@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Client Intake — Always Precise Investigations</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0e1a2c">
+<style>
+  :root{
+    --navy:#0e1a2c; --navy-2:#13273f; --teal:#2f7d90; --teal-2:#3d97ad;
+    --gold:#c99a3b; --ink:#1c2531; --muted:#5c6775; --line:#dfe3e8;
+    --paper:#f4f5f7; --card:#ffffff; --good:#1c8a4d; --bad:#c14133;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif;background:var(--paper);color:var(--ink);line-height:1.6;-webkit-text-size-adjust:100%;}
+  .top{background:var(--navy);color:#fff;padding:16px 20px;}
+  .top .wrap{max-width:680px;margin:0 auto;display:flex;align-items:center;gap:12px;}
+  .mark{width:34px;height:34px;flex:none;}
+  .top .name{font-weight:700;letter-spacing:.03em;font-size:1.02rem;line-height:1.15;}
+  .top .name span{display:block;font-weight:400;font-size:.72rem;color:#9db2c9;letter-spacing:.05em;}
+  .top .meta{margin-left:auto;text-align:right;font-size:.74rem;color:#9db2c9;line-height:1.5;}
+  .top .meta a{color:#cfe0f0;text-decoration:none;font-weight:600;}
+
+  main{max-width:680px;margin:0 auto;padding:20px 16px 60px;}
+  .progress{display:flex;gap:6px;margin:6px 0 18px;}
+  .progress i{flex:1;height:5px;border-radius:3px;background:var(--line);transition:background .2s;}
+  .progress i.done{background:var(--teal-2);}
+  .stepno{font-size:.78rem;color:var(--muted);margin-bottom:14px;letter-spacing:.03em;}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px;box-shadow:0 1px 3px rgba(16,29,51,.05);}
+  h1{font-size:1.3rem;margin-bottom:4px;}
+  .lead{color:var(--muted);font-size:.92rem;margin-bottom:18px;}
+  label.f{display:block;margin-bottom:14px;}
+  label.f > span{display:block;font-size:.85rem;font-weight:600;margin-bottom:5px;}
+  label.f > span .req{color:var(--bad);}
+  input[type=text],input[type=tel],input[type=email],select,textarea{
+    width:100%;font-size:16px;font-family:inherit;color:var(--ink);background:#fff;
+    border:1px solid var(--line);border-radius:8px;padding:11px 12px;}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--teal-2);border-color:var(--teal-2);}
+  textarea{min-height:96px;resize:vertical;}
+  .hint{font-size:.78rem;color:var(--muted);margin-top:4px;}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:0 14px;}
+  @media(max-width:520px){.two{grid-template-columns:1fr;}}
+
+  .opt{display:block;border:1.5px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:10px;cursor:pointer;transition:border-color .15s,background .15s;}
+  .opt:hover{border-color:var(--teal-2);}
+  .opt.sel{border-color:var(--teal-2);background:#f0f8fa;}
+  .opt input{margin-right:8px;}
+  .opt b{font-size:1rem;}
+  .opt .desc{color:var(--muted);font-size:.86rem;margin-top:2px;}
+  .opt .price{float:right;color:var(--navy);font-weight:700;}
+
+  .feebox{background:#f0f8fa;border:1px solid #cfe6ec;border-radius:10px;padding:14px 16px;margin:4px 0 16px;font-size:.9rem;}
+  .feebox .row{display:flex;justify-content:space-between;padding:3px 0;}
+  .feebox .due{border-top:1px solid #cfe6ec;margin-top:6px;padding-top:8px;font-weight:700;font-size:1.02rem;}
+  .agree{font-size:.82rem;color:#3a4653;max-height:190px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:14px;background:#fbfbfc;margin-bottom:14px;}
+  .agree h4{margin:10px 0 4px;font-size:.85rem;color:var(--ink);}
+  .agree p{margin-bottom:8px;}
+  .chk{display:flex;gap:10px;align-items:flex-start;font-size:.88rem;margin-bottom:14px;}
+  .chk input{margin-top:3px;flex:none;width:18px;height:18px;}
+
+  .sigwrap{border:1px solid var(--line);border-radius:8px;background:#fff;position:relative;}
+  canvas#sig{display:block;width:100%;height:170px;border-radius:8px;touch-action:none;cursor:crosshair;}
+  .sigline{position:absolute;left:16px;right:16px;bottom:34px;border-bottom:1px solid #c7ccd3;pointer-events:none;}
+  .sigx{position:absolute;left:16px;bottom:16px;color:var(--muted);font-size:.8rem;pointer-events:none;}
+  .sigclear{position:absolute;right:10px;top:10px;background:#fff;border:1px solid var(--line);border-radius:6px;font-size:.78rem;padding:4px 10px;cursor:pointer;color:var(--muted);}
+
+  .pay-opt{display:flex;gap:12px;flex-wrap:wrap;margin:6px 0 4px;}
+  .pay-opt .opt{flex:1;min-width:150px;margin:0;text-align:center;}
+  .pay-btn{display:inline-block;width:100%;text-align:center;color:#fff;font-weight:700;text-decoration:none;padding:14px;border-radius:8px;font-size:1.05rem;margin-top:6px;}
+  .pay-btn.venmo{background:#3D95CE;} .pay-btn.cashapp{background:#00C244;}
+
+  .nav{display:flex;gap:10px;margin-top:20px;}
+  .btn{font:inherit;font-size:1rem;font-weight:700;border:0;border-radius:8px;padding:13px 22px;cursor:pointer;}
+  .btn.primary{background:var(--teal);color:#fff;flex:1;}
+  .btn.primary:hover{background:var(--teal-2);}
+  .btn.primary:disabled{opacity:.6;cursor:default;}
+  .btn.ghost{background:#fff;border:1px solid var(--line);color:var(--ink);}
+  .err{color:var(--bad);font-size:.85rem;margin-top:10px;min-height:1em;}
+
+  .record{background:#fff;border:1px solid var(--line);border-radius:12px;padding:22px;}
+  .record h2{font-size:1.2rem;margin-bottom:2px;}
+  .record .case{color:var(--teal);font-weight:700;font-family:ui-monospace,monospace;}
+  .record dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:14px 0;font-size:.9rem;}
+  .record dt{color:var(--muted);}
+  .record dd{color:var(--ink);}
+  .record img.sig{max-width:260px;border-bottom:1px solid #c7ccd3;margin-top:4px;}
+  .ok{background:#e9f7ef;border:1px solid #b6e0c6;color:#166534;border-radius:8px;padding:12px 14px;font-size:.9rem;margin-bottom:14px;}
+  .warn{background:#fdecea;border:1px solid #f5c6c0;color:#8a2318;border-radius:8px;padding:12px 14px;font-size:.9rem;margin-bottom:14px;}
+  .foot{max-width:680px;margin:0 auto;padding:0 16px 40px;color:var(--muted);font-size:.78rem;text-align:center;}
+  @media print{.top .meta,.nav,.sigclear{display:none;}body{background:#fff;}}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="wrap">
+    <svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="10" fill="#13273f"/><path d="M32 12l6 8-6 8-6-8z" fill="#3d97ad"/><path d="M32 30l10 12H22z" fill="#c99a3b"/></svg>
+    <div class="name">ALWAYS PRECISE<span>INVESTIGATIONS · CLIENT INTAKE</span></div>
+    <div class="meta">
+      <a id="m-phone" href="tel:+14349070975">(434) 907-0975</a><br>
+      <span id="m-lic">Va DCJS #11-9159</span>
+    </div>
+  </div>
+</div>
+
+<main>
+  <div class="stepno">Case <b id="caseno" style="font-family:ui-monospace,monospace;color:var(--teal)"></b></div>
+  <div class="progress" id="progress"></div>
+
+  <div id="app"></div>
+</main>
+<div class="foot">Confidential. Submitted only to Always Precise Investigations. Licensed &amp; insured · Va DCJS #11-9159.</div>
+
+<script>
+"use strict";
+
+/* ============ Phase 1: Configuration ============ */
+const FIRM = {
+  name:    "Always Precise Investigations",
+  phone:   "(434) 907-0975",
+  tel:     "+14349070975",
+  email:   "AlwaysPreciseInvestigations@gmail.com",
+  license: "11-9159",          // Va DCJS
+  venmo:   "Trever-Brown9",    // NO @  (personal — swap to business before client use)
+  cashtag: "TreverB"           // NO $  (personal — swap to business before client use)
+};
+const FEES = {
+  surveillance: { label:"Surveillance", retainer:1500, hourly:100, minHours:4 },
+  process:      { label:"Process Serving", flat:150 }
+};
+/* Web3Forms access key goes here for email delivery; until then submissions
+   go through FormSubmit to the firm inbox (needs one-time activation). */
+const WEB3FORMS_KEY = "";
+
+/* ============ State ============ */
+const CASE_NO = "API-" + new Date().toISOString().slice(0,10).replace(/-/g,"") + "-" + String(Math.floor(1000+Math.random()*9000));
+const S = { step:0, svc:null, pay:null, sig:null, files:[] };
+const STEPS = ["info","service","subject","objective","agreement","payment"];
+const app = document.getElementById("app");
+const $ = id => document.getElementById(id);
+
+/* keep field values across step re-renders */
+const val = {};
+function capture(scope){ (scope||document).querySelectorAll("[data-k]").forEach(el=>{ val[el.dataset.k] = el.type==="checkbox" ? el.checked : el.value; }); }
+
+/* ============ Boot ============ */
+document.addEventListener("DOMContentLoaded", () => {
+  $("caseno").textContent = CASE_NO;
+  $("m-phone").textContent = FIRM.phone; $("m-phone").href = "tel:" + FIRM.tel;
+  $("m-lic").textContent = "Va DCJS #" + FIRM.license;
+  const p = $("progress"); STEPS.forEach(()=>p.insertAdjacentHTML("beforeend","<i></i>"));
+  render();
+});
+
+const money = n => "$" + Number(n).toLocaleString();
+function svc(){ return S.svc ? FEES[S.svc] : null; }
+function amountDue(){ const f=svc(); if(!f) return 0; return S.svc==="surveillance" ? f.retainer : f.flat; }
+
+/* ============ Render ============ */
+function render(){
+  document.querySelectorAll("#progress i").forEach((el,i)=> el.classList.toggle("done", i<=S.step));
+  app.innerHTML = view(STEPS[S.step]);
+  restore();
+  if(STEPS[S.step]==="agreement") initSig();
+  if(STEPS[S.step]==="payment") paintPay();
+  window.scrollTo(0,0);
+}
+function restore(){ document.querySelectorAll("[data-k]").forEach(el=>{ if(val[el.dataset.k]!==undefined){ if(el.type==="checkbox") el.checked=val[el.dataset.k]; else el.value=val[el.dataset.k]; } }); }
+
+function navButtons(nextLabel){
+  return `<div class="nav">
+    ${S.step>0 ? `<button type="button" class="btn ghost" onclick="back()">Back</button>` : ""}
+    <button type="button" class="btn primary" onclick="next()">${nextLabel||"Continue"}</button>
+  </div><div class="err" id="err"></div>`;
+}
+
+function view(step){
+  if(step==="info") return `<div class="card">
+    <h1>Your information</h1>
+    <p class="lead">Tell us how to reach you. Everything you share is confidential.</p>
+    <label class="f"><span>Full name <b class="req">*</b></span><input type="text" data-k="c_name" autocomplete="name"></label>
+    <div class="two">
+      <label class="f"><span>Phone</span><input type="tel" data-k="c_phone" autocomplete="tel"></label>
+      <label class="f"><span>Email</span><input type="email" data-k="c_email" autocomplete="email"></label>
+    </div>
+    <p class="hint" style="margin-top:-6px;margin-bottom:12px;">Give us at least one — phone or email.</p>
+    <label class="f"><span>Mailing address</span><input type="text" data-k="c_addr" autocomplete="street-address" placeholder="Street, City, VA, ZIP"></label>
+    <label class="f"><span>Best time to reach you</span><input type="text" data-k="c_best" placeholder="e.g. weekday evenings"></label>
+    ${navButtons()}
+  </div>`;
+
+  if(step==="service") return `<div class="card">
+    <h1>What do you need?</h1>
+    <p class="lead">Select the service. Fees are shown up front — no surprises.</p>
+    <label class="opt" id="opt-surveillance" onclick="pickSvc('surveillance')">
+      <span class="price">${money(FEES.surveillance.retainer)} retainer</span>
+      <input type="radio" name="svc" ${S.svc==="surveillance"?"checked":""}><b>Surveillance</b>
+      <div class="desc">Documented surveillance for personal or legal matters. ${money(FEES.surveillance.retainer)} retainer, then ${money(FEES.surveillance.hourly)}/hr (${FEES.surveillance.minHours}-hour minimum).</div>
+    </label>
+    <label class="opt" id="opt-process" onclick="pickSvc('process')">
+      <span class="price">${money(FEES.process.flat)} flat</span>
+      <input type="radio" name="svc" ${S.svc==="process"?"checked":""}><b>Process Serving</b>
+      <div class="desc">Reliable service of legal documents across Virginia. ${money(FEES.process.flat)} flat fee.</div>
+    </label>
+    ${navButtons()}
+  </div>`;
+
+  if(step==="subject") return `<div class="card">
+    <h1>Subject of the investigation</h1>
+    <p class="lead">Who or what should we look into? Share whatever you know — more detail helps.</p>
+    <label class="f"><span>Subject's name</span><input type="text" data-k="s_name"></label>
+    <label class="f"><span>Known address or location</span><input type="text" data-k="s_addr"></label>
+    <label class="f"><span>Vehicle / physical description</span><input type="text" data-k="s_desc" placeholder="Make, model, color, plate, appearance…"></label>
+    <label class="f"><span>Relationship to you</span><input type="text" data-k="s_rel" placeholder="e.g. spouse, tenant, employee, defendant"></label>
+    <label class="f"><span>Documents or photos</span>
+      <input type="file" id="files" multiple onchange="pickFiles(this)" style="font-size:.9rem;padding:8px 0;border:0;">
+      <span class="hint" id="filenote">Attach court papers or a photo of the subject if you have them.</span></label>
+    ${navButtons()}
+  </div>`;
+
+  if(step==="objective") return `<div class="card">
+    <h1>Your objective</h1>
+    <p class="lead">What outcome are you hoping for, and how soon?</p>
+    <label class="f"><span>What do you want to find out or accomplish?</span><textarea data-k="o_goal" placeholder="Describe the situation and the result you need…"></textarea></label>
+    <label class="f"><span>Timeline / urgency</span><input type="text" data-k="o_time" placeholder="e.g. before a court date on 8/15, ASAP, flexible"></label>
+    <label class="f"><span>Anything else we should know</span><textarea data-k="o_notes" placeholder="Optional"></textarea></label>
+    ${navButtons()}
+  </div>`;
+
+  if(step==="agreement"){
+    const f=svc(), due=amountDue();
+    const feeLines = S.svc==="surveillance"
+      ? `<div class="row"><span>Retainer (due now)</span><b>${money(f.retainer)}</b></div>
+         <div class="row"><span>Hourly rate after retainer</span><span>${money(f.hourly)}/hr</span></div>
+         <div class="row"><span>Minimum engagement</span><span>${f.minHours} hours</span></div>`
+      : `<div class="row"><span>Flat service fee</span><b>${money(f.flat)}</b></div>`;
+    return `<div class="card">
+      <h1>Agreement &amp; signature</h1>
+      <p class="lead">Please review the terms for <b>${f?f.label:"the selected service"}</b> and sign below.</p>
+      <div class="feebox">${feeLines}<div class="row due"><span>Due today</span><span>${money(due)}</span></div></div>
+      <div class="agree">
+        <h4>Engagement</h4>
+        <p>The client retains ${FIRM.name} ("the firm," Va DCJS #${FIRM.license}) to perform ${f?f.label.toLowerCase():"the selected"} services described in this intake. Work begins after the retainer or fee shown above is received.</p>
+        <h4>Fees</h4>
+        <p>${S.svc==="surveillance"
+            ? `A non-refundable retainer of ${money(f.retainer)} is due today and is applied to work performed. Services are billed at ${money(f.hourly)} per hour with a ${f.minHours}-hour minimum. The client authorizes additional hours only with prior approval.`
+            : `A flat fee of ${money(f.flat)} is due today for one service attempt as permitted by law. Additional attempts or addresses may incur additional fees agreed in advance.`}</p>
+        <h4>Lawful purpose &amp; conduct</h4>
+        <p>The client affirms a lawful and legitimate purpose for this engagement. The firm does not accept cyber-stalking matters and has no ability to access, hack, or retrieve data from a third party's phone, accounts, or devices. All work is performed lawfully; findings are provided for the client's stated purpose only.</p>
+        <h4>Confidentiality &amp; no guarantee</h4>
+        <p>The firm keeps client information confidential except as required by law. Investigative work cannot guarantee a particular result or finding.</p>
+      </div>
+      <label class="chk"><input type="checkbox" data-k="a_consent"><span>I have read and agree to the terms above, I affirm a lawful purpose, and I authorize ${FIRM.name} to proceed.</span></label>
+      <label class="f"><span>Type your full legal name <b class="req">*</b></span><input type="text" data-k="a_typed" placeholder="Your full legal name"></label>
+      <div style="font-size:.85rem;font-weight:600;margin-bottom:6px;">Signature <b class="req">*</b></div>
+      <div class="sigwrap">
+        <button type="button" class="sigclear" onclick="clearSig()">Clear</button>
+        <canvas id="sig"></canvas>
+        <div class="sigline"></div><div class="sigx">Sign with your finger or mouse</div>
+      </div>
+      ${navButtons("Continue to payment")}
+    </div>`;
+  }
+
+  if(step==="payment"){
+    const f=svc(), due=amountDue();
+    return `<div class="card">
+      <h1>Payment</h1>
+      <p class="lead">A ${S.svc==="surveillance"?"retainer":"fee"} of <b>${money(due)}</b> is due today to begin. Choose how you'd like to pay.</p>
+      <div class="pay-opt">
+        <label class="opt ${S.pay==="venmo"?"sel":""}" onclick="pickPay('venmo')"><input type="radio" name="pay" ${S.pay==="venmo"?"checked":""}><b>Venmo</b></label>
+        <label class="opt ${S.pay==="cashapp"?"sel":""}" onclick="pickPay('cashapp')"><input type="radio" name="pay" ${S.pay==="cashapp"?"checked":""}><b>Cash App</b></label>
+      </div>
+      <div id="paylink"></div>
+      <p class="hint">Payments go to ${FIRM.name} (Trever Brown). Please confirm the name in the app before sending. You can also pay by another method — just call ${FIRM.phone}.</p>
+      ${navButtons("Submit intake")}
+    </div>`;
+  }
+  return "";
+}
+
+/* ============ Step actions ============ */
+function pickSvc(k){ capture(); S.svc=k; render(); }
+function pickPay(k){ capture(); S.pay=k; paintPay(); document.querySelectorAll(".pay-opt .opt").forEach(o=>o.classList.remove("sel")); }
+function pickFiles(input){ S.files=[...input.files].map(f=>f.name); const n=$("filenote"); if(n) n.textContent = S.files.length? S.files.length+" file(s) attached: "+S.files.join(", ") : "Attach court papers or a photo of the subject if you have them."; }
+
+function paintPay(){
+  const box=$("paylink"); if(!box) return;
+  const due=amountDue(), note=encodeURIComponent("Case "+CASE_NO);
+  if(S.pay==="venmo"){
+    const url=`https://venmo.com/${FIRM.venmo}?txn=pay&amount=${due}&note=${note}`;
+    box.innerHTML=`<a class="pay-btn venmo" href="${url}" target="_blank" rel="noopener noreferrer">Pay ${money(due)} with Venmo</a>`;
+  }else if(S.pay==="cashapp"){
+    const url=`https://cash.app/$${FIRM.cashtag}/${due}`;
+    box.innerHTML=`<a class="pay-btn cashapp" href="${url}" target="_blank" rel="noopener noreferrer">Pay ${money(due)} with Cash App</a>`;
+  }else box.innerHTML="";
+  document.querySelectorAll(".pay-opt .opt").forEach((o,i)=>o.classList.toggle("sel",(i===0&&S.pay==="venmo")||(i===1&&S.pay==="cashapp")));
+}
+
+/* ============ Signature pad ============ */
+let sigCtx=null, drawing=false, sigDirty=false;
+function initSig(){
+  const c=$("sig"); if(!c) return;
+  const ratio=window.devicePixelRatio||1, w=c.clientWidth, h=c.clientHeight;
+  c.width=w*ratio; c.height=h*ratio;
+  sigCtx=c.getContext("2d"); sigCtx.scale(ratio,ratio);
+  sigCtx.lineWidth=2.2; sigCtx.lineCap="round"; sigCtx.lineJoin="round"; sigCtx.strokeStyle="#12305a";
+  if(S.sig){ const img=new Image(); img.onload=()=>sigCtx.drawImage(img,0,0,w,h); img.src=S.sig; sigDirty=true; }
+  const pos=e=>{ const r=c.getBoundingClientRect(); const t=e.touches?e.touches[0]:e; return {x:t.clientX-r.left,y:t.clientY-r.top}; };
+  const start=e=>{ e.preventDefault(); drawing=true; sigDirty=true; const p=pos(e); sigCtx.beginPath(); sigCtx.moveTo(p.x,p.y); };
+  const move =e=>{ if(!drawing) return; e.preventDefault(); const p=pos(e); sigCtx.lineTo(p.x,p.y); sigCtx.stroke(); };
+  const end  =()=>{ if(drawing){ drawing=false; S.sig=c.toDataURL("image/png"); } };
+  c.onpointerdown=start; c.onpointermove=move; window.addEventListener("pointerup",end);
+}
+function clearSig(){ const c=$("sig"); if(!c||!sigCtx) return; sigCtx.clearRect(0,0,c.width,c.height); S.sig=null; sigDirty=false; }
+
+/* ============ Navigation + validation ============ */
+function fail(msg){ const e=$("err"); if(e) e.textContent=msg; window.scrollTo(0,document.body.scrollHeight); }
+function validate(step){
+  capture();
+  if(step==="info"){
+    if(!(val.c_name||"").trim()) return "Please enter your full name.";
+    if(!(val.c_phone||"").trim() && !(val.c_email||"").trim()) return "Add a phone number or email so we can reach you.";
+  }
+  if(step==="service" && !S.svc) return "Please choose a service.";
+  if(step==="agreement"){
+    if(!val.a_consent) return "Please check the box to agree to the terms.";
+    if(!(val.a_typed||"").trim()) return "Please type your full legal name.";
+    if(!S.sig || !sigDirty) return "Please sign in the box above.";
+  }
+  if(step==="payment" && !S.pay) return "Choose a payment method (or call us to pay another way).";
+  return null;
+}
+function next(){
+  const step=STEPS[S.step], msg=validate(step);
+  if(msg){ fail(msg); return; }
+  if(step==="payment"){ finish(); return; }
+  S.step++; render();
+}
+function back(){ capture(); if(S.step>0){ S.step--; render(); } }
+
+/* ============ Phase 2: Submission ============ */
+function buildPayload(){
+  const f=svc();
+  return {
+    case_no:CASE_NO,
+    service:f?f.label:"",
+    fee_due:amountDue(),
+    payment_method:S.pay||"",
+    client_name:val.c_name||"", client_phone:val.c_phone||"", client_email:val.c_email||"",
+    client_address:val.c_addr||"", best_time:val.c_best||"",
+    subject_name:val.s_name||"", subject_address:val.s_addr||"", subject_description:val.s_desc||"", subject_relationship:val.s_rel||"",
+    objective:val.o_goal||"", timeline:val.o_time||"", notes:val.o_notes||"",
+    attachments:(S.files||[]).join(", "),
+    signed_name:val.a_typed||"", signature:S.sig||"",
+    submitted_at:new Date().toLocaleString()
+  };
+}
+async function submitIntake(p){
+  // Web3Forms if a key is set (handles large payloads incl. the signature), else FormSubmit to the firm inbox.
+  if(WEB3FORMS_KEY){
+    const r=await fetch("https://api.web3forms.com/submit",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},
+      body:JSON.stringify({access_key:WEB3FORMS_KEY,subject:"New client intake "+p.case_no+" — "+p.service,from_name:"Website Intake",...p})});
+    const d=await r.json(); return !!d.success;
+  }
+  const r=await fetch("https://formsubmit.co/ajax/"+FIRM.email,{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},
+    body:JSON.stringify({_subject:"New client intake "+p.case_no+" — "+p.service,_template:"table",...p})});
+  const d=await r.json().catch(()=>({})); return d && (d.success==="true"||d.success===true);
+}
+async function finish(){
+  const btn=document.querySelector(".btn.primary"); const err=$("err");
+  const p=buildPayload();
+  btn.disabled=true; btn.textContent="Sending…"; if(err) err.textContent="";
+  let sent=false, threw=false;
+  try{ sent=await submitIntake(p); }catch(e){ threw=true; }
+  renderRecord(p, sent, threw);
+}
+
+/* ============ Final record ============ */
+function esc(s){ return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function row(label,v){ return v ? `<dt>${label}</dt><dd>${esc(v)}</dd>` : ""; }
+function renderRecord(p, sent, threw){
+  document.querySelectorAll("#progress i").forEach(el=>el.classList.add("done"));
+  const status = sent
+    ? `<div class="ok"><b>Intake submitted.</b> Always Precise Investigations has received your request. We'll contact you shortly. Keep your case number for reference.</div>`
+    : `<div class="warn"><b>We couldn't confirm delivery.</b> Please call <b>${FIRM.phone}</b> or email <b>${FIRM.email}</b> and give your case number so we don't miss you. Your details are shown below — you can print or screenshot this page.</div>`;
+  app.innerHTML = `<div class="record">
+    ${status}
+    <h2>Client Intake — ${esc(p.service)}</h2>
+    <div>Case <span class="case">${esc(p.case_no)}</span></div>
+    <dl>
+      ${row("Name",p.client_name)}${row("Phone",p.client_phone)}${row("Email",p.client_email)}
+      ${row("Address",p.client_address)}${row("Best time",p.best_time)}
+      ${row("Subject",p.subject_name)}${row("Subject address",p.subject_address)}${row("Description",p.subject_description)}${row("Relationship",p.subject_relationship)}
+      ${row("Objective",p.objective)}${row("Timeline",p.timeline)}${row("Notes",p.notes)}${row("Attachments",p.attachments)}
+      ${row("Service",p.service)}${row("Due today",money(p.fee_due))}${row("Payment method",p.payment_method)}
+      ${row("Signed by",p.signed_name)}
+    </dl>
+    ${p.signature?`<div><div style="font-size:.8rem;color:var(--muted)">Signature</div><img class="sig" src="${p.signature}" alt="signature"></div>`:""}
+    <div class="nav"><button type="button" class="btn ghost" onclick="window.print()">Print / Save PDF</button></div>
+  </div>`;
+  window.scrollTo(0,0);
+}
+</script>
+</body>
+</html>
