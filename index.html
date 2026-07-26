@@ -103,6 +103,29 @@
   footer a{color:var(--teal-2);text-decoration:none;}
   footer .row{margin:6px 0;}
 
+  button.call-btn{border:0;cursor:pointer;font-family:'Segoe UI',Arial,sans-serif;font-size:1rem;}
+  .btn-outline{background:transparent;border:1.5px solid var(--teal);color:#fff;font-family:'Segoe UI',Arial,sans-serif;font-weight:700;text-decoration:none;padding:13px 26px;border-radius:5px;display:inline-block;cursor:pointer;transition:background .15s;}
+  .btn-outline:hover{background:rgba(61,151,173,.18);}
+  .hero .btn-row{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;}
+  .hero .btn-row .call-btn,.hero .btn-row .btn-outline{font-size:1.1rem;padding:14px 28px;}
+
+  .modal-back{position:fixed;inset:0;background:rgba(6,12,22,.74);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:60;overflow:auto;}
+  .modal-back[hidden]{display:none;}
+  .modal{background:var(--card);border:1px solid var(--line);border-top:3px solid var(--teal);border-radius:8px;max-width:460px;width:100%;padding:24px;}
+  .modal h3{font-size:1.35rem;margin-bottom:4px;}
+  .modal .sub{color:var(--muted);font-family:'Segoe UI',Arial,sans-serif;font-size:.9rem;margin-bottom:16px;}
+  .modal .x{float:right;background:none;border:none;color:var(--muted);font-size:1.6rem;line-height:1;cursor:pointer;}
+  .field{display:block;margin-bottom:12px;font-family:'Segoe UI',Arial,sans-serif;}
+  .field span{display:block;font-size:.82rem;color:var(--ink);margin-bottom:5px;}
+  .field input,.field textarea{width:100%;font-size:16px;font-family:'Segoe UI',Arial,sans-serif;background:var(--navy);color:#fff;border:1px solid var(--line);border-radius:6px;padding:11px 12px;}
+  .field textarea{min-height:94px;resize:vertical;}
+  .field input:focus,.field textarea:focus{outline:2px solid var(--teal);}
+  .modal .send{width:100%;background:var(--teal);color:#fff;font-family:'Segoe UI',Arial,sans-serif;font-weight:700;font-size:1rem;border:0;border-radius:6px;padding:13px;cursor:pointer;margin-top:4px;}
+  .modal .send:hover{background:var(--teal-2);}
+  .modal .send:disabled{opacity:.6;cursor:default;}
+  #c-status{font-family:'Segoe UI',Arial,sans-serif;font-size:.9rem;margin-top:12px;text-align:center;color:var(--ink);}
+  #c-status b{color:var(--teal-2);}
+
   @media (max-width:640px){
     nav{gap:14px;font-size:.8rem;width:100%;justify-content:center;order:3;}
     header .wrap{justify-content:center;}
@@ -121,6 +144,7 @@
       <a href="#services">Services</a>
       <a href="#reviews">Reviews</a>
       <a href="#about">About</a>
+      <a href="#" onclick="openContact();return false;">Contact</a>
       <a class="call-btn" href="tel:+14349070975">Call (434) 907-0975</a>
     </nav>
   </div>
@@ -130,7 +154,10 @@
   <div class="tag">Serving ALL of Virginia since 2014</div>
   <h1>Private Investigations, Done With Precision</h1>
   <p>Licensed, insured, and discreet. When you need the truth — documented, professional, and ready when it matters — Always Precise Investigations delivers results.</p>
-  <a class="call-btn" href="tel:+14349070975">Free Confidential Consultation</a>
+  <div class="btn-row">
+    <button class="call-btn" onclick="openContact()">Contact Us</button>
+    <a class="btn-outline" href="tel:+14349070975">Call (434) 907-0975</a>
+  </div>
   <div class="stars">★★★★★<small>5-Star Rated · Va DCJS #11-9159</small></div>
 </div>
 
@@ -210,6 +237,44 @@
   <div class="row lic">Va DCJS #11-9159 · Licensed and Insured</div>
   <div class="row">Serving ALL of Virginia since 2014</div>
 </footer>
+
+<div class="modal-back" id="contactModal" hidden onclick="if(event.target===this)closeContact()">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Contact Always Precise Investigations">
+    <button class="x" onclick="closeContact()" aria-label="Close">&times;</button>
+    <h3>Contact Us</h3>
+    <p class="sub">Send a brief message with your name and number, and we'll call you back. Confidential, no obligation.</p>
+    <form onsubmit="sendContact(event)">
+      <label class="field"><span>Your name</span><input type="text" name="name" autocomplete="name" required></label>
+      <label class="field"><span>Phone number</span><input type="tel" name="phone" autocomplete="tel" required></label>
+      <label class="field"><span>How can we help?</span><textarea name="message" placeholder="Briefly describe what you need…" required></textarea></label>
+      <button type="submit" class="send">Send message</button>
+      <div id="c-status"></div>
+    </form>
+  </div>
+</div>
+
+<script>
+  function openContact(){var m=document.getElementById('contactModal');m.hidden=false;document.body.style.overflow='hidden';var n=m.querySelector('input[name=name]');if(n)n.focus();}
+  function closeContact(){document.getElementById('contactModal').hidden=true;document.body.style.overflow='';}
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')closeContact();});
+  async function sendContact(e){
+    e.preventDefault();
+    var f=e.target, btn=f.querySelector('.send'), status=document.getElementById('c-status');
+    var name=f.elements.name.value.trim(), phone=f.elements.phone.value.trim(), message=f.elements.message.value.trim();
+    btn.disabled=true; status.textContent='Sending…';
+    try{
+      var res=await fetch('https://formsubmit.co/ajax/AlwaysPreciseInvestigations@gmail.com',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','Accept':'application/json'},
+        body:JSON.stringify({name:name,phone:phone,message:message,_subject:'New website inquiry — Always Precise Investigations',_template:'table'})
+      });
+      var d={}; try{ d=await res.json(); }catch(_){}
+      if(d && (d.success==='true'||d.success===true)){ f.reset(); status.innerHTML='<b>Thank you!</b> Your message was sent — we’ll be in touch shortly.'; }
+      else { status.innerHTML='Your message was received. If you don’t hear back soon, please call <b>(434) 907-0975</b>.'; }
+    }catch(err){ status.innerHTML='Couldn’t send right now — please call <b>(434) 907-0975</b> or email us directly.'; }
+    btn.disabled=false;
+  }
+</script>
 
 </body>
 </html>
