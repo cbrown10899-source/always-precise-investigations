@@ -126,6 +126,15 @@
   #c-status{font-family:'Segoe UI',Arial,sans-serif;font-size:.9rem;margin-top:12px;text-align:center;color:var(--ink);}
   #c-status b{color:var(--teal-2);}
 
+  .pay{background:var(--navy-2);text-align:center;}
+  .pay .lede{margin:0 auto 22px;}
+  .pay-row{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;}
+  .pay-btn{display:inline-flex;align-items:center;justify-content:center;font-family:'Segoe UI',Arial,sans-serif;font-weight:700;text-decoration:none;color:#fff;padding:14px 30px;border-radius:6px;font-size:1.05rem;min-width:200px;transition:filter .15s;}
+  .pay-btn:hover{filter:brightness(1.08);}
+  .pay-btn.venmo{background:#3D95CE;}
+  .pay-btn.cashapp{background:#00C244;}
+  .pay-note{color:var(--muted);font-family:'Segoe UI',Arial,sans-serif;font-size:.82rem;margin-top:16px;}
+
   @media (max-width:640px){
     nav{gap:14px;font-size:.8rem;width:100%;justify-content:center;order:3;}
     header .wrap{justify-content:center;}
@@ -144,6 +153,7 @@
       <a href="#services">Services</a>
       <a href="#reviews">Reviews</a>
       <a href="#about">About</a>
+      <a href="#payments">Pay</a>
       <a href="#" onclick="openContact();return false;">Contact</a>
       <a class="call-btn" href="tel:+14349070975">Call (434) 907-0975</a>
     </nav>
@@ -228,6 +238,19 @@
     <div class="phone"><a href="tel:+14349070975">434-907-0975</a></div>
     <div class="email"><a href="mailto:AlwaysPreciseInvestigations@gmail.com">AlwaysPreciseInvestigations@gmail.com</a></div>
     <a class="call-btn" href="tel:+14349070975">Call for a Free Consultation</a>
+  </div>
+</section>
+
+<section id="payments" class="pay">
+  <div class="wrap">
+    <div class="eyebrow" style="text-align:center;">Payments</div>
+    <h2>Make a Payment</h2>
+    <p class="lede">Pay quickly and securely from your phone — tap your preferred option and it opens the app right to our account.</p>
+    <div class="pay-row">
+      <a class="pay-btn venmo" href="https://venmo.com/u/Trever-Brown9" target="_blank" rel="noopener noreferrer">Pay with Venmo</a>
+      <a class="pay-btn cashapp" href="https://cash.app/$TreverB" target="_blank" rel="noopener noreferrer">Pay with Cash App</a>
+    </div>
+    <p class="pay-note">Payments go to Always Precise Investigations (Trever Brown). Please confirm the name in the app before you send.</p>
   </div>
 </section>
 
