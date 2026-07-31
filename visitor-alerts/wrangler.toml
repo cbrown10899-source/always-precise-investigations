@@ -1,0 +1,22 @@
+name = "api-visitor-alerts"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+[vars]
+SITE_ORIGIN   = "https://alwayspreciseinvestigations.net"
+VAPID_SUBJECT = "mailto:AlwaysPreciseInvestigations@gmail.com"
+# Public key is not secret — paste the value from gen-vapid.mjs here.
+VAPID_PUBLIC_KEY = "PASTE_PUBLIC_KEY_HERE"
+
+# Secrets (never in this file):
+#   npx wrangler secret put VAPID_PRIVATE_KEY
+#   npx wrangler secret put WATCH_PASSWORD
+#   npx wrangler secret put SALT
+
+[[kv_namespaces]]
+binding = "SUBS"
+id = "PASTE_KV_ID_FOR_SUBS"
+
+[[kv_namespaces]]
+binding = "HITS"
+id = "PASTE_KV_ID_FOR_HITS"

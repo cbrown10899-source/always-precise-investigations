@@ -1,0 +1,12 @@
+{
+  "name": "Always Precise — Live Visitors",
+  "short_name": "Live Visitors",
+  "start_url": "/watch/",
+  "scope": "/watch/",
+  "display": "standalone",
+  "background_color": "#0e1a2c",
+  "theme_color": "#0e1a2c",
+  "icons": [
+    { "src": "/assets/logo-white.webp", "sizes": "512x512", "type": "image/webp", "purpose": "any" }
+  ]
+}

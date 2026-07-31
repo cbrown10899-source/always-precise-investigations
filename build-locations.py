@@ -335,6 +335,7 @@ def page(slug, place, kind, county, court, detail, nearby):
   <div class="row">{LICENSE} &middot; Licensed and Insured &middot; Serving Virginia since 2014</div>
   <div class="row"><a href="{DOMAIN}/">Home</a> &middot; <a href="{DOMAIN}/private-investigator/">Service areas</a></div>
 </div></footer>
+<script src="/beacon.js" defer></script>
 </body>
 </html>
 """
@@ -423,6 +424,7 @@ def hub():
   <div class="row">{LICENSE} &middot; Licensed and Insured &middot; Serving Virginia since 2014</div>
   <div class="row"><a href="{DOMAIN}/">Home</a></div>
 </div></footer>
+<script src="/beacon.js" defer></script>
 </body>
 </html>
 """

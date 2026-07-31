@@ -2,3 +2,6 @@ User-agent: *
 Allow: /
 
 Sitemap: https://alwayspreciseinvestigations.net/sitemap.xml
+
+# Private dashboard — not for search engines
+Disallow: /watch/

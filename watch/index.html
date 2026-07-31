@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Live Visitors — Always Precise</title>
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="theme-color" content="#0e1a2c">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Live Visitors">
+<link rel="apple-touch-icon" href="/assets/logo-white.webp">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--navy:#0e1a2c;--navy-2:#13273f;--card:#16283f;--line:#26405c;
+--ink:#dfe6ef;--muted:#9fb0c4;--teal:#3d97ad;--teal-2:#4fb3cb;--gold:#e6b54a;--green:#4ec77f}
+body{background:var(--navy);color:var(--ink);font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif;
+line-height:1.55;padding:0 0 40px;-webkit-text-size-adjust:100%}
+.wrap{max-width:640px;margin:0 auto;padding:0 18px}
+header{background:var(--navy-2);border-bottom:1px solid var(--line);padding:14px 0 13px;
+position:sticky;top:0;z-index:5}
+header .wrap{display:flex;align-items:center;justify-content:space-between;gap:12px}
+h1{font-size:17px;font-weight:600;color:#fff}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#5a6b80;margin-right:7px;vertical-align:middle}
+.dot.live{background:var(--green);box-shadow:0 0 0 0 rgba(78,199,127,.7);animation:pulse 2s infinite}
+@keyframes pulse{70%{box-shadow:0 0 0 9px rgba(78,199,127,0)}100%{box-shadow:0 0 0 0 rgba(78,199,127,0)}}
+@media (prefers-reduced-motion:reduce){.dot.live{animation:none}}
+.gate{padding:60px 0}
+.gate h2{font-size:20px;margin-bottom:8px;color:#fff}
+.gate p{color:var(--muted);margin-bottom:20px;font-size:15px}
+input[type=password]{width:100%;background:var(--card);border:1px solid var(--line);border-radius:8px;
+color:var(--ink);font:inherit;padding:14px 15px;margin-bottom:12px}
+input[type=password]:focus{outline:none;border-color:var(--teal)}
+button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--line);
+background:var(--card);color:var(--ink);padding:13px 18px}
+button.primary{background:var(--teal);border-color:var(--teal);color:#08131f;font-weight:700;width:100%}
+button:disabled{opacity:.55;cursor:default}
+.bar{display:flex;gap:9px;flex-wrap:wrap;margin:16px 0 4px}
+.bar button{flex:1;min-width:130px;font-size:14px;padding:11px 12px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-top:16px;
+display:flex;align-items:center;justify-content:space-between;gap:14px}
+.stat .n{font-size:34px;font-weight:700;color:#fff;line-height:1}
+.stat .l{color:var(--muted);font-size:13px}
+.list{margin-top:18px;display:flex;flex-direction:column;gap:9px}
+.v{background:var(--card);border:1px solid var(--line);border-left-width:3px;border-radius:10px;padding:12px 14px}
+.v.now{border-left-color:var(--green)}
+.v.hot{border-left-color:var(--gold)}
+.v .top{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+.v .path{font-weight:600;color:#fff;font-size:15px;word-break:break-all}
+.v .ago{color:var(--muted);font-size:12px;white-space:nowrap}
+.v .meta{color:var(--muted);font-size:13px;margin-top:3px}
+.tag{display:inline-block;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+border:1px solid var(--line);border-radius:999px;padding:2px 8px;margin-left:6px;color:var(--muted)}
+.tag.hot{border-color:var(--gold);color:var(--gold)}
+.tag.ret{border-color:var(--teal);color:var(--teal-2)}
+.empty{color:var(--muted);text-align:center;padding:40px 0;font-size:15px}
+.note{color:var(--muted);font-size:12.5px;margin-top:18px;line-height:1.6}
+.err{background:#3a1e22;border:1px solid #6d3038;color:#ffc9cf;border-radius:8px;padding:11px 13px;
+font-size:14px;margin-bottom:12px}
+</style>
+</head>
+<body>
+
+<header><div class="wrap">
+  <h1><span class="dot" id="dot"></span><span id="hdr">Live Visitors</span></h1>
+  <button id="signout" style="display:none;font-size:13px;padding:7px 12px">Sign out</button>
+</div></header>
+
+<div class="wrap">
+
+  <!-- Password gate. The page holds no secrets; the passphrase only unlocks the API. -->
+  <div class="gate" id="gate">
+    <h2>Enter passphrase</h2>
+    <p>This page shows who is on the website right now. It is not linked anywhere and is hidden from search engines.</p>
+    <div class="err" id="err" style="display:none"></div>
+    <input type="password" id="pw" placeholder="Passphrase" autocomplete="current-password" enterkeyhint="go">
+    <button class="primary" id="unlock">Unlock</button>
+  </div>
+
+  <!-- Dashboard -->
+  <div id="app" style="display:none">
+    <div class="stat">
+      <div><div class="n" id="online">0</div><div class="l">on the site now</div></div>
+      <div style="text-align:right"><div class="n" id="today">0</div><div class="l">visits today</div></div>
+    </div>
+
+    <div class="bar">
+      <button id="notify">Turn on alerts</button>
+      <button id="refresh">Refresh</button>
+    </div>
+
+    <div class="list" id="list"></div>
+    <div class="empty" id="empty">No visits recorded yet.</div>
+
+    <p class="note">
+      Alerts fire when someone arrives, at most once every 15 minutes per visitor —
+      except the intake and contact pages, which always alert. Add this page to your
+      home screen to keep notifications working when the browser is closed.
+    </p>
+  </div>
+</div>
+
+<script>
+/* Config: point this at your deployed Worker. */
+const API = 'https://api-visitor-alerts.YOUR-SUBDOMAIN.workers.dev';
+
+const $ = (id) => document.getElementById(id);
+let token = localStorage.getItem('apiwatch-token') || '';
+let timer = null;
+
+const api = (path, opts = {}) =>
+  fetch(API + path, {
+    ...opts,
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token, ...(opts.headers || {}) },
+  });
+
+function ago(ms) {
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.round(s / 60) + 'm ago';
+  if (s < 86400) return Math.round(s / 3600) + 'h ago';
+  return Math.round(s / 86400) + 'd ago';
+}
+
+function render(data) {
+  $('online').textContent = data.online;
+  $('dot').className = 'dot' + (data.online > 0 ? ' live' : '');
+  const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+  $('today').textContent = data.visits.filter((v) => v.t >= midnight.getTime()).length;
+
+  const list = $('list');
+  list.innerHTML = '';
+  $('empty').style.display = data.visits.length ? 'none' : 'block';
+
+  for (const v of data.visits) {
+    const live = Date.now() - v.t < 3 * 60000;
+    const hot = /^\/intake|contact/i.test(v.path);
+    const el = document.createElement('div');
+    el.className = 'v' + (live ? ' now' : '') + (hot ? ' hot' : '');
+    const place = [v.city, v.region].filter(Boolean).join(', ') || v.country || 'Unknown location';
+    el.innerHTML =
+      '<div class="top"><span class="path">' + esc(v.path) + '</span>' +
+      '<span class="ago">' + ago(v.t) + '</span></div>' +
+      '<div class="meta">' + esc(place) +
+      (v.ref ? ' &middot; from ' + esc(v.ref) : ' &middot; direct') +
+      (hot ? '<span class="tag hot">high intent</span>' : '') +
+      (v.returning ? '<span class="tag ret">returning</span>' : '') + '</div>';
+    list.appendChild(el);
+  }
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function load() {
+  try {
+    const r = await api('/recent');
+    if (r.status === 401) return lock('That passphrase was not accepted.');
+    render(await r.json());
+  } catch (e) {
+    console.warn('load failed', e);
+  }
+}
+
+function unlockUI() {
+  $('gate').style.display = 'none';
+  $('app').style.display = 'block';
+  $('signout').style.display = 'inline-block';
+  load();
+  clearInterval(timer);
+  timer = setInterval(load, 20000);   // keep the open dashboard current
+}
+
+function lock(msg) {
+  localStorage.removeItem('apiwatch-token');
+  token = '';
+  clearInterval(timer);
+  $('gate').style.display = 'block';
+  $('app').style.display = 'none';
+  $('signout').style.display = 'none';
+  if (msg) { $('err').textContent = msg; $('err').style.display = 'block'; }
+}
+
+$('unlock').addEventListener('click', async () => {
+  token = $('pw').value.trim();
+  if (!token) return;
+  const r = await api('/recent');
+  if (r.ok) {
+    localStorage.setItem('apiwatch-token', token);
+    $('err').style.display = 'none';
+    unlockUI();
+  } else {
+    lock('That passphrase was not accepted.');
+  }
+});
+$('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('unlock').click(); });
+$('signout').addEventListener('click', () => lock(''));
+$('refresh').addEventListener('click', load);
+
+/* ---- push notifications ---- */
+async function enablePush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    alert('This browser does not support notifications. On iPhone, add this page to your Home Screen first, then open it from there.');
+    return;
+  }
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') { alert('Notifications were not allowed.'); return; }
+
+  const reg = await navigator.serviceWorker.register('sw.js');
+  await navigator.serviceWorker.ready;
+
+  const keyRes = await fetch(API + '/vapid-public-key');
+  const { key } = await keyRes.json();
+  if (!key) { alert('Server is missing its push key. See the setup steps in visitor-alerts/README.md.'); return; }
+
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlB64ToUint8Array(key),
+  });
+  const r = await api('/subscribe', { method: 'POST', body: JSON.stringify(sub) });
+  if (r.ok) {
+    // The service worker fetches details itself, so it needs the passphrase too.
+    navigator.serviceWorker.controller?.postMessage({ type: 'token', token, api: API });
+    reg.active?.postMessage({ type: 'token', token, api: API });
+    $('notify').textContent = 'Alerts are on';
+    $('notify').disabled = true;
+  } else {
+    alert('Could not register for alerts.');
+  }
+}
+
+function urlB64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+$('notify').addEventListener('click', enablePush);
+
+if (token) unlockUI();
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistration().then((reg) => {
+    if (reg && Notification.permission === 'granted') {
+      $('notify').textContent = 'Alerts are on';
+      $('notify').disabled = true;
+      reg.active?.postMessage({ type: 'token', token, api: API });
+    }
+  });
+}
+</script>
+</body>
+</html>
