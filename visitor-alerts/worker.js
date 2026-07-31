@@ -236,7 +236,20 @@ function botReason(request, body) {
   const sig = body && body.s;
   if (!sig || typeof sig.w !== 'number' || typeof sig.h !== 'number') return 'no-client-signals';
   if (sig.w < 200 || sig.h < 200 || sig.w > 20000 || sig.h > 20000) return 'implausible-viewport';
+
+  // A real browser reports a timezone; scripted clients usually do not.
+  if (typeof sig.tz !== 'string' || !sig.tz.includes('/')) return 'no-timezone';
+
+  // sig.t is ms on the page before the human signal fired. The beacon cannot
+  // legitimately report ~0 — it waits for interaction or four seconds of dwell.
+  if (typeof sig.t !== 'number' || sig.t < 150) return 'instant-fire';
+
   return '';
+
+  /* Deliberately NOT filtered on datacenter ASN: iCloud Private Relay, corporate
+     VPNs and mobile carriers all resolve to hosting-like networks, and blocking
+     them would silently drop real prospects — the failure that actually costs
+     money here. */
 }
 
 /* -------------------------------------------------------------- handlers */

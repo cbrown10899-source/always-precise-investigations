@@ -155,6 +155,12 @@ const call = (req, env) => worker.fetch(req, env);
   const r3 = await call(hit({}, { ip: '203.0.113.21', cf: { verifiedBotCategory: 'Search Engine Crawler' } }), env);
   ok('flags a Cloudflare-verified bot', (await r3.json()).filtered === 'verified-bot');
 
+  const r3b = await call(hit({ s: { ...SIGNALS, tz: '' } }, { ip: '203.0.113.23' }), env);
+  ok('flags a client reporting no timezone', (await r3b.json()).filtered === 'no-timezone');
+
+  const r3c = await call(hit({ s: { ...SIGNALS, t: 0 } }, { ip: '203.0.113.24' }), env);
+  ok('flags an instantly-fired beacon (replayed request)', (await r3c.json()).filtered === 'instant-fire');
+
   ok('no push was sent for any bot hit', pushCalls.length === 0, `${pushCalls.length} calls`);
 
   const r4 = await call(hit({}, { ip: '203.0.113.22' }), env);
@@ -163,7 +169,7 @@ const call = (req, env) => worker.fetch(req, env);
 
   const recent = await (await call(authed('/recent'), env)).json();
   ok('bots are excluded from the visitor list', recent.visits.every((v) => !v.bot));
-  ok('bots are counted separately', recent.botsToday === 3, String(recent.botsToday));
+  ok('bots are counted separately', recent.botsToday === 5, String(recent.botsToday));
 }
 
 // --- notification debounce
