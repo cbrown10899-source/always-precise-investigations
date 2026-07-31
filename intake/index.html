@@ -178,7 +178,7 @@ function navButtons(nextLabel){
 
 function view(step){
   if(step==="info") return `<div class="card">
-    <h1>Your information</h1>
+    <h2>Your information</h2>
     <p class="lead">Tell us how to reach you. Everything you share is confidential.</p>
     <label class="f"><span>Full name <b class="req">*</b></span><input type="text" data-k="c_name" autocomplete="name"></label>
     <div class="two">
@@ -192,7 +192,7 @@ function view(step){
   </div>`;
 
   if(step==="service") return `<div class="card">
-    <h1>What do you need?</h1>
+    <h2>What do you need?</h2>
     <p class="lead">Select the service. Fees are shown up front — no surprises.</p>
     <label class="opt" id="opt-surveillance" onclick="pickSvc('surveillance')">
       <span class="price">${money(FEES.surveillance.retainer)} retainer</span>
@@ -208,7 +208,7 @@ function view(step){
   </div>`;
 
   if(step==="subject") return `<div class="card">
-    <h1>Subject of the investigation</h1>
+    <h2>Subject of the investigation</h2>
     <p class="lead">Who or what should we look into? Share whatever you know — more detail helps.</p>
     <label class="f"><span>Subject's name</span><input type="text" data-k="s_name"></label>
     <label class="f"><span>Known address or location</span><input type="text" data-k="s_addr"></label>
@@ -221,7 +221,7 @@ function view(step){
   </div>`;
 
   if(step==="objective") return `<div class="card">
-    <h1>Your objective</h1>
+    <h2>Your objective</h2>
     <p class="lead">What outcome are you hoping for, and how soon?</p>
     <label class="f"><span>What do you want to find out or accomplish?</span><textarea data-k="o_goal" placeholder="Describe the situation and the result you need…"></textarea></label>
     <label class="f"><span>Timeline / urgency</span><input type="text" data-k="o_time" placeholder="e.g. before a court date on 8/15, ASAP, flexible"></label>
@@ -237,7 +237,7 @@ function view(step){
          <div class="row"><span>Minimum engagement</span><span>${f.minHours} hours</span></div>`
       : `<div class="row"><span>Flat service fee</span><b>${money(f.flat)}</b></div>`;
     return `<div class="card">
-      <h1>Agreement &amp; signature</h1>
+      <h2>Agreement &amp; signature</h2>
       <p class="lead">Please review the terms for <b>${f?f.label:"the selected service"}</b> and sign below.</p>
       <div class="feebox">${feeLines}<div class="row due"><span>Due today</span><span>${money(due)}</span></div></div>
       <div class="agree">
@@ -267,7 +267,7 @@ function view(step){
   if(step==="payment"){
     const f=svc(), due=amountDue();
     return `<div class="card">
-      <h1>Payment</h1>
+      <h2>Payment</h2>
       <p class="lead">A ${S.svc==="surveillance"?"retainer":"fee"} of <b>${money(due)}</b> is due today to begin. Choose how you'd like to pay.</p>
       <div class="pay-opt">
         <label class="opt ${S.pay==="venmo"?"sel":""}" onclick="pickPay('venmo')"><input type="radio" name="pay" ${S.pay==="venmo"?"checked":""}><b>Venmo</b></label>
