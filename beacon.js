@@ -10,7 +10,7 @@
  * nothing typed into any form. Honors Do Not Track and Global Privacy Control.
  */
 (function () {
-  var API = 'https://api-visitor-alerts.YOUR-SUBDOMAIN.workers.dev';
+  var API = 'https://api-visitor-alerts.corlinllc.workers.dev';
 
   // Respect opt-outs.
   if (navigator.doNotTrack === '1' || window.doNotTrack === '1' || navigator.globalPrivacyControl) return;
