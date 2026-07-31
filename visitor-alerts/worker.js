@@ -31,6 +31,40 @@ const MAX_LOG = 120;            // rolling visits retained
 const QUIET_MINUTES = 15;       // per-visitor notification debounce
 const HIGH_INTENT = [/^\/intake/, /contact/i];  // always notify, ignores debounce
 
+/* Anything matching these user agents is logged as a bot and never alerts.
+   Covers search crawlers, SEO tools, AI crawlers, social unfurlers, uptime
+   monitors, and headless automation. */
+const BOT_UA = new RegExp([
+  'bot','crawl','spider','slurp','archiver','scrape','curl','wget','python-requests',
+  'httpclient','okhttp','java/','go-http','libwww','perl','ruby','scrapy','phantomjs',
+  'headlesschrome','puppeteer','playwright','selenium','lighthouse','pagespeed',
+  'gtmetrix','pingdom','uptimerobot','statuscake','semrush','ahrefs','mj12','dotbot',
+  'petalbot','bytespider','dataforseo','serpstat','screaming frog','sitebulb',
+  'facebookexternalhit','twitterbot','linkedinbot','slackbot','discordbot',
+  'whatsapp','telegrambot','embedly','preview','gptbot','oai-searchbot','chatgpt',
+  'claudebot','anthropic','perplexity','ccbot','google-extended','applebot',
+  'amazonbot','duckduckbot','yandex','baiduspider','sogou','exabot','ia_archiver'
+].join('|'), 'i');
+
+/** Is this request a bot rather than a person? Returns a reason, or ''. */
+function botReason(request, body) {
+  const ua = request.headers.get('user-agent') || '';
+  if (!ua) return 'no-user-agent';
+  if (BOT_UA.test(ua)) return 'known-bot-ua';
+
+  // Cloudflare identifies verified crawlers on all plans.
+  const cf = request.cf || {};
+  if (cf.verifiedBotCategory) return 'verified-bot';
+
+  // The beacon only fires after a human signal and sends these; their absence
+  // means something replayed the endpoint directly rather than loading a page.
+  const sig = body && body.s;
+  if (!sig || typeof sig.w !== 'number' || typeof sig.h !== 'number') return 'no-client-signals';
+  if (sig.w < 200 || sig.h < 200) return 'implausible-viewport';
+
+  return '';
+}
+
 /* ------------------------------------------------------------------ utils */
 
 const b64urlToBytes = (s) => {
@@ -167,6 +201,8 @@ async function handleHit(request, env) {
      day, env.SALT || 'api'].join('|')
   )).slice(0, 16);
 
+  const bot = botReason(request, body);
+
   const visit = {
     t: Date.now(),
     path,
@@ -176,6 +212,7 @@ async function handleHit(request, env) {
     country: cf.country || '',
     v: vkey,
     returning: false,
+    bot: bot || undefined,      // present only when filtered
   };
 
   // Append to the rolling log.
@@ -184,6 +221,9 @@ async function handleHit(request, env) {
   visit.returning = log.some((h) => h.v === vkey);
   log.unshift(visit);
   await env.HITS.put('log', JSON.stringify(log.slice(0, MAX_LOG)));
+
+  // Bots are recorded for reference but never raise an alert.
+  if (bot) return json({ ok: true, filtered: bot });
 
   // Debounce: one alert per visitor per QUIET_MINUTES, unless high intent.
   const hot = HIGH_INTENT.some((re) => re.test(path));
@@ -216,12 +256,19 @@ async function handleRecent(env) {
   const raw = await env.HITS.get('log');
   const log = raw ? JSON.parse(raw) : [];
   const now = Date.now();
+  const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+
+  const people = log.filter((h) => !h.bot);
+  const bots = log.filter((h) => h.bot);
+
   return json({
     ok: true,
     now,
-    // "online" = seen in the last 3 minutes
-    online: new Set(log.filter((h) => now - h.t < 3 * 60_000).map((h) => h.v)).size,
-    visits: log.slice(0, 60),
+    // "online" = a real person seen in the last 3 minutes
+    online: new Set(people.filter((h) => now - h.t < 3 * 60_000).map((h) => h.v)).size,
+    visits: people.slice(0, 60),
+    botsToday: bots.filter((h) => h.t >= midnight.getTime()).length,
+    bots: bots.slice(0, 20),
   });
 }
 

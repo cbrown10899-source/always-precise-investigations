@@ -56,6 +56,7 @@ border:1px solid var(--line);border-radius:999px;padding:2px 8px;margin-left:6px
 .tag.ret{border-color:var(--teal);color:var(--teal-2)}
 .empty{color:var(--muted);text-align:center;padding:40px 0;font-size:15px}
 .note{color:var(--muted);font-size:12.5px;margin-top:18px;line-height:1.6}
+.filtered{color:#6d8199;font-size:12.5px;margin-top:14px;text-align:center}
 .err{background:#3a1e22;border:1px solid #6d3038;color:#ffc9cf;border-radius:8px;padding:11px 13px;
 font-size:14px;margin-bottom:12px}
 </style>
@@ -92,11 +93,13 @@ font-size:14px;margin-bottom:12px}
 
     <div class="list" id="list"></div>
     <div class="empty" id="empty">No visits recorded yet.</div>
+    <p class="filtered" id="filtered"></p>
 
     <p class="note">
-      Alerts fire when someone arrives, at most once every 15 minutes per visitor —
-      except the intake and contact pages, which always alert. Add this page to your
-      home screen to keep notifications working when the browser is closed.
+      Only real people are shown. Search crawlers, link previews and scanners are
+      filtered out and never alert. Alerts fire at most once every 15 minutes per
+      visitor — except the intake and contact pages, which always alert. Add this
+      page to your home screen to keep notifications working when the browser is closed.
     </p>
   </div>
 </div>
@@ -128,6 +131,11 @@ function render(data) {
   $('dot').className = 'dot' + (data.online > 0 ? ' live' : '');
   const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
   $('today').textContent = data.visits.filter((v) => v.t >= midnight.getTime()).length;
+
+  const f = $('filtered');
+  f.textContent = data.botsToday
+    ? data.botsToday + ' bot ' + (data.botsToday === 1 ? 'visit' : 'visits') + ' filtered today (search crawlers, link previews, scanners) — not shown above and never alerted.'
+    : '';
 
   const list = $('list');
   list.innerHTML = '';
