@@ -90,6 +90,7 @@
   .warn{background:#fdecea;border:1px solid #f5c6c0;color:#8a2318;border-radius:8px;padding:12px 14px;font-size:.9rem;margin-bottom:14px;}
   .foot{max-width:680px;margin:0 auto;padding:0 16px 40px;color:var(--muted);font-size:.78rem;text-align:center;}
   @media print{.top .meta,.nav,.sigclear{display:none;}body{background:#fff;}}
+.sr-page-title{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 </style>
 </head>
 <body>
@@ -178,6 +179,7 @@ function navButtons(nextLabel){
 
 function view(step){
   if(step==="info") return `<div class="card">
+    <h1 class="sr-page-title">Client Intake</h1>
     <h2>Your information</h2>
     <p class="lead">Tell us how to reach you. Everything you share is confidential.</p>
     <label class="f"><span>Full name <b class="req">*</b></span><input type="text" data-k="c_name" autocomplete="name"></label>
