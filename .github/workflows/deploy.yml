@@ -1,0 +1,34 @@
+name: Deploy site to Cloudflare Pages
+
+# Every push to master rebuilds the public site and deploys it to the
+# existing "always-precise" Pages project. No manual uploads.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch: {}   # lets you trigger a deploy by hand from the Actions tab
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stage public site (exclude non-site files)
+        run: |
+          mkdir _site
+          rsync -a \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude '_site' \
+            --exclude 'visitor-alerts' \
+            --exclude 'build-locations.py' \
+            --exclude 'README.md' \
+            ./ _site/
+          echo "Files to deploy:"; find _site -type f | wc -l
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: 63a4b8fd9efe4137e1f91c49b5e61c6f
+          command: pages deploy _site --project-name=always-precise --branch=main --commit-dirty=true
