@@ -2,76 +2,80 @@
  * Always Precise — live visitor alerts.
  *
  * A Cloudflare Worker that receives a lightweight beacon from the website,
- * keeps a short rolling log of visits, and sends a Web Push "tickle" to the
- * owner's phone when someone arrives.
+ * keeps a short rolling log of real visits, and sends a Web Push "tickle" to
+ * the owner's phone when someone arrives.
  *
  * Endpoints
- *   POST /hit         public  — beacon from the site (no auth; origin-checked)
- *   POST /subscribe   auth    — register a device for push
- *   POST /unsubscribe auth    — remove a device
- *   GET  /recent      auth    — recent visits as JSON (dashboard + SW)
- *   GET  /health      public  — liveness
+ *   POST /hit               public — beacon from the site (origin-locked, rate-limited)
+ *   POST /subscribe         auth   — register a device for push
+ *   POST /unsubscribe       auth   — remove a device
+ *   GET  /recent            auth   — recent visits as JSON (dashboard + service worker)
+ *   GET  /vapid-public-key  public — the push public key (not a secret)
+ *   GET  /health            public — liveness
  *
- * Auth is a single shared passphrase (env.WATCH_PASSWORD) sent as
- * `Authorization: Bearer <passphrase>`. The dashboard page itself contains no
- * secret, so it is harmless if anyone stumbles onto the URL — without the
- * passphrase it shows nothing.
+ * Security posture
+ *   - The dashboard page holds no secret. Auth is a shared passphrase compared
+ *     as a SHA-256 digest (constant length, constant time), so neither the value
+ *     nor its length leaks by timing.
+ *   - Failed unlock attempts are counted per client and locked out. This matters:
+ *     a short numeric passcode is otherwise trivially brute-forced.
+ *   - /hit requires the site's Origin, caps body size, and is rate-limited per
+ *     visitor so nobody can flood the log or spam the owner's phone.
+ *   - Push endpoints are validated against known push services, so a stolen
+ *     passphrase cannot turn this Worker into a request proxy.
+ *   - CORS never falls back to a wildcard on authenticated routes.
  *
- * Push carries NO payload. A payload would need aes128gcm encryption; instead
- * the push simply wakes the service worker, which calls /recent for details.
- * Simpler, and no visitor data ever passes through the push service.
+ * Push carries NO payload — it only wakes the service worker, which then calls
+ * /recent. No visitor data ever passes through Apple's or Google's push
+ * infrastructure.
  *
- * Privacy: stores page path, referrer host, coarse city/region from Cloudflare
- * headers, and a daily-rotating pseudonymous visitor hash. No cookies, no
- * cross-site identifiers, no IP or user-agent at rest, and nothing whatsoever
- * from the intake form's fields.
+ * Privacy: stores page path, referrer host, coarse city/region from Cloudflare,
+ * and a daily-rotating pseudonymous visitor hash. No cookies, no IPs or user
+ * agents at rest, no cross-site identifiers, and nothing from the intake form.
  */
 
-const MAX_LOG = 120;            // rolling visits retained
-const QUIET_MINUTES = 15;       // per-visitor notification debounce
-const HIGH_INTENT = [/^\/intake/, /contact/i];  // always notify, ignores debounce
+const MAX_LOG = 120;              // rolling visits retained
+const QUIET_MINUTES = 15;         // per-visitor notification debounce
+const MAX_BODY = 2048;            // bytes accepted on /hit
+const HIT_LIMIT = 20;             // hits per visitor per window
+const HIT_WINDOW = 60;            // seconds
+const AUTH_MAX_FAILS = 8;         // failed unlocks before lockout
+const AUTH_LOCK_SECONDS = 900;    // lockout duration (15 min)
+const MAX_SUBS = 10;              // registered devices
+const TZ = 'America/New_York';    // for "today" boundaries
 
-/* Anything matching these user agents is logged as a bot and never alerts.
-   Covers search crawlers, SEO tools, AI crawlers, social unfurlers, uptime
-   monitors, and headless automation. */
+const HIGH_INTENT = [/^\/intake/, /contact/i];
+
+/* Known Web Push services. A subscription endpoint outside this set is refused
+   so the Worker can never be aimed at an arbitrary host. */
+const PUSH_HOSTS = [
+  /\.push\.services\.mozilla\.com$/,
+  /^fcm\.googleapis\.com$/,
+  /^updates\.push\.services\.mozilla\.com$/,
+  /\.notify\.windows\.com$/,
+  /^web\.push\.apple\.com$/,
+  /\.push\.apple\.com$/,
+];
+
+/* Bots: logged for reference, never alerted. */
 const BOT_UA = new RegExp([
-  'bot','crawl','spider','slurp','archiver','scrape','curl','wget','python-requests',
-  'httpclient','okhttp','java/','go-http','libwww','perl','ruby','scrapy','phantomjs',
-  'headlesschrome','puppeteer','playwright','selenium','lighthouse','pagespeed',
-  'gtmetrix','pingdom','uptimerobot','statuscake','semrush','ahrefs','mj12','dotbot',
-  'petalbot','bytespider','dataforseo','serpstat','screaming frog','sitebulb',
-  'facebookexternalhit','twitterbot','linkedinbot','slackbot','discordbot',
-  'whatsapp','telegrambot','embedly','preview','gptbot','oai-searchbot','chatgpt',
-  'claudebot','anthropic','perplexity','ccbot','google-extended','applebot',
-  'amazonbot','duckduckbot','yandex','baiduspider','sogou','exabot','ia_archiver'
+  'bot', 'crawl', 'spider', 'slurp', 'archiver', 'scrape', 'curl', 'wget', 'python-requests',
+  'httpclient', 'okhttp', 'java/', 'go-http', 'libwww', 'perl', 'ruby', 'scrapy', 'phantomjs',
+  'headlesschrome', 'puppeteer', 'playwright', 'selenium', 'lighthouse', 'pagespeed',
+  'gtmetrix', 'pingdom', 'uptimerobot', 'statuscake', 'semrush', 'ahrefs', 'mj12', 'dotbot',
+  'petalbot', 'bytespider', 'dataforseo', 'serpstat', 'screaming frog', 'sitebulb',
+  'facebookexternalhit', 'twitterbot', 'linkedinbot', 'slackbot', 'discordbot',
+  'whatsapp', 'telegrambot', 'embedly', 'preview', 'gptbot', 'oai-searchbot', 'chatgpt',
+  'claudebot', 'anthropic', 'perplexity', 'ccbot', 'google-extended', 'applebot',
+  'amazonbot', 'duckduckbot', 'yandex', 'baiduspider', 'sogou', 'exabot', 'ia_archiver',
 ].join('|'), 'i');
-
-/** Is this request a bot rather than a person? Returns a reason, or ''. */
-function botReason(request, body) {
-  const ua = request.headers.get('user-agent') || '';
-  if (!ua) return 'no-user-agent';
-  if (BOT_UA.test(ua)) return 'known-bot-ua';
-
-  // Cloudflare identifies verified crawlers on all plans.
-  const cf = request.cf || {};
-  if (cf.verifiedBotCategory) return 'verified-bot';
-
-  // The beacon only fires after a human signal and sends these; their absence
-  // means something replayed the endpoint directly rather than loading a page.
-  const sig = body && body.s;
-  if (!sig || typeof sig.w !== 'number' || typeof sig.h !== 'number') return 'no-client-signals';
-  if (sig.w < 200 || sig.h < 200) return 'implausible-viewport';
-
-  return '';
-}
 
 /* ------------------------------------------------------------------ utils */
 
 const b64urlToBytes = (s) => {
   s = s.replace(/-/g, '+').replace(/_/g, '/');
   const pad = s.length % 4 ? '='.repeat(4 - (s.length % 4)) : '';
-  const bin = atob(s + pad);
-  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  return Uint8Array.from(atob(s + pad), (c) => c.charCodeAt(0));
 };
 
 const bytesToB64url = (bytes) =>
@@ -89,174 +93,256 @@ async function sha256Hex(str) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Constant-time-ish string compare so the passphrase can't be timed out. */
-function safeEqual(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+/**
+ * Compare two secrets in constant time.
+ * Both sides are hashed first, so the comparison is always over 64 hex chars —
+ * the length of the supplied value cannot be inferred from timing.
+ */
+async function secretEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const [ha, hb] = await Promise.all([sha256Hex(a), sha256Hex(b)]);
   let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  for (let i = 0; i < ha.length; i++) diff |= ha.charCodeAt(i) ^ hb.charCodeAt(i);
   return diff === 0;
 }
 
-function authed(request, env) {
-  const h = request.headers.get('authorization') || '';
-  const token = h.startsWith('Bearer ') ? h.slice(7) : '';
-  return env.WATCH_PASSWORD && safeEqual(token, env.WATCH_PASSWORD);
+/** Start of "today" in the business's timezone, as an epoch ms value. */
+function startOfLocalDay(now = Date.now()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(new Date(now));
+  const get = (t) => Number(parts.find((p) => p.type === t).value);
+  const secondsIntoDay = get('hour') * 3600 + get('minute') * 60 + get('second');
+  return now - secondsIntoDay * 1000;
 }
 
-function corsHeaders(env) {
+/** Stable per-client key used for rate limiting and lockout (never stored raw). */
+async function clientKey(request, env) {
+  return (await sha256Hex(
+    [request.headers.get('cf-connecting-ip') || '',
+     new Date().toISOString().slice(0, 10),
+     env.SALT || 'api'].join('|')
+  )).slice(0, 20);
+}
+
+function corsHeaders(env, authRoute) {
+  const origin = env.SITE_ORIGIN;
+  // Never wildcard a route that accepts credentials.
+  const allow = origin || (authRoute ? 'null' : '*');
   return {
-    'access-control-allow-origin': env.SITE_ORIGIN || '*',
+    'access-control-allow-origin': allow,
     'access-control-allow-methods': 'GET,POST,OPTIONS',
     'access-control-allow-headers': 'content-type,authorization',
     'access-control-max-age': '86400',
+    vary: 'Origin',
   };
+}
+
+/* ---------------------------------------------------------------- auth */
+
+/**
+ * Verify the bearer passphrase, with lockout after repeated failures.
+ * Returns { ok } or { ok:false, locked:true, retryAfter }.
+ */
+async function checkAuth(request, env) {
+  const ck = await clientKey(request, env);
+  const failKey = `authfail:${ck}`;
+  const fails = Number((await env.HITS.get(failKey)) || 0);
+  if (fails >= AUTH_MAX_FAILS) return { ok: false, locked: true, retryAfter: AUTH_LOCK_SECONDS };
+
+  const h = request.headers.get('authorization') || '';
+  const token = h.startsWith('Bearer ') ? h.slice(7) : '';
+  const ok = Boolean(env.WATCH_PASSWORD) && (await secretEqual(token, env.WATCH_PASSWORD));
+
+  if (!ok) {
+    await env.HITS.put(failKey, String(fails + 1), { expirationTtl: AUTH_LOCK_SECONDS });
+    return { ok: false, locked: false };
+  }
+  if (fails) await env.HITS.delete(failKey);   // clean slate on success
+  return { ok: true };
+}
+
+function authFailure(res) {
+  return res.locked
+    ? json({ ok: false, error: 'too many attempts', retryAfter: res.retryAfter }, 429)
+    : json({ ok: false, error: 'unauthorized' }, 401);
 }
 
 /* ------------------------------------------------------------- VAPID push */
 
-/** Sign a VAPID JWT for one push endpoint. */
 async function vapidAuth(endpoint, env) {
   const aud = new URL(endpoint).origin;
   const header = bytesToB64url(new TextEncoder().encode(JSON.stringify({ typ: 'JWT', alg: 'ES256' })));
-  const body = bytesToB64url(
-    new TextEncoder().encode(
-      JSON.stringify({
-        aud,
-        exp: Math.floor(Date.now() / 1000) + 12 * 3600,
-        sub: env.VAPID_SUBJECT || 'mailto:AlwaysPreciseInvestigations@gmail.com',
-      })
-    )
-  );
+  const body = bytesToB64url(new TextEncoder().encode(JSON.stringify({
+    aud,
+    exp: Math.floor(Date.now() / 1000) + 12 * 3600,
+    sub: env.VAPID_SUBJECT || 'mailto:AlwaysPreciseInvestigations@gmail.com',
+  })));
   const unsigned = `${header}.${body}`;
 
-  // Import the raw P-256 private scalar as a JWK signing key.
-  const d = env.VAPID_PRIVATE_KEY;
-  const pub = b64urlToBytes(env.VAPID_PUBLIC_KEY); // 65-byte uncompressed point
+  const pub = b64urlToBytes(env.VAPID_PUBLIC_KEY);
   const jwk = {
-    kty: 'EC',
-    crv: 'P-256',
-    d,
-    x: bytesToB64url(pub.slice(1, 33)),
-    y: bytesToB64url(pub.slice(33, 65)),
-    ext: true,
+    kty: 'EC', crv: 'P-256', d: env.VAPID_PRIVATE_KEY,
+    x: bytesToB64url(pub.slice(1, 33)), y: bytesToB64url(pub.slice(33, 65)), ext: true,
   };
   const key = await crypto.subtle.importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
-  const sig = await crypto.subtle.sign(
-    { name: 'ECDSA', hash: 'SHA-256' },
-    key,
-    new TextEncoder().encode(unsigned)
-  );
+  const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key,
+    new TextEncoder().encode(unsigned));
   return `vapid t=${unsigned}.${bytesToB64url(sig)}, k=${env.VAPID_PUBLIC_KEY}`;
 }
 
-/** Fan a payload-less push out to every registered device; prune dead ones. */
+function isValidPushEndpoint(endpoint) {
+  let u;
+  try { u = new URL(endpoint); } catch (_) { return false; }
+  if (u.protocol !== 'https:') return false;
+  return PUSH_HOSTS.some((re) => re.test(u.hostname));
+}
+
 async function notifyAll(env) {
+  if (!env.VAPID_PRIVATE_KEY || !env.VAPID_PUBLIC_KEY) return;   // push not configured
   const list = await env.SUBS.list({ prefix: 'sub:' });
-  await Promise.all(
-    list.keys.map(async ({ name }) => {
-      const raw = await env.SUBS.get(name);
-      if (!raw) return;
-      const sub = JSON.parse(raw);
-      try {
-        const res = await fetch(sub.endpoint, {
-          method: 'POST',
-          headers: {
-            Authorization: await vapidAuth(sub.endpoint, env),
-            TTL: '600',
-            'content-length': '0',
-          },
-        });
-        // 404/410 mean the browser dropped the subscription — clean it up.
-        if (res.status === 404 || res.status === 410) await env.SUBS.delete(name);
-      } catch (_) {
-        /* transient push-service failure: leave the subscription in place */
-      }
-    })
-  );
+  await Promise.all(list.keys.map(async ({ name }) => {
+    const raw = await env.SUBS.get(name);
+    if (!raw) return;
+    let sub;
+    try { sub = JSON.parse(raw); } catch (_) { return; }
+    if (!sub.endpoint || !isValidPushEndpoint(sub.endpoint)) { await env.SUBS.delete(name); return; }
+    try {
+      const res = await fetch(sub.endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: await vapidAuth(sub.endpoint, env),
+          TTL: '600',
+          'content-length': '0',
+        },
+      });
+      if (res.status === 404 || res.status === 410) await env.SUBS.delete(name);
+    } catch (_) { /* transient push-service failure */ }
+  }));
+}
+
+/* -------------------------------------------------------------- bot check */
+
+function botReason(request, body) {
+  const ua = request.headers.get('user-agent') || '';
+  if (!ua) return 'no-user-agent';
+  if (BOT_UA.test(ua)) return 'known-bot-ua';
+
+  const cf = request.cf || {};
+  if (cf.verifiedBotCategory) return 'verified-bot';
+
+  // The beacon only fires after a human signal and always sends these.
+  const sig = body && body.s;
+  if (!sig || typeof sig.w !== 'number' || typeof sig.h !== 'number') return 'no-client-signals';
+  if (sig.w < 200 || sig.h < 200 || sig.w > 20000 || sig.h > 20000) return 'implausible-viewport';
+  return '';
 }
 
 /* -------------------------------------------------------------- handlers */
 
 async function handleHit(request, env) {
-  // Only accept beacons fired from the site itself.
+  // Origin is required and must match the site — a bare POST is rejected.
   const origin = request.headers.get('origin');
-  if (env.SITE_ORIGIN && origin && origin !== env.SITE_ORIGIN) {
+  if (!env.SITE_ORIGIN || origin !== env.SITE_ORIGIN) {
     return json({ ok: false, error: 'origin' }, 403);
   }
 
+  // Cap the body before parsing.
+  const declared = Number(request.headers.get('content-length') || 0);
+  if (declared > MAX_BODY) return json({ ok: false, error: 'too large' }, 413);
+  const text = await request.text();
+  if (text.length > MAX_BODY) return json({ ok: false, error: 'too large' }, 413);
+
   let body = {};
-  try { body = await request.json(); } catch (_) {}
+  try { body = JSON.parse(text); } catch (_) { return json({ ok: false, error: 'bad json' }, 400); }
+  if (!body || typeof body !== 'object') return json({ ok: false, error: 'bad json' }, 400);
 
   const cf = request.cf || {};
-  const path = String(body.path || '/').slice(0, 200);
-  let refHost = '';
-  try { refHost = body.ref ? new URL(body.ref).hostname : ''; } catch (_) {}
-
-  // Pseudonymous, daily-rotating visitor key — enough to debounce, not enough
-  // to follow anyone across days. Raw IP/UA are never stored.
   const day = new Date().toISOString().slice(0, 10);
-  const vkey = (await sha256Hex(
-    [request.headers.get('cf-connecting-ip') || '',
-     request.headers.get('user-agent') || '',
-     day, env.SALT || 'api'].join('|')
-  )).slice(0, 16);
+  const vkey = (await sha256Hex([
+    request.headers.get('cf-connecting-ip') || '',
+    request.headers.get('user-agent') || '',
+    day, env.SALT || 'api',
+  ].join('|'))).slice(0, 16);
+
+  // Per-visitor flood control.
+  const rlKey = `rl:${vkey}`;
+  const count = Number((await env.HITS.get(rlKey)) || 0);
+  if (count >= HIT_LIMIT) return json({ ok: false, error: 'rate limited' }, 429);
+  await env.HITS.put(rlKey, String(count + 1), { expirationTtl: HIT_WINDOW });
+
+  // Only accept a same-site path; never trust a client-supplied absolute URL.
+  let path = String(body.path || '/');
+  if (!path.startsWith('/') || path.startsWith('//')) path = '/';
+  path = path.slice(0, 200);
+
+  let refHost = '';
+  try { refHost = body.ref ? new URL(String(body.ref)).hostname.slice(0, 100) : ''; } catch (_) {}
 
   const bot = botReason(request, body);
-
   const visit = {
     t: Date.now(),
     path,
     ref: refHost,
-    city: cf.city || '',
-    region: cf.region || '',
-    country: cf.country || '',
+    city: String(cf.city || '').slice(0, 60),
+    region: String(cf.region || '').slice(0, 60),
+    country: String(cf.country || '').slice(0, 4),
     v: vkey,
     returning: false,
-    bot: bot || undefined,      // present only when filtered
+    bot: bot || undefined,
   };
 
-  // Append to the rolling log.
   const logRaw = await env.HITS.get('log');
-  const log = logRaw ? JSON.parse(logRaw) : [];
-  visit.returning = log.some((h) => h.v === vkey);
+  let log = [];
+  try { log = logRaw ? JSON.parse(logRaw) : []; } catch (_) { log = []; }
+  visit.returning = log.some((h) => h.v === vkey && !h.bot);
   log.unshift(visit);
   await env.HITS.put('log', JSON.stringify(log.slice(0, MAX_LOG)));
 
-  // Bots are recorded for reference but never raise an alert.
   if (bot) return json({ ok: true, filtered: bot });
 
-  // Debounce: one alert per visitor per QUIET_MINUTES, unless high intent.
   const hot = HIGH_INTENT.some((re) => re.test(path));
   const seenKey = `seen:${vkey}`;
   const seen = await env.HITS.get(seenKey);
   if (!seen || hot) {
     await env.HITS.put(seenKey, '1', { expirationTtl: QUIET_MINUTES * 60 });
     await notifyAll(env);
+    return json({ ok: true, notified: true });
   }
-  return json({ ok: true });
+  return json({ ok: true, notified: false });
 }
 
 async function handleSubscribe(request, env) {
-  const sub = await request.json();
-  if (!sub || !sub.endpoint) return json({ ok: false, error: 'bad subscription' }, 400);
+  let sub;
+  try { sub = await request.json(); } catch (_) { return json({ ok: false, error: 'bad json' }, 400); }
+  if (!sub || typeof sub.endpoint !== 'string') return json({ ok: false, error: 'bad subscription' }, 400);
+  if (!isValidPushEndpoint(sub.endpoint)) return json({ ok: false, error: 'unrecognized push service' }, 400);
+
+  const existing = await env.SUBS.list({ prefix: 'sub:' });
   const id = (await sha256Hex(sub.endpoint)).slice(0, 24);
-  await env.SUBS.put(`sub:${id}`, JSON.stringify({ endpoint: sub.endpoint }));
+  const known = existing.keys.some((k) => k.name === `sub:${id}`);
+  if (!known && existing.keys.length >= MAX_SUBS) {
+    return json({ ok: false, error: 'device limit reached' }, 409);
+  }
+  await env.SUBS.put(`sub:${id}`, JSON.stringify({ endpoint: sub.endpoint, at: Date.now() }));
   return json({ ok: true, id });
 }
 
 async function handleUnsubscribe(request, env) {
-  const { endpoint } = await request.json();
-  if (!endpoint) return json({ ok: false }, 400);
-  const id = (await sha256Hex(endpoint)).slice(0, 24);
-  await env.SUBS.delete(`sub:${id}`);
+  let body;
+  try { body = await request.json(); } catch (_) { return json({ ok: false }, 400); }
+  if (!body || typeof body.endpoint !== 'string') return json({ ok: false }, 400);
+  await env.SUBS.delete(`sub:${(await sha256Hex(body.endpoint)).slice(0, 24)}`);
   return json({ ok: true });
 }
 
 async function handleRecent(env) {
   const raw = await env.HITS.get('log');
-  const log = raw ? JSON.parse(raw) : [];
+  let log = [];
+  try { log = raw ? JSON.parse(raw) : []; } catch (_) { log = []; }
   const now = Date.now();
-  const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+  const dayStart = startOfLocalDay(now);
 
   const people = log.filter((h) => !h.bot);
   const bots = log.filter((h) => h.bot);
@@ -264,46 +350,59 @@ async function handleRecent(env) {
   return json({
     ok: true,
     now,
-    // "online" = a real person seen in the last 3 minutes
     online: new Set(people.filter((h) => now - h.t < 3 * 60_000).map((h) => h.v)).size,
+    todayCount: people.filter((h) => h.t >= dayStart).length,
     visits: people.slice(0, 60),
-    botsToday: bots.filter((h) => h.t >= midnight.getTime()).length,
-    bots: bots.slice(0, 20),
+    botsToday: bots.filter((h) => h.t >= dayStart).length,
   });
 }
 
 /* ----------------------------------------------------------------- entry */
 
+const AUTH_ROUTES = new Set(['/subscribe', '/unsubscribe', '/recent']);
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const cors = corsHeaders(env);
+    const isAuthRoute = AUTH_ROUTES.has(url.pathname);
+    const cors = corsHeaders(env, isAuthRoute);
 
-    if (request.method === 'OPTIONS') return new Response(null, { headers: cors });
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
 
     let res;
     try {
       if (url.pathname === '/health') {
-        res = json({ ok: true });
-      } else if (url.pathname === '/hit' && request.method === 'POST') {
-        res = await handleHit(request, env);
-      } else if (url.pathname === '/subscribe' && request.method === 'POST') {
-        res = authed(request, env) ? await handleSubscribe(request, env) : json({ ok: false }, 401);
-      } else if (url.pathname === '/unsubscribe' && request.method === 'POST') {
-        res = authed(request, env) ? await handleUnsubscribe(request, env) : json({ ok: false }, 401);
-      } else if (url.pathname === '/recent') {
-        res = authed(request, env) ? await handleRecent(env) : json({ ok: false }, 401);
+        res = json({ ok: true, configured: Boolean(env.WATCH_PASSWORD && env.VAPID_PUBLIC_KEY) });
       } else if (url.pathname === '/vapid-public-key') {
         res = json({ key: env.VAPID_PUBLIC_KEY || null });
+      } else if (url.pathname === '/hit' && request.method === 'POST') {
+        res = await handleHit(request, env);
+      } else if (isAuthRoute) {
+        const auth = await checkAuth(request, env);
+        if (!auth.ok) {
+          res = authFailure(auth);
+        } else if (url.pathname === '/recent') {
+          res = await handleRecent(env);
+        } else if (request.method === 'POST' && url.pathname === '/subscribe') {
+          res = await handleSubscribe(request, env);
+        } else if (request.method === 'POST' && url.pathname === '/unsubscribe') {
+          res = await handleUnsubscribe(request, env);
+        } else {
+          res = json({ ok: false, error: 'method not allowed' }, 405);
+        }
       } else {
         res = json({ ok: false, error: 'not found' }, 404);
       }
     } catch (err) {
-      res = json({ ok: false, error: String(err && err.message || err) }, 500);
+      // Never leak internals to the client; the detail goes to the Worker log.
+      console.error('worker error', err && err.stack);
+      res = json({ ok: false, error: 'server error' }, 500);
     }
 
     const out = new Response(res.body, res);
     for (const [k, v] of Object.entries(cors)) out.headers.set(k, v);
+    out.headers.set('x-content-type-options', 'nosniff');
+    out.headers.set('referrer-policy', 'no-referrer');
     return out;
   },
 };

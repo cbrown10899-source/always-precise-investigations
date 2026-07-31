@@ -57,6 +57,14 @@ border:1px solid var(--line);border-radius:999px;padding:2px 8px;margin-left:6px
 .empty{color:var(--muted);text-align:center;padding:40px 0;font-size:15px}
 .note{color:var(--muted);font-size:12.5px;margin-top:18px;line-height:1.6}
 .filtered{color:#6d8199;font-size:12.5px;margin-top:14px;text-align:center}
+.faceid{margin-bottom:14px}
+.or{text-align:center;color:var(--muted);font-size:13px;margin:0 0 14px}
+.offer{background:var(--card);border:1px solid var(--teal);border-radius:12px;padding:16px;margin-top:16px}
+.offer b{color:#fff;font-size:15px;display:block;margin-bottom:3px}
+.offer p{color:var(--muted);font-size:13.5px;margin-bottom:12px}
+.offer-btns{display:flex;gap:9px}
+.offer-btns button{flex:1;font-size:14px;padding:11px 12px}
+.offer-btns .ghost{background:transparent;color:var(--muted)}
 .err{background:#3a1e22;border:1px solid #6d3038;color:#ffc9cf;border-radius:8px;padding:11px 13px;
 font-size:14px;margin-bottom:12px}
 </style>
@@ -72,10 +80,12 @@ font-size:14px;margin-bottom:12px}
 
   <!-- Password gate. The page holds no secrets; the passphrase only unlocks the API. -->
   <div class="gate" id="gate">
-    <h2>Enter passphrase</h2>
+    <h2>Enter passcode</h2>
     <p>This page shows who is on the website right now. It is not linked anywhere and is hidden from search engines.</p>
     <div class="err" id="err" style="display:none"></div>
-    <input type="password" id="pw" placeholder="Passphrase" autocomplete="current-password" enterkeyhint="go">
+    <button class="primary faceid" id="faceUnlock" style="display:none">Unlock with Face ID</button>
+    <div class="or" id="or" style="display:none">or use your passcode</div>
+    <input type="password" id="pw" placeholder="Passcode" autocomplete="current-password" enterkeyhint="go">
     <button class="primary" id="unlock">Unlock</button>
   </div>
 
@@ -84,6 +94,17 @@ font-size:14px;margin-bottom:12px}
     <div class="stat">
       <div><div class="n" id="online">0</div><div class="l">on the site now</div></div>
       <div style="text-align:right"><div class="n" id="today">0</div><div class="l">visits today</div></div>
+    </div>
+
+    <div class="offer" id="faceOffer" style="display:none">
+      <div>
+        <b>Skip the passcode next time</b>
+        <p>Use Face ID to open this on your phone.</p>
+      </div>
+      <div class="offer-btns">
+        <button id="faceEnable">Turn on Face ID</button>
+        <button id="faceDismiss" class="ghost">Not now</button>
+      </div>
     </div>
 
     <div class="bar">
@@ -184,6 +205,7 @@ function unlockUI() {
 
 function lock(msg) {
   localStorage.removeItem('apiwatch-token');
+  localStorage.removeItem(CRED_KEY);
   token = '';
   clearInterval(timer);
   $('gate').style.display = 'block';
@@ -200,6 +222,7 @@ $('unlock').addEventListener('click', async () => {
     localStorage.setItem('apiwatch-token', token);
     $('err').style.display = 'none';
     unlockUI();
+    maybeOfferFaceId();
   } else {
     lock('That passphrase was not accepted.');
   }
@@ -248,7 +271,106 @@ function urlB64ToUint8Array(base64String) {
 }
 $('notify').addEventListener('click', enablePush);
 
-if (token) unlockUI();
+/* ---------- Face ID / biometric unlock ----------
+ * After one successful passcode entry, the device can register a platform
+ * authenticator (Face ID, Touch ID, Android biometric). On later visits a
+ * successful biometric check releases the passcode already stored on this
+ * device, so he never types it again.
+ *
+ * Scope of protection, stated plainly: this is a convenience lock on an
+ * already-trusted device, not a second secret. The passcode still lives in
+ * this device's local storage — biometrics gate the UI, they do not encrypt
+ * it. The real protections against anyone else are the unguessable passcode
+ * and the server-side lockout.
+ */
+const CRED_KEY = 'apiwatch-cred';
+
+function bufToB64(buf){ return btoa(String.fromCharCode(...new Uint8Array(buf))); }
+function b64ToBuf(b64){ return Uint8Array.from(atob(b64), c => c.charCodeAt(0)).buffer; }
+
+async function biometricsAvailable(){
+  if (!window.PublicKeyCredential) return false;
+  try {
+    return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+  } catch (_) { return false; }
+}
+
+async function enableFaceId(){
+  try {
+    const challenge = crypto.getRandomValues(new Uint8Array(32));
+    const userId = crypto.getRandomValues(new Uint8Array(16));
+    const cred = await navigator.credentials.create({
+      publicKey: {
+        challenge,
+        rp: { name: 'Always Precise — Live Visitors' },
+        user: { id: userId, name: 'live-visitors', displayName: 'Live Visitors' },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        authenticatorSelection: {
+          authenticatorAttachment: 'platform',
+          userVerification: 'required',
+          residentKey: 'preferred'
+        },
+        timeout: 60000,
+        attestation: 'none'
+      }
+    });
+    if (!cred) throw new Error('no credential');
+    localStorage.setItem(CRED_KEY, bufToB64(cred.rawId));
+    $('faceOffer').style.display = 'none';
+  } catch (e) {
+    alert('Face ID could not be set up on this device. You can keep using the passcode.');
+  }
+}
+
+async function faceUnlock(){
+  const stored = localStorage.getItem(CRED_KEY);
+  if (!stored) return false;
+  try {
+    const challenge = crypto.getRandomValues(new Uint8Array(32));
+    const assertion = await navigator.credentials.get({
+      publicKey: {
+        challenge,
+        allowCredentials: [{ type: 'public-key', id: b64ToBuf(stored) }],
+        userVerification: 'required',
+        timeout: 60000
+      }
+    });
+    return Boolean(assertion);
+  } catch (e) {
+    return false;
+  }
+}
+
+async function setupGate(){
+  const hasCred = Boolean(localStorage.getItem(CRED_KEY));
+  const canBio = await biometricsAvailable();
+  if (hasCred && canBio && token) {
+    $('faceUnlock').style.display = 'block';
+    $('or').style.display = 'block';
+  }
+}
+
+$('faceUnlock').addEventListener('click', async () => {
+  $('faceUnlock').disabled = true;
+  const okBio = await faceUnlock();
+  $('faceUnlock').disabled = false;
+  if (okBio) {
+    const r = await api('/recent');
+    if (r.ok) { $('err').style.display = 'none'; unlockUI(); return; }
+  }
+  $('err').textContent = 'Face ID did not match. Use your passcode.';
+  $('err').style.display = 'block';
+});
+
+$('faceEnable').addEventListener('click', enableFaceId);
+$('faceDismiss').addEventListener('click', () => { $('faceOffer').style.display = 'none'; });
+
+async function maybeOfferFaceId(){
+  if (localStorage.getItem(CRED_KEY)) return;
+  if (await biometricsAvailable()) $('faceOffer').style.display = 'block';
+}
+
+if (token) { unlockUI(); } else { setupGate(); }
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistration().then((reg) => {
     if (reg && Notification.permission === 'granted') {

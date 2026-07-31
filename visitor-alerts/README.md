@@ -36,11 +36,14 @@ the `[vars]` block there.
 
 ```bash
 npx wrangler secret put VAPID_PRIVATE_KEY   # from step 1
-npx wrangler secret put WATCH_PASSWORD      # the passphrase he'll type
+npx wrangler secret put WATCH_PASSWORD      # the passcode he'll type (e.g. TGB1940)
 npx wrangler secret put SALT                # any random string
 ```
 
-Pick a real passphrase — it is the only thing protecting the visitor log.
+Pick a passcode that is not guessable. A short numeric PIN can be brute-forced;
+the Worker locks a client out after 8 failed attempts for 15 minutes, which
+raises the cost enormously, but length still matters. Mixed letters and digits
+(e.g. `TGB1940`) is the minimum worth using.
 
 ## 4. Deploy the Worker
 
@@ -72,9 +75,23 @@ The beacon `<script>` tag is already on every page.
    required, not optional.
    **Android:** works from the browser; installing is still nicer.
 4. Tap **Turn on alerts** and allow notifications
-5. Visit the site from another device to confirm an alert arrives
+5. Tap **Turn on Face ID** when offered — after that the passcode is only a
+   fallback; Face ID (or Touch ID) opens it
+6. Visit the site from another device to confirm an alert arrives
 
 ---
+
+## Tests
+
+```bash
+node visitor-alerts/test-worker.mjs
+```
+
+Runs the real Worker against an in-memory KV and a stubbed push service —
+33 checks covering origin locking, body limits, path sanitising, bot
+filtering, the alert debounce, the auth lockout, beacon rate limiting, push
+endpoint validation, CORS behaviour, and error handling. Run it after any
+change to `worker.js`; it needs no deployment and no network.
 
 ## Behaviour
 
@@ -90,6 +107,29 @@ The beacon `<script>` tag is already on every page.
 
 In `worker.js`: `QUIET_MINUTES` (debounce), `HIGH_INTENT` (always-alert paths),
 `MAX_LOG` (visits retained).
+
+## Security
+
+- **Auth:** a shared passcode, compared as a SHA-256 digest in constant time, so
+  neither the value nor its length leaks through timing.
+- **Lockout:** 8 failed attempts locks that client out for 15 minutes. Without
+  this a short passcode would fall to a brute-force script in minutes.
+- **Face ID / Touch ID:** after one correct passcode entry the device can
+  register a platform authenticator; later opens need only the biometric.
+  Stated plainly — this is a convenience lock on an already-trusted device, not
+  a second secret: the passcode remains in that device's local storage and
+  biometrics gate the interface rather than encrypting it. The protections
+  against anyone *else* are the passcode and the server-side lockout.
+- **Beacon endpoint:** requires the site's exact `Origin`, caps the body at 2 KB,
+  rate-limits to 20 hits per visitor per minute, and normalises the reported
+  path so an absolute or protocol-relative URL can never enter the log.
+- **Push endpoints** are validated against the known push services, so a stolen
+  passcode cannot turn the Worker into a request proxy; devices are capped at 10.
+- **CORS** never falls back to a wildcard on an authenticated route.
+- **Errors** return a generic message; details go to the Worker log only.
+
+If the passcode is ever exposed: `npx wrangler secret put WATCH_PASSWORD`, then
+he re-enters the new one once.
 
 ## Privacy
 
