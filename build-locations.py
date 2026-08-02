@@ -123,7 +123,7 @@ BY_SLUG = {p[0]: p for p in PLACES}
 
 CSS = """
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--navy:#0e1a2c;--navy-2:#13273f;--card:#16283f;--line:#26405c;
+:root{--navy:#13233c;--navy-2:#1a2f4e;--card:#1d3251;--line:#31517a;
 --ink:#dfe6ef;--muted:#9fb0c4;--white:#fff;--teal:#3d97ad;--teal-2:#4fb3cb;--gold:#e6b54a}
 html{scroll-behavior:smooth}
 body{font-family:Georgia,'Times New Roman',serif;color:var(--ink);background:var(--navy);line-height:1.7;-webkit-text-size-adjust:100%}
@@ -269,7 +269,7 @@ def page(slug, place, kind, county, court, detail, nearby):
 </head>
 <body>
 <header><div class="wrap">
-  <a class="brand" href="{DOMAIN}/" aria-label="Always Precise Investigations home" style="background:#fff;border-radius:8px;padding:5px 12px;display:inline-flex;align-items:center"><img src="/assets/logo-lockup.svg" alt="Always Precise Investigations" style="height:40px;width:auto" width="240" height="68"></a>
+  <a class="brand" href="{DOMAIN}/" aria-label="Always Precise Investigations home" style="background:#fff;border-radius:12px;padding:8px 14px;display:inline-flex;align-items:center"><img src="/assets/logo-lockup.svg" alt="Always Precise Investigations" style="height:48px;width:auto" width="240" height="68"></a>
   <a class="call" href="tel:{PHONE_LINK}">Call {PHONE_DISPLAY}</a>
 </div></header>
 
@@ -380,7 +380,7 @@ def hub():
 </head>
 <body>
 <header><div class="wrap">
-  <a class="brand" href="{DOMAIN}/" aria-label="Always Precise Investigations home" style="background:#fff;border-radius:8px;padding:5px 12px;display:inline-flex;align-items:center"><img src="/assets/logo-lockup.svg" alt="Always Precise Investigations" style="height:40px;width:auto" width="240" height="68"></a>
+  <a class="brand" href="{DOMAIN}/" aria-label="Always Precise Investigations home" style="background:#fff;border-radius:12px;padding:8px 14px;display:inline-flex;align-items:center"><img src="/assets/logo-lockup.svg" alt="Always Precise Investigations" style="height:48px;width:auto" width="240" height="68"></a>
   <a class="call" href="tel:{PHONE_LINK}">Call {PHONE_DISPLAY}</a>
 </div></header>
 
