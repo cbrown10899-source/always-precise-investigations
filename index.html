@@ -69,6 +69,8 @@
   header{background:rgba(14,26,44,.96);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20;}
   header .wrap{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 20px;flex-wrap:wrap;}
   header img{height:34px;width:auto;}
+  .brand-badge{background:#fff;border-radius:8px;padding:5px 12px;display:inline-flex;align-items:center;box-shadow:0 1px 6px rgba(0,0,0,.35);}
+  .brand-badge img{height:44px;width:auto;}
   nav{display:flex;align-items:center;gap:22px;flex-wrap:wrap;}
   nav a{font-family:'Segoe UI',Arial,sans-serif;color:var(--ink);text-decoration:none;font-size:.86rem;letter-spacing:.06em;text-transform:uppercase;}
   nav a:hover{color:var(--teal-2);}
@@ -168,7 +170,6 @@ padding:11px 22px;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;f
 
 <header>
   <div class="wrap">
-    <a href="#top" aria-label="Always Precise Investigations home"><img src="assets/logo-white.webp" alt="Always Precise Investigations"></a>
     <nav>
       <a href="#areas">Areas</a><a href="#services">Services</a>
       <a href="#reviews">Reviews</a>
@@ -176,6 +177,7 @@ padding:11px 22px;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;f
       <a href="#" onclick="openContact();return false;">Contact</a>
       <a class="call-btn" href="tel:+14349070975">Call (434) 907-0975</a>
     </nav>
+    <a class="brand-badge" href="#top" aria-label="Always Precise Investigations home"><img src="assets/logo-lockup.svg" alt="Always Precise Investigations — scales of justice logo" width="240" height="68"></a>
   </div>
 </header>
 

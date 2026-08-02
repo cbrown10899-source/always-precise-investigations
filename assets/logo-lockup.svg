@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 340" role="img" aria-label="Always Precise Investigations">
+<style>
+ .navy{fill:#22306B}.red{fill:#8E1F2C}
+ text{font-family:Georgia,'Times New Roman',serif}
+</style>
+<g class="navy">
+ <!-- beam: gentle curve with ball finials -->
+ <path d="M56 96 C 100 74, 260 74, 304 96 L 304 88 C 260 64, 100 64, 56 88 Z"/>
+ <circle cx="56" cy="92" r="9"/><circle cx="304" cy="92" r="9"/>
+ <!-- centre column: T with taper and stepped base -->
+ <path d="M148 80 L212 80 L204 96 L192 110 L192 240 L168 240 L168 110 L156 96 Z"/>
+ <rect x="150" y="240" width="60" height="14" rx="3"/>
+ <rect x="132" y="254" width="96" height="14" rx="3"/>
+ <rect x="112" y="268" width="136" height="16" rx="4"/>
+ <!-- left pan: hanger triangle + bowl -->
+ <g stroke="#22306B" stroke-width="5" fill="none">
+  <path d="M56 100 L20 190 M56 100 L92 190 M56 100 L56 190"/>
+ </g>
+ <path d="M8 192 L104 192 A48 34 0 0 1 8 192 Z"/>
+ <!-- right pan -->
+ <g stroke="#22306B" stroke-width="5" fill="none">
+  <path d="M304 100 L268 190 M304 100 L340 190 M304 100 L304 190"/>
+ </g>
+ <path d="M256 192 L352 192 A48 34 0 0 1 256 192 Z"/>
+</g>
+<text x="392" y="152" class="navy" font-size="103" font-weight="bold">Always Precise</text>
+<rect x="394" y="172" width="762" height="5" class="navy"/>
+<text x="392" y="286" class="red" font-size="107" font-weight="bold">Investigations</text>
+</svg>

@@ -269,7 +269,7 @@ def page(slug, place, kind, county, court, detail, nearby):
 </head>
 <body>
 <header><div class="wrap">
-  <a class="brand" href="{DOMAIN}/">Always Precise Investigations</a>
+  <a class="brand" href="{DOMAIN}/" aria-label="Always Precise Investigations home" style="background:#fff;border-radius:8px;padding:5px 12px;display:inline-flex;align-items:center"><img src="/assets/logo-lockup.svg" alt="Always Precise Investigations" style="height:40px;width:auto" width="240" height="68"></a>
   <a class="call" href="tel:{PHONE_LINK}">Call {PHONE_DISPLAY}</a>
 </div></header>
 
@@ -380,7 +380,7 @@ def hub():
 </head>
 <body>
 <header><div class="wrap">
-  <a class="brand" href="{DOMAIN}/">Always Precise Investigations</a>
+  <a class="brand" href="{DOMAIN}/" aria-label="Always Precise Investigations home" style="background:#fff;border-radius:8px;padding:5px 12px;display:inline-flex;align-items:center"><img src="/assets/logo-lockup.svg" alt="Always Precise Investigations" style="height:40px;width:auto" width="240" height="68"></a>
   <a class="call" href="tel:{PHONE_LINK}">Call {PHONE_DISPLAY}</a>
 </div></header>
 
