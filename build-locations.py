@@ -333,7 +333,7 @@ def page(slug, place, kind, county, court, detail, nearby):
   <div class="row"><strong>Always Precise Investigations, LLC</strong></div>
   <div class="row"><a href="tel:{PHONE_LINK}">{PHONE_DISPLAY}</a> &middot; <a href="mailto:{EMAIL}">{EMAIL}</a></div>
   <div class="row">{LICENSE} &middot; Licensed and Insured &middot; Serving Virginia since 2014</div>
-  <div class="row"><a href="{DOMAIN}/">Home</a> &middot; <a href="{DOMAIN}/private-investigator/">Service areas</a> &middot; <a href="{DOMAIN}/privacy">Privacy</a></div>
+  <div class="row"><a href="{DOMAIN}/">Home</a> &middot; <a href="{DOMAIN}/private-investigator/">Service areas</a> &middot; <a href="{DOMAIN}/infidelity-investigations/">Infidelity</a> &middot; <a href="{DOMAIN}/child-custody-investigations/">Child custody</a> &middot; <a href="{DOMAIN}/privacy">Privacy</a></div>
 </div></footer>
 <script src="/beacon.js" defer></script>
 </body>
