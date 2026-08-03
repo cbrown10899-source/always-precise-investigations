@@ -19,7 +19,7 @@ jobs:
           D="https://alwayspreciseinvestigations.net"
           HOST="alwayspreciseinvestigations.net"
           MARKER="Always Precise"
-          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 CorlinHealthCheck/1.0"
           CURL=(curl -sS --max-time 25 --compressed -A "$UA" -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" -H "Accept-Language: en-US,en;q=0.9")
           FAILS=0
           R=report.md
@@ -33,7 +33,7 @@ jobs:
           CODE=$("${CURL[@]}" -D "$HDRS" -o "$BODY" -w '%{http_code}' "$D/" || echo 000)
           CFM=$(grep -i '^cf-mitigated:' "$HDRS" | tr -d '\r' || true)
           if [ -n "$CFM" ] || [ "$CODE" = "403" ] || [ "$CODE" = "503" ]; then
-            bad "Cloudflare is challenging this probe (HTTP $CODE ${CFM:-}). Every result below is the CHALLENGE PAGE, not the site. Fix: Cloudflare dashboard → Security → WAF → Custom rules → 'Skip' rule for User-Agent containing 'HealthCheck', or allow verified-bot/monitor traffic."
+            bad "Cloudflare is challenging this probe (HTTP $CODE ${CFM:-}). Every result below is the CHALLENGE PAGE, not the site. Fix: Cloudflare dashboard → Security → WAF → Custom rules → 'Skip' rule where User-Agent contains 'CorlinHealthCheck' (works for WAF/Security-Level challenges; free-plan Bot Fight Mode has no exceptions — it must be toggled off for this probe to pass)."
           elif [ "$CODE" != "200" ]; then
             bad "homepage → HTTP $CODE"
           elif ! grep -q "$MARKER" "$BODY"; then
@@ -86,7 +86,7 @@ jobs:
         run: |
           EXISTING=$(gh issue list -R "${{ github.repository }}" --state open --search "Site health check failing in:title" --json number --jq '.[0].number' || true)
           if [ -n "$EXISTING" ]; then
-            gh issue comment "$EXISTING" -R "${{ github.repository }}" --body-file report.md
+            gh issue edit "$EXISTING" -R "${{ github.repository }}" --body-file report.md
           else
             gh issue create -R "${{ github.repository }}" --title "Site health check failing" --body-file report.md
           fi
