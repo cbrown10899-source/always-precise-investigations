@@ -1,0 +1,4 @@
+Contact: mailto:AlwaysPreciseInvestigations@gmail.com
+Expires: 2027-08-01T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://alwayspreciseinvestigations.net/.well-known/security.txt

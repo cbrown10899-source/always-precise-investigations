@@ -1,0 +1,35 @@
+# Security headers on every response (Cloudflare Pages reads this file).
+# script/style allow 'unsafe-inline' because the pages ship their small
+# interactive bits (contact modal, intake form logic) inline; no user input
+# is rendered into the DOM. connect-src lists exactly the three endpoints
+# the site talks to: the visitor-alerts worker, and the two form relays the
+# intake page submits through.
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+  Permissions-Policy: geolocation=(), camera=(), microphone=(), payment=(), usb=(), accelerometer=(), gyroscope=(), magnetometer=(), interest-cohort=()
+  Cross-Origin-Opener-Policy: same-origin
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com https://api-visitor-alerts.corlinllc.workers.dev https://api.web3forms.com https://formsubmit.co; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+
+# App shell: always revalidate so deploys show up on the next load.
+/
+  Cache-Control: no-cache
+/index.html
+  Cache-Control: no-cache
+
+# Static content routes — safe to cache.
+/private-investigator/*
+  Cache-Control: public, max-age=3600
+/infidelity-investigations/*
+  Cache-Control: public, max-age=3600
+/child-custody-investigations/*
+  Cache-Control: public, max-age=3600
+/assets/*
+  Cache-Control: public, max-age=604800
+
+# Private visitor dashboard — never indexed, never cached.
+/watch/*
+  X-Robots-Tag: noindex, nofollow
+  Cache-Control: no-store

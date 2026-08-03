@@ -261,7 +261,7 @@ def page(slug, place, kind, county, court, detail, nearby):
 <meta name="twitter:description" content="{esc(desc)}">
 <meta name="twitter:image" content="{DOMAIN}/assets/banner1.webp">
 <meta name="theme-color" content="#0e1a2c">
-<link rel="icon" href="{DOMAIN}/assets/logo-white.webp">
+<link rel="icon" href="/assets/logo-white.webp">
 <script type="application/ld+json">{json.dumps(biz_ld)}</script>
 <script type="application/ld+json">{json.dumps(faq_ld)}</script>
 <script type="application/ld+json">{json.dumps(crumb_ld)}</script>
@@ -374,7 +374,7 @@ def hub():
 <meta name="twitter:description" content="{esc(desc)}">
 <meta name="twitter:image" content="{DOMAIN}/assets/banner1.webp">
 <meta name="theme-color" content="#0e1a2c">
-<link rel="icon" href="{DOMAIN}/assets/logo-white.webp">
+<link rel="icon" href="/assets/logo-white.webp">
 <script type="application/ld+json">{json.dumps(ld)}</script>
 <style>{CSS}</style>
 </head>
