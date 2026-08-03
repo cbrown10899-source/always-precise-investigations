@@ -1,8 +1,8 @@
 name: Daily site health
-# Probes the LIVE domain every morning: security headers, TLS expiry,
-# every sitemap URL answering 200 (with slow-page notes), robots and
-# security.txt, and a homepage weight budget. Green runs are silent;
-# a failure fails the workflow AND opens an issue with the report.
+# Probes the LIVE domain: security headers, TLS expiry, every sitemap URL,
+# robots/security.txt, and a homepage weight budget. Detects Cloudflare
+# bot challenges explicitly so a blocked probe can't masquerade as a real
+# result. Green runs are silent; failures update/open a single issue.
 on:
   schedule:
     - cron: '0 11 * * *'   # 11:00 UTC = 7:00 AM ET daily
@@ -18,6 +18,9 @@ jobs:
           set -uo pipefail
           D="https://alwayspreciseinvestigations.net"
           HOST="alwayspreciseinvestigations.net"
+          MARKER="Always Precise"
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+          CURL=(curl -sS --max-time 25 --compressed -A "$UA" -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" -H "Accept-Language: en-US,en;q=0.9")
           FAILS=0
           R=report.md
           echo "# Site health — $HOST — $(date -u +%F)" > $R
@@ -25,10 +28,23 @@ jobs:
           note() { echo "- 🐢 $1" >> $R; }
           bad()  { echo "- ❌ $1" >> $R; FAILS=$((FAILS+1)); }
 
+          echo "## Reachability" >> $R
+          HDRS=$(mktemp); BODY=$(mktemp)
+          CODE=$("${CURL[@]}" -D "$HDRS" -o "$BODY" -w '%{http_code}' "$D/" || echo 000)
+          CFM=$(grep -i '^cf-mitigated:' "$HDRS" | tr -d '\r' || true)
+          if [ -n "$CFM" ] || [ "$CODE" = "403" ] || [ "$CODE" = "503" ]; then
+            bad "Cloudflare is challenging this probe (HTTP $CODE ${CFM:-}). Every result below is the CHALLENGE PAGE, not the site. Fix: Cloudflare dashboard → Security → WAF → Custom rules → 'Skip' rule for User-Agent containing 'HealthCheck', or allow verified-bot/monitor traffic."
+          elif [ "$CODE" != "200" ]; then
+            bad "homepage → HTTP $CODE"
+          elif ! grep -q "$MARKER" "$BODY"; then
+            bad "homepage answered 200 but does not contain '$MARKER' — wrong or placeholder content served"
+          else
+            ok "homepage 200 with expected content"
+          fi
+
           echo "## Security headers" >> $R
-          H=$(curl -sSI --max-time 20 "$D/" || true)
           for h in strict-transport-security content-security-policy x-content-type-options x-frame-options referrer-policy permissions-policy cross-origin-opener-policy; do
-            if echo "$H" | grep -qi "^$h:"; then ok "$h"; else bad "missing header: $h"; fi
+            if grep -qi "^$h:" "$HDRS"; then ok "$h"; else bad "missing header: $h"; fi
           done
 
           echo "## TLS certificate" >> $R
@@ -42,9 +58,9 @@ jobs:
 
           echo "## Sitemap sweep (every indexed URL)" >> $R
           N=0
-          for u in $(curl -s --max-time 20 "$D/sitemap.xml" | grep -oP '(?<=<loc>)[^<]+'); do
+          for u in $("${CURL[@]}" "$D/sitemap.xml" | grep -oP '(?<=<loc>)[^<]+'); do
             N=$((N+1))
-            res=$(curl -so /dev/null --max-time 25 -w '%{http_code} %{time_total}' "$u" || echo "000 0")
+            res=$("${CURL[@]}" -o /dev/null -w '%{http_code} %{time_total}' "$u" || echo "000 0")
             code=${res%% *}; t=${res##* }
             if [ "$code" != "200" ]; then bad "$u → HTTP $code"
             elif awk "BEGIN{exit !($t>3.0)}"; then note "$u took ${t}s"; fi
@@ -53,22 +69,24 @@ jobs:
 
           echo "## Plumbing" >> $R
           for p in /robots.txt /.well-known/security.txt; do
-            c=$(curl -so /dev/null --max-time 20 -w '%{http_code}' "$D$p" || echo 000)
+            c=$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$D$p" || echo 000)
             if [ "$c" = "200" ]; then ok "$p"; else bad "$p → HTTP $c"; fi
           done
 
           echo "## Speed proxy" >> $R
-          SZ=$(curl -so /dev/null --max-time 20 -w '%{size_download}' "$D/" || echo 0)
-          TT=$(curl -so /dev/null --max-time 20 -w '%{time_total}' "$D/" || echo 0)
-          if [ "$SZ" -lt 150000 ] && [ "$SZ" -gt 1000 ]; then ok "homepage document ${SZ} bytes in ${TT}s"; else bad "homepage document out of range: ${SZ} bytes"; fi
+          SZ=$(wc -c < "$BODY")
+          if [ "$SZ" -lt 150000 ] && [ "$SZ" -gt 8000 ]; then ok "homepage document ${SZ} bytes"; else bad "homepage document out of range: ${SZ} bytes"; fi
 
           cat $R >> "$GITHUB_STEP_SUMMARY"
           [ "$FAILS" -eq 0 ]
-      - name: Open issue on failure
+      - name: Report failure in one issue (no daily duplicates)
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh issue create -R "${{ github.repository }}" \
-            --title "Site health check failed — $(date -u +%F)" \
-            --body-file report.md || true
+          EXISTING=$(gh issue list -R "${{ github.repository }}" --state open --search "Site health check failing in:title" --json number --jq '.[0].number' || true)
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" -R "${{ github.repository }}" --body-file report.md
+          else
+            gh issue create -R "${{ github.repository }}" --title "Site health check failing" --body-file report.md
+          fi
