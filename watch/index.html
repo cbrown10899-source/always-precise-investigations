@@ -15,11 +15,16 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--navy:#0e1a2c;--navy-2:#13273f;--card:#16283f;--line:#26405c;
---ink:#dfe6ef;--muted:#9fb0c4;--teal:#3d97ad;--teal-2:#4fb3cb;--gold:#e6b54a;--green:#4ec77f}
+--ink:#dfe6ef;--muted:#9fb0c4;--teal:#3d97ad;--teal-2:#4fb3cb;--gold:#e6b54a;--green:#4ec77f;
+/* Home-screen app draws under the status bar (viewport-fit=cover + translucent
+   bar), so the header must sit below the notch instead of under it. */
+--safe-top:env(safe-area-inset-top,0px);--safe-bot:env(safe-area-inset-bottom,0px);
+--safe-l:env(safe-area-inset-left,0px);--safe-r:env(safe-area-inset-right,0px)}
 body{background:var(--navy);color:var(--ink);font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif;
-line-height:1.55;padding:0 0 40px;-webkit-text-size-adjust:100%}
-.wrap{max-width:640px;margin:0 auto;padding:0 18px}
-header{background:var(--navy-2);border-bottom:1px solid var(--line);padding:14px 0 13px;
+line-height:1.55;padding:0 0 calc(40px + var(--safe-bot));-webkit-text-size-adjust:100%}
+.wrap{max-width:640px;margin:0 auto;padding:0 calc(18px + var(--safe-r)) 0 calc(18px + var(--safe-l))}
+header{background:var(--navy-2);border-bottom:1px solid var(--line);
+padding:calc(14px + var(--safe-top)) 0 13px;
 position:sticky;top:0;z-index:5}
 header .wrap{display:flex;align-items:center;justify-content:space-between;gap:12px}
 h1{font-size:17px;font-weight:600;color:#fff}
@@ -49,6 +54,12 @@ padding:16px 18px;margin-top:16px;display:flex;align-items:center;justify-conten
 .ticker .l{color:var(--muted);font-size:12px;letter-spacing:.08em;text-transform:uppercase;margin-top:5px}
 .ticker .sub{text-align:right;color:var(--muted);font-size:12.5px;line-height:1.55}
 .ticker .sub b{color:var(--ink)}
+/* On a phone the side-by-side split squeezes the label into two lines; give
+   the headline number the full width and drop the explainer beneath it. */
+@media (max-width:430px){
+  .ticker{flex-direction:column;align-items:flex-start;gap:10px}
+  .ticker .sub{text-align:left}
+}
 .list{margin-top:18px;display:flex;flex-direction:column;gap:9px}
 .v{background:var(--card);border:1px solid var(--line);border-left-width:3px;border-radius:10px;padding:12px 14px}
 .v.now{border-left-color:var(--green)}
@@ -102,7 +113,7 @@ font-size:14px;margin-bottom:12px}
          the same person on the same day is not counted again (visitor hashes
          rotate daily, so same-day is the strongest dedupe that exists). -->
     <div class="ticker">
-      <div><div class="n" id="v30">0</div><div class="l">Real visits &middot; last 30 days</div></div>
+      <div><div class="n" id="v30">0</div><div class="l">Real visits &middot; 30 days</div></div>
       <div class="sub">first-time visits only<br>same-day repeats not counted</div>
     </div>
     <div class="stat">
