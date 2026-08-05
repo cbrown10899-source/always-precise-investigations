@@ -264,6 +264,47 @@ const call = (req, env) => worker.fetch(req, env);
   ok('an internal failure returns a generic 500', res.status === 500 && body.error === 'server error');
 }
 
+// --- ticker counters: 30-day real visits (+ affiliate plumbing, unused here)
+{
+  const env = makeEnv();
+
+  // Two visits by one person (second is returning), then a second person.
+  await call(hit({ path: '/' }, { ip: '203.0.113.81' }), env);
+  await call(hit({ path: '/privacy' }, { ip: '203.0.113.81' }), env);
+  await call(hit({ path: '/' }, { ip: '203.0.113.82' }), env);
+  // Affiliate clicks: three from one person (count once), one from another.
+  await call(hit({ path: '/Amazon Click · linen shirt' }, { ip: '203.0.113.81' }), env);
+  await call(hit({ path: '/Amazon Click · linen shirt' }, { ip: '203.0.113.81' }), env);
+  await call(hit({ path: '/Amazon Click · lamp' }, { ip: '203.0.113.81' }), env);
+  await call(hit({ path: '/Amazon Click · lamp' }, { ip: '203.0.113.82' }), env);
+  // A bot affiliate click never counts.
+  await call(hit({ path: '/Amazon Click · bot' }, { ip: '66.249.0.9', ua: 'Googlebot/2.1' }), env);
+
+  const recent = await (await call(authed('/recent'), env)).json();
+  ok('30-day ticker counts each person once per day', recent.visits30 === 2, String(recent.visits30));
+  ok('affiliate clicks dedupe to one per person per day', recent.aff30 === 2, String(recent.aff30));
+  ok('running affiliate total matches', recent.affTotal === 2, String(recent.affTotal));
+}
+
+// --- ticker seeding from a log that predates the counters
+{
+  const env = makeEnv();
+  const now = Date.now();
+  await env.HITS.put('log', JSON.stringify([
+    { t: now - 2 * 86_400_000, path: '/', v: 'aaaa', returning: false },
+    { t: now - 2 * 86_400_000, path: '/privacy', v: 'aaaa', returning: true },
+    { t: now - 86_400_000, path: '/Amazon Click · rug', v: 'bbbb', returning: false },
+    { t: now - 86_400_000, path: '/Amazon Click · rug', v: 'bbbb', returning: true },
+    { t: now - 86_400_000, path: '/', v: 'cccc', returning: false, bot: 'known-bot-ua' },
+  ]));
+  const recent = await (await call(authed('/recent'), env)).json();
+  ok('counters seed real visits from the pre-existing log', recent.visits30 === 1, String(recent.visits30));
+  ok('counters seed deduped affiliate clicks from the log', recent.aff30 === 1, String(recent.aff30));
+  const again = await (await call(authed('/recent'), env)).json();
+  ok('seeded totals are stable across reads', again.affTotal === 1 && again.visits30 === 1,
+    `affTotal ${again.affTotal}, visits30 ${again.visits30}`);
+}
+
 /* ----------------------------------------------------------------- report */
 
 console.log('\nvisitor-alerts worker tests\n');

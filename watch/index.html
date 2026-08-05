@@ -43,6 +43,12 @@ button:disabled{opacity:.55;cursor:default}
 display:flex;align-items:center;justify-content:space-between;gap:14px}
 .stat .n{font-size:34px;font-weight:700;color:#fff;line-height:1}
 .stat .l{color:var(--muted);font-size:13px}
+.ticker{background:linear-gradient(135deg,#1a2e4a80,#16283f);border:1px solid var(--gold);border-radius:12px;
+padding:16px 18px;margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:14px}
+.ticker .n{font-size:38px;font-weight:800;color:var(--teal-2);line-height:1}
+.ticker .l{color:var(--muted);font-size:12px;letter-spacing:.08em;text-transform:uppercase;margin-top:5px}
+.ticker .sub{text-align:right;color:var(--muted);font-size:12.5px;line-height:1.55}
+.ticker .sub b{color:var(--ink)}
 .list{margin-top:18px;display:flex;flex-direction:column;gap:9px}
 .v{background:var(--card);border:1px solid var(--line);border-left-width:3px;border-radius:10px;padding:12px 14px}
 .v.now{border-left-color:var(--green)}
@@ -92,6 +98,13 @@ font-size:14px;margin-bottom:12px}
 
   <!-- Dashboard -->
   <div id="app" style="display:none">
+    <!-- 30-day ticker. "Real" = bot-filtered first visits; a repeat visit by
+         the same person on the same day is not counted again (visitor hashes
+         rotate daily, so same-day is the strongest dedupe that exists). -->
+    <div class="ticker">
+      <div><div class="n" id="v30">0</div><div class="l">Real visits &middot; last 30 days</div></div>
+      <div class="sub">first-time visits only<br>same-day repeats not counted</div>
+    </div>
     <div class="stat">
       <div><div class="n" id="online">0</div><div class="l">on the site now</div></div>
       <div style="text-align:right"><div class="n" id="today">0</div><div class="l">visits today</div></div>
@@ -149,6 +162,10 @@ function ago(ms) {
 }
 
 function render(data) {
+  // 30-day ticker; `|| 0` keeps the page working if the Worker is briefly
+  // the older version without the counter fields.
+  $('v30').textContent = data.visits30 || 0;
+
   $('online').textContent = data.online;
   $('dot').className = 'dot' + (data.online > 0 ? ' live' : '');
   const midnight = new Date(); midnight.setHours(0, 0, 0, 0);

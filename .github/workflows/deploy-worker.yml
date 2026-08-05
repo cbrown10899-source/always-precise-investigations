@@ -1,0 +1,32 @@
+name: Deploy visitor-alerts Worker
+
+# Uploads new Worker code while KEEPING the deployed bindings, vars and
+# secrets (content-only PUT). Safe to re-run any time; no KV ids needed here.
+on:
+  push:
+    branches: [master]
+    paths: ['visitor-alerts/worker.js']
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Upload Worker content (settings preserved)
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -e
+          NAME=api-visitor-alerts
+          ACCT=63a4b8fd9efe4137e1f91c49b5e61c6f
+          curl -sf -X PUT \
+            "https://api.cloudflare.com/client/v4/accounts/$ACCT/workers/scripts/$NAME/content" \
+            -H "Authorization: Bearer $CF_API_TOKEN" \
+            -F 'metadata={"main_module":"worker.js"};type=application/json' \
+            -F 'worker.js=@visitor-alerts/worker.js;type=application/javascript+module' \
+            -o /dev/null -w 'upload HTTP %{http_code}\n'
+      - name: Health check
+        run: |
+          sleep 5
+          curl -sf https://api-visitor-alerts.corlinllc.workers.dev/health; echo

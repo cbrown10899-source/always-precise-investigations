@@ -43,6 +43,10 @@ const AUTH_MAX_FAILS = 8;         // failed unlocks before lockout
 const AUTH_LOCK_SECONDS = 900;    // lockout duration (15 min)
 const MAX_SUBS = 10;              // registered devices
 const TZ = 'America/New_York';    // for "today" boundaries
+const DAYS_KEY = 'days';          // KV: rolling per-day counters {date:{v,a}}
+const DAYS_KEEP = 40;             // days of counters retained
+const COUNT_WINDOW = 30;          // days summed for the dashboard ticker
+const AFF_PREFIX = '/Amazon Click'; // paths logged by an affiliate ping (unused here today)
 
 const HIGH_INTENT = [/^\/intake/, /contact/i];
 
@@ -115,6 +119,67 @@ function startOfLocalDay(now = Date.now()) {
   const get = (t) => Number(parts.find((p) => p.type === t).value);
   const secondsIntoDay = get('hour') * 3600 + get('minute') * 60 + get('second');
   return now - secondsIntoDay * 1000;
+}
+
+/** Local calendar date (YYYY-MM-DD) in the business timezone. */
+function localDayStr(ts = Date.now()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(ts));
+}
+
+/** The last n distinct local dates, today first. 12h steps so DST cannot skip a day. */
+function lastLocalDays(n) {
+  const out = [];
+  let t = Date.now();
+  while (out.length < n) {
+    const d = localDayStr(t);
+    if (out[out.length - 1] !== d) out.push(d);
+    t -= 43_200_000;
+  }
+  return out;
+}
+
+/**
+ * Rolling per-day counters: { 'YYYY-MM-DD': { v, a } } — v is real first
+ * visits (non-bot, not a same-day repeat), a is affiliate clicks deduped to
+ * one per person per day. The visit log only holds MAX_LOG entries, so these
+ * live in their own KV record; on first use they are seeded from whatever
+ * history the log still holds.
+ */
+async function loadDays(env, log) {
+  const raw = await env.HITS.get(DAYS_KEY);
+  if (raw !== null) {
+    try { return { days: JSON.parse(raw) || {}, fresh: false }; }
+    catch (_) { return { days: {}, fresh: false }; }
+  }
+  const days = {};
+  const affSeen = new Set();
+  for (const h of [...(log || [])].reverse()) {
+    if (h.bot) continue;
+    const d = localDayStr(h.t);
+    days[d] = days[d] || { v: 0, a: 0 };
+    if (String(h.path || '').startsWith(AFF_PREFIX)) {
+      const k = `${d}:${h.v}`;
+      if (!affSeen.has(k)) { affSeen.add(k); days[d].a++; }
+    } else if (!h.returning) {
+      days[d].v++;
+    }
+  }
+  return { days, fresh: true };
+}
+
+function pruneDays(days) {
+  const keep = new Set(lastLocalDays(DAYS_KEEP));
+  for (const d of Object.keys(days)) if (!keep.has(d)) delete days[d];
+  return days;
+}
+
+/** All-time affiliate-click total; falls back to the seeded counters on first use. */
+async function affTotalValue(env, days) {
+  const raw = await env.HITS.get('affTotal');
+  if (raw !== null) return Number(raw) || 0;
+  return Object.values(days).reduce((s, x) => s + (x.a || 0), 0);
 }
 
 /** Stable per-client key used for rate limiting and lockout (never stored raw). */
@@ -310,6 +375,29 @@ async function handleHit(request, env) {
   let log = [];
   try { log = logRaw ? JSON.parse(logRaw) : []; } catch (_) { log = []; }
   visit.returning = log.some((h) => h.v === vkey && !h.bot);
+
+  // Durable ticker counters — the log above forgets after MAX_LOG entries.
+  // Counted before this visit joins the log so first-use seeding cannot
+  // double-count it.
+  if (!bot) {
+    const days = pruneDays((await loadDays(env, log)).days);
+    const d = localDayStr(visit.t);
+    days[d] = days[d] || { v: 0, a: 0 };
+    if (path.startsWith(AFF_PREFIX)) {
+      // One affiliate click per person per local day, however many they make.
+      const affKey = `affseen:${d}:${vkey}`;
+      if ((await env.HITS.get(affKey)) === null) {
+        const total = await affTotalValue(env, days);
+        days[d].a = (days[d].a || 0) + 1;
+        await env.HITS.put('affTotal', String(total + 1));
+        await env.HITS.put(affKey, '1', { expirationTtl: 100_000 });
+      }
+    } else if (!visit.returning) {
+      days[d].v = (days[d].v || 0) + 1;
+    }
+    await env.HITS.put(DAYS_KEY, JSON.stringify(days));
+  }
+
   log.unshift(visit);
   await env.HITS.put('log', JSON.stringify(log.slice(0, MAX_LOG)));
 
@@ -360,6 +448,12 @@ async function handleRecent(env) {
   const people = log.filter((h) => !h.bot);
   const bots = log.filter((h) => h.bot);
 
+  const loaded = await loadDays(env, log);
+  const days = pruneDays(loaded.days);
+  if (loaded.fresh) await env.HITS.put(DAYS_KEY, JSON.stringify(days));
+  const win = lastLocalDays(COUNT_WINDOW);
+  const sum = (k) => win.reduce((s, d) => s + ((days[d] && days[d][k]) || 0), 0);
+
   return json({
     ok: true,
     now,
@@ -367,6 +461,9 @@ async function handleRecent(env) {
     todayCount: people.filter((h) => h.t >= dayStart).length,
     visits: people.slice(0, 60),
     botsToday: bots.filter((h) => h.t >= dayStart).length,
+    visits30: sum('v'),
+    aff30: sum('a'),
+    affTotal: await affTotalValue(env, days),
   });
 }
 
