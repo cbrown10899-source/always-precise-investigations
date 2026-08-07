@@ -1,0 +1,38 @@
+name: Rebuild location pages
+
+# build-locations.py is the source of truth for the /private-investigator/
+# pages, the service-area hub and sitemap.xml — but the generated HTML is what
+# is committed and deployed. Running the generator here keeps the two from
+# drifting, and means editing the PLACES list is enough to add a service area
+# (no local Python needed).
+on:
+  push:
+    branches: [master]
+    paths: ['build-locations.py']
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+
+      - name: Generate pages
+        run: python3 build-locations.py
+
+      - name: Commit any changes
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "Generator output already matches the committed pages."
+            exit 0
+          fi
+          git add private-investigator sitemap.xml
+          git commit -m "Rebuild location pages from build-locations.py"
+          git push

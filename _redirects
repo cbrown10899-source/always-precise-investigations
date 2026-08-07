@@ -1,0 +1,7 @@
+# Retired service areas — beyond a roughly one-hour drive from Lynchburg, so
+# the business does not cover them. These pages were live and are likely to
+# hold some inbound links, so they redirect to the service-area hub rather
+# than 404ing.
+/private-investigator/richmond-va/*   /private-investigator/  301
+/private-investigator/louisa-va/*     /private-investigator/  301
+/private-investigator/powhatan-va/*   /private-investigator/  301

@@ -16,6 +16,20 @@ PHONE_LINK = "+14349070975"
 EMAIL = "AlwaysPreciseInvestigations@gmail.com"
 LICENSE = "Va DCJS #11-9159"
 
+# NAP exactly as it appears on the Google Business Profile — name, address and
+# phone must match the listing character for character, since inconsistent
+# citations are what hold a business out of the local pack. GBP_URL is the
+# listing's stable cid link, which ties this site to that listing.
+ADDRESS = {"@type": "PostalAddress", "streetAddress": "503 Old Plantation Dr #303",
+           "addressLocality": "Lynchburg", "addressRegion": "VA",
+           "postalCode": "24502", "addressCountry": "US"}
+GEO = {"@type": "GeoCoordinates", "latitude": 37.309454, "longitude": -79.2683106}
+HOURS = [{"@type": "OpeningHoursSpecification",
+          "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+          "opens": "07:00", "closes": "22:00"}]
+GBP_URL = "https://maps.google.com/?cid=1285488950812777376"
+FACEBOOK = "https://www.facebook.com/AlwaysPreciseInvestigations/"
+
 # (slug, place, kind, county, courthouse venue, distinguishing detail, nearby slugs)
 PLACES = [
     ("lynchburg-va", "Lynchburg", "city", "Central Virginia",
@@ -33,7 +47,12 @@ PLACES = [
     ("bedford-va", "Bedford", "town", "Bedford County",
      "Bedford County Circuit Court",
      "the county seat below the Peaks of Otter",
-     ["forest-va", "lynchburg-va", "altavista-va"]),
+     ["forest-va", "lynchburg-va", "roanoke-va", "altavista-va"]),
+    ("roanoke-va", "Roanoke", "city", "Roanoke County",
+     "Roanoke City Circuit Court",
+     "the Star City of the Roanoke Valley, the largest metro west of Lynchburg and an easy run "
+     "out Route 460 or the Blue Ridge Parkway",
+     ["bedford-va", "forest-va", "lynchburg-va"]),
     ("amherst-va", "Amherst", "town", "Amherst County",
      "Amherst County Circuit Court",
      "the county seat north of the James River",
@@ -69,11 +88,7 @@ PLACES = [
     ("palmyra-va", "Palmyra", "community", "Fluvanna County",
      "Fluvanna County Circuit Court",
      "the Fluvanna County seat on the Rivanna River",
-     ["charlottesville-va", "scottsville-va", "louisa-va"]),
-    ("louisa-va", "Louisa", "town", "Louisa County",
-     "Louisa County Circuit Court",
-     "the Louisa County seat east of Charlottesville",
-     ["palmyra-va", "charlottesville-va"]),
+     ["charlottesville-va", "scottsville-va"]),
     ("lovingston-va", "Lovingston", "community", "Nelson County",
      "Nelson County Circuit Court",
      "the Nelson County seat along Route 29 between Lynchburg and Charlottesville",
@@ -88,12 +103,8 @@ PLACES = [
      ["buckingham-va", "farmville-va"]),
     ("cumberland-va", "Cumberland", "community", "Cumberland County",
      "Cumberland County Circuit Court",
-     "the Cumberland County seat between Farmville and Powhatan",
-     ["farmville-va", "buckingham-va", "powhatan-va"]),
-    ("powhatan-va", "Powhatan", "community", "Powhatan County",
-     "Powhatan County Circuit Court",
-     "the county seat west of Richmond on Route 60",
-     ["cumberland-va", "richmond-va"]),
+     "the Cumberland County seat east of Farmville on Route 60",
+     ["farmville-va", "buckingham-va", "dillwyn-va"]),
     ("danville-va", "Danville", "city", "Southside Virginia",
      "Danville Circuit Court",
      "the Dan River city on the North Carolina line",
@@ -114,10 +125,6 @@ PLACES = [
      "Halifax County Circuit Court",
      "the Halifax County seat",
      ["south-boston-va", "danville-va"]),
-    ("richmond-va", "Richmond", "city", "Central Virginia",
-     "Richmond Circuit Court",
-     "the state capital on the fall line of the James River",
-     ["powhatan-va", "cumberland-va"]),
 ]
 BY_SLUG = {p[0]: p for p in PLACES}
 
@@ -207,7 +214,7 @@ def page(slug, place, kind, county, court, detail, nearby):
          "unmarked vehicles and keep their distance; the goal is documentation without any change in the "
          "subject's behavior."),
         (f"How quickly can an investigator get to {place}?",
-         f"{place} sits inside our regular Central Virginia service area, so most cases can be scheduled "
+         f"{place} sits inside our regular service area, so most cases can be scheduled "
          "within a few days — and urgent matters sooner. Timing often matters more than people expect: "
          "patterns are easiest to document while they are still active."),
     ]
@@ -220,11 +227,12 @@ def page(slug, place, kind, county, court, detail, nearby):
         "@context": "https://schema.org", "@type": "ProfessionalService",
         "name": "Always Precise Investigations, LLC",
         "description": f"Licensed private investigation firm serving {place}, Virginia and the surrounding area since 2014.",
-        "telephone": "+14349070975", "email": EMAIL, "url": url,
+        "telephone": PHONE_LINK, "email": EMAIL, "url": url,
         "areaServed": {"@type": "Place", "name": f"{place}, Virginia"},
-        "address": {"@type": "PostalAddress", "addressRegion": "VA", "addressCountry": "US"},
+        "address": ADDRESS, "geo": GEO, "openingHoursSpecification": HOURS,
         "foundingDate": "2014", "priceRange": "$$",
-        "sameAs": ["https://www.facebook.com/AlwaysPreciseInvestigations/"]
+        "identifier": {"@type": "PropertyValue", "name": "Virginia DCJS license", "value": "11-9159"},
+        "sameAs": [FACEBOOK, GBP_URL]
     }
     crumb_ld = {
         "@context": "https://schema.org", "@type": "BreadcrumbList",
@@ -343,8 +351,8 @@ def page(slug, place, kind, county, court, detail, nearby):
 def hub():
     url = f"{DOMAIN}/private-investigator/"
     title = "Private Investigator Near Me | Central Virginia"
-    desc = ("Licensed private investigators across Central Virginia — Lynchburg, Charlottesville, "
-            "Danville, Farmville and nearby counties. Free consult: " + PHONE_DISPLAY + ".")
+    desc = ("Licensed private investigators in Lynchburg, Roanoke, Charlottesville, Danville and "
+            "nearby Virginia counties. Free consult: " + PHONE_DISPLAY + ".")
     items = "".join(
         f'<a href="{DOMAIN}/private-investigator/{s}/">{esc(p)}</a>' for s, p, *_ in PLACES)
     ld = {"@context": "https://schema.org", "@type": "ItemList",
@@ -388,8 +396,8 @@ def hub():
   <p class="eyebrow">Central Virginia</p>
   <h1>Looking for a private investigator near you?</h1>
   <p class="lede">We are licensed and insured in Virginia and have worked Central Virginia since 2014 —
-  from Lynchburg and Charlottesville to Danville, Farmville and the counties in between. Pick your area
-  below, or simply call; the first conversation is free and confidential.</p>
+  from Lynchburg and Roanoke to Charlottesville, Danville, Farmville and the counties in between. Pick
+  your area below, or simply call; the first conversation is free and confidential.</p>
 </div></div>
 
 <section><div class="wrap">
@@ -436,6 +444,17 @@ def main():
         d = os.path.join("private-investigator", p[0])
         os.makedirs(d, exist_ok=True)
         open(os.path.join(d, "index.html"), "w").write(page(*p))
+
+    # Dropping a place from PLACES has to remove its page too — otherwise the
+    # folder stays behind and keeps serving a service area we no longer cover,
+    # invisibly, because it is gone from the sitemap and the hub.
+    for name in sorted(os.listdir("private-investigator")):
+        d = os.path.join("private-investigator", name)
+        if os.path.isdir(d) and name not in BY_SLUG:
+            for f in os.listdir(d):
+                os.remove(os.path.join(d, f))
+            os.rmdir(d)
+            print(f"removed retired location page: {name}")
     # sitemap
     urls = [(f"{DOMAIN}/", "1.0", "monthly"),
             (f"{DOMAIN}/private-investigator/", "0.9", "monthly")]
