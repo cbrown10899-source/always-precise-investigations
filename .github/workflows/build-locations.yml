@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   build:
@@ -36,3 +37,13 @@ jobs:
           git add private-investigator sitemap.xml
           git commit -m "Rebuild location pages from build-locations.py"
           git push
+          echo "deployed=yes" >> "$GITHUB_ENV"
+
+      # A push made with GITHUB_TOKEN deliberately does not trigger other
+      # workflows, so the commit above would sit undeployed. Ask for the
+      # deploy explicitly.
+      - name: Deploy the rebuilt pages
+        if: env.deployed == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy.yml --ref master
