@@ -36,14 +36,15 @@ the `[vars]` block there.
 
 ```bash
 npx wrangler secret put VAPID_PRIVATE_KEY   # from step 1
-npx wrangler secret put WATCH_PASSWORD      # the passcode he'll type (e.g. TGB1940)
+npx wrangler secret put WATCH_PASSWORD      # the passcode he'll type
 npx wrangler secret put SALT                # any random string
 ```
 
-Pick a passcode that is not guessable. A short numeric PIN can be brute-forced;
-the Worker locks a client out after 8 failed attempts for 15 minutes, which
-raises the cost enormously, but length still matters. Mixed letters and digits
-(e.g. `TGB1940`) is the minimum worth using.
+Pick a passcode that is not guessable, and do not write the real one down in
+this file — it is committed to a repository. A short numeric PIN can be
+brute-forced; the Worker locks a client out after 8 failed attempts for 15
+minutes, which raises the cost enormously, but length still matters. Twelve or
+more mixed characters from a password manager is the right answer.
 
 ## 4. Deploy the Worker
 
