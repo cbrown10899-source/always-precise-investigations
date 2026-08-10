@@ -3,5 +3,6 @@ Allow: /
 
 Sitemap: https://alwayspreciseinvestigations.net/sitemap.xml
 
-# Private dashboard — not for search engines
-Disallow: /watch/
+# The private dashboard is deliberately NOT listed here: robots.txt is public,
+# so a Disallow line only advertises the path. It is kept out of search by
+# noindex meta plus an X-Robots-Tag header set in _headers.
