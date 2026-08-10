@@ -37,7 +37,9 @@ function makeKV() {
 }
 
 const SITE = 'https://alwayspreciseinvestigations.net';
-const PASS = 'TGB1940';
+// Fixture only — never the live WATCH_PASSWORD. The real one is a Worker
+// secret and must not appear in this repository.
+const PASS = 'test-passphrase-not-the-real-one';
 
 // A real P-256 key pair so VAPID signing is genuinely exercised.
 const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
