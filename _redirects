@@ -5,3 +5,30 @@
 /private-investigator/richmond-va/*   /private-investigator/  301
 /private-investigator/louisa-va/*     /private-investigator/  301
 /private-investigator/powhatan-va/*   /private-investigator/  301
+
+# Consolidation 2026-08-10: 27 near-duplicate city pages became 6 real markets.
+# Every page below earned 0 clicks from 195 impressions at avg position 37.5, so
+# the pages were costing crawl budget and diluting the surviving ones. Each town
+# redirects to the market that actually covers it, not to the hub, so the visitor
+# lands somewhere that answers their question.
+/private-investigator/forest-va/*  /private-investigator/lynchburg-va/  301
+/private-investigator/madison-heights-va/*  /private-investigator/lynchburg-va/  301
+/private-investigator/rustburg-va/*  /private-investigator/lynchburg-va/  301
+/private-investigator/amherst-va/*  /private-investigator/lynchburg-va/  301
+/private-investigator/altavista-va/*  /private-investigator/lynchburg-va/  301
+/private-investigator/brookneal-va/*  /private-investigator/lynchburg-va/  301
+/private-investigator/appomattox-va/*  /private-investigator/lynchburg-va/  301
+/private-investigator/smith-mountain-lake-va/*  /private-investigator/bedford-va/  301
+/private-investigator/salem-va/*  /private-investigator/roanoke-va/  301
+/private-investigator/vinton-va/*  /private-investigator/roanoke-va/  301
+/private-investigator/rocky-mount-va/*  /private-investigator/roanoke-va/  301
+/private-investigator/chatham-va/*  /private-investigator/danville-va/  301
+/private-investigator/gretna-va/*  /private-investigator/danville-va/  301
+/private-investigator/south-boston-va/*  /private-investigator/danville-va/  301
+/private-investigator/halifax-va/*  /private-investigator/danville-va/  301
+/private-investigator/scottsville-va/*  /private-investigator/charlottesville-va/  301
+/private-investigator/palmyra-va/*  /private-investigator/charlottesville-va/  301
+/private-investigator/lovingston-va/*  /private-investigator/charlottesville-va/  301
+/private-investigator/buckingham-va/*  /private-investigator/farmville-va/  301
+/private-investigator/dillwyn-va/*  /private-investigator/farmville-va/  301
+/private-investigator/cumberland-va/*  /private-investigator/farmville-va/  301
