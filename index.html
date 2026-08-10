@@ -374,7 +374,7 @@ padding:11px 22px;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;f
       });
       var d={}; try{ d=await res.json(); }catch(_){}
       if(d && (d.success==='true'||d.success===true)){ f.reset(); status.innerHTML='<b>Thank you!</b> Your message was sent — we’ll be in touch shortly.'; }
-      else { status.innerHTML='Your message was received. If you don’t hear back soon, please call <b>(434) 907-0975</b>.'; }
+      else { status.innerHTML='<b>We couldn’t confirm your message was delivered.</b> Please call <b>(434) 907-0975</b> so we don’t miss you.'; }
     }catch(err){ status.innerHTML='Couldn’t send right now — please call <b>(434) 907-0975</b> or email us directly.'; }
     btn.disabled=false;
   }
