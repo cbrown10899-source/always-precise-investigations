@@ -358,6 +358,14 @@ padding:11px 22px;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;f
 </div>
 
 <script>
+  /* Web3Forms access key. Paste the key from web3forms.com here and the contact
+     form switches to it; leave it empty and it falls back to FormSubmit.
+     FormSubmit was never usable on this domain — its activation link errors with
+     "Confirmation token not found" — so until this key is set, messages sent
+     through the form are NOT delivered and the visitor is told so. This key is
+     a public submission endpoint, not a secret; it is safe in page source, and
+     unlike the old setup it keeps the firm's email address out of the HTML. */
+  var WEB3FORMS_KEY = "";
   function openContact(){var m=document.getElementById('contactModal');m.hidden=false;document.body.style.overflow='hidden';var n=m.querySelector('input[name=name]');if(n)n.focus();}
   function closeContact(){document.getElementById('contactModal').hidden=true;document.body.style.overflow='';}
   document.addEventListener('keydown',function(e){if(e.key==='Escape')closeContact();});
@@ -367,12 +375,22 @@ padding:11px 22px;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;f
     var name=f.elements.name.value.trim(), phone=f.elements.phone.value.trim(), message=f.elements.message.value.trim();
     btn.disabled=true; status.textContent='Sending…';
     try{
-      var res=await fetch('https://formsubmit.co/ajax/AlwaysPreciseInvestigations@gmail.com',{
-        method:'POST',
-        headers:{'Content-Type':'application/json','Accept':'application/json'},
-        body:JSON.stringify({name:name,phone:phone,message:message,_subject:'New website inquiry — Always Precise Investigations',_template:'table'})
-      });
-      var d={}; try{ d=await res.json(); }catch(_){}
+      var res, d={};
+      if(WEB3FORMS_KEY){
+        res=await fetch('https://api.web3forms.com/submit',{
+          method:'POST',
+          headers:{'Content-Type':'application/json','Accept':'application/json'},
+          body:JSON.stringify({access_key:WEB3FORMS_KEY,subject:'New website inquiry — Always Precise Investigations',from_name:'Website Contact Form',name:name,phone:phone,message:message})
+        });
+        try{ d=await res.json(); }catch(_){}
+      } else {
+        res=await fetch('https://formsubmit.co/ajax/AlwaysPreciseInvestigations@gmail.com',{
+          method:'POST',
+          headers:{'Content-Type':'application/json','Accept':'application/json'},
+          body:JSON.stringify({name:name,phone:phone,message:message,_subject:'New website inquiry — Always Precise Investigations',_template:'table'})
+        });
+        try{ d=await res.json(); }catch(_){}
+      }
       if(d && (d.success==='true'||d.success===true)){ f.reset(); status.innerHTML='<b>Thank you!</b> Your message was sent — we’ll be in touch shortly.'; }
       else { status.innerHTML='<b>We couldn’t confirm your message was delivered.</b> Please call <b>(434) 907-0975</b> so we don’t miss you.'; }
     }catch(err){ status.innerHTML='Couldn’t send right now — please call <b>(434) 907-0975</b> or email us directly.'; }
