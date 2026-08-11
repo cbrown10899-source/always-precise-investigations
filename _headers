@@ -30,6 +30,8 @@
   Cache-Control: public, max-age=3600
 /child-custody-investigations/*
   Cache-Control: public, max-age=3600
+/insurance-investigations/*
+  Cache-Control: public, max-age=3600
 /assets/*
   Cache-Control: public, max-age=604800
 
