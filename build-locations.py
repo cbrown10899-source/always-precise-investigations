@@ -233,6 +233,7 @@ def page(slug, place, kind, county, court, detail, nearby):
     <div class="card"><h3>Surveillance</h3><p>Covert, documented, and quoted by the hour — no hidden mileage or travel fees in our service area.</p></div>
     <div class="card"><h3>Child custody</h3><p>Documentation of conditions, conduct and third-party contact relevant to custody proceedings.</p></div>
     <div class="card"><h3>Background checks</h3><p>For employers, landlords, volunteer organizations, and personal peace of mind.</p></div>
+    <div class="card"><h3>Insurance claims</h3><p>Workers' comp and liability claim surveillance for insurers, employers, and defense attorneys.</p></div>
     <div class="card"><h3>Process serving</h3><p>Prompt, documented service of legal papers throughout the area.</p></div>
   </div>
 </div></section>
@@ -273,7 +274,7 @@ def page(slug, place, kind, county, court, detail, nearby):
   <div class="row"><strong>Always Precise Investigations, LLC</strong></div>
   <div class="row"><a href="tel:{PHONE_LINK}">{PHONE_DISPLAY}</a> &middot; <a href="mailto:{EMAIL}">{EMAIL}</a></div>
   <div class="row">{LICENSE} &middot; Licensed and Insured &middot; Serving Virginia since 2014</div>
-  <div class="row"><a href="{DOMAIN}/">Home</a> &middot; <a href="{DOMAIN}/private-investigator/">Service areas</a> &middot; <a href="{DOMAIN}/infidelity-investigations/">Infidelity</a> &middot; <a href="{DOMAIN}/child-custody-investigations/">Child custody</a> &middot; <a href="{DOMAIN}/privacy">Privacy</a></div>
+  <div class="row"><a href="{DOMAIN}/">Home</a> &middot; <a href="{DOMAIN}/private-investigator/">Service areas</a> &middot; <a href="{DOMAIN}/infidelity-investigations/">Infidelity</a> &middot; <a href="{DOMAIN}/child-custody-investigations/">Child custody</a> &middot; <a href="{DOMAIN}/insurance-investigations/">Insurance claims</a> &middot; <a href="{DOMAIN}/privacy">Privacy</a></div>
 </div></footer>
 <script src="/beacon.js" defer></script>
 </body>
@@ -335,7 +336,8 @@ def hub():
 <section><div class="wrap">
   <h2>What we handle</h2>
   <p>Infidelity and adultery documentation, covert surveillance, child-custody evidence, background
-  checks, workers' compensation and auto-claim investigation, and process serving. Surveillance is quoted
+  checks, <a href="{DOMAIN}/insurance-investigations/">workers' compensation and auto-claim investigation</a>,
+  and process serving. Surveillance is quoted
   by the hour with no hidden mileage or travel fees anywhere in the service area below.</p>
   <p>Virginia treats adultery as a fault ground for divorce and holds it to a demanding evidentiary
   standard, which is why independent documentation matters so much more here than a spouse's own
@@ -389,11 +391,12 @@ def main():
             print(f"removed retired location page: {name}")
     # sitemap
     # The sitemap is regenerated wholesale below, so every non-generated page has
-    # to be listed here too — otherwise a rebuild silently drops it. The two
+    # to be listed here too — otherwise a rebuild silently drops it. The three
     # service pages are hand-written and live outside PLACES.
     urls = [(f"{DOMAIN}/", "1.0", "monthly"),
             (f"{DOMAIN}/infidelity-investigations/", "0.9", "monthly"),
             (f"{DOMAIN}/child-custody-investigations/", "0.9", "monthly"),
+            (f"{DOMAIN}/insurance-investigations/", "0.9", "monthly"),
             (f"{DOMAIN}/private-investigator/", "0.9", "monthly")]
     urls += [(f"{DOMAIN}/private-investigator/{s}/", "0.8", "monthly") for s, *_ in PLACES]
     body = "".join(
