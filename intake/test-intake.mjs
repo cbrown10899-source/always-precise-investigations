@@ -232,7 +232,7 @@ section('Carrier path — insurance claim assignment');
   await advance(page);
   await page.locator('#opt-claims').click();
   await page.waitForTimeout(80);
-  ok('choosing a claim assignment expands the flow to 7 steps', await dots(page) === 7);
+  ok('choosing a claim assignment expands the flow to 8 steps', await dots(page) === 8);
   await advance(page);
   ok('step 3 is the claim-details step', await heading(page) === 'Claim details');
 
@@ -258,11 +258,40 @@ section('Carrier path — insurance claim assignment');
   await advance(page);
   ok('the objective step becomes scope and deadline', (await heading(page)).includes('Scope'));
   await set(page, 'o_goal', 'Activity level versus stated restrictions');
-  await set(page, 'o_hours', '8 hours authorized');
   await set(page, 'o_time', 'Hearing 9/12');
   await advance(page);
 
-  ok('step 6 states assignment terms', (await heading(page)).includes('Assignment terms'));
+  /* Section 9 of the handoff: surveillance is authorized in hours, with the
+     8-hour minimum day and the 24-hour initial authorization as presets. The
+     rate behind them is internal and must not appear on this public page. */
+  ok('step 6 is scheduling and authorization', await heading(page) === 'Scheduling & authorization');
+  const auth = await page.locator('.card').innerText();
+  ok('the 8-hour day is offered', auth.includes('8 hours — 1 day'));
+  ok('the 16-hour authorization is offered', auth.includes('16 hours — 2 days'));
+  ok('the 24-hour initial authorization is offered', auth.includes('24 hours — 3 days'));
+  ok('a custom authorization is offered', auth.includes('Custom authorization'));
+  ok('the 8-hour day is described as the minimum', /minimum surveillance day/i.test(auth));
+  ok('NO CARRIER RATE IS PUBLISHED on the authorization step', !auth.includes('$'), auth);
+  ok('the page says rates are confirmed before acceptance',
+     /confirmed before the assignment is accepted/i.test(auth));
+  ok('expenses are flagged as billed separately', /expenses are billed separately/i.test(auth));
+
+  await advance(page);
+  ok('authorization is required', await heading(page) === 'Scheduling & authorization');
+  ok('and it says so', (await err(page)).toLowerCase().includes('hours'));
+
+  await page.locator('#opt-auth-a24').click();
+  await page.waitForTimeout(80);
+  await set(page, 'z_nte', '$3,600 not to exceed');
+  await set(page, 'z_start', '2026-09-01');
+  await set(page, 'z_days', 'Any day');
+  await set(page, 'z_times', '0600-1400');
+  await page.locator('[data-k="z_weekend"]').selectOption({ label: 'Yes — weekends authorized' });
+  await page.locator('[data-k="z_priority"]').selectOption({ label: 'Expedited' });
+  await set(page, 'z_geo', 'Within 50 miles of Roanoke');
+  await advance(page);
+
+  ok('step 7 states assignment terms', (await heading(page)).includes('Assignment terms'));
   const fees = await page.locator('.feebox').innerText();
   ok('terms say the work is invoiced to the carrier', fees.includes('Invoiced to the carrier'));
   ok('no rate is published to the carrier', !fees.includes('$'));
@@ -275,7 +304,7 @@ section('Carrier path — insurance claim assignment');
   await sign(page);
   await advance(page);
 
-  ok('step 7 is billing', await heading(page) === 'Billing');
+  ok('step 8 is billing', await heading(page) === 'Billing');
   const billing = await page.locator('.feebox').innerText();
   ok('billing echoes the carrier and claim number',
      billing.includes('Example Mutual') && billing.includes('WC-2026-88421'));
@@ -291,7 +320,15 @@ section('Carrier path — insurance claim assignment');
     ok('the portal record carries the carrier', stored.carrier === 'Example Mutual');
     ok('the portal record carries the claim type', stored.claim_type === "Workers' compensation");
     ok('the portal record carries the date of loss', stored.date_of_loss === '03/14/2026');
-    ok('the portal record carries the authorized hours', stored.authorized_hours === '8 hours authorized');
+    ok('the portal record carries the authorized hours', stored.authorized_hours === '24 hours — 3 days');
+    ok('the portal record carries the not-to-exceed', stored.not_to_exceed === '$3,600 not to exceed');
+    ok('the portal record carries the start date', stored.start_date === '2026-09-01');
+    ok('the portal record carries the permitted times', stored.permitted_times === '0600-1400');
+    ok('the portal record carries the weekend authorization',
+       stored.weekend_authorized === 'Yes — weekends authorized');
+    ok('the portal record carries the priority', stored.priority === 'Expedited');
+    ok('the portal record carries the geographic limits',
+       stored.geographic_limits === 'Within 50 miles of Roanoke');
     ok('the portal record carries the billing email', stored.billing_email === 'ap@carrier.example');
     ok('the portal record marks the work invoiced', stored.payment_method === 'Invoiced to carrier');
     ok('nothing is charged at assignment', stored.fee_due === 0);
@@ -317,7 +354,7 @@ section('Switching service after the flow has branched');
   await advance(page);
   await page.locator('#opt-claims').click();
   await page.waitForTimeout(80);
-  ok('claim assignment gives 7 steps', await dots(page) === 7);
+  ok('claim assignment gives 8 steps', await dots(page) === 8);
   await page.locator('#opt-process').click();
   await page.waitForTimeout(80);
   ok('switching back to a consumer service restores 6 steps', await dots(page) === 6);
@@ -355,6 +392,10 @@ section('The relay never receives what was typed');
   await advance(page);
   await set(page, 'o_goal', 'Activity versus stated restrictions');
   await advance(page);
+  await page.locator('#opt-auth-a24').click();
+  await page.waitForTimeout(80);
+  await set(page, 'z_nte', '$3,600 not to exceed');
+  await advance(page);
   await page.locator('[data-k="a_consent"]').check();
   await set(page, 'a_typed', 'Dana Adjuster');
   await sign(page);
@@ -375,6 +416,7 @@ section('The relay never receives what was typed');
       'the claim number': 'WC-2026-88421',
       'the policy number': 'POL-77123',
       'the signature image': 'data:image/png',
+      'what the carrier authorized spending': '3,600',
     };
     for (const [what, needle] of Object.entries(secrets)) {
       ok(`the relay never sees ${what}`, !blob.includes(needle));

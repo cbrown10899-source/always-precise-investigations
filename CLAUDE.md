@@ -132,11 +132,19 @@ notice. There is a test that fails if any of those values reaches the relay.
 - **Surveillance** — seven steps. An extra coverage step where the client buys
   a block of hours, then a Venmo or Cash App payment for that block.
 - **Process serving** — six steps, ending in payment of the flat fee.
-- **Carrier** — insurance claim assignment. Seven steps: an extra claim-details
+- **Carrier** — insurance claim assignment. Eight steps: an extra claim-details
   step (carrier/TPA, claim number, policy, claim type, date of loss, adjuster,
   defense counsel, prior surveillance), claimant-specific wording on the
-  subject and scope steps, carrier terms in place of the consumer agreement,
-  and a billing step instead of payment. Nothing is charged at assignment.
+  subject and scope steps, a scheduling-and-authorization step, carrier terms in
+  place of the consumer agreement, and a billing step instead of payment.
+  Nothing is charged at assignment.
+
+  The authorization step offers 8 / 16 / 24 hours or custom — **hours, never a
+  rate**, because that page is public. It also collects the not-to-exceed
+  amount, start date, permitted days and times, weekend authorization, priority
+  and geographic limits. Everything there except the not-to-exceed is
+  allow-listed to investigators: they cannot work inside an authorization they
+  cannot see, but a budget is commercial.
 
 The step list is chosen by `steps()`; all three share the first two steps,
 which is what makes switching service mid-flow safe. **No claims rate is
@@ -144,6 +152,29 @@ published in the form** — carrier work is invoiced per fee schedule and
 confirmed in writing, so there is no number to get wrong or to leak. The
 consumer blocks below are consumer pricing and must never appear on the claims
 path.
+
+## Carrier rates are internal — and this file is public-adjacent
+
+The insurance rate strategy lives in `case-portal/PRICING.md`, with the
+machine-readable copy as `RATES` in `case-portal/worker.js`. **Both are in
+`case-portal/` deliberately** — that directory is excluded from the Pages
+deploy, and it is the only safe home for anything internal.
+
+`deploy.yml` rsyncs the repo root to Cloudflare Pages. `CLAUDE.md` was **not**
+excluded until 2026-08-12, so this file was being served publicly. It is
+excluded now, and the workflow fails the build if any markdown file is staged
+for deploy. Do not put a rate, a negotiated discount or an internal note
+anywhere the rsync can reach.
+
+Carrier pricing is never published: not on `insurance-investigations/`, not on
+the vendor page, not in the intake form. `/pricing` on the Worker is admin-only
+and returns 403 to an investigator. The public language is "final rates and
+authorization will be confirmed before the assignment is accepted."
+
+Headline numbers: $150/hr standard, 8-hour minimum day, 24 hours ($3,600) as
+the typical initial authorization, $135–$150 preferred-volume band, $125 floor.
+The reasoning — including why $800/day is rejected for carrier work — is in
+`PRICING.md`. Read it before quoting anything.
 
 ## The rate card
 
@@ -167,7 +198,7 @@ know the cap they are working to. The price fields (`package`, `package_price`,
 Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
-node intake/test-intake.mjs      # 87 checks; needs Playwright, skips cleanly without it
+node intake/test-intake.mjs      # 105 checks; needs Playwright, skips cleanly without it
 node visitor-alerts/test-worker.mjs   # 41 checks
 ```
 
@@ -238,7 +269,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 131 checks: auth, invites, roles, redaction, ingest, origin
+node case-portal/test-worker.mjs   # 152 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 93 checks: the page against the real Worker
 ```
 

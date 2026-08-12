@@ -221,6 +221,8 @@ const FIELD_KEEP = [
   "subject_name", "subject_address", "subject_description", "subject_relationship",
   "objective", "authorized_hours", "timeline", "notes", "attachments",
   "claim_type", "date_of_loss", "prior_surveillance",
+  "start_date", "permitted_days", "permitted_times", "weekend_authorized",
+  "priority", "geographic_limits",
 ];
 
 function redactExample(c) {
@@ -537,6 +539,10 @@ async function openCase(caseNo){
       ${row(claim ? "Claimant" : "Subject", p.subject_name)}${row("Address", p.subject_address)}
       ${row("Description", p.subject_description)}${row(claim ? "Injury & restrictions" : "Relationship", p.subject_relationship)}
       ${row(claim ? "Scope" : "Objective", p.objective)}${row("Authorized hours", p.authorized_hours)}
+      ${row("Not to exceed", p.not_to_exceed)}${row("Requested start", p.start_date)}
+      ${row("Permitted days", p.permitted_days)}${row("Permitted times", p.permitted_times)}
+      ${row("Weekend", p.weekend_authorized)}${row("Priority", p.priority)}
+      ${row("Geographic limits", p.geographic_limits)}
       ${row(claim ? "Deadline" : "Timeline", p.timeline)}${row("Notes", p.notes)}${row("Attachments", p.attachments)}
       ${claim ? `${row("Billing reference", p.billing_reference)}${row("Invoices to", p.billing_email)}${row("Billing notes", p.billing_notes)}`
               : `${row("Due today", p.fee_due != null ? "$" + p.fee_due : "")}${row("Payment method", p.payment_method)}`}

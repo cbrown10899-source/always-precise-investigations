@@ -155,6 +155,19 @@ const PACKAGES = [
 ];
 const pkg = id => PACKAGES.find(p => p.id === id) || null;
 
+/* Carrier surveillance authorization presets. HOURS, NEVER A RATE — this page
+   is public and carrier pricing is quoted per assignment. The 8-hour day is the
+   billing minimum and 24 hours is the usual initial authorization; the internal
+   rate that goes with them lives in case-portal/worker.js, which is not
+   deployed to the public site. */
+const AUTH_PRESETS = [
+  { id:"a8",     label:"8 hours — 1 day",   desc:"A single day of coverage. Our minimum surveillance day." },
+  { id:"a16",    label:"16 hours — 2 days", desc:"Two days, typically split to compare different days of the week." },
+  { id:"a24",    label:"24 hours — 3 days", desc:"The usual initial authorization — enough to establish a pattern rather than a snapshot." },
+  { id:"custom", label:"Custom authorization", desc:"Tell us the hours or the structure you need and we will work to it." },
+];
+const authPreset = id => AUTH_PRESETS.find(a => a.id === id) || null;
+
 const FEES = {
   surveillance: { label:"Surveillance", hourly:HOURLY, packages:true },
   process:      { label:"Process Serving", flat:150 },
@@ -185,7 +198,7 @@ const S = { step:0, svc:null, pkg:null, pay:null, sig:null, files:[] };
 // makes it safe to switch service without stranding S.step.
 const STEPS       = ["info","service","subject","objective","agreement","payment"];
 const SURV_STEPS  = ["info","service","package","subject","objective","agreement","payment"];
-const CLAIM_STEPS = ["info","service","claim","subject","objective","agreement","billing"];
+const CLAIM_STEPS = ["info","service","claim","subject","objective","authorization","agreement","billing"];
 function steps(){
   if(S.svc==="claims") return CLAIM_STEPS;
   return S.svc==="surveillance" ? SURV_STEPS : STEPS;
@@ -368,9 +381,55 @@ function view(step){
       ? "What does this file need to answer, and by when?"
       : "What outcome are you hoping for, and how soon?"}</p>
     <label class="f"><span>${isClaims()?"What does the file need to establish?":"What do you want to find out or accomplish?"}</span><textarea data-k="o_goal" placeholder="${isClaims()?"e.g. activity level versus stated restrictions, employment verification, scene documentation…":"Describe the situation and the result you need…"}"></textarea></label>
-    ${isClaims()?`<label class="f"><span>Authorized hours / budget</span><input type="text" data-k="o_hours" placeholder="e.g. 8 hours authorized, or call before exceeding"></label>`:""}
     <label class="f"><span>${isClaims()?"Deadline":"Timeline / urgency"}</span><input type="text" data-k="o_time" placeholder="${isClaims()?"e.g. hearing 9/12, report needed by 9/1":"e.g. before a court date on 8/15, ASAP, flexible"}"></label>
     <label class="f"><span>Anything else we should know</span><textarea data-k="o_notes" placeholder="Optional"></textarea></label>
+    ${navButtons()}
+  </div>`;
+
+  /* Carrier authorization. Surveillance is authorized in hours, and the presets
+     are the standard 8-hour day, two days and the usual three-day initial
+     authorization. NO RATE APPEARS HERE — this is a public page and carrier
+     pricing is quoted per assignment, so the form collects what the carrier is
+     authorizing and says the rate is confirmed before acceptance. */
+  if(step==="authorization") return `<div class="card">
+    <h2>Scheduling &amp; authorization</h2>
+    <p class="lead">What are we authorized to do, and when. Final rates and authorization
+      are confirmed before the assignment is accepted.</p>
+
+    <div style="font-size:.85rem;font-weight:600;margin-bottom:6px;">Authorized hours</div>
+    ${AUTH_PRESETS.map(a => `
+      <label class="opt ${val.z_auth===a.id?"sel":""}" id="opt-auth-${a.id}" onclick="pickAuth('${a.id}')">
+        <input type="radio" name="auth" ${val.z_auth===a.id?"checked":""}><b>${a.label}</b>
+        <div class="desc">${a.desc}</div>
+      </label>`).join("")}
+    ${val.z_auth==="custom"?`<label class="f"><span>Custom authorization</span><input type="text" data-k="z_custom" placeholder="e.g. 12 hours, or 4 hours per day across 5 days"></label>`:""}
+
+    <div class="two">
+      <label class="f"><span>Not-to-exceed amount</span><input type="text" data-k="z_nte" placeholder="Optional — a cap we will not pass without approval"></label>
+      <label class="f"><span>Requested start date</span><input type="date" data-k="z_start"></label>
+    </div>
+    <div class="two">
+      <label class="f"><span>Permitted days</span><input type="text" data-k="z_days" placeholder="e.g. weekdays only, or any day"></label>
+      <label class="f"><span>Permitted times</span><input type="text" data-k="z_times" placeholder="e.g. 0600–1400, or investigator's discretion"></label>
+    </div>
+    <div class="two">
+      <label class="f"><span>Weekend authorization</span>
+        <select data-k="z_weekend">
+          <option value="">Select…</option>
+          <option>Yes — weekends authorized</option>
+          <option>No — weekdays only</option>
+          <option>Call first</option></select></label>
+      <label class="f"><span>Priority</span>
+        <select data-k="z_priority">
+          <option value="">Select…</option>
+          <option>Routine</option>
+          <option>Expedited</option>
+          <option>Rush — needed immediately</option></select></label>
+    </div>
+    <label class="f"><span>Geographic limitations</span><input type="text" data-k="z_geo" placeholder="e.g. within 50 miles of Roanoke; call before travelling further"></label>
+    <label class="f"><span>Special billing instructions</span><textarea data-k="z_billing" placeholder="Optional — required references, invoicing portal, expense pre-approval…"></textarea></label>
+    <p class="hint">Approved expenses are billed separately from investigator time. Mileage and
+      travel time are not charged inside our service area; travel beyond it is quoted before we go.</p>
     ${navButtons()}
   </div>`;
 
@@ -471,6 +530,7 @@ function view(step){
 /* ============ Step actions ============ */
 function pickSvc(k){ capture(); S.svc=k; if(k!=="surveillance") S.pkg=null; render(); }
 function pickPkg(k){ capture(); S.pkg=k; render(); }
+function pickAuth(k){ capture(); val.z_auth=k; render(); }
 function pickPay(k){ capture(); S.pay=k; paintPay(); document.querySelectorAll(".pay-opt .opt").forEach(o=>o.classList.remove("sel")); }
 function pickFiles(input){ S.files=[...input.files].map(f=>f.name); const n=$("filenote"); if(n) n.textContent = S.files.length? S.files.length+" file(s) attached: "+S.files.join(", ") : "Attach court papers or a photo of the subject if you have them."; }
 
@@ -514,6 +574,10 @@ function validate(step){
   }
   if(step==="service" && !S.svc) return "Please choose a service.";
   if(step==="package" && !S.pkg) return "Please choose how much coverage you need.";
+  if(step==="authorization"){
+    if(!val.z_auth) return "Please choose how many hours you are authorizing.";
+    if(val.z_auth==="custom" && !(val.z_custom||"").trim()) return "Please describe the custom authorization.";
+  }
   if(step==="claim"){
     if(!(val.k_carrier||"").trim()) return "Please enter the carrier, TPA or employer assigning the file.";
     if(!(val.k_claimno||"").trim()) return "Please enter the claim number.";
@@ -575,9 +639,26 @@ function buildPayload(){
       claim_type:val.k_type||"", date_of_loss:val.k_dol||"",
       adjuster:val.k_adjuster||"", adjuster_email:val.k_adj_email||"", adjuster_phone:val.k_adj_phone||"",
       defense_counsel:val.k_counsel||"", billing_reference:val.k_po||"", prior_surveillance:val.k_prior||"",
-      authorized_hours:val.o_hours||"", billing_email:val.b_email||"", billing_notes:val.b_notes||"",
+      billing_email:val.b_email||"", billing_notes:val.b_notes||"",
       payment_method:"Invoiced to carrier"
     });
+    // What the carrier authorized. The operational half of this — hours, days,
+    // times, weekend, priority, geography — is what an investigator needs to
+    // work inside the authorization, and those fields are allow-listed in the
+    // portal Worker. The not-to-exceed amount is commercial and stays
+    // admin-only, which the allow-list gives us by default.
+    const a = authPreset(val.z_auth);
+    Object.assign(p, {
+      authorized_hours: val.z_auth==="custom"
+        ? (val.z_custom||"Custom authorization")
+        : (a ? a.label : ""),
+      not_to_exceed:val.z_nte||"",
+      start_date:val.z_start||"",
+      permitted_days:val.z_days||"", permitted_times:val.z_times||"",
+      weekend_authorized:val.z_weekend||"", priority:val.z_priority||"",
+      geographic_limits:val.z_geo||"",
+    });
+    if(val.z_billing) p.billing_notes = [p.billing_notes, val.z_billing].filter(Boolean).join(" — ");
   }
   return p;
 }
@@ -667,7 +748,7 @@ function renderRecord(p, sent, threw, stored){
       ${row(claims?"Assigning contact":"Name",p.client_name)}${row("Phone",p.client_phone)}${row("Email",p.client_email)}
       ${claims?"":`${row("Address",p.client_address)}${row("Best time",p.best_time)}`}
       ${row(claims?"Claimant":"Subject",p.subject_name)}${row(claims?"Claimant address":"Subject address",p.subject_address)}${row("Description",p.subject_description)}${row(claims?"Injury & restrictions":"Relationship",p.subject_relationship)}
-      ${row(claims?"Scope":"Objective",p.objective)}${claims?row("Authorized hours",p.authorized_hours):""}${row(claims?"Deadline":"Timeline",p.timeline)}${row("Notes",p.notes)}${row("Attachments",p.attachments)}
+      ${row(claims?"Scope":"Objective",p.objective)}${claims?`${row("Authorized hours",p.authorized_hours)}${row("Not to exceed",p.not_to_exceed)}${row("Requested start",p.start_date)}${row("Permitted days",p.permitted_days)}${row("Permitted times",p.permitted_times)}${row("Weekend",p.weekend_authorized)}${row("Priority",p.priority)}${row("Geographic limits",p.geographic_limits)}`:""}${row(claims?"Deadline":"Timeline",p.timeline)}${row("Notes",p.notes)}${row("Attachments",p.attachments)}
       ${row("Service",p.service)}
       ${claims
         ? `${row("Billing","Invoiced to carrier")}${row("Billing reference / PO",p.billing_reference)}${row("Invoices to",p.billing_email)}${row("Billing notes",p.billing_notes)}`

@@ -347,6 +347,62 @@ section('An investigator is not sent the client');
      !future.includes('CARRIER-CONFIDENTIAL'));
 }
 
+/* ------------------------------------------------------------- pricing */
+
+/* Carrier rates are internal. They are not published, and the endpoint that
+   holds them is admin-only — an investigator knowing the billing rate is how a
+   rate sheet reaches a competitor. */
+section('Internal rates are admin-only');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  ok('an investigator cannot read the rate card',
+     (await call(env, '/pricing', { cookie: inv })).status === 403);
+  ok('a signed-out visitor cannot read the rate card',
+     (await call(env, '/pricing')).status === 401);
+
+  const res = await call(env, '/pricing', { cookie: admin });
+  ok('an admin can read the rate card', res.status === 200);
+  const d = await jsonOf(res);
+  ok('the standard surveillance rate is $150/hr', d.rates.surveillance.standard === 150);
+  ok('the surveillance day minimum is 8 hours', d.rates.surveillance.minHoursPerDay === 8);
+  ok('the typical initial authorization is 24 hours', d.rates.surveillance.typicalAuthHours === 24);
+  ok('the preferred-volume band is 135–150', d.rates.surveillance.volumeMin === 135 && d.rates.surveillance.volumeMax === 150);
+  ok('the floor is 125', d.rates.surveillance.floor === 125);
+  ok('rush and holiday multipliers are configured',
+     d.rates.multipliers.rush === 1.25 && d.rates.multipliers.holiday === 1.5);
+  ok('testimony is rated separately', d.rates.services.testimony[0] === 200);
+  ok('expense categories are enumerated', d.rates.expenses.categories.includes('Mileage'));
+  ok('reporting counts as billable investigator time',
+     d.rates.billableAsInvestigatorTime.includes('Report writing'));
+  ok('the authorization presets are 8, 16 and 24 hours',
+     JSON.stringify(d.auth_presets) === JSON.stringify([8, 16, 24]));
+
+  // The number the handoff exists to protect: 24 hours at the standard rate.
+  const q = await jsonOf(await call(env, '/pricing?hours=24', { cookie: admin }));
+  ok('a 3-day authorization quotes at $3,600', q.quote.subtotal === 3600);
+  ok('and it is not flagged as below the band', q.quote.belowVolumeBand === false);
+
+  const vol = await jsonOf(await call(env, '/pricing?hours=24&rate=135', { cookie: admin }));
+  ok('the bottom of the volume band quotes at $3,240', vol.quote.subtotal === 3240);
+  ok('a volume rate is not below the floor', vol.quote.belowFloor === false);
+
+  const cheap = await jsonOf(await call(env, '/pricing?hours=24&rate=100', { cookie: admin }));
+  ok('$100/hr is flagged as below the floor', cheap.quote.belowFloor === true);
+  ok('the $800/day the handoff rejects quotes at $2,400', cheap.quote.subtotal === 2400);
+
+  const rush = await jsonOf(await call(env, '/pricing?hours=8', { cookie: admin }));
+  ok('a rush day applies the 1.25x multiplier', rush.quote.rush === 1500);
+  ok('a bad hours value yields no quote',
+     (await jsonOf(await call(env, '/pricing?hours=abc', { cookie: admin }))).quote === null);
+}
+
 /* ------------------------------------------------------- invitation-only */
 
 section('Invitation-only account creation');

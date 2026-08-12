@@ -295,6 +295,85 @@ async function handleIngest(request, env) {
   return json({ ok: true, case_no: caseNo });
 }
 
+/* ---------------------------------------------------------------- pricing */
+
+/* THE ONE INTERNAL RATE CONFIGURATION. The reasoning behind these numbers is in
+   PRICING.md next to this file; both live in case-portal/ because that
+   directory is excluded from the Pages deploy.
+
+   These are CARRIER rates and they are internal. They are not published on the
+   site, not sent to the intake form, and `/pricing` below is admin-only. A
+   negotiated rate is a preferred-volume rate, never advertised.
+
+   Do not copy a number out of here into a page or a second config. One place is
+   the whole point: a rate rise must not leave a stale figure behind.
+
+   Consumer pricing is separate and deliberately public — PACKAGES in
+   intake/index.html. Do not merge the two. */
+const RATES = {
+  currency: 'USD',
+  surveillance: {
+    standard: 150,           // rack rate per investigator hour
+    volumeMin: 135,          // preferred-volume band, offered on merit
+    volumeMax: 150,
+    floor: 125,              // do not go below without guaranteed volume
+    minHoursPerDay: 8,
+    typicalAuthHours: 24,    // 3 days — the usual initial authorization
+  },
+  services: {
+    // [low, high] per hour. A single number means one rate, not a range.
+    surveillance_wc:      [150, 150],
+    surveillance_liab:    [150, 150],
+    surveillance_disab:   [150, 150],
+    siu_fraud:            [150, 175],
+    recorded_statement:   [125, 150],
+    field_canvass:        [125, 150],
+    scene_liability:      [125, 150],
+    background_social:    [100, 150],
+    asset_business:       [150, 200],
+    skip_trace:           [125, 150],
+    testimony:            [200, 250],
+  },
+  multipliers: { rush: 1.25, holiday: 1.5 },
+  // Billed separately from investigator time when approved in advance. Mileage
+  // and travel time are NOT charged inside the defined service area — that is
+  // published on the vendor page, so it is a commitment, not a default.
+  expenses: {
+    mileagePerMile: 0.70,
+    chargeableOutsideServiceArea: true,
+    categories: ['Mileage', 'Tolls', 'Parking', 'Lodging', 'Airfare',
+                 'Rental vehicle', 'Database fees', 'Record fees',
+                 'Unusual equipment', 'Authorized third-party'],
+  },
+  // Reporting is investigator time. Never promise it free.
+  billableAsInvestigatorTime: ['Field investigation', 'Surveillance',
+    'Video review', 'Chronology preparation', 'Report writing',
+    'Evidence organization', 'Case-file preparation', 'Evidence delivery'],
+};
+
+/* Authorization presets offered on the carrier intake. HOURS ONLY — the form is
+   a public page, so it must not carry a rate. The estimate below is computed
+   here, for admins, never sent to the form. */
+const AUTH_PRESETS = [8, 16, 24];
+
+function quoteFor(hours, rate) {
+  const h = Number(hours);
+  if (!Number.isFinite(h) || h <= 0) return null;
+  // Number(null) and Number('') are both 0, and 0 is finite — so an absent rate
+  // has to be rejected before the numeric check, or a missing ?rate= quotes the
+  // whole assignment at nothing.
+  const given = rate === null || rate === undefined || String(rate).trim() === ''
+    ? NaN : Number(rate);
+  const r = Number.isFinite(given) && given > 0 ? given : RATES.surveillance.standard;
+  return {
+    hours: h, rate: r, subtotal: h * r,
+    rush: h * r * RATES.multipliers.rush,
+    holiday: h * r * RATES.multipliers.holiday,
+    belowFloor: r < RATES.surveillance.floor,
+    belowVolumeBand: r < RATES.surveillance.volumeMin,
+  };
+}
+
 /* ------------------------------------------------------------ submissions */
 
 /* An investigator is given what the fieldwork needs and nothing that identifies
@@ -316,6 +395,11 @@ const FIELD_KEEP = [
   'objective', 'authorized_hours', 'timeline', 'notes', 'attachments',
   // case shape — none of these name the client
   'claim_type', 'date_of_loss', 'prior_surveillance',
+  // the limits the fieldwork has to stay inside. An investigator cannot work to
+  // an authorization they cannot see. `not_to_exceed` is deliberately NOT here:
+  // it is a budget, and a budget is commercial.
+  'start_date', 'permitted_days', 'permitted_times', 'weekend_authorized',
+  'priority', 'geographic_limits',
 ];
 
 /* The denormalised columns carry the same identities as the payload does — a
@@ -749,6 +833,20 @@ async function route(request, env) {
   if (m && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return setStatus(request, env, m[1]);
+  }
+
+  /* Internal rates. Admin-only and deliberately not reachable from the intake
+     form or any public page — carrier pricing is quoted per assignment, and a
+     negotiated rate is never advertised. `hours` and `rate` are optional and
+     produce a quote against the configured standard. */
+  if (p === '/pricing' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    const q = new URL(request.url).searchParams;
+    return json({
+      rates: RATES,
+      auth_presets: AUTH_PRESETS,
+      quote: q.has('hours') ? quoteFor(q.get('hours'), q.get('rate')) : null,
+    });
   }
 
   if (p === '/users' && method === 'GET') {
