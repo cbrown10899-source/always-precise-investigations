@@ -51,7 +51,7 @@ emits a long step summary.
 
 ## Deploy topology
 
-Seven workflows, all in `.github/workflows/`:
+Eight workflows, all in `.github/workflows/`:
 
 | Workflow              | Trigger                              | Does                                       |
 | --------------------- | ------------------------------------ | ------------------------------------------ |
@@ -62,6 +62,7 @@ Seven workflows, all in `.github/workflows/`:
 | `site-health.yml`     | daily cron, 11:00 UTC                | probes the live domain; opens one issue on failure |
 | `portal-setup.yml`    | manual dispatch                      | one-shot Cloudflare setup for the portal   |
 | `save-point.yml`      | human push to `master`, or manual    | tags a `save/…` point and cuts a Release   |
+| `harden-check.yml`    | manual, plus weekly Monday 11:30 UTC | runs `verify.sh` live-site security checks |
 
 Every workflow carries a `concurrency` group. They were added after runs
 collided: on 2026-08-07 five runs started in the same minute and two were
@@ -372,7 +373,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 179 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 205 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 127 checks: the page against the real Worker
 ```
 

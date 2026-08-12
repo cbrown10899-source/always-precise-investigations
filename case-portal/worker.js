@@ -240,16 +240,28 @@ function pick(o, ...keys) {
  * portal writes costs nothing: the intake delivers by email independently, so a
  * flood can never stop a real client from reaching the firm.
  */
-async function withinRateLimit(env) {
-  const cap = parseInt(env.INGEST_PER_MINUTE || '', 10) || INGEST_PER_MINUTE;
+/* Per-minute counters in the ingest_rate table. `kind` picks the bucket:
+   ingest (the default, keyed by the bare minute — existing rows keep working)
+   or 'mail', keyed with a prefix so outbound email has its own cap. The mail
+   cap exists so a compromised admin session cannot turn the firm's own
+   verified domain into a spam source in the minutes before anyone notices. */
+async function withinRateLimit(env, kind) {
+  const mail = kind === 'mail';
+  const cap = mail
+    ? (parseInt(env.MAIL_PER_MINUTE || '', 10) || 20)
+    : (parseInt(env.INGEST_PER_MINUTE || '', 10) || INGEST_PER_MINUTE);
   const minute = nowIso().slice(0, 16);   // YYYY-MM-DDTHH:MM
+  const key = mail ? 'mail:' + minute : minute;
   await env.DB.prepare(
     `INSERT INTO ingest_rate (minute, n) VALUES (?, 1)
-       ON CONFLICT(minute) DO UPDATE SET n = n + 1`).bind(minute).run();
-  const row = await env.DB.prepare('SELECT n FROM ingest_rate WHERE minute = ?').bind(minute).first();
-  // Keep the table from growing without bound.
-  await env.DB.prepare('DELETE FROM ingest_rate WHERE minute < ?')
-    .bind(new Date(Date.now() - 3600_000).toISOString().slice(0, 16)).run();
+       ON CONFLICT(minute) DO UPDATE SET n = n + 1`).bind(key).run();
+  const row = await env.DB.prepare('SELECT n FROM ingest_rate WHERE minute = ?').bind(key).first();
+  // Keep the table from growing without bound — both key shapes.
+  const cutoff = new Date(Date.now() - 3600_000).toISOString().slice(0, 16);
+  await env.DB.prepare(
+    `DELETE FROM ingest_rate
+      WHERE (minute NOT LIKE 'mail:%' AND minute < ?1)
+         OR (minute LIKE 'mail:%' AND minute < 'mail:' || ?1)`).bind(cutoff).run();
   return !row || row.n <= cap;
 }
 
@@ -464,8 +476,18 @@ async function emailSheet(request, env, id) {
   if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(to) || to.length > 200) {
     return json({ error: 'Enter a valid email address.' }, 400);
   }
-  const note = String(body.note || '').slice(0, 500);
-  const caseNo = String(body.case_no || '').slice(0, 64);
+  // The note reaches the email body (escaped there); the case number reaches
+  // the SUBJECT line. Neither may carry control characters — a CR/LF smuggled
+  // into a header field is how one email becomes several. Defense in depth:
+  // the callers are admins, but a header injection should be impossible, not
+  // merely unlikely.
+  const note = String(body.note || '')
+    .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').slice(0, 500);
+  const caseNo = String(body.case_no || '').replace(/[^\x20-\x7e]/g, '').slice(0, 64);
+
+  if (!(await withinRateLimit(env, 'mail'))) {
+    return json({ error: 'Too many emails in one minute — wait a moment and send again.' }, 429);
+  }
 
   const { text, html } = sheetEmail(sheet, note);
   const subject = caseNo

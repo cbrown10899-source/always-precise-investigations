@@ -731,6 +731,100 @@ section('Invitation email');
 
 /* ------------------------------------------------- origin guard and headers */
 
+section('Rate sheets and the emailed quote');
+{
+  // Same provider stand-in as the invitation tests: nothing leaves the run.
+  const realFetch = globalThis.fetch;
+  let lastBody = null, providerCalls = 0;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      providerCalls++; lastBody = JSON.parse(init.body);
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '3';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  const d = await jsonOf(await call(env, '/sheets', { cookie: admin }));
+  ok('exactly two sheets exist', d.sheets.length === 2);
+  ok('the personal sheet is labelled "$1,500 retainer"', d.sheets[0].name === '$1,500 retainer');
+  ok('the personal sheet carries the retainer and the hourly rate',
+     JSON.stringify(d.sheets[0]).includes('$1,500') && JSON.stringify(d.sheets[0]).includes('$100/hr'));
+  const ins = JSON.stringify(d.sheets.find(s => s.id === 'insurance'));
+  ok('the carrier sheet carries the whole ladder',
+     ins.includes('$1,200') && ins.includes('$2,300') && ins.includes('$3,300'));
+  ok('the carrier sheet states the overage rate', ins.includes('$150/hr'));
+  ok('the retainer figure is not on the carrier sheet', !ins.includes('$1,500'));
+  ok('whether sending is configured is reported', d.email_configured === true);
+
+  ok('an unknown sheet id is a 404',
+     (await call(env, '/sheets/nope/email', { method: 'POST', cookie: admin, body: { to: 'a@b.co' } })).status === 404);
+  ok('a malformed address is refused before a send is spent',
+     (await call(env, '/sheets/personal/email', { method: 'POST', cookie: admin, body: { to: 'not-an-address' } })).status === 400);
+  ok('no provider call was made for either', providerCalls === 0);
+
+  // The header-injection attempt: CR/LF smuggled through the case number,
+  // which is the one field that reaches the subject line.
+  const res = await call(env, '/sheets/personal/email', { method: 'POST', cookie: admin,
+    body: { to: 'client@example.test', case_no: 'API-1\r\nBcc: thief@evil.test', note: 'line one\r\nline two' } });
+  ok('a legitimate send succeeds', res.status === 200);
+  ok('it goes to the address given', lastBody.to === 'client@example.test');
+  ok('no CR or LF ever reaches the subject', !/[\r\n]/.test(lastBody.subject), JSON.stringify(lastBody.subject));
+  ok('the case number itself survives sanitizing', lastBody.subject.includes('API-1'));
+  ok('the note is flattened to one line in the HTML part', lastBody.html.includes('line one line two'));
+  ok('the sheet email never carries the API key',
+     !JSON.stringify(lastBody).includes('test-resend-key'));
+
+  // The outbound cap: a compromised admin session must not be able to turn
+  // the firm's verified domain into a spam source.
+  const s2 = await call(env, '/sheets/personal/email', { method: 'POST', cookie: admin, body: { to: 'client@example.test' } });
+  const s3 = await call(env, '/sheets/insurance/email', { method: 'POST', cookie: admin, body: { to: 'adjuster@example.test' } });
+  const s4 = await call(env, '/sheets/personal/email', { method: 'POST', cookie: admin, body: { to: 'client@example.test' } });
+  ok('sends inside the cap go through', s2.status === 200 && s3.status === 200);
+  ok('the send beyond the cap is a 429', s4.status === 429);
+  ok('the refused send never reached the provider', providerCalls === 3);
+
+  globalThis.fetch = realFetch;
+}
+
+section('The dashboard summary');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  await ingest(env, { case_no: 'API-S1', client_name: 'A Client', subject_name: 'Subject One' });
+  await ingest(env, { case_no: 'API-S2', carrier: 'Acme Mutual', claim_number: 'C-100',
+                      client_name: 'B Adjuster', subject_name: 'Subject Two' });
+
+  const sum = (await jsonOf(await call(env, '/summary', { cookie: admin }))).summary;
+  ok('the admin summary counts every case', sum.total === 2);
+  ok('it splits carrier from private work', sum.claims === 1 && sum.consumer === 1);
+  ok('it counts the unassigned queue', sum.unassigned === 2);
+  ok('new cases are counted by status', sum.new === 2);
+
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  let mine = (await jsonOf(await call(env, '/summary', { cookie: inv }))).summary;
+  ok('an investigator with nothing assigned totals zero', mine.total === 0);
+  ok('the firm-wide unassigned queue is not shown to them', !('unassigned' in mine));
+
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const dana = users.users.find(u => u.username === 'dana');
+  await call(env, '/submissions/API-S1/assign', { method: 'POST', cookie: admin, body: { user_id: dana.id } });
+
+  mine = (await jsonOf(await call(env, '/summary', { cookie: inv }))).summary;
+  ok('their summary is their caseload, not the firm book', mine.total === 1 && mine.assigned === 1);
+}
+
 section('Origin guard and headers');
 {
   const env = freshEnv();
