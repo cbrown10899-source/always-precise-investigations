@@ -985,6 +985,37 @@ section('Test cases');
   await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
   const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
 
+  /* A half-applied schema is exactly when this button gets pressed, so it must
+     not write a case it cannot finish. The first version inserted the
+     submission and then failed on case_meta, leaving an orphan behind on every
+     click — three of them appeared on the live portal that way. */
+  {
+    const { DatabaseSync } = await import('node:sqlite');
+    const bare = new DatabaseSync(':memory:');
+    bare.exec(SCHEMA);
+    bare.exec('DROP TABLE case_meta');
+    const partialEnv = { ...freshEnv(), DB: d1(bare) };
+    await bootstrapAdmin(partialEnv);
+    const padmin = (await login(partialEnv, 'trever', 'FirstAdminPass1')).cookie;
+
+    const res = await call(partialEnv, '/demo-case', { method: 'POST', cookie: padmin });
+    ok('a test case is refused when the schema is incomplete', res.status === 503, String(res.status));
+    ok('and it names the workflow that fixes it',
+       (await jsonOf(res)).error.includes('Set up the case portal'));
+    const rows = bare.prepare("SELECT COUNT(*) AS n FROM submissions WHERE case_no LIKE 'TEST-%'").get();
+    ok('NOTHING was written — no orphan case left behind', rows.n === 0, `found ${rows.n}`);
+
+    // And cleanup still works on that same broken schema, because being unable
+    // to tidy up until an unrelated workflow runs would be the wrong way round.
+    bare.prepare(`INSERT INTO submissions (case_no, kind, status, payload, created_at)
+                  VALUES ('TEST-orphan-1', 'claims', 'new', '{}', ?)`).run(new Date().toISOString());
+    const cleared = await call(partialEnv, '/demo-case/clear', { method: 'POST', cookie: padmin });
+    ok('clearing works even with tables missing', cleared.status === 200, String(cleared.status));
+    ok('and it removed the stray row', (await jsonOf(cleared)).removed === 1);
+    ok('the orphan is gone',
+       bare.prepare("SELECT COUNT(*) AS n FROM submissions WHERE case_no LIKE 'TEST-%'").get().n === 0);
+  }
+
   ok('an investigator cannot create one',
      (await call(env, '/demo-case', { method: 'POST', cookie: inv })).status === 403);
   ok('nor clear them',

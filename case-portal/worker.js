@@ -1049,6 +1049,20 @@ function demoPayload(n) {
 }
 
 async function createDemoCase(env, user) {
+  /* Check the schema BEFORE writing anything. The first version wrote the
+     submission, then failed on the case_meta insert because that table did not
+     exist yet — leaving a half-made case with no authorization behind, once per
+     click. A write that cannot be completed should not be started. */
+  const missing = await missingTables(env);
+  const needed = ['case_types', 'case_meta'].filter(t => missing.includes(t));
+  if (needed.length) {
+    return json({
+      error: 'The database is missing tables this needs. Run the "Set up the case portal" '
+           + 'workflow in GitHub Actions to apply the schema, then try again.',
+      code: 'schema_out_of_date',
+    }, 503);
+  }
+
   const stamp = nowIso().slice(0, 10).replace(/-/g, '');
   const rand = Array.from(crypto.getRandomValues(new Uint8Array(2)))
     .map(b => b.toString(16).padStart(2, '0')).join('');
@@ -1078,17 +1092,28 @@ async function createDemoCase(env, user) {
 }
 
 /* Only ever TEST- rows. The prefix is the whole safety mechanism, so it is
-   written into every statement rather than computed once and trusted. */
+   written into every statement rather than computed once and trusted.
+
+   Skips tables the database does not have. Cleaning up has to work on a
+   half-applied schema — that is precisely the state that leaves stray test
+   rows behind, and being unable to remove them until an unrelated workflow is
+   run would be the wrong way round. */
 async function clearDemoCases(env) {
   const like = 'TEST-%';
-  for (const sql of [
-    'DELETE FROM activity_log WHERE case_no LIKE ?',
-    'DELETE FROM case_reports WHERE case_no LIKE ?',
-    'DELETE FROM case_days   WHERE case_no LIKE ?',
-    'DELETE FROM case_meta   WHERE case_no LIKE ?',
-    'DELETE FROM submissions WHERE case_no LIKE ?',
-  ]) await env.DB.prepare(sql).bind(like).run();
-  return json({ ok: true });
+  const missing = await missingTables(env);
+  let removed = 0;
+  for (const [table, sql] of [
+    ['activity_log', 'DELETE FROM activity_log WHERE case_no LIKE ?'],
+    ['case_reports', 'DELETE FROM case_reports WHERE case_no LIKE ?'],
+    ['case_days',    'DELETE FROM case_days   WHERE case_no LIKE ?'],
+    ['case_meta',    'DELETE FROM case_meta   WHERE case_no LIKE ?'],
+    ['submissions',  'DELETE FROM submissions WHERE case_no LIKE ?'],
+  ]) {
+    if (missing.includes(table)) continue;
+    const r = await env.DB.prepare(sql).bind(like).run();
+    if (table === 'submissions') removed = (r.meta && r.meta.changes) || 0;
+  }
+  return json({ ok: true, removed });
 }
 
 /* ------------------------------------------------------- daily reports */
