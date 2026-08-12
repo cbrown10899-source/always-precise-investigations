@@ -48,4 +48,4 @@ PBKDF2_ITER = "25000"
 [[d1_databases]]
 binding = "DB"
 database_name = "api-case-portal"
-database_id = "PASTE_D1_DATABASE_ID"
+database_id = "5268dd8e-ba3b-46ca-aba0-437a28cc3844"
