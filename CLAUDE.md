@@ -86,8 +86,40 @@ The homepage services grid also advertises **Workers' Comp & Auto Claims**
 employers") — but unlike the other two, it has no page behind it and no link.
 That is the outstanding gap in the service-page set.
 
-## Contact
+## Contact and intake
 
 Both forms (homepage and `intake/`) post to Web3Forms. The access key lives in
 the page source; it is a public key by design, but it is the only thing making
 the forms deliver, so do not strip it.
+
+`intake/` is a single-file wizard with **two paths** off the service step:
+
+- **Consumer** — surveillance or process serving. Six steps, ends in a Venmo
+  or Cash App payment for the retainer or flat fee.
+- **Carrier** — insurance claim assignment. Seven steps: an extra claim-details
+  step (carrier/TPA, claim number, policy, claim type, date of loss, adjuster,
+  defense counsel, prior surveillance), claimant-specific wording on the
+  subject and scope steps, carrier terms in place of the consumer agreement,
+  and a billing step instead of payment. Nothing is charged at assignment.
+
+The step list is chosen by `steps()`; both paths share the first two steps,
+which is what makes switching service mid-flow safe. **No claims rate is
+published in the form** — carrier work is invoiced per fee schedule and
+confirmed in writing, so there is no number to get wrong or to leak.
+
+Tests, which intercept form delivery so a run never reaches the firm's inbox:
+
+```bash
+node intake/test-intake.mjs      # needs Playwright; skips cleanly without it
+node visitor-alerts/test-worker.mjs
+```
+
+Note the payment handles in `FIRM` are still personal accounts — the source
+comment flags them to be swapped for business accounts before client use.
+
+## The /watch/ dashboard
+
+`watch/` is a private, passcode- and Face ID-gated dashboard showing live site
+visitors, installable as a PWA. It is backed by the `api-visitor-alerts`
+Worker in `visitor-alerts/` and is deliberately `noindex` and absent from
+`robots.txt` — keep it that way. `beacon.js` on each page is what feeds it.
