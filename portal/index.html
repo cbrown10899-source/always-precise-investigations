@@ -88,6 +88,48 @@
   .sheet-s{font-size:.88rem;}
   .sheet-go{margin-top:10px;font-size:.78rem;font-weight:700;color:var(--teal);}
   .sheet-note{font-size:.8rem;color:var(--muted);font-weight:400;max-width:46ch;}
+  /* case workspace — built to be usable from a phone in a parked car */
+  .wstabs{display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line);
+    margin:0 0 16px;padding-bottom:0;-webkit-overflow-scrolling:touch;}
+  .wstabs button{flex:none;font:inherit;font-size:.88rem;font-weight:700;background:none;border:0;
+    border-bottom:2px solid transparent;color:var(--muted);padding:9px 12px;cursor:pointer;white-space:nowrap;}
+  .wstabs button.on{color:var(--navy);border-bottom-color:var(--teal);}
+  .wspanel{min-height:120px;}
+  .quick{background:#f7f9fb;border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:16px;}
+  .quick .btn{width:100%;}
+  .qgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(84px,1fr));gap:6px;margin-bottom:12px;}
+  .qk{position:relative;}
+  .qk input{position:absolute;opacity:0;pointer-events:none;}
+  .qk span{display:block;text-align:center;font-size:.8rem;font-weight:700;padding:10px 4px;
+    border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer;}
+  .qk input:checked + span{border-color:var(--teal);background:#eaf5f7;color:var(--navy);}
+  .qk input:focus-visible + span{outline:2px solid var(--teal);}
+  .opt{font-weight:400;color:var(--muted);font-size:.78rem;}
+  .dayon{background:#eaf5f7;border:1px solid #b7dbe3;border-radius:8px;padding:10px 12px;
+    font-size:.88rem;margin-bottom:12px;}
+  .meter{height:8px;border-radius:999px;background:#dbe6ea;overflow:hidden;margin:8px 0 2px;}
+  .meter i{display:block;height:100%;background:var(--teal);}
+  .meter.warn i{background:#d19a1f;} .meter.high i{background:#c9711f;} .meter.over i{background:#b23a2c;}
+  .warnline{font-size:.85rem;color:#7a5410;background:#fdf7ec;border:1px solid #e8cf9e;
+    border-radius:8px;padding:8px 10px;margin-top:8px;}
+  .warnline.over{color:#8a2318;background:#fdecea;border-color:#f5c6c0;}
+  .tl-day{font-size:.78rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+    color:var(--muted);margin:16px 0 6px;}
+  .tl{list-style:none;margin:0;padding:0;border-left:2px solid var(--line);}
+  .tl-i{display:flex;gap:10px;padding:8px 0 8px 12px;position:relative;}
+  .tl-i::before{content:"";position:absolute;left:-5px;top:14px;width:8px;height:8px;
+    border-radius:50%;background:var(--teal);}
+  .tl-t{flex:none;width:64px;font-family:ui-monospace,monospace;font-size:.82rem;font-weight:700;color:var(--navy);}
+  .tl-b{flex:1;min-width:0;}
+  .tl-d{font-size:.92rem;}
+  .tl-m{font-size:.78rem;color:var(--muted);}
+  .tl-n{font-size:.78rem;color:#7a5410;}
+  @media(max-width:560px){
+    .wspanel .two{grid-template-columns:1fr;}
+    .tl-t{width:52px;}
+    dialog{width:100%;max-width:100%;border-radius:0;margin:0;height:100%;max-height:100%;}
+    .dlg{padding:16px;}
+  }
   .ex-note{background:#fdf7ec;border:1px solid #e8cf9e;color:#6b4f12;border-radius:8px;
     padding:11px 14px;font-size:.88rem;margin-bottom:14px;}
   .tag.ex-tag{background:#f3e2bd;color:#6b4f12;margin-left:6px;}
@@ -144,6 +186,8 @@ const $ = id => document.getElementById(id);
 const app = $("app");
 let ME = null, TAB = "cases", CASES = [], USERS = [], INVITES = [], TOTAL = 0, FILTER = "", LAST_LINK = "", LAST_EMAILED = false;
 let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
+// The open case workspace: which case, which tab, its loaded data, last error.
+let WS = null, WS_CASE = null, WS_TAB = "overview", WS_ERR = "";
 /* Examples show themselves on a first sign-in and can be recalled later. */
 let SHOW_EXAMPLE = false;
 
@@ -153,7 +197,11 @@ function when(iso){
   const d = new Date(iso);
   return isNaN(d) ? esc(iso) : d.toLocaleString([], {month:"short", day:"numeric", year:"numeric", hour:"numeric", minute:"2-digit"});
 }
-const label = s => ({new:"New", assigned:"Assigned", in_progress:"In progress", closed:"Closed"}[s] || s);
+const label = s => ({
+  new:"New", assigned:"Assigned", in_progress:"In progress", closed:"Closed",
+  activity:"Activity", photo:"Photo", video:"Video", location:"Location",
+  vehicle:"Vehicle", note:"Note", mileage:"Mileage", expense:"Expense",
+}[s] || s);
 
 /* Only ever render an image the browser will treat as image data. Anything
    else in that field came from a public form and is not to be trusted. */
@@ -585,16 +633,219 @@ async function doLogout(){
   ME = null; CASES = []; USERS = []; INVITES = []; TAB = "cases"; LAST_LINK = ""; LAST_EMAILED = false; paint();
 }
 
-async function openCase(caseNo){
-  let s;
+/* The case workspace. A case is not a record to read, it is work in progress,
+   so opening one lands on tabs rather than one long detail list. Only the tabs
+   that do something today are shown — an empty "Evidence" tab would promise a
+   feature that is not there. */
+async function openCase(caseNo, tab){
+  WS_CASE = caseNo; WS_TAB = tab || "overview"; WS_ERR = "";
   if(isExample(caseNo)){
-    // Held in the page, so this never reaches the API or the database.
-    s = examplesFor(ME.role).find(c => c.case_no === caseNo);
-    if(!s) return;
-  }else{
-    try{ s = (await api("/submissions/" + encodeURIComponent(caseNo))).submission; }
-    catch(e){ alert(e.message); return; }
+    WS = null;   // examples are page-held demo data; they have no live workspace
+    return paintCase();
   }
+  try{
+    const [sub, ws] = await Promise.all([
+      api("/submissions/" + encodeURIComponent(caseNo)),
+      api("/cases/" + encodeURIComponent(caseNo) + "/workspace"),
+    ]);
+    WS = { ...ws, submission: sub.submission };
+  }catch(e){ alert(e.message); return; }
+  paintCase();
+}
+
+async function reloadWorkspace(){
+  if(!WS_CASE || isExample(WS_CASE)) return;
+  try{
+    const ws = await api("/cases/" + encodeURIComponent(WS_CASE) + "/workspace");
+    WS = { ...ws, submission: WS ? WS.submission : null };
+  }catch(e){ WS_ERR = e.message; }
+  paintCase();
+}
+
+function wsTabs(){
+  const admin = ME.role === "admin";
+  const t = [["overview","Overview"], ["subject","Subject"], ["activity","Activity log"], ["field","Field work"]];
+  // Authorization is the insurance panel; it appears once there is one, and
+  // always for an admin so it can be set.
+  if(admin || (WS && WS.authorization && WS.authorization.authorized_hours != null)) t.push(["auth","Authorization"]);
+  if(admin) t.push(["assign","Assignment"]);
+  return t;
+}
+
+function authPanel(a, admin){
+  if(!a) return "";
+  const bar = (used, total, pct, level) => {
+    if(total == null) return "";
+    const w = Math.max(0, Math.min(100, pct || 0));
+    const tone = level >= 100 ? "over" : level >= 90 ? "high" : level >= 75 ? "warn" : "";
+    return `<div class="meter ${tone}"><i style="width:${w}%"></i></div>`;
+  };
+  const hoursSet = a.authorized_hours != null;
+  return `<div class="feebox">
+    ${hoursSet ? `
+      <div class="row"><span>Authorized</span><b>${esc(a.authorized_hours)} hours</b></div>
+      <div class="row"><span>Used</span><b>${esc(a.hours_used)} hours</b></div>
+      <div class="row"><span>Remaining</span><b>${esc(a.hours_remaining)} hours</b></div>
+      ${bar(a.hours_used, a.authorized_hours, a.percent_used, a.warn_level)}
+      ${a.warn_level != null ? `<div class="warnline ${a.warn_level >= 100 ? "over" : ""}">
+         ${a.warn_level >= 100
+           ? "<b>Authorization is used up.</b> Request more before any further work."
+           : `<b>${esc(a.percent_used)}% of the authorization is used.</b> Past the ${esc(a.warn_level)}% mark.`}
+       </div>` : ""}`
+      : `<div class="row"><span>Authorized hours</span><span>Not set</span></div>`}
+    ${admin && a.authorized_budget != null ? `
+      <div class="row" style="border-top:1px solid #cfe6ec;margin-top:8px;padding-top:8px">
+        <span>Authorized budget</span><b>$${esc(a.authorized_budget.toLocaleString())}</b></div>
+      <div class="row"><span>Billable so far</span><b>$${esc(a.billable_so_far.toLocaleString())}</b></div>
+      <div class="row"><span>Remaining</span><b>$${esc(a.budget_remaining.toLocaleString())}</b></div>
+      <div class="row"><span style="color:var(--muted);font-size:.82rem">Billed at $${esc(a.billed_at_rate)}/hr</span><span></span></div>` : ""}
+    ${a.miles_total ? `<div class="row"><span>Miles logged</span><span>${esc(a.miles_total)}</span></div>` : ""}
+  </div>`;
+}
+
+function activityPanel(){
+  const a = (WS && WS.activity) || [];
+  const open = WS && WS.open_day;
+  const today = new Date().toISOString().slice(0,10);
+  const now = new Date().toTimeString().slice(0,5);
+
+  const quick = ["activity","photo","video","location","vehicle","note","mileage","expense"];
+  const byDay = {};
+  for(const e of a){ (byDay[e.at_date] = byDay[e.at_date] || []).push(e); }
+
+  return `
+    ${open ? `<div class="dayon"><b>Investigation day running</b> &mdash; started ${esc(open.start_time)} on ${esc(open.day_date)}.
+        Entries are attached to it automatically.</div>`
+      : `<div class="note">No investigation day is running. You can still log entries; starting a day
+         is what totals the hours and mileage.</div>`}
+
+    <form class="quick" data-act="addActivity">
+      <div class="qgrid">
+        ${quick.map(k => `<label class="qk"><input type="radio" name="qkind" value="${k}" ${k==="activity"?"checked":""}><span>${esc(label(k))}</span></label>`).join("")}
+      </div>
+      <div class="two">
+        <label class="f"><span>Date</span><input id="a_date" type="date" value="${today}"></label>
+        <label class="f"><span>Time</span><input id="a_time" type="time" value="${now}"></label>
+      </div>
+      <label class="f"><span>What happened</span>
+        <textarea id="a_desc" rows="2" placeholder="e.g. Subject departed residence in the white GMC Sierra."></textarea></label>
+      <div class="two">
+        <label class="f"><span>Location <span class="opt">optional</span></span><input id="a_loc" placeholder="e.g. 2214 Old Forest Rd"></label>
+        <label class="f"><span>Vehicle <span class="opt">optional</span></span><input id="a_veh" placeholder="e.g. White GMC Sierra XKT-2209"></label>
+      </div>
+      <label class="f"><span>Internal note <span class="opt">optional, never client-facing</span></span><input id="a_note"></label>
+      <button class="btn" type="submit">Add to the log</button>
+      ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+    </form>
+
+    ${a.length ? Object.keys(byDay).map(d => `
+      <div class="tl-day">${esc(when(d + "T12:00:00Z"))}</div>
+      <ol class="tl">
+        ${byDay[d].map(e => `<li class="tl-i">
+          <div class="tl-t">${esc(e.at_time)}</div>
+          <div class="tl-b">
+            <span class="tag ${esc(e.kind)}">${esc(label(e.kind))}</span>
+            <div class="tl-d">${esc(e.description)}</div>
+            ${e.location ? `<div class="tl-m">at ${esc(e.location)}</div>` : ""}
+            ${e.vehicle ? `<div class="tl-m">vehicle: ${esc(e.vehicle)}</div>` : ""}
+            ${e.internal_note ? `<div class="tl-n">internal: ${esc(e.internal_note)}</div>` : ""}
+            <div class="tl-m">${esc(e.investigator || "")}${e.edited_at ? " · edited" : ""}</div>
+          </div></li>`).join("")}
+      </ol>`).join("")
+      : `<div class="empty">Nothing logged on this case yet.</div>`}`;
+}
+
+function fieldPanel(){
+  const open = WS && WS.open_day;
+  const days = (WS && WS.days) || [];
+  const today = new Date().toISOString().slice(0,10);
+  const now = new Date().toTimeString().slice(0,5);
+  return `
+    ${open
+      ? `<form class="quick" data-act="endDay">
+           <div class="dayon"><b>Day running since ${esc(open.start_time)}</b> on ${esc(open.day_date)}${
+             open.start_mileage != null ? ` &middot; started at ${esc(open.start_mileage)} miles` : ""}.</div>
+           <div class="two">
+             <label class="f"><span>End time</span><input id="d_end" type="time" value="${now}"></label>
+             <label class="f"><span>Ending mileage <span class="opt">optional</span></span><input id="d_emiles" inputmode="decimal"></label>
+           </div>
+           <label class="f"><span>Summary of the day <span class="opt">optional</span></span>
+             <textarea id="d_sum" rows="3" placeholder="What the day established, in your own words."></textarea></label>
+           <button class="btn danger" type="submit">End investigation day</button>
+           ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+         </form>`
+      : `<form class="quick" data-act="startDay">
+           <div class="two">
+             <label class="f"><span>Date</span><input id="d_date" type="date" value="${today}"></label>
+             <label class="f"><span>Start time</span><input id="d_start" type="time" value="${now}"></label>
+           </div>
+           <label class="f"><span>Beginning mileage <span class="opt">optional</span></span><input id="d_smiles" inputmode="decimal"></label>
+           <button class="btn" type="submit">Start investigation</button>
+           ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+         </form>`}
+    <h3 style="margin:18px 0 6px;font-size:1rem">Days on this case</h3>
+    ${days.length ? `<div style="overflow-x:auto"><table>
+      <thead><tr><th>Date</th><th>Hours</th><th class="hide">Miles</th><th class="hide">Investigator</th></tr></thead>
+      <tbody>${days.map(d => `<tr>
+        <td>${esc(d.day_date)}<div class="tl-m">${esc(d.start_time)}${d.end_time ? "–" + esc(d.end_time) : " · running"}</div></td>
+        <td>${d.hours != null ? esc(d.hours) : "—"}</td>
+        <td class="hide">${d.miles != null ? esc(d.miles) : "—"}</td>
+        <td class="hide">${esc(d.investigator || "")}</td>
+      </tr>${d.summary ? `<tr><td colspan="4" class="tl-n">${esc(d.summary)}</td></tr>` : ""}`).join("")}
+      </tbody></table></div>`
+      : `<div class="empty">No investigation days recorded yet.</div>`}`;
+}
+
+function authAdminForm(){
+  const a = (WS && WS.authorization) || {};
+  const types = (WS && WS.case_types) || [];
+  const ins = types.filter(t => t.side === "insurance"), pri = types.filter(t => t.side === "private");
+  const opt = t => `<option value="${t.id}" ${t.id === a.case_type_id ? "selected" : ""}>${esc(t.label)}</option>`;
+  return `<form class="quick" data-act="saveMeta">
+    <label class="f"><span>Case type</span>
+      <select id="m_type">
+        <option value="">— not set —</option>
+        <optgroup label="Insurance">${ins.map(opt).join("")}</optgroup>
+        <optgroup label="Private">${pri.map(opt).join("")}</optgroup>
+      </select></label>
+    <div class="two">
+      <label class="f"><span>Authorized hours</span><input id="m_hours" inputmode="decimal" value="${a.authorized_hours ?? ""}"></label>
+      <label class="f"><span>Authorized budget</span><input id="m_budget" inputmode="decimal" value="${a.authorized_budget ?? ""}"></label>
+    </div>
+    <button class="btn" type="submit">Save authorization</button>
+    ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+  </form>`;
+}
+
+function paintCase(){
+  const admin = ME.role === "admin";
+  if(isExample(WS_CASE)) return paintExampleCase();
+  if(!WS) return;
+  const s = WS.submission || {};
+  const a = WS.authorization || {};
+
+  const panel =
+      WS_TAB === "activity" ? activityPanel()
+    : WS_TAB === "field"    ? fieldPanel()
+    : WS_TAB === "auth"     ? authPanel(a, admin) + (admin ? authAdminForm() : "")
+    : WS_TAB === "assign"   ? assignPanel(s)
+    : WS_TAB === "subject"  ? detailList(s, "subject")
+    :                         detailList(s, "overview") + (a.authorized_hours != null ? authPanel(a, admin) : "");
+
+  $("dlgBody").innerHTML = `
+    <h2>${esc(a.case_type || (s.kind === "claims" ? "Claim assignment" : "Client intake"))}</h2>
+    <div class="case">${esc(WS_CASE)}</div>
+    <div class="wstabs">${wsTabs().map(([k, lbl]) =>
+      `<button class="${WS_TAB === k ? "on" : ""}" data-act="wsTab" data-tab="${k}">${esc(lbl)}</button>`).join("")}</div>
+    <div class="wspanel">${panel}</div>`;
+  if(!$("dlg").open) $("dlg").showModal();
+}
+
+async function openExampleCase(caseNo){ WS_CASE = caseNo; WS = null; paintExampleCase(); }
+
+function paintExampleCase(){
+  const s = examplesFor(ME.role).find(c => c.case_no === WS_CASE);
+  if(!s) return;
   const p = s.payload || {};
   const row = (k, v) => v ? `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>` : "";
   const claim = s.kind === "claims";
@@ -652,7 +903,111 @@ async function openCase(caseNo){
     </dl>
     ${sig ? `<div><div style="font-size:.8rem;color:var(--muted)">Signature</div><img class="sig" src="${esc(sig)}" alt="signature"></div>` : ""}
     ${controls}`;
-  $("dlg").showModal();
+  if(!$("dlg").open) $("dlg").showModal();
+}
+
+/* The intake detail, split so the workspace can show what the field needs
+   (subject) apart from what the office needs (everything). Both read from the
+   same submission — the Worker has already removed whatever this role may not
+   see, so nothing here decides that. */
+function detailList(s, mode){
+  const p = s.payload || {};
+  const row = (k, v) => v ? `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>` : "";
+  const claim = s.kind === "claims";
+  const sig = safeImage(p.signature);
+
+  if(mode === "subject"){
+    return `<dl class="detail">
+      ${row(claim ? "Claimant" : "Subject", p.subject_name)}${row("Address", p.subject_address)}
+      ${row("Description", p.subject_description)}
+      ${row(claim ? "Injury & restrictions" : "Relationship", p.subject_relationship)}
+      ${row("Prior surveillance", p.prior_surveillance)}
+      ${row(claim ? "Scope" : "Objective", p.objective)}
+      ${row("Permitted days", p.permitted_days)}${row("Permitted times", p.permitted_times)}
+      ${row("Weekend", p.weekend_authorized)}${row("Geographic limits", p.geographic_limits)}
+      ${row("Field notes", p.notes)}
+    </dl>`;
+  }
+  return `<dl class="detail">
+    ${claim ? `${row("Carrier / TPA", p.carrier)}${row("Claim number", p.claim_number)}${row("Policy number", p.policy_number)}
+               ${row("Claim type", p.claim_type)}${row("Date of loss", p.date_of_loss)}${row("Adjuster", p.adjuster)}
+               ${row("Adjuster email", p.adjuster_email)}${row("Adjuster phone", p.adjuster_phone)}
+               ${row("Defense counsel", p.defense_counsel)}` : ""}
+    ${row(claim ? "Assigning contact" : "Client", p.client_name)}${row("Phone", p.client_phone)}${row("Email", p.client_email)}
+    ${claim ? "" : `${row("Address", p.client_address)}${row("Best time", p.best_time)}`}
+    ${row(claim ? "Claimant" : "Subject", p.subject_name)}
+    ${row(claim ? "Scope" : "Objective", p.objective)}
+    ${row("Authorized hours", p.authorized_hours)}${row("Not to exceed", p.not_to_exceed)}
+    ${row("Requested start", p.start_date)}${row("Priority", p.priority)}
+    ${row(claim ? "Deadline" : "Timeline", p.timeline)}${row("Attachments", p.attachments)}
+    ${claim ? `${row("Billing reference", p.billing_reference)}${row("Invoices to", p.billing_email)}${row("Billing notes", p.billing_notes)}` : ""}
+    ${row(claim ? "Authorized by" : "Signed by", p.signed_name)}
+    ${row("Received", when(s.created_at))}
+  </dl>
+  ${sig ? `<div><div style="font-size:.8rem;color:var(--muted)">Signature</div><img class="sig" src="${esc(sig)}" alt="signature"></div>` : ""}`;
+}
+
+function assignPanel(s){
+  return `<div class="actions">
+      <label class="f"><span>Assigned to</span>
+        <select id="asg">
+          <option value="">— unassigned —</option>
+          ${USERS.filter(u => u.active).map(u => `<option value="${u.id}" ${u.id === s.assigned_to ? "selected" : ""}>${esc(u.display_name || u.username)}</option>`).join("")}
+        </select></label>
+      <label class="f"><span>Status</span>
+        <select id="sts">${["new","assigned","in_progress","closed"].map(v => `<option value="${v}" ${v === s.status ? "selected" : ""}>${esc(label(v))}</option>`).join("")}</select></label>
+      <button class="btn" data-act="saveCase" data-case="${esc(s.case_no)}">Save</button>
+      <div class="err" id="derr" style="width:100%"></div>
+    </div>`;
+}
+
+/* ---- workspace actions ---- */
+
+async function addActivityEntry(){
+  const kindEl = document.querySelector('input[name="qkind"]:checked');
+  WS_ERR = "";
+  try{
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/activity`, {method:"POST", body:{
+      kind: kindEl ? kindEl.value : "activity",
+      at_date: $("a_date").value, at_time: $("a_time").value,
+      description: $("a_desc").value,
+      location: $("a_loc").value, vehicle: $("a_veh").value,
+      internal_note: $("a_note").value,
+    }});
+  }catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+async function startInvestigationDay(){
+  WS_ERR = "";
+  try{
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/day/start`, {method:"POST", body:{
+      day_date: $("d_date").value, start_time: $("d_start").value, start_mileage: $("d_smiles").value,
+    }});
+  }catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+async function endInvestigationDay(){
+  WS_ERR = "";
+  try{
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/day/end`, {method:"POST", body:{
+      end_time: $("d_end").value, end_mileage: $("d_emiles").value, summary: $("d_sum").value,
+    }});
+  }catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+async function saveCaseMeta(){
+  WS_ERR = "";
+  try{
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/meta`, {method:"POST", body:{
+      case_type_id: $("m_type").value,
+      authorized_hours: $("m_hours").value,
+      authorized_budget: $("m_budget").value,
+    }});
+  }catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
 }
 
 async function saveCase(caseNo){
@@ -735,6 +1090,7 @@ document.addEventListener("click", ev => {
   else if(act === "saveCase"){ saveCase(el.dataset.case); }
   else if(act === "toggleActive"){ toggleActive(Number(el.dataset.id), Number(el.dataset.active)); }
   else if(act === "revokeInvite"){ revokeInvite(Number(el.dataset.id)); }
+  else if(act === "wsTab"){ WS_TAB = el.dataset.tab; WS_ERR = ""; paintCase(); }
   else if(act === "openSheet"){
     OPEN_SHEET = OPEN_SHEET === el.dataset.sheet ? null : el.dataset.sheet;
     SHEET_MSG = ""; paint();
@@ -758,9 +1114,14 @@ document.addEventListener("submit", ev => {
   const el = ev.target.closest("[data-act]");
   if(!el) return;
   ev.preventDefault();
-  if(el.dataset.act === "login") doLogin();
-  else if(el.dataset.act === "invite") doInvite();
-  else if(el.dataset.act === "accept") doAccept(new URLSearchParams(location.search).get("invite") || "");
+  const a = el.dataset.act;
+  if(a === "login") doLogin();
+  else if(a === "invite") doInvite();
+  else if(a === "accept") doAccept(new URLSearchParams(location.search).get("invite") || "");
+  else if(a === "addActivity") addActivityEntry();
+  else if(a === "startDay") startInvestigationDay();
+  else if(a === "endDay") endInvestigationDay();
+  else if(a === "saveMeta") saveCaseMeta();
 });
 
 document.addEventListener("input", ev => {

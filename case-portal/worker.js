@@ -720,6 +720,285 @@ async function setStatus(request, env, caseNo) {
   return json({ ok: true, case_no: caseNo, status });
 }
 
+/* ------------------------------------------------------- case workspace */
+
+/* THE ACCESS RULE for everything in the workspace. An investigator reaches a
+   case only when it is assigned to them — checked here, against the database,
+   on every call. Changing the case number in a URL must not be a way in, so no
+   workspace route trusts a caller's word about which case they are allowed to
+   open. Returns the submission row, or null. */
+async function caseFor(env, user, caseNo) {
+  const row = await env.DB.prepare(
+    'SELECT case_no, kind, status, assigned_to FROM submissions WHERE case_no = ?')
+    .bind(caseNo).first();
+  if (!row) return null;
+  if (user.role !== 'admin' && row.assigned_to !== user.id) return null;
+  return row;
+}
+
+async function listCaseTypes(env) {
+  const { results } = await env.DB.prepare(
+    'SELECT id, label, side, active FROM case_types WHERE active = 1 ORDER BY side, label').all();
+  return results || [];
+}
+
+async function configValue(env, key, fallback) {
+  const row = await env.DB.prepare('SELECT value FROM app_config WHERE key = ?').bind(key).first();
+  return row && row.value != null ? row.value : fallback;
+}
+
+/* Hours and budget against what was authorized. Hours come from completed
+   investigation days; nothing is estimated from an open day, because a day
+   still running has no total yet.
+
+   Thresholds are configuration (app_config), not constants sprinkled through
+   the code — 75/90/100 today, whatever the office wants tomorrow. */
+async function authorizationFor(env, caseNo, forAdmin) {
+  const meta = await env.DB.prepare(
+    `SELECT m.authorized_hours, m.authorized_budget, m.case_type_id, t.label AS case_type, t.side
+       FROM case_meta m LEFT JOIN case_types t ON t.id = m.case_type_id
+      WHERE m.case_no = ?`).bind(caseNo).first();
+
+  const used = await env.DB.prepare(
+    'SELECT COALESCE(SUM(hours), 0) AS h, COALESCE(SUM(miles), 0) AS m FROM case_days WHERE case_no = ?')
+    .bind(caseNo).first();
+  const hoursUsed = Math.round((Number(used && used.h) || 0) * 100) / 100;
+
+  const thresholds = String(await configValue(env, 'auth_warn_thresholds', '75,90,100'))
+    .split(',').map(n => parseFloat(n)).filter(n => Number.isFinite(n)).sort((a, b) => a - b);
+
+  const authHours = meta && meta.authorized_hours != null ? Number(meta.authorized_hours) : null;
+  const pct = authHours && authHours > 0 ? Math.round((hoursUsed / authHours) * 1000) / 10 : null;
+  // The highest threshold this case has reached, or null while it is clear.
+  const level = pct == null ? null
+    : thresholds.filter(t => pct >= t).pop() ?? null;
+
+  const out = {
+    case_type: meta ? meta.case_type : null,
+    case_type_id: meta ? meta.case_type_id : null,
+    side: meta ? meta.side : null,
+    authorized_hours: authHours,
+    hours_used: hoursUsed,
+    hours_remaining: authHours == null ? null : Math.round((authHours - hoursUsed) * 100) / 100,
+    percent_used: pct,
+    warn_at: thresholds,
+    warn_level: level,
+    miles_total: Math.round((Number(used && used.m) || 0) * 10) / 10,
+  };
+
+  // Money is commercial. An investigator is told the hours they are working to
+  // and nothing about what the case is worth.
+  if (forAdmin) {
+    const budget = meta && meta.authorized_budget != null ? Number(meta.authorized_budget) : null;
+    const billable = Math.round(hoursUsed * RATES.surveillance.standard * 100) / 100;
+    out.authorized_budget = budget;
+    out.billable_so_far = billable;
+    out.budget_remaining = budget == null ? null : Math.round((budget - billable) * 100) / 100;
+    out.billed_at_rate = RATES.surveillance.standard;
+  }
+  return out;
+}
+
+async function caseWorkspace(env, user, caseNo) {
+  const row = await caseFor(env, user, caseNo);
+  if (!row) return json({ error: 'not found' }, 404);
+  const admin = user.role === 'admin';
+
+  const { results: activity } = await env.DB.prepare(
+    `SELECT a.id, a.day_id, a.at_date, a.at_time, a.kind, a.description, a.location,
+            a.vehicle, a.internal_note, a.edited_at, u.display_name AS investigator
+       FROM activity_log a LEFT JOIN users u ON u.id = a.investigator_id
+      WHERE a.case_no = ?
+      ORDER BY a.at_date DESC, a.at_time DESC, a.id DESC
+      LIMIT 500`).bind(caseNo).all();
+
+  const { results: days } = await env.DB.prepare(
+    `SELECT d.id, d.day_date, d.start_time, d.end_time, d.start_mileage, d.end_mileage,
+            d.hours, d.miles, d.summary, u.display_name AS investigator, d.investigator_id
+       FROM case_days d LEFT JOIN users u ON u.id = d.investigator_id
+      WHERE d.case_no = ? ORDER BY d.day_date DESC, d.id DESC LIMIT 100`).bind(caseNo).all();
+
+  // The day this caller currently has running, if any — what turns the button
+  // into END INVESTIGATION DAY.
+  const openDay = await env.DB.prepare(
+    `SELECT id, day_date, start_time, start_mileage FROM case_days
+      WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL
+      ORDER BY id DESC LIMIT 1`).bind(caseNo, user.id).first();
+
+  return json({
+    case_no: row.case_no,
+    kind: row.kind,
+    status: row.status,
+    authorization: await authorizationFor(env, caseNo, admin),
+    case_types: admin ? await listCaseTypes(env) : [],
+    activity: activity || [],
+    days: days || [],
+    open_day: openDay || null,
+  });
+}
+
+async function setCaseMeta(request, env, caseNo) {
+  const body = await readJson(request);
+  const exists = await env.DB.prepare('SELECT 1 AS x FROM submissions WHERE case_no = ?').bind(caseNo).first();
+  if (!exists) return json({ error: 'not found' }, 404);
+
+  const num = v => {
+    if (v === null || v === undefined || String(v).trim() === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : undefined;   // undefined = reject
+  };
+  const hours = num(body.authorized_hours);
+  const budget = num(body.authorized_budget);
+  if (hours === undefined || budget === undefined) {
+    return json({ error: 'Hours and budget must be numbers, or left blank.' }, 400);
+  }
+  let typeId = null;
+  if (body.case_type_id !== null && body.case_type_id !== undefined && String(body.case_type_id) !== '') {
+    typeId = parseInt(body.case_type_id, 10);
+    if (!Number.isFinite(typeId)) return json({ error: 'invalid case type' }, 400);
+    const t = await env.DB.prepare('SELECT 1 AS x FROM case_types WHERE id = ? AND active = 1').bind(typeId).first();
+    if (!t) return json({ error: 'no such case type' }, 400);
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO case_meta (case_no, case_type_id, authorized_hours, authorized_budget, updated_by, updated_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+     ON CONFLICT(case_no) DO UPDATE SET
+       case_type_id = ?2, authorized_hours = ?3, authorized_budget = ?4,
+       updated_by = ?5, updated_at = ?6`)
+    .bind(caseNo, typeId, hours, budget, null, nowIso()).run();
+
+  return json({ ok: true, authorization: await authorizationFor(env, caseNo, true) });
+}
+
+/* ---- the investigation day ---- */
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+async function startDay(request, env, user, caseNo) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const body = await readJson(request);
+  const date = String(body.day_date || '');
+  const time = String(body.start_time || '');
+  if (!DATE_RE.test(date) || !TIME_RE.test(time)) {
+    return json({ error: 'A date and a start time are both needed.' }, 400);
+  }
+  const open = await env.DB.prepare(
+    'SELECT id FROM case_days WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL')
+    .bind(caseNo, user.id).first();
+  if (open) return json({ error: 'You already have a day running on this case.', day_id: open.id }, 409);
+
+  const miles = body.start_mileage === '' || body.start_mileage == null ? null : Number(body.start_mileage);
+  if (miles !== null && !(Number.isFinite(miles) && miles >= 0)) {
+    return json({ error: 'Beginning mileage must be a number.' }, 400);
+  }
+  const res = await env.DB.prepare(
+    `INSERT INTO case_days (case_no, investigator_id, day_date, start_time, start_mileage, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`).bind(caseNo, user.id, date, time, miles, nowIso()).run();
+  return json({ ok: true, day_id: res.meta ? res.meta.last_row_id : null }, 201);
+}
+
+async function endDay(request, env, user, caseNo) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const body = await readJson(request);
+  const time = String(body.end_time || '');
+  if (!TIME_RE.test(time)) return json({ error: 'An end time is needed.' }, 400);
+
+  const day = await env.DB.prepare(
+    `SELECT id, day_date, start_time, start_mileage FROM case_days
+      WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL ORDER BY id DESC LIMIT 1`)
+    .bind(caseNo, user.id).first();
+  if (!day) return json({ error: 'No investigation day is running on this case.' }, 409);
+
+  const endMiles = body.end_mileage === '' || body.end_mileage == null ? null : Number(body.end_mileage);
+  if (endMiles !== null && !(Number.isFinite(endMiles) && endMiles >= 0)) {
+    return json({ error: 'Ending mileage must be a number.' }, 400);
+  }
+  if (endMiles !== null && day.start_mileage != null && endMiles < day.start_mileage) {
+    return json({ error: 'Ending mileage is lower than the beginning mileage.' }, 400);
+  }
+
+  // Minutes across the clock. A day that runs past midnight is treated as
+  // ending the next day rather than as a negative span.
+  const mins = t => (parseInt(t.slice(0, 2), 10) * 60) + parseInt(t.slice(3, 5), 10);
+  let span = mins(time) - mins(day.start_time);
+  if (span < 0) span += 24 * 60;
+  const hours = Math.round((span / 60) * 100) / 100;
+  const miles = endMiles != null && day.start_mileage != null
+    ? Math.round((endMiles - day.start_mileage) * 10) / 10 : null;
+
+  await env.DB.prepare(
+    `UPDATE case_days SET end_time = ?, end_mileage = ?, hours = ?, miles = ?,
+            summary = ?, ended_at = ? WHERE id = ?`)
+    .bind(time, endMiles, hours, miles, String(body.summary || '').slice(0, 4000), nowIso(), day.id).run();
+
+  return json({ ok: true, day_id: day.id, hours, miles,
+                authorization: await authorizationFor(env, caseNo, user.role === 'admin') });
+}
+
+/* ---- the activity log ---- */
+
+const ACTIVITY_KINDS = ['activity', 'photo', 'video', 'location', 'vehicle', 'note', 'mileage', 'expense'];
+
+async function addActivity(request, env, user, caseNo) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const body = await readJson(request);
+  const date = String(body.at_date || '');
+  const time = String(body.at_time || '');
+  if (!DATE_RE.test(date) || !TIME_RE.test(time)) {
+    return json({ error: 'A date and time are both needed.' }, 400);
+  }
+  const kind = ACTIVITY_KINDS.includes(String(body.kind)) ? String(body.kind) : 'activity';
+  const description = String(body.description || '').trim().slice(0, 4000);
+  if (!description) return json({ error: 'Describe what happened.' }, 400);
+
+  // Attach to the caller's running day when there is one, so the timeline and
+  // the day's totals stay tied together without the field asking.
+  const open = await env.DB.prepare(
+    'SELECT id FROM case_days WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL ORDER BY id DESC LIMIT 1')
+    .bind(caseNo, user.id).first();
+
+  const res = await env.DB.prepare(
+    `INSERT INTO activity_log
+       (case_no, day_id, investigator_id, at_date, at_time, kind, description,
+        location, vehicle, internal_note, created_at, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(caseNo, open ? open.id : null, user.id, date, time, kind, description,
+          String(body.location || '').slice(0, 300) || null,
+          String(body.vehicle || '').slice(0, 300) || null,
+          String(body.internal_note || '').slice(0, 2000) || null,
+          nowIso(), user.id).run();
+
+  return json({ ok: true, id: res.meta ? res.meta.last_row_id : null }, 201);
+}
+
+/* Edits are stamped, never silent. There is deliberately no delete route: an
+   investigative timeline that can be quietly erased is worth less in a
+   hearing than one that shows its corrections. */
+async function editActivity(request, env, user, caseNo, id) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const row = await env.DB.prepare(
+    'SELECT id, investigator_id FROM activity_log WHERE id = ? AND case_no = ?').bind(id, caseNo).first();
+  if (!row) return json({ error: 'not found' }, 404);
+  if (user.role !== 'admin' && row.investigator_id !== user.id) {
+    return json({ error: 'That entry belongs to another investigator.' }, 403);
+  }
+  const body = await readJson(request);
+  const description = String(body.description || '').trim().slice(0, 4000);
+  if (!description) return json({ error: 'Describe what happened.' }, 400);
+
+  await env.DB.prepare(
+    `UPDATE activity_log SET description = ?, location = ?, vehicle = ?, internal_note = ?,
+            edited_at = ?, edited_by = ? WHERE id = ?`)
+    .bind(description,
+          String(body.location || '').slice(0, 300) || null,
+          String(body.vehicle || '').slice(0, 300) || null,
+          String(body.internal_note || '').slice(0, 2000) || null,
+          nowIso(), user.id, id).run();
+  return json({ ok: true, id });
+}
+
 /* ----------------------------------------------------------------- users */
 
 async function listUsers(env) {
@@ -1110,6 +1389,44 @@ async function route(request, env) {
   /* Counts for the dashboard. Scoped like everything else — an investigator's
      totals are their own cases, not the firm's book of work. */
   if (p === '/summary' && method === 'GET') return caseSummary(env, user);
+
+  /* The case workspace. Every route below re-checks that this caller may open
+     this case, against the database, so a changed case number in the URL is
+     not a way into someone else's work. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/workspace$/);
+  if (m && method === 'GET') return caseWorkspace(env, user, m[1]);
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/meta$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return setCaseMeta(request, env, m[1]);
+  }
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/day\/start$/);
+  if (m && method === 'POST') return startDay(request, env, user, m[1]);
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/day\/end$/);
+  if (m && method === 'POST') return endDay(request, env, user, m[1]);
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/activity$/);
+  if (m && method === 'POST') return addActivity(request, env, user, m[1]);
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/activity\/(\d{1,12})$/);
+  if (m && method === 'POST') return editActivity(request, env, user, m[1], parseInt(m[2], 10));
+
+  if (p === '/case-types' && method === 'GET') return json({ case_types: await listCaseTypes(env) });
+  if (p === '/case-types' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    const body = await readJson(request);
+    const label = String(body.label || '').trim().slice(0, 80);
+    const side = String(body.side || '');
+    if (!label) return json({ error: 'Name the case type.' }, 400);
+    if (!['insurance', 'private'].includes(side)) return json({ error: 'Pick insurance or private.' }, 400);
+    try {
+      await env.DB.prepare('INSERT INTO case_types (label, side) VALUES (?, ?)').bind(label, side).run();
+    } catch { return json({ error: 'That case type already exists.' }, 409); }
+    return json({ ok: true, case_types: await listCaseTypes(env) }, 201);
+  }
 
   if (p === '/users' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
