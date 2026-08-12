@@ -16,9 +16,14 @@
     <priority>0.9</priority>
   </url>
   <url>
-    <loc>https://alwayspreciseinvestigations.net/insurance-claims-investigations/</loc>
+    <loc>https://alwayspreciseinvestigations.net/insurance-investigations/</loc>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://alwayspreciseinvestigations.net/insurance-investigations/vendor-information/</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.5</priority>
   </url>
   <url>
     <loc>https://alwayspreciseinvestigations.net/private-investigator/</loc>

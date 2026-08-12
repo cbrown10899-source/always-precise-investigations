@@ -81,10 +81,21 @@ common source of an apparent "something else is editing the repo" conflict.
 hand-written pages for the two highest-intent searches. They are linked from
 the services grid on the homepage with a "how we document it" call to action.
 
-The homepage services grid also advertises **Workers' Comp & Auto Claims**
-("Claims investigation and surveillance for insurers, attorneys, and
-employers") — but unlike the other two, it has no page behind it and no link.
-That is the outstanding gap in the service-page set.
+`insurance-investigations/` is the third, aimed at carriers, TPAs, self-insured
+employers and defense firms rather than consumers. It is linked from the
+homepage nav, the services grid, every location page and `_headers`. Its
+`vendor-information/` subpage carries the firm identification a carrier's
+onboarding form asks for.
+
+**Nothing on that page or its subpage states a rate, a coverage limit, a tax
+identifier or a policy number.** Carrier rates are quoted per assignment and
+documents are issued on request, so there is no figure in the HTML that can go
+stale or be quoted to the wrong carrier. Keep it that way.
+
+The page's "Submit an Assignment" buttons point at `/intake/`, which is the
+Secure Assignment Intake its copy describes — the carrier path issues a request
+number immediately, exactly as promised there. `_redirects` also maps the older
+`/insurance-investigations/submit/` URL to `/intake/`.
 
 ## Contact and intake
 
