@@ -3,6 +3,7 @@ Allow: /
 
 Sitemap: https://alwayspreciseinvestigations.net/sitemap.xml
 
-# The private dashboard is deliberately NOT listed here: robots.txt is public,
-# so a Disallow line only advertises the path. It is kept out of search by
-# noindex meta plus an X-Robots-Tag header set in _headers.
+# The private dashboard and the case portal are deliberately NOT listed here:
+# robots.txt is public, so a Disallow line only advertises the path. Both are
+# kept out of search by noindex meta plus an X-Robots-Tag header set in
+# _headers.

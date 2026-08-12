@@ -139,6 +139,14 @@ const FEES = {
    go through FormSubmit to the firm inbox (needs one-time activation). */
 const WEB3FORMS_KEY = "71016cd4-875b-4e71-9cb8-1a1c13f50c43";
 
+/* The case portal keeps a record of every submission so it can be looked up
+   later — email alone leaves no searchable history. This key is not a secret
+   (this page is public, so anyone can read it); it only keeps casual noise out
+   of the table, which the Worker also rate- and size-limits. Delivery to the
+   firm inbox stays on Web3Forms, so a portal outage cannot lose a client. */
+const PORTAL_API = "https://api-case-portal.corlinllc.workers.dev";
+const PORTAL_INGEST_KEY = "PASTE_INGEST_KEY";
+
 /* ============ State ============ */
 const CASE_NO = "API-" + new Date().toISOString().slice(0,10).replace(/-/g,"") + "-" + String(Math.floor(1000+Math.random()*9000));
 const S = { step:0, svc:null, pay:null, sig:null, files:[] };
@@ -505,12 +513,27 @@ async function submitIntake(p){
     body:JSON.stringify({_subject:"New client intake "+p.case_no+" — "+p.service,_template:"table",...p})});
   const d=await r.json().catch(()=>({})); return d && (d.success==="true"||d.success===true);
 }
+/* Record the submission in the case portal. Deliberately never throws and
+   never blocks the client: the confirmation they see depends on the email
+   going out, not on our own storage being reachable. */
+async function recordInPortal(p){
+  if(!PORTAL_INGEST_KEY || PORTAL_INGEST_KEY === "PASTE_INGEST_KEY") return;
+  try{
+    await fetch(PORTAL_API + "/ingest", {
+      method:"POST",
+      headers:{"Content-Type":"application/json","X-Ingest-Key":PORTAL_INGEST_KEY},
+      body:JSON.stringify(p)
+    });
+  }catch(e){ /* the inbox copy is the one that matters to the client */ }
+}
+
 async function finish(){
   const btn=document.querySelector(".btn.primary"); const err=$("err");
   const p=buildPayload();
   btn.disabled=true; btn.textContent="Sending…"; if(err) err.textContent="";
   let sent=false, threw=false;
   try{ sent=await submitIntake(p); }catch(e){ threw=true; }
+  await recordInPortal(p);
   renderRecord(p, sent, threw);
 }
 

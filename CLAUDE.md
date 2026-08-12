@@ -128,6 +128,44 @@ node visitor-alerts/test-worker.mjs
 Note the payment handles in `FIRM` are still personal accounts — the source
 comment flags them to be swapped for business accounts before client use.
 
+## The case portal
+
+`/portal/` is the staff case system, backed by the `api-case-portal` Worker in
+`case-portal/` and a D1 database. Setup is in `case-portal/README.md`.
+
+Two roles. Admins see every case, assign work and manage accounts.
+Investigators see **only** cases assigned to them — enforced in the SQL query,
+not by the page hiding rows. Test that boundary if you touch the queries.
+
+It is a **separate Worker from `api-visitor-alerts` on purpose**: this one holds
+claimant names, injuries, claim numbers and signature images; that one holds
+anonymous counters. Do not merge them.
+
+Things that are load-bearing:
+
+- `case-portal/` is excluded from the Pages deploy in `deploy.yml`, the same way
+  `visitor-alerts/` is. Worker source must not ship to the public site.
+- `/portal/` is kept out of search by `noindex` plus an `X-Robots-Tag` in
+  `_headers` — **not** by a `robots.txt` entry, which would only advertise it.
+  The same rule already applies to `/watch/`.
+- The intake posts to Web3Forms *and* the portal. Email is the client's
+  confirmation path; the portal copy is fire-and-forget so an outage there can
+  never lose a client.
+- Nothing submitted before the ingest key was set exists in the portal.
+  Submissions used to be emailed and nowhere else.
+- Passwords are PBKDF2-SHA256 with the round count stored per user. Sessions are
+  server-side, and the database holds only the SHA-256 of the cookie value.
+
+Tests:
+
+```bash
+node case-portal/test-worker.mjs   # 54 checks: auth, lockout, roles, CORS
+node portal/test-portal.mjs        # 26 checks: the page against the real Worker
+```
+
+The portal tests run the real page against the real Worker against real SQLite,
+so they catch SQL and permission mistakes rather than mocking past them.
+
 ## The /watch/ dashboard
 
 `watch/` is a private, passcode- and Face ID-gated dashboard showing live site
