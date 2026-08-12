@@ -320,6 +320,25 @@ const RATES = {
     minHoursPerDay: 8,
     typicalAuthHours: 24,    // 3 days — the usual initial authorization
   },
+
+  /* The flat-fee carrier ladder. Hours match AUTH_PRESETS below, so whatever a
+     carrier authorizes on the intake form maps straight onto a price here.
+     Quoted per assignment and confirmed in writing — never published.
+
+     Priced deliberately: the one-day block is rack rate, and the discount
+     widens with the commitment without ever crossing the floor. A draft at
+     1000/1800/2600 worked out to 125/112.50/108.33 an hour, which put two of
+     the three below the floor and left about $1,000 a case on the table against
+     the standard rate. There is a test that fails if any block here drops under
+     RATES.surveillance.floor, so that cannot happen again by accident. */
+  packages: [
+    { hours: 8,  price: 1200, label: 'One day — 8 hours',
+      note: 'The minimum surveillance day, at the standard rate.' },
+    { hours: 16, price: 2300, label: 'Two days — 16 hours',
+      note: '$100 below the standard rate for the commitment.' },
+    { hours: 24, price: 3300, label: 'Three days — 24 hours',
+      note: 'The usual initial authorization. $300 below standard, inside the preferred-volume band.' },
+  ],
   services: {
     // [low, high] per hour. A single number means one rate, not a range.
     surveillance_wc:      [150, 150],
@@ -335,15 +354,32 @@ const RATES = {
     testimony:            [200, 250],
   },
   multipliers: { rush: 1.25, holiday: 1.5 },
-  // Billed separately from investigator time when approved in advance. Mileage
-  // and travel time are NOT charged inside the defined service area — that is
-  // published on the vendor page, so it is a commitment, not a default.
+  /* NO ADDITIONAL FEES. The quoted price is the invoiced price, on both the
+     carrier and the private-client side. Mileage, travel time, tolls, parking,
+     database and record fees, report writing and the footage are all inside the
+     block. Nothing is added afterwards.
+
+     This is a commitment made to clients in the signed terms, not an internal
+     default — do not reintroduce line-item expense billing without changing the
+     terms in intake/index.html at the same time.
+
+     The ladder was checked against it: absorbing roughly 60 miles a day at
+     $0.70 leaves the three-day block at about $132/hr, still above the $125
+     floor. That is why absorbing travel is affordable at these prices and was
+     not at the $2,600 draft, which would have landed near $103.
+
+     The one carve-out is the one already published on the vendor page: an
+     assignment outside the defined service area has its travel quoted honestly
+     before the assignment is accepted, rather than absorbed silently. Quoted up
+     front and agreed is not an additional fee — a line item appearing on an
+     invoice afterwards is, and that is what never happens. */
   expenses: {
-    mileagePerMile: 0.70,
-    chargeableOutsideServiceArea: true,
-    categories: ['Mileage', 'Tolls', 'Parking', 'Lodging', 'Airfare',
-                 'Rental vehicle', 'Database fees', 'Record fees',
-                 'Unusual equipment', 'Authorized third-party'],
+    billedSeparately: false,
+    includedInBlock: ['Mileage', 'Travel time', 'Tolls', 'Parking',
+                      'Database fees', 'Record fees', 'Report writing',
+                      'Video review', 'Footage and evidence delivery'],
+    outsideServiceArea: 'Quoted before the assignment is accepted, never added afterwards.',
+    mileagePerMile: 0.70,   // for internal costing only — never invoiced
   },
   // Reporting is investigator time. Never promise it free.
   billableAsInvestigatorTime: ['Field investigation', 'Surveillance',
@@ -355,6 +391,23 @@ const RATES = {
    a public page, so it must not carry a rate. The estimate below is computed
    here, for admins, never sent to the form. */
 const AUTH_PRESETS = [8, 16, 24];
+
+/* Each block with its effective hourly worked out, and flagged against the
+   band and the floor. The flags are what stop a discount being agreed by
+   feel — a block that reads as a reasonable round number can still be under
+   the rate the firm decided it would not go below. */
+function packageSheet() {
+  const s = RATES.surveillance;
+  return RATES.packages.map(p => {
+    const effective = Math.round((p.price / p.hours) * 100) / 100;
+    return {
+      ...p, effective,
+      savingVsStandard: (s.standard * p.hours) - p.price,
+      belowVolumeBand: effective < s.volumeMin,
+      belowFloor: effective < s.floor,
+    };
+  });
+}
 
 function quoteFor(hours, rate) {
   const h = Number(hours);
@@ -845,6 +898,7 @@ async function route(request, env) {
     return json({
       rates: RATES,
       auth_presets: AUTH_PRESETS,
+      packages: packageSheet(),
       quote: q.has('hours') ? quoteFor(q.get('hours'), q.get('rate')) : null,
     });
   }

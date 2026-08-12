@@ -40,6 +40,31 @@ carrier intake path behave. Keep it that way.
 | Court / deposition testimony | $200–$250/hr |
 | Rush / holiday / special assignment | 1.25×–1.5× standard |
 
+## The flat-fee ladder
+
+What a carrier is actually quoted. Hours match the authorization presets on the
+intake form, so whatever they authorize maps straight onto a price.
+
+| Block | Price | Effective | Against standard |
+| --- | ---: | ---: | ---: |
+| One day — 8 hrs | **$1,200** | $150.00/hr | rack rate |
+| Two days — 16 hrs | **$2,300** | $143.75/hr | −$100 |
+| Three days — 24 hrs | **$3,300** | $137.50/hr | −$300 |
+
+Overage beyond the block is **$150/hr** and never without written approval
+first. That is the standard rate on purpose: an overage rate far above the block
+rate reads as a penalty and invites an adjuster to argue it.
+
+Every block is at or above the $125 floor, and `test-worker.mjs` fails if one
+ever is not. That guard exists because a bad price does not look like one — a
+draft of $1,000 / $1,800 / $2,600 reads like sensible round numbers and is
+$125.00, $112.50 and $108.33 an hour: two of the three below the floor, and
+about **$1,000 a case** left behind on the three-day against standard. Round
+numbers are exactly how the floor gets crossed without anyone noticing.
+
+Discount below this ladder only for genuine volume, only toward the $135 band,
+and present it as a preferred-volume rate.
+
 ## Volume pricing
 
 Rack rate stays **$150/hr**. For clients producing recurring assignments or
@@ -73,14 +98,25 @@ $100 upward.
 - **Reporting time is billable.** Field time, surveillance, video review,
   chronology, report writing, evidence organisation, case-file preparation and
   delivery are all investigator time. Do not promise free reporting anywhere.
-- **Expenses bill separately** from the hourly rate, when approved: mileage,
-  tolls, parking, lodging, airfare, rental vehicle, database and record fees,
-  unusual equipment, authorised third-party costs.
+- **No additional fees, on either side of the business.** The quoted price is
+  the invoiced price. Mileage, travel time, tolls, parking, database and record
+  fees, video review and report preparation are inside the block and are never
+  added as line items afterwards. This reverses the earlier plan to bill
+  expenses separately, and it is written into the signed terms on both the
+  carrier and the private-client path — so it is a commitment to clients, not
+  an internal default. Do not reintroduce expense billing without changing
+  those terms at the same time.
 
-  Note the one standing exception already published on the vendor page —
-  mileage and travel time are **not** charged inside the defined service area,
-  and travel beyond it is quoted honestly before acceptance. That promise is
-  live on the site; expense billing applies outside it.
+  The one carve-out, already published on the vendor page: an assignment
+  outside the defined service area has its travel quoted and agreed **before
+  acceptance**. Quoted up front is not an additional fee; a line item appearing
+  after the work is, and that is what never happens.
+
+  This is affordable because the ladder was priced for it. Absorbing roughly 60
+  miles a day leaves the three-day block near $132/hr, still above the floor.
+  It would **not** have been affordable at the $2,600 draft, which lands near
+  $103/hr once travel is absorbed — an all-in price and a discounted price are
+  two concessions, and the draft made both at once.
 
 ## Consumer pricing is a separate question
 

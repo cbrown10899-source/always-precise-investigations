@@ -361,6 +361,7 @@ function view(step){
       <div class="feebox" style="margin-top:14px">
         <div class="row"><span>Hours are used flexibly</span><span>Across whatever days suit the case</span></div>
         <div class="row"><span>If the case needs longer</span><span>${money(HOURLY)}/hr, only with your approval first</span></div>
+        <div class="row"><span>Additional fees</span><span>None &mdash; mileage, travel and the report are included</span></div>
         <div class="row due"><span>Due today</span><span>${sel?money(sel.price):"Choose a block above"}</span></div>
       </div>
       <p class="hint">Nothing beyond the block you choose is ever charged without asking you first.
@@ -479,8 +480,10 @@ function view(step){
     </div>
     <label class="f"><span>Geographic limitations</span><input type="text" data-k="z_geo" placeholder="e.g. within 50 miles of Roanoke; call before travelling further"></label>
     <label class="f"><span>Special billing instructions</span><textarea data-k="z_billing" placeholder="Optional — required references, invoicing portal, expense pre-approval…"></textarea></label>
-    <p class="hint">Approved expenses are billed separately from investigator time. Mileage and
-      travel time are not charged inside our service area; travel beyond it is quoted before we go.</p>
+    <p class="hint"><b>No additional fees.</b> The rate we confirm is the rate you are invoiced &mdash;
+      mileage, travel time, tolls, parking, database and record fees and report writing are all
+      included. An assignment outside our service area has its travel quoted before we accept it,
+      never added to the invoice afterwards.</p>
     ${navButtons()}
   </div>`;
 
@@ -489,7 +492,7 @@ function view(step){
     const feeLines = isClaims()
       ? `<div class="row"><span>Billing</span><b>Invoiced to the carrier</b></div>
          <div class="row"><span>Rate</span><span>Per agreed fee schedule</span></div>
-         <div class="row"><span>Mileage &amp; travel time</span><span>Not charged in our service area</span></div>`
+         <div class="row"><span>Additional fees</span><span>None &mdash; mileage, travel and reporting included</span></div>`
       : S.svc==="surveillance"
       ? (()=>{ const p=pkg(S.pkg); return `
          <div class="row"><span>Coverage selected</span><b>${p?`${p.label} — ${p.hours} hours`:"—"}</b></div>
@@ -510,7 +513,9 @@ function view(step){
         <h4>Assignment</h4>
         <p>The assigning party retains ${FIRM.name} ("the firm," Va DCJS #${FIRM.license}) to perform the claim investigation described in this intake. Work begins on written acceptance of the assignment; no payment is due at intake.</p>
         <h4>Billing</h4>
-        <p>Work is invoiced to the carrier, third-party administrator or assigning employer under the agreed fee schedule. The applicable rate and any estimated hours are confirmed in writing before work begins. Mileage and travel time are not charged within our service area. Authorized hours are not exceeded without prior approval from the assigning contact.</p>
+        <p>Work is invoiced to the carrier, third-party administrator or assigning employer under the agreed fee schedule. The applicable rate and any estimated hours are confirmed in writing before work begins. Authorized hours are not exceeded without prior approval from the assigning contact.</p>
+        <h4>No additional fees</h4>
+        <p>The confirmed rate is the invoiced amount. Mileage, travel time, tolls, parking, database and record fees, video review and report preparation are included in it and are not billed as separate line items. An assignment outside the firm's service area has its travel quoted and agreed before the assignment is accepted; nothing is added to an invoice after the work is done.</p>
         <h4>Lawful conduct</h4>
         <p>All work is performed lawfully and from lawful vantage points. The firm does not trespass on private property, record into a residence, place tracking devices on vehicles it has no authority over, access accounts or devices, or misrepresent itself to obtain financial or medical records. Surveillance is conducted without contact with the claimant.</p>
         <h4>Reporting</h4>
@@ -522,7 +527,7 @@ function view(step){
         <p>The client retains ${FIRM.name} ("the firm," Va DCJS #${FIRM.license}) to perform ${f?f.label.toLowerCase():"the selected"} services described in this intake. Work begins after the fee shown above is received.</p>
         <h4>Fees</h4>
         <p>${S.svc==="surveillance"
-            ? (()=>{ const p=pkg(S.pkg); return `The client purchases a block of <b>${p?p.hours:"—"} investigative hours</b> for <b>${p?money(p.price):"—"}</b>, due today. Those hours are used across whatever dates and times the firm judges most likely to produce results for the stated objective, and include the written report and the footage gathered. Hours beyond the purchased block are billed at ${money(f.hourly)} per hour and are never incurred without the client's prior approval. Travel within the firm's service area is not charged separately.`; })()
+            ? (()=>{ const p=pkg(S.pkg); return `The client purchases a block of <b>${p?p.hours:"—"} investigative hours</b> for <b>${p?money(p.price):"—"}</b>, due today. Those hours are used across whatever dates and times the firm judges most likely to produce results for the stated objective, and include the written report and the footage gathered. Hours beyond the purchased block are billed at ${money(f.hourly)} per hour and are never incurred without the client's prior approval. <b>No additional fees apply</b>: mileage, travel time, tolls, parking, database and record fees and report preparation are included in the price above and are not billed separately. Work outside the firm's service area is quoted and agreed before it is accepted.`; })()
             : `A flat fee of ${money(f.flat)} is due today for one service attempt as permitted by law. Additional attempts or addresses may incur additional fees agreed in advance.`}</p>
         <h4>Lawful purpose &amp; conduct</h4>
         <p>The client affirms a lawful and legitimate purpose for this engagement. The firm does not accept cyber-stalking matters and has no ability to access, hack, or retrieve data from a third party's phone, accounts, or devices. All work is performed lawfully; findings are provided for the client's stated purpose only.</p>

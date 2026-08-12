@@ -51,6 +51,10 @@ function d1(db) {
 }
 
 const ORIGIN = 'https://alwayspreciseinvestigations.net';
+// The rate the firm decided it would not go below. Written out here rather than
+// read from the Worker on purpose: if someone lowers the floor to make a cheap
+// block pass, that is a decision, and it should take editing the test too.
+const RATES_FLOOR = 125;
 function freshEnv() {
   const db = new DatabaseSync(':memory:');
   db.exec(SCHEMA);
@@ -378,7 +382,12 @@ section('Internal rates are admin-only');
   ok('rush and holiday multipliers are configured',
      d.rates.multipliers.rush === 1.25 && d.rates.multipliers.holiday === 1.5);
   ok('testimony is rated separately', d.rates.services.testimony[0] === 200);
-  ok('expense categories are enumerated', d.rates.expenses.categories.includes('Mileage'));
+  ok('nothing is billed on top of the quoted price', d.rates.expenses.billedSeparately === false);
+  ok('mileage is inside the block', d.rates.expenses.includedInBlock.includes('Mileage'));
+  ok('travel time is inside the block', d.rates.expenses.includedInBlock.includes('Travel time'));
+  ok('report writing is inside the block', d.rates.expenses.includedInBlock.includes('Report writing'));
+  ok('out-of-area travel is quoted up front, not added later',
+     /before the assignment is accepted/.test(d.rates.expenses.outsideServiceArea));
   ok('reporting counts as billable investigator time',
      d.rates.billableAsInvestigatorTime.includes('Report writing'));
   ok('the authorization presets are 8, 16 and 24 hours',
@@ -401,6 +410,51 @@ section('Internal rates are admin-only');
   ok('a rush day applies the 1.25x multiplier', rush.quote.rush === 1500);
   ok('a bad hours value yields no quote',
      (await jsonOf(await call(env, '/pricing?hours=abc', { cookie: admin }))).quote === null);
+
+  /* The flat-fee carrier ladder. */
+  const pk = d.packages;
+  ok('three blocks are offered', pk.length === 3);
+  ok('the blocks match the authorization presets the form offers',
+     JSON.stringify(pk.map(p => p.hours)) === JSON.stringify(d.auth_presets));
+  ok('one day is $1,200', pk[0].price === 1200 && pk[0].hours === 8);
+  ok('two days is $2,300', pk[1].price === 2300 && pk[1].hours === 16);
+  ok('three days is $3,300', pk[2].price === 3300 && pk[2].hours === 24);
+  ok('the one-day block is at the standard rate', pk[0].effective === 150);
+  ok('two days works out at $143.75/hr', pk[1].effective === 143.75);
+  ok('three days works out at $137.50/hr', pk[2].effective === 137.5);
+  ok('the three-day block saves the carrier $300 against standard', pk[2].savingVsStandard === 300);
+  ok('the three-day block stays inside the preferred-volume band', pk[2].belowVolumeBand === false);
+
+  /* THE GUARD. A block priced below the floor is the mistake this whole rate
+     strategy exists to prevent, and a round number can hide it — $2,600 for
+     three days reads fine and is $108.33/hr. If someone re-prices the ladder,
+     this fails rather than quietly shipping a discount nobody approved. */
+  for (const p of pk) {
+    ok(`${p.hours}h is not below the $${RATES_FLOOR} floor`, p.belowFloor === false,
+       `$${p.price} = $${p.effective}/hr`);
+    ok(`${p.hours}h is at or above the floor by arithmetic too`,
+       p.price / p.hours >= RATES_FLOOR, `$${p.price / p.hours}/hr`);
+  }
+  ok('the floor the blocks are checked against is still $125', d.rates.surveillance.floor === 125);
+
+  // The rejected draft, asserted so the reasoning survives in the tests.
+  ok('the 1000/1800/2600 draft would have breached the floor twice',
+     1000 / 8 >= RATES_FLOOR && 1800 / 16 < RATES_FLOOR && 2600 / 24 < RATES_FLOOR);
+  ok('and would have cost $1,000 a case against standard on a 3-day',
+     (150 * 24) - 2600 === 1000);
+
+  /* The blocks absorb travel now, so the floor has to survive that too — an
+     all-in price is only affordable if it is priced for it. Roughly 60 miles a
+     day at the internal costing rate. */
+  const mile = d.rates.expenses.mileagePerMile;
+  for (const p of pk) {
+    const absorbed = (p.hours / 8) * 60 * mile;
+    ok(`${p.hours}h still clears the floor after absorbing travel`,
+       (p.price - absorbed) / p.hours >= RATES_FLOOR,
+       `$${((p.price - absorbed) / p.hours).toFixed(2)}/hr`);
+  }
+  ok('the rejected $2,600 draft would NOT have cleared it after travel',
+     (2600 - (3 * 60 * mile)) / 24 < RATES_FLOOR);
 }
 
 /* ------------------------------------------------------- invitation-only */

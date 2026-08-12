@@ -170,6 +170,10 @@ section('Consumer path — surveillance');
   ok('the terms state the overage rate', terms.includes('$100 per hour'));
   ok('the terms promise no overage without approval', /prior approval/.test(terms));
   ok('the old retainer wording is gone', !/retainer/i.test(terms));
+  ok('the terms promise no additional fees', /No additional fees apply/i.test(terms));
+  ok('mileage is named as included', /mileage/i.test(terms));
+  ok('the report is named as included', /report preparation/i.test(terms));
+  ok('the price sheet says it too', card.includes('None') && /mileage/i.test(card));
   await page.locator('[data-k="a_consent"]').check();
   await set(page, 'a_typed', 'Jane Client');
   await sign(page);
@@ -274,7 +278,8 @@ section('Carrier path — insurance claim assignment');
   ok('NO CARRIER RATE IS PUBLISHED on the authorization step', !auth.includes('$'), auth);
   ok('the page says rates are confirmed before acceptance',
      /confirmed before the assignment is accepted/i.test(auth));
-  ok('expenses are flagged as billed separately', /expenses are billed separately/i.test(auth));
+  ok('the authorization step promises no additional fees', /No additional fees/i.test(auth));
+  ok('it names what is included', /mileage, travel time/i.test(auth));
 
   await advance(page);
   ok('authorization is required', await heading(page) === 'Scheduling & authorization');
@@ -298,6 +303,12 @@ section('Carrier path — insurance claim assignment');
   const terms = await page.locator('.agree').innerText();
   ok('carrier terms cover billing and reporting', terms.includes('Billing') && terms.includes('Reporting'));
   ok('the consumer-only cyber-stalking clause is not shown', !terms.includes('cyber-stalking'));
+  ok('the carrier is promised no additional fees', /No additional fees/.test(terms));
+  ok('mileage is named as included for a carrier', /Mileage, travel time/.test(terms));
+  ok('nothing is added to an invoice after the work',
+     /nothing is added to an invoice after the work is done/i.test(terms));
+  ok('out-of-area travel is still quoted before acceptance',
+     /before the assignment is accepted/.test(terms));
 
   await page.locator('[data-k="a_consent"]').check();
   await set(page, 'a_typed', 'Dana Adjuster');

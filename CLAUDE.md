@@ -190,8 +190,32 @@ the vendor page, not in the intake form. `/pricing` on the Worker is admin-only
 and returns 403 to an investigator. The public language is "final rates and
 authorization will be confirmed before the assignment is accepted."
 
-Headline numbers: $150/hr standard, 8-hour minimum day, 24 hours ($3,600) as
-the typical initial authorization, $135–$150 preferred-volume band, $125 floor.
+Headline numbers: $150/hr standard, 8-hour minimum day, $135–$150
+preferred-volume band, $125 floor. The flat-fee ladder a carrier is quoted is
+**$1,200 / $2,300 / $3,300** for 8 / 16 / 24 hours, with overage at $150/hr and
+never without written approval. Those hours match the authorization presets on
+the intake form.
+
+**`RATES.packages` is guarded.** A test fails if any block falls below the $125
+floor, and the floor is written out separately in the test so lowering it takes
+a deliberate edit in two places. That guard is there because a bad price does
+not look like one: $1,000 / $1,800 / $2,600 reads like sensible round numbers
+and is $125.00 / $112.50 / $108.33 an hour.
+
+**No additional fees, on both sides of the business.** The quoted price is the
+invoiced price — mileage, travel time, tolls, parking, database and record fees,
+video review and report preparation are all inside the block, never added
+afterwards. This is written into the signed terms on the carrier path *and* the
+private-client path, so it is a promise to clients, not an internal setting: do
+not reintroduce expense billing without changing `intake/index.html` at the same
+time. The one carve-out is the one already published — travel for an assignment
+outside the service area is quoted and agreed before acceptance.
+
+A second test checks the ladder still clears the floor *after* absorbing about
+60 miles a day, because an all-in price is only affordable if it was priced for
+it. The three-day block lands near $132/hr; the rejected $2,600 draft would land
+near $103.
+
 The reasoning — including why $800/day is rejected for carrier work — is in
 `PRICING.md`. Read it before quoting anything.
 
@@ -217,7 +241,7 @@ know the cap they are working to. The price fields (`package`, `package_price`,
 Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
-node intake/test-intake.mjs      # 135 checks; needs Playwright, skips cleanly without it
+node intake/test-intake.mjs      # 144 checks; needs Playwright, skips cleanly without it
 node visitor-alerts/test-worker.mjs   # 41 checks
 ```
 
@@ -288,7 +312,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 152 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 179 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 93 checks: the page against the real Worker
 ```
 
