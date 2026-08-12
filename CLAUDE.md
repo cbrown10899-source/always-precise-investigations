@@ -51,7 +51,7 @@ emits a long step summary.
 
 ## Deploy topology
 
-Five workflows, all in `.github/workflows/`:
+Seven workflows, all in `.github/workflows/`:
 
 | Workflow              | Trigger                              | Does                                       |
 | --------------------- | ------------------------------------ | ------------------------------------------ |
@@ -60,6 +60,8 @@ Five workflows, all in `.github/workflows/`:
 | `deploy-worker.yml`   | push touching `visitor-alerts/worker.js` | uploads the Worker, preserving bindings |
 | `deploy-portal.yml`   | push touching `case-portal/worker.js`   | tests, then uploads the portal Worker      |
 | `site-health.yml`     | daily cron, 11:00 UTC                | probes the live domain; opens one issue on failure |
+| `portal-setup.yml`    | manual dispatch                      | one-shot Cloudflare setup for the portal   |
+| `save-point.yml`      | human push to `master`, or manual    | tags a `save/…` point and cuts a Release   |
 
 Every workflow carries a `concurrency` group. They were added after runs
 collided: on 2026-08-07 five runs started in the same minute and two were
@@ -67,6 +69,30 @@ cancelled. Without the guards, a push that touches `build-locations.py` starts
 one deploy of the *pre-rebuild* tree while `build-locations.yml` dispatches a
 second deploy of the *rebuilt* tree — a race whose loser can publish stale
 pages over fresh ones. Do not remove them.
+
+## Save points and rollback
+
+Work that exists only inside a session's container dies with the container —
+that is how the insurance build was nearly lost once. Two rules and one
+mechanism keep a point of return at all times:
+
+- **Push after every milestone.** Commit and push to the working branch as each
+  substantive piece lands, not at the end. An unpushed tree is one crash from
+  gone; scratchpad files doubly so.
+- **Master is the recovery line.** Everything merged is on GitHub — the
+  off-site copy — and `save-point.yml` names each human merge as a tag
+  (`save/<date>-<sha>`) with a GitHub Release. The Release's auto-attached
+  *Source code (zip)* is the desktop copy: Releases page → download. Manual
+  runs of the workflow are the "save now" button.
+- **Rollback:** `git revert <bad-sha>` and push for one bad change (the deploy
+  workflow republishes the site); `git checkout -B master save/<tag>` and a
+  `--force-with-lease` push to return the whole tree to a save point.
+
+**The case database is not in git, on purpose** — claimant names and signatures
+must not land in a repo. Its point of return is Cloudflare **D1 Time Travel**,
+which keeps 30 days of automatic history; commands are in
+`case-portal/README.md`. A repo save point plus a Time Travel restore together
+recover the whole system to a moment.
 
 ## Generated files
 

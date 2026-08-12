@@ -285,6 +285,35 @@ stored, never written to the database. Every example case number starts with
 test asserts the table still holds no row matching `EXAMPLE-%`. The names,
 claim numbers and addresses in them are invented.
 
+## If something goes wrong: points of return
+
+The code has save points — every human merge to `master` is tagged
+`save/<date>-<sha>` by `save-point.yml` and cut as a GitHub Release whose
+*Source code (zip)* is a downloadable desktop copy. Reverting a bad change
+redeploys the site automatically.
+
+**The case data is deliberately not in any of that.** Claimant names, injuries
+and signatures must never sit in a repository. The database's point of return
+is Cloudflare's own **D1 Time Travel**: every write is journaled and the last
+**30 days** can be restored to the minute, with nothing to set up.
+
+```bash
+# What can I restore to?
+npx wrangler d1 time-travel info api-case-portal
+
+# Take a bookmark BEFORE anything risky (a schema change, a bulk fix):
+npx wrangler d1 time-travel info api-case-portal   # note the current bookmark
+
+# Restore to a moment or a bookmark:
+npx wrangler d1 time-travel restore api-case-portal --timestamp=1755000000
+npx wrangler d1 time-travel restore api-case-portal --bookmark=<bookmark>
+```
+
+A restore rewinds **everything** in the database — cases, accounts, sessions
+and invitations together — so everyone is signed out and any account created
+after the restore point is gone (reinvite them). Ingest that arrives during a
+restore is emailed as an alert regardless, so a client is never silently lost.
+
 ## Things to know
 
 - **The portal is the record; email is only an alert.** The email relay is a

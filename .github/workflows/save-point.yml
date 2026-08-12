@@ -1,0 +1,69 @@
+name: Save point
+
+# A point of return after every big change, plus one on demand.
+#
+# Every merge to master already survives a crash — it is on GitHub, which is
+# the off-site copy. What this adds is a NAMED, one-click way back:
+#
+#   - a tag  save/<date>-<short-sha>  pinning the exact tree
+#   - a GitHub Release on that tag, whose auto-attached "Source code (zip)"
+#     is the desktop copy: Releases page -> download -> done
+#
+# Restore paths, from least to most drastic:
+#   site/code   git revert <bad-sha> && push       (deploy redeploys the site)
+#   whole tree  git checkout -B master save/...    then push with lease
+#   database    D1 Time Travel keeps 30 days of history on Cloudflare's side:
+#                 npx wrangler d1 time-travel info api-case-portal
+#                 npx wrangler d1 time-travel restore api-case-portal --timestamp=<unix>
+#               (documented in case-portal/README.md — case data lives there,
+#                not in git, so a repo save point deliberately never holds it)
+#
+# Runs on every human merge to master. Commits by github-actions[bot] (the
+# location-page regeneration) are skipped — they are derivative trees, and a
+# save point for each would bury the ones that matter. workflow_dispatch is
+# the "save now" button.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+# Same collision guard every workflow here carries (see CLAUDE.md).
+concurrency:
+  group: save-point
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  save:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag and release this tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHORT="${GITHUB_SHA::7}"
+          TAG="save/$(date -u +%Y-%m-%d-%H%M)-${SHORT}"
+          # Idempotent: a re-run of the same commit must not fail or duplicate.
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "save point ${TAG} already exists"; exit 0
+          fi
+          SUBJECT="$(git log -1 --pretty=%s "${GITHUB_SHA}")"
+          gh release create "${TAG}" \
+            --target "${GITHUB_SHA}" \
+            --title "Save point — ${SUBJECT}" \
+            --notes "Point of return for: ${SUBJECT}
+
+          Download **Source code (zip)** below for a desktop copy of the whole site
+          and portal as of this change. To roll the code back to this point:
+
+          \`git checkout -B master ${TAG} && git push --force-with-lease origin master\`
+
+          The case database is not in this zip by design — cases restore from
+          Cloudflare D1 Time Travel (30 days, see case-portal/README.md)."
+          echo "created ${TAG}"
