@@ -762,6 +762,19 @@ section('Rate sheets and the emailed quote');
   ok('the retainer figure is not on the carrier sheet', !ins.includes('$1,500'));
   ok('whether sending is configured is reported', d.email_configured === true);
 
+  /* A dollar sign on an hours figure reads as a price and is wrong twice over:
+     it misstates the minimum day and it puts a number where a carrier expects
+     a duration. It shipped once as "$8-hour minimum day". */
+  const insSheet = d.sheets.find(s => s.id === 'insurance');
+  ok('the minimum day is stated in hours, not dollars',
+     insSheet.summary.includes('8-hour minimum day') && !insSheet.summary.includes('$8'),
+     insSheet.summary);
+  ok('the initial authorization is stated in hours',
+     insSheet.summary.includes('24 hours is the usual'), insSheet.summary);
+  ok('no hours figure anywhere on either sheet carries a dollar sign',
+     !JSON.stringify(d.sheets).match(/\$\d+(\.\d+)?\s*-?\s*hour/i),
+     JSON.stringify(d.sheets).slice(0, 300));
+
   ok('an unknown sheet id is a 404',
      (await call(env, '/sheets/nope/email', { method: 'POST', cookie: admin, body: { to: 'a@b.co' } })).status === 404);
   ok('a malformed address is refused before a send is spent',
@@ -958,6 +971,131 @@ section('The investigation day and the activity log');
   const night = await jsonOf(await call(env, '/cases/API-W2/day/end', { method: 'POST', cookie: admin,
     body: { end_time: '02:30' } }));
   ok('a day running past midnight totals forwards, not backwards', night.hours === 4.5);
+}
+
+section('The daily report builder');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana Field', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  await ingest(env, { case_no: 'API-R1', subject_name: 'Pat Coleman', client_name: 'Acme' });
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const dana = users.users.find(u => u.username === 'dana');
+  await call(env, '/submissions/API-R1/assign', { method: 'POST', cookie: admin, body: { user_id: dana.id } });
+
+  await call(env, '/cases/API-R1/day/start', { method: 'POST', cookie: inv,
+    body: { day_date: '2026-08-12', start_time: '07:00' } });
+  for (const [t, d, loc] of [
+    ['07:03', 'Arrived in vicinity of subject residence.', ''],
+    ['07:14', 'Subject vehicle observed parked at residence.', ''],
+    ['08:17', 'Subject arrived at ABC Fitness', '1400 Main St'],
+  ]) {
+    await call(env, '/cases/API-R1/activity', { method: 'POST', cookie: inv,
+      body: { at_date: '2026-08-12', at_time: t, description: d, location: loc } });
+  }
+  await call(env, '/cases/API-R1/day/end', { method: 'POST', cookie: inv,
+    body: { end_time: '15:30', summary: 'Subject active throughout.' } });
+
+  const gen = await call(env, '/cases/API-R1/reports/generate', { method: 'POST', cookie: inv,
+    body: { day_id: (await jsonOf(await call(env, '/cases/API-R1/workspace', { cookie: inv }))).days[0].id } });
+  ok('a draft generates from the day', gen.status === 201);
+  const repId = (await jsonOf(gen)).id;
+
+  let ws = await jsonOf(await call(env, '/cases/API-R1/workspace', { cookie: inv }));
+  const body = ws.reports[0].body;
+  ok('the draft starts as a draft', ws.reports[0].status === 'draft');
+  ok('it is headed as a chronology', body.includes('SURVEILLANCE CHRONOLOGY'));
+  ok('it states the surveillance window in 12-hour time',
+     body.includes('from 7:00 AM to 3:30 PM'), body.slice(0, 200));
+  ok('field shorthand becomes a sentence',
+     body.includes('At approximately 8:17 AM, the subject arrived at ABC Fitness'), body);
+  ok('a location is carried into the line', body.includes('(1400 Main St)'));
+  ok('a line that is not about the subject keeps the wording verbatim',
+     body.includes('At approximately 7:03 AM — Arrived in vicinity of subject residence.'), body);
+  /* The rewrite must only fire on an actual verb. "Subject vehicle observed"
+     means the subject's vehicle, and "the subject vehicle observed parked"
+     would be nonsense the investigator then has to notice and undo. */
+  ok('a noun phrase after "Subject" is left verbatim, not rewritten',
+     body.includes('At approximately 7:14 AM — Subject vehicle observed parked at residence'), body);
+  ok('and it never produces "the subject vehicle"', !body.includes('the subject vehicle'), body);
+  ok('entries come out in time order', body.indexOf('7:03 AM') < body.indexOf('8:17 AM'));
+  ok('the day summary is carried in', body.includes('Subject active throughout.'));
+  ok('a second report for the same day is refused',
+     (await call(env, '/cases/API-R1/reports/generate', { method: 'POST', cookie: inv,
+       body: { day_id: ws.days[0].id } })).status === 409);
+
+  ok('the investigator can edit their draft',
+     (await call(env, `/cases/API-R1/reports/${repId}`, { method: 'POST', cookie: inv,
+       body: { body: body + '\nAdded on review by the investigator.' } })).status === 200);
+  ok('an empty report is refused',
+     (await call(env, `/cases/API-R1/reports/${repId}`, { method: 'POST', cookie: inv,
+       body: { body: '   ' } })).status === 400);
+
+  /* THE RULE: writing a report is not reviewing it. */
+  ok('an investigator cannot approve their own report',
+     (await call(env, `/cases/API-R1/reports/${repId}/status`, { method: 'POST', cookie: inv,
+       body: { status: 'approved' } })).status === 403);
+  ok('nor mark it delivered',
+     (await call(env, `/cases/API-R1/reports/${repId}/status`, { method: 'POST', cookie: inv,
+       body: { status: 'delivered' } })).status === 403);
+  ok('but they can submit it for review',
+     (await call(env, `/cases/API-R1/reports/${repId}/status`, { method: 'POST', cookie: inv,
+       body: { status: 'submitted' } })).status === 200);
+  ok('once submitted they cannot keep editing around the review',
+     (await call(env, `/cases/API-R1/reports/${repId}`, { method: 'POST', cookie: inv,
+       body: { body: 'quietly changed' } })).status === 409);
+
+  ok('the office can send it back with a note',
+     (await call(env, `/cases/API-R1/reports/${repId}/status`, { method: 'POST', cookie: admin,
+       body: { status: 'needs_revision', note: 'Add the vehicle description at 07:14.' } })).status === 200);
+  ws = await jsonOf(await call(env, '/cases/API-R1/workspace', { cookie: inv }));
+  ok('the investigator sees why it came back',
+     ws.reports[0].review_note === 'Add the vehicle description at 07:14.');
+  ok('and can edit it again', ws.reports[0].status === 'needs_revision');
+  ok('editing works once it is back with them',
+     (await call(env, `/cases/API-R1/reports/${repId}`, { method: 'POST', cookie: inv,
+       body: { body: body + '\nWhite GMC Sierra.' } })).status === 200);
+
+  await call(env, `/cases/API-R1/reports/${repId}/status`, { method: 'POST', cookie: inv, body: { status: 'submitted' } });
+  ok('the office can approve', (await call(env, `/cases/API-R1/reports/${repId}/status`,
+     { method: 'POST', cookie: admin, body: { status: 'approved' } })).status === 200);
+  ok('and mark it delivered', (await call(env, `/cases/API-R1/reports/${repId}/status`,
+     { method: 'POST', cookie: admin, body: { status: 'delivered' } })).status === 200);
+  ok('an invalid status is refused', (await call(env, `/cases/API-R1/reports/${repId}/status`,
+     { method: 'POST', cookie: admin, body: { status: 'published' } })).status === 400);
+
+  // An admin doing their own fieldwork runs the whole path alone.
+  await ingest(env, { case_no: 'API-R2', subject_name: 'Solo Subject', client_name: 'Acme' });
+  await call(env, '/cases/API-R2/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-13', start_time: '09:00' } });
+  await call(env, '/cases/API-R2/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-08-13', at_time: '09:05', description: 'Subject departed residence.' } });
+  await call(env, '/cases/API-R2/day/end', { method: 'POST', cookie: admin, body: { end_time: '12:00' } });
+  const w2 = await jsonOf(await call(env, '/cases/API-R2/workspace', { cookie: admin }));
+  const g2 = await jsonOf(await call(env, '/cases/API-R2/reports/generate', { method: 'POST', cookie: admin,
+    body: { day_id: w2.days[0].id } }));
+  ok('an admin can draft their own report', typeof g2.id === 'number');
+  ok('and carry it all the way to approved themselves',
+     (await call(env, `/cases/API-R2/reports/${g2.id}/status`, { method: 'POST', cookie: admin,
+       body: { status: 'approved' } })).status === 200);
+
+  // A day with nothing logged still drafts — it says so rather than pretending.
+  await ingest(env, { case_no: 'API-R3', subject_name: 'Quiet Subject', client_name: 'Acme' });
+  await call(env, '/cases/API-R3/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-14', start_time: '06:00' } });
+  await call(env, '/cases/API-R3/day/end', { method: 'POST', cookie: admin, body: { end_time: '10:00' } });
+  const w3 = await jsonOf(await call(env, '/cases/API-R3/workspace', { cookie: admin }));
+  const g3 = await jsonOf(await call(env, '/cases/API-R3/reports/generate', { method: 'POST', cookie: admin,
+    body: { day_id: w3.days[0].id } }));
+  ok('an empty day reports zero entries honestly', g3.entries === 0);
+  const w3b = await jsonOf(await call(env, '/cases/API-R3/workspace', { cookie: admin }));
+  ok('and says so in the draft rather than inventing activity',
+     w3b.reports[0].body.includes('No activity entries were logged'));
 }
 
 /* The rule that matters most once outside investigators exist: a case number

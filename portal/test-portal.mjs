@@ -702,6 +702,61 @@ section('The case workspace in the browser');
   await page.close();
 }
 
+section('Drafting and reviewing a daily report in the browser');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Reports');
+
+  ok('a completed day is offered to report on',
+     await page.locator('#r_day').count() === 1);
+  ok('the page is explicit that the wording stays the investigator\'s',
+     has(await text(page, '#dlgBody'), 'wording stays yours'));
+
+  await page.locator('.btn', { hasText: 'Generate draft' }).click();
+  await page.waitForTimeout(700);
+  const draft = await page.locator('#r_body').inputValue();
+  ok('a chronology is drafted', draft.includes('SURVEILLANCE CHRONOLOGY'));
+  ok('it carries the logged observation',
+     draft.includes('Subject vehicle observed parked at residence'), draft);
+  ok('a noun phrase is left alone rather than mangled into "the subject vehicle"',
+     !draft.includes('the subject vehicle'), draft);
+  ok('the time is written out in 12-hour form', draft.includes('7:14 AM'));
+  ok('it opens as a draft', has(await text(page, '#dlgBody'), 'Draft'));
+
+  // Edit it, the way a person actually would.
+  await page.locator('#r_body').fill(draft + '\nAt approximately 1:00 PM, surveillance was discontinued.');
+  await page.locator('.btn', { hasText: 'Save changes' }).click();
+  await page.waitForTimeout(600);
+  ok('the edit survives a save',
+     (await page.locator('#r_body').inputValue()).includes('surveillance was discontinued'));
+
+  await page.locator('.btn', { hasText: 'Submit for review' }).click();
+  await page.waitForTimeout(600);
+  let panel = await text(page, '#dlgBody');
+  ok('submitting moves it along', has(panel, 'Submitted'));
+  ok('an admin reviewing gets Approve', await page.locator('.btn', { hasText: 'Approve' }).count() === 1);
+  ok('and Send back', await page.locator('.btn', { hasText: 'Send back' }).count() === 1);
+
+  await page.locator('#r_note').fill('Add the vehicle description.');
+  await page.locator('.btn', { hasText: 'Send back' }).click();
+  await page.waitForTimeout(600);
+  panel = await text(page, '#dlgBody');
+  ok('sending it back records the note', panel.includes('Add the vehicle description.'));
+  ok('and it reads as needing revision', has(panel, 'Needs revision'));
+
+  await page.locator('.btn', { hasText: 'Submit for review' }).click();
+  await page.waitForTimeout(600);
+  await page.locator('.btn', { hasText: 'Approve' }).click();
+  await page.waitForTimeout(600);
+  panel = await text(page, '#dlgBody');
+  ok('an admin can approve it', has(panel, 'Approved'));
+  ok('and then mark it delivered', await page.locator('.btn', { hasText: 'Mark delivered' }).count() === 1);
+  await page.close();
+}
+
 section('An investigator gets the same field tools, without the money');
 {
   const page = await newPage();

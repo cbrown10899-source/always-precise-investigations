@@ -15,7 +15,7 @@ Progress ledger (update as phases land):
 | 3. Activity Log | **done** — 2026-08-12 (8 quick kinds; media attachment waits on priority 6) |
 | 4. Start / End Investigation Day | **done** — 2026-08-12 (hours + mileage totalled) |
 | 7. Insurance Authorization Tracking | **done** — 2026-08-12 (hours + budget, configurable thresholds; REQUEST MORE not built) |
-| 5. Daily Report Builder | not started |
+| 5. Daily Report Builder | **done** — 2026-08-12 (draft from log, 5 statuses, admin-only approval) |
 | 6. Evidence Management | not started — needs R2 private storage first |
 | 8. Dashboard Improvements | not started |
 | 9–15. Phase 2 (outside investigators) | not started |

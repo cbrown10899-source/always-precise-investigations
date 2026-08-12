@@ -444,7 +444,9 @@ function rateSheets() {
       id: 'insurance',
       name: 'Insurance assignment rates',
       audience: 'Carriers, TPAs, self-insured employers, SIU and defense counsel',
-      summary: `Surveillance is authorized in blocks of hours. ${money(RATES.surveillance.minHoursPerDay)}`
+      // Hours are hours. money() belongs on prices only — it once rendered
+      // this as "$8-hour minimum day".
+      summary: `Surveillance is authorized in blocks of hours. ${RATES.surveillance.minHoursPerDay}`
              + `-hour minimum day; ${RATES.surveillance.typicalAuthHours} hours is the usual initial authorization.`,
       lines: [
         ...RATES.packages.map(p => ({
@@ -825,6 +827,12 @@ async function caseWorkspace(env, user, caseNo) {
       WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL
       ORDER BY id DESC LIMIT 1`).bind(caseNo, user.id).first();
 
+  const { results: reports } = await env.DB.prepare(
+    `SELECT r.id, r.day_id, r.report_date, r.status, r.body, r.review_note,
+            r.updated_at, u.display_name AS investigator, r.investigator_id
+       FROM case_reports r LEFT JOIN users u ON u.id = r.investigator_id
+      WHERE r.case_no = ? ORDER BY r.report_date DESC, r.id DESC LIMIT 100`).bind(caseNo).all();
+
   return json({
     case_no: row.case_no,
     kind: row.kind,
@@ -834,6 +842,7 @@ async function caseWorkspace(env, user, caseNo) {
     activity: activity || [],
     days: days || [],
     open_day: openDay || null,
+    reports: reports || [],
   });
 }
 
@@ -997,6 +1006,148 @@ async function editActivity(request, env, user, caseNo, id) {
           String(body.internal_note || '').slice(0, 2000) || null,
           nowIso(), user.id, id).run();
   return json({ ok: true, id });
+}
+
+/* ------------------------------------------------------- daily reports */
+
+/* Assembling a chronology from the log is the useful part; writing the
+   investigator's words for them is not. This does the mechanical work — order,
+   12-hour times, one line per observation — and leaves the wording alone.
+
+   The only rewrite is "Subject <verb>" to "the subject <verb>", and only when
+   the next word is actually a verb — "Subject arrived" becomes "the subject
+   arrived", while "Subject vehicle observed parked at residence" is left
+   alone, because there "Subject" modifies a noun and the substitution would
+   produce nonsense. Everything the rule is not certain about keeps the
+   investigator's sentence verbatim after a dash.
+
+   A report becomes testimony. A system that quietly rephrases what someone
+   observed is a system putting words in a witness's mouth, so this one does
+   the mechanical work and stops. */
+function time12(hhmm) {
+  const h = parseInt(hhmm.slice(0, 2), 10), m = hhmm.slice(3, 5);
+  const ampm = h < 12 ? 'AM' : 'PM';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${m} ${ampm}`;
+}
+
+/* Past-tense verbs cover most of what a surveillance line says the subject did.
+   The irregulars are the ones that actually turn up in field notes. */
+const PAST_IRREGULAR = /^(was|were|went|drove|left|took|came|got|made|sat|stood|ran|met|held|threw|bent|rode|began|broke|drew|fell|flew|hid|kept|knelt|lay|paid|put|read|said|sold|sent|set|shot|slept|spoke|spent|swept|swam|wore|won|wrote)$/i;
+
+function draftLine(e) {
+  const t = time12(e.at_time);
+  const d = String(e.description || '').trim().replace(/\s+/g, ' ');
+  const where = e.location ? ` (${e.location})` : '';
+
+  const m = d.match(/^subject\s+(\S+)/i);
+  const actsLikeVerb = m && (/^[a-z]+ed$/i.test(m[1]) || PAST_IRREGULAR.test(m[1]));
+  const body = actsLikeVerb
+    ? `At approximately ${t}, the subject${d.slice(7)}`
+    : `At approximately ${t} — ${d}`;
+
+  const withDot = /[.!?]$/.test(body) ? body : body + '.';
+  return where ? withDot.replace(/([.!?])$/, `${where}$1`) : withDot;
+}
+
+function draftBody(day, entries) {
+  const head = [
+    `SURVEILLANCE CHRONOLOGY — ${day.day_date}`,
+    day.end_time
+      ? `Surveillance conducted from ${time12(day.start_time)} to ${time12(day.end_time)}.`
+      : `Surveillance commenced at ${time12(day.start_time)}.`,
+    '',
+  ];
+  const lines = entries.length
+    ? entries.map(draftLine)
+    : ['(No activity entries were logged for this day.)'];
+  const tail = day.summary ? ['', 'SUMMARY', day.summary] : [];
+  return head.concat(lines).concat(tail).join('\n');
+}
+
+const REPORT_STATUSES = ['draft', 'submitted', 'needs_revision', 'approved', 'delivered'];
+
+async function generateReport(request, env, user, caseNo) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const body = await readJson(request);
+  const dayId = parseInt(body.day_id, 10);
+  if (!Number.isFinite(dayId)) return json({ error: 'Pick the investigation day to report on.' }, 400);
+
+  const day = await env.DB.prepare(
+    'SELECT * FROM case_days WHERE id = ? AND case_no = ?').bind(dayId, caseNo).first();
+  if (!day) return json({ error: 'not found' }, 404);
+  if (user.role !== 'admin' && day.investigator_id !== user.id) {
+    return json({ error: 'That day belongs to another investigator.' }, 403);
+  }
+
+  const existing = await env.DB.prepare('SELECT id FROM case_reports WHERE day_id = ?').bind(dayId).first();
+  if (existing) return json({ error: 'A report already exists for that day.', id: existing.id }, 409);
+
+  const { results } = await env.DB.prepare(
+    `SELECT at_time, description, location FROM activity_log
+      WHERE case_no = ? AND day_id = ? ORDER BY at_time ASC, id ASC`).bind(caseNo, dayId).all();
+
+  const res = await env.DB.prepare(
+    `INSERT INTO case_reports (case_no, day_id, investigator_id, report_date, status, body, created_at)
+     VALUES (?, ?, ?, ?, 'draft', ?, ?)`)
+    .bind(caseNo, dayId, day.investigator_id, day.day_date,
+          draftBody(day, results || []), nowIso()).run();
+
+  return json({ ok: true, id: res.meta ? res.meta.last_row_id : null, entries: (results || []).length }, 201);
+}
+
+async function saveReport(request, env, user, caseNo, id) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const rep = await env.DB.prepare(
+    'SELECT id, investigator_id, status FROM case_reports WHERE id = ? AND case_no = ?').bind(id, caseNo).first();
+  if (!rep) return json({ error: 'not found' }, 404);
+
+  const admin = user.role === 'admin';
+  if (!admin && rep.investigator_id !== user.id) {
+    return json({ error: 'That report belongs to another investigator.' }, 403);
+  }
+  // Once approved, the wording is what the office signed off on. An admin can
+  // still reopen it by setting the status back; an investigator cannot edit
+  // around a review that has already happened.
+  if (!admin && !['draft', 'needs_revision'].includes(rep.status)) {
+    return json({ error: 'This report is with the office for review.' }, 409);
+  }
+  const text = String((await readJson(request)).body || '');
+  if (!text.trim()) return json({ error: 'The report is empty.' }, 400);
+
+  await env.DB.prepare(
+    'UPDATE case_reports SET body = ?, updated_at = ?, updated_by = ? WHERE id = ?')
+    .bind(text.slice(0, 100000), nowIso(), user.id, id).run();
+  return json({ ok: true, id });
+}
+
+/* The review path. An investigator moves work forward — draft to submitted —
+   and nothing else. Approving your own report is not a review, so the
+   transitions that decide a report is finished are admin-only. */
+async function setReportStatus(request, env, user, caseNo, id) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const rep = await env.DB.prepare(
+    'SELECT id, investigator_id, status FROM case_reports WHERE id = ? AND case_no = ?').bind(id, caseNo).first();
+  if (!rep) return json({ error: 'not found' }, 404);
+
+  const body = await readJson(request);
+  const next = String(body.status || '');
+  if (!REPORT_STATUSES.includes(next)) return json({ error: 'invalid status' }, 400);
+
+  const admin = user.role === 'admin';
+  if (!admin) {
+    if (rep.investigator_id !== user.id) {
+      return json({ error: 'That report belongs to another investigator.' }, 403);
+    }
+    const allowed = ['draft', 'needs_revision'].includes(rep.status) && next === 'submitted';
+    if (!allowed) {
+      return json({ error: 'Only the office can review or approve a report.' }, 403);
+    }
+  }
+  await env.DB.prepare(
+    `UPDATE case_reports SET status = ?, review_note = ?, status_at = ?, status_by = ? WHERE id = ?`)
+    .bind(next, String(body.note || '').slice(0, 2000) || null, nowIso(), user.id, id).run();
+  return json({ ok: true, id, status: next });
 }
 
 /* ----------------------------------------------------------------- users */
@@ -1413,6 +1564,15 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/activity\/(\d{1,12})$/);
   if (m && method === 'POST') return editActivity(request, env, user, m[1], parseInt(m[2], 10));
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/reports\/generate$/);
+  if (m && method === 'POST') return generateReport(request, env, user, m[1]);
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/reports\/(\d{1,12})$/);
+  if (m && method === 'POST') return saveReport(request, env, user, m[1], parseInt(m[2], 10));
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/reports\/(\d{1,12})\/status$/);
+  if (m && method === 'POST') return setReportStatus(request, env, user, m[1], parseInt(m[2], 10));
 
   if (p === '/case-types' && method === 'GET') return json({ case_types: await listCaseTypes(env) });
   if (p === '/case-types' && method === 'POST') {
