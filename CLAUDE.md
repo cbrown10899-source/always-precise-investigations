@@ -361,7 +361,11 @@ Things that are load-bearing:
   `visitor-alerts/` is. Worker source must not ship to the public site.
 - `/portal/` is kept out of search by `noindex` plus an `X-Robots-Tag` in
   `_headers` — **not** by a `robots.txt` entry, which would only advertise it.
-  The same rule already applies to `/watch/`.
+  The same rule already applies to `/watch/`. And robots.txt must not even
+  *mention* either of them: it once carried a comment explaining this very
+  policy, which announced their existence in a public file. The live check
+  (`verify.sh`, run by `harden-check.yml`) fails on the word "portal" appearing
+  in robots.txt at all, comments included — the explanation lives here instead.
 - The intake posts to Web3Forms *and* the portal. Email is the client's
   confirmation path; the portal copy is fire-and-forget so an outage there can
   never lose a client.
