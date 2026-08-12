@@ -60,8 +60,14 @@ const server = http.createServer((req, res) => {
   let p = path.join(ROOT, decodeURIComponent(req.url.split('?')[0]));
   if (fs.existsSync(p) && fs.statSync(p).isDirectory()) p = path.join(p, 'index.html');
   if (!fs.existsSync(p)) { res.writeHead(404); return res.end('not found'); }
+  let out = fs.readFileSync(p);
+  if (p.endsWith('intake/index.html')) {
+    // The committed page carries a placeholder, which short-circuits the portal
+    // write. Swap in a test key so the real submission path is exercised.
+    out = Buffer.from(String(out).replace('"PASTE_INGEST_KEY"', '"test-ingest-key"'));
+  }
   res.writeHead(200, { 'Content-Type': TYPES[path.extname(p)] || 'text/plain' });
-  res.end(fs.readFileSync(p));
+  res.end(out);
 });
 await new Promise(r => server.listen(0, '127.0.0.1', r));
 const BASE = `http://127.0.0.1:${server.address().port}/intake/`;
@@ -73,7 +79,8 @@ const bundled = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 if (fs.existsSync(bundled)) launch.executablePath = bundled;
 const browser = await chromium.launch(launch);
 
-let submitted = null;
+let submitted = null;   // what the third-party relay receives
+let stored = null;      // what the case portal receives
 
 async function newPage() {
   const page = await (await browser.newContext()).newPage();
@@ -83,6 +90,10 @@ async function newPage() {
     route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' });
   });
   await page.route('**formsubmit.co/**', route => route.abort());
+  await page.route('**/portal-api/ingest', route => {
+    stored = JSON.parse(route.request().postData() || '{}');
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+  });
   page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
   await page.goto(BASE);
   return page;
@@ -110,7 +121,7 @@ async function sign(page) {
 
 section('Consumer path — surveillance');
 {
-  submitted = null;
+  submitted = null; stored = null;
   const page = await newPage();
   ok('progress bar shows the 6 consumer steps', await dots(page) === 6);
 
@@ -143,8 +154,8 @@ section('Consumer path — surveillance');
   await advance(page);
   await page.waitForTimeout(400);
 
-  ok('payload bills the consumer retainer', submitted && submitted.fee_due === 1500);
-  ok('payload carries no claim fields', submitted && !('claim_number' in submitted));
+  ok('the portal record bills the consumer retainer', stored && stored.fee_due === 1500);
+  ok('the portal record carries no claim fields', stored && !('claim_number' in stored));
   ok('record is titled Client Intake', (await page.locator('.record').innerText()).includes('Client Intake'));
   await page.close();
 }
@@ -153,7 +164,7 @@ section('Consumer path — surveillance');
 
 section('Carrier path — insurance claim assignment');
 {
-  submitted = null;
+  submitted = null; stored = null;
   const page = await newPage();
   await set(page, 'c_name', 'Dana Adjuster');
   await set(page, 'c_email', 'dana@carrier.example');
@@ -213,18 +224,18 @@ section('Carrier path — insurance claim assignment');
   await advance(page);
   await page.waitForTimeout(400);
 
-  ok('the assignment was submitted', submitted !== null);
-  if (submitted) {
-    ok('payload carries the claim number', submitted.claim_number === 'WC-2026-88421');
-    ok('payload carries the carrier', submitted.carrier === 'Example Mutual');
-    ok('payload carries the claim type', submitted.claim_type === "Workers' compensation");
-    ok('payload carries the date of loss', submitted.date_of_loss === '03/14/2026');
-    ok('payload carries the authorized hours', submitted.authorized_hours === '8 hours authorized');
-    ok('payload carries the billing email', submitted.billing_email === 'ap@carrier.example');
-    ok('payload marks the work invoiced', submitted.payment_method === 'Invoiced to carrier');
-    ok('nothing is charged at assignment', submitted.fee_due === 0);
+  ok('the assignment was submitted', stored !== null);
+  if (stored) {
+    ok('the portal record carries the claim number', stored.claim_number === 'WC-2026-88421');
+    ok('the portal record carries the carrier', stored.carrier === 'Example Mutual');
+    ok('the portal record carries the claim type', stored.claim_type === "Workers' compensation");
+    ok('the portal record carries the date of loss', stored.date_of_loss === '03/14/2026');
+    ok('the portal record carries the authorized hours', stored.authorized_hours === '8 hours authorized');
+    ok('the portal record carries the billing email', stored.billing_email === 'ap@carrier.example');
+    ok('the portal record marks the work invoiced', stored.payment_method === 'Invoiced to carrier');
+    ok('nothing is charged at assignment', stored.fee_due === 0);
     ok('the authorization signature is captured',
-       typeof submitted.signature === 'string' && submitted.signature.startsWith('data:image/png'));
+       typeof stored.signature === 'string' && stored.signature.startsWith('data:image/png'));
   }
   const record = await page.locator('.record').innerText();
   ok('record is titled Claim Assignment', record.includes('Claim Assignment'));
@@ -253,6 +264,65 @@ section('Switching service after the flow has branched');
   await advance(page);
   ok('the consumer flow resumes correctly', await heading(page) === 'Subject of the investigation');
   await page.close();
+}
+
+section('The relay never receives what was typed');
+{
+  submitted = null; stored = null;
+  const page = await newPage();
+  // Point the page at a configured ingest key so the portal write is attempted.
+  await page.addInitScript(() => {
+    Object.defineProperty(window, '__forceKey', { value: true });
+  });
+  await page.evaluate(() => {}).catch(() => {});
+
+  await set(page, 'c_name', 'Dana Adjuster');
+  await set(page, 'c_email', 'dana@carrier.example');
+  await advance(page);
+  await page.locator('#opt-claims').click();
+  await page.waitForTimeout(80);
+  await advance(page);
+  await set(page, 'k_carrier', 'Example Mutual');
+  await set(page, 'k_claimno', 'WC-2026-88421');
+  await set(page, 'k_policy', 'POL-77123');
+  await set(page, 'k_adjuster', 'Dana Adjuster');
+  await advance(page);
+  await set(page, 's_name', 'Pat Coleman');
+  await set(page, 's_addr', '1142 Rivermont Ave');
+  await set(page, 's_desc', 'Silver Ram 1500');
+  await set(page, 's_rel', 'Lumbar strain; no lifting over 10 lbs');
+  await advance(page);
+  await set(page, 'o_goal', 'Activity versus stated restrictions');
+  await advance(page);
+  await page.locator('[data-k="a_consent"]').check();
+  await set(page, 'a_typed', 'Dana Adjuster');
+  await sign(page);
+  await advance(page);
+  await set(page, 'b_email', 'ap@carrier.example');
+  await advance(page);
+  await page.waitForTimeout(500);
+
+  ok('the firm is still notified', submitted !== null);
+  if (submitted) {
+    const blob = JSON.stringify(submitted);
+    const secrets = {
+      "the claimant's name": 'Pat Coleman',
+      "the claimant's address": 'Rivermont',
+      'the vehicle description': 'Silver Ram',
+      'the alleged injury': 'Lumbar strain',
+      'the objective': 'stated restrictions',
+      'the claim number': 'WC-2026-88421',
+      'the policy number': 'POL-77123',
+      'the signature image': 'data:image/png',
+    };
+    for (const [what, needle] of Object.entries(secrets)) {
+      ok(`the relay never sees ${what}`, !blob.includes(needle));
+    }
+    ok('the relay does get the case number', blob.includes(submitted.case_no));
+    ok('the relay does get a contact name', String(submitted.contact_name || '').length > 0);
+    ok('the relay is told where to read the details instead',
+       String(submitted.where_to_read_it || '').includes('portal'));
+  }
 }
 
 /* ------------------------------------------------------------------ report */

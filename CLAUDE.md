@@ -104,6 +104,14 @@ Both forms (homepage and `intake/`) post to Web3Forms. The access key lives in
 the page source; it is a public key by design, but it is the only thing making
 the forms deliver, so do not strip it.
 
+**What the relay is allowed to see is a hard boundary.** Web3Forms is a third
+party, so `intake/` sends it only a notice — case number, service, and the
+contact's name, phone and email. The claimant, address, vehicle, alleged
+injury, objective, claim and policy numbers and the signature go to the case
+portal on our own Cloudflare account and nowhere else. `buildNotice()` is what
+enforces that; do not widen it, and do not spread the full payload into the
+notice. There is a test that fails if any of those values reaches the relay.
+
 `intake/` is a single-file wizard with **two paths** off the service step:
 
 - **Consumer** — surveillance or process serving. Six steps, ends in a Venmo

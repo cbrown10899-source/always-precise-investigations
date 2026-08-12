@@ -502,49 +502,82 @@ function buildPayload(){
   }
   return p;
 }
-async function submitIntake(p){
-  // Web3Forms if a key is set (handles large payloads incl. the signature), else FormSubmit to the firm inbox.
+/* What a submission is allowed to tell a third party.
+ *
+ * The email relay is outside our infrastructure, so it is sent only enough to
+ * say a case arrived and who to ring back. What the client actually typed —
+ * the claimant, the address, the vehicle, the alleged injury, the objective,
+ * the claim and policy numbers, the signature — stays in the case portal on
+ * our own Cloudflare account and is read there, behind a staff login.
+ *
+ * Contact details are included on purpose: without them, a portal outage would
+ * leave a real enquiry with no way to reach the person who made it. */
+function buildNotice(p, stored){
+  return {
+    case_no: p.case_no,
+    service: p.service,
+    type: p.claim_number || p.carrier ? "Insurance claim assignment" : "Client intake",
+    contact_name: p.client_name || p.signed_name || "",
+    contact_phone: p.client_phone || "",
+    contact_email: p.client_email || "",
+    submitted_at: p.submitted_at,
+    recorded_in_portal: stored ? "yes" : "NO — not recorded, see below",
+    where_to_read_it: stored
+      ? "Open the case portal at /portal/ and search this case number. The details are deliberately not in this email."
+      : "THIS SUBMISSION WAS NOT RECORDED. Nothing else was kept. Call the contact above today; their own copy of the details is on their screen."
+  };
+}
+
+/* Notify the firm that something arrived. Never carries the case content. */
+async function notifyFirm(notice){
   if(WEB3FORMS_KEY){
     const r=await fetch("https://api.web3forms.com/submit",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},
-      body:JSON.stringify({access_key:WEB3FORMS_KEY,subject:"New client intake "+p.case_no+" — "+p.service,from_name:"Website Intake",...p})});
+      body:JSON.stringify({access_key:WEB3FORMS_KEY,subject:"New "+notice.type+" "+notice.case_no,from_name:"Website Intake",...notice})});
     const d=await r.json(); return !!d.success;
   }
   const r=await fetch("https://formsubmit.co/ajax/"+FIRM.email,{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},
-    body:JSON.stringify({_subject:"New client intake "+p.case_no+" — "+p.service,_template:"table",...p})});
+    body:JSON.stringify({_subject:"New "+notice.type+" "+notice.case_no,_template:"table",...notice})});
   const d=await r.json().catch(()=>({})); return d && (d.success==="true"||d.success===true);
 }
-/* Record the submission in the case portal. Deliberately never throws and
-   never blocks the client: the confirmation they see depends on the email
-   going out, not on our own storage being reachable. */
+
+/* The case portal is the record. This is the write that has to succeed. */
 async function recordInPortal(p){
-  if(!PORTAL_INGEST_KEY || PORTAL_INGEST_KEY === "PASTE_INGEST_KEY") return;
+  if(!PORTAL_INGEST_KEY || PORTAL_INGEST_KEY === "PASTE_INGEST_KEY") return false;
   try{
-    await fetch(PORTAL_API + "/ingest", {
+    const r = await fetch(PORTAL_API + "/ingest", {
       method:"POST",
       headers:{"Content-Type":"application/json","X-Ingest-Key":PORTAL_INGEST_KEY},
       body:JSON.stringify(p)
     });
-  }catch(e){ /* the inbox copy is the one that matters to the client */ }
+    return r.ok;
+  }catch(e){ return false; }
 }
 
 async function finish(){
   const btn=document.querySelector(".btn.primary"); const err=$("err");
   const p=buildPayload();
   btn.disabled=true; btn.textContent="Sending…"; if(err) err.textContent="";
-  let sent=false, threw=false;
-  try{ sent=await submitIntake(p); }catch(e){ threw=true; }
-  await recordInPortal(p);
-  renderRecord(p, sent, threw);
+
+  // Store first, then notify — the notice reports whether the store worked.
+  const stored = await recordInPortal(p);
+  let notified=false, threw=false;
+  try{ notified = await notifyFirm(buildNotice(p, stored)); }catch(e){ threw=true; }
+
+  // The client is told it landed only if the firm can actually act on it:
+  // either the details are recorded, or someone has their number to call.
+  renderRecord(p, stored || notified, threw, stored);
 }
 
 /* ============ Final record ============ */
 function esc(s){ return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function row(label,v){ return v ? `<dt>${label}</dt><dd>${esc(v)}</dd>` : ""; }
-function renderRecord(p, sent, threw){
+function renderRecord(p, sent, threw, stored){
   document.querySelectorAll("#progress i").forEach(el=>el.classList.add("done"));
   const claims = isClaims();
-  const status = sent
+  const status = stored
     ? `<div class="ok"><b>${claims?"Assignment submitted.":"Intake submitted."}</b> Always Precise Investigations has received your ${claims?"assignment":"request"}. We'll ${claims?"confirm acceptance and the rate in writing before going out":"contact you shortly"}. Keep your case number for reference.</div>`
+    : sent
+    ? `<div class="warn"><b>Received, but please keep this page.</b> We have your contact details and your case number, and we will call you — but the details you entered did not save on our side. Printing or screenshotting this page means nothing is lost.</div>`
     : `<div class="warn"><b>We couldn't confirm delivery.</b> Please call <b>${FIRM.phone}</b> or email <b>${FIRM.email}</b> and give your case number so we don't miss you. Your details are shown below — you can print or screenshot this page.</div>`;
   app.innerHTML = `<div class="record">
     ${status}

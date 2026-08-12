@@ -126,9 +126,17 @@ cookie bug, which is exactly what it did once.
 
 ## Things to know
 
-- **Email still delivers.** The intake posts to Web3Forms *and* the portal. If
-  the portal is down the client still gets a confirmation and you still get the
-  email; only the stored copy is missed.
+- **The portal is the record; email is only an alert.** The email relay is a
+  third party, so it is sent the case number, the service, and the contact's
+  name, phone and email — nothing else. The claimant, the address, the vehicle,
+  the alleged injury, the objective, the claim and policy numbers and the
+  signature never leave this account. The alert says whether the portal write
+  succeeded and where to read the rest.
+- **If the portal write fails**, the alert says so in capitals and the client is
+  told on screen to keep or print their copy. That is deliberate: the
+  alternative is emailing the case content to a third party to avoid losing it,
+  which is the thing this design exists to prevent. You still get their name and
+  number, so the enquiry is never silently lost.
 - **Nothing before this exists.** Submissions were only ever emailed, so the
   portal starts empty and fills from the first submission after the ingest key
   is set. Older intakes exist only in the inbox.
