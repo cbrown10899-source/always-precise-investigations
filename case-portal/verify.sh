@@ -90,7 +90,10 @@ fi
 INTAKE=$(curljson "$SITE/intake/")
 if [ -z "$INTAKE" ]; then
   bad "the intake form is wired to the portal" "could not fetch $SITE/intake/ — nothing was checked."
-elif printf '%s' "$INTAKE" | grep -q 'PASTE_INGEST_KEY'; then
+elif printf '%s' "$INTAKE" | grep -q 'PORTAL_INGEST_KEY = "PASTE_INGEST_KEY"'; then
+  # Match the placeholder AS THE ASSIGNED VALUE. The bare string also appears in
+  # the page's own guard (`=== "PASTE_INGEST_KEY"`), which made this check fail
+  # on a perfectly wired form for as long as the guard has existed.
   bad "the intake form is wired to the portal" \
       "intake/index.html still has the placeholder — submissions will email but record nothing."
 else
