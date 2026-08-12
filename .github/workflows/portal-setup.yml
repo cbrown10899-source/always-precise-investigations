@@ -70,18 +70,40 @@ jobs:
       - name: Find or create the D1 database
         run: |
           set -euo pipefail
-          cd case-portal
-          ID=$(npx --yes wrangler d1 list --json 2>/dev/null \
-                 | jq -r --arg n "$DB_NAME" '.[]? | select(.name==$n) | .uuid' | head -1)
-          if [ -z "$ID" ]; then
+          # Deliberately the REST API rather than `wrangler d1 list --json`:
+          # wrangler prints a decorated banner to stdout ahead of the JSON, so
+          # jq chokes on "wrangler 4.122.0" before reaching any data.
+          API="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database"
+          AUTH="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+
+          show_errors() {
+            printf '%s\n' "$1" | jq -r '.errors[]? | "  [\(.code)] \(.message)"' 2>/dev/null \
+              || printf '  %s\n' "$1"
+          }
+
+          LIST=$(curl -sS -H "$AUTH" "$API?per_page=100")
+          if [ "$(printf '%s' "$LIST" | jq -r '.success // false')" != "true" ]; then
+            echo "::error::Cloudflare refused to list D1 databases. The usual cause is that CLOUDFLARE_API_TOKEN has no D1 permission — it was created for Pages and Workers. Edit the token to add 'D1: Edit' for this account."
+            show_errors "$LIST"
+            exit 1
+          fi
+          ID=$(printf '%s' "$LIST" | jq -r --arg n "$DB_NAME" '.result[]? | select(.name==$n) | .uuid' | head -1)
+
+          if [ -z "$ID" ] || [ "$ID" = "null" ]; then
             echo "Creating $DB_NAME"
-            npx --yes wrangler d1 create "$DB_NAME"
-            ID=$(npx --yes wrangler d1 list --json \
-                   | jq -r --arg n "$DB_NAME" '.[]? | select(.name==$n) | .uuid' | head -1)
+            CREATED=$(curl -sS -X POST -H "$AUTH" -H 'Content-Type: application/json' \
+                        -d "$(jq -nc --arg n "$DB_NAME" '{name:$n}')" "$API")
+            if [ "$(printf '%s' "$CREATED" | jq -r '.success // false')" != "true" ]; then
+              echo "::error::Could not create the D1 database."
+              show_errors "$CREATED"
+              exit 1
+            fi
+            ID=$(printf '%s' "$CREATED" | jq -r '.result.uuid')
           else
             echo "Found existing $DB_NAME"
           fi
-          [ -n "$ID" ] || { echo "::error::could not resolve the database id"; exit 1; }
+          [ -n "$ID" ] && [ "$ID" != "null" ] || { echo "::error::could not resolve the database id"; exit 1; }
+          echo "Database id: $ID"
           echo "D1_ID=$ID" >> "$GITHUB_ENV"
 
       - name: Write the database id into wrangler.toml
@@ -183,8 +205,16 @@ jobs:
           cd case-portal
           # Runs even if an earlier step failed: a token that can mint an admin
           # must never outlive the run that created it.
-          printf 'BOOTSTRAP_TOKEN\ny\n' | npx --yes wrangler secret delete BOOTSTRAP_TOKEN || \
+          OUT=$(printf 'BOOTSTRAP_TOKEN\ny\n' | npx --yes wrangler secret delete BOOTSTRAP_TOKEN 2>&1) && RC=0 || RC=$?
+          if [ "${RC:-0}" -eq 0 ]; then
+            echo "Bootstrap token destroyed."
+          elif printf '%s' "$OUT" | grep -qi "not found"; then
+            # An earlier step failed before the token was ever created.
+            echo "No bootstrap token was set — nothing to destroy."
+          else
+            printf '%s\n' "$OUT"
             echo "::warning::Could not delete BOOTSTRAP_TOKEN — remove it by hand in the Worker's Variables and Secrets."
+          fi
 
       - name: Commit the database id and the ingest key
         run: |
