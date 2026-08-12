@@ -814,6 +814,15 @@ section('The case workspace in the browser');
     ok(`the workspace has a ${t} tab`, has(tabs, t), tabs);
   }
 
+  // The chain has to hold hands: Reports with nothing to report on points at
+  // Field work rather than dead-ending.
+  await wsTab(page, 'Reports');
+  ok('an empty Reports tab offers the way to Field work',
+     await page.locator('.btn', { hasText: 'Go to Field work' }).count() === 1);
+  await page.locator('.btn', { hasText: 'Go to Field work' }).click();
+  await page.waitForTimeout(250);
+  ok('and it lands on the day controls', await page.locator('#d_date').count() === 1);
+
   // Set the authorization first so the panel has something to measure against.
   await wsTab(page, 'Authorization');
   await page.locator('#m_hours').fill('8');
@@ -837,6 +846,8 @@ section('The case workspace in the browser');
   // Log the timeline.
   await wsTab(page, 'Activity log');
   ok('the log says a day is running', has(await text(page, '#dlgBody'), 'Investigation day running'));
+  ok('and offers to end it from right there',
+     await page.locator('.btn', { hasText: 'End the day' }).count() === 1);
   const quick = await page.locator('.qgrid').innerText();
   for (const b of ['Activity', 'Photo', 'Video', 'Location', 'Vehicle', 'Note', 'Mileage', 'Expense']) {
     ok(`there is a quick button for ${b}`, has(quick, b), quick);
@@ -875,7 +886,14 @@ section('The case workspace in the browser');
   await page.locator('.btn', { hasText: 'End investigation day' }).click();
   await page.waitForTimeout(600);
   const field = await text(page, '#dlgBody');
-  ok('the day is recorded with its hours', field.includes('6'));
+  ok('ending the day says what was recorded', has(field, 'Day ended — 6 hours'));
+  ok('and offers the report as the next step',
+     await page.locator('.btn', { hasText: 'Draft the daily report' }).count() === 1);
+  await page.locator('.btn', { hasText: 'Draft the daily report' }).click();
+  await page.waitForTimeout(300);
+  ok('which lands on Reports with the day ready to draft', await page.locator('#r_day').count() === 1);
+  await wsTab(page, 'Field work');
+  ok('the day is recorded with its hours', (await text(page, '#dlgBody')).includes('6'));
   ok('the summary is kept', field.includes('Subject active throughout the morning.'));
   ok('the start/end times show on the day row', field.includes('7:00 AM'));
 
