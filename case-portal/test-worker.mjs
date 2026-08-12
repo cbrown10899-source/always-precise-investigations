@@ -60,6 +60,7 @@ function freshEnv() {
     INGEST_KEY: 'ingest-test-key',
     BOOTSTRAP_TOKEN: 'bootstrap-test-token',
     PBKDF2_ITER: '10000',   // keep the suite quick; production uses the default
+    INGEST_PER_MINUTE: '5', // ditto — production defaults far higher
   };
 }
 
@@ -211,17 +212,22 @@ section('Submission ingest');
 
 /* ------------------------------------------------- roles and case visibility */
 
+async function invite(env, cookie, body) {
+  return call(env, '/invites', { method: 'POST', cookie, body });
+}
+
 section('Roles and case visibility');
 {
   const env = freshEnv();
   await bootstrapAdmin(env);
   const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
 
-  let res = await call(env, '/users', {
-    method: 'POST', cookie: admin,
-    body: { username: 'dana', display_name: 'Dana', password: 'FieldWork2026x', role: 'investigator' },
-  });
-  ok('an admin can create an investigator', res.status === 201);
+  let res = await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' });
+  ok('an admin can invite an investigator', res.status === 201);
+  const link = (await jsonOf(res)).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  res = await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  ok('the invitee sets their own password and the account is created', res.status === 201);
 
   await ingest(env, { case_no: 'API-A', client_name: 'Assigned Case' });
   await ingest(env, { case_no: 'API-B', client_name: 'Other Case' });
@@ -229,9 +235,7 @@ section('Roles and case visibility');
   const users = await jsonOf(await call(env, '/users', { cookie: admin }));
   const dana = users.users.find(u => u.username === 'dana');
 
-  res = await call(env, `/submissions/API-A/assign`, {
-    method: 'POST', cookie: admin, body: { user_id: dana.id },
-  });
+  res = await call(env, `/submissions/API-A/assign`, { method: 'POST', cookie: admin, body: { user_id: dana.id } });
   ok('an admin can assign a case', res.status === 200 && (await jsonOf(res)).status === 'assigned');
 
   const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
@@ -243,19 +247,88 @@ section('Roles and case visibility');
   const adminList = await jsonOf(await call(env, '/submissions', { cookie: admin }));
   ok('an admin sees every case', adminList.total === 2);
 
-  res = await call(env, '/submissions/API-B', { cookie: inv });
-  ok('an investigator cannot open a case they were not assigned', res.status === 404);
-  res = await call(env, '/submissions/API-A', { cookie: inv });
-  ok('an investigator can open their own case', res.status === 200);
+  ok('an investigator cannot open a case they were not assigned',
+     (await call(env, '/submissions/API-B', { cookie: inv })).status === 404);
+  ok('an investigator can open their own case',
+     (await call(env, '/submissions/API-A', { cookie: inv })).status === 200);
+  ok('an investigator cannot list staff accounts',
+     (await call(env, '/users', { cookie: inv })).status === 403);
+  ok('an investigator cannot issue invitations',
+     (await invite(env, inv, { username: 'sneak', role: 'admin' })).status === 403);
+  ok('an investigator cannot assign cases',
+     (await call(env, '/submissions/API-B/assign', { method: 'POST', cookie: inv, body: { user_id: dana.id } })).status === 403);
+}
 
-  res = await call(env, '/users', { cookie: inv });
-  ok('an investigator cannot list staff accounts', res.status === 403);
-  res = await call(env, '/users', {
-    method: 'POST', cookie: inv, body: { username: 'sneak', password: 'Password12345', role: 'admin' },
-  });
-  ok('an investigator cannot create accounts', res.status === 403);
-  res = await call(env, '/submissions/API-B/assign', { method: 'POST', cookie: inv, body: { user_id: dana.id } });
-  ok('an investigator cannot assign cases', res.status === 403);
+/* ------------------------------------------------------- invitation-only */
+
+section('Invitation-only account creation');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  ok('there is no public route that creates an account',
+     (await call(env, '/users', { method: 'POST', body: { username: 'walkin', password: 'Password1234' } })).status === 401);
+  ok('not even an admin can create an account directly — only invite',
+     (await call(env, '/users', { method: 'POST', cookie: admin, body: { username: 'walkin', password: 'Password1234' } })).status === 404);
+  ok('an anonymous visitor cannot issue an invitation',
+     (await invite(env, undefined, { username: 'walkin', role: 'admin' })).status === 401);
+
+  let res = await invite(env, admin, { username: 'pat', display_name: 'Pat', email: 'pat@example.com', role: 'investigator' });
+  ok('an invitation is issued', res.status === 201);
+  const body = await jsonOf(res);
+  const token = new URL(body.url, 'https://x.test').searchParams.get('invite');
+  ok('the invitation link carries a 64-hex token', /^[0-9a-f]{64}$/.test(token));
+  ok('the link points at the portal page', body.url.includes('/portal/?invite='));
+
+  const pending = await jsonOf(await call(env, '/invites', { cookie: admin }));
+  ok('the invitation shows as pending', pending.invites.some(i => i.username === 'pat'));
+  ok('the stored invitation never exposes the token',
+     pending.invites.every(i => !('token_hash' in i) && !JSON.stringify(i).includes(token)));
+
+  res = await call(env, `/invite/${token}`);
+  ok('the acceptance page can look the invitation up', (await jsonOf(res)).valid === true);
+  res = await call(env, `/invite/${'a'.repeat(64)}`);
+  ok('an unknown token is not valid', res.status === 404);
+
+  ok('a weak password is refused at acceptance',
+     (await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'short' } })).status === 400);
+
+  res = await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'ChosenByPat1x' } });
+  ok('accepting creates the account', res.status === 201);
+  ok('accepting signs them straight in', cookieFrom(res).startsWith('api_portal='));
+  ok('the new account can sign in with the password they chose',
+     (await login(env, 'pat', 'ChosenByPat1x')).res.status === 200);
+
+  ok('the invitation cannot be redeemed twice',
+     (await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'SomeoneElse1x' } })).status === 404);
+  const after = await jsonOf(await call(env, '/invites', { cookie: admin }));
+  ok('a redeemed invitation leaves the pending list', !after.invites.some(i => i.username === 'pat'));
+
+  ok('inviting a username that already exists is refused',
+     (await invite(env, admin, { username: 'pat', role: 'investigator' })).status === 409);
+  ok('a malformed username is refused',
+     (await invite(env, admin, { username: 'has spaces', role: 'investigator' })).status === 400);
+  ok('an invalid role is refused',
+     (await invite(env, admin, { username: 'newbie', role: 'superuser' })).status === 400);
+  ok('a malformed email is refused',
+     (await invite(env, admin, { username: 'newbie', role: 'investigator', email: 'not-an-email' })).status === 400);
+
+  res = await invite(env, admin, { username: 'gone', role: 'investigator' });
+  const goneTok = new URL((await jsonOf(res)).url, 'https://x.test').searchParams.get('invite');
+  const list = await jsonOf(await call(env, '/invites', { cookie: admin }));
+  const goneId = list.invites.find(i => i.username === 'gone').id;
+  ok('an admin can revoke an invitation',
+     (await call(env, `/invites/${goneId}/revoke`, { method: 'POST', cookie: admin })).status === 200);
+  ok('a revoked invitation stops working',
+     (await call(env, `/invite/${goneTok}/accept`, { method: 'POST', body: { password: 'TooLate1234x' } })).status === 404);
+
+  res = await invite(env, admin, { username: 'twice', role: 'investigator' });
+  const t1 = new URL((await jsonOf(res)).url, 'https://x.test').searchParams.get('invite');
+  res = await invite(env, admin, { username: 'twice', role: 'investigator' });
+  const t2 = new URL((await jsonOf(res)).url, 'https://x.test').searchParams.get('invite');
+  ok('reissuing an invitation invalidates the previous link',
+     (await call(env, `/invite/${t1}`)).status === 404 && (await call(env, `/invite/${t2}`)).status === 200);
 }
 
 /* ---------------------------------------------------------- account handling */
@@ -265,62 +338,113 @@ section('Account handling');
   const env = freshEnv();
   await bootstrapAdmin(env);
   const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
-  const mk = (body) => call(env, '/users', { method: 'POST', cookie: admin, body });
-
-  ok('a short password is refused', (await mk({ username: 'a1', password: 'Short1a', role: 'investigator' })).status === 400);
-  ok('a password with no digit is refused', (await mk({ username: 'a2', password: 'NoDigitsHereAtAll', role: 'investigator' })).status === 400);
-  ok('a bad username is refused', (await mk({ username: 'no spaces!', password: 'GoodPassword1x', role: 'investigator' })).status === 400);
-  ok('an invalid role is refused', (await mk({ username: 'a3', password: 'GoodPassword1x', role: 'superuser' })).status === 400);
-  ok('a valid account is created', (await mk({ username: 'pat', password: 'GoodPassword1x', role: 'investigator' })).status === 201);
-  ok('a duplicate username is refused', (await mk({ username: 'pat', password: 'GoodPassword1x', role: 'investigator' })).status === 409);
+  const res0 = await invite(env, admin, { username: 'pat', display_name: 'Pat', role: 'investigator' });
+  const tok = new URL((await jsonOf(res0)).url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'ChosenByPat1x' } });
 
   const users = await jsonOf(await call(env, '/users', { cookie: admin }));
   ok('the account list never exposes hashes',
      users.users.every(u => !('pass_hash' in u) && !('pass_salt' in u)));
   const pat = users.users.find(u => u.username === 'pat');
 
-  const patCookie = (await login(env, 'pat', 'GoodPassword1x')).cookie;
-  ok('the new account can sign in', (await call(env, '/auth/me', { cookie: patCookie })).status === 200);
-
+  const patCookie = (await login(env, 'pat', 'ChosenByPat1x')).cookie;
   let res = await call(env, `/users/${pat.id}/active`, { method: 'POST', cookie: admin, body: { active: false } });
-  ok('an admin can deactivate an account', res.status === 200);
-  ok('deactivating ends that account\'s live session',
+  ok('an admin can disable an account', res.status === 200);
+  ok("disabling ends that account's live session",
      (await call(env, '/auth/me', { cookie: patCookie })).status === 401);
-  ok('a deactivated account cannot sign back in',
-     (await login(env, 'pat', 'GoodPassword1x')).res.status === 401);
+  ok('a disabled account cannot sign back in',
+     (await login(env, 'pat', 'ChosenByPat1x')).res.status === 401);
 
   const me = await jsonOf(await call(env, '/auth/me', { cookie: admin }));
-  const admins = (await jsonOf(await call(env, '/users', { cookie: admin }))).users;
-  const selfId = admins.find(u => u.username === me.user.username).id;
-  res = await call(env, `/users/${selfId}/active`, { method: 'POST', cookie: admin, body: { active: false } });
-  ok('an admin cannot lock themselves out', res.status === 400);
+  const selfId = (await jsonOf(await call(env, '/users', { cookie: admin }))).users
+    .find(u => u.username === me.user.username).id;
+  ok('an admin cannot lock themselves out',
+     (await call(env, `/users/${selfId}/active`, { method: 'POST', cookie: admin, body: { active: false } })).status === 400);
 
   await call(env, `/users/${pat.id}/active`, { method: 'POST', cookie: admin, body: { active: true } });
-  const patAgain = (await login(env, 'pat', 'GoodPassword1x')).cookie;
-  res = await call(env, `/users/${pat.id}/password`, {
-    method: 'POST', cookie: admin, body: { password: 'BrandNewPass1x' },
-  });
+  const patAgain = (await login(env, 'pat', 'ChosenByPat1x')).cookie;
+  res = await call(env, `/users/${pat.id}/password`, { method: 'POST', cookie: admin, body: { password: 'BrandNewPass1x' } });
   ok('an admin can reset a password', res.status === 200);
   ok('a password reset ends existing sessions',
      (await call(env, '/auth/me', { cookie: patAgain })).status === 401);
-  ok('the old password stops working', (await login(env, 'pat', 'GoodPassword1x')).res.status === 401);
+  ok('the old password stops working', (await login(env, 'pat', 'ChosenByPat1x')).res.status === 401);
   ok('the new password works', (await login(env, 'pat', 'BrandNewPass1x')).res.status === 200);
+  ok('an investigator cannot reset anyone\'s password',
+     (await call(env, `/users/${selfId}/password`, {
+       method: 'POST', cookie: (await login(env, 'pat', 'BrandNewPass1x')).cookie, body: { password: 'Hijacked123x' },
+     })).status === 403);
 }
 
-/* ------------------------------------------------------------------- CORS */
+/* -------------------------------------------------- security regressions */
 
-section('CORS and headers');
+section('Security regressions');
+{
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '500';   // the rate limit has its own block below
+
+  // A case number is rendered in the admin's browser. It must not be able to
+  // carry a quote, an angle bracket, or anything else that leaves plain text.
+  const hostile = [
+    "x'); alert(1); ('",
+    '<script>alert(1)</script>',
+    'x" onmouseover="alert(1)',
+    'x\\u0027);fetch(\\u0027//evil\\u0027);(\\u0027',
+    'a'.repeat(200),
+    'sp ace',
+  ];
+  let allRejected = true;
+  for (const c of hostile) {
+    const res = await ingest(env, { case_no: c, client_name: 'x' });
+    if (res.status !== 400) allRejected = false;
+  }
+  ok('every hostile case number is rejected at ingest', allRejected);
+  ok('a well-formed case number is still accepted',
+     (await ingest(env, { case_no: 'API-20260812-4118', client_name: 'x' })).status === 200);
+
+  // The route parameter is pinned to the same alphabet.
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  ok('a hostile case number in the URL does not reach a query',
+     (await call(env, '/submissions/' + encodeURIComponent("x'); drop--"), { cookie: admin })).status === 404);
+
+  // Rate limiting is real, not just claimed in a comment.
+  const env2 = freshEnv();
+  let limited = false;
+  for (let i = 0; i < 8; i++) {
+    const r = await ingest(env2, { case_no: `API-RATE-${i}`, client_name: 'x' });
+    if (r.status === 429) limited = true;
+  }
+  ok('ingest is rate limited once the cap is passed', limited);
+
+  // Oversize is refused on the declared length, before the body is read.
+  const big = await call(env, '/ingest', {
+    method: 'POST',
+    headers: { 'X-Ingest-Key': env.INGEST_KEY, 'Content-Length': String(9 * 1024 * 1024) },
+    body: JSON.stringify({ case_no: 'API-DECLARED' }),
+  });
+  ok('an oversized Content-Length is refused up front', big.status === 413);
+}
+
+/* ------------------------------------------------- origin guard and headers */
+
+section('Origin guard and headers');
 {
   const env = freshEnv();
   let res = await call(env, '/health');
-  ok('the site origin is allowed', res.headers.get('Access-Control-Allow-Origin') === ORIGIN);
+  ok('the site origin is accepted', res.status === 200);
   res = await call(env, '/health', { origin: 'https://evil.example' });
-  ok('any other origin gets no CORS grant', res.headers.get('Access-Control-Allow-Origin') === null);
+  ok('a foreign origin is refused outright', res.status === 403);
   ok('responses are never cached', res.headers.get('Cache-Control') === 'no-store');
   ok('nosniff is set', res.headers.get('X-Content-Type-Options') === 'nosniff');
+  ok('no referrer is leaked', res.headers.get('Referrer-Policy') === 'no-referrer');
 
-  res = await call(env, '/submissions', { method: 'OPTIONS' });
-  ok('preflight is answered', res.status === 204);
+  // curl and the deploy health check send no Origin at all.
+  res = await worker.fetch(new Request(API + '/health'), env);
+  ok('a request with no Origin is allowed through', res.status === 200);
+
+  // The Worker answers under its mounted prefix as well as bare.
+  res = await worker.fetch(new Request(API + '/portal-api/health'), env);
+  ok('the /portal-api prefix is stripped', res.status === 200 && (await jsonOf(res)).ok === true);
 }
 
 /* ------------------------------------------------------------------ report */

@@ -21,7 +21,7 @@ Measured against this repo:
 | all 84 runs                  | 1.29 MB    | ~323,000       |
 
 A single unfiltered call therefore costs more than an entire context window
-and will end the session. This repo accumulates runs quickly — four workflows,
+and will end the session. This repo accumulates runs quickly — five workflows,
 one of them a daily cron — so the count only grows.
 
 When you need deploy or health status, do one of these instead:
@@ -36,13 +36,14 @@ emits a long step summary.
 
 ## Deploy topology
 
-Four workflows, all in `.github/workflows/`:
+Five workflows, all in `.github/workflows/`:
 
 | Workflow              | Trigger                              | Does                                       |
 | --------------------- | ------------------------------------ | ------------------------------------------ |
 | `deploy.yml`          | any push to `master`                 | rsyncs the site to Cloudflare Pages        |
 | `build-locations.yml` | push to `master` touching the generator | regenerates location pages, commits, deploys |
 | `deploy-worker.yml`   | push touching `visitor-alerts/worker.js` | uploads the Worker, preserving bindings |
+| `deploy-portal.yml`   | push touching `case-portal/worker.js`   | tests, then uploads the portal Worker      |
 | `site-health.yml`     | daily cron, 11:00 UTC                | probes the live domain; opens one issue on failure |
 
 Every workflow carries a `concurrency` group. They were added after runs
@@ -137,12 +138,26 @@ Two roles. Admins see every case, assign work and manage accounts.
 Investigators see **only** cases assigned to them — enforced in the SQL query,
 not by the page hiding rows. Test that boundary if you touch the queries.
 
+**Accounts exist only by invitation.** There is no public sign-up and no route
+that creates an account directly — an admin issues a one-time link and the
+invitee chooses their own password. Do not add a create-account endpoint.
+
 It is a **separate Worker from `api-visitor-alerts` on purpose**: this one holds
 claimant names, injuries, claim numbers and signature images; that one holds
 anonymous counters. Do not merge them.
 
 Things that are load-bearing:
 
+- **The Worker must stay on `alwayspreciseinvestigations.net/portal-api/*`.** A
+  session cookie set by a `workers.dev` hostname is cross-site and never sent
+  back — Safari blocks third-party cookies outright. Moving it off the domain
+  silently breaks every sign-in.
+- **Case numbers are untrusted.** They come from a public form and are rendered
+  in an admin's browser, so ingest pins them to `[A-Za-z0-9-]{3,64}` and the
+  page passes them through `data-` attributes read by a delegated listener —
+  never into an inline handler, where the browser decodes an escaped quote back
+  into script. There is a regression test that plants a hostile row directly in
+  the database.
 - `case-portal/` is excluded from the Pages deploy in `deploy.yml`, the same way
   `visitor-alerts/` is. Worker source must not ship to the public site.
 - `/portal/` is kept out of search by `noindex` plus an `X-Robots-Tag` in
@@ -159,8 +174,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 54 checks: auth, lockout, roles, CORS
-node portal/test-portal.mjs        # 26 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 79 checks: auth, invites, roles, ingest, origin
+node portal/test-portal.mjs        # 35 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,

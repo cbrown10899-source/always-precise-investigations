@@ -62,3 +62,31 @@ CREATE TABLE IF NOT EXISTS login_fails (
   fails        INTEGER NOT NULL DEFAULT 0,
   locked_until TEXT
 );
+
+-- Invitations. There is no way to create an account except by redeeming one of
+-- these, and only an admin can issue them. The invitee chooses their own
+-- password when they redeem it, so nobody — including the admin who invited
+-- them — ever knows it. Only the SHA-256 of the token is stored, so the
+-- database does not contain a redeemable link.
+CREATE TABLE IF NOT EXISTS invites (
+  token_hash   TEXT PRIMARY KEY,
+  username     TEXT    NOT NULL,
+  display_name TEXT    NOT NULL DEFAULT '',
+  email        TEXT,
+  role         TEXT    NOT NULL CHECK (role IN ('admin','investigator')),
+  created_by   INTEGER NOT NULL REFERENCES users(id),
+  created_at   TEXT    NOT NULL,
+  expires_at   TEXT    NOT NULL,
+  used_at      TEXT,
+  revoked_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_invites_user ON invites(username);
+
+-- Ingest rate limiting, one row per minute. The intake form is public, so its
+-- ingest key is public too; this is what actually stops the table being
+-- flooded. Losing a minute of portal writes never costs a client anything —
+-- the form delivers by email independently of this.
+CREATE TABLE IF NOT EXISTS ingest_rate (
+  minute TEXT PRIMARY KEY,
+  n      INTEGER NOT NULL DEFAULT 0
+);

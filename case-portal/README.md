@@ -6,6 +6,12 @@ Two roles. **Admins** (you and your partner) see every case, assign work and
 manage accounts. **Investigators** see only the cases assigned to them — that
 is enforced in the SQL query, not by the page hiding rows.
 
+**There is no public sign-up, and no route that creates an account directly.**
+An account exists only by redeeming an invitation, and only an admin can issue
+one. The invitee follows a one-time link and chooses their own password, so
+nobody — including the admin who invited them — ever knows it. Links expire in
+7 days, work once, and can be revoked.
+
 - `worker.js` — the API. A separate Worker from `api-visitor-alerts` on purpose:
   this one holds claimant names, injuries, claim numbers and signatures, that
   one holds anonymous counters. Different secrets, different blast radius.
@@ -48,20 +54,27 @@ npx wrangler secret put INGEST_KEY        # any long random string
 npx wrangler secret put BOOTSTRAP_TOKEN   # used once, below, then delete it
 ```
 
-**3. Deploy**
+**3. Deploy — on the site's own domain**
 
 ```bash
 npx wrangler deploy
 ```
 
-The first deploy must be a real `wrangler deploy` so the D1 binding is
-attached. After that, pushing a change to `worker.js` on `master` runs
-`deploy-portal.yml`, which uploads content only and preserves the binding.
+`wrangler.toml` routes the Worker to
+`alwayspreciseinvestigations.net/portal-api/*`. **That route is load-bearing.**
+A session cookie set by a `workers.dev` hostname is cross-site: Safari drops
+third-party cookies outright and `SameSite=Strict` blocks them everywhere else,
+so sign-in would appear to succeed and then every following request would 401.
+Same-origin also removes CORS and preflights entirely.
+
+The first deploy must be a real `wrangler deploy` so the D1 binding and the
+route are attached. After that, pushing a change to `worker.js` on `master`
+runs `deploy-portal.yml`, which uploads content only and preserves both.
 
 **4. Create your admin account**
 
 ```bash
-curl -X POST https://api-case-portal.corlinllc.workers.dev/setup \
+curl -X POST https://alwayspreciseinvestigations.net/portal-api/setup \
   -H "X-Bootstrap-Token: <the BOOTSTRAP_TOKEN you set>" \
   -H "Content-Type: application/json" \
   -d '{"username":"trever","display_name":"Trever Brown","password":"<a long password>"}'
@@ -74,8 +87,12 @@ the endpoint cannot be used again:
 npx wrangler secret delete BOOTSTRAP_TOKEN
 ```
 
-Then sign in at `/portal/` and add your partner and your investigators from the
-Staff tab.
+Then sign in at `/portal/`. Invite your partner as an **admin** and your
+investigators as **investigators** from the Staff tab. Each invitation produces
+a one-time link — copy it, or use the "Email it" button, which opens your own
+mail client with the link already written. The link is shown once and is not
+recoverable afterwards; reissue instead of hunting for it, which automatically
+invalidates the previous one.
 
 **5. Point the intake form at the portal**
 
@@ -84,8 +101,9 @@ step 2. Until that is done the form still works and still emails — it just doe
 not record anything.
 
 That key sits in a public page, so it is not a secret. It keeps casual noise
-out of the table; the Worker's size cap and the unique constraint on case
-numbers are what actually protect it.
+out of the table; the size cap, the case-number format check, the per-minute
+rate limit and the unique constraint on case numbers are what actually protect
+it.
 
 ## Tests
 
@@ -93,10 +111,18 @@ numbers are what actually protect it.
 node case-portal/test-worker.mjs
 ```
 
-54 checks covering login, lockout, account enumeration, ingest, role
-separation, account handling and CORS. They run the real worker against an
-in-memory SQLite database through a D1-shaped adapter, so the SQL is genuinely
-executed.
+```bash
+node portal/test-portal.mjs      # needs Playwright
+```
+
+79 Worker checks and 35 end-to-end, covering login, lockout, account
+enumeration, invitations, ingest validation and rate limiting, role separation,
+account handling, the origin guard and a stored-XSS regression. The Worker
+tests run against an in-memory SQLite database through a D1-shaped adapter, so
+the SQL genuinely executes. The end-to-end tests mount the Worker at
+`/portal-api/*` on the same origin as the page, because that is how it is
+deployed — serving it from a second origin in the test would hide a cross-site
+cookie bug, which is exactly what it did once.
 
 ## Things to know
 
@@ -112,3 +138,11 @@ executed.
   logins and password changes are affected; everything else is a plain query.
 - **Deactivate, don't delete.** Removing a user would orphan the assignment on
   their cases. Disabling ends their sessions immediately and keeps the history.
+- **Case numbers are untrusted input.** They arrive from a public form and end
+  up rendered in an admin's browser, so ingest pins them to
+  `[A-Za-z0-9-]{3,64}`. Do not loosen that without also checking how the page
+  renders them.
+- **The ingest rate limit is real.** 60 submissions a minute by default, which
+  is far above genuine traffic. Exceeding it drops portal writes for that
+  minute only; the email path is untouched, so a flood can never stop a client
+  reaching the firm.

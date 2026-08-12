@@ -44,4 +44,4 @@ jobs:
       - name: Health check
         run: |
           sleep 5
-          curl -sf https://api-case-portal.corlinllc.workers.dev/health; echo
+          curl -sf https://alwayspreciseinvestigations.net/portal-api/health; echo

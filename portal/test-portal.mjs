@@ -81,52 +81,51 @@ function d1(db) {
 const db = new DatabaseSync(':memory:');
 db.exec(SCHEMA);
 
-// The Worker, fronted by a plain Node server so the browser can reach it.
 const env = {
   DB: d1(db),
-  SITE_ORIGIN: '',            // filled in once the site port is known
+  SITE_ORIGIN: '',              // filled in once the port is known
   INGEST_KEY: 'e2e-ingest-key',
   BOOTSTRAP_TOKEN: 'e2e-bootstrap',
   PBKDF2_ITER: '10000',
+  INGEST_PER_MINUTE: '500',
 };
 
-const apiServer = http.createServer(async (req, res) => {
-  const chunks = [];
-  for await (const c of req) chunks.push(c);
-  const body = chunks.length ? Buffer.concat(chunks) : undefined;
-  const request = new Request(`http://127.0.0.1${req.url}`, {
-    method: req.method,
-    headers: req.headers,
-    body: ['GET', 'HEAD'].includes(req.method) ? undefined : body,
-  });
-  const out = await worker.fetch(request, env);
-  const headers = {};
-  // Set-Cookie must survive as its own header, not be folded into a string.
-  const cookies = out.headers.getSetCookie ? out.headers.getSetCookie() : [];
-  for (const [k, v] of out.headers) if (k.toLowerCase() !== 'set-cookie') headers[k] = v;
-  if (cookies.length) headers['set-cookie'] = cookies;
-  res.writeHead(out.status, headers);
-  res.end(Buffer.from(await out.arrayBuffer()));
-});
-await new Promise(r => apiServer.listen(0, '127.0.0.1', r));
-const API = `http://127.0.0.1:${apiServer.address().port}`;
-
+// ONE server serves the page and mounts the Worker at /portal-api/*, because
+// that is how it is deployed. Serving the API from a second origin would let a
+// cross-site cookie bug pass unnoticed — which is exactly what it did before.
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.webp': 'image/webp' };
-const siteServer = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
+  if (req.url.startsWith('/portal-api')) {
+    const chunks = [];
+    for await (const c of req) chunks.push(c);
+    const request = new Request(`http://127.0.0.1:${server.address().port}${req.url}`, {
+      method: req.method,
+      headers: req.headers,
+      body: ['GET', 'HEAD'].includes(req.method) ? undefined : Buffer.concat(chunks),
+    });
+    const out = await worker.fetch(request, env);
+    const headers = {};
+    const cookies = out.headers.getSetCookie ? out.headers.getSetCookie() : [];
+    for (const [k, v] of out.headers) if (k.toLowerCase() !== 'set-cookie') headers[k] = v;
+    if (cookies.length) {
+      // The browser will not keep a Secure cookie over plain http on a
+      // non-localhost host, and 127.0.0.1 counts as a secure context, so this
+      // only drops the flag that the transport cannot satisfy locally.
+      headers['set-cookie'] = cookies.map(c => c.replace(/;\s*Secure/i, ''));
+    }
+    res.writeHead(out.status, headers);
+    return res.end(Buffer.from(await out.arrayBuffer()));
+  }
   let p = path.join(ROOT, decodeURIComponent(req.url.split('?')[0]));
   if (fs.existsSync(p) && fs.statSync(p).isDirectory()) p = path.join(p, 'index.html');
   if (!fs.existsSync(p)) { res.writeHead(404); return res.end('not found'); }
-  let out = fs.readFileSync(p);
-  if (p.endsWith('portal/index.html')) {
-    // Point the page at the local Worker instead of the deployed one.
-    out = Buffer.from(String(out).replace(/const API = "[^"]*"/, `const API = "${API}"`));
-  }
   res.writeHead(200, { 'Content-Type': TYPES[path.extname(p)] || 'text/plain' });
-  res.end(out);
+  res.end(fs.readFileSync(p));
 });
-await new Promise(r => siteServer.listen(0, '127.0.0.1', r));
-const SITE = `http://127.0.0.1:${siteServer.address().port}`;
+await new Promise(r => server.listen(0, '127.0.0.1', r));
+const SITE = `http://127.0.0.1:${server.address().port}`;
 env.SITE_ORIGIN = SITE;
+const API = SITE + '/portal-api';
 
 /* ------------------------------------------------------------- seed data */
 
@@ -234,13 +233,38 @@ section('Assignment');
   await signIn(page, 'trever', 'AdminPassword1x');
   await page.locator('.tabs button', { hasText: 'Staff' }).click();
   await page.waitForTimeout(250);
-  await page.locator('#nu_name').fill('Dana Field');
-  await page.locator('#nu_user').fill('dana');
-  await page.locator('#nu_pass').fill('FieldWork2026x');
-  await page.locator('.btn', { hasText: 'Create account' }).click();
-  await page.waitForTimeout(500);
-  ok('an admin can create an investigator from the Staff tab',
-     (await text(page, '.card')).includes('Dana Field'));
+  await page.locator('#nv_name').fill('Dana Field');
+  await page.locator('#nv_user').fill('dana');
+  await page.locator('.btn', { hasText: 'Create invitation' }).click();
+  await page.waitForTimeout(600);
+  const linkText = await text(page, '.linkbox');
+  ok('inviting produces a one-time link', linkText.includes('/portal/?invite='));
+  ok('the admin is told the link is shown once', has(linkText, 'not shown again'));
+  const inviteUrl = (linkText.match(/http\S*\/portal\/\?invite=[0-9a-f]{64}/) || [''])[0];
+
+  // The invitee sets their own password; the admin never sees it.
+  const invitee = await (await browser.newContext()).newPage();
+  await invitee.goto(inviteUrl);
+  await invitee.waitForTimeout(400);
+  ok('the invitation link opens a set-your-password page',
+     (await invitee.locator('h1').first().innerText()) === 'Set your password');
+  await invitee.locator('#p1').fill('FieldWork2026x');
+  await invitee.locator('#p2').fill('Mismatch2026x');
+  await invitee.locator('#acceptBtn').click();
+  await invitee.waitForTimeout(300);
+  ok('mismatched passwords are refused', (await invitee.locator('#err').innerText()).length > 0);
+  await invitee.locator('#p2').fill('FieldWork2026x');
+  await invitee.locator('#acceptBtn').click();
+  await invitee.waitForTimeout(700);
+  ok('accepting signs the investigator straight in', await invitee.locator('.tabs').count() === 1);
+  ok('the invite token is cleared from the address bar', !invitee.url().includes('invite='));
+  await invitee.close();
+
+  await page.reload();
+  await page.waitForTimeout(600);
+  await page.locator('.tabs button', { hasText: 'Staff' }).click();
+  await page.waitForTimeout(300);
+  ok('the new investigator appears in staff', (await text(page, '.card')).includes('Dana Field'));
 
   await page.locator('.tabs button', { hasText: 'Cases' }).click();
   await page.waitForTimeout(250);
@@ -289,11 +313,31 @@ section('Session');
   await page.close();
 }
 
+section('Stored XSS regression');
+{
+  // Ingest now rejects this, so plant it straight into the table. The point is
+  // that even a hostile row already in the database must render as text.
+  db.prepare(`INSERT INTO submissions (case_no, kind, status, client_name, payload, created_at)
+              VALUES (?, 'consumer', 'new', ?, '{}', ?)`)
+    .run("x'); window.__pwned = true; ('",
+         '<img src=x onerror="window.__pwned=true">',
+         new Date().toISOString());
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.waitForTimeout(500);
+  const pwned = await page.evaluate(() => Boolean(window.__pwned));
+  ok('a hostile case number in the database does not execute', pwned === false);
+  ok('a hostile client name does not execute', pwned === false);
+  ok('the hostile row still renders as visible text',
+     (await text(page, '.card')).includes('window.__pwned'));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
-apiServer.close();
-siteServer.close();
+server.close();
 
 console.log(results.join('\n'));
 console.log(`\n${passed} passed, ${failed} failed`);
