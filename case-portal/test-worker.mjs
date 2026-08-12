@@ -425,6 +425,112 @@ section('Security regressions');
   ok('an oversized Content-Length is refused up front', big.status === 413);
 }
 
+/* ------------------------------------------------------- invitation email */
+
+section('Invitation email');
+{
+  // Stand in for the provider so nothing leaves the test, and so a rejection
+  // or an outage can be simulated exactly.
+  const realFetch = globalThis.fetch;
+  let sentTo = null, lastBody = null, mode = 'ok';
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      lastBody = JSON.parse(init.body);
+      sentTo = lastBody.to;
+      if (mode === 'reject') return new Response('{"message":"domain not verified"}', { status: 403 });
+      if (mode === 'throw') throw new Error('network down');
+      return new Response('{"id":"re_123"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+
+  const withMail = () => {
+    const e = freshEnv();
+    e.RESEND_API_KEY = 'test-resend-key';
+    e.INVITE_FROM = 'Always Precise <portal@example.test>';
+    return e;
+  };
+  const adminOf = async (env) => {
+    await bootstrapAdmin(env);
+    return (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  };
+
+  {
+    sentTo = null; mode = 'ok';
+    const env = withMail(); const admin = await adminOf(env);
+    const res = await call(env, '/invites', { method: 'POST', cookie: admin,
+      body: { username: 'dana', display_name: 'Dana Field', email: 'dana@example.test', role: 'investigator' } });
+    const body = await jsonOf(res);
+    ok('an invitation with an address is emailed', body.emailed === true);
+    ok('it goes to the address given', sentTo === 'dana@example.test');
+    ok('the configured From address is used', lastBody.from === 'Always Precise <portal@example.test>');
+    ok('the email carries the invitation link', lastBody.text.includes(body.url));
+    ok('the HTML part carries it too', lastBody.html.includes(body.url));
+    ok('the email names who invited them', lastBody.text.includes('Trever'));
+    ok('the API key is never in the message body',
+       !JSON.stringify(lastBody).includes('test-resend-key'));
+    ok('the link still comes back to the admin as well', typeof body.url === 'string' && body.url.includes('invite='));
+  }
+
+  {
+    sentTo = null; mode = 'ok';
+    const env = withMail(); const admin = await adminOf(env);
+    const res = await call(env, '/invites', { method: 'POST', cookie: admin,
+      body: { username: 'noaddr', role: 'investigator' } });
+    ok('an invitation with no address is still created', res.status === 201);
+    ok('nothing is sent when no address was given', sentTo === null);
+    ok('and it says so', (await jsonOf(res)).emailed === false);
+  }
+
+  {
+    sentTo = null; mode = 'ok';
+    const env = freshEnv();            // no RESEND_API_KEY at all
+    const admin = await adminOf(env);
+    const res = await call(env, '/invites', { method: 'POST', cookie: admin,
+      body: { username: 'pat', email: 'pat@example.test', role: 'investigator' } });
+    const body = await jsonOf(res);
+    ok('with sending unconfigured the invitation still works', res.status === 201);
+    ok('nothing is sent', sentTo === null);
+    ok('unconfigured is reported, not treated as an error', body.email_status === 'not_configured');
+    ok('the admin still gets a usable link', body.url.includes('invite='));
+  }
+
+  {
+    mode = 'reject';
+    const env = withMail(); const admin = await adminOf(env);
+    const res = await call(env, '/invites', { method: 'POST', cookie: admin,
+      body: { username: 'rej', email: 'rej@example.test', role: 'investigator' } });
+    const body = await jsonOf(res);
+    ok('a provider rejection does not fail the invitation', res.status === 201);
+    ok('the rejection is reported', body.emailed === false && body.email_status === 'rejected');
+    ok('the link is returned so it can be sent by hand', body.url.includes('invite='));
+    const check = await call(env, `/invite/${new URL(body.url, 'https://x.test').searchParams.get('invite')}`);
+    ok('and the invitation is genuinely usable', (await jsonOf(check)).valid === true);
+  }
+
+  {
+    mode = 'throw';
+    const env = withMail(); const admin = await adminOf(env);
+    const res = await call(env, '/invites', { method: 'POST', cookie: admin,
+      body: { username: 'down', email: 'down@example.test', role: 'investigator' } });
+    const body = await jsonOf(res);
+    ok('a provider outage does not fail the invitation', res.status === 201);
+    ok('the outage is reported', body.email_status === 'unreachable');
+    ok('the link is still returned', body.url.includes('invite='));
+  }
+
+  {
+    mode = 'ok';
+    const env = withMail();
+    ok('health reports that sending is configured',
+       (await jsonOf(await call(env, '/health'))).email === true);
+    ok('health reports when it is not',
+       (await jsonOf(await call(freshEnv(), '/health'))).email === false);
+  }
+
+  globalThis.fetch = realFetch;
+}
+
 /* ------------------------------------------------- origin guard and headers */
 
 section('Origin guard and headers');

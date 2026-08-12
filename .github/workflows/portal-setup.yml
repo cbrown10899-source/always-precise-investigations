@@ -17,6 +17,10 @@ name: Set up the case portal
 # repository secret named PORTAL_ADMIN_PASSWORD first:
 #   Settings -> Secrets and variables -> Actions -> New repository secret
 # At least 12 characters with an uppercase letter, a lowercase letter and a digit.
+#
+# Optionally add RESEND_API_KEY as a repository secret too, and invitations are
+# emailed instead of handed back as a link to send yourself. Without it nothing
+# breaks — sending is an addition, not a dependency.
 on:
   workflow_dispatch:
     inputs:
@@ -197,6 +201,8 @@ jobs:
           echo "INGEST_KEY=$KEY" >> "$GITHUB_ENV"
 
       - name: Put the secrets on the Worker
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
         run: |
           set -euo pipefail
           cd case-portal
@@ -207,6 +213,16 @@ jobs:
           echo "BOOT_TOKEN=$BOOT" >> "$GITHUB_ENV"
           printf '%s' "$INGEST_KEY" | npx --yes wrangler secret put INGEST_KEY
           printf '%s' "$BOOT"       | npx --yes wrangler secret put BOOTSTRAP_TOKEN
+
+          # Optional. Set RESEND_API_KEY as a repository secret and invitations
+          # get emailed; leave it unset and the admin sends the link by hand,
+          # which is how the portal has always worked.
+          if [ -n "${RESEND_API_KEY:-}" ]; then
+            printf '%s' "$RESEND_API_KEY" | npx --yes wrangler secret put RESEND_API_KEY
+            echo "Invitation email is configured."
+          else
+            echo "No RESEND_API_KEY set — invitations will return a link for you to send yourself."
+          fi
 
       - name: Deploy the Worker with its binding and route
         run: |
