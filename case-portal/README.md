@@ -222,10 +222,20 @@ cookie bug, which is exactly what it did once.
 - **Nothing before this exists.** Submissions were only ever emailed, so the
   portal starts empty and fills from the first submission after the ingest key
   is set. Older intakes exist only in the inbox.
-- **CPU on the free plan.** PBKDF2 at 100,000 rounds may exceed the free tier's
-  per-request CPU limit on login. If sign-in fails with a CPU error, lower
-  `PBKDF2_ITER` in `wrangler.toml` or move the Worker to a paid plan. Only
-  logins and password changes are affected; everything else is a plain query.
+- **The free plan is worth trying before paying.** Sign-in is the only
+  expensive request the portal makes — password hashing is deliberately slow.
+  Everything else is a plain query, well inside any limit. `PBKDF2_ITER` in
+  `wrangler.toml` is what decides whether sign-in fits, and it now ships at
+  25,000 rather than 100,000 for that reason.
+
+  That number has **not** been measured against Cloudflare's free-plan CPU
+  limit. Deploy, try signing in, and find out. If it fails with a CPU error,
+  halve it and redeploy. If it works, you are done — and you can raise it when
+  you move to the paid plan.
+
+  The count is stored per user with their hash, so changing it never locks
+  anyone out; it applies to passwords set afterwards. To re-harden an existing
+  account at a higher count, reset its password from the Staff tab.
 - **Deactivate, don't delete.** Removing a user would orphan the assignment on
   their cases. Disabling ends their sessions immediately and keeps the history.
 - **Case numbers are untrusted input.** They arrive from a public form and end

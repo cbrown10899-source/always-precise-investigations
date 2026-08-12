@@ -17,9 +17,29 @@ workers_dev = false
 
 [vars]
 SITE_ORIGIN = "https://alwayspreciseinvestigations.net"
-# PBKDF2 rounds used when a password is set. Raising it only affects passwords
-# set afterwards — each user's count is stored with their hash.
-PBKDF2_ITER = "100000"
+
+# PBKDF2 rounds used when a password is set. This is the one setting that
+# decides whether the portal runs on the free Workers plan.
+#
+# Hashing is deliberately slow, and it is the only expensive request the portal
+# makes — signing in. Everything else is a plain query well inside any limit.
+# The free plan allows 10ms of CPU per request, so a high round count is what
+# pushes sign-in over it.
+#
+#   25000   the value to try first on the free plan. NOT measured against
+#           Cloudflare's limit — try signing in and see. Still ~25,000x the
+#           work of a bare hash, which is defensible for a handful of staff
+#           accounts with 12-character minimum passwords, per-user salts and
+#           lockout after 8 attempts.
+#   100000  what you would want on the paid plan. Closer to current guidance.
+#
+# If sign-in fails with a CPU-limit error, halve this and redeploy. If it
+# works, leave it — and raise it when you move to the paid plan.
+#
+# The count is stored per user with their hash, so raising it later affects
+# only passwords set after the change — nobody is locked out by the switch.
+# To re-harden an existing account, reset its password from the Staff tab.
+PBKDF2_ITER = "25000"
 
 # Secrets (never in this file):
 #   npx wrangler secret put INGEST_KEY       # also goes in intake/index.html
