@@ -7,6 +7,15 @@ on:
     branches: [master]
   workflow_dispatch: {}   # lets you trigger a deploy by hand from the Actions tab
 
+# One deploy at a time, newest wins. A push that touches build-locations.py
+# starts a deploy of the pre-rebuild tree, and the rebuild then dispatches a
+# second deploy of the regenerated tree. Left to race, the older run can land
+# last and publish stale pages. Cancelling the in-flight run makes the most
+# recent content the one that ends up live.
+concurrency:
+  group: deploy-pages
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest

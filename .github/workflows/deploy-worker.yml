@@ -8,6 +8,11 @@ on:
     paths: ['visitor-alerts/worker.js']
   workflow_dispatch: {}
 
+# Two overlapping uploads of the same Worker script; newest content wins.
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest

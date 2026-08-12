@@ -9,6 +9,11 @@ on:
   workflow_dispatch: {}
 permissions:
   issues: write
+# A manual run overlapping the scheduled one would have both probes editing
+# the same tracking issue.
+concurrency:
+  group: site-health
+  cancel-in-progress: false
 jobs:
   health:
     runs-on: ubuntu-latest
