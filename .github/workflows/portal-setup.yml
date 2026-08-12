@@ -67,6 +67,61 @@ jobs:
             exit 1
           fi
 
+      - name: Preflight — can this token do everything the setup needs?
+        run: |
+          set -uo pipefail
+          # Check every permission up front and report ALL the missing ones at
+          # once. Discovering them one failed run at a time is a miserable loop,
+          # and each fix needs a human in the Cloudflare dashboard.
+          AUTH="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          MISSING=0
+          probe() {
+            local name="$1" url="$2" body
+            body=$(curl -sS -H "$AUTH" "$url" 2>/dev/null)
+            if [ "$(printf '%s' "$body" | jq -r '.success // false')" = "true" ]; then
+              echo "  OK       $name"
+            else
+              echo "  MISSING  $name"
+              printf '%s' "$body" | jq -r '.errors[]? | "           [\(.code)] \(.message)"' 2>/dev/null || true
+              MISSING=1
+            fi
+          }
+
+          echo "What CLOUDFLARE_API_TOKEN is allowed to do:"
+          probe "Account | D1 | Edit" \
+                "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database?per_page=1"
+          probe "Account | Workers Scripts | Edit" \
+                "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts"
+
+          ZONE=$(curl -sS -H "$AUTH" \
+            "https://api.cloudflare.com/client/v4/zones?name=alwayspreciseinvestigations.net" \
+            | jq -r '.result[0].id // empty')
+          if [ -n "$ZONE" ]; then
+            probe "Zone | Workers Routes | Edit" \
+                  "https://api.cloudflare.com/client/v4/zones/$ZONE/workers/routes"
+          else
+            echo "  MISSING  Zone | Zone | Read  (cannot even see the domain)"
+            MISSING=1
+          fi
+
+          if [ "$MISSING" -ne 0 ]; then
+            echo ""
+            echo "This token cannot finish the setup. Fix it once, in the Cloudflare"
+            echo "dashboard: My Profile -> API Tokens -> edit the token this repository"
+            echo "uses, and give it ALL of:"
+            echo ""
+            echo "    Account | D1                | Edit"
+            echo "    Account | Workers Scripts   | Edit"
+            echo "    Account | Cloudflare Pages  | Edit"
+            echo "    Zone    | Workers Routes    | Edit    (alwayspreciseinvestigations.net)"
+            echo "    Zone    | Zone              | Read    (alwayspreciseinvestigations.net)"
+            echo ""
+            echo "Then run this workflow again. Nothing has been changed."
+            echo "::error::CLOUDFLARE_API_TOKEN is missing permissions — see the list above. Nothing was changed."
+            exit 1
+          fi
+          echo "Token has everything the setup needs."
+
       - name: Find or create the D1 database
         run: |
           set -euo pipefail
