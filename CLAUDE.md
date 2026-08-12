@@ -24,12 +24,27 @@ A single unfiltered call therefore costs more than an entire context window
 and will end the session. This repo accumulates runs quickly — five workflows,
 one of them a daily cron — so the count only grows.
 
-When you need deploy or health status, do one of these instead:
+**`per_page` does not work on this tool.** Measured on 2026-08-12: asking for
+`per_page: 2` with `resource_id: deploy.yml` returned **30 runs, 464 KB**. The
+`resource_id` filter is honoured — only that workflow's runs came back — but the
+count is not, so scoping alone still overflows.
 
-- Pass `minimal_output: true`, and always set `per_page` to 5–10.
-- Filter to what you actually want: `workflow_runs_filter: {status, event, branch}`,
-  or scope to one workflow by passing `deploy.yml` as `resource_id`.
-- For "did my push deploy?", check the commit status rather than listing runs.
+What actually works:
+
+- For "did my push deploy?", use `pull_request_read` with `get_status` or
+  `get_check_runs`. Those return a few hundred bytes, not half a megabyte.
+- If you do call an Actions listing, **expect it to overflow and plan for it**.
+  The harness saves the payload to a file and hands you the path. Parse that
+  file with a small python script that prints only the fields you want — never
+  read it into context. That path works reliably and costs nothing:
+
+  ```python
+  d = json.loads(open(path).read()[open(path).read().find('{'):])
+  for r in d['workflow_runs'][:5]:
+      print(r['created_at'], r['conclusion'] or r['status'], r['name'], r['head_sha'][:8])
+  ```
+
+Do not "fix" this by adding `per_page` back. It was tried and it does nothing.
 
 The same caution applies to `get_job_logs` on this repo: `site-health.yml`
 emits a long step summary.

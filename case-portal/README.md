@@ -32,6 +32,40 @@ its SHA-256, so a copy of the database yields no usable cookie.
 
 ## Setup
 
+Two ways. The workflow is easier and repeatable; the manual steps are below it
+if you would rather see each one happen.
+
+### The easy way: run the setup workflow
+
+One prerequisite, because a password should never come from a machine that then
+tells you what it is — add your admin password as a repository secret:
+
+**Settings → Secrets and variables → Actions → New repository secret**
+Name it `PORTAL_ADMIN_PASSWORD`. At least 12 characters, with an uppercase
+letter, a lowercase letter and a digit.
+
+Then **Actions → Set up the case portal → Run workflow**, fill in your username
+and display name, and run it. It will:
+
+- find or create the `api-case-portal` D1 database
+- apply `schema.sql` to it
+- generate the ingest key and commit it into the intake form
+- put both secrets on the Worker
+- deploy, attaching the D1 binding and the `/portal-api/*` route
+- wait until the route actually answers
+- create your admin account, then destroy the bootstrap token
+- redeploy the site so the intake form picks up the key
+
+It is safe to run more than once: a second run finds the existing database,
+reuses the committed ingest key, and skips the admin because the account exists.
+Re-run it any time something looks half-configured.
+
+The one thing it cannot do is upgrade your plan. **Do that first** — sign-in
+exceeds the free plan's 10 ms CPU limit while everything else keeps working,
+which reads as a bug rather than a billing setting.
+
+### The manual way
+
 Once, from the repo root.
 
 **1. Create the database**
