@@ -127,26 +127,48 @@ portal on our own Cloudflare account and nowhere else. `buildNotice()` is what
 enforces that; do not widen it, and do not spread the full payload into the
 notice. There is a test that fails if any of those values reaches the relay.
 
-`intake/` is a single-file wizard with **two paths** off the service step:
+`intake/` is a single-file wizard with **three paths** off the service step:
 
-- **Consumer** — surveillance or process serving. Six steps, ends in a Venmo
-  or Cash App payment for the retainer or flat fee.
+- **Surveillance** — seven steps. An extra coverage step where the client buys
+  a block of hours, then a Venmo or Cash App payment for that block.
+- **Process serving** — six steps, ending in payment of the flat fee.
 - **Carrier** — insurance claim assignment. Seven steps: an extra claim-details
   step (carrier/TPA, claim number, policy, claim type, date of loss, adjuster,
   defense counsel, prior surveillance), claimant-specific wording on the
   subject and scope steps, carrier terms in place of the consumer agreement,
   and a billing step instead of payment. Nothing is charged at assignment.
 
-The step list is chosen by `steps()`; both paths share the first two steps,
+The step list is chosen by `steps()`; all three share the first two steps,
 which is what makes switching service mid-flow safe. **No claims rate is
 published in the form** — carrier work is invoiced per fee schedule and
-confirmed in writing, so there is no number to get wrong or to leak.
+confirmed in writing, so there is no number to get wrong or to leak. The
+consumer blocks below are consumer pricing and must never appear on the claims
+path.
+
+## The rate card
+
+`PACKAGES` and `HOURLY` near the top of `intake/index.html` are **the only place
+a price is set.** Change a number there and it changes the option the client
+picks, the agreement they sign, the amount in the Venmo and Cash App deep links,
+the printed sheet and what is recorded in the portal. Nothing downstream
+hard-codes a figure, and a test fails if any block price appears anywhere else
+in the file.
+
+Current blocks: 4 hours $400, 8 hours $800, 16 hours $1,500, 24 hours $2,200,
+with overage at $100/hr and never without the client's prior approval. These
+replaced a $1,500 retainer plus $100/hr with a 4-hour minimum. `id` is what gets
+stored, so keep an id stable once a real case has used it.
+
+A block also sets `authorized_hours` on the stored case — deliberately, because
+that is the one allow-listed field an investigator can see, and they need to
+know the cap they are working to. The price fields (`package`, `package_price`,
+`fee_due`) stay admin-only by default, which is the allow-list doing its job.
 
 Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
-node intake/test-intake.mjs      # needs Playwright; skips cleanly without it
-node visitor-alerts/test-worker.mjs
+node intake/test-intake.mjs      # 87 checks; needs Playwright, skips cleanly without it
+node visitor-alerts/test-worker.mjs   # 41 checks
 ```
 
 Note the payment handles in `FIRM` are still personal accounts — the source

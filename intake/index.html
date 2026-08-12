@@ -46,6 +46,8 @@
   .opt{display:block;border:1.5px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:10px;cursor:pointer;transition:border-color .15s,background .15s;}
   .opt:hover{border-color:var(--teal-2);}
   .opt.sel{border-color:var(--teal-2);background:#f0f8fa;}
+  .opt .badge{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:999px;background:var(--teal-2);
+    color:#fff;font-size:.68rem;font-weight:700;letter-spacing:.03em;text-transform:uppercase;vertical-align:middle;}
   .opt input{margin-right:8px;}
   .opt b{font-size:1rem;}
   .opt .desc{color:var(--muted);font-size:.86rem;margin-top:2px;}
@@ -127,12 +129,39 @@ const FIRM = {
   venmo:   "Trever-Brown9",    // NO @  (personal — swap to business before client use)
   cashtag: "TreverB"           // NO $  (personal — swap to business before client use)
 };
+/* ============ Rate card ============
+   THE ONLY PLACE PRICES ARE SET. Change a number here and it changes the option
+   the client picks, the agreement they sign, the amount in the Venmo and Cash
+   App links, the printed payment sheet and what is recorded in the portal.
+   Nothing downstream hard-codes a figure.
+
+   These are derived from the firm's own hourly rate below: 4 hours at cost as
+   the entry point, then a widening discount so a longer engagement is worth
+   committing to. The 3-day block works out to about $92/hr.
+
+   Adding or removing a block is safe — the step renders whatever is in this
+   array, and `id` is what gets stored, so keep an id stable once it has been
+   used on a real case. */
+const HOURLY = 100;          // overage rate once a block is used up
+const PACKAGES = [
+  { id:"half",  label:"Half day",   hours:4,  price:400,
+    desc:"A single window — a shift change, a scheduled appointment, one evening." },
+  { id:"day",   label:"Full day",   hours:8,  price:800,
+    desc:"A full day of coverage. The usual starting point when a pattern is not yet known." },
+  { id:"two",   label:"Two days",   hours:16, price:1500, tag:"Most chosen",
+    desc:"Two days, usually split to compare a weekday against a weekend." },
+  { id:"three", label:"Three days", hours:24, price:2200, tag:"Best value",
+    desc:"Three days across a week. Enough to establish a routine rather than a snapshot." },
+];
+const pkg = id => PACKAGES.find(p => p.id === id) || null;
+
 const FEES = {
-  surveillance: { label:"Surveillance", retainer:1500, hourly:100, minHours:4 },
+  surveillance: { label:"Surveillance", hourly:HOURLY, packages:true },
   process:      { label:"Process Serving", flat:150 },
   // Carrier work is invoiced, not paid up front through a consumer payment app.
   // No rate is published here on purpose: claims rates are set per fee schedule
-  // and confirmed in writing before work begins.
+  // and confirmed in writing before work begins. The blocks above are consumer
+  // pricing and must not be shown on the claims path.
   claims:       { label:"Insurance Claim Assignment", billed:true }
 };
 /* Web3Forms access key goes here for email delivery; until then submissions
@@ -149,13 +178,18 @@ const PORTAL_INGEST_KEY = "8d9ad57784dbc7e00d86806d2c186d60337fb4f762ea5f100ef31
 
 /* ============ State ============ */
 const CASE_NO = "API-" + new Date().toISOString().slice(0,10).replace(/-/g,"") + "-" + String(Math.floor(1000+Math.random()*9000));
-const S = { step:0, svc:null, pay:null, sig:null, files:[] };
+const S = { step:0, svc:null, pkg:null, pay:null, sig:null, files:[] };
 // A carrier assignment collects claim details and ends in invoicing, so the
-// claims path has its own step list. Both share the first two steps, which is
-// what makes it safe to switch service without stranding S.step.
+// claims path has its own step list; surveillance adds a step to choose how
+// much coverage to buy. All three share the first two steps, which is what
+// makes it safe to switch service without stranding S.step.
 const STEPS       = ["info","service","subject","objective","agreement","payment"];
+const SURV_STEPS  = ["info","service","package","subject","objective","agreement","payment"];
 const CLAIM_STEPS = ["info","service","claim","subject","objective","agreement","billing"];
-function steps(){ return S.svc==="claims" ? CLAIM_STEPS : STEPS; }
+function steps(){
+  if(S.svc==="claims") return CLAIM_STEPS;
+  return S.svc==="surveillance" ? SURV_STEPS : STEPS;
+}
 function isClaims(){ return S.svc==="claims"; }
 const app = document.getElementById("app");
 const $ = id => document.getElementById(id);
@@ -177,7 +211,8 @@ function svc(){ return S.svc ? FEES[S.svc] : null; }
 function amountDue(){
   const f=svc(); if(!f) return 0;
   if(isClaims()) return 0;            // invoiced to the carrier, nothing due at intake
-  return S.svc==="surveillance" ? f.retainer : f.flat;
+  if(S.svc==="surveillance"){ const p=pkg(S.pkg); return p ? p.price : 0; }
+  return f.flat;
 }
 
 /* ============ Render ============ */
@@ -229,9 +264,9 @@ function view(step){
     <h2>What do you need?</h2>
     <p class="lead">Select the service. Fees are shown up front — no surprises.</p>
     <label class="opt" id="opt-surveillance" onclick="pickSvc('surveillance')">
-      <span class="price">${money(FEES.surveillance.retainer)} retainer</span>
+      <span class="price">From ${money(PACKAGES[0].price)}</span>
       <input type="radio" name="svc" ${S.svc==="surveillance"?"checked":""}><b>Surveillance</b>
-      <div class="desc">Documented surveillance for personal or legal matters. ${money(FEES.surveillance.retainer)} retainer, then ${money(FEES.surveillance.hourly)}/hr (${FEES.surveillance.minHours}-hour minimum).</div>
+      <div class="desc">Documented surveillance for personal or legal matters. Bought in blocks of coverage from ${PACKAGES[0].hours} hours (${money(PACKAGES[0].price)}) &mdash; you choose how much on the next step.</div>
     </label>
     <label class="opt" id="opt-process" onclick="pickSvc('process')">
       <span class="price">${money(FEES.process.flat)} flat</span>
@@ -245,6 +280,30 @@ function view(step){
     </label>
     ${navButtons()}
   </div>`;
+
+  if(step==="package"){
+    const sel = pkg(S.pkg);
+    return `<div class="card">
+      <h2>How much coverage?</h2>
+      <p class="lead">Surveillance is bought as a block of hours. Pick the one that fits &mdash; we'll
+        tell you honestly on the call if we think a different block suits the case better.</p>
+      ${PACKAGES.map(p => `
+        <label class="opt ${S.pkg===p.id?"sel":""}" id="opt-pkg-${p.id}" onclick="pickPkg('${p.id}')">
+          <span class="price">${money(p.price)}</span>
+          <input type="radio" name="pkg" ${S.pkg===p.id?"checked":""}><b>${p.label} &mdash; ${p.hours} hours</b>${
+            p.tag?`<span class="badge">${p.tag}</span>`:""}
+          <div class="desc">${p.desc}</div>
+        </label>`).join("")}
+      <div class="feebox" style="margin-top:14px">
+        <div class="row"><span>Hours are used flexibly</span><span>Across whatever days suit the case</span></div>
+        <div class="row"><span>If the case needs longer</span><span>${money(HOURLY)}/hr, only with your approval first</span></div>
+        <div class="row due"><span>Due today</span><span>${sel?money(sel.price):"Choose a block above"}</span></div>
+      </div>
+      <p class="hint">Nothing beyond the block you choose is ever charged without asking you first.
+        Questions before you decide? Call ${FIRM.phone}.</p>
+      ${navButtons()}
+    </div>`;
+  }
 
   if(step==="claim") return `<div class="card">
     <h2>Claim details</h2>
@@ -322,9 +381,10 @@ function view(step){
          <div class="row"><span>Rate</span><span>Per agreed fee schedule</span></div>
          <div class="row"><span>Mileage &amp; travel time</span><span>Not charged in our service area</span></div>`
       : S.svc==="surveillance"
-      ? `<div class="row"><span>Retainer (due now)</span><b>${money(f.retainer)}</b></div>
-         <div class="row"><span>Hourly rate after retainer</span><span>${money(f.hourly)}/hr</span></div>
-         <div class="row"><span>Minimum engagement</span><span>${f.minHours} hours</span></div>`
+      ? (()=>{ const p=pkg(S.pkg); return `
+         <div class="row"><span>Coverage selected</span><b>${p?`${p.label} — ${p.hours} hours`:"—"}</b></div>
+         <div class="row"><span>Price for that block</span><b>${p?money(p.price):"—"}</b></div>
+         <div class="row"><span>Additional hours, if approved</span><span>${money(f.hourly)}/hr</span></div>`; })()
       : `<div class="row"><span>Flat service fee</span><b>${money(f.flat)}</b></div>`;
     const dueLine = isClaims()
       ? `<div class="row due"><span>Due at assignment</span><span>Nothing — invoiced</span></div>`
@@ -349,10 +409,10 @@ function view(step){
         <p>Claim information is kept confidential except as required by law, and work product is released only to the assigning party and its counsel. Investigative work cannot guarantee a particular result or finding.</p>
       ` : `
         <h4>Engagement</h4>
-        <p>The client retains ${FIRM.name} ("the firm," Va DCJS #${FIRM.license}) to perform ${f?f.label.toLowerCase():"the selected"} services described in this intake. Work begins after the retainer or fee shown above is received.</p>
+        <p>The client retains ${FIRM.name} ("the firm," Va DCJS #${FIRM.license}) to perform ${f?f.label.toLowerCase():"the selected"} services described in this intake. Work begins after the fee shown above is received.</p>
         <h4>Fees</h4>
         <p>${S.svc==="surveillance"
-            ? `A non-refundable retainer of ${money(f.retainer)} is due today and is applied to work performed. Services are billed at ${money(f.hourly)} per hour with a ${f.minHours}-hour minimum. The client authorizes additional hours only with prior approval.`
+            ? (()=>{ const p=pkg(S.pkg); return `The client purchases a block of <b>${p?p.hours:"—"} investigative hours</b> for <b>${p?money(p.price):"—"}</b>, due today. Those hours are used across whatever dates and times the firm judges most likely to produce results for the stated objective, and include the written report and the footage gathered. Hours beyond the purchased block are billed at ${money(f.hourly)} per hour and are never incurred without the client's prior approval. Travel within the firm's service area is not charged separately.`; })()
             : `A flat fee of ${money(f.flat)} is due today for one service attempt as permitted by law. Additional attempts or addresses may incur additional fees agreed in advance.`}</p>
         <h4>Lawful purpose &amp; conduct</h4>
         <p>The client affirms a lawful and legitimate purpose for this engagement. The firm does not accept cyber-stalking matters and has no ability to access, hack, or retrieve data from a third party's phone, accounts, or devices. All work is performed lawfully; findings are provided for the client's stated purpose only.</p>
@@ -390,10 +450,12 @@ function view(step){
   </div>`;
 
   if(step==="payment"){
-    const f=svc(), due=amountDue();
+    const f=svc(), due=amountDue(), p=pkg(S.pkg);
     return `<div class="card">
       <h2>Payment</h2>
-      <p class="lead">A ${S.svc==="surveillance"?"retainer":"fee"} of <b>${money(due)}</b> is due today to begin. Choose how you'd like to pay.</p>
+      <p class="lead">${p
+        ? `<b>${p.label} — ${p.hours} hours of coverage.</b> ${money(due)} is due today to begin.`
+        : `A fee of <b>${money(due)}</b> is due today to begin.`} Choose how you'd like to pay.</p>
       <div class="pay-opt">
         <label class="opt ${S.pay==="venmo"?"sel":""}" onclick="pickPay('venmo')"><input type="radio" name="pay" ${S.pay==="venmo"?"checked":""}><b>Venmo</b></label>
         <label class="opt ${S.pay==="cashapp"?"sel":""}" onclick="pickPay('cashapp')"><input type="radio" name="pay" ${S.pay==="cashapp"?"checked":""}><b>Cash App</b></label>
@@ -407,7 +469,8 @@ function view(step){
 }
 
 /* ============ Step actions ============ */
-function pickSvc(k){ capture(); S.svc=k; render(); }
+function pickSvc(k){ capture(); S.svc=k; if(k!=="surveillance") S.pkg=null; render(); }
+function pickPkg(k){ capture(); S.pkg=k; render(); }
 function pickPay(k){ capture(); S.pay=k; paintPay(); document.querySelectorAll(".pay-opt .opt").forEach(o=>o.classList.remove("sel")); }
 function pickFiles(input){ S.files=[...input.files].map(f=>f.name); const n=$("filenote"); if(n) n.textContent = S.files.length? S.files.length+" file(s) attached: "+S.files.join(", ") : "Attach court papers or a photo of the subject if you have them."; }
 
@@ -450,6 +513,7 @@ function validate(step){
     if(!(val.c_phone||"").trim() && !(val.c_email||"").trim()) return "Add a phone number or email so we can reach you.";
   }
   if(step==="service" && !S.svc) return "Please choose a service.";
+  if(step==="package" && !S.pkg) return "Please choose how much coverage you need.";
   if(step==="claim"){
     if(!(val.k_carrier||"").trim()) return "Please enter the carrier, TPA or employer assigning the file.";
     if(!(val.k_claimno||"").trim()) return "Please enter the claim number.";
@@ -488,6 +552,21 @@ function buildPayload(){
     signed_name:val.a_typed||"", signature:S.sig||"",
     submitted_at:new Date().toLocaleString()
   };
+  const blk = pkg(S.pkg);
+  if(blk){
+    // What was bought. `package` and `package_price` are commercial and stay
+    // admin-only by default — FIELD_KEEP in the portal Worker is an allow-list,
+    // so a new field like these is not sent to an investigator unless someone
+    // adds it. `authorized_hours` is deliberately the existing allow-listed
+    // field: the investigator does need to know the cap they are working to,
+    // and hours are not a price.
+    Object.assign(p, {
+      package:`${blk.label} — ${blk.hours} hours`,
+      package_hours:blk.hours,
+      package_price:blk.price,
+      authorized_hours:`${blk.hours} hours purchased — call before exceeding`,
+    });
+  }
   if(isClaims()){
     // Claim identifiers lead the payload so the assignment email is filable
     // against the carrier's own record without opening the attachment.
@@ -592,9 +671,14 @@ function renderRecord(p, sent, threw, stored){
       ${row("Service",p.service)}
       ${claims
         ? `${row("Billing","Invoiced to carrier")}${row("Billing reference / PO",p.billing_reference)}${row("Invoices to",p.billing_email)}${row("Billing notes",p.billing_notes)}`
-        : `${row("Due today",money(p.fee_due))}${row("Payment method",p.payment_method)}`}
+        : `${row("Coverage purchased",p.package)}${row("Due today",money(p.fee_due))}${row("Payment method",p.payment_method)}`}
       ${row(claims?"Authorized by":"Signed by",p.signed_name)}
     </dl>
+    ${p.package?`<div class="feebox" style="margin-top:4px">
+      <div class="row"><span>${esc(p.package)}</span><b>${money(p.package_price)}</b></div>
+      <div class="row"><span>Additional hours, only with your approval</span><span>${money(HOURLY)}/hr</span></div>
+      <div class="row due"><span>Total due today</span><span>${money(p.fee_due)}</span></div>
+    </div>`:""}
     ${p.signature?`<div><div style="font-size:.8rem;color:var(--muted)">Signature</div><img class="sig" src="${p.signature}" alt="signature"></div>`:""}
     <div class="nav"><button type="button" class="btn ghost" onclick="window.print()">Print / Save PDF</button></div>
   </div>`;

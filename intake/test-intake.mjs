@@ -130,34 +130,95 @@ section('Consumer path — surveillance');
   await advance(page);
   await page.locator('#opt-surveillance').click();
   await page.waitForTimeout(80);
+  ok('choosing surveillance adds the coverage step', await dots(page) === 7);
   await advance(page);
 
-  ok('step 3 is the subject step', await heading(page) === 'Subject of the investigation');
+  ok('step 3 asks how much coverage', await heading(page) === 'How much coverage?');
+  const card = await page.locator('.card').innerText();
+  for (const [what, shown] of Object.entries({
+    'the half day': '$400', 'the full day': '$800',
+    'two days': '$1,500', 'three days': '$2,200',
+  })) ok(`the rate card offers ${what} at ${shown}`, card.includes(shown), card);
+  ok('the overage rate is stated up front', card.includes('$100/hr'));
+  ok('overage needs approval first', /approval/i.test(card));
+
+  // The block is required — this is what the client is agreeing to pay.
+  await advance(page);
+  ok('you cannot pass the step without choosing a block',
+     await heading(page) === 'How much coverage?');
+  ok('and it says why', (await page.locator('#err').innerText()).length > 0);
+
+  await page.locator('#opt-pkg-two').click();
+  await page.waitForTimeout(80);
+  ok('choosing a block shows what is due', (await page.locator('.feebox').innerText()).includes('$1,500'));
+  await advance(page);
+
+  ok('step 4 is the subject step', await heading(page) === 'Subject of the investigation');
   ok('consumer keeps the "relationship to you" field',
      await page.locator('[data-k="s_rel"]').getAttribute('placeholder') !== null);
   await set(page, 's_name', 'John Subject');
   await advance(page);
-  ok('step 4 is the objective step', await heading(page) === 'Your objective');
+  ok('step 5 is the objective step', await heading(page) === 'Your objective');
   await advance(page);
 
-  ok('step 5 is the agreement', (await heading(page)).includes('Agreement'));
+  ok('step 6 is the agreement', (await heading(page)).includes('Agreement'));
   const fees = await page.locator('.feebox').innerText();
-  ok('fee box shows the $1,500 retainer due today', fees.includes('$1,500') && fees.includes('Due today'));
+  ok('fee box names the block that was chosen', fees.includes('Two days') && fees.includes('16 hours'));
+  ok('fee box shows the price due today', fees.includes('$1,500') && fees.includes('Due today'));
+  const terms = await page.locator('.agree').innerText();
+  ok('the terms state the hours purchased', terms.includes('16 investigative hours'));
+  ok('the terms state the overage rate', terms.includes('$100 per hour'));
+  ok('the terms promise no overage without approval', /prior approval/.test(terms));
+  ok('the old retainer wording is gone', !/retainer/i.test(terms));
   await page.locator('[data-k="a_consent"]').check();
   await set(page, 'a_typed', 'Jane Client');
   await sign(page);
   await advance(page);
 
-  ok('step 6 is the payment step', await heading(page) === 'Payment');
+  ok('step 7 is the payment step', await heading(page) === 'Payment');
+  ok('the payment step names the block', (await page.locator('.card').innerText()).includes('Two days'));
   await page.locator('.pay-opt .opt').first().click();
   await page.waitForTimeout(80);
+  ok('the payment link carries the block price',
+     (await page.locator('.pay-btn').getAttribute('href')).includes('amount=1500'));
   await advance(page);
   await page.waitForTimeout(400);
 
-  ok('the portal record bills the consumer retainer', stored && stored.fee_due === 1500);
+  ok('the portal record bills the block that was chosen', stored && stored.fee_due === 1500);
+  ok('the portal record names the block', stored && stored.package === 'Two days — 16 hours');
+  ok('the portal record keeps the hours', stored && stored.package_hours === 16);
+  ok('the portal record keeps the price', stored && stored.package_price === 1500);
+  ok('the hours become the cap the investigator works to',
+     stored && /16 hours purchased/.test(stored.authorized_hours || ''));
   ok('the portal record carries no claim fields', stored && !('claim_number' in stored));
-  ok('record is titled Client Intake', (await page.locator('.record').innerText()).includes('Client Intake'));
+
+  const rec = await page.locator('.record').innerText();
+  ok('record is titled Client Intake', rec.includes('Client Intake'));
+  ok('the printed sheet states the coverage bought', rec.includes('Two days — 16 hours'));
+  ok('the printed sheet states the total due', rec.includes('$1,500'));
+  ok('the printed sheet states the overage rate', rec.includes('$100/hr'));
   await page.close();
+}
+
+/* A rate is a promise. It is set in one place and everything downstream reads
+   it from there, so a price change can never leave a stale figure behind in the
+   terms, the payment link or the printed sheet. */
+section('Prices come from one place');
+{
+  const src = fs.readFileSync(path.join(ROOT, 'intake/index.html'), 'utf8');
+  const card = (src.match(/const PACKAGES = \[([\s\S]*?)\n\];/) || [, ''])[1];
+  const prices = [...card.matchAll(/price:(\d+)/g)].map(m => m[1]);
+  ok('the rate card declares every block price', prices.length === 4);
+
+  // Anything outside the rate card that looks like one of those prices is a
+  // figure that will not follow when the rate card changes.
+  const rest = src.replace(card, '');
+  for (const p of prices) {
+    const n = Number(p).toLocaleString();
+    ok(`$${n} is not hard-coded anywhere else`, !rest.includes('$' + n), '$' + n);
+  }
+  ok('the old $1,500 retainer constant is gone', !/retainer:\s*\d/.test(src));
+  ok('the overage rate is a constant too', /const HOURLY = \d+/.test(src));
 }
 
 /* ---------------------------------------------------------- carrier path */
