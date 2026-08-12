@@ -32,3 +32,7 @@
 /private-investigator/buckingham-va/*  /private-investigator/farmville-va/  301
 /private-investigator/dillwyn-va/*  /private-investigator/farmville-va/  301
 /private-investigator/cumberland-va/*  /private-investigator/farmville-va/  301
+
+# The assignment intake lives at /intake/ (the carrier path). Anything that
+# already points at the old /submit/ URL keeps working.
+/insurance-investigations/submit/*  /intake/  301

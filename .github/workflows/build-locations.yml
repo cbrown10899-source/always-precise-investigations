@@ -15,6 +15,13 @@ permissions:
   contents: write
   actions: write
 
+# This job commits to master. Two overlapping runs would race on the push and
+# one would fail outright, so let an in-flight rebuild finish rather than
+# cancelling it midway.
+concurrency:
+  group: build-locations
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -36,8 +43,21 @@ jobs:
           fi
           git add private-investigator sitemap.xml
           git commit -m "Rebuild location pages from build-locations.py"
-          git push
-          echo "deployed=yes" >> "$GITHUB_ENV"
+
+          # master can move while this run is building. A bare push would just
+          # be rejected and fail the job, so rebase onto whatever landed and
+          # try again. The commit only touches generated files, so replaying it
+          # on a newer base is safe.
+          for attempt in 1 2 3; do
+            if git push; then
+              echo "deployed=yes" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            echo "Push rejected (attempt $attempt) — rebasing onto origin/master."
+            git pull --rebase origin master
+          done
+          echo "Could not push the rebuild after 3 attempts." >&2
+          exit 1
 
       # A push made with GITHUB_TOKEN deliberately does not trigger other
       # workflows, so the commit above would sit undeployed. Ask for the

@@ -30,6 +30,8 @@
   Cache-Control: public, max-age=3600
 /child-custody-investigations/*
   Cache-Control: public, max-age=3600
+/insurance-investigations/*
+  Cache-Control: public, max-age=3600
 /assets/*
   Cache-Control: public, max-age=604800
 
@@ -37,3 +39,16 @@
 /watch/*
   X-Robots-Tag: noindex, nofollow
   Cache-Control: no-store
+
+/intake/*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow, noarchive
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+
+/portal/*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow, noarchive
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'

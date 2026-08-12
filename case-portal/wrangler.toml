@@ -1,0 +1,31 @@
+name = "api-case-portal"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# Deliberately a different Worker from api-visitor-alerts. This one holds case
+# data; that one holds anonymous counters. Separate secrets, separate blast
+# radius.
+
+# The Worker MUST answer on the site's own domain. A session cookie set by a
+# workers.dev hostname is cross-site: Safari drops it outright and SameSite
+# blocks it everywhere else, so sign-in would appear to work and then 401 on
+# every following request. This route is load-bearing, not a convenience.
+routes = [
+  { pattern = "alwayspreciseinvestigations.net/portal-api/*", zone_name = "alwayspreciseinvestigations.net" }
+]
+workers_dev = false
+
+[vars]
+SITE_ORIGIN = "https://alwayspreciseinvestigations.net"
+# PBKDF2 rounds used when a password is set. Raising it only affects passwords
+# set afterwards — each user's count is stored with their hash.
+PBKDF2_ITER = "100000"
+
+# Secrets (never in this file):
+#   npx wrangler secret put INGEST_KEY       # also goes in intake/index.html
+#   npx wrangler secret put BOOTSTRAP_TOKEN  # used once, then delete it
+
+[[d1_databases]]
+binding = "DB"
+database_name = "api-case-portal"
+database_id = "PASTE_D1_DATABASE_ID"

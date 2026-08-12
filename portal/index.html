@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Case Portal — Always Precise</title>
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0e1a2c">
+<link rel="icon" href="/assets/logo-white.webp">
+<style>
+  :root{
+    --navy:#0e1a2c; --navy-2:#13273f; --teal:#2f7d90; --teal-2:#3d97ad;
+    --gold:#c99a3b; --ink:#1c2531; --muted:#5c6775; --line:#dfe3e8;
+    --paper:#f4f5f7; --card:#fff; --good:#1c8a4d; --bad:#c14133; --warn:#a86a12;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif;background:var(--paper);color:var(--ink);line-height:1.6;-webkit-text-size-adjust:100%;}
+
+  .top{background:var(--navy);color:#fff;padding:14px 20px;}
+  .top .wrap{max-width:1180px;margin:0 auto;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+  .top .name{font-weight:700;letter-spacing:.03em;line-height:1.15;}
+  .top .name span{display:block;font-weight:400;font-size:.72rem;color:#9db2c9;letter-spacing:.05em;}
+  .top .who{margin-left:auto;font-size:.82rem;color:#cfe0f0;text-align:right;}
+  .top .who b{display:block;color:#fff;}
+  .top button{font:inherit;font-size:.82rem;background:transparent;border:1px solid #3c5878;color:#cfe0f0;border-radius:6px;padding:6px 12px;cursor:pointer;margin-left:12px;}
+  .top button:hover{background:#1c3552;}
+
+  main{max-width:1180px;margin:0 auto;padding:22px 16px 70px;}
+  .tabs{display:flex;gap:6px;margin-bottom:18px;flex-wrap:wrap;}
+  .tabs button{font:inherit;font-size:.9rem;font-weight:600;background:transparent;border:0;border-bottom:2px solid transparent;color:var(--muted);padding:8px 14px;cursor:pointer;}
+  .tabs button.on{color:var(--ink);border-bottom-color:var(--teal-2);}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px;box-shadow:0 1px 3px rgba(16,29,51,.05);}
+  .card.narrow{max-width:430px;margin:8vh auto 0;}
+  h1{font-size:1.28rem;margin-bottom:4px;}
+  h2{font-size:1.05rem;margin-bottom:12px;}
+  .lead{color:var(--muted);font-size:.92rem;margin-bottom:18px;}
+  label.f{display:block;margin-bottom:14px;}
+  label.f > span{display:block;font-size:.85rem;font-weight:600;margin-bottom:5px;}
+  input,select,textarea{width:100%;font-size:16px;font-family:inherit;color:var(--ink);background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 12px;}
+  input:focus,select:focus{outline:2px solid var(--teal-2);border-color:var(--teal-2);}
+  .btn{font:inherit;font-size:.95rem;font-weight:700;border:0;border-radius:8px;padding:11px 20px;cursor:pointer;background:var(--teal);color:#fff;}
+  .btn:hover{background:var(--teal-2);}
+  .btn:disabled{opacity:.6;cursor:default;}
+  .btn.sm{font-size:.82rem;padding:7px 13px;}
+  .btn.ghost{background:#fff;border:1px solid var(--line);color:var(--ink);}
+  .btn.danger{background:var(--bad);}
+  .err{color:var(--bad);font-size:.86rem;margin-top:10px;min-height:1em;}
+  .okmsg{color:var(--good);font-size:.86rem;margin-top:10px;min-height:1em;}
+
+  .bar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;}
+  .bar input{max-width:280px;}
+  .count{color:var(--muted);font-size:.86rem;margin-left:auto;}
+  .note{background:#fdf7ec;border:1px solid #f0dcb6;color:#7a5a12;border-radius:8px;padding:10px 13px;font-size:.86rem;margin-bottom:14px;}
+
+  table{width:100%;border-collapse:collapse;font-size:.9rem;}
+  th,td{text-align:left;padding:11px 12px;border-bottom:1px solid var(--line);vertical-align:top;}
+  th{font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);white-space:nowrap;}
+  tbody tr.click{cursor:pointer;}
+  tbody tr.click:hover{background:#f7fafb;}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.86rem;color:var(--teal);}
+  .tag{display:inline-block;font-size:.72rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;border-radius:999px;padding:3px 9px;}
+  .tag.claims{background:#eaf4f7;color:#1f5c6d;}
+  .tag.consumer{background:#f0eee9;color:#6b5a33;}
+  .tag.new{background:#fdf1e3;color:var(--warn);}
+  .tag.assigned{background:#eaf4f7;color:#1f5c6d;}
+  .tag.in_progress{background:#e8f1fb;color:#1e4f8a;}
+  .tag.closed{background:#e9f7ef;color:var(--good);}
+  .empty{color:var(--muted);padding:26px 4px;font-size:.92rem;}
+
+  .linkbox{background:#f1f7f9;border:1px solid #cfe6ec;border-radius:8px;padding:12px 14px;margin-top:12px;}
+  .linkbox code{display:block;word-break:break-all;font-family:ui-monospace,monospace;font-size:.82rem;color:#14495a;margin-bottom:10px;}
+
+  dialog{border:0;border-radius:12px;padding:0;max-width:760px;width:calc(100% - 32px);box-shadow:0 18px 50px rgba(10,20,32,.34);}
+  dialog::backdrop{background:rgba(10,20,32,.55);}
+  .dlg{padding:22px;}
+  .dlg h2{margin-bottom:2px;}
+  .dlg .case{font-family:ui-monospace,monospace;color:var(--teal);font-weight:700;margin-bottom:14px;}
+  dl.detail{display:grid;grid-template-columns:auto 1fr;gap:7px 16px;margin:14px 0;font-size:.9rem;}
+  dl.detail dt{color:var(--muted);white-space:nowrap;}
+  dl.detail dd{word-break:break-word;}
+  .sig{max-width:250px;border-bottom:1px solid #c7ccd3;margin-top:4px;}
+  .dlg .actions{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:16px;margin-top:8px;}
+  .dlg .actions label.f{margin-bottom:0;min-width:170px;}
+  .close{position:absolute;right:14px;top:12px;background:transparent;border:0;font-size:1.5rem;line-height:1;color:var(--muted);cursor:pointer;}
+  .rel{position:relative;}
+  @media(max-width:760px){
+    dl.detail{grid-template-columns:1fr;gap:2px;}
+    dl.detail dt{margin-top:8px;}
+    th.hide,td.hide{display:none;}
+  }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="wrap">
+    <svg width="34" height="34" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="10" fill="#13273f"/><path d="M32 12l6 8-6 8-6-8z" fill="#3d97ad"/><path d="M32 30l10 12H22z" fill="#c99a3b"/></svg>
+    <div class="name">ALWAYS PRECISE<span>INVESTIGATIONS · CASE PORTAL</span></div>
+    <div class="who" id="who" hidden></div>
+  </div>
+</div>
+
+<main id="app"></main>
+
+<dialog id="dlg"><div class="rel"><button class="close" data-act="closeDlg" aria-label="Close">&times;</button><div class="dlg" id="dlgBody"></div></div></dialog>
+
+<script>
+"use strict";
+
+/* The API is mounted on this same domain, at /portal-api/*, by a Cloudflare
+   Worker route. It has to be same-origin: a session cookie set by a
+   workers.dev hostname would be cross-site and never sent back. */
+const API = "/portal-api";
+
+const $ = id => document.getElementById(id);
+const app = $("app");
+let ME = null, TAB = "cases", CASES = [], USERS = [], INVITES = [], TOTAL = 0, FILTER = "", LAST_LINK = "";
+
+function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function when(iso){
+  if(!iso) return "—";
+  const d = new Date(iso);
+  return isNaN(d) ? esc(iso) : d.toLocaleString([], {month:"short", day:"numeric", year:"numeric", hour:"numeric", minute:"2-digit"});
+}
+const label = s => ({new:"New", assigned:"Assigned", in_progress:"In progress", closed:"Closed"}[s] || s);
+
+/* Only ever render an image the browser will treat as image data. Anything
+   else in that field came from a public form and is not to be trusted. */
+function safeImage(src){
+  return typeof src === "string" && /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(src) ? src : "";
+}
+
+async function api(path, opts = {}){
+  const res = await fetch(API + path, {
+    credentials: "same-origin",
+    headers: opts.body ? {"Content-Type":"application/json"} : {},
+    ...opts,
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  let data = {};
+  try { data = await res.json(); } catch {}
+  if(res.status === 401 && ME){ ME = null; paint(); throw new Error("Your session ended. Please sign in again."); }
+  if(!res.ok) throw new Error(data.error || "That did not work. Please try again.");
+  return data;
+}
+
+/* ------------------------------------------------------------------ views */
+
+function loginView(){
+  return `<div class="card narrow">
+    <h1>Case Portal</h1>
+    <p class="lead">Staff sign-in. Accounts are created by invitation only — there is no public sign-up.</p>
+    <form data-act="login">
+      <label class="f"><span>Username</span><input id="u" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
+      <label class="f"><span>Password</span><input id="p" type="password" autocomplete="current-password" required></label>
+      <button class="btn" style="width:100%" id="loginBtn">Sign in</button>
+      <div class="err" id="err"></div>
+    </form>
+  </div>`;
+}
+
+function inviteView(state){
+  if(state.error){
+    return `<div class="card narrow">
+      <h1>Invitation not valid</h1>
+      <p class="lead">${esc(state.error)}</p>
+      <a class="btn" href="/portal/" style="display:inline-block;text-decoration:none">Go to sign-in</a>
+    </div>`;
+  }
+  return `<div class="card narrow">
+    <h1>Set your password</h1>
+    <p class="lead">Welcome, ${esc(state.display_name || state.username)}. Choose a password for
+      <b>${esc(state.username)}</b> (${state.role === "admin" ? "admin" : "investigator"}).
+      Nobody else ever sees it — not even whoever invited you.</p>
+    <form data-act="accept">
+      <label class="f"><span>New password</span><input id="p1" type="password" autocomplete="new-password" required></label>
+      <label class="f"><span>Confirm password</span><input id="p2" type="password" autocomplete="new-password" required></label>
+      <p class="lead">At least 12 characters, with an uppercase letter, a lowercase letter and a digit.</p>
+      <button class="btn" style="width:100%" id="acceptBtn">Create my account</button>
+      <div class="err" id="err"></div>
+    </form>
+  </div>`;
+}
+
+function shell(inner){
+  const tabs = ME.role === "admin"
+    ? `<button class="${TAB==="cases"?"on":""}" data-act="tab" data-tab="cases">Cases</button>
+       <button class="${TAB==="staff"?"on":""}" data-act="tab" data-tab="staff">Staff</button>`
+    : "";
+  return `<div class="tabs">${tabs}</div>${inner}`;
+}
+
+function casesView(){
+  const q = FILTER.trim().toLowerCase();
+  const rows = CASES.filter(c => !q || [c.case_no, c.client_name, c.subject_name, c.carrier, c.claim_number]
+    .some(v => (v || "").toLowerCase().includes(q)));
+
+  // Case numbers reach this markup from a public form, so they go in a data
+  // attribute read by a delegated listener — never interpolated into script.
+  const body = rows.map(c => `
+    <tr class="click" data-act="openCase" data-case="${esc(c.case_no)}">
+      <td class="mono">${esc(c.case_no)}</td>
+      <td class="hide">${when(c.created_at)}</td>
+      <td><span class="tag ${c.kind === "claims" ? "claims" : "consumer"}">${c.kind === "claims" ? "Claim" : "Client"}</span></td>
+      <td>${esc(c.kind === "claims" ? (c.carrier || "—") : (c.client_name || "—"))}
+          ${c.claim_number ? `<div class="mono">${esc(c.claim_number)}</div>` : ""}</td>
+      <td class="hide">${esc(c.subject_name || "—")}</td>
+      <td><span class="tag ${esc(c.status)}">${esc(label(c.status))}</span></td>
+      <td class="hide">${esc(c.assigned_name || "—")}</td>
+    </tr>`).join("");
+
+  const more = TOTAL > CASES.length
+    ? `<div class="note">Showing the ${CASES.length} most recent of ${TOTAL} cases. Search covers what is loaded.</div>` : "";
+
+  return `<div class="card">
+    <div class="bar">
+      <h2 style="margin:0">Cases</h2>
+      <input id="q" placeholder="Search case, client, carrier, claim no." value="${esc(FILTER)}" data-act="filter">
+      <span class="count">${rows.length} of ${CASES.length}</span>
+    </div>
+    ${more}
+    ${rows.length ? `<div style="overflow-x:auto"><table>
+      <thead><tr><th>Case</th><th class="hide">Received</th><th>Type</th><th>Client / carrier</th>
+      <th class="hide">Subject</th><th>Status</th><th class="hide">Assigned</th></tr></thead>
+      <tbody>${body}</tbody></table></div>`
+      : `<div class="empty">${CASES.length ? "Nothing matches that search." : "No submissions yet. Intake forms will appear here as they arrive."}</div>`}
+  </div>`;
+}
+
+function staffView(){
+  const rows = USERS.map(u => `<tr>
+    <td><b>${esc(u.display_name || u.username)}</b><div class="mono">${esc(u.username)}</div></td>
+    <td>${u.role === "admin" ? "Admin" : "Investigator"}</td>
+    <td>${u.active ? '<span class="tag closed">Active</span>' : '<span class="tag new">Disabled</span>'}</td>
+    <td class="hide">${when(u.last_login_at)}</td>
+    <td style="white-space:nowrap">${u.id === ME.id ? "" :
+      `<button class="btn sm ${u.active ? "danger" : "ghost"}" data-act="toggleActive" data-id="${u.id}" data-active="${u.active ? 0 : 1}">${u.active ? "Disable" : "Enable"}</button>`}
+    </td></tr>`).join("");
+
+  const pending = INVITES.length ? INVITES.map(i => `<tr>
+    <td><b>${esc(i.display_name || i.username)}</b><div class="mono">${esc(i.username)}</div></td>
+    <td>${i.role === "admin" ? "Admin" : "Investigator"}</td>
+    <td>${esc(i.email || "—")}</td>
+    <td class="hide">Expires ${when(i.expires_at)}</td>
+    <td><button class="btn sm ghost" data-act="revokeInvite" data-id="${i.id}">Revoke</button></td>
+  </tr>`).join("") : "";
+
+  const linkBox = LAST_LINK ? `<div class="linkbox">
+      <b>Invitation link — copy it now, it is not shown again.</b>
+      <code>${esc(LAST_LINK)}</code>
+      <button class="btn sm" data-act="copyLink">Copy link</button>
+      <a class="btn sm ghost" style="text-decoration:none;display:inline-block" data-act="mailLink" href="#">Email it</a>
+    </div>` : "";
+
+  return `<div class="card" style="margin-bottom:18px">
+    <h2>Staff accounts</h2>
+    <div style="overflow-x:auto"><table>
+      <thead><tr><th>Name</th><th>Role</th><th>Status</th><th class="hide">Last sign-in</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+  </div>
+
+  ${pending ? `<div class="card" style="margin-bottom:18px">
+    <h2>Pending invitations</h2>
+    <div style="overflow-x:auto"><table>
+      <thead><tr><th>Name</th><th>Role</th><th>Email</th><th class="hide">Expiry</th><th></th></tr></thead>
+      <tbody>${pending}</tbody></table></div>
+  </div>` : ""}
+
+  <div class="card">
+    <h2>Invite someone</h2>
+    <p class="lead">This creates a one-time link you send them. They choose their own password, so you
+      never handle it. The link works once and expires in 7 days. Investigators see only the cases
+      assigned to them; admins see everything.</p>
+    <form data-act="invite">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 14px">
+        <label class="f"><span>Full name</span><input id="nv_name" required></label>
+        <label class="f"><span>Username they will sign in with</span><input id="nv_user" autocapitalize="none" spellcheck="false" placeholder="lowercase, no spaces" required></label>
+        <label class="f"><span>Role</span><select id="nv_role"><option value="investigator">Investigator</option><option value="admin">Admin</option></select></label>
+        <label class="f"><span>Their email <span style="font-weight:400;color:var(--muted)">(optional)</span></span><input id="nv_email" type="email" autocapitalize="none"></label>
+      </div>
+      <button class="btn">Create invitation</button>
+      <div class="err" id="uerr"></div><div class="okmsg" id="uok"></div>
+    </form>
+    ${linkBox}
+  </div>`;
+}
+
+/* ------------------------------------------------------------- rendering */
+
+function paint(){
+  if(!ME){ app.innerHTML = loginView(); $("who").hidden = true; return; }
+  $("who").hidden = false;
+  $("who").innerHTML = `<b>${esc(ME.display_name || ME.username)}</b>${ME.role === "admin" ? "Admin" : "Investigator"}
+    <button data-act="logout">Sign out</button>`;
+  app.innerHTML = shell(TAB === "staff" ? staffView() : casesView());
+  const q = $("q");
+  if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+}
+
+async function render(){
+  if(!ME){ paint(); return; }
+  try{
+    const d = await api("/submissions?limit=200");
+    CASES = d.submissions; TOTAL = d.total;
+    if(ME.role === "admin"){
+      USERS = (await api("/users")).users;
+      INVITES = (await api("/invites")).invites;
+    }
+  }catch(e){ /* paint anyway; the message surfaces on the next action */ }
+  paint();
+}
+
+/* --------------------------------------------------------------- actions */
+
+async function doLogin(){
+  const btn = $("loginBtn"), err = $("err");
+  btn.disabled = true; btn.textContent = "Signing in…"; err.textContent = "";
+  try{
+    ME = (await api("/auth/login", {method:"POST", body:{username:$("u").value, password:$("p").value}})).user;
+    await render();
+  }catch(e){
+    err.textContent = e.message;
+    btn.disabled = false; btn.textContent = "Sign in";
+  }
+}
+
+async function doAccept(token){
+  const btn = $("acceptBtn"), err = $("err");
+  err.textContent = "";
+  if($("p1").value !== $("p2").value){ err.textContent = "Those passwords do not match."; return; }
+  btn.disabled = true; btn.textContent = "Creating…";
+  try{
+    ME = (await api(`/invite/${token}/accept`, {method:"POST", body:{password:$("p1").value}})).user;
+    history.replaceState({}, "", "/portal/");   // keep the token out of the address bar
+    await render();
+  }catch(e){
+    err.textContent = e.message;
+    btn.disabled = false; btn.textContent = "Create my account";
+  }
+}
+
+async function doLogout(){
+  try{ await api("/auth/logout", {method:"POST"}); }catch{}
+  ME = null; CASES = []; USERS = []; INVITES = []; TAB = "cases"; LAST_LINK = ""; paint();
+}
+
+async function openCase(caseNo){
+  let s;
+  try{ s = (await api("/submissions/" + encodeURIComponent(caseNo))).submission; }
+  catch(e){ alert(e.message); return; }
+  const p = s.payload || {};
+  const row = (k, v) => v ? `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>` : "";
+  const claim = s.kind === "claims";
+  const sig = safeImage(p.signature);
+
+  const controls = ME.role === "admin"
+    ? `<div class="actions">
+        <label class="f"><span>Assigned to</span>
+          <select id="asg">
+            <option value="">— unassigned —</option>
+            ${USERS.filter(u => u.active).map(u => `<option value="${u.id}" ${u.id === s.assigned_to ? "selected" : ""}>${esc(u.display_name || u.username)}</option>`).join("")}
+          </select></label>
+        <label class="f"><span>Status</span>
+          <select id="sts">${["new","assigned","in_progress","closed"].map(v => `<option value="${v}" ${v === s.status ? "selected" : ""}>${esc(label(v))}</option>`).join("")}</select></label>
+        <button class="btn" data-act="saveCase" data-case="${esc(s.case_no)}">Save</button>
+        <div class="err" id="derr" style="width:100%"></div>
+      </div>` : "";
+
+  $("dlgBody").innerHTML = `
+    <h2>${claim ? "Claim assignment" : "Client intake"} — ${esc(s.service || "")}</h2>
+    <div class="case">${esc(s.case_no)}</div>
+    <dl class="detail">
+      ${claim ? `${row("Carrier / TPA", p.carrier)}${row("Claim number", p.claim_number)}${row("Policy number", p.policy_number)}
+                 ${row("Claim type", p.claim_type)}${row("Date of loss", p.date_of_loss)}${row("Adjuster", p.adjuster)}
+                 ${row("Adjuster email", p.adjuster_email)}${row("Adjuster phone", p.adjuster_phone)}
+                 ${row("Defense counsel", p.defense_counsel)}${row("Prior surveillance", p.prior_surveillance)}` : ""}
+      ${row(claim ? "Assigning contact" : "Client", p.client_name)}${row("Phone", p.client_phone)}${row("Email", p.client_email)}
+      ${claim ? "" : `${row("Address", p.client_address)}${row("Best time", p.best_time)}`}
+      ${row(claim ? "Claimant" : "Subject", p.subject_name)}${row("Address", p.subject_address)}
+      ${row("Description", p.subject_description)}${row(claim ? "Injury & restrictions" : "Relationship", p.subject_relationship)}
+      ${row(claim ? "Scope" : "Objective", p.objective)}${row("Authorized hours", p.authorized_hours)}
+      ${row(claim ? "Deadline" : "Timeline", p.timeline)}${row("Notes", p.notes)}${row("Attachments", p.attachments)}
+      ${claim ? `${row("Billing reference", p.billing_reference)}${row("Invoices to", p.billing_email)}${row("Billing notes", p.billing_notes)}`
+              : `${row("Due today", p.fee_due != null ? "$" + p.fee_due : "")}${row("Payment method", p.payment_method)}`}
+      ${row(claim ? "Authorized by" : "Signed by", p.signed_name)}
+      ${row("Received", when(s.created_at))}
+    </dl>
+    ${sig ? `<div><div style="font-size:.8rem;color:var(--muted)">Signature</div><img class="sig" src="${esc(sig)}" alt="signature"></div>` : ""}
+    ${controls}`;
+  $("dlg").showModal();
+}
+
+async function saveCase(caseNo){
+  const err = $("derr"); err.textContent = "";
+  const uid = $("asg").value;
+  try{
+    await api(`/submissions/${encodeURIComponent(caseNo)}/assign`, {method:"POST", body:{user_id: uid === "" ? null : Number(uid)}});
+    await api(`/submissions/${encodeURIComponent(caseNo)}/status`, {method:"POST", body:{status: $("sts").value}});
+    $("dlg").close();
+    await render();
+  }catch(e){ err.textContent = e.message; }
+}
+
+async function doInvite(){
+  const err = $("uerr"), okm = $("uok"); err.textContent = ""; okm.textContent = "";
+  try{
+    const r = await api("/invites", {method:"POST", body:{
+      username: $("nv_user").value.trim().toLowerCase(),
+      display_name: $("nv_name").value.trim(),
+      email: $("nv_email").value.trim(),
+      role: $("nv_role").value,
+    }});
+    LAST_LINK = r.url;
+    await render();
+    const o = $("uok"); if(o) o.textContent = "Invitation created. Send them the link below.";
+  }catch(e){ err.textContent = e.message; }
+}
+
+async function toggleActive(id, active){
+  if(!active && !confirm("Disable this account? Any session they have open ends immediately.")) return;
+  try{ await api(`/users/${id}/active`, {method:"POST", body:{active: Boolean(active)}}); await render(); }
+  catch(e){ alert(e.message); }
+}
+
+async function revokeInvite(id){
+  if(!confirm("Revoke this invitation? The link stops working immediately.")) return;
+  try{ await api(`/invites/${id}/revoke`, {method:"POST"}); LAST_LINK = ""; await render(); }
+  catch(e){ alert(e.message); }
+}
+
+/* --------------------------------------------------------- event routing */
+/* One delegated listener. Nothing user-supplied is ever written into an
+   inline handler, where the browser would decode it back into script. */
+
+document.addEventListener("click", ev => {
+  const el = ev.target.closest("[data-act]");
+  if(!el) return;
+  const act = el.dataset.act;
+  if(act === "closeDlg"){ $("dlg").close(); }
+  else if(act === "tab"){ TAB = el.dataset.tab; paint(); }
+  else if(act === "logout"){ doLogout(); }
+  else if(act === "openCase"){ openCase(el.dataset.case); }
+  else if(act === "saveCase"){ saveCase(el.dataset.case); }
+  else if(act === "toggleActive"){ toggleActive(Number(el.dataset.id), Number(el.dataset.active)); }
+  else if(act === "revokeInvite"){ revokeInvite(Number(el.dataset.id)); }
+  else if(act === "copyLink"){
+    navigator.clipboard.writeText(LAST_LINK).then(() => { el.textContent = "Copied"; });
+  }
+  else if(act === "mailLink"){
+    ev.preventDefault();
+    const subject = encodeURIComponent("Your Always Precise case portal login");
+    const body = encodeURIComponent(
+      "You have been given access to the Always Precise Investigations case portal.\n\n" +
+      "Open this link to choose your password:\n" + LAST_LINK +
+      "\n\nThe link works once and expires in 7 days.");
+    window.location.href = `mailto:?subject=${subject}&body=${body}`;
+  }
+});
+
+document.addEventListener("submit", ev => {
+  const el = ev.target.closest("[data-act]");
+  if(!el) return;
+  ev.preventDefault();
+  if(el.dataset.act === "login") doLogin();
+  else if(el.dataset.act === "invite") doInvite();
+  else if(el.dataset.act === "accept") doAccept(new URLSearchParams(location.search).get("invite") || "");
+});
+
+document.addEventListener("input", ev => {
+  if(ev.target.dataset && ev.target.dataset.act === "filter"){ FILTER = ev.target.value; paint(); }
+});
+
+/* ------------------------------------------------------------------- boot */
+
+(async function boot(){
+  const token = new URLSearchParams(location.search).get("invite");
+  if(token){
+    try{
+      const s = await api("/invite/" + encodeURIComponent(token));
+      app.innerHTML = inviteView(s);
+    }catch(e){
+      app.innerHTML = inviteView({error: e.message});
+    }
+    return;
+  }
+  try{
+    ME = (await api("/auth/me")).user;   // resume an existing session
+    await render();
+  }catch{ paint(); }
+})();
+</script>
+</body>
+</html>

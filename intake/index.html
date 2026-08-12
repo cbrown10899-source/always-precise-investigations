@@ -129,16 +129,34 @@ const FIRM = {
 };
 const FEES = {
   surveillance: { label:"Surveillance", retainer:1500, hourly:100, minHours:4 },
-  process:      { label:"Process Serving", flat:150 }
+  process:      { label:"Process Serving", flat:150 },
+  // Carrier work is invoiced, not paid up front through a consumer payment app.
+  // No rate is published here on purpose: claims rates are set per fee schedule
+  // and confirmed in writing before work begins.
+  claims:       { label:"Insurance Claim Assignment", billed:true }
 };
 /* Web3Forms access key goes here for email delivery; until then submissions
    go through FormSubmit to the firm inbox (needs one-time activation). */
 const WEB3FORMS_KEY = "71016cd4-875b-4e71-9cb8-1a1c13f50c43";
 
+/* The case portal keeps a record of every submission so it can be looked up
+   later — email alone leaves no searchable history. This key is not a secret
+   (this page is public, so anyone can read it); it only keeps casual noise out
+   of the table, which the Worker also rate- and size-limits. Delivery to the
+   firm inbox stays on Web3Forms, so a portal outage cannot lose a client. */
+const PORTAL_API = "/portal-api";
+const PORTAL_INGEST_KEY = "PASTE_INGEST_KEY";
+
 /* ============ State ============ */
 const CASE_NO = "API-" + new Date().toISOString().slice(0,10).replace(/-/g,"") + "-" + String(Math.floor(1000+Math.random()*9000));
 const S = { step:0, svc:null, pay:null, sig:null, files:[] };
-const STEPS = ["info","service","subject","objective","agreement","payment"];
+// A carrier assignment collects claim details and ends in invoicing, so the
+// claims path has its own step list. Both share the first two steps, which is
+// what makes it safe to switch service without stranding S.step.
+const STEPS       = ["info","service","subject","objective","agreement","payment"];
+const CLAIM_STEPS = ["info","service","claim","subject","objective","agreement","billing"];
+function steps(){ return S.svc==="claims" ? CLAIM_STEPS : STEPS; }
+function isClaims(){ return S.svc==="claims"; }
 const app = document.getElementById("app");
 const $ = id => document.getElementById(id);
 
@@ -151,21 +169,35 @@ document.addEventListener("DOMContentLoaded", () => {
   $("caseno").textContent = CASE_NO;
   $("m-phone").textContent = FIRM.phone; $("m-phone").href = "tel:" + FIRM.tel;
   $("m-lic").textContent = "Va DCJS #" + FIRM.license;
-  const p = $("progress"); STEPS.forEach(()=>p.insertAdjacentHTML("beforeend","<i></i>"));
   render();
 });
 
 const money = n => "$" + Number(n).toLocaleString();
 function svc(){ return S.svc ? FEES[S.svc] : null; }
-function amountDue(){ const f=svc(); if(!f) return 0; return S.svc==="surveillance" ? f.retainer : f.flat; }
+function amountDue(){
+  const f=svc(); if(!f) return 0;
+  if(isClaims()) return 0;            // invoiced to the carrier, nothing due at intake
+  return S.svc==="surveillance" ? f.retainer : f.flat;
+}
 
 /* ============ Render ============ */
+// The two paths have different step counts, so the progress bar is rebuilt
+// whenever the count changes rather than being fixed once at boot.
+function paintProgress(){
+  const p=$("progress"), n=steps().length;
+  if(p.children.length!==n){
+    p.innerHTML="";
+    for(let i=0;i<n;i++) p.insertAdjacentHTML("beforeend","<i></i>");
+  }
+  [...p.children].forEach((el,i)=> el.classList.toggle("done", i<=S.step));
+}
 function render(){
-  document.querySelectorAll("#progress i").forEach((el,i)=> el.classList.toggle("done", i<=S.step));
-  app.innerHTML = view(STEPS[S.step]);
+  const step = steps()[S.step];
+  paintProgress();
+  app.innerHTML = view(step);
   restore();
-  if(STEPS[S.step]==="agreement") initSig();
-  if(STEPS[S.step]==="payment") paintPay();
+  if(step==="agreement") initSig();
+  if(step==="payment") paintPay();
   window.scrollTo(0,0);
 }
 function restore(){ document.querySelectorAll("[data-k]").forEach(el=>{ if(val[el.dataset.k]!==undefined){ if(el.type==="checkbox") el.checked=val[el.dataset.k]; else el.value=val[el.dataset.k]; } }); }
@@ -206,43 +238,116 @@ function view(step){
       <input type="radio" name="svc" ${S.svc==="process"?"checked":""}><b>Process Serving</b>
       <div class="desc">Reliable service of legal documents across Virginia. ${money(FEES.process.flat)} flat fee.</div>
     </label>
+    <label class="opt" id="opt-claims" onclick="pickSvc('claims')">
+      <span class="price">Invoiced</span>
+      <input type="radio" name="svc" ${S.svc==="claims"?"checked":""}><b>Insurance Claim Assignment</b>
+      <div class="desc">For carriers, TPAs, self-insured employers and defense counsel. Workers' comp, auto and liability claims — billed to the carrier, nothing due at assignment.</div>
+    </label>
+    ${navButtons()}
+  </div>`;
+
+  if(step==="claim") return `<div class="card">
+    <h2>Claim details</h2>
+    <p class="lead">Enough to open the file and match our report to yours.</p>
+    <label class="f"><span>Carrier / TPA / employer <b class="req">*</b></span><input type="text" data-k="k_carrier" autocomplete="organization" placeholder="Company assigning the file"></label>
+    <div class="two">
+      <label class="f"><span>Claim number <b class="req">*</b></span><input type="text" data-k="k_claimno"></label>
+      <label class="f"><span>Policy number</span><input type="text" data-k="k_policy"></label>
+    </div>
+    <div class="two">
+      <label class="f"><span>Claim type</span>
+        <select data-k="k_type">
+          <option value="">Select…</option>
+          <option>Workers' compensation</option>
+          <option>Auto liability</option>
+          <option>General liability</option>
+          <option>Property</option>
+          <option>Disability</option>
+          <option>Other</option>
+        </select></label>
+      <label class="f"><span>Date of loss</span><input type="text" data-k="k_dol" placeholder="MM/DD/YYYY"></label>
+    </div>
+    <label class="f"><span>Adjuster / assigning contact</span><input type="text" data-k="k_adjuster"></label>
+    <div class="two">
+      <label class="f"><span>Adjuster email</span><input type="email" data-k="k_adj_email" autocomplete="email"></label>
+      <label class="f"><span>Adjuster phone</span><input type="tel" data-k="k_adj_phone" autocomplete="tel"></label>
+    </div>
+    <label class="f"><span>Defense counsel <span class="hint" style="font-weight:400">(if the file is in litigation)</span></span><input type="text" data-k="k_counsel" placeholder="Firm and attorney"></label>
+    <label class="f"><span>Billing reference / PO</span><input type="text" data-k="k_po" placeholder="If your billing requires one"></label>
+    <label class="f"><span>Prior surveillance on this claim?</span>
+      <select data-k="k_prior">
+        <option value="">Select…</option>
+        <option>None</option>
+        <option>Yes — by our firm</option>
+        <option>Yes — by another vendor</option>
+        <option>Unknown</option>
+      </select>
+      <span class="hint">Prior activity changes how a subject behaves. Worth knowing before we go out.</span></label>
     ${navButtons()}
   </div>`;
 
   if(step==="subject") return `<div class="card">
-    <h2>Subject of the investigation</h2>
-    <p class="lead">Who or what should we look into? Share whatever you know — more detail helps.</p>
-    <label class="f"><span>Subject's name</span><input type="text" data-k="s_name"></label>
+    <h2>${isClaims()?"The claimant":"Subject of the investigation"}</h2>
+    <p class="lead">${isClaims()
+      ? "Who we are going out on. Addresses and vehicles are what make or break a first day in the field."
+      : "Who or what should we look into? Share whatever you know — more detail helps."}</p>
+    <label class="f"><span>${isClaims()?"Claimant's name":"Subject's name"}</span><input type="text" data-k="s_name"></label>
     <label class="f"><span>Known address or location</span><input type="text" data-k="s_addr"></label>
     <label class="f"><span>Vehicle / physical description</span><input type="text" data-k="s_desc" placeholder="Make, model, color, plate, appearance…"></label>
-    <label class="f"><span>Relationship to you</span><input type="text" data-k="s_rel" placeholder="e.g. spouse, tenant, employee, defendant"></label>
+    ${isClaims()
+      ? `<label class="f"><span>Alleged injury &amp; stated restrictions</span><textarea data-k="s_rel" placeholder="Reported injury, work status, and any restrictions in the file…"></textarea></label>`
+      : `<label class="f"><span>Relationship to you</span><input type="text" data-k="s_rel" placeholder="e.g. spouse, tenant, employee, defendant"></label>`}
     <label class="f"><span>Documents or photos</span>
       <input type="file" id="files" multiple onchange="pickFiles(this)" style="font-size:.9rem;padding:8px 0;border:0;">
-      <span class="hint" id="filenote">Attach court papers or a photo of the subject if you have them.</span></label>
+      <span class="hint" id="filenote">${isClaims()?"Attach the claim file, recorded statement, ISO report or a photo of the claimant.":"Attach court papers or a photo of the subject if you have them."}</span></label>
     ${navButtons()}
   </div>`;
 
   if(step==="objective") return `<div class="card">
-    <h2>Your objective</h2>
-    <p class="lead">What outcome are you hoping for, and how soon?</p>
-    <label class="f"><span>What do you want to find out or accomplish?</span><textarea data-k="o_goal" placeholder="Describe the situation and the result you need…"></textarea></label>
-    <label class="f"><span>Timeline / urgency</span><input type="text" data-k="o_time" placeholder="e.g. before a court date on 8/15, ASAP, flexible"></label>
+    <h2>${isClaims()?"Scope &amp; deadline":"Your objective"}</h2>
+    <p class="lead">${isClaims()
+      ? "What does this file need to answer, and by when?"
+      : "What outcome are you hoping for, and how soon?"}</p>
+    <label class="f"><span>${isClaims()?"What does the file need to establish?":"What do you want to find out or accomplish?"}</span><textarea data-k="o_goal" placeholder="${isClaims()?"e.g. activity level versus stated restrictions, employment verification, scene documentation…":"Describe the situation and the result you need…"}"></textarea></label>
+    ${isClaims()?`<label class="f"><span>Authorized hours / budget</span><input type="text" data-k="o_hours" placeholder="e.g. 8 hours authorized, or call before exceeding"></label>`:""}
+    <label class="f"><span>${isClaims()?"Deadline":"Timeline / urgency"}</span><input type="text" data-k="o_time" placeholder="${isClaims()?"e.g. hearing 9/12, report needed by 9/1":"e.g. before a court date on 8/15, ASAP, flexible"}"></label>
     <label class="f"><span>Anything else we should know</span><textarea data-k="o_notes" placeholder="Optional"></textarea></label>
     ${navButtons()}
   </div>`;
 
   if(step==="agreement"){
     const f=svc(), due=amountDue();
-    const feeLines = S.svc==="surveillance"
+    const feeLines = isClaims()
+      ? `<div class="row"><span>Billing</span><b>Invoiced to the carrier</b></div>
+         <div class="row"><span>Rate</span><span>Per agreed fee schedule</span></div>
+         <div class="row"><span>Mileage &amp; travel time</span><span>Not charged in our service area</span></div>`
+      : S.svc==="surveillance"
       ? `<div class="row"><span>Retainer (due now)</span><b>${money(f.retainer)}</b></div>
          <div class="row"><span>Hourly rate after retainer</span><span>${money(f.hourly)}/hr</span></div>
          <div class="row"><span>Minimum engagement</span><span>${f.minHours} hours</span></div>`
       : `<div class="row"><span>Flat service fee</span><b>${money(f.flat)}</b></div>`;
+    const dueLine = isClaims()
+      ? `<div class="row due"><span>Due at assignment</span><span>Nothing — invoiced</span></div>`
+      : `<div class="row due"><span>Due today</span><span>${money(due)}</span></div>`;
     return `<div class="card">
-      <h2>Agreement &amp; signature</h2>
-      <p class="lead">Please review the terms for <b>${f?f.label:"the selected service"}</b> and sign below.</p>
-      <div class="feebox">${feeLines}<div class="row due"><span>Due today</span><span>${money(due)}</span></div></div>
+      <h2>${isClaims()?"Assignment terms &amp; authorization":"Agreement &amp; signature"}</h2>
+      <p class="lead">${isClaims()
+        ? `Please review the terms for this <b>${f?f.label.toLowerCase():"assignment"}</b> and authorize below.`
+        : `Please review the terms for <b>${f?f.label:"the selected service"}</b> and sign below.`}</p>
+      <div class="feebox">${feeLines}${dueLine}</div>
       <div class="agree">
+      ${isClaims() ? `
+        <h4>Assignment</h4>
+        <p>The assigning party retains ${FIRM.name} ("the firm," Va DCJS #${FIRM.license}) to perform the claim investigation described in this intake. Work begins on written acceptance of the assignment; no payment is due at intake.</p>
+        <h4>Billing</h4>
+        <p>Work is invoiced to the carrier, third-party administrator or assigning employer under the agreed fee schedule. The applicable rate and any estimated hours are confirmed in writing before work begins. Mileage and travel time are not charged within our service area. Authorized hours are not exceeded without prior approval from the assigning contact.</p>
+        <h4>Lawful conduct</h4>
+        <p>All work is performed lawfully and from lawful vantage points. The firm does not trespass on private property, record into a residence, place tracking devices on vehicles it has no authority over, access accounts or devices, or misrepresent itself to obtain financial or medical records. Surveillance is conducted without contact with the claimant.</p>
+        <h4>Reporting</h4>
+        <p>Deliverables are a written activity report with a time-stamped narrative, supported by video and photographs, together with the source footage. Negative results are reported as plainly as positive results. The investigator who performed the work is available for deposition and hearing testimony as to what they personally observed.</p>
+        <h4>Confidentiality &amp; no guarantee</h4>
+        <p>Claim information is kept confidential except as required by law, and work product is released only to the assigning party and its counsel. Investigative work cannot guarantee a particular result or finding.</p>
+      ` : `
         <h4>Engagement</h4>
         <p>The client retains ${FIRM.name} ("the firm," Va DCJS #${FIRM.license}) to perform ${f?f.label.toLowerCase():"the selected"} services described in this intake. Work begins after the retainer or fee shown above is received.</p>
         <h4>Fees</h4>
@@ -253,8 +358,11 @@ function view(step){
         <p>The client affirms a lawful and legitimate purpose for this engagement. The firm does not accept cyber-stalking matters and has no ability to access, hack, or retrieve data from a third party's phone, accounts, or devices. All work is performed lawfully; findings are provided for the client's stated purpose only.</p>
         <h4>Confidentiality &amp; no guarantee</h4>
         <p>The firm keeps client information confidential except as required by law. Investigative work cannot guarantee a particular result or finding.</p>
+      `}
       </div>
-      <label class="chk"><input type="checkbox" data-k="a_consent"><span>I have read and agree to the terms above, I affirm a lawful purpose, and I authorize ${FIRM.name} to proceed.</span></label>
+      <label class="chk"><input type="checkbox" data-k="a_consent"><span>${isClaims()
+        ? `I am authorized to assign this claim on behalf of the party named above, and I authorize ${FIRM.name} to proceed on the terms stated.`
+        : `I have read and agree to the terms above, I affirm a lawful purpose, and I authorize ${FIRM.name} to proceed.`}</span></label>
       <label class="f"><span>Type your full legal name <b class="req">*</b></span><input type="text" data-k="a_typed" placeholder="Your full legal name"></label>
       <div style="font-size:.85rem;font-weight:600;margin-bottom:6px;">Signature <b class="req">*</b></div>
       <div class="sigwrap">
@@ -262,9 +370,24 @@ function view(step){
         <canvas id="sig"></canvas>
         <div class="sigline"></div><div class="sigx">Sign with your finger or mouse</div>
       </div>
-      ${navButtons("Continue to payment")}
+      ${navButtons(isClaims()?"Continue":"Continue to payment")}
     </div>`;
   }
+
+  if(step==="billing") return `<div class="card">
+    <h2>Billing</h2>
+    <p class="lead">Nothing is due now. This assignment is invoiced to the carrier under the agreed fee schedule.</p>
+    <div class="feebox">
+      <div class="row"><span>Carrier / TPA</span><b>${esc(val.k_carrier||"—")}</b></div>
+      <div class="row"><span>Claim number</span><span>${esc(val.k_claimno||"—")}</span></div>
+      ${val.k_po?`<div class="row"><span>Billing reference / PO</span><span>${esc(val.k_po)}</span></div>`:""}
+      <div class="row due"><span>Due at assignment</span><span>Nothing — invoiced</span></div>
+    </div>
+    <label class="f"><span>Send invoices to</span><input type="email" data-k="b_email" placeholder="Accounts payable or billing email"></label>
+    <label class="f"><span>Billing notes</span><textarea data-k="b_notes" placeholder="Portal, invoicing requirements, required references…"></textarea></label>
+    <p class="hint">We confirm the rate and any estimated hours in writing before going out. Questions on rates? Call ${FIRM.phone}.</p>
+    ${navButtons("Submit assignment")}
+  </div>`;
 
   if(step==="payment"){
     const f=svc(), due=amountDue();
@@ -327,8 +450,14 @@ function validate(step){
     if(!(val.c_phone||"").trim() && !(val.c_email||"").trim()) return "Add a phone number or email so we can reach you.";
   }
   if(step==="service" && !S.svc) return "Please choose a service.";
+  if(step==="claim"){
+    if(!(val.k_carrier||"").trim()) return "Please enter the carrier, TPA or employer assigning the file.";
+    if(!(val.k_claimno||"").trim()) return "Please enter the claim number.";
+  }
   if(step==="agreement"){
-    if(!val.a_consent) return "Please check the box to agree to the terms.";
+    if(!val.a_consent) return isClaims()
+      ? "Please confirm you are authorized to assign this claim."
+      : "Please check the box to agree to the terms.";
     if(!(val.a_typed||"").trim()) return "Please type your full legal name.";
     if(!S.sig || !sigDirty) return "Please sign in the box above.";
   }
@@ -336,9 +465,9 @@ function validate(step){
   return null;
 }
 function next(){
-  const step=STEPS[S.step], msg=validate(step);
+  const step=steps()[S.step], msg=validate(step);
   if(msg){ fail(msg); return; }
-  if(step==="payment"){ finish(); return; }
+  if(step==="payment" || step==="billing"){ finish(); return; }
   S.step++; render();
 }
 function back(){ capture(); if(S.step>0){ S.step--; render(); } }
@@ -346,7 +475,7 @@ function back(){ capture(); if(S.step>0){ S.step--; render(); } }
 /* ============ Phase 2: Submission ============ */
 function buildPayload(){
   const f=svc();
-  return {
+  const p = {
     case_no:CASE_NO,
     service:f?f.label:"",
     fee_due:amountDue(),
@@ -359,46 +488,112 @@ function buildPayload(){
     signed_name:val.a_typed||"", signature:S.sig||"",
     submitted_at:new Date().toLocaleString()
   };
+  if(isClaims()){
+    // Claim identifiers lead the payload so the assignment email is filable
+    // against the carrier's own record without opening the attachment.
+    Object.assign(p, {
+      carrier:val.k_carrier||"", claim_number:val.k_claimno||"", policy_number:val.k_policy||"",
+      claim_type:val.k_type||"", date_of_loss:val.k_dol||"",
+      adjuster:val.k_adjuster||"", adjuster_email:val.k_adj_email||"", adjuster_phone:val.k_adj_phone||"",
+      defense_counsel:val.k_counsel||"", billing_reference:val.k_po||"", prior_surveillance:val.k_prior||"",
+      authorized_hours:val.o_hours||"", billing_email:val.b_email||"", billing_notes:val.b_notes||"",
+      payment_method:"Invoiced to carrier"
+    });
+  }
+  return p;
 }
-async function submitIntake(p){
-  // Web3Forms if a key is set (handles large payloads incl. the signature), else FormSubmit to the firm inbox.
+/* What a submission is allowed to tell a third party.
+ *
+ * The email relay is outside our infrastructure, so it is sent only enough to
+ * say a case arrived and who to ring back. What the client actually typed —
+ * the claimant, the address, the vehicle, the alleged injury, the objective,
+ * the claim and policy numbers, the signature — stays in the case portal on
+ * our own Cloudflare account and is read there, behind a staff login.
+ *
+ * Contact details are included on purpose: without them, a portal outage would
+ * leave a real enquiry with no way to reach the person who made it. */
+function buildNotice(p, stored){
+  return {
+    case_no: p.case_no,
+    service: p.service,
+    type: p.claim_number || p.carrier ? "Insurance claim assignment" : "Client intake",
+    contact_name: p.client_name || p.signed_name || "",
+    contact_phone: p.client_phone || "",
+    contact_email: p.client_email || "",
+    submitted_at: p.submitted_at,
+    recorded_in_portal: stored ? "yes" : "NO — not recorded, see below",
+    where_to_read_it: stored
+      ? "Open the case portal at /portal/ and search this case number. The details are deliberately not in this email."
+      : "THIS SUBMISSION WAS NOT RECORDED. Nothing else was kept. Call the contact above today; their own copy of the details is on their screen."
+  };
+}
+
+/* Notify the firm that something arrived. Never carries the case content. */
+async function notifyFirm(notice){
   if(WEB3FORMS_KEY){
     const r=await fetch("https://api.web3forms.com/submit",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},
-      body:JSON.stringify({access_key:WEB3FORMS_KEY,subject:"New client intake "+p.case_no+" — "+p.service,from_name:"Website Intake",...p})});
+      body:JSON.stringify({access_key:WEB3FORMS_KEY,subject:"New "+notice.type+" "+notice.case_no,from_name:"Website Intake",...notice})});
     const d=await r.json(); return !!d.success;
   }
   const r=await fetch("https://formsubmit.co/ajax/"+FIRM.email,{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},
-    body:JSON.stringify({_subject:"New client intake "+p.case_no+" — "+p.service,_template:"table",...p})});
+    body:JSON.stringify({_subject:"New "+notice.type+" "+notice.case_no,_template:"table",...notice})});
   const d=await r.json().catch(()=>({})); return d && (d.success==="true"||d.success===true);
 }
+
+/* The case portal is the record. This is the write that has to succeed. */
+async function recordInPortal(p){
+  if(!PORTAL_INGEST_KEY || PORTAL_INGEST_KEY === "PASTE_INGEST_KEY") return false;
+  try{
+    const r = await fetch(PORTAL_API + "/ingest", {
+      method:"POST",
+      headers:{"Content-Type":"application/json","X-Ingest-Key":PORTAL_INGEST_KEY},
+      body:JSON.stringify(p)
+    });
+    return r.ok;
+  }catch(e){ return false; }
+}
+
 async function finish(){
   const btn=document.querySelector(".btn.primary"); const err=$("err");
   const p=buildPayload();
   btn.disabled=true; btn.textContent="Sending…"; if(err) err.textContent="";
-  let sent=false, threw=false;
-  try{ sent=await submitIntake(p); }catch(e){ threw=true; }
-  renderRecord(p, sent, threw);
+
+  // Store first, then notify — the notice reports whether the store worked.
+  const stored = await recordInPortal(p);
+  let notified=false, threw=false;
+  try{ notified = await notifyFirm(buildNotice(p, stored)); }catch(e){ threw=true; }
+
+  // The client is told it landed only if the firm can actually act on it:
+  // either the details are recorded, or someone has their number to call.
+  renderRecord(p, stored || notified, threw, stored);
 }
 
 /* ============ Final record ============ */
 function esc(s){ return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function row(label,v){ return v ? `<dt>${label}</dt><dd>${esc(v)}</dd>` : ""; }
-function renderRecord(p, sent, threw){
+function renderRecord(p, sent, threw, stored){
   document.querySelectorAll("#progress i").forEach(el=>el.classList.add("done"));
-  const status = sent
-    ? `<div class="ok"><b>Intake submitted.</b> Always Precise Investigations has received your request. We'll contact you shortly. Keep your case number for reference.</div>`
+  const claims = isClaims();
+  const status = stored
+    ? `<div class="ok"><b>${claims?"Assignment submitted.":"Intake submitted."}</b> Always Precise Investigations has received your ${claims?"assignment":"request"}. We'll ${claims?"confirm acceptance and the rate in writing before going out":"contact you shortly"}. Keep your case number for reference.</div>`
+    : sent
+    ? `<div class="warn"><b>Received, but please keep this page.</b> We have your contact details and your case number, and we will call you — but the details you entered did not save on our side. Printing or screenshotting this page means nothing is lost.</div>`
     : `<div class="warn"><b>We couldn't confirm delivery.</b> Please call <b>${FIRM.phone}</b> or email <b>${FIRM.email}</b> and give your case number so we don't miss you. Your details are shown below — you can print or screenshot this page.</div>`;
   app.innerHTML = `<div class="record">
     ${status}
-    <h2>Client Intake — ${esc(p.service)}</h2>
+    <h2>${claims?"Claim Assignment":"Client Intake"} — ${esc(p.service)}</h2>
     <div>Case <span class="case">${esc(p.case_no)}</span></div>
     <dl>
-      ${row("Name",p.client_name)}${row("Phone",p.client_phone)}${row("Email",p.client_email)}
-      ${row("Address",p.client_address)}${row("Best time",p.best_time)}
-      ${row("Subject",p.subject_name)}${row("Subject address",p.subject_address)}${row("Description",p.subject_description)}${row("Relationship",p.subject_relationship)}
-      ${row("Objective",p.objective)}${row("Timeline",p.timeline)}${row("Notes",p.notes)}${row("Attachments",p.attachments)}
-      ${row("Service",p.service)}${row("Due today",money(p.fee_due))}${row("Payment method",p.payment_method)}
-      ${row("Signed by",p.signed_name)}
+      ${claims?`${row("Carrier / TPA",p.carrier)}${row("Claim number",p.claim_number)}${row("Policy number",p.policy_number)}${row("Claim type",p.claim_type)}${row("Date of loss",p.date_of_loss)}${row("Adjuster",p.adjuster)}${row("Adjuster email",p.adjuster_email)}${row("Adjuster phone",p.adjuster_phone)}${row("Defense counsel",p.defense_counsel)}${row("Prior surveillance",p.prior_surveillance)}`:""}
+      ${row(claims?"Assigning contact":"Name",p.client_name)}${row("Phone",p.client_phone)}${row("Email",p.client_email)}
+      ${claims?"":`${row("Address",p.client_address)}${row("Best time",p.best_time)}`}
+      ${row(claims?"Claimant":"Subject",p.subject_name)}${row(claims?"Claimant address":"Subject address",p.subject_address)}${row("Description",p.subject_description)}${row(claims?"Injury & restrictions":"Relationship",p.subject_relationship)}
+      ${row(claims?"Scope":"Objective",p.objective)}${claims?row("Authorized hours",p.authorized_hours):""}${row(claims?"Deadline":"Timeline",p.timeline)}${row("Notes",p.notes)}${row("Attachments",p.attachments)}
+      ${row("Service",p.service)}
+      ${claims
+        ? `${row("Billing","Invoiced to carrier")}${row("Billing reference / PO",p.billing_reference)}${row("Invoices to",p.billing_email)}${row("Billing notes",p.billing_notes)}`
+        : `${row("Due today",money(p.fee_due))}${row("Payment method",p.payment_method)}`}
+      ${row(claims?"Authorized by":"Signed by",p.signed_name)}
     </dl>
     ${p.signature?`<div><div style="font-size:.8rem;color:var(--muted)">Signature</div><img class="sig" src="${p.signature}" alt="signature"></div>`:""}
     <div class="nav"><button type="button" class="btn ghost" onclick="window.print()">Print / Save PDF</button></div>
