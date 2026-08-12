@@ -551,6 +551,77 @@ section('The dashboard with nothing in it');
   env.DB = saved;
 }
 
+/* A case list that cannot load and a case list with nothing in it are not the
+   same thing. The portal used to draw the same screen for both — an empty
+   dashboard, a "no submissions yet" line, and no hint that anything had gone
+   wrong. That is how a real failure sat on the live site looking like calm. */
+section('A failed load says so instead of looking empty');
+{
+  const page = await newPage();
+  // Break the case list for this page only, before it ever loads.
+  await page.route('**/portal-api/submissions?**', r =>
+    r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"database unavailable"}' }));
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const body = await text(page, '.card');
+  const shell = await page.evaluate(() => document.querySelector('#app').innerText);
+  ok('the failure is on screen', shell.includes('Something did not load'), shell.slice(0, 200));
+  ok('it says what failed', shell.includes('case list could not be loaded'));
+  ok('it carries the reason back from the server', shell.includes('database unavailable'));
+  ok('there is a way to retry', await page.locator('.btn', { hasText: 'Try again' }).count() === 1);
+  ok('it points at the setup workflow as the likely cure', has(shell, 'portal setup workflow'));
+
+  // The important part: the example must NOT stand in for real data here.
+  ok('a broken load does not quietly show the example instead',
+     !body.includes('EXAMPLE-CLAIM-0001'), body.slice(0, 200));
+  ok('and does not claim there are simply no submissions',
+     !body.includes('No submissions yet'), body.slice(0, 200));
+
+  // Recovering works without a reload.
+  await page.unroute('**/portal-api/submissions?**');
+  await page.locator('.btn', { hasText: 'Try again' }).click();
+  await page.waitForTimeout(600);
+  const after = await page.evaluate(() => document.querySelector('#app').innerText);
+  ok('retrying clears the banner', !after.includes('Something did not load'));
+  ok('and the real cases come back', after.includes('API-20260812-4001'));
+  await page.close();
+}
+
+section('Adding a test case from the portal');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.btn', { hasText: 'Add a test case' }).click();
+  await page.waitForTimeout(700);
+
+  const list = await text(page, '.card');
+  ok('a test case appears in the list', /TEST-\d{8}-/.test(list), list.slice(0, 200));
+  ok('it is badged as a test', has(list, 'Test'));
+  ok('its carrier is unmistakably fake', list.includes('Demo Mutual Insurance (TEST)'));
+  ok('a Remove button appears once one exists',
+     await page.locator('.btn', { hasText: 'Remove test cases' }).count() === 1);
+
+  // It behaves like a real case, which is the whole point of having one.
+  await page.locator('tbody tr', { hasText: 'TEST-' }).first().click();
+  await page.waitForTimeout(500);
+  ok('it opens a full workspace', await page.locator('.wstabs button').count() >= 6);
+  await wsTab(page, 'Authorization');
+  const auth = await text(page, '#dlgBody');
+  ok('it arrives with hours to work against', auth.includes('24 hours'));
+  ok('and a budget', auth.includes('3,300'));
+  await page.locator('.close').click();
+  await page.waitForTimeout(250);
+
+  // Clearing takes the test cases and leaves the real ones.
+  page.on('dialog', d => d.accept());
+  await page.locator('.btn', { hasText: 'Remove test cases' }).click();
+  await page.waitForTimeout(800);
+  const after = await text(page, '.card');
+  ok('the test case is gone', !/TEST-\d{8}-/.test(after), after.slice(0, 200));
+  ok('the real cases are untouched', after.includes('API-20260812-4001') && after.includes('API-20260812-4002'));
+  await page.close();
+}
+
 section('Rate sheets');
 {
   const page = await newPage();

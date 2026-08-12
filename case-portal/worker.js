@@ -1008,6 +1008,89 @@ async function editActivity(request, env, user, caseNo, id) {
   return json({ ok: true, id });
 }
 
+/* ---------------------------------------------------------- demo cases */
+
+/* A real case to build and test against, without a real client in it.
+   Everything is invented and the case number always starts TEST-, which is
+   what every other part of the system keys on: the list badges it, and the
+   clear route deletes only rows whose case_no matches that prefix. A real
+   case can therefore never be removed by this, which matters because the
+   clear button sits next to live work.
+
+   Deliberately NOT the same thing as the built-in example: the example is
+   page-held and never touches the database, while this is a genuine row that
+   can be assigned, logged against and reported on. */
+function demoPayload(n) {
+  return {
+    carrier: 'Demo Mutual Insurance (TEST)', claim_number: `TEST-WC-${n}`,
+    policy_number: `TEST-POL-${n}`, claim_type: "Workers' compensation",
+    date_of_loss: '04/18/2026',
+    adjuster: 'Alex Demo (test contact)', adjuster_email: 'adjuster@demo.invalid',
+    adjuster_phone: '(540) 555-0100', defense_counsel: 'Demo & Demo LLP (test)',
+    prior_surveillance: 'None',
+    client_name: 'Alex Demo (test contact)', client_phone: '(540) 555-0100',
+    client_email: 'adjuster@demo.invalid',
+    subject_name: 'Jordan Sample (TEST subject)',
+    subject_address: '100 Example Way, Roanoke, VA 24011',
+    subject_description: 'Blue Ford Ranger, VA plate TST-0001. 5\'10", medium build.',
+    subject_relationship: 'Lumbar strain. No lifting over 20 lbs, no ladders. Off work since 04/22.',
+    objective: 'Establish activity level against the stated restrictions. This is a test case — '
+             + 'nothing here relates to a real claimant.',
+    authorized_hours: '24 hours — 3 days', not_to_exceed: '$3,300',
+    start_date: '2026-09-01', permitted_days: 'Any day', permitted_times: '0600-1400',
+    weekend_authorized: 'Yes — weekends authorized', priority: 'Routine',
+    geographic_limits: 'Within 50 miles of Roanoke',
+    timeline: 'Test case — no real deadline',
+    notes: 'TEST CASE. Created from the portal to try the workspace out. Safe to delete.',
+    attachments: 'none', billing_reference: 'TEST-PO-0001',
+    billing_email: 'ap@demo.invalid', billing_notes: 'Test case — do not invoice.',
+    signed_name: 'Alex Demo (test contact)', payment_method: 'Invoiced to carrier', fee_due: 0,
+  };
+}
+
+async function createDemoCase(env, user) {
+  const stamp = nowIso().slice(0, 10).replace(/-/g, '');
+  const rand = Array.from(crypto.getRandomValues(new Uint8Array(2)))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+  const caseNo = `TEST-${stamp}-${rand}`;
+  const payload = demoPayload(rand);
+
+  await env.DB.prepare(
+    `INSERT INTO submissions
+       (case_no, kind, service, status, client_name, client_email, client_phone,
+        subject_name, carrier, claim_number, payload, created_at)
+     VALUES (?, 'claims', 'Insurance Claim Assignment (TEST)', 'new', ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(caseNo, payload.client_name, payload.client_email, payload.client_phone,
+          payload.subject_name, payload.carrier, payload.claim_number,
+          JSON.stringify(payload), nowIso()).run();
+
+  // Give it an authorization so the panel has something to measure against.
+  // Bound, not inlined: a double-quoted literal is an IDENTIFIER in SQLite, so
+  // spelling this out in the SQL failed with "no such column".
+  const wc = await env.DB.prepare('SELECT id FROM case_types WHERE label = ?')
+    .bind("Workers' Compensation Surveillance").first();
+  await env.DB.prepare(
+    `INSERT INTO case_meta (case_no, case_type_id, authorized_hours, authorized_budget, updated_by, updated_at)
+     VALUES (?, ?, 24, 3300, ?, ?)`)
+    .bind(caseNo, wc ? wc.id : null, user.id, nowIso()).run();
+
+  return json({ ok: true, case_no: caseNo }, 201);
+}
+
+/* Only ever TEST- rows. The prefix is the whole safety mechanism, so it is
+   written into every statement rather than computed once and trusted. */
+async function clearDemoCases(env) {
+  const like = 'TEST-%';
+  for (const sql of [
+    'DELETE FROM activity_log WHERE case_no LIKE ?',
+    'DELETE FROM case_reports WHERE case_no LIKE ?',
+    'DELETE FROM case_days   WHERE case_no LIKE ?',
+    'DELETE FROM case_meta   WHERE case_no LIKE ?',
+    'DELETE FROM submissions WHERE case_no LIKE ?',
+  ]) await env.DB.prepare(sql).bind(like).run();
+  return json({ ok: true });
+}
+
 /* ------------------------------------------------------- daily reports */
 
 /* Assembling a chronology from the log is the useful part; writing the
@@ -1573,6 +1656,17 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/reports\/(\d{1,12})\/status$/);
   if (m && method === 'POST') return setReportStatus(request, env, user, m[1], parseInt(m[2], 10));
+
+  /* A real, clearly-labelled case to try the portal against. Admin only, and
+     the clear route touches nothing that is not prefixed TEST-. */
+  if (p === '/demo-case' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return createDemoCase(env, user);
+  }
+  if (p === '/demo-case/clear' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return clearDemoCases(env);
+  }
 
   if (p === '/case-types' && method === 'GET') return json({ case_types: await listCaseTypes(env) });
   if (p === '/case-types' && method === 'POST') {

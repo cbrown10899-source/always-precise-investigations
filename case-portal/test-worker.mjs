@@ -973,6 +973,80 @@ section('The investigation day and the activity log');
   ok('a day running past midnight totals forwards, not backwards', night.hours === 4.5);
 }
 
+/* A real row to build against, with no real client in it. The prefix is the
+   whole safety mechanism, so it is tested harder than the feature. */
+section('Test cases');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  ok('an investigator cannot create one',
+     (await call(env, '/demo-case', { method: 'POST', cookie: inv })).status === 403);
+  ok('nor clear them',
+     (await call(env, '/demo-case/clear', { method: 'POST', cookie: inv })).status === 403);
+
+  const made = await call(env, '/demo-case', { method: 'POST', cookie: admin });
+  ok('an admin can create one', made.status === 201);
+  const caseNo = (await jsonOf(made)).case_no;
+  ok('it is unmistakably a test case', /^TEST-\d{8}-[0-9a-f]{4}$/.test(caseNo), caseNo);
+
+  const ws = await jsonOf(await call(env, `/cases/${caseNo}/workspace`, { cookie: admin }));
+  ok('it arrives with an authorization to work against', ws.authorization.authorized_hours === 24);
+  ok('and a budget', ws.authorization.authorized_budget === 3300);
+  ok('and a case type', ws.authorization.case_type === "Workers' Compensation Surveillance");
+
+  const detail = await jsonOf(await call(env, `/submissions/${caseNo}`, { cookie: admin }));
+  const blob = JSON.stringify(detail);
+  ok('the carrier is marked TEST', blob.includes('Demo Mutual Insurance (TEST)'));
+  ok('the subject is marked TEST', blob.includes('TEST subject'));
+  ok('the objective says so in words too', blob.includes('This is a test case'));
+  ok('every contact address is unroutable', !/@(?!demo\.invalid)[a-z]+\.(com|net|org)/i.test(blob), blob.slice(0, 200));
+
+  // Two in a row must not collide.
+  const second = await jsonOf(await call(env, '/demo-case', { method: 'POST', cookie: admin }));
+  ok('a second one gets its own number', second.case_no !== caseNo);
+
+  // Work it like a real case, then confirm clearing takes the whole trail.
+  await call(env, `/cases/${caseNo}/day/start`, { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-12', start_time: '07:00' } });
+  await call(env, `/cases/${caseNo}/activity`, { method: 'POST', cookie: admin,
+    body: { at_date: '2026-08-12', at_time: '07:05', description: 'Subject departed residence.' } });
+  await call(env, `/cases/${caseNo}/day/end`, { method: 'POST', cookie: admin, body: { end_time: '11:00' } });
+  const w = await jsonOf(await call(env, `/cases/${caseNo}/workspace`, { cookie: admin }));
+  await call(env, `/cases/${caseNo}/reports/generate`, { method: 'POST', cookie: admin,
+    body: { day_id: w.days[0].id } });
+
+  /* THE GUARD. A real case sits beside the test ones; clearing must not
+     scratch it, nor any of its workspace rows. */
+  await ingest(env, { case_no: 'API-REAL-1', carrier: 'A Real Carrier', claim_number: 'REAL-9',
+                      subject_name: 'A Real Subject', client_name: 'A Real Client' });
+  await call(env, '/cases/API-REAL-1/meta', { method: 'POST', cookie: admin,
+    body: { authorized_hours: 8, authorized_budget: 1200 } });
+  await call(env, '/cases/API-REAL-1/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-12', start_time: '08:00' } });
+  await call(env, '/cases/API-REAL-1/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-08-12', at_time: '08:30', description: 'Real observation.' } });
+
+  ok('clearing succeeds', (await call(env, '/demo-case/clear', { method: 'POST', cookie: admin })).status === 200);
+
+  const after = await jsonOf(await call(env, '/submissions', { cookie: admin }));
+  ok('every test case is gone', !after.submissions.some(s => s.case_no.startsWith('TEST-')));
+  ok('THE REAL CASE SURVIVES', after.submissions.some(s => s.case_no === 'API-REAL-1'),
+     JSON.stringify(after.submissions.map(s => s.case_no)));
+
+  const realWs = await jsonOf(await call(env, '/cases/API-REAL-1/workspace', { cookie: admin }));
+  ok('its authorization survives', realWs.authorization.authorized_hours === 8);
+  ok('its activity log survives', realWs.activity.length === 1);
+  ok('its investigation day survives', realWs.days.length === 1);
+  ok('the cleared test workspace is gone',
+     (await call(env, `/cases/${caseNo}/workspace`, { cookie: admin })).status === 404);
+}
+
 section('The daily report builder');
 {
   const env = freshEnv();

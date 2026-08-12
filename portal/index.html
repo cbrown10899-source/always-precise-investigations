@@ -88,6 +88,8 @@
   .sheet-s{font-size:.88rem;}
   .sheet-go{margin-top:10px;font-size:.78rem;font-weight:700;color:var(--teal);}
   .sheet-note{font-size:.8rem;color:var(--muted);font-weight:400;max-width:46ch;}
+  .loaderr{background:#fdecea;border:1px solid #f5c6c0;color:#8a2318;border-radius:10px;
+    padding:12px 14px;margin-bottom:16px;font-size:.9rem;}
   /* case workspace — built to be usable from a phone in a parked car */
   .wstabs{display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line);
     margin:0 0 16px;padding-bottom:0;-webkit-overflow-scrolling:touch;}
@@ -150,6 +152,7 @@
   .ex-note{background:#fdf7ec;border:1px solid #e8cf9e;color:#6b4f12;border-radius:8px;
     padding:11px 14px;font-size:.88rem;margin-bottom:14px;}
   .tag.ex-tag{background:#f3e2bd;color:#6b4f12;margin-left:6px;}
+  .tag.demo-tag{background:#e3d7f5;color:#4a2f77;margin-left:6px;}
   tbody tr.ex{background:repeating-linear-gradient(45deg,#fffdf7,#fffdf7 10px,#fdf7ec 10px,#fdf7ec 20px);}
   tbody tr.ex:hover{background:#fdf3e0;}
   tbody tr.ex td:first-child{box-shadow:inset 3px 0 0 #d9b45e;}
@@ -205,6 +208,7 @@ let ME = null, TAB = "cases", CASES = [], USERS = [], INVITES = [], TOTAL = 0, F
 let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
 // The open case workspace: which case, which tab, its loaded data, last error.
 let WS = null, WS_CASE = null, WS_TAB = "overview", WS_ERR = "", WS_REPORT = null;
+let LOAD_ERR = "";   // why the portal could not load, shown rather than hidden
 /* Examples show themselves on a first sign-in and can be recalled later. */
 let SHOW_EXAMPLE = false;
 
@@ -324,6 +328,10 @@ function examplesFor(role) {
     : EXAMPLE_CASES.filter(c => c.kind === "claims").map(redactExample);
 }
 function isExample(caseNo) { return String(caseNo || "").startsWith("EXAMPLE-"); }
+/* A real database row, but invented — badged everywhere so it can never be
+   mistaken for a client's case. The prefix is what the clear route deletes on,
+   so nothing without it is ever at risk. */
+function isDemo(caseNo) { return String(caseNo || "").startsWith("TEST-"); }
 
 async function api(path, opts = {}){
   const res = await fetch(API + path, {
@@ -383,7 +391,14 @@ function shell(inner){
        <button class="${TAB==="sheets"?"on":""}" data-act="tab" data-tab="sheets">Rate sheets</button>
        <button class="${TAB==="staff"?"on":""}" data-act="tab" data-tab="staff">Staff</button>`
     : "";
-  return `<div class="tabs">${tabs}</div>${summaryCards()}${inner}`;
+  const problem = LOAD_ERR ? `<div class="loaderr">
+      <b>Something did not load.</b> ${esc(LOAD_ERR)}
+      <button class="btn sm ghost" data-act="reload" style="margin-left:8px">Try again</button>
+      <div style="font-size:.82rem;margin-top:6px">Nothing below is necessarily the whole picture
+        while this is showing. If it keeps happening, the portal setup workflow may need re-running
+        so the database has every table.</div>
+    </div>` : "";
+  return `<div class="tabs">${tabs}</div>${problem}${summaryCards()}${inner}`;
 }
 
 /* The dashboard strip. Drawn whether or not there is any work in the system —
@@ -481,7 +496,8 @@ function casesView(){
       <td class="mono">${esc(c.case_no)}</td>
       <td class="hide">${when(c.created_at)}</td>
       <td><span class="tag ${c.kind === "claims" ? "claims" : "consumer"}">${c.kind === "claims" ? "Claim" : "Client"}</span>${
-        isExample(c.case_no) ? '<span class="tag ex-tag">Example</span>' : ""}</td>
+        isExample(c.case_no) ? '<span class="tag ex-tag">Example</span>' : ""}${
+        isDemo(c.case_no) ? '<span class="tag demo-tag">Test</span>' : ""}</td>
       ${admin ? `<td>${esc(c.kind === "claims" ? (c.carrier || "—") : (c.client_name || "—"))}
           ${c.claim_number ? `<div class="mono">${esc(c.claim_number)}</div>` : ""}</td>
       <td class="hide">${esc(c.subject_name || "—")}</td>`
@@ -507,6 +523,9 @@ function casesView(){
       <h2 style="margin:0">Cases</h2>
       <input id="q" placeholder="${admin ? "Search case, client, carrier, claim no." : "Search case or subject"}" value="${esc(FILTER)}" data-act="filter">
       ${SHOW_EXAMPLE ? "" : `<button class="btn sm ghost" data-act="showExample">Show an example</button>`}
+      ${admin ? `<button class="btn sm ghost" data-act="addDemo">Add a test case</button>${
+        CASES.some(c => isDemo(c.case_no))
+          ? `<button class="btn sm ghost" data-act="clearDemo">Remove test cases</button>` : ""}` : ""}
       <span class="count">${rows.length} of ${shown.length}</span>
     </div>
     ${exBanner}
@@ -516,7 +535,11 @@ function casesView(){
       ${admin ? `<th>Client / carrier</th><th class="hide">Subject</th>` : `<th>Subject</th>`}
       <th>Status</th>${admin ? `<th class="hide">Assigned</th>` : ""}</tr></thead>
       <tbody>${body}</tbody></table></div>`
-      : `<div class="empty">${shown.length
+      : `<div class="empty">${
+          // Never claim the list is empty when it simply did not load — that
+          // is the sentence that made a real outage look like a quiet week.
+          LOAD_ERR ? "The case list did not load, so nothing can be shown here yet."
+          : shown.length
             ? "Nothing matches that search."
             : (ME.role === "admin"
                 ? "No submissions yet. Intake forms appear here as they arrive."
@@ -598,21 +621,37 @@ function paint(){
   if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
 }
 
+/* Loading the portal used to swallow every failure and paint an empty
+   dashboard, which looks exactly like a portal with no cases in it. That is the
+   worst possible way to fail: a case list that cannot load and a case list with
+   nothing in it are not the same thing, and the screen said the same thing for
+   both. Each fetch now records why it failed, and the page says so. */
 async function render(){
   if(!ME){ paint(); return; }
+  LOAD_ERR = "";
+  let listed = false;
   try{
     const d = await api("/submissions?limit=200");
-    CASES = d.submissions; TOTAL = d.total;
-    // A first sign-in lands on an empty table, which teaches nothing. Show the
-    // worked example unasked, once, until there is real work to look at.
-    if(CASES.length === 0) SHOW_EXAMPLE = true;
-    try{ SUMMARY = (await api("/summary")).summary; }catch(e){ SUMMARY = null; }
-    if(ME.role === "admin"){
-      USERS = (await api("/users")).users;
-      INVITES = (await api("/invites")).invites;
-      try{ SHEETS = (await api("/sheets")).sheets; }catch(e){ SHEETS = []; }
-    }
-  }catch(e){ /* paint anyway; the message surfaces on the next action */ }
+    CASES = Array.isArray(d.submissions) ? d.submissions : [];
+    TOTAL = d.total || 0;
+    listed = true;
+  }catch(e){
+    CASES = []; TOTAL = 0;
+    LOAD_ERR = "The case list could not be loaded — " + e.message;
+  }
+  // A first sign-in lands on an empty table, which teaches nothing. Show the
+  // worked example unasked — but only when the list genuinely loaded and is
+  // genuinely empty, never as cover for a failed fetch.
+  if(listed && CASES.length === 0) SHOW_EXAMPLE = true;
+
+  try{ SUMMARY = (await api("/summary")).summary; }
+  catch(e){ SUMMARY = null; if(!LOAD_ERR) LOAD_ERR = "The dashboard totals could not be loaded — " + e.message; }
+
+  if(ME.role === "admin"){
+    try{ USERS = (await api("/users")).users; }catch(e){ USERS = []; }
+    try{ INVITES = (await api("/invites")).invites; }catch(e){ INVITES = []; }
+    try{ SHEETS = (await api("/sheets")).sheets; }catch(e){ SHEETS = []; }
+  }
   paint();
 }
 
@@ -1080,6 +1119,18 @@ async function endInvestigationDay(){
   await reloadWorkspace();
 }
 
+async function addDemoCase(){
+  try{ await api("/demo-case", {method:"POST"}); SHOW_EXAMPLE = false; await render(); }
+  catch(e){ alert(e.message); }
+}
+
+async function clearDemoCases(){
+  if(!confirm("Remove every test case, with its activity log, days and reports?\n\n" +
+              "Only cases numbered TEST-… are touched. Real cases are not affected.")) return;
+  try{ await api("/demo-case/clear", {method:"POST"}); await render(); }
+  catch(e){ alert(e.message); }
+}
+
 async function generateReportDraft(){
   WS_ERR = "";
   try{
@@ -1206,6 +1257,9 @@ document.addEventListener("click", ev => {
   else if(act === "saveCase"){ saveCase(el.dataset.case); }
   else if(act === "toggleActive"){ toggleActive(Number(el.dataset.id), Number(el.dataset.active)); }
   else if(act === "revokeInvite"){ revokeInvite(Number(el.dataset.id)); }
+  else if(act === "reload"){ render(); }
+  else if(act === "addDemo"){ addDemoCase(); }
+  else if(act === "clearDemo"){ clearDemoCases(); }
   else if(act === "wsTab"){ WS_TAB = el.dataset.tab; WS_ERR = ""; paintCase(); }
   else if(act === "openReport"){
     WS_REPORT = WS_REPORT === Number(el.dataset.id) ? null : Number(el.dataset.id);
