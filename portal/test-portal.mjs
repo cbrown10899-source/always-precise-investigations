@@ -175,6 +175,12 @@ const text = (page, sel) => page.locator(sel).first().innerText();
 const has = (haystack, needle) => haystack.toLowerCase().includes(needle.toLowerCase());
 // The list is newest-first, so never address a row by position.
 const rowFor = (page, caseNo) => page.locator('tbody tr', { hasText: caseNo }).first();
+// The case dialog is a workspace with tabs; most detail is no longer on the
+// first panel, so a test that wants a section has to open it.
+async function wsTab(page, name) {
+  await page.locator('.wstabs button', { hasText: name }).click();
+  await page.waitForTimeout(200);
+}
 async function signIn(page, u, p) {
   await page.locator('#u').fill(u);
   await page.locator('#p').fill(p);
@@ -221,8 +227,12 @@ section('Admin case list');
   await page.waitForTimeout(350);
   const dlg = await text(page, '#dlgBody');
   ok('opening a case shows the claim detail', dlg.includes('WC-2026-88421') && dlg.includes('Example Mutual'));
-  ok('the claimant is labelled as a claimant', dlg.includes('Claimant'));
-  ok('the injury and restrictions are shown', dlg.includes('Lumbar strain'));
+  await wsTab(page, 'Subject');
+  const subj = await text(page, '#dlgBody');
+  ok('the claimant is labelled as a claimant', subj.includes('Claimant'));
+  ok('the injury and restrictions are shown', subj.includes('Lumbar strain'));
+  ok('the case opens on a workspace with tabs', await page.locator('.wstabs button').count() >= 4);
+  await wsTab(page, 'Assignment');
   ok('an admin sees the assignment controls', await page.locator('#asg').count() === 1);
   await page.close();
 }
@@ -269,7 +279,8 @@ section('Assignment');
   await page.locator('.tabs button', { hasText: 'Cases' }).click();
   await page.waitForTimeout(250);
   await rowFor(page, 'API-20260812-4001').click();
-  await page.waitForTimeout(350);
+  await page.waitForTimeout(400);
+  await wsTab(page, 'Assignment');
   await page.locator('#asg').selectOption({ label: 'Dana Field' });
   await page.locator('#sts').selectOption('in_progress');
   await page.locator('.btn', { hasText: 'Save' }).click();
@@ -296,9 +307,14 @@ section('Investigator scope');
   const dlg = await text(page, '#dlgBody');
   ok('the investigator can open their case', dlg.includes('API-20260812-4001'));
   ok('the investigator gets the subject', dlg.includes('Pat Coleman'));
-  ok('the investigator gets the injury and restrictions', dlg.includes('Lumbar strain'));
   ok('the investigator gets the scope', dlg.includes('Activity level versus stated restrictions'));
   ok('the investigator gets the deadline', dlg.includes('Hearing 9/12'));
+  await wsTab(page, 'Subject');
+  const isubj = await text(page, '#dlgBody');
+  ok('the investigator gets the injury and restrictions', isubj.includes('Lumbar strain'));
+  ok('the investigator has an Activity log tab', await page.locator('.wstabs button', { hasText: 'Activity log' }).count() === 1);
+  ok('the investigator has a Field work tab', await page.locator('.wstabs button', { hasText: 'Field work' }).count() === 1);
+  ok('the investigator has NO Assignment tab', await page.locator('.wstabs button', { hasText: 'Assignment' }).count() === 0);
   ok('the investigator gets no assignment controls', await page.locator('#asg').count() === 0);
   await page.close();
 }
@@ -593,6 +609,129 @@ section('An investigator gets no rates at all');
       body: JSON.stringify({ to: 'someone@example.com' }),
     })).status);
   ok('and they cannot email one to anybody', mail === 403);
+  await page.close();
+}
+
+/* The field workflow, driven through the page the way it will actually be
+   used: open a case, start the day, log the timeline, end the day, and watch
+   the authorization move. */
+section('The case workspace in the browser');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+
+  const tabs = await text(page, '.wstabs');
+  for (const t of ['Overview', 'Subject', 'Activity log', 'Field work', 'Authorization', 'Assignment']) {
+    ok(`the workspace has a ${t} tab`, has(tabs, t), tabs);
+  }
+
+  // Set the authorization first so the panel has something to measure against.
+  await wsTab(page, 'Authorization');
+  await page.locator('#m_hours').fill('8');
+  await page.locator('#m_budget').fill('1200');
+  await page.locator('.btn', { hasText: 'Save authorization' }).click();
+  await page.waitForTimeout(500);
+  let auth = await text(page, '#dlgBody');
+  ok('the authorization panel shows the hours', auth.includes('8 hours'));
+  ok('it shows the budget an admin authorized', auth.includes('1,200'));
+  ok('nothing is used yet', auth.includes('0 hours'));
+
+  // Start the day.
+  await wsTab(page, 'Field work');
+  await page.locator('#d_date').fill('2026-08-12');
+  await page.locator('#d_start').fill('07:00');
+  await page.locator('#d_smiles').fill('41000');
+  await page.locator('.btn', { hasText: 'Start investigation' }).click();
+  await page.waitForTimeout(500);
+  ok('the day is running', has(await text(page, '#dlgBody'), 'Day running since 07:00'));
+
+  // Log the timeline.
+  await wsTab(page, 'Activity log');
+  ok('the log says a day is running', has(await text(page, '#dlgBody'), 'Investigation day running'));
+  const quick = await page.locator('.qgrid').innerText();
+  for (const b of ['Activity', 'Photo', 'Video', 'Location', 'Vehicle', 'Note', 'Mileage', 'Expense']) {
+    ok(`there is a quick button for ${b}`, has(quick, b), quick);
+  }
+  await page.locator('#a_date').fill('2026-08-12');
+  await page.locator('#a_time').fill('07:14');
+  await page.locator('#a_desc').fill('Subject vehicle observed parked at residence.');
+  await page.locator('#a_loc').fill('88 Peakland Pl');
+  await page.locator('.btn', { hasText: 'Add to the log' }).click();
+  await page.waitForTimeout(500);
+
+  let log = await text(page, '#dlgBody');
+  ok('the entry is on the timeline', log.includes('Subject vehicle observed parked at residence.'));
+  ok('the time is shown', log.includes('07:14'));
+  ok('the location is shown', log.includes('88 Peakland Pl'));
+
+  await page.locator('#a_time').fill('08:17');
+  await page.locator('#a_desc').fill('Subject arrived at ABC Fitness.');
+  await page.locator('.btn', { hasText: 'Add to the log' }).click();
+  await page.waitForTimeout(500);
+  log = await text(page, '#dlgBody');
+  ok('a second entry joins it', log.includes('Subject arrived at ABC Fitness.'));
+  ok('the newest entry reads first', log.indexOf('08:17') < log.indexOf('07:14'));
+
+  await page.locator('#a_desc').fill('');
+  await page.locator('.btn', { hasText: 'Add to the log' }).click();
+  await page.waitForTimeout(400);
+  ok('an entry with no description is refused on screen',
+     has(await text(page, '#dlgBody'), 'Describe what happened'));
+
+  // End the day and watch the authorization move.
+  await wsTab(page, 'Field work');
+  await page.locator('#d_end').fill('13:00');
+  await page.locator('#d_emiles').fill('41042');
+  await page.locator('#d_sum').fill('Subject active throughout the morning.');
+  await page.locator('.btn', { hasText: 'End investigation day' }).click();
+  await page.waitForTimeout(600);
+  const field = await text(page, '#dlgBody');
+  ok('the day is recorded with its hours', field.includes('6'));
+  ok('the summary is kept', field.includes('Subject active throughout the morning.'));
+  ok('the start/end times show on the day row', field.includes('07:00'));
+
+  await wsTab(page, 'Authorization');
+  auth = await text(page, '#dlgBody');
+  ok('used hours reached the authorization panel', auth.includes('6 hours'));
+  ok('remaining is worked out', auth.includes('2 hours'));
+  ok('the 75% threshold warns', has(auth, '75%'));
+  ok('mileage carried over', auth.includes('42'));
+  ok('the billable figure is shown to an admin', auth.includes('900'));
+  await page.close();
+}
+
+section('An investigator gets the same field tools, without the money');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+  const tabs = await text(page, '.wstabs');
+  ok('they get the activity log', has(tabs, 'Activity log'));
+  ok('they get field work', has(tabs, 'Field work'));
+  ok('they do not get Assignment', !has(tabs, 'Assignment'));
+
+  await wsTab(page, 'Field work');
+  ok('they can start their own day',
+     await page.locator('.btn', { hasText: 'Start investigation' }).count() === 1);
+
+  await wsTab(page, 'Activity log');
+  await page.locator('#a_desc').fill('Arrived in vicinity of subject residence.');
+  await page.locator('.btn', { hasText: 'Add to the log' }).click();
+  await page.waitForTimeout(500);
+  ok('an investigator can log their own timeline',
+     (await text(page, '#dlgBody')).includes('Arrived in vicinity of subject residence.'));
+
+  // The whole panel, checked for anything commercial.
+  const whole = await text(page, '#dlgBody');
+  for (const [what, needle] of Object.entries({
+    'the carrier': 'Example Mutual',
+    'the claim number': 'WC-2026-88421',
+    'a billable figure': 'Billable',
+    'a budget': 'Authorized budget',
+  })) ok(`an investigator never sees ${what} in the workspace`, !whole.includes(needle), needle);
   await page.close();
 }
 

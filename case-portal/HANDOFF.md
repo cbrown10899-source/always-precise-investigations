@@ -10,11 +10,11 @@ Progress ledger (update as phases land):
 
 | Priority | Status |
 | --- | --- |
-| 1. Case Workspace | in progress — 2026-08-12 |
-| 2. Case Type System | in progress — 2026-08-12 |
-| 3. Activity Log | in progress — 2026-08-12 |
-| 4. Start / End Investigation Day | in progress — 2026-08-12 |
-| 7. Insurance Authorization Tracking | in progress — 2026-08-12 |
+| 1. Case Workspace | **done** — 2026-08-12 (Overview/Subject/Activity/Field/Auth/Assignment tabs) |
+| 2. Case Type System | **done** — 2026-08-12 (17 seeded, admin-addable, DB-driven) |
+| 3. Activity Log | **done** — 2026-08-12 (8 quick kinds; media attachment waits on priority 6) |
+| 4. Start / End Investigation Day | **done** — 2026-08-12 (hours + mileage totalled) |
+| 7. Insurance Authorization Tracking | **done** — 2026-08-12 (hours + budget, configurable thresholds; REQUEST MORE not built) |
 | 5. Daily Report Builder | not started |
 | 6. Evidence Management | not started — needs R2 private storage first |
 | 8. Dashboard Improvements | not started |

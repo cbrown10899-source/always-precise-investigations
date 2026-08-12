@@ -825,6 +825,198 @@ section('The dashboard summary');
   ok('their summary is their caseload, not the firm book', mine.total === 1 && mine.assigned === 1);
 }
 
+/* ------------------------------------------------------- case workspace */
+
+section('Case types');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  const d = await jsonOf(await call(env, '/case-types', { cookie: admin }));
+  const labels = d.case_types.map(t => t.label);
+  ok('the insurance categories are seeded', labels.includes("Workers' Compensation Surveillance"));
+  ok('SIU is a category', labels.includes('SIU / Fraud'));
+  ok('the private categories are seeded', labels.includes('Child Custody') && labels.includes('Adultery / Infidelity'));
+  ok('locate and skip trace is offered', labels.includes('Locate / Skip Trace'));
+  ok('there is an Other / Custom catch-all', labels.includes('Other / Custom'));
+  ok('every type declares which side it belongs to',
+     d.case_types.every(t => t.side === 'insurance' || t.side === 'private'));
+
+  ok('an admin can add a case type',
+     (await call(env, '/case-types', { method: 'POST', cookie: admin,
+       body: { label: 'Fire / Arson Investigation', side: 'insurance' } })).status === 201);
+  ok('a duplicate is refused',
+     (await call(env, '/case-types', { method: 'POST', cookie: admin,
+       body: { label: 'Fire / Arson Investigation', side: 'insurance' } })).status === 409);
+  ok('an unnamed type is refused',
+     (await call(env, '/case-types', { method: 'POST', cookie: admin, body: { side: 'insurance' } })).status === 400);
+}
+
+section('The investigation day and the activity log');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-W1', carrier: 'Acme Mutual', claim_number: 'C-1',
+                      subject_name: 'Pat Coleman', objective: 'Activity level' });
+
+  const t = await jsonOf(await call(env, '/case-types', { cookie: admin }));
+  const wc = t.case_types.find(x => x.label === "Workers' Compensation Surveillance");
+  ok('authorization can be set on a case',
+     (await call(env, '/cases/API-W1/meta', { method: 'POST', cookie: admin,
+       body: { case_type_id: wc.id, authorized_hours: 24, authorized_budget: 3600 } })).status === 200);
+  ok('non-numeric hours are refused',
+     (await call(env, '/cases/API-W1/meta', { method: 'POST', cookie: admin,
+       body: { authorized_hours: 'lots' } })).status === 400);
+
+  let ws = await jsonOf(await call(env, '/cases/API-W1/workspace', { cookie: admin }));
+  ok('the workspace reports the case type', ws.authorization.case_type === "Workers' Compensation Surveillance");
+  ok('it reports the authorized hours', ws.authorization.authorized_hours === 24);
+  ok('nothing is used yet', ws.authorization.hours_used === 0);
+  ok('no day is running', ws.open_day === null);
+  ok('the thresholds are configuration, not constants',
+     JSON.stringify(ws.authorization.warn_at) === JSON.stringify([75, 90, 100]));
+
+  ok('a day starts',
+     (await call(env, '/cases/API-W1/day/start', { method: 'POST', cookie: admin,
+       body: { day_date: '2026-08-12', start_time: '07:00', start_mileage: 41000 } })).status === 201);
+  ok('a second day cannot start while one is running',
+     (await call(env, '/cases/API-W1/day/start', { method: 'POST', cookie: admin,
+       body: { day_date: '2026-08-12', start_time: '08:00' } })).status === 409);
+  ok('a malformed time is refused',
+     (await call(env, '/cases/API-W1/day/start', { method: 'POST', cookie: admin,
+       body: { day_date: '2026-08-12', start_time: '25:00' } })).status === 400);
+
+  ws = await jsonOf(await call(env, '/cases/API-W1/workspace', { cookie: admin }));
+  ok('the running day comes back with the workspace', ws.open_day && ws.open_day.start_time === '07:00');
+
+  for (const [time, desc] of [
+    ['07:03', 'Arrived in vicinity of subject residence.'],
+    ['07:14', 'Subject vehicle observed parked at residence.'],
+    ['08:17', 'Subject arrived at ABC Fitness.'],
+  ]) {
+    await call(env, '/cases/API-W1/activity', { method: 'POST', cookie: admin,
+      body: { at_date: '2026-08-12', at_time: time, description: desc } });
+  }
+  ok('an entry with no description is refused',
+     (await call(env, '/cases/API-W1/activity', { method: 'POST', cookie: admin,
+       body: { at_date: '2026-08-12', at_time: '09:00', description: '  ' } })).status === 400);
+
+  ws = await jsonOf(await call(env, '/cases/API-W1/workspace', { cookie: admin }));
+  ok('the log holds every entry', ws.activity.length === 3);
+  ok('it reads newest first', ws.activity[0].at_time === '08:17');
+  ok('entries attach to the running day', ws.activity.every(e => e.day_id === ws.open_day.id));
+  ok('each entry names who logged it', ws.activity[0].investigator === 'Trever');
+
+  const edit = await call(env, `/cases/API-W1/activity/${ws.activity[0].id}`, { method: 'POST', cookie: admin,
+    body: { description: 'Subject arrived at ABC Fitness and entered.', location: 'ABC Fitness' } });
+  ok('an entry can be corrected', edit.status === 200);
+  ws = await jsonOf(await call(env, '/cases/API-W1/workspace', { cookie: admin }));
+  ok('the correction is stamped rather than silent', ws.activity[0].edited_at !== null);
+  ok('the correction took', ws.activity[0].description.includes('and entered'));
+
+  const end = await jsonOf(await call(env, '/cases/API-W1/day/end', { method: 'POST', cookie: admin,
+    body: { end_time: '15:30', end_mileage: 41086, summary: 'Subject active throughout.' } }));
+  ok('the day totals its hours', end.hours === 8.5);
+  ok('the day totals its mileage', end.miles === 86);
+  ok('ending with no day running is refused',
+     (await call(env, '/cases/API-W1/day/end', { method: 'POST', cookie: admin, body: { end_time: '16:00' } })).status === 409);
+
+  // Mileage that goes backwards is a typo, and a typo in mileage is money.
+  await ingest(env, { case_no: 'API-W3', client_name: 'C', subject_name: 'S' });
+  await call(env, '/cases/API-W3/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-12', start_time: '07:00', start_mileage: 41000 } });
+  ok('ending mileage below the start is refused',
+     (await call(env, '/cases/API-W3/day/end', { method: 'POST', cookie: admin,
+       body: { end_time: '15:00', end_mileage: 40900 } })).status === 400);
+  ok('the day is still running after a rejected end',
+     (await jsonOf(await call(env, '/cases/API-W3/workspace', { cookie: admin }))).open_day !== null);
+
+  ws = await jsonOf(await call(env, '/cases/API-W1/workspace', { cookie: admin }));
+  const a = ws.authorization;
+  ok('used hours come from completed days', a.hours_used === 8.5);
+  ok('remaining is what is left', a.hours_remaining === 15.5);
+  ok('the percentage is worked out', a.percent_used === 35.4);
+  ok('no warning at 35%', a.warn_level === null);
+  ok('the admin sees what it is worth', a.billable_so_far === 8.5 * 150);
+  ok('and what is left of the budget', a.budget_remaining === 3600 - (8.5 * 150));
+  ok('mileage carries to the case total', a.miles_total === 86);
+
+  // Past the first threshold.
+  await call(env, '/cases/API-W1/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-13', start_time: '06:00' } });
+  await call(env, '/cases/API-W1/day/end', { method: 'POST', cookie: admin, body: { end_time: '16:00' } });
+  ws = await jsonOf(await call(env, '/cases/API-W1/workspace', { cookie: admin }));
+  ok('hours accumulate across days', ws.authorization.hours_used === 18.5);
+  ok('the 75% threshold trips', ws.authorization.warn_level === 75);
+
+  // A day that runs past midnight is a span, not a negative number.
+  await ingest(env, { case_no: 'API-W2', client_name: 'A Client', subject_name: 'Night Subject' });
+  await call(env, '/cases/API-W2/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-14', start_time: '22:00' } });
+  const night = await jsonOf(await call(env, '/cases/API-W2/day/end', { method: 'POST', cookie: admin,
+    body: { end_time: '02:30' } }));
+  ok('a day running past midnight totals forwards, not backwards', night.hours === 4.5);
+}
+
+/* The rule that matters most once outside investigators exist: a case number
+   in a URL is not a key to somebody else's work. */
+section('An investigator cannot reach an unassigned case by URL');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  await ingest(env, { case_no: 'API-MINE', subject_name: 'Assigned Subject', client_name: 'Client A' });
+  await ingest(env, { case_no: 'API-THEIRS', subject_name: 'Other Subject', client_name: 'Client B',
+                      carrier: 'Rival Mutual', claim_number: 'SECRET-9' });
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const dana = users.users.find(u => u.username === 'dana');
+  await call(env, '/submissions/API-MINE/assign', { method: 'POST', cookie: admin, body: { user_id: dana.id } });
+  await call(env, '/cases/API-THEIRS/meta', { method: 'POST', cookie: admin,
+    body: { authorized_hours: 24, authorized_budget: 3600 } });
+
+  ok('their own case opens', (await call(env, '/cases/API-MINE/workspace', { cookie: inv })).status === 200);
+  for (const [what, path, method] of [
+    ['open the workspace', '/cases/API-THEIRS/workspace', 'GET'],
+    ['start a day on it', '/cases/API-THEIRS/day/start', 'POST'],
+    ['end a day on it', '/cases/API-THEIRS/day/end', 'POST'],
+    ['log activity against it', '/cases/API-THEIRS/activity', 'POST'],
+  ]) {
+    const res = await call(env, path, { method, cookie: inv,
+      body: method === 'POST' ? { day_date: '2026-08-12', start_time: '07:00', end_time: '15:00',
+                                  at_date: '2026-08-12', at_time: '07:00', description: 'x' } : undefined });
+    ok(`an investigator cannot ${what}`, res.status === 404, `got ${res.status}`);
+  }
+  ok('and cannot set authorization even on their own case',
+     (await call(env, '/cases/API-MINE/meta', { method: 'POST', cookie: inv,
+       body: { authorized_hours: 999 } })).status === 403);
+
+  // The money stays out of the investigator's workspace.
+  await call(env, '/cases/API-MINE/meta', { method: 'POST', cookie: admin,
+    body: { authorized_hours: 16, authorized_budget: 2400 } });
+  const mine = await jsonOf(await call(env, '/cases/API-MINE/workspace', { cookie: inv }));
+  ok('an investigator is told the hours they are working to', mine.authorization.authorized_hours === 16);
+  ok('an investigator is not told the budget', mine.authorization.authorized_budget === undefined);
+  ok('nor what the case bills at', mine.authorization.billable_so_far === undefined);
+  ok('nor the rate', mine.authorization.billed_at_rate === undefined);
+  ok('and gets no case-type list to edit with', mine.case_types.length === 0);
+
+  // One investigator must not be able to rewrite another's timeline.
+  await call(env, '/cases/API-MINE/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-08-12', at_time: '09:00', description: "Admin's own entry." } });
+  const ws = await jsonOf(await call(env, '/cases/API-MINE/workspace', { cookie: inv }));
+  const adminEntry = ws.activity.find(e => e.description.includes("Admin's own"));
+  ok("an investigator cannot edit another person's entry",
+     (await call(env, `/cases/API-MINE/activity/${adminEntry.id}`, { method: 'POST', cookie: inv,
+       body: { description: 'rewritten' } })).status === 403);
+}
+
 section('Origin guard and headers');
 {
   const env = freshEnv();
