@@ -573,6 +573,13 @@ async function caseSummary(env, user) {
     ])]);
   }
 
+  // Expenses waiting on the office's three decisions.
+  if (admin && have('case_expenses')) {
+    const { results: pend } = await env.DB.prepare(
+      'SELECT DISTINCT case_no FROM case_expenses WHERE reviewed_at IS NULL').all();
+    out.expenses_pending = cap((pend || []).map(r => r.case_no));
+  }
+
   // Authorization running low: used hours at or past the first warning
   // threshold. The threshold is the configured one, not a constant here.
   if (have('case_meta') && have('case_days')) {
@@ -897,6 +904,22 @@ async function caseWorkspace(env, user, caseNo) {
        FROM case_reports r LEFT JOIN users u ON u.id = r.investigator_id
       WHERE r.case_no = ? ORDER BY r.report_date DESC, r.id DESC LIMIT 100`).bind(caseNo).all();
 
+  const { results: expenses } = await env.DB.prepare(
+    `SELECT e.id, e.expense_date, e.category, e.amount, e.miles, e.description,
+            e.reimbursable, e.billable, e.internal, e.reviewed_at, e.edited_at,
+            e.investigator_id, u.display_name AS investigator
+       FROM case_expenses e LEFT JOIN users u ON u.id = e.investigator_id
+      WHERE e.case_no = ? ORDER BY e.expense_date DESC, e.id DESC LIMIT 200`).bind(caseNo).all();
+
+  // Visibility is enforced HERE: an admin-only note never leaves the Worker
+  // for anyone else. The page renders what arrives; it decides nothing.
+  const { results: notes } = await env.DB.prepare(
+    `SELECT n.id, n.note_type, n.visibility, n.body, n.created_at, n.edited_at,
+            u.display_name AS author
+       FROM case_notes n LEFT JOIN users u ON u.id = n.author_id
+      WHERE n.case_no = ? ${admin ? '' : "AND n.visibility != 'admin'"}
+      ORDER BY n.id DESC LIMIT 200`).bind(caseNo).all();
+
   return json({
     case_no: row.case_no,
     kind: row.kind,
@@ -907,6 +930,8 @@ async function caseWorkspace(env, user, caseNo) {
     days: days || [],
     open_day: openDay || null,
     reports: reports || [],
+    expenses: expenses || [],
+    notes: notes || [],
   });
 }
 
@@ -1070,6 +1095,130 @@ async function editActivity(request, env, user, caseNo, id) {
           String(body.internal_note || '').slice(0, 2000) || null,
           nowIso(), user.id, id).run();
   return json({ ok: true, id });
+}
+
+/* ------------------------------------------------------------- expenses */
+
+const EXPENSE_CATEGORIES = ['mileage', 'tolls', 'parking', 'hotel', 'airfare',
+                            'rental', 'records', 'database', 'equipment', 'meals', 'other'];
+
+async function addExpense(request, env, user, caseNo) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const body = await readJson(request);
+  const date = String(body.expense_date || '');
+  if (!DATE_RE.test(date)) return json({ error: 'The expense needs a date.' }, 400);
+  const category = String(body.category || '');
+  if (!EXPENSE_CATEGORIES.includes(category)) return json({ error: 'Pick a category.' }, 400);
+  const description = String(body.description || '').trim().slice(0, 2000);
+  if (!description) return json({ error: 'Say what the expense was.' }, 400);
+
+  const num = v => {
+    if (v === null || v === undefined || String(v).trim() === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : undefined;
+  };
+  const amount = num(body.amount), miles = num(body.miles);
+  if (amount === undefined || miles === undefined) {
+    return json({ error: 'Amounts must be numbers, or left blank.' }, 400);
+  }
+  if (amount === null && miles === null) {
+    return json({ error: 'Give an amount, or miles for a mileage claim.' }, 400);
+  }
+
+  const open = await env.DB.prepare(
+    'SELECT id FROM case_days WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL ORDER BY id DESC LIMIT 1')
+    .bind(caseNo, user.id).first();
+
+  const res = await env.DB.prepare(
+    `INSERT INTO case_expenses
+       (case_no, day_id, investigator_id, expense_date, category, amount, miles,
+        description, created_at, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(caseNo, open ? open.id : null, user.id, date, category, amount, miles,
+          description, nowIso(), user.id).run();
+  return json({ ok: true, id: res.meta ? res.meta.last_row_id : null }, 201);
+}
+
+async function editExpense(request, env, user, caseNo, id) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const row = await env.DB.prepare(
+    'SELECT id, investigator_id, reviewed_at FROM case_expenses WHERE id = ? AND case_no = ?')
+    .bind(id, caseNo).first();
+  if (!row) return json({ error: 'not found' }, 404);
+  const admin = user.role === 'admin';
+  if (!admin && row.investigator_id !== user.id) {
+    return json({ error: 'That expense belongs to another investigator.' }, 403);
+  }
+  // Once reviewed, the classification decision was made against these numbers;
+  // changing them re-opens the review rather than sliding under it.
+  const body = await readJson(request);
+  const description = String(body.description || '').trim().slice(0, 2000);
+  if (!description) return json({ error: 'Say what the expense was.' }, 400);
+  const num = v => {
+    if (v === null || v === undefined || String(v).trim() === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : undefined;
+  };
+  const amount = num(body.amount), miles = num(body.miles);
+  if (amount === undefined || miles === undefined) {
+    return json({ error: 'Amounts must be numbers, or left blank.' }, 400);
+  }
+  await env.DB.prepare(
+    `UPDATE case_expenses SET amount = ?, miles = ?, description = ?,
+            reimbursable = NULL, billable = NULL, internal = NULL,
+            reviewed_at = NULL, reviewed_by = NULL,
+            edited_at = ?, edited_by = ? WHERE id = ?`)
+    .bind(amount, miles, description, nowIso(), user.id, id).run();
+  return json({ ok: true, id });
+}
+
+/* The three classifications are three separate decisions — money owed back to
+   the investigator, money billable to the client, money the company eats —
+   and only the office makes them. */
+async function reviewExpense(request, env, user, caseNo, id) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const row = await env.DB.prepare(
+    'SELECT id FROM case_expenses WHERE id = ? AND case_no = ?').bind(id, caseNo).first();
+  if (!row) return json({ error: 'not found' }, 404);
+  const body = await readJson(request);
+  const flag = v => (v === true || v === 1 || v === '1') ? 1 : 0;
+  await env.DB.prepare(
+    `UPDATE case_expenses SET reimbursable = ?, billable = ?, internal = ?,
+            reviewed_at = ?, reviewed_by = ? WHERE id = ?`)
+    .bind(flag(body.reimbursable), flag(body.billable), flag(body.internal),
+          nowIso(), user.id, id).run();
+  return json({ ok: true, id });
+}
+
+/* ----------------------------------------------------------------- notes */
+
+const NOTE_TYPES = ['investigator', 'admin', 'client_comm', 'strategy', 'subject', 'evidence', 'billing'];
+// What a non-admin may author. Strategy, billing and client-communication
+// notes are office records; an investigator writes field notes.
+const NOTE_TYPES_INVESTIGATOR = ['investigator', 'subject', 'evidence'];
+
+async function addNote(request, env, user, caseNo) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const body = await readJson(request);
+  const admin = user.role === 'admin';
+  const type = String(body.note_type || '');
+  const allowed = admin ? NOTE_TYPES : NOTE_TYPES_INVESTIGATOR;
+  if (!allowed.includes(type)) return json({ error: 'Pick a note type.' }, 400);
+
+  // An investigator cannot write a note they would not be allowed to read,
+  // and only the office decides what is eligible for a client-facing record.
+  let visibility = String(body.visibility || 'team');
+  if (!['admin', 'team', 'client_eligible'].includes(visibility)) visibility = 'team';
+  if (!admin) visibility = 'team';
+
+  const text = String(body.body || '').trim().slice(0, 8000);
+  if (!text) return json({ error: 'Write the note.' }, 400);
+
+  const res = await env.DB.prepare(
+    `INSERT INTO case_notes (case_no, author_id, note_type, visibility, body, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`)
+    .bind(caseNo, user.id, type, visibility, text, nowIso()).run();
+  return json({ ok: true, id: res.meta ? res.meta.last_row_id : null }, 201);
 }
 
 /* ---------------------------------------------------------- demo cases */
@@ -1764,6 +1913,21 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/activity\/(\d{1,12})$/);
   if (m && method === 'POST') return editActivity(request, env, user, m[1], parseInt(m[2], 10));
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/expenses$/);
+  if (m && method === 'POST') return addExpense(request, env, user, m[1]);
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/expenses\/(\d{1,12})$/);
+  if (m && method === 'POST') return editExpense(request, env, user, m[1], parseInt(m[2], 10));
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/expenses\/(\d{1,12})\/review$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return reviewExpense(request, env, user, m[1], parseInt(m[2], 10));
+  }
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/notes$/);
+  if (m && method === 'POST') return addNote(request, env, user, m[1]);
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/reports\/generate$/);
   if (m && method === 'POST') return generateReport(request, env, user, m[1]);

@@ -207,6 +207,58 @@ CREATE TABLE IF NOT EXISTS case_reports (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_day ON case_reports(day_id) WHERE day_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_reports_case ON case_reports(case_no, report_date DESC);
 
+-- Expenses and mileage (HANDOFF priority 12). An investigator records what a
+-- case cost them; an admin reviews it and sets the three classifications,
+-- which are deliberately separate concepts: money owed back to the
+-- investigator, money billable to the client, and money the company eats are
+-- three different decisions about the same receipt. NULL means undecided —
+-- the review is what sets them. Receipt images wait for evidence storage
+-- (priority 6); until then the description carries what the receipt says.
+CREATE TABLE IF NOT EXISTS case_expenses (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no         TEXT    NOT NULL,
+  day_id          INTEGER REFERENCES case_days(id),
+  investigator_id INTEGER NOT NULL REFERENCES users(id),
+  expense_date    TEXT    NOT NULL,
+  category        TEXT    NOT NULL
+                    CHECK (category IN ('mileage','tolls','parking','hotel','airfare',
+                                        'rental','records','database','equipment','meals','other')),
+  amount          REAL,               -- claimed; mileage may carry miles instead
+  miles           REAL,
+  description     TEXT    NOT NULL,
+  reimbursable    INTEGER,            -- 1/0, NULL until reviewed
+  billable        INTEGER,            -- 1/0, NULL until reviewed
+  internal        INTEGER,            -- 1/0, NULL until reviewed
+  reviewed_at     TEXT,
+  reviewed_by     INTEGER REFERENCES users(id),
+  created_at      TEXT    NOT NULL,
+  created_by      INTEGER NOT NULL REFERENCES users(id),
+  edited_at       TEXT,
+  edited_by       INTEGER REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_expenses_case ON case_expenses(case_no, expense_date DESC);
+CREATE INDEX IF NOT EXISTS idx_expenses_pending ON case_expenses(reviewed_at) WHERE reviewed_at IS NULL;
+
+-- Categorised case notes with visibility (HANDOFF priority 15). Visibility is
+-- enforced in the query that reads them, never by the page: admin-only notes
+-- do not leave the Worker for an investigator. client_eligible only marks a
+-- note as allowed into a future client-facing record — nothing sends it.
+CREATE TABLE IF NOT EXISTS case_notes (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no    TEXT    NOT NULL,
+  author_id  INTEGER NOT NULL REFERENCES users(id),
+  note_type  TEXT    NOT NULL
+               CHECK (note_type IN ('investigator','admin','client_comm','strategy',
+                                    'subject','evidence','billing')),
+  visibility TEXT    NOT NULL DEFAULT 'team'
+               CHECK (visibility IN ('admin','team','client_eligible')),
+  body       TEXT    NOT NULL,
+  created_at TEXT    NOT NULL,
+  edited_at  TEXT,
+  edited_by  INTEGER REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_notes_case ON case_notes(case_no, id DESC);
+
 -- Small configuration values (authorization warning thresholds and whatever
 -- comes next), so numbers like 75/90/100 are configuration, not code.
 CREATE TABLE IF NOT EXISTS app_config (

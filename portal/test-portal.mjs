@@ -832,7 +832,7 @@ section('The case workspace in the browser');
   await page.locator('#d_smiles').fill('41000');
   await page.locator('.btn', { hasText: 'Start investigation' }).click();
   await page.waitForTimeout(500);
-  ok('the day is running', has(await text(page, '#dlgBody'), 'Day running since 07:00'));
+  ok('the day is running', has(await text(page, '#dlgBody'), 'Day running since 7:00 AM'));
 
   // Log the timeline.
   await wsTab(page, 'Activity log');
@@ -850,7 +850,7 @@ section('The case workspace in the browser');
 
   let log = await text(page, '#dlgBody');
   ok('the entry is on the timeline', log.includes('Subject vehicle observed parked at residence.'));
-  ok('the time is shown', log.includes('07:14'));
+  ok('the time is shown in 12-hour form', log.includes('7:14 AM'));
   ok('the location is shown', log.includes('88 Peakland Pl'));
 
   await page.locator('#a_time').fill('08:17');
@@ -859,7 +859,7 @@ section('The case workspace in the browser');
   await page.waitForTimeout(500);
   log = await text(page, '#dlgBody');
   ok('a second entry joins it', log.includes('Subject arrived at ABC Fitness.'));
-  ok('the newest entry reads first', log.indexOf('08:17') < log.indexOf('07:14'));
+  ok('the newest entry reads first', log.indexOf('8:17 AM') < log.indexOf('7:14 AM'));
 
   await page.locator('#a_desc').fill('');
   await page.locator('.btn', { hasText: 'Add to the log' }).click();
@@ -877,7 +877,7 @@ section('The case workspace in the browser');
   const field = await text(page, '#dlgBody');
   ok('the day is recorded with its hours', field.includes('6'));
   ok('the summary is kept', field.includes('Subject active throughout the morning.'));
-  ok('the start/end times show on the day row', field.includes('07:00'));
+  ok('the start/end times show on the day row', field.includes('7:00 AM'));
 
   await wsTab(page, 'Authorization');
   auth = await text(page, '#dlgBody');
@@ -975,6 +975,101 @@ section('An investigator gets the same field tools, without the money');
     'a budget': 'Authorized budget',
   })) ok(`an investigator never sees ${what} in the workspace`, !whole.includes(needle), needle);
   await page.close();
+}
+
+section('The workspace is a full page, not a popup');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+  ok('opening a case leaves no dialog element at all', await page.locator('dialog').count() === 0);
+  ok('the workspace fills the page', await page.locator('.casepage').count() === 1);
+  ok('the dashboard cards are out of the way', await page.locator('.stats').count() === 0);
+  ok('there is a way back', has(await text(page, '.pagebar'), 'All cases'));
+  await page.locator('.close').click();
+  await page.waitForTimeout(500);
+  ok('back returns to the case list', await page.locator('.stats').count() === 1);
+  await page.close();
+}
+
+section('Expenses: the field records, the office decides');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Expenses');
+
+  await page.locator('#x_date').fill('2026-08-12');
+  await page.locator('#x_cat').selectOption('parking');
+  await page.locator('#x_amt').fill('14.50');
+  await page.locator('#x_desc').fill('Parking garage across from the courthouse');
+  await page.locator('.btn', { hasText: 'Record expense' }).click();
+  await page.waitForTimeout(500);
+  let panel = await text(page, '#dlgBody');
+  ok('the expense is listed', panel.includes('Parking garage across from the courthouse'));
+  ok('with its amount', panel.includes('$14.50'));
+  ok('it awaits the three decisions', await page.locator('.xrev').count() === 1);
+
+  // Mileage claims carry miles, not just dollars.
+  await page.locator('#x_cat').selectOption('mileage');
+  await page.locator('#x_mi').fill('62');
+  await page.locator('#x_desc').fill('Round trip to the subject residence');
+  await page.locator('.btn', { hasText: 'Record expense' }).click();
+  await page.waitForTimeout(500);
+  panel = await text(page, '#dlgBody');
+  ok('a mileage claim records the miles', panel.includes('62'));
+
+  // The office's three separate decisions.
+  const box = page.locator('.xrev').first();
+  await box.locator('.xr-re').check();
+  await box.locator('.xr-bi').check();
+  await box.locator('button').click();
+  await page.waitForTimeout(500);
+  panel = await text(page, '#dlgBody');
+  ok('a reviewed expense wears its decisions', has(panel, 'Reimburse') && has(panel, 'Billable'));
+  ok('the total claimed is summed', panel.includes('Total claimed'));
+  await page.close();
+}
+
+section('Notes: visibility is decided at the Worker, not the page');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Internal notes');
+
+  // An admin-only note about money — the kind an investigator must never see.
+  await page.locator('#n_type').selectOption('billing');
+  await page.locator('#n_vis').selectOption('admin');
+  await page.locator('#n_body').fill('Carrier agreed to the preferred-volume rate on this file.');
+  await page.locator('.btn', { hasText: 'Add note' }).click();
+  await page.waitForTimeout(500);
+  // And a team note the investigator should see.
+  await page.locator('#n_type').selectOption('subject');
+  await page.locator('#n_vis').selectOption('team');
+  await page.locator('#n_body').fill('Subject has switched to a grey rental sedan this week.');
+  await page.locator('.btn', { hasText: 'Add note' }).click();
+  await page.waitForTimeout(500);
+  const adminSees = await text(page, '#dlgBody');
+  ok('the admin sees both notes', adminSees.includes('preferred-volume') && adminSees.includes('grey rental sedan'));
+  ok('visibility is labelled on each note', has(adminSees, 'Admin only') && has(adminSees, 'Team'));
+  await page.close();
+
+  const inv = await newPage();
+  await signIn(inv, 'dana', 'FieldWork2026x');
+  await rowFor(inv, 'API-20260812-4001').click();
+  await inv.waitForTimeout(450);
+  await wsTab(inv, 'Internal notes');
+  const invSees = await inv.evaluate(() => document.body.innerText);
+  ok('the investigator sees the team note', invSees.includes('grey rental sedan'));
+  ok('THE ADMIN-ONLY NOTE NEVER REACHES THEIR BROWSER', !invSees.includes('preferred-volume'), invSees.slice(0, 120));
+  ok('an investigator is not offered admin visibility', await inv.locator('#n_vis').count() === 0);
+  const opts = await inv.locator('#n_type').innerText();
+  ok('office note types are not offered to them', !has(opts, 'Billing') && !has(opts, 'Strategy'));
+  await inv.close();
 }
 
 /* ------------------------------------------------------------------ report */
