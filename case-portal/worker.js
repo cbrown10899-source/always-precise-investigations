@@ -508,9 +508,19 @@ async function emailSheet(request, env, id) {
   return json({ ok: true, sent_to: to, sheet: sheet.id });
 }
 
+/* The dashboard's one job is answering "what needs my attention today?", so
+   beyond the raw counts it returns the actual case numbers behind each alert —
+   which is what lets a card be clicked to show exactly those cases rather than
+   being a number to go hunting after.
+
+   Scoped like everything else: an investigator's alerts are their own cases
+   and their own days, never the firm's book of work. And it degrades — on a
+   database missing the workspace tables it returns the basic counts it can
+   compute instead of failing the whole strip. */
 async function caseSummary(env, user) {
-  const scope = user.role === 'admin' ? '' : 'WHERE assigned_to = ?';
-  const binds = user.role === 'admin' ? [] : [user.id];
+  const admin = user.role === 'admin';
+  const scope = admin ? '' : 'WHERE assigned_to = ?';
+  const binds = admin ? [] : [user.id];
   const { results } = await env.DB.prepare(
     `SELECT status, kind, COUNT(*) AS n FROM submissions ${scope} GROUP BY status, kind`)
     .bind(...binds).all();
@@ -522,12 +532,66 @@ async function caseSummary(env, user) {
     if (r.status in out) out[r.status] += n;
     if (r.kind === 'claims') out.claims += n; else out.consumer += n;
   }
-  // Unassigned work an admin should be looking at first.
-  if (user.role === 'admin') {
+  out.open = out.total - out.closed;
+
+  if (admin) {
     const row = await env.DB.prepare(
       "SELECT COUNT(*) AS n FROM submissions WHERE assigned_to IS NULL AND status != 'closed'").first();
     out.unassigned = row ? Number(row.n) || 0 : 0;
   }
+
+  const missing = await missingTables(env);
+  const have = t => !missing.includes(t);
+  const cap = a => a.slice(0, 100);
+
+  // Out in the field right now: a day someone started and has not ended.
+  if (have('case_days')) {
+    const { results: openDays } = await env.DB.prepare(
+      `SELECT DISTINCT d.case_no FROM case_days d
+        ${admin ? '' : 'JOIN submissions s ON s.case_no = d.case_no AND s.assigned_to = ?'}
+        WHERE d.end_time IS NULL ${admin ? '' : 'AND d.investigator_id = ?'}`)
+      .bind(...(admin ? [] : [user.id, user.id])).all();
+    out.active_now = cap((openDays || []).map(r => r.case_no));
+  }
+
+  // Reports owed: a finished day with no report yet, plus — for the reviewer —
+  // reports sitting in submitted, and — for the writer — ones sent back.
+  if (have('case_days') && have('case_reports')) {
+    const { results: unreported } = await env.DB.prepare(
+      `SELECT DISTINCT d.case_no FROM case_days d
+        LEFT JOIN case_reports r ON r.day_id = d.id
+        ${admin ? '' : 'JOIN submissions s ON s.case_no = d.case_no AND s.assigned_to = ?'}
+        WHERE d.end_time IS NOT NULL AND r.id IS NULL ${admin ? '' : 'AND d.investigator_id = ?'}`)
+      .bind(...(admin ? [] : [user.id, user.id])).all();
+    const { results: pending } = await env.DB.prepare(admin
+      ? "SELECT DISTINCT case_no FROM case_reports WHERE status = 'submitted'"
+      : "SELECT DISTINCT case_no FROM case_reports WHERE status = 'needs_revision' AND investigator_id = ?")
+      .bind(...(admin ? [] : [user.id])).all();
+    out.reports_due = cap([...new Set([
+      ...(unreported || []).map(r => r.case_no),
+      ...(pending || []).map(r => r.case_no),
+    ])]);
+  }
+
+  // Authorization running low: used hours at or past the first warning
+  // threshold. The threshold is the configured one, not a constant here.
+  if (have('case_meta') && have('case_days')) {
+    const first = String(await configValue(env, 'auth_warn_thresholds', '75,90,100'))
+      .split(',').map(parseFloat).filter(Number.isFinite).sort((a, b) => a - b)[0] ?? 75;
+    const { results: authRows } = await env.DB.prepare(
+      `SELECT m.case_no, m.authorized_hours, COALESCE(SUM(d.hours), 0) AS used
+         FROM case_meta m
+         LEFT JOIN case_days d ON d.case_no = m.case_no
+         ${admin ? '' : 'JOIN submissions s ON s.case_no = m.case_no AND s.assigned_to = ?'}
+        WHERE m.authorized_hours > 0
+        GROUP BY m.case_no, m.authorized_hours`)
+      .bind(...(admin ? [] : [user.id])).all();
+    out.auth_low = cap((authRows || [])
+      .filter(r => (Number(r.used) / Number(r.authorized_hours)) * 100 >= first)
+      .map(r => r.case_no));
+    out.auth_warn_at = first;
+  }
+
   return json({ summary: out });
 }
 
@@ -1049,6 +1113,20 @@ function demoPayload(n) {
 }
 
 async function createDemoCase(env, user) {
+  /* Check the schema BEFORE writing anything. The first version wrote the
+     submission, then failed on the case_meta insert because that table did not
+     exist yet — leaving a half-made case with no authorization behind, once per
+     click. A write that cannot be completed should not be started. */
+  const missing = await missingTables(env);
+  const needed = ['case_types', 'case_meta'].filter(t => missing.includes(t));
+  if (needed.length) {
+    return json({
+      error: 'The database is missing tables this needs. Run the "Set up the case portal" '
+           + 'workflow in GitHub Actions to apply the schema, then try again.',
+      code: 'schema_out_of_date',
+    }, 503);
+  }
+
   const stamp = nowIso().slice(0, 10).replace(/-/g, '');
   const rand = Array.from(crypto.getRandomValues(new Uint8Array(2)))
     .map(b => b.toString(16).padStart(2, '0')).join('');
@@ -1078,17 +1156,28 @@ async function createDemoCase(env, user) {
 }
 
 /* Only ever TEST- rows. The prefix is the whole safety mechanism, so it is
-   written into every statement rather than computed once and trusted. */
+   written into every statement rather than computed once and trusted.
+
+   Skips tables the database does not have. Cleaning up has to work on a
+   half-applied schema — that is precisely the state that leaves stray test
+   rows behind, and being unable to remove them until an unrelated workflow is
+   run would be the wrong way round. */
 async function clearDemoCases(env) {
   const like = 'TEST-%';
-  for (const sql of [
-    'DELETE FROM activity_log WHERE case_no LIKE ?',
-    'DELETE FROM case_reports WHERE case_no LIKE ?',
-    'DELETE FROM case_days   WHERE case_no LIKE ?',
-    'DELETE FROM case_meta   WHERE case_no LIKE ?',
-    'DELETE FROM submissions WHERE case_no LIKE ?',
-  ]) await env.DB.prepare(sql).bind(like).run();
-  return json({ ok: true });
+  const missing = await missingTables(env);
+  let removed = 0;
+  for (const [table, sql] of [
+    ['activity_log', 'DELETE FROM activity_log WHERE case_no LIKE ?'],
+    ['case_reports', 'DELETE FROM case_reports WHERE case_no LIKE ?'],
+    ['case_days',    'DELETE FROM case_days   WHERE case_no LIKE ?'],
+    ['case_meta',    'DELETE FROM case_meta   WHERE case_no LIKE ?'],
+    ['submissions',  'DELETE FROM submissions WHERE case_no LIKE ?'],
+  ]) {
+    if (missing.includes(table)) continue;
+    const r = await env.DB.prepare(sql).bind(like).run();
+    if (table === 'submissions') removed = (r.meta && r.meta.changes) || 0;
+  }
+  return json({ ok: true, removed });
 }
 
 /* ------------------------------------------------------- daily reports */

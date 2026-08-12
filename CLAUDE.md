@@ -271,9 +271,16 @@ the client agrees. The terms say exactly that.
 
 ## The dashboard
 
-`summaryCards()` draws a counts strip above the case list on both roles, scoped
-the same way everything else is — an investigator's totals are their own cases.
-`GET /summary` provides them.
+`summaryCards()` draws an alerts strip above the case list, built to answer
+"what needs my attention today": Open cases, Needs assignment, Out now (a day
+running), Reports due (finished day with no report, or a report waiting on
+review), Authorization low (past the first configured threshold). Cards with
+work behind them are **clickable** — `/summary` returns the case numbers behind
+each count, and clicking filters the list to exactly those cases, with a chip
+to clear. Carrier/private counts live in the Cases bar as text. Cards whose
+data does not exist yet (client responses, expenses, closure) are deliberately
+absent until their features land — no fake zeros. Scoped per role as always:
+an investigator's alerts are their own cases and days.
 
 **It draws even when there are no cases**, and on an empty portal the worked
 example is shown unasked so the cards are not all zero and a new admin can see
@@ -377,8 +384,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 311 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 219 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 317 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 228 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,

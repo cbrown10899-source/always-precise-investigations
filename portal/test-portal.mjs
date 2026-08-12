@@ -511,9 +511,11 @@ section('The dashboard');
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
   const stats = await text(page, '.stats');
-  for (const label of ['Cases', 'Unassigned', 'In progress', 'Carrier', 'Private']) {
+  for (const label of ['Open cases', 'Needs assignment', 'Out now', 'Reports due', 'Authorization low']) {
     ok(`the dashboard shows ${label}`, has(stats, label), stats);
   }
+  ok('carrier and private counts moved to the case bar, not the cards',
+     !has(stats, 'Carrier') && has(await text(page, '.bar'), 'carrier'));
   ok('the counts are real numbers', /\d/.test(stats));
   await page.close();
 }
@@ -737,6 +739,65 @@ section('An investigator gets no rates at all');
   ok('and they cannot email one to anybody', mail === 403);
   await page.close();
 }
+
+/* The cards are doors, not statistics: clicking one shows exactly the cases
+   behind its number. This drives the whole loop — a day left running makes
+   Out now light up, clicking it narrows the list, ending the day makes the
+   finished-but-unreported day surface under Reports due. */
+section('Dashboard cards answer "what needs my attention"');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  // Use 4001: the later workspace section does exact hour-math on 4002, and a
+  // stray day here would silently break it.
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Field work');
+  await page.locator('#d_date').fill('2026-08-13');
+  await page.locator('#d_start').fill('06:00');
+  await page.locator('.btn', { hasText: 'Start investigation' }).click();
+  await page.waitForTimeout(500);
+  await page.locator('.close').click();
+  await page.waitForTimeout(300);
+
+  await render(page);
+  const stats = await text(page, '.stats');
+  ok('Out now counts the running day', /Out now/.test(stats), stats);
+
+  const outCard = page.locator('.stat', { hasText: 'Out now' });
+  ok('the card with work behind it is clickable', (await outCard.getAttribute('class')).includes('click'));
+  await outCard.click();
+  await page.waitForTimeout(250);
+  let list = await text(page, '.card');
+  ok('clicking it narrows the list to those cases', list.includes('API-20260812-4001'));
+  ok('other cases drop out of view', !list.includes('API-20260812-4002'));
+  ok('a chip names the active filter', has(await text(page, '.bar'), 'Out now'));
+  ok('the example never stands in for an alert', !list.includes('EXAMPLE-'));
+
+  await page.locator('.chip button').click();
+  await page.waitForTimeout(250);
+  list = await text(page, '.card');
+  ok('clearing the chip restores the full list', list.includes('API-20260812-4002'));
+
+  // End the day: it must move from Out now to Reports due.
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Field work');
+  await page.locator('#d_end').fill('10:00');
+  await page.locator('.btn', { hasText: 'End investigation day' }).click();
+  await page.waitForTimeout(600);
+  await page.locator('.close').click();
+  await page.waitForTimeout(300);
+  await render(page);
+  const after = await text(page, '.stats');
+  const dueCard = page.locator('.stat', { hasText: 'Reports due' });
+  ok('a finished day without a report shows under Reports due',
+     parseInt((await dueCard.innerText()).match(/\d+/)[0], 10) >= 1, after);
+  await page.close();
+}
+
+async function render(page){ await page.evaluate(() => window.render && window.render()); await page.waitForTimeout(500); }
 
 /* The field workflow, driven through the page the way it will actually be
    used: open a case, start the day, log the timeline, end the day, and watch

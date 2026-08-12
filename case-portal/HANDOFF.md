@@ -17,7 +17,7 @@ Progress ledger (update as phases land):
 | 7. Insurance Authorization Tracking | **done** — 2026-08-12 (hours + budget, configurable thresholds; REQUEST MORE not built) |
 | 5. Daily Report Builder | **done** — 2026-08-12 (draft from log, 5 statuses, admin-only approval) |
 | 6. Evidence Management | not started — needs R2 private storage first |
-| 8. Dashboard Improvements | not started |
+| 8. Dashboard Improvements | **done** — 2026-08-12 (operational cards, click-to-filter; Awaiting Client / Ready to Close / Expenses arrive with priorities 18/20/12) |
 | 9–15. Phase 2 (outside investigators) | not started |
 | 16–20. Phase 3 (case operations) | not started |
 | Phase 4 (client portal, redaction, safety, profitability) | not started |

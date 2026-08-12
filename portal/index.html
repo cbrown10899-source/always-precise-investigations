@@ -77,6 +77,14 @@
   .stat.warn .stat-n{color:#8a6410;}
   .stat-l{font-size:.82rem;font-weight:700;margin-top:2px;}
   .stat-h{font-size:.75rem;color:var(--muted);margin-top:1px;}
+  .stat.live{border-color:#9fd3c0;background:#f0faf6;}
+  .stat.live .stat-n{color:#1a6b3c;}
+  .stat.click{cursor:pointer;}
+  .stat.click:hover{border-color:var(--teal);}
+  .stat.on{border-color:var(--teal);box-shadow:0 0 0 1px var(--teal) inset;background:#f2f9fa;}
+  .chip{display:inline-flex;align-items:center;gap:6px;background:#eaf5f7;border:1px solid #b7dbe3;
+    color:var(--navy);border-radius:999px;padding:3px 6px 3px 11px;font-size:.8rem;font-weight:700;}
+  .chip button{border:0;background:none;font:inherit;font-size:1rem;cursor:pointer;color:var(--teal-ink,#1d5c6c);line-height:1;}
   /* rate sheets */
   .sheet-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:12px;}
   .sheet-card{text-align:left;background:#fff;border:1px solid var(--line);border-radius:10px;
@@ -210,6 +218,7 @@ let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG =
 let WS = null, WS_CASE = null, WS_TAB = "overview", WS_ERR = "", WS_REPORT = null;
 let LOAD_ERR = "";        // why the portal could not load, shown rather than hidden
 let SCHEMA_MISSING = [];  // tables the database does not have yet
+let CARD_FILTER = null;   // {label, set:Set(case numbers)} — a dashboard card's cases
 /* Examples show themselves on a first sign-in and can be recalled later. */
 let SHOW_EXAMPLE = false;
 
@@ -417,32 +426,46 @@ function shell(inner){
   return `<div class="tabs">${tabs}</div>${schema}${problem}${summaryCards()}${inner}`;
 }
 
-/* The dashboard strip. Drawn whether or not there is any work in the system —
-   an empty portal that shows nothing at all looks broken, and a new admin needs
-   to see the shape of the thing before the first case arrives. */
+/* The dashboard strip answers one question: what needs my attention today?
+   Every card that can act carries the case numbers behind its count, so
+   clicking it shows exactly those cases instead of leaving a number to go
+   hunting after. Cards whose data does not exist yet — client responses,
+   expenses, closure — arrive with their features rather than sitting at a
+   fake zero. Drawn even when the portal is empty, because a page that shows
+   nothing at all looks broken. */
 function summaryCards(){
   if(TAB === "staff" || TAB === "sheets") return "";
   const s = SUMMARY || {};
   const shown = SHOW_EXAMPLE ? examplesFor(ME.role) : [];
-  const bump = k => shown.filter(c => c.status === k).length;
   const admin = ME.role === "admin";
-  const card = (label, n, hint, tone) => `<div class="stat ${tone||""}">
+
+  const card = (label, n, hint, tone, set) => {
+    const act = set && n > 0;
+    const on = act && CARD_FILTER && CARD_FILTER.label === label;
+    return `<div class="stat ${tone||""}${act ? " click" : ""}${on ? " on" : ""}"${
+        act ? ` data-act="cardFilter" data-label="${esc(label)}" data-set="${esc(set.join(","))}"` : ""}>
       <div class="stat-n">${n}</div>
       <div class="stat-l">${esc(label)}</div>
       ${hint ? `<div class="stat-h">${esc(hint)}</div>` : ""}
     </div>`;
+  };
 
+  const active = s.active_now || [], due = s.reports_due || [], low = s.auth_low || [];
   const total = (s.total || 0) + shown.length;
+
   const cards = admin
-    ? card("Cases", total, total ? "" : "None yet")
-      + card("Unassigned", (s.unassigned || 0) + shown.filter(c => !c.assigned_name).length,
-             "Waiting on you", (s.unassigned || bump("new")) ? "warn" : "")
-      + card("In progress", (s.in_progress || 0) + bump("in_progress"), "Out in the field")
-      + card("Carrier", (s.claims || 0) + shown.filter(c => c.kind === "claims").length, "Insurance work")
-      + card("Private", (s.consumer || 0) + shown.filter(c => c.kind !== "claims").length, "Non-insurance")
+    ? card("Open cases", (s.open || 0) + shown.length, total ? "" : "None yet")
+      + card("Needs assignment", (s.unassigned || 0) + shown.filter(c => !c.assigned_name).length,
+             "Waiting on you", (s.unassigned || 0) ? "warn" : "")
+      + card("Out now", active.length, "A day is running", active.length ? "live" : "", active)
+      + card("Reports due", due.length, "Day done, no report", due.length ? "warn" : "", due)
+      + card("Authorization low", low.length,
+             s.auth_warn_at ? `Past ${s.auth_warn_at}% of hours` : "Hours running out",
+             low.length ? "warn" : "", low)
     : card("Assigned to you", total, total ? "" : "Nothing yet")
-      + card("In progress", (s.in_progress || 0) + bump("in_progress"), "Started")
-      + card("Closed", (s.closed || 0) + bump("closed"), "Finished");
+      + card("Out now", active.length, "Your day is running", active.length ? "live" : "", active)
+      + card("Reports due", due.length, "Finish or fix a report", due.length ? "warn" : "", due)
+      + card("Authorization low", low.length, "Call before exceeding", low.length ? "warn" : "", low);
 
   // No Hide button here — the banner over the case list already carries one,
   // and two controls doing the same thing is how a page starts feeling
@@ -498,7 +521,12 @@ function sheetsView(){
 function casesView(){
   const q = FILTER.trim().toLowerCase();
   const admin = ME.role === "admin";
-  const shown = SHOW_EXAMPLE ? CASES.concat(examplesFor(ME.role)) : CASES;
+  // A card filter narrows to the exact cases behind that card's number; the
+  // example never stands in among them, because an alert is real work.
+  const base = CARD_FILTER
+    ? CASES.filter(c => CARD_FILTER.set.has(c.case_no))
+    : (SHOW_EXAMPLE ? CASES.concat(examplesFor(ME.role)) : CASES);
+  const shown = base;
   const rows = shown.filter(c => !q || [c.case_no, c.client_name, c.subject_name, c.carrier, c.claim_number]
     .some(v => (v || "").toLowerCase().includes(q)));
 
@@ -534,15 +562,22 @@ function casesView(){
       <button class="btn sm ghost" data-act="hideExample" style="margin-left:8px">Hide the example</button>
     </div>` : "";
 
+  const filterChip = CARD_FILTER
+    ? `<span class="chip">${esc(CARD_FILTER.label)}: ${CARD_FILTER.set.size}
+         <button data-act="clearCardFilter" aria-label="Clear filter">&times;</button></span>`
+    : "";
+
   return `<div class="card">
     <div class="bar">
-      <h2 style="margin:0">Cases</h2>
+      <h2 style="margin:0">Cases</h2>${filterChip}
       <input id="q" placeholder="${admin ? "Search case, client, carrier, claim no." : "Search case or subject"}" value="${esc(FILTER)}" data-act="filter">
       ${SHOW_EXAMPLE ? "" : `<button class="btn sm ghost" data-act="showExample">Show an example</button>`}
       ${admin ? `<button class="btn sm ghost" data-act="addDemo">Add a test case</button>${
         CASES.some(c => isDemo(c.case_no))
           ? `<button class="btn sm ghost" data-act="clearDemo">Remove test cases</button>` : ""}` : ""}
-      <span class="count">${rows.length} of ${shown.length}</span>
+      <span class="count">${rows.length} of ${shown.length}${
+        (s => s && (s.claims || s.consumer)
+          ? ` · ${s.claims || 0} carrier · ${s.consumer || 0} private` : "")(SUMMARY)}</span>
     </div>
     ${exBanner}
     ${more}
@@ -1281,6 +1316,14 @@ document.addEventListener("click", ev => {
   else if(act === "toggleActive"){ toggleActive(Number(el.dataset.id), Number(el.dataset.active)); }
   else if(act === "revokeInvite"){ revokeInvite(Number(el.dataset.id)); }
   else if(act === "reload"){ render(); }
+  else if(act === "cardFilter"){
+    const label = el.dataset.label;
+    CARD_FILTER = CARD_FILTER && CARD_FILTER.label === label
+      ? null   // clicking the active card clears it
+      : { label, set: new Set(el.dataset.set.split(",").filter(Boolean)) };
+    paint();
+  }
+  else if(act === "clearCardFilter"){ CARD_FILTER = null; paint(); }
   else if(act === "addDemo"){ addDemoCase(); }
   else if(act === "clearDemo"){ clearDemoCases(); }
   else if(act === "wsTab"){ WS_TAB = el.dataset.tab; WS_ERR = ""; paintCase(); }
