@@ -105,6 +105,35 @@ out of the table; the size cap, the case-number format check, the per-minute
 rate limit and the unique constraint on case numbers are what actually protect
 it.
 
+**6. Check it**
+
+```bash
+./case-portal/verify.sh
+```
+
+Read-only, creates nothing, sends no real data. It checks the Worker is
+answering on the site's own domain, the D1 binding and ingest key are set, the
+schema is applied, ingest refuses an unkeyed submission, case data is refused
+to anyone not signed in, the portal page is served with its noindex and CSP
+headers, and the intake form no longer carries the placeholder.
+
+Run it after setup and after any deploy that touches the Worker. Two things it
+cannot check are printed at the end: that you deleted `BOOTSTRAP_TOKEN`, and
+that you are on the Workers Paid plan.
+
+## Going live
+
+The insurance pages, the vendor page and the carrier intake path need none of
+the above — they are static and go live the moment the branch merges. Only the
+portal needs Cloudflare set up, and until it is, the intake form still works and
+still emails; it simply records nothing.
+
+| | Needs setup? |
+| --- | --- |
+| `/insurance-investigations/` and its vendor page | no |
+| Carrier path in `/intake/` | no |
+| Storing submissions, `/portal/`, staff logins | yes — steps 1–6 |
+
 ## Tests
 
 ```bash
