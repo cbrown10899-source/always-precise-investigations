@@ -184,6 +184,29 @@ CREATE TABLE IF NOT EXISTS activity_log (
 );
 CREATE INDEX IF NOT EXISTS idx_activity_case ON activity_log(case_no, at_date, at_time);
 
+-- Daily reports (HANDOFF priority 5). A report is drafted FROM the activity
+-- log and then belongs to whoever is writing it — the generated chronology is
+-- a starting point, never a finished document, so `body` is plain editable
+-- text from the moment it is created. One report per investigation day.
+CREATE TABLE IF NOT EXISTS case_reports (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no         TEXT    NOT NULL,
+  day_id          INTEGER REFERENCES case_days(id),
+  investigator_id INTEGER NOT NULL REFERENCES users(id),
+  report_date     TEXT    NOT NULL,
+  status          TEXT    NOT NULL DEFAULT 'draft'
+                    CHECK (status IN ('draft','submitted','needs_revision','approved','delivered')),
+  body            TEXT    NOT NULL DEFAULT '',
+  review_note     TEXT,
+  created_at      TEXT    NOT NULL,
+  updated_at      TEXT,
+  updated_by      INTEGER REFERENCES users(id),
+  status_at       TEXT,
+  status_by       INTEGER REFERENCES users(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_day ON case_reports(day_id) WHERE day_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_reports_case ON case_reports(case_no, report_date DESC);
+
 -- Small configuration values (authorization warning thresholds and whatever
 -- comes next), so numbers like 75/90/100 are configuration, not code.
 CREATE TABLE IF NOT EXISTS app_config (
