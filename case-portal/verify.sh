@@ -97,6 +97,49 @@ else
   ok "the intake form is wired to the portal"
 fi
 
+# 8. No price is published anywhere a visitor can reach. Quotes go out from
+#    the portal as rate sheets; a figure on the public site is a leak.
+if [ -n "$INTAKE" ]; then
+  if printf '%s' "$INTAKE" | grep -qE '\$[0-9]'; then
+    bad "the intake form publishes no price" \
+        "a dollar figure is in the served intake page — pricing belongs in the portal's rate sheets."
+  else
+    ok "the intake form publishes no price"
+  fi
+fi
+
+# 9. Internal files must 404 on the live site. Each of these was served
+#    publicly at some point, which is why each is pinned here.
+for f in CLAUDE.md case-portal/PRICING.md case-portal/worker.js \
+         portal/test-portal.mjs intake/test-intake.mjs; do
+  C=$(code "$SITE/$f")
+  case "$C" in
+    404) ok "internal file is not served: /$f" ;;
+    000) bad "internal file is not served: /$f" "no response — nothing was checked." ;;
+    *)   bad "internal file is not served: /$f" "got $C — anything but 404 here needs explaining." ;;
+  esac
+done
+
+# 10. The admin-only endpoints refuse an unauthenticated caller. Rates and the
+#     rate sheets are quotes the firm has not chosen to make yet.
+for p in pricing sheets summary users invites; do
+  C=$(code "$API/$p")
+  if [ "$C" = "401" ]; then
+    ok "/portal-api/$p is closed to anyone not signed in"
+  else
+    bad "/portal-api/$p is closed to anyone not signed in" "expected 401, got $C."
+  fi
+done
+
+# 11. The portal is hidden, not advertised: robots.txt must not mention it.
+ROBOTS=$(curljson "$SITE/robots.txt")
+if printf '%s' "$ROBOTS" | grep -qi 'portal'; then
+  bad "robots.txt does not advertise the portal" \
+      "a portal path is in robots.txt — that hides nothing and points straight at it."
+else
+  ok "robots.txt does not advertise the portal"
+fi
+
 printf '\n  %s passed, %s failed\n\n' "$PASS" "$FAIL"
 if [ "$FAIL" -eq 0 ]; then
   note "Two things this cannot check for you:"

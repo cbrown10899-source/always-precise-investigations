@@ -34,6 +34,7 @@ jobs:
             --exclude 'build-locations.py' \
             --exclude 'README.md' \
             --exclude 'CLAUDE.md' \
+            --exclude '*.mjs' \
             ./ _site/
           # Internal notes must never reach the public site. CLAUDE.md was
           # being published until 2026-08-12 — it describes where each
@@ -45,6 +46,12 @@ jobs:
           done
           if find _site -name '*.md' | grep -q .; then
             echo "::error::markdown staged for deploy:"; find _site -name '*.md'; exit 1
+          fi
+          # Test suites are not part of the site. They were served publicly
+          # until 2026-08-12 — no secrets in them, but a public copy of the
+          # test harness is a map of exactly what the defenses check.
+          if find _site -name '*.mjs' | grep -q .; then
+            echo "::error::test files staged for deploy:"; find _site -name '*.mjs'; exit 1
           fi
           echo "Files to deploy:"; find _site -type f | wc -l
 

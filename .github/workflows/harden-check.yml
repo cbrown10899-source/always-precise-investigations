@@ -1,0 +1,40 @@
+name: Security check (live)
+
+# Runs case-portal/verify.sh against the LIVE site from a GitHub runner.
+#
+# It exists because the place that builds the site cannot always reach it —
+# remote Claude sessions run behind an egress policy that may block the
+# domain — and because a security posture should be re-checked on a schedule,
+# not only when someone remembers. The checks are read-only: nothing is
+# created, nothing is signed in, no real data is sent.
+#
+# What it verifies (see verify.sh for the authoritative list): the Worker
+# answers on the site's own domain with its bindings; ingest and case data
+# refuse unauthenticated callers; the portal page is served with noindex and a
+# CSP; the intake is wired and publishes no price; internal files (CLAUDE.md,
+# PRICING.md, the Worker source, the test suites) all 404; the admin-only
+# endpoints all 401; robots.txt does not advertise the portal.
+#
+# Run it by hand from the Actions tab after any deploy you care about, or let
+# the weekly run catch drift. A failure fails the run loudly — read the step
+# output, it names the exact check and what to do.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 11 * * 1'   # weekly, Monday 11:30 UTC — after the daily site-health probe
+
+concurrency:
+  group: harden-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the live checks
+        run: bash case-portal/verify.sh https://alwayspreciseinvestigations.net
