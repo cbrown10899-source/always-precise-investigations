@@ -37,8 +37,27 @@ if you would rather see each one happen.
 
 ### The easy way: run the setup workflow
 
-One prerequisite, because a password should never come from a machine that then
-tells you what it is — add your admin password as a repository secret:
+**The API token needs to be able to do this.** The stored
+`CLOUDFLARE_API_TOKEN` was created for Pages deploys and Worker uploads, so it
+very likely cannot touch D1 or zone routes — the first setup run failed with
+Cloudflare error 10000, Authentication error, for exactly that reason. In the
+Cloudflare dashboard, **My Profile → API Tokens**, edit that token so it has
+all of:
+
+| Scope | Resource | Level |
+| --- | --- | --- |
+| Account | D1 | Edit |
+| Account | Workers Scripts | Edit |
+| Account | Cloudflare Pages | Edit |
+| Zone | Workers Routes | Edit (alwayspreciseinvestigations.net) |
+| Zone | Zone | Read (alwayspreciseinvestigations.net) |
+
+The workflow checks all five before touching anything and lists every missing
+one in a single run, so you fix the token once rather than discovering the gaps
+one failure at a time.
+
+Second prerequisite, because a password should never come from a machine that
+then tells you what it is — add your admin password as a repository secret:
 
 **Settings → Secrets and variables → Actions → New repository secret**
 Name it `PORTAL_ADMIN_PASSWORD`. At least 12 characters, with an uppercase
