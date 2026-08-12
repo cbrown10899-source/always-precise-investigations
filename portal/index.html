@@ -208,7 +208,8 @@ let ME = null, TAB = "cases", CASES = [], USERS = [], INVITES = [], TOTAL = 0, F
 let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
 // The open case workspace: which case, which tab, its loaded data, last error.
 let WS = null, WS_CASE = null, WS_TAB = "overview", WS_ERR = "", WS_REPORT = null;
-let LOAD_ERR = "";   // why the portal could not load, shown rather than hidden
+let LOAD_ERR = "";        // why the portal could not load, shown rather than hidden
+let SCHEMA_MISSING = [];  // tables the database does not have yet
 /* Examples show themselves on a first sign-in and can be recalled later. */
 let SHOW_EXAMPLE = false;
 
@@ -391,14 +392,29 @@ function shell(inner){
        <button class="${TAB==="sheets"?"on":""}" data-act="tab" data-tab="sheets">Rate sheets</button>
        <button class="${TAB==="staff"?"on":""}" data-act="tab" data-tab="staff">Staff</button>`
     : "";
+  // The schema notice comes first and is specific, because it is the one cause
+  // that explains every other symptom at once.
+  const schema = SCHEMA_MISSING.length ? `<div class="loaderr">
+      <b>The database is not fully set up yet.</b> ${SCHEMA_MISSING.length}
+      ${SCHEMA_MISSING.length === 1 ? "table is" : "tables are"} missing, so parts of the portal
+      will fail until the schema is applied.
+      <div style="font-size:.86rem;margin-top:8px">
+        Fix it in one run: <b>GitHub &rarr; Actions &rarr; Set up the case portal &rarr; Run
+        workflow</b>. It is safe to re-run &mdash; it finds the existing database, adds only what
+        is missing, and leaves your account alone.
+      </div>
+      <div style="font-size:.78rem;margin-top:6px;opacity:.85">Missing: <span class="mono">${
+        SCHEMA_MISSING.map(esc).join(", ")}</span></div>
+      <button class="btn sm ghost" data-act="reload" style="margin-top:10px">Check again</button>
+    </div>` : "";
+
   const problem = LOAD_ERR ? `<div class="loaderr">
       <b>Something did not load.</b> ${esc(LOAD_ERR)}
       <button class="btn sm ghost" data-act="reload" style="margin-left:8px">Try again</button>
       <div style="font-size:.82rem;margin-top:6px">Nothing below is necessarily the whole picture
-        while this is showing. If it keeps happening, the portal setup workflow may need re-running
-        so the database has every table.</div>
+        while this is showing.</div>
     </div>` : "";
-  return `<div class="tabs">${tabs}</div>${problem}${summaryCards()}${inner}`;
+  return `<div class="tabs">${tabs}</div>${schema}${problem}${summaryCards()}${inner}`;
 }
 
 /* The dashboard strip. Drawn whether or not there is any work in the system —
@@ -646,6 +662,13 @@ async function render(){
 
   try{ SUMMARY = (await api("/summary")).summary; }
   catch(e){ SUMMARY = null; if(!LOAD_ERR) LOAD_ERR = "The dashboard totals could not be loaded — " + e.message; }
+
+  // A half-applied schema is the one failure that looks like a dozen different
+  // bugs, so ask directly rather than waiting to trip over it.
+  try{
+    const h = await api("/health");
+    SCHEMA_MISSING = Array.isArray(h.missing_tables) ? h.missing_tables : [];
+  }catch(e){ SCHEMA_MISSING = []; }
 
   if(ME.role === "admin"){
     try{ USERS = (await api("/users")).users; }catch(e){ USERS = []; }

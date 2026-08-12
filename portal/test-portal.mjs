@@ -569,7 +569,7 @@ section('A failed load says so instead of looking empty');
   ok('it says what failed', shell.includes('case list could not be loaded'));
   ok('it carries the reason back from the server', shell.includes('database unavailable'));
   ok('there is a way to retry', await page.locator('.btn', { hasText: 'Try again' }).count() === 1);
-  ok('it points at the setup workflow as the likely cure', has(shell, 'portal setup workflow'));
+  ok('it warns that what is shown may be incomplete', has(shell, 'necessarily the whole picture'));
 
   // The important part: the example must NOT stand in for real data here.
   ok('a broken load does not quietly show the example instead',
@@ -620,6 +620,61 @@ section('Adding a test case from the portal');
   ok('the test case is gone', !/TEST-\d{8}-/.test(after), after.slice(0, 200));
   ok('the real cases are untouched', after.includes('API-20260812-4001') && after.includes('API-20260812-4002'));
   await page.close();
+}
+
+/* The live portal hit exactly this: the workspace tables had not been created,
+   so every button that touched one returned "Something went wrong handling
+   that request" and the screen otherwise looked like a normal empty portal.
+   One cause, many symptoms, and nothing on screen naming it. */
+section('A half-applied schema names itself');
+{
+  const page = await newPage();
+  await page.route('**/portal-api/health', r => r.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ok: true, configured: true, email: false,
+                           missing_tables: ['case_types', 'case_meta', 'case_days'] }),
+  }));
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const shell = await page.evaluate(() => document.querySelector('#app').innerText);
+
+  ok('the portal says the database is not set up', has(shell, 'not fully set up'));
+  ok('it counts what is missing', shell.includes('3 tables are missing'));
+  ok('it names them', shell.includes('case_types') && shell.includes('case_days'));
+  ok('it gives the exact fix', has(shell, 'Set up the case portal'));
+  ok('it says the fix is safe to re-run', has(shell, 'safe to re-run'));
+  ok('there is a way to re-check', await page.locator('.btn', { hasText: 'Check again' }).count() === 1);
+  await page.close();
+}
+
+section('A missing table is reported as a fixable setup problem, not a mystery');
+{
+  // Drop a workspace table under the running Worker, the way a live database
+  // sits when the schema has not been re-applied after a deploy.
+  db.exec('DROP TABLE IF EXISTS case_types');
+  const res = await worker.fetch(new Request(API + '/demo-case', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: SITE },
+  }), env);
+  ok('an unauthenticated caller is still just refused', res.status === 401);
+
+  const login = await post('/auth/login', { username: 'trever', password: 'AdminPassword1x' });
+  const cookie = (login.headers.getSetCookie()[0] || '').split(';')[0];
+  const attempt = await worker.fetch(new Request(API + '/demo-case', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: SITE, Cookie: cookie },
+  }), env);
+  const bodyText = await attempt.text();
+  ok('the failure is a 503, not a bare 500', attempt.status === 503, String(attempt.status));
+  ok('it names the workflow that fixes it', bodyText.includes('Set up the case portal'), bodyText);
+  ok('it is tagged so the page can act on it', bodyText.includes('schema_out_of_date'));
+  ok('it does not leak the SQL or the column', !/sqlite|SELECT|no such table/i.test(bodyText), bodyText);
+
+  // Health reports it too, so the page can warn before anything is clicked.
+  const h = await (await worker.fetch(new Request(API + '/health', { headers: { Origin: SITE } }), env)).json();
+  ok('health lists the missing table', h.missing_tables.includes('case_types'), JSON.stringify(h));
+
+  db.exec(SCHEMA);   // put it back for the rest of the run
+  const h2 = await (await worker.fetch(new Request(API + '/health', { headers: { Origin: SITE } }), env)).json();
+  ok('and reports a clean bill once the schema is applied', h2.missing_tables.length === 0,
+     JSON.stringify(h2.missing_tables));
 }
 
 section('Rate sheets');

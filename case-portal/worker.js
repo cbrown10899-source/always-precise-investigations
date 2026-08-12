@@ -1546,6 +1546,26 @@ async function readJson(request) {
 
 const ADMIN_ONLY = 'This action needs an admin account.';
 
+/* Every table the application expects. Compared against what the database
+   actually has, so "the schema has not been applied yet" is a thing the portal
+   can say plainly rather than a 500 the user has to interpret. */
+const EXPECTED_TABLES = [
+  'users', 'sessions', 'submissions', 'login_fails', 'invites', 'ingest_rate',
+  'case_types', 'case_meta', 'case_days', 'activity_log', 'case_reports', 'app_config',
+];
+
+async function missingTables(env) {
+  if (!env.DB) return EXPECTED_TABLES.slice();
+  try {
+    const { results } = await env.DB.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table'").all();
+    const have = new Set((results || []).map(r => r.name));
+    return EXPECTED_TABLES.filter(t => !have.has(t));
+  } catch {
+    return [];   // cannot tell; do not invent a problem
+  }
+}
+
 async function route(request, env) {
   const url = new URL(request.url);
   // The Worker is mounted on /portal-api/* on the site's own domain; strip that
@@ -1556,7 +1576,15 @@ async function route(request, env) {
   const method = request.method;
 
   if (p === '/health') {
-    return json({ ok: true, configured: Boolean(env.DB && env.INGEST_KEY), email: Boolean(env.RESEND_API_KEY) });
+    return json({
+      ok: true,
+      configured: Boolean(env.DB && env.INGEST_KEY),
+      email: Boolean(env.RESEND_API_KEY),
+      // Which tables are actually there. The portal checks this on load so a
+      // half-applied schema announces itself, instead of waiting for whichever
+      // button happens to touch a missing table first.
+      missing_tables: await missingTables(env),
+    });
   }
   if (p === '/auth/login' && method === 'POST') return handleLogin(request, env);
   if (p === '/auth/logout' && method === 'POST') return handleLogout(request, env);
@@ -1732,7 +1760,18 @@ export default {
     } catch (e) {
       // Never return the raw error: it can carry SQL and column names.
       console.error('portal error', e && e.stack ? e.stack : e);
-      res = json({ error: 'Something went wrong handling that request.' }, 500);
+      // One exception, because "something went wrong" sent a real admin round
+      // in circles: a missing table means the schema has not been applied, and
+      // the fix is a workflow run rather than anything to debug. Naming the
+      // condition leaks nothing — the remedy is in the README either way.
+      const msg = String((e && e.message) || '');
+      res = /no such table|no such column/i.test(msg)
+        ? json({
+            error: 'The database is missing tables this needs. Run the "Set up the case portal" '
+                 + 'workflow in GitHub Actions to apply the schema, then try again.',
+            code: 'schema_out_of_date',
+          }, 503)
+        : json({ error: 'Something went wrong handling that request.' }, 500);
     }
     const headers = new Headers(res.headers);
     headers.set('Cache-Control', 'no-store');
