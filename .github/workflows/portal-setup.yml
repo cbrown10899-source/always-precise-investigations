@@ -1,0 +1,232 @@
+name: Set up the case portal
+
+# One-shot setup for the case portal, run from the Actions tab. Does everything
+# the six manual wrangler steps do, using the CLOUDFLARE_API_TOKEN already
+# stored on this repository:
+#
+#   - finds or creates the D1 database
+#   - applies schema.sql to it (safe to re-run; every table is IF NOT EXISTS)
+#   - generates the ingest key on first run and commits it into the intake form
+#   - deploys the Worker, which attaches the D1 binding and the /portal-api route
+#   - creates the first admin account, then destroys the token that allowed it
+#
+# Safe to run more than once. A second run finds the existing database, reuses
+# the committed ingest key, and skips admin creation because the account exists.
+#
+# The only thing it cannot do for you is invent your admin password. Add it as a
+# repository secret named PORTAL_ADMIN_PASSWORD first:
+#   Settings -> Secrets and variables -> Actions -> New repository secret
+# At least 12 characters with an uppercase letter, a lowercase letter and a digit.
+on:
+  workflow_dispatch:
+    inputs:
+      admin_username:
+        description: 'Username for the first admin (lowercase, no spaces)'
+        required: true
+        default: 'trever'
+      admin_display_name:
+        description: 'Display name for that admin'
+        required: true
+        default: 'Trever Brown'
+      create_admin:
+        description: 'Create the first admin account'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: portal-setup
+  cancel-in-progress: false
+
+env:
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: 63a4b8fd9efe4137e1f91c49b5e61c6f
+  DB_NAME: api-case-portal
+  SITE: https://alwayspreciseinvestigations.net
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: master }
+
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      - name: Check the admin password secret exists
+        if: ${{ inputs.create_admin }}
+        env:
+          ADMIN_PASSWORD: ${{ secrets.PORTAL_ADMIN_PASSWORD }}
+        run: |
+          if [ -z "${ADMIN_PASSWORD:-}" ]; then
+            echo "::error::PORTAL_ADMIN_PASSWORD is not set. Add it under Settings -> Secrets and variables -> Actions, or re-run with 'Create the first admin account' unticked."
+            exit 1
+          fi
+
+      - name: Find or create the D1 database
+        run: |
+          set -euo pipefail
+          cd case-portal
+          ID=$(npx --yes wrangler d1 list --json 2>/dev/null \
+                 | jq -r --arg n "$DB_NAME" '.[]? | select(.name==$n) | .uuid' | head -1)
+          if [ -z "$ID" ]; then
+            echo "Creating $DB_NAME"
+            npx --yes wrangler d1 create "$DB_NAME"
+            ID=$(npx --yes wrangler d1 list --json \
+                   | jq -r --arg n "$DB_NAME" '.[]? | select(.name==$n) | .uuid' | head -1)
+          else
+            echo "Found existing $DB_NAME"
+          fi
+          [ -n "$ID" ] || { echo "::error::could not resolve the database id"; exit 1; }
+          echo "D1_ID=$ID" >> "$GITHUB_ENV"
+
+      - name: Write the database id into wrangler.toml
+        run: |
+          set -euo pipefail
+          cd case-portal
+          sed -i "s|database_id = \".*\"|database_id = \"$D1_ID\"|" wrangler.toml
+          grep -n 'database_id' wrangler.toml
+
+      - name: Apply the schema
+        run: |
+          set -euo pipefail
+          cd case-portal
+          # Every table is IF NOT EXISTS, so re-running is a no-op. --yes skips
+          # the "about to touch a remote database" confirmation.
+          npx --yes wrangler d1 execute "$DB_NAME" --remote --file=schema.sql --yes 2>/tmp/d1.err \
+            || npx --yes wrangler d1 execute "$DB_NAME" --remote --file=schema.sql \
+            || { echo "::error::schema apply failed"; cat /tmp/d1.err || true; exit 1; }
+
+      - name: Settle the ingest key
+        run: |
+          set -euo pipefail
+          # The committed intake page is the source of truth: the key ships
+          # inside a public page by design, so there is nothing to protect by
+          # keeping it elsewhere, and reusing it keeps re-runs idempotent.
+          CURRENT=$(grep -oP '(?<=const PORTAL_INGEST_KEY = ")[^"]*' intake/index.html)
+          if [ "$CURRENT" = "PASTE_INGEST_KEY" ] || [ -z "$CURRENT" ]; then
+            KEY=$(openssl rand -hex 32)
+            echo "Generated a new ingest key"
+            echo "KEY_IS_NEW=yes" >> "$GITHUB_ENV"
+          else
+            KEY="$CURRENT"
+            echo "Reusing the ingest key already committed"
+            echo "KEY_IS_NEW=no" >> "$GITHUB_ENV"
+          fi
+          echo "INGEST_KEY=$KEY" >> "$GITHUB_ENV"
+
+      - name: Put the secrets on the Worker
+        run: |
+          set -euo pipefail
+          cd case-portal
+          BOOT=$(openssl rand -hex 32)
+          # Keep the bootstrap token out of the log entirely — it is the one
+          # value here that can mint an admin account.
+          echo "::add-mask::$BOOT"
+          echo "BOOT_TOKEN=$BOOT" >> "$GITHUB_ENV"
+          printf '%s' "$INGEST_KEY" | npx --yes wrangler secret put INGEST_KEY
+          printf '%s' "$BOOT"       | npx --yes wrangler secret put BOOTSTRAP_TOKEN
+
+      - name: Deploy the Worker with its binding and route
+        run: |
+          set -euo pipefail
+          cd case-portal
+          npx --yes wrangler deploy
+
+      - name: Wait for the route to answer
+        run: |
+          set -uo pipefail
+          for i in 1 2 3 4 5 6 7 8; do
+            BODY=$(curl -sS --max-time 15 "$SITE/portal-api/health" || true)
+            if printf '%s' "$BODY" | grep -q '"configured":true'; then
+              echo "Portal is answering: $BODY"; exit 0
+            fi
+            echo "attempt $i: ${BODY:-no response}"
+            sleep 10
+          done
+          echo "::error::/portal-api/health never reported configured:true. The route or the D1 binding did not attach."
+          exit 1
+
+      - name: Create the first admin
+        if: ${{ inputs.create_admin }}
+        env:
+          # Through env, never interpolated into the script. A password or a
+          # name containing a quote would otherwise break out of the quoting.
+          ADMIN_USERNAME: ${{ inputs.admin_username }}
+          ADMIN_DISPLAY: ${{ inputs.admin_display_name }}
+          ADMIN_PASSWORD: ${{ secrets.PORTAL_ADMIN_PASSWORD }}
+        run: |
+          set -uo pipefail
+          CODE=$(curl -sS --max-time 20 -o /tmp/setup.json -w '%{http_code}' \
+            -X POST "$SITE/portal-api/setup" \
+            -H "X-Bootstrap-Token: $BOOT_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -nc --arg u "$ADMIN_USERNAME" \
+                        --arg d "$ADMIN_DISPLAY" \
+                        --arg p "$ADMIN_PASSWORD" \
+                        '{username:$u, display_name:$d, password:$p}')")
+          case "$CODE" in
+            201) echo "Admin account created." ;;
+            409) echo "An account already exists — nothing to do." ;;
+            400) echo "::error::Rejected: $(cat /tmp/setup.json). The password must be 12+ characters with an uppercase letter, a lowercase letter and a digit."; exit 1 ;;
+            *)   echo "::error::Unexpected $CODE: $(cat /tmp/setup.json)"; exit 1 ;;
+          esac
+
+      - name: Destroy the bootstrap token
+        if: always()
+        run: |
+          set -uo pipefail
+          cd case-portal
+          # Runs even if an earlier step failed: a token that can mint an admin
+          # must never outlive the run that created it.
+          printf 'BOOTSTRAP_TOKEN\ny\n' | npx --yes wrangler secret delete BOOTSTRAP_TOKEN || \
+            echo "::warning::Could not delete BOOTSTRAP_TOKEN — remove it by hand in the Worker's Variables and Secrets."
+
+      - name: Commit the database id and the ingest key
+        run: |
+          set -euo pipefail
+          sed -i "s|const PORTAL_INGEST_KEY = \".*\"|const PORTAL_INGEST_KEY = \"$INGEST_KEY\"|" intake/index.html
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "Nothing to commit — already wired up."
+            exit 0
+          fi
+          git add case-portal/wrangler.toml intake/index.html
+          git commit -m "Wire the intake form and wrangler config to the deployed portal"
+          for attempt in 1 2 3; do
+            if git push; then echo "DEPLOY_SITE=yes" >> "$GITHUB_ENV"; exit 0; fi
+            echo "push rejected (attempt $attempt) — rebasing"
+            git pull --rebase origin master
+          done
+          echo "::error::could not push the wiring commit"; exit 1
+
+      # A push made with GITHUB_TOKEN does not trigger other workflows, so the
+      # intake change would sit undeployed. Ask for the deploy explicitly.
+      - name: Deploy the site so the intake form picks up the key
+        if: env.DEPLOY_SITE == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy.yml --ref master
+
+      - name: What is left to do
+        if: success()
+        run: |
+          {
+            echo "## Case portal is set up"
+            echo ""
+            echo "- Database: \`$DB_NAME\` (\`$D1_ID\`)"
+            echo "- Route: \`alwayspreciseinvestigations.net/portal-api/*\`"
+            echo "- Ingest key: $( [ "$KEY_IS_NEW" = yes ] && echo 'generated and committed' || echo 'already committed, reused' )"
+            echo "- Bootstrap token: destroyed"
+            echo ""
+            echo "### Still yours to do"
+            echo ""
+            echo "1. **Upgrade to Workers Paid** if you have not — sign-in exceeds the free plan's 10ms CPU limit while everything else keeps working."
+            echo "2. Sign in at [$SITE/portal/]($SITE/portal/) and invite your partner as an admin."
+            echo "3. Run \`./case-portal/verify.sh\` for an independent check."
+          } >> "$GITHUB_STEP_SUMMARY"
