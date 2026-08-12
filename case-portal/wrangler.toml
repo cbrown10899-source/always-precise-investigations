@@ -41,10 +41,15 @@ SITE_ORIGIN = "https://alwayspreciseinvestigations.net"
 # To re-harden an existing account, reset its password from the Staff tab.
 PBKDF2_ITER = "25000"
 
-# From: address for invitation emails. Must be on a domain verified with the
-# email provider, or delivery is refused. Leave the default and Resend will only
-# deliver to your own account address, which is fine for testing.
-INVITE_FROM = "Always Precise Investigations <onboarding@resend.dev>"
+# From: address for invitation emails. The domain is verified with Resend via
+# Domain Connect, which put DKIM at the apex and the bounce-handling MX and SPF
+# on the send. subdomain — so mail can be sent from the real domain rather than
+# from send.alwayspreciseinvestigations.net.
+#
+# portal@ rather than noreply@ on purpose: an investigator replying to their
+# invitation should reach a person, not a black hole. It does not need to be a
+# real mailbox to send from, but it can be forwarded if you want the replies.
+INVITE_FROM = "Always Precise Investigations <portal@alwayspreciseinvestigations.net>"
 
 # Secrets (never in this file):
 #   npx wrangler secret put INGEST_KEY       # also goes in intake/index.html
