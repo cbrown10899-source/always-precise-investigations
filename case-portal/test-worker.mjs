@@ -51,6 +51,10 @@ function d1(db) {
 }
 
 const ORIGIN = 'https://alwayspreciseinvestigations.net';
+// The rate the firm decided it would not go below. Written out here rather than
+// read from the Worker on purpose: if someone lowers the floor to make a cheap
+// block pass, that is a decision, and it should take editing the test too.
+const RATES_FLOOR = 125;
 function freshEnv() {
   const db = new DatabaseSync(':memory:');
   db.exec(SCHEMA);
@@ -257,6 +261,200 @@ section('Roles and case visibility');
      (await invite(env, inv, { username: 'sneak', role: 'admin' })).status === 403);
   ok('an investigator cannot assign cases',
      (await call(env, '/submissions/API-B/assign', { method: 'POST', cookie: inv, body: { user_id: dana.id } })).status === 403);
+}
+
+/* --------------------------------------------------- the commercial boundary */
+
+/* An investigator gets the fieldwork and nothing that identifies who is paying
+   for it. Everything below is what someone would need to solicit the client
+   directly, so it must not leave the Worker for a non-admin caller. */
+section('An investigator is not sent the client');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+
+  await ingest(env, {
+    case_no: 'API-C', service: 'Insurance Claim Assignment',
+    carrier: 'Example Mutual Insurance', claim_number: 'WC-2026-88421', policy_number: 'POL-77123',
+    claim_type: "Workers' compensation", date_of_loss: '03/14/2026',
+    adjuster: 'Dana Reyes', adjuster_email: 'dreyes@examplemutual.com', adjuster_phone: '5405550173',
+    defense_counsel: 'Poe & Marsden', prior_surveillance: 'Yes — by another vendor',
+    client_name: 'Dana Reyes', client_phone: '5405550173', client_email: 'dreyes@examplemutual.com',
+    subject_name: 'Pat Coleman', subject_address: '2214 Old Forest Rd',
+    subject_description: 'White GMC Sierra', subject_relationship: 'Lumbar strain; no lifting over 10 lbs',
+    objective: 'Activity level versus stated restrictions', authorized_hours: '8 hours',
+    timeline: 'Hearing 9/12', notes: 'Neighbour is a retired deputy', attachments: 'claim-file.pdf',
+    billing_reference: 'PO-77412', billing_email: 'ap@examplemutual.com', billing_notes: 'PO on the invoice',
+    signed_name: 'Dana Reyes', payment_method: 'Invoiced to carrier', fee_due: 0,
+    signature: 'data:image/png;base64,iVBORw0KGgo=',
+  });
+
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const dana = users.users.find(u => u.username === 'dana');
+  await call(env, '/submissions/API-C/assign', { method: 'POST', cookie: admin, body: { user_id: dana.id } });
+
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const detail = await jsonOf(await call(env, '/submissions/API-C', { cookie: inv }));
+  const seen = JSON.stringify(detail);
+
+  for (const [what, value] of Object.entries({
+    'the carrier': 'Example Mutual Insurance',
+    'the claim number': 'WC-2026-88421',
+    'the policy number': 'POL-77123',
+    'the adjuster': 'Dana Reyes',
+    "the adjuster's email": 'dreyes@examplemutual.com',
+    "the adjuster's phone": '5405550173',
+    'defense counsel': 'Poe & Marsden',
+    'the billing reference': 'PO-77412',
+    'the billing contact': 'ap@examplemutual.com',
+    'the signature': 'iVBORw0KGgo=',
+  })) ok(`an investigator is not sent ${what}`, !seen.includes(value), value);
+
+  ok('the raw payload column is not passed through either', typeof detail.submission.payload === 'object');
+  ok('an investigator is sent the subject', detail.submission.payload.subject_name === 'Pat Coleman');
+  ok('an investigator is sent the address to watch', detail.submission.payload.subject_address === '2214 Old Forest Rd');
+  ok('an investigator is sent the vehicle', detail.submission.payload.subject_description === 'White GMC Sierra');
+  ok('an investigator is sent the restrictions', /Lumbar strain/.test(detail.submission.payload.subject_relationship));
+  ok('an investigator is sent the scope', /Activity level/.test(detail.submission.payload.objective));
+  ok('an investigator is sent the authorized hours', detail.submission.payload.authorized_hours === '8 hours');
+  ok('an investigator is sent the deadline', detail.submission.payload.timeline === 'Hearing 9/12');
+  ok('an investigator is sent the field notes', /retired deputy/.test(detail.submission.payload.notes));
+  ok('an investigator is still told the case number', detail.submission.case_no === 'API-C');
+  ok('an investigator is still told the status', detail.submission.status === 'assigned');
+
+  const list = JSON.stringify(await jsonOf(await call(env, '/submissions', { cookie: inv })));
+  ok('the list is redacted too, not only the detail',
+     !list.includes('Example Mutual Insurance') && !list.includes('WC-2026-88421'));
+  ok('the list still names the subject', list.includes('Pat Coleman'));
+
+  // The admin's own view is untouched — this is a per-role filter, not deletion.
+  const adminView = JSON.stringify(await jsonOf(await call(env, '/submissions/API-C', { cookie: admin })));
+  ok('an admin still sees the carrier', adminView.includes('Example Mutual Insurance'));
+  ok('an admin still sees the claim number', adminView.includes('WC-2026-88421'));
+  ok('an admin still sees the billing reference', adminView.includes('PO-77412'));
+  ok('an admin still sees the signature', adminView.includes('iVBORw0KGgo='));
+
+  // A field nobody has classified yet must default to admin-only. This is the
+  // difference between an allow-list and a delete-list, and it is the whole
+  // reason for the former.
+  await ingest(env, {
+    case_no: 'API-D', client_name: 'New Client', subject_name: 'Watch Me',
+    some_future_field: 'CARRIER-CONFIDENTIAL',
+  });
+  await call(env, '/submissions/API-D/assign', { method: 'POST', cookie: admin, body: { user_id: dana.id } });
+  const future = JSON.stringify(await jsonOf(await call(env, '/submissions/API-D', { cookie: inv })));
+  ok('a field added to the intake later does not leak by default',
+     !future.includes('CARRIER-CONFIDENTIAL'));
+}
+
+/* ------------------------------------------------------------- pricing */
+
+/* Carrier rates are internal. They are not published, and the endpoint that
+   holds them is admin-only — an investigator knowing the billing rate is how a
+   rate sheet reaches a competitor. */
+section('Internal rates are admin-only');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  ok('an investigator cannot read the rate card',
+     (await call(env, '/pricing', { cookie: inv })).status === 403);
+  ok('a signed-out visitor cannot read the rate card',
+     (await call(env, '/pricing')).status === 401);
+
+  const res = await call(env, '/pricing', { cookie: admin });
+  ok('an admin can read the rate card', res.status === 200);
+  const d = await jsonOf(res);
+  ok('the standard surveillance rate is $150/hr', d.rates.surveillance.standard === 150);
+  ok('the surveillance day minimum is 8 hours', d.rates.surveillance.minHoursPerDay === 8);
+  ok('the typical initial authorization is 24 hours', d.rates.surveillance.typicalAuthHours === 24);
+  ok('the preferred-volume band is 135–150', d.rates.surveillance.volumeMin === 135 && d.rates.surveillance.volumeMax === 150);
+  ok('the floor is 125', d.rates.surveillance.floor === 125);
+  ok('rush and holiday multipliers are configured',
+     d.rates.multipliers.rush === 1.25 && d.rates.multipliers.holiday === 1.5);
+  ok('testimony is rated separately', d.rates.services.testimony[0] === 200);
+  ok('nothing is billed on top of the quoted price', d.rates.expenses.billedSeparately === false);
+  ok('mileage is inside the block', d.rates.expenses.includedInBlock.includes('Mileage'));
+  ok('travel time is inside the block', d.rates.expenses.includedInBlock.includes('Travel time'));
+  ok('report writing is inside the block', d.rates.expenses.includedInBlock.includes('Report writing'));
+  ok('out-of-area travel is quoted up front, not added later',
+     /before the assignment is accepted/.test(d.rates.expenses.outsideServiceArea));
+  ok('reporting counts as billable investigator time',
+     d.rates.billableAsInvestigatorTime.includes('Report writing'));
+  ok('the authorization presets are 8, 16 and 24 hours',
+     JSON.stringify(d.auth_presets) === JSON.stringify([8, 16, 24]));
+
+  // The number the handoff exists to protect: 24 hours at the standard rate.
+  const q = await jsonOf(await call(env, '/pricing?hours=24', { cookie: admin }));
+  ok('a 3-day authorization quotes at $3,600', q.quote.subtotal === 3600);
+  ok('and it is not flagged as below the band', q.quote.belowVolumeBand === false);
+
+  const vol = await jsonOf(await call(env, '/pricing?hours=24&rate=135', { cookie: admin }));
+  ok('the bottom of the volume band quotes at $3,240', vol.quote.subtotal === 3240);
+  ok('a volume rate is not below the floor', vol.quote.belowFloor === false);
+
+  const cheap = await jsonOf(await call(env, '/pricing?hours=24&rate=100', { cookie: admin }));
+  ok('$100/hr is flagged as below the floor', cheap.quote.belowFloor === true);
+  ok('the $800/day the handoff rejects quotes at $2,400', cheap.quote.subtotal === 2400);
+
+  const rush = await jsonOf(await call(env, '/pricing?hours=8', { cookie: admin }));
+  ok('a rush day applies the 1.25x multiplier', rush.quote.rush === 1500);
+  ok('a bad hours value yields no quote',
+     (await jsonOf(await call(env, '/pricing?hours=abc', { cookie: admin }))).quote === null);
+
+  /* The flat-fee carrier ladder. */
+  const pk = d.packages;
+  ok('three blocks are offered', pk.length === 3);
+  ok('the blocks match the authorization presets the form offers',
+     JSON.stringify(pk.map(p => p.hours)) === JSON.stringify(d.auth_presets));
+  ok('one day is $1,200', pk[0].price === 1200 && pk[0].hours === 8);
+  ok('two days is $2,300', pk[1].price === 2300 && pk[1].hours === 16);
+  ok('three days is $3,300', pk[2].price === 3300 && pk[2].hours === 24);
+  ok('the one-day block is at the standard rate', pk[0].effective === 150);
+  ok('two days works out at $143.75/hr', pk[1].effective === 143.75);
+  ok('three days works out at $137.50/hr', pk[2].effective === 137.5);
+  ok('the three-day block saves the carrier $300 against standard', pk[2].savingVsStandard === 300);
+  ok('the three-day block stays inside the preferred-volume band', pk[2].belowVolumeBand === false);
+
+  /* THE GUARD. A block priced below the floor is the mistake this whole rate
+     strategy exists to prevent, and a round number can hide it — $2,600 for
+     three days reads fine and is $108.33/hr. If someone re-prices the ladder,
+     this fails rather than quietly shipping a discount nobody approved. */
+  for (const p of pk) {
+    ok(`${p.hours}h is not below the $${RATES_FLOOR} floor`, p.belowFloor === false,
+       `$${p.price} = $${p.effective}/hr`);
+    ok(`${p.hours}h is at or above the floor by arithmetic too`,
+       p.price / p.hours >= RATES_FLOOR, `$${p.price / p.hours}/hr`);
+  }
+  ok('the floor the blocks are checked against is still $125', d.rates.surveillance.floor === 125);
+
+  // The rejected draft, asserted so the reasoning survives in the tests.
+  ok('the 1000/1800/2600 draft would have breached the floor twice',
+     1000 / 8 >= RATES_FLOOR && 1800 / 16 < RATES_FLOOR && 2600 / 24 < RATES_FLOOR);
+  ok('and would have cost $1,000 a case against standard on a 3-day',
+     (150 * 24) - 2600 === 1000);
+
+  /* The blocks absorb travel now, so the floor has to survive that too — an
+     all-in price is only affordable if it is priced for it. Roughly 60 miles a
+     day at the internal costing rate. */
+  const mile = d.rates.expenses.mileagePerMile;
+  for (const p of pk) {
+    const absorbed = (p.hours / 8) * 60 * mile;
+    ok(`${p.hours}h still clears the floor after absorbing travel`,
+       (p.price - absorbed) / p.hours >= RATES_FLOOR,
+       `$${((p.price - absorbed) / p.hours).toFixed(2)}/hr`);
+  }
+  ok('the rejected $2,600 draft would NOT have cleared it after travel',
+     (2600 - (3 * 60 * mile)) / 24 < RATES_FLOOR);
 }
 
 /* ------------------------------------------------------- invitation-only */

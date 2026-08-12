@@ -119,22 +119,27 @@ async function sign(page) {
 
 /* ------------------------------------------------------- consumer path */
 
-section('Consumer path — surveillance');
+section('Consumer path — no price is ever shown');
 {
   submitted = null; stored = null;
   const page = await newPage();
-  ok('progress bar shows the 6 consumer steps', await dots(page) === 6);
+  ok('the consumer flow is 5 steps, ending at the agreement', await dots(page) === 5);
 
   await set(page, 'c_name', 'Jane Client');
   await set(page, 'c_phone', '4345550111');
   await advance(page);
+
+  const services = await page.locator('.card').innerText();
+  ok('step 2 offers the services', services.includes('Surveillance'));
+  ok('no price is attached to surveillance', !/\$\s?\d/.test(services), services);
+  ok('the client is told a fee sheet comes in writing', /fee sheet/i.test(services));
+
   await page.locator('#opt-surveillance').click();
   await page.waitForTimeout(80);
+  ok('choosing surveillance does not add a pricing step', await dots(page) === 5);
   await advance(page);
 
   ok('step 3 is the subject step', await heading(page) === 'Subject of the investigation');
-  ok('consumer keeps the "relationship to you" field',
-     await page.locator('[data-k="s_rel"]').getAttribute('placeholder') !== null);
   await set(page, 's_name', 'John Subject');
   await advance(page);
   ok('step 4 is the objective step', await heading(page) === 'Your objective');
@@ -142,22 +147,56 @@ section('Consumer path — surveillance');
 
   ok('step 5 is the agreement', (await heading(page)).includes('Agreement'));
   const fees = await page.locator('.feebox').innerText();
-  ok('fee box shows the $1,500 retainer due today', fees.includes('$1,500') && fees.includes('Due today'));
+  ok('the fee box quotes nothing', !/\$\s?\d/.test(fees), fees);
+  ok('it says the fee is sent in writing', /sent to you in writing/i.test(fees));
+  ok('it says nothing is due now', /nothing/i.test(fees));
+  const terms = await page.locator('.agree').innerText();
+  ok('the terms name no figure', !/\$\s?\d/.test(terms), terms);
+  ok('the terms say work starts only after the fee is agreed',
+     /work begins only once the client has agreed/i.test(terms));
+  ok('the terms promise no additional fees', /No additional fees apply/i.test(terms));
+  ok('submitting does not itself create a charge',
+     /does not by itself start work or create a charge/i.test(terms));
+
   await page.locator('[data-k="a_consent"]').check();
   await set(page, 'a_typed', 'Jane Client');
   await sign(page);
+  ok('the last button submits rather than going to payment',
+     (await page.locator('.btn.primary').innerText()).includes('Submit'));
   await advance(page);
+  await page.waitForTimeout(500);
 
-  ok('step 6 is the payment step', await heading(page) === 'Payment');
-  await page.locator('.pay-opt .opt').first().click();
-  await page.waitForTimeout(80);
-  await advance(page);
-  await page.waitForTimeout(400);
+  ok('the intake was recorded', stored !== null);
+  ok('nothing is charged at intake', stored && stored.fee_due === 0);
+  ok('no package is recorded', stored && !('package' in stored));
+  ok('no payment method is recorded', stored && !stored.payment_method);
 
-  ok('the portal record bills the consumer retainer', stored && stored.fee_due === 1500);
-  ok('the portal record carries no claim fields', stored && !('claim_number' in stored));
-  ok('record is titled Client Intake', (await page.locator('.record').innerText()).includes('Client Intake'));
+  const rec = await page.locator('.record').innerText();
+  ok('record is titled Client Intake', rec.includes('Client Intake'));
+  ok('the record quotes no price', !/\$\s?\d/.test(rec), rec);
+  ok('the record says the fee comes in writing', /sent to you in writing/i.test(rec));
   await page.close();
+}
+
+/* The whole point of moving pricing into the portal: a visitor to the website
+   never sees a number the firm has not chosen to quote them. */
+section('The public form carries no pricing at all');
+{
+  const src = fs.readFileSync(path.join(ROOT, 'intake/index.html'), 'utf8');
+  ok('no dollar figure appears anywhere in the intake source',
+     !/\$\s?\d/.test(src), (src.match(/\$\s?\d[^\n]{0,40}/) || [''])[0]);
+  ok('the old consumer rate card is gone', !src.includes('PACKAGES'));
+  ok('the hourly constant is gone', !/const HOURLY/.test(src));
+  ok('no payment step remains', !src.includes('pay-btn'));
+
+  for (const f of ['index.html', 'insurance-investigations/index.html',
+                   'insurance-investigations/vendor-information/index.html',
+                   'infidelity-investigations/index.html',
+                   'child-custody-investigations/index.html']) {
+    const page = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    ok(`${f} publishes no price`, !/\$\s?\d{2,}/.test(page),
+       (page.match(/\$\s?\d{2,}[^\n]{0,30}/) || [''])[0]);
+  }
 }
 
 /* ---------------------------------------------------------- carrier path */
@@ -171,7 +210,7 @@ section('Carrier path — insurance claim assignment');
   await advance(page);
   await page.locator('#opt-claims').click();
   await page.waitForTimeout(80);
-  ok('choosing a claim assignment expands the flow to 7 steps', await dots(page) === 7);
+  ok('choosing a claim assignment expands the flow to 8 steps', await dots(page) === 8);
   await advance(page);
   ok('step 3 is the claim-details step', await heading(page) === 'Claim details');
 
@@ -197,24 +236,60 @@ section('Carrier path — insurance claim assignment');
   await advance(page);
   ok('the objective step becomes scope and deadline', (await heading(page)).includes('Scope'));
   await set(page, 'o_goal', 'Activity level versus stated restrictions');
-  await set(page, 'o_hours', '8 hours authorized');
   await set(page, 'o_time', 'Hearing 9/12');
   await advance(page);
 
-  ok('step 6 states assignment terms', (await heading(page)).includes('Assignment terms'));
+  /* Section 9 of the handoff: surveillance is authorized in hours, with the
+     8-hour minimum day and the 24-hour initial authorization as presets. The
+     rate behind them is internal and must not appear on this public page. */
+  ok('step 6 is scheduling and authorization', await heading(page) === 'Scheduling & authorization');
+  const auth = await page.locator('.card').innerText();
+  ok('the 8-hour day is offered', auth.includes('8 hours — 1 day'));
+  ok('the 16-hour authorization is offered', auth.includes('16 hours — 2 days'));
+  ok('the 24-hour initial authorization is offered', auth.includes('24 hours — 3 days'));
+  ok('a custom authorization is offered', auth.includes('Custom authorization'));
+  ok('the 8-hour day is described as the minimum', /minimum surveillance day/i.test(auth));
+  ok('NO CARRIER RATE IS PUBLISHED on the authorization step', !auth.includes('$'), auth);
+  ok('the page says rates are confirmed before acceptance',
+     /confirmed before the assignment is accepted/i.test(auth));
+  ok('the authorization step promises no additional fees', /No additional fees/i.test(auth));
+  ok('it names what is included', /mileage, travel time/i.test(auth));
+
+  await advance(page);
+  ok('authorization is required', await heading(page) === 'Scheduling & authorization');
+  ok('and it says so', (await err(page)).toLowerCase().includes('hours'));
+
+  await page.locator('#opt-auth-a24').click();
+  await page.waitForTimeout(80);
+  await set(page, 'z_nte', '$3,600 not to exceed');
+  await set(page, 'z_start', '2026-09-01');
+  await set(page, 'z_days', 'Any day');
+  await set(page, 'z_times', '0600-1400');
+  await page.locator('[data-k="z_weekend"]').selectOption({ label: 'Yes — weekends authorized' });
+  await page.locator('[data-k="z_priority"]').selectOption({ label: 'Expedited' });
+  await set(page, 'z_geo', 'Within 50 miles of Roanoke');
+  await advance(page);
+
+  ok('step 7 states assignment terms', (await heading(page)).includes('Assignment terms'));
   const fees = await page.locator('.feebox').innerText();
   ok('terms say the work is invoiced to the carrier', fees.includes('Invoiced to the carrier'));
   ok('no rate is published to the carrier', !fees.includes('$'));
   const terms = await page.locator('.agree').innerText();
   ok('carrier terms cover billing and reporting', terms.includes('Billing') && terms.includes('Reporting'));
   ok('the consumer-only cyber-stalking clause is not shown', !terms.includes('cyber-stalking'));
+  ok('the carrier is promised no additional fees', /No additional fees/.test(terms));
+  ok('mileage is named as included for a carrier', /Mileage, travel time/.test(terms));
+  ok('nothing is added to an invoice after the work',
+     /nothing is added to an invoice after the work is done/i.test(terms));
+  ok('out-of-area travel is still quoted before acceptance',
+     /before the assignment is accepted/.test(terms));
 
   await page.locator('[data-k="a_consent"]').check();
   await set(page, 'a_typed', 'Dana Adjuster');
   await sign(page);
   await advance(page);
 
-  ok('step 7 is billing', await heading(page) === 'Billing');
+  ok('step 8 is billing', await heading(page) === 'Billing');
   const billing = await page.locator('.feebox').innerText();
   ok('billing echoes the carrier and claim number',
      billing.includes('Example Mutual') && billing.includes('WC-2026-88421'));
@@ -230,7 +305,15 @@ section('Carrier path — insurance claim assignment');
     ok('the portal record carries the carrier', stored.carrier === 'Example Mutual');
     ok('the portal record carries the claim type', stored.claim_type === "Workers' compensation");
     ok('the portal record carries the date of loss', stored.date_of_loss === '03/14/2026');
-    ok('the portal record carries the authorized hours', stored.authorized_hours === '8 hours authorized');
+    ok('the portal record carries the authorized hours', stored.authorized_hours === '24 hours — 3 days');
+    ok('the portal record carries the not-to-exceed', stored.not_to_exceed === '$3,600 not to exceed');
+    ok('the portal record carries the start date', stored.start_date === '2026-09-01');
+    ok('the portal record carries the permitted times', stored.permitted_times === '0600-1400');
+    ok('the portal record carries the weekend authorization',
+       stored.weekend_authorized === 'Yes — weekends authorized');
+    ok('the portal record carries the priority', stored.priority === 'Expedited');
+    ok('the portal record carries the geographic limits',
+       stored.geographic_limits === 'Within 50 miles of Roanoke');
     ok('the portal record carries the billing email', stored.billing_email === 'ap@carrier.example');
     ok('the portal record marks the work invoiced', stored.payment_method === 'Invoiced to carrier');
     ok('nothing is charged at assignment', stored.fee_due === 0);
@@ -256,10 +339,10 @@ section('Switching service after the flow has branched');
   await advance(page);
   await page.locator('#opt-claims').click();
   await page.waitForTimeout(80);
-  ok('claim assignment gives 7 steps', await dots(page) === 7);
+  ok('claim assignment gives 8 steps', await dots(page) === 8);
   await page.locator('#opt-process').click();
   await page.waitForTimeout(80);
-  ok('switching back to a consumer service restores 6 steps', await dots(page) === 6);
+  ok('switching back to a consumer service restores 5 steps', await dots(page) === 5);
   ok('the switch leaves you on the service step', (await heading(page)).includes('What do you need'));
   await advance(page);
   ok('the consumer flow resumes correctly', await heading(page) === 'Subject of the investigation');
@@ -294,6 +377,10 @@ section('The relay never receives what was typed');
   await advance(page);
   await set(page, 'o_goal', 'Activity versus stated restrictions');
   await advance(page);
+  await page.locator('#opt-auth-a24').click();
+  await page.waitForTimeout(80);
+  await set(page, 'z_nte', '$3,600 not to exceed');
+  await advance(page);
   await page.locator('[data-k="a_consent"]').check();
   await set(page, 'a_typed', 'Dana Adjuster');
   await sign(page);
@@ -314,6 +401,7 @@ section('The relay never receives what was typed');
       'the claim number': 'WC-2026-88421',
       'the policy number': 'POL-77123',
       'the signature image': 'data:image/png',
+      'what the carrier authorized spending': '3,600',
     };
     for (const [what, needle] of Object.entries(secrets)) {
       ok(`the relay never sees ${what}`, !blob.includes(needle));
@@ -323,6 +411,124 @@ section('The relay never receives what was typed');
     ok('the relay is told where to read the details instead',
        String(submitted.where_to_read_it || '').includes('portal'));
   }
+}
+
+/* An adjuster arriving from the insurance pages must never be shown the
+   consumer side. Landing on the shared picker would offer them domestic
+   surveillance with a private-client price beside it. */
+section('The carrier door — /intake/?assignment=insurance');
+{
+  submitted = null; stored = null;
+  const page = await (await browser.newContext()).newPage();
+  await page.route('**api.web3forms.com/**', route => {
+    submitted = JSON.parse(route.request().postData() || '{}');
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' });
+  });
+  await page.route('**formsubmit.co/**', route => route.abort());
+  await page.route('**/portal-api/ingest', route => {
+    stored = JSON.parse(route.request().postData() || '{}');
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+  });
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(BASE + '?assignment=insurance');
+  await page.waitForTimeout(200);
+
+  const first = await page.locator('.card').innerText();
+  ok('the carrier door opens on the assigning contact', await heading(page) === 'Assigning contact');
+  ok('it identifies itself as an assignment intake',
+     (await page.locator('.name').innerText()).includes('ASSIGNMENT INTAKE'));
+  ok('the page title is the assignment intake',
+     (await page.title()).includes('Secure Assignment Intake'));
+  ok('the service picker is gone from the flow', await dots(page) === 7);
+  ok('a carrier is asked their title', first.includes('Title'));
+  ok('a carrier is asked their organization type', first.includes('Organization type'));
+  ok('a carrier is NOT asked for a mailing address', !first.includes('Mailing address'));
+  ok('a carrier is NOT asked the best time to reach them', !first.includes('Best time'));
+
+  // The whole point: none of the consumer business is ever put on screen.
+  //
+  // This checks rendered text, not page source. The consumer step markup does
+  // still sit in the shared file's <script> — a carrier who opened View Source
+  // could read it. Isolating that too means splitting the form into two pages,
+  // which is a structural change, not a copy change. What is asserted here is
+  // what an adjuster actually sees.
+  const seen = await page.evaluate(() => document.body.innerText);
+  for (const [what, needle] of Object.entries({
+    'domestic surveillance': 'personal or legal matters',
+    'the relationship-to-you framing': 'relationship to you',
+    'the consumer half-day price': '$400',
+    'the consumer two-day price': '$1,500',
+    'process serving': 'Process Serving',
+    'any consumer price at all': '$',
+  })) ok(`the carrier never sees ${what}`, !seen.includes(needle), seen.slice(0, 200));
+
+  await set(page, 'c_name', 'Karen Whitfield');
+  await set(page, 'c_email', 'kwhitfield@carrier.example');
+  await set(page, 'c_title', 'Claims Adjuster');
+  await page.locator('[data-k="c_orgtype"]').selectOption({ label: 'Insurance carrier' });
+  await advance(page);
+  ok('step 2 goes straight to the claim, with no service picker',
+     await heading(page) === 'Claim details');
+
+  await set(page, 'k_carrier', 'Blue Ridge Mutual');
+  await set(page, 'k_claimno', 'WC-2026-104871');
+  await advance(page);
+  await set(page, 's_name', 'Marcus Ellery');
+  await advance(page);
+  await set(page, 'o_goal', 'Activity against stated restrictions');
+  await advance(page);
+  ok('the authorization step is still reached', await heading(page) === 'Scheduling & authorization');
+  await page.locator('#opt-auth-a24').click();
+  await page.waitForTimeout(80);
+  await advance(page);
+  await page.locator('[data-k="a_consent"]').check();
+  await set(page, 'a_typed', 'Karen Whitfield');
+  await sign(page);
+  await advance(page);
+  ok('and it still ends in billing, not payment', await heading(page) === 'Billing');
+  await advance(page);
+  await page.waitForTimeout(500);
+
+  ok('the assignment records as a claim', stored && stored.claim_number === 'WC-2026-104871');
+  ok('the contact title is recorded', stored && stored.contact_title === 'Claims Adjuster');
+  ok('the organization type is recorded', stored && stored.organization_type === 'Insurance carrier');
+  ok('nothing was charged', stored && stored.fee_due === 0);
+  await page.close();
+}
+
+/* Bare /intake/ is unchanged for anyone who did not come via the insurance
+   pages — all three services still offered. */
+section('Bare /intake/ still offers everything');
+{
+  const page = await newPage();
+  ok('it is still the client intake',
+     (await page.locator('.name').innerText()).includes('CLIENT INTAKE'));
+  await set(page, 'c_name', 'Jane Client');
+  await set(page, 'c_phone', '4345550111');
+  await advance(page);
+  const services = await page.locator('.card').innerText();
+  ok('surveillance is offered', services.includes('Surveillance'));
+  ok('process serving is offered', services.includes('Process Serving'));
+  ok('the claim assignment is still offered here too',
+     services.includes('Insurance Claim Assignment'));
+  await page.close();
+}
+
+/* Every carrier-facing button has to go through the door, or the isolation is
+   decorative — one stale link puts an adjuster back on the consumer picker. */
+section('Carrier pages link to the carrier door');
+{
+  for (const f of ['insurance-investigations/index.html',
+                   'insurance-investigations/vendor-information/index.html']) {
+    const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    const bare = (src.match(/href="\/intake\/"/g) || []).length;
+    const door = (src.match(/href="\/intake\/\?assignment=insurance"/g) || []).length;
+    ok(`${f.split('/')[1] === 'index.html' ? 'the insurance page' : 'the vendor page'} sends carriers through the door`, door > 0);
+    ok(`${f.split('/')[1] === 'index.html' ? 'the insurance page' : 'the vendor page'} has no bare /intake/ link left`, bare === 0, `${bare} left`);
+  }
+  const red = fs.readFileSync(path.join(ROOT, '_redirects'), 'utf8');
+  ok('the old /submit/ URL lands on the carrier door',
+     /\/insurance-investigations\/submit\/\*\s+\/intake\/\?assignment=insurance/.test(red));
 }
 
 /* ------------------------------------------------------------------ report */

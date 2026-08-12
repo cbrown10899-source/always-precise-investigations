@@ -295,7 +295,338 @@ async function handleIngest(request, env) {
   return json({ ok: true, case_no: caseNo });
 }
 
+/* ---------------------------------------------------------------- pricing */
+
+/* THE ONE INTERNAL RATE CONFIGURATION. The reasoning behind these numbers is in
+   PRICING.md next to this file; both live in case-portal/ because that
+   directory is excluded from the Pages deploy.
+
+   These are CARRIER rates and they are internal. They are not published on the
+   site, not sent to the intake form, and `/pricing` below is admin-only. A
+   negotiated rate is a preferred-volume rate, never advertised.
+
+   Do not copy a number out of here into a page or a second config. One place is
+   the whole point: a rate rise must not leave a stale figure behind.
+
+   Consumer pricing is separate and deliberately public — PACKAGES in
+   intake/index.html. Do not merge the two. */
+const RATES = {
+  currency: 'USD',
+  surveillance: {
+    standard: 150,           // rack rate per investigator hour
+    volumeMin: 135,          // preferred-volume band, offered on merit
+    volumeMax: 150,
+    floor: 125,              // do not go below without guaranteed volume
+    minHoursPerDay: 8,
+    typicalAuthHours: 24,    // 3 days — the usual initial authorization
+  },
+
+  /* The flat-fee carrier ladder. Hours match AUTH_PRESETS below, so whatever a
+     carrier authorizes on the intake form maps straight onto a price here.
+     Quoted per assignment and confirmed in writing — never published.
+
+     Priced deliberately: the one-day block is rack rate, and the discount
+     widens with the commitment without ever crossing the floor. A draft at
+     1000/1800/2600 worked out to 125/112.50/108.33 an hour, which put two of
+     the three below the floor and left about $1,000 a case on the table against
+     the standard rate. There is a test that fails if any block here drops under
+     RATES.surveillance.floor, so that cannot happen again by accident. */
+  packages: [
+    { hours: 8,  price: 1200, label: 'One day — 8 hours',
+      note: 'The minimum surveillance day, at the standard rate.' },
+    { hours: 16, price: 2300, label: 'Two days — 16 hours',
+      note: '$100 below the standard rate for the commitment.' },
+    { hours: 24, price: 3300, label: 'Three days — 24 hours',
+      note: 'The usual initial authorization. $300 below standard, inside the preferred-volume band.' },
+  ],
+  services: {
+    // [low, high] per hour. A single number means one rate, not a range.
+    surveillance_wc:      [150, 150],
+    surveillance_liab:    [150, 150],
+    surveillance_disab:   [150, 150],
+    siu_fraud:            [150, 175],
+    recorded_statement:   [125, 150],
+    field_canvass:        [125, 150],
+    scene_liability:      [125, 150],
+    background_social:    [100, 150],
+    asset_business:       [150, 200],
+    skip_trace:           [125, 150],
+    testimony:            [200, 250],
+  },
+  multipliers: { rush: 1.25, holiday: 1.5 },
+  /* NO ADDITIONAL FEES. The quoted price is the invoiced price, on both the
+     carrier and the private-client side. Mileage, travel time, tolls, parking,
+     database and record fees, report writing and the footage are all inside the
+     block. Nothing is added afterwards.
+
+     This is a commitment made to clients in the signed terms, not an internal
+     default — do not reintroduce line-item expense billing without changing the
+     terms in intake/index.html at the same time.
+
+     The ladder was checked against it: absorbing roughly 60 miles a day at
+     $0.70 leaves the three-day block at about $132/hr, still above the $125
+     floor. That is why absorbing travel is affordable at these prices and was
+     not at the $2,600 draft, which would have landed near $103.
+
+     The one carve-out is the one already published on the vendor page: an
+     assignment outside the defined service area has its travel quoted honestly
+     before the assignment is accepted, rather than absorbed silently. Quoted up
+     front and agreed is not an additional fee — a line item appearing on an
+     invoice afterwards is, and that is what never happens. */
+  expenses: {
+    billedSeparately: false,
+    includedInBlock: ['Mileage', 'Travel time', 'Tolls', 'Parking',
+                      'Database fees', 'Record fees', 'Report writing',
+                      'Video review', 'Footage and evidence delivery'],
+    outsideServiceArea: 'Quoted before the assignment is accepted, never added afterwards.',
+    mileagePerMile: 0.70,   // for internal costing only — never invoiced
+  },
+  // Reporting is investigator time. Never promise it free.
+  billableAsInvestigatorTime: ['Field investigation', 'Surveillance',
+    'Video review', 'Chronology preparation', 'Report writing',
+    'Evidence organization', 'Case-file preparation', 'Evidence delivery'],
+};
+
+/* Authorization presets offered on the carrier intake. HOURS ONLY — the form is
+   a public page, so it must not carry a rate. The estimate below is computed
+   here, for admins, never sent to the form. */
+const AUTH_PRESETS = [8, 16, 24];
+
+/* ------------------------------------------------------------- rate sheets */
+
+/* The two documents the office sends a client. They live here, not on the
+   public site, because no quote or price is shown to anyone who has not asked
+   for one: a private client gets the retainer sheet, a carrier gets the block
+   ladder, and neither sees the other's numbers.
+
+   `id` is what the email endpoint takes, so keep an id stable once it has been
+   sent to anyone. Prices come from RATES and the constants below — nothing here
+   restates a figure that is set elsewhere. */
+const PERSONAL = { retainer: 1500, hourly: 100, minHours: 4 };
+
+function rateSheets() {
+  const money = n => '$' + Number(n).toLocaleString('en-US');
+  const inc = 'Mileage, travel time, tolls, parking, database and record fees, '
+            + 'video review and the written report are all included.';
+  return [
+    {
+      id: 'personal',
+      name: `${money(PERSONAL.retainer)} retainer`,
+      audience: 'Private clients — surveillance, domestic and family matters',
+      summary: `${money(PERSONAL.retainer)} to begin, applied to the work performed, then `
+             + `${money(PERSONAL.hourly)} an hour with a ${PERSONAL.minHours}-hour minimum.`,
+      lines: [
+        { label: 'Retainer to begin', value: money(PERSONAL.retainer),
+          note: 'Applied in full to the work performed — it is not a separate charge.' },
+        { label: 'Hourly rate', value: `${money(PERSONAL.hourly)}/hr`,
+          note: `${PERSONAL.minHours}-hour minimum engagement.` },
+        { label: 'Additional fees', value: 'None', note: inc },
+        { label: 'Beyond the retainer', value: `${money(PERSONAL.hourly)}/hr`,
+          note: 'Only ever with your approval first. Nothing is spent without asking you.' },
+      ],
+      closing: 'Work begins once the retainer is received. You get a written report with '
+             + 'time-stamped photographs and video, and the investigator who did the work '
+             + 'can testify to what they personally observed.',
+    },
+    {
+      id: 'insurance',
+      name: 'Insurance assignment rates',
+      audience: 'Carriers, TPAs, self-insured employers, SIU and defense counsel',
+      summary: `Surveillance is authorized in blocks of hours. ${money(RATES.surveillance.minHoursPerDay)}`
+             + `-hour minimum day; ${RATES.surveillance.typicalAuthHours} hours is the usual initial authorization.`,
+      lines: [
+        ...RATES.packages.map(p => ({
+          label: p.label, value: money(p.price), note: p.note,
+        })),
+        { label: 'Additional hours', value: `${money(RATES.surveillance.standard)}/hr`,
+          note: 'Never incurred without written approval from the assigning contact.' },
+        { label: 'Additional fees', value: 'None', note: inc },
+        { label: 'Outside the service area', value: 'Quoted first',
+          note: 'Travel is quoted and agreed before the assignment is accepted, never added afterwards.' },
+      ],
+      closing: 'Rates are confirmed in writing before any work begins. Submitting an assignment '
+             + 'does not by itself constitute acceptance. Deliverables are a written activity '
+             + 'report tied to time-stamped video and photographs, with the source footage.',
+    },
+  ];
+}
+
+function sheetById(id) { return rateSheets().find(s => s.id === id) || null; }
+
+async function emailSheet(request, env, id) {
+  const sheet = sheetById(id);
+  if (!sheet) return json({ error: 'no such rate sheet' }, 404);
+
+  const body = await readJson(request);
+  const to = String(body.to || '').trim();
+  // Deliberately loose — a real address check is a delivery attempt, and this
+  // only needs to catch a typo before one is spent.
+  if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(to) || to.length > 200) {
+    return json({ error: 'Enter a valid email address.' }, 400);
+  }
+  const note = String(body.note || '').slice(0, 500);
+  const caseNo = String(body.case_no || '').slice(0, 64);
+
+  const { text, html } = sheetEmail(sheet, note);
+  const subject = caseNo
+    ? `${sheet.name} — Always Precise Investigations (case ${caseNo})`
+    : `${sheet.name} — Always Precise Investigations`;
+
+  const mail = await sendMail(env, { to, subject, text, html });
+  if (!mail.sent) {
+    return json({
+      error: mail.reason === 'not_configured'
+        ? 'Email is not configured on the Worker. Add RESEND_API_KEY to send from here.'
+        : 'That did not send. Check the address and try again.',
+      reason: mail.reason,
+    }, 502);
+  }
+  return json({ ok: true, sent_to: to, sheet: sheet.id });
+}
+
+async function caseSummary(env, user) {
+  const scope = user.role === 'admin' ? '' : 'WHERE assigned_to = ?';
+  const binds = user.role === 'admin' ? [] : [user.id];
+  const { results } = await env.DB.prepare(
+    `SELECT status, kind, COUNT(*) AS n FROM submissions ${scope} GROUP BY status, kind`)
+    .bind(...binds).all();
+
+  const out = { total: 0, new: 0, assigned: 0, in_progress: 0, closed: 0, claims: 0, consumer: 0 };
+  for (const r of results || []) {
+    const n = Number(r.n) || 0;
+    out.total += n;
+    if (r.status in out) out[r.status] += n;
+    if (r.kind === 'claims') out.claims += n; else out.consumer += n;
+  }
+  // Unassigned work an admin should be looking at first.
+  if (user.role === 'admin') {
+    const row = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM submissions WHERE assigned_to IS NULL AND status != 'closed'").first();
+    out.unassigned = row ? Number(row.n) || 0 : 0;
+  }
+  return json({ summary: out });
+}
+
+/* The email. Plain text alongside the HTML so it stays readable in a client
+   that blocks markup, and so an adjuster forwarding it to their approver does
+   not send them a broken page. */
+function sheetEmail(sheet, note) {
+  const rows = sheet.lines.map(l =>
+    `  ${l.label}: ${l.value}\n     ${l.note}`).join('\n');
+  const text =
+`${sheet.name}
+Always Precise Investigations, LLC — Va DCJS #11-9159
+
+${sheet.summary}
+${note ? `\n${note}\n` : ''}
+${rows}
+
+${sheet.closing}
+
+Questions: (434) 907-0975
+Always Precise Investigations, LLC`;
+
+  const html =
+`<div style="font-family:'Segoe UI',Arial,sans-serif;color:#1c2531;line-height:1.55;max-width:560px">
+  <h2 style="margin:0 0 2px;color:#12305a">${escHtml(sheet.name)}</h2>
+  <p style="margin:0 0 18px;font-size:.82rem;color:#5c6775;letter-spacing:.04em;text-transform:uppercase">
+    Always Precise Investigations, LLC &middot; Va DCJS #11-9159</p>
+  <p style="margin:0 0 18px">${escHtml(sheet.summary)}</p>
+  ${note ? `<p style="margin:0 0 18px;padding:12px 14px;background:#f4f8fa;border-left:3px solid #2f7d90">${escHtml(note)}</p>` : ''}
+  <table style="width:100%;border-collapse:collapse;margin:0 0 18px">
+    ${sheet.lines.map(l => `<tr>
+      <td style="padding:11px 0;border-bottom:1px solid #e4e9ed;vertical-align:top">
+        <b>${escHtml(l.label)}</b>
+        <div style="font-size:.86rem;color:#5c6775">${escHtml(l.note)}</div>
+      </td>
+      <td style="padding:11px 0;border-bottom:1px solid #e4e9ed;text-align:right;
+                 white-space:nowrap;font-weight:700;vertical-align:top">${escHtml(l.value)}</td>
+    </tr>`).join('')}
+  </table>
+  <p style="font-size:.92rem">${escHtml(sheet.closing)}</p>
+  <hr style="border:0;border-top:1px solid #dfe3e8">
+  <p style="font-size:.82rem;color:#5c6775">Questions? (434) 907-0975<br>
+     Always Precise Investigations, LLC</p>
+</div>`;
+  return { text, html };
+}
+
+/* Each block with its effective hourly worked out, and flagged against the
+   band and the floor. The flags are what stop a discount being agreed by
+   feel — a block that reads as a reasonable round number can still be under
+   the rate the firm decided it would not go below. */
+function packageSheet() {
+  const s = RATES.surveillance;
+  return RATES.packages.map(p => {
+    const effective = Math.round((p.price / p.hours) * 100) / 100;
+    return {
+      ...p, effective,
+      savingVsStandard: (s.standard * p.hours) - p.price,
+      belowVolumeBand: effective < s.volumeMin,
+      belowFloor: effective < s.floor,
+    };
+  });
+}
+
+function quoteFor(hours, rate) {
+  const h = Number(hours);
+  if (!Number.isFinite(h) || h <= 0) return null;
+  // Number(null) and Number('') are both 0, and 0 is finite — so an absent rate
+  // has to be rejected before the numeric check, or a missing ?rate= quotes the
+  // whole assignment at nothing.
+  const given = rate === null || rate === undefined || String(rate).trim() === ''
+    ? NaN : Number(rate);
+  const r = Number.isFinite(given) && given > 0 ? given : RATES.surveillance.standard;
+  return {
+    hours: h, rate: r, subtotal: h * r,
+    rush: h * r * RATES.multipliers.rush,
+    holiday: h * r * RATES.multipliers.holiday,
+    belowFloor: r < RATES.surveillance.floor,
+    belowVolumeBand: r < RATES.surveillance.volumeMin,
+  };
+}
+
 /* ------------------------------------------------------------ submissions */
+
+/* An investigator is given what the fieldwork needs and nothing that identifies
+   who is paying for it. The carrier, the adjuster, the claim and policy numbers,
+   the defense firm, the billing contact and the consumer client's own details
+   are what a departing investigator would need to solicit the work directly, so
+   they never leave this Worker for a non-admin caller.
+
+   This is an allow-list, not a delete-list, and deliberately so: when the intake
+   form gains a field, it stays admin-only until someone decides otherwise. A
+   delete-list would leak every new field by default.
+
+   Same principle as the row scope above — enforced here, not by the page hiding
+   fields. A field the page merely omits is still in the browser's network tab. */
+const FIELD_KEEP = [
+  // who and where to watch
+  'subject_name', 'subject_address', 'subject_description', 'subject_relationship',
+  // what the assignment actually asks for
+  'objective', 'authorized_hours', 'timeline', 'notes', 'attachments',
+  // case shape — none of these name the client
+  'claim_type', 'date_of_loss', 'prior_surveillance',
+  // the limits the fieldwork has to stay inside. An investigator cannot work to
+  // an authorization they cannot see. `not_to_exceed` is deliberately NOT here:
+  // it is a budget, and a budget is commercial.
+  'start_date', 'permitted_days', 'permitted_times', 'weekend_authorized',
+  'priority', 'geographic_limits',
+];
+
+/* The denormalised columns carry the same identities as the payload does — a
+   claim number is the carrier's own reference, so it names them just as
+   plainly. Dropped from list rows and detail rows alike. */
+function redactRow(row) {
+  const { carrier, claim_number, client_name, client_email, client_phone, ...rest } = row;
+  return rest;
+}
+
+function redactPayload(payload) {
+  const kept = {};
+  for (const k of FIELD_KEEP) if (payload[k] !== undefined) kept[k] = payload[k];
+  return kept;
+}
 
 async function listSubmissions(request, env, user) {
   const url = new URL(request.url);
@@ -318,7 +649,11 @@ async function listSubmissions(request, env, user) {
     ? env.DB.prepare('SELECT COUNT(*) AS n FROM submissions').first()
     : env.DB.prepare('SELECT COUNT(*) AS n FROM submissions WHERE assigned_to = ?').bind(user.id).first());
 
-  return json({ submissions: results || [], total: countRow ? countRow.n : 0, limit, offset });
+  const rows = results || [];
+  return json({
+    submissions: user.role === 'admin' ? rows : rows.map(redactRow),
+    total: countRow ? countRow.n : 0, limit, offset,
+  });
 }
 
 async function getSubmission(env, user, caseNo) {
@@ -330,6 +665,7 @@ async function getSubmission(env, user, caseNo) {
   if (user.role !== 'admin' && row.assigned_to !== user.id) return json({ error: 'not found' }, 404);
   let payload = {};
   try { payload = JSON.parse(row.payload); } catch { /* keep the row usable */ }
+  if (user.role !== 'admin') return json({ submission: { ...redactRow(row), payload: redactPayload(payload) } });
   return json({ submission: { ...row, payload } });
 }
 
@@ -501,6 +837,16 @@ Va DCJS #11-9159`;
   <p style="font-size:.8rem;color:#5c6775">Always Precise Investigations, LLC &middot; Va DCJS #11-9159</p>
 </div>`;
 
+  return sendMail(env, { to, subject: 'Your Always Precise case portal access', text, html });
+}
+
+/* One place that talks to the provider. Never throws: a send that fails is
+   reported, never fatal, because losing an invitation or a quote to a provider
+   outage would be worse than sending it by hand. */
+async function sendMail(env, { to, subject, text, html }) {
+  if (!env.RESEND_API_KEY) return { sent: false, reason: 'not_configured' };
+  if (!to) return { sent: false, reason: 'no_address' };
+  const from = env.INVITE_FROM || 'Always Precise Investigations <onboarding@resend.dev>';
   try {
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -508,16 +854,16 @@ Va DCJS #11-9159`;
         Authorization: `Bearer ${env.RESEND_API_KEY}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ from, to, subject: 'Your Always Precise case portal access', text, html }),
+      body: JSON.stringify({ from, to, subject, text, html }),
       signal: AbortSignal.timeout(8000),
     });
     if (res.ok) return { sent: true };
     let detail = '';
     try { detail = (await res.json()).message || ''; } catch { /* body may not be json */ }
-    console.error('invite email rejected', res.status, detail);
+    console.error('email rejected', res.status, detail);
     return { sent: false, reason: 'rejected', status: res.status, detail };
   } catch (e) {
-    console.error('invite email failed', e && e.message ? e.message : e);
+    console.error('email failed', e && e.message ? e.message : e);
     return { sent: false, reason: 'unreachable' };
   }
 }
@@ -710,6 +1056,38 @@ async function route(request, env) {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return setStatus(request, env, m[1]);
   }
+
+  /* Internal rates. Admin-only and deliberately not reachable from the intake
+     form or any public page — carrier pricing is quoted per assignment, and a
+     negotiated rate is never advertised. `hours` and `rate` are optional and
+     produce a quote against the configured standard. */
+  if (p === '/pricing' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    const q = new URL(request.url).searchParams;
+    return json({
+      rates: RATES,
+      auth_presets: AUTH_PRESETS,
+      packages: packageSheet(),
+      quote: q.has('hours') ? quoteFor(q.get('hours'), q.get('rate')) : null,
+    });
+  }
+
+  /* The two sheets the office sends. Admin-only for the same reason the rates
+     are: a price the firm has not chosen to quote yet is not public. */
+  if (p === '/sheets' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return json({ sheets: rateSheets(), email_configured: Boolean(env.RESEND_API_KEY) });
+  }
+
+  m = p.match(/^\/sheets\/([a-z]{3,20})\/email$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return emailSheet(request, env, m[1]);
+  }
+
+  /* Counts for the dashboard. Scoped like everything else — an investigator's
+     totals are their own cases, not the firm's book of work. */
+  if (p === '/summary' && method === 'GET') return caseSummary(env, user);
 
   if (p === '/users' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);

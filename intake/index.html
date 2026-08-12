@@ -46,10 +46,11 @@
   .opt{display:block;border:1.5px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:10px;cursor:pointer;transition:border-color .15s,background .15s;}
   .opt:hover{border-color:var(--teal-2);}
   .opt.sel{border-color:var(--teal-2);background:#f0f8fa;}
+  .opt .badge{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:999px;background:var(--teal-2);
+    color:#fff;font-size:.68rem;font-weight:700;letter-spacing:.03em;text-transform:uppercase;vertical-align:middle;}
   .opt input{margin-right:8px;}
   .opt b{font-size:1rem;}
   .opt .desc{color:var(--muted);font-size:.86rem;margin-top:2px;}
-  .opt .price{float:right;color:var(--navy);font-weight:700;}
 
   .feebox{background:#f0f8fa;border:1px solid #cfe6ec;border-radius:10px;padding:14px 16px;margin:4px 0 16px;font-size:.9rem;}
   .feebox .row{display:flex;justify-content:space-between;padding:3px 0;}
@@ -65,11 +66,6 @@
   .sigline{position:absolute;left:16px;right:16px;bottom:34px;border-bottom:1px solid #c7ccd3;pointer-events:none;}
   .sigx{position:absolute;left:16px;bottom:16px;color:var(--muted);font-size:.8rem;pointer-events:none;}
   .sigclear{position:absolute;right:10px;top:10px;background:#fff;border:1px solid var(--line);border-radius:6px;font-size:.78rem;padding:4px 10px;cursor:pointer;color:var(--muted);}
-
-  .pay-opt{display:flex;gap:12px;flex-wrap:wrap;margin:6px 0 4px;}
-  .pay-opt .opt{flex:1;min-width:150px;margin:0;text-align:center;}
-  .pay-btn{display:inline-block;width:100%;text-align:center;color:#fff;font-weight:700;text-decoration:none;padding:14px;border-radius:8px;font-size:1.05rem;margin-top:6px;}
-  .pay-btn.venmo{background:#3D95CE;} .pay-btn.cashapp{background:#00C244;}
 
   .nav{display:flex;gap:10px;margin-top:20px;}
   .btn{font:inherit;font-size:1rem;font-weight:700;border:0;border-radius:8px;padding:13px 22px;cursor:pointer;}
@@ -98,7 +94,7 @@
 <div class="top">
   <div class="wrap">
     <svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="10" fill="#13273f"/><path d="M32 12l6 8-6 8-6-8z" fill="#3d97ad"/><path d="M32 30l10 12H22z" fill="#c99a3b"/></svg>
-    <div class="name">ALWAYS PRECISE<span>INVESTIGATIONS · CLIENT INTAKE</span></div>
+    <div class="name">ALWAYS PRECISE<span id="m-kind">INVESTIGATIONS · CLIENT INTAKE</span></div>
     <div class="meta">
       <a id="m-phone" href="tel:+14349070975">(434) 907-0975</a><br>
       <span id="m-lic">Va DCJS #11-9159</span>
@@ -123,16 +119,42 @@ const FIRM = {
   phone:   "(434) 907-0975",
   tel:     "+14349070975",
   email:   "AlwaysPreciseInvestigations@gmail.com",
-  license: "11-9159",          // Va DCJS
-  venmo:   "Trever-Brown9",    // NO @  (personal — swap to business before client use)
-  cashtag: "TreverB"           // NO $  (personal — swap to business before client use)
+  license: "11-9159"           // Va DCJS
+  // No payment is taken on this page any more — the office sends a fee sheet
+  // from the portal and the client pays from that, so the handles that used to
+  // build the payment buttons live wherever those instructions are written.
 };
+/* ============ NO PRICES ON THIS PAGE ============
+   This is a public page, and the firm does not publish quotes — not for private
+   clients and not for carriers. A rate is sent to someone who has asked for
+   one, from the portal, as one of the two rate sheets in case-portal/worker.js:
+   the retainer sheet for a private client and the block ladder for a
+   carrier.
+
+   So the intake collects the case and nothing else. It does not quote, it does
+   not total, and it does not take a payment. The office sends the sheet, and
+   the client pays from that.
+
+   Do not reintroduce a figure here. There is a test that fails if a dollar
+   amount appears anywhere in this file. */
+
+/* Carrier surveillance authorization presets. HOURS, NEVER A RATE — this page
+   is public and carrier pricing is quoted per assignment. The 8-hour day is the
+   billing minimum and 24 hours is the usual initial authorization; the internal
+   rate that goes with them lives in case-portal/worker.js, which is not
+   deployed to the public site. */
+const AUTH_PRESETS = [
+  { id:"a8",     label:"8 hours — 1 day",   desc:"A single day of coverage. Our minimum surveillance day." },
+  { id:"a16",    label:"16 hours — 2 days", desc:"Two days, typically split to compare different days of the week." },
+  { id:"a24",    label:"24 hours — 3 days", desc:"The usual initial authorization — enough to establish a pattern rather than a snapshot." },
+  { id:"custom", label:"Custom authorization", desc:"Tell us the hours or the structure you need and we will work to it." },
+];
+const authPreset = id => AUTH_PRESETS.find(a => a.id === id) || null;
+
+/* Labels only. Every one of these used to carry a figure; none does now. */
 const FEES = {
-  surveillance: { label:"Surveillance", retainer:1500, hourly:100, minHours:4 },
-  process:      { label:"Process Serving", flat:150 },
-  // Carrier work is invoiced, not paid up front through a consumer payment app.
-  // No rate is published here on purpose: claims rates are set per fee schedule
-  // and confirmed in writing before work begins.
+  surveillance: { label:"Surveillance" },
+  process:      { label:"Process Serving" },
   claims:       { label:"Insurance Claim Assignment", billed:true }
 };
 /* Web3Forms access key goes here for email delivery; until then submissions
@@ -149,13 +171,36 @@ const PORTAL_INGEST_KEY = "8d9ad57784dbc7e00d86806d2c186d60337fb4f762ea5f100ef31
 
 /* ============ State ============ */
 const CASE_NO = "API-" + new Date().toISOString().slice(0,10).replace(/-/g,"") + "-" + String(Math.floor(1000+Math.random()*9000));
-const S = { step:0, svc:null, pay:null, sig:null, files:[] };
+/* A carrier arriving from the insurance pages must never be shown the consumer
+   side of the business. Landing on the shared service picker would offer an
+   adjuster domestic surveillance, with a private-client price beside it, which
+   is the wrong first impression of the firm and tells them nothing they want.
+
+   So `/intake/?assignment=insurance` is the carrier door: the service is fixed
+   to a claim assignment, the picker is dropped from the flow entirely, and the
+   page identifies itself as an assignment intake rather than a client intake.
+   Every "Submit an Assignment" button on the insurance pages points here.
+
+   Bare `/intake/` is unchanged and still offers all three, for anyone who
+   arrives without going through the insurance pages. */
+const CARRIER_ONLY = /^(insurance|carrier|claims)$/i
+  .test(new URLSearchParams(location.search).get("assignment") || "");
+
+const S = { step:0, svc:CARRIER_ONLY ? "claims" : null, sig:null, files:[] };
 // A carrier assignment collects claim details and ends in invoicing, so the
-// claims path has its own step list. Both share the first two steps, which is
-// what makes it safe to switch service without stranding S.step.
-const STEPS       = ["info","service","subject","objective","agreement","payment"];
-const CLAIM_STEPS = ["info","service","claim","subject","objective","agreement","billing"];
-function steps(){ return S.svc==="claims" ? CLAIM_STEPS : STEPS; }
+// claims path has its own step list; surveillance adds a step to choose how
+// much coverage to buy. All three share the first two steps, which is what
+// makes it safe to switch service without stranding S.step.
+const STEPS       = ["info","service","subject","objective","agreement"];
+const CLAIM_STEPS = ["info","service","claim","subject","objective","authorization","agreement","billing"];
+function steps(){
+  // The carrier door has no service picker to show, so it is dropped rather
+  // than rendered and skipped — a step that exists but is never reached still
+  // draws a segment on the progress bar.
+  if(CARRIER_ONLY) return CLAIM_STEPS.filter(s => s !== "service");
+  if(S.svc==="claims") return CLAIM_STEPS;
+  return STEPS;
+}
 function isClaims(){ return S.svc==="claims"; }
 const app = document.getElementById("app");
 const $ = id => document.getElementById(id);
@@ -169,16 +214,15 @@ document.addEventListener("DOMContentLoaded", () => {
   $("caseno").textContent = CASE_NO;
   $("m-phone").textContent = FIRM.phone; $("m-phone").href = "tel:" + FIRM.tel;
   $("m-lic").textContent = "Va DCJS #" + FIRM.license;
+  if(CARRIER_ONLY){
+    $("m-kind").textContent = "INVESTIGATIONS · ASSIGNMENT INTAKE";
+    document.title = "Secure Assignment Intake — Always Precise Investigations";
+  }
   render();
 });
 
 const money = n => "$" + Number(n).toLocaleString();
 function svc(){ return S.svc ? FEES[S.svc] : null; }
-function amountDue(){
-  const f=svc(); if(!f) return 0;
-  if(isClaims()) return 0;            // invoiced to the carrier, nothing due at intake
-  return S.svc==="surveillance" ? f.retainer : f.flat;
-}
 
 /* ============ Render ============ */
 // The two paths have different step counts, so the progress bar is rebuilt
@@ -197,7 +241,6 @@ function render(){
   app.innerHTML = view(step);
   restore();
   if(step==="agreement") initSig();
-  if(step==="payment") paintPay();
   window.scrollTo(0,0);
 }
 function restore(){ document.querySelectorAll("[data-k]").forEach(el=>{ if(val[el.dataset.k]!==undefined){ if(el.type==="checkbox") el.checked=val[el.dataset.k]; else el.value=val[el.dataset.k]; } }); }
@@ -210,7 +253,35 @@ function navButtons(nextLabel){
 }
 
 function view(step){
-  if(step==="info") return `<div class="card">
+  /* An adjuster and a private client are asked different questions here. A
+     carrier is an organization with a title and a direct line; a mailing
+     address and "best time to reach you" are consumer questions that read as
+     amateur on an assignment form. */
+  if(step==="info") return isClaims() ? `<div class="card">
+    <h1 class="sr-page-title">Secure Assignment Intake</h1>
+    <h2>Assigning contact</h2>
+    <p class="lead">Who is assigning this file, and how we reach you about it.</p>
+    <label class="f"><span>Full name <b class="req">*</b></span><input type="text" data-k="c_name" autocomplete="name"></label>
+    <div class="two">
+      <label class="f"><span>Title</span><input type="text" data-k="c_title" placeholder="e.g. Claims Adjuster, SIU Investigator"></label>
+      <label class="f"><span>Organization type</span>
+        <select data-k="c_orgtype">
+          <option value="">Select…</option>
+          <option>Insurance carrier</option>
+          <option>Third-party administrator</option>
+          <option>Self-insured employer</option>
+          <option>Insurance defense firm</option>
+          <option>Risk pool / municipal</option>
+          <option>SIU department</option>
+          <option>Other</option></select></label>
+    </div>
+    <div class="two">
+      <label class="f"><span>Direct phone</span><input type="tel" data-k="c_phone" autocomplete="tel"></label>
+      <label class="f"><span>Email</span><input type="email" data-k="c_email" autocomplete="email"></label>
+    </div>
+    <p class="hint" style="margin-top:-6px;">Give us at least one — phone or email. A request number is issued the moment this is submitted.</p>
+    ${navButtons()}
+  </div>` : `<div class="card">
     <h1 class="sr-page-title">Client Intake</h1>
     <h2>Your information</h2>
     <p class="lead">Tell us how to reach you. Everything you share is confidential.</p>
@@ -227,19 +298,16 @@ function view(step){
 
   if(step==="service") return `<div class="card">
     <h2>What do you need?</h2>
-    <p class="lead">Select the service. Fees are shown up front — no surprises.</p>
+    <p class="lead">Select the service. We send you a written fee sheet before anything is agreed &mdash; no surprises and no obligation.</p>
     <label class="opt" id="opt-surveillance" onclick="pickSvc('surveillance')">
-      <span class="price">${money(FEES.surveillance.retainer)} retainer</span>
       <input type="radio" name="svc" ${S.svc==="surveillance"?"checked":""}><b>Surveillance</b>
-      <div class="desc">Documented surveillance for personal or legal matters. ${money(FEES.surveillance.retainer)} retainer, then ${money(FEES.surveillance.hourly)}/hr (${FEES.surveillance.minHours}-hour minimum).</div>
+      <div class="desc">Documented surveillance for personal or legal matters. We confirm the fee with you in writing before any work begins.</div>
     </label>
     <label class="opt" id="opt-process" onclick="pickSvc('process')">
-      <span class="price">${money(FEES.process.flat)} flat</span>
       <input type="radio" name="svc" ${S.svc==="process"?"checked":""}><b>Process Serving</b>
-      <div class="desc">Reliable service of legal documents across Virginia. ${money(FEES.process.flat)} flat fee.</div>
+      <div class="desc">Reliable service of legal documents across Virginia. We confirm the fee with you before we go.</div>
     </label>
     <label class="opt" id="opt-claims" onclick="pickSvc('claims')">
-      <span class="price">Invoiced</span>
       <input type="radio" name="svc" ${S.svc==="claims"?"checked":""}><b>Insurance Claim Assignment</b>
       <div class="desc">For carriers, TPAs, self-insured employers and defense counsel. Workers' comp, auto and liability claims — billed to the carrier, nothing due at assignment.</div>
     </label>
@@ -309,26 +377,74 @@ function view(step){
       ? "What does this file need to answer, and by when?"
       : "What outcome are you hoping for, and how soon?"}</p>
     <label class="f"><span>${isClaims()?"What does the file need to establish?":"What do you want to find out or accomplish?"}</span><textarea data-k="o_goal" placeholder="${isClaims()?"e.g. activity level versus stated restrictions, employment verification, scene documentation…":"Describe the situation and the result you need…"}"></textarea></label>
-    ${isClaims()?`<label class="f"><span>Authorized hours / budget</span><input type="text" data-k="o_hours" placeholder="e.g. 8 hours authorized, or call before exceeding"></label>`:""}
     <label class="f"><span>${isClaims()?"Deadline":"Timeline / urgency"}</span><input type="text" data-k="o_time" placeholder="${isClaims()?"e.g. hearing 9/12, report needed by 9/1":"e.g. before a court date on 8/15, ASAP, flexible"}"></label>
     <label class="f"><span>Anything else we should know</span><textarea data-k="o_notes" placeholder="Optional"></textarea></label>
     ${navButtons()}
   </div>`;
 
+  /* Carrier authorization. Surveillance is authorized in hours, and the presets
+     are the standard 8-hour day, two days and the usual three-day initial
+     authorization. NO RATE APPEARS HERE — this is a public page and carrier
+     pricing is quoted per assignment, so the form collects what the carrier is
+     authorizing and says the rate is confirmed before acceptance. */
+  if(step==="authorization") return `<div class="card">
+    <h2>Scheduling &amp; authorization</h2>
+    <p class="lead">What are we authorized to do, and when. Final rates and authorization
+      are confirmed before the assignment is accepted.</p>
+
+    <div style="font-size:.85rem;font-weight:600;margin-bottom:6px;">Authorized hours</div>
+    ${AUTH_PRESETS.map(a => `
+      <label class="opt ${val.z_auth===a.id?"sel":""}" id="opt-auth-${a.id}" onclick="pickAuth('${a.id}')">
+        <input type="radio" name="auth" ${val.z_auth===a.id?"checked":""}><b>${a.label}</b>
+        <div class="desc">${a.desc}</div>
+      </label>`).join("")}
+    ${val.z_auth==="custom"?`<label class="f"><span>Custom authorization</span><input type="text" data-k="z_custom" placeholder="e.g. 12 hours, or 4 hours per day across 5 days"></label>`:""}
+
+    <div class="two">
+      <label class="f"><span>Not-to-exceed amount</span><input type="text" data-k="z_nte" placeholder="Optional — a cap we will not pass without approval"></label>
+      <label class="f"><span>Requested start date</span><input type="date" data-k="z_start"></label>
+    </div>
+    <div class="two">
+      <label class="f"><span>Permitted days</span><input type="text" data-k="z_days" placeholder="e.g. weekdays only, or any day"></label>
+      <label class="f"><span>Permitted times</span><input type="text" data-k="z_times" placeholder="e.g. 0600–1400, or investigator's discretion"></label>
+    </div>
+    <div class="two">
+      <label class="f"><span>Weekend authorization</span>
+        <select data-k="z_weekend">
+          <option value="">Select…</option>
+          <option>Yes — weekends authorized</option>
+          <option>No — weekdays only</option>
+          <option>Call first</option></select></label>
+      <label class="f"><span>Priority</span>
+        <select data-k="z_priority">
+          <option value="">Select…</option>
+          <option>Routine</option>
+          <option>Expedited</option>
+          <option>Rush — needed immediately</option></select></label>
+    </div>
+    <label class="f"><span>Geographic limitations</span><input type="text" data-k="z_geo" placeholder="e.g. within 50 miles of Roanoke; call before travelling further"></label>
+    <label class="f"><span>Special billing instructions</span><textarea data-k="z_billing" placeholder="Optional — required references, invoicing portal, expense pre-approval…"></textarea></label>
+    <p class="hint"><b>No additional fees.</b> The rate we confirm is the rate you are invoiced &mdash;
+      mileage, travel time, tolls, parking, database and record fees and report writing are all
+      included. An assignment outside our service area has its travel quoted before we accept it,
+      never added to the invoice afterwards.</p>
+    ${navButtons()}
+  </div>`;
+
   if(step==="agreement"){
-    const f=svc(), due=amountDue();
+    const f=svc();
+    // No figure on either side. The fee sheet is sent from the office once
+    // someone has read the case; publishing a number here would quote every
+    // visitor the same price regardless of what the work actually is.
     const feeLines = isClaims()
       ? `<div class="row"><span>Billing</span><b>Invoiced to the carrier</b></div>
-         <div class="row"><span>Rate</span><span>Per agreed fee schedule</span></div>
-         <div class="row"><span>Mileage &amp; travel time</span><span>Not charged in our service area</span></div>`
-      : S.svc==="surveillance"
-      ? `<div class="row"><span>Retainer (due now)</span><b>${money(f.retainer)}</b></div>
-         <div class="row"><span>Hourly rate after retainer</span><span>${money(f.hourly)}/hr</span></div>
-         <div class="row"><span>Minimum engagement</span><span>${f.minHours} hours</span></div>`
-      : `<div class="row"><span>Flat service fee</span><b>${money(f.flat)}</b></div>`;
+         <div class="row"><span>Rate</span><span>Confirmed in writing before work begins</span></div>
+         <div class="row"><span>Additional fees</span><span>None &mdash; mileage, travel and reporting included</span></div>`
+      : `<div class="row"><span>Fee</span><b>Sent to you in writing</b></div>
+         <div class="row"><span>Additional fees</span><span>None &mdash; mileage, travel and the report included</span></div>`;
     const dueLine = isClaims()
       ? `<div class="row due"><span>Due at assignment</span><span>Nothing — invoiced</span></div>`
-      : `<div class="row due"><span>Due today</span><span>${money(due)}</span></div>`;
+      : `<div class="row due"><span>Due now</span><span>Nothing — we send your fee sheet first</span></div>`;
     return `<div class="card">
       <h2>${isClaims()?"Assignment terms &amp; authorization":"Agreement &amp; signature"}</h2>
       <p class="lead">${isClaims()
@@ -340,7 +456,9 @@ function view(step){
         <h4>Assignment</h4>
         <p>The assigning party retains ${FIRM.name} ("the firm," Va DCJS #${FIRM.license}) to perform the claim investigation described in this intake. Work begins on written acceptance of the assignment; no payment is due at intake.</p>
         <h4>Billing</h4>
-        <p>Work is invoiced to the carrier, third-party administrator or assigning employer under the agreed fee schedule. The applicable rate and any estimated hours are confirmed in writing before work begins. Mileage and travel time are not charged within our service area. Authorized hours are not exceeded without prior approval from the assigning contact.</p>
+        <p>Work is invoiced to the carrier, third-party administrator or assigning employer under the agreed fee schedule. The applicable rate and any estimated hours are confirmed in writing before work begins. Authorized hours are not exceeded without prior approval from the assigning contact.</p>
+        <h4>No additional fees</h4>
+        <p>The confirmed rate is the invoiced amount. Mileage, travel time, tolls, parking, database and record fees, video review and report preparation are included in it and are not billed as separate line items. An assignment outside the firm's service area has its travel quoted and agreed before the assignment is accepted; nothing is added to an invoice after the work is done.</p>
         <h4>Lawful conduct</h4>
         <p>All work is performed lawfully and from lawful vantage points. The firm does not trespass on private property, record into a residence, place tracking devices on vehicles it has no authority over, access accounts or devices, or misrepresent itself to obtain financial or medical records. Surveillance is conducted without contact with the claimant.</p>
         <h4>Reporting</h4>
@@ -349,11 +467,9 @@ function view(step){
         <p>Claim information is kept confidential except as required by law, and work product is released only to the assigning party and its counsel. Investigative work cannot guarantee a particular result or finding.</p>
       ` : `
         <h4>Engagement</h4>
-        <p>The client retains ${FIRM.name} ("the firm," Va DCJS #${FIRM.license}) to perform ${f?f.label.toLowerCase():"the selected"} services described in this intake. Work begins after the retainer or fee shown above is received.</p>
+        <p>The client retains ${FIRM.name} ("the firm," Va DCJS #${FIRM.license}) to perform ${f?f.label.toLowerCase():"the selected"} services described in this intake. Submitting this form does not by itself start work or create a charge.</p>
         <h4>Fees</h4>
-        <p>${S.svc==="surveillance"
-            ? `A non-refundable retainer of ${money(f.retainer)} is due today and is applied to work performed. Services are billed at ${money(f.hourly)} per hour with a ${f.minHours}-hour minimum. The client authorizes additional hours only with prior approval.`
-            : `A flat fee of ${money(f.flat)} is due today for one service attempt as permitted by law. Additional attempts or addresses may incur additional fees agreed in advance.`}</p>
+        <p>The firm sends the client a written fee sheet after reading this intake, and work begins only once the client has agreed to it and the retainer has been received. Nothing is charged before then. <b>No additional fees apply</b> on top of the agreed amount: mileage, travel time, tolls, parking, database and record fees and preparation of the written report are all included. Work beyond what has been agreed is never carried out without the client's approval first, and work outside the firm's service area is quoted and agreed before it is accepted.</p>
         <h4>Lawful purpose &amp; conduct</h4>
         <p>The client affirms a lawful and legitimate purpose for this engagement. The firm does not accept cyber-stalking matters and has no ability to access, hack, or retrieve data from a third party's phone, accounts, or devices. All work is performed lawfully; findings are provided for the client's stated purpose only.</p>
         <h4>Confidentiality &amp; no guarantee</h4>
@@ -370,7 +486,7 @@ function view(step){
         <canvas id="sig"></canvas>
         <div class="sigline"></div><div class="sigx">Sign with your finger or mouse</div>
       </div>
-      ${navButtons(isClaims()?"Continue":"Continue to payment")}
+      ${navButtons(isClaims()?"Continue":"Submit intake")}
     </div>`;
   }
 
@@ -389,40 +505,14 @@ function view(step){
     ${navButtons("Submit assignment")}
   </div>`;
 
-  if(step==="payment"){
-    const f=svc(), due=amountDue();
-    return `<div class="card">
-      <h2>Payment</h2>
-      <p class="lead">A ${S.svc==="surveillance"?"retainer":"fee"} of <b>${money(due)}</b> is due today to begin. Choose how you'd like to pay.</p>
-      <div class="pay-opt">
-        <label class="opt ${S.pay==="venmo"?"sel":""}" onclick="pickPay('venmo')"><input type="radio" name="pay" ${S.pay==="venmo"?"checked":""}><b>Venmo</b></label>
-        <label class="opt ${S.pay==="cashapp"?"sel":""}" onclick="pickPay('cashapp')"><input type="radio" name="pay" ${S.pay==="cashapp"?"checked":""}><b>Cash App</b></label>
-      </div>
-      <div id="paylink"></div>
-      <p class="hint">Payments go to ${FIRM.name} (Trever Brown). Please confirm the name in the app before sending. You can also pay by another method — just call ${FIRM.phone}.</p>
-      ${navButtons("Submit intake")}
-    </div>`;
-  }
   return "";
 }
 
 /* ============ Step actions ============ */
 function pickSvc(k){ capture(); S.svc=k; render(); }
-function pickPay(k){ capture(); S.pay=k; paintPay(); document.querySelectorAll(".pay-opt .opt").forEach(o=>o.classList.remove("sel")); }
+function pickAuth(k){ capture(); val.z_auth=k; render(); }
 function pickFiles(input){ S.files=[...input.files].map(f=>f.name); const n=$("filenote"); if(n) n.textContent = S.files.length? S.files.length+" file(s) attached: "+S.files.join(", ") : "Attach court papers or a photo of the subject if you have them."; }
 
-function paintPay(){
-  const box=$("paylink"); if(!box) return;
-  const due=amountDue(), note=encodeURIComponent("Case "+CASE_NO);
-  if(S.pay==="venmo"){
-    const url=`https://venmo.com/${FIRM.venmo}?txn=pay&amount=${due}&note=${note}`;
-    box.innerHTML=`<a class="pay-btn venmo" href="${url}" target="_blank" rel="noopener noreferrer">Pay ${money(due)} with Venmo</a>`;
-  }else if(S.pay==="cashapp"){
-    const url=`https://cash.app/$${FIRM.cashtag}/${due}`;
-    box.innerHTML=`<a class="pay-btn cashapp" href="${url}" target="_blank" rel="noopener noreferrer">Pay ${money(due)} with Cash App</a>`;
-  }else box.innerHTML="";
-  document.querySelectorAll(".pay-opt .opt").forEach((o,i)=>o.classList.toggle("sel",(i===0&&S.pay==="venmo")||(i===1&&S.pay==="cashapp")));
-}
 
 /* ============ Signature pad ============ */
 let sigCtx=null, drawing=false, sigDirty=false;
@@ -450,6 +540,10 @@ function validate(step){
     if(!(val.c_phone||"").trim() && !(val.c_email||"").trim()) return "Add a phone number or email so we can reach you.";
   }
   if(step==="service" && !S.svc) return "Please choose a service.";
+  if(step==="authorization"){
+    if(!val.z_auth) return "Please choose how many hours you are authorizing.";
+    if(val.z_auth==="custom" && !(val.z_custom||"").trim()) return "Please describe the custom authorization.";
+  }
   if(step==="claim"){
     if(!(val.k_carrier||"").trim()) return "Please enter the carrier, TPA or employer assigning the file.";
     if(!(val.k_claimno||"").trim()) return "Please enter the claim number.";
@@ -461,13 +555,14 @@ function validate(step){
     if(!(val.a_typed||"").trim()) return "Please type your full legal name.";
     if(!S.sig || !sigDirty) return "Please sign in the box above.";
   }
-  if(step==="payment" && !S.pay) return "Choose a payment method (or call us to pay another way).";
   return null;
 }
 function next(){
   const step=steps()[S.step], msg=validate(step);
   if(msg){ fail(msg); return; }
-  if(step==="payment" || step==="billing"){ finish(); return; }
+  // The consumer path now ends on the agreement — there is no payment step,
+  // because there is no figure to charge until the fee sheet is agreed.
+  if(step==="billing" || (step==="agreement" && !isClaims())){ finish(); return; }
   S.step++; render();
 }
 function back(){ capture(); if(S.step>0){ S.step--; render(); } }
@@ -478,8 +573,7 @@ function buildPayload(){
   const p = {
     case_no:CASE_NO,
     service:f?f.label:"",
-    fee_due:amountDue(),
-    payment_method:S.pay||"",
+    fee_due:0,          // nothing is quoted or charged at intake any more
     client_name:val.c_name||"", client_phone:val.c_phone||"", client_email:val.c_email||"",
     client_address:val.c_addr||"", best_time:val.c_best||"",
     subject_name:val.s_name||"", subject_address:val.s_addr||"", subject_description:val.s_desc||"", subject_relationship:val.s_rel||"",
@@ -496,9 +590,27 @@ function buildPayload(){
       claim_type:val.k_type||"", date_of_loss:val.k_dol||"",
       adjuster:val.k_adjuster||"", adjuster_email:val.k_adj_email||"", adjuster_phone:val.k_adj_phone||"",
       defense_counsel:val.k_counsel||"", billing_reference:val.k_po||"", prior_surveillance:val.k_prior||"",
-      authorized_hours:val.o_hours||"", billing_email:val.b_email||"", billing_notes:val.b_notes||"",
+      billing_email:val.b_email||"", billing_notes:val.b_notes||"",
+      contact_title:val.c_title||"", organization_type:val.c_orgtype||"",
       payment_method:"Invoiced to carrier"
     });
+    // What the carrier authorized. The operational half of this — hours, days,
+    // times, weekend, priority, geography — is what an investigator needs to
+    // work inside the authorization, and those fields are allow-listed in the
+    // portal Worker. The not-to-exceed amount is commercial and stays
+    // admin-only, which the allow-list gives us by default.
+    const a = authPreset(val.z_auth);
+    Object.assign(p, {
+      authorized_hours: val.z_auth==="custom"
+        ? (val.z_custom||"Custom authorization")
+        : (a ? a.label : ""),
+      not_to_exceed:val.z_nte||"",
+      start_date:val.z_start||"",
+      permitted_days:val.z_days||"", permitted_times:val.z_times||"",
+      weekend_authorized:val.z_weekend||"", priority:val.z_priority||"",
+      geographic_limits:val.z_geo||"",
+    });
+    if(val.z_billing) p.billing_notes = [p.billing_notes, val.z_billing].filter(Boolean).join(" — ");
   }
   return p;
 }
@@ -588,11 +700,11 @@ function renderRecord(p, sent, threw, stored){
       ${row(claims?"Assigning contact":"Name",p.client_name)}${row("Phone",p.client_phone)}${row("Email",p.client_email)}
       ${claims?"":`${row("Address",p.client_address)}${row("Best time",p.best_time)}`}
       ${row(claims?"Claimant":"Subject",p.subject_name)}${row(claims?"Claimant address":"Subject address",p.subject_address)}${row("Description",p.subject_description)}${row(claims?"Injury & restrictions":"Relationship",p.subject_relationship)}
-      ${row(claims?"Scope":"Objective",p.objective)}${claims?row("Authorized hours",p.authorized_hours):""}${row(claims?"Deadline":"Timeline",p.timeline)}${row("Notes",p.notes)}${row("Attachments",p.attachments)}
+      ${row(claims?"Scope":"Objective",p.objective)}${claims?`${row("Authorized hours",p.authorized_hours)}${row("Not to exceed",p.not_to_exceed)}${row("Requested start",p.start_date)}${row("Permitted days",p.permitted_days)}${row("Permitted times",p.permitted_times)}${row("Weekend",p.weekend_authorized)}${row("Priority",p.priority)}${row("Geographic limits",p.geographic_limits)}`:""}${row(claims?"Deadline":"Timeline",p.timeline)}${row("Notes",p.notes)}${row("Attachments",p.attachments)}
       ${row("Service",p.service)}
       ${claims
         ? `${row("Billing","Invoiced to carrier")}${row("Billing reference / PO",p.billing_reference)}${row("Invoices to",p.billing_email)}${row("Billing notes",p.billing_notes)}`
-        : `${row("Due today",money(p.fee_due))}${row("Payment method",p.payment_method)}`}
+        : `${row("Fee","Sent to you in writing — nothing charged yet")}`}
       ${row(claims?"Authorized by":"Signed by",p.signed_name)}
     </dl>
     ${p.signature?`<div><div style="font-size:.8rem;color:var(--muted)">Signature</div><img class="sig" src="${p.signature}" alt="signature"></div>`:""}

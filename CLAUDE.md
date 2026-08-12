@@ -127,26 +127,156 @@ portal on our own Cloudflare account and nowhere else. `buildNotice()` is what
 enforces that; do not widen it, and do not spread the full payload into the
 notice. There is a test that fails if any of those values reaches the relay.
 
-`intake/` is a single-file wizard with **two paths** off the service step:
+**A carrier must never be shown the consumer side.** Every "Submit an Assignment"
+button on the insurance pages, and the `/insurance-investigations/submit/`
+redirect, points at **`/intake/?assignment=insurance`** — the carrier door. It
+fixes the service to a claim assignment, drops the service picker from the flow
+entirely, retitles the page "Secure Assignment Intake", and asks an adjuster for
+their title and organization type instead of a mailing address and the best time
+to reach them. Landing an adjuster on the shared picker offers them domestic
+surveillance with a private-client price beside it.
 
-- **Consumer** — surveillance or process serving. Six steps, ends in a Venmo
-  or Cash App payment for the retainer or flat fee.
-- **Carrier** — insurance claim assignment. Seven steps: an extra claim-details
+Bare `/intake/` is unchanged and still offers all three services, for anyone who
+did not arrive via the insurance pages. There is a test that fails if a bare
+`/intake/` link reappears on a carrier page.
+
+Known limit: the consumer step markup still sits in the shared file's `<script>`,
+so it is in View Source even though no carrier-facing screen renders it. The
+tests assert what an adjuster *sees*. Removing it from the source means splitting
+the form into two pages that share plumbing — a structural change nobody has
+asked for yet.
+
+`intake/` is a single-file wizard with **three paths** off the service step:
+
+- **Surveillance** — seven steps. An extra coverage step where the client buys
+  a block of hours, then a Venmo or Cash App payment for that block.
+- **Process serving** — six steps, ending in payment of the flat fee.
+- **Carrier** — insurance claim assignment. Eight steps: an extra claim-details
   step (carrier/TPA, claim number, policy, claim type, date of loss, adjuster,
   defense counsel, prior surveillance), claimant-specific wording on the
-  subject and scope steps, carrier terms in place of the consumer agreement,
-  and a billing step instead of payment. Nothing is charged at assignment.
+  subject and scope steps, a scheduling-and-authorization step, carrier terms in
+  place of the consumer agreement, and a billing step instead of payment.
+  Nothing is charged at assignment.
 
-The step list is chosen by `steps()`; both paths share the first two steps,
+  The authorization step offers 8 / 16 / 24 hours or custom — **hours, never a
+  rate**, because that page is public. It also collects the not-to-exceed
+  amount, start date, permitted days and times, weekend authorization, priority
+  and geographic limits. Everything there except the not-to-exceed is
+  allow-listed to investigators: they cannot work inside an authorization they
+  cannot see, but a budget is commercial.
+
+The step list is chosen by `steps()`; all three share the first two steps,
 which is what makes switching service mid-flow safe. **No claims rate is
 published in the form** — carrier work is invoiced per fee schedule and
-confirmed in writing, so there is no number to get wrong or to leak.
+confirmed in writing, so there is no number to get wrong or to leak. The
+consumer blocks below are consumer pricing and must never appear on the claims
+path.
+
+## Carrier rates are internal — and this file is public-adjacent
+
+The insurance rate strategy lives in `case-portal/PRICING.md`, with the
+machine-readable copy as `RATES` in `case-portal/worker.js`. **Both are in
+`case-portal/` deliberately** — that directory is excluded from the Pages
+deploy, and it is the only safe home for anything internal.
+
+`deploy.yml` rsyncs the repo root to Cloudflare Pages. `CLAUDE.md` was **not**
+excluded until 2026-08-12, so this file was being served publicly. It is
+excluded now, and the workflow fails the build if any markdown file is staged
+for deploy. Do not put a rate, a negotiated discount or an internal note
+anywhere the rsync can reach.
+
+Carrier pricing is never published: not on `insurance-investigations/`, not on
+the vendor page, not in the intake form. `/pricing` on the Worker is admin-only
+and returns 403 to an investigator. The public language is "final rates and
+authorization will be confirmed before the assignment is accepted."
+
+Headline numbers: $150/hr standard, 8-hour minimum day, $135–$150
+preferred-volume band, $125 floor. The flat-fee ladder a carrier is quoted is
+**$1,200 / $2,300 / $3,300** for 8 / 16 / 24 hours, with overage at $150/hr and
+never without written approval. Those hours match the authorization presets on
+the intake form.
+
+**`RATES.packages` is guarded.** A test fails if any block falls below the $125
+floor, and the floor is written out separately in the test so lowering it takes
+a deliberate edit in two places. That guard is there because a bad price does
+not look like one: $1,000 / $1,800 / $2,600 reads like sensible round numbers
+and is $125.00 / $112.50 / $108.33 an hour.
+
+**No additional fees, on both sides of the business.** The quoted price is the
+invoiced price — mileage, travel time, tolls, parking, database and record fees,
+video review and report preparation are all inside the block, never added
+afterwards. This is written into the signed terms on the carrier path *and* the
+private-client path, so it is a promise to clients, not an internal setting: do
+not reintroduce expense billing without changing `intake/index.html` at the same
+time. The one carve-out is the one already published — travel for an assignment
+outside the service area is quoted and agreed before acceptance.
+
+A second test checks the ladder still clears the floor *after* absorbing about
+60 miles a day, because an all-in price is only affordable if it was priced for
+it. The three-day block lands near $132/hr; the rejected $2,600 draft would land
+near $103.
+
+The reasoning — including why $800/day is rejected for carrier work — is in
+`PRICING.md`. Read it before quoting anything.
+
+## No price appears on the public site
+
+**The intake form quotes nothing and charges nothing.** There is no rate card,
+no package step and no payment step on it any more, on either path. A test fails
+if a dollar figure appears anywhere in `intake/index.html`, and another checks
+the homepage, both insurance pages and the two service pages.
+
+Pricing lives in the portal as two rate sheets an admin opens and emails
+(`rateSheets()` in `case-portal/worker.js`):
+
+- **`$1,500 retainer`** — private clients. $1,500 to begin applied to the work,
+  then $100/hr with a 4-hour minimum. `PERSONAL` in the Worker sets it.
+- **`Insurance assignment rates`** — carriers. The `RATES.packages` ladder.
+
+`GET /sheets` and `POST /sheets/:id/email` are admin-only; an investigator gets
+403 from both, and from `/pricing`. Sending goes through `sendMail()`, the same
+Resend path the invitations use, and never throws — a provider outage costs a
+copy-and-paste, not a lost quote.
+
+The consumer flow therefore ends at the **agreement**, not a payment: submitting
+records the case, the office reads it and sends the sheet, and work starts once
+the client agrees. The terms say exactly that.
+
+## The dashboard
+
+`summaryCards()` draws a counts strip above the case list on both roles, scoped
+the same way everything else is — an investigator's totals are their own cases.
+`GET /summary` provides them.
+
+**It draws even when there are no cases**, and on an empty portal the worked
+example is shown unasked so the cards are not all zero and a new admin can see
+the shape of the thing. The banner says the totals include the example. There is
+one Hide button, over the case list — not two.
+
+## The rate card
+
+`PACKAGES` and `HOURLY` near the top of `intake/index.html` are **the only place
+a price is set.** Change a number there and it changes the option the client
+picks, the agreement they sign, the amount in the Venmo and Cash App deep links,
+the printed sheet and what is recorded in the portal. Nothing downstream
+hard-codes a figure, and a test fails if any block price appears anywhere else
+in the file.
+
+Current blocks: 4 hours $400, 8 hours $800, 16 hours $1,500, 24 hours $2,200,
+with overage at $100/hr and never without the client's prior approval. These
+replaced a $1,500 retainer plus $100/hr with a 4-hour minimum. `id` is what gets
+stored, so keep an id stable once a real case has used it.
+
+A block also sets `authorized_hours` on the stored case — deliberately, because
+that is the one allow-listed field an investigator can see, and they need to
+know the cap they are working to. The price fields (`package`, `package_price`,
+`fee_due`) stay admin-only by default, which is the allow-list doing its job.
 
 Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
-node intake/test-intake.mjs      # needs Playwright; skips cleanly without it
-node visitor-alerts/test-worker.mjs
+node intake/test-intake.mjs      # 130 checks; needs Playwright, skips cleanly without it
+node visitor-alerts/test-worker.mjs   # 41 checks
 ```
 
 Note the payment handles in `FIRM` are still personal accounts — the source
@@ -160,6 +290,25 @@ comment flags them to be swapped for business accounts before client use.
 Two roles. Admins see every case, assign work and manage accounts.
 Investigators see **only** cases assigned to them — enforced in the SQL query,
 not by the page hiding rows. Test that boundary if you touch the queries.
+
+**An investigator is never sent the client.** They get the fieldwork — subject,
+address, vehicle, restrictions, scope, authorized hours, deadline, notes — and
+none of what identifies who is paying: the carrier, the adjuster and their
+contact details, the claim and policy numbers, defense counsel, the billing
+contact, the consumer client's own name and number, and the signature. An
+investigator who leaves should not be leaving with the client list.
+
+`FIELD_KEEP` in `case-portal/worker.js` is what enforces it, and it is an
+**allow-list on purpose**: when the intake form gains a field it stays
+admin-only until someone decides otherwise. A delete-list would leak every new
+field by default. `redactRow` also drops the denormalised `carrier`,
+`claim_number`, `client_name`, `client_email` and `client_phone` columns — a
+claim number is the carrier's own reference and names them just as plainly.
+
+This is enforced in the Worker, not the page. A field the page merely declines
+to draw is still sitting in the browser's network tab. `portal/index.html`
+carries a copy of `FIELD_KEEP` solely so the built-in example shows an
+investigator the truth; a test compares the two lists and fails if they drift.
 
 **Accounts exist only by invitation.** There is no public sign-up and no route
 that creates an account directly — an admin issues a one-time link and the
@@ -197,8 +346,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 79 checks: auth, invites, roles, ingest, origin
-node portal/test-portal.mjs        # 35 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 179 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 127 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,

@@ -33,7 +33,19 @@ jobs:
             --exclude 'case-portal' \
             --exclude 'build-locations.py' \
             --exclude 'README.md' \
+            --exclude 'CLAUDE.md' \
             ./ _site/
+          # Internal notes must never reach the public site. CLAUDE.md was
+          # being published until 2026-08-12 — it describes where each
+          # boundary is enforced, which is a map for anyone probing them.
+          # case-portal/ is excluded above and is the only home for anything
+          # internal; a rate sheet in the repo root would be served verbatim.
+          for leak in CLAUDE.md README.md PRICING.md; do
+            if [ -e "_site/$leak" ]; then echo "::error::$leak staged for deploy"; exit 1; fi
+          done
+          if find _site -name '*.md' | grep -q .; then
+            echo "::error::markdown staged for deploy:"; find _site -name '*.md'; exit 1
+          fi
           echo "Files to deploy:"; find _site -type f | wc -l
 
       - name: Deploy to Cloudflare Pages
