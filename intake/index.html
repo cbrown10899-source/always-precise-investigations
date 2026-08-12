@@ -100,7 +100,7 @@
 <div class="top">
   <div class="wrap">
     <svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="10" fill="#13273f"/><path d="M32 12l6 8-6 8-6-8z" fill="#3d97ad"/><path d="M32 30l10 12H22z" fill="#c99a3b"/></svg>
-    <div class="name">ALWAYS PRECISE<span>INVESTIGATIONS · CLIENT INTAKE</span></div>
+    <div class="name">ALWAYS PRECISE<span id="m-kind">INVESTIGATIONS · CLIENT INTAKE</span></div>
     <div class="meta">
       <a id="m-phone" href="tel:+14349070975">(434) 907-0975</a><br>
       <span id="m-lic">Va DCJS #11-9159</span>
@@ -191,7 +191,22 @@ const PORTAL_INGEST_KEY = "8d9ad57784dbc7e00d86806d2c186d60337fb4f762ea5f100ef31
 
 /* ============ State ============ */
 const CASE_NO = "API-" + new Date().toISOString().slice(0,10).replace(/-/g,"") + "-" + String(Math.floor(1000+Math.random()*9000));
-const S = { step:0, svc:null, pkg:null, pay:null, sig:null, files:[] };
+/* A carrier arriving from the insurance pages must never be shown the consumer
+   side of the business. Landing on the shared service picker would offer an
+   adjuster domestic surveillance, with a private-client price beside it, which
+   is the wrong first impression of the firm and tells them nothing they want.
+
+   So `/intake/?assignment=insurance` is the carrier door: the service is fixed
+   to a claim assignment, the picker is dropped from the flow entirely, and the
+   page identifies itself as an assignment intake rather than a client intake.
+   Every "Submit an Assignment" button on the insurance pages points here.
+
+   Bare `/intake/` is unchanged and still offers all three, for anyone who
+   arrives without going through the insurance pages. */
+const CARRIER_ONLY = /^(insurance|carrier|claims)$/i
+  .test(new URLSearchParams(location.search).get("assignment") || "");
+
+const S = { step:0, svc:CARRIER_ONLY ? "claims" : null, pkg:null, pay:null, sig:null, files:[] };
 // A carrier assignment collects claim details and ends in invoicing, so the
 // claims path has its own step list; surveillance adds a step to choose how
 // much coverage to buy. All three share the first two steps, which is what
@@ -200,6 +215,10 @@ const STEPS       = ["info","service","subject","objective","agreement","payment
 const SURV_STEPS  = ["info","service","package","subject","objective","agreement","payment"];
 const CLAIM_STEPS = ["info","service","claim","subject","objective","authorization","agreement","billing"];
 function steps(){
+  // The carrier door has no service picker to show, so it is dropped rather
+  // than rendered and skipped — a step that exists but is never reached still
+  // draws a segment on the progress bar.
+  if(CARRIER_ONLY) return CLAIM_STEPS.filter(s => s !== "service");
   if(S.svc==="claims") return CLAIM_STEPS;
   return S.svc==="surveillance" ? SURV_STEPS : STEPS;
 }
@@ -216,6 +235,10 @@ document.addEventListener("DOMContentLoaded", () => {
   $("caseno").textContent = CASE_NO;
   $("m-phone").textContent = FIRM.phone; $("m-phone").href = "tel:" + FIRM.tel;
   $("m-lic").textContent = "Va DCJS #" + FIRM.license;
+  if(CARRIER_ONLY){
+    $("m-kind").textContent = "INVESTIGATIONS · ASSIGNMENT INTAKE";
+    document.title = "Secure Assignment Intake — Always Precise Investigations";
+  }
   render();
 });
 
@@ -258,7 +281,35 @@ function navButtons(nextLabel){
 }
 
 function view(step){
-  if(step==="info") return `<div class="card">
+  /* An adjuster and a private client are asked different questions here. A
+     carrier is an organization with a title and a direct line; a mailing
+     address and "best time to reach you" are consumer questions that read as
+     amateur on an assignment form. */
+  if(step==="info") return isClaims() ? `<div class="card">
+    <h1 class="sr-page-title">Secure Assignment Intake</h1>
+    <h2>Assigning contact</h2>
+    <p class="lead">Who is assigning this file, and how we reach you about it.</p>
+    <label class="f"><span>Full name <b class="req">*</b></span><input type="text" data-k="c_name" autocomplete="name"></label>
+    <div class="two">
+      <label class="f"><span>Title</span><input type="text" data-k="c_title" placeholder="e.g. Claims Adjuster, SIU Investigator"></label>
+      <label class="f"><span>Organization type</span>
+        <select data-k="c_orgtype">
+          <option value="">Select…</option>
+          <option>Insurance carrier</option>
+          <option>Third-party administrator</option>
+          <option>Self-insured employer</option>
+          <option>Insurance defense firm</option>
+          <option>Risk pool / municipal</option>
+          <option>SIU department</option>
+          <option>Other</option></select></label>
+    </div>
+    <div class="two">
+      <label class="f"><span>Direct phone</span><input type="tel" data-k="c_phone" autocomplete="tel"></label>
+      <label class="f"><span>Email</span><input type="email" data-k="c_email" autocomplete="email"></label>
+    </div>
+    <p class="hint" style="margin-top:-6px;">Give us at least one — phone or email. A request number is issued the moment this is submitted.</p>
+    ${navButtons()}
+  </div>` : `<div class="card">
     <h1 class="sr-page-title">Client Intake</h1>
     <h2>Your information</h2>
     <p class="lead">Tell us how to reach you. Everything you share is confidential.</p>
@@ -640,6 +691,7 @@ function buildPayload(){
       adjuster:val.k_adjuster||"", adjuster_email:val.k_adj_email||"", adjuster_phone:val.k_adj_phone||"",
       defense_counsel:val.k_counsel||"", billing_reference:val.k_po||"", prior_surveillance:val.k_prior||"",
       billing_email:val.b_email||"", billing_notes:val.b_notes||"",
+      contact_title:val.c_title||"", organization_type:val.c_orgtype||"",
       payment_method:"Invoiced to carrier"
     });
     // What the carrier authorized. The operational half of this — hours, days,

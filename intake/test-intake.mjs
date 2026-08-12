@@ -428,6 +428,124 @@ section('The relay never receives what was typed');
   }
 }
 
+/* An adjuster arriving from the insurance pages must never be shown the
+   consumer side. Landing on the shared picker would offer them domestic
+   surveillance with a private-client price beside it. */
+section('The carrier door — /intake/?assignment=insurance');
+{
+  submitted = null; stored = null;
+  const page = await (await browser.newContext()).newPage();
+  await page.route('**api.web3forms.com/**', route => {
+    submitted = JSON.parse(route.request().postData() || '{}');
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' });
+  });
+  await page.route('**formsubmit.co/**', route => route.abort());
+  await page.route('**/portal-api/ingest', route => {
+    stored = JSON.parse(route.request().postData() || '{}');
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+  });
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(BASE + '?assignment=insurance');
+  await page.waitForTimeout(200);
+
+  const first = await page.locator('.card').innerText();
+  ok('the carrier door opens on the assigning contact', await heading(page) === 'Assigning contact');
+  ok('it identifies itself as an assignment intake',
+     (await page.locator('.name').innerText()).includes('ASSIGNMENT INTAKE'));
+  ok('the page title is the assignment intake',
+     (await page.title()).includes('Secure Assignment Intake'));
+  ok('the service picker is gone from the flow', await dots(page) === 7);
+  ok('a carrier is asked their title', first.includes('Title'));
+  ok('a carrier is asked their organization type', first.includes('Organization type'));
+  ok('a carrier is NOT asked for a mailing address', !first.includes('Mailing address'));
+  ok('a carrier is NOT asked the best time to reach them', !first.includes('Best time'));
+
+  // The whole point: none of the consumer business is ever put on screen.
+  //
+  // This checks rendered text, not page source. The consumer step markup does
+  // still sit in the shared file's <script> — a carrier who opened View Source
+  // could read it. Isolating that too means splitting the form into two pages,
+  // which is a structural change, not a copy change. What is asserted here is
+  // what an adjuster actually sees.
+  const seen = await page.evaluate(() => document.body.innerText);
+  for (const [what, needle] of Object.entries({
+    'domestic surveillance': 'personal or legal matters',
+    'the relationship-to-you framing': 'relationship to you',
+    'the consumer half-day price': '$400',
+    'the consumer two-day price': '$1,500',
+    'process serving': 'Process Serving',
+    'any consumer price at all': '$',
+  })) ok(`the carrier never sees ${what}`, !seen.includes(needle), seen.slice(0, 200));
+
+  await set(page, 'c_name', 'Karen Whitfield');
+  await set(page, 'c_email', 'kwhitfield@carrier.example');
+  await set(page, 'c_title', 'Claims Adjuster');
+  await page.locator('[data-k="c_orgtype"]').selectOption({ label: 'Insurance carrier' });
+  await advance(page);
+  ok('step 2 goes straight to the claim, with no service picker',
+     await heading(page) === 'Claim details');
+
+  await set(page, 'k_carrier', 'Blue Ridge Mutual');
+  await set(page, 'k_claimno', 'WC-2026-104871');
+  await advance(page);
+  await set(page, 's_name', 'Marcus Ellery');
+  await advance(page);
+  await set(page, 'o_goal', 'Activity against stated restrictions');
+  await advance(page);
+  ok('the authorization step is still reached', await heading(page) === 'Scheduling & authorization');
+  await page.locator('#opt-auth-a24').click();
+  await page.waitForTimeout(80);
+  await advance(page);
+  await page.locator('[data-k="a_consent"]').check();
+  await set(page, 'a_typed', 'Karen Whitfield');
+  await sign(page);
+  await advance(page);
+  ok('and it still ends in billing, not payment', await heading(page) === 'Billing');
+  await advance(page);
+  await page.waitForTimeout(500);
+
+  ok('the assignment records as a claim', stored && stored.claim_number === 'WC-2026-104871');
+  ok('the contact title is recorded', stored && stored.contact_title === 'Claims Adjuster');
+  ok('the organization type is recorded', stored && stored.organization_type === 'Insurance carrier');
+  ok('nothing was charged', stored && stored.fee_due === 0);
+  await page.close();
+}
+
+/* Bare /intake/ is unchanged for anyone who did not come via the insurance
+   pages — all three services still offered. */
+section('Bare /intake/ still offers everything');
+{
+  const page = await newPage();
+  ok('it is still the client intake',
+     (await page.locator('.name').innerText()).includes('CLIENT INTAKE'));
+  await set(page, 'c_name', 'Jane Client');
+  await set(page, 'c_phone', '4345550111');
+  await advance(page);
+  const services = await page.locator('.card').innerText();
+  ok('surveillance is offered', services.includes('Surveillance'));
+  ok('process serving is offered', services.includes('Process Serving'));
+  ok('the claim assignment is still offered here too',
+     services.includes('Insurance Claim Assignment'));
+  await page.close();
+}
+
+/* Every carrier-facing button has to go through the door, or the isolation is
+   decorative — one stale link puts an adjuster back on the consumer picker. */
+section('Carrier pages link to the carrier door');
+{
+  for (const f of ['insurance-investigations/index.html',
+                   'insurance-investigations/vendor-information/index.html']) {
+    const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    const bare = (src.match(/href="\/intake\/"/g) || []).length;
+    const door = (src.match(/href="\/intake\/\?assignment=insurance"/g) || []).length;
+    ok(`${f.split('/')[1] === 'index.html' ? 'the insurance page' : 'the vendor page'} sends carriers through the door`, door > 0);
+    ok(`${f.split('/')[1] === 'index.html' ? 'the insurance page' : 'the vendor page'} has no bare /intake/ link left`, bare === 0, `${bare} left`);
+  }
+  const red = fs.readFileSync(path.join(ROOT, '_redirects'), 'utf8');
+  ok('the old /submit/ URL lands on the carrier door',
+     /\/insurance-investigations\/submit\/\*\s+\/intake\/\?assignment=insurance/.test(red));
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();

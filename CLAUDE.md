@@ -127,6 +127,25 @@ portal on our own Cloudflare account and nowhere else. `buildNotice()` is what
 enforces that; do not widen it, and do not spread the full payload into the
 notice. There is a test that fails if any of those values reaches the relay.
 
+**A carrier must never be shown the consumer side.** Every "Submit an Assignment"
+button on the insurance pages, and the `/insurance-investigations/submit/`
+redirect, points at **`/intake/?assignment=insurance`** — the carrier door. It
+fixes the service to a claim assignment, drops the service picker from the flow
+entirely, retitles the page "Secure Assignment Intake", and asks an adjuster for
+their title and organization type instead of a mailing address and the best time
+to reach them. Landing an adjuster on the shared picker offers them domestic
+surveillance with a private-client price beside it.
+
+Bare `/intake/` is unchanged and still offers all three services, for anyone who
+did not arrive via the insurance pages. There is a test that fails if a bare
+`/intake/` link reappears on a carrier page.
+
+Known limit: the consumer step markup still sits in the shared file's `<script>`,
+so it is in View Source even though no carrier-facing screen renders it. The
+tests assert what an adjuster *sees*. Removing it from the source means splitting
+the form into two pages that share plumbing — a structural change nobody has
+asked for yet.
+
 `intake/` is a single-file wizard with **three paths** off the service step:
 
 - **Surveillance** — seven steps. An extra coverage step where the client buys
@@ -198,7 +217,7 @@ know the cap they are working to. The price fields (`package`, `package_price`,
 Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
-node intake/test-intake.mjs      # 105 checks; needs Playwright, skips cleanly without it
+node intake/test-intake.mjs      # 135 checks; needs Playwright, skips cleanly without it
 node visitor-alerts/test-worker.mjs   # 41 checks
 ```
 
