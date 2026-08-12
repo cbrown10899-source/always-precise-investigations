@@ -69,6 +69,13 @@
   .tag.closed{background:#e9f7ef;color:var(--good);}
   .empty{color:var(--muted);padding:26px 4px;font-size:.92rem;}
 
+  .ex-note{background:#fdf7ec;border:1px solid #e8cf9e;color:#6b4f12;border-radius:8px;
+    padding:11px 14px;font-size:.88rem;margin-bottom:14px;}
+  .tag.ex-tag{background:#f3e2bd;color:#6b4f12;margin-left:6px;}
+  tbody tr.ex{background:repeating-linear-gradient(45deg,#fffdf7,#fffdf7 10px,#fdf7ec 10px,#fdf7ec 20px);}
+  tbody tr.ex:hover{background:#fdf3e0;}
+  tbody tr.ex td:first-child{box-shadow:inset 3px 0 0 #d9b45e;}
+
   .linkbox{background:#f1f7f9;border:1px solid #cfe6ec;border-radius:8px;padding:12px 14px;margin-top:12px;}
   .linkbox code{display:block;word-break:break-all;font-family:ui-monospace,monospace;font-size:.82rem;color:#14495a;margin-bottom:10px;}
 
@@ -117,6 +124,8 @@ const API = "/portal-api";
 const $ = id => document.getElementById(id);
 const app = $("app");
 let ME = null, TAB = "cases", CASES = [], USERS = [], INVITES = [], TOTAL = 0, FILTER = "", LAST_LINK = "", LAST_EMAILED = false;
+/* Examples show themselves on a first sign-in and can be recalled later. */
+let SHOW_EXAMPLE = false;
 
 function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function when(iso){
@@ -131,6 +140,103 @@ const label = s => ({new:"New", assigned:"Assigned", in_progress:"In progress", 
 function safeImage(src){
   return typeof src === "string" && /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(src) ? src : "";
 }
+
+
+/* ------------------------------------------------------------- examples */
+/* Two worked cases so a new sign-in shows the real layout instead of an empty
+   table. They live here and nowhere else: never fetched, never stored, never
+   written to the database. Every case number starts with EXAMPLE- and the
+   router only accepts [A-Za-z0-9-], so one could never collide with a real
+   case even if it somehow reached the API.
+
+   The data is realistic on purpose — a layout demonstrated with "Lorem ipsum"
+   teaches nobody where the claim number goes. The names and numbers are
+   invented. */
+const EXAMPLE_SIGNATURE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAABGCAIAAAB9pI6tAAABZ0lEQVR42u3bwRGCQAxA0dRgJdZj/33o1fGksmST8P54Vsi+AUSJpzSoMAIBLQEtAS0BLaAloCWgJaAloAW0BLQEtAS0BLSAloCWgJaAloAW0BLQEtAS0BLQAloCWrog6Nv98cfLshVZEaAPOYb7+0kWXIuc5YumjrH+aaRpC/H+iVsWLorMfdXiAZ1wjKh8JIq9E6/2tnznHLxbXkPn7BLWHX03A52/J1gXobz8OnM/6I2wsK45hEzZMYMy1i12PEF2nLqtrW/Qotxxg2Me5Uuxbn06qgi6xShHsp50ZVUCdLtRjlx+t3TWgJ50jmvkAOVTQHcfaEcTKOeBHnYNalMvDdr3KpTngJ4xgl4/rSF71l2OYRUxhDLQQzyhDPQGW8t5+WM30CVYH9Tm0Rugi7Je+wgZykDXku05X6AvLds8gW6P29yAloAW0BLQEtAS0BLQAloCWgJaAloCWkBLQEtAS0BLn70AC1I/GEqi0NIAAAAASUVORK5CYII=";
+
+const EXAMPLE_CASES = [
+  {
+    case_no: "EXAMPLE-CLAIM-0001", kind: "claims", service: "Insurance Claim Assignment",
+    status: "assigned", client_name: "Karen Whitfield", subject_name: "Marcus Ellery",
+    carrier: "Blue Ridge Mutual", claim_number: "WC-2026-104871",
+    created_at: "2026-08-11T14:20:00.000Z", assigned_name: "You",
+    payload: {
+      carrier: "Blue Ridge Mutual", claim_number: "WC-2026-104871",
+      policy_number: "BRM-88-441209", claim_type: "Workers' compensation",
+      date_of_loss: "04/18/2026",
+      adjuster: "Karen Whitfield", adjuster_email: "kwhitfield@blueridgemutual.example",
+      adjuster_phone: "(540) 555-0173",
+      defense_counsel: "Poe & Marsden — R. Marsden",
+      prior_surveillance: "Yes — by another vendor",
+      client_name: "Karen Whitfield", client_phone: "(540) 555-0173",
+      client_email: "kwhitfield@blueridgemutual.example",
+      subject_name: "Marcus Ellery",
+      subject_address: "2214 Old Forest Rd, Lynchburg, VA 24501",
+      subject_description: "White GMC Sierra, VA plate XKT-2209. 6'1\", heavy build, beard.",
+      subject_relationship: "Lumbar disc herniation. No lifting over 15 lbs, no ladders, no prolonged standing. Off work since 04/22.",
+      objective: "Establish activity level against the stated restrictions. Claimant reportedly helps at a family landscaping business on weekends — verify or rule out.",
+      authorized_hours: "8 hours authorized — call before exceeding",
+      timeline: "Commission hearing 09/12 — report needed by 09/01",
+      notes: "Neighbour on the corner is a retired deputy; avoid parking on that side.",
+      attachments: "claim-file.pdf, ISO-report.pdf, claimant-photo.jpg",
+      billing_reference: "PO-77412", billing_email: "ap@blueridgemutual.example",
+      billing_notes: "Submit through the carrier vendor portal. PO must appear on the invoice.",
+      signed_name: "Karen Whitfield", payment_method: "Invoiced to carrier", fee_due: 0,
+      signature: EXAMPLE_SIGNATURE,
+    },
+  },
+  {
+    case_no: "EXAMPLE-INTAKE-0002", kind: "consumer", service: "Surveillance",
+    status: "new", client_name: "Denise Harlow", subject_name: "R. Harlow",
+    carrier: null, claim_number: null,
+    created_at: "2026-08-11T09:05:00.000Z", assigned_name: null,
+    payload: {
+      client_name: "Denise Harlow", client_phone: "(434) 555-0148",
+      client_email: "d.harlow@example.com",
+      client_address: "88 Peakland Pl, Lynchburg, VA 24503",
+      best_time: "Weekday evenings after 6pm",
+      subject_name: "R. Harlow",
+      subject_address: "Same — believed staying elsewhere Thursdays",
+      subject_description: "Grey Honda Accord, VA plate LMR-8841",
+      subject_relationship: "Spouse",
+      objective: "Document whereabouts on Thursday evenings. Attorney has advised documentation is needed before filing.",
+      timeline: "Before the 09/04 hearing date",
+      notes: "Please do not call the house phone. Mobile only.",
+      attachments: "marriage-cert.pdf",
+      signed_name: "Denise Harlow", payment_method: "venmo", fee_due: 1500,
+      signature: EXAMPLE_SIGNATURE,
+    },
+  },
+];
+
+/* An investigator's copy of a case has the client stripped out of it by the
+   Worker before it is sent — carrier, adjuster, claim and policy numbers,
+   defense counsel, billing and the signature never arrive. The example has to
+   be redacted the same way or it would promise a view that does not exist.
+
+   This list mirrors FIELD_KEEP in case-portal/worker.js. The Worker is what
+   enforces it; this only keeps the example honest. A test compares the two so
+   they cannot drift apart. */
+const FIELD_KEEP = [
+  "subject_name", "subject_address", "subject_description", "subject_relationship",
+  "objective", "authorized_hours", "timeline", "notes", "attachments",
+  "claim_type", "date_of_loss", "prior_surveillance",
+];
+
+function redactExample(c) {
+  const kept = {};
+  for (const k of FIELD_KEEP) if (c.payload[k] !== undefined) kept[k] = c.payload[k];
+  return { ...c, carrier: null, claim_number: null, client_name: null, payload: kept };
+}
+
+/* An investigator only ever has cases assigned to them, so they see the claim
+   example and not the unassigned intake — redacted, as a real one would be. */
+function examplesFor(role) {
+  return role === "admin"
+    ? EXAMPLE_CASES
+    : EXAMPLE_CASES.filter(c => c.kind === "claims").map(redactExample);
+}
+function isExample(caseNo) { return String(caseNo || "").startsWith("EXAMPLE-"); }
 
 async function api(path, opts = {}){
   const res = await fetch(API + path, {
@@ -194,38 +300,62 @@ function shell(inner){
 
 function casesView(){
   const q = FILTER.trim().toLowerCase();
-  const rows = CASES.filter(c => !q || [c.case_no, c.client_name, c.subject_name, c.carrier, c.claim_number]
+  const admin = ME.role === "admin";
+  const shown = SHOW_EXAMPLE ? CASES.concat(examplesFor(ME.role)) : CASES;
+  const rows = shown.filter(c => !q || [c.case_no, c.client_name, c.subject_name, c.carrier, c.claim_number]
     .some(v => (v || "").toLowerCase().includes(q)));
 
   // Case numbers reach this markup from a public form, so they go in a data
   // attribute read by a delegated listener — never interpolated into script.
+  //
+  // The client/carrier column is admin-only: the Worker does not send those
+  // fields to an investigator at all, so there is nothing to put in it.
   const body = rows.map(c => `
-    <tr class="click" data-act="openCase" data-case="${esc(c.case_no)}">
+    <tr class="click${isExample(c.case_no) ? " ex" : ""}" data-act="openCase" data-case="${esc(c.case_no)}">
       <td class="mono">${esc(c.case_no)}</td>
       <td class="hide">${when(c.created_at)}</td>
-      <td><span class="tag ${c.kind === "claims" ? "claims" : "consumer"}">${c.kind === "claims" ? "Claim" : "Client"}</span></td>
-      <td>${esc(c.kind === "claims" ? (c.carrier || "—") : (c.client_name || "—"))}
+      <td><span class="tag ${c.kind === "claims" ? "claims" : "consumer"}">${c.kind === "claims" ? "Claim" : "Client"}</span>${
+        isExample(c.case_no) ? '<span class="tag ex-tag">Example</span>' : ""}</td>
+      ${admin ? `<td>${esc(c.kind === "claims" ? (c.carrier || "—") : (c.client_name || "—"))}
           ${c.claim_number ? `<div class="mono">${esc(c.claim_number)}</div>` : ""}</td>
-      <td class="hide">${esc(c.subject_name || "—")}</td>
+      <td class="hide">${esc(c.subject_name || "—")}</td>`
+      : `<td>${esc(c.subject_name || "—")}</td>`}
       <td><span class="tag ${esc(c.status)}">${esc(label(c.status))}</span></td>
-      <td class="hide">${esc(c.assigned_name || "—")}</td>
+      ${admin ? `<td class="hide">${esc(c.assigned_name || "—")}</td>` : ""}
     </tr>`).join("");
 
   const more = TOTAL > CASES.length
     ? `<div class="note">Showing the ${CASES.length} most recent of ${TOTAL} cases. Search covers what is loaded.</div>` : "";
 
+  const exBanner = SHOW_EXAMPLE ? `<div class="ex-note">
+      <b>The rows marked Example are not real cases.</b> They are here to show the layout &mdash;
+      ${ME.role === "admin"
+        ? "a carrier assignment and a client intake, with every field filled in."
+        : "an assignment exactly as one will look when it is given to you."}
+      Open one to see the full detail. Nothing here is stored, and it disappears the moment you hide it.
+      <button class="btn sm ghost" data-act="hideExample" style="margin-left:8px">Hide the example</button>
+    </div>` : "";
+
   return `<div class="card">
     <div class="bar">
       <h2 style="margin:0">Cases</h2>
-      <input id="q" placeholder="Search case, client, carrier, claim no." value="${esc(FILTER)}" data-act="filter">
-      <span class="count">${rows.length} of ${CASES.length}</span>
+      <input id="q" placeholder="${admin ? "Search case, client, carrier, claim no." : "Search case or subject"}" value="${esc(FILTER)}" data-act="filter">
+      ${SHOW_EXAMPLE ? "" : `<button class="btn sm ghost" data-act="showExample">Show an example</button>`}
+      <span class="count">${rows.length} of ${shown.length}</span>
     </div>
+    ${exBanner}
     ${more}
     ${rows.length ? `<div style="overflow-x:auto"><table>
-      <thead><tr><th>Case</th><th class="hide">Received</th><th>Type</th><th>Client / carrier</th>
-      <th class="hide">Subject</th><th>Status</th><th class="hide">Assigned</th></tr></thead>
+      <thead><tr><th>Case</th><th class="hide">Received</th><th>Type</th>
+      ${admin ? `<th>Client / carrier</th><th class="hide">Subject</th>` : `<th>Subject</th>`}
+      <th>Status</th>${admin ? `<th class="hide">Assigned</th>` : ""}</tr></thead>
       <tbody>${body}</tbody></table></div>`
-      : `<div class="empty">${CASES.length ? "Nothing matches that search." : "No submissions yet. Intake forms will appear here as they arrive."}</div>`}
+      : `<div class="empty">${shown.length
+            ? "Nothing matches that search."
+            : (ME.role === "admin"
+                ? "No submissions yet. Intake forms appear here as they arrive."
+                : "Nothing assigned to you yet. Cases appear here when an admin assigns one.")
+              + ` <button class="btn sm ghost" data-act="showExample" style="margin-left:8px">Show an example</button>`}</div>`}
   </div>`;
 }
 
@@ -307,6 +437,9 @@ async function render(){
   try{
     const d = await api("/submissions?limit=200");
     CASES = d.submissions; TOTAL = d.total;
+    // A first sign-in lands on an empty table, which teaches nothing. Show the
+    // worked example unasked, once, until there is real work to look at.
+    if(CASES.length === 0) SHOW_EXAMPLE = true;
     if(ME.role === "admin"){
       USERS = (await api("/users")).users;
       INVITES = (await api("/invites")).invites;
@@ -351,14 +484,26 @@ async function doLogout(){
 
 async function openCase(caseNo){
   let s;
-  try{ s = (await api("/submissions/" + encodeURIComponent(caseNo))).submission; }
-  catch(e){ alert(e.message); return; }
+  if(isExample(caseNo)){
+    // Held in the page, so this never reaches the API or the database.
+    s = examplesFor(ME.role).find(c => c.case_no === caseNo);
+    if(!s) return;
+  }else{
+    try{ s = (await api("/submissions/" + encodeURIComponent(caseNo))).submission; }
+    catch(e){ alert(e.message); return; }
+  }
   const p = s.payload || {};
   const row = (k, v) => v ? `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>` : "";
   const claim = s.kind === "claims";
   const sig = safeImage(p.signature);
 
-  const controls = ME.role === "admin"
+  const controls = isExample(s.case_no)
+    ? `<div class="actions"><div style="color:var(--muted);font-size:.88rem">
+         ${ME.role === "admin"
+           ? "On a real case, this is where you assign it to an investigator and set its status."
+           : "On a real case assigned to you, everything above is what you would see. Assignment and status are set by the office."}
+       </div></div>`
+    : ME.role === "admin"
     ? `<div class="actions">
         <label class="f"><span>Assigned to</span>
           <select id="asg">
@@ -372,6 +517,14 @@ async function openCase(caseNo){
       </div>` : "";
 
   $("dlgBody").innerHTML = `
+    ${isExample(s.case_no) ? `<div class="ex-note" style="margin-bottom:14px">
+       <b>Example — not a real case.</b> ${ME.role === "admin"
+         ? `Every field a live ${claim ? "carrier assignment" : "client intake"} can carry is filled in
+            here, including the signature. A real case shows exactly this, with whatever the sender
+            actually provided.`
+         : `This is the whole of what an assignment shows you: the subject, the scope and the
+            deadline. Who the case is for &mdash; the carrier, the adjuster, the claim number,
+            billing &mdash; stays with the office.`}</div>` : ""}
     <h2>${claim ? "Claim assignment" : "Client intake"} — ${esc(s.service || "")}</h2>
     <div class="case">${esc(s.case_no)}</div>
     <dl class="detail">
@@ -451,6 +604,8 @@ document.addEventListener("click", ev => {
   const act = el.dataset.act;
   if(act === "closeDlg"){ $("dlg").close(); }
   else if(act === "tab"){ TAB = el.dataset.tab; paint(); }
+  else if(act === "showExample"){ SHOW_EXAMPLE = true; paint(); }
+  else if(act === "hideExample"){ SHOW_EXAMPLE = false; paint(); }
   else if(act === "logout"){ doLogout(); }
   else if(act === "openCase"){ openCase(el.dataset.case); }
   else if(act === "saveCase"){ saveCase(el.dataset.case); }

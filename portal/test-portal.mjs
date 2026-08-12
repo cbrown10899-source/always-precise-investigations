@@ -288,12 +288,168 @@ section('Investigator scope');
   ok('the investigator sees the case assigned to them', body.includes('API-20260812-4001'));
   ok('the investigator does NOT see the unassigned case', !body.includes('API-20260812-4002'));
   ok('the investigator has no Staff tab', !(await text(page, '.tabs')).includes('Staff'));
+  ok('the case list shows the subject instead of the carrier',
+     body.includes('Pat Coleman') && !body.includes('Example Mutual Insurance'));
 
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(350);
-  ok('the investigator can open their case', (await text(page, '#dlgBody')).includes('WC-2026-88421'));
+  const dlg = await text(page, '#dlgBody');
+  ok('the investigator can open their case', dlg.includes('API-20260812-4001'));
+  ok('the investigator gets the subject', dlg.includes('Pat Coleman'));
+  ok('the investigator gets the injury and restrictions', dlg.includes('Lumbar strain'));
+  ok('the investigator gets the scope', dlg.includes('Activity level versus stated restrictions'));
+  ok('the investigator gets the deadline', dlg.includes('Hearing 9/12'));
   ok('the investigator gets no assignment controls', await page.locator('#asg').count() === 0);
   await page.close();
+}
+
+/* The commercial boundary: an investigator is given the fieldwork and nothing
+   that identifies who is paying for it. Asserted against the page AND against
+   the raw API response, because a field the page merely declines to draw is
+   still sitting in the browser's network tab. */
+section('The client is not shown to an investigator');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(350);
+  const dlg = await text(page, '#dlgBody');
+  const secrets = {
+    'the carrier': 'Example Mutual Insurance',
+    'the claim number': 'WC-2026-88421',
+    'the policy number': 'POL-77123',
+    'the adjuster': 'Dana Reyes',
+    "the adjuster's email": 'dreyes@examplemutual.com',
+  };
+  for (const [what, value] of Object.entries(secrets)) {
+    ok(`${what} is not in the case detail`, !dlg.includes(value), value);
+  }
+
+  // Straight from the API, with the page taken out of it entirely.
+  const raw = await page.evaluate(async () =>
+    JSON.stringify(await (await fetch('/portal-api/submissions/API-20260812-4001',
+      { credentials: 'same-origin' })).json()));
+  for (const [what, value] of Object.entries(secrets)) {
+    ok(`${what} never reaches the browser at all`, !raw.includes(value), value);
+  }
+  ok('the API still sends what the fieldwork needs',
+     raw.includes('Pat Coleman') && raw.includes('Lumbar strain'));
+
+  const rawList = await page.evaluate(async () =>
+    JSON.stringify(await (await fetch('/portal-api/submissions?limit=200',
+      { credentials: 'same-origin' })).json()));
+  ok('the list response carries no carrier', !rawList.includes('Example Mutual Insurance'));
+  ok('the list response carries no claim number', !rawList.includes('WC-2026-88421'));
+  await page.close();
+}
+
+section('Example view');
+{
+  const page = await newPage();
+  const calls = [];
+  page.on('request', r => { if (r.url().includes('/portal-api/')) calls.push(r.url()); });
+  await signIn(page, 'trever', 'AdminPassword1x');
+  ok('an admin with real cases is not shown the example unasked',
+     !(await text(page, '.card')).includes('EXAMPLE-CLAIM-0001'));
+
+  await page.locator('.btn', { hasText: 'Show an example' }).click();
+  await page.waitForTimeout(250);
+  const listed = await text(page, '.card');
+  ok('an admin can call up the carrier example', listed.includes('EXAMPLE-CLAIM-0001'));
+  ok('an admin also gets the client example', listed.includes('EXAMPLE-INTAKE-0002'));
+  ok('the example rows are labelled as examples', has(listed, 'Example'));
+  ok('the banner says they are not real cases', has(listed, 'not real cases'));
+  ok('the real cases are still listed alongside', listed.includes('API-20260812-4001'));
+
+  calls.length = 0;
+  await rowFor(page, 'EXAMPLE-CLAIM-0001').click();
+  await page.waitForTimeout(350);
+  const dlg = await text(page, '#dlgBody');
+  ok('opening an example makes no API call', calls.length === 0, calls.join(' '));
+  ok('the dialog says it is not a real case', has(dlg, 'not a real case'));
+  for (const [what, value] of Object.entries({
+    carrier: 'Blue Ridge Mutual', 'claim number': 'WC-2026-104871',
+    'policy number': 'BRM-88-441209', adjuster: 'Karen Whitfield',
+    'defense counsel': 'Poe & Marsden', claimant: 'Marcus Ellery',
+    injury: 'Lumbar disc herniation', 'authorized hours': '8 hours authorized',
+    'billing reference': 'PO-77412',
+  })) ok(`the admin example fills in the ${what}`, dlg.includes(value), value);
+  ok('the admin example carries a signature', await page.locator('#dlgBody img.sig').count() === 1);
+  ok('the example offers no assignment controls', await page.locator('#asg').count() === 0);
+
+  await page.locator('.close').click();
+  await page.waitForTimeout(200);
+  await page.locator('.btn', { hasText: 'Hide the example' }).click();
+  await page.waitForTimeout(250);
+  const hidden = await text(page, '.card');
+  ok('hiding the example removes it', !hidden.includes('EXAMPLE-CLAIM-0001'));
+  ok('hiding the example leaves the real cases', hidden.includes('API-20260812-4001'));
+  await page.close();
+
+  const planted = db.prepare("SELECT COUNT(*) AS n FROM submissions WHERE case_no LIKE 'EXAMPLE-%'").get().n;
+  ok('no example was ever written to the database', planted === 0);
+}
+
+section('Example view — a new investigator');
+{
+  // Someone who has just accepted an invitation and has nothing assigned yet.
+  const admin = await newPage();
+  await signIn(admin, 'trever', 'AdminPassword1x');
+  await admin.locator('.tabs button', { hasText: 'Staff' }).click();
+  await admin.waitForTimeout(250);
+  await admin.locator('#nv_name').fill('Nate Ruiz');
+  await admin.locator('#nv_user').fill('nate');
+  await admin.locator('.btn', { hasText: 'Create invitation' }).click();
+  await admin.waitForTimeout(600);
+  const url = ((await text(admin, '.linkbox')).match(/http\S*\/portal\/\?invite=[0-9a-f]{64}/) || [''])[0];
+  await admin.close();
+
+  const page = await (await browser.newContext({ viewport: { width: 1200, height: 900 } })).newPage();
+  await page.goto(url);
+  await page.waitForTimeout(400);
+  await page.locator('#p1').fill('NightWatch2026x');
+  await page.locator('#p2').fill('NightWatch2026x');
+  await page.locator('#acceptBtn').click();
+  await page.waitForTimeout(800);
+
+  const body = await text(page, '.card');
+  ok('a new investigator lands on the example without asking for it',
+     body.includes('EXAMPLE-CLAIM-0001'));
+  ok('an investigator is not shown the consumer intake example',
+     !body.includes('EXAMPLE-INTAKE-0002'));
+  ok('the example is labelled', has(body, 'Example'));
+  ok('the carrier is not on the example row', !body.includes('Blue Ridge Mutual'));
+
+  await rowFor(page, 'EXAMPLE-CLAIM-0001').click();
+  await page.waitForTimeout(350);
+  const dlg = await text(page, '#dlgBody');
+  ok('the example shows the claimant', dlg.includes('Marcus Ellery'));
+  ok('the example shows the injury and restrictions', dlg.includes('Lumbar disc herniation'));
+  ok('the example shows the scope', has(dlg, 'Establish activity level'));
+  ok('the example shows the field notes', has(dlg, 'retired deputy'));
+  for (const [what, value] of Object.entries({
+    carrier: 'Blue Ridge Mutual', 'claim number': 'WC-2026-104871',
+    'policy number': 'BRM-88-441209', adjuster: 'Karen Whitfield',
+    'defense counsel': 'Poe & Marsden', 'billing reference': 'PO-77412',
+  })) ok(`the investigator example hides the ${what}`, !dlg.includes(value), value);
+  ok('the investigator example carries no signature',
+     await page.locator('#dlgBody img.sig').count() === 0);
+  ok('the example explains that the client stays with the office', has(dlg, 'stays with the office'));
+  await page.close();
+}
+
+/* The page redacts the example so a new investigator is shown the truth. The
+   Worker is what actually enforces it. If the two lists drift, the example
+   starts promising a view that does not match the one they get. */
+section('The page example matches what the Worker sends');
+{
+  const list = src => (src.match(/FIELD_KEEP = \[([\s\S]*?)\]/) || [, ''])[1]
+    .match(/['"]([a-z_]+)['"]/g)?.map(s => s.slice(1, -1)) || [];
+  const fromWorker = list(fs.readFileSync(path.join(ROOT, 'case-portal/worker.js'), 'utf8'));
+  const fromPage = list(fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8'));
+  ok('the Worker declares a field allow-list', fromWorker.length > 0);
+  ok('the page mirrors it exactly', JSON.stringify(fromWorker) === JSON.stringify(fromPage),
+     `worker=${fromWorker} page=${fromPage}`);
 }
 
 section('Session');

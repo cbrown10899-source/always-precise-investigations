@@ -297,6 +297,41 @@ async function handleIngest(request, env) {
 
 /* ------------------------------------------------------------ submissions */
 
+/* An investigator is given what the fieldwork needs and nothing that identifies
+   who is paying for it. The carrier, the adjuster, the claim and policy numbers,
+   the defense firm, the billing contact and the consumer client's own details
+   are what a departing investigator would need to solicit the work directly, so
+   they never leave this Worker for a non-admin caller.
+
+   This is an allow-list, not a delete-list, and deliberately so: when the intake
+   form gains a field, it stays admin-only until someone decides otherwise. A
+   delete-list would leak every new field by default.
+
+   Same principle as the row scope above — enforced here, not by the page hiding
+   fields. A field the page merely omits is still in the browser's network tab. */
+const FIELD_KEEP = [
+  // who and where to watch
+  'subject_name', 'subject_address', 'subject_description', 'subject_relationship',
+  // what the assignment actually asks for
+  'objective', 'authorized_hours', 'timeline', 'notes', 'attachments',
+  // case shape — none of these name the client
+  'claim_type', 'date_of_loss', 'prior_surveillance',
+];
+
+/* The denormalised columns carry the same identities as the payload does — a
+   claim number is the carrier's own reference, so it names them just as
+   plainly. Dropped from list rows and detail rows alike. */
+function redactRow(row) {
+  const { carrier, claim_number, client_name, client_email, client_phone, ...rest } = row;
+  return rest;
+}
+
+function redactPayload(payload) {
+  const kept = {};
+  for (const k of FIELD_KEEP) if (payload[k] !== undefined) kept[k] = payload[k];
+  return kept;
+}
+
 async function listSubmissions(request, env, user) {
   const url = new URL(request.url);
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10) || 50, LIST_LIMIT_MAX);
@@ -318,7 +353,11 @@ async function listSubmissions(request, env, user) {
     ? env.DB.prepare('SELECT COUNT(*) AS n FROM submissions').first()
     : env.DB.prepare('SELECT COUNT(*) AS n FROM submissions WHERE assigned_to = ?').bind(user.id).first());
 
-  return json({ submissions: results || [], total: countRow ? countRow.n : 0, limit, offset });
+  const rows = results || [];
+  return json({
+    submissions: user.role === 'admin' ? rows : rows.map(redactRow),
+    total: countRow ? countRow.n : 0, limit, offset,
+  });
 }
 
 async function getSubmission(env, user, caseNo) {
@@ -330,6 +369,7 @@ async function getSubmission(env, user, caseNo) {
   if (user.role !== 'admin' && row.assigned_to !== user.id) return json({ error: 'not found' }, 404);
   let payload = {};
   try { payload = JSON.parse(row.payload); } catch { /* keep the row usable */ }
+  if (user.role !== 'admin') return json({ submission: { ...redactRow(row), payload: redactPayload(payload) } });
   return json({ submission: { ...row, payload } });
 }
 

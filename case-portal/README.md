@@ -6,6 +6,31 @@ Two roles. **Admins** (you and your partner) see every case, assign work and
 manage accounts. **Investigators** see only the cases assigned to them — that
 is enforced in the SQL query, not by the page hiding rows.
 
+**An investigator is never sent the client.** They get everything the fieldwork
+needs and nothing that identifies who is paying for it, so an investigator who
+leaves does not leave with the client list:
+
+| An investigator gets | An investigator never receives |
+| --- | --- |
+| Subject / claimant name, address, vehicle and description | Carrier or TPA |
+| Injury and stated restrictions | Adjuster, their email and phone |
+| Scope, authorized hours, deadline | Claim number and policy number |
+| Field notes and attachments | Defense counsel |
+| Claim type, date of loss, prior surveillance | Billing reference, invoices-to, billing notes |
+| Case number, status, when it arrived | The consumer client's own name, phone, email, address |
+| | The signature, and what was charged |
+
+`FIELD_KEEP` in `worker.js` is what enforces it. It is an **allow-list, not a
+delete-list** — when the intake form gains a field it stays admin-only until
+someone decides otherwise, rather than leaking on the day it is added. The
+denormalised `carrier`, `claim_number`, `client_name`, `client_email` and
+`client_phone` columns are dropped from the list rows too; a claim number is the
+carrier's own reference, so it names them just as plainly.
+
+It is done in the Worker rather than the page on purpose. A field the page
+simply declines to draw has still been sent, and is one glance at the browser's
+network tab away.
+
 **There is no public sign-up, and no route that creates an account directly.**
 An account exists only by redeeming an invitation, and only an admin can issue
 one. The invitee follows a one-time link and chooses their own password, so
@@ -226,14 +251,39 @@ node case-portal/test-worker.mjs
 node portal/test-portal.mjs      # needs Playwright
 ```
 
-79 Worker checks and 35 end-to-end, covering login, lockout, account
+131 Worker checks and 93 end-to-end, covering login, lockout, account
 enumeration, invitations, ingest validation and rate limiting, role separation,
-account handling, the origin guard and a stored-XSS regression. The Worker
-tests run against an in-memory SQLite database through a D1-shaped adapter, so
-the SQL genuinely executes. The end-to-end tests mount the Worker at
-`/portal-api/*` on the same origin as the page, because that is how it is
-deployed — serving it from a second origin in the test would hide a cross-site
-cookie bug, which is exactly what it did once.
+what an investigator is and is not sent, account handling, the origin guard and
+a stored-XSS regression. The Worker tests run against an in-memory SQLite
+database through a D1-shaped adapter, so the SQL genuinely executes. The
+end-to-end tests mount the Worker at `/portal-api/*` on the same origin as the
+page, because that is how it is deployed — serving it from a second origin in
+the test would hide a cross-site cookie bug, which is exactly what it did once.
+
+The redaction is asserted twice over: against what the page draws, and against
+the raw JSON the browser received. Only the second one is a real test — a field
+the page declines to draw has still been sent.
+
+## The worked example
+
+A first sign-in used to land on an empty table, which teaches nobody anything.
+It now shows a worked example instead — a fully filled-in case, marked
+**Example** on the row and again in the dialog, with a button to hide it. Once
+there are real cases the example stops appearing on its own; "Show an example"
+in the toolbar brings it back whenever someone wants to see the layout again.
+
+- An **admin** gets two: a carrier assignment and a client intake, with every
+  field a live case can carry filled in, signature included. That is the point —
+  so your partner can see the whole layout before the first real case arrives.
+- An **investigator** gets one, the carrier assignment, redacted exactly as a
+  real one would be. It runs through the same allow-list, so the example cannot
+  promise a view they will not get.
+
+The examples live in `portal/index.html` and nowhere else: never fetched, never
+stored, never written to the database. Every example case number starts with
+`EXAMPLE-`, opening one is served from page memory rather than the API, and a
+test asserts the table still holds no row matching `EXAMPLE-%`. The names,
+claim numbers and addresses in them are invented.
 
 ## Things to know
 

@@ -259,6 +259,94 @@ section('Roles and case visibility');
      (await call(env, '/submissions/API-B/assign', { method: 'POST', cookie: inv, body: { user_id: dana.id } })).status === 403);
 }
 
+/* --------------------------------------------------- the commercial boundary */
+
+/* An investigator gets the fieldwork and nothing that identifies who is paying
+   for it. Everything below is what someone would need to solicit the client
+   directly, so it must not leave the Worker for a non-admin caller. */
+section('An investigator is not sent the client');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+
+  await ingest(env, {
+    case_no: 'API-C', service: 'Insurance Claim Assignment',
+    carrier: 'Example Mutual Insurance', claim_number: 'WC-2026-88421', policy_number: 'POL-77123',
+    claim_type: "Workers' compensation", date_of_loss: '03/14/2026',
+    adjuster: 'Dana Reyes', adjuster_email: 'dreyes@examplemutual.com', adjuster_phone: '5405550173',
+    defense_counsel: 'Poe & Marsden', prior_surveillance: 'Yes — by another vendor',
+    client_name: 'Dana Reyes', client_phone: '5405550173', client_email: 'dreyes@examplemutual.com',
+    subject_name: 'Pat Coleman', subject_address: '2214 Old Forest Rd',
+    subject_description: 'White GMC Sierra', subject_relationship: 'Lumbar strain; no lifting over 10 lbs',
+    objective: 'Activity level versus stated restrictions', authorized_hours: '8 hours',
+    timeline: 'Hearing 9/12', notes: 'Neighbour is a retired deputy', attachments: 'claim-file.pdf',
+    billing_reference: 'PO-77412', billing_email: 'ap@examplemutual.com', billing_notes: 'PO on the invoice',
+    signed_name: 'Dana Reyes', payment_method: 'Invoiced to carrier', fee_due: 0,
+    signature: 'data:image/png;base64,iVBORw0KGgo=',
+  });
+
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const dana = users.users.find(u => u.username === 'dana');
+  await call(env, '/submissions/API-C/assign', { method: 'POST', cookie: admin, body: { user_id: dana.id } });
+
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const detail = await jsonOf(await call(env, '/submissions/API-C', { cookie: inv }));
+  const seen = JSON.stringify(detail);
+
+  for (const [what, value] of Object.entries({
+    'the carrier': 'Example Mutual Insurance',
+    'the claim number': 'WC-2026-88421',
+    'the policy number': 'POL-77123',
+    'the adjuster': 'Dana Reyes',
+    "the adjuster's email": 'dreyes@examplemutual.com',
+    "the adjuster's phone": '5405550173',
+    'defense counsel': 'Poe & Marsden',
+    'the billing reference': 'PO-77412',
+    'the billing contact': 'ap@examplemutual.com',
+    'the signature': 'iVBORw0KGgo=',
+  })) ok(`an investigator is not sent ${what}`, !seen.includes(value), value);
+
+  ok('the raw payload column is not passed through either', typeof detail.submission.payload === 'object');
+  ok('an investigator is sent the subject', detail.submission.payload.subject_name === 'Pat Coleman');
+  ok('an investigator is sent the address to watch', detail.submission.payload.subject_address === '2214 Old Forest Rd');
+  ok('an investigator is sent the vehicle', detail.submission.payload.subject_description === 'White GMC Sierra');
+  ok('an investigator is sent the restrictions', /Lumbar strain/.test(detail.submission.payload.subject_relationship));
+  ok('an investigator is sent the scope', /Activity level/.test(detail.submission.payload.objective));
+  ok('an investigator is sent the authorized hours', detail.submission.payload.authorized_hours === '8 hours');
+  ok('an investigator is sent the deadline', detail.submission.payload.timeline === 'Hearing 9/12');
+  ok('an investigator is sent the field notes', /retired deputy/.test(detail.submission.payload.notes));
+  ok('an investigator is still told the case number', detail.submission.case_no === 'API-C');
+  ok('an investigator is still told the status', detail.submission.status === 'assigned');
+
+  const list = JSON.stringify(await jsonOf(await call(env, '/submissions', { cookie: inv })));
+  ok('the list is redacted too, not only the detail',
+     !list.includes('Example Mutual Insurance') && !list.includes('WC-2026-88421'));
+  ok('the list still names the subject', list.includes('Pat Coleman'));
+
+  // The admin's own view is untouched — this is a per-role filter, not deletion.
+  const adminView = JSON.stringify(await jsonOf(await call(env, '/submissions/API-C', { cookie: admin })));
+  ok('an admin still sees the carrier', adminView.includes('Example Mutual Insurance'));
+  ok('an admin still sees the claim number', adminView.includes('WC-2026-88421'));
+  ok('an admin still sees the billing reference', adminView.includes('PO-77412'));
+  ok('an admin still sees the signature', adminView.includes('iVBORw0KGgo='));
+
+  // A field nobody has classified yet must default to admin-only. This is the
+  // difference between an allow-list and a delete-list, and it is the whole
+  // reason for the former.
+  await ingest(env, {
+    case_no: 'API-D', client_name: 'New Client', subject_name: 'Watch Me',
+    some_future_field: 'CARRIER-CONFIDENTIAL',
+  });
+  await call(env, '/submissions/API-D/assign', { method: 'POST', cookie: admin, body: { user_id: dana.id } });
+  const future = JSON.stringify(await jsonOf(await call(env, '/submissions/API-D', { cookie: inv })));
+  ok('a field added to the intake later does not leak by default',
+     !future.includes('CARRIER-CONFIDENTIAL'));
+}
+
 /* ------------------------------------------------------- invitation-only */
 
 section('Invitation-only account creation');

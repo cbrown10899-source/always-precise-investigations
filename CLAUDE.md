@@ -161,6 +161,25 @@ Two roles. Admins see every case, assign work and manage accounts.
 Investigators see **only** cases assigned to them — enforced in the SQL query,
 not by the page hiding rows. Test that boundary if you touch the queries.
 
+**An investigator is never sent the client.** They get the fieldwork — subject,
+address, vehicle, restrictions, scope, authorized hours, deadline, notes — and
+none of what identifies who is paying: the carrier, the adjuster and their
+contact details, the claim and policy numbers, defense counsel, the billing
+contact, the consumer client's own name and number, and the signature. An
+investigator who leaves should not be leaving with the client list.
+
+`FIELD_KEEP` in `case-portal/worker.js` is what enforces it, and it is an
+**allow-list on purpose**: when the intake form gains a field it stays
+admin-only until someone decides otherwise. A delete-list would leak every new
+field by default. `redactRow` also drops the denormalised `carrier`,
+`claim_number`, `client_name`, `client_email` and `client_phone` columns — a
+claim number is the carrier's own reference and names them just as plainly.
+
+This is enforced in the Worker, not the page. A field the page merely declines
+to draw is still sitting in the browser's network tab. `portal/index.html`
+carries a copy of `FIELD_KEEP` solely so the built-in example shows an
+investigator the truth; a test compares the two lists and fails if they drift.
+
 **Accounts exist only by invitation.** There is no public sign-up and no route
 that creates an account directly — an admin issues a one-time link and the
 invitee chooses their own password. Do not add a create-account endpoint.
@@ -197,8 +216,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 79 checks: auth, invites, roles, ingest, origin
-node portal/test-portal.mjs        # 35 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 131 checks: auth, invites, roles, redaction, ingest, origin
+node portal/test-portal.mjs        # 93 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
