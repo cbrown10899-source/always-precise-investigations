@@ -69,6 +69,25 @@
   .tag.closed{background:#e9f7ef;color:var(--good);}
   .empty{color:var(--muted);padding:26px 4px;font-size:.92rem;}
 
+  /* dashboard strip */
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:16px;}
+  .stat{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 16px;}
+  .stat.warn{border-color:#e8cf9e;background:#fdf9f1;}
+  .stat-n{font-size:1.7rem;font-weight:800;line-height:1.1;color:var(--navy);font-variant-numeric:tabular-nums;}
+  .stat.warn .stat-n{color:#8a6410;}
+  .stat-l{font-size:.82rem;font-weight:700;margin-top:2px;}
+  .stat-h{font-size:.75rem;color:var(--muted);margin-top:1px;}
+  /* rate sheets */
+  .sheet-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:12px;}
+  .sheet-card{text-align:left;background:#fff;border:1px solid var(--line);border-radius:10px;
+    padding:15px 16px;cursor:pointer;font:inherit;color:inherit;display:block;width:100%;}
+  .sheet-card:hover{border-color:var(--teal);}
+  .sheet-card.on{border-color:var(--teal);background:#f2f9fa;box-shadow:0 0 0 1px var(--teal) inset;}
+  .sheet-n{font-weight:800;font-size:1.05rem;color:var(--navy);}
+  .sheet-a{font-size:.78rem;color:var(--muted);margin:2px 0 8px;}
+  .sheet-s{font-size:.88rem;}
+  .sheet-go{margin-top:10px;font-size:.78rem;font-weight:700;color:var(--teal);}
+  .sheet-note{font-size:.8rem;color:var(--muted);font-weight:400;max-width:46ch;}
   .ex-note{background:#fdf7ec;border:1px solid #e8cf9e;color:#6b4f12;border-radius:8px;
     padding:11px 14px;font-size:.88rem;margin-bottom:14px;}
   .tag.ex-tag{background:#f3e2bd;color:#6b4f12;margin-left:6px;}
@@ -124,6 +143,7 @@ const API = "/portal-api";
 const $ = id => document.getElementById(id);
 const app = $("app");
 let ME = null, TAB = "cases", CASES = [], USERS = [], INVITES = [], TOTAL = 0, FILTER = "", LAST_LINK = "", LAST_EMAILED = false;
+let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
 /* Examples show themselves on a first sign-in and can be recalled later. */
 let SHOW_EXAMPLE = false;
 
@@ -295,9 +315,88 @@ function inviteView(state){
 function shell(inner){
   const tabs = ME.role === "admin"
     ? `<button class="${TAB==="cases"?"on":""}" data-act="tab" data-tab="cases">Cases</button>
+       <button class="${TAB==="sheets"?"on":""}" data-act="tab" data-tab="sheets">Rate sheets</button>
        <button class="${TAB==="staff"?"on":""}" data-act="tab" data-tab="staff">Staff</button>`
     : "";
-  return `<div class="tabs">${tabs}</div>${inner}`;
+  return `<div class="tabs">${tabs}</div>${summaryCards()}${inner}`;
+}
+
+/* The dashboard strip. Drawn whether or not there is any work in the system —
+   an empty portal that shows nothing at all looks broken, and a new admin needs
+   to see the shape of the thing before the first case arrives. */
+function summaryCards(){
+  if(TAB === "staff" || TAB === "sheets") return "";
+  const s = SUMMARY || {};
+  const shown = SHOW_EXAMPLE ? examplesFor(ME.role) : [];
+  const bump = k => shown.filter(c => c.status === k).length;
+  const admin = ME.role === "admin";
+  const card = (label, n, hint, tone) => `<div class="stat ${tone||""}">
+      <div class="stat-n">${n}</div>
+      <div class="stat-l">${esc(label)}</div>
+      ${hint ? `<div class="stat-h">${esc(hint)}</div>` : ""}
+    </div>`;
+
+  const total = (s.total || 0) + shown.length;
+  const cards = admin
+    ? card("Cases", total, total ? "" : "None yet")
+      + card("Unassigned", (s.unassigned || 0) + shown.filter(c => !c.assigned_name).length,
+             "Waiting on you", (s.unassigned || bump("new")) ? "warn" : "")
+      + card("In progress", (s.in_progress || 0) + bump("in_progress"), "Out in the field")
+      + card("Carrier", (s.claims || 0) + shown.filter(c => c.kind === "claims").length, "Insurance work")
+      + card("Private", (s.consumer || 0) + shown.filter(c => c.kind !== "claims").length, "Non-insurance")
+    : card("Assigned to you", total, total ? "" : "Nothing yet")
+      + card("In progress", (s.in_progress || 0) + bump("in_progress"), "Started")
+      + card("Closed", (s.closed || 0) + bump("closed"), "Finished");
+
+  // No Hide button here — the banner over the case list already carries one,
+  // and two controls doing the same thing is how a page starts feeling
+  // untrustworthy about which one you actually pressed.
+  return `<div class="stats">${cards}</div>${
+    SHOW_EXAMPLE ? `<div class="ex-note" style="margin-bottom:16px">
+      <b>These totals include the example</b> &mdash; they drop back to your real numbers when you hide it.
+    </div>` : ""}`;
+}
+
+/* Two documents the office sends: the retainer sheet for a private client, the
+   block ladder for a carrier. Neither is on the public site — a price is quoted
+   to someone who asked, not published to everyone who visits. */
+function sheetsView(){
+  if(!SHEETS.length) return `<div class="card"><div class="empty">Loading rate sheets…</div></div>`;
+  const open = SHEETS.find(s => s.id === OPEN_SHEET);
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Rate sheets</h2></div>
+    <p class="note">Nothing here appears on the website. Open a sheet to read exactly what the
+      client will receive, then send it to them.</p>
+    <div class="sheet-grid">
+      ${SHEETS.map(s => `<button class="sheet-card${s.id === OPEN_SHEET ? " on" : ""}" data-act="openSheet" data-sheet="${esc(s.id)}">
+        <div class="sheet-n">${esc(s.name)}</div>
+        <div class="sheet-a">${esc(s.audience)}</div>
+        <div class="sheet-s">${esc(s.summary)}</div>
+        <div class="sheet-go">${s.id === OPEN_SHEET ? "Showing below" : "Open and send"}</div>
+      </button>`).join("")}
+    </div>
+  </div>
+  ${open ? `<div class="card">
+    <div class="bar"><h2 style="margin:0">${esc(open.name)}</h2>
+      <span class="count">${esc(open.audience)}</span></div>
+    <p class="lead">${esc(open.summary)}</p>
+    <div class="feebox">
+      ${open.lines.map(l => `<div class="row">
+        <span><b>${esc(l.label)}</b><div class="sheet-note">${esc(l.note)}</div></span>
+        <b style="white-space:nowrap">${esc(l.value)}</b></div>`).join("")}
+    </div>
+    <p class="note">${esc(open.closing)}</p>
+    <div class="actions" style="border-top:1px solid var(--line);padding-top:16px;margin-top:6px">
+      <label class="f" style="flex:1 1 260px;margin-bottom:0"><span>Send it to</span>
+        <input id="sh_to" type="email" placeholder="name@example.com" value="${esc(SHEET_MAIL)}"></label>
+      <label class="f" style="flex:1 1 220px;margin-bottom:0"><span>Case number (optional)</span>
+        <input id="sh_case" placeholder="Puts it in the subject line"></label>
+      <button class="btn" data-act="emailSheet" data-sheet="${esc(open.id)}">Email this sheet</button>
+    </div>
+    <label class="f"><span>Add a line to the message (optional)</span>
+      <input id="sh_note" placeholder="e.g. As discussed on the phone this morning."></label>
+    ${SHEET_MSG ? `<div class="note" style="margin-top:4px">${esc(SHEET_MSG)}</div>` : ""}
+  </div>` : ""}`;
 }
 
 function casesView(){
@@ -429,7 +528,7 @@ function paint(){
   $("who").hidden = false;
   $("who").innerHTML = `<b>${esc(ME.display_name || ME.username)}</b>${ME.role === "admin" ? "Admin" : "Investigator"}
     <button data-act="logout">Sign out</button>`;
-  app.innerHTML = shell(TAB === "staff" ? staffView() : casesView());
+  app.innerHTML = shell(TAB === "staff" ? staffView() : TAB === "sheets" ? sheetsView() : casesView());
   const q = $("q");
   if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
 }
@@ -442,9 +541,11 @@ async function render(){
     // A first sign-in lands on an empty table, which teaches nothing. Show the
     // worked example unasked, once, until there is real work to look at.
     if(CASES.length === 0) SHOW_EXAMPLE = true;
+    try{ SUMMARY = (await api("/summary")).summary; }catch(e){ SUMMARY = null; }
     if(ME.role === "admin"){
       USERS = (await api("/users")).users;
       INVITES = (await api("/invites")).invites;
+      try{ SHEETS = (await api("/sheets")).sheets; }catch(e){ SHEETS = []; }
     }
   }catch(e){ /* paint anyway; the message surfaces on the next action */ }
   paint();
@@ -600,6 +701,23 @@ async function revokeInvite(id){
   catch(e){ alert(e.message); }
 }
 
+async function emailSheet(id){
+  const to = ($("sh_to").value || "").trim();
+  const note = ($("sh_note") ? $("sh_note").value : "").trim();
+  const caseNo = ($("sh_case") ? $("sh_case").value : "").trim();
+  SHEET_MAIL = to;
+  if(!to){ SHEET_MSG = "Enter the address to send it to."; paint(); return; }
+  const btn = document.querySelector('[data-act="emailSheet"]');
+  if(btn){ btn.disabled = true; btn.textContent = "Sending…"; }
+  try{
+    const r = await api(`/sheets/${encodeURIComponent(id)}/email`,
+      {method:"POST", body:{to, note, case_no:caseNo}});
+    SHEET_MSG = `Sent to ${r.sent_to}.`;
+    SHEET_MAIL = "";
+  }catch(e){ SHEET_MSG = e.message; }
+  paint();
+}
+
 /* --------------------------------------------------------- event routing */
 /* One delegated listener. Nothing user-supplied is ever written into an
    inline handler, where the browser would decode it back into script. */
@@ -617,6 +735,11 @@ document.addEventListener("click", ev => {
   else if(act === "saveCase"){ saveCase(el.dataset.case); }
   else if(act === "toggleActive"){ toggleActive(Number(el.dataset.id), Number(el.dataset.active)); }
   else if(act === "revokeInvite"){ revokeInvite(Number(el.dataset.id)); }
+  else if(act === "openSheet"){
+    OPEN_SHEET = OPEN_SHEET === el.dataset.sheet ? null : el.dataset.sheet;
+    SHEET_MSG = ""; paint();
+  }
+  else if(act === "emailSheet"){ emailSheet(el.dataset.sheet); }
   else if(act === "copyLink"){
     navigator.clipboard.writeText(LAST_LINK).then(() => { el.textContent = "Copied"; });
   }

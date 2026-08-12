@@ -119,110 +119,84 @@ async function sign(page) {
 
 /* ------------------------------------------------------- consumer path */
 
-section('Consumer path — surveillance');
+section('Consumer path — no price is ever shown');
 {
   submitted = null; stored = null;
   const page = await newPage();
-  ok('progress bar shows the 6 consumer steps', await dots(page) === 6);
+  ok('the consumer flow is 5 steps, ending at the agreement', await dots(page) === 5);
 
   await set(page, 'c_name', 'Jane Client');
   await set(page, 'c_phone', '4345550111');
   await advance(page);
+
+  const services = await page.locator('.card').innerText();
+  ok('step 2 offers the services', services.includes('Surveillance'));
+  ok('no price is attached to surveillance', !/\$\s?\d/.test(services), services);
+  ok('the client is told a fee sheet comes in writing', /fee sheet/i.test(services));
+
   await page.locator('#opt-surveillance').click();
   await page.waitForTimeout(80);
-  ok('choosing surveillance adds the coverage step', await dots(page) === 7);
+  ok('choosing surveillance does not add a pricing step', await dots(page) === 5);
   await advance(page);
 
-  ok('step 3 asks how much coverage', await heading(page) === 'How much coverage?');
-  const card = await page.locator('.card').innerText();
-  for (const [what, shown] of Object.entries({
-    'the half day': '$400', 'the full day': '$800',
-    'two days': '$1,500', 'three days': '$2,200',
-  })) ok(`the rate card offers ${what} at ${shown}`, card.includes(shown), card);
-  ok('the overage rate is stated up front', card.includes('$100/hr'));
-  ok('overage needs approval first', /approval/i.test(card));
-
-  // The block is required — this is what the client is agreeing to pay.
-  await advance(page);
-  ok('you cannot pass the step without choosing a block',
-     await heading(page) === 'How much coverage?');
-  ok('and it says why', (await page.locator('#err').innerText()).length > 0);
-
-  await page.locator('#opt-pkg-two').click();
-  await page.waitForTimeout(80);
-  ok('choosing a block shows what is due', (await page.locator('.feebox').innerText()).includes('$1,500'));
-  await advance(page);
-
-  ok('step 4 is the subject step', await heading(page) === 'Subject of the investigation');
-  ok('consumer keeps the "relationship to you" field',
-     await page.locator('[data-k="s_rel"]').getAttribute('placeholder') !== null);
+  ok('step 3 is the subject step', await heading(page) === 'Subject of the investigation');
   await set(page, 's_name', 'John Subject');
   await advance(page);
-  ok('step 5 is the objective step', await heading(page) === 'Your objective');
+  ok('step 4 is the objective step', await heading(page) === 'Your objective');
   await advance(page);
 
-  ok('step 6 is the agreement', (await heading(page)).includes('Agreement'));
+  ok('step 5 is the agreement', (await heading(page)).includes('Agreement'));
   const fees = await page.locator('.feebox').innerText();
-  ok('fee box names the block that was chosen', fees.includes('Two days') && fees.includes('16 hours'));
-  ok('fee box shows the price due today', fees.includes('$1,500') && fees.includes('Due today'));
+  ok('the fee box quotes nothing', !/\$\s?\d/.test(fees), fees);
+  ok('it says the fee is sent in writing', /sent to you in writing/i.test(fees));
+  ok('it says nothing is due now', /nothing/i.test(fees));
   const terms = await page.locator('.agree').innerText();
-  ok('the terms state the hours purchased', terms.includes('16 investigative hours'));
-  ok('the terms state the overage rate', terms.includes('$100 per hour'));
-  ok('the terms promise no overage without approval', /prior approval/.test(terms));
-  ok('the old retainer wording is gone', !/retainer/i.test(terms));
+  ok('the terms name no figure', !/\$\s?\d/.test(terms), terms);
+  ok('the terms say work starts only after the fee is agreed',
+     /work begins only once the client has agreed/i.test(terms));
   ok('the terms promise no additional fees', /No additional fees apply/i.test(terms));
-  ok('mileage is named as included', /mileage/i.test(terms));
-  ok('the report is named as included', /report preparation/i.test(terms));
-  ok('the price sheet says it too', card.includes('None') && /mileage/i.test(card));
+  ok('submitting does not itself create a charge',
+     /does not by itself start work or create a charge/i.test(terms));
+
   await page.locator('[data-k="a_consent"]').check();
   await set(page, 'a_typed', 'Jane Client');
   await sign(page);
+  ok('the last button submits rather than going to payment',
+     (await page.locator('.btn.primary').innerText()).includes('Submit'));
   await advance(page);
+  await page.waitForTimeout(500);
 
-  ok('step 7 is the payment step', await heading(page) === 'Payment');
-  ok('the payment step names the block', (await page.locator('.card').innerText()).includes('Two days'));
-  await page.locator('.pay-opt .opt').first().click();
-  await page.waitForTimeout(80);
-  ok('the payment link carries the block price',
-     (await page.locator('.pay-btn').getAttribute('href')).includes('amount=1500'));
-  await advance(page);
-  await page.waitForTimeout(400);
-
-  ok('the portal record bills the block that was chosen', stored && stored.fee_due === 1500);
-  ok('the portal record names the block', stored && stored.package === 'Two days — 16 hours');
-  ok('the portal record keeps the hours', stored && stored.package_hours === 16);
-  ok('the portal record keeps the price', stored && stored.package_price === 1500);
-  ok('the hours become the cap the investigator works to',
-     stored && /16 hours purchased/.test(stored.authorized_hours || ''));
-  ok('the portal record carries no claim fields', stored && !('claim_number' in stored));
+  ok('the intake was recorded', stored !== null);
+  ok('nothing is charged at intake', stored && stored.fee_due === 0);
+  ok('no package is recorded', stored && !('package' in stored));
+  ok('no payment method is recorded', stored && !stored.payment_method);
 
   const rec = await page.locator('.record').innerText();
   ok('record is titled Client Intake', rec.includes('Client Intake'));
-  ok('the printed sheet states the coverage bought', rec.includes('Two days — 16 hours'));
-  ok('the printed sheet states the total due', rec.includes('$1,500'));
-  ok('the printed sheet states the overage rate', rec.includes('$100/hr'));
+  ok('the record quotes no price', !/\$\s?\d/.test(rec), rec);
+  ok('the record says the fee comes in writing', /sent to you in writing/i.test(rec));
   await page.close();
 }
 
-/* A rate is a promise. It is set in one place and everything downstream reads
-   it from there, so a price change can never leave a stale figure behind in the
-   terms, the payment link or the printed sheet. */
-section('Prices come from one place');
+/* The whole point of moving pricing into the portal: a visitor to the website
+   never sees a number the firm has not chosen to quote them. */
+section('The public form carries no pricing at all');
 {
   const src = fs.readFileSync(path.join(ROOT, 'intake/index.html'), 'utf8');
-  const card = (src.match(/const PACKAGES = \[([\s\S]*?)\n\];/) || [, ''])[1];
-  const prices = [...card.matchAll(/price:(\d+)/g)].map(m => m[1]);
-  ok('the rate card declares every block price', prices.length === 4);
+  ok('no dollar figure appears anywhere in the intake source',
+     !/\$\s?\d/.test(src), (src.match(/\$\s?\d[^\n]{0,40}/) || [''])[0]);
+  ok('the old consumer rate card is gone', !src.includes('PACKAGES'));
+  ok('the hourly constant is gone', !/const HOURLY/.test(src));
+  ok('no payment step remains', !src.includes('pay-btn'));
 
-  // Anything outside the rate card that looks like one of those prices is a
-  // figure that will not follow when the rate card changes.
-  const rest = src.replace(card, '');
-  for (const p of prices) {
-    const n = Number(p).toLocaleString();
-    ok(`$${n} is not hard-coded anywhere else`, !rest.includes('$' + n), '$' + n);
+  for (const f of ['index.html', 'insurance-investigations/index.html',
+                   'insurance-investigations/vendor-information/index.html',
+                   'infidelity-investigations/index.html',
+                   'child-custody-investigations/index.html']) {
+    const page = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    ok(`${f} publishes no price`, !/\$\s?\d{2,}/.test(page),
+       (page.match(/\$\s?\d{2,}[^\n]{0,30}/) || [''])[0]);
   }
-  ok('the old $1,500 retainer constant is gone', !/retainer:\s*\d/.test(src));
-  ok('the overage rate is a constant too', /const HOURLY = \d+/.test(src));
 }
 
 /* ---------------------------------------------------------- carrier path */
@@ -368,7 +342,7 @@ section('Switching service after the flow has branched');
   ok('claim assignment gives 8 steps', await dots(page) === 8);
   await page.locator('#opt-process').click();
   await page.waitForTimeout(80);
-  ok('switching back to a consumer service restores 6 steps', await dots(page) === 6);
+  ok('switching back to a consumer service restores 5 steps', await dots(page) === 5);
   ok('the switch leaves you on the service step', (await heading(page)).includes('What do you need'));
   await advance(page);
   ok('the consumer flow resumes correctly', await heading(page) === 'Subject of the investigation');

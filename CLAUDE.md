@@ -219,6 +219,40 @@ near $103.
 The reasoning — including why $800/day is rejected for carrier work — is in
 `PRICING.md`. Read it before quoting anything.
 
+## No price appears on the public site
+
+**The intake form quotes nothing and charges nothing.** There is no rate card,
+no package step and no payment step on it any more, on either path. A test fails
+if a dollar figure appears anywhere in `intake/index.html`, and another checks
+the homepage, both insurance pages and the two service pages.
+
+Pricing lives in the portal as two rate sheets an admin opens and emails
+(`rateSheets()` in `case-portal/worker.js`):
+
+- **`$1,500 retainer`** — private clients. $1,500 to begin applied to the work,
+  then $100/hr with a 4-hour minimum. `PERSONAL` in the Worker sets it.
+- **`Insurance assignment rates`** — carriers. The `RATES.packages` ladder.
+
+`GET /sheets` and `POST /sheets/:id/email` are admin-only; an investigator gets
+403 from both, and from `/pricing`. Sending goes through `sendMail()`, the same
+Resend path the invitations use, and never throws — a provider outage costs a
+copy-and-paste, not a lost quote.
+
+The consumer flow therefore ends at the **agreement**, not a payment: submitting
+records the case, the office reads it and sends the sheet, and work starts once
+the client agrees. The terms say exactly that.
+
+## The dashboard
+
+`summaryCards()` draws a counts strip above the case list on both roles, scoped
+the same way everything else is — an investigator's totals are their own cases.
+`GET /summary` provides them.
+
+**It draws even when there are no cases**, and on an empty portal the worked
+example is shown unasked so the cards are not all zero and a new admin can see
+the shape of the thing. The banner says the totals include the example. There is
+one Hide button, over the case list — not two.
+
 ## The rate card
 
 `PACKAGES` and `HOURLY` near the top of `intake/index.html` are **the only place
@@ -241,7 +275,7 @@ know the cap they are working to. The price fields (`package`, `package_price`,
 Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
-node intake/test-intake.mjs      # 144 checks; needs Playwright, skips cleanly without it
+node intake/test-intake.mjs      # 130 checks; needs Playwright, skips cleanly without it
 node visitor-alerts/test-worker.mjs   # 41 checks
 ```
 
@@ -313,7 +347,7 @@ Tests:
 
 ```bash
 node case-portal/test-worker.mjs   # 179 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 93 checks: the page against the real Worker
+node portal/test-portal.mjs        # 127 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,

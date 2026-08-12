@@ -490,6 +490,112 @@ section('Stored XSS regression');
   await page.close();
 }
 
+section('The dashboard');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const stats = await text(page, '.stats');
+  for (const label of ['Cases', 'Unassigned', 'In progress', 'Carrier', 'Private']) {
+    ok(`the dashboard shows ${label}`, has(stats, label), stats);
+  }
+  ok('the counts are real numbers', /\d/.test(stats));
+  await page.close();
+}
+
+/* An empty portal that draws nothing looks broken, and a new admin has no way
+   to tell what it will look like once work arrives. */
+section('The dashboard with nothing in it');
+{
+  const empty = new DatabaseSync(':memory:');
+  empty.exec(SCHEMA);
+  const saved = env.DB;
+  env.DB = d1(empty);
+  await worker.fetch(new Request(API + '/setup', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: SITE, 'X-Bootstrap-Token': 'e2e-bootstrap' },
+    body: JSON.stringify({ username: 'fresh', display_name: 'Fresh Admin', password: 'FreshStart1x' }),
+  }), env);
+
+  const page = await newPage();
+  await signIn(page, 'fresh', 'FreshStart1x');
+  ok('the dashboard still draws with no cases', await page.locator('.stats').count() === 1);
+  const body = await text(page, '.card');
+  ok('and the example comes up unasked', body.includes('EXAMPLE-CLAIM-0001'));
+  ok('an admin sees both examples', body.includes('EXAMPLE-INTAKE-0002'));
+  const stats = await text(page, '.stats');
+  ok('the totals count the example so the cards are not all zero', /[1-9]/.test(stats), stats);
+  ok('and it says the totals include it', has(await text(page, '.ex-note'), 'include the example'));
+
+  await page.locator('.btn', { hasText: 'Hide the example' }).click();
+  await page.waitForTimeout(250);
+  ok('hiding it leaves the real empty state', !(await text(page, '.card')).includes('EXAMPLE-CLAIM-0001'));
+  ok('the dashboard is still drawn when empty', await page.locator('.stats').count() === 1);
+  ok('and there is a button to bring the example back',
+     await page.locator('.btn', { hasText: 'Show an example' }).count() > 0);
+  await page.close();
+  env.DB = saved;
+}
+
+section('Rate sheets');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Rate sheets' }).click();
+  await page.waitForTimeout(400);
+  const card = await text(page, '.card');
+  ok('the retainer sheet is offered', card.includes('$1,500 retainer'));
+  ok('it names its audience', has(card, 'Private clients'));
+  ok('the insurance sheet is offered', card.includes('Insurance assignment rates'));
+  ok('it names its audience', has(card, 'Carriers, TPAs'));
+  ok('the page says none of it is on the website', has(card, 'Nothing here appears on the website'));
+
+  await page.locator('.sheet-card', { hasText: '$1,500 retainer' }).click();
+  await page.waitForTimeout(300);
+  const sheet = await page.locator('.card').nth(1).innerText();
+  ok('the retainer sheet states the retainer', sheet.includes('$1,500'));
+  ok('it states the hourly rate', sheet.includes('$100/hr'));
+  ok('it states the minimum', has(sheet, '4-hour minimum'));
+  ok('it promises no additional fees', has(sheet, 'None'));
+  ok('there is somewhere to type the address', await page.locator('#sh_to').count() === 1);
+
+  await page.locator('.sheet-card', { hasText: 'Insurance assignment rates' }).click();
+  await page.waitForTimeout(300);
+  const ins = await page.locator('.card').nth(1).innerText();
+  ok('the insurance sheet lists the one-day block', ins.includes('$1,200'));
+  ok('it lists the two-day block', ins.includes('$2,300'));
+  ok('it lists the three-day block', ins.includes('$3,300'));
+  ok('it states the overage rate', ins.includes('$150/hr'));
+  ok('the retainer figure is NOT on the carrier sheet', !ins.includes('$1,500'), ins);
+
+  // Sending needs an address, and says so rather than failing silently.
+  await page.locator('.btn', { hasText: 'Email this sheet' }).click();
+  await page.waitForTimeout(300);
+  ok('sending with no address is refused',
+     has(await page.locator('.card').nth(1).innerText(), 'Enter the address'));
+  await page.close();
+}
+
+section('An investigator gets no rates at all');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  ok('there is no Rate sheets tab', !(await text(page, '.tabs')).includes('Rate sheets'));
+
+  const sheets = await page.evaluate(async () =>
+    (await fetch('/portal-api/sheets', { credentials: 'same-origin' })).status);
+  ok('the sheets endpoint refuses them', sheets === 403);
+  const pricing = await page.evaluate(async () =>
+    (await fetch('/portal-api/pricing', { credentials: 'same-origin' })).status);
+  ok('the rates endpoint refuses them', pricing === 403);
+  const mail = await page.evaluate(async () =>
+    (await fetch('/portal-api/sheets/insurance/email', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: 'someone@example.com' }),
+    })).status);
+  ok('and they cannot email one to anybody', mail === 403);
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
