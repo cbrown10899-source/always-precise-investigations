@@ -158,7 +158,36 @@ out of the table; the size cap, the case-number format check, the per-minute
 rate limit and the unique constraint on case numbers are what actually protect
 it.
 
-**6. Check it**
+**6. Optional: email the invitations**
+
+Without this, creating an invitation hands you a link to send yourself. With
+it, the portal emails the invitee directly.
+
+A Worker cannot send email on its own, so this needs a provider.
+[Resend](https://resend.com) has a free tier that is far beyond what a handful
+of staff invitations needs.
+
+1. Create a Resend account and an API key.
+2. Verify `alwayspreciseinvestigations.net` there — it walks you through the DNS
+   records. Until you do, Resend only delivers to your own account address,
+   which is fine for testing but not for inviting anyone else.
+3. Add the key as a repository secret named `RESEND_API_KEY`, the same way as
+   `PORTAL_ADMIN_PASSWORD`.
+4. Set `INVITE_FROM` in `wrangler.toml` to an address on the verified domain,
+   e.g. `Always Precise Investigations <portal@alwayspreciseinvestigations.net>`.
+5. Re-run the setup workflow. It pushes the key to the Worker and applies the
+   From address.
+
+Sending is **best effort and never blocks an invitation**. The invite row is
+committed before any email is attempted, and the link comes back to you either
+way — so a provider outage costs a copy-and-paste, never a lost invitation. The
+Staff tab tells you which happened.
+
+Worth knowing: the link in that email is a bearer credential. Whoever opens it
+first creates the account. That is why it is single-use, expires in 7 days, and
+can be revoked from the Staff tab.
+
+**7. Check it**
 
 ```bash
 ./case-portal/verify.sh

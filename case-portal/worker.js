@@ -34,9 +34,12 @@
  * Vars
  *   SITE_ORIGIN      the site's own origin, e.g. https://alwayspreciseinvestigations.net
  *   PBKDF2_ITER      optional override for the iteration count on new passwords
+ *   INVITE_FROM      From: address for invitation emails, on a verified domain
  * Secrets
  *   INGEST_KEY       shared key the intake form sends with a submission
  *   BOOTSTRAP_TOKEN  one-time token that creates the first admin account
+ *   RESEND_API_KEY   optional. Set it and invitations are emailed; leave it
+ *                    unset and the admin sends the link by hand, as before.
  */
 
 const SESSION_HOURS = 12;
@@ -436,6 +439,89 @@ async function resetPassword(request, env, id) {
 
 /* ---------------------------------------------------------------- invites */
 
+/** Escape for insertion into an HTML email body. */
+function escHtml(t) {
+  return String(t ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/**
+ * Email an invitation link.
+ *
+ * Best effort by design: this never throws and its failure never fails the
+ * invitation. The invite row is already committed by the time this runs, and
+ * the link is returned to the admin regardless — so a provider outage costs a
+ * copy-and-paste, never a lost invitation.
+ *
+ * Unconfigured is a normal state, not an error. Without RESEND_API_KEY the
+ * portal behaves exactly as it did before: the admin sends the link themselves.
+ *
+ * Note the link in this email is a bearer credential — whoever opens it first
+ * creates the account. That is why it is single-use, expires in a week, and can
+ * be revoked from the Staff tab.
+ */
+async function sendInviteEmail(env, { to, displayName, url, invitedBy, role }) {
+  if (!env.RESEND_API_KEY) return { sent: false, reason: 'not_configured' };
+  if (!to) return { sent: false, reason: 'no_address' };
+
+  const from = env.INVITE_FROM || 'Always Precise Investigations <onboarding@resend.dev>';
+  const who = displayName || 'there';
+  const by = invitedBy ? ` by ${invitedBy}` : '';
+  const kind = role === 'admin' ? 'an administrator' : 'an investigator';
+
+  const text =
+`${who},
+
+You have been given access${by} to the Always Precise Investigations case portal as ${kind}.
+
+Open this link to choose your own password:
+${url}
+
+The link works once and expires in ${INVITE_DAYS} days. Nobody else sees the password you choose — not even whoever invited you.
+
+If you were not expecting this, ignore it and the invitation goes unused.
+
+Always Precise Investigations, LLC
+Va DCJS #11-9159`;
+
+  const html =
+`<div style="font-family:'Segoe UI',Arial,sans-serif;color:#1c2531;line-height:1.6;max-width:520px">
+  <p>${escHtml(who)},</p>
+  <p>You have been given access${escHtml(by)} to the Always Precise Investigations case
+     portal as ${escHtml(kind)}.</p>
+  <p><a href="${escHtml(url)}" style="display:inline-block;background:#2f7d90;color:#fff;
+     text-decoration:none;font-weight:700;padding:12px 22px;border-radius:8px">Choose your password</a></p>
+  <p style="font-size:.86rem;color:#5c6775">Or paste this into your browser:<br>
+     <span style="word-break:break-all">${escHtml(url)}</span></p>
+  <p style="font-size:.9rem">The link works once and expires in ${INVITE_DAYS} days. Nobody else
+     sees the password you choose &mdash; not even whoever invited you.</p>
+  <p style="font-size:.86rem;color:#5c6775">If you were not expecting this, ignore it and the
+     invitation goes unused.</p>
+  <hr style="border:0;border-top:1px solid #dfe3e8">
+  <p style="font-size:.8rem;color:#5c6775">Always Precise Investigations, LLC &middot; Va DCJS #11-9159</p>
+</div>`;
+
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ from, to, subject: 'Your Always Precise case portal access', text, html }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (res.ok) return { sent: true };
+    let detail = '';
+    try { detail = (await res.json()).message || ''; } catch { /* body may not be json */ }
+    console.error('invite email rejected', res.status, detail);
+    return { sent: false, reason: 'rejected', status: res.status, detail };
+  } catch (e) {
+    console.error('invite email failed', e && e.message ? e.message : e);
+    return { sent: false, reason: 'unreachable' };
+  }
+}
+
 /**
  * Issue an invitation. The raw token is returned exactly once, in this
  * response, and only its hash is kept — so the link cannot be recovered later
@@ -470,9 +556,19 @@ async function createInvite(request, env, actor) {
     .bind(await sha256Hex(token), username, String(body.display_name || username).slice(0, 80),
       email || null, role, actor.id, nowIso(), expires).run();
 
+  const url = `${env.SITE_ORIGIN || ''}/portal/?invite=${token}`;
+
+  // Only now, with the invitation safely stored, try to deliver it. The link
+  // goes back either way so a failed send is an inconvenience, not a loss.
+  const mail = await sendInviteEmail(env, {
+    to: email, displayName: String(body.display_name || username).slice(0, 80),
+    url, invitedBy: actor.display_name || actor.username, role,
+  });
+
   return json({
-    ok: true, username, role, expires_at: expires,
-    url: `${env.SITE_ORIGIN || ''}/portal/?invite=${token}`,
+    ok: true, username, role, expires_at: expires, url,
+    emailed: mail.sent === true,
+    email_status: mail.sent ? 'sent' : (mail.reason || 'not_sent'),
   }, 201);
 }
 
@@ -579,7 +675,7 @@ async function route(request, env) {
   const method = request.method;
 
   if (p === '/health') {
-    return json({ ok: true, configured: Boolean(env.DB && env.INGEST_KEY) });
+    return json({ ok: true, configured: Boolean(env.DB && env.INGEST_KEY), email: Boolean(env.RESEND_API_KEY) });
   }
   if (p === '/auth/login' && method === 'POST') return handleLogin(request, env);
   if (p === '/auth/logout' && method === 'POST') return handleLogout(request, env);

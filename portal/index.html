@@ -116,7 +116,7 @@ const API = "/portal-api";
 
 const $ = id => document.getElementById(id);
 const app = $("app");
-let ME = null, TAB = "cases", CASES = [], USERS = [], INVITES = [], TOTAL = 0, FILTER = "", LAST_LINK = "";
+let ME = null, TAB = "cases", CASES = [], USERS = [], INVITES = [], TOTAL = 0, FILTER = "", LAST_LINK = "", LAST_EMAILED = false;
 
 function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function when(iso){
@@ -248,10 +248,12 @@ function staffView(){
   </tr>`).join("") : "";
 
   const linkBox = LAST_LINK ? `<div class="linkbox">
-      <b>Invitation link — copy it now, it is not shown again.</b>
+      <b>${LAST_EMAILED
+        ? "Invitation emailed. Here is the link as well, in case it does not arrive."
+        : "Invitation link — copy it now, it is not shown again."}</b>
       <code>${esc(LAST_LINK)}</code>
       <button class="btn sm" data-act="copyLink">Copy link</button>
-      <a class="btn sm ghost" style="text-decoration:none;display:inline-block" data-act="mailLink" href="#">Email it</a>
+      <a class="btn sm ghost" style="text-decoration:none;display:inline-block" data-act="mailLink" href="#">Open in my email app</a>
     </div>` : "";
 
   return `<div class="card" style="margin-bottom:18px">
@@ -270,9 +272,10 @@ function staffView(){
 
   <div class="card">
     <h2>Invite someone</h2>
-    <p class="lead">This creates a one-time link you send them. They choose their own password, so you
-      never handle it. The link works once and expires in 7 days. Investigators see only the cases
-      assigned to them; admins see everything.</p>
+    <p class="lead">This creates a one-time link. If email sending is switched on and you give an
+      address, it is sent for you; otherwise copy the link and send it yourself. Either way they
+      choose their own password, so you never handle it. The link works once and expires in 7 days.
+      Investigators see only the cases assigned to them; admins see everything.</p>
     <form data-act="invite">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 14px">
         <label class="f"><span>Full name</span><input id="nv_name" required></label>
@@ -343,7 +346,7 @@ async function doAccept(token){
 
 async function doLogout(){
   try{ await api("/auth/logout", {method:"POST"}); }catch{}
-  ME = null; CASES = []; USERS = []; INVITES = []; TAB = "cases"; LAST_LINK = ""; paint();
+  ME = null; CASES = []; USERS = []; INVITES = []; TAB = "cases"; LAST_LINK = ""; LAST_EMAILED = false; paint();
 }
 
 async function openCase(caseNo){
@@ -406,15 +409,23 @@ async function saveCase(caseNo){
 async function doInvite(){
   const err = $("uerr"), okm = $("uok"); err.textContent = ""; okm.textContent = "";
   try{
+    // Read the address before render() rebuilds the form and clears the field.
+    const addr = $("nv_email").value.trim();
     const r = await api("/invites", {method:"POST", body:{
       username: $("nv_user").value.trim().toLowerCase(),
       display_name: $("nv_name").value.trim(),
-      email: $("nv_email").value.trim(),
+      email: addr,
       role: $("nv_role").value,
     }});
     LAST_LINK = r.url;
+    LAST_EMAILED = r.emailed === true;
     await render();
-    const o = $("uok"); if(o) o.textContent = "Invitation created. Send them the link below.";
+    const o = $("uok");
+    if(o) o.textContent = LAST_EMAILED
+      ? `Invitation emailed to ${addr}.`
+      : (addr
+          ? "Invitation created, but nothing was emailed — send them the link below yourself."
+          : "Invitation created. Copy the link below and send it to them.");
   }catch(e){ err.textContent = e.message; }
 }
 
@@ -426,7 +437,7 @@ async function toggleActive(id, active){
 
 async function revokeInvite(id){
   if(!confirm("Revoke this invitation? The link stops working immediately.")) return;
-  try{ await api(`/invites/${id}/revoke`, {method:"POST"}); LAST_LINK = ""; await render(); }
+  try{ await api(`/invites/${id}/revoke`, {method:"POST"}); LAST_LINK = ""; LAST_EMAILED = false; await render(); }
   catch(e){ alert(e.message); }
 }
 
