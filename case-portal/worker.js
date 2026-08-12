@@ -508,9 +508,19 @@ async function emailSheet(request, env, id) {
   return json({ ok: true, sent_to: to, sheet: sheet.id });
 }
 
+/* The dashboard's one job is answering "what needs my attention today?", so
+   beyond the raw counts it returns the actual case numbers behind each alert —
+   which is what lets a card be clicked to show exactly those cases rather than
+   being a number to go hunting after.
+
+   Scoped like everything else: an investigator's alerts are their own cases
+   and their own days, never the firm's book of work. And it degrades — on a
+   database missing the workspace tables it returns the basic counts it can
+   compute instead of failing the whole strip. */
 async function caseSummary(env, user) {
-  const scope = user.role === 'admin' ? '' : 'WHERE assigned_to = ?';
-  const binds = user.role === 'admin' ? [] : [user.id];
+  const admin = user.role === 'admin';
+  const scope = admin ? '' : 'WHERE assigned_to = ?';
+  const binds = admin ? [] : [user.id];
   const { results } = await env.DB.prepare(
     `SELECT status, kind, COUNT(*) AS n FROM submissions ${scope} GROUP BY status, kind`)
     .bind(...binds).all();
@@ -522,12 +532,66 @@ async function caseSummary(env, user) {
     if (r.status in out) out[r.status] += n;
     if (r.kind === 'claims') out.claims += n; else out.consumer += n;
   }
-  // Unassigned work an admin should be looking at first.
-  if (user.role === 'admin') {
+  out.open = out.total - out.closed;
+
+  if (admin) {
     const row = await env.DB.prepare(
       "SELECT COUNT(*) AS n FROM submissions WHERE assigned_to IS NULL AND status != 'closed'").first();
     out.unassigned = row ? Number(row.n) || 0 : 0;
   }
+
+  const missing = await missingTables(env);
+  const have = t => !missing.includes(t);
+  const cap = a => a.slice(0, 100);
+
+  // Out in the field right now: a day someone started and has not ended.
+  if (have('case_days')) {
+    const { results: openDays } = await env.DB.prepare(
+      `SELECT DISTINCT d.case_no FROM case_days d
+        ${admin ? '' : 'JOIN submissions s ON s.case_no = d.case_no AND s.assigned_to = ?'}
+        WHERE d.end_time IS NULL ${admin ? '' : 'AND d.investigator_id = ?'}`)
+      .bind(...(admin ? [] : [user.id, user.id])).all();
+    out.active_now = cap((openDays || []).map(r => r.case_no));
+  }
+
+  // Reports owed: a finished day with no report yet, plus — for the reviewer —
+  // reports sitting in submitted, and — for the writer — ones sent back.
+  if (have('case_days') && have('case_reports')) {
+    const { results: unreported } = await env.DB.prepare(
+      `SELECT DISTINCT d.case_no FROM case_days d
+        LEFT JOIN case_reports r ON r.day_id = d.id
+        ${admin ? '' : 'JOIN submissions s ON s.case_no = d.case_no AND s.assigned_to = ?'}
+        WHERE d.end_time IS NOT NULL AND r.id IS NULL ${admin ? '' : 'AND d.investigator_id = ?'}`)
+      .bind(...(admin ? [] : [user.id, user.id])).all();
+    const { results: pending } = await env.DB.prepare(admin
+      ? "SELECT DISTINCT case_no FROM case_reports WHERE status = 'submitted'"
+      : "SELECT DISTINCT case_no FROM case_reports WHERE status = 'needs_revision' AND investigator_id = ?")
+      .bind(...(admin ? [] : [user.id])).all();
+    out.reports_due = cap([...new Set([
+      ...(unreported || []).map(r => r.case_no),
+      ...(pending || []).map(r => r.case_no),
+    ])]);
+  }
+
+  // Authorization running low: used hours at or past the first warning
+  // threshold. The threshold is the configured one, not a constant here.
+  if (have('case_meta') && have('case_days')) {
+    const first = String(await configValue(env, 'auth_warn_thresholds', '75,90,100'))
+      .split(',').map(parseFloat).filter(Number.isFinite).sort((a, b) => a - b)[0] ?? 75;
+    const { results: authRows } = await env.DB.prepare(
+      `SELECT m.case_no, m.authorized_hours, COALESCE(SUM(d.hours), 0) AS used
+         FROM case_meta m
+         LEFT JOIN case_days d ON d.case_no = m.case_no
+         ${admin ? '' : 'JOIN submissions s ON s.case_no = m.case_no AND s.assigned_to = ?'}
+        WHERE m.authorized_hours > 0
+        GROUP BY m.case_no, m.authorized_hours`)
+      .bind(...(admin ? [] : [user.id])).all();
+    out.auth_low = cap((authRows || [])
+      .filter(r => (Number(r.used) / Number(r.authorized_hours)) * 100 >= first)
+      .map(r => r.case_no));
+    out.auth_warn_at = first;
+  }
+
   return json({ summary: out });
 }
 
