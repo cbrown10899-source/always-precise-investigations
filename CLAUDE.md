@@ -384,8 +384,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 317 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 228 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 340 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 245 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,

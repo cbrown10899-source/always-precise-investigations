@@ -18,7 +18,9 @@ Progress ledger (update as phases land):
 | 5. Daily Report Builder | **done** — 2026-08-12 (draft from log, 5 statuses, admin-only approval) |
 | 6. Evidence Management | not started — needs R2 private storage first |
 | 8. Dashboard Improvements | **done** — 2026-08-12 (operational cards, click-to-filter; Awaiting Client / Ready to Close / Expenses arrive with priorities 18/20/12) |
-| 9–15. Phase 2 (outside investigators) | not started |
+| 12. Expenses + Mileage | **done** — 2026-08-12 (three separate classifications; receipt images wait on priority 6 storage) |
+| 15. Case Notes + Visibility | **done** — 2026-08-12 (7 types, 3 visibilities, enforced in the Worker's query) |
+| 9, 10, 11, 13, 14. Phase 2 remainder | not started (10 largely enforced already via FIELD_KEEP + workspace redaction) |
 | 16–20. Phase 3 (case operations) | not started |
 | Phase 4 (client portal, redaction, safety, profitability) | not started |
 

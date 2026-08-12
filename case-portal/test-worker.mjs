@@ -1078,6 +1078,122 @@ section('Test cases');
      (await call(env, `/cases/${caseNo}/workspace`, { cookie: admin })).status === 404);
 }
 
+section('Expenses: three separate decisions, made by the office');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  await ingest(env, { case_no: 'API-X1', subject_name: 'S', client_name: 'C' });
+  await ingest(env, { case_no: 'API-X2', subject_name: 'S2', client_name: 'C2' });
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const dana = users.users.find(u => u.username === 'dana');
+  await call(env, '/submissions/API-X1/assign', { method: 'POST', cookie: admin, body: { user_id: dana.id } });
+
+  ok('an expense with no category is refused',
+     (await call(env, '/cases/API-X1/expenses', { method: 'POST', cookie: inv,
+       body: { expense_date: '2026-08-12', amount: 10, description: 'x' } })).status === 400);
+  ok('an expense with neither amount nor miles is refused',
+     (await call(env, '/cases/API-X1/expenses', { method: 'POST', cookie: inv,
+       body: { expense_date: '2026-08-12', category: 'tolls', description: 'x' } })).status === 400);
+  ok('an investigator records an expense on their case',
+     (await call(env, '/cases/API-X1/expenses', { method: 'POST', cookie: inv,
+       body: { expense_date: '2026-08-12', category: 'parking', amount: 14.5,
+               description: 'Courthouse garage' } })).status === 201);
+  ok('a mileage claim carries miles without a dollar figure',
+     (await call(env, '/cases/API-X1/expenses', { method: 'POST', cookie: inv,
+       body: { expense_date: '2026-08-12', category: 'mileage', miles: 62,
+               description: 'Round trip to residence' } })).status === 201);
+  ok('an investigator cannot record one on a case not theirs',
+     (await call(env, '/cases/API-X2/expenses', { method: 'POST', cookie: inv,
+       body: { expense_date: '2026-08-12', category: 'tolls', amount: 5, description: 'x' } })).status === 404);
+
+  let ws = await jsonOf(await call(env, '/cases/API-X1/workspace', { cookie: inv }));
+  ok('the workspace lists the expenses', ws.expenses.length === 2);
+  const exp = ws.expenses.find(e => e.category === 'parking');
+  ok('nothing is classified until the office decides',
+     exp.reimbursable === null && exp.billable === null && exp.internal === null);
+
+  ok('an investigator cannot review an expense',
+     (await call(env, `/cases/API-X1/expenses/${exp.id}/review`, { method: 'POST', cookie: inv,
+       body: { reimbursable: true } })).status === 403);
+  ok('the office sets the three decisions separately',
+     (await call(env, `/cases/API-X1/expenses/${exp.id}/review`, { method: 'POST', cookie: admin,
+       body: { reimbursable: true, billable: true, internal: false } })).status === 200);
+  ws = await jsonOf(await call(env, '/cases/API-X1/workspace', { cookie: admin }));
+  const reviewed = ws.expenses.find(e => e.id === exp.id);
+  ok('the decisions stick', reviewed.reimbursable === 1 && reviewed.billable === 1 && reviewed.internal === 0);
+  ok('the review is stamped', reviewed.reviewed_at !== null);
+
+  ok('editing a reviewed expense reopens the review',
+     (await call(env, `/cases/API-X1/expenses/${exp.id}`, { method: 'POST', cookie: inv,
+       body: { amount: 18.5, description: 'Courthouse garage — corrected receipt' } })).status === 200);
+  ws = await jsonOf(await call(env, '/cases/API-X1/workspace', { cookie: admin }));
+  const reopened = ws.expenses.find(e => e.id === exp.id);
+  ok('the classifications reset with the numbers',
+     reopened.reviewed_at === null && reopened.reimbursable === null);
+
+  const sum = (await jsonOf(await call(env, '/summary', { cookie: admin }))).summary;
+  ok('unreviewed expenses reach the dashboard', sum.expenses_pending.includes('API-X1'));
+  const isum = (await jsonOf(await call(env, '/summary', { cookie: inv }))).summary;
+  ok('the review queue is the office\'s, not the investigator\'s',
+     isum.expenses_pending === undefined);
+}
+
+section('Notes: visibility is enforced in the query');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  await ingest(env, { case_no: 'API-N1', subject_name: 'S', client_name: 'C' });
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const dana = users.users.find(u => u.username === 'dana');
+  await call(env, '/submissions/API-N1/assign', { method: 'POST', cookie: admin, body: { user_id: dana.id } });
+
+  await call(env, '/cases/API-N1/notes', { method: 'POST', cookie: admin,
+    body: { note_type: 'billing', visibility: 'admin',
+            body: 'Carrier agreed the preferred-volume rate on this file.' } });
+  await call(env, '/cases/API-N1/notes', { method: 'POST', cookie: admin,
+    body: { note_type: 'subject', visibility: 'team',
+            body: 'Subject switched to a grey rental sedan.' } });
+  await call(env, '/cases/API-N1/notes', { method: 'POST', cookie: admin,
+    body: { note_type: 'client_comm', visibility: 'client_eligible',
+            body: 'Told the adjuster day two is scheduled.' } });
+
+  const adminWs = await jsonOf(await call(env, '/cases/API-N1/workspace', { cookie: admin }));
+  ok('the admin sees all three notes', adminWs.notes.length === 3);
+
+  const invWs = await jsonOf(await call(env, '/cases/API-N1/workspace', { cookie: inv }));
+  ok('the investigator gets two', invWs.notes.length === 2);
+  ok('THE ADMIN-ONLY NOTE NEVER LEAVES THE WORKER',
+     !JSON.stringify(invWs).includes('preferred-volume'));
+  ok('team and client-eligible notes do arrive',
+     JSON.stringify(invWs).includes('grey rental sedan') &&
+     JSON.stringify(invWs).includes('day two is scheduled'));
+
+  ok('an investigator cannot author a billing note',
+     (await call(env, '/cases/API-N1/notes', { method: 'POST', cookie: inv,
+       body: { note_type: 'billing', body: 'x' } })).status === 400);
+  ok('an investigator note is forced to team visibility',
+     (await call(env, '/cases/API-N1/notes', { method: 'POST', cookie: inv,
+       body: { note_type: 'investigator', visibility: 'admin', body: 'Saw nothing after 3pm.' } })).status === 201);
+  const after = await jsonOf(await call(env, '/cases/API-N1/workspace', { cookie: inv }));
+  const theirs = after.notes.find(n => n.body === 'Saw nothing after 3pm.');
+  ok('whatever visibility they asked for, it stored as team', theirs.visibility === 'team');
+  ok('an empty note is refused',
+     (await call(env, '/cases/API-N1/notes', { method: 'POST', cookie: inv,
+       body: { note_type: 'investigator', body: '  ' } })).status === 400);
+}
+
 section('The daily report builder');
 {
   const env = freshEnv();

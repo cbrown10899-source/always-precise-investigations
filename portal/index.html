@@ -157,6 +157,16 @@
     dialog{width:100%;max-width:100%;border-radius:0;margin:0;height:100%;max-height:100%;}
     .dlg{padding:16px;}
   }
+  .casepage{max-width:980px;margin:0 auto;}
+  .pagebar{margin-bottom:12px;}
+  .xrev{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:.8rem;}
+  .xrev label{display:flex;gap:4px;align-items:center;white-space:nowrap;}
+  .tag.xr{background:#dff2e5;color:#1a6b3c;} .tag.xb{background:#dcecf2;color:#1d5c6c;}
+  .tag.xi{background:#e6ebf0;color:#42505f;}
+  .notecard{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px;}
+  .notebody{white-space:pre-wrap;font-size:.92rem;margin:6px 0 4px;}
+  .tag.nv-admin{background:#fdecea;color:#8a2318;} .tag.nv-team{background:#e6ebf0;color:#42505f;}
+  .tag.nv-client{background:#f3e2bd;color:#6b4f12;}
   .ex-note{background:#fdf7ec;border:1px solid #e8cf9e;color:#6b4f12;border-radius:8px;
     padding:11px 14px;font-size:.88rem;margin-bottom:14px;}
   .tag.ex-tag{background:#f3e2bd;color:#6b4f12;margin-left:6px;}
@@ -200,7 +210,6 @@
 
 <main id="app"></main>
 
-<dialog id="dlg"><div class="rel"><button class="close" data-act="closeDlg" aria-label="Close">&times;</button><div class="dlg" id="dlgBody"></div></div></dialog>
 
 <script>
 "use strict";
@@ -216,6 +225,7 @@ let ME = null, TAB = "cases", CASES = [], USERS = [], INVITES = [], TOTAL = 0, F
 let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
 // The open case workspace: which case, which tab, its loaded data, last error.
 let WS = null, WS_CASE = null, WS_TAB = "overview", WS_ERR = "", WS_REPORT = null;
+let VIEW = "list";   // "list" | "case" — the workspace is a full page, not a popup
 let LOAD_ERR = "";        // why the portal could not load, shown rather than hidden
 let SCHEMA_MISSING = [];  // tables the database does not have yet
 let CARD_FILTER = null;   // {label, set:Set(case numbers)} — a dashboard card's cases
@@ -232,10 +242,26 @@ const label = s => ({
   new:"New", assigned:"Assigned", in_progress:"In progress", closed:"Closed",
   activity:"Activity", photo:"Photo", video:"Video", location:"Location",
   vehicle:"Vehicle", note:"Note", mileage:"Mileage", expense:"Expense",
+  tolls:"Tolls", parking:"Parking", hotel:"Hotel", airfare:"Airfare", rental:"Rental vehicle",
+  records:"Records", database:"Database", equipment:"Equipment", meals:"Meals", other:"Other",
+  investigator:"Investigator", admin:"Admin", client_comm:"Client communication",
+  strategy:"Strategy", subject:"Subject", evidence:"Evidence", billing:"Billing",
 }[s] || s);
 
 /* Only ever render an image the browser will treat as image data. Anything
    else in that field came from a public form and is not to be trusted. */
+/* Times are entered 24-hour by the clock widget and read 12-hour by people;
+   the reports already write 12-hour, so the timeline matches them. */
+function t12(hhmm){
+  const h = parseInt(String(hhmm).slice(0,2), 10), m = String(hhmm).slice(3,5);
+  if(!Number.isFinite(h)) return String(hhmm || "");
+  return `${h % 12 === 0 ? 12 : h % 12}:${m} ${h < 12 ? "AM" : "PM"}`;
+}
+function fmtDay(d){
+  const t = new Date(String(d) + "T00:00:00");   // local midnight — no timezone drift
+  return isNaN(t) ? String(d) : t.toLocaleDateString(undefined, {weekday:"short", month:"short", day:"numeric", year:"numeric"});
+}
+
 function safeImage(src){
   return typeof src === "string" && /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(src) ? src : "";
 }
@@ -462,6 +488,8 @@ function summaryCards(){
       + card("Authorization low", low.length,
              s.auth_warn_at ? `Past ${s.auth_warn_at}% of hours` : "Hours running out",
              low.length ? "warn" : "", low)
+      + card("Expenses to review", (s.expenses_pending || []).length, "Awaiting your call",
+             (s.expenses_pending || []).length ? "warn" : "", s.expenses_pending || [])
     : card("Assigned to you", total, total ? "" : "Nothing yet")
       + card("Out now", active.length, "Your day is running", active.length ? "live" : "", active)
       + card("Reports due", due.length, "Finish or fix a report", due.length ? "warn" : "", due)
@@ -667,6 +695,16 @@ function paint(){
   $("who").hidden = false;
   $("who").innerHTML = `<b>${esc(ME.display_name || ME.username)}</b>${ME.role === "admin" ? "Admin" : "Investigator"}
     <button data-act="logout">Sign out</button>`;
+  if(VIEW === "case" && WS_CASE){
+    // The workspace takes the whole page. The back button carries the same
+    // .close class the dialog's X had, so muscle memory and tests both hold.
+    app.innerHTML = `<div class="casepage">
+      <div class="pagebar"><button class="btn sm ghost close" data-act="backToCases">&larr; All cases</button></div>
+      <div class="card"><div class="dlg" id="dlgBody">${
+        isExample(WS_CASE) ? exampleBodyHtml() : caseBodyHtml()}</div></div>
+    </div>`;
+    return;
+  }
   app.innerHTML = shell(TAB === "staff" ? staffView() : TAB === "sheets" ? sheetsView() : casesView());
   const q = $("q");
   if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
@@ -752,7 +790,7 @@ async function doLogout(){
    that do something today are shown — an empty "Evidence" tab would promise a
    feature that is not there. */
 async function openCase(caseNo, tab){
-  WS_CASE = caseNo; WS_TAB = tab || "overview"; WS_ERR = "";
+  WS_CASE = caseNo; WS_TAB = tab || "overview"; WS_ERR = ""; VIEW = "case";
   if(isExample(caseNo)){
     WS = null;   // examples are page-held demo data; they have no live workspace
     return paintCase();
@@ -779,7 +817,7 @@ async function reloadWorkspace(){
 function wsTabs(){
   const admin = ME.role === "admin";
   const t = [["overview","Overview"], ["subject","Subject"], ["activity","Activity log"],
-             ["field","Field work"], ["reports","Reports"]];
+             ["field","Field work"], ["reports","Reports"], ["expenses","Expenses"], ["notes","Internal notes"]];
   // Authorization is the insurance panel; it appears once there is one, and
   // always for an admin so it can be set.
   if(admin || (WS && WS.authorization && WS.authorization.authorized_hours != null)) t.push(["auth","Authorization"]);
@@ -829,7 +867,7 @@ function activityPanel(){
   for(const e of a){ (byDay[e.at_date] = byDay[e.at_date] || []).push(e); }
 
   return `
-    ${open ? `<div class="dayon"><b>Investigation day running</b> &mdash; started ${esc(open.start_time)} on ${esc(open.day_date)}.
+    ${open ? `<div class="dayon"><b>Investigation day running</b> &mdash; started ${esc(t12(open.start_time))} on ${esc(fmtDay(open.day_date))}.
         Entries are attached to it automatically.</div>`
       : `<div class="note">No investigation day is running. You can still log entries; starting a day
          is what totals the hours and mileage.</div>`}
@@ -854,10 +892,10 @@ function activityPanel(){
     </form>
 
     ${a.length ? Object.keys(byDay).map(d => `
-      <div class="tl-day">${esc(when(d + "T12:00:00Z"))}</div>
+      <div class="tl-day">${esc(fmtDay(d))}</div>
       <ol class="tl">
         ${byDay[d].map(e => `<li class="tl-i">
-          <div class="tl-t">${esc(e.at_time)}</div>
+          <div class="tl-t">${esc(t12(e.at_time))}</div>
           <div class="tl-b">
             <span class="tag ${esc(e.kind)}">${esc(label(e.kind))}</span>
             <div class="tl-d">${esc(e.description)}</div>
@@ -878,7 +916,7 @@ function fieldPanel(){
   return `
     ${open
       ? `<form class="quick" data-act="endDay">
-           <div class="dayon"><b>Day running since ${esc(open.start_time)}</b> on ${esc(open.day_date)}${
+           <div class="dayon"><b>Day running since ${esc(t12(open.start_time))}</b> on ${esc(fmtDay(open.day_date))}${
              open.start_mileage != null ? ` &middot; started at ${esc(open.start_mileage)} miles` : ""}.</div>
            <div class="two">
              <label class="f"><span>End time</span><input id="d_end" type="time" value="${now}"></label>
@@ -902,7 +940,7 @@ function fieldPanel(){
     ${days.length ? `<div style="overflow-x:auto"><table>
       <thead><tr><th>Date</th><th>Hours</th><th class="hide">Miles</th><th class="hide">Investigator</th></tr></thead>
       <tbody>${days.map(d => `<tr>
-        <td>${esc(d.day_date)}<div class="tl-m">${esc(d.start_time)}${d.end_time ? "–" + esc(d.end_time) : " · running"}</div></td>
+        <td>${esc(fmtDay(d.day_date))}<div class="tl-m">${esc(t12(d.start_time))}${d.end_time ? "–" + esc(t12(d.end_time)) : " · running"}</div></td>
         <td>${d.hours != null ? esc(d.hours) : "—"}</td>
         <td class="hide">${d.miles != null ? esc(d.miles) : "—"}</td>
         <td class="hide">${esc(d.investigator || "")}</td>
@@ -974,6 +1012,102 @@ function reportsPanel(){
 const reportLabel = s => ({draft:"Draft", submitted:"Submitted", needs_revision:"Needs revision",
                            approved:"Approved", delivered:"Delivered"}[s] || s);
 
+/* Expenses. Anyone on the case records what it cost them; the office makes
+   the three separate decisions — owed back, billable on, company cost. */
+function expensesPanel(){
+  const admin = ME.role === "admin";
+  const list = (WS && WS.expenses) || [];
+  const today = new Date().toISOString().slice(0,10);
+  const cats = [["mileage","Mileage"],["tolls","Tolls"],["parking","Parking"],["hotel","Hotel"],
+    ["airfare","Airfare"],["rental","Rental vehicle"],["records","Records"],["database","Database"],
+    ["equipment","Equipment"],["meals","Meals (if authorized)"],["other","Other"]];
+  const money = n => n == null ? "" : "$" + Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+  const totals = list.reduce((t,e)=>({amt:t.amt+(Number(e.amount)||0), mi:t.mi+(Number(e.miles)||0)}), {amt:0,mi:0});
+
+  return `
+    <form class="quick" data-act="addExpense">
+      <div class="two">
+        <label class="f"><span>Date</span><input id="x_date" type="date" value="${today}"></label>
+        <label class="f"><span>Category</span>
+          <select id="x_cat">${cats.map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select></label>
+      </div>
+      <div class="two">
+        <label class="f"><span>Amount <span class="opt">dollars</span></span><input id="x_amt" inputmode="decimal"></label>
+        <label class="f"><span>Miles <span class="opt">for mileage claims</span></span><input id="x_mi" inputmode="decimal"></label>
+      </div>
+      <label class="f"><span>What it was</span><input id="x_desc" placeholder="e.g. Parking garage at the courthouse — receipt in hand"></label>
+      <button class="btn" type="submit">Record expense</button>
+      <p class="hint">Receipt photos attach once evidence storage lands. Until then, keep the paper
+        and note what it says here.</p>
+      ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+    </form>
+
+    ${list.length ? `<div style="overflow-x:auto"><table>
+      <thead><tr><th>Date</th><th>Category</th><th>Amount</th><th class="hide">Miles</th><th>Status</th></tr></thead>
+      <tbody>${list.map(e => `<tr>
+        <td>${esc(fmtDay(e.expense_date))}<div class="tl-m">${esc(e.investigator || "")}${e.edited_at ? " · edited" : ""}</div></td>
+        <td>${esc(label(e.category) || e.category)}<div class="tl-m">${esc(e.description)}</div></td>
+        <td>${money(e.amount) || "—"}</td>
+        <td class="hide">${e.miles != null ? esc(e.miles) : "—"}</td>
+        <td>${e.reviewed_at
+            ? `${e.reimbursable ? '<span class="tag xr">Reimburse</span>' : ""}
+               ${e.billable ? '<span class="tag xb">Billable</span>' : ""}
+               ${e.internal ? '<span class="tag xi">Company</span>' : ""}
+               ${!e.reimbursable && !e.billable && !e.internal ? '<span class="tag">Reviewed</span>' : ""}`
+            : admin
+            ? `<div class="xrev" data-id="${e.id}">
+                 <label><input type="checkbox" class="xr-re"> reimburse</label>
+                 <label><input type="checkbox" class="xr-bi"> billable</label>
+                 <label><input type="checkbox" class="xr-in"> company</label>
+                 <button class="btn sm" data-act="reviewExpense" data-id="${e.id}">Save</button>
+               </div>`
+            : '<span class="tag new">Awaiting review</span>'}</td>
+      </tr>`).join("")}
+      <tr><td><b>Total claimed</b></td><td></td><td><b>${money(totals.amt)}</b></td>
+          <td class="hide"><b>${totals.mi || ""}</b></td><td></td></tr>
+      </tbody></table></div>`
+      : `<div class="empty">No expenses recorded on this case.</div>`}`;
+}
+
+/* Notes, categorised and visibility-tagged. What arrives here has already been
+   filtered by the Worker — an admin-only note never reaches this page for an
+   investigator, so there is nothing for the page to hide. */
+function notesPanel(){
+  const admin = ME.role === "admin";
+  const notes = (WS && WS.notes) || [];
+  const types = admin
+    ? [["admin","Admin note"],["investigator","Investigator note"],["client_comm","Client communication"],
+       ["strategy","Case strategy"],["subject","Subject information"],["evidence","Evidence note"],["billing","Billing note"]]
+    : [["investigator","Investigator note"],["subject","Subject information"],["evidence","Evidence note"]];
+  const visLabel = v => v === "admin" ? "Admin only" : v === "client_eligible" ? "Client eligible" : "Team";
+
+  return `
+    <form class="quick" data-act="addNote">
+      <div class="two">
+        <label class="f"><span>Type</span>
+          <select id="n_type">${types.map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select></label>
+        ${admin ? `<label class="f"><span>Who can see it</span>
+          <select id="n_vis">
+            <option value="team">Admins + investigators on the case</option>
+            <option value="admin">Admins only</option>
+            <option value="client_eligible">Eligible for a client-facing record</option>
+          </select></label>` : ""}
+      </div>
+      <label class="f"><span>Note</span><textarea id="n_body" rows="3"></textarea></label>
+      <button class="btn" type="submit">Add note</button>
+      ${admin ? `<p class="hint">"Client eligible" only marks a note as allowed into a future
+        client-facing record. Nothing is ever sent automatically.</p>` : ""}
+      ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+    </form>
+    ${notes.length ? notes.map(n => `<div class="notecard">
+        <div class="rc-h"><span class="tag">${esc(label(n.note_type) || n.note_type)}</span>
+          <span class="tag ${n.visibility === "admin" ? "nv-admin" : n.visibility === "client_eligible" ? "nv-client" : "nv-team"}">${esc(visLabel(n.visibility))}</span></div>
+        <div class="notebody">${esc(n.body)}</div>
+        <div class="tl-m">${esc(n.author || "")} &middot; ${when(n.created_at)}${n.edited_at ? " · edited" : ""}</div>
+      </div>`).join("")
+      : `<div class="empty">No notes on this case yet.</div>`}`;
+}
+
 function authAdminForm(){
   const a = (WS && WS.authorization) || {};
   const types = (WS && WS.case_types) || [];
@@ -995,10 +1129,9 @@ function authAdminForm(){
   </form>`;
 }
 
-function paintCase(){
+function caseBodyHtml(){
   const admin = ME.role === "admin";
-  if(isExample(WS_CASE)) return paintExampleCase();
-  if(!WS) return;
+  if(!WS) return `<div class="empty">Loading the case&hellip;</div>`;
   const s = WS.submission || {};
   const a = WS.authorization || {};
 
@@ -1006,25 +1139,30 @@ function paintCase(){
       WS_TAB === "activity" ? activityPanel()
     : WS_TAB === "field"    ? fieldPanel()
     : WS_TAB === "reports"  ? reportsPanel()
+    : WS_TAB === "expenses" ? expensesPanel()
+    : WS_TAB === "notes"    ? notesPanel()
     : WS_TAB === "auth"     ? authPanel(a, admin) + (admin ? authAdminForm() : "")
     : WS_TAB === "assign"   ? assignPanel(s)
     : WS_TAB === "subject"  ? detailList(s, "subject")
     :                         detailList(s, "overview") + (a.authorized_hours != null ? authPanel(a, admin) : "");
 
-  $("dlgBody").innerHTML = `
+  return `
     <h2>${esc(a.case_type || (s.kind === "claims" ? "Claim assignment" : "Client intake"))}</h2>
     <div class="case">${esc(WS_CASE)}</div>
     <div class="wstabs">${wsTabs().map(([k, lbl]) =>
       `<button class="${WS_TAB === k ? "on" : ""}" data-act="wsTab" data-tab="${k}">${esc(lbl)}</button>`).join("")}</div>
     <div class="wspanel">${panel}</div>`;
-  if(!$("dlg").open) $("dlg").showModal();
 }
 
-async function openExampleCase(caseNo){ WS_CASE = caseNo; WS = null; paintExampleCase(); }
+/* The workspace is a full page, not a popup — a case is where the day's work
+   happens, and work does not happen through a keyhole. paint() routes here. */
+function paintCase(){ paint(); }
 
-function paintExampleCase(){
+async function openExampleCase(caseNo){ WS_CASE = caseNo; WS = null; VIEW = "case"; paint(); }
+
+function exampleBodyHtml(){
   const s = examplesFor(ME.role).find(c => c.case_no === WS_CASE);
-  if(!s) return;
+  if(!s) return "";
   const p = s.payload || {};
   const row = (k, v) => v ? `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>` : "";
   const claim = s.kind === "claims";
@@ -1049,7 +1187,7 @@ function paintExampleCase(){
         <div class="err" id="derr" style="width:100%"></div>
       </div>` : "";
 
-  $("dlgBody").innerHTML = `
+  return `
     ${isExample(s.case_no) ? `<div class="ex-note" style="margin-bottom:14px">
        <b>Example — not a real case.</b> ${ME.role === "admin"
          ? `Every field a live ${claim ? "carrier assignment" : "client intake"} can carry is filled in
@@ -1082,8 +1220,7 @@ function paintExampleCase(){
     </dl>
     ${sig ? `<div><div style="font-size:.8rem;color:var(--muted)">Signature</div><img class="sig" src="${esc(sig)}" alt="signature"></div>` : ""}
     ${controls}`;
-  if(!$("dlg").open) $("dlg").showModal();
-}
+  }
 
 /* The intake detail, split so the workspace can show what the field needs
    (subject) apart from what the office needs (everything). Both read from the
@@ -1223,6 +1360,42 @@ async function setReportStage(id, to){
   await reloadWorkspace();
 }
 
+async function addExpenseEntry(){
+  WS_ERR = "";
+  try{
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/expenses`, {method:"POST", body:{
+      expense_date: $("x_date").value, category: $("x_cat").value,
+      amount: $("x_amt").value, miles: $("x_mi").value, description: $("x_desc").value,
+    }});
+  }catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+async function reviewExpenseEntry(id){
+  WS_ERR = "";
+  const box = document.querySelector(`.xrev[data-id="${id}"]`);
+  try{
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/expenses/${id}/review`, {method:"POST", body:{
+      reimbursable: box.querySelector(".xr-re").checked,
+      billable: box.querySelector(".xr-bi").checked,
+      internal: box.querySelector(".xr-in").checked,
+    }});
+  }catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+async function addNoteEntry(){
+  WS_ERR = "";
+  try{
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/notes`, {method:"POST", body:{
+      note_type: $("n_type").value,
+      visibility: $("n_vis") ? $("n_vis").value : "team",
+      body: $("n_body").value,
+    }});
+  }catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
 async function saveCaseMeta(){
   WS_ERR = "";
   try{
@@ -1241,7 +1414,7 @@ async function saveCase(caseNo){
   try{
     await api(`/submissions/${encodeURIComponent(caseNo)}/assign`, {method:"POST", body:{user_id: uid === "" ? null : Number(uid)}});
     await api(`/submissions/${encodeURIComponent(caseNo)}/status`, {method:"POST", body:{status: $("sts").value}});
-    $("dlg").close();
+    VIEW = "list"; WS = null;
     await render();
   }catch(e){ err.textContent = e.message; }
 }
@@ -1306,7 +1479,7 @@ document.addEventListener("click", ev => {
   const el = ev.target.closest("[data-act]");
   if(!el) return;
   const act = el.dataset.act;
-  if(act === "closeDlg"){ $("dlg").close(); }
+  if(act === "backToCases"){ VIEW = "list"; render(); }
   else if(act === "tab"){ TAB = el.dataset.tab; paint(); }
   else if(act === "showExample"){ SHOW_EXAMPLE = true; paint(); }
   else if(act === "hideExample"){ SHOW_EXAMPLE = false; paint(); }
@@ -1333,6 +1506,7 @@ document.addEventListener("click", ev => {
   }
   else if(act === "saveReport"){ saveReportBody(Number(el.dataset.id)); }
   else if(act === "reportStatus"){ setReportStage(Number(el.dataset.id), el.dataset.to); }
+  else if(act === "reviewExpense"){ reviewExpenseEntry(Number(el.dataset.id)); }
   else if(act === "openSheet"){
     OPEN_SHEET = OPEN_SHEET === el.dataset.sheet ? null : el.dataset.sheet;
     SHEET_MSG = ""; paint();
@@ -1365,6 +1539,8 @@ document.addEventListener("submit", ev => {
   else if(a === "endDay") endInvestigationDay();
   else if(a === "saveMeta") saveCaseMeta();
   else if(a === "genReport") generateReportDraft();
+  else if(a === "addExpense") addExpenseEntry();
+  else if(a === "addNote") addNoteEntry();
 });
 
 document.addEventListener("input", ev => {
