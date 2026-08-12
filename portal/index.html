@@ -114,6 +114,9 @@
     border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer;}
   .qk input:checked + span{border-color:var(--teal);background:#eaf5f7;color:var(--navy);}
   .qk input:focus-visible + span{outline:2px solid var(--teal);}
+  .qk2{display:block;width:100%;text-align:center;font:inherit;font-size:.8rem;font-weight:700;
+    padding:10px 4px;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer;}
+  .qk2.on{border-color:var(--teal);background:#eaf5f7;color:var(--navy);}
   .opt{font-weight:400;color:var(--muted);font-size:.78rem;}
   .dayon{background:#eaf5f7;border:1px solid #b7dbe3;border-radius:8px;padding:10px 12px;
     font-size:.88rem;margin-bottom:12px;}
@@ -226,6 +229,8 @@ let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG =
 // The open case workspace: which case, which tab, its loaded data, last error.
 let WS = null, WS_CASE = null, WS_TAB = "overview", WS_ERR = "", WS_REPORT = null;
 let VIEW = "list";   // "list" | "case" — the workspace is a full page, not a popup
+let QKIND = "activity";  // which quick-add composer is open on the activity log
+let WS_NOTICE = "";      // one-shot "day ended" notice carrying the next step
 let LOAD_ERR = "";        // why the portal could not load, shown rather than hidden
 let SCHEMA_MISSING = [];  // tables the database does not have yet
 let CARD_FILTER = null;   // {label, set:Set(case numbers)} — a dashboard card's cases
@@ -868,26 +873,62 @@ function activityPanel(){
 
   return `
     ${open ? `<div class="dayon"><b>Investigation day running</b> &mdash; started ${esc(t12(open.start_time))} on ${esc(fmtDay(open.day_date))}.
-        Entries are attached to it automatically.</div>`
+        Entries are attached to it automatically.
+        <button class="btn sm ghost" data-act="wsTab" data-tab="field" style="margin-left:8px">End the day</button></div>`
       : `<div class="note">No investigation day is running. You can still log entries; starting a day
-         is what totals the hours and mileage.</div>`}
+         is what totals the hours and mileage.
+         <button class="btn sm ghost" data-act="wsTab" data-tab="field" style="margin-left:8px">Start a day</button></div>`}
 
     <form class="quick" data-act="addActivity">
       <div class="qgrid">
-        ${quick.map(k => `<label class="qk"><input type="radio" name="qkind" value="${k}" ${k==="activity"?"checked":""}><span>${esc(label(k))}</span></label>`).join("")}
+        ${["activity","photo","video","location","vehicle","note","mileage","expense"].map(k =>
+          `<button type="button" class="qk2 ${QKIND === k ? "on" : ""}" data-act="qkind" data-k="${k}">${esc(label(k))}</button>`).join("")}
       </div>
       <div class="two">
         <label class="f"><span>Date</span><input id="a_date" type="date" value="${today}"></label>
         <label class="f"><span>Time</span><input id="a_time" type="time" value="${now}"></label>
       </div>
-      <label class="f"><span>What happened</span>
-        <textarea id="a_desc" rows="2" placeholder="e.g. Subject departed residence in the white GMC Sierra."></textarea></label>
-      <div class="two">
-        <label class="f"><span>Location <span class="opt">optional</span></span><input id="a_loc" placeholder="e.g. 2214 Old Forest Rd"></label>
-        <label class="f"><span>Vehicle <span class="opt">optional</span></span><input id="a_veh" placeholder="e.g. White GMC Sierra XKT-2209"></label>
-      </div>
-      <label class="f"><span>Internal note <span class="opt">optional, never client-facing</span></span><input id="a_note"></label>
-      <button class="btn" type="submit">Add to the log</button>
+      ${QKIND === "mileage" ? `
+        <div class="two">
+          <label class="f"><span>Miles</span><input id="a_miles" inputmode="decimal" placeholder="e.g. 62"></label>
+          <label class="f"><span>From / to</span><input id="a_desc" placeholder="e.g. Office to subject residence and back"></label>
+        </div>
+        <p class="hint">Recorded as a mileage claim under Expenses and marked on the timeline together.</p>`
+      : QKIND === "expense" ? `
+        <div class="two">
+          <label class="f"><span>Amount</span><input id="a_amt" inputmode="decimal" placeholder="e.g. 14.50"></label>
+          <label class="f"><span>Category</span>
+            <select id="a_cat">${[["tolls","Tolls"],["parking","Parking"],["hotel","Hotel"],["airfare","Airfare"],
+              ["rental","Rental vehicle"],["records","Records"],["database","Database"],["equipment","Equipment"],
+              ["meals","Meals (if authorized)"],["other","Other"]].map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select></label>
+        </div>
+        <label class="f"><span>What it was</span><input id="a_desc" placeholder="e.g. Parking garage across from the courthouse"></label>
+        <p class="hint">Recorded under Expenses for the office's review and marked on the timeline together.</p>`
+      : `
+        <label class="f"><span>${QKIND === "photo" ? "What the photo shows"
+            : QKIND === "video" ? "What the video captures"
+            : QKIND === "note" ? "Field note"
+            : QKIND === "location" ? "What is at this location"
+            : QKIND === "vehicle" ? "What the vehicle is doing" : "What happened"}</span>
+          <textarea id="a_desc" rows="2" placeholder="${
+              QKIND === "photo" ? "e.g. Subject loading mulch bags into the truck bed, taken from the street."
+            : QKIND === "video" ? "e.g. 4 min 20 s — subject carrying ladder from garage to trailer."
+            : QKIND === "note" ? "e.g. Neighbour waved; may have been noticed. Rotating position."
+            : QKIND === "location" ? "e.g. ABC Fitness — subject's regular morning gym."
+            : QKIND === "vehicle" ? "e.g. Parked nose-out in the driveway, engine running."
+            : "e.g. Subject departed residence in the white GMC Sierra."}"></textarea></label>
+        ${QKIND === "photo" || QKIND === "video" ? `
+          <p class="hint">This marks the moment on the timeline; the ${QKIND} file itself attaches when
+            evidence storage arrives. Keep the media on the device until then.</p>` : ""}
+        <div class="two">
+          <label class="f"><span>Location ${QKIND === "location" ? "" : `<span class="opt">optional</span>`}</span>
+            <input id="a_loc" placeholder="e.g. 2214 Old Forest Rd"></label>
+          <label class="f"><span>Vehicle ${QKIND === "vehicle" ? "" : `<span class="opt">optional</span>`}</span>
+            <input id="a_veh" placeholder="e.g. White GMC Sierra XKT-2209"></label>
+        </div>
+        <label class="f"><span>Internal note <span class="opt">optional, never client-facing</span></span><input id="a_note"></label>`}
+      <button class="btn" type="submit">${
+        QKIND === "mileage" ? "Record mileage" : QKIND === "expense" ? "Record expense" : "Add to the log"}</button>
       ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
     </form>
 
@@ -910,10 +951,14 @@ function activityPanel(){
 
 function fieldPanel(){
   const open = WS && WS.open_day;
+  const notice = WS_NOTICE ? `<div class="dayon"><b>${esc(WS_NOTICE)}</b>
+      <button class="btn sm" data-act="wsTab" data-tab="reports" style="margin-left:8px">Draft the daily report</button>
+    </div>` : "";
   const days = (WS && WS.days) || [];
   const today = new Date().toISOString().slice(0,10);
   const now = new Date().toTimeString().slice(0,5);
   return `
+    ${notice}
     ${open
       ? `<form class="quick" data-act="endDay">
            <div class="dayon"><b>Day running since ${esc(t12(open.start_time))}</b> on ${esc(fmtDay(open.day_date))}${
@@ -975,7 +1020,8 @@ function reportsPanel(){
       </form>`
       : `<div class="note">${days.length
           ? "Every completed day on this case already has a report."
-          : "End an investigation day first — a report is drafted from a day's activity log."}</div>`}
+          : `End an investigation day first &mdash; a report is drafted from a day's activity log.
+             <button class="btn sm ghost" data-act="wsTab" data-tab="field" style="margin-left:8px">Go to Field work</button>`}</div>`}
 
     ${reports.length ? `<div class="rlist">${reports.map(r => `
       <button class="rcard${r.id === WS_REPORT ? " on" : ""}" data-act="openReport" data-id="${r.id}">
@@ -1280,16 +1326,34 @@ function assignPanel(s){
 /* ---- workspace actions ---- */
 
 async function addActivityEntry(){
-  const kindEl = document.querySelector('input[name="qkind"]:checked');
   WS_ERR = "";
+  const date = $("a_date").value, time = $("a_time").value;
   try{
-    await api(`/cases/${encodeURIComponent(WS_CASE)}/activity`, {method:"POST", body:{
-      kind: kindEl ? kindEl.value : "activity",
-      at_date: $("a_date").value, at_time: $("a_time").value,
-      description: $("a_desc").value,
-      location: $("a_loc").value, vehicle: $("a_veh").value,
-      internal_note: $("a_note").value,
-    }});
+    if(QKIND === "mileage" || QKIND === "expense"){
+      // These are money, so the real record is the expense; the timeline entry
+      // marks when it happened so the day still reads as one story.
+      const desc = $("a_desc").value.trim();
+      const miles = QKIND === "mileage" ? $("a_miles").value : "";
+      const amt = QKIND === "expense" ? $("a_amt").value : "";
+      await api(`/cases/${encodeURIComponent(WS_CASE)}/expenses`, {method:"POST", body:{
+        expense_date: date, category: QKIND === "mileage" ? "mileage" : $("a_cat").value,
+        miles, amount: amt, description: desc,
+      }});
+      await api(`/cases/${encodeURIComponent(WS_CASE)}/activity`, {method:"POST", body:{
+        kind: QKIND, at_date: date, at_time: time,
+        description: QKIND === "mileage" ? `${miles} miles — ${desc}` : `$${amt} ${$("a_cat").value} — ${desc}`,
+      }});
+    }else{
+      const loc = $("a_loc").value, veh = $("a_veh").value;
+      if(QKIND === "location" && !loc.trim()){ WS_ERR = "A location entry needs the location."; return paintCase(); }
+      if(QKIND === "vehicle" && !veh.trim()){ WS_ERR = "A vehicle entry needs the vehicle."; return paintCase(); }
+      await api(`/cases/${encodeURIComponent(WS_CASE)}/activity`, {method:"POST", body:{
+        kind: QKIND, at_date: date, at_time: time,
+        description: $("a_desc").value,
+        location: loc, vehicle: veh,
+        internal_note: $("a_note").value,
+      }});
+    }
   }catch(e){ WS_ERR = e.message; }
   await reloadWorkspace();
 }
@@ -1307,9 +1371,10 @@ async function startInvestigationDay(){
 async function endInvestigationDay(){
   WS_ERR = "";
   try{
-    await api(`/cases/${encodeURIComponent(WS_CASE)}/day/end`, {method:"POST", body:{
+    const r = await api(`/cases/${encodeURIComponent(WS_CASE)}/day/end`, {method:"POST", body:{
       end_time: $("d_end").value, end_mileage: $("d_emiles").value, summary: $("d_sum").value,
     }});
+    WS_NOTICE = `Day ended — ${r.hours} hours${r.miles != null ? `, ${r.miles} miles` : ""} recorded.`;
   }catch(e){ WS_ERR = e.message; }
   await reloadWorkspace();
 }
@@ -1499,7 +1564,8 @@ document.addEventListener("click", ev => {
   else if(act === "clearCardFilter"){ CARD_FILTER = null; paint(); }
   else if(act === "addDemo"){ addDemoCase(); }
   else if(act === "clearDemo"){ clearDemoCases(); }
-  else if(act === "wsTab"){ WS_TAB = el.dataset.tab; WS_ERR = ""; paintCase(); }
+  else if(act === "wsTab"){ if(WS_TAB !== el.dataset.tab) WS_NOTICE = ""; WS_TAB = el.dataset.tab; WS_ERR = ""; paintCase(); }
+  else if(act === "qkind"){ QKIND = el.dataset.k; WS_ERR = ""; paintCase(); }
   else if(act === "openReport"){
     WS_REPORT = WS_REPORT === Number(el.dataset.id) ? null : Number(el.dataset.id);
     WS_ERR = ""; paintCase();
