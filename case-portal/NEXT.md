@@ -7,18 +7,16 @@ overflow pattern, guard tests). This file is the live queue and in-flight
 state. Update it when the queue moves; keep it short.
 
 Snapshot date: 2026-08-13. Branch: `claude/app-crashes-lockups-debug-jcy6kf`.
-Master is green through PR #43 (UIBUILD Phase 2). Suites at last green:
-worker 601, portal e2e 417 (intake 130, alerts 41).
+Master is green through PR #44 (UIBUILD Phase 3). Suites at last green:
+worker 610, portal e2e 439 (intake 130, alerts 41).
 
 ## The queue, in the owner's order
 
-1. **UIBUILD.md — streamlined UI, phases 4–8, in order.** Phases 1–3 are
-   DONE (ledger in UIBUILD.md has the details). Phase 4 (report +
-   evidence: report preview screen; submission workflow; evidence
-   gallery; filters; activity links) is next. Phase 4 should also pick
-   up the two deferrals noted in the ledger: evidence thumbnails on the
-   case overview, and linked evidence in the quick-entry More-details
-   fold.
+1. **UIBUILD.md — streamlined UI, phases 5–8, in order.** Phases 1–4 are
+   DONE (ledger in UIBUILD.md has the details). Phase 5 (Case Build:
+   summary steps; contents; Dropbox delivery status/link; preview;
+   finalize; completed view — P13/P14 polish over the existing Package
+   tab) is next.
 2. **INTAKE-NA.md — intake "not available" states** (owner: after the UI
    work).
 3. **SURVEILLANCE.md — Active Surveillance Mode** (owner: after the shared
@@ -40,12 +38,13 @@ same landing-vs-click class of bug was then found and fixed twice more
 (openCase straight to the package tab, and the e2e harness now prints
 its report on an uncaught exception instead of dying silently).
 
-**Phase 3 is built and green on the branch** (field activity: the
-timeline-first panel with per-entry evidence counts and stamped Edit;
-the Add Activity sheet with Quick/Custom, search, categories,
-per-username favorites, one-tap No change, the arrival sentence
-generator; Custom keeps mileage/expense whole). No Worker change at
-all this phase. Ship it as one PR, then start Phase 4.
+**Phase 3 shipped as PR #44** (deploy green). **Phase 4 is built and
+green on the branch** (P11 report preview screen with the submitted-
+version snapshot — `report_versions` is a SCHEMA CHANGE, so dispatch
+portal-setup after the merge; P12 evidence gallery with type tabs and
+thumbnails; overview thumbnails; quick-fold evidence linking via the
+new POST /evidence/:id/link). Ship as one PR, dispatch portal-setup,
+then start Phase 5.
 
 ## How to resume in a fresh session
 

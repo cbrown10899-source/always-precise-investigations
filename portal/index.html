@@ -286,6 +286,26 @@
   .tl-edit{margin-left:8px;font-size:.72rem;background:none;border:0;color:var(--teal);
     cursor:pointer;font-weight:700;padding:0;}
   .tl-counts{display:inline-block;font-size:.78rem;color:var(--muted);margin-right:6px;}
+  /* UIBUILD Phase 4 — the report preview screen (P11) and evidence gallery (P12). */
+  .rpnav{display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line);margin:0 0 12px;
+    -webkit-overflow-scrolling:touch;}
+  .rpnav button{flex:none;font:inherit;font-size:.82rem;font-weight:700;background:none;border:0;
+    border-bottom:2px solid transparent;color:var(--muted);padding:8px 10px;cursor:pointer;white-space:nowrap;}
+  .rpnav button.on{color:var(--navy);border-bottom-color:var(--teal);}
+  #repdoc{border:1px solid var(--line);border-radius:10px;padding:26px 28px;background:#fff;}
+  #repdoc h2{margin:0;}
+  .rvbody{white-space:pre-wrap;font:inherit;font-size:.92rem;margin:10px 0 0;overflow-x:auto;}
+  .evtabs{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0 10px;}
+  .evtab{font:inherit;font-size:.78rem;font-weight:700;padding:7px 11px;border:1px solid var(--line);
+    border-radius:16px;background:#fff;cursor:pointer;}
+  .evtab.on{border-color:var(--teal);background:#eaf5f7;color:var(--navy);}
+  .evgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;}
+  .evcard{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px;}
+  .evthumb{width:100%;height:110px;object-fit:cover;border-radius:8px;background:#f2f5f8;display:block;}
+  .evtile{width:100%;height:110px;border-radius:8px;background:#eef2f5;display:flex;
+    align-items:center;justify-content:center;font-size:2rem;}
+  .ovthumbs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;}
+  .ovthumbs img{width:56px;height:56px;object-fit:cover;border-radius:8px;}
   @media print{
     body.printing-invoice *{visibility:hidden !important;}
     body.printing-invoice #invdoc, body.printing-invoice #invdoc *{visibility:visible !important;}
@@ -293,6 +313,9 @@
     body.printing-package *{visibility:hidden !important;}
     body.printing-package #pkgdoc, body.printing-package #pkgdoc *{visibility:visible !important;}
     body.printing-package #pkgdoc{position:absolute;left:0;top:0;width:100%;border:0;padding:0;}
+    body.printing-report *{visibility:hidden !important;}
+    body.printing-report #repdoc, body.printing-report #repdoc *{visibility:visible !important;}
+    body.printing-report #repdoc{position:absolute;left:0;top:0;width:100%;border:0;padding:0;}
   }
   @media(max-width:640px){.cal-cell{min-height:54px;} .cal-ev{font-size:.58rem;padding:1px 3px;}}
   .comprow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:2px 0 8px;}
@@ -417,6 +440,9 @@ let INVOICES = null, INV_OPEN = null, INV_MSG = "", INV_WARN = [], INV_EVENTS = 
     INV_FILTER = {status: "", type: "", q: ""};
 // The open case workspace: which case, which tab, its loaded data, last error.
 let WS = null, WS_CASE = null, WS_TAB = "overview", WS_ERR = "", WS_REPORT = null;
+let REP_VIEW = "preview";  // the open report's sub-view (UIBUILD P11)
+let REP_VERS = {};         // fetched submitted-version history, per report id
+let EV_TAB = "all";        // which evidence gallery tab is showing (UIBUILD P12)
 let VIEW = "list";   // "list" | "case" — the workspace is a full page, not a popup
 let QKIND = "activity";  // which composer the sheet's Custom tab shows
 let WS_NOTICE = "";      // one-shot "day ended" notice carrying the next step
@@ -1417,6 +1443,7 @@ async function doLogout(){
    feature that is not there. */
 async function openCase(caseNo, tab){
   WS_CASE = caseNo; WS_TAB = tab || "overview"; WS_ERR = ""; SUBJ_FORM = null; ACT_MODAL = null; VIEW = "case";
+  REP_VIEW = "preview"; REP_VERS = {}; EV_TAB = "all";
   if(isExample(caseNo)){
     WS = null;   // examples are page-held demo data; they have no live workspace
     return paintCase();
@@ -1666,6 +1693,15 @@ function amComposeHtml(){
       </div>
       <label class="f"><span>Internal note <span class="opt">never client-facing</span></span>
         <input id="qa_note" value="${esc(pre.internal_note || "")}"></label>
+      ${(() => {   // link already-uploaded files to this moment (P9)
+        if(m.edit) return "";
+        const linkable = ((WS && WS.evidence) || []).filter(e => !e.deleted_at && !e.entry_id).slice(0, 6);
+        return linkable.length ? `<div style="margin-top:8px">
+          <span style="font-size:.8rem;font-weight:700;color:var(--muted)">Link evidence to this moment</span>
+          ${linkable.map(e => `<label class="cap" style="display:flex;margin-top:4px">
+            <input type="checkbox" class="qa-ev" data-id="${e.id}"><span>${esc(e.filename)}${e.note ? ` — ${esc(String(e.note).slice(0, 40))}` : ""}</span></label>`).join("")}
+        </div>` : "";
+      })()}
     </details>
     <button class="btn" type="submit">${m.edit ? "Save the correction" : "Add to log"}</button>
     ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
@@ -1813,29 +1849,111 @@ function reportsPanel(){
         ${r.review_note ? `<div class="tl-n">Office note: ${esc(r.review_note)}</div>` : ""}
       </button>`).join("")}</div>` : ""}
 
-    ${open ? `<div class="quick" style="margin-top:14px">
-      <div class="rc-h" style="margin-bottom:8px"><b>${esc(open.report_date)}</b> ${badge(open.status)}</div>
-      <textarea id="r_body" rows="16" class="rbody" ${
-        (!admin && !["draft","needs_revision"].includes(open.status)) ? "readonly" : ""
-      }>${esc(open.body)}</textarea>
-      <div class="ractions">
-        ${(admin || ["draft","needs_revision"].includes(open.status))
-          ? `<button class="btn sm" data-act="saveReport" data-id="${open.id}">Save changes</button>` : ""}
-        ${["draft","needs_revision"].includes(open.status)
-          ? `<button class="btn sm ghost" data-act="reportStatus" data-id="${open.id}" data-to="submitted">Submit for review</button>` : ""}
-        ${admin && open.status === "submitted" ? `
-          <button class="btn sm ghost" data-act="reportStatus" data-id="${open.id}" data-to="needs_revision">Send back</button>
-          <button class="btn sm" data-act="reportStatus" data-id="${open.id}" data-to="approved">Approve</button>` : ""}
-        ${admin && open.status === "approved"
-          ? `<button class="btn sm" data-act="reportStatus" data-id="${open.id}" data-to="delivered">Mark delivered</button>` : ""}
-      </div>
-      ${admin && open.status === "submitted"
-        ? `<label class="f" style="margin-top:10px"><span>Note back to the investigator <span class="opt">optional</span></span>
-             <input id="r_note" placeholder="What needs changing"></label>` : ""}
-      ${!admin && open.status === "submitted"
-        ? `<p class="hint">With the office for review. You will see a note here if anything needs changing.</p>` : ""}
-      ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
-    </div>` : ""}`;
+    ${open ? reportOpenHtml(open, admin, badge) : ""}`;
+}
+
+/* UIBUILD P11 — the report preview screen. The document leads; the panel nav
+   walks its ingredients (chronology, the day, attachments, the submitted
+   versions); the actions sit at the bottom, and editing is a step you take,
+   not the resting state. */
+function reportOpenHtml(open, admin, badge){
+  const editable = admin || ["draft","needs_revision"].includes(open.status);
+  const day = ((WS && WS.days) || []).find(d => d.id === open.day_id);
+  const dayEntries = ((WS && WS.activity) || []).filter(e => e.day_id === open.day_id);
+  const entryIds = new Set(dayEntries.map(e => e.id));
+  const attached = ((WS && WS.evidence) || []).filter(e => !e.deleted_at && entryIds.has(e.entry_id));
+  const vers = REP_VERS[open.id];
+
+  const views = [["preview","Draft preview"], ["chronology","Chronology"], ["summary","Summary"],
+                 ["attachments","Attachments"], ["versions","Versions"]];
+  const nav = `<div class="rpnav">${views.map(([k, lbl]) =>
+    `<button class="${REP_VIEW === k ? "on" : ""}" data-act="repView" data-v="${k}">${lbl}${
+      k === "attachments" && attached.length ? ` (${attached.length})` : ""}</button>`).join("")}</div>`;
+
+  const body =
+      REP_VIEW === "edit" && editable ? `
+        <textarea id="r_body" rows="16" class="rbody">${esc(open.body)}</textarea>
+        <div class="ractions">
+          <button class="btn sm" data-act="saveReport" data-id="${open.id}">Save changes</button>
+          <button class="btn sm ghost" data-act="repView" data-v="preview">Done editing</button>
+        </div>`
+    : REP_VIEW === "chronology" ? (dayEntries.length
+        ? `<ol class="tl">${dayEntries.map(e => `<li class="tl-i">
+             <div class="tl-t">${esc(t12(e.at_time))}</div>
+             <div class="tl-b"><div class="tl-d">${esc(e.description)}</div>
+               ${e.location ? `<div class="tl-m">at ${esc(e.location)}</div>` : ""}</div></li>`).join("")}</ol>`
+        : `<div class="empty">No activity entries are attached to this report's day.</div>`)
+    : REP_VIEW === "summary" ? (day
+        ? `<dl class="detail">
+             <dt>Day</dt><dd>${esc(fmtDay(day.day_date))}</dd>
+             <dt>Window</dt><dd>${esc(t12(day.start_time))}${day.end_time ? " – " + esc(t12(day.end_time)) : ""}</dd>
+             ${day.hours != null ? `<dt>Hours</dt><dd>${esc(day.hours)}</dd>` : ""}
+             ${day.miles != null ? `<dt>Miles</dt><dd>${esc(day.miles)}</dd>` : ""}
+             ${day.investigator ? `<dt>Investigator</dt><dd>${esc(day.investigator)}</dd>` : ""}
+             ${day.summary ? `<dt>Day summary</dt><dd>${esc(day.summary)}</dd>` : ""}
+           </dl>`
+        : `<div class="empty">This report is not tied to a recorded day.</div>`)
+    : REP_VIEW === "attachments" ? (attached.length
+        ? `<div class="rlist">${attached.map(e => `<div class="rcard" style="cursor:default">
+             <div class="rc-h"><b><a href="/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${e.id}/file"
+               target="_blank" rel="noopener">${esc(e.filename)}</a></b></div>
+             ${e.note ? `<div class="tl-n">${esc(e.note)}</div>` : ""}
+           </div>`).join("")}</div>`
+        : `<div class="empty">Nothing is linked to this day's moments yet. Files attach from the
+           Evidence panel, or from the Add Activity fold.</div>`)
+    : REP_VIEW === "versions" ? (!vers
+        ? `<div class="empty">Loading the submitted versions&hellip;</div>`
+        : vers.length
+        ? vers.map((v, i) => `<details class="amfold" ${i === 0 ? "open" : ""}>
+             <summary>Submitted ${when(v.submitted_at)}${v.submitted_by ? " by " + esc(v.submitted_by) : ""}</summary>
+             <pre class="rvbody">${esc(v.body)}</pre>
+           </details>`).join("")
+        : `<div class="empty">Not submitted yet. Each submission preserves its exact text here.</div>`)
+    : `
+      <div id="repdoc">
+        <div class="doc-head">
+          <div><h2>Always Precise Investigations, LLC</h2>
+            <div style="font-size:.85rem;color:#44505c">Confidential investigative work product</div></div>
+          <div style="text-align:right">
+            <div style="font-weight:800;letter-spacing:.06em">INVESTIGATIVE REPORT${
+              ["draft","needs_revision"].includes(open.status) ? " — DRAFT" : ""}</div>
+            <div class="mono" style="font-size:.8rem">${esc(WS_CASE)}</div>
+            <div style="font-size:.85rem">${esc(fmtDay(open.report_date))}</div>
+            ${open.investigator ? `<div style="font-size:.8rem;color:#44505c">Investigator: ${esc(open.investigator)}</div>` : ""}
+          </div>
+        </div>
+        <pre class="rvbody">${esc(open.body)}</pre>
+      </div>`;
+
+  return `<div class="quick" style="margin-top:14px">
+    <div class="rc-h" style="margin-bottom:8px"><b>${esc(open.report_date)}</b> ${badge(open.status)}</div>
+    ${nav}
+    ${body}
+    <div class="ractions" style="margin-top:10px">
+      ${editable && REP_VIEW !== "edit"
+        ? `<button class="btn sm ghost" data-act="repView" data-v="edit">Edit report</button>` : ""}
+      <button class="btn sm ghost" data-act="repPrint">Download draft</button>
+      ${["draft","needs_revision"].includes(open.status)
+        ? `<button class="btn sm" data-act="reportStatus" data-id="${open.id}" data-to="submitted">Submit report</button>` : ""}
+      ${admin && open.status === "submitted" ? `
+        <button class="btn sm ghost" data-act="reportStatus" data-id="${open.id}" data-to="needs_revision">Send back</button>
+        <button class="btn sm" data-act="reportStatus" data-id="${open.id}" data-to="approved">Approve</button>` : ""}
+      ${admin && open.status === "approved"
+        ? `<button class="btn sm" data-act="reportStatus" data-id="${open.id}" data-to="delivered">Mark delivered</button>` : ""}
+    </div>
+    ${admin && open.status === "submitted"
+      ? `<label class="f" style="margin-top:10px"><span>Note back to the investigator <span class="opt">optional</span></span>
+           <input id="r_note" placeholder="What needs changing"></label>` : ""}
+    ${!admin && open.status === "submitted"
+      ? `<p class="hint">With the office for review. The submitted text is preserved under Versions.</p>` : ""}
+    ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+  </div>`;
+}
+
+async function loadReportVersions(id){
+  try{ REP_VERS[id] = (await api(`/cases/${encodeURIComponent(WS_CASE)}/reports/${id}/versions`)).versions; }
+  catch(e){ REP_VERS[id] = []; WS_ERR = e.message; }
+  paintCase();
 }
 
 const reportLabel = s => ({draft:"Draft", submitted:"Submitted", needs_revision:"Needs revision",
@@ -2069,22 +2187,39 @@ function evidencePanel(){
   const clsTone = c => c === "client_deliverable" ? "rs-approved" : c === "do_not_use" ? "rs-needs_revision"
     : c === "needs_redaction" ? "rs-submitted" : "rs-draft";
 
-  const row = e => e.deleted_at
-    ? `<div class="rcard" style="cursor:default;opacity:.55">
-        <div class="rc-h"><b>${esc(e.filename)}</b><span class="tag rs-draft">deleted</span></div>
+  const kindOf = e => String(e.content_type || "").startsWith("image/") ? "photos"
+    : String(e.content_type || "").startsWith("video/") ? "video" : "docs";
+  const fileUrl = e => `/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${e.id}/file`;
+  const momentOf = e => {
+    if(!e.entry_id) return "";
+    const m = ((WS && WS.activity) || []).find(a => a.id === e.entry_id);
+    return m ? `<div class="tl-m">&#128206; ${esc(t12(m.at_time))} — ${esc(String(m.description || "").slice(0, 44))}</div>` : "";
+  };
+
+  // The gallery card (UIBUILD P12): the picture leads, the classification is
+  // a compact badge, and the admin controls stay small under it.
+  const card = e => e.deleted_at
+    ? `<div class="evcard" style="opacity:.55">
+        <div class="evtile">&#128465;</div>
+        <div class="rc-h" style="margin-top:6px"><b>${esc(e.filename)}</b><span class="tag rs-draft">deleted</span></div>
         <div class="tl-m">${mb(e.size_bytes)} &middot; removed ${when(e.deleted_at)} &mdash; the record stays</div>
       </div>`
-    : `<div class="rcard" style="cursor:default">
-        <div class="rc-h"><b><a href="/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${e.id}/file"
+    : `<div class="evcard">
+        ${kindOf(e) === "photos"
+          ? `<a href="${fileUrl(e)}" target="_blank" rel="noopener"><img class="evthumb" src="${fileUrl(e)}" alt="${esc(e.filename)}" loading="lazy"></a>`
+          : `<div class="evtile">${kindOf(e) === "video" ? "&#127909;" : "&#128196;"}</div>`}
+        <div class="rc-h" style="margin-top:6px"><b><a href="${fileUrl(e)}"
              target="_blank" rel="noopener">${esc(e.filename)}</a></b>
           <span class="tag ${clsTone(e.classification)}">${esc(clsLabel(e.classification))}</span>
-          ${admin ? `<select data-act="evClass" data-id="${e.id}" style="font-size:.78rem">
-              ${["needs_review","client_deliverable","internal_only","needs_redaction","do_not_use"]
-                .map(c => `<option value="${c}" ${c === e.classification ? "selected" : ""}>${clsLabel(c)}</option>`).join("")}
-            </select>
-            <button class="btn sm ghost" data-act="evDelete" data-id="${e.id}">Delete</button>` : ""}</div>
+          ${kindOf(e) === "video" ? `<span class="tag">Portal</span>` : ""}</div>
         <div class="tl-m">${mb(e.size_bytes)} &middot; ${esc(e.uploaded_by || "")} &middot; ${when(e.uploaded_at)}</div>
         ${e.note ? `<div class="tl-n">${esc(e.note)}</div>` : ""}
+        ${momentOf(e)}
+        ${admin ? `<div style="margin-top:6px"><select data-act="evClass" data-id="${e.id}" style="font-size:.78rem">
+            ${["needs_review","client_deliverable","internal_only","needs_redaction","do_not_use"]
+              .map(c => `<option value="${c}" ${c === e.classification ? "selected" : ""}>${clsLabel(c)}</option>`).join("")}
+          </select>
+          <button class="btn sm ghost" data-act="evDelete" data-id="${e.id}">Delete</button></div>` : ""}
       </div>`;
 
   return `
@@ -2112,8 +2247,16 @@ function evidencePanel(){
       ${WS_NOTICE ? `<div class="note">${esc(WS_NOTICE)}</div>` : ""}
       ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
     </form>
-    ${rows.length ? `<div class="rlist">${rows.map(row).join("")}</div>`
-      : `<div class="empty">Nothing stored on this case yet.</div>`}`;
+    <div class="evtabs">${[["all","All"], ["photos","Photos"], ["video","Video"], ["docs","Documents"]]
+      .map(([k, lbl]) => {
+        const n = k === "all" ? rows.length : rows.filter(e => !e.deleted_at && kindOf(e) === k).length;
+        return `<button class="evtab ${EV_TAB === k ? "on" : ""}" data-act="evTab" data-t="${k}">${lbl}${n ? ` (${n})` : ""}</button>`;
+      }).join("")}</div>
+    ${(() => {
+      const shown = EV_TAB === "all" ? rows : rows.filter(e => !e.deleted_at && kindOf(e) === EV_TAB);
+      return shown.length ? `<div class="evgrid">${shown.map(card).join("")}</div>`
+        : `<div class="empty">${rows.length ? "Nothing of this type on the case." : "Nothing stored on this case yet."}</div>`;
+    })()}`;
 }
 
 async function uploadEvidenceFile(){
@@ -2557,6 +2700,14 @@ function overviewPanel(s, a){
       </div>
       <div class="ovcard">
         <h3>Evidence overview</h3>
+        ${(() => {   // a first look at the pictures; each thumb opens the gallery
+          const th = ((WS && WS.evidence) || [])
+            .filter(e => !e.deleted_at && String(e.content_type || "").startsWith("image/")).slice(0, 4);
+          return th.length ? `<div class="ovthumbs">${th.map(e =>
+            `<button data-act="wsTab" data-tab="evidence" style="padding:0;border:0;background:none;cursor:pointer">
+               <img src="/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${e.id}/file"
+                 alt="${esc(e.filename)}" loading="lazy"></button>`).join("")}</div>` : "";
+        })()}
         <div class="ov-row"><span>Photos</span><b>${shape.photos}</b></div>
         <div class="ov-row"><span>Video</span><b>${shape.videos}</b></div>
         <div class="ov-row"><span>Documents</span><b>${docs}</b></div>
@@ -3319,7 +3470,15 @@ async function quickAddEntry(oneTapLine){
         video_acquired: $("qa_va").checked,
         photo_acquired: $("qa_pa").checked,
       };
-      await api(`/cases/${encodeURIComponent(WS_CASE)}/activity`, {method:"POST", body});
+      // Ticked files ride to the new moment. Read before the paint eats the DOM.
+      const links = oneTapLine ? []
+        : [...document.querySelectorAll(".qa-ev:checked")].map(x => Number(x.dataset.id));
+      const made = await api(`/cases/${encodeURIComponent(WS_CASE)}/activity`, {method:"POST", body});
+      for(const evId of links){
+        try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/evidence/${evId}/link`,
+          {method:"POST", body:{entry_id: made.id}}); }
+        catch(e){ WS_ERR = "The entry saved, but a file link failed — " + e.message; }
+      }
     }
     ACT_MODAL = null;
   }catch(e){ WS_ERR = e.message; }
@@ -3365,6 +3524,7 @@ async function generateReportDraft(){
     const r = await api(`/cases/${encodeURIComponent(WS_CASE)}/reports/generate`,
       {method:"POST", body:{day_id: $("r_day").value}});
     WS_REPORT = r.id;   // open it straight away — it needs reading, not filing
+    REP_VIEW = "preview";
   }catch(e){ WS_ERR = e.message; }
   await reloadWorkspace();
 }
@@ -3761,8 +3921,20 @@ document.addEventListener("click", ev => {
   else if(act === "createInvoiceAuth"){ createInvoiceFor(el.dataset.case, true); }
   else if(act === "openReport"){
     WS_REPORT = WS_REPORT === Number(el.dataset.id) ? null : Number(el.dataset.id);
-    WS_ERR = ""; paintCase();
+    REP_VIEW = "preview"; WS_ERR = ""; paintCase();
   }
+  else if(act === "repView"){
+    REP_VIEW = el.dataset.v; WS_ERR = "";
+    // Versions load on first look, then stay.
+    if(REP_VIEW === "versions" && WS_REPORT && !REP_VERS[WS_REPORT]) loadReportVersions(WS_REPORT);
+    else paintCase();
+  }
+  else if(act === "repPrint"){
+    document.body.classList.add("printing-report");
+    window.print();
+    setTimeout(() => document.body.classList.remove("printing-report"), 400);
+  }
+  else if(act === "evTab"){ EV_TAB = el.dataset.t; paintCase(); }
   else if(act === "saveReport"){ saveReportBody(Number(el.dataset.id)); }
   else if(act === "reportStatus"){ setReportStage(Number(el.dataset.id), el.dataset.to); }
   else if(act === "reviewExpense"){ reviewExpenseEntry(Number(el.dataset.id)); }

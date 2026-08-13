@@ -2828,7 +2828,57 @@ async function setReportStatus(request, env, user, caseNo, id) {
   await env.DB.prepare(
     `UPDATE case_reports SET status = ?, review_note = ?, status_at = ?, status_by = ? WHERE id = ?`)
     .bind(next, String(body.note || '').slice(0, 2000) || null, nowIso(), user.id, id).run();
+
+  // Submitting preserves the exact text (UIBUILD P11): the snapshot is what
+  // was reviewed, whatever happens to the working copy afterwards.
+  if (next === 'submitted') {
+    const full = await env.DB.prepare('SELECT body FROM case_reports WHERE id = ?').bind(id).first();
+    try {
+      await env.DB.prepare(
+        'INSERT INTO report_versions (report_id, body, submitted_at, submitted_by) VALUES (?, ?, ?, ?)')
+        .bind(id, full ? String(full.body || '') : '', nowIso(), user.id).run();
+    } catch { /* a missing table surfaces via /health, not by blocking review */ }
+  }
   return json({ ok: true, id, status: next });
+}
+
+/* The submitted-version history (UIBUILD P11). Read-only, scoped by the same
+   caseFor gate as everything else in the workspace. */
+async function reportVersions(env, user, caseNo, id) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const rep = await env.DB.prepare(
+    'SELECT id FROM case_reports WHERE id = ? AND case_no = ?').bind(id, caseNo).first();
+  if (!rep) return json({ error: 'not found' }, 404);
+  const { results } = await env.DB.prepare(
+    `SELECT v.id, v.body, v.submitted_at, u.display_name AS submitted_by
+       FROM report_versions v LEFT JOIN users u ON u.id = v.submitted_by
+      WHERE v.report_id = ? ORDER BY v.id DESC LIMIT 50`).bind(id).all();
+  return json({ versions: results || [] });
+}
+
+/* Link an evidence file to the activity moment it documents, after upload
+   (UIBUILD P9's fold). The uploader or the office; the entry must be on the
+   same case, and null unlinks. */
+async function linkEvidence(request, env, user, caseNo, evidenceId) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const ev = await env.DB.prepare(
+    'SELECT id, uploaded_by FROM case_evidence WHERE id = ? AND case_no = ? AND deleted_at IS NULL')
+    .bind(evidenceId, caseNo).first();
+  if (!ev) return json({ error: 'not found' }, 404);
+  if (user.role !== 'admin' && ev.uploaded_by !== user.id) {
+    return json({ error: 'That file was uploaded by someone else.' }, 403);
+  }
+  const body = await readJson(request);
+  let entryId = null;
+  if (body.entry_id !== null && body.entry_id !== undefined && String(body.entry_id) !== '') {
+    entryId = parseInt(body.entry_id, 10);
+    if (!Number.isFinite(entryId)) return json({ error: 'invalid entry' }, 400);
+    const entry = await env.DB.prepare(
+      'SELECT id FROM activity_log WHERE id = ? AND case_no = ?').bind(entryId, caseNo).first();
+    if (!entry) return json({ error: 'That moment is not on this case.' }, 400);
+  }
+  await env.DB.prepare('UPDATE case_evidence SET entry_id = ? WHERE id = ?').bind(entryId, evidenceId).run();
+  return json({ ok: true, id: evidenceId, entry_id: entryId });
 }
 
 /* ----------------------------------------------------------------- users */
@@ -3157,7 +3207,7 @@ const EXPECTED_TABLES = [
   'case_details', 'case_subjects', 'subject_vehicles', 'case_comms', 'case_tasks',
   'case_status', 'case_closure', 'case_retainer',
   'invoices', 'invoice_lines', 'invoice_payments', 'invoice_events', 'case_evidence',
-  'case_builds', 'build_items', 'external_files', 'build_events',
+  'case_builds', 'build_items', 'external_files', 'build_events', 'report_versions',
 ];
 
 async function missingTables(env) {
@@ -3644,6 +3694,12 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/reports\/(\d{1,12})\/status$/);
   if (m && method === 'POST') return setReportStatus(request, env, user, m[1], parseInt(m[2], 10));
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/reports\/(\d{1,12})\/versions$/);
+  if (m && method === 'GET') return reportVersions(env, user, m[1], parseInt(m[2], 10));
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/evidence\/(\d{1,12})\/link$/);
+  if (m && method === 'POST') return linkEvidence(request, env, user, m[1], parseInt(m[2], 10));
 
   /* A real, clearly-labelled case to try the portal against. Admin only, and
      the clear route touches nothing that is not prefixed TEST-. */
