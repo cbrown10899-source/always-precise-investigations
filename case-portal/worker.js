@@ -2238,8 +2238,22 @@ async function uploadEvidence(request, env, user, caseNo) {
   const classification = user.role === 'admin' && EVIDENCE_CLASSES.includes(String(form.get('classification') || ''))
     ? String(form.get('classification')) : 'needs_review';
   const note = String(form.get('note') || '').trim().slice(0, 1000) || null;
-  const entryId = parseInt(form.get('entry_id'), 10);
-  const subjectId = parseInt(form.get('subject_id'), 10);
+
+  /* A photo can ride with a subject and a clip with the activity moment it
+     documents — but only this case's. A link to another case's row is
+     refused, not silently dropped, so a mis-tap is visible. */
+  let entryId = parseInt(form.get('entry_id'), 10);
+  let subjectId = parseInt(form.get('subject_id'), 10);
+  if (Number.isInteger(entryId)) {
+    const e = await env.DB.prepare('SELECT id FROM activity_log WHERE id = ? AND case_no = ?')
+      .bind(entryId, caseNo).first();
+    if (!e) return json({ error: 'That activity entry is not on this case.' }, 400);
+  } else entryId = null;
+  if (Number.isInteger(subjectId)) {
+    const sj = await env.DB.prepare('SELECT id FROM case_subjects WHERE id = ? AND case_no = ?')
+      .bind(subjectId, caseNo).first();
+    if (!sj) return json({ error: 'That subject is not on this case.' }, 400);
+  } else subjectId = null;
 
   // A unique key per upload: an original can never be overwritten.
   const key = `cases/${caseNo}/${crypto.randomUUID()}-${filename}`;
@@ -2252,8 +2266,7 @@ async function uploadEvidence(request, env, user, caseNo) {
        entry_id, subject_id, note, uploaded_by, uploaded_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(caseNo, key, filename, file.type || null, file.size, classification,
-          Number.isInteger(entryId) ? entryId : null, Number.isInteger(subjectId) ? subjectId : null,
-          note, user.id, now).run();
+          entryId, subjectId, note, user.id, now).run();
   return json({ ok: true, id: res.meta ? res.meta.last_row_id : null,
                 usage: await evidenceUsage(env) }, 201);
 }
