@@ -1598,6 +1598,54 @@ section('Reset links land where you clicked');
   await page.close();
 }
 
+/* Case Build through the browser: the mini-dashboard, the gates, the
+   finalized document (CASEBUILD.md P0 + UXSIMPLIFY P9/P16/P17). */
+section('The case package, gated and printed');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Package');
+  await page.waitForTimeout(700);
+  let body = await text(page, '#dlgBody');
+  ok('the mini-dashboard shows the case state',
+     has(body, 'Activity') && has(body, 'Report') && has(body, 'Case build'));
+  ok('the build reads not started', has(body, 'Not started'));
+  await page.locator('[data-act="pkgStart"]').click();
+  await page.waitForTimeout(700);
+  body = await text(page, '#dlgBody');
+  ok('a draft opens at version one', has(body, 'Draft v1'));
+
+  await page.locator('.pkg-item', { hasText: 'clip1.mp4' }).locator('.btn', { hasText: 'Add' }).click();
+  await page.waitForTimeout(700);
+  ok('the missing panel names the package-type gate',
+     has(await text(page, '#dlgBody'), 'package type does not include video'));
+  await page.locator('[data-act="pkgType"]').selectOption('report_photos_video');
+  await page.waitForTimeout(700);
+
+  await page.locator('[data-act="pkgFinalize"]').click();
+  await page.waitForTimeout(800);
+  body = await text(page, '#dlgBody');
+  ok('with the gates clear it finalizes', has(body, 'Package finalized'));
+  ok('the document carries the video section and the index',
+     has(body, 'VIDEO EVIDENCE') && has(body, 'EVIDENCE INDEX'));
+  ok('and says video is provided separately while Dropbox is unconnected',
+     has(body, 'provided separately'));
+  await page.locator('[data-act="pkgDelivered"]').click();
+  await page.waitForTimeout(700);
+  ok('delivery is stamped', has(await text(page, '#dlgBody'), 'Delivered'));
+  await page.close();
+}
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+  ok('an investigator has no Package tab', !has(await text(page, '.wstabs'), 'Package'));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
