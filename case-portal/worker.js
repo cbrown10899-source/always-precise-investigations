@@ -599,6 +599,19 @@ async function caseSummary(env, user) {
     out.auth_warn_at = first;
   }
 
+  // Follow-up tasks past their date (priority 19). The office's overdue list;
+  // for an investigator, only tasks assigned to them.
+  if (have('case_tasks')) {
+    const today = nowIso().slice(0, 10);
+    const { results: late } = await env.DB.prepare(
+      `SELECT DISTINCT t.case_no FROM case_tasks t
+        ${admin ? '' : 'JOIN submissions s ON s.case_no = t.case_no AND s.assigned_to = ?'}
+        WHERE t.status = 'open' AND t.due_date IS NOT NULL AND t.due_date < ?
+        ${admin ? '' : 'AND t.assigned_to = ?'}`)
+      .bind(...(admin ? [today] : [user.id, today, user.id])).all();
+    out.tasks_overdue = cap((late || []).map(r => r.case_no));
+  }
+
   return json({ summary: out });
 }
 
@@ -1089,6 +1102,17 @@ async function caseWorkspace(env, user, caseNo) {
       WHERE c.case_no = ? ${admin ? '' : "AND c.visibility != 'admin'"}
       ORDER BY c.at_date DESC, c.at_time DESC, c.id DESC LIMIT 200`).bind(caseNo).all();
 
+  // Follow-up tasks (priority 19): the office sees them all; an investigator
+  // only the ones assigned to them.
+  const { results: tasks } = await env.DB.prepare(
+    `SELECT t.id, t.task, t.assigned_to, t.due_date, t.priority, t.status,
+            t.created_at, t.done_at, u.display_name AS assignee
+       FROM case_tasks t LEFT JOIN users u ON u.id = t.assigned_to
+      WHERE t.case_no = ? ${admin ? '' : 'AND t.assigned_to = ?'}
+      ORDER BY CASE t.status WHEN 'open' THEN 0 ELSE 1 END,
+               t.due_date IS NULL, t.due_date, t.id LIMIT 200`)
+    .bind(...(admin ? [caseNo] : [caseNo, user.id])).all();
+
   const myOffer = admin ? null : await env.DB.prepare(
     `SELECT investigation_date, expected_hours, general_location, instructions,
             compensation_hourly, mileage_terms
@@ -1144,6 +1168,7 @@ async function caseWorkspace(env, user, caseNo) {
     expenses: expenses || [],
     notes: notes || [],
     comms: comms || [],
+    tasks: tasks || [],
     offers: offers || [],
     my_offer: myOffer || null,
   });
@@ -1480,6 +1505,54 @@ async function addComm(request, env, user, caseNo) {
           String(body.person || '').trim().slice(0, 200) || null, summary,
           follow || null, visibility, user.id, nowIso()).run();
   return json({ ok: true, id: res.meta ? res.meta.last_row_id : null }, 201);
+}
+
+/* Follow-up tasks (HANDOFF priority 19). Admin-created case to-dos. A task
+   assigned to an investigator is the office choosing to tell them — that
+   assignment is the only way a task ever reaches one, and marking their own
+   task done is the only write they have. */
+async function addTask(request, env, user, caseNo) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  const body = await readJson(request);
+  const task = String(body.task || '').trim().slice(0, 500);
+  if (!task) return json({ error: 'Say what needs doing.' }, 400);
+  const due = String(body.due_date || '').slice(0, 10);
+  if (due && !/^\d{4}-\d{2}-\d{2}$/.test(due)) return json({ error: 'Due date must be a date.' }, 400);
+  let priority = String(body.priority || 'normal');
+  if (!['low', 'normal', 'high', 'urgent'].includes(priority)) priority = 'normal';
+  let assigned = null;
+  if (body.assigned_to !== null && body.assigned_to !== undefined && String(body.assigned_to) !== '') {
+    assigned = parseInt(body.assigned_to, 10);
+    if (!Number.isInteger(assigned)) return json({ error: 'Pick a person, or leave it with the office.' }, 400);
+    const u = await env.DB.prepare('SELECT id FROM users WHERE id = ? AND active = 1').bind(assigned).first();
+    if (!u) return json({ error: 'Pick an active person.' }, 400);
+  }
+  const res = await env.DB.prepare(
+    `INSERT INTO case_tasks (case_no, task, assigned_to, due_date, priority, created_by, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .bind(caseNo, task, assigned, due || null, priority, user.id, nowIso()).run();
+  return json({ ok: true, id: res.meta ? res.meta.last_row_id : null }, 201);
+}
+
+async function setTaskStatus(request, env, user, caseNo, taskId) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const t = await env.DB.prepare(
+    'SELECT id, assigned_to, status FROM case_tasks WHERE id = ? AND case_no = ?')
+    .bind(taskId, caseNo).first();
+  if (!t) return json({ error: 'not found' }, 404);
+  const status = String((await readJson(request)).status || '');
+  if (!['open', 'done', 'cancelled'].includes(status)) return json({ error: 'open, done or cancelled.' }, 400);
+  if (user.role !== 'admin') {
+    // Their own task, and the only transition the field needs: finished it.
+    if (t.assigned_to !== user.id) return json({ error: 'not found' }, 404);
+    if (status !== 'done') return json({ error: 'You can mark your task done — the office decides the rest.' }, 403);
+  }
+  const closing = status !== 'open';
+  await env.DB.prepare(
+    `UPDATE case_tasks SET status = ?, done_by = ?, done_at = ? WHERE id = ?`)
+    .bind(status, closing ? user.id : null, closing ? nowIso() : null, taskId).run();
+  return json({ ok: true });
 }
 
 /* ------------------------------------------------- my work, across cases */
@@ -2092,7 +2165,7 @@ const EXPECTED_TABLES = [
   'users', 'sessions', 'submissions', 'login_fails', 'invites', 'ingest_rate',
   'case_types', 'case_meta', 'case_days', 'activity_log', 'activity_media', 'case_reports', 'app_config',
   'case_expenses', 'case_notes', 'user_rates', 'case_settings', 'password_resets', 'case_offers',
-  'case_details', 'case_subjects', 'subject_vehicles', 'case_comms',
+  'case_details', 'case_subjects', 'subject_vehicles', 'case_comms', 'case_tasks',
 ];
 
 async function missingTables(env) {
@@ -2286,6 +2359,12 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/comms$/);
   if (m && method === 'POST') return addComm(request, env, user, m[1]);
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/tasks$/);
+  if (m && method === 'POST') return addTask(request, env, user, m[1]);
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/tasks\/(\d{1,12})\/status$/);
+  if (m && method === 'POST') return setTaskStatus(request, env, user, m[1], parseInt(m[2], 10));
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/reports\/generate$/);
   if (m && method === 'POST') return generateReport(request, env, user, m[1]);

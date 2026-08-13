@@ -427,3 +427,27 @@ CREATE TABLE IF NOT EXISTS case_comms (
   created_at     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_comms_case ON case_comms(case_no, at_date);
+
+-- Follow-up tasks (HANDOFF priority 19). Simple case to-dos — call the
+-- adjuster, request more authorization, confirm the surveillance date, send
+-- the invoice. Admin-created; a task may be assigned to an investigator, and
+-- that assignment is the only way one ever sees it. Overdue open tasks show
+-- on the dashboard. Done/cancelled keep the row — the record of what was
+-- asked and when it was resolved is the point.
+CREATE TABLE IF NOT EXISTS case_tasks (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no     TEXT    NOT NULL,
+  task        TEXT    NOT NULL,
+  assigned_to INTEGER REFERENCES users(id),   -- NULL = the office generally
+  due_date    TEXT,                           -- YYYY-MM-DD
+  priority    TEXT    NOT NULL DEFAULT 'normal'
+                CHECK (priority IN ('low','normal','high','urgent')),
+  status      TEXT    NOT NULL DEFAULT 'open'
+                CHECK (status IN ('open','done','cancelled')),
+  created_by  INTEGER REFERENCES users(id),
+  created_at  TEXT,
+  done_by     INTEGER REFERENCES users(id),
+  done_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_case ON case_tasks(case_no, status);
+CREATE INDEX IF NOT EXISTS idx_tasks_due  ON case_tasks(status, due_date);

@@ -1560,6 +1560,83 @@ section('Communication log: the office writes, visibility decides who reads');
      !JSON.stringify(iws.comms).includes('D. Reyes'));
 }
 
+section('Follow-up tasks: assignment is the only way one reaches the field');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  for (const uname of ['dana', 'reed']) {
+    const l = (await jsonOf(await invite(env, admin, { username: uname, display_name: uname, role: 'investigator' }))).url;
+    const t = new URL(l, 'https://x.test').searchParams.get('invite');
+    await call(env, `/invite/${t}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  }
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const reed = (await login(env, 'reed', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find(u => u.username === 'dana').id;
+
+  await ingest(env, { case_no: 'API-TK1', service: 'Surveillance',
+                      client_name: 'C', subject_name: 'S' });
+  await call(env, '/submissions/API-TK1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+
+  ok('a task needs words',
+     (await call(env, '/cases/API-TK1/tasks', { method: 'POST', cookie: admin,
+       body: { task: '  ' } })).status === 400);
+  ok('a due date has to be one',
+     (await call(env, '/cases/API-TK1/tasks', { method: 'POST', cookie: admin,
+       body: { task: 'x', due_date: 'soon' } })).status === 400);
+  ok('the assigned investigator cannot create tasks',
+     (await call(env, '/cases/API-TK1/tasks', { method: 'POST', cookie: dana,
+       body: { task: 'x' } })).status === 403);
+
+  await call(env, '/cases/API-TK1/tasks', { method: 'POST', cookie: admin,
+    body: { task: 'Send the invoice.', due_date: '2026-08-01', priority: 'high' } });
+  const mine = await jsonOf(await call(env, '/cases/API-TK1/tasks', { method: 'POST', cookie: admin,
+    body: { task: 'Confirm the surveillance date with the office.', assigned_to: danaId,
+            due_date: '2026-08-01', priority: 'urgent' } }));
+  await call(env, '/cases/API-TK1/tasks', { method: 'POST', cookie: admin,
+    body: { task: 'Upload the final video.', assigned_to: danaId, due_date: '2026-12-01' } });
+
+  const aws = await jsonOf(await call(env, '/cases/API-TK1/workspace', { cookie: admin }));
+  ok('the office sees every task', aws.tasks.length === 3);
+  const dws = await jsonOf(await call(env, '/cases/API-TK1/workspace', { cookie: dana }));
+  ok('an investigator sees only tasks assigned to them',
+     dws.tasks.length === 2 && dws.tasks.every(t => t.assigned_to === danaId));
+  ok('and never the billing task', !JSON.stringify(dws.tasks).includes('invoice'));
+
+  // Overdue: on the dashboard for whoever owns the lateness.
+  let asum = (await jsonOf(await call(env, '/summary', { cookie: admin }))).summary;
+  ok('overdue tasks reach the admin dashboard', asum.tasks_overdue.includes('API-TK1'));
+  let dsum = (await jsonOf(await call(env, '/summary', { cookie: dana }))).summary;
+  ok("and the investigator's own overdue reaches theirs", dsum.tasks_overdue.includes('API-TK1'));
+
+  const officeTask = aws.tasks.find(t => t.task === 'Send the invoice.');
+  ok("an investigator cannot touch a task that is not theirs",
+     (await call(env, `/cases/API-TK1/tasks/${officeTask.id}/status`, { method: 'POST', cookie: dana,
+       body: { status: 'done' } })).status === 404);
+  ok('or cancel even their own',
+     (await call(env, `/cases/API-TK1/tasks/${mine.id}/status`, { method: 'POST', cookie: dana,
+       body: { status: 'cancelled' } })).status === 403);
+  ok('marking their own task done is theirs to do',
+     (await call(env, `/cases/API-TK1/tasks/${mine.id}/status`, { method: 'POST', cookie: dana,
+       body: { status: 'done' } })).status === 200);
+
+  dsum = (await jsonOf(await call(env, '/summary', { cookie: dana }))).summary;
+  ok('done clears their overdue card', dsum.tasks_overdue.length === 0);
+  asum = (await jsonOf(await call(env, '/summary', { cookie: admin }))).summary;
+  ok("the office's own late task still shows", asum.tasks_overdue.includes('API-TK1'));
+
+  ok('an unassigned investigator finds nothing at all',
+     (await call(env, `/cases/API-TK1/tasks/${mine.id}/status`, { method: 'POST', cookie: reed,
+       body: { status: 'done' } })).status === 404);
+  ok('the office can reopen',
+     (await call(env, `/cases/API-TK1/tasks/${mine.id}/status`, { method: 'POST', cookie: admin,
+       body: { status: 'open' } })).status === 200);
+  const after = await jsonOf(await call(env, '/cases/API-TK1/workspace', { cookie: admin }));
+  ok('reopening clears the resolution stamp',
+     after.tasks.find(t => t.id === mine.id).done_at === null);
+}
+
 section('Password reset: a one-time link, nobody learns the password');
 {
   const env = freshEnv();
