@@ -24,7 +24,7 @@ Progress ledger (update as phases land):
 | 10. Investigator Redaction | **done** in substance (FIELD_KEEP, workspace money stripping, note visibility) — per-case "view client identity" toggle shipped with 11 |
 | 11. Rate Sheets / pay split | **done** — 2026-08-13 (per-user comp, per-case client rate, identity toggle; client-org rates await a client entity) |
 | 13. Assignment acceptance | **done** — 2026-08-13 (offer → accept/decline; thin pre-acceptance view; owner decision: ONE offer at a time, no competing) |
-| 14. Calendar | not started |
+| 14. Calendar | **done** — 2026-08-13 (`/calendar` month view, both roles: worked/running days + pending offers; admin sees everyone, an investigator their own; offer chips stay thin) |
 | 16–20. Phase 3 (case operations) | not started |
 | Phase 4 (client portal, redaction, safety, profitability) | not started |
 
