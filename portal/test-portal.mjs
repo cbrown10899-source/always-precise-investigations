@@ -1460,6 +1460,64 @@ section('The retainer balance on a private case');
   await page.close();
 }
 
+/* The invoice workflow (INVOICING.md): CASE -> CREATE -> REVIEW -> document ->
+   BILL -> payment -> PAID, driven through the page. */
+section('An invoice from case to PAID');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  ok('the office gets an Invoices tab', has(await text(page, '.tabs'), 'Invoices'));
+
+  // Authorize 8 hours on the claims case, then bill it as the flat block.
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Authorization');
+  await page.locator('#m_hours').fill('8');
+  await page.locator('.btn', { hasText: 'Save authorization' }).click();
+  await page.waitForTimeout(500);
+  await wsTab(page, 'Overview');
+  await page.locator('[data-act="createInvoiceAuth"]').click();
+  await page.waitForTimeout(800);
+
+  let body = await text(page, '.card');
+  ok('the invoice opens on its own desk', /API-INV-\d{4}-0001/.test(body), body.slice(0, 160));
+  ok('the authorization billed as the flat block',
+     has(body, '8-Hour Surveillance Authorization') && body.includes('$1,200'));
+  ok('the carrier and claim rode along',
+     has(body, 'Example Mutual') && body.includes('WC-2026-88421'));
+  ok('the document block is the printable review', await page.locator('#invdoc').count() === 1);
+  ok('with the company name on it', has(await text(page, '#invdoc'), 'Always Precise Investigations'));
+
+  await page.locator('[data-act="invStatus"][data-s="ready"]').click();
+  await page.waitForTimeout(500);
+  ok('ready surfaces the carrier gaps as warnings', has(await text(page, '.card'), 'PO number'));
+  await page.locator('[data-act="invStatus"][data-s="sent_to_bill"]').click();
+  await page.waitForTimeout(500);
+  body = await text(page, '.card');
+  ok('sent to BILL is stamped, not paid', has(body, 'Sent to BILL') && body.includes('$1,200'));
+
+  await page.locator('#ip_amt').fill('1200');
+  await page.locator('.btn', { hasText: 'Record payment' }).click();
+  await page.waitForTimeout(800);
+  ok('the balance reaching zero is what makes it PAID',
+     has(await text(page, '.card'), 'Paid in full'));
+
+  await page.locator('[data-act="invBack"]').click();
+  await page.waitForTimeout(600);
+  ok('the book lists it', /API-INV/.test(await text(page, '.card')));
+  ok('with the month of payments summed', has(await text(page, '.stats'), 'Paid this month'));
+  await page.close();
+}
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  ok('an investigator has no Invoices tab', !has(await text(page, '.tabs'), 'Invoices'));
+  const st = await page.evaluate(async () =>
+    (await fetch('/portal-api/invoices', { credentials: 'same-origin' })).status);
+  ok('and the invoice book refuses them', st === 403);
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();

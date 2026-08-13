@@ -147,6 +147,27 @@
   .rs-close b{display:block;margin-bottom:3px;}
   .rs-close p{margin:0;font-size:.88rem;color:#44505c;}
   @media(max-width:640px){.rs-big .rs-v{font-size:1.35rem;}}
+  /* Invoices */
+  .inv-line{display:grid;grid-template-columns:1fr 70px 90px 100px 34px;gap:6px;margin-bottom:6px;align-items:center;}
+  .inv-line input{width:100%;}
+  @media(max-width:640px){.inv-line{grid-template-columns:1fr 54px 70px 80px 30px;}}
+  .inv-tot{text-align:right;font-size:1.05rem;margin:8px 0 2px;}
+  .inv-tot b{font-size:1.35rem;color:var(--navy,#12305a);}
+  #invdoc{border:1px solid var(--line);border-radius:10px;padding:26px 28px;background:#fff;margin-top:14px;}
+  #invdoc h2{margin:0;}
+  .doc-head{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;border-bottom:2px solid var(--navy,#12305a);padding-bottom:12px;margin-bottom:14px;}
+  .doc-refs dt{font-weight:700;font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;}
+  .doc-refs dd{margin:0 0 6px;}
+  .doc-table{width:100%;border-collapse:collapse;margin:12px 0;}
+  .doc-table th,.doc-table td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:left;font-size:.92rem;}
+  .doc-table th:last-child,.doc-table td:last-child,.doc-table th.n,.doc-table td.n{text-align:right;}
+  .doc-due{text-align:right;font-size:1.15rem;margin-top:10px;}
+  .doc-due b{font-size:1.5rem;color:var(--navy,#12305a);}
+  @media print{
+    body.printing-invoice *{visibility:hidden !important;}
+    body.printing-invoice #invdoc, body.printing-invoice #invdoc *{visibility:visible !important;}
+    body.printing-invoice #invdoc{position:absolute;left:0;top:0;width:100%;border:0;padding:0;}
+  }
   @media(max-width:640px){.cal-cell{min-height:54px;} .cal-ev{font-size:.58rem;padding:1px 3px;}}
   .comprow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:2px 0 8px;}
   .comprow input{width:90px;font:inherit;font-size:.85rem;border:1px solid var(--line);border-radius:6px;padding:6px 8px;}
@@ -264,6 +285,8 @@ const $ = id => document.getElementById(id);
 const app = $("app");
 let ME = null, TAB = "cases", CASES = [], USERS = [], INVITES = [], TOTAL = 0, FILTER = "", LAST_LINK = "", LAST_EMAILED = false;
 let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
+let INVOICES = null, INV_OPEN = null, INV_MSG = "", INV_WARN = [], INV_EVENTS = [], INV_SETTINGS = null,
+    INV_FILTER = {status: "", type: "", q: ""};
 // The open case workspace: which case, which tab, its loaded data, last error.
 let WS = null, WS_CASE = null, WS_TAB = "overview", WS_ERR = "", WS_REPORT = null;
 let VIEW = "list";   // "list" | "case" — the workspace is a full page, not a popup
@@ -514,6 +537,7 @@ function shell(inner){
     ? `<button class="${TAB==="cases"?"on":""}" data-act="tab" data-tab="cases">Cases</button>
        <button class="${TAB==="calendar"?"on":""}" data-act="tab" data-tab="calendar">Calendar</button>
        <button class="${TAB==="sheets"?"on":""}" data-act="tab" data-tab="sheets">Rate sheets</button>
+       <button class="${TAB==="invoices"?"on":""}" data-act="tab" data-tab="invoices">Invoices</button>
        <button class="${TAB==="staff"?"on":""}" data-act="tab" data-tab="staff">Staff</button>`
     : `<button class="${TAB==="cases"?"on":""}" data-act="tab" data-tab="cases">My assignments</button>
        <button class="${TAB==="today"?"on":""}" data-act="tab" data-tab="today">Today</button>
@@ -987,6 +1011,7 @@ function paint(){
   app.innerHTML = shell(
       TAB === "staff" ? staffView()
     : TAB === "sheets" ? sheetsView()
+    : TAB === "invoices" ? invoicesView()
     : TAB === "today" ? todayView()
     : TAB === "calendar" ? calendarView()
     : TAB === "myreports" ? myReportsView()
@@ -1684,7 +1709,13 @@ function caseBodyHtml(){
     : WS_TAB === "auth"     ? authPanel(a, admin) + (admin ? authAdminForm() : "")
     : WS_TAB === "assign"   ? assignPanel(s)
     : WS_TAB === "subject"  ? detailList(s, "subject") + caseDetailsPanel() + subjectsPanel(s)
-    :                         myOfferBox() + detailList(s, "overview") + (a.authorized_hours != null ? authPanel(a, admin) : "") + closurePanel();
+    :                         myOfferBox() + detailList(s, "overview") + (a.authorized_hours != null ? authPanel(a, admin) : "")
+                              + (admin && !isExample(WS_CASE) ? `<div class="actions" style="border-top:1px solid var(--line);padding-top:12px;margin-top:10px">
+                                  <button class="btn sm" data-act="createInvoice" data-case="${esc(WS_CASE)}">Create invoice</button>
+                                  ${(s.kind === "claims" && a.authorized_hours != null) || s.kind !== "claims"
+                                    ? `<button class="btn sm ghost" data-act="createInvoiceAuth" data-case="${esc(WS_CASE)}">Create from ${s.kind === "claims" ? "authorization" : "retainer"}</button>` : ""}
+                                </div>` : "")
+                              + closurePanel();
 
   return `
     <h2>${esc(a.case_type || (s.kind === "claims" ? "Claim assignment" : "Client intake"))}</h2>
@@ -1958,6 +1989,335 @@ async function saveVehicleRec(sid, vid){
     SUBJ_FORM = null;
   }catch(e){ WS_ERR = e.message; }
   await reloadWorkspace();
+}
+
+
+/* ------------------------------------------------------------- invoices */
+
+/* The office's money desk (INVOICING.md). Admin-only — nothing here is ever
+   rendered for an investigator, and the Worker refuses them anyway. The
+   document block below is exactly what prints: Print / Save as PDF hides
+   everything else on the page. */
+const INV_STATUS_LABEL = s => ({draft:"Draft", ready:"Ready", sent_to_bill:"Sent to BILL",
+  sent_to_client:"Sent to client", partially_paid:"Partially paid", paid:"Paid",
+  overdue:"Overdue", void:"Void"})[s] || s;
+const usd = n => "$" + Number(n || 0).toLocaleString("en-US",
+  {minimumFractionDigits: (Number(n) % 1 ? 2 : 0), maximumFractionDigits: 2});
+
+function invoicesView(){
+  if(INV_OPEN) return invoiceDetailView();
+  if(!INVOICES) return `<div class="card"><div class="empty">Loading invoices&hellip;</div></div>`;
+  const sm = INVOICES.summary || {};
+  const stat = (label, v, tone) => `<div class="stat ${tone || ""}">
+    <div class="stat-n">${v}</div><div class="stat-l">${esc(label)}</div></div>`;
+  const rows = (INVOICES.invoices || []).map(i => `<tr data-act="invOpen" data-id="${i.id}" style="cursor:pointer">
+      <td><b>${esc(i.invoice_no)}</b><div class="mono">${esc(i.case_no)}</div></td>
+      <td class="hide">${esc((i.bill_to || "").split("\n")[0])}${i.refs.claim_number ? `<div class="mono">${esc(i.refs.claim_number)}</div>` : ""}</td>
+      <td class="hide">${esc(fmtDay(i.issue_date || "") || "—")}</td>
+      <td>${esc(fmtDay(i.due_date || "") || "—")}</td>
+      <td>${usd(i.total)}</td>
+      <td>${usd(i.balance_due)}</td>
+      <td><span class="tag ${esc(i.display_status)}">${esc(INV_STATUS_LABEL(i.display_status))}</span></td>
+    </tr>`).join("");
+  return `<div class="stats">
+      ${stat("Outstanding", usd(sm.outstanding), sm.outstanding ? "warn" : "")}
+      ${stat("Due soon", sm.due_soon || 0)}
+      ${stat("Overdue", sm.overdue || 0, sm.overdue ? "warn" : "")}
+      ${stat("Paid this month", usd(sm.paid_this_month))}
+      ${stat("Drafts", sm.drafts || 0)}
+    </div>
+    <div class="card">
+      <div class="bar"><h2 style="margin:0">Invoices</h2>
+        <select data-act="invFilterStatus">
+          ${[["","All statuses"],["draft","Draft"],["ready","Ready"],["sent_to_bill","Sent to BILL"],
+             ["overdue","Overdue"],["partially_paid","Partially paid"],["paid","Paid"],["void","Void"]]
+            .map(([v,l]) => `<option value="${v}" ${INV_FILTER.status === v ? "selected" : ""}>${l}</option>`).join("")}
+        </select>
+        <select data-act="invFilterType">
+          ${[["","Both sides"],["insurance","Insurance"],["private","Private"]]
+            .map(([v,l]) => `<option value="${v}" ${INV_FILTER.type === v ? "selected" : ""}>${l}</option>`).join("")}
+        </select>
+        <input data-act="invFilterQ" placeholder="Search # / case / claim" value="${esc(INV_FILTER.q)}" style="max-width:220px">
+      </div>
+      ${rows ? `<div style="overflow-x:auto"><table>
+          <thead><tr><th>Invoice</th><th class="hide">Bill to</th><th class="hide">Issued</th>
+            <th>Due</th><th>Amount</th><th>Balance</th><th>Status</th></tr></thead>
+          <tbody>${rows}</tbody></table></div>`
+        : `<div class="empty">No invoices${INV_FILTER.status || INV_FILTER.type || INV_FILTER.q ? " match" : " yet — open a case and use Create invoice"}.</div>`}
+      ${INV_MSG ? `<div class="note" style="margin-top:8px">${esc(INV_MSG)}</div>` : ""}
+    </div>`;
+}
+
+function invoiceDocHtml(i){
+  const cfg = INV_SETTINGS || {};
+  const refLabels = {claim_number:"Claim #", policy_number:"Policy #", insured:"Insured",
+    claimant:"Claimant", date_of_loss:"Date of loss", client_reference:"Client ref",
+    po_number:"PO #", authorization_number:"Authorization #", vendor_number:"Vendor #",
+    service_dates:"Service dates", assignment_type:"Assignment", adjuster:"Adjuster"};
+  const refs = Object.entries(i.refs || {}).filter(([, v]) => v);
+  return `<div id="invdoc">
+    <div class="doc-head">
+      <div><h2>${esc(cfg.company_name || "")}</h2>
+        <div style="font-size:.85rem;color:var(--muted)">${esc(cfg.company_line || "")}</div></div>
+      <div style="text-align:right">
+        <div style="font-size:1.2rem;font-weight:800;letter-spacing:.06em">INVOICE</div>
+        <div><b>${esc(i.invoice_no)}</b></div>
+        <div style="font-size:.88rem">Issued ${esc(fmtDay(i.issue_date || "") || "—")}</div>
+        ${i.due_date ? `<div style="font-size:.88rem">Due ${esc(fmtDay(i.due_date))}</div>` : ""}
+        ${i.payment_terms ? `<div style="font-size:.88rem">${esc(i.payment_terms)}</div>` : ""}
+      </div>
+    </div>
+    <div style="display:flex;gap:26px;flex-wrap:wrap">
+      <div style="flex:1;min-width:220px">
+        <div class="doc-refs"><dt>Bill to</dt><dd style="white-space:pre-line">${esc(i.bill_to || "")}</dd>
+        ${i.billing_email ? `<dd style="color:var(--muted)">${esc(i.billing_email)}</dd>` : ""}</div>
+      </div>
+      ${refs.length ? `<dl class="doc-refs" style="flex:1;min-width:200px;margin:0">
+        <dt>Case #</dt><dd>${esc(i.case_no)}</dd>
+        ${refs.map(([k, v]) => `<dt>${esc(refLabels[k] || k)}</dt><dd>${esc(v)}</dd>`).join("")}
+      </dl>` : `<dl class="doc-refs" style="flex:1;min-width:200px;margin:0">
+        <dt>Case #</dt><dd>${esc(i.case_no)}</dd></dl>`}
+    </div>
+    <table class="doc-table"><thead><tr><th>Description</th><th class="n">Qty</th>
+      <th class="n">Rate</th><th class="n">Amount</th></tr></thead>
+      <tbody>${(i.lines || []).map(l => `<tr><td>${esc(l.description)}</td>
+        <td class="n">${l.rate != null ? esc(l.qty) : ""}</td>
+        <td class="n">${l.rate != null ? usd(l.rate) : ""}</td>
+        <td class="n">${usd(l.amount)}</td></tr>`).join("")}</tbody></table>
+    ${i.adjustments ? `<div style="text-align:right;font-size:.92rem">Adjustments: ${usd(i.adjustments)}</div>` : ""}
+    ${i.amount_paid ? `<div style="text-align:right;font-size:.95rem">Invoice total ${usd(i.total)}
+        &middot; Payments received ${usd(i.amount_paid)}</div>` : ""}
+    <div class="doc-due">${i.amount_paid ? "Balance due" : "Total due"} <b>${usd(i.balance_due)}</b></div>
+    ${i.client_notes ? `<p style="font-size:.9rem">${esc(i.client_notes)}</p>` : ""}
+    <p style="font-size:.88rem;color:var(--muted)">${esc(cfg.payment_instructions || "")}</p>
+    <p style="font-size:.85rem;border-top:1px solid var(--line);padding-top:10px;color:var(--muted)">${esc(cfg.invoice_footer || "")}</p>
+  </div>`;
+}
+
+function invoiceDetailView(){
+  const i = INV_OPEN;
+  const editable = ["draft", "ready"].includes(i.status);
+  const lineRow = (l, idx) => `<div class="inv-line">
+    <input id="il_d_${idx}" placeholder="Description" value="${esc(l.description || "")}" ${editable ? "" : "disabled"}>
+    <input id="il_q_${idx}" placeholder="Qty" inputmode="decimal" value="${esc(l.qty ?? "")}" ${editable ? "" : "disabled"}>
+    <input id="il_r_${idx}" placeholder="Rate" inputmode="decimal" value="${esc(l.rate ?? "")}" ${editable ? "" : "disabled"}>
+    <input id="il_a_${idx}" placeholder="Amount" inputmode="decimal" value="${esc(l.amount ?? "")}" ${editable ? "" : "disabled"}>
+    ${editable ? `<button type="button" class="btn sm ghost" data-act="invDelLine" data-i="${idx}">&times;</button>` : "<span></span>"}
+  </div>`;
+  const refIn = (k, label) => `<label class="f"><span>${label}</span>
+    <input id="ir_${k}" value="${esc((i.refs || {})[k] || "")}" ${editable ? "" : "disabled"}></label>`;
+
+  return `<div class="card">
+    <div class="bar">
+      <button class="btn sm ghost" data-act="invBack">&larr; All invoices</button>
+      <h2 style="margin:0">${esc(i.invoice_no)}</h2>
+      <span class="tag ${esc(i.display_status)}">${esc(INV_STATUS_LABEL(i.display_status))}</span>
+      <span class="count">${esc(i.invoice_type)} &middot; case
+        <a href="#" data-act="openCase" data-case="${esc(i.case_no)}">${esc(i.case_no)}</a></span>
+      <button class="btn sm" data-act="invPrint">Print / Save as PDF</button>
+    </div>
+    ${INV_MSG ? `<div class="note">${esc(INV_MSG)}</div>` : ""}
+    ${INV_WARN.length ? `<div class="warnline">Worth adding before it goes out: ${esc(INV_WARN.join("; "))}.</div>` : ""}
+
+    <form class="quick" data-act="invSave">
+      <label class="f"><span>Bill to</span><textarea id="iv_billto" rows="2" ${editable ? "" : "disabled"}>${esc(i.bill_to || "")}</textarea></label>
+      <div class="two">
+        <label class="f"><span>Billing email</span><input id="iv_bemail" value="${esc(i.billing_email || "")}" ${editable ? "" : "disabled"}></label>
+        <label class="f"><span>Payment terms</span><input id="iv_terms" value="${esc(i.payment_terms || "")}" ${editable ? "" : "disabled"}></label>
+      </div>
+      <div class="two">
+        <label class="f"><span>Issue date</span><input id="iv_issue" type="date" value="${esc(i.issue_date || "")}" ${editable ? "" : "disabled"}></label>
+        <label class="f"><span>Due date</span><input id="iv_due" type="date" value="${esc(i.due_date || "")}" ${editable ? "" : "disabled"}></label>
+      </div>
+      ${i.invoice_type === "insurance" ? `<div class="two">
+        ${refIn("claim_number", "Claim #")}${refIn("po_number", "PO #")}
+      </div><div class="two">
+        ${refIn("authorization_number", "Authorization #")}${refIn("vendor_number", "Vendor #")}
+      </div><div class="two">
+        ${refIn("adjuster", "Adjuster")}${refIn("service_dates", "Service dates")}
+      </div>` : `<div class="two">${refIn("service_dates", "Service dates")}${refIn("client_reference", "Client ref")}</div>`}
+      <label class="f"><span>Note to the client <span class="opt">prints on the invoice</span></span>
+        <input id="iv_cnotes" value="${esc(i.client_notes || "")}" ${editable ? "" : "disabled"}></label>
+      <label class="f"><span>Internal notes <span class="opt">never prints</span></span>
+        <input id="iv_inotes" value="${esc(i.internal_notes || "")}"></label>
+      <button class="btn sm" type="submit">Save invoice</button>
+    </form>
+
+    <h3 style="margin:16px 0 8px;font-size:1rem">Line items</h3>
+    ${(i.lines || []).map(lineRow).join("")}
+    ${editable ? `<div style="margin:6px 0 2px">
+      <button class="btn sm ghost" data-act="invAddLine">Add line</button>
+      <button class="btn sm" data-act="invSaveLines">Save lines</button></div>` : ""}
+    <div class="inv-tot">Total ${usd(i.total)} &middot; Paid ${usd(i.amount_paid)} &middot; Balance <b>${usd(i.balance_due)}</b></div>
+
+    <div class="actions" style="border-top:1px solid var(--line);padding-top:12px;margin-top:8px">
+      ${i.status === "draft" ? `<button class="btn" data-act="invStatus" data-s="ready">Mark ready</button>` : ""}
+      ${i.status === "ready" ? `<button class="btn" data-act="invStatus" data-s="sent_to_bill">Mark sent to BILL</button>
+        <button class="btn ghost" data-act="invStatus" data-s="draft">Back to draft</button>` : ""}
+      ${i.status !== "void" ? `<button class="btn ghost" data-act="invStatus" data-s="void">Void</button>` : ""}
+      <button class="btn ghost" data-act="invCopy">Copy billing details</button>
+    </div>
+
+    ${i.status !== "draft" ? `
+    <h3 style="margin:16px 0 8px;font-size:1rem">BILL handoff</h3>
+    <p class="hint">Version 1 is manual: enter the invoice in BILL, then keep its reference here.
+      Sent to BILL never means paid — payments below are what move the balance.</p>
+    <form class="quick" data-act="invBillSave">
+      <div class="two">
+        <label class="f"><span>BILL invoice ID</span><input id="ib_inv" value="${esc(i.external_invoice_id || "")}"></label>
+        <label class="f"><span>BILL customer ID</span><input id="ib_cust" value="${esc(i.external_customer_id || "")}"></label>
+      </div>
+      <label class="f"><span>BILL status</span><input id="ib_status" value="${esc(i.external_status || "")}" placeholder="e.g. processing"></label>
+      <button class="btn sm" type="submit">Save BILL reference</button>
+      ${i.sent_to_bill_at ? `<p class="hint">Sent to BILL ${when(i.sent_to_bill_at)}</p>` : ""}
+    </form>
+
+    <h3 style="margin:16px 0 8px;font-size:1rem">Payments</h3>
+    ${(i.payments || []).length ? i.payments.map(pm => `<div class="tl-m">${usd(pm.amount)} &middot; ${esc(fmtDay(pm.paid_date))}
+        &middot; ${esc(pm.method)}${pm.reference ? ` &middot; ${esc(pm.reference)}` : ""}${pm.provider !== "manual" ? ` &middot; via ${esc(pm.provider)}` : ""}</div>`).join("")
+      : `<p class="hint">Nothing recorded yet.</p>`}
+    ${i.status !== "void" ? `<form class="quick" data-act="invPay" style="margin-top:8px">
+      <div class="two">
+        <label class="f"><span>Amount</span><input id="ip_amt" inputmode="decimal"></label>
+        <label class="f"><span>Date</span><input id="ip_date" type="date" value="${new Date().toISOString().slice(0,10)}"></label>
+      </div>
+      <div class="two">
+        <label class="f"><span>Method</span><select id="ip_method">${["ach","check","card","wire","other"]
+          .map(v => `<option value="${v}">${v.toUpperCase()}</option>`).join("")}</select></label>
+        <label class="f"><span>Reference <span class="opt">optional</span></span><input id="ip_ref"></label>
+      </div>
+      <button class="btn sm" type="submit">Record payment</button>
+    </form>` : ""}` : ""}
+
+    ${INV_EVENTS.length ? `<h3 style="margin:16px 0 6px;font-size:1rem">History</h3>
+      ${INV_EVENTS.map(e => `<div class="tl-m">${esc(e.action)}${e.detail ? ` &middot; ${esc(e.detail)}` : ""}
+        &middot; ${esc(e.who || "")} &middot; ${when(e.at)}</div>`).join("")}` : ""}
+
+    <h3 style="margin:18px 0 6px;font-size:1rem">The document <span class="opt">exactly what prints</span></h3>
+    ${invoiceDocHtml(i)}
+  </div>`;
+}
+
+async function loadInvoices(){
+  try{ INVOICES = await api("/invoices" + (Object.values(INV_FILTER).some(Boolean)
+    ? `?status=${encodeURIComponent(INV_FILTER.status)}&type=${encodeURIComponent(INV_FILTER.type)}&q=${encodeURIComponent(INV_FILTER.q)}` : ""));
+    INV_SETTINGS = INVOICES.settings;
+  }catch(e){ INVOICES = {invoices: [], summary: {}}; INV_MSG = e.message; }
+  paint();
+}
+
+async function openInvoice(id){
+  try{
+    const d = await api("/invoices/" + id);
+    INV_OPEN = d.invoice; INV_WARN = d.warnings || []; INV_EVENTS = d.events || [];
+    INV_SETTINGS = d.settings; INV_MSG = "";
+  }catch(e){ INV_MSG = e.message; }
+  if(TAB !== "invoices"){ TAB = "invoices"; }
+  VIEW = "list";
+  paint();
+}
+
+function invLinesFromDom(){
+  const lines = [];
+  for(let idx = 0; idx < (INV_OPEN.lines || []).length; idx++){
+    const el = $("il_d_" + idx);
+    if(!el) continue;
+    lines.push({ description: el.value, qty: $("il_q_" + idx).value,
+                 rate: $("il_r_" + idx).value, amount: $("il_a_" + idx).value });
+  }
+  return lines;
+}
+
+async function saveInvoiceFields(){
+  INV_MSG = "";
+  const refs = {};
+  for(const k of ["claim_number","po_number","authorization_number","vendor_number","adjuster","service_dates","client_reference"]){
+    const el = $("ir_" + k); if(el) refs[k] = el.value;
+  }
+  try{
+    const body = { internal_notes: $("iv_inotes").value };
+    if($("iv_billto") && !$("iv_billto").disabled){
+      Object.assign(body, { bill_to: $("iv_billto").value, billing_email: $("iv_bemail").value,
+        payment_terms: $("iv_terms").value, issue_date: $("iv_issue").value || null,
+        due_date: $("iv_due").value || null, client_notes: $("iv_cnotes").value, refs });
+    }
+    const d = await api("/invoices/" + INV_OPEN.id, {method: "POST", body});
+    INV_OPEN = d.invoice; INV_MSG = "Saved.";
+  }catch(e){ INV_MSG = e.message; }
+  paint();
+}
+
+async function saveInvoiceLines(){
+  INV_MSG = "";
+  try{
+    const d = await api(`/invoices/${INV_OPEN.id}/lines`, {method: "POST", body: {lines: invLinesFromDom()}});
+    INV_OPEN = d.invoice; INV_MSG = "Lines saved.";
+  }catch(e){ INV_MSG = e.message; }
+  paint();
+}
+
+async function setInvStatus(status){
+  INV_MSG = "";
+  try{
+    const d = await api(`/invoices/${INV_OPEN.id}/status`, {method: "POST", body: {status}});
+    INV_OPEN = d.invoice; INV_WARN = d.warnings || [];
+  }catch(e){ INV_MSG = e.message; }
+  paint();
+}
+
+async function saveInvBill(){
+  INV_MSG = "";
+  try{
+    const d = await api(`/invoices/${INV_OPEN.id}/bill`, {method: "POST", body: {
+      external_invoice_id: $("ib_inv").value, external_customer_id: $("ib_cust").value,
+      external_status: $("ib_status").value }});
+    INV_OPEN = d.invoice; INV_MSG = "BILL reference saved.";
+  }catch(e){ INV_MSG = e.message; }
+  paint();
+}
+
+async function recordInvPayment(){
+  INV_MSG = "";
+  try{
+    const d = await api(`/invoices/${INV_OPEN.id}/payments`, {method: "POST", body: {
+      amount: $("ip_amt").value, paid_date: $("ip_date").value,
+      method: $("ip_method").value, reference: $("ip_ref").value }});
+    INV_OPEN = d.invoice; INV_MSG = d.invoice.status === "paid" ? "Paid in full." : "Payment recorded.";
+  }catch(e){ INV_MSG = e.message; }
+  await openInvoice(INV_OPEN.id);
+}
+
+function copyInvoiceDetails(){
+  const i = INV_OPEN;
+  const lineTxt = (i.lines || []).map(l => `  ${l.description}: ${usd(l.amount)}`).join("\n");
+  const txt = [`Invoice #: ${i.invoice_no}`,
+    `Bill to: ${(i.bill_to || "").replace(/\n/g, " — ")}`,
+    i.refs.claim_number ? `Claim #: ${i.refs.claim_number}` : "",
+    `Case #: ${i.case_no}`, lineTxt,
+    `Amount: ${usd(i.total)}`,
+    i.payment_terms ? `Terms: ${i.payment_terms}` : "",
+    i.due_date ? `Due: ${i.due_date}` : ""].filter(Boolean).join("\n");
+  try{ navigator.clipboard.writeText(txt); INV_MSG = "Billing details copied — paste into BILL."; }
+  catch(e){ INV_MSG = "Could not reach the clipboard."; }
+  paint();
+}
+
+async function createInvoiceFor(caseNo, fromAuth){
+  try{
+    const d = await api(`/cases/${encodeURIComponent(caseNo)}/invoices`, {method: "POST",
+      body: fromAuth ? {from_authorization: true} : {}});
+    await openInvoice(d.invoice.id);
+  }catch(e){
+    if(String(e.message).includes("duplicate")){
+      if(confirm(e.message)){
+        const d2 = await api(`/cases/${encodeURIComponent(caseNo)}/invoices`, {method: "POST",
+          body: {confirm_duplicate: true, ...(fromAuth ? {from_authorization: true} : {})}});
+        return openInvoice(d2.invoice.id);
+      }
+      return;
+    }
+    WS_ERR = e.message; paintCase();
+  }
 }
 
 function myOfferBox(){
@@ -2378,6 +2738,7 @@ document.addEventListener("click", ev => {
   else if(act === "tab"){
     TAB = el.dataset.tab; paint();
     if(TAB === "calendar") loadCalendar(CAL ? CAL.month : "");
+    if(TAB === "invoices"){ INV_OPEN = null; INV_MSG = ""; loadInvoices(); }
     if(TAB === "myreports") api("/my/reports").then(d => { MY_REPORTS = d; paint(); }).catch(()=>{});
     if(TAB === "myexpenses"){
       api("/my/expenses").then(d => { MY_EXPENSES = d; paint(); }).catch(()=>{});
@@ -2418,6 +2779,26 @@ document.addEventListener("click", ev => {
   else if(act === "subjCancel"){ SUBJ_FORM = null; WS_ERR = ""; paintCase(); }
   else if(act === "taskStatus"){ setTaskStat(Number(el.dataset.id), el.dataset.s); }
   else if(act === "closeCase"){ doCloseCase(); }
+  else if(act === "invOpen"){ openInvoice(Number(el.dataset.id)); }
+  else if(act === "invBack"){ INV_OPEN = null; INV_MSG = ""; loadInvoices(); }
+  else if(act === "invStatus"){ setInvStatus(el.dataset.s); }
+  else if(act === "invCopy"){ copyInvoiceDetails(); }
+  else if(act === "invPrint"){
+    document.body.classList.add("printing-invoice");
+    window.print();
+    setTimeout(() => document.body.classList.remove("printing-invoice"), 400);
+  }
+  else if(act === "invAddLine"){
+    INV_OPEN.lines = invLinesFromDom().concat([{description: "", qty: "", rate: "", amount: ""}]);
+    paint();
+  }
+  else if(act === "invDelLine"){
+    const lines = invLinesFromDom(); lines.splice(Number(el.dataset.i), 1);
+    INV_OPEN.lines = lines; paint();
+  }
+  else if(act === "invSaveLines"){ saveInvoiceLines(); }
+  else if(act === "createInvoice"){ createInvoiceFor(el.dataset.case, false); }
+  else if(act === "createInvoiceAuth"){ createInvoiceFor(el.dataset.case, true); }
   else if(act === "openReport"){
     WS_REPORT = WS_REPORT === Number(el.dataset.id) ? null : Number(el.dataset.id);
     WS_ERR = ""; paintCase();
@@ -2473,6 +2854,9 @@ document.addEventListener("submit", ev => {
   else if(a === "addComm") addCommEntry();
   else if(a === "addTask") addTaskEntry();
   else if(a === "saveClosure") saveClosureTicks();
+  else if(a === "invSave") saveInvoiceFields();
+  else if(a === "invBillSave") saveInvBill();
+  else if(a === "invPay") recordInvPayment();
   else if(a === "makeOffer") makeCaseOffer();
   else if(a === "saveDetails") saveCaseDetails();
   else if(a === "saveSubject") saveSubjectRec(el.dataset.id ? Number(el.dataset.id) : null);
@@ -2487,6 +2871,9 @@ document.addEventListener("input", ev => {
     return;
   }
   if(ev.target.dataset && ev.target.dataset.act === "filter"){ FILTER = ev.target.value; paint(); }
+  if(ev.target.dataset && ev.target.dataset.act === "invFilterStatus"){ INV_FILTER.status = ev.target.value; loadInvoices(); }
+  if(ev.target.dataset && ev.target.dataset.act === "invFilterType"){ INV_FILTER.type = ev.target.value; loadInvoices(); }
+  if(ev.target.dataset && ev.target.dataset.act === "invFilterQ"){ INV_FILTER.q = ev.target.value; loadInvoices(); }
 });
 
 /* ------------------------------------------------------------------- boot */

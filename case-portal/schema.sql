@@ -492,3 +492,80 @@ CREATE TABLE IF NOT EXISTS case_retainer (
   updated_by      INTEGER REFERENCES users(id),
   updated_at      TEXT
 );
+
+-- ------------------------------------------------------------------ invoices
+-- The invoice system (INVOICING.md). The portal is the operational record;
+-- BILL is the payment system — version 1 is the manual handoff, and the
+-- provider fields are deliberately generic (billing_provider +
+-- external_* ids) so a live integration later plugs in without a rebuild.
+-- Totals are computed from lines and payments on read, never stored, so
+-- they cannot drift. Finalized invoices are never deleted: void keeps the
+-- row, and invoice_events is the audit trail.
+CREATE TABLE IF NOT EXISTS invoices (
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_no           TEXT    NOT NULL UNIQUE,
+  case_no              TEXT    NOT NULL,
+  invoice_type         TEXT    NOT NULL CHECK (invoice_type IN ('insurance','private')),
+  status               TEXT    NOT NULL DEFAULT 'draft' CHECK (status IN
+                         ('draft','ready','sent_to_bill','sent_to_client',
+                          'partially_paid','paid','void')),
+  issue_date           TEXT,
+  due_date             TEXT,
+  payment_terms        TEXT,
+  currency             TEXT    NOT NULL DEFAULT 'USD',
+  bill_to              TEXT,             -- the addressee block, as it should print
+  billing_email        TEXT,
+  refs_json            TEXT    NOT NULL DEFAULT '{}',  -- claim/PO/auth/vendor…; only values print
+  client_notes         TEXT,
+  internal_notes       TEXT,             -- never printed on the document
+  adjustments          REAL    NOT NULL DEFAULT 0,
+  billing_provider     TEXT    NOT NULL DEFAULT 'manual',
+  external_customer_id TEXT,
+  external_invoice_id  TEXT,
+  external_status      TEXT,
+  sent_to_bill_at      TEXT,
+  last_synced_at       TEXT,
+  created_by           INTEGER REFERENCES users(id),
+  created_at           TEXT,
+  updated_by           INTEGER REFERENCES users(id),
+  updated_at           TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_invoices_case   ON invoices(case_no);
+CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
+
+CREATE TABLE IF NOT EXISTS invoice_lines (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_id  INTEGER NOT NULL,
+  sort        INTEGER NOT NULL DEFAULT 0,
+  description TEXT    NOT NULL,
+  qty         REAL    NOT NULL DEFAULT 1,
+  rate        REAL,              -- NULL on a flat package line: no per-hour math prints
+  amount      REAL    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_invlines ON invoice_lines(invoice_id, sort);
+
+CREATE TABLE IF NOT EXISTS invoice_payments (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_id          INTEGER NOT NULL,
+  amount              REAL    NOT NULL,
+  paid_date           TEXT    NOT NULL,
+  method              TEXT    NOT NULL DEFAULT 'other' CHECK (method IN
+                        ('ach','card','check','wire','other')),
+  reference           TEXT,
+  provider            TEXT    NOT NULL DEFAULT 'manual',
+  external_payment_id TEXT,
+  notes               TEXT,
+  recorded_by         INTEGER REFERENCES users(id),
+  recorded_at         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_invpay ON invoice_payments(invoice_id);
+
+CREATE TABLE IF NOT EXISTS invoice_events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_id INTEGER NOT NULL,
+  action     TEXT    NOT NULL,
+  detail     TEXT,
+  user_id    INTEGER REFERENCES users(id),
+  at         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_invevents ON invoice_events(invoice_id);

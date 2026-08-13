@@ -931,6 +931,156 @@ section('The two internal calculations never share a number');
   ok('off-ladder hours name no package', aws.authorization.package_price === undefined);
 }
 
+section("Invoices: the office's money desk, and BILL only collects");
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const tok = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  await ingest(env, { case_no: 'API-IV1', carrier: 'Example Mutual', claim_number: 'WC-2026-11452',
+                      adjuster: 'Dana Reyes', billing_email: 'ap@examplemutual.test',
+                      client_name: 'Dana Reyes', subject_name: 'Pat Coleman', date_of_loss: '03/14/2026' });
+  await ingest(env, { case_no: 'API-IV2', service: 'Surveillance',
+                      client_name: 'Jane Client', subject_name: 'John Subject' });
+  await call(env, '/cases/API-IV1/meta', { method: 'POST', cookie: admin, body: { authorized_hours: 24 } });
+
+  /* The security line first: an investigator has no invoice surface at all. */
+  ok('an investigator cannot create an invoice',
+     (await call(env, '/cases/API-IV1/invoices', { method: 'POST', cookie: inv, body: {} })).status === 403);
+  ok('or list them',
+     (await call(env, '/invoices', { cookie: inv })).status === 403);
+  ok('or touch billing settings',
+     (await call(env, '/billing-settings', { cookie: inv })).status === 403);
+
+  /* CREATE FROM AUTHORIZATION: 24 authorized hours bill as the flat block —
+     one line, no per-hour arithmetic on it. */
+  const made = await jsonOf(await call(env, '/cases/API-IV1/invoices', { method: 'POST', cookie: admin,
+    body: { from_authorization: true } }));
+  const iv1 = made.invoice;
+  ok('the number is server-side and sequential', /^API-INV-\d{4}-0001$/.test(iv1.invoice_no), iv1.invoice_no);
+  ok('the case pre-fills the bill-to block',
+     iv1.bill_to.includes('Example Mutual') && iv1.bill_to.includes('Attn: Dana Reyes'));
+  ok('the billing email came from the case', iv1.billing_email === 'ap@examplemutual.test');
+  ok('the claim references rode along', iv1.refs.claim_number === 'WC-2026-11452'
+     && iv1.refs.claimant === 'Pat Coleman');
+  ok('the package bills flat — one line, no rate shown',
+     iv1.lines.length === 1 && iv1.lines[0].description === '24-Hour Surveillance Authorization'
+     && iv1.lines[0].rate === null && iv1.lines[0].amount === 3300);
+  ok('totals are computed, not stored', iv1.subtotal === 3300 && iv1.total === 3300
+     && iv1.balance_due === 3300 && iv1.status === 'draft');
+  ok('insurance terms default from settings', iv1.payment_terms === 'Net 30');
+
+  ok('a second invoice on the case warns before it exists',
+     (await call(env, '/cases/API-IV1/invoices', { method: 'POST', cookie: admin, body: {} })).status === 409);
+
+  const priv = (await jsonOf(await call(env, '/cases/API-IV2/invoices', { method: 'POST', cookie: admin,
+    body: { from_authorization: true } }))).invoice;
+  ok('a private case opens with the retainer, never a surcharge',
+     priv.invoice_type === 'private' && priv.lines[0].description === 'Investigation Retainer'
+     && priv.lines[0].amount === 1500
+     && priv.client_notes.includes('applied toward authorized investigative services'));
+  ok('private terms are their own', priv.payment_terms === 'Due on receipt');
+  ok('numbers stay sequential across types', /-0002$/.test(priv.invoice_no));
+
+  /* The gatekeeping: drafts take no payments, Ready validates, paid is
+     arithmetic and never a button. */
+  ok('a draft takes no payments',
+     (await call(env, `/invoices/${iv1.id}/payments`, { method: 'POST', cookie: admin,
+       body: { amount: 100, paid_date: '2026-08-13' } })).status === 400);
+  ok('paid can never be clicked into being',
+     (await call(env, `/invoices/${iv1.id}/status`, { method: 'POST', cookie: admin,
+       body: { status: 'paid' } })).status === 400);
+  ok('BILL cannot be reached from a draft',
+     (await call(env, `/invoices/${iv1.id}/status`, { method: 'POST', cookie: admin,
+       body: { status: 'sent_to_bill' } })).status === 400);
+
+  const readied = await jsonOf(await call(env, `/invoices/${iv1.id}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'ready' } }));
+  ok('a complete draft goes Ready', readied.invoice.status === 'ready');
+  ok('and the carrier gaps warn without blocking',
+     readied.warnings.some(w => w.includes('PO number'))
+     && readied.warnings.some(w => w.includes('vendor number'))
+     && !readied.warnings.some(w => w.includes('claim number')));
+
+  /* Additional authorized hours are their own clearly-priced line. */
+  const relined = (await jsonOf(await call(env, `/invoices/${iv1.id}/lines`, { method: 'POST', cookie: admin,
+    body: { lines: [
+      { description: '24-Hour Surveillance Authorization', amount: 3300 },
+      { description: 'Additional Authorized Surveillance', qty: 4, rate: 150 },
+    ] } }))).invoice;
+  ok('a rate line computes its own amount', relined.lines[1].amount === 600);
+  ok('and the totals follow', relined.total === 3900 && relined.balance_due === 3900);
+
+  const sent = (await jsonOf(await call(env, `/invoices/${iv1.id}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'sent_to_bill' } }))).invoice;
+  ok('Ready can go to BILL, stamped when', sent.status === 'sent_to_bill' && sent.sent_to_bill_at != null
+     && sent.billing_provider === 'bill');
+  ok('sent to BILL is NOT paid', sent.display_status !== 'paid' && sent.balance_due === 3900);
+
+  await call(env, `/invoices/${iv1.id}/bill`, { method: 'POST', cookie: admin,
+    body: { external_invoice_id: 'BILL-7741', external_status: 'processing' } });
+  const withRef = (await jsonOf(await call(env, `/invoices/${iv1.id}`, { cookie: admin }))).invoice;
+  ok('the BILL reference is preserved', withRef.external_invoice_id === 'BILL-7741');
+
+  /* Partial payments: arithmetic decides the status. */
+  const p1 = (await jsonOf(await call(env, `/invoices/${iv1.id}/payments`, { method: 'POST', cookie: admin,
+    body: { amount: 1000, paid_date: '2026-08-20', method: 'ach', provider: 'bill',
+            external_payment_id: 'PAY-1' } }))).invoice;
+  ok('a first payment leaves it partially paid', p1.status === 'partially_paid' && p1.balance_due === 2900);
+  const p2 = (await jsonOf(await call(env, `/invoices/${iv1.id}/payments`, { method: 'POST', cookie: admin,
+    body: { amount: 2900, paid_date: '2026-08-27', method: 'check' } }))).invoice;
+  ok('the balance reaching zero is what makes it PAID', p2.status === 'paid' && p2.balance_due === 0);
+
+  /* Void keeps the record and locks the doors. */
+  await call(env, `/invoices/${priv.id}/status`, { method: 'POST', cookie: admin, body: { status: 'void' } });
+  ok('a void invoice cannot be edited',
+     (await call(env, `/invoices/${priv.id}`, { method: 'POST', cookie: admin,
+       body: { bill_to: 'someone else' } })).status === 400);
+  ok('or paid',
+     (await call(env, `/invoices/${priv.id}/payments`, { method: 'POST', cookie: admin,
+       body: { amount: 5, paid_date: '2026-08-13' } })).status === 400);
+  ok('or revived',
+     (await call(env, `/invoices/${priv.id}/status`, { method: 'POST', cookie: admin,
+       body: { status: 'ready' } })).status === 400);
+
+  /* Overdue is computed against today, and the dashboard sums the book. */
+  const late = (await jsonOf(await call(env, '/cases/API-IV2/invoices', { method: 'POST', cookie: admin,
+    body: {} }))).invoice;   // the void one does not count as a duplicate
+  await call(env, `/invoices/${late.id}/lines`, { method: 'POST', cookie: admin,
+    body: { lines: [{ description: 'Investigation Retainer', amount: 1500 }] } });
+  await call(env, `/invoices/${late.id}`, { method: 'POST', cookie: admin,
+    body: { due_date: '2020-01-01' } });
+  await call(env, `/invoices/${late.id}/status`, { method: 'POST', cookie: admin, body: { status: 'ready' } });
+  const book = await jsonOf(await call(env, '/invoices', { cookie: admin }));
+  const lateRow = book.invoices.find(x => x.id === late.id);
+  ok('a past-due balance reads overdue without being stored', lateRow.display_status === 'overdue');
+  ok('the dashboard sums the outstanding balance', book.summary.outstanding === 1500
+     && book.summary.overdue === 1);
+  ok('and the month of payments', book.summary.paid_this_month === 3900);
+  ok('the status filter answers by what the office sees',
+     (await jsonOf(await call(env, '/invoices?status=overdue', { cookie: admin }))).invoices
+       .every(x => x.display_status === 'overdue'));
+
+  /* The audit trail names every consequential act. */
+  const trail = (await jsonOf(await call(env, `/invoices/${iv1.id}`, { cookie: admin }))).events
+    .map(e => e.action);
+  for (const a of ['created', 'status_ready', 'lines_replaced', 'status_sent_to_bill',
+                   'bill_ref_added', 'payment_recorded']) {
+    ok(`the trail records ${a}`, trail.includes(a), trail.join(','));
+  }
+
+  /* Settings are configuration, not code. */
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { payment_instructions: 'Remit via the BILL payment request.' } });
+  ok('billing settings round-trip',
+     (await jsonOf(await call(env, '/billing-settings', { cookie: admin }))).settings
+       .payment_instructions === 'Remit via the BILL payment request.');
+}
+
 section('The dashboard summary');
 {
   const env = freshEnv();
