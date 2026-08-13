@@ -412,9 +412,16 @@ section('Example view');
   await signIn(page, 'trever', 'AdminPassword1x');
   ok('an admin with real cases is not shown the example unasked',
      !(await text(page, '.card')).includes('EXAMPLE-CLAIM-0001'));
-
-  await page.locator('.btn', { hasText: 'Show an example' }).click();
-  await page.waitForTimeout(250);
+  // P20: the working material lives under Settings now, not on the case list.
+  ok('the case list bar carries no test controls',
+     !has(await text(page, '.bar'), 'test case') && !has(await text(page, '.bar'), 'example'));
+  await page.locator('.tabs button', { hasText: 'Settings' }).click();
+  await page.waitForTimeout(300);
+  ok('Settings holds the developer area', has(await text(page, '.card'), 'Developer & testing'));
+  await page.locator('.btn', { hasText: 'Show the example cases' }).click();
+  await page.waitForTimeout(300);
+  ok('showing the example lands where the example is',
+     has(await text(page, '.tabs button.on'), 'Cases'));
   const listed = await text(page, '.card');
   ok('an admin can call up the carrier example', listed.includes('EXAMPLE-CLAIM-0001'));
   ok('an admin also gets the client example', listed.includes('EXAMPLE-INTAKE-0002'));
@@ -638,15 +645,23 @@ section('Adding a test case from the portal');
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Settings' }).click();
+  await page.waitForTimeout(300);
   await page.locator('.btn', { hasText: 'Add a test case' }).click();
   await page.waitForTimeout(700);
 
+  ok('adding lands on the case list, where it now sits',
+     has(await text(page, '.tabs button.on'), 'Cases'));
   const list = await text(page, '.card');
   ok('a test case appears in the list', /TEST-\d{8}-/.test(list), list.slice(0, 200));
   ok('it is badged as a test', has(list, 'Test'));
   ok('its carrier is unmistakably fake', list.includes('Demo Mutual Insurance (TEST)'));
-  ok('a Remove button appears once one exists',
+  await page.locator('.tabs button', { hasText: 'Settings' }).click();
+  await page.waitForTimeout(300);
+  ok('a Remove button appears in Settings once one exists',
      await page.locator('.btn', { hasText: 'Remove test cases' }).count() === 1);
+  await page.locator('.tabs button', { hasText: 'Cases' }).click();
+  await page.waitForTimeout(300);
 
   // It behaves like a real case, which is the whole point of having one.
   await page.locator('tbody tr', { hasText: 'TEST-' }).first().click();
@@ -659,13 +674,23 @@ section('Adding a test case from the portal');
   await page.locator('.close').click();
   await page.waitForTimeout(250);
 
-  // Clearing takes the test cases and leaves the real ones.
+  // Clearing takes the test cases and leaves the real ones — from Settings.
   page.on('dialog', d => d.accept());
+  await page.locator('.tabs button', { hasText: 'Settings' }).click();
+  await page.waitForTimeout(300);
   await page.locator('.btn', { hasText: 'Remove test cases' }).click();
   await page.waitForTimeout(800);
+  await page.locator('.tabs button', { hasText: 'Cases' }).click();
+  await page.waitForTimeout(400);
   const after = await text(page, '.card');
   ok('the test case is gone', !/TEST-\d{8}-/.test(after), after.slice(0, 200));
   ok('the real cases are untouched', after.includes('API-20260812-4001') && after.includes('API-20260812-4002'));
+  await page.close();
+}
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  ok('an investigator gets no Settings', !has(await text(page, '.tabs'), 'Settings'));
   await page.close();
 }
 
