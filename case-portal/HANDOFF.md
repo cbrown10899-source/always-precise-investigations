@@ -16,7 +16,7 @@ Progress ledger (update as phases land):
 | 4. Start / End Investigation Day | **done** — 2026-08-12 (hours + mileage totalled) |
 | 7. Insurance Authorization Tracking | **done** — 2026-08-12 (hours + budget, configurable thresholds; REQUEST MORE not built) |
 | 5. Daily Report Builder | **done** — 2026-08-12 (draft from log, 5 statuses, admin-only approval) |
-| 6. Evidence Management | not started — needs R2 private storage first |
+| 6. Evidence Management | blocked on one dashboard click — `r2-setup.yml` probe ran 2026-08-13: Cloudflare error 10042, R2 has never been enabled on the account. Owner: dashboard → R2 Object Storage → Get started (free tier), then re-run the workflow. Code waits until the bucket is real |
 | 8. Dashboard Improvements | **done** — 2026-08-12 (operational cards, click-to-filter; Awaiting Client / Ready to Close / Expenses arrive with priorities 18/20/12) |
 | 12. Expenses + Mileage | **done** — 2026-08-12 (three separate classifications; receipt images wait on priority 6 storage) |
 | 15. Case Notes + Visibility | **done** — 2026-08-12 (7 types, 3 visibilities, enforced in the Worker's query) |

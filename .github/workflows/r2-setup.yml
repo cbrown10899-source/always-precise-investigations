@@ -53,23 +53,47 @@ jobs:
 
           LIST=$(curl -sS -H "$AUTH" "$API?per_page=100" 2>/dev/null)
           if [ "$(printf '%s' "$LIST" | jq -r '.success // false')" != "true" ]; then
-            echo "R2_VERDICT: token-lacks-r2"
+            # Two distinct failures land here and need different fixes:
+            #   10042 — R2 has never been enabled on the account (a dashboard
+            #           click-through), which masks whatever the token can do
+            #   anything else — the account has R2 but this token cannot touch it
+            ERRCODE=$(printf '%s' "$LIST" | jq -r '.errors[0].code // 0' 2>/dev/null)
             show_errors "$LIST"
-            {
-              echo "## The token cannot touch R2 yet"
-              echo ""
-              echo "CLOUDFLARE_API_TOKEN has no R2 permission — it was created for"
-              echo "Pages, Workers and D1. One edit in the Cloudflare dashboard fixes it:"
-              echo ""
-              echo "**My Profile → API Tokens → edit the token this repository uses → add:**"
-              echo ""
-              echo '```'
-              echo "    Account | Workers R2 Storage | Edit"
-              echo '```'
-              echo ""
-              echo "Then run this workflow again. Nothing has been changed."
-            } >> "$GITHUB_STEP_SUMMARY"
-            echo "::error::CLOUDFLARE_API_TOKEN has no R2 permission. Add 'Account | Workers R2 Storage | Edit' to the token, then re-run. Nothing was changed."
+            if [ "$ERRCODE" = "10042" ]; then
+              echo "R2_VERDICT: r2-not-enabled-on-account"
+              {
+                echo "## R2 is not enabled on the Cloudflare account yet"
+                echo ""
+                echo "This is not a token problem — the account has never activated R2."
+                echo "One click-through fixes it:"
+                echo ""
+                echo "**Cloudflare dashboard → R2 Object Storage (left sidebar) → Get started / Enable R2.**"
+                echo ""
+                echo "The free tier (10 GB) is far more than the portal needs; Cloudflare may"
+                echo "ask for a payment method on file even for the free tier."
+                echo ""
+                echo "Then run this workflow again. If that run reports a token permission"
+                echo "error instead, make the one edit it names. Nothing has been changed."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::R2 is not enabled on the Cloudflare account. Dashboard -> R2 Object Storage -> Get started, then re-run. Nothing was changed."
+            else
+              echo "R2_VERDICT: token-lacks-r2"
+              {
+                echo "## The token cannot touch R2"
+                echo ""
+                echo "CLOUDFLARE_API_TOKEN has no R2 permission — it was created for"
+                echo "Pages, Workers and D1. One edit in the Cloudflare dashboard fixes it:"
+                echo ""
+                echo "**My Profile → API Tokens → edit the token this repository uses → add:**"
+                echo ""
+                echo '```'
+                echo "    Account | Workers R2 Storage | Edit"
+                echo '```'
+                echo ""
+                echo "Then run this workflow again. Nothing has been changed."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::CLOUDFLARE_API_TOKEN has no R2 permission. Add 'Account | Workers R2 Storage | Edit' to the token, then re-run. Nothing was changed."
+            fi
             exit 1
           fi
           echo "Token can list R2 buckets."
