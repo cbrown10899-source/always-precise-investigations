@@ -403,3 +403,27 @@ CREATE TABLE IF NOT EXISTS subject_vehicles (
   updated_at       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_vehicles_subject ON subject_vehicles(subject_id);
+
+-- Communication log (HANDOFF priority 18). Per-case record of who was
+-- spoken to, when, how, and what was said — email, phone, text, client
+-- update, investigator communication, authorization request, internal.
+-- Version 1 documents communication; it sends nothing. Office-authored:
+-- admins write, and visibility decides what the assigned investigator can
+-- see, the same three levels the notes use. Client-eligible only marks a
+-- row as safe for a future client-facing record — nothing is auto-sent.
+CREATE TABLE IF NOT EXISTS case_comms (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no        TEXT    NOT NULL,
+  comm_type      TEXT    NOT NULL CHECK (comm_type IN
+                   ('email','phone','text','client_update','investigator','authorization_request','internal')),
+  at_date        TEXT    NOT NULL,   -- YYYY-MM-DD
+  at_time        TEXT,               -- HH:MM, 24h storage like everything else
+  person         TEXT,               -- who the communication was with
+  summary        TEXT    NOT NULL,
+  follow_up_date TEXT,               -- when this needs another touch
+  visibility     TEXT    NOT NULL DEFAULT 'admin'
+                   CHECK (visibility IN ('admin','team','client_eligible')),
+  author_id      INTEGER REFERENCES users(id),
+  created_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_comms_case ON case_comms(case_no, at_date);

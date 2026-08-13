@@ -1308,6 +1308,32 @@ section('Subjects and vehicles in the browser');
   await page.close();
 }
 
+/* Priority 18: the communication log in the browser. */
+section('The communication log');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Comm log');
+  let body = await text(page, '#dlgBody');
+  ok('the log opens on its own tab', has(body, 'Log the communication'));
+  ok('and says it never sends anything', has(body, 'nothing is sent'));
+
+  await page.locator('#c_person').fill('Jane Client');
+  await page.locator('#c_time').fill('14:30');
+  await page.locator('#c_sum').fill('Client asked for a status update; told her the report drafts tonight.');
+  await page.locator('#c_fup').fill('2026-08-15');
+  await page.locator('.btn', { hasText: 'Log the communication' }).click();
+  await page.waitForTimeout(600);
+  body = await text(page, '#dlgBody');
+  ok('the entry lands on the log', has(body, 'status update'));
+  ok('with its time in 12-hour form', has(body, '2:30 PM'));
+  ok('and the follow-up date on it', has(body, 'follow up'));
+  ok('office-only is the default badge', has(body, 'Admin only'));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
