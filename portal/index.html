@@ -249,6 +249,43 @@
   .ov-recent li:last-child{border-bottom:0;}
   .ov-recent .t{flex:0 0 auto;color:var(--muted);font-size:.78rem;padding-top:2px;}
   .ov-foot{margin-top:10px;}
+  /* UIBUILD Phase 3 — the Add Activity sheet (P8/P9) and the timeline-first
+     panel (P10). Desktop: a centered panel. Mobile: a bottom sheet, with the
+     add button pinned above the thumb. */
+  .ambar{margin:0 0 14px;}
+  .addact{font-weight:800;}
+  .amwrap{position:fixed;inset:0;background:rgba(9,18,30,.45);z-index:80;display:flex;
+    justify-content:center;align-items:flex-start;padding:6vh 16px;}
+  .amsheet{background:#fff;border-radius:14px;max-width:560px;width:100%;max-height:86vh;
+    overflow-y:auto;padding:16px 18px;}
+  @media(max-width:640px){
+    .amwrap{align-items:flex-end;padding:0;}
+    .amsheet{border-radius:14px 14px 0 0;max-height:88vh;max-width:none;}
+    .addact{position:fixed;left:14px;right:14px;bottom:14px;z-index:70;
+      box-shadow:0 6px 18px rgba(9,18,30,.35);}
+  }
+  .amhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
+  .amx{background:none;border:0;font-size:1.5rem;line-height:1;cursor:pointer;color:var(--muted);padding:2px 8px;}
+  .amtabs{display:flex;gap:6px;margin-bottom:12px;}
+  .amtab{flex:1;font:inherit;font-weight:800;padding:9px;border:1px solid var(--line);
+    background:#f2f5f8;border-radius:9px;cursor:pointer;color:var(--muted);}
+  .amtab.on{background:#13273f;border-color:#13273f;color:#fff;}
+  .amcats{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0;}
+  .amcat{font:inherit;font-size:.78rem;font-weight:700;padding:7px 11px;border:1px solid var(--line);
+    border-radius:16px;background:#fff;cursor:pointer;}
+  .amcat.on{border-color:var(--teal);background:#eaf5f7;color:var(--navy);}
+  .amline{display:flex;gap:6px;align-items:stretch;margin-bottom:6px;}
+  .amstar{flex:0 0 auto;font-size:1.05rem;border:1px solid var(--line);background:#fff;
+    border-radius:8px;cursor:pointer;color:#b7924c;padding:0 10px;}
+  .ampick{flex:1;text-align:left;font:inherit;font-size:.9rem;padding:10px 12px;
+    border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer;}
+  .ampick:hover{border-color:var(--teal);background:#f4fafb;}
+  .amtag{font-size:.66rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--teal);}
+  .amfold{border:1px solid var(--line);border-radius:9px;padding:10px 12px;margin:10px 0;}
+  .amfold summary{cursor:pointer;font-weight:700;font-size:.88rem;color:var(--muted);}
+  .tl-edit{margin-left:8px;font-size:.72rem;background:none;border:0;color:var(--teal);
+    cursor:pointer;font-weight:700;padding:0;}
+  .tl-counts{display:inline-block;font-size:.78rem;color:var(--muted);margin-right:6px;}
   @media print{
     body.printing-invoice *{visibility:hidden !important;}
     body.printing-invoice #invdoc, body.printing-invoice #invdoc *{visibility:visible !important;}
@@ -381,26 +418,63 @@ let INVOICES = null, INV_OPEN = null, INV_MSG = "", INV_WARN = [], INV_EVENTS = 
 // The open case workspace: which case, which tab, its loaded data, last error.
 let WS = null, WS_CASE = null, WS_TAB = "overview", WS_ERR = "", WS_REPORT = null;
 let VIEW = "list";   // "list" | "case" — the workspace is a full page, not a popup
-let QKIND = "activity";  // which quick-add composer is open on the activity log
+let QKIND = "activity";  // which composer the sheet's Custom tab shows
 let WS_NOTICE = "";      // one-shot "day ended" notice carrying the next step
+let ACT_MODAL = null;    // the Add Activity sheet (UIBUILD P8): null when closed
 
-/* Stock chronology lines, straight from the handoff's examples and the usual
-   surveillance phrasing. Picking one fills the description — it stays fully
-   editable, this just saves typing the same sentences from a parked car. */
-const PHRASES = [
-  "Arrived in vicinity of subject residence.",
-  "Established stationary surveillance position.",
-  "Subject vehicle observed parked at residence.",
-  "Subject observed exiting the residence.",
-  "Subject departed residence.",
-  "Subject arrived at ",
-  "Subject departed ",
-  "Subject returned to residence.",
-  "Lost visual contact with subject vehicle in traffic.",
-  "Re-established visual contact with subject.",
-  "No activity observed at the residence.",
-  "Surveillance discontinued for the day.",
+/* The stock chronology lines (UIBUILD P8), grouped the way the field thinks
+   about them. Picking one fills the narrative — it stays fully editable, this
+   just saves typing the same sentences from a parked car. Every quick line is
+   stored as kind "activity": the groups are for FINDING the line, and a
+   picked line never demands another field first. */
+const NO_CHANGE_LINE = "No change was noted during this period.";
+const ARRIVAL_LINE = "Arrived in vicinity of subject residence.";
+const ACTION_GROUPS = [
+  ["arrival", "Arrival", [
+    ARRIVAL_LINE,
+    "Established stationary surveillance position.",
+    "Surveillance discontinued for the day.",
+  ]],
+  ["nochange", "No activity", [
+    NO_CHANGE_LINE,
+    "No activity observed at the residence.",
+  ]],
+  ["subject", "Subject", [
+    "Subject observed exiting the residence.",
+    "Subject departed residence.",
+    "Subject arrived at ",
+    "Subject departed ",
+    "Subject returned to residence.",
+    "Lost visual contact with subject vehicle in traffic.",
+    "Re-established visual contact with subject.",
+  ]],
+  ["vehicle", "Vehicle", [
+    "Subject vehicle observed parked at residence.",
+    "Subject vehicle departed the residence.",
+    "Subject vehicle returned to the residence.",
+  ]],
+  ["location", "Location", [
+    "Subject entered the location.",
+    "Subject exited the location.",
+    "Subject observed inside the location.",
+  ]],
 ];
+const ALL_LINES = ACTION_GROUPS.flatMap(g => g[2]);
+
+/* Favorites (P8): starrable, shown first. Kept in localStorage per username —
+   per-browser rather than per-account, which is the practical version the
+   handoff allowed for; a Worker-side store can replace it without the UI
+   changing. */
+function favLines(){
+  try{ const f = JSON.parse(localStorage.getItem("apiFavs:" + (ME && ME.username)) || "[]");
+       return Array.isArray(f) ? f : []; }
+  catch{ return []; }
+}
+function favToggle(line){
+  const f = favLines(), i = f.indexOf(line);
+  if(i >= 0) f.splice(i, 1); else f.unshift(line);
+  try{ localStorage.setItem("apiFavs:" + (ME && ME.username), JSON.stringify(f)); }catch{}
+}
 let LOAD_ERR = "";        // why the portal could not load, shown rather than hidden
 let SCHEMA_MISSING = [];  // tables the database does not have yet
 let CARD_FILTER = null;   // {label, set:Set(case numbers)} — a dashboard card's cases
@@ -1234,6 +1308,9 @@ function paint(){
       <div class="card"><div class="dlg" id="dlgBody">${
         isExample(WS_CASE) ? exampleBodyHtml() : caseBodyHtml()}</div></div>
     </div>`;
+    // Typing in the sheet's search repaints; hand the cursor straight back.
+    const amq = $("am_q");
+    if(amq && ACT_MODAL && ACT_MODAL.search){ amq.focus(); amq.setSelectionRange(amq.value.length, amq.value.length); }
     return;
   }
   app.innerHTML = shell(
@@ -1339,7 +1416,7 @@ async function doLogout(){
    that do something today are shown — an empty "Evidence" tab would promise a
    feature that is not there. */
 async function openCase(caseNo, tab){
-  WS_CASE = caseNo; WS_TAB = tab || "overview"; WS_ERR = ""; SUBJ_FORM = null; VIEW = "case";
+  WS_CASE = caseNo; WS_TAB = tab || "overview"; WS_ERR = ""; SUBJ_FORM = null; ACT_MODAL = null; VIEW = "case";
   if(isExample(caseNo)){
     WS = null;   // examples are page-held demo data; they have no live workspace
     return paintCase();
@@ -1440,15 +1517,23 @@ function authPanel(a, admin){
   </div>`;
 }
 
+/* The activity panel is the TIMELINE (UIBUILD P10): the day's story first,
+   with one prominent + Add activity that opens the sheet. The form no longer
+   sits on the page. */
 function activityPanel(){
   const a = (WS && WS.activity) || [];
   const open = WS && WS.open_day;
-  const today = new Date().toISOString().slice(0,10);
-  const now = new Date().toTimeString().slice(0,5);
-
-  const quick = ["activity","photo","video","location","vehicle","note","mileage","expense"];
+  const evLive = ((WS && WS.evidence) || []).filter(ev2 => !ev2.deleted_at);
   const byDay = {};
   for(const e of a){ (byDay[e.at_date] = byDay[e.at_date] || []).push(e); }
+  const counts = e => {
+    const mine = evLive.filter(ev2 => ev2.entry_id === e.id);
+    const p = mine.filter(ev2 => String(ev2.content_type || "").startsWith("image/")).length;
+    const v = mine.filter(ev2 => String(ev2.content_type || "").startsWith("video/")).length;
+    return (p ? `<span class="tl-counts">&#128247; ${p}</span>` : "")
+         + (v ? `<span class="tl-counts">&#127909; ${v}</span>` : "");
+  };
+  const canEdit = e => ME.role === "admin" || (e.investigator && e.investigator === ME.display_name);
 
   return `
     ${open ? `<div class="dayon"><b>Investigation day running</b> &mdash; started ${esc(t12(open.start_time))} on ${esc(fmtDay(open.day_date))}.
@@ -1458,64 +1543,7 @@ function activityPanel(){
          is what totals the hours and mileage.
          <button class="btn sm ghost" data-act="wsTab" data-tab="field" style="margin-left:8px">Start a day</button></div>`}
 
-    <form class="quick" data-act="addActivity">
-      <div class="qgrid">
-        ${["activity","location","vehicle","note","mileage","expense"].map(k =>
-          `<button type="button" class="qk2 ${QKIND === k ? "on" : ""}" data-act="qkind" data-k="${k}">${esc(label(k))}</button>`).join("")}
-      </div>
-      <div class="two">
-        <label class="f"><span>Date</span><input id="a_date" type="date" value="${today}"></label>
-        <label class="f"><span>Time</span><input id="a_time" type="time" value="${now}"></label>
-      </div>
-      ${QKIND === "mileage" ? `
-        <div class="two">
-          <label class="f"><span>Miles</span><input id="a_miles" inputmode="decimal" placeholder="e.g. 62"></label>
-          <label class="f"><span>From / to</span><input id="a_desc" placeholder="e.g. Office to subject residence and back"></label>
-        </div>
-        <p class="hint">Recorded under Expenses and marked on the timeline together. Mileage is never
-          billed to a client &mdash; it is your reimbursement record, and the firm's for taxes.</p>`
-      : QKIND === "expense" ? `
-        <div class="two">
-          <label class="f"><span>Amount</span><input id="a_amt" inputmode="decimal" placeholder="e.g. 14.50"></label>
-          <label class="f"><span>Category</span>
-            <select id="a_cat">${[["tolls","Tolls"],["parking","Parking"],["hotel","Hotel"],["airfare","Airfare"],
-              ["rental","Rental vehicle"],["records","Records"],["database","Database"],["equipment","Equipment"],
-              ["meals","Meals (if authorized)"],["other","Other"]].map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select></label>
-        </div>
-        <label class="f"><span>What it was</span><input id="a_desc" placeholder="e.g. Parking garage across from the courthouse"></label>
-        <p class="hint">Recorded under Expenses for the office's review and marked on the timeline together.</p>`
-      : `
-        <label class="f"><span>Common lines <span class="opt">picking one fills the box — edit freely</span></span>
-          <select id="a_phrase" data-act="phrase">
-            <option value="">Write my own / pick a line…</option>
-            ${PHRASES.map(ph => `<option value="${esc(ph)}">${esc(ph)}</option>`).join("")}
-          </select></label>
-        <label class="f"><span>${QKIND === "note" ? "Field note"
-            : QKIND === "location" ? "What is at this location"
-            : QKIND === "vehicle" ? "What the vehicle is doing" : "What happened"}</span>
-          <textarea id="a_desc" rows="2" placeholder="${
-              QKIND === "note" ? "e.g. Neighbour waved; may have been noticed. Rotating position."
-            : QKIND === "location" ? "e.g. ABC Fitness — subject's regular morning gym."
-            : QKIND === "vehicle" ? "e.g. Parked nose-out in the driveway, engine running."
-            : "e.g. Subject departed residence in the white GMC Sierra."}"></textarea></label>
-        <div class="capgrid">
-          <label class="cap"><input type="checkbox" id="a_sd"><span>Subject documented</span></label>
-          <label class="cap"><input type="checkbox" id="a_va"><span>Video acquired</span></label>
-          <label class="cap"><input type="checkbox" id="a_pa"><span>Photo taken</span></label>
-        </div>
-        <p class="hint">Tick what was captured at this moment — it goes on the timeline and into the
-          report line. The files themselves attach when evidence storage arrives.</p>
-        <div class="two">
-          <label class="f"><span>Location ${QKIND === "location" ? "" : `<span class="opt">optional</span>`}</span>
-            <input id="a_loc" placeholder="e.g. 2214 Old Forest Rd"></label>
-          <label class="f"><span>Vehicle ${QKIND === "vehicle" ? "" : `<span class="opt">optional</span>`}</span>
-            <input id="a_veh" placeholder="e.g. White GMC Sierra XKT-2209"></label>
-        </div>
-        <label class="f"><span>Internal note <span class="opt">optional, never client-facing</span></span><input id="a_note"></label>`}
-      <button class="btn" type="submit">${
-        QKIND === "mileage" ? "Record mileage" : QKIND === "expense" ? "Record expense" : "Add to the log"}</button>
-      ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
-    </form>
+    <div class="ambar"><button class="btn addact" data-act="actOpen">+ Add activity</button></div>
 
     ${a.length ? Object.keys(byDay).map(d => `
       <div class="tl-day">${esc(fmtDay(d))}</div>
@@ -1527,8 +1555,9 @@ function activityPanel(){
             <div class="tl-d">${esc(e.description)}</div>
             ${e.location ? `<div class="tl-m">at ${esc(e.location)}</div>` : ""}
             ${e.vehicle ? `<div class="tl-m">vehicle: ${esc(e.vehicle)}</div>` : ""}
-            ${e.subject_documented || e.video_acquired || e.photo_acquired ? `<div>
-              ${((WS && WS.evidence) || []).filter(ev2 => ev2.entry_id === e.id && !ev2.deleted_at)
+            ${e.subject_documented || e.video_acquired || e.photo_acquired || counts(e) ? `<div>
+              ${counts(e)}
+              ${evLive.filter(ev2 => ev2.entry_id === e.id)
                 .map(ev2 => `<a class="tag rs-submitted" style="text-decoration:none"
                   href="/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${ev2.id}/file"
                   target="_blank" rel="noopener">&#128206; ${esc(ev2.filename)}</a>`).join("")}
@@ -1536,10 +1565,171 @@ function activityPanel(){
               ${e.video_acquired ? '<span class="tag cap-va">Video</span>' : ""}
               ${e.photo_acquired ? '<span class="tag cap-pa">Photo</span>' : ""}</div>` : ""}
             ${e.internal_note ? `<div class="tl-n">internal: ${esc(e.internal_note)}</div>` : ""}
-            <div class="tl-m">${esc(e.investigator || "")}${e.edited_at ? " · edited" : ""}</div>
+            <div class="tl-m">${esc(e.investigator || "")}${e.edited_at ? " · edited" : ""}${
+              canEdit(e) ? `<button class="tl-edit" data-act="actEdit" data-id="${e.id}">Edit</button>` : ""}</div>
           </div></li>`).join("")}
       </ol>`).join("")
-      : `<div class="empty">Nothing logged on this case yet.</div>`}`;
+      : `<div class="empty">Nothing logged on this case yet. + Add activity starts the story.</div>`}
+    ${ACT_MODAL ? actModalHtml() : ""}`;
+}
+
+/* --------------------------- the Add Activity sheet (UIBUILD P8/P9) */
+
+function actModalHtml(){
+  const m = ACT_MODAL;
+  return `<div class="amwrap" data-act="actClose">
+    <div class="amsheet" data-act="amNoop" role="dialog" aria-modal="true" aria-label="Add activity">
+      <div class="amhead">
+        <b>${m.edit ? "Correct the entry" : "Add activity"}</b>
+        <button class="amx" data-act="actClose" aria-label="Close">&times;</button>
+      </div>
+      ${m.edit ? amComposeHtml() : `
+        <div class="amtabs">
+          <button class="amtab ${m.tab === "quick" ? "on" : ""}" data-act="actTab" data-t="quick">Quick</button>
+          <button class="amtab ${m.tab === "custom" ? "on" : ""}" data-act="actTab" data-t="custom">Custom</button>
+        </div>
+        ${m.tab === "custom" ? amCustomHtml() : (m.pick != null ? amComposeHtml() : amQuickListHtml())}`}
+    </div>
+  </div>`;
+}
+
+function amQuickListHtml(){
+  const m = ACT_MODAL;
+  const favs = favLines();
+  const lineRow = line => {
+    const fav = favs.includes(line);
+    return `<div class="amline">
+      <button class="amstar ${fav ? "on" : ""}" data-act="actStar" data-line="${esc(line)}"
+        aria-label="${fav ? "Unfavorite" : "Favorite"}" title="${fav ? "Unfavorite" : "Favorite"}">${fav ? "&#9733;" : "&#9734;"}</button>
+      <button class="ampick" data-act="actPick" data-line="${esc(line)}">${esc(line)}${
+        line === NO_CHANGE_LINE ? ' <span class="amtag">one tap &mdash; logs now</span>' : ""}</button>
+    </div>`;
+  };
+  const q = (m.search || "").trim().toLowerCase();
+  if(q){
+    const hits = [...new Set([...favs, ...ALL_LINES])].filter(l => l.toLowerCase().includes(q));
+    return `${amSearchBox()}
+      ${hits.length ? hits.map(lineRow).join("") : `<div class="empty">No stock line matches. The Custom tab writes anything.</div>`}`;
+  }
+  const lines = m.cat === "fav" ? favs : ((ACTION_GROUPS.find(g => g[0] === m.cat) || ACTION_GROUPS[0])[2]);
+  return `${amSearchBox()}
+    <div class="amcats">
+      <button class="amcat ${m.cat === "fav" ? "on" : ""}" data-act="actCat" data-c="fav">&#9733; Favorites</button>
+      ${ACTION_GROUPS.map(([k, lbl]) => `<button class="amcat ${m.cat === k ? "on" : ""}" data-act="actCat" data-c="${k}">${lbl}</button>`).join("")}
+    </div>
+    ${lines.length ? lines.map(lineRow).join("")
+      : `<div class="empty">Nothing starred yet. The &#9734; beside any line keeps it here.</div>`}`;
+}
+
+function amSearchBox(){
+  return `<label class="f"><span>What happened?</span>
+    <input id="am_q" value="${esc(ACT_MODAL.search || "")}" placeholder="Search the stock lines&hellip;"
+      autocomplete="off" data-act-input="amSearch"></label>`;
+}
+
+/* The compose step (P9): the picked line, editable, with the time taken from
+   the clock and the rarely-needed fields behind one fold. Also the edit form —
+   the same shape, minus what the Worker does not allow to change. */
+function amComposeHtml(){
+  const m = ACT_MODAL;
+  const now = new Date().toTimeString().slice(0,5);
+  const today = new Date().toISOString().slice(0,10);
+  const pre = m.pre || {};
+  const isArrival = !m.edit && m.pick === ARRIVAL_LINE;
+  return `<form class="amform" data-act="quickAdd">
+    ${m.edit ? "" : `<button type="button" class="btn sm ghost" data-act="actBack" style="margin-bottom:10px">&larr; All lines</button>
+    <div class="two">
+      <label class="f"><span>Date</span><input id="qa_date" type="date" value="${today}"></label>
+      <label class="f"><span>Time <span class="opt">now &mdash; editable</span></span><input id="qa_time" type="time" value="${now}"></label>
+    </div>`}
+    ${isArrival ? `
+    <div class="two">
+      <label class="f"><span>Vehicles present <span class="opt">optional</span></span>
+        <input id="qa_vp" placeholder="e.g. Subject&#39;s white GMC Sierra in the driveway" data-act-input="amArrival"></label>
+      <label class="f"><span>Surveillance position <span class="opt">optional</span></span>
+        <input id="qa_pos" placeholder="e.g. with a clear view of the front door" data-act-input="amArrival"></label>
+    </div>` : ""}
+    <label class="f"><span>${m.edit ? "What happened" : "The line <span class=\"opt\">edit freely</span>"}</span>
+      <textarea id="qa_desc" rows="3" data-act-input="amDirty">${esc(m.edit ? (pre.description || "") : m.pick)}</textarea></label>
+    ${m.edit ? "" : `<div class="capgrid">
+      <label class="cap"><input type="checkbox" id="qa_sd"><span>Subject documented</span></label>
+      <label class="cap"><input type="checkbox" id="qa_pa"><span>Photo taken</span></label>
+      <label class="cap"><input type="checkbox" id="qa_va"><span>Video acquired</span></label>
+    </div>`}
+    <details class="amfold" ${m.edit && (pre.location || pre.vehicle || pre.internal_note) ? "open" : ""}>
+      <summary>More details</summary>
+      <div class="two" style="margin-top:8px">
+        <label class="f"><span>Location <span class="opt">optional</span></span>
+          <input id="qa_loc" value="${esc(pre.location || "")}" placeholder="e.g. 2214 Old Forest Rd"></label>
+        <label class="f"><span>Vehicle <span class="opt">optional</span></span>
+          <input id="qa_veh" value="${esc(pre.vehicle || "")}" placeholder="e.g. White GMC Sierra XKT-2209"></label>
+      </div>
+      <label class="f"><span>Internal note <span class="opt">never client-facing</span></span>
+        <input id="qa_note" value="${esc(pre.internal_note || "")}"></label>
+    </details>
+    <button class="btn" type="submit">${m.edit ? "Save the correction" : "Add to log"}</button>
+    ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+  </form>`;
+}
+
+/* The Custom tab: the free-form composer, kinds and all — including Mileage
+   and Expense, which write the money record and mark the timeline together. */
+function amCustomHtml(){
+  const today = new Date().toISOString().slice(0,10);
+  const now = new Date().toTimeString().slice(0,5);
+  return `<form class="amform" data-act="addActivity">
+    <div class="qgrid">
+      ${["activity","location","vehicle","note","mileage","expense"].map(k =>
+        `<button type="button" class="qk2 ${QKIND === k ? "on" : ""}" data-act="qkind" data-k="${k}">${esc(label(k))}</button>`).join("")}
+    </div>
+    <div class="two">
+      <label class="f"><span>Date</span><input id="a_date" type="date" value="${today}"></label>
+      <label class="f"><span>Time</span><input id="a_time" type="time" value="${now}"></label>
+    </div>
+    ${QKIND === "mileage" ? `
+      <div class="two">
+        <label class="f"><span>Miles</span><input id="a_miles" inputmode="decimal" placeholder="e.g. 62"></label>
+        <label class="f"><span>From / to</span><input id="a_desc" placeholder="e.g. Office to subject residence and back"></label>
+      </div>
+      <p class="hint">Recorded under Expenses and marked on the timeline together. Mileage is never
+        billed to a client &mdash; it is your reimbursement record, and the firm's for taxes.</p>`
+    : QKIND === "expense" ? `
+      <div class="two">
+        <label class="f"><span>Amount</span><input id="a_amt" inputmode="decimal" placeholder="e.g. 14.50"></label>
+        <label class="f"><span>Category</span>
+          <select id="a_cat">${[["tolls","Tolls"],["parking","Parking"],["hotel","Hotel"],["airfare","Airfare"],
+            ["rental","Rental vehicle"],["records","Records"],["database","Database"],["equipment","Equipment"],
+            ["meals","Meals (if authorized)"],["other","Other"]].map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select></label>
+      </div>
+      <label class="f"><span>What it was</span><input id="a_desc" placeholder="e.g. Parking garage across from the courthouse"></label>
+      <p class="hint">Recorded under Expenses for the office's review and marked on the timeline together.</p>`
+    : `
+      <label class="f"><span>${QKIND === "note" ? "Field note"
+          : QKIND === "location" ? "What is at this location"
+          : QKIND === "vehicle" ? "What the vehicle is doing" : "What happened"}</span>
+        <textarea id="a_desc" rows="2" placeholder="${
+            QKIND === "note" ? "e.g. Neighbour waved; may have been noticed. Rotating position."
+          : QKIND === "location" ? "e.g. ABC Fitness — subject's regular morning gym."
+          : QKIND === "vehicle" ? "e.g. Parked nose-out in the driveway, engine running."
+          : "e.g. Subject departed residence in the white GMC Sierra."}"></textarea></label>
+      <div class="capgrid">
+        <label class="cap"><input type="checkbox" id="a_sd"><span>Subject documented</span></label>
+        <label class="cap"><input type="checkbox" id="a_va"><span>Video acquired</span></label>
+        <label class="cap"><input type="checkbox" id="a_pa"><span>Photo taken</span></label>
+      </div>
+      <p class="hint">Tick what was captured at this moment — it goes on the timeline and into the
+        report line. Files attach from the Evidence panel.</p>
+      <div class="two">
+        <label class="f"><span>Location ${QKIND === "location" ? "" : `<span class="opt">optional</span>`}</span>
+          <input id="a_loc" placeholder="e.g. 2214 Old Forest Rd"></label>
+        <label class="f"><span>Vehicle ${QKIND === "vehicle" ? "" : `<span class="opt">optional</span>`}</span>
+          <input id="a_veh" placeholder="e.g. White GMC Sierra XKT-2209"></label>
+      </div>
+      <label class="f"><span>Internal note <span class="opt">optional, never client-facing</span></span><input id="a_note"></label>`}
+    <button class="btn" type="submit">${
+      QKIND === "mileage" ? "Record mileage" : QKIND === "expense" ? "Record expense" : "Add to the log"}</button>
+    ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+  </form>`;
 }
 
 function fieldPanel(){
@@ -3098,6 +3288,40 @@ async function addActivityEntry(){
         photo_acquired: $("a_pa") ? $("a_pa").checked : false,
       }});
     }
+    ACT_MODAL = null;   // success closes the sheet; the timeline is the confirmation
+  }catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+/* The quick path (P9): a picked line, the clock, and Add to log. Also carries
+   the one-tap No-change entry and the correction of an existing entry. */
+async function quickAddEntry(oneTapLine){
+  WS_ERR = "";
+  try{
+    if(!oneTapLine && ACT_MODAL && ACT_MODAL.edit){
+      // The Worker allows exactly these four fields to change, and stamps it.
+      await api(`/cases/${encodeURIComponent(WS_CASE)}/activity/${ACT_MODAL.edit}`, {method:"POST", body:{
+        description: $("qa_desc").value,
+        location: $("qa_loc").value, vehicle: $("qa_veh").value, internal_note: $("qa_note").value,
+      }});
+    }else{
+      const now = new Date();
+      const body = oneTapLine ? {
+        kind: "activity", description: oneTapLine,
+        at_date: now.toISOString().slice(0,10), at_time: now.toTimeString().slice(0,5),
+      } : {
+        kind: "activity",
+        at_date: $("qa_date").value, at_time: $("qa_time").value,
+        description: $("qa_desc").value,
+        location: $("qa_loc").value, vehicle: $("qa_veh").value,
+        internal_note: $("qa_note").value,
+        subject_documented: $("qa_sd").checked,
+        video_acquired: $("qa_va").checked,
+        photo_acquired: $("qa_pa").checked,
+      };
+      await api(`/cases/${encodeURIComponent(WS_CASE)}/activity`, {method:"POST", body});
+    }
+    ACT_MODAL = null;
   }catch(e){ WS_ERR = e.message; }
   await reloadWorkspace();
 }
@@ -3462,14 +3686,34 @@ document.addEventListener("click", ev => {
   else if(act === "clearCardFilter"){ CARD_FILTER = null; paint(); }
   else if(act === "addDemo"){ addDemoCase(); }
   else if(act === "clearDemo"){ clearDemoCases(); }
-  else if(act === "wsTab"){ if(WS_TAB !== el.dataset.tab) WS_NOTICE = ""; WS_TAB = el.dataset.tab; WS_ERR = "";
+  else if(act === "wsTab"){ if(WS_TAB !== el.dataset.tab){ WS_NOTICE = ""; ACT_MODAL = null; }
+    WS_TAB = el.dataset.tab; WS_ERR = "";
     if(WS_TAB === "package"){ PKG = null; loadPackage(); } else paintCase(); }
   else if(act === "wsSec"){
     // A section opens on its first panel; WS_TAB stays the only routing state.
     const sec = wsSections().find(x => x[0] === el.dataset.sec);
-    if(sec){ if(WS_TAB !== sec[2][0][0]) WS_NOTICE = ""; WS_TAB = sec[2][0][0]; WS_ERR = "";
+    if(sec){ if(WS_TAB !== sec[2][0][0]){ WS_NOTICE = ""; ACT_MODAL = null; }
+      WS_TAB = sec[2][0][0]; WS_ERR = "";
       if(WS_TAB === "package"){ PKG = null; loadPackage(); } else paintCase(); } }
   else if(act === "qkind"){ QKIND = el.dataset.k; WS_ERR = ""; paintCase(); }
+  else if(act === "actOpen"){ WS_ERR = "";
+    ACT_MODAL = {tab:"quick", cat: favLines().length ? "fav" : "arrival", search:"", pick:null, edit:null};
+    paintCase(); }
+  else if(act === "actClose"){ ACT_MODAL = null; WS_ERR = ""; paintCase(); }
+  else if(act === "actTab"){ if(ACT_MODAL){ ACT_MODAL.tab = el.dataset.t; WS_ERR = ""; paintCase(); } }
+  else if(act === "actCat"){ if(ACT_MODAL){ ACT_MODAL.cat = el.dataset.c; paintCase(); } }
+  else if(act === "actStar"){ favToggle(el.dataset.line); paintCase(); }
+  else if(act === "actPick"){
+    if(el.dataset.line === NO_CHANGE_LINE){ quickAddEntry(el.dataset.line); }   // one tap (P9)
+    else if(ACT_MODAL){ ACT_MODAL.pick = el.dataset.line; ACT_MODAL.dirty = false; WS_ERR = ""; paintCase(); } }
+  else if(act === "actBack"){ if(ACT_MODAL){ ACT_MODAL.pick = null; WS_ERR = ""; paintCase(); } }
+  else if(act === "actEdit"){
+    const entry = ((WS && WS.activity) || []).find(x => x.id === Number(el.dataset.id));
+    if(entry){ WS_ERR = "";
+      ACT_MODAL = {tab:"quick", pick:"", edit: entry.id,
+        pre:{description: entry.description, location: entry.location,
+             vehicle: entry.vehicle, internal_note: entry.internal_note}};
+      paintCase(); } }
   else if(act === "subjNew"){ SUBJ_FORM = {mode:"new", pre:{}}; WS_ERR = ""; paintCase(); }
   else if(act === "subjFromIntake"){
     const p = (WS && WS.submission && WS.submission.payload) || {};
@@ -3565,6 +3809,7 @@ document.addEventListener("submit", ev => {
   else if(a === "accept") doAccept(new URLSearchParams(location.search).get("invite") || "");
   else if(a === "resetAccept") doResetAccept(new URLSearchParams(location.search).get("reset") || "");
   else if(a === "addActivity") addActivityEntry();
+  else if(a === "quickAdd") quickAddEntry(null);
   else if(a === "startDay") startInvestigationDay();
   else if(a === "endDay") endInvestigationDay();
   else if(a === "saveMeta") saveCaseMeta();
@@ -3585,10 +3830,17 @@ document.addEventListener("submit", ev => {
 });
 
 document.addEventListener("input", ev => {
-  if(ev.target.dataset && ev.target.dataset.act === "phrase"){
-    const d = $("a_desc"); const ph = ev.target.value;
-    if(ph && d){ d.value = d.value.trim() ? d.value.replace(/\s*$/, " ") + ph : ph; d.focus(); }
-    ev.target.selectedIndex = 0;
+  const din = ev.target.dataset ? ev.target.dataset.actInput : "";
+  if(din === "amSearch" && ACT_MODAL){ ACT_MODAL.search = ev.target.value; paintCase(); return; }
+  if(din === "amDirty" && ACT_MODAL){ ACT_MODAL.dirty = true; return; }
+  if(din === "amArrival" && ACT_MODAL && !ACT_MODAL.dirty){
+    // The arrival template (P9): the extras generate the sentence — until the
+    // narrative is hand-edited, which makes the hand the author.
+    const vp = ($("qa_vp") ? $("qa_vp").value : "").trim();
+    const pos = ($("qa_pos") ? $("qa_pos").value : "").trim();
+    if($("qa_desc")) $("qa_desc").value = ARRIVAL_LINE
+      + (vp ? ` ${vp.replace(/\.$/, "")} present.` : "")
+      + (pos ? ` Established surveillance position ${pos.replace(/\.$/, "")}.` : "");
     return;
   }
   if(ev.target.dataset && ev.target.dataset.act === "filter"){ FILTER = ev.target.value; paint(); }

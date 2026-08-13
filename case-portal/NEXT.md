@@ -7,16 +7,18 @@ overflow pattern, guard tests). This file is the live queue and in-flight
 state. Update it when the queue moves; keep it short.
 
 Snapshot date: 2026-08-13. Branch: `claude/app-crashes-lockups-debug-jcy6kf`.
-Master is green through PR #42 (UIBUILD Phase 1). Suites at last green:
-worker 601, portal e2e 393 (intake 130, alerts 41).
+Master is green through PR #43 (UIBUILD Phase 2). Suites at last green:
+worker 601, portal e2e 417 (intake 130, alerts 41).
 
 ## The queue, in the owner's order
 
-1. **UIBUILD.md — streamlined UI, phases 3–8, in order.** Phases 1 and 2
-   are DONE (ledger in UIBUILD.md has the details). Phase 3 (field
-   activity: Add Activity modal; Quick/Custom; searchable actions;
-   favorites; structured templates; More Details fold; clean timeline;
-   sticky mobile add) is next.
+1. **UIBUILD.md — streamlined UI, phases 4–8, in order.** Phases 1–3 are
+   DONE (ledger in UIBUILD.md has the details). Phase 4 (report +
+   evidence: report preview screen; submission workflow; evidence
+   gallery; filters; activity links) is next. Phase 4 should also pick
+   up the two deferrals noted in the ledger: evidence thumbnails on the
+   case overview, and linked evidence in the quick-entry More-details
+   fold.
 2. **INTAKE-NA.md — intake "not available" states** (owner: after the UI
    work).
 3. **SURVEILLANCE.md — Active Surveillance Mode** (owner: after the shared
@@ -30,23 +32,20 @@ worker 601, portal e2e 393 (intake 130, alerts 41).
 
 ## Just resolved (2026-08-13, this session)
 
-**Phase 1 shipped as PR #42** (squash-merged; branch reset onto master).
-The dashboard e2e timeout's recorded lead (pkgCard throwing on the
-hostile row) was wrong — the actual bug was that nothing fetched
-`/packages` on the admin's dashboard LANDING (`render()`'s BOOTED
-branch); only the tab click did. Fixed in `render()`; logout resets
-PKGS; the same landing-vs-click bug was then found and fixed for the
-dashboard's Build jump (`openCase` straight to the package tab now
-loads the build). The e2e harness also prints its report on an
-uncaught exception now, instead of dying silently on a Playwright
-timeout.
+**Phase 1 shipped as PR #42, Phase 2 as PR #43** (both squash-merged,
+deploys green, branch reset onto master each time). The Phase-1 e2e
+timeout's recorded lead (pkgCard/hostile row) was wrong — the real bug
+was that nothing fetched `/packages` on the dashboard LANDING; the
+same landing-vs-click class of bug was then found and fixed twice more
+(openCase straight to the package tab, and the e2e harness now prints
+its report on an uncaught exception instead of dying silently).
 
-**Phase 2 is built and green on the branch** (case detail: P5 header,
-P6 four sections with WS_TAB-derived section state, P7 admin overview
-reusing pkgProgress/pkgNextStep, Billing & closing under Admin,
-workspace carries build_status/invoice_status admin-only). Ship it as
-one PR (no schema change — no portal-setup dispatch), then start
-Phase 3.
+**Phase 3 is built and green on the branch** (field activity: the
+timeline-first panel with per-entry evidence counts and stamped Edit;
+the Add Activity sheet with Quick/Custom, search, categories,
+per-username favorites, one-tap No change, the arrival sentence
+generator; Custom keeps mileage/expense whole). No Worker change at
+all this phase. Ship it as one PR, then start Phase 4.
 
 ## How to resume in a fresh session
 

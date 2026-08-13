@@ -210,6 +210,14 @@ async function wsTab(page, name) {
   await tab().click();
   await page.waitForTimeout(200);
 }
+// The activity form lives in the Add Activity sheet (UIBUILD P8); the free
+// composer is its Custom tab.
+async function openComposer(page) {
+  await page.locator('[data-act="actOpen"]').click();
+  await page.waitForTimeout(250);
+  await page.locator('.amtab', { hasText: 'Custom' }).click();
+  await page.waitForTimeout(250);
+}
 async function signIn(page, u, p) {
   await page.locator('#u').fill(u);
   await page.locator('#p').fill(p);
@@ -901,11 +909,13 @@ section('The case workspace in the browser');
   await page.waitForTimeout(500);
   ok('the day is running', has(await text(page, '#dlgBody'), 'Day running since 7:00 AM'));
 
-  // Log the timeline.
+  // Log the timeline — the form lives in the Add Activity sheet now (P10).
   await wsTab(page, 'Activity log');
   ok('the log says a day is running', has(await text(page, '#dlgBody'), 'Investigation day running'));
   ok('and offers to end it from right there',
      await page.locator('.btn', { hasText: 'End the day' }).count() === 1);
+
+  await openComposer(page);
   const quick = await page.locator('.qgrid').innerText();
   for (const b of ['Activity', 'Location', 'Vehicle', 'Note', 'Mileage', 'Expense']) {
     ok(`there is a quick button for ${b}`, has(quick, b), quick);
@@ -923,7 +933,10 @@ section('The case workspace in the browser');
   ok('the entry is on the timeline', log.includes('Subject vehicle observed parked at residence.'));
   ok('the time is shown in 12-hour form', log.includes('7:14 AM'));
   ok('the location is shown', log.includes('88 Peakland Pl'));
+  ok('the sheet closed itself on success', await page.locator('.amsheet').count() === 0);
 
+  await openComposer(page);
+  await page.locator('#a_date').fill('2026-08-12');
   await page.locator('#a_time').fill('08:17');
   await page.locator('#a_desc').fill('Subject arrived at ABC Fitness.');
   await page.locator('.btn', { hasText: 'Add to the log' }).click();
@@ -932,11 +945,15 @@ section('The case workspace in the browser');
   ok('a second entry joins it', log.includes('Subject arrived at ABC Fitness.'));
   ok('the newest entry reads first', log.indexOf('8:17 AM') < log.indexOf('7:14 AM'));
 
+  await openComposer(page);
   await page.locator('#a_desc').fill('');
   await page.locator('.btn', { hasText: 'Add to the log' }).click();
   await page.waitForTimeout(400);
   ok('an entry with no description is refused on screen',
      has(await text(page, '#dlgBody'), 'Describe what happened'));
+  ok('and the sheet stays open to fix it', await page.locator('.amsheet').count() === 1);
+  await page.locator('.amx').click();
+  await page.waitForTimeout(250);
 
   // End the day and watch the authorization move.
   await wsTab(page, 'Field work');
@@ -1038,6 +1055,7 @@ section('An investigator gets the same field tools, without the money');
      await page.locator('.btn', { hasText: 'Start investigation' }).count() === 1);
 
   await wsTab(page, 'Activity log');
+  await openComposer(page);
   await page.locator('#a_desc').fill('Arrived in vicinity of subject residence.');
   await page.locator('.btn', { hasText: 'Add to the log' }).click();
   await page.waitForTimeout(500);
@@ -1153,7 +1171,7 @@ section('Notes: visibility is decided at the Worker, not the page');
 /* The owner's exact repro: click a quick button, watch the form. Each kind
    must swap the composer — a highlighted pill over an unchanged form reads as
    broken because it is. */
-section('Each quick button changes the composer');
+section('The Custom tab carries every composer');
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
@@ -1161,7 +1179,9 @@ section('Each quick button changes the composer');
   await page.waitForTimeout(450);
   await wsTab(page, 'Activity log');
 
-  ok('Activity starts with the plain composer', await page.locator('#a_loc').count() === 1);
+  ok('the panel is the timeline, not a form (P10)', await page.locator('#a_desc').count() === 0);
+  await openComposer(page);
+  ok('Custom starts with the plain composer', await page.locator('#a_loc').count() === 1);
 
   await page.locator('.qk2', { hasText: 'Mileage' }).click();
   await page.waitForTimeout(250);
@@ -1178,11 +1198,7 @@ section('Each quick button changes the composer');
   ok('the capture checkmarks sit on the activity composer',
      await page.locator('#a_sd').count() === 1 && await page.locator('#a_va').count() === 1
        && await page.locator('#a_pa').count() === 1);
-  ok('the stock chronology lines are offered', await page.locator('#a_phrase').count() === 1);
-  await page.locator('#a_phrase').selectOption('Subject departed residence.');
-  await page.waitForTimeout(150);
-  ok('picking a line fills the description',
-     (await page.locator('#a_desc').inputValue()) === 'Subject departed residence.');
+  await page.locator('#a_desc').fill('Subject departed residence.');
   await page.locator('#a_va').check();
   await page.locator('#a_sd').check();
   await page.locator('#a_time').fill('09:41');
@@ -1192,6 +1208,7 @@ section('Each quick button changes the composer');
   ok('the timeline wears the capture badges',
      has(flagged, 'Subject documented') && has(flagged, 'Video'), flagged.slice(0, 200));
 
+  await openComposer(page);
   await page.locator('.qk2', { hasText: 'Location' }).click();
   await page.waitForTimeout(250);
   await page.locator('#a_desc').fill('ABC Fitness — regular morning gym.');
@@ -1212,6 +1229,104 @@ section('Each quick button changes the composer');
   await wsTab(page, 'Expenses');
   const xp = await text(page, '#dlgBody');
   ok('and the claim lands under Expenses for review', xp.includes('Office to subject residence and back'));
+  await page.close();
+}
+
+/* UIBUILD phase 3 (P8/P9): the Quick tab — stock lines behind a search and
+   categories, favorites first, one-tap No change, and the arrival template
+   that writes the sentence. */
+section('Quick lines: search, favorites, one tap');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Activity log');
+
+  await page.locator('[data-act="actOpen"]').click();
+  await page.waitForTimeout(300);
+  ok('the sheet opens on Quick', has(await text(page, '.amtab.on'), 'Quick'));
+  const cats = await text(page, '.amcats');
+  for (const c of ['Favorites', 'Arrival', 'No activity', 'Subject', 'Vehicle', 'Location']) {
+    ok(`the ${c} category is offered`, has(cats, c), cats);
+  }
+
+  // Search cuts across every category.
+  await page.locator('#am_q').fill('visual contact');
+  await page.waitForTimeout(300);
+  const hits = await text(page, '.amsheet');
+  ok('search finds the line', has(hits, 'Lost visual contact with subject vehicle in traffic.'));
+  ok('and drops the rest', !has(hits, 'Subject departed residence.'));
+  await page.locator('#am_q').fill('');
+  await page.waitForTimeout(300);
+
+  // Starring keeps a line under Favorites, first.
+  await page.locator('.amcat', { hasText: 'Subject' }).click();
+  await page.waitForTimeout(250);
+  await page.locator('.amline', { hasText: 'Subject returned to residence.' }).locator('.amstar').click();
+  await page.waitForTimeout(250);
+  await page.locator('.amcat', { hasText: 'Favorites' }).click();
+  await page.waitForTimeout(250);
+  ok('a starred line waits under Favorites',
+     has(await text(page, '.amsheet'), 'Subject returned to residence.'));
+
+  // Picking a line lands on the compose step with the sentence in the box.
+  await page.locator('.ampick', { hasText: 'Subject returned to residence.' }).click();
+  await page.waitForTimeout(300);
+  ok('the picked line fills the narrative',
+     (await page.locator('#qa_desc').inputValue()) === 'Subject returned to residence.');
+  ok('the time is already on the clock', (await page.locator('#qa_time').inputValue()).length === 5);
+  ok('the rare fields wait behind one fold', await page.locator('.amfold summary').count() === 1);
+  await page.locator('#qa_time').fill('10:05');
+  await page.locator('.btn', { hasText: 'Add to log' }).click();
+  await page.waitForTimeout(500);
+  ok('the quick entry is on the timeline',
+     (await text(page, '#dlgBody')).includes('Subject returned to residence.'));
+  ok('the sheet closed on success', await page.locator('.amsheet').count() === 0);
+
+  // NO CHANGE is one tap: no compose step, straight to the log (P9).
+  await page.locator('[data-act="actOpen"]').click();
+  await page.waitForTimeout(300);
+  await page.locator('.amcat', { hasText: 'No activity' }).click();
+  await page.waitForTimeout(250);
+  await page.locator('.ampick', { hasText: 'No change was noted during this period.' }).click();
+  await page.waitForTimeout(500);
+  ok('one tap logged it', (await text(page, '#dlgBody')).includes('No change was noted during this period.'));
+  ok('with no compose step in between', await page.locator('.amsheet').count() === 0);
+
+  // The arrival template generates the sentence from the extras.
+  await page.locator('[data-act="actOpen"]').click();
+  await page.waitForTimeout(300);
+  await page.locator('.amcat', { hasText: 'Arrival' }).click();
+  await page.waitForTimeout(250);
+  await page.locator('.ampick', { hasText: 'Arrived in vicinity of subject residence.' }).click();
+  await page.waitForTimeout(300);
+  ok('arrival asks the two field questions',
+     await page.locator('#qa_vp').count() === 1 && await page.locator('#qa_pos').count() === 1);
+  await page.locator('#qa_vp').fill("Subject's white GMC Sierra in the driveway");
+  await page.waitForTimeout(200);
+  await page.locator('#qa_pos').fill('with a clear view of the front door');
+  await page.waitForTimeout(200);
+  const built = await page.locator('#qa_desc').inputValue();
+  ok('the sentence is generated from the answers',
+     built.includes('Arrived in vicinity of subject residence.')
+       && built.includes("Sierra in the driveway present.")
+       && built.includes('Established surveillance position with a clear view of the front door.'), built);
+  await page.locator('.amx').click();
+  await page.waitForTimeout(250);
+
+  // The unobtrusive Edit (P10): correct an entry from the timeline.
+  await page.locator('.tl-i', { hasText: 'Subject returned to residence.' })
+    .locator('.tl-edit').click();
+  await page.waitForTimeout(300);
+  ok('Edit opens the correction form with the entry in it',
+     (await page.locator('#qa_desc').inputValue()) === 'Subject returned to residence.');
+  await page.locator('#qa_desc').fill('Subject returned to residence and entered through the garage.');
+  await page.locator('.btn', { hasText: 'Save the correction' }).click();
+  await page.waitForTimeout(500);
+  const edited = await text(page, '#dlgBody');
+  ok('the correction is on the timeline', edited.includes('entered through the garage'));
+  ok('and stamped rather than silent', has(edited, 'edited'));
   await page.close();
 }
 
@@ -1603,6 +1718,18 @@ section('Evidence in the browser');
   const subjCard = await text(page, '#dlgBody');
   ok('the photo rides with the subject card', has(subjCard, 'Photos & files'));
   ok('as an image thumbnail', await page.locator('.rcard img').count() >= 1);
+  await wsTab(page, 'Evidence');
+
+  // A photo linked to a timeline moment: the entry wears its count (P10).
+  await page.locator('#ev_file').setInputFiles({
+    name: 'moment.jpg', mimeType: 'image/jpeg', buffer: Buffer.alloc(500, 67) });
+  await page.locator('#ev_link').selectOption({ label: '8:17 AM — Subject arrived at ABC Fitness.' });
+  await page.locator('.btn', { hasText: 'Upload evidence' }).click();
+  await page.waitForTimeout(700);
+  await wsTab(page, 'Activity log');
+  ok('a linked photo puts a count on the moment',
+     await page.locator('.tl-i', { hasText: 'Subject arrived at ABC Fitness.' })
+       .locator('.tl-counts').count() >= 1);
   await wsTab(page, 'Evidence');
 
   await page.locator('[data-act="evDelete"]').first().click();
