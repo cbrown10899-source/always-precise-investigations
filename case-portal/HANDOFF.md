@@ -26,7 +26,8 @@ Progress ledger (update as phases land):
 | 13. Assignment acceptance | **done** — 2026-08-13 (offer → accept/decline; thin pre-acceptance view; owner decision: ONE offer at a time, no competing) |
 | 14. Calendar | **done** — 2026-08-13 (`/calendar` month view, both roles: worked/running days + pending offers; admin sees everyone, an investigator their own; offer chips stay thin) |
 | 16. Private-case intake details | **done** — 2026-08-13 (per-type field sets on the Subject tab: infidelity / custody / general, chosen by case type; Worker allow-lists the keys; observe-and-document framing; admin writes, assigned investigator reads) |
-| 17–20. Phase 3 (subjects+vehicles, communications, tasks, closure) | not started |
+| 17. Subjects + vehicles | **done** — 2026-08-13 (structured records on the Subject tab, several per case, vehicles nested; both roles write on cases they can open, edits stamped, no delete; photographs join with priority 6) |
+| 18–20. Phase 3 (communications, tasks, closure) | not started |
 | Phase 4 (client portal, redaction, safety, profitability) | not started |
 
 ---

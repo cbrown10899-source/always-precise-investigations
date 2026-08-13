@@ -1424,6 +1424,81 @@ section('Private case details: the type decides the fields');
        body: { objectives: 'x' } })).status === 404);
 }
 
+section('Subjects and vehicles: structured records, scoped to the case');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  for (const uname of ['dana', 'reed']) {
+    const l = (await jsonOf(await invite(env, admin, { username: uname, display_name: uname, role: 'investigator' }))).url;
+    const t = new URL(l, 'https://x.test').searchParams.get('invite');
+    await call(env, `/invite/${t}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  }
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const reed = (await login(env, 'reed', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find(u => u.username === 'dana').id;
+
+  await ingest(env, { case_no: 'API-SV1', service: 'Surveillance',
+                      client_name: 'Private Client', subject_name: 'Sam Watched' });
+  await ingest(env, { case_no: 'API-SV2', service: 'Surveillance',
+                      client_name: 'Other Client', subject_name: 'Other Subject' });
+  await call(env, '/submissions/API-SV1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+
+  ok('a subject needs a name',
+     (await call(env, '/cases/API-SV1/subjects', { method: 'POST', cookie: admin,
+       body: { hair: 'brown' } })).status === 400);
+  const made = await jsonOf(await call(env, '/cases/API-SV1/subjects', { method: 'POST', cookie: admin,
+    body: { name: 'Sam Watched', alias: 'Sammy', hair: 'brown', height: `5'10"`,
+            employer: 'ABC Roofing', addresses: '12 Elm St, Lynchburg' } }));
+  ok('an admin adds a subject', typeof made.id === 'number');
+
+  ok('the assigned investigator can add one too',
+     (await call(env, '/cases/API-SV1/subjects', { method: 'POST', cookie: dana,
+       body: { name: 'Associate seen twice' } })).status === 201);
+  ok('an unassigned investigator cannot',
+     (await call(env, '/cases/API-SV1/subjects', { method: 'POST', cookie: reed,
+       body: { name: 'X' } })).status === 404);
+
+  // Edits replace the record and stamp who; the case in the URL must own it.
+  ok('an edit through the wrong case is a 404',
+     (await call(env, `/cases/API-SV2/subjects/${made.id}`, { method: 'POST', cookie: admin,
+       body: { name: 'Sam Watched', hair: 'dyed black' } })).status === 404);
+  await call(env, `/cases/API-SV1/subjects/${made.id}`, { method: 'POST', cookie: dana,
+    body: { name: 'Sam Watched', alias: 'Sammy', hair: 'dyed black', height: `5'10"`,
+            employer: 'ABC Roofing', addresses: '12 Elm St, Lynchburg' } });
+  const srow = await env.DB.prepare('SELECT hair, updated_by, created_by FROM case_subjects WHERE id = ?')
+    .bind(made.id).first();
+  ok('the edit lands with an audit stamp', srow.hair === 'dyed black'
+     && srow.updated_by !== srow.created_by);
+
+  ok('a vehicle needs some description',
+     (await call(env, `/cases/API-SV1/subjects/${made.id}/vehicles`, { method: 'POST', cookie: dana,
+       body: { color: 'white' } })).status === 400);
+  const veh = await jsonOf(await call(env, `/cases/API-SV1/subjects/${made.id}/vehicles`, {
+    method: 'POST', cookie: dana,
+    body: { year: '2019', make: 'GMC', model: 'Sierra', color: 'white', plate: 'ABC-1234', plate_state: 'VA' } }));
+  ok('a vehicle attaches to the subject', typeof veh.id === 'number');
+  ok('a second vehicle joins it',
+     (await call(env, `/cases/API-SV1/subjects/${made.id}/vehicles`, { method: 'POST', cookie: admin,
+       body: { make: 'Honda', model: 'Civic', color: 'grey' } })).status === 201);
+  ok("a vehicle cannot be reached through another case",
+     (await call(env, `/cases/API-SV2/subjects/${made.id}/vehicles/${veh.id}`, { method: 'POST', cookie: admin,
+       body: { make: 'GMC' } })).status === 404);
+  await call(env, `/cases/API-SV1/subjects/${made.id}/vehicles/${veh.id}`, { method: 'POST', cookie: admin,
+    body: { year: '2019', make: 'GMC', model: 'Sierra', color: 'white', plate: 'XYZ-9876', plate_state: 'VA' } });
+
+  const ws = await jsonOf(await call(env, '/cases/API-SV1/workspace', { cookie: dana }));
+  const sam = ws.subjects.find(x => x.id === made.id);
+  ok('the workspace carries subjects with their vehicles nested',
+     ws.subjects.length === 2 && sam.vehicles.length === 2
+     && sam.vehicles.some(v => v.plate === 'XYZ-9876'));
+  ok('long fields are capped, not refused',
+     (await call(env, `/cases/API-SV1/subjects`, { method: 'POST', cookie: admin,
+       body: { name: 'N'.repeat(500) } })).status === 201
+     && (await env.DB.prepare('SELECT MAX(LENGTH(name)) AS l FROM case_subjects').first()).l <= 200);
+}
+
 section('Password reset: a one-time link, nobody learns the password');
 {
   const env = freshEnv();
