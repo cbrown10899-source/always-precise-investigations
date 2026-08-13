@@ -1216,6 +1216,127 @@ section('Evidence: stored privately, metered, and capped inside the free plan');
        method: 'POST', headers: { Origin: ORIGIN, Cookie: a2 }, body: fd2 }), bare)).status === 503);
 }
 
+section('Case Build: the package behind hard gates');
+{
+  const fakeR2 = () => {
+    const store = new Map();
+    return {
+      async put(key, body, opts) { store.set(key, { body, opts }); },
+      async get(key) { const o = store.get(key); return o ? { body: o.body } : null; },
+      async delete(key) { store.delete(key); },
+      _store: store,
+    };
+  };
+  const env = freshEnv();
+  env.EVIDENCE = fakeR2();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const tok = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  await ingest(env, { case_no: 'API-CB1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+
+  ok('an investigator has no build surface at all',
+     (await call(env, '/cases/API-CB1/build', { cookie: inv })).status === 403
+     && (await call(env, '/external-storage', { cookie: inv })).status === 403);
+
+  // The raw material: a worked day, an approved report, classified evidence.
+  await call(env, '/cases/API-CB1/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-13', start_time: '07:00' } });
+  await call(env, '/cases/API-CB1/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-08-13', at_time: '08:21', kind: 'activity',
+            description: 'Subject arrived at ABC Fitness.' } });
+  await call(env, '/cases/API-CB1/day/end', { method: 'POST', cookie: admin, body: { end_time: '15:00' } });
+  const dayId = (await jsonOf(await call(env, '/cases/API-CB1/workspace', { cookie: admin }))).days[0].id;
+  const rep = await jsonOf(await call(env, '/cases/API-CB1/reports/generate', { method: 'POST', cookie: admin,
+    body: { day_id: dayId } }));
+  await call(env, `/cases/API-CB1/reports/${rep.id}/status`, { method: 'POST', cookie: admin, body: { status: 'submitted' } });
+
+  const up = (file, extra = {}) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    for (const [k, v] of Object.entries(extra)) fd.append(k, v);
+    return worker.fetch(new Request(API + '/cases/API-CB1/evidence', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  };
+  const mk = (name, bytes, type) => new File([new Uint8Array(bytes).fill(65)], name, { type });
+  const photo1 = (await jsonOf(await up(mk('photo1.jpg', 300, 'image/jpeg'), { classification: 'client_deliverable' }))).id;
+  const photo2 = (await jsonOf(await up(mk('photo2.jpg', 300, 'image/jpeg')))).id;   // needs_review
+  const clip = (await jsonOf(await up(mk('clip.mp4', 900, 'video/mp4'), { classification: 'client_deliverable' }))).id;
+  const doc = (await jsonOf(await up(mk('summary.pdf', 200, 'application/pdf'), { classification: 'client_deliverable' }))).id;
+
+  // No approved report yet: the build opens, and the gate says exactly that.
+  let st = await jsonOf(await call(env, '/cases/API-CB1/build', { method: 'POST', cookie: admin }));
+  ok('a draft build opens', st.build.status === 'draft' && st.build.version === 1);
+  ok('only one draft at a time',
+     (await call(env, '/cases/API-CB1/build', { method: 'POST', cookie: admin })).status === 409);
+  ok('the gate names the missing approval',
+     st.gates.some(g => g.includes('approve') || g.includes('approved')));
+
+  ok('a needs-review photo is refused with its reason',
+     (await jsonOf(await call(env, `/build/${st.build.id}/items`, { method: 'POST', cookie: admin,
+       body: { evidence_id: photo2 } }))).error.includes('needs review'));
+  await call(env, `/build/${st.build.id}/items`, { method: 'POST', cookie: admin, body: { evidence_id: photo1 } });
+  await call(env, `/build/${st.build.id}/items`, { method: 'POST', cookie: admin, body: { evidence_id: clip } });
+  await call(env, `/build/${st.build.id}/items`, { method: 'POST', cookie: admin, body: { evidence_id: doc } });
+  st = await jsonOf(await call(env, '/cases/API-CB1/build', { cookie: admin }));
+  ok('roles follow the content type',
+     st.items.find(i => i.evidence_id === photo1).role === 'photo'
+     && st.items.find(i => i.evidence_id === clip).role === 'video'
+     && st.items.find(i => i.evidence_id === doc).role === 'attachment');
+  ok('the same file cannot join twice',
+     (await call(env, `/build/${st.build.id}/items`, { method: 'POST', cookie: admin,
+       body: { evidence_id: photo1 } })).status === 409);
+
+  ok('a video in a photos-only package is a named gate',
+     st.gates.some(g => g.includes('package type does not include video')));
+  await call(env, `/build/${st.build.id}/package`, { method: 'POST', cookie: admin,
+    body: { package_type: 'report_photos_video' } });
+
+  /* Reclassification after selection cannot sneak through: the gate names
+     the file at finalize time, alongside the unapproved report. */
+  await call(env, `/cases/API-CB1/evidence/${photo1}`, { method: 'POST', cookie: admin,
+    body: { classification: 'internal_only' } });
+  const blocked = await jsonOf(await call(env, `/build/${st.build.id}/finalize`, { method: 'POST', cookie: admin }));
+  ok('a file reclassified after selection blocks finalize by name',
+     blocked.gates.some(g => g.includes('photo1.jpg')));
+  ok('and the unapproved report blocks beside it',
+     blocked.gates.some(g => g.includes('approve')));
+  await call(env, `/cases/API-CB1/evidence/${photo1}`, { method: 'POST', cookie: admin,
+    body: { classification: 'client_deliverable' } });
+
+  // Approve the report; finalize binds it automatically and the package closes.
+  await call(env, `/cases/API-CB1/reports/${rep.id}/status`, { method: 'POST', cookie: admin, body: { status: 'approved' } });
+  st = await jsonOf(await call(env, `/build/${st.build.id}/finalize`, { method: 'POST', cookie: admin }));
+  ok('with every gate clear the package finalizes', st.build.status === 'finalized'
+     && st.build.report_id != null && st.build.finalized_at != null);
+  ok('a finalized package takes no more items',
+     (await call(env, `/build/${st.build.id}/items`, { method: 'POST', cookie: admin,
+       body: { evidence_id: photo2 } })).status === 400);
+  ok('delivery is recorded on the finalized package',
+     (await jsonOf(await call(env, `/build/${st.build.id}/delivered`, { method: 'POST', cookie: admin })))
+       .build.delivered_at != null);
+
+  st = await jsonOf(await call(env, `/build/${st.build.id}/reopen`, { method: 'POST', cookie: admin }));
+  ok('reopening rebuilds the same version', st.build.status === 'draft' && st.build.version === 1);
+  await call(env, `/build/${st.build.id}/finalize`, { method: 'POST', cookie: admin });
+  const v2 = await jsonOf(await call(env, '/cases/API-CB1/build', { method: 'POST', cookie: admin }));
+  ok('a new build after a finalized one is the next version', v2.build.version === 2);
+
+  const trail = (await jsonOf(await call(env, '/cases/API-CB1/build', { cookie: admin }))).events
+    .map(e => e.action);
+  ok('the audit trail names the acts',
+     ['created'].every(a => trail.includes(a)));
+
+  ok('dropbox reports not configured, in words',
+     (await jsonOf(await call(env, '/external-storage', { cookie: admin }))).providers.dropbox.configured === false);
+  ok('provider actions say what is missing instead of failing quietly',
+     (await jsonOf(await call(env, `/build/${v2.build.id}/upload-videos`, { method: 'POST', cookie: admin })))
+       .code === 'provider_not_configured');
+}
+
 section('The dashboard summary');
 {
   const env = freshEnv();

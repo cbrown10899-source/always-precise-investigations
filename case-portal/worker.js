@@ -2322,6 +2322,129 @@ async function deleteEvidence(env, user, caseNo, eid) {
   return json({ ok: true, usage: await evidenceUsage(env) });
 }
 
+
+/* ------------------------------------------------------------ case build */
+
+/* The client package (CASEBUILD.md priority 0): an approved report plus
+   selected client-deliverable photos, videos and attachments, previewed as
+   one document and finalized behind hard gates. Admin-only in full. Dropbox
+   is a PROVIDER, never the architecture — until the owner connects it, the
+   provider reports not-configured and nothing here blocks. */
+
+const EXTERNAL_PROVIDERS = {
+  dropbox: {
+    label: 'Dropbox',
+    configured: env => Boolean(env.DROPBOX_APP_KEY && env.DROPBOX_APP_SECRET && env.DROPBOX_REFRESH_TOKEN),
+    note: 'Create a Dropbox app and add DROPBOX_APP_KEY, DROPBOX_APP_SECRET and '
+        + 'DROPBOX_REFRESH_TOKEN as Worker secrets. Until then video delivery is arranged '
+        + 'separately and nothing else waits.',
+  },
+};
+
+async function buildEvent(env, buildId, user, action, detail) {
+  await env.DB.prepare(
+    'INSERT INTO build_events (build_id, action, detail, user_id, at) VALUES (?, ?, ?, ?, ?)')
+    .bind(buildId, action, detail || null, user ? user.id : null, nowIso()).run();
+}
+
+async function latestApprovedReport(env, caseNo) {
+  return await env.DB.prepare(
+    `SELECT id, report_date, status FROM case_reports
+      WHERE case_no = ? AND status IN ('approved', 'delivered')
+      ORDER BY report_date DESC, id DESC LIMIT 1`).bind(caseNo).first();
+}
+
+/* Everything the build screen needs in one fetch: the current build, its
+   items joined to their evidence, what is eligible to add, and the gates as
+   they stand — so FINALIZE never surprises. */
+async function buildState(env, caseNo) {
+  const build = await env.DB.prepare(
+    'SELECT * FROM case_builds WHERE case_no = ? ORDER BY version DESC, id DESC LIMIT 1')
+    .bind(caseNo).first();
+
+  const { results: evidence } = await env.DB.prepare(
+    `SELECT e.id, e.filename, e.content_type, e.size_bytes, e.classification, e.entry_id,
+            e.note, e.uploaded_at, a.at_time AS entry_time, a.at_date AS entry_date,
+            a.description AS entry_description
+       FROM case_evidence e LEFT JOIN activity_log a ON a.id = e.entry_id
+      WHERE e.case_no = ? AND e.deleted_at IS NULL ORDER BY e.id`).bind(caseNo).all();
+
+  let items = [], report = null, gates = [], events = [];
+  if (build) {
+    ({ results: items } = await env.DB.prepare(
+      `SELECT i.id, i.evidence_id, i.role, i.sort FROM build_items i
+        WHERE i.build_id = ? ORDER BY i.role, i.sort, i.id`).bind(build.id).all());
+    if (build.report_id) {
+      report = await env.DB.prepare(
+        'SELECT id, report_date, status, body FROM case_reports WHERE id = ? AND case_no = ?')
+        .bind(build.report_id, caseNo).first();
+    }
+    gates = await buildGates(env, build, items || [], report);
+    ({ results: events } = await env.DB.prepare(
+      `SELECT e.action, e.detail, e.at, u.display_name AS who
+         FROM build_events e LEFT JOIN users u ON u.id = e.user_id
+        WHERE e.build_id = ? ORDER BY e.id DESC LIMIT 30`).bind(build.id).all());
+  }
+
+  const { results: extRows } = await env.DB.prepare(
+    `SELECT x.* FROM external_files x JOIN case_evidence e ON e.id = x.evidence_id
+      WHERE e.case_no = ?`).bind(caseNo).all();
+
+  return {
+    build: build || null,
+    report: report ? { id: report.id, report_date: report.report_date, status: report.status,
+                       body: report.body } : null,
+    items: items || [],
+    evidence: evidence || [],
+    external_files: extRows || [],
+    events: events || [],
+    gates,
+    approved_report: await latestApprovedReport(env, caseNo),
+    providers: Object.fromEntries(Object.entries(EXTERNAL_PROVIDERS).map(([k, prov]) =>
+      [k, { label: prov.label, configured: prov.configured(env), note: prov.note }])),
+  };
+}
+
+/* The finalize gates, named plainly. Also used by the screen so the admin
+   sees exactly what needs attention BEFORE pressing finalize. */
+async function buildGates(env, build, items, report) {
+  const gates = [];
+  if (!build.report_id || !report) {
+    gates.push('No report is attached — approve a daily report first.');
+  } else if (!['approved', 'delivered'].includes(report.status)) {
+    gates.push(`The attached report is ${report.status} — it must be approved.`);
+  }
+  const ids = items.map(i => i.evidence_id);
+  for (const it of items) {
+    const e = await env.DB.prepare(
+      'SELECT filename, classification, deleted_at FROM case_evidence WHERE id = ?')
+      .bind(it.evidence_id).first();
+    if (!e || e.deleted_at) { gates.push('A selected file has been deleted — remove it from the package.'); continue; }
+    if (e.classification !== 'client_deliverable') {
+      gates.push(`${e.filename} is ${e.classification.replace(/_/g, ' ')} — only client-deliverable material ships.`);
+    }
+  }
+  if (ids.length) {
+    const { results: failed } = await env.DB.prepare(
+      `SELECT delivery_name FROM external_files
+        WHERE evidence_id IN (${ids.map(() => '?').join(',')}) AND upload_status = 'failed'`)
+      .bind(...ids).all();
+    for (const f of failed || []) {
+      gates.push(`External upload failed for ${f.delivery_name || 'a file'} — retry or remove it before finalizing.`);
+    }
+  }
+  const videos = items.filter(i => i.role === 'video');
+  if (videos.length && !['report_photos_video', 'full'].includes(build.package_type)) {
+    gates.push('Videos are selected but the package type does not include video — switch the package or remove them.');
+  }
+  return gates;
+}
+
+async function adminBuild(env, user, buildId) {
+  const b = await env.DB.prepare('SELECT * FROM case_builds WHERE id = ?').bind(buildId).first();
+  return b || null;
+}
+
 /* ------------------------------------------------- my work, across cases */
 
 /* An investigator's own desk: their reports and their expenses across every
@@ -2935,6 +3058,7 @@ const EXPECTED_TABLES = [
   'case_details', 'case_subjects', 'subject_vehicles', 'case_comms', 'case_tasks',
   'case_status', 'case_closure', 'case_retainer',
   'invoices', 'invoice_lines', 'invoice_payments', 'invoice_events', 'case_evidence',
+  'case_builds', 'build_items', 'external_files', 'build_events',
 ];
 
 async function missingTables(env) {
@@ -3107,6 +3231,170 @@ async function route(request, env) {
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/activity\/(\d{1,12})$/);
   if (m && method === 'POST') return editActivity(request, env, user, m[1], parseInt(m[2], 10));
 
+
+
+  /* Case Build (CASEBUILD.md) — the client package. Admin-only in full: an
+     investigator never selects, shares, or finalizes client deliverables. */
+  if (p.startsWith('/build/') || /^\/cases\/[A-Za-z0-9-]{3,64}\/build$/.test(p) || p === '/external-storage') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  }
+
+  if (p === '/external-storage' && method === 'GET') {
+    return json({ providers: Object.fromEntries(Object.entries(EXTERNAL_PROVIDERS).map(([k, prov]) =>
+      [k, { label: prov.label, configured: prov.configured(env), note: prov.note }])) });
+  }
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/build$/);
+  if (m && method === 'GET') {
+    const exists = await env.DB.prepare('SELECT 1 AS x FROM submissions WHERE case_no = ?').bind(m[1]).first();
+    if (!exists) return json({ error: 'not found' }, 404);
+    return json(await buildState(env, m[1]));
+  }
+  if (m && method === 'POST') {
+    const exists = await env.DB.prepare('SELECT 1 AS x FROM submissions WHERE case_no = ?').bind(m[1]).first();
+    if (!exists) return json({ error: 'not found' }, 404);
+    const open = await env.DB.prepare(
+      "SELECT id FROM case_builds WHERE case_no = ? AND status = 'draft'").bind(m[1]).first();
+    if (open) return json({ error: 'A draft build is already open on this case.' }, 409);
+    const rep = await latestApprovedReport(env, m[1]);
+    const ver = await env.DB.prepare(
+      'SELECT COALESCE(MAX(version), 0) AS v FROM case_builds WHERE case_no = ?').bind(m[1]).first();
+    const now = nowIso();
+    const res = await env.DB.prepare(
+      `INSERT INTO case_builds (case_no, version, report_id, created_by, created_at, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .bind(m[1], (Number(ver && ver.v) || 0) + 1, rep ? rep.id : null, user.id, now, user.id, now).run();
+    await buildEvent(env, res.meta.last_row_id, user, 'created',
+      rep ? `on the approved report of ${rep.report_date}` : 'no approved report yet');
+    return json(await buildState(env, m[1]), 201);
+  }
+
+  m = p.match(/^\/build\/(\d{1,12})\/package$/);
+  if (m && method === 'POST') {
+    const b = await adminBuild(env, user, parseInt(m[1], 10));
+    if (!b) return json({ error: 'not found' }, 404);
+    if (b.status !== 'draft') return json({ error: 'Reopen the build to change it.' }, 400);
+    const pt = String((await readJson(request)).package_type || '');
+    if (!['report_only', 'report_photos', 'report_photos_video', 'full'].includes(pt)) {
+      return json({ error: 'Pick a real package type.' }, 400);
+    }
+    await env.DB.prepare('UPDATE case_builds SET package_type = ?, updated_by = ?, updated_at = ? WHERE id = ?')
+      .bind(pt, user.id, nowIso(), b.id).run();
+    await buildEvent(env, b.id, user, 'package_type', pt);
+    return json(await buildState(env, b.case_no));
+  }
+
+  m = p.match(/^\/build\/(\d{1,12})\/items$/);
+  if (m && method === 'POST') {
+    const b = await adminBuild(env, user, parseInt(m[1], 10));
+    if (!b) return json({ error: 'not found' }, 404);
+    if (b.status !== 'draft') return json({ error: 'Reopen the build to change it.' }, 400);
+    const body = await readJson(request);
+    const eid = parseInt(body.evidence_id, 10);
+    const e = await env.DB.prepare(
+      'SELECT id, filename, content_type, classification, deleted_at FROM case_evidence WHERE id = ? AND case_no = ?')
+      .bind(eid, b.case_no).first();
+    if (!e || e.deleted_at) return json({ error: 'That file is not on this case.' }, 400);
+    /* The eligibility line: only client-deliverable material enters a
+       package. Everything else is refused with its reason, not filtered
+       silently — reclassifying is one click away. */
+    if (e.classification !== 'client_deliverable') {
+      return json({ error: `${e.filename} is marked ${e.classification.replace(/_/g, ' ')} — `
+        + 'only client-deliverable material enters a package. Reclassify it first.' }, 400);
+    }
+    const dupe = await env.DB.prepare(
+      'SELECT id FROM build_items WHERE build_id = ? AND evidence_id = ?').bind(b.id, eid).first();
+    if (dupe) return json({ error: 'Already in the package.' }, 409);
+    const ct = String(e.content_type || '');
+    const role = ct.startsWith('image/') ? 'photo' : ct.startsWith('video/') ? 'video' : 'attachment';
+    const sortRow = await env.DB.prepare(
+      'SELECT COALESCE(MAX(sort), -1) AS s FROM build_items WHERE build_id = ? AND role = ?')
+      .bind(b.id, role).first();
+    await env.DB.prepare(
+      'INSERT INTO build_items (build_id, evidence_id, role, sort, added_by, added_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(b.id, eid, role, (Number(sortRow && sortRow.s) ?? -1) + 1, user.id, nowIso()).run();
+    await buildEvent(env, b.id, user, 'item_added', `${role}: ${e.filename}`);
+    return json(await buildState(env, b.case_no), 201);
+  }
+
+  m = p.match(/^\/build\/(\d{1,12})\/items\/(\d{1,12})\/remove$/);
+  if (m && method === 'POST') {
+    const b = await adminBuild(env, user, parseInt(m[1], 10));
+    if (!b) return json({ error: 'not found' }, 404);
+    if (b.status !== 'draft') return json({ error: 'Reopen the build to change it.' }, 400);
+    const r = await env.DB.prepare('DELETE FROM build_items WHERE id = ? AND build_id = ?')
+      .bind(parseInt(m[2], 10), b.id).run();
+    if (r.meta && r.meta.changes === 0) return json({ error: 'not found' }, 404);
+    await buildEvent(env, b.id, user, 'item_removed', null);
+    return json(await buildState(env, b.case_no));
+  }
+
+  m = p.match(/^\/build\/(\d{1,12})\/finalize$/);
+  if (m && method === 'POST') {
+    const b = await adminBuild(env, user, parseInt(m[1], 10));
+    if (!b) return json({ error: 'not found' }, 404);
+    if (b.status === 'finalized') return json({ error: 'Already finalized.' }, 400);
+    // A build opened before the report was approved binds it now, quietly —
+    // the gate only fires when there is genuinely nothing approved to bind.
+    if (!b.report_id) {
+      const rep = await latestApprovedReport(env, b.case_no);
+      if (rep) {
+        await env.DB.prepare('UPDATE case_builds SET report_id = ?, updated_by = ?, updated_at = ? WHERE id = ?')
+          .bind(rep.id, user.id, nowIso(), b.id).run();
+        b.report_id = rep.id;
+        await buildEvent(env, b.id, user, 'report_attached', `the approved report of ${rep.report_date}`);
+      }
+    }
+    const { results: items } = await env.DB.prepare(
+      'SELECT id, evidence_id, role FROM build_items WHERE build_id = ?').bind(b.id).all();
+    const report = b.report_id ? await env.DB.prepare(
+      'SELECT id, report_date, status FROM case_reports WHERE id = ? AND case_no = ?')
+      .bind(b.report_id, b.case_no).first() : null;
+    const gates = await buildGates(env, b, items || [], report);
+    if (gates.length) return json({ error: 'Not ready to finalize.', gates }, 400);
+    await env.DB.prepare(
+      'UPDATE case_builds SET status = ?, finalized_by = ?, finalized_at = ?, updated_by = ?, updated_at = ? WHERE id = ?')
+      .bind('finalized', user.id, nowIso(), user.id, nowIso(), b.id).run();
+    await buildEvent(env, b.id, user, 'finalized', `v${b.version}, ${(items || []).length} item(s)`);
+    return json(await buildState(env, b.case_no));
+  }
+
+  m = p.match(/^\/build\/(\d{1,12})\/reopen$/);
+  if (m && method === 'POST') {
+    const b = await adminBuild(env, user, parseInt(m[1], 10));
+    if (!b) return json({ error: 'not found' }, 404);
+    if (b.status !== 'finalized') return json({ error: 'Only a finalized build reopens.' }, 400);
+    await env.DB.prepare(
+      'UPDATE case_builds SET status = ?, finalized_by = NULL, finalized_at = NULL, updated_by = ?, updated_at = ? WHERE id = ?')
+      .bind('draft', user.id, nowIso(), b.id).run();
+    await buildEvent(env, b.id, user, 'reopened', 'package rebuilt');
+    return json(await buildState(env, b.case_no));
+  }
+
+  m = p.match(/^\/build\/(\d{1,12})\/delivered$/);
+  if (m && method === 'POST') {
+    const b = await adminBuild(env, user, parseInt(m[1], 10));
+    if (!b) return json({ error: 'not found' }, 404);
+    if (b.status !== 'finalized') return json({ error: 'Finalize the package before marking it delivered.' }, 400);
+    await env.DB.prepare(
+      'UPDATE case_builds SET delivered_by = ?, delivered_at = ?, updated_by = ?, updated_at = ? WHERE id = ?')
+      .bind(user.id, nowIso(), user.id, nowIso(), b.id).run();
+    await buildEvent(env, b.id, user, 'delivered', null);
+    return json(await buildState(env, b.case_no));
+  }
+
+  /* The provider actions. Honest about their state: until the owner connects
+     Dropbox, these name the missing configuration and block nothing else. */
+  m = p.match(/^\/build\/(\d{1,12})\/(upload-videos|share)$/);
+  if (m && method === 'POST') {
+    const b = await adminBuild(env, user, parseInt(m[1], 10));
+    if (!b) return json({ error: 'not found' }, 404);
+    if (!EXTERNAL_PROVIDERS.dropbox.configured(env)) {
+      return json({ error: 'Dropbox is not connected. ' + EXTERNAL_PROVIDERS.dropbox.note,
+                    code: 'provider_not_configured' }, 503);
+    }
+    return json({ error: 'The live Dropbox integration lands after its API documentation review.' }, 501);
+  }
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/evidence$/);
   if (m && method === 'POST') return uploadEvidence(request, env, user, m[1]);

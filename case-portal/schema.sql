@@ -596,3 +596,77 @@ CREATE TABLE IF NOT EXISTS case_evidence (
   deleted_at     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_evidence_case ON case_evidence(case_no);
+
+-- Case Build (CASEBUILD.md priority 0): the client package. A build selects
+-- an approved report plus client-deliverable photos, videos and attachments,
+-- previews as one document, and finalizes behind hard gates. Versioned per
+-- case; reopening keeps the version and the trail. Admin-only territory —
+-- an investigator never selects client deliverables.
+CREATE TABLE IF NOT EXISTS case_builds (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no      TEXT    NOT NULL,
+  version      INTEGER NOT NULL DEFAULT 1,
+  status       TEXT    NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','finalized')),
+  package_type TEXT    NOT NULL DEFAULT 'report_photos' CHECK (package_type IN
+                 ('report_only','report_photos','report_photos_video','full')),
+  report_id    INTEGER,
+  created_by   INTEGER REFERENCES users(id),
+  created_at   TEXT,
+  finalized_by INTEGER REFERENCES users(id),
+  finalized_at TEXT,
+  delivered_by INTEGER REFERENCES users(id),
+  delivered_at TEXT,
+  updated_by   INTEGER REFERENCES users(id),
+  updated_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_builds_case ON case_builds(case_no);
+
+CREATE TABLE IF NOT EXISTS build_items (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  build_id    INTEGER NOT NULL,
+  evidence_id INTEGER NOT NULL,
+  role        TEXT    NOT NULL CHECK (role IN ('photo','video','attachment')),
+  sort        INTEGER NOT NULL DEFAULT 0,
+  added_by    INTEGER REFERENCES users(id),
+  added_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_bitems ON build_items(build_id);
+
+-- Delivery copies on an external provider (CASEBUILD.md). GENERIC fields on
+-- purpose: dropbox is the first provider, never the architecture. A row here
+-- is a CLIENT DELIVERY COPY — the evidentiary original stays in case_evidence
+-- and R2, and revoking or deleting a share can never touch it.
+CREATE TABLE IF NOT EXISTS external_files (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  evidence_id      INTEGER NOT NULL,
+  storage_provider TEXT    NOT NULL CHECK (storage_provider IN
+                     ('local_private_storage','dropbox','google_drive','onedrive','s3','other')),
+  delivery_name    TEXT,               -- the professional client-facing filename
+  external_file_id TEXT,
+  external_folder_id TEXT,
+  external_path    TEXT,
+  external_share_id TEXT,
+  external_share_url TEXT,
+  share_created_at TEXT,
+  share_expires_at TEXT,
+  share_revoked_at TEXT,
+  upload_status    TEXT    NOT NULL DEFAULT 'pending' CHECK (upload_status IN
+                     ('pending','uploading','uploaded','failed')),
+  upload_error     TEXT,
+  external_metadata TEXT,
+  created_by       INTEGER REFERENCES users(id),
+  created_at       TEXT,
+  updated_by       INTEGER REFERENCES users(id),
+  updated_at       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_extfiles ON external_files(evidence_id);
+
+CREATE TABLE IF NOT EXISTS build_events (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  build_id INTEGER NOT NULL,
+  action   TEXT    NOT NULL,
+  detail   TEXT,
+  user_id  INTEGER REFERENCES users(id),
+  at       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_bevents ON build_events(build_id);
