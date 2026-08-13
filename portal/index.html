@@ -117,6 +117,11 @@
   .qk2{display:block;width:100%;text-align:center;font:inherit;font-size:.8rem;font-weight:700;
     padding:10px 4px;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer;}
   .qk2.on{border-color:var(--teal);background:#eaf5f7;color:var(--navy);}
+  .capgrid{display:flex;gap:14px;flex-wrap:wrap;margin:2px 0 6px;}
+  .cap{display:flex;gap:6px;align-items:center;font-size:.85rem;font-weight:600;cursor:pointer;}
+  .cap input{width:17px;height:17px;}
+  .tag.cap-sd{background:#dff2e5;color:#1a6b3c;} .tag.cap-va{background:#dcecf2;color:#1d5c6c;}
+  .tag.cap-pa{background:#e3d7f5;color:#4a2f77;}
   .opt{font-weight:400;color:var(--muted);font-size:.78rem;}
   .dayon{background:#eaf5f7;border:1px solid #b7dbe3;border-radius:8px;padding:10px 12px;
     font-size:.88rem;margin-bottom:12px;}
@@ -231,6 +236,24 @@ let WS = null, WS_CASE = null, WS_TAB = "overview", WS_ERR = "", WS_REPORT = nul
 let VIEW = "list";   // "list" | "case" — the workspace is a full page, not a popup
 let QKIND = "activity";  // which quick-add composer is open on the activity log
 let WS_NOTICE = "";      // one-shot "day ended" notice carrying the next step
+
+/* Stock chronology lines, straight from the handoff's examples and the usual
+   surveillance phrasing. Picking one fills the description — it stays fully
+   editable, this just saves typing the same sentences from a parked car. */
+const PHRASES = [
+  "Arrived in vicinity of subject residence.",
+  "Established stationary surveillance position.",
+  "Subject vehicle observed parked at residence.",
+  "Subject observed exiting the residence.",
+  "Subject departed residence.",
+  "Subject arrived at ",
+  "Subject departed ",
+  "Subject returned to residence.",
+  "Lost visual contact with subject vehicle in traffic.",
+  "Re-established visual contact with subject.",
+  "No activity observed at the residence.",
+  "Surveillance discontinued for the day.",
+];
 let LOAD_ERR = "";        // why the portal could not load, shown rather than hidden
 let SCHEMA_MISSING = [];  // tables the database does not have yet
 let CARD_FILTER = null;   // {label, set:Set(case numbers)} — a dashboard card's cases
@@ -881,7 +904,7 @@ function activityPanel(){
 
     <form class="quick" data-act="addActivity">
       <div class="qgrid">
-        ${["activity","photo","video","location","vehicle","note","mileage","expense"].map(k =>
+        ${["activity","location","vehicle","note","mileage","expense"].map(k =>
           `<button type="button" class="qk2 ${QKIND === k ? "on" : ""}" data-act="qkind" data-k="${k}">${esc(label(k))}</button>`).join("")}
       </div>
       <div class="two">
@@ -905,21 +928,26 @@ function activityPanel(){
         <label class="f"><span>What it was</span><input id="a_desc" placeholder="e.g. Parking garage across from the courthouse"></label>
         <p class="hint">Recorded under Expenses for the office's review and marked on the timeline together.</p>`
       : `
-        <label class="f"><span>${QKIND === "photo" ? "What the photo shows"
-            : QKIND === "video" ? "What the video captures"
-            : QKIND === "note" ? "Field note"
+        <label class="f"><span>Common lines <span class="opt">picking one fills the box — edit freely</span></span>
+          <select id="a_phrase" data-act="phrase">
+            <option value="">Write my own / pick a line…</option>
+            ${PHRASES.map(ph => `<option value="${esc(ph)}">${esc(ph)}</option>`).join("")}
+          </select></label>
+        <label class="f"><span>${QKIND === "note" ? "Field note"
             : QKIND === "location" ? "What is at this location"
             : QKIND === "vehicle" ? "What the vehicle is doing" : "What happened"}</span>
           <textarea id="a_desc" rows="2" placeholder="${
-              QKIND === "photo" ? "e.g. Subject loading mulch bags into the truck bed, taken from the street."
-            : QKIND === "video" ? "e.g. 4 min 20 s — subject carrying ladder from garage to trailer."
-            : QKIND === "note" ? "e.g. Neighbour waved; may have been noticed. Rotating position."
+              QKIND === "note" ? "e.g. Neighbour waved; may have been noticed. Rotating position."
             : QKIND === "location" ? "e.g. ABC Fitness — subject's regular morning gym."
             : QKIND === "vehicle" ? "e.g. Parked nose-out in the driveway, engine running."
             : "e.g. Subject departed residence in the white GMC Sierra."}"></textarea></label>
-        ${QKIND === "photo" || QKIND === "video" ? `
-          <p class="hint">This marks the moment on the timeline; the ${QKIND} file itself attaches when
-            evidence storage arrives. Keep the media on the device until then.</p>` : ""}
+        <div class="capgrid">
+          <label class="cap"><input type="checkbox" id="a_sd"><span>Subject documented</span></label>
+          <label class="cap"><input type="checkbox" id="a_va"><span>Video acquired</span></label>
+          <label class="cap"><input type="checkbox" id="a_pa"><span>Photo taken</span></label>
+        </div>
+        <p class="hint">Tick what was captured at this moment — it goes on the timeline and into the
+          report line. The files themselves attach when evidence storage arrives.</p>
         <div class="two">
           <label class="f"><span>Location ${QKIND === "location" ? "" : `<span class="opt">optional</span>`}</span>
             <input id="a_loc" placeholder="e.g. 2214 Old Forest Rd"></label>
@@ -942,6 +970,10 @@ function activityPanel(){
             <div class="tl-d">${esc(e.description)}</div>
             ${e.location ? `<div class="tl-m">at ${esc(e.location)}</div>` : ""}
             ${e.vehicle ? `<div class="tl-m">vehicle: ${esc(e.vehicle)}</div>` : ""}
+            ${e.subject_documented || e.video_acquired || e.photo_acquired ? `<div>
+              ${e.subject_documented ? '<span class="tag cap-sd">Subject documented</span>' : ""}
+              ${e.video_acquired ? '<span class="tag cap-va">Video</span>' : ""}
+              ${e.photo_acquired ? '<span class="tag cap-pa">Photo</span>' : ""}</div>` : ""}
             ${e.internal_note ? `<div class="tl-n">internal: ${esc(e.internal_note)}</div>` : ""}
             <div class="tl-m">${esc(e.investigator || "")}${e.edited_at ? " · edited" : ""}</div>
           </div></li>`).join("")}
@@ -1352,6 +1384,9 @@ async function addActivityEntry(){
         description: $("a_desc").value,
         location: loc, vehicle: veh,
         internal_note: $("a_note").value,
+        subject_documented: $("a_sd") ? $("a_sd").checked : false,
+        video_acquired: $("a_va") ? $("a_va").checked : false,
+        photo_acquired: $("a_pa") ? $("a_pa").checked : false,
       }});
     }
   }catch(e){ WS_ERR = e.message; }
@@ -1610,6 +1645,12 @@ document.addEventListener("submit", ev => {
 });
 
 document.addEventListener("input", ev => {
+  if(ev.target.dataset && ev.target.dataset.act === "phrase"){
+    const d = $("a_desc"); const ph = ev.target.value;
+    if(ph && d){ d.value = d.value.trim() ? d.value.replace(/\s*$/, " ") + ph : ph; d.focus(); }
+    ev.target.selectedIndex = 0;
+    return;
+  }
   if(ev.target.dataset && ev.target.dataset.act === "filter"){ FILTER = ev.target.value; paint(); }
 });
 

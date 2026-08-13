@@ -879,8 +879,12 @@ async function caseWorkspace(env, user, caseNo) {
 
   const { results: activity } = await env.DB.prepare(
     `SELECT a.id, a.day_id, a.at_date, a.at_time, a.kind, a.description, a.location,
-            a.vehicle, a.internal_note, a.edited_at, u.display_name AS investigator
+            a.vehicle, a.internal_note, a.edited_at, u.display_name AS investigator,
+            COALESCE(m.subject_documented, 0) AS subject_documented,
+            COALESCE(m.video_acquired, 0) AS video_acquired,
+            COALESCE(m.photo_acquired, 0) AS photo_acquired
        FROM activity_log a LEFT JOIN users u ON u.id = a.investigator_id
+       LEFT JOIN activity_media m ON m.entry_id = a.id
       WHERE a.case_no = ?
       ORDER BY a.at_date DESC, a.at_time DESC, a.id DESC
       LIMIT 500`).bind(caseNo).all();
@@ -1068,7 +1072,20 @@ async function addActivity(request, env, user, caseNo) {
           String(body.internal_note || '').slice(0, 2000) || null,
           nowIso(), user.id).run();
 
-  return json({ ok: true, id: res.meta ? res.meta.last_row_id : null }, 201);
+  const id = res.meta ? res.meta.last_row_id : null;
+  // What was captured at this moment. Recorded beside the entry so the report
+  // can state it per line; the media files themselves attach with priority 6.
+  const f = v => (v === true || v === 1 || v === '1') ? 1 : 0;
+  const sd = f(body.subject_documented), va = f(body.video_acquired), pa = f(body.photo_acquired);
+  if (id && (sd || va || pa)) {
+    await env.DB.prepare(
+      `INSERT INTO activity_media (entry_id, subject_documented, video_acquired, photo_acquired)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(entry_id) DO UPDATE SET subject_documented = ?2, video_acquired = ?3, photo_acquired = ?4`)
+      .bind(id, sd, va, pa).run();
+  }
+
+  return json({ ok: true, id }, 201);
 }
 
 /* Edits are stamped, never silent. There is deliberately no delete route: an
@@ -1368,7 +1385,13 @@ function draftLine(e) {
     : `At approximately ${t} — ${d}`;
 
   const withDot = /[.!?]$/.test(body) ? body : body + '.';
-  return where ? withDot.replace(/([.!?])$/, `${where}$1`) : withDot;
+  const placed = where ? withDot.replace(/([.!?])$/, `${where}$1`) : withDot;
+  // What was captured, stated per line the way a chronology does.
+  const marks = [];
+  if (e.subject_documented) marks.push('Subject documented');
+  if (e.video_acquired) marks.push('Video acquired');
+  if (e.photo_acquired) marks.push('Photograph acquired');
+  return marks.length ? `${placed} (${marks.join('. ')}.)` : placed;
 }
 
 function draftBody(day, entries) {
@@ -1405,8 +1428,12 @@ async function generateReport(request, env, user, caseNo) {
   if (existing) return json({ error: 'A report already exists for that day.', id: existing.id }, 409);
 
   const { results } = await env.DB.prepare(
-    `SELECT at_time, description, location FROM activity_log
-      WHERE case_no = ? AND day_id = ? ORDER BY at_time ASC, id ASC`).bind(caseNo, dayId).all();
+    `SELECT a.at_time, a.description, a.location,
+            COALESCE(m.subject_documented, 0) AS subject_documented,
+            COALESCE(m.video_acquired, 0) AS video_acquired,
+            COALESCE(m.photo_acquired, 0) AS photo_acquired
+       FROM activity_log a LEFT JOIN activity_media m ON m.entry_id = a.id
+      WHERE a.case_no = ? AND a.day_id = ? ORDER BY a.at_time ASC, a.id ASC`).bind(caseNo, dayId).all();
 
   const res = await env.DB.prepare(
     `INSERT INTO case_reports (case_no, day_id, investigator_id, report_date, status, body, created_at)
@@ -1789,7 +1816,7 @@ const ADMIN_ONLY = 'This action needs an admin account.';
    can say plainly rather than a 500 the user has to interpret. */
 const EXPECTED_TABLES = [
   'users', 'sessions', 'submissions', 'login_fails', 'invites', 'ingest_rate',
-  'case_types', 'case_meta', 'case_days', 'activity_log', 'case_reports', 'app_config',
+  'case_types', 'case_meta', 'case_days', 'activity_log', 'activity_media', 'case_reports', 'app_config',
 ];
 
 async function missingTables(env) {

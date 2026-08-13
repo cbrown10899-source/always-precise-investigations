@@ -1219,6 +1219,11 @@ section('The daily report builder');
     await call(env, '/cases/API-R1/activity', { method: 'POST', cookie: inv,
       body: { at_date: '2026-08-12', at_time: t, description: d, location: loc } });
   }
+  // The captured-at-this-moment flags travel into the chronology.
+  await call(env, '/cases/API-R1/activity', { method: 'POST', cookie: inv,
+    body: { at_date: '2026-08-12', at_time: '09:12', description: 'Subject mowing the front lawn.',
+            subject_documented: true, video_acquired: true } });
+
   await call(env, '/cases/API-R1/day/end', { method: 'POST', cookie: inv,
     body: { end_time: '15:30', summary: 'Subject active throughout.' } });
 
@@ -1246,6 +1251,8 @@ section('The daily report builder');
   ok('and it never produces "the subject vehicle"', !body.includes('the subject vehicle'), body);
   ok('entries come out in time order', body.indexOf('7:03 AM') < body.indexOf('8:17 AM'));
   ok('the day summary is carried in', body.includes('Subject active throughout.'));
+  ok('a flagged moment states what was captured, per line',
+     body.includes('Subject mowing the front lawn. (Subject documented. Video acquired.)'), body);
   ok('a second report for the same day is refused',
      (await call(env, '/cases/API-R1/reports/generate', { method: 'POST', cookie: inv,
        body: { day_id: ws.days[0].id } })).status === 409);

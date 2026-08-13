@@ -184,6 +184,17 @@ CREATE TABLE IF NOT EXISTS activity_log (
 );
 CREATE INDEX IF NOT EXISTS idx_activity_case ON activity_log(case_no, at_date, at_time);
 
+-- What was captured at a timeline moment. A 1:1 side-table rather than new
+-- columns so schema.sql never needs an ALTER: the flags record THAT the
+-- subject was documented or footage acquired at that entry; the files
+-- themselves attach when evidence storage (priority 6) lands.
+CREATE TABLE IF NOT EXISTS activity_media (
+  entry_id           INTEGER PRIMARY KEY REFERENCES activity_log(id),
+  subject_documented INTEGER NOT NULL DEFAULT 0,
+  video_acquired     INTEGER NOT NULL DEFAULT 0,
+  photo_acquired     INTEGER NOT NULL DEFAULT 0
+);
+
 -- Daily reports (HANDOFF priority 5). A report is drafted FROM the activity
 -- log and then belongs to whoever is writing it — the generated chronology is
 -- a starting point, never a finished document, so `body` is plain editable
