@@ -599,6 +599,15 @@ async function caseSummary(env, user) {
     out.auth_warn_at = first;
   }
 
+  // The two stage-driven cards (priority 20): the ball in the client's court,
+  // and complete cases waiting on the closing checklist.
+  if (admin && have('case_status')) {
+    const { results: st } = await env.DB.prepare(
+      `SELECT case_no, stage FROM case_status WHERE stage IN ('awaiting_client','complete')`).all();
+    out.awaiting_client = cap((st || []).filter(r => r.stage === 'awaiting_client').map(r => r.case_no));
+    out.ready_to_close = cap((st || []).filter(r => r.stage === 'complete').map(r => r.case_no));
+  }
+
   // Follow-up tasks past their date (priority 19). The office's overdue list;
   // for an investigator, only tasks assigned to them.
   if (have('case_tasks')) {
@@ -752,8 +761,10 @@ async function listSubmissions(request, env, user) {
 
   const { results } = await env.DB.prepare(
     `SELECT s.case_no, s.kind, s.service, s.status, s.client_name, s.subject_name,
-            s.carrier, s.claim_number, s.created_at, s.assigned_to, u.display_name AS assigned_name
+            s.carrier, s.claim_number, s.created_at, s.assigned_to, u.display_name AS assigned_name,
+            cs.stage
        FROM submissions s LEFT JOIN users u ON u.id = s.assigned_to
+       LEFT JOIN case_status cs ON cs.case_no = s.case_no
        ${scope}
       ORDER BY s.created_at DESC LIMIT ? OFFSET ?`).bind(...binds).all();
 
@@ -789,7 +800,7 @@ async function getSubmission(env, user, caseNo) {
   return json({ submission: { ...row, payload } });
 }
 
-async function assignSubmission(request, env, caseNo) {
+async function assignSubmission(request, env, user, caseNo) {
   const body = await readJson(request);
   const userId = body.user_id === null ? null : parseInt(body.user_id, 10);
   if (userId !== null && !Number.isFinite(userId)) return json({ error: 'user_id is required' }, 400);
@@ -803,19 +814,96 @@ async function assignSubmission(request, env, caseNo) {
     'UPDATE submissions SET assigned_to = ?, status = ? WHERE case_no = ?')
     .bind(userId, status, caseNo).run();
   if (res.meta && res.meta.changes === 0) return json({ error: 'not found' }, 404);
+  await setStage(env, user, caseNo, userId === null ? 'open' : 'assigned');
   return json({ ok: true, case_no: caseNo, assigned_to: userId, status });
 }
 
-async function setStatus(request, env, caseNo) {
+/* Extended statuses and closure (HANDOFF priority 20). submissions.status is
+   CHECK-locked to four coarse values, so the nine operational stages live in
+   case_status and the coarse column is derived — everything older that reads
+   status keeps working, and the closed stage is reachable only through the
+   closing checklist. */
+const STAGES = ['open', 'assigned', 'in_progress', 'report_review', 'awaiting_client',
+  'complete', 'on_hold', 'cancelled', 'closed'];
+const coarseFor = stage =>
+  stage === 'closed' || stage === 'cancelled' ? 'closed'
+  : stage === 'open' ? 'new'
+  : stage === 'assigned' ? 'assigned' : 'in_progress';
+
+const CLOSURE_ITEMS = [
+  ['field_work', 'Field work completed'],
+  ['activity_logs', 'Activity logs completed'],
+  ['evidence', 'Evidence uploaded and accounted for'],
+  ['report', 'Report completed'],
+  ['admin_review', 'Admin review completed'],
+  ['deliverables', 'Client deliverables prepared'],
+  ['expenses', 'Expenses reviewed'],
+  ['billing', 'Billing reviewed'],
+];
+
+async function setStage(env, user, caseNo, stage) {
+  await env.DB.prepare(
+    `INSERT INTO case_status (case_no, stage, set_by, set_at) VALUES (?1, ?2, ?3, ?4)
+     ON CONFLICT(case_no) DO UPDATE SET stage = ?2, set_by = ?3, set_at = ?4`)
+    .bind(caseNo, stage, user ? user.id : null, nowIso()).run();
+  await env.DB.prepare('UPDATE submissions SET status = ? WHERE case_no = ?')
+    .bind(coarseFor(stage), caseNo).run();
+}
+
+async function setStatus(request, env, user, caseNo) {
   const body = await readJson(request);
-  const status = String(body.status || '');
-  if (!['new', 'assigned', 'in_progress', 'closed'].includes(status)) {
-    return json({ error: 'invalid status' }, 400);
+  let stage = String(body.status || '');
+  if (stage === 'new') stage = 'open';   // the older vocabulary
+  if (!STAGES.includes(stage)) return json({ error: 'invalid status' }, 400);
+  const row = await env.DB.prepare('SELECT status FROM submissions WHERE case_no = ?').bind(caseNo).first();
+  if (!row) return json({ error: 'not found' }, 404);
+  if (stage === 'closed') {
+    // Already closed: a no-op, so re-saving a closed case does not error.
+    if (row.status === 'closed') return json({ ok: true, case_no: caseNo, status: 'closed' });
+    return json({ error: 'Closing goes through the checklist — open the case and use Close the case.' }, 400);
   }
-  const res = await env.DB.prepare('UPDATE submissions SET status = ? WHERE case_no = ?')
-    .bind(status, caseNo).run();
-  if (res.meta && res.meta.changes === 0) return json({ error: 'not found' }, 404);
-  return json({ ok: true, case_no: caseNo, status });
+  if (row.status === 'closed') {
+    // Leaving closed reopens: the stamp clears, the ticks stay as history.
+    await env.DB.prepare('UPDATE case_closure SET closed_by = NULL, closed_at = NULL WHERE case_no = ?')
+      .bind(caseNo).run();
+  }
+  await setStage(env, user, caseNo, stage);
+  return json({ ok: true, case_no: caseNo, status: stage });
+}
+
+async function saveClosure(request, env, user, caseNo) {
+  const sub = await env.DB.prepare('SELECT 1 AS x FROM submissions WHERE case_no = ?').bind(caseNo).first();
+  if (!sub) return json({ error: 'not found' }, 404);
+  const body = await readJson(request);
+  const given = body.checklist && typeof body.checklist === 'object' ? body.checklist : {};
+  const out = {};
+  for (const [k] of CLOSURE_ITEMS) if (given[k]) out[k] = true;
+  await env.DB.prepare(
+    `INSERT INTO case_closure (case_no, checklist_json, updated_by, updated_at)
+     VALUES (?1, ?2, ?3, ?4)
+     ON CONFLICT(case_no) DO UPDATE SET checklist_json = ?2, updated_by = ?3, updated_at = ?4`)
+    .bind(caseNo, JSON.stringify(out), user.id, nowIso()).run();
+  return json({ ok: true, checklist: out });
+}
+
+async function closeCase(env, user, caseNo) {
+  const sub = await env.DB.prepare('SELECT status FROM submissions WHERE case_no = ?').bind(caseNo).first();
+  if (!sub) return json({ error: 'not found' }, 404);
+  if (sub.status === 'closed') return json({ ok: true, status: 'closed' });
+  const c = await env.DB.prepare('SELECT checklist_json FROM case_closure WHERE case_no = ?').bind(caseNo).first();
+  let ticks = {};
+  try { ticks = c && c.checklist_json ? JSON.parse(c.checklist_json) : {}; } catch { ticks = {}; }
+  const missing = CLOSURE_ITEMS.filter(([k]) => !ticks[k]).map(([, l]) => l);
+  if (missing.length) {
+    return json({ error: 'Finish the checklist first — still open: ' + missing.join('; ') + '.' }, 400);
+  }
+  await env.DB.prepare(
+    `INSERT INTO case_closure (case_no, checklist_json, closed_by, closed_at, updated_by, updated_at)
+     VALUES (?1, ?2, ?3, ?4, ?3, ?4)
+     ON CONFLICT(case_no) DO UPDATE SET closed_by = ?3, closed_at = ?4, updated_by = ?3, updated_at = ?4`)
+    .bind(caseNo, JSON.stringify(ticks), user.id, nowIso()).run();
+  await setStage(env, user, caseNo, 'closed');
+  return json({ ok: true, status: 'closed' });
 }
 
 /* ------------------------------------------------------- case workspace */
@@ -1121,6 +1209,22 @@ async function caseWorkspace(env, user, caseNo) {
 
   const auth = await authorizationFor(env, caseNo, admin);
 
+  // The operational stage (priority 20); older cases without a row fall back
+  // to a stage derived from the coarse status.
+  const stRow = await env.DB.prepare('SELECT stage FROM case_status WHERE case_no = ?').bind(caseNo).first();
+  const stage = stRow ? stRow.stage : (row.status === 'new' ? 'open' : row.status);
+  let closure = null;
+  if (admin) {
+    const c = await env.DB.prepare(
+      `SELECT c.checklist_json, c.closed_at, u.display_name AS closed_by
+         FROM case_closure c LEFT JOIN users u ON u.id = c.closed_by
+        WHERE c.case_no = ?`).bind(caseNo).first();
+    let checklist = {};
+    try { checklist = c && c.checklist_json ? JSON.parse(c.checklist_json) : {}; } catch { checklist = {}; }
+    closure = { items: CLOSURE_ITEMS, checklist,
+                closed_at: c ? c.closed_at : null, closed_by: c ? c.closed_by : null };
+  }
+
   /* Per-type details for private cases (priority 16). The case type picks the
      field set; a claims case never has one — its claim details live in the
      intake payload. Both roles read them: they are fieldwork facts. */
@@ -1155,6 +1259,8 @@ async function caseWorkspace(env, user, caseNo) {
     case_no: row.case_no,
     kind: row.kind,
     status: row.status,
+    stage,
+    closure,
     authorization: auth,
     details,
     detail_set: detailSet,
@@ -2166,6 +2272,7 @@ const EXPECTED_TABLES = [
   'case_types', 'case_meta', 'case_days', 'activity_log', 'activity_media', 'case_reports', 'app_config',
   'case_expenses', 'case_notes', 'user_rates', 'case_settings', 'password_resets', 'case_offers',
   'case_details', 'case_subjects', 'subject_vehicles', 'case_comms', 'case_tasks',
+  'case_status', 'case_closure',
 ];
 
 async function missingTables(env) {
@@ -2265,13 +2372,13 @@ async function route(request, env) {
   m = p.match(/^\/submissions\/([A-Za-z0-9-]{3,64})\/assign$/);
   if (m && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
-    return assignSubmission(request, env, m[1]);
+    return assignSubmission(request, env, user, m[1]);
   }
 
   m = p.match(/^\/submissions\/([A-Za-z0-9-]{3,64})\/status$/);
   if (m && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
-    return setStatus(request, env, m[1]);
+    return setStatus(request, env, user, m[1]);
   }
 
   /* Internal rates. Admin-only and deliberately not reachable from the intake
@@ -2359,6 +2466,18 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/comms$/);
   if (m && method === 'POST') return addComm(request, env, user, m[1]);
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/closure$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return saveClosure(request, env, user, m[1]);
+  }
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/close$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return closeCase(env, user, m[1]);
+  }
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/tasks$/);
   if (m && method === 'POST') return addTask(request, env, user, m[1]);
@@ -2563,6 +2682,7 @@ async function route(request, env) {
     await env.DB.prepare(
       `UPDATE submissions SET assigned_to = ?, status = 'assigned' WHERE case_no = ?`)
       .bind(user.id, offer.case_no).run();
+    await setStage(env, user, offer.case_no, 'assigned');
     await env.DB.prepare(
       `UPDATE case_offers SET status = 'accepted', responded_at = ? WHERE id = ?`).bind(nowIso(), oid).run();
     // Anyone else still holding a pending offer on this case loses it quietly.

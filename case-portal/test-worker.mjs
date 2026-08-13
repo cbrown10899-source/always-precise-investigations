@@ -1637,6 +1637,81 @@ section('Follow-up tasks: assignment is the only way one reaches the field');
      after.tasks.find(t => t.id === mine.id).done_at === null);
 }
 
+section('Closure: nine stages, and the checklist is the only door to closed');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const tok = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find(u => u.username === 'dana').id;
+
+  await ingest(env, { case_no: 'API-CL1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  await call(env, '/submissions/API-CL1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+
+  ok('the new stages are accepted',
+     (await call(env, '/submissions/API-CL1/status', { method: 'POST', cookie: admin,
+       body: { status: 'report_review' } })).status === 200);
+  let list = await jsonOf(await call(env, '/submissions', { cookie: admin }));
+  const row = list.submissions.find(r => r.case_no === 'API-CL1');
+  ok('the list carries the fine stage', row.stage === 'report_review');
+  ok('while the coarse status stays in the old vocabulary', row.status === 'in_progress');
+
+  await call(env, '/submissions/API-CL1/status', { method: 'POST', cookie: admin,
+    body: { status: 'awaiting_client' } });
+  let sum = (await jsonOf(await call(env, '/summary', { cookie: admin }))).summary;
+  ok('awaiting-client cases become a dashboard card', sum.awaiting_client.includes('API-CL1'));
+  await call(env, '/submissions/API-CL1/status', { method: 'POST', cookie: admin,
+    body: { status: 'complete' } });
+  sum = (await jsonOf(await call(env, '/summary', { cookie: admin }))).summary;
+  ok('complete cases wait under Ready to close', sum.ready_to_close.includes('API-CL1'));
+
+  ok('the status shortcut to closed is refused',
+     (await call(env, '/submissions/API-CL1/status', { method: 'POST', cookie: admin,
+       body: { status: 'closed' } })).status === 400);
+  const shortClose = await call(env, '/cases/API-CL1/close', { method: 'POST', cookie: admin });
+  ok('closing with an unfinished checklist names what is missing',
+     shortClose.status === 400 && (await jsonOf(shortClose)).error.includes('Billing reviewed'));
+
+  ok('an investigator cannot tick the checklist',
+     (await call(env, '/cases/API-CL1/closure', { method: 'POST', cookie: inv,
+       body: { checklist: { billing: true } } })).status === 403);
+  ok('nor close',
+     (await call(env, '/cases/API-CL1/close', { method: 'POST', cookie: inv })).status === 403);
+
+  const every = { field_work: true, activity_logs: true, evidence: true, report: true,
+                  admin_review: true, deliverables: true, expenses: true, billing: true };
+  await call(env, '/cases/API-CL1/closure', { method: 'POST', cookie: admin, body: { checklist: every } });
+  ok('with all eight confirmed the case closes',
+     (await call(env, '/cases/API-CL1/close', { method: 'POST', cookie: admin })).status === 200);
+
+  const ws = await jsonOf(await call(env, '/cases/API-CL1/workspace', { cookie: admin }));
+  ok('the workspace shows closed with who and when',
+     ws.stage === 'closed' && ws.status === 'closed'
+     && ws.closure.closed_by === 'Trever' && ws.closure.closed_at != null);
+  const iws = await jsonOf(await call(env, '/cases/API-CL1/workspace', { cookie: inv }));
+  ok('the investigator sees the stage but never the closure machinery',
+     iws.stage === 'closed' && iws.closure === null);
+
+  // Reopen from the status: the stamp clears, the ticks stay as history.
+  await call(env, '/submissions/API-CL1/status', { method: 'POST', cookie: admin,
+    body: { status: 'in_progress' } });
+  const back = await jsonOf(await call(env, '/cases/API-CL1/workspace', { cookie: admin }));
+  ok('reopening clears the closed stamp', back.stage === 'in_progress' && back.closure.closed_at === null);
+  ok('but keeps the checklist as history', back.closure.checklist.billing === true);
+
+  ok('the old vocabulary still lands: new means open',
+     (await call(env, '/submissions/API-CL1/status', { method: 'POST', cookie: admin,
+       body: { status: 'new' } })).status === 200
+     && (await jsonOf(await call(env, '/cases/API-CL1/workspace', { cookie: admin }))).stage === 'open');
+  ok('and nonsense is still refused',
+     (await call(env, '/submissions/API-CL1/status', { method: 'POST', cookie: admin,
+       body: { status: 'resolved' } })).status === 400);
+}
+
 section('Password reset: a one-time link, nobody learns the password');
 {
   const env = freshEnv();

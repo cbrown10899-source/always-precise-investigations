@@ -1371,6 +1371,56 @@ section('Follow-up tasks in the browser');
   await page.close();
 }
 
+/* Priority 20: the nine stages, and closing through the checklist. Runs last
+   on purpose — it walks API-20260812-4002 to closed and back. */
+section('Closing a case takes the checklist');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+
+  await wsTab(page, 'Assignment');
+  ok('the status select speaks the full vocabulary',
+     has(await text(page, '#sts'), 'Awaiting client') && has(await text(page, '#sts'), 'On hold'));
+  await page.locator('#sts').selectOption('awaiting_client');
+  await page.locator('[data-act="saveCase"]').click();
+  await page.waitForTimeout(700);
+  ok('the list tag reads the new stage', has(await rowFor(page, 'API-20260812-4002').innerText(), 'Awaiting client'));
+  const waitCard = page.locator('.stat', { hasText: 'Awaiting client' });
+  ok('the dashboard card counts it', parseInt((await waitCard.innerText()).match(/\d+/)[0], 10) >= 1);
+
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  ok('the closing checklist waits on the overview',
+     has(await text(page, '#dlgBody'), 'Close the case'));
+  await page.locator('[data-act="closeCase"]').click();
+  await page.waitForTimeout(600);
+  ok('closing early names the unfinished lines',
+     has(await text(page, '#dlgBody'), 'Finish the checklist'));
+  for (const k of ['field_work','activity_logs','evidence','report','admin_review','deliverables','expenses','billing']) {
+    await page.locator('#cl_' + k).check();
+  }
+  await page.locator('[data-act="closeCase"]').click();
+  await page.waitForTimeout(700);
+  ok('all eight confirmed closes the case', has(await text(page, '#dlgBody'), 'Case closed'));
+
+  await page.locator('.close').click();
+  await page.waitForTimeout(500);
+  ok('the list shows it closed', has(await rowFor(page, 'API-20260812-4002').innerText(), 'Closed'));
+
+  // Reopen from the status select — the checklist is for closing, not holding.
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Assignment');
+  await page.locator('#sts').selectOption('in_progress');
+  await page.locator('[data-act="saveCase"]').click();
+  await page.waitForTimeout(700);
+  ok('reopening from the status works',
+     has(await rowFor(page, 'API-20260812-4002').innerText(), 'In progress'));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();

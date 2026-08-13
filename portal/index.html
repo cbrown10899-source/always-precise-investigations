@@ -67,6 +67,12 @@
   .tag.assigned{background:#eaf4f7;color:#1f5c6d;}
   .tag.in_progress{background:#e8f1fb;color:#1e4f8a;}
   .tag.closed{background:#e9f7ef;color:var(--good);}
+  .tag.report_review{background:#f3ecfb;color:#5b3d8a;}
+  .tag.awaiting_client{background:#fdf1e3;color:var(--warn);}
+  .tag.complete{background:#e9f7ef;color:var(--good);}
+  .tag.on_hold{background:#f1f1f1;color:#666;}
+  .tag.cancelled{background:#f1f1f1;color:#888;}
+  .tag.open{background:#fdf1e3;color:var(--warn);}
   .empty{color:var(--muted);padding:26px 4px;font-size:.92rem;}
 
   /* dashboard strip */
@@ -282,7 +288,9 @@ function when(iso){
   return isNaN(d) ? esc(iso) : d.toLocaleString([], {month:"short", day:"numeric", year:"numeric", hour:"numeric", minute:"2-digit"});
 }
 const label = s => ({
-  new:"New", assigned:"Assigned", in_progress:"In progress", closed:"Closed",
+  new:"Open", open:"Open", assigned:"Assigned", in_progress:"In progress", closed:"Closed",
+  report_review:"Report review", awaiting_client:"Awaiting client", complete:"Complete",
+  on_hold:"On hold", cancelled:"Cancelled",
   activity:"Activity", photo:"Photo", video:"Video", location:"Location",
   vehicle:"Vehicle", note:"Note", mileage:"Mileage", expense:"Expense",
   tolls:"Tolls", parking:"Parking", hotel:"Hotel", airfare:"Airfare", rental:"Rental vehicle",
@@ -561,6 +569,10 @@ function summaryCards(){
              s.auth_warn_at ? `Past ${s.auth_warn_at}% of hours` : "Hours running out",
              low.length ? "warn" : "", low)
       + card("Tasks overdue", late.length, "Past their due date", late.length ? "warn" : "", late)
+      + card("Awaiting client", (s.awaiting_client || []).length, "Ball in their court", "",
+             s.awaiting_client || [])
+      + card("Ready to close", (s.ready_to_close || []).length, "Complete — run the checklist",
+             (s.ready_to_close || []).length ? "live" : "", s.ready_to_close || [])
       + card("Expenses to review", (s.expenses_pending || []).length, "Awaiting your call",
              (s.expenses_pending || []).length ? "warn" : "", s.expenses_pending || [])
     : card("Assigned to you", total, total ? "" : "Nothing yet")
@@ -817,7 +829,7 @@ function casesView(){
           ${c.claim_number ? `<div class="mono">${esc(c.claim_number)}</div>` : ""}</td>
       <td class="hide">${esc(c.subject_name || "—")}</td>`
       : `<td>${esc(c.subject_name || "—")}</td>`}
-      <td><span class="tag ${esc(c.status)}">${esc(label(c.status))}</span></td>
+      <td><span class="tag ${esc(c.stage || c.status)}">${esc(label(c.stage || c.status))}</span></td>
       ${admin ? `<td class="hide">${esc(c.assigned_name || "—")}</td>` : ""}
     </tr>`).join("");
 
@@ -1478,6 +1490,67 @@ function commsPanel(){
           : "Nothing shared with you on this case yet."}</div>`}`;
 }
 
+/* Priority 20 — the nine operational stages. The select offers every stage
+   except closed: closing goes through the checklist, and the Worker refuses
+   the shortcut. A closed case shows closed as its current value so re-saving
+   is a no-op rather than an error. */
+function STAGE_OPTS(s){
+  const wsStage = WS && WS.case_no === s.case_no ? WS.stage : null;
+  const cur = wsStage || s.stage || (s.status === "new" ? "open" : s.status) || "open";
+  const stages = ["open","assigned","in_progress","report_review","awaiting_client",
+                  "complete","on_hold","cancelled"];
+  const list = cur === "closed" ? ["closed", ...stages] : stages;
+  return list.map(v => `<option value="${v}" ${v === cur ? "selected" : ""}>${esc(label(v))}</option>`).join("");
+}
+
+/* The closing checklist: eight attestations, the only door to closed. */
+function closurePanel(){
+  if(ME.role !== "admin" || !WS || !WS.closure) return "";
+  const c = WS.closure;
+  if(c.closed_at){
+    return `<div class="feebox" style="margin-top:14px">
+      <div class="row"><span><b>Case closed</b></span>
+        <span>${esc(c.closed_by || "")} &middot; ${when(c.closed_at)}</span></div>
+      <div class="row"><span style="color:var(--muted);font-size:.85rem">Reopen by setting a status
+        above and saving.</span><span></span></div>
+    </div>`;
+  }
+  const done = c.items.filter(([k]) => c.checklist[k]).length;
+  return `<form class="quick" data-act="saveClosure" style="margin-top:14px">
+    <h3 style="margin:0 0 8px;font-size:1rem">Close the case <span class="opt">${done}/${c.items.length} confirmed</span></h3>
+    ${c.items.map(([k, l]) => `
+      <label class="cap"><input type="checkbox" id="cl_${k}" ${c.checklist[k] ? "checked" : ""}><span>${esc(l)}</span></label>`).join("")}
+    <div style="margin-top:10px">
+      <button class="btn ghost sm" type="submit">Save checklist</button>
+      <button class="btn sm" type="button" data-act="closeCase">Close the case</button>
+    </div>
+    <p class="hint">Every line is your confirmation, not the system's guess. Closing needs all
+      ${c.items.length}; the case can be reopened later from the status above.</p>
+    ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+  </form>`;
+}
+
+async function saveClosureTicks(){
+  WS_ERR = "";
+  const checklist = {};
+  for(const [k] of ((WS && WS.closure && WS.closure.items) || [])){
+    const el = $("cl_" + k);
+    if(el) checklist[k] = el.checked;
+  }
+  try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/closure`, {method:"POST", body:{checklist}}); }
+  catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+async function doCloseCase(){
+  await saveClosureTicks();          // what is on screen is what gets judged
+  if(WS_ERR) return;
+  WS_ERR = "";
+  try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/close`, {method:"POST", body:{}}); }
+  catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
 /* Priority 19 — follow-up tasks. Admin-created; assigning one to an
    investigator is the office choosing to tell them, and that assignment is
    the only way a task reaches one. The one write the field has is marking
@@ -1577,7 +1650,7 @@ function caseBodyHtml(){
     : WS_TAB === "auth"     ? authPanel(a, admin) + (admin ? authAdminForm() : "")
     : WS_TAB === "assign"   ? assignPanel(s)
     : WS_TAB === "subject"  ? detailList(s, "subject") + caseDetailsPanel() + subjectsPanel(s)
-    :                         myOfferBox() + detailList(s, "overview") + (a.authorized_hours != null ? authPanel(a, admin) : "");
+    :                         myOfferBox() + detailList(s, "overview") + (a.authorized_hours != null ? authPanel(a, admin) : "") + closurePanel();
 
   return `
     <h2>${esc(a.case_type || (s.kind === "claims" ? "Claim assignment" : "Client intake"))}</h2>
@@ -1615,7 +1688,7 @@ function exampleBodyHtml(){
             ${USERS.filter(u => u.active).map(u => `<option value="${u.id}" ${u.id === s.assigned_to ? "selected" : ""}>${esc(u.display_name || u.username)}</option>`).join("")}
           </select></label>
         <label class="f"><span>Status</span>
-          <select id="sts">${["new","assigned","in_progress","closed"].map(v => `<option value="${v}" ${v === s.status ? "selected" : ""}>${esc(label(v))}</option>`).join("")}</select></label>
+          <select id="sts">${STAGE_OPTS(s)}</select></label>
         <button class="btn" data-act="saveCase" data-case="${esc(s.case_no)}">Save</button>
         <div class="err" id="derr" style="width:100%"></div>
       </div>` : "";
@@ -1918,7 +1991,7 @@ function assignPanel(s){
           ${USERS.filter(u => u.active).map(u => `<option value="${u.id}" ${u.id === s.assigned_to ? "selected" : ""}>${esc(u.display_name || u.username)}</option>`).join("")}
         </select></label>
       <label class="f"><span>Status</span>
-        <select id="sts">${["new","assigned","in_progress","closed"].map(v => `<option value="${v}" ${v === s.status ? "selected" : ""}>${esc(label(v))}</option>`).join("")}</select></label>
+        <select id="sts">${STAGE_OPTS(s)}</select></label>
       <button class="btn" data-act="saveCase" data-case="${esc(s.case_no)}">Save</button>
       <div class="err" id="derr" style="width:100%"></div>
     </div>`;
@@ -2305,6 +2378,7 @@ document.addEventListener("click", ev => {
   else if(act === "vehEdit"){ SUBJ_FORM = {mode:"veh", sid: Number(el.dataset.sid), vid: Number(el.dataset.vid)}; WS_ERR = ""; paintCase(); }
   else if(act === "subjCancel"){ SUBJ_FORM = null; WS_ERR = ""; paintCase(); }
   else if(act === "taskStatus"){ setTaskStat(Number(el.dataset.id), el.dataset.s); }
+  else if(act === "closeCase"){ doCloseCase(); }
   else if(act === "openReport"){
     WS_REPORT = WS_REPORT === Number(el.dataset.id) ? null : Number(el.dataset.id);
     WS_ERR = ""; paintCase();
@@ -2359,6 +2433,7 @@ document.addEventListener("submit", ev => {
   else if(a === "addNote") addNoteEntry();
   else if(a === "addComm") addCommEntry();
   else if(a === "addTask") addTaskEntry();
+  else if(a === "saveClosure") saveClosureTicks();
   else if(a === "makeOffer") makeCaseOffer();
   else if(a === "saveDetails") saveCaseDetails();
   else if(a === "saveSubject") saveSubjectRec(el.dataset.id ? Number(el.dataset.id) : null);
