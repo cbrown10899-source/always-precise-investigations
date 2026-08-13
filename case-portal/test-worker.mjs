@@ -919,6 +919,10 @@ section('The two internal calculations never share a number');
   const iws = await jsonOf(await call(env, '/cases/API-RB1/workspace', { cookie: inv }));
   ok('none of it ever reaches an investigator',
      !JSON.stringify(iws.authorization).match(/retainer|1500|2000|billed_at_rate/i));
+  // The overview's progress fields (UIBUILD P7) sit behind the same wall: a
+  // build is a client deliverable and an invoice is money.
+  ok('an investigator workspace has no build status',
+     !('build_status' in iws) && !('invoice_status' in iws));
 
   // The claims side of the wall: authorized hours that match a block name
   // the package, and only then.
@@ -1422,6 +1426,11 @@ section('The investigation day and the activity log');
   ok('no day is running', ws.open_day === null);
   ok('the thresholds are configuration, not constants',
      JSON.stringify(ws.authorization.warn_at) === JSON.stringify([75, 90, 100]));
+  // The overview's progress fields (UIBUILD P7): present for the office even
+  // while empty, so the page never guesses.
+  ok('an admin workspace carries the build state',
+     'build_status' in ws && ws.build_status === null);
+  ok('and the invoice state', 'invoice_status' in ws && ws.invoice_status === null);
 
   ok('a day starts',
      (await call(env, '/cases/API-W1/day/start', { method: 'POST', cookie: admin,

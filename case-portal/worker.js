@@ -1307,6 +1307,23 @@ async function caseWorkspace(env, user, caseNo) {
   // to a stage derived from the coarse status.
   const stRow = await env.DB.prepare('SELECT stage FROM case_status WHERE case_no = ?').bind(caseNo).first();
   const stage = stRow ? stRow.stage : (row.status === 'new' ? 'open' : row.status);
+
+  /* Build and invoice state for the overview's package-progress column
+     (UIBUILD P7). Admin-only, like the closure block below: an invoice is
+     money and a build is a client deliverable — an investigator receives
+     neither, the same boundary /packages and /build already enforce. */
+  let buildStatus = null, invoiceStatus = null;
+  if (admin) {
+    const b = await env.DB.prepare(
+      'SELECT status FROM case_builds WHERE case_no = ? ORDER BY version DESC, id DESC LIMIT 1')
+      .bind(caseNo).first();
+    buildStatus = b ? b.status : null;
+    const iv = await env.DB.prepare(
+      "SELECT status FROM invoices WHERE case_no = ? AND status != 'void' ORDER BY id DESC LIMIT 1")
+      .bind(caseNo).first();
+    invoiceStatus = iv ? iv.status : null;
+  }
+
   let closure = null;
   if (admin) {
     const c = await env.DB.prepare(
@@ -1355,6 +1372,7 @@ async function caseWorkspace(env, user, caseNo) {
     status: row.status,
     stage,
     closure,
+    ...(admin ? { build_status: buildStatus, invoice_status: invoiceStatus } : {}),
     authorization: auth,
     details,
     detail_set: detailSet,
