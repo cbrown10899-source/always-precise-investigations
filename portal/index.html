@@ -548,6 +548,7 @@ function summaryCards(){
   };
 
   const active = s.active_now || [], due = s.reports_due || [], low = s.auth_low || [];
+  const late = s.tasks_overdue || [];
   const total = (s.total || 0) + shown.length;
 
   const cards = admin
@@ -559,12 +560,14 @@ function summaryCards(){
       + card("Authorization low", low.length,
              s.auth_warn_at ? `Past ${s.auth_warn_at}% of hours` : "Hours running out",
              low.length ? "warn" : "", low)
+      + card("Tasks overdue", late.length, "Past their due date", late.length ? "warn" : "", late)
       + card("Expenses to review", (s.expenses_pending || []).length, "Awaiting your call",
              (s.expenses_pending || []).length ? "warn" : "", s.expenses_pending || [])
     : card("Assigned to you", total, total ? "" : "Nothing yet")
       + card("Out now", active.length, "Your day is running", active.length ? "live" : "", active)
       + card("Reports due", due.length, "Finish or fix a report", due.length ? "warn" : "", due)
-      + card("Authorization low", low.length, "Call before exceeding", low.length ? "warn" : "", low);
+      + card("Authorization low", low.length, "Call before exceeding", low.length ? "warn" : "", low)
+      + card("Tasks overdue", late.length, "Past their due date", late.length ? "warn" : "", late);
 
   // No Hide button here — the banner over the case list already carries one,
   // and two controls doing the same thing is how a page starts feeling
@@ -1076,7 +1079,7 @@ function wsTabs(){
   const admin = ME.role === "admin";
   const t = [["overview","Overview"], ["subject","Subject"], ["activity","Activity log"],
              ["field","Field work"], ["reports","Reports"], ["expenses","Expenses"], ["notes","Internal notes"],
-             ["comms","Comm log"]];
+             ["comms","Comm log"], ["tasks","Tasks"]];
   // Authorization is the insurance panel; it appears once there is one, and
   // always for an admin so it can be set.
   if(admin || (WS && WS.authorization && WS.authorization.authorized_hours != null)) t.push(["auth","Authorization"]);
@@ -1475,6 +1478,59 @@ function commsPanel(){
           : "Nothing shared with you on this case yet."}</div>`}`;
 }
 
+/* Priority 19 — follow-up tasks. Admin-created; assigning one to an
+   investigator is the office choosing to tell them, and that assignment is
+   the only way a task reaches one. The one write the field has is marking
+   their own task done. */
+function tasksPanel(){
+  const admin = ME.role === "admin";
+  const tasks = (WS && WS.tasks) || [];
+  const today = new Date().toISOString().slice(0,10);
+  const priTag = p => p === "urgent" ? `<span class="tag rs-needs_revision">urgent</span>`
+    : p === "high" ? `<span class="tag rs-submitted">high</span>`
+    : p === "low" ? `<span class="tag rs-draft">low</span>` : "";
+
+  const composer = !admin ? "" : `
+    <form class="quick" data-act="addTask">
+      <label class="f"><span>What needs doing</span>
+        <input id="t_task" placeholder="e.g. Call the adjuster to confirm the second day."></label>
+      <div class="two">
+        <label class="f"><span>Assigned to</span>
+          <select id="t_who"><option value="">The office</option>
+            ${USERS.filter(u => u.active).map(u =>
+              `<option value="${u.id}">${esc(u.display_name || u.username)}</option>`).join("")}</select></label>
+        <label class="f"><span>Due <span class="opt">optional</span></span><input id="t_due" type="date"></label>
+      </div>
+      <label class="f"><span>Priority</span>
+        <select id="t_pri">${[["normal","Normal"],["high","High"],["urgent","Urgent"],["low","Low"]]
+          .map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select></label>
+      <button class="btn" type="submit">Add task</button>
+      <p class="hint">A task assigned to an investigator shows on their view of this case and on
+        their dashboard when overdue. Office tasks stay with the office.</p>
+      ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+    </form>`;
+
+  const row = t => {
+    const overdue = t.status === "open" && t.due_date && t.due_date < today;
+    return `<div class="rcard" style="cursor:default${t.status !== "open" ? ";opacity:.65" : ""}">
+      <div class="rc-h"><b>${esc(t.task)}</b>${priTag(t.priority)}
+        ${t.status === "open"
+          ? `<button class="btn sm" data-act="taskStatus" data-id="${t.id}" data-s="done">Done</button>
+             ${admin ? `<button class="btn sm ghost" data-act="taskStatus" data-id="${t.id}" data-s="cancelled">Cancel</button>` : ""}`
+          : `<span class="tag ${t.status === "done" ? "rs-approved" : "rs-draft"}">${esc(t.status)}</span>
+             ${admin ? `<button class="btn sm ghost" data-act="taskStatus" data-id="${t.id}" data-s="open">Reopen</button>` : ""}`}</div>
+      <div class="tl-m">${t.assignee ? esc(t.assignee) : "The office"}${
+        t.due_date ? ` &middot; due ${esc(fmtDay(t.due_date))}` : ""}${
+        overdue ? ` &middot; <b style="color:#a33">overdue</b>` : ""}</div>
+    </div>`;
+  };
+
+  return `${composer}
+    ${tasks.length ? `<div class="rlist">${tasks.map(row).join("")}</div>`
+      : `<div class="empty">${admin ? "No tasks on this case yet."
+          : "Nothing is assigned to you on this case."}</div>`}`;
+}
+
 function authAdminForm(){
   const a = (WS && WS.authorization) || {};
   const types = (WS && WS.case_types) || [];
@@ -1517,6 +1573,7 @@ function caseBodyHtml(){
     : WS_TAB === "expenses" ? expensesPanel()
     : WS_TAB === "notes"    ? notesPanel()
     : WS_TAB === "comms"    ? commsPanel()
+    : WS_TAB === "tasks"    ? tasksPanel()
     : WS_TAB === "auth"     ? authPanel(a, admin) + (admin ? authAdminForm() : "")
     : WS_TAB === "assign"   ? assignPanel(s)
     : WS_TAB === "subject"  ? detailList(s, "subject") + caseDetailsPanel() + subjectsPanel(s)
@@ -2008,6 +2065,24 @@ async function addNoteEntry(){
   await reloadWorkspace();
 }
 
+async function addTaskEntry(){
+  WS_ERR = "";
+  try{
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/tasks`, {method:"POST", body:{
+      task: $("t_task").value, assigned_to: $("t_who").value,
+      due_date: $("t_due").value, priority: $("t_pri").value,
+    }});
+  }catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+async function setTaskStat(id, s){
+  WS_ERR = "";
+  try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/tasks/${id}/status`, {method:"POST", body:{status: s}}); }
+  catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
 async function addCommEntry(){
   WS_ERR = "";
   try{
@@ -2229,6 +2304,7 @@ document.addEventListener("click", ev => {
   else if(act === "vehAdd"){ SUBJ_FORM = {mode:"veh", sid: Number(el.dataset.sid)}; WS_ERR = ""; paintCase(); }
   else if(act === "vehEdit"){ SUBJ_FORM = {mode:"veh", sid: Number(el.dataset.sid), vid: Number(el.dataset.vid)}; WS_ERR = ""; paintCase(); }
   else if(act === "subjCancel"){ SUBJ_FORM = null; WS_ERR = ""; paintCase(); }
+  else if(act === "taskStatus"){ setTaskStat(Number(el.dataset.id), el.dataset.s); }
   else if(act === "openReport"){
     WS_REPORT = WS_REPORT === Number(el.dataset.id) ? null : Number(el.dataset.id);
     WS_ERR = ""; paintCase();
@@ -2282,6 +2358,7 @@ document.addEventListener("submit", ev => {
   else if(a === "addExpense") addExpenseEntry();
   else if(a === "addNote") addNoteEntry();
   else if(a === "addComm") addCommEntry();
+  else if(a === "addTask") addTaskEntry();
   else if(a === "makeOffer") makeCaseOffer();
   else if(a === "saveDetails") saveCaseDetails();
   else if(a === "saveSubject") saveSubjectRec(el.dataset.id ? Number(el.dataset.id) : null);

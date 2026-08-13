@@ -1334,6 +1334,43 @@ section('The communication log');
   await page.close();
 }
 
+/* Priority 19: follow-up tasks, and the overdue card that answers for them. */
+section('Follow-up tasks in the browser');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Tasks');
+  await page.locator('#t_task').fill('Call the adjuster to confirm the second day.');
+  await page.locator('#t_due').fill('2026-08-12');
+  await page.locator('#t_pri').selectOption('high');
+  await page.locator('.btn', { hasText: 'Add task' }).click();
+  await page.waitForTimeout(600);
+  const body = await text(page, '#dlgBody');
+  ok('the task lands on the list', has(body, 'Call the adjuster'));
+  ok('a past due date reads overdue', has(body, 'overdue'));
+
+  await page.locator('.close').click();
+  await page.waitForTimeout(400);
+  await render(page);
+  const lateCard = page.locator('.stat', { hasText: 'Tasks overdue' });
+  ok('the dashboard counts it', parseInt((await lateCard.innerText()).match(/\d+/)[0], 10) >= 1);
+  await lateCard.click();
+  await page.waitForTimeout(300);
+  ok('clicking narrows the list to the case', (await text(page, '.card')).includes('API-20260812-4002'));
+  await page.locator('.chip button').click();
+  await page.waitForTimeout(250);
+
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Tasks');
+  await page.locator('.btn', { hasText: 'Done' }).first().click();
+  await page.waitForTimeout(600);
+  ok('done retires the task', has(await text(page, '#dlgBody'), 'done'));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
