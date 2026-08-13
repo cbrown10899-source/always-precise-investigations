@@ -1740,6 +1740,408 @@ async function setTaskStatus(request, env, user, caseNo, taskId) {
   return json({ ok: true });
 }
 
+
+/* ------------------------------------------------------------- invoicing */
+
+/* The invoice system (INVOICING.md). The portal is the operational record;
+   BILL collects the money. Everything here is admin-only — an investigator
+   never sees a client invoice, an amount, or a payment status. Totals are
+   computed from lines and payments on read so they cannot drift, and every
+   consequential action lands in invoice_events with who and when. */
+
+const INVOICE_STATUSES = ['draft', 'ready', 'sent_to_bill', 'sent_to_client', 'partially_paid', 'paid', 'void'];
+const PAYMENT_METHODS = ['ach', 'card', 'check', 'wire', 'other'];
+const BILLING_PROVIDERS = ['manual', 'bill', 'stripe', 'quickbooks', 'other'];
+const INVOICE_REF_KEYS = ['claim_number', 'policy_number', 'insured', 'claimant', 'date_of_loss',
+  'client_reference', 'po_number', 'authorization_number', 'vendor_number', 'service_dates',
+  'assignment_type', 'adjuster'];
+
+const BILLING_DEFAULTS = {
+  company_name: 'Always Precise Investigations, LLC',
+  company_line: 'Va DCJS #11-9159 · (434) 907-0975',
+  invoice_prefix: 'API-INV',
+  terms_insurance: 'Net 30',
+  terms_private: 'Due on receipt',
+  payment_instructions: 'Please remit payment according to the electronic payment instructions provided with this invoice.',
+  invoice_footer: 'Thank you for choosing Always Precise Investigations. Please reference the invoice number and claim number with payment.',
+};
+
+async function billingSettings(env) {
+  const out = { ...BILLING_DEFAULTS };
+  const { results } = await env.DB.prepare(
+    "SELECT key, value FROM app_config WHERE key LIKE 'billing_%'").all();
+  for (const r of results || []) {
+    const k = r.key.replace(/^billing_/, '');
+    if (k in out) out[k] = r.value;
+  }
+  return out;
+}
+
+async function invoiceEvent(env, invoiceId, user, action, detail) {
+  await env.DB.prepare(
+    'INSERT INTO invoice_events (invoice_id, action, detail, user_id, at) VALUES (?, ?, ?, ?, ?)')
+    .bind(invoiceId, action, detail || null, user ? user.id : null, nowIso()).run();
+}
+
+/* Server-side, sequential, unique, never the database id. API-INV-2026-0001. */
+async function nextInvoiceNo(env) {
+  const cfg = await billingSettings(env);
+  const year = nowIso().slice(0, 4);
+  const row = await env.DB.prepare(
+    'SELECT invoice_no FROM invoices WHERE invoice_no LIKE ? ORDER BY invoice_no DESC LIMIT 1')
+    .bind(`${cfg.invoice_prefix}-${year}-%`).first();
+  const last = row ? parseInt(row.invoice_no.slice(row.invoice_no.lastIndexOf('-') + 1), 10) : 0;
+  return `${cfg.invoice_prefix}-${year}-${String((Number.isFinite(last) ? last : 0) + 1).padStart(4, '0')}`;
+}
+
+function invoiceMoney(lines, adjustments, payments) {
+  const subtotal = Math.round((lines || []).reduce((t, l) => t + Number(l.amount || 0), 0) * 100) / 100;
+  const total = Math.round((subtotal + Number(adjustments || 0)) * 100) / 100;
+  const paid = Math.round((payments || []).reduce((t, pm) => t + Number(pm.amount || 0), 0) * 100) / 100;
+  return { subtotal, total, amount_paid: paid, balance_due: Math.round((total - paid) * 100) / 100 };
+}
+
+/* Overdue is a fact about today, computed on read — never stored where it
+   could go stale. Void never reads as overdue. */
+function invoiceDisplayStatus(inv, money) {
+  if (inv.status === 'void') return 'void';
+  if (money.balance_due <= 0 && money.total > 0 && money.amount_paid > 0) return 'paid';
+  if (money.amount_paid > 0 && money.balance_due > 0) return 'partially_paid';
+  if (inv.due_date && inv.due_date < nowIso().slice(0, 10) && money.balance_due > 0
+      && inv.status !== 'draft') return 'overdue';
+  return inv.status;
+}
+
+async function invoiceWithMoney(env, inv) {
+  const { results: lines } = await env.DB.prepare(
+    'SELECT id, sort, description, qty, rate, amount FROM invoice_lines WHERE invoice_id = ? ORDER BY sort, id')
+    .bind(inv.id).all();
+  const { results: payments } = await env.DB.prepare(
+    `SELECT p.id, p.amount, p.paid_date, p.method, p.reference, p.provider,
+            p.external_payment_id, p.notes, p.recorded_at, u.display_name AS recorded_by
+       FROM invoice_payments p LEFT JOIN users u ON u.id = p.recorded_by
+      WHERE p.invoice_id = ? ORDER BY p.paid_date, p.id`).bind(inv.id).all();
+  const money = invoiceMoney(lines, inv.adjustments, payments);
+  let refs = {};
+  try { refs = JSON.parse(inv.refs_json || '{}'); } catch { refs = {}; }
+  return { ...inv, refs_json: undefined, refs, lines: lines || [], payments: payments || [],
+           ...money, display_status: invoiceDisplayStatus(inv, money) };
+}
+
+/* What an invoice must carry before the office can call it Ready. Insurance
+   gaps that a carrier's AP desk usually wants are warnings, not blocks —
+   different carriers need different references. */
+function invoiceReadyProblems(inv, lines) {
+  const problems = [];
+  if (!inv.bill_to || !String(inv.bill_to).trim()) problems.push('who the invoice bills to');
+  if (!inv.issue_date) problems.push('an issue date');
+  if (!(lines && lines.length)) problems.push('at least one line item');
+  if (!inv.due_date && !(inv.payment_terms && String(inv.payment_terms).trim())) {
+    problems.push('a due date or payment terms');
+  }
+  if (!inv.billing_email && !String(inv.bill_to || '').trim()) problems.push('a billing destination');
+  return problems;
+}
+
+function invoiceWarnings(inv) {
+  if (inv.invoice_type !== 'insurance') return [];
+  let refs = {};
+  try { refs = typeof inv.refs === 'object' && inv.refs ? inv.refs : JSON.parse(inv.refs_json || '{}'); }
+  catch { refs = {}; }
+  const wanted = [['claim_number', 'claim number'], ['adjuster', 'adjuster'],
+                  ['po_number', 'PO number'], ['authorization_number', 'authorization number'],
+                  ['vendor_number', 'vendor number']];
+  return wanted.filter(([k]) => !refs[k]).map(([, label]) => `no ${label} on the invoice`);
+}
+
+/* CREATE INVOICE from the case: pre-pulls what the case already knows, and
+   nothing sends anywhere. A possible duplicate warns and requires the
+   admin's explicit confirmation — supplemental invoices are legitimate. */
+async function createInvoice(request, env, user, caseNo) {
+  const sub = await env.DB.prepare('SELECT * FROM submissions WHERE case_no = ?').bind(caseNo).first();
+  if (!sub) return json({ error: 'not found' }, 404);
+  const body = await readJson(request);
+
+  const dup = await env.DB.prepare(
+    "SELECT invoice_no FROM invoices WHERE case_no = ? AND status != 'void' LIMIT 1").bind(caseNo).first();
+  if (dup && body.confirm_duplicate !== true) {
+    return json({ error: `Possible duplicate — ${dup.invoice_no} already bills this case. Confirm to create a supplemental invoice.`,
+                  possible_duplicate: dup.invoice_no }, 409);
+  }
+
+  let payload = {};
+  try { payload = JSON.parse(sub.payload || '{}'); } catch { payload = {}; }
+  const type = sub.kind === 'claims' ? 'insurance' : 'private';
+  const cfg = await billingSettings(env);
+
+  const billTo = type === 'insurance'
+    ? [sub.carrier || payload.carrier, payload.adjuster ? `Attn: ${payload.adjuster}` : 'Attn: Billing Department']
+        .filter(Boolean).join('\n')
+    : (sub.client_name || payload.client_name || '');
+  const refs = {};
+  if (type === 'insurance') {
+    for (const [k, v] of [['claim_number', sub.claim_number || payload.claim_number],
+                          ['policy_number', payload.policy_number],
+                          ['claimant', payload.subject_name],
+                          ['date_of_loss', payload.date_of_loss],
+                          ['adjuster', payload.adjuster]]) {
+      if (v) refs[k] = String(v).slice(0, 200);
+    }
+  }
+
+  const invoiceNo = await nextInvoiceNo(env);
+  const now = nowIso();
+  const res = await env.DB.prepare(
+    `INSERT INTO invoices (invoice_no, case_no, invoice_type, status, issue_date, payment_terms,
+       bill_to, billing_email, refs_json, created_by, created_at, updated_by, updated_at)
+     VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(invoiceNo, caseNo, type, now.slice(0, 10),
+          type === 'insurance' ? cfg.terms_insurance : cfg.terms_private,
+          billTo || null,
+          (type === 'insurance' ? (payload.billing_email || payload.adjuster_email) : (sub.client_email || payload.client_email)) || null,
+          JSON.stringify(refs), user.id, now, user.id, now).run();
+  const id = res.meta ? res.meta.last_row_id : null;
+
+  /* CREATE FROM AUTHORIZATION: an insurance case whose authorized hours match
+     a block bills as that flat package — one line, no per-hour arithmetic. A
+     private case's opening request is the retainer, never a surcharge. */
+  if (body.from_authorization === true) {
+    if (type === 'insurance') {
+      const meta = await env.DB.prepare(
+        'SELECT authorized_hours FROM case_meta WHERE case_no = ?').bind(caseNo).first();
+      const hours = meta ? Number(meta.authorized_hours) : null;
+      const pkg = hours != null ? RATES.packages.find(pk => pk.hours === hours) : null;
+      if (pkg) {
+        await env.DB.prepare(
+          `INSERT INTO invoice_lines (invoice_id, sort, description, qty, rate, amount)
+           VALUES (?, 0, ?, 1, NULL, ?)`)
+          .bind(id, `${pkg.hours}-Hour Surveillance Authorization`, pkg.price).run();
+      } else if (hours) {
+        await env.DB.prepare(
+          `INSERT INTO invoice_lines (invoice_id, sort, description, qty, rate, amount)
+           VALUES (?, 0, ?, ?, ?, ?)`)
+          .bind(id, 'Authorized Surveillance', hours, RATES.surveillance.standard,
+                Math.round(hours * RATES.surveillance.standard * 100) / 100).run();
+      }
+    } else {
+      await env.DB.prepare(
+        `INSERT INTO invoice_lines (invoice_id, sort, description, qty, rate, amount)
+         VALUES (?, 0, 'Investigation Retainer', 1, NULL, ?)`)
+        .bind(id, PERSONAL.retainer).run();
+      await env.DB.prepare('UPDATE invoices SET client_notes = ? WHERE id = ?')
+        .bind('Retainer is applied toward authorized investigative services.', id).run();
+    }
+  }
+
+  await invoiceEvent(env, id, user, 'created', `${invoiceNo} for ${caseNo}`);
+  const inv = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
+  return json({ ok: true, invoice: await invoiceWithMoney(env, inv) }, 201);
+}
+
+async function listInvoices(request, env) {
+  const q = new URL(request.url).searchParams;
+  const rows = (await env.DB.prepare(
+    'SELECT * FROM invoices ORDER BY id DESC LIMIT 500').all()).results || [];
+  const full = [];
+  for (const r of rows) full.push(await invoiceWithMoney(env, r));
+
+  const today = nowIso().slice(0, 10);
+  const soonCut = new Date(Date.parse(today) + 14 * 86400000).toISOString().slice(0, 10);
+  const month = today.slice(0, 7);
+  const live = full.filter(i => i.status !== 'void');
+  const summary = {
+    outstanding: Math.round(live.filter(i => i.status !== 'draft')
+      .reduce((t, i) => t + Math.max(0, i.balance_due), 0) * 100) / 100,
+    due_soon: live.filter(i => i.display_status !== 'paid' && i.status !== 'draft'
+      && i.due_date && i.due_date >= today && i.due_date <= soonCut).length,
+    overdue: live.filter(i => i.display_status === 'overdue').length,
+    paid_this_month: Math.round(full.reduce((t, i) => t + i.payments
+      .filter(pm => String(pm.paid_date || '').slice(0, 7) === month)
+      .reduce((x, pm) => x + Number(pm.amount || 0), 0), 0) * 100) / 100,
+    drafts: full.filter(i => i.status === 'draft').length,
+  };
+
+  let out = full;
+  const status = q.get('status'), type = q.get('type'), text = (q.get('q') || '').toLowerCase();
+  if (status) out = out.filter(i => i.display_status === status || i.status === status);
+  if (type) out = out.filter(i => i.invoice_type === type);
+  if (text) out = out.filter(i => [i.invoice_no, i.case_no, i.bill_to, i.refs.claim_number]
+    .some(v => String(v || '').toLowerCase().includes(text)));
+  return json({ invoices: out, summary, settings: await billingSettings(env) });
+}
+
+async function editInvoice(request, env, user, id) {
+  const inv = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
+  if (!inv) return json({ error: 'not found' }, 404);
+  if (inv.status === 'void') return json({ error: 'A void invoice keeps its record — create a new one instead.' }, 400);
+  const body = await readJson(request);
+
+  /* Past ready, the financial content is settled: only internal notes and the
+     provider bookkeeping stay editable. Corrections after sending are an
+     adjustment or a void, both on the record. */
+  const locked = !['draft', 'ready'].includes(inv.status);
+  const fields = {};
+  const take = (k, cap) => {
+    if (body[k] === undefined) return;
+    fields[k] = body[k] === null ? null : String(body[k]).trim().slice(0, cap) || null;
+  };
+  take('internal_notes', 4000);
+  if (!locked) {
+    take('bill_to', 600); take('billing_email', 200); take('client_notes', 2000);
+    take('issue_date', 10); take('due_date', 10); take('payment_terms', 100);
+    for (const d of ['issue_date', 'due_date']) {
+      if (fields[d] && !/^\d{4}-\d{2}-\d{2}$/.test(fields[d])) return json({ error: 'Dates are YYYY-MM-DD.' }, 400);
+    }
+    if (body.adjustments !== undefined) {
+      const adj = Number(body.adjustments);
+      if (!Number.isFinite(adj)) return json({ error: 'Adjustments must be a number.' }, 400);
+      fields.adjustments = adj;
+    }
+    if (body.refs !== undefined && typeof body.refs === 'object' && body.refs) {
+      const refs = {};
+      for (const k of INVOICE_REF_KEYS) {
+        const v = body.refs[k];
+        if (v !== undefined && v !== null && String(v).trim()) refs[k] = String(v).trim().slice(0, 200);
+      }
+      fields.refs_json = JSON.stringify(refs);
+    }
+  }
+  if (!Object.keys(fields).length) return json({ error: locked
+    ? 'This invoice is past editing — only internal notes can change.' : 'Nothing to change.' }, 400);
+
+  const sets = Object.keys(fields).map(k => `${k} = ?`).join(', ');
+  await env.DB.prepare(`UPDATE invoices SET ${sets}, updated_by = ?, updated_at = ? WHERE id = ?`)
+    .bind(...Object.values(fields), user.id, nowIso(), id).run();
+  await invoiceEvent(env, id, user, 'edited', Object.keys(fields).join(', '));
+  const after = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
+  return json({ ok: true, invoice: await invoiceWithMoney(env, after) });
+}
+
+async function replaceInvoiceLines(request, env, user, id) {
+  const inv = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
+  if (!inv) return json({ error: 'not found' }, 404);
+  if (!['draft', 'ready'].includes(inv.status)) {
+    return json({ error: 'Lines are settled once an invoice leaves the office — adjust or void instead.' }, 400);
+  }
+  const body = await readJson(request);
+  const given = Array.isArray(body.lines) ? body.lines.slice(0, 50) : null;
+  if (!given || !given.length) return json({ error: 'An invoice needs at least one line item.' }, 400);
+  const clean = [];
+  for (const [i, l] of given.entries()) {
+    const description = String(l.description || '').trim().slice(0, 300);
+    if (!description) return json({ error: `Line ${i + 1} needs a description.` }, 400);
+    const qty = l.qty === undefined || l.qty === null || String(l.qty).trim() === '' ? 1 : Number(l.qty);
+    const rate = l.rate === undefined || l.rate === null || String(l.rate).trim() === '' ? null : Number(l.rate);
+    if (!Number.isFinite(qty) || (rate !== null && !Number.isFinite(rate))) {
+      return json({ error: `Line ${i + 1}: quantity and rate must be numbers.` }, 400);
+    }
+    const amount = l.amount === undefined || l.amount === null || String(l.amount).trim() === ''
+      ? (rate !== null ? Math.round(qty * rate * 100) / 100 : null) : Number(l.amount);
+    if (amount === null || !Number.isFinite(amount)) {
+      return json({ error: `Line ${i + 1} needs an amount (or a rate to compute one).` }, 400);
+    }
+    clean.push({ sort: i, description, qty, rate, amount: Math.round(amount * 100) / 100 });
+  }
+  await env.DB.prepare('DELETE FROM invoice_lines WHERE invoice_id = ?').bind(id).run();
+  for (const l of clean) {
+    await env.DB.prepare(
+      'INSERT INTO invoice_lines (invoice_id, sort, description, qty, rate, amount) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(id, l.sort, l.description, l.qty, l.rate, l.amount).run();
+  }
+  await env.DB.prepare('UPDATE invoices SET updated_by = ?, updated_at = ? WHERE id = ?')
+    .bind(user.id, nowIso(), id).run();
+  await invoiceEvent(env, id, user, 'lines_replaced', `${clean.length} line(s)`);
+  const after = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
+  return json({ ok: true, invoice: await invoiceWithMoney(env, after) });
+}
+
+async function setInvoiceStatus(request, env, user, id) {
+  const inv = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
+  if (!inv) return json({ error: 'not found' }, 404);
+  const body = await readJson(request);
+  const status = String(body.status || '');
+  if (!INVOICE_STATUSES.includes(status)) return json({ error: 'invalid status' }, 400);
+  if (status === 'paid' || status === 'partially_paid') {
+    return json({ error: 'Payment status comes from recorded payments, never from a button.' }, 400);
+  }
+  if (inv.status === 'void') return json({ error: 'A void invoice stays void.' }, 400);
+
+  if (status === 'ready') {
+    const { results: lines } = await env.DB.prepare(
+      'SELECT id FROM invoice_lines WHERE invoice_id = ?').bind(id).all();
+    const problems = invoiceReadyProblems(inv, lines);
+    if (problems.length) return json({ error: 'Not ready yet — it still needs ' + problems.join(', ') + '.' }, 400);
+  }
+  if (status === 'sent_to_bill') {
+    if (!['ready', 'sent_to_bill'].includes(inv.status)) {
+      return json({ error: 'Review it to Ready before it goes to BILL.' }, 400);
+    }
+  }
+  if (status === 'sent_to_client' && !['ready', 'sent_to_bill', 'sent_to_client'].includes(inv.status)) {
+    return json({ error: 'Only a reviewed invoice is ever sent.' }, 400);
+  }
+
+  const sets = ['status = ?', 'updated_by = ?', 'updated_at = ?'];
+  const binds = [status, user.id, nowIso()];
+  if (status === 'sent_to_bill') { sets.push('sent_to_bill_at = ?', "billing_provider = 'bill'"); binds.push(nowIso()); }
+  binds.push(id);
+  await env.DB.prepare(`UPDATE invoices SET ${sets.join(', ')} WHERE id = ?`).bind(...binds).run();
+  await invoiceEvent(env, id, user, status === 'void' ? 'voided' : `status_${status}`, null);
+  const after = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
+  const out = await invoiceWithMoney(env, after);
+  return json({ ok: true, invoice: out, warnings: status === 'ready' ? invoiceWarnings(out) : [] });
+}
+
+async function setInvoiceBillRefs(request, env, user, id) {
+  const inv = await env.DB.prepare('SELECT id, status FROM invoices WHERE id = ?').bind(id).first();
+  if (!inv) return json({ error: 'not found' }, 404);
+  if (inv.status === 'void') return json({ error: 'A void invoice stays void.' }, 400);
+  const body = await readJson(request);
+  const provider = BILLING_PROVIDERS.includes(String(body.billing_provider || '')) ? body.billing_provider : 'bill';
+  const g = k => body[k] === undefined || body[k] === null ? null : String(body[k]).trim().slice(0, 120) || null;
+  await env.DB.prepare(
+    `UPDATE invoices SET billing_provider = ?, external_invoice_id = ?, external_customer_id = ?,
+        external_status = ?, last_synced_at = ?, updated_by = ?, updated_at = ? WHERE id = ?`)
+    .bind(provider, g('external_invoice_id'), g('external_customer_id'), g('external_status'),
+          nowIso(), user.id, nowIso(), id).run();
+  await invoiceEvent(env, id, user, 'bill_ref_added',
+    [g('external_invoice_id'), g('external_status')].filter(Boolean).join(' · ') || null);
+  const after = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
+  return json({ ok: true, invoice: await invoiceWithMoney(env, after) });
+}
+
+async function recordInvoicePayment(request, env, user, id) {
+  const inv = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
+  if (!inv) return json({ error: 'not found' }, 404);
+  if (inv.status === 'void') return json({ error: 'A void invoice takes no payments.' }, 400);
+  if (inv.status === 'draft') return json({ error: 'Review the draft before recording payments against it.' }, 400);
+  const body = await readJson(request);
+  const amount = Number(body.amount);
+  if (!Number.isFinite(amount) || amount <= 0) return json({ error: 'Payment amount must be a positive number.' }, 400);
+  const date = String(body.paid_date || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json({ error: 'Date the payment (YYYY-MM-DD).' }, 400);
+  const method = PAYMENT_METHODS.includes(String(body.method || '')) ? body.method : 'other';
+  const provider = BILLING_PROVIDERS.includes(String(body.provider || '')) ? body.provider : 'manual';
+  await env.DB.prepare(
+    `INSERT INTO invoice_payments (invoice_id, amount, paid_date, method, reference, provider,
+       external_payment_id, notes, recorded_by, recorded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(id, Math.round(amount * 100) / 100, date, method,
+          String(body.reference || '').trim().slice(0, 120) || null, provider,
+          String(body.external_payment_id || '').trim().slice(0, 120) || null,
+          String(body.notes || '').trim().slice(0, 1000) || null, user.id, nowIso()).run();
+
+  /* Payment status is arithmetic, never a claim: the stored status moves to
+     paid only when the balance actually reaches zero. */
+  const out = await invoiceWithMoney(env, inv);
+  const newStatus = out.balance_due <= 0 ? 'paid' : 'partially_paid';
+  await env.DB.prepare('UPDATE invoices SET status = ?, updated_by = ?, updated_at = ? WHERE id = ?')
+    .bind(newStatus, user.id, nowIso(), id).run();
+  await invoiceEvent(env, id, user, 'payment_recorded', `$${amount} ${method}` + (newStatus === 'paid' ? ' — PAID IN FULL' : ''));
+  const after = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
+  return json({ ok: true, invoice: await invoiceWithMoney(env, after) });
+}
+
 /* ------------------------------------------------- my work, across cases */
 
 /* An investigator's own desk: their reports and their expenses across every
@@ -2352,6 +2754,7 @@ const EXPECTED_TABLES = [
   'case_expenses', 'case_notes', 'user_rates', 'case_settings', 'password_resets', 'case_offers',
   'case_details', 'case_subjects', 'subject_vehicles', 'case_comms', 'case_tasks',
   'case_status', 'case_closure', 'case_retainer',
+  'invoices', 'invoice_lines', 'invoice_payments', 'invoice_events',
 ];
 
 async function missingTables(env) {
@@ -2545,6 +2948,50 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/comms$/);
   if (m && method === 'POST') return addComm(request, env, user, m[1]);
+
+
+  /* Invoicing (INVOICING.md) — the office's money desk. Admin-only in full:
+     an investigator never sees a client invoice, an amount, or a payment. */
+  if (p.startsWith('/invoices') || /^\/cases\/[A-Za-z0-9-]{3,64}\/invoices$/.test(p) || p === '/billing-settings') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  }
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/invoices$/);
+  if (m && method === 'POST') return createInvoice(request, env, user, m[1]);
+  if (p === '/invoices' && method === 'GET') return listInvoices(request, env);
+  m = p.match(/^\/invoices\/(\d{1,12})$/);
+  if (m && method === 'GET') {
+    const inv = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(parseInt(m[1], 10)).first();
+    if (!inv) return json({ error: 'not found' }, 404);
+    const full = await invoiceWithMoney(env, inv);
+    const { results: events } = await env.DB.prepare(
+      `SELECT e.action, e.detail, e.at, u.display_name AS who
+         FROM invoice_events e LEFT JOIN users u ON u.id = e.user_id
+        WHERE e.invoice_id = ? ORDER BY e.id`).bind(inv.id).all();
+    return json({ invoice: full, warnings: invoiceWarnings(full),
+                  events: events || [], settings: await billingSettings(env) });
+  }
+  if (m && method === 'POST') return editInvoice(request, env, user, parseInt(m[1], 10));
+  m = p.match(/^\/invoices\/(\d{1,12})\/lines$/);
+  if (m && method === 'POST') return replaceInvoiceLines(request, env, user, parseInt(m[1], 10));
+  m = p.match(/^\/invoices\/(\d{1,12})\/status$/);
+  if (m && method === 'POST') return setInvoiceStatus(request, env, user, parseInt(m[1], 10));
+  m = p.match(/^\/invoices\/(\d{1,12})\/bill$/);
+  if (m && method === 'POST') return setInvoiceBillRefs(request, env, user, parseInt(m[1], 10));
+  m = p.match(/^\/invoices\/(\d{1,12})\/payments$/);
+  if (m && method === 'POST') return recordInvoicePayment(request, env, user, parseInt(m[1], 10));
+  if (p === '/billing-settings' && method === 'GET') return json({ settings: await billingSettings(env) });
+  if (p === '/billing-settings' && method === 'POST') {
+    const body = await readJson(request);
+    for (const k of Object.keys(BILLING_DEFAULTS)) {
+      if (body[k] === undefined) continue;
+      const v = String(body[k]).trim().slice(0, 1000);
+      await env.DB.prepare(
+        `INSERT INTO app_config (key, value, updated_by, updated_at) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(key) DO UPDATE SET value = ?2, updated_by = ?3, updated_at = ?4`)
+        .bind('billing_' + k, v, user.id, nowIso()).run();
+    }
+    return json({ ok: true, settings: await billingSettings(env) });
+  }
 
   /* The private-retainer record (RATESHEETS.md admin side). Consumer cases
      only — a claim assignment is authorized in hour blocks, and the two
