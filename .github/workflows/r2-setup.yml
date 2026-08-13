@@ -1,0 +1,116 @@
+name: Set up evidence storage (R2)
+
+# One-shot R2 bucket setup for evidence management (HANDOFF priority 6), run
+# from the Actions tab. Uses the CLOUDFLARE_API_TOKEN already stored on this
+# repository:
+#
+#   - probes whether the token is allowed to touch R2 at all, and says exactly
+#     which permission to add if not (nothing is changed on a failed probe)
+#   - finds or creates the private bucket
+#   - never touches wrangler.toml — the Worker's R2 binding ships with the
+#     evidence feature itself, only after this workflow has confirmed the
+#     bucket exists, because deploying a binding to a missing bucket breaks
+#     every later deploy of the Worker
+#
+# Safe to run more than once: a second run finds the bucket and stops.
+#
+# The bucket is private. Nothing here makes it public, and the evidence
+# feature serves files only through the Worker's own session checks.
+on:
+  workflow_dispatch:
+    inputs:
+      bucket:
+        description: 'Bucket name for case evidence'
+        required: true
+        default: 'case-evidence'
+
+permissions: {}
+
+concurrency:
+  group: r2-setup
+  cancel-in-progress: false
+
+env:
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: 63a4b8fd9efe4137e1f91c49b5e61c6f
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe — is this token allowed to touch R2?
+        env:
+          BUCKET: ${{ inputs.bucket }}
+        run: |
+          set -uo pipefail
+          API="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets"
+          AUTH="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+
+          show_errors() {
+            printf '%s\n' "$1" | jq -r '.errors[]? | "  [\(.code)] \(.message)"' 2>/dev/null \
+              || printf '  %s\n' "$1"
+          }
+
+          LIST=$(curl -sS -H "$AUTH" "$API?per_page=100" 2>/dev/null)
+          if [ "$(printf '%s' "$LIST" | jq -r '.success // false')" != "true" ]; then
+            echo "R2_VERDICT: token-lacks-r2"
+            show_errors "$LIST"
+            {
+              echo "## The token cannot touch R2 yet"
+              echo ""
+              echo "CLOUDFLARE_API_TOKEN has no R2 permission — it was created for"
+              echo "Pages, Workers and D1. One edit in the Cloudflare dashboard fixes it:"
+              echo ""
+              echo "**My Profile → API Tokens → edit the token this repository uses → add:**"
+              echo ""
+              echo '```'
+              echo "    Account | Workers R2 Storage | Edit"
+              echo '```'
+              echo ""
+              echo "Then run this workflow again. Nothing has been changed."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::CLOUDFLARE_API_TOKEN has no R2 permission. Add 'Account | Workers R2 Storage | Edit' to the token, then re-run. Nothing was changed."
+            exit 1
+          fi
+          echo "Token can list R2 buckets."
+
+          if [ "$(printf '%s' "$LIST" | jq -r --arg b "$BUCKET" '[.result.buckets[]? | select(.name==$b)] | length')" -gt 0 ]; then
+            echo "R2_VERDICT: ready (bucket already existed)"
+            echo "R2_STATE=existing" >> "$GITHUB_ENV"
+          else
+            echo "R2_STATE=absent" >> "$GITHUB_ENV"
+          fi
+
+      - name: Create the bucket if it is not there
+        if: env.R2_STATE == 'absent'
+        env:
+          BUCKET: ${{ inputs.bucket }}
+        run: |
+          set -uo pipefail
+          API="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets"
+          AUTH="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+
+          CREATED=$(curl -sS -X POST -H "$AUTH" -H 'Content-Type: application/json' \
+                      -d "$(jq -nc --arg n "$BUCKET" '{name:$n}')" "$API")
+          if [ "$(printf '%s' "$CREATED" | jq -r '.success // false')" != "true" ]; then
+            echo "R2_VERDICT: create-failed"
+            printf '%s\n' "$CREATED" | jq -r '.errors[]? | "  [\(.code)] \(.message)"' 2>/dev/null || true
+            echo "::error::The token can list R2 but could not create the bucket — it likely has Read rather than Edit. Change the permission to 'Account | Workers R2 Storage | Edit' and re-run."
+            exit 1
+          fi
+          echo "R2_VERDICT: ready (bucket created)"
+          echo "R2_STATE=created" >> "$GITHUB_ENV"
+
+      - name: What happens next
+        if: success()
+        env:
+          BUCKET: ${{ inputs.bucket }}
+        run: |
+          {
+            echo "## Evidence bucket is ready"
+            echo ""
+            echo "- Bucket: \`$BUCKET\` ($( [ "$R2_STATE" = created ] && echo 'created just now' || echo 'already existed' ), private)"
+            echo ""
+            echo "The Worker's R2 binding and the evidence upload/serve routes ship"
+            echo "with the evidence feature itself — nothing else to click here."
+          } >> "$GITHUB_STEP_SUMMARY"
