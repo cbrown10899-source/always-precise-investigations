@@ -849,9 +849,11 @@ section('The case workspace in the browser');
   ok('and offers to end it from right there',
      await page.locator('.btn', { hasText: 'End the day' }).count() === 1);
   const quick = await page.locator('.qgrid').innerText();
-  for (const b of ['Activity', 'Photo', 'Video', 'Location', 'Vehicle', 'Note', 'Mileage', 'Expense']) {
+  for (const b of ['Activity', 'Location', 'Vehicle', 'Note', 'Mileage', 'Expense']) {
     ok(`there is a quick button for ${b}`, has(quick, b), quick);
   }
+  ok('Photo and Video pills are gone — capture is a checkmark on the moment',
+     !has(quick, 'Photo') && !has(quick, 'Video'), quick);
   await page.locator('#a_date').fill('2026-08-12');
   await page.locator('#a_time').fill('07:14');
   await page.locator('#a_desc').fill('Subject vehicle observed parked at residence.');
@@ -1113,11 +1115,24 @@ section('Each quick button changes the composer');
   ok('Expense swaps in amount and category',
      await page.locator('#a_amt').count() === 1 && await page.locator('#a_cat').count() === 1);
 
-  await page.locator('.qk2', { hasText: 'Video' }).click();
+  await page.locator('.qk2', { hasText: 'Activity' }).click();
   await page.waitForTimeout(250);
-  const vid = await text(page, '#dlgBody');
-  ok('Video asks what the footage captures', has(vid, 'What the video captures'));
-  ok('and says the file attaches when evidence storage lands', has(vid, 'evidence storage'));
+  ok('the capture checkmarks sit on the activity composer',
+     await page.locator('#a_sd').count() === 1 && await page.locator('#a_va').count() === 1
+       && await page.locator('#a_pa').count() === 1);
+  ok('the stock chronology lines are offered', await page.locator('#a_phrase').count() === 1);
+  await page.locator('#a_phrase').selectOption('Subject departed residence.');
+  await page.waitForTimeout(150);
+  ok('picking a line fills the description',
+     (await page.locator('#a_desc').inputValue()) === 'Subject departed residence.');
+  await page.locator('#a_va').check();
+  await page.locator('#a_sd').check();
+  await page.locator('#a_time').fill('09:41');
+  await page.locator('.btn', { hasText: 'Add to the log' }).click();
+  await page.waitForTimeout(500);
+  const flagged = await text(page, '#dlgBody');
+  ok('the timeline wears the capture badges',
+     has(flagged, 'Subject documented') && has(flagged, 'Video'), flagged.slice(0, 200));
 
   await page.locator('.qk2', { hasText: 'Location' }).click();
   await page.waitForTimeout(250);
