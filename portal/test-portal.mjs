@@ -81,6 +81,7 @@ function d1(db) {
 const db = new DatabaseSync(':memory:');
 db.exec(SCHEMA);
 
+const r2store = new Map();
 const env = {
   DB: d1(db),
   SITE_ORIGIN: '',              // filled in once the port is known
@@ -88,6 +89,11 @@ const env = {
   BOOTSTRAP_TOKEN: 'e2e-bootstrap',
   PBKDF2_ITER: '10000',
   INGEST_PER_MINUTE: '500',
+  EVIDENCE: {                    // the R2 stand-in — bytes in, bytes out
+    async put(key, body, opts) { r2store.set(key, { body, opts }); },
+    async get(key) { const o = r2store.get(key); return o ? { body: o.body } : null; },
+    async delete(key) { r2store.delete(key); },
+  },
 };
 
 // ONE server serves the page and mounts the Worker at /portal-api/*, because
@@ -1515,6 +1521,49 @@ section('An invoice from case to PAID');
   const st = await page.evaluate(async () =>
     (await fetch('/portal-api/invoices', { credentials: 'same-origin' })).status);
   ok('and the invoice book refuses them', st === 403);
+  await page.close();
+}
+
+/* Priority 6: evidence through the browser — upload, classify, serve, delete,
+   and the storage meter on the dashboard. */
+section('Evidence in the browser');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Evidence');
+  ok('the tab says the failsafe is on', has(await text(page, '#dlgBody'), 'free-plan failsafe'));
+
+  await page.locator('#ev_file').setInputFiles({
+    name: 'clip1.mp4', mimeType: 'video/mp4', buffer: Buffer.alloc(4096, 65) });
+  await page.locator('#ev_note').fill('Subject loading lumber, clip 1.');
+  await page.locator('.btn', { hasText: 'Upload evidence' }).click();
+  await page.waitForTimeout(700);
+  let body = await text(page, '#dlgBody');
+  ok('the upload lands with its note', has(body, 'clip1.mp4') && has(body, 'loading lumber'));
+  ok('and reports the meter', has(body, '% of the free plan'));
+
+  const served = await page.evaluate(async () => {
+    const link = document.querySelector('.rcard a');
+    const r = await fetch(link.getAttribute('href'), { credentials: 'same-origin' });
+    return { status: r.status, type: r.headers.get('content-type'), len: (await r.arrayBuffer()).byteLength };
+  });
+  ok('the file streams back through the Worker', served.status === 200
+     && served.type === 'video/mp4' && served.len === 4096);
+
+  await page.locator('[data-act="evClass"]').selectOption('client_deliverable');
+  await page.waitForTimeout(600);
+  ok('the office classifies it', has(await text(page, '#dlgBody'), 'Client deliverable'));
+
+  await page.locator('[data-act="evDelete"]').click();
+  await page.waitForTimeout(600);
+  ok('a delete keeps the record on screen', has(await text(page, '#dlgBody'), 'the record stays'));
+
+  await page.locator('.close').click();
+  await page.waitForTimeout(400);
+  await render(page);
+  ok('the dashboard carries the storage meter', has(await text(page, '.stats'), 'Storage'));
   await page.close();
 }
 

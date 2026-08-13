@@ -1081,6 +1081,122 @@ section("Invoices: the office's money desk, and BILL only collects");
        .payment_instructions === 'Remit via the BILL payment request.');
 }
 
+section('Evidence: stored privately, metered, and capped inside the free plan');
+{
+  const fakeR2 = () => {
+    const store = new Map();
+    return {
+      async put(key, body, opts) { store.set(key, { body, opts }); },
+      async get(key) { const o = store.get(key); return o ? { body: o.body } : null; },
+      async delete(key) { store.delete(key); },
+      _store: store,
+    };
+  };
+  const env = freshEnv();
+  env.EVIDENCE = fakeR2();
+  env.STORAGE_FREE_TIER = '10000';   // tiny numbers so the refusals run for real
+  env.STORAGE_HARD_CAP = '5000';
+  env.STORAGE_MAX_FILE = '2000';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  for (const uname of ['dana', 'reed']) {
+    const l = (await jsonOf(await invite(env, admin, { username: uname, display_name: uname, role: 'investigator' }))).url;
+    const t = new URL(l, 'https://x.test').searchParams.get('invite');
+    await call(env, `/invite/${t}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  }
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const reed = (await login(env, 'reed', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find(u => u.username === 'dana').id;
+
+  await ingest(env, { case_no: 'API-EV1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  await call(env, '/submissions/API-EV1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+
+  const mk = (name, bytes, type) => new File([new Uint8Array(bytes).fill(65)], name, { type });
+  const up = (cookie, file, extra = {}) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    for (const [k, v] of Object.entries(extra)) fd.append(k, v);
+    return worker.fetch(new Request(API + '/cases/API-EV1/evidence', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: cookie }, body: fd }), env);
+  };
+
+  ok('an unassigned investigator cannot upload', (await up(reed, mk('x.jpg', 100, 'image/jpeg'))).status === 404);
+  ok('a file over the per-file limit is refused before it is stored',
+     (await up(admin, mk('big.mp4', 2500, 'video/mp4'))).status === 413);
+
+  const first = await jsonOf(await up(dana, mk('clip1.mp4', 1800, 'video/mp4'),
+    { classification: 'client_deliverable', note: 'Subject at the gym.' }));
+  ok('the assigned investigator uploads field product', typeof first.id === 'number');
+  ok('and the meter answers immediately', first.usage.bytes_used === 1800
+     && first.usage.percent_of_free === 18);
+
+  let ws = await jsonOf(await call(env, '/cases/API-EV1/workspace', { cookie: dana }));
+  ok('an investigator cannot classify — it lands needs_review',
+     ws.evidence[0].classification === 'needs_review' && ws.evidence[0].note === 'Subject at the gym.');
+
+  await up(admin, mk('clip2.mp4', 1800, 'video/mp4'), { classification: 'internal_only' });
+  ok('an admin classifies at upload',
+     (await jsonOf(await call(env, '/cases/API-EV1/workspace', { cookie: admin })))
+       .evidence.find(e => e.filename === 'clip2.mp4').classification === 'internal_only');
+
+  /* THE FAILSAFE. 3,600 of the 5,000-byte cap is used; another 1,800 would
+     cross it, so nothing uploads — and nothing can ever bill. */
+  const blocked = await up(admin, mk('clip3.mp4', 1800, 'video/mp4'));
+  ok('the free-plan failsafe refuses the upload that would cross the cap', blocked.status === 507);
+  ok('and says so in plain words', (await jsonOf(blocked)).code === 'storage_cap');
+
+  // Serving: the bytes come back through the Worker's own session checks.
+  const got = await call(env, `/cases/API-EV1/evidence/${first.id}/file`, { cookie: dana });
+  ok('the assigned investigator streams their footage back', got.status === 200
+     && got.headers.get('content-type') === 'video/mp4'
+     && (await got.arrayBuffer()).byteLength === 1800);
+  ok('an unassigned investigator gets nothing',
+     (await call(env, `/cases/API-EV1/evidence/${first.id}/file`, { cookie: reed })).status === 404);
+
+  ok('an investigator cannot reclassify',
+     (await call(env, `/cases/API-EV1/evidence/${first.id}`, { method: 'POST', cookie: dana,
+       body: { classification: 'client_deliverable' } })).status === 403);
+  ok('the office can',
+     (await call(env, `/cases/API-EV1/evidence/${first.id}`, { method: 'POST', cookie: admin,
+       body: { classification: 'client_deliverable' } })).status === 200);
+
+  ok('an investigator cannot delete evidence',
+     (await call(env, `/cases/API-EV1/evidence/${first.id}/delete`, { method: 'POST', cookie: dana })).status === 403);
+  const del = await jsonOf(await call(env, `/cases/API-EV1/evidence/${first.id}/delete`,
+    { method: 'POST', cookie: admin }));
+  ok('an admin delete frees the space', del.usage.bytes_used === 1800);
+  ok('the object is truly gone from the bucket', env.EVIDENCE._store.size === 1);
+  ok('but the record of it stays, stamped',
+     (await env.DB.prepare('SELECT deleted_at, deleted_by FROM case_evidence WHERE id = ?')
+       .bind(first.id).first()).deleted_at != null);
+  ok('a deleted object no longer serves',
+     (await call(env, `/cases/API-EV1/evidence/${first.id}/file`, { cookie: admin })).status === 404);
+  ws = await jsonOf(await call(env, '/cases/API-EV1/workspace', { cookie: dana }));
+  ok('the field sees only what exists', ws.evidence.length === 1);
+  ok('the office also sees the removal record',
+     (await jsonOf(await call(env, '/cases/API-EV1/workspace', { cookie: admin }))).evidence.length === 2);
+
+  ok('freed space uploads again', (await up(admin, mk('clip3.mp4', 1800, 'video/mp4'))).status === 201);
+
+  const st = await jsonOf(await call(env, '/storage', { cookie: admin }));
+  ok('the storage meter is admin-only',
+     (await call(env, '/storage', { cookie: dana })).status === 403
+     && st.storage.bytes_used === 3600);
+  ok('the public health check carries only the bare percentage',
+     (await jsonOf(await call(env, '/health'))).storage_pct === 36);
+
+  // Without the binding, uploads say exactly what is missing.
+  const bare = freshEnv();
+  await bootstrapAdmin(bare);
+  const a2 = (await login(bare, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(bare, { case_no: 'API-EV2', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  const fd2 = new FormData(); fd2.append('file', mk('x.jpg', 10, 'image/jpeg'));
+  ok('a missing binding is a named condition, not a mystery',
+     (await worker.fetch(new Request(API + '/cases/API-EV2/evidence', {
+       method: 'POST', headers: { Origin: ORIGIN, Cookie: a2 }, body: fd2 }), bare)).status === 503);
+}
+
 section('The dashboard summary');
 {
   const env = freshEnv();

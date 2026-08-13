@@ -642,6 +642,11 @@ async function caseSummary(env, user) {
     out.auth_warn_at = first;
   }
 
+  // The storage meter (the free-plan failsafe's face on the dashboard).
+  if (admin && have('case_evidence')) {
+    out.storage = await evidenceUsage(env);
+  }
+
   // The two stage-driven cards (priority 20): the ball in the client's court,
   // and complete cases waiting on the closing checklist.
   if (admin && have('case_status')) {
@@ -1269,6 +1274,16 @@ async function caseWorkspace(env, user, caseNo) {
       WHERE c.case_no = ? ${admin ? '' : "AND c.visibility != 'admin'"}
       ORDER BY c.at_date DESC, c.at_time DESC, c.id DESC LIMIT 200`).bind(caseNo).all();
 
+  // Evidence (priority 6): fieldwork product, so both roles see it on cases
+  // they can open. Deleted rows stay visible to the office only — the record
+  // of a removal is admin bookkeeping, not field context.
+  const { results: evidence } = await env.DB.prepare(
+    `SELECT e.id, e.filename, e.content_type, e.size_bytes, e.classification, e.entry_id,
+            e.subject_id, e.note, e.uploaded_at, e.deleted_at, u.display_name AS uploaded_by
+       FROM case_evidence e LEFT JOIN users u ON u.id = e.uploaded_by
+      WHERE e.case_no = ? ${admin ? '' : 'AND e.deleted_at IS NULL'}
+      ORDER BY e.id DESC LIMIT 200`).bind(caseNo).all();
+
   // Follow-up tasks (priority 19): the office sees them all; an investigator
   // only the ones assigned to them.
   const { results: tasks } = await env.DB.prepare(
@@ -1353,6 +1368,7 @@ async function caseWorkspace(env, user, caseNo) {
     expenses: expenses || [],
     notes: notes || [],
     comms: comms || [],
+    evidence: evidence || [],
     tasks: tasks || [],
     offers: offers || [],
     my_offer: myOffer || null,
@@ -2142,6 +2158,157 @@ async function recordInvoicePayment(request, env, user, id) {
   return json({ ok: true, invoice: await invoiceWithMoney(env, after) });
 }
 
+
+/* ------------------------------------------------------------- evidence */
+
+/* Evidence storage (HANDOFF priority 6), with the free-plan failsafe the
+   owner asked for. Cloudflare has no spend cap, so the Worker IS the cap:
+   uploads are refused outright before the account could ever owe a cent —
+   at 9 GB of the free tier's 10 GB (headroom for metering drift), at 75 MB
+   per file (inside the Workers request and memory ceilings), and at a
+   monthly upload count no honest month approaches (the Class-A failsafe).
+   The limits are env-overridable so the tests exercise the refusals with
+   real uploads instead of trusting arithmetic. */
+const STORAGE = {
+  freeTierBytes: 10 * 1024 ** 3,
+  hardCapBytes: 9 * 1024 ** 3,
+  warnPct: 75,
+  maxFileBytes: 75 * 1024 * 1024,
+  maxUploadsPerMonth: 50000,
+};
+
+function storageLimits(env) {
+  const n = (v, d) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : d; };
+  return {
+    freeTierBytes: n(env.STORAGE_FREE_TIER, STORAGE.freeTierBytes),
+    hardCapBytes: n(env.STORAGE_HARD_CAP, STORAGE.hardCapBytes),
+    maxFileBytes: n(env.STORAGE_MAX_FILE, STORAGE.maxFileBytes),
+    maxUploadsPerMonth: n(env.STORAGE_MAX_UPLOADS, STORAGE.maxUploadsPerMonth),
+  };
+}
+
+async function evidenceUsage(env) {
+  const lim = storageLimits(env);
+  const row = await env.DB.prepare(
+    'SELECT COALESCE(SUM(size_bytes), 0) AS b FROM case_evidence WHERE deleted_at IS NULL').first();
+  const up = await env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM case_evidence WHERE uploaded_at LIKE ?')
+    .bind(nowIso().slice(0, 7) + '%').first();
+  const bytes = Number(row && row.b) || 0;
+  return {
+    bytes_used: bytes,
+    hard_cap_bytes: lim.hardCapBytes,
+    free_tier_bytes: lim.freeTierBytes,
+    percent_of_free: Math.round((bytes / lim.freeTierBytes) * 1000) / 10,
+    warn_at: STORAGE.warnPct,
+    uploads_this_month: Number(up && up.n) || 0,
+    max_file_bytes: lim.maxFileBytes,
+  };
+}
+
+const EVIDENCE_CLASSES = ['client_deliverable', 'internal_only', 'do_not_use', 'needs_review', 'needs_redaction'];
+
+async function uploadEvidence(request, env, user, caseNo) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  if (!env.EVIDENCE) {
+    return json({ error: 'Evidence storage is not attached yet — run the R2 setup workflow, then redeploy the Worker.' }, 503);
+  }
+  let form;
+  try { form = await request.formData(); } catch { return json({ error: 'Send the file as multipart form data.' }, 400); }
+  const file = form.get('file');
+  if (!file || typeof file === 'string' || !file.size) return json({ error: 'Attach a file.' }, 400);
+
+  const lim = storageLimits(env);
+  if (file.size > lim.maxFileBytes) {
+    return json({ error: `That file is ${(file.size / 1048576).toFixed(1)} MB and the per-file limit is `
+      + `${Math.floor(lim.maxFileBytes / 1048576)} MB. Split long video into parts before uploading.` }, 413);
+  }
+  const usage = await evidenceUsage(env);
+  if (usage.uploads_this_month >= lim.maxUploadsPerMonth) {
+    return json({ error: 'The monthly upload failsafe is reached — nothing else uploads this month.' }, 429);
+  }
+  if (usage.bytes_used + file.size > lim.hardCapBytes) {
+    return json({ error: 'The free-plan failsafe: this upload would push evidence storage past the line that '
+      + 'keeps the account inside the free tier, so it was refused — nothing can bill. An admin can clear '
+      + 'delivered footage (deletes are audited) to make room.', code: 'storage_cap',
+      usage }, 507);
+  }
+
+  const filename = String(file.name || 'file').replace(/[^A-Za-z0-9._ -]/g, '_').slice(0, 120) || 'file';
+  const classification = user.role === 'admin' && EVIDENCE_CLASSES.includes(String(form.get('classification') || ''))
+    ? String(form.get('classification')) : 'needs_review';
+  const note = String(form.get('note') || '').trim().slice(0, 1000) || null;
+  const entryId = parseInt(form.get('entry_id'), 10);
+  const subjectId = parseInt(form.get('subject_id'), 10);
+
+  // A unique key per upload: an original can never be overwritten.
+  const key = `cases/${caseNo}/${crypto.randomUUID()}-${filename}`;
+  await env.EVIDENCE.put(key, await file.arrayBuffer(), {
+    httpMetadata: { contentType: file.type || 'application/octet-stream' },
+  });
+  const now = nowIso();
+  const res = await env.DB.prepare(
+    `INSERT INTO case_evidence (case_no, r2_key, filename, content_type, size_bytes, classification,
+       entry_id, subject_id, note, uploaded_by, uploaded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(caseNo, key, filename, file.type || null, file.size, classification,
+          Number.isInteger(entryId) ? entryId : null, Number.isInteger(subjectId) ? subjectId : null,
+          note, user.id, now).run();
+  return json({ ok: true, id: res.meta ? res.meta.last_row_id : null,
+                usage: await evidenceUsage(env) }, 201);
+}
+
+async function serveEvidence(env, user, caseNo, eid) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  if (!env.EVIDENCE) return json({ error: 'Evidence storage is not attached.' }, 503);
+  const row = await env.DB.prepare(
+    'SELECT r2_key, filename, content_type, deleted_at FROM case_evidence WHERE id = ? AND case_no = ?')
+    .bind(eid, caseNo).first();
+  if (!row || row.deleted_at) return json({ error: 'not found' }, 404);
+  const obj = await env.EVIDENCE.get(row.r2_key);
+  if (!obj) return json({ error: 'The stored object is missing from the bucket.' }, 404);
+  return new Response(obj.body, { status: 200, headers: {
+    'Content-Type': row.content_type || 'application/octet-stream',
+    'Content-Disposition': `inline; filename="${row.filename.replace(/"/g, '')}"`,
+    'Cache-Control': 'private, no-store',
+  } });
+}
+
+async function editEvidence(request, env, user, caseNo, eid) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  const row = await env.DB.prepare(
+    'SELECT id, deleted_at FROM case_evidence WHERE id = ? AND case_no = ?').bind(eid, caseNo).first();
+  if (!row) return json({ error: 'not found' }, 404);
+  if (row.deleted_at) return json({ error: 'Deleted evidence keeps its record and takes no edits.' }, 400);
+  const body = await readJson(request);
+  const sets = [], binds = [];
+  if (body.classification !== undefined) {
+    if (!EVIDENCE_CLASSES.includes(String(body.classification))) return json({ error: 'Pick a real classification.' }, 400);
+    sets.push('classification = ?', 'classified_by = ?', 'classified_at = ?');
+    binds.push(body.classification, user.id, nowIso());
+  }
+  if (body.note !== undefined) { sets.push('note = ?'); binds.push(String(body.note || '').trim().slice(0, 1000) || null); }
+  if (!sets.length) return json({ error: 'Nothing to change.' }, 400);
+  binds.push(eid);
+  await env.DB.prepare(`UPDATE case_evidence SET ${sets.join(', ')} WHERE id = ?`).bind(...binds).run();
+  return json({ ok: true });
+}
+
+async function deleteEvidence(env, user, caseNo, eid) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  const row = await env.DB.prepare(
+    'SELECT r2_key, deleted_at FROM case_evidence WHERE id = ? AND case_no = ?').bind(eid, caseNo).first();
+  if (!row) return json({ error: 'not found' }, 404);
+  if (row.deleted_at) return json({ ok: true });
+  if (env.EVIDENCE) await env.EVIDENCE.delete(row.r2_key);
+  // The object goes; the record of it stays, with who removed it and when.
+  await env.DB.prepare('UPDATE case_evidence SET deleted_by = ?, deleted_at = ? WHERE id = ?')
+    .bind(user.id, nowIso(), eid).run();
+  return json({ ok: true, usage: await evidenceUsage(env) });
+}
+
 /* ------------------------------------------------- my work, across cases */
 
 /* An investigator's own desk: their reports and their expenses across every
@@ -2754,7 +2921,7 @@ const EXPECTED_TABLES = [
   'case_expenses', 'case_notes', 'user_rates', 'case_settings', 'password_resets', 'case_offers',
   'case_details', 'case_subjects', 'subject_vehicles', 'case_comms', 'case_tasks',
   'case_status', 'case_closure', 'case_retainer',
-  'invoices', 'invoice_lines', 'invoice_payments', 'invoice_events',
+  'invoices', 'invoice_lines', 'invoice_payments', 'invoice_events', 'case_evidence',
 ];
 
 async function missingTables(env) {
@@ -2779,6 +2946,11 @@ async function route(request, env) {
   const method = request.method;
 
   if (p === '/health') {
+    const missing = await missingTables(env);
+    let storagePct = null;
+    if (env.DB && !missing.includes('case_evidence')) {
+      try { storagePct = (await evidenceUsage(env)).percent_of_free; } catch { storagePct = null; }
+    }
     return json({
       ok: true,
       configured: Boolean(env.DB && env.INGEST_KEY),
@@ -2786,7 +2958,10 @@ async function route(request, env) {
       // Which tables are actually there. The portal checks this on load so a
       // half-applied schema announces itself, instead of waiting for whichever
       // button happens to touch a missing table first.
-      missing_tables: await missingTables(env),
+      missing_tables: missing,
+      // A bare percentage of the R2 free tier — nothing sensitive, and what
+      // the daily site-health run reads to warn the owner at 75%.
+      storage_pct: storagePct,
     });
   }
   if (p === '/auth/login' && method === 'POST') return handleLogin(request, env);
@@ -2918,6 +3093,24 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/activity\/(\d{1,12})$/);
   if (m && method === 'POST') return editActivity(request, env, user, m[1], parseInt(m[2], 10));
+
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/evidence$/);
+  if (m && method === 'POST') return uploadEvidence(request, env, user, m[1]);
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/evidence\/(\d{1,12})\/file$/);
+  if (m && method === 'GET') return serveEvidence(env, user, m[1], parseInt(m[2], 10));
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/evidence\/(\d{1,12})$/);
+  if (m && method === 'POST') return editEvidence(request, env, user, m[1], parseInt(m[2], 10));
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/evidence\/(\d{1,12})\/delete$/);
+  if (m && method === 'POST') return deleteEvidence(env, user, m[1], parseInt(m[2], 10));
+
+  if (p === '/storage' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return json({ storage: await evidenceUsage(env) });
+  }
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/subjects$/);
   if (m && method === 'POST') return saveSubject(request, env, user, m[1], null);

@@ -569,3 +569,30 @@ CREATE TABLE IF NOT EXISTS invoice_events (
   at         TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_invevents ON invoice_events(invoice_id);
+
+-- Evidence (HANDOFF priority 6), stored in the private case-evidence R2
+-- bucket and metered here. size_bytes is what the free-plan failsafe sums —
+-- the Worker refuses uploads before the account could ever owe Cloudflare a
+-- cent. Originals are never overwritten (keys are unique per upload) and
+-- never silently deleted: an admin delete removes the object but keeps this
+-- row with who and when, which is the audit the handoff requires.
+CREATE TABLE IF NOT EXISTS case_evidence (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no        TEXT    NOT NULL,
+  r2_key         TEXT    NOT NULL UNIQUE,
+  filename       TEXT    NOT NULL,
+  content_type   TEXT,
+  size_bytes     INTEGER NOT NULL,
+  classification TEXT    NOT NULL DEFAULT 'needs_review' CHECK (classification IN
+                   ('client_deliverable','internal_only','do_not_use','needs_review','needs_redaction')),
+  entry_id       INTEGER,             -- optional: the activity moment it documents
+  subject_id     INTEGER,             -- optional: a subject photograph
+  note           TEXT,
+  uploaded_by    INTEGER REFERENCES users(id),
+  uploaded_at    TEXT,
+  classified_by  INTEGER REFERENCES users(id),
+  classified_at  TEXT,
+  deleted_by     INTEGER REFERENCES users(id),
+  deleted_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_case ON case_evidence(case_no);

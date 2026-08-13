@@ -613,6 +613,10 @@ function summaryCards(){
              (s.ready_to_close || []).length ? "live" : "", s.ready_to_close || [])
       + card("Expenses to review", (s.expenses_pending || []).length, "Awaiting your call",
              (s.expenses_pending || []).length ? "warn" : "", s.expenses_pending || [])
+      + (s.storage ? card("Storage",
+             (s.storage.bytes_used / 1073741824).toFixed(s.storage.bytes_used > 107374182 ? 1 : 2) + " GB",
+             s.storage.percent_of_free + "% of the free plan" + (s.storage.percent_of_free >= 90 ? " — uploads pause at the cap" : ""),
+             s.storage.percent_of_free >= 90 ? "over" : s.storage.percent_of_free >= 75 ? "warn" : "") : "")
     : card("Assigned to you", total, total ? "" : "Nothing yet")
       + card("Out now", active.length, "Your day is running", active.length ? "live" : "", active)
       + card("Reports due", due.length, "Finish or fix a report", due.length ? "warn" : "", due)
@@ -1132,7 +1136,7 @@ function wsTabs(){
   const admin = ME.role === "admin";
   const t = [["overview","Overview"], ["subject","Subject"], ["activity","Activity log"],
              ["field","Field work"], ["reports","Reports"], ["expenses","Expenses"], ["notes","Internal notes"],
-             ["comms","Comm log"], ["tasks","Tasks"]];
+             ["comms","Comm log"], ["evidence","Evidence"], ["tasks","Tasks"]];
   // Authorization is the insurance panel; it appears once there is one, and
   // always for an admin so it can be set.
   if(admin || (WS && WS.authorization && WS.authorization.authorized_hours != null)) t.push(["auth","Authorization"]);
@@ -1602,6 +1606,91 @@ async function doCloseCase(){
   await reloadWorkspace();
 }
 
+
+/* Priority 6 — evidence, with the free-plan failsafe. Uploads land in the
+   private R2 bucket through the Worker, which refuses anything that could
+   push the account past the free tier. Both roles upload and read on their
+   cases; classification and deletion are the office's. */
+function evidencePanel(){
+  const admin = ME.role === "admin";
+  const rows = (WS && WS.evidence) || [];
+  const mb = b => b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB";
+  const clsLabel = c => ({client_deliverable:"Client deliverable", internal_only:"Internal only",
+    do_not_use:"Do not use", needs_review:"Needs review", needs_redaction:"Needs redaction"})[c] || c;
+  const clsTone = c => c === "client_deliverable" ? "rs-approved" : c === "do_not_use" ? "rs-needs_revision"
+    : c === "needs_redaction" ? "rs-submitted" : "rs-draft";
+
+  const row = e => e.deleted_at
+    ? `<div class="rcard" style="cursor:default;opacity:.55">
+        <div class="rc-h"><b>${esc(e.filename)}</b><span class="tag rs-draft">deleted</span></div>
+        <div class="tl-m">${mb(e.size_bytes)} &middot; removed ${when(e.deleted_at)} &mdash; the record stays</div>
+      </div>`
+    : `<div class="rcard" style="cursor:default">
+        <div class="rc-h"><b><a href="/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${e.id}/file"
+             target="_blank" rel="noopener">${esc(e.filename)}</a></b>
+          <span class="tag ${clsTone(e.classification)}">${esc(clsLabel(e.classification))}</span>
+          ${admin ? `<select data-act="evClass" data-id="${e.id}" style="font-size:.78rem">
+              ${["needs_review","client_deliverable","internal_only","needs_redaction","do_not_use"]
+                .map(c => `<option value="${c}" ${c === e.classification ? "selected" : ""}>${clsLabel(c)}</option>`).join("")}
+            </select>
+            <button class="btn sm ghost" data-act="evDelete" data-id="${e.id}">Delete</button>` : ""}</div>
+        <div class="tl-m">${mb(e.size_bytes)} &middot; ${esc(e.uploaded_by || "")} &middot; ${when(e.uploaded_at)}</div>
+        ${e.note ? `<div class="tl-n">${esc(e.note)}</div>` : ""}
+      </div>`;
+
+  return `
+    <form class="quick" data-act="evUpload">
+      <label class="f"><span>File <span class="opt">photos, video, documents &mdash; originals are never overwritten</span></span>
+        <input id="ev_file" type="file"></label>
+      <div class="two">
+        ${admin ? `<label class="f"><span>Classification</span>
+          <select id="ev_class">${["needs_review","client_deliverable","internal_only","needs_redaction","do_not_use"]
+            .map(c => `<option value="${c}">${clsLabel(c)}</option>`).join("")}</select></label>` : ""}
+        <label class="f"><span>Note <span class="opt">optional</span></span>
+          <input id="ev_note" placeholder="e.g. Subject loading lumber, clip 2 of 3."></label>
+      </div>
+      <button class="btn" type="submit">Upload evidence</button>
+      <p class="hint">The free-plan failsafe is on: uploads stop before storage could ever bill.
+        Large video should be split into parts.</p>
+      ${WS_NOTICE ? `<div class="note">${esc(WS_NOTICE)}</div>` : ""}
+      ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+    </form>
+    ${rows.length ? `<div class="rlist">${rows.map(row).join("")}</div>`
+      : `<div class="empty">Nothing stored on this case yet.</div>`}`;
+}
+
+async function uploadEvidenceFile(){
+  WS_ERR = ""; WS_NOTICE = "";
+  const f = $("ev_file") && $("ev_file").files[0];
+  if(!f){ WS_ERR = "Pick a file first."; return paintCase(); }
+  const fd = new FormData();
+  fd.append("file", f);
+  if($("ev_class")) fd.append("classification", $("ev_class").value);
+  fd.append("note", $("ev_note").value);
+  try{
+    const res = await fetch(`/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence`,
+      {method: "POST", credentials: "same-origin", body: fd});
+    const d = await res.json().catch(() => ({}));
+    if(!res.ok) throw new Error(d.error || ("Upload failed (" + res.status + ")"));
+    WS_NOTICE = "Stored. " + (d.usage ? d.usage.percent_of_free + "% of the free plan used." : "");
+  }catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+async function setEvidenceClass(id, cls){
+  WS_ERR = "";
+  try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/evidence/${id}`, {method:"POST", body:{classification: cls}}); }
+  catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+async function deleteEvidenceRow(id){
+  WS_ERR = "";
+  try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/evidence/${id}/delete`, {method:"POST", body:{}}); }
+  catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
 /* Priority 19 — follow-up tasks. Admin-created; assigning one to an
    investigator is the office choosing to tell them, and that assignment is
    the only way a task reaches one. The one write the field has is marking
@@ -1705,6 +1794,7 @@ function caseBodyHtml(){
     : WS_TAB === "expenses" ? expensesPanel()
     : WS_TAB === "notes"    ? notesPanel()
     : WS_TAB === "comms"    ? commsPanel()
+    : WS_TAB === "evidence" ? evidencePanel()
     : WS_TAB === "tasks"    ? tasksPanel()
     : WS_TAB === "auth"     ? authPanel(a, admin) + (admin ? authAdminForm() : "")
     : WS_TAB === "assign"   ? assignPanel(s)
@@ -2797,6 +2887,7 @@ document.addEventListener("click", ev => {
     INV_OPEN.lines = lines; paint();
   }
   else if(act === "invSaveLines"){ saveInvoiceLines(); }
+  else if(act === "evDelete"){ deleteEvidenceRow(Number(el.dataset.id)); }
   else if(act === "createInvoice"){ createInvoiceFor(el.dataset.case, false); }
   else if(act === "createInvoiceAuth"){ createInvoiceFor(el.dataset.case, true); }
   else if(act === "openReport"){
@@ -2857,6 +2948,7 @@ document.addEventListener("submit", ev => {
   else if(a === "invSave") saveInvoiceFields();
   else if(a === "invBillSave") saveInvBill();
   else if(a === "invPay") recordInvPayment();
+  else if(a === "evUpload") uploadEvidenceFile();
   else if(a === "makeOffer") makeCaseOffer();
   else if(a === "saveDetails") saveCaseDetails();
   else if(a === "saveSubject") saveSubjectRec(el.dataset.id ? Number(el.dataset.id) : null);
@@ -2874,6 +2966,7 @@ document.addEventListener("input", ev => {
   if(ev.target.dataset && ev.target.dataset.act === "invFilterStatus"){ INV_FILTER.status = ev.target.value; loadInvoices(); }
   if(ev.target.dataset && ev.target.dataset.act === "invFilterType"){ INV_FILTER.type = ev.target.value; loadInvoices(); }
   if(ev.target.dataset && ev.target.dataset.act === "invFilterQ"){ INV_FILTER.q = ev.target.value; loadInvoices(); }
+  if(ev.target.dataset && ev.target.dataset.act === "evClass"){ setEvidenceClass(Number(ev.target.dataset.id), ev.target.value); }
 });
 
 /* ------------------------------------------------------------------- boot */
