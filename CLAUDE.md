@@ -51,7 +51,7 @@ emits a long step summary.
 
 ## Deploy topology
 
-Eight workflows, all in `.github/workflows/`:
+Nine workflows, all in `.github/workflows/`:
 
 | Workflow              | Trigger                              | Does                                       |
 | --------------------- | ------------------------------------ | ------------------------------------------ |
@@ -61,6 +61,7 @@ Eight workflows, all in `.github/workflows/`:
 | `deploy-portal.yml`   | push touching `case-portal/worker.js`   | tests, then uploads the portal Worker      |
 | `site-health.yml`     | daily cron, 11:00 UTC                | probes the live domain; opens one issue on failure |
 | `portal-setup.yml`    | manual dispatch                      | one-shot Cloudflare setup for the portal   |
+| `r2-setup.yml`        | manual dispatch                      | probes the token for R2, creates the private evidence bucket |
 | `save-point.yml`      | human push to `master`, or manual    | tags a `save/…` point and cuts a Release   |
 | `harden-check.yml`    | manual, plus weekly Monday 11:30 UTC | runs `verify.sh` live-site security checks |
 
