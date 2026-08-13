@@ -163,10 +163,29 @@
   .doc-table th:last-child,.doc-table td:last-child,.doc-table th.n,.doc-table td.n{text-align:right;}
   .doc-due{text-align:right;font-size:1.15rem;margin-top:10px;}
   .doc-due b{font-size:1.5rem;color:var(--navy,#12305a);}
+  /* The Case Package view (UXSIMPLIFY P9/P13/P16/P17) */
+  .pkg-blocks{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;margin:10px 0 14px;}
+  .pkg-b{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fff;cursor:pointer;text-align:left;}
+  .pkg-b b{display:block;font-size:.78rem;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);}
+  .pkg-b .pk-v{font-size:1.05rem;font-weight:700;margin-top:2px;}
+  .pkg-b .pk-s{font-size:.95rem;margin-left:6px;}
+  .pkg-b.done{border-color:#9fd3b2;background:#f4faf6;}
+  .pkg-b.part{border-color:#e9d8a6;background:#fdfaf1;}
+  .pkg-miss{border-left:3px solid #b7924c;background:#fbf7ee;border-radius:0 8px 8px 0;padding:12px 14px;margin:10px 0;}
+  .pkg-miss li{margin:4px 0 4px 16px;}
+  .pkg-pick{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;}
+  .pkg-item{border:1px solid var(--line);border-radius:8px;padding:6px;background:#fff;width:118px;font-size:.72rem;}
+  .pkg-item img{width:100%;height:64px;object-fit:cover;border-radius:5px;}
+  .pkg-item.on{border-color:var(--teal);box-shadow:0 0 0 1px var(--teal) inset;}
+  #pkgdoc{border:1px solid var(--line);border-radius:10px;padding:26px 28px;background:#fff;margin-top:14px;}
+  #pkgdoc img{max-width:100%;border-radius:6px;}
   @media print{
     body.printing-invoice *{visibility:hidden !important;}
     body.printing-invoice #invdoc, body.printing-invoice #invdoc *{visibility:visible !important;}
     body.printing-invoice #invdoc{position:absolute;left:0;top:0;width:100%;border:0;padding:0;}
+    body.printing-package *{visibility:hidden !important;}
+    body.printing-package #pkgdoc, body.printing-package #pkgdoc *{visibility:visible !important;}
+    body.printing-package #pkgdoc{position:absolute;left:0;top:0;width:100%;border:0;padding:0;}
   }
   @media(max-width:640px){.cal-cell{min-height:54px;} .cal-ev{font-size:.58rem;padding:1px 3px;}}
   .comprow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:2px 0 8px;}
@@ -1149,6 +1168,7 @@ function wsTabs(){
   // Authorization is the insurance panel; it appears once there is one, and
   // always for an admin so it can be set.
   if(admin || (WS && WS.authorization && WS.authorization.authorized_hours != null)) t.push(["auth","Authorization"]);
+  if(admin) t.push(["package","Package"]);
   if(admin) t.push(["assign","Assignment"]);
   return t;
 }
@@ -1715,6 +1735,184 @@ async function deleteEvidenceRow(id){
   await reloadWorkspace();
 }
 
+
+/* The Case Package (CASEBUILD.md + UXSIMPLIFY P9/P13/P16/P17). One screen
+   that says what is done, what is missing, and finalizes the client package
+   behind the Worker's gates. Admin-only — an investigator never selects
+   client deliverables. */
+let PKG = null;   // buildState from the Worker
+
+async function loadPackage(){
+  try{ PKG = await api(`/cases/${encodeURIComponent(WS_CASE)}/build`); }
+  catch(e){ PKG = null; WS_ERR = e.message; }
+  paintCase();
+}
+
+function pkgMark(state){   // done | part | none | warn — never color alone
+  return state === "done" ? '<span class="pk-s">&#10003;</span>'
+       : state === "part" ? '<span class="pk-s">&#9685;</span>'
+       : state === "warn" ? '<span class="pk-s">!</span>'
+       : '<span class="pk-s">&#9675;</span>';
+}
+
+function packagePanel(){
+  if(!PKG) return `<div class="empty">Loading the package&hellip;</div>`;
+  const b = PKG.build;
+  const ev = PKG.evidence || [];
+  const items = PKG.items || [];
+  const inPkg = id => items.some(i => i.evidence_id === id);
+  const photos = ev.filter(e => String(e.content_type || "").startsWith("image/"));
+  const videos = ev.filter(e => String(e.content_type || "").startsWith("video/"));
+  const others = ev.filter(e => !String(e.content_type || "").startsWith("image/")
+                             && !String(e.content_type || "").startsWith("video/"));
+  const eligible = e => e.classification === "client_deliverable";
+  const act = (WS && WS.activity || []).length;
+  const rep = PKG.approved_report ? "done" : ((WS && WS.reports || []).length ? "part" : "none");
+  const inv = (PKG.invoices || [])[0];
+
+  /* The mini-dashboard: state blocks, each a door (UXSIMPLIFY P9/P14/P19). */
+  const blocks = `
+    <div class="pkg-blocks">
+      <button class="pkg-b ${act ? "done" : ""}" data-act="wsTab" data-tab="activity">
+        <b>Activity</b><span class="pk-v">${act} entr${act === 1 ? "y" : "ies"}</span>${pkgMark(act ? "done" : "none")}</button>
+      <button class="pkg-b ${rep === "done" ? "done" : rep === "part" ? "part" : ""}" data-act="wsTab" data-tab="reports">
+        <b>Report</b><span class="pk-v">${PKG.approved_report ? "Approved" : (WS && WS.reports || []).length ? "In review" : "None"}</span>${pkgMark(rep)}</button>
+      <button class="pkg-b ${photos.some(eligible) ? "done" : photos.length ? "part" : ""}" data-act="wsTab" data-tab="evidence">
+        <b>Photos</b><span class="pk-v">${photos.length}</span>${pkgMark(photos.some(eligible) ? "done" : photos.length ? "part" : "none")}</button>
+      ${videos.length ? `<button class="pkg-b ${videos.some(eligible) ? "done" : "part"}" data-act="wsTab" data-tab="evidence">
+        <b>Video</b><span class="pk-v">${videos.length}</span>${pkgMark(videos.some(eligible) ? "done" : "part")}</button>` : ""}
+      <button class="pkg-b ${b && b.status === "finalized" ? "done" : b ? "part" : ""}">
+        <b>Case build</b><span class="pk-v">${b ? (b.status === "finalized" ? "Finalized" : "Draft v" + b.version) : "Not started"}</span>${pkgMark(b && b.status === "finalized" ? "done" : b ? "part" : "none")}</button>
+      <button class="pkg-b ${inv ? (inv.status === "paid" ? "done" : "part") : ""}" data-act="tab" data-tab="invoices">
+        <b>Invoice</b><span class="pk-v">${inv ? label(inv.status) : "Not created"}</span>${pkgMark(inv ? (inv.status === "paid" ? "done" : "part") : "none")}</button>
+    </div>`;
+
+  if(!b){
+    return `${blocks}
+      <p class="hint">The package pulls the approved report and the client-deliverable
+        photos, video and documents into one deliverable, behind hard gates.</p>
+      <button class="btn" data-act="pkgStart">Start the package build</button>
+      ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}`;
+  }
+
+  /* What's missing (UXSIMPLIFY P16): only what stands between here and
+     finalized, each line the Worker's own words. */
+  const missing = PKG.gates.length && b.status !== "finalized" ? `
+    <div class="pkg-miss"><b>To finish this package</b>
+      <ul>${PKG.gates.map(g => `<li>${esc(g)}</li>`).join("")}</ul></div>` : "";
+
+  const pick = (list, kind) => list.length ? `
+    <h3 style="margin:14px 0 4px;font-size:.95rem">${kind}</h3>
+    <div class="pkg-pick">${list.map(e => {
+      const on = inPkg(e.id);
+      const img = String(e.content_type || "").startsWith("image/");
+      const item = items.find(i => i.evidence_id === e.id);
+      return `<div class="pkg-item${on ? " on" : ""}">
+        ${img ? `<img src="/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${e.id}/file" alt="">` : ""}
+        <div style="margin:4px 0 2px;word-break:break-all"><b>${esc(e.filename)}</b></div>
+        <div style="color:var(--muted)">${eligible(e) ? "Client deliverable" : esc(e.classification.replace(/_/g, " "))}</div>
+        ${b.status === "draft" ? (on
+          ? `<button class="btn sm ghost" data-act="pkgRemove" data-id="${item ? item.id : ""}">Remove</button>`
+          : `<button class="btn sm" data-act="pkgAdd" data-id="${e.id}">Add</button>`) : (on ? "In package" : "")}
+      </div>`;
+    }).join("")}</div>` : "";
+
+  const doc = pkgDocHtml();
+
+  return `${blocks}${missing}
+    ${b.status === "draft" ? `
+      <label class="f" style="max-width:340px"><span>Package type</span>
+        <select data-act="pkgType">
+          ${[["report_only","Report only"],["report_photos","Report + photos"],
+             ["report_photos_video","Report + photos + video link"],["full","Full client package"]]
+            .map(([v, l]) => `<option value="${v}" ${b.package_type === v ? "selected" : ""}>${l}</option>`).join("")}
+        </select></label>
+      ${pick(photos, "Photos")}${pick(videos, "Video")}${pick(others, "Documents")}
+      <div class="actions" style="border-top:1px solid var(--line);padding-top:12px;margin-top:10px">
+        <button class="btn" data-act="pkgFinalize">Finalize the package</button>
+      </div>`
+    : `
+      <div class="feebox">
+        <div class="row"><span><b>Package finalized</b> &mdash; v${b.version}</span>
+          <span>${when(b.finalized_at)}</span></div>
+        ${b.delivered_at ? `<div class="row"><span>Delivered</span><span>${when(b.delivered_at)}</span></div>` : ""}
+        ${(PKG.providers && PKG.providers.dropbox && !PKG.providers.dropbox.configured && items.some(i => i.role === "video"))
+          ? `<div class="row"><span style="color:var(--muted);font-size:.85rem">Video delivery: Dropbox is not
+              connected &mdash; video is provided separately for now.</span><span></span></div>` : ""}
+      </div>
+      <div class="actions">
+        <button class="btn" data-act="pkgPrint">Print / Save the package PDF</button>
+        ${!b.delivered_at ? `<button class="btn ghost" data-act="pkgDelivered">Mark delivered</button>` : ""}
+        <button class="btn ghost" data-act="pkgReopen">Reopen and rebuild</button>
+      </div>`}
+    ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+    ${doc}`;
+}
+
+/* The document — exactly what prints (report, photographs, video listing,
+   evidence index). Photos are embedded; video is listed, never embedded. */
+function pkgDocHtml(){
+  const b = PKG && PKG.build;
+  if(!b) return "";
+  const items = PKG.items || [];
+  const evById = Object.fromEntries((PKG.evidence || []).map(e => [e.id, e]));
+  const rows = items.map((i, n) => {
+    const e = evById[i.evidence_id] || {};
+    return { n: n + 1, role: i.role, e,
+      time: e.entry_time ? t12(e.entry_time) : "",
+      desc: e.note || e.entry_description || e.filename || "" };
+  });
+  const photos = rows.filter(r => r.role === "photo");
+  const videos = rows.filter(r => r.role === "video");
+  return `<h3 style="margin:18px 0 6px;font-size:1rem">The document <span class="opt">exactly what prints</span></h3>
+  <div id="pkgdoc">
+    <div class="doc-head">
+      <div><h2>Always Precise Investigations, LLC</h2>
+        <div style="font-size:.85rem;color:var(--muted)">Va DCJS #11-9159 &middot; (434) 907-0975</div></div>
+      <div style="text-align:right">
+        <div style="font-size:1.1rem;font-weight:800;letter-spacing:.05em">INVESTIGATIVE REPORT</div>
+        <div><b>${esc(WS_CASE)}</b></div>
+        ${PKG.report ? `<div style="font-size:.88rem">Report of ${esc(fmtDay(PKG.report.report_date))}</div>` : ""}
+      </div>
+    </div>
+    ${PKG.report ? `<div style="white-space:pre-line;font-size:.95rem">${esc(PKG.report.body)}</div>`
+      : `<p style="color:var(--muted)">No report attached yet.</p>`}
+    ${photos.length ? `<h3 style="border-top:1px solid var(--line);padding-top:14px">PHOTOGRAPHS</h3>
+      ${photos.map(r => `<div style="margin:0 0 14px">
+        <img src="/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${r.e.id}/file" alt="">
+        <div style="font-size:.85rem;color:var(--muted)">Photo ${String(r.n).padStart(2, "0")}${r.time ? ` &middot; ${esc(r.time)}` : ""} &middot; ${esc(r.desc)}</div>
+      </div>`).join("")}` : ""}
+    ${videos.length ? `<h3 style="border-top:1px solid var(--line);padding-top:14px">VIDEO EVIDENCE</h3>
+      ${videos.map((r, i2) => `<div style="margin:0 0 10px">
+        <b>Video ${String(i2 + 1).padStart(2, "0")}</b>${r.time ? ` &middot; ${esc(r.time)}` : ""}
+        <div style="font-size:.9rem">${esc(r.desc)}</div>
+      </div>`).join("")}
+      <p style="font-size:.9rem"><b>VIDEO DELIVERY</b> &mdash; Selected video evidence is provided
+        through the accompanying electronic evidence delivery. Video package reference: ${esc(WS_CASE)}.</p>` : ""}
+    ${rows.length ? `<h3 style="border-top:1px solid var(--line);padding-top:14px">EVIDENCE INDEX</h3>
+      <table class="doc-table"><thead><tr><th>Exhibit</th><th>Time</th><th>Type</th><th>Description</th><th>Delivery</th></tr></thead>
+        <tbody>${rows.map(r => `<tr>
+          <td>${r.role === "photo" ? "Photo" : r.role === "video" ? "Video" : "Document"} ${String(r.n).padStart(2, "0")}</td>
+          <td>${esc(r.time)}</td><td>${esc(r.role)}</td><td>${esc(r.desc)}</td>
+          <td>${r.role === "video" ? "Video delivery" : "Report"}</td>
+        </tr>`).join("")}</tbody></table>` : ""}
+    <p style="font-size:.85rem;border-top:1px solid var(--line);padding-top:10px;color:var(--muted)">
+      Prepared by Always Precise Investigations, LLC. The investigator may provide testimony
+      regarding their own observations when appropriate and separately arranged.</p>
+  </div>`;
+}
+
+async function pkgApi(path, body){
+  WS_ERR = "";
+  try{ PKG = await api(path, {method: "POST", body: body || {}}); }
+  catch(e){
+    WS_ERR = e.message;
+    if(e.gates) WS_ERR = "Not ready: " + e.gates.join(" ");
+    await loadPackage(); return;
+  }
+  paintCase();
+}
+
 /* Priority 19 — follow-up tasks. Admin-created; assigning one to an
    investigator is the office choosing to tell them, and that assignment is
    the only way a task reaches one. The one write the field has is marking
@@ -1818,6 +2016,7 @@ function caseBodyHtml(){
     : WS_TAB === "expenses" ? expensesPanel()
     : WS_TAB === "notes"    ? notesPanel()
     : WS_TAB === "comms"    ? commsPanel()
+    : WS_TAB === "package"  ? packagePanel()
     : WS_TAB === "evidence" ? evidencePanel()
     : WS_TAB === "tasks"    ? tasksPanel()
     : WS_TAB === "auth"     ? authPanel(a, admin) + (admin ? authAdminForm() : "")
@@ -2910,7 +3109,8 @@ document.addEventListener("click", ev => {
   else if(act === "clearCardFilter"){ CARD_FILTER = null; paint(); }
   else if(act === "addDemo"){ addDemoCase(); }
   else if(act === "clearDemo"){ clearDemoCases(); }
-  else if(act === "wsTab"){ if(WS_TAB !== el.dataset.tab) WS_NOTICE = ""; WS_TAB = el.dataset.tab; WS_ERR = ""; paintCase(); }
+  else if(act === "wsTab"){ if(WS_TAB !== el.dataset.tab) WS_NOTICE = ""; WS_TAB = el.dataset.tab; WS_ERR = "";
+    if(WS_TAB === "package"){ PKG = null; loadPackage(); } else paintCase(); }
   else if(act === "qkind"){ QKIND = el.dataset.k; WS_ERR = ""; paintCase(); }
   else if(act === "subjNew"){ SUBJ_FORM = {mode:"new", pre:{}}; WS_ERR = ""; paintCase(); }
   else if(act === "subjFromIntake"){
@@ -2944,6 +3144,17 @@ document.addEventListener("click", ev => {
   }
   else if(act === "invSaveLines"){ saveInvoiceLines(); }
   else if(act === "evDelete"){ deleteEvidenceRow(Number(el.dataset.id)); }
+  else if(act === "pkgStart"){ pkgApi(`/cases/${encodeURIComponent(WS_CASE)}/build`); }
+  else if(act === "pkgAdd"){ pkgApi(`/build/${PKG.build.id}/items`, {evidence_id: Number(el.dataset.id)}); }
+  else if(act === "pkgRemove"){ pkgApi(`/build/${PKG.build.id}/items/${el.dataset.id}/remove`); }
+  else if(act === "pkgFinalize"){ pkgApi(`/build/${PKG.build.id}/finalize`); }
+  else if(act === "pkgReopen"){ pkgApi(`/build/${PKG.build.id}/reopen`); }
+  else if(act === "pkgDelivered"){ pkgApi(`/build/${PKG.build.id}/delivered`); }
+  else if(act === "pkgPrint"){
+    document.body.classList.add("printing-package");
+    window.print();
+    setTimeout(() => document.body.classList.remove("printing-package"), 400);
+  }
   else if(act === "createInvoice"){ createInvoiceFor(el.dataset.case, false); }
   else if(act === "createInvoiceAuth"){ createInvoiceFor(el.dataset.case, true); }
   else if(act === "openReport"){
@@ -3027,6 +3238,7 @@ document.addEventListener("input", ev => {
   if(ev.target.dataset && ev.target.dataset.act === "invFilterType"){ INV_FILTER.type = ev.target.value; loadInvoices(); }
   if(ev.target.dataset && ev.target.dataset.act === "invFilterQ"){ INV_FILTER.q = ev.target.value; loadInvoices(); }
   if(ev.target.dataset && ev.target.dataset.act === "evClass"){ setEvidenceClass(Number(ev.target.dataset.id), ev.target.value); }
+  if(ev.target.dataset && ev.target.dataset.act === "pkgType"){ pkgApi(`/build/${PKG.build.id}/package`, {package_type: ev.target.value}); }
 });
 
 /* ------------------------------------------------------------------- boot */

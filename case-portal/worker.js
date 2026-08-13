@@ -2390,7 +2390,13 @@ async function buildState(env, caseNo) {
     `SELECT x.* FROM external_files x JOIN case_evidence e ON e.id = x.evidence_id
       WHERE e.case_no = ?`).bind(caseNo).all();
 
+  // The mini-dashboard's billing block: enough to show state, nothing more.
+  const { results: caseInvoices } = await env.DB.prepare(
+    'SELECT id, invoice_no, status FROM invoices WHERE case_no = ? ORDER BY id DESC LIMIT 10')
+    .bind(caseNo).all();
+
   return {
+    invoices: caseInvoices || [],
     build: build || null,
     report: report ? { id: report.id, report_date: report.report_date, status: report.status,
                        body: report.body } : null,
