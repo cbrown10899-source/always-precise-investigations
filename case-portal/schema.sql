@@ -670,3 +670,16 @@ CREATE TABLE IF NOT EXISTS build_events (
   at       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_bevents ON build_events(build_id);
+
+-- A submitted report is never overwritten (UIBUILD P11): submitting snapshots
+-- the exact text with its moment and author, and later edits touch only the
+-- working copy. There is deliberately no delete: like the activity log, a
+-- report history that can be quietly erased is worth less in a hearing.
+CREATE TABLE IF NOT EXISTS report_versions (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  report_id    INTEGER NOT NULL,
+  body         TEXT    NOT NULL,
+  submitted_at TEXT    NOT NULL,
+  submitted_by INTEGER REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_repvers ON report_versions(report_id);

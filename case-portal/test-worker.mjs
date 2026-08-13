@@ -1209,6 +1209,27 @@ section('Evidence: stored privately, metered, and capped inside the free plan');
   ok('the public health check carries only the bare percentage',
      (await jsonOf(await call(env, '/health'))).storage_pct === 44);
 
+  /* Linking after upload (UIBUILD P9's fold): the uploader ties their file to
+     the moment it documents; nobody re-files someone else's work. */
+  const late = await jsonOf(await up(dana, mk('late.jpg', 200, 'image/jpeg')));
+  ok('a file can be linked to a moment after upload',
+     (await call(env, `/cases/API-EV1/evidence/${late.id}/link`, { method: 'POST', cookie: dana,
+       body: { entry_id: entry.id } })).status === 200);
+  ok('and the link lands in the workspace',
+     (await jsonOf(await call(env, '/cases/API-EV1/workspace', { cookie: dana })))
+       .evidence.find(e => e.id === late.id).entry_id === entry.id);
+  ok("an investigator cannot re-file someone else's upload",
+     (await call(env, `/cases/API-EV1/evidence/${clip.id}/link`, { method: 'POST', cookie: dana,
+       body: { entry_id: entry.id } })).status === 403);
+  ok('a moment from another case is refused',
+     (await call(env, `/cases/API-EV1/evidence/${late.id}/link`, { method: 'POST', cookie: dana,
+       body: { entry_id: 999999 } })).status === 400);
+  ok('null unlinks',
+     (await call(env, `/cases/API-EV1/evidence/${late.id}/link`, { method: 'POST', cookie: dana,
+       body: { entry_id: null } })).status === 200
+     && (await jsonOf(await call(env, '/cases/API-EV1/workspace', { cookie: dana })))
+       .evidence.find(e => e.id === late.id).entry_id === null);
+
   // Without the binding, uploads say exactly what is missing.
   const bare = freshEnv();
   await bootstrapAdmin(bare);
@@ -2546,6 +2567,20 @@ section('The daily report builder');
      { method: 'POST', cookie: admin, body: { status: 'delivered' } })).status === 200);
   ok('an invalid status is refused', (await call(env, `/cases/API-R1/reports/${repId}/status`,
      { method: 'POST', cookie: admin, body: { status: 'published' } })).status === 400);
+
+  /* UIBUILD P11: each submission preserved the exact text of its moment. */
+  const vers = await jsonOf(await call(env, `/cases/API-R1/reports/${repId}/versions`, { cookie: inv }));
+  ok('each submission left a version behind', vers.versions.length === 2, JSON.stringify(vers).slice(0, 200));
+  ok('the newest version carries the resubmitted text',
+     vers.versions[0].body.includes('White GMC Sierra.'));
+  ok('the first submission is preserved exactly, without the later edit',
+     !vers.versions[1].body.includes('White GMC Sierra.')
+     && vers.versions[1].body.includes('Added on review by the investigator.'));
+  await call(env, `/cases/API-R1/reports/${repId}`, { method: 'POST', cookie: admin,
+    body: { body: 'Working copy rewritten by the office.' } });
+  const vers2 = await jsonOf(await call(env, `/cases/API-R1/reports/${repId}/versions`, { cookie: admin }));
+  ok('editing the working copy never touches a submitted version',
+     vers2.versions.length === 2 && vers2.versions[0].body.includes('White GMC Sierra.'));
 
   // An admin doing their own fieldwork runs the whole path alone.
   await ingest(env, { case_no: 'API-R2', subject_name: 'Solo Subject', client_name: 'Acme' });

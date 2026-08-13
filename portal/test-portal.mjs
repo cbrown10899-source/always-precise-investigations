@@ -999,23 +999,49 @@ section('Drafting and reviewing a daily report in the browser');
 
   await page.locator('.btn', { hasText: 'Generate draft' }).click();
   await page.waitForTimeout(700);
-  const draft = await page.locator('#r_body').inputValue();
-  ok('a chronology is drafted', draft.includes('SURVEILLANCE CHRONOLOGY'));
-  ok('it carries the logged observation',
-     draft.includes('Subject vehicle observed parked at residence'), draft);
-  ok('a noun phrase is left alone rather than mangled into "the subject vehicle"',
-     !draft.includes('the subject vehicle'), draft);
-  ok('the time is written out in 12-hour form', draft.includes('7:14 AM'));
-  ok('it opens as a draft', has(await text(page, '#dlgBody'), 'Draft'));
 
-  // Edit it, the way a person actually would.
+  // UIBUILD P11: the preview leads — a branded document, not a bare textarea.
+  ok('the draft opens as a branded preview', await page.locator('#repdoc').count() === 1);
+  const doc = await text(page, '#repdoc');
+  ok('the document is headed as an investigative report', has(doc, 'INVESTIGATIVE REPORT'));
+  ok('and flagged as a draft', has(doc, 'DRAFT'));
+  ok('with the firm name on it', has(doc, 'Always Precise Investigations'));
+  ok('and the case number', doc.includes('API-20260812-4002'));
+  ok('a chronology is drafted', doc.includes('SURVEILLANCE CHRONOLOGY'));
+  ok('it carries the logged observation',
+     doc.includes('Subject vehicle observed parked at residence'), doc);
+  ok('a noun phrase is left alone rather than mangled into "the subject vehicle"',
+     !doc.includes('the subject vehicle'), doc);
+  ok('the time is written out in 12-hour form', doc.includes('7:14 AM'));
+  const rpnav = await text(page, '.rpnav');
+  for (const v of ['Draft preview', 'Chronology', 'Summary', 'Attachments', 'Versions']) {
+    ok(`the panel nav offers ${v}`, has(rpnav, v), rpnav);
+  }
+  await page.locator('.rpnav button', { hasText: 'Chronology' }).click();
+  await page.waitForTimeout(250);
+  ok('Chronology is the timeline extract', has(await text(page, '#dlgBody'), '7:14 AM'));
+  await page.locator('.rpnav button', { hasText: 'Summary' }).click();
+  await page.waitForTimeout(250);
+  ok('Summary is the day', has(await text(page, '#dlgBody'), 'Hours'));
+  await page.locator('.rpnav button', { hasText: 'Draft preview' }).click();
+  await page.waitForTimeout(250);
+
+  // Edit it, the way a person actually would — a step in, a step out.
+  await page.locator('.btn', { hasText: 'Edit report' }).click();
+  await page.waitForTimeout(300);
+  const draft = await page.locator('#r_body').inputValue();
   await page.locator('#r_body').fill(draft + '\nAt approximately 1:00 PM, surveillance was discontinued.');
   await page.locator('.btn', { hasText: 'Save changes' }).click();
   await page.waitForTimeout(600);
   ok('the edit survives a save',
      (await page.locator('#r_body').inputValue()).includes('surveillance was discontinued'));
+  await page.locator('.btn', { hasText: 'Done editing' }).click();
+  await page.waitForTimeout(300);
+  ok('done editing returns to the preview', await page.locator('#repdoc').count() === 1);
+  ok('and there is a way to take the document with you',
+     await page.locator('.btn', { hasText: 'Download draft' }).count() === 1);
 
-  await page.locator('.btn', { hasText: 'Submit for review' }).click();
+  await page.locator('.btn', { hasText: 'Submit report' }).click();
   await page.waitForTimeout(600);
   let panel = await text(page, '#dlgBody');
   ok('submitting moves it along', has(panel, 'Submitted'));
@@ -1029,13 +1055,20 @@ section('Drafting and reviewing a daily report in the browser');
   ok('sending it back records the note', panel.includes('Add the vehicle description.'));
   ok('and it reads as needing revision', has(panel, 'Needs revision'));
 
-  await page.locator('.btn', { hasText: 'Submit for review' }).click();
+  await page.locator('.btn', { hasText: 'Submit report' }).click();
   await page.waitForTimeout(600);
   await page.locator('.btn', { hasText: 'Approve' }).click();
   await page.waitForTimeout(600);
   panel = await text(page, '#dlgBody');
   ok('an admin can approve it', has(panel, 'Approved'));
   ok('and then mark it delivered', await page.locator('.btn', { hasText: 'Mark delivered' }).count() === 1);
+
+  // Two submissions, two preserved versions (P11) — never overwritten.
+  await page.locator('.rpnav button', { hasText: 'Versions' }).click();
+  await page.waitForTimeout(600);
+  const vers = await text(page, '#dlgBody');
+  ok('each submission preserved its exact text',
+     (vers.match(/Submitted /g) || []).length >= 2, vers.slice(0, 300));
   await page.close();
 }
 
@@ -1697,7 +1730,7 @@ section('Evidence in the browser');
   ok('and reports the meter', has(body, '% of the free plan'));
 
   const served = await page.evaluate(async () => {
-    const link = document.querySelector('.rcard a');
+    const link = document.querySelector('.evcard a');
     const r = await fetch(link.getAttribute('href'), { credentials: 'same-origin' });
     return { status: r.status, type: r.headers.get('content-type'), len: (await r.arrayBuffer()).byteLength };
   });
@@ -1720,6 +1753,21 @@ section('Evidence in the browser');
   ok('as an image thumbnail', await page.locator('.rcard img').count() >= 1);
   await wsTab(page, 'Evidence');
 
+  // The gallery (UIBUILD P12): tabs cut by type, cards carry the picture.
+  ok('the gallery tabs stand ready', has(await text(page, '.evtabs'), 'Photos'));
+  await page.locator('.evtab', { hasText: 'Video' }).click();
+  await page.waitForTimeout(250);
+  let gal = await text(page, '.evgrid');
+  ok('the Video tab holds the clip', has(gal, 'clip1.mp4') && !has(gal, 'subject.jpg'), gal.slice(0, 150));
+  ok('a video card says where it lives', has(gal, 'Portal'));
+  await page.locator('.evtab', { hasText: 'Photos' }).click();
+  await page.waitForTimeout(250);
+  gal = await text(page, '.evgrid');
+  ok('the Photos tab holds the stills', has(gal, 'subject.jpg') && !has(gal, 'clip1.mp4'), gal.slice(0, 150));
+  ok('a photo card carries its thumbnail', await page.locator('.evcard img.evthumb').count() >= 1);
+  await page.locator('.evtab', { hasText: 'All' }).click();
+  await page.waitForTimeout(250);
+
   // A photo linked to a timeline moment: the entry wears its count (P10).
   await page.locator('#ev_file').setInputFiles({
     name: 'moment.jpg', mimeType: 'image/jpeg', buffer: Buffer.alloc(500, 67) });
@@ -1729,6 +1777,24 @@ section('Evidence in the browser');
   await wsTab(page, 'Activity log');
   ok('a linked photo puts a count on the moment',
      await page.locator('.tl-i', { hasText: 'Subject arrived at ABC Fitness.' })
+       .locator('.tl-counts').count() >= 1);
+  await wsTab(page, 'Evidence');
+  ok('and the card names its moment', has(await text(page, '.evgrid'), '8:17 AM'));
+
+  // The quick-entry fold links an already-uploaded file to the new moment (P9).
+  await wsTab(page, 'Activity log');
+  await page.locator('[data-act="actOpen"]').click();
+  await page.waitForTimeout(300);
+  await page.locator('.ampick', { hasText: 'Established stationary surveillance position.' }).click();
+  await page.waitForTimeout(300);
+  await page.locator('.amfold summary').click();
+  await page.waitForTimeout(200);
+  ok('the fold offers the unlinked files', has(await text(page, '.amfold'), 'clip1.mp4'));
+  await page.locator('.cap', { hasText: 'clip1.mp4' }).locator('input').check();
+  await page.locator('.btn', { hasText: 'Add to log' }).click();
+  await page.waitForTimeout(700);
+  ok('the ticked file rode to the new moment',
+     await page.locator('.tl-i', { hasText: 'Established stationary surveillance position.' })
        .locator('.tl-counts').count() >= 1);
   await wsTab(page, 'Evidence');
 
