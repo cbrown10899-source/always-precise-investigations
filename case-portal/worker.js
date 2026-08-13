@@ -1871,7 +1871,7 @@ const ADMIN_ONLY = 'This action needs an admin account.';
 const EXPECTED_TABLES = [
   'users', 'sessions', 'submissions', 'login_fails', 'invites', 'ingest_rate',
   'case_types', 'case_meta', 'case_days', 'activity_log', 'activity_media', 'case_reports', 'app_config',
-  'case_expenses', 'case_notes', 'user_rates', 'case_settings',
+  'case_expenses', 'case_notes', 'user_rates', 'case_settings', 'password_resets',
 ];
 
 async function missingTables(env) {
@@ -1917,6 +1917,46 @@ async function route(request, env) {
   if (inv && method === 'GET') return checkInvite(env, inv[1]);
   inv = p.match(/^\/invite\/([0-9a-f]{64})\/accept$/);
   if (inv && method === 'POST') return acceptInvite(request, env, inv[1]);
+
+  let rst = p.match(/^\/reset\/([0-9a-f]{64})$/);
+  if (rst && method === 'GET') {
+    const th = await sha256Hex(rst[1]);
+    const row = await env.DB.prepare(
+      `SELECT r.user_id, r.expires_at, r.used_at, u.username, u.display_name
+         FROM password_resets r JOIN users u ON u.id = r.user_id
+        WHERE r.token_hash = ?`).bind(th).first();
+    if (!row || row.used_at || row.expires_at < nowIso()) {
+      return json({ error: 'This reset link is not valid any more. Ask an admin for a fresh one.' }, 404);
+    }
+    return json({ username: row.username, display_name: row.display_name });
+  }
+  rst = p.match(/^\/reset\/([0-9a-f]{64})\/accept$/);
+  if (rst && method === 'POST') {
+    const th = await sha256Hex(rst[1]);
+    const row = await env.DB.prepare(
+      `SELECT r.user_id, r.expires_at, r.used_at FROM password_resets r WHERE r.token_hash = ?`)
+      .bind(th).first();
+    if (!row || row.used_at || row.expires_at < nowIso()) {
+      return json({ error: 'This reset link is not valid any more. Ask an admin for a fresh one.' }, 404);
+    }
+    const body = await readJson(request);
+    const pwErr = passwordProblem(String(body.password || ''));
+    if (pwErr) return json({ error: pwErr }, 400);
+    const salt = randomHex(16);
+    const iterations = iterCount(env);
+    const hash = await pbkdf2(String(body.password), salt, iterations);
+    await env.DB.prepare('UPDATE users SET pass_hash = ?, pass_salt = ?, iterations = ? WHERE id = ?')
+      .bind(hash, salt, iterations, row.user_id).run();
+    // Single use, every old session dead, lockout counter cleared.
+    await env.DB.prepare('UPDATE password_resets SET used_at = ? WHERE token_hash = ?').bind(nowIso(), th).run();
+    await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(row.user_id).run();
+    await env.DB.prepare('DELETE FROM login_fails WHERE username = (SELECT username FROM users WHERE id = ?)')
+      .bind(row.user_id).run();
+    const u = await env.DB.prepare('SELECT id, username, display_name, role FROM users WHERE id = ?')
+      .bind(row.user_id).first();
+    const session = await createSession(env, u.id);
+    return json({ ok: true, user: u }, 200, { 'Set-Cookie': sessionCookie(session, SESSION_HOURS * 3600) });
+  }
 
   // Everything below needs a signed-in caller.
   const user = await currentUser(request, env);
@@ -2120,6 +2160,23 @@ async function route(request, env) {
   if (m && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return setUserActive(request, env, m[1], user);
+  }
+
+  m = p.match(/^\/users\/(\d+)\/reset-link$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    const uid = parseInt(m[1], 10);
+    const u = await env.DB.prepare('SELECT id, active FROM users WHERE id = ?').bind(uid).first();
+    if (!u) return json({ error: 'not found' }, 404);
+    const token = randomHex(32);
+    // A fresh link quietly retires any earlier one for the same person.
+    await env.DB.prepare('DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL').bind(uid).run();
+    await env.DB.prepare(
+      `INSERT INTO password_resets (token_hash, user_id, created_by, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?)`)
+      .bind(await sha256Hex(token), uid, user.id, nowIso(),
+            new Date(Date.now() + 24 * 3600_000).toISOString()).run();
+    return json({ ok: true, url: `${env.SITE_ORIGIN || ''}/portal/?reset=${token}`, expires_hours: 24 }, 201);
   }
 
   m = p.match(/^\/users\/(\d+)\/password$/);

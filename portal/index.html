@@ -452,6 +452,26 @@ function inviteView(state){
   </div>`;
 }
 
+function resetView(state){
+  if(state.error){
+    return `<div class="card narrow"><h1>Reset link not valid</h1>
+      <p class="lead">${esc(state.error)}</p>
+      <a class="btn" href="/portal/" style="display:inline-block;text-decoration:none">Go to sign-in</a></div>`;
+  }
+  return `<div class="card narrow">
+    <h1>Choose a new password</h1>
+    <p class="lead">For <b>${esc(state.display_name || state.username)}</b>
+      (<span class="mono">${esc(state.username)}</span>). Nobody else ever sees it &mdash; not even
+      the admin who sent this link. Every signed-in session ends when it changes.</p>
+    <form data-act="resetAccept">
+      <label class="f"><span>New password</span><input id="p1" type="password" autocomplete="new-password" required></label>
+      <label class="f"><span>Confirm password</span><input id="p2" type="password" autocomplete="new-password" required></label>
+      <p class="lead">At least 12 characters, with an uppercase letter, a lowercase letter and a digit.</p>
+      <button class="btn" style="width:100%" id="acceptBtn">Set my new password</button>
+      <div class="err" id="err"></div>
+    </form></div>`;
+}
+
 function shell(inner){
   // Simplified navigation for the field, exactly as the handoff draws it —
   // not a miniature admin portal. Calendar and Availability join when their
@@ -752,6 +772,7 @@ function staffView(){
     <td class="hide">${when(u.last_login_at)}</td>
     <td style="white-space:nowrap">${u.id === ME.id ? "" :
       `<button class="btn sm ${u.active ? "danger" : "ghost"}" data-act="toggleActive" data-id="${u.id}" data-active="${u.active ? 0 : 1}">${u.active ? "Disable" : "Enable"}</button>`}
+      <button class="btn sm ghost" data-act="resetLink" data-id="${u.id}">Reset password</button>
     </td></tr>
     <tr><td colspan="5" style="border-top:0;padding-top:0">
       <div class="comprow" data-id="${u.id}">
@@ -1626,6 +1647,31 @@ async function saveCaseMeta(){
   await reloadWorkspace();
 }
 
+async function requestResetLink(id){
+  try{
+    const r = await api(`/users/${id}/reset-link`, {method:"POST"});
+    LAST_LINK = r.url; LAST_EMAILED = false;
+    await render();
+    const o = $("uok");
+    if(o) o.textContent = "Reset link created — send it to them yourself. It works once and expires in 24 hours.";
+  }catch(e){ alert(e.message); }
+}
+
+async function doResetAccept(token){
+  const btn = $("acceptBtn"), err = $("err");
+  err.textContent = "";
+  if($("p1").value !== $("p2").value){ err.textContent = "Those passwords do not match."; return; }
+  btn.disabled = true; btn.textContent = "Setting…";
+  try{
+    ME = (await api(`/reset/${token}/accept`, {method:"POST", body:{password:$("p1").value}})).user;
+    history.replaceState({}, "", "/portal/");
+    await render();
+  }catch(e){
+    err.textContent = e.message;
+    btn.disabled = false; btn.textContent = "Set my new password";
+  }
+}
+
 async function saveUserRates(id){
   const row = document.querySelector(`.comprow[data-id="${id}"]`);
   try{
@@ -1745,6 +1791,7 @@ document.addEventListener("click", ev => {
   else if(act === "reportStatus"){ setReportStage(Number(el.dataset.id), el.dataset.to); }
   else if(act === "reviewExpense"){ reviewExpenseEntry(Number(el.dataset.id)); }
   else if(act === "saveUserRates"){ saveUserRates(Number(el.dataset.id)); }
+  else if(act === "resetLink"){ requestResetLink(Number(el.dataset.id)); }
   else if(act === "openSheet"){
     OPEN_SHEET = OPEN_SHEET === el.dataset.sheet ? null : el.dataset.sheet;
     SHEET_MSG = ""; paint();
@@ -1772,6 +1819,7 @@ document.addEventListener("submit", ev => {
   if(a === "login") doLogin();
   else if(a === "invite") doInvite();
   else if(a === "accept") doAccept(new URLSearchParams(location.search).get("invite") || "");
+  else if(a === "resetAccept") doResetAccept(new URLSearchParams(location.search).get("reset") || "");
   else if(a === "addActivity") addActivityEntry();
   else if(a === "startDay") startInvestigationDay();
   else if(a === "endDay") endInvestigationDay();
@@ -1794,6 +1842,12 @@ document.addEventListener("input", ev => {
 /* ------------------------------------------------------------------- boot */
 
 (async function boot(){
+  const rtoken = new URLSearchParams(location.search).get("reset");
+  if(rtoken){
+    try{ app.innerHTML = resetView(await api("/reset/" + encodeURIComponent(rtoken))); }
+    catch(e){ app.innerHTML = resetView({error: e.message}); }
+    return;
+  }
   const token = new URLSearchParams(location.search).get("invite");
   if(token){
     try{

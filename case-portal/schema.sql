@@ -294,6 +294,18 @@ CREATE TABLE IF NOT EXISTS case_settings (
   updated_at           TEXT
 );
 
+-- Password resets, invitation-style: an admin issues a one-time link and the
+-- person chooses their own new password, so nobody — the admin included —
+-- ever knows it. Only the token's SHA-256 is stored. 24-hour expiry.
+CREATE TABLE IF NOT EXISTS password_resets (
+  token_hash TEXT PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id),
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used_at    TEXT
+);
+
 -- Small configuration values (authorization warning thresholds and whatever
 -- comes next), so numbers like 75/90/100 are configuration, not code.
 CREATE TABLE IF NOT EXISTS app_config (

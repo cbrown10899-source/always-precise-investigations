@@ -384,7 +384,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 357 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 369 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 270 checks: the page against the real Worker
 ```
 
