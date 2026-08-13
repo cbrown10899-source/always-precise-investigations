@@ -1567,6 +1567,25 @@ section('Evidence in the browser');
   await page.close();
 }
 
+/* The two live findings from the owner: the reset link now appears AT the
+   row that was clicked, and disabled accounts offer the guarded delete. */
+section('Reset links land where you clicked');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Staff' }).click();
+  await page.waitForTimeout(500);
+  await page.locator('tr', { hasText: 'dana' }).locator('.btn', { hasText: 'Reset password' }).first().click();
+  await page.waitForTimeout(600);
+  const box = await text(page, '.linkbox');
+  ok('the link appears inline, at the row', has(box, 'Password reset link for dana'));
+  ok('worded as a reset, not an invitation', !has(box, 'Invitation'));
+  ok('and carries the working link', /\?reset=[0-9a-f]{64}/.test(box), box.slice(0, 160));
+  ok('a delete button only ever appears on a disabled account',
+     await page.locator('[data-act="deleteUser"]').count() === 0);
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();

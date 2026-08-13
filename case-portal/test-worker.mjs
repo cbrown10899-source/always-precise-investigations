@@ -2149,6 +2149,51 @@ section('Password reset: a one-time link, nobody learns the password');
      (await call(env, `/reset/${rt2}`)).status === 404);
 }
 
+section('Deleting an account: history always wins');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  for (const uname of ['worked', 'fresh']) {
+    const l = (await jsonOf(await invite(env, admin, { username: uname, display_name: uname, role: 'investigator' }))).url;
+    const t = new URL(l, 'https://x.test').searchParams.get('invite');
+    await call(env, `/invite/${t}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  }
+  const workedCookie = (await login(env, 'worked', 'FieldWork2026x')).cookie;
+  const freshCookie = (await login(env, 'fresh', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const workedId = users.users.find(u => u.username === 'worked').id;
+  const freshId = users.users.find(u => u.username === 'fresh').id;
+  const adminId = users.users.find(u => u.username === 'trever').id;
+
+  // 'worked' has case history: one recorded day.
+  await ingest(env, { case_no: 'API-DEL1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  await call(env, '/submissions/API-DEL1/assign', { method: 'POST', cookie: admin, body: { user_id: workedId } });
+  await call(env, '/cases/API-DEL1/day/start', { method: 'POST', cookie: workedCookie,
+    body: { day_date: '2026-08-13', start_time: '07:00' } });
+
+  ok('an investigator cannot delete accounts',
+     (await call(env, `/users/${freshId}/delete`, { method: 'POST', cookie: workedCookie })).status === 403);
+  ok('an admin cannot delete themselves',
+     (await call(env, `/users/${adminId}/delete`, { method: 'POST', cookie: admin })).status === 400);
+  ok('the last active admin is undeletable by construction',
+     (await jsonOf(await call(env, `/users/${adminId}/delete`, { method: 'POST', cookie: admin }))).error.includes('your own'));
+
+  const refused = await call(env, `/users/${workedId}/delete`, { method: 'POST', cookie: admin });
+  ok('an account with recorded case work is refused', refused.status === 409
+     && (await jsonOf(refused)).code === 'has_work');
+  ok('their history is intact',
+     (await env.DB.prepare('SELECT COUNT(*) AS n FROM case_days WHERE investigator_id = ?')
+       .bind(workedId).first()).n === 1);
+
+  ok('a never-used account deletes cleanly',
+     (await call(env, `/users/${freshId}/delete`, { method: 'POST', cookie: admin })).status === 200);
+  ok('the row is gone',
+     (await env.DB.prepare('SELECT COUNT(*) AS n FROM users WHERE id = ?').bind(freshId).first()).n === 0);
+  ok('and every session with it',
+     (await call(env, '/auth/me', { cookie: freshCookie })).status === 401);
+}
+
 section('Client rate and investigator pay never share a field');
 {
   const env = freshEnv();

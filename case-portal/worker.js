@@ -3527,6 +3527,49 @@ async function route(request, env) {
     return setUserActive(request, env, m[1], user);
   }
 
+  /* Full account deletion, behind the disable flow's yes/no. History wins:
+     an account with recorded case work can never be deleted — its stamps ARE
+     the case record — it stays disabled instead. A never-used or mistaken
+     account deletes cleanly, sessions and all. */
+  m = p.match(/^\/users\/(\d+)\/delete$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    const uid = parseInt(m[1], 10);
+    if (uid === user.id) return json({ error: 'You cannot delete your own account.' }, 400);
+    const u = await env.DB.prepare('SELECT id, role FROM users WHERE id = ?').bind(uid).first();
+    if (!u) return json({ error: 'not found' }, 404);
+    if (u.role === 'admin') {
+      const others = await env.DB.prepare(
+        'SELECT COUNT(*) AS n FROM users WHERE role = ? AND active = 1 AND id != ?')
+        .bind('admin', uid).first();
+      if (!others || Number(others.n) < 1) {
+        return json({ error: 'That is the last active admin — the portal cannot be left without one.' }, 400);
+      }
+    }
+    const work = [
+      ['submissions', 'assigned_to'], ['case_days', 'investigator_id'],
+      ['activity_log', 'investigator_id'], ['case_reports', 'investigator_id'],
+      ['case_expenses', 'investigator_id'], ['case_notes', 'author_id'],
+      ['case_offers', 'investigator_id'], ['case_tasks', 'assigned_to'],
+      ['case_evidence', 'uploaded_by'],
+    ];
+    for (const [table, col] of work) {
+      const r = await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${col} = ?`).bind(uid).first();
+      if (r && Number(r.n) > 0) {
+        return json({ error: 'This account has recorded case work, so it stays — deleted accounts would '
+          + 'leave holes in the case history. It is disabled; that is the right end state.',
+          code: 'has_work' }, 409);
+      }
+    }
+    for (const sql of [
+      'DELETE FROM sessions WHERE user_id = ?',
+      'DELETE FROM password_resets WHERE user_id = ?',
+      'DELETE FROM user_rates WHERE user_id = ?',
+      'DELETE FROM users WHERE id = ?',
+    ]) await env.DB.prepare(sql).bind(uid).run();
+    return json({ ok: true, deleted: true });
+  }
+
   m = p.match(/^\/users\/(\d+)\/reset-link$/);
   if (m && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
