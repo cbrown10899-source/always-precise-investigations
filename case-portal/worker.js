@@ -2451,6 +2451,81 @@ async function adminBuild(env, user, buildId) {
   return b || null;
 }
 
+
+/* The dashboard's Case Package cards (UIBUILD P3): per active case, the
+   state of every workflow module in one payload, so the page can draw the
+   ring, the blocks and one computed NEXT STEP without a fetch per case. */
+async function casePackages(env) {
+  const { results: rows } = await env.DB.prepare(
+    `SELECT s.case_no, s.kind, s.status, s.carrier, s.client_name, s.subject_name,
+            st.stage, t.label AS case_type, u.display_name AS investigator,
+            cm.authorized_hours, cm.authorized_budget
+       FROM submissions s
+       LEFT JOIN case_status st ON st.case_no = s.case_no
+       LEFT JOIN case_meta cm ON cm.case_no = s.case_no
+       LEFT JOIN case_types t ON t.id = cm.case_type_id
+       LEFT JOIN users u ON u.id = s.assigned_to
+      WHERE s.status != 'closed'
+      ORDER BY s.created_at DESC LIMIT 24`).all();
+
+  const packages = [];
+  for (const c of rows || []) {
+    const acts = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM activity_log WHERE case_no = ?').bind(c.case_no).first();
+    const daysRow = await env.DB.prepare(
+      `SELECT COALESCE(SUM(hours), 0) AS h, COUNT(*) AS n,
+              SUM(CASE WHEN end_time IS NULL THEN 1 ELSE 0 END) AS open
+         FROM case_days WHERE case_no = ?`).bind(c.case_no).first();
+    const rep = await env.DB.prepare(
+      `SELECT status FROM case_reports WHERE case_no = ?
+        ORDER BY CASE status WHEN 'approved' THEN 0 WHEN 'delivered' THEN 0
+                 WHEN 'submitted' THEN 1 ELSE 2 END, id DESC LIMIT 1`).bind(c.case_no).first();
+    const ev = await env.DB.prepare(
+      `SELECT SUM(CASE WHEN content_type LIKE 'image/%' THEN 1 ELSE 0 END) AS photos,
+              SUM(CASE WHEN content_type LIKE 'video/%' THEN 1 ELSE 0 END) AS videos
+         FROM case_evidence WHERE case_no = ? AND deleted_at IS NULL`).bind(c.case_no).first();
+    const build = await env.DB.prepare(
+      'SELECT status FROM case_builds WHERE case_no = ? ORDER BY version DESC, id DESC LIMIT 1')
+      .bind(c.case_no).first();
+    const invoice = await env.DB.prepare(
+      "SELECT status FROM invoices WHERE case_no = ? AND status != 'void' ORDER BY id DESC LIMIT 1")
+      .bind(c.case_no).first();
+    let retainer = null;
+    if (c.kind === 'consumer') {
+      const auth = await authorizationFor(env, c.case_no, true);
+      retainer = auth.retainer ? { amount: auth.retainer.amount, remaining: auth.retainer.remaining,
+                                   received: auth.retainer.received } : null;
+    }
+    packages.push({
+      case_no: c.case_no, kind: c.kind, stage: c.stage || null, case_type: c.case_type || null,
+      client: c.kind === 'claims' ? (c.carrier || c.client_name) : c.client_name,
+      subject: c.subject_name, investigator: c.investigator || null,
+      authorized_hours: c.authorized_hours, authorized_budget: c.authorized_budget,
+      hours_used: Math.round((Number(daysRow && daysRow.h) || 0) * 100) / 100,
+      open_day: Number(daysRow && daysRow.open) > 0,
+      days: Number(daysRow && daysRow.n) || 0,
+      activity_count: Number(acts && acts.n) || 0,
+      report_status: rep ? rep.status : null,
+      photos: Number(ev && ev.photos) || 0,
+      videos: Number(ev && ev.videos) || 0,
+      build_status: build ? build.status : null,
+      invoice_status: invoice ? invoice.status : null,
+      retainer,
+    });
+  }
+
+  // The Outstanding card: what is billed and unpaid across the book.
+  const { results: liveInv } = await env.DB.prepare(
+    "SELECT id FROM invoices WHERE status NOT IN ('void', 'draft')").all();
+  let outstanding = 0;
+  for (const iv of liveInv || []) {
+    const full = await invoiceWithMoney(env,
+      await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(iv.id).first());
+    outstanding += Math.max(0, full.balance_due);
+  }
+  return json({ packages, outstanding: Math.round(outstanding * 100) / 100 });
+}
+
 /* ------------------------------------------------- my work, across cases */
 
 /* An investigator's own desk: their reports and their expenses across every
@@ -3243,6 +3318,11 @@ async function route(request, env) {
      investigator never selects, shares, or finalizes client deliverables. */
   if (p.startsWith('/build/') || /^\/cases\/[A-Za-z0-9-]{3,64}\/build$/.test(p) || p === '/external-storage') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  }
+
+  if (p === '/packages' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return casePackages(env);
   }
 
   if (p === '/external-storage' && method === 'GET') {

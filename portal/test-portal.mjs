@@ -192,6 +192,9 @@ async function signIn(page, u, p) {
   await page.locator('#p').fill(p);
   await page.locator('#loginBtn').click();
   await page.waitForTimeout(500);
+  // Admins land on the Dashboard now; the suite's sections start from Cases.
+  const cases = page.locator('.tabs button', { hasText: 'Cases' });
+  if (await cases.count()) { await cases.first().click(); await page.waitForTimeout(400); }
 }
 
 /* ------------------------------------------------------------------ tests */
@@ -1643,6 +1646,39 @@ section('The case package, gated and printed');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(450);
   ok('an investigator has no Package tab', !has(await text(page, '.wstabs'), 'Package'));
+  await page.close();
+}
+
+/* UIBUILD phase 1: the sidebar, the dashboard landing, the package cards
+   and Continue Case routing. */
+section('The dashboard leads with case packages');
+{
+  const page = await newPage();
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+  ok('an admin lands on the dashboard', has(await text(page, '.tabs button.on'), 'Dashboard'));
+  ok('the navigation carries the intake door', has(await text(page, '.tabs'), 'Intake a Client'));
+  const body = await text(page, '#app');
+  ok('the outstanding balance is a card', has(body, 'Outstanding'));
+  ok('case packages render as cards', await page.locator('.pcard').count() >= 2);
+  const card = await page.locator('.pcard', { hasText: 'API-20260812-4001' }).innerText();
+  ok('a card shows the module states', has(card, 'Activity') && has(card, 'Report') && has(card, 'Invoice'));
+  ok('and one computed next step', has(card, 'Next step'));
+  ok('the ring speaks percent', /\d+%/.test(card));
+
+  await page.locator('.pcard', { hasText: 'API-20260812-4001' })
+    .locator('.btn', { hasText: 'Continue case' }).click();
+  await page.waitForTimeout(700);
+  ok('Continue case opens the case at its step', await page.locator('.casepage').count() === 1);
+  await page.close();
+}
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  ok('an investigator keeps their own landing', has(await text(page, '.tabs button.on'), 'My assignments'));
+  ok('and gets no intake door', !has(await text(page, '.tabs'), 'Intake a Client'));
   await page.close();
 }
 
