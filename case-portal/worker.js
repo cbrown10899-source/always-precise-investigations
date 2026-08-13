@@ -875,6 +875,83 @@ function detailSetFor(caseType) {
   return 'general';
 }
 
+/* Structured subject and vehicle records (HANDOFF priority 17). Fieldwork
+   facts: both roles read and write them on cases they can open. A save
+   replaces the record as a whole — the form submits every field — and there
+   is no delete, the activity-log posture: corrections are edits, stamped
+   with who and when. */
+const SUBJECT_FIELDS = ['name', 'alias', 'dob', 'height', 'weight', 'hair', 'descriptors',
+  'addresses', 'employer', 'phone', 'social_accounts', 'notes'];
+const VEHICLE_FIELDS = ['year', 'make', 'model', 'color', 'plate', 'plate_state',
+  'registered_owner', 'notes'];
+
+function cleanRecord(body, allowed) {
+  const out = {};
+  for (const k of allowed) {
+    const v = body[k] === undefined || body[k] === null ? '' : String(body[k]).trim();
+    const cap = k === 'notes' || k === 'descriptors' || k === 'addresses' ? 2000 : 200;
+    out[k] = v ? v.slice(0, cap) : null;
+  }
+  return out;
+}
+
+async function saveSubject(request, env, user, caseNo, subjectId) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const f = cleanRecord(await readJson(request), SUBJECT_FIELDS);
+  if (!f.name) return json({ error: 'A subject needs at least a name.' }, 400);
+  const now = nowIso();
+  if (subjectId == null) {
+    const res = await env.DB.prepare(
+      `INSERT INTO case_subjects (case_no, name, alias, dob, height, weight, hair, descriptors,
+         addresses, employer, phone, social_accounts, notes, created_by, created_at, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(caseNo, f.name, f.alias, f.dob, f.height, f.weight, f.hair, f.descriptors,
+            f.addresses, f.employer, f.phone, f.social_accounts, f.notes, user.id, now, user.id, now).run();
+    return json({ ok: true, id: res.meta ? res.meta.last_row_id : null }, 201);
+  }
+  const owns = await env.DB.prepare(
+    'SELECT id FROM case_subjects WHERE id = ? AND case_no = ?').bind(subjectId, caseNo).first();
+  if (!owns) return json({ error: 'not found' }, 404);
+  await env.DB.prepare(
+    `UPDATE case_subjects SET name = ?, alias = ?, dob = ?, height = ?, weight = ?, hair = ?,
+        descriptors = ?, addresses = ?, employer = ?, phone = ?, social_accounts = ?, notes = ?,
+        updated_by = ?, updated_at = ? WHERE id = ?`)
+    .bind(f.name, f.alias, f.dob, f.height, f.weight, f.hair, f.descriptors, f.addresses,
+          f.employer, f.phone, f.social_accounts, f.notes, user.id, now, subjectId).run();
+  return json({ ok: true, id: subjectId });
+}
+
+async function saveVehicle(request, env, user, caseNo, subjectId, vehicleId) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const owns = await env.DB.prepare(
+    'SELECT id FROM case_subjects WHERE id = ? AND case_no = ?').bind(subjectId, caseNo).first();
+  if (!owns) return json({ error: 'not found' }, 404);
+  const f = cleanRecord(await readJson(request), VEHICLE_FIELDS);
+  if (!f.make && !f.model && !f.plate) {
+    return json({ error: 'Describe the vehicle — a make, a model or a plate.' }, 400);
+  }
+  const now = nowIso();
+  if (vehicleId == null) {
+    const res = await env.DB.prepare(
+      `INSERT INTO subject_vehicles (subject_id, year, make, model, color, plate, plate_state,
+         registered_owner, notes, created_by, created_at, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(subjectId, f.year, f.make, f.model, f.color, f.plate, f.plate_state,
+            f.registered_owner, f.notes, user.id, now, user.id, now).run();
+    return json({ ok: true, id: res.meta ? res.meta.last_row_id : null }, 201);
+  }
+  const v = await env.DB.prepare(
+    'SELECT id FROM subject_vehicles WHERE id = ? AND subject_id = ?').bind(vehicleId, subjectId).first();
+  if (!v) return json({ error: 'not found' }, 404);
+  await env.DB.prepare(
+    `UPDATE subject_vehicles SET year = ?, make = ?, model = ?, color = ?, plate = ?,
+        plate_state = ?, registered_owner = ?, notes = ?, updated_by = ?, updated_at = ?
+      WHERE id = ?`)
+    .bind(f.year, f.make, f.model, f.color, f.plate, f.plate_state, f.registered_owner,
+          f.notes, user.id, now, vehicleId).run();
+  return json({ ok: true, id: vehicleId });
+}
+
 async function caseSettings(env, caseNo) {
   return await env.DB.prepare(
     `SELECT client_hourly, client_mileage, show_client_identity
@@ -1024,6 +1101,23 @@ async function caseWorkspace(env, user, caseNo) {
     catch { details = {}; }
   }
 
+  /* Structured subjects with their vehicles (priority 17) — for both roles;
+     the subject is who is watched, never who is paying. */
+  const { results: subjectRows } = await env.DB.prepare(
+    `SELECT s.id, s.name, s.alias, s.dob, s.height, s.weight, s.hair, s.descriptors,
+            s.addresses, s.employer, s.phone, s.social_accounts, s.notes, s.updated_at,
+            u.display_name AS added_by
+       FROM case_subjects s LEFT JOIN users u ON u.id = s.created_by
+      WHERE s.case_no = ? ORDER BY s.id LIMIT 50`).bind(caseNo).all();
+  const { results: vehicleRows } = await env.DB.prepare(
+    `SELECT v.id, v.subject_id, v.year, v.make, v.model, v.color, v.plate, v.plate_state,
+            v.registered_owner, v.notes
+       FROM subject_vehicles v JOIN case_subjects s ON s.id = v.subject_id
+      WHERE s.case_no = ? ORDER BY v.id LIMIT 200`).bind(caseNo).all();
+  const subjects = (subjectRows || []).map(s => ({
+    ...s, vehicles: (vehicleRows || []).filter(v => v.subject_id === s.id),
+  }));
+
   return json({
     case_no: row.case_no,
     kind: row.kind,
@@ -1032,6 +1126,7 @@ async function caseWorkspace(env, user, caseNo) {
     details,
     detail_set: detailSet,
     detail_fields: detailFields,
+    subjects,
     case_types: admin ? await listCaseTypes(env) : [],
     activity: activity || [],
     days: days || [],
@@ -1953,7 +2048,7 @@ const EXPECTED_TABLES = [
   'users', 'sessions', 'submissions', 'login_fails', 'invites', 'ingest_rate',
   'case_types', 'case_meta', 'case_days', 'activity_log', 'activity_media', 'case_reports', 'app_config',
   'case_expenses', 'case_notes', 'user_rates', 'case_settings', 'password_resets', 'case_offers',
-  'case_details',
+  'case_details', 'case_subjects', 'subject_vehicles',
 ];
 
 async function missingTables(env) {
@@ -2117,6 +2212,18 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/activity\/(\d{1,12})$/);
   if (m && method === 'POST') return editActivity(request, env, user, m[1], parseInt(m[2], 10));
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/subjects$/);
+  if (m && method === 'POST') return saveSubject(request, env, user, m[1], null);
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/subjects\/(\d{1,12})$/);
+  if (m && method === 'POST') return saveSubject(request, env, user, m[1], parseInt(m[2], 10));
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/subjects\/(\d{1,12})\/vehicles$/);
+  if (m && method === 'POST') return saveVehicle(request, env, user, m[1], parseInt(m[2], 10), null);
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/subjects\/(\d{1,12})\/vehicles\/(\d{1,12})$/);
+  if (m && method === 'POST') return saveVehicle(request, env, user, m[1], parseInt(m[2], 10), parseInt(m[3], 10));
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/expenses$/);
   if (m && method === 'POST') return addExpense(request, env, user, m[1]);

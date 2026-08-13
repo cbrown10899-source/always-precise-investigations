@@ -1048,7 +1048,7 @@ async function doLogout(){
    that do something today are shown — an empty "Evidence" tab would promise a
    feature that is not there. */
 async function openCase(caseNo, tab){
-  WS_CASE = caseNo; WS_TAB = tab || "overview"; WS_ERR = ""; VIEW = "case";
+  WS_CASE = caseNo; WS_TAB = tab || "overview"; WS_ERR = ""; SUBJ_FORM = null; VIEW = "case";
   if(isExample(caseNo)){
     WS = null;   // examples are page-held demo data; they have no live workspace
     return paintCase();
@@ -1460,7 +1460,7 @@ function caseBodyHtml(){
     : WS_TAB === "notes"    ? notesPanel()
     : WS_TAB === "auth"     ? authPanel(a, admin) + (admin ? authAdminForm() : "")
     : WS_TAB === "assign"   ? assignPanel(s)
-    : WS_TAB === "subject"  ? detailList(s, "subject") + caseDetailsPanel()
+    : WS_TAB === "subject"  ? detailList(s, "subject") + caseDetailsPanel() + subjectsPanel(s)
     :                         myOfferBox() + detailList(s, "overview") + (a.authorized_hours != null ? authPanel(a, admin) : "");
 
   return `
@@ -1608,6 +1608,133 @@ function caseDetailsPanel(){
     <button class="btn" type="submit">Save details</button>
     ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
   </form>`;
+}
+
+/* Priority 17 — structured subjects and their vehicles. Fieldwork records:
+   both roles add and correct them (there is no delete — corrections are
+   edits, stamped in the Worker). One form is open at a time: SUBJ_FORM is
+   null, {mode:"new",pre}, {mode:"edit",id} or {mode:"veh",sid,vid?}. */
+let SUBJ_FORM = null;
+
+function subjForm(pre, id){
+  const g = k => esc((pre && pre[k]) || "");
+  return `<form class="quick" data-act="saveSubject" data-id="${id || ""}" style="margin-top:10px">
+    <div class="two">
+      <label class="f"><span>Name</span><input id="sf_name" value="${g("name")}"></label>
+      <label class="f"><span>Alias / nickname</span><input id="sf_alias" value="${g("alias")}"></label>
+    </div>
+    <div class="two">
+      <label class="f"><span>Date of birth <span class="opt">if legitimately supplied</span></span><input id="sf_dob" value="${g("dob")}"></label>
+      <label class="f"><span>Phone <span class="opt">if legitimately obtained</span></span><input id="sf_phone" value="${g("phone")}"></label>
+    </div>
+    <div class="two">
+      <label class="f"><span>Height</span><input id="sf_height" value="${g("height")}"></label>
+      <label class="f"><span>Weight</span><input id="sf_weight" value="${g("weight")}"></label>
+    </div>
+    <label class="f"><span>Hair</span><input id="sf_hair" value="${g("hair")}"></label>
+    <label class="f"><span>Other descriptors</span><textarea id="sf_descriptors" rows="2">${g("descriptors")}</textarea></label>
+    <label class="f"><span>Addresses</span><textarea id="sf_addresses" rows="2">${g("addresses")}</textarea></label>
+    <div class="two">
+      <label class="f"><span>Employer / workplace</span><input id="sf_employer" value="${g("employer")}"></label>
+      <label class="f"><span>Known social accounts</span><input id="sf_social_accounts" value="${g("social_accounts")}"></label>
+    </div>
+    <label class="f"><span>Notes</span><textarea id="sf_notes" rows="2">${g("notes")}</textarea></label>
+    <button class="btn" type="submit">Save subject</button>
+    <button class="btn ghost" type="button" data-act="subjCancel">Cancel</button>
+    ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+  </form>`;
+}
+
+function vehForm(sub){
+  const v = (SUBJ_FORM.vid && (sub.vehicles || []).find(x => x.id === SUBJ_FORM.vid)) || {};
+  const g = k => esc(v[k] || "");
+  return `<form class="quick" data-act="saveVehicle" data-sid="${sub.id}" data-vid="${v.id || ""}" style="margin-top:10px">
+    <div class="two">
+      <label class="f"><span>Year</span><input id="vf_year" value="${g("year")}"></label>
+      <label class="f"><span>Color</span><input id="vf_color" value="${g("color")}"></label>
+    </div>
+    <div class="two">
+      <label class="f"><span>Make</span><input id="vf_make" value="${g("make")}"></label>
+      <label class="f"><span>Model</span><input id="vf_model" value="${g("model")}"></label>
+    </div>
+    <div class="two">
+      <label class="f"><span>Plate</span><input id="vf_plate" value="${g("plate")}"></label>
+      <label class="f"><span>Plate state</span><input id="vf_plate_state" value="${g("plate_state")}"></label>
+    </div>
+    <label class="f"><span>Registered owner <span class="opt">if lawfully obtained</span></span><input id="vf_registered_owner" value="${g("registered_owner")}"></label>
+    <label class="f"><span>Notes</span><textarea id="vf_notes" rows="2">${g("notes")}</textarea></label>
+    <button class="btn" type="submit">Save vehicle</button>
+    <button class="btn ghost" type="button" data-act="subjCancel">Cancel</button>
+    ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+  </form>`;
+}
+
+function subjectsPanel(s){
+  if(!WS) return "";
+  const subs = WS.subjects || [];
+  const p = (s && s.payload) || {};
+  const fr = (l, v) => v ? `<dt>${esc(l)}</dt><dd>${esc(v)}</dd>` : "";
+
+  const vehLine = v => `<div class="tl-m">${esc([v.year, v.color, v.make, v.model].filter(Boolean).join(" "))}${
+      v.plate ? ` &mdash; ${esc(v.plate)}${v.plate_state ? " (" + esc(v.plate_state) + ")" : ""}` : ""}
+      <button class="btn sm ghost" data-act="vehEdit" data-sid="${v.subject_id}" data-vid="${v.id}">Edit</button></div>
+    ${v.registered_owner ? `<div class="tl-n">Registered to ${esc(v.registered_owner)}</div>` : ""}
+    ${v.notes ? `<div class="tl-n">${esc(v.notes)}</div>` : ""}`;
+
+  const card = sub => {
+    const editing = SUBJ_FORM && SUBJ_FORM.mode === "edit" && SUBJ_FORM.id === sub.id;
+    return `<div class="rcard" style="cursor:default">
+      <div class="rc-h"><b>${esc(sub.name)}</b>${sub.alias ? ` <span class="tl-m">&ldquo;${esc(sub.alias)}&rdquo;</span>` : ""}
+        ${!SUBJ_FORM ? `<button class="btn sm ghost" data-act="subjEdit" data-id="${sub.id}">Edit</button>
+        <button class="btn sm ghost" data-act="vehAdd" data-sid="${sub.id}">Add vehicle</button>` : ""}</div>
+      ${editing ? subjForm(sub, sub.id) : `<dl class="detail">
+        ${fr("Date of birth", sub.dob)}${fr("Height", sub.height)}${fr("Weight", sub.weight)}
+        ${fr("Hair", sub.hair)}${fr("Descriptors", sub.descriptors)}${fr("Addresses", sub.addresses)}
+        ${fr("Employer", sub.employer)}${fr("Phone", sub.phone)}
+        ${fr("Social accounts", sub.social_accounts)}${fr("Notes", sub.notes)}
+      </dl>`}
+      ${(sub.vehicles || []).length && !editing ? `<div style="margin-top:4px"><b style="font-size:.85rem">Vehicles</b>${sub.vehicles.map(vehLine).join("")}</div>` : ""}
+      ${SUBJ_FORM && SUBJ_FORM.mode === "veh" && SUBJ_FORM.sid === sub.id ? vehForm(sub) : ""}
+    </div>`;
+  };
+
+  return `<h3 style="margin:18px 0 6px;font-size:1rem">Subjects &amp; vehicles</h3>
+    ${subs.length ? `<div class="rlist">${subs.map(card).join("")}</div>`
+      : `<p class="hint">No structured subject records yet. The intake snapshot above stays as
+         received; records added here are the working copy the field can keep current.</p>`}
+    ${SUBJ_FORM && SUBJ_FORM.mode === "new" ? subjForm(SUBJ_FORM.pre, null) : ""}
+    ${!SUBJ_FORM ? `<div style="margin-top:8px">
+        <button class="btn sm" data-act="subjNew">Add a subject</button>
+        ${!subs.length && p.subject_name ? `<button class="btn sm ghost" data-act="subjFromIntake">Start from the intake subject</button>` : ""}
+      </div>` : ""}`;
+}
+
+async function saveSubjectRec(id){
+  WS_ERR = "";
+  const body = {};
+  for(const k of ["name","alias","dob","height","weight","hair","descriptors","addresses","employer","phone","social_accounts","notes"]){
+    const el = $("sf_" + k);
+    if(el) body[k] = el.value;
+  }
+  try{
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/subjects` + (id ? `/${id}` : ""), {method:"POST", body});
+    SUBJ_FORM = null;
+  }catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+async function saveVehicleRec(sid, vid){
+  WS_ERR = "";
+  const body = {};
+  for(const k of ["year","make","model","color","plate","plate_state","registered_owner","notes"]){
+    const el = $("vf_" + k);
+    if(el) body[k] = el.value;
+  }
+  try{
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/subjects/${sid}/vehicles` + (vid ? `/${vid}` : ""), {method:"POST", body});
+    SUBJ_FORM = null;
+  }catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
 }
 
 function myOfferBox(){
@@ -2019,6 +2146,17 @@ document.addEventListener("click", ev => {
   else if(act === "clearDemo"){ clearDemoCases(); }
   else if(act === "wsTab"){ if(WS_TAB !== el.dataset.tab) WS_NOTICE = ""; WS_TAB = el.dataset.tab; WS_ERR = ""; paintCase(); }
   else if(act === "qkind"){ QKIND = el.dataset.k; WS_ERR = ""; paintCase(); }
+  else if(act === "subjNew"){ SUBJ_FORM = {mode:"new", pre:{}}; WS_ERR = ""; paintCase(); }
+  else if(act === "subjFromIntake"){
+    const p = (WS && WS.submission && WS.submission.payload) || {};
+    SUBJ_FORM = {mode:"new", pre:{name: p.subject_name || "", addresses: p.subject_address || "",
+                                  descriptors: p.subject_description || ""}};
+    WS_ERR = ""; paintCase();
+  }
+  else if(act === "subjEdit"){ SUBJ_FORM = {mode:"edit", id: Number(el.dataset.id)}; WS_ERR = ""; paintCase(); }
+  else if(act === "vehAdd"){ SUBJ_FORM = {mode:"veh", sid: Number(el.dataset.sid)}; WS_ERR = ""; paintCase(); }
+  else if(act === "vehEdit"){ SUBJ_FORM = {mode:"veh", sid: Number(el.dataset.sid), vid: Number(el.dataset.vid)}; WS_ERR = ""; paintCase(); }
+  else if(act === "subjCancel"){ SUBJ_FORM = null; WS_ERR = ""; paintCase(); }
   else if(act === "openReport"){
     WS_REPORT = WS_REPORT === Number(el.dataset.id) ? null : Number(el.dataset.id);
     WS_ERR = ""; paintCase();
@@ -2073,6 +2211,8 @@ document.addEventListener("submit", ev => {
   else if(a === "addNote") addNoteEntry();
   else if(a === "makeOffer") makeCaseOffer();
   else if(a === "saveDetails") saveCaseDetails();
+  else if(a === "saveSubject") saveSubjectRec(el.dataset.id ? Number(el.dataset.id) : null);
+  else if(a === "saveVehicle") saveVehicleRec(Number(el.dataset.sid), el.dataset.vid ? Number(el.dataset.vid) : null);
 });
 
 document.addEventListener("input", ev => {

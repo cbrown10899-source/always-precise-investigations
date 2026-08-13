@@ -355,3 +355,51 @@ CREATE TABLE IF NOT EXISTS case_details (
   updated_by  INTEGER REFERENCES users(id),
   updated_at  TEXT
 );
+
+-- Structured subject and vehicle records (HANDOFF priority 17). A case can
+-- carry several subjects (a custody case watches two households; an
+-- insurance case sometimes adds an associate), and a subject several
+-- vehicles. Fieldwork facts, so both roles read and write them on cases
+-- they can open; every write stamps who and when, and there is no delete —
+-- corrections are edits, the way the activity log works. The DOB, phone and
+-- registered-owner labels carry the handoff's "if legitimately obtained"
+-- qualifiers on the form. Photographs join when evidence storage lands.
+CREATE TABLE IF NOT EXISTS case_subjects (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no         TEXT    NOT NULL,
+  name            TEXT    NOT NULL,
+  alias           TEXT,
+  dob             TEXT,
+  height          TEXT,
+  weight          TEXT,
+  hair            TEXT,
+  descriptors     TEXT,
+  addresses       TEXT,
+  employer        TEXT,
+  phone           TEXT,
+  social_accounts TEXT,
+  notes           TEXT,
+  created_by      INTEGER REFERENCES users(id),
+  created_at      TEXT,
+  updated_by      INTEGER REFERENCES users(id),
+  updated_at      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_subjects_case ON case_subjects(case_no);
+
+CREATE TABLE IF NOT EXISTS subject_vehicles (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject_id       INTEGER NOT NULL REFERENCES case_subjects(id),
+  year             TEXT,
+  make             TEXT,
+  model            TEXT,
+  color            TEXT,
+  plate            TEXT,
+  plate_state      TEXT,
+  registered_owner TEXT,
+  notes            TEXT,
+  created_by       INTEGER REFERENCES users(id),
+  created_at       TEXT,
+  updated_by       INTEGER REFERENCES users(id),
+  updated_at       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_vehicles_subject ON subject_vehicles(subject_id);

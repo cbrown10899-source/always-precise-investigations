@@ -1275,6 +1275,39 @@ section('Private case details follow the case type');
   await page.close();
 }
 
+/* Priority 17: structured subjects and vehicles, driven through the page. */
+section('Subjects and vehicles in the browser');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Subject');
+  ok('the subjects section is on the Subject tab', has(await text(page, '#dlgBody'), 'Subjects & vehicles'));
+
+  await page.locator('.btn', { hasText: 'Start from the intake subject' }).click();
+  await page.waitForTimeout(300);
+  ok('the intake subject prefills the form',
+     (await page.locator('#sf_name').inputValue()) === 'John Subject');
+  await page.locator('#sf_hair').fill('brown, short');
+  await page.locator('.btn', { hasText: 'Save subject' }).click();
+  await page.waitForTimeout(600);
+  let body = await text(page, '#dlgBody');
+  ok('the subject card appears with its fields', has(body, 'John Subject') && has(body, 'brown, short'));
+
+  await page.locator('.btn', { hasText: 'Add vehicle' }).click();
+  await page.waitForTimeout(300);
+  await page.locator('#vf_make').fill('GMC');
+  await page.locator('#vf_model').fill('Sierra');
+  await page.locator('#vf_color').fill('white');
+  await page.locator('#vf_plate').fill('ABC-1234');
+  await page.locator('.btn', { hasText: 'Save vehicle' }).click();
+  await page.waitForTimeout(600);
+  body = await text(page, '#dlgBody');
+  ok('the vehicle rides with the subject', has(body, 'white GMC Sierra') && has(body, 'ABC-1234'));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
