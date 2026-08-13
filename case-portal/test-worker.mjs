@@ -752,38 +752,85 @@ section('Rate sheets and the emailed quote');
 
   const d = await jsonOf(await call(env, '/sheets', { cookie: admin }));
   ok('exactly two sheets exist', d.sheets.length === 2);
-  ok('the personal sheet is labelled "$1,500 retainer"', d.sheets[0].name === '$1,500 retainer');
-  ok('the personal sheet carries the retainer and the hourly rate',
-     JSON.stringify(d.sheets[0]).includes('$1,500') && JSON.stringify(d.sheets[0]).includes('$100/hr'));
-  const ins = JSON.stringify(d.sheets.find(s => s.id === 'insurance'));
+
+  /* TWO SEPARATE PRODUCTS (RATESHEETS.md): retainer+hourly vs
+     package/authorization. Separate ids, separate types, separate copy. */
+  const priv = d.sheets.find(s => s.id === 'private_retainer');
+  const insSheet = d.sheets.find(s => s.id === 'insurance_assignment');
+  ok('the private sheet is the retainer model', priv && priv.type === 'retainer'
+     && priv.name === '$1,500 Retainer');
+  ok('the carrier sheet is the package model', insSheet && insSheet.type === 'package'
+     && insSheet.name === 'Insurance Assignment Rates');
+  ok('the selector labels are unmistakable',
+     priv.selector_label === 'Private Client — $1,500 Retainer'
+     && insSheet.selector_label === 'Insurance Assignment Rates');
+
+  const privJson = JSON.stringify(priv), ins = JSON.stringify(insSheet);
+  ok('the retainer is a deposit against the work, in so many words',
+     priv.summary.includes('applied directly to authorized investigative services'));
+  ok('the private sheet carries the retainer and the hourly rate',
+     privJson.includes('$1,500') && privJson.includes('$100/hr'));
+  ok('and says what consumes retainer time — report prep included',
+     privJson.includes('report preparation') && privJson.includes('applied against your authorized retainer'));
+  ok('testimony is separately arranged, never bundled into the rate',
+     priv.closing.includes('separately arranged'));
   ok('the carrier sheet carries the whole ladder',
      ins.includes('$1,200') && ins.includes('$2,300') && ins.includes('$3,300'));
   ok('the carrier sheet states the overage rate', ins.includes('$150/hr'));
+  ok('the three-day block wears the recommendation badge',
+     insSheet.lines.find(l => l.value === '$3,300').badge === 'Recommended initial authorization');
+  ok('and no other line does',
+     insSheet.lines.filter(l => l.badge).length === 1);
+
+  /* Never cross the streams: no package price on the private sheet, no
+     retainer on the carrier sheet. */
   ok('the retainer figure is not on the carrier sheet', !ins.includes('$1,500'));
+  ok('no package price is on the private sheet',
+     !privJson.includes('$1,200') && !privJson.includes('$2,300') && !privJson.includes('$3,300'));
+
+  /* "Additional fees — None" is gone from BOTH, replaced by the included
+     language. The old presentation listed eight things only to say "None". */
+  for (const [label, sh] of [['private', priv], ['carrier', insSheet]]) {
+    ok(`no "Additional fees — None" presentation on the ${label} sheet`,
+       !sh.lines.some(l => /additional fees/i.test(l.label) || l.value === 'None'));
+    ok(`the ${label} sheet says routine costs are included instead`,
+       sh.lines.some(l => l.value === 'No routine add-on fees'));
+    ok(`the ${label} sheet quotes outside-area travel in advance`,
+       sh.lines.some(l => l.value === 'Quoted in advance'));
+    ok(`the ${label} sheet has its confirmation line`, !!sh.closing_title
+       && sh.closing_title.includes('No surprise billing'));
+  }
+
+  /* Internal strategy never reaches a client-facing sheet. */
+  ok('no internal pricing language on either sheet',
+     !JSON.stringify(d.sheets).match(/rack|volume band|below standard|below the standard|floor|margin|discount|competitor|investigator pay|profit/i),
+     JSON.stringify(d.sheets).match(/rack|volume band|below standard|below the standard|floor|margin|discount|competitor|investigator pay|profit/i)?.[0]);
+
   ok('whether sending is configured is reported', d.email_configured === true);
 
   /* A dollar sign on an hours figure reads as a price and is wrong twice over:
      it misstates the minimum day and it puts a number where a carrier expects
      a duration. It shipped once as "$8-hour minimum day". */
-  const insSheet = d.sheets.find(s => s.id === 'insurance');
   ok('the minimum day is stated in hours, not dollars',
-     insSheet.summary.includes('8-hour minimum day') && !insSheet.summary.includes('$8'),
+     insSheet.summary.includes('8-hour day is the minimum') && !insSheet.summary.includes('$8'),
      insSheet.summary);
   ok('the initial authorization is stated in hours',
-     insSheet.summary.includes('24 hours is the usual'), insSheet.summary);
+     insSheet.summary.includes('24 hours is the typical'), insSheet.summary);
   ok('no hours figure anywhere on either sheet carries a dollar sign',
      !JSON.stringify(d.sheets).match(/\$\d+(\.\d+)?\s*-?\s*hour/i),
      JSON.stringify(d.sheets).slice(0, 300));
 
   ok('an unknown sheet id is a 404',
      (await call(env, '/sheets/nope/email', { method: 'POST', cookie: admin, body: { to: 'a@b.co' } })).status === 404);
+  ok('the retired ids are gone with it',
+     (await call(env, '/sheets/personal/email', { method: 'POST', cookie: admin, body: { to: 'a@b.co' } })).status === 404);
   ok('a malformed address is refused before a send is spent',
-     (await call(env, '/sheets/personal/email', { method: 'POST', cookie: admin, body: { to: 'not-an-address' } })).status === 400);
-  ok('no provider call was made for either', providerCalls === 0);
+     (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin, body: { to: 'not-an-address' } })).status === 400);
+  ok('no provider call was made yet', providerCalls === 0);
 
   // The header-injection attempt: CR/LF smuggled through the case number,
   // which is the one field that reaches the subject line.
-  const res = await call(env, '/sheets/personal/email', { method: 'POST', cookie: admin,
+  const res = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
     body: { to: 'client@example.test', case_no: 'API-1\r\nBcc: thief@evil.test', note: 'line one\r\nline two' } });
   ok('a legitimate send succeeds', res.status === 200);
   ok('it goes to the address given', lastBody.to === 'client@example.test');
@@ -793,16 +840,95 @@ section('Rate sheets and the emailed quote');
   ok('the sheet email never carries the API key',
      !JSON.stringify(lastBody).includes('test-resend-key'));
 
+  /* THE SEND PRESERVES THE TYPE. The private send carries retainer copy and
+     no package price; the carrier send carries the ladder and no retainer. */
+  ok('the private send is the retainer document',
+     lastBody.html.includes('Retainer to begin') && lastBody.html.includes('$1,500')
+     && lastBody.html.includes('Your case. Your authorization.')
+     && !lastBody.html.includes('$3,300') && !lastBody.html.includes('$1,200'));
+
+  const s3 = await call(env, '/sheets/insurance_assignment/email', { method: 'POST', cookie: admin, body: { to: 'adjuster@example.test' } });
+  ok('the carrier send succeeds', s3.status === 200);
+  ok('the carrier send is the package document',
+     lastBody.html.includes('$1,200') && lastBody.html.includes('$2,300') && lastBody.html.includes('$3,300')
+     && lastBody.html.includes('Recommended initial authorization')
+     && lastBody.html.includes('Clear pricing. No surprise billing.')
+     && !lastBody.html.includes('$1,500'));
+
   // The outbound cap: a compromised admin session must not be able to turn
   // the firm's verified domain into a spam source.
-  const s2 = await call(env, '/sheets/personal/email', { method: 'POST', cookie: admin, body: { to: 'client@example.test' } });
-  const s3 = await call(env, '/sheets/insurance/email', { method: 'POST', cookie: admin, body: { to: 'adjuster@example.test' } });
-  const s4 = await call(env, '/sheets/personal/email', { method: 'POST', cookie: admin, body: { to: 'client@example.test' } });
-  ok('sends inside the cap go through', s2.status === 200 && s3.status === 200);
-  ok('the send beyond the cap is a 429', s4.status === 429);
+  const s4 = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin, body: { to: 'client@example.test' } });
+  const s5 = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin, body: { to: 'client@example.test' } });
+  ok('sends inside the cap go through', s4.status === 200);
+  ok('the send beyond the cap is a 429', s5.status === 429);
   ok('the refused send never reached the provider', providerCalls === 3);
 
   globalThis.fetch = realFetch;
+}
+
+section('The two internal calculations never share a number');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const tok = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find(u => u.username === 'dana').id;
+
+  await ingest(env, { case_no: 'API-RB1', service: 'Surveillance', client_name: 'P. Client', subject_name: 'S' });
+  await ingest(env, { case_no: 'API-RB2', carrier: 'Acme Mutual', claim_number: 'AM-1',
+                      client_name: 'A. Adjuster', subject_name: 'C' });
+
+  let ws = await jsonOf(await call(env, '/cases/API-RB1/workspace', { cookie: admin }));
+  ok('a private case bills at the private hourly by default',
+     ws.authorization.billed_at_rate === 100 && ws.authorization.case_rate_set === false);
+  ok('and carries the retainer balance from day one',
+     ws.authorization.retainer.amount === 1500 && ws.authorization.retainer.applied === 0
+     && ws.authorization.retainer.remaining === 1500);
+  const cws = await jsonOf(await call(env, '/cases/API-RB2/workspace', { cookie: admin }));
+  ok('a claims case never has a retainer', cws.authorization.retainer === undefined);
+  ok('and still bills at the carrier standard by default', cws.authorization.billed_at_rate === 150);
+
+  // Work consumes the retainer at the case rate: the handoff's own worked
+  // example — six hours at $100 leaves $900 of the $1,500.
+  await call(env, '/cases/API-RB1/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-12', start_time: '07:00' } });
+  await call(env, '/cases/API-RB1/day/end', { method: 'POST', cookie: admin, body: { end_time: '13:00' } });
+  ws = await jsonOf(await call(env, '/cases/API-RB1/workspace', { cookie: admin }));
+  const r = ws.authorization.retainer;
+  ok('$1,500 minus six hours at $100 leaves $900', r.applied === 600 && r.remaining === 900);
+  ok('with about nine hours left on it', r.approx_hours_remaining === 9);
+  ok('not received until the office says so', r.received === false);
+
+  ok('an investigator cannot touch the retainer record',
+     (await call(env, '/cases/API-RB1/retainer', { method: 'POST', cookie: inv,
+       body: { received: true } })).status === 403);
+  ok('a claims case refuses a retainer outright',
+     (await call(env, '/cases/API-RB2/retainer', { method: 'POST', cookie: admin,
+       body: { received: true } })).status === 400);
+  const set = await jsonOf(await call(env, '/cases/API-RB1/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 2000, received: true } }));
+  ok('the office records the amount and receipt',
+     set.authorization.retainer.amount === 2000 && set.authorization.retainer.received === true
+     && set.authorization.retainer.remaining === 1400);
+
+  await call(env, '/submissions/API-RB1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+  const iws = await jsonOf(await call(env, '/cases/API-RB1/workspace', { cookie: inv }));
+  ok('none of it ever reaches an investigator',
+     !JSON.stringify(iws.authorization).match(/retainer|1500|2000|billed_at_rate/i));
+
+  // The claims side of the wall: authorized hours that match a block name
+  // the package, and only then.
+  await call(env, '/cases/API-RB2/meta', { method: 'POST', cookie: admin, body: { authorized_hours: 24 } });
+  let aws = await jsonOf(await call(env, '/cases/API-RB2/workspace', { cookie: admin }));
+  ok('24 authorized hours names the $3,300 package',
+     aws.authorization.package_price === 3300 && aws.authorization.package_label === 'Three days');
+  await call(env, '/cases/API-RB2/meta', { method: 'POST', cookie: admin, body: { authorized_hours: 10 } });
+  aws = await jsonOf(await call(env, '/cases/API-RB2/workspace', { cookie: admin }));
+  ok('off-ladder hours name no package', aws.authorization.package_price === undefined);
 }
 
 section('The dashboard summary');

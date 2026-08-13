@@ -343,13 +343,17 @@ const RATES = {
      the three below the floor and left about $1,000 a case on the table against
      the standard rate. There is a test that fails if any block here drops under
      RATES.surveillance.floor, so that cannot happen again by accident. */
+  /* `client` is what the rate sheet prints. It is CLIENT-FACING COPY ONLY —
+     the discount arithmetic above must never appear in it (RATESHEETS.md:
+     no "below standard", no volume band, no rack-rate comparison). */
   packages: [
-    { hours: 8,  price: 1200, label: 'One day — 8 hours',
-      note: 'The minimum surveillance day, at the standard rate.' },
-    { hours: 16, price: 2300, label: 'Two days — 16 hours',
-      note: '$100 below the standard rate for the commitment.' },
-    { hours: 24, price: 3300, label: 'Three days — 24 hours',
-      note: 'The usual initial authorization. $300 below standard, inside the preferred-volume band.' },
+    { hours: 8,  price: 1200, label: 'One day',
+      client: '8 hours of authorized surveillance.' },
+    { hours: 16, price: 2300, label: 'Two days',
+      client: '16 hours of authorized surveillance at a reduced multi-day package rate.' },
+    { hours: 24, price: 3300, label: 'Three days', recommended: true,
+      client: '24 hours of authorized surveillance and the preferred starting authorization '
+            + 'for most multi-day surveillance assignments.' },
   ],
   services: {
     // [low, high] per hour. A single number means one rate, not a range.
@@ -406,61 +410,100 @@ const AUTH_PRESETS = [8, 16, 24];
 
 /* ------------------------------------------------------------- rate sheets */
 
-/* The two documents the office sends a client. They live here, not on the
-   public site, because no quote or price is shown to anyone who has not asked
-   for one: a private client gets the retainer sheet, a carrier gets the block
-   ladder, and neither sees the other's numbers.
+/* The two documents the office sends a client — TWO SEPARATE PRODUCTS
+   (RATESHEETS.md). The carrier sheet is package/authorization-based; the
+   private sheet is retainer+hourly. They share the card UI and nothing else:
+   separate config, separate copy, separate logic, so editing one cannot touch
+   the other. Neither ever shows internal strategy — no rack rate, no volume
+   band, no discount arithmetic, no floor. Those live in RATES and PRICING.md.
+
+   They live here, not on the public site, because no quote or price is shown
+   to anyone who has not asked for one — and neither client ever sees the
+   other's numbers.
 
    `id` is what the email endpoint takes, so keep an id stable once it has been
-   sent to anyone. Prices come from RATES and the constants below — nothing here
-   restates a figure that is set elsewhere. */
+   sent to anyone. Prices come from RATES and PERSONAL — nothing here restates
+   a figure that is set elsewhere. */
 const PERSONAL = { retainer: 1500, hourly: 100, minHours: 4 };
 
 function rateSheets() {
   const money = n => '$' + Number(n).toLocaleString('en-US');
-  const inc = 'Mileage, travel time, tolls, parking, database and record fees, '
-            + 'video review and the written report are all included.';
   return [
     {
-      id: 'personal',
-      name: `${money(PERSONAL.retainer)} retainer`,
-      audience: 'Private clients — surveillance, domestic and family matters',
-      summary: `${money(PERSONAL.retainer)} to begin, applied to the work performed, then `
-             + `${money(PERSONAL.hourly)} an hour with a ${PERSONAL.minHours}-hour minimum.`,
+      id: 'private_retainer',
+      type: 'retainer',
+      name: `${money(PERSONAL.retainer)} Retainer`,
+      selector_label: `Private Client — ${money(PERSONAL.retainer)} Retainer`,
+      audience: 'Private surveillance, domestic and family investigations',
+      summary: `A ${money(PERSONAL.retainer)} retainer is required to begin. The retainer is `
+             + `applied directly to authorized investigative services billed at `
+             + `${money(PERSONAL.hourly)} per hour.`,
       lines: [
-        { label: 'Retainer to begin', value: money(PERSONAL.retainer),
-          note: 'Applied in full to the work performed — it is not a separate charge.' },
-        { label: 'Hourly rate', value: `${money(PERSONAL.hourly)}/hr`,
-          note: `${PERSONAL.minHours}-hour minimum engagement.` },
-        { label: 'Additional fees', value: 'None', note: inc },
-        { label: 'Beyond the retainer', value: `${money(PERSONAL.hourly)}/hr`,
-          note: 'Only ever with your approval first. Nothing is spent without asking you.' },
+        { label: 'Retainer to begin', value: money(PERSONAL.retainer), big: true,
+          sub: 'Applied to the work — not an extra fee',
+          note: 'Applied in full toward authorized investigative services. It is not a '
+              + 'separate fee — your retainer funds the work performed on your case.' },
+        { label: 'Investigative rate', value: `${money(PERSONAL.hourly)}/hr`, big: true,
+          sub: `${PERSONAL.minHours}-hour minimum`,
+          note: `${PERSONAL.minHours}-hour minimum engagement. Investigative time is deducted `
+              + `from the retainer at the same ${money(PERSONAL.hourly)}-per-hour rate. Field `
+              + 'investigation, necessary video review, case documentation and report '
+              + 'preparation are handled at this rate and applied against your authorized '
+              + 'retainer.' },
+        { label: 'If additional time is needed', value: `${money(PERSONAL.hourly)}/hr`, big: true,
+          sub: 'Only with your approval',
+          note: 'We contact you before exceeding the authorized retainer. Additional '
+              + 'investigative time is never incurred without your approval — you remain in '
+              + 'control of any additional authorization.' },
+        { label: 'Straightforward billing', value: 'No routine add-on fees',
+          note: 'Standard local operating costs are included. There are no routine mileage, '
+              + 'toll, parking, report or case-delivery surcharges within our normal service '
+              + 'area.' },
+        { label: 'Outside our normal service area', value: 'Quoted in advance',
+          note: 'Significant travel outside our normal service area is discussed and approved '
+              + 'before the work is scheduled.' },
       ],
-      closing: 'Work begins once the retainer is received. You get a written report with '
-             + 'time-stamped photographs and video, and the investigator who did the work '
-             + 'can testify to what they personally observed.',
+      closing_title: 'Your case. Your authorization. No surprise billing.',
+      closing: 'Work begins once the retainer and required authorization are received. '
+             + 'Investigative activity is documented and appropriate case deliverables may '
+             + 'include a written report, photographs and video. An investigator may provide '
+             + 'testimony regarding their own observations when appropriate and separately '
+             + 'arranged.',
     },
     {
-      id: 'insurance',
-      name: 'Insurance assignment rates',
-      audience: 'Carriers, TPAs, self-insured employers, SIU and defense counsel',
-      // Hours are hours. money() belongs on prices only — it once rendered
-      // this as "$8-hour minimum day".
-      summary: `Surveillance is authorized in blocks of hours. ${RATES.surveillance.minHoursPerDay}`
-             + `-hour minimum day; ${RATES.surveillance.typicalAuthHours} hours is the usual initial authorization.`,
+      id: 'insurance_assignment',
+      type: 'package',
+      name: 'Insurance Assignment Rates',
+      selector_label: 'Insurance Assignment Rates',
+      audience: 'For carriers, TPAs, self-insured employers, SIU departments and defense counsel',
+      summary: `Surveillance is authorized in blocks of investigative time. An `
+             + `${RATES.surveillance.minHoursPerDay}-hour day is the minimum surveillance `
+             + `assignment, and ${RATES.surveillance.typicalAuthHours} hours is the typical `
+             + `initial authorization.`,
       lines: [
         ...RATES.packages.map(p => ({
-          label: p.label, value: money(p.price), note: p.note,
+          label: p.label, sub: `${p.hours} hours`, value: money(p.price), big: true,
+          badge: p.recommended ? 'Recommended initial authorization' : '',
+          note: p.client,
         })),
-        { label: 'Additional hours', value: `${money(RATES.surveillance.standard)}/hr`,
-          note: 'Never incurred without written approval from the assigning contact.' },
-        { label: 'Additional fees', value: 'None', note: inc },
-        { label: 'Outside the service area', value: 'Quoted first',
-          note: 'Travel is quoted and agreed before the assignment is accepted, never added afterwards.' },
+        { label: 'Additional authorized hours', value: `${money(RATES.surveillance.standard)}/hr`,
+          big: true, sub: 'With prior authorization',
+          note: 'Additional investigative time is only incurred with prior authorization from '
+              + 'the assigning client.' },
+        { label: 'Included in the flat rate', value: 'No routine add-on fees',
+          note: 'Standard local travel, routine case expenses, investigative reporting, video '
+              + 'review, photographs and delivery of case materials are included in the '
+              + 'authorized package price.' },
+        { label: 'Outside our normal service area', value: 'Quoted in advance',
+          note: 'Assignments requiring significant travel outside our normal service area are '
+              + 'quoted and approved before the assignment is accepted. No unapproved travel '
+              + 'charge is added afterward.' },
       ],
-      closing: 'Rates are confirmed in writing before any work begins. Submitting an assignment '
-             + 'does not by itself constitute acceptance. Deliverables are a written activity '
-             + 'report tied to time-stamped video and photographs, with the source footage.',
+      closing_title: 'Clear pricing. No surprise billing.',
+      closing: 'Rates and authorization are confirmed in writing before investigative work '
+             + 'begins. Submission of an assignment does not by itself constitute acceptance. '
+             + 'Surveillance deliverables generally include an investigative activity report '
+             + 'supported by available time-stamped photographs and video.',
     },
   ];
 }
@@ -629,15 +672,17 @@ async function caseSummary(env, user) {
    not send them a broken page. */
 function sheetEmail(sheet, note) {
   const rows = sheet.lines.map(l =>
-    `  ${l.label}: ${l.value}\n     ${l.note}`).join('\n');
+    `  ${l.label}${l.sub ? ` (${l.sub})` : ''}: ${l.value}${l.badge ? `  ** ${l.badge} **` : ''}\n     ${l.note}`).join('\n');
   const text =
 `${sheet.name}
 Always Precise Investigations, LLC — Va DCJS #11-9159
 
+${sheet.audience}
 ${sheet.summary}
 ${note ? `\n${note}\n` : ''}
 ${rows}
 
+${sheet.closing_title}
 ${sheet.closing}
 
 Questions: (434) 907-0975
@@ -646,21 +691,24 @@ Always Precise Investigations, LLC`;
   const html =
 `<div style="font-family:'Segoe UI',Arial,sans-serif;color:#1c2531;line-height:1.55;max-width:560px">
   <h2 style="margin:0 0 2px;color:#12305a">${escHtml(sheet.name)}</h2>
-  <p style="margin:0 0 18px;font-size:.82rem;color:#5c6775;letter-spacing:.04em;text-transform:uppercase">
+  <p style="margin:0 0 4px;font-size:.82rem;color:#5c6775;letter-spacing:.04em;text-transform:uppercase">
     Always Precise Investigations, LLC &middot; Va DCJS #11-9159</p>
+  <p style="margin:0 0 14px;font-size:.88rem;color:#5c6775">${escHtml(sheet.audience)}</p>
   <p style="margin:0 0 18px">${escHtml(sheet.summary)}</p>
   ${note ? `<p style="margin:0 0 18px;padding:12px 14px;background:#f4f8fa;border-left:3px solid #2f7d90">${escHtml(note)}</p>` : ''}
   <table style="width:100%;border-collapse:collapse;margin:0 0 18px">
     ${sheet.lines.map(l => `<tr>
-      <td style="padding:11px 0;border-bottom:1px solid #e4e9ed;vertical-align:top">
-        <b>${escHtml(l.label)}</b>
+      <td style="padding:12px 0;border-bottom:1px solid #e4e9ed;vertical-align:top">
+        <b>${escHtml(l.label)}</b>${l.sub ? ` <span style="font-size:.8rem;color:#5c6775">&middot; ${escHtml(l.sub)}</span>` : ''}
+        ${l.badge ? `<div style="display:inline-block;margin-left:6px;padding:2px 9px;border:1px solid #b7924c;color:#8a6d33;border-radius:10px;font-size:.68rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase">${escHtml(l.badge)}</div>` : ''}
         <div style="font-size:.86rem;color:#5c6775">${escHtml(l.note)}</div>
       </td>
-      <td style="padding:11px 0;border-bottom:1px solid #e4e9ed;text-align:right;
-                 white-space:nowrap;font-weight:700;vertical-align:top">${escHtml(l.value)}</td>
+      <td style="padding:12px 0 12px 14px;border-bottom:1px solid #e4e9ed;text-align:right;white-space:nowrap;vertical-align:top;${
+        l.big ? 'font-size:1.35rem;font-weight:800;color:#12305a' : 'font-weight:700'}">${escHtml(l.value)}</td>
     </tr>`).join('')}
   </table>
-  <p style="font-size:.92rem">${escHtml(sheet.closing)}</p>
+  <p style="margin:0 0 4px;font-weight:800;color:#12305a">${escHtml(sheet.closing_title)}</p>
+  <p style="margin:0 0 14px;font-size:.92rem">${escHtml(sheet.closing)}</p>
   <hr style="border:0;border-top:1px solid #dfe3e8">
   <p style="font-size:.82rem;color:#5c6775">Questions? (434) 907-0975<br>
      Always Precise Investigations, LLC</p>
@@ -1108,7 +1156,14 @@ async function authorizationFor(env, caseNo, forAdmin) {
   // and nothing about what the case is worth.
   if (forAdmin) {
     const st = await caseSettings(env, caseNo);
-    const rate = st.client_hourly != null ? Number(st.client_hourly) : RATES.surveillance.standard;
+    /* The default rate follows the case's SIDE of the business — the two
+       pricing models never share a number (RATESHEETS.md). A claims case
+       bills at the standard carrier rate; a private case at the retainer
+       model's hourly. An explicit per-case rate still overrides either. */
+    const sub = await env.DB.prepare('SELECT kind FROM submissions WHERE case_no = ?').bind(caseNo).first();
+    const kind = sub ? sub.kind : null;
+    const rate = st.client_hourly != null ? Number(st.client_hourly)
+      : (kind === 'consumer' ? PERSONAL.hourly : RATES.surveillance.standard);
     const budget = meta && meta.authorized_budget != null ? Number(meta.authorized_budget) : null;
     const billable = Math.round(hoursUsed * rate * 100) / 100;
     out.authorized_budget = budget;
@@ -1117,6 +1172,30 @@ async function authorizationFor(env, caseNo, forAdmin) {
     out.billed_at_rate = rate;
     out.case_rate_set = st.client_hourly != null;
     out.client_mileage_rate = st.client_mileage;
+    out.kind = kind;
+
+    if (kind === 'claims') {
+      // The authorized package, when the hours match one — so the office sees
+      // "24 hours = the $3,300 block" without re-deriving it.
+      const pkg = authHours != null ? RATES.packages.find(p => p.hours === authHours) : null;
+      if (pkg) { out.package_price = pkg.price; out.package_label = pkg.label; }
+    } else if (kind === 'consumer') {
+      /* The private-retainer balance (RATESHEETS.md admin side): how much of
+         the client's money the recorded work has consumed, at this case's
+         rate. Internal only — an investigator never receives this branch,
+         and no client-facing surface reads it yet. */
+      const ret = await env.DB.prepare(
+        'SELECT retainer_amount, received FROM case_retainer WHERE case_no = ?').bind(caseNo).first();
+      const amount = ret && ret.retainer_amount != null ? Number(ret.retainer_amount) : PERSONAL.retainer;
+      const applied = Math.round(hoursUsed * rate * 100) / 100;
+      out.retainer = {
+        amount,
+        received: !!(ret && ret.received),
+        applied,
+        remaining: Math.round((amount - applied) * 100) / 100,
+        approx_hours_remaining: rate > 0 ? Math.round(((amount - applied) / rate) * 10) / 10 : null,
+      };
+    }
     out.show_client_identity = st.show_client_identity ? 1 : 0;
   }
   return out;
@@ -2272,7 +2351,7 @@ const EXPECTED_TABLES = [
   'case_types', 'case_meta', 'case_days', 'activity_log', 'activity_media', 'case_reports', 'app_config',
   'case_expenses', 'case_notes', 'user_rates', 'case_settings', 'password_resets', 'case_offers',
   'case_details', 'case_subjects', 'subject_vehicles', 'case_comms', 'case_tasks',
-  'case_status', 'case_closure',
+  'case_status', 'case_closure', 'case_retainer',
 ];
 
 async function missingTables(env) {
@@ -2403,7 +2482,7 @@ async function route(request, env) {
     return json({ sheets: rateSheets(), email_configured: Boolean(env.RESEND_API_KEY) });
   }
 
-  m = p.match(/^\/sheets\/([a-z]{3,20})\/email$/);
+  m = p.match(/^\/sheets\/([a-z_]{3,32})\/email$/);
   if (m && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return emailSheet(request, env, m[1]);
@@ -2466,6 +2545,33 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/comms$/);
   if (m && method === 'POST') return addComm(request, env, user, m[1]);
+
+  /* The private-retainer record (RATESHEETS.md admin side). Consumer cases
+     only — a claim assignment is authorized in hour blocks, and the two
+     models never share a calculation. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/retainer$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    const sub = await env.DB.prepare('SELECT kind FROM submissions WHERE case_no = ?').bind(m[1]).first();
+    if (!sub) return json({ error: 'not found' }, 404);
+    if (sub.kind === 'claims') {
+      return json({ error: 'Retainers are the private-client model — a claim assignment is authorized in hour blocks.' }, 400);
+    }
+    const body = await readJson(request);
+    const raw = body.retainer_amount;
+    const amount = raw === undefined || raw === null || String(raw).trim() === ''
+      ? PERSONAL.retainer : Number(raw);
+    if (!Number.isFinite(amount) || amount < 0) return json({ error: 'The retainer must be a number.' }, 400);
+    const received = body.received === true || body.received === 1 || body.received === '1' ? 1 : 0;
+    await env.DB.prepare(
+      `INSERT INTO case_retainer (case_no, retainer_amount, received, received_at, updated_by, updated_at)
+       VALUES (?1, ?2, ?3, CASE WHEN ?3 = 1 THEN ?4 ELSE NULL END, ?5, ?4)
+       ON CONFLICT(case_no) DO UPDATE SET retainer_amount = ?2, received = ?3,
+         received_at = CASE WHEN ?3 = 1 THEN COALESCE(case_retainer.received_at, ?4) ELSE NULL END,
+         updated_by = ?5, updated_at = ?4`)
+      .bind(m[1], amount, received, nowIso(), user.id).run();
+    return json({ ok: true, authorization: await authorizationFor(env, m[1], true) });
+  }
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/closure$/);
   if (m && method === 'POST') {
