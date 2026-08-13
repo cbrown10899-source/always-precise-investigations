@@ -179,6 +179,46 @@
   .pkg-item.on{border-color:var(--teal);box-shadow:0 0 0 1px var(--teal) inset;}
   #pkgdoc{border:1px solid var(--line);border-radius:10px;padding:26px 28px;background:#fff;margin-top:14px;}
   #pkgdoc img{max-width:100%;border-radius:6px;}
+  /* UIBUILD P1: the navigation rail. Same .tabs machinery, new shape — a
+     fixed sidebar at desktop widths, a drawer behind the burger on mobile. */
+  @media(min-width:900px){
+    body.withnav .tabs{position:fixed;left:0;top:58px;bottom:0;width:198px;flex-direction:column;
+      align-items:stretch;gap:2px;padding:14px 10px;margin:0;background:#13273f;border-radius:0;
+      overflow-y:auto;z-index:40;}
+    body.withnav .tabs button{text-align:left;color:#c9d6e4;background:transparent;border-radius:8px;
+      padding:9px 12px;font-weight:600;}
+    body.withnav .tabs button.on{background:#1f3a58;color:#fff;}
+    body.withnav .tabs button:hover{background:#1a3350;color:#fff;}
+    body.withnav .tabs .side-intake{margin-top:auto;display:block;text-align:center;background:var(--gold,#c99a3b);
+      color:#13273f;font-weight:800;border-radius:9px;padding:11px 12px;text-decoration:none;}
+    body.withnav #app{margin-left:198px;}
+  }
+  @media(max-width:899px){
+    body.withnav .tabs{display:none;}
+    body.withnav.navopen .tabs{display:flex;position:fixed;left:0;top:0;bottom:0;width:76%;max-width:300px;
+      flex-direction:column;align-items:stretch;gap:2px;padding:60px 12px 14px;background:#13273f;z-index:60;
+      overflow-y:auto;box-shadow:0 0 0 100vmax rgba(9,18,30,.45);}
+    body.withnav.navopen .tabs button{text-align:left;color:#c9d6e4;background:transparent;border-radius:8px;padding:11px 12px;}
+    body.withnav.navopen .tabs button.on{background:#1f3a58;color:#fff;}
+    body.withnav.navopen .tabs .side-intake{margin-top:auto;display:block;text-align:center;
+      background:var(--gold,#c99a3b);color:#13273f;font-weight:800;border-radius:9px;padding:11px;text-decoration:none;}
+    .burger{display:inline-block;}
+  }
+  .burger{display:none;background:transparent;border:0;color:#fff;font-size:1.4rem;cursor:pointer;padding:4px 10px;}
+  /* Case Package cards (UIBUILD P3) */
+  .pkgcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px;margin-top:10px;}
+  .pcard{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;}
+  .pc-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;}
+  .pc-ring{flex:0 0 auto;}
+  .pc-mods{display:flex;gap:4px;flex-wrap:wrap;margin:10px 0 8px;}
+  .pc-m{flex:1 1 40px;min-width:52px;text-align:center;font-size:.62rem;color:var(--muted);
+    border:1px solid var(--line);border-radius:8px;padding:5px 2px;cursor:pointer;background:#fff;}
+  .pc-m b{display:block;font-size:.86rem;color:var(--ink,#1c2531);}
+  .pc-m.done{border-color:#9fd3b2;background:#f4faf6;}
+  .pc-m.part{border-color:#e9d8a6;background:#fdfaf1;}
+  .pc-next{display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1px solid var(--line);
+    padding-top:10px;margin-top:4px;}
+  .pc-next small{display:block;color:var(--muted);font-size:.72rem;}
   @media print{
     body.printing-invoice *{visibility:hidden !important;}
     body.printing-invoice #invdoc, body.printing-invoice #invdoc *{visibility:visible !important;}
@@ -285,6 +325,7 @@
   <div class="wrap">
     <svg width="34" height="34" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="10" fill="#13273f"/><path d="M32 12l6 8-6 8-6-8z" fill="#3d97ad"/><path d="M32 30l10 12H22z" fill="#c99a3b"/></svg>
     <div class="name">ALWAYS PRECISE<span>INVESTIGATIONS · CASE PORTAL</span></div>
+    <button class="burger" id="burger" data-act="navToggle" hidden>&#9776;</button>
     <div class="who" id="who" hidden></div>
   </div>
 </div>
@@ -553,17 +594,20 @@ function shell(inner){
   // Simplified navigation for the field, exactly as the handoff draws it —
   // not a miniature admin portal. Calendar and Availability join when their
   // features exist rather than sitting as dead tabs.
+  const item = (id, label) => `<button class="${TAB === id ? "on" : ""}" data-act="tab" data-tab="${id}">${label}</button>`;
   const tabs = ME.role === "admin"
-    ? `<button class="${TAB==="cases"?"on":""}" data-act="tab" data-tab="cases">Cases</button>
-       <button class="${TAB==="calendar"?"on":""}" data-act="tab" data-tab="calendar">Calendar</button>
-       <button class="${TAB==="sheets"?"on":""}" data-act="tab" data-tab="sheets">Rate sheets</button>
-       <button class="${TAB==="invoices"?"on":""}" data-act="tab" data-tab="invoices">Invoices</button>
-       <button class="${TAB==="staff"?"on":""}" data-act="tab" data-tab="staff">Staff</button>`
-    : `<button class="${TAB==="cases"?"on":""}" data-act="tab" data-tab="cases">My assignments</button>
-       <button class="${TAB==="today"?"on":""}" data-act="tab" data-tab="today">Today</button>
-       <button class="${TAB==="calendar"?"on":""}" data-act="tab" data-tab="calendar">Calendar</button>
-       <button class="${TAB==="myreports"?"on":""}" data-act="tab" data-tab="myreports">Reports</button>
-       <button class="${TAB==="myexpenses"?"on":""}" data-act="tab" data-tab="myexpenses">Expenses</button>`;
+    ? item("dashboard", "&#8962; Dashboard")
+      + item("cases", "&#128193; Cases")
+      + item("calendar", "&#128197; Calendar")
+      + item("sheets", "&#128179; Rate sheets")
+      + item("invoices", "&#129534; Invoices")
+      + item("staff", "&#128101; Staff")
+      + `<a class="side-intake" href="/intake/" target="_blank" rel="noopener">+ Intake a Client</a>`
+    : item("cases", "&#128193; My assignments")
+      + item("today", "&#9728; Today")
+      + item("calendar", "&#128197; Calendar")
+      + item("myreports", "&#128196; Reports")
+      + item("myexpenses", "&#129534; Expenses");
   // The schema notice comes first and is specific, because it is the one cause
   // that explains every other symptom at once.
   const schema = SCHEMA_MISSING.length ? `<div class="loaderr">
@@ -589,6 +633,119 @@ function shell(inner){
   return `<div class="tabs">${tabs}</div>${schema}${problem}${summaryCards()}${inner}`;
 }
 
+
+/* --------------------------------------------------------- the dashboard */
+
+/* UIBUILD P2-P4: the admin's landing view. The operational cards up top,
+   the Outstanding balance, then the Case Package cards — each with its ring,
+   its module states and ONE computed next step. Centralized logic (P24):
+   pkgProgress and pkgNextStep are the only places that decide. */
+let PKGS = null;
+
+async function loadPackages(){
+  try{ PKGS = await api("/packages"); }
+  catch(e){ PKGS = {packages: [], outstanding: 0}; LOAD_ERR = e.message; }
+  paint();
+}
+
+function pkgProgress(p){
+  const mods = [];
+  mods.push(["activity", p.activity_count > 0 ? "done" : "none", `${p.activity_count} entr${p.activity_count === 1 ? "y" : "ies"}`]);
+  mods.push(["report", ["approved", "delivered"].includes(p.report_status) ? "done" : p.report_status ? "part" : "none",
+             p.report_status ? label(p.report_status) : "None"]);
+  mods.push(["photos", p.photos > 0 ? "done" : "none", String(p.photos)]);
+  if(p.videos > 0) mods.push(["video", "done", String(p.videos)]);
+  mods.push(["build", p.build_status === "finalized" ? "done" : p.build_status ? "part" : "none",
+             p.build_status === "finalized" ? "Final" : p.build_status ? "Draft" : "Not started"]);
+  mods.push(["invoice", p.invoice_status === "paid" ? "done" : p.invoice_status ? "part" : "none",
+             p.invoice_status ? label(p.invoice_status) : "Not created"]);
+  const done = mods.filter(m => m[1] === "done").length;
+  return { mods, done, total: mods.length, pct: Math.round((done / mods.length) * 100) };
+}
+
+function pkgNextStep(p){
+  if(p.open_day) return {label: "Continue activity log", tab: "activity"};
+  if(!p.days) return {label: "Start investigation day", tab: "field"};
+  if(!p.report_status) return {label: "Draft the report", tab: "reports"};
+  if(!["approved", "delivered"].includes(p.report_status)) return {label: "Review report", tab: "reports"};
+  if(p.build_status !== "finalized") return {label: "Build case package", tab: "package"};
+  if(!p.invoice_status) return {label: "Create invoice", tab: "overview"};
+  if(p.invoice_status !== "paid") return {label: "Track the invoice", tab: "overview"};
+  return {label: "Ready to close", tab: "overview"};
+}
+
+function ringHtml(pct){
+  const r = 26, c = 2 * Math.PI * r;
+  return `<svg class="pc-ring" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="${pct}% complete">
+    <circle cx="32" cy="32" r="${r}" fill="none" stroke="#e4e9ed" stroke-width="6"/>
+    <circle cx="32" cy="32" r="${r}" fill="none" stroke="${pct >= 100 ? "#2e7d4f" : "#2f7d90"}" stroke-width="6"
+      stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - Math.min(100, pct) / 100)}"
+      stroke-linecap="round" transform="rotate(-90 32 32)"/>
+    <text x="32" y="30" text-anchor="middle" font-size="13" font-weight="800" fill="#13273f">${pct}%</text>
+    <text x="32" y="43" text-anchor="middle" font-size="7" fill="#5c6775">Complete</text>
+  </svg>`;
+}
+
+function pkgCard(p){
+  const prog = pkgProgress(p);
+  const next = pkgNextStep(p);
+  const modLabel = {activity: "Activity", report: "Report", photos: "Photos", video: "Video",
+                    build: "Build", invoice: "Invoice"};
+  const modTab = {activity: "activity", report: "reports", photos: "evidence", video: "evidence",
+                  build: "package", invoice: "overview"};
+  const mark = st => st === "done" ? "&#10003;" : st === "part" ? "&#9685;" : "&#9675;";
+  const authLine = p.kind === "claims"
+    ? (p.authorized_hours != null
+        ? `Auth: ${esc(p.authorized_hours)} hrs${p.authorized_budget != null ? " / $" + esc(p.authorized_budget.toLocaleString()) : ""} &middot; Used: ${esc(p.hours_used)} hrs`
+        : "No authorization set")
+    : (p.retainer
+        ? `Retainer: $${esc(p.retainer.amount.toLocaleString())} &middot; Balance: $${esc(p.retainer.remaining.toLocaleString())}`
+        : "Private client");
+  return `<div class="pcard">
+    <div class="pc-top">
+      <div>
+        <span class="tag ${p.kind === "claims" ? "claims" : "consumer"}">${esc(p.case_type || (p.kind === "claims" ? "Insurance" : "Private"))}</span>
+        <div style="font-weight:800;margin-top:5px">${esc(p.client || "")}</div>
+        <div style="font-size:.85rem;color:var(--muted)">${esc(p.subject || "")}</div>
+        <div class="mono" style="font-size:.72rem;margin-top:3px">${esc(p.case_no)}</div>
+        <div style="font-size:.76rem;color:var(--muted);margin-top:4px">${authLine}</div>
+      </div>
+      ${ringHtml(prog.pct)}
+    </div>
+    <div class="pc-mods">
+      ${prog.mods.map(([id, st, sub]) => `<button class="pc-m ${st}" data-act="pkgJump"
+          data-case="${esc(p.case_no)}" data-tab="${modTab[id]}">
+        <b>${mark(st)}</b>${modLabel[id]}<div>${esc(sub)}</div></button>`).join("")}
+    </div>
+    <div class="pc-next">
+      <div><small>Next step</small><b>${esc(next.label)}</b></div>
+      <button class="btn sm" data-act="pkgJump" data-case="${esc(p.case_no)}" data-tab="${next.tab}">
+        Continue case &rarr;</button>
+    </div>
+  </div>`;
+}
+
+function dashView(){
+  if(!PKGS) return `<div class="card"><div class="empty">Loading the dashboard&hellip;</div></div>`;
+  const out = PKGS.outstanding || 0;
+  const active = (PKGS.packages || []);
+  return `
+    <div class="stats" style="margin-top:0">
+      <div class="stat ${out ? "click warn" : ""}" ${out ? `data-act="tab" data-tab="invoices"` : ""}>
+        <div class="stat-n">$${esc(out.toLocaleString())}</div>
+        <div class="stat-l">Outstanding</div>
+        ${out ? `<div class="stat-h">View invoices</div>` : ""}
+      </div>
+    </div>
+    <div class="card">
+      <div class="bar"><h2 style="margin:0">Case packages</h2>
+        <span class="count">At-a-glance progress for active cases</span>
+        <button class="btn sm ghost" data-act="tab" data-tab="cases" style="margin-left:auto">View all cases &rarr;</button></div>
+      ${active.length ? `<div class="pkgcards">${active.map(pkgCard).join("")}</div>`
+        : `<div class="empty">No active cases. New intakes appear here as cases the moment they arrive.</div>`}
+    </div>`;
+}
+
 /* The dashboard strip answers one question: what needs my attention today?
    Every card that can act carries the case numbers behind its count, so
    clicking it shows exactly those cases instead of leaving a number to go
@@ -597,7 +754,7 @@ function shell(inner){
    fake zero. Drawn even when the portal is empty, because a page that shows
    nothing at all looks broken. */
 function summaryCards(){
-  if(TAB !== "cases" && TAB !== "today") return "";   // calendar included in the exclusion
+  if(TAB !== "cases" && TAB !== "today" && TAB !== "dashboard") return "";
   const s = SUMMARY || {};
   const shown = SHOW_EXAMPLE ? examplesFor(ME.role) : [];
   const admin = ME.role === "admin";
@@ -1026,7 +1183,12 @@ function staffView(){
 /* ------------------------------------------------------------- rendering */
 
 function paint(){
-  if(!ME){ app.innerHTML = loginView(); $("who").hidden = true; return; }
+  if(!ME){ app.innerHTML = loginView(); $("who").hidden = true;
+    document.body.classList.remove("withnav", "navopen");
+    if($("burger")) $("burger").hidden = true;
+    return; }
+  document.body.classList.add("withnav");
+  if($("burger")) $("burger").hidden = false;
   $("who").hidden = false;
   $("who").innerHTML = `<b>${esc(ME.display_name || ME.username)}</b>${ME.role === "admin" ? "Admin" : "Investigator"}
     <button data-act="logout">Sign out</button>`;
@@ -1041,7 +1203,8 @@ function paint(){
     return;
   }
   app.innerHTML = shell(
-      TAB === "staff" ? staffView()
+      TAB === "dashboard" ? dashView()
+    : TAB === "staff" ? staffView()
     : TAB === "sheets" ? sheetsView()
     : TAB === "invoices" ? invoicesView()
     : TAB === "today" ? todayView()
@@ -1058,8 +1221,10 @@ function paint(){
    worst possible way to fail: a case list that cannot load and a case list with
    nothing in it are not the same thing, and the screen said the same thing for
    both. Each fetch now records why it failed, and the page says so. */
+let BOOTED = false;
 async function render(){
   if(!ME){ paint(); return; }
+  if(!BOOTED){ BOOTED = true; if(ME.role === "admin" && TAB === "cases") TAB = "dashboard"; }
   LOAD_ERR = "";
   let listed = false;
   try{
@@ -1093,6 +1258,10 @@ async function render(){
     try{ USERS = (await api("/users")).users; }catch(e){ USERS = []; }
     try{ INVITES = (await api("/invites")).invites; }catch(e){ INVITES = []; }
     try{ SHEETS = (await api("/sheets")).sheets; }catch(e){ SHEETS = []; }
+    // The dashboard is the admin's landing, so render() is a second door to
+    // it — the tab click is not the only way in. Without this, the first
+    // sign-in paints "Loading…" forever, because nothing ever fetches.
+    if(TAB === "dashboard" && !PKGS) await loadPackages();
   }
   paint();
 }
@@ -1128,7 +1297,7 @@ async function doAccept(token){
 
 async function doLogout(){
   try{ await api("/auth/logout", {method:"POST"}); }catch{}
-  ME = null; CASES = []; USERS = []; INVITES = []; TAB = "cases"; LAST_LINK = ""; LAST_EMAILED = false; RESET_BOX = null; paint();
+  ME = null; CASES = []; USERS = []; INVITES = []; PKGS = null; TAB = "cases"; LAST_LINK = ""; LAST_EMAILED = false; RESET_BOX = null; paint();
 }
 
 /* The case workspace. A case is not a record to read, it is work in progress,
@@ -3080,10 +3249,14 @@ document.addEventListener("click", ev => {
   if(!el) return;
   const act = el.dataset.act;
   if(act === "backToCases"){ VIEW = "list"; render(); }
+  else if(act === "navToggle"){ document.body.classList.toggle("navopen"); }
+  else if(act === "pkgJump"){ openCase(el.dataset.case, el.dataset.tab === "overview" ? undefined : el.dataset.tab); }
   else if(act === "tab"){
     TAB = el.dataset.tab; paint();
     if(TAB === "calendar") loadCalendar(CAL ? CAL.month : "");
     if(TAB === "invoices"){ INV_OPEN = null; INV_MSG = ""; loadInvoices(); }
+    if(TAB === "dashboard"){ PKGS = null; loadPackages(); }
+    document.body.classList.remove("navopen");
     if(TAB === "myreports") api("/my/reports").then(d => { MY_REPORTS = d; paint(); }).catch(()=>{});
     if(TAB === "myexpenses"){
       api("/my/expenses").then(d => { MY_EXPENSES = d; paint(); }).catch(()=>{});
