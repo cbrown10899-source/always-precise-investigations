@@ -10,7 +10,7 @@ Progress ledger (handoff phases):
 
 | Phase | Status |
 | --- | --- |
-| 1. Navigation + dashboard (sidebar; mobile drawer; simplified metrics; Case Package cards; Continue Case routing) | not started |
+| 1. Navigation + dashboard (sidebar; mobile drawer; simplified metrics; Case Package cards; Continue Case routing) | **done** — 2026-08-13 (left rail + burger drawer; admin lands on Dashboard; Outstanding card; per-case package cards with ring, module states and one computed next step via `pkgProgress`/`pkgNextStep` (P24); Continue Case routes to the computed step; Worker `GET /packages` admin-only. The landing bug — `render()` never fetched `/packages`, so the first sign-in showed "Loading…" forever — fixed by loading on the dashboard landing, not only on the tab click) |
 | 2. Case detail (Back to Cases; four-section tabs; new Overview; package progress; Next Step card; recent activity; evidence overview) | not started |
 | 3. Field activity (Add Activity modal; Quick/Custom; searchable actions; favorites; structured templates; More Details fold; clean timeline; sticky mobile add) | not started |
 | 4. Report + evidence (report preview screen; submission workflow; evidence gallery; filters; activity links) | not started |

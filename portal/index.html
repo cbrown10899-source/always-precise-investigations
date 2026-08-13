@@ -1258,6 +1258,10 @@ async function render(){
     try{ USERS = (await api("/users")).users; }catch(e){ USERS = []; }
     try{ INVITES = (await api("/invites")).invites; }catch(e){ INVITES = []; }
     try{ SHEETS = (await api("/sheets")).sheets; }catch(e){ SHEETS = []; }
+    // The dashboard is the admin's landing, so render() is a second door to
+    // it — the tab click is not the only way in. Without this, the first
+    // sign-in paints "Loading…" forever, because nothing ever fetches.
+    if(TAB === "dashboard" && !PKGS) await loadPackages();
   }
   paint();
 }
@@ -1293,7 +1297,7 @@ async function doAccept(token){
 
 async function doLogout(){
   try{ await api("/auth/logout", {method:"POST"}); }catch{}
-  ME = null; CASES = []; USERS = []; INVITES = []; TAB = "cases"; LAST_LINK = ""; LAST_EMAILED = false; RESET_BOX = null; paint();
+  ME = null; CASES = []; USERS = []; INVITES = []; PKGS = null; TAB = "cases"; LAST_LINK = ""; LAST_EMAILED = false; RESET_BOX = null; paint();
 }
 
 /* The case workspace. A case is not a record to read, it is work in progress,

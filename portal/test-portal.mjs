@@ -54,6 +54,18 @@ function ok(name, cond, detail = '') {
 }
 function section(name) { results.push(`\n${name}`); }
 
+/* A crashed run must still say what it saw. An uncaught Playwright timeout
+   otherwise swallows the whole report — including the page-error FAILs that
+   name the exception being debugged. */
+function crash(e) {
+  results.push(`\n  CRASH  ${e && e.message ? e.message : e}`);
+  console.log(results.join('\n'));
+  console.log(`\n${passed} passed, ${failed} failed, then the run crashed`);
+  process.exit(1);
+}
+process.on('uncaughtException', crash);
+process.on('unhandledRejection', crash);
+
 /* ------------------------------------------------- D1 adapter over sqlite */
 
 function d1(db) {

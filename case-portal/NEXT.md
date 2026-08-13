@@ -8,12 +8,14 @@ state. Update it when the queue moves; keep it short.
 
 Snapshot date: 2026-08-13. Branch: `claude/app-crashes-lockups-debug-jcy6kf`.
 Master is green through PR #41. Suites at last green: worker 598, portal
-e2e 357 (intake 130, alerts 41).
+e2e 367 (intake 130, alerts 41).
 
 ## The queue, in the owner's order
 
-1. **UIBUILD.md — streamlined UI, phases 1–8.** Phase 1 is IN FLIGHT on the
-   branch (see below). Then phases 2–8 in order.
+1. **UIBUILD.md — streamlined UI, phases 2–8, in order.** Phase 1 is DONE
+   and shipping as one PR (see below). Phase 2 (case detail: Back to
+   Cases; four-section tabs; new Overview; package progress; Next Step
+   card; recent activity; evidence overview) is next.
 2. **INTAKE-NA.md — intake "not available" states** (owner: after the UI
    work).
 3. **SURVEILLANCE.md — Active Surveillance Mode** (owner: after the shared
@@ -25,29 +27,25 @@ e2e 357 (intake 130, alerts 41).
    BILL live API; Phase-4 futures (client portal, redaction workflow,
    field safety, profitability).
 
-## In flight on the branch (uncommitted → now committed as WIP)
+## Just resolved (2026-08-13, this session)
 
-UIBUILD Phase 1: sidebar navigation (the `.tabs` row restyled as a fixed
-left rail on desktop, burger drawer on mobile), admin Dashboard tab
-(landing view: summary cards + Outstanding + Case Package cards with
-progress rings and one computed Next Step), Worker `GET /packages`
-(admin-only, per-active-case module states + outstanding total),
-`pkgProgress`/`pkgNextStep` as the centralized logic (UIBUILD P24).
-
-**Known failing state + the debug lead (instrumented 2026-08-13):**
-`/packages` responds 200 in the e2e, and the FIRST row is the stored-XSS
-regression's hostile case (`case_no: x'); window.__pwned = true; ('`,
-client `<img src=x onerror=…>`). The dashboard e2e still times out on
-`.pcard` — the likeliest cause is one card's template throwing mid-map
-(one bad row kills the whole innerHTML paint). Next move: run the e2e and
-grep the output for `no page errors (` — the page-error listener records
-the actual JS exception as a FAIL line naming it. Check `pkgCard` against
-that row (everything user-sourced must pass through esc(); verify no
-null-call like `.toLocaleString()` on a field the hostile row leaves
-odd). Also consider excluding nothing — the hostile row is a legitimate
-test of exactly this surface, so the fix belongs in `pkgCard`, never in
-filtering the row out. Everything else in both suites passed. Ship Phase
-1 as one PR when green (no schema change — no portal-setup dispatch).
+The dashboard e2e timeout is fixed and Phase 1 is green. The recorded
+lead (pkgCard throwing on the hostile row) was wrong: `pkgCard` renders
+the hostile row fine — everything passes through esc(), and a consumer
+case always carries a retainer object (`authorizationFor` defaults to
+`PERSONAL.retainer`), so no null-call. The actual bug: `loadPackages()`
+was only called from the **tab-click** handler, but an admin **lands** on
+the dashboard via `render()` (the BOOTED branch), which never fetched
+`/packages` — PKGS stayed null and dashView painted "Loading…" forever.
+Fix: `render()` now awaits `loadPackages()` when an admin is on the
+dashboard with no PKGS loaded; logout also resets PKGS. Second fix, in
+the harness: an uncaught Playwright timeout used to kill the run before
+the report printed (which is why the page-error FAIL line was never
+seen); test-portal.mjs now prints the accumulated report on
+uncaughtException/unhandledRejection, so a future crash still names what
+it saw. Suites: worker 598, portal 367 (+10 for Phase 1), intake 130,
+alerts 41 — all green. Shipping Phase 1 as one PR (no schema change — no
+portal-setup dispatch).
 
 ## How to resume in a fresh session
 
@@ -55,8 +53,8 @@ filtering the row out. Everything else in both suites passed. Ship Phase
 2. Read this file, then the ledger of whichever handoff is at the head of
    the queue.
 3. Run the suites first: `node case-portal/test-worker.mjs` and
-   `node portal/test-portal.mjs` — fix the dashboard e2e, ship Phase 1,
-   continue down the queue.
+   `node portal/test-portal.mjs` — then continue down the queue (UIBUILD
+   Phase 2 is the head).
 4. Per-feature rhythm (unchanged all session): build → tests green → ledger
    + CLAUDE.md counts → commit/push → PR → squash-merge → rebase dance →
    portal-setup dispatch only when schema.sql changed.
