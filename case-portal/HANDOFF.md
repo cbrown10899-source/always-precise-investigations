@@ -23,7 +23,7 @@ Progress ledger (update as phases land):
 | 9. Investigator Role | **done** — 2026-08-13 (My assignments · Today · Reports · Expenses; Calendar/Availability join with 14) |
 | 10. Investigator Redaction | **done** in substance (FIELD_KEEP, workspace money stripping, note visibility) — per-case "view client identity" toggle shipped with 11 |
 | 11. Rate Sheets / pay split | **done** — 2026-08-13 (per-user comp, per-case client rate, identity toggle; client-org rates await a client entity) |
-| 13. Assignment acceptance | **done** — 2026-08-13 (offer → accept/decline; thin pre-acceptance view; first accept wins) |
+| 13. Assignment acceptance | **done** — 2026-08-13 (offer → accept/decline; thin pre-acceptance view; owner decision: ONE offer at a time, no competing) |
 | 14. Calendar | not started |
 | 16–20. Phase 3 (case operations) | not started |
 | Phase 4 (client portal, redaction, safety, profitability) | not started |
@@ -208,6 +208,11 @@ rush multiplier, holiday multiplier, case-specific rate, client-specific
 rate, preferred-volume rate. CLIENT RATE and INVESTIGATOR COMPENSATION stay
 separate fields (e.g. $150/hr vs $55/hr). An outside investigator never sees
 the client billing rate unless specifically authorized.
+
+**Owner decisions recorded 2026-08-13:** mileage is never billed to a client
+(all-in pricing covers it) — mileage records exist for investigator
+reimbursement and the firm's taxes; and offers never compete — one at a time,
+resolved before the next.
 
 ## PRIORITY 12 — EXPENSES + MILEAGE
 
