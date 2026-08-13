@@ -34,14 +34,20 @@ progress rings and one computed Next Step), Worker `GET /packages`
 (admin-only, per-active-case module states + outstanding total),
 `pkgProgress`/`pkgNextStep` as the centralized logic (UIBUILD P24).
 
-**Known failing state:** the new dashboard e2e section times out at
-`.pcard` with text `API-20260812-4001` — zero cards rendered, so
-`/packages` or `dashView()` fails at runtime in the e2e context (worker
-suite passes; the endpoint is unit-green). Debug next: add a temporary
-`console.error` of the `/packages` response (or check `LOAD_ERR`) in the
-e2e, or curl the mounted server during the run. Everything else in both
-suites passed at last run. Fix, then ship as one PR (no schema change in
-Phase 1 — no portal-setup dispatch needed).
+**Known failing state + the debug lead (instrumented 2026-08-13):**
+`/packages` responds 200 in the e2e, and the FIRST row is the stored-XSS
+regression's hostile case (`case_no: x'); window.__pwned = true; ('`,
+client `<img src=x onerror=…>`). The dashboard e2e still times out on
+`.pcard` — the likeliest cause is one card's template throwing mid-map
+(one bad row kills the whole innerHTML paint). Next move: run the e2e and
+grep the output for `no page errors (` — the page-error listener records
+the actual JS exception as a FAIL line naming it. Check `pkgCard` against
+that row (everything user-sourced must pass through esc(); verify no
+null-call like `.toLocaleString()` on a field the hostile row leaves
+odd). Also consider excluding nothing — the hostile row is a legitimate
+test of exactly this surface, so the fix belongs in `pkgCard`, never in
+filtering the row out. Everything else in both suites passed. Ship Phase
+1 as one PR when green (no schema change — no portal-setup dispatch).
 
 ## How to resume in a fresh session
 
@@ -67,3 +73,8 @@ Phase 1 — no portal-setup dispatch needed).
 - The owner works from phone + desktop, sends handoffs mid-build, and
   wants every handoff RECORDED VERBATIM in case-portal/ before building —
   that rule already survived two near-losses this session.
+- The owner may hold FURTHER ChatGPT handoffs not yet pasted into any
+  session. Everything pasted so far IS recorded here (RATESHEETS,
+  INVOICING, CASEBUILD, INTAKE-NA, UXSIMPLIFY, UIBUILD, SURVEILLANCE).
+  Anything still only in ChatGPT: ask the owner to paste it, record it to
+  case-portal/ first, then build in their stated order.
