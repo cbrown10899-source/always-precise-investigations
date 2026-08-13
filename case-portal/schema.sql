@@ -270,6 +270,30 @@ CREATE TABLE IF NOT EXISTS case_notes (
 );
 CREATE INDEX IF NOT EXISTS idx_notes_case ON case_notes(case_no, id DESC);
 
+-- What the firm pays an investigator (HANDOFF priority 11). Deliberately a
+-- different number in a different table from anything a client is billed:
+-- CLIENT RATE and INVESTIGATOR COMPENSATION never share a field.
+CREATE TABLE IF NOT EXISTS user_rates (
+  user_id    INTEGER PRIMARY KEY REFERENCES users(id),
+  hourly     REAL,               -- what the investigator is paid per hour
+  mileage    REAL,               -- their mileage reimbursement per mile
+  updated_by INTEGER REFERENCES users(id),
+  updated_at TEXT
+);
+
+-- Per-case commercial settings, admin-set. client_hourly overrides the
+-- standard rate for billing arithmetic on this one case; show_client_identity
+-- is priority 10's toggle — default NO, and revealing it shows the
+-- investigator who the client is, never what the case bills or who to call.
+CREATE TABLE IF NOT EXISTS case_settings (
+  case_no              TEXT PRIMARY KEY,
+  client_hourly        REAL,
+  client_mileage       REAL,
+  show_client_identity INTEGER NOT NULL DEFAULT 0,
+  updated_by           INTEGER REFERENCES users(id),
+  updated_at           TEXT
+);
+
 -- Small configuration values (authorization warning thresholds and whatever
 -- comes next), so numbers like 75/90/100 are configuration, not code.
 CREATE TABLE IF NOT EXISTS app_config (

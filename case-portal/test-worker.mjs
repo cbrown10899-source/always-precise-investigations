@@ -1194,6 +1194,69 @@ section('Notes: visibility is enforced in the query');
        body: { note_type: 'investigator', body: '  ' } })).status === 400);
 }
 
+section('Client rate and investigator pay never share a field');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const dana = users.users.find(u => u.username === 'dana');
+
+  ok('an admin sets what an investigator is paid',
+     (await call(env, `/users/${dana.id}/rates`, { method: 'POST', cookie: admin,
+       body: { hourly: 55, mileage: 0.5 } })).status === 200);
+  ok('an investigator cannot set anyone\'s pay',
+     (await call(env, `/users/${dana.id}/rates`, { method: 'POST', cookie: inv,
+       body: { hourly: 500 } })).status === 403);
+  const comp = await jsonOf(await call(env, '/my/comp', { cookie: inv }));
+  ok('they see their own compensation', comp.hourly === 55 && comp.mileage === 0.5);
+  const staff = await jsonOf(await call(env, '/users', { cookie: admin }));
+  ok('the staff list carries it for the office',
+     staff.users.find(u => u.id === dana.id).comp_hourly === 55);
+
+  // Case rate: admin-only arithmetic; the investigator's view never gains money.
+  await ingest(env, { case_no: 'API-CR1', carrier: 'Quiet Mutual', claim_number: 'QM-7',
+                      client_name: 'A. Adjuster', subject_name: 'S' });
+  await call(env, '/submissions/API-CR1/assign', { method: 'POST', cookie: admin, body: { user_id: dana.id } });
+  await call(env, '/cases/API-CR1/meta', { method: 'POST', cookie: admin,
+    body: { authorized_hours: 8, authorized_budget: 1400 } });
+  await call(env, '/cases/API-CR1/settings', { method: 'POST', cookie: admin,
+    body: { client_hourly: 175, client_mileage: 0.7 } });
+  await call(env, '/cases/API-CR1/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-13', start_time: '07:00' } });
+  await call(env, '/cases/API-CR1/day/end', { method: 'POST', cookie: admin, body: { end_time: '11:00' } });
+
+  const aws = await jsonOf(await call(env, '/cases/API-CR1/workspace', { cookie: admin }));
+  ok('billing arithmetic uses the case rate', aws.authorization.billed_at_rate === 175
+     && aws.authorization.billable_so_far === 700);
+  ok('and says the rate is case-specific', aws.authorization.case_rate_set === true);
+  const iws = await jsonOf(await call(env, '/cases/API-CR1/workspace', { cookie: inv }));
+  ok('none of it reaches the investigator',
+     !JSON.stringify(iws.authorization).match(/175|700|billed_at_rate|client_mileage/));
+
+  /* Priority 10's toggle: identity, never money or contacts. */
+  let det = await jsonOf(await call(env, '/submissions/API-CR1', { cookie: inv }));
+  ok('by default the investigator does not know the carrier',
+     !JSON.stringify(det).includes('Quiet Mutual'));
+  await call(env, '/cases/API-CR1/settings', { method: 'POST', cookie: admin,
+    body: { client_hourly: 175, client_mileage: 0.7, show_client_identity: true } });
+  det = await jsonOf(await call(env, '/submissions/API-CR1', { cookie: inv }));
+  ok('with the toggle on they learn who the client is',
+     det.submission.carrier === 'Quiet Mutual' && det.submission.claim_number === 'QM-7'
+       && det.submission.payload.client_name === 'A. Adjuster');
+  ok('but still not how to reach or bill them',
+     !JSON.stringify(det).match(/adjuster_email|billing_email|client_phone|client_email/));
+  ok('and still no rate', !JSON.stringify(det).includes('175'));
+  await call(env, '/cases/API-CR1/settings', { method: 'POST', cookie: admin,
+    body: { client_hourly: 175, client_mileage: 0.7, show_client_identity: false } });
+  det = await jsonOf(await call(env, '/submissions/API-CR1', { cookie: inv }));
+  ok('turning it back off closes the door again', !JSON.stringify(det).includes('Quiet Mutual'));
+}
+
 section("My reports and my expenses are mine alone");
 {
   const env = freshEnv();

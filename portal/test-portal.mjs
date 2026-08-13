@@ -628,6 +628,13 @@ section('Adding a test case from the portal');
    so every button that touched one returned "Something went wrong handling
    that request" and the screen otherwise looked like a normal empty portal.
    One cause, many symptoms, and nothing on screen naming it. */
+section('No rate is baked into the portal page source');
+{
+  const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+  ok('no dollar figure appears in the served portal HTML',
+     !/\$\s?\d/.test(src), (src.match(/\$\s?\d[^\n]{0,50}/) || [''])[0]);
+}
+
 section('A half-applied schema names itself');
 {
   const page = await newPage();
