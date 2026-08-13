@@ -234,6 +234,21 @@
     text-transform:uppercase;background:#f2f5f8;border:1px solid var(--line);border-radius:9px;
     color:var(--muted);padding:8px 14px;cursor:pointer;white-space:nowrap;}
   .wsecs button.on{background:#13273f;border-color:#13273f;color:#fff;}
+  .wsecs .sec-s{display:none;}
+  /* UIBUILD P15 — on a phone the section bar is the bottom navigation:
+     fixed under the thumb, short labels, the add button pinned above it. */
+  @media(max-width:640px){
+    .casepage .wsecs{position:fixed;left:0;right:0;bottom:0;z-index:65;background:#13273f;
+      margin:0;padding:6px 8px calc(6px + env(safe-area-inset-bottom));gap:4px;
+      justify-content:space-around;border-radius:0;}
+    .casepage .wsecs button{flex:1;background:transparent;border:0;color:#c9d6e4;
+      border-radius:8px;padding:9px 2px;text-align:center;}
+    .casepage .wsecs button.on{background:#1f3a58;color:#fff;}
+    .casepage .wsecs .sec-l{display:none;}
+    .casepage .wsecs .sec-s{display:inline;}
+    .casepage{padding-bottom:76px;}
+    .addact{bottom:74px;}
+  }
   .ovgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:14px;}
   .ovcard{background:#fff;border:1px solid var(--line);border-radius:12px;padding:13px 15px;}
   .ovcard h3{margin:0 0 8px;font-size:.74rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);}
@@ -791,17 +806,22 @@ async function loadPackages(){
   paint();
 }
 
-function pkgProgress(p){
+/* scope "field" (UIBUILD P15) is the investigator's version of both helpers:
+   the modules they can see and the steps that are theirs — build and invoice
+   are the office's and never appear. Same functions, one flag (P24). */
+function pkgProgress(p, scope){
   const mods = [];
   mods.push(["activity", p.activity_count > 0 ? "done" : "none", `${p.activity_count} entr${p.activity_count === 1 ? "y" : "ies"}`]);
   mods.push(["report", ["approved", "delivered"].includes(p.report_status) ? "done" : p.report_status ? "part" : "none",
              p.report_status ? label(p.report_status) : "None"]);
   mods.push(["photos", p.photos > 0 ? "done" : "none", String(p.photos)]);
   if(p.videos > 0) mods.push(["video", "done", String(p.videos)]);
-  mods.push(["build", p.build_status === "finalized" ? "done" : p.build_status ? "part" : "none",
-             p.build_status === "finalized" ? "Final" : p.build_status ? "Draft" : "Not started"]);
-  mods.push(["invoice", p.invoice_status === "paid" ? "done" : p.invoice_status ? "part" : "none",
-             p.invoice_status ? label(p.invoice_status) : "Not created"]);
+  if(scope !== "field"){
+    mods.push(["build", p.build_status === "finalized" ? "done" : p.build_status ? "part" : "none",
+               p.build_status === "finalized" ? "Final" : p.build_status ? "Draft" : "Not started"]);
+    mods.push(["invoice", p.invoice_status === "paid" ? "done" : p.invoice_status ? "part" : "none",
+               p.invoice_status ? label(p.invoice_status) : "Not created"]);
+  }
   const done = mods.filter(m => m[1] === "done").length;
   return { mods, done, total: mods.length, pct: Math.round((done / mods.length) * 100) };
 }
@@ -814,11 +834,17 @@ const MOD_LABEL = {activity: "Activity", report: "Report", photos: "Photos", vid
 const MOD_TAB = {activity: "activity", report: "reports", photos: "evidence", video: "evidence",
                  build: "package", invoice: "billing"};
 
-function pkgNextStep(p){
+function pkgNextStep(p, scope){
   if(p.open_day) return {label: "Continue activity log", tab: "activity"};
   if(!p.days) return {label: "Start investigation day", tab: "field"};
   if(!p.report_status) return {label: "Draft the report", tab: "reports"};
-  if(!["approved", "delivered"].includes(p.report_status)) return {label: "Review report", tab: "reports"};
+  if(!["approved", "delivered"].includes(p.report_status)){
+    if(scope === "field") return p.report_status === "submitted"
+      ? {label: "Submitted — with the office for review", tab: "reports"}
+      : {label: "Finish and submit the report", tab: "reports"};
+    return {label: "Review report", tab: "reports"};
+  }
+  if(scope === "field") return {label: "Assignment complete — with the office", tab: "reports"};
   if(p.build_status !== "finalized") return {label: "Build case package", tab: "package"};
   if(!p.invoice_status) return {label: "Create invoice", tab: "billing"};
   if(p.invoice_status !== "paid") return {label: "Track the invoice", tab: "billing"};
@@ -1662,14 +1688,16 @@ async function reloadWorkspace(){
    active section is DERIVED from it, never stored, so the two cannot drift.
    An investigator's four sections are their own — nothing administrative. */
 function wsSections(){
+  // The 4th element is the bottom-bar label (UIBUILD P15) — the same four
+  // sections, phone-width words.
   if(ME.role === "admin"){
     return [
-      ["overview",  "Overview",          [["overview","Overview"], ["details","Intake details"], ["subject","Subject"]]],
-      ["fieldwork", "Fieldwork",         [["field","Field work"], ["activity","Activity log"]]],
-      ["repev",     "Report & Evidence", [["reports","Reports"], ["evidence","Evidence"], ["package","Package"]]],
+      ["overview",  "Overview",          [["overview","Overview"], ["details","Intake details"], ["subject","Subject"]], "Home"],
+      ["fieldwork", "Fieldwork",         [["field","Field work"], ["activity","Activity log"]], "Field"],
+      ["repev",     "Report & Evidence", [["reports","Reports"], ["evidence","Evidence"], ["package","Package"]], "Report"],
       ["admin",     "Admin",             [["assign","Assignment"], ["auth","Authorization"], ["expenses","Expenses"],
                                           ["notes","Internal notes"], ["comms","Comm log"], ["tasks","Tasks"],
-                                          ["billing","Billing & closing"]]],
+                                          ["billing","Billing & closing"]], "Admin"],
     ];
   }
   const assignment = [["overview","Overview"], ["subject","Subject"], ["tasks","Tasks"],
@@ -1678,10 +1706,10 @@ function wsSections(){
   // an investigator works to a cap they can see, and nothing about money.
   if(WS && WS.authorization && WS.authorization.authorized_hours != null) assignment.push(["auth","Authorization"]);
   return [
-    ["assignment", "Assignment", assignment],
-    ["activity",   "Activity",   [["field","Field work"], ["activity","Activity log"], ["expenses","Expenses"]]],
-    ["evidence",   "Evidence",   [["evidence","Evidence"]]],
-    ["report",     "Report",     [["reports","Reports"]]],
+    ["assignment", "Assignment", assignment, "Home"],
+    ["activity",   "Activity",   [["field","Field work"], ["activity","Activity log"], ["expenses","Expenses"]], "Activity"],
+    ["evidence",   "Evidence",   [["evidence","Evidence"]], "Evidence"],
+    ["report",     "Report",     [["reports","Reports"]], "Report"],
   ];
 }
 function wsSectionFor(tab){
@@ -2830,13 +2858,14 @@ function caseBodyHtml(){
     : WS_TAB === "details"  ? detailList(s, "overview")
     : WS_TAB === "billing"  ? billingPanel(s, a)
     : admin                 ? overviewPanel(s, a)
-    :                         myOfferBox() + detailList(s, "overview") + (a.authorized_hours != null ? authPanel(a, admin) : "");
+    :                         fieldHomeHtml() + myOfferBox() + detailList(s, "overview")
+                              + (a.authorized_hours != null ? authPanel(a, admin) : "");
 
   const sec = wsSectionFor(WS_TAB);
   return `
     ${caseHeader(s, a, admin)}
-    <div class="wsecs">${wsSections().map(([k, lbl]) =>
-      `<button class="${sec[0] === k ? "on" : ""}" data-act="wsSec" data-sec="${k}">${esc(lbl)}</button>`).join("")}</div>
+    <div class="wsecs">${wsSections().map(([k, lbl, _tabs, short]) =>
+      `<button class="${sec[0] === k ? "on" : ""}" data-act="wsSec" data-sec="${k}"><span class="sec-l">${esc(lbl)}</span><span class="sec-s">${esc(short || lbl)}</span></button>`).join("")}</div>
     <div class="wstabs">${sec[2].map(([k, lbl]) =>
       `<button class="${WS_TAB === k ? "on" : ""}" data-act="wsTab" data-tab="${k}">${esc(lbl)}</button>`).join("")}</div>
     <div class="wspanel">${panel}</div>`;
@@ -2960,6 +2989,38 @@ function overviewPanel(s, a){
         <div class="ov-foot"><button class="btn sm ghost" data-act="wsTab" data-tab="evidence">View all evidence &rarr;</button></div>
       </div>
     </div>`;
+}
+
+/* UIBUILD P15 — the field's case home: the ring over what is theirs, one
+   next step with GO, and the last moments — above the assignment detail.
+   Field scope: build and invoice are the office's and never appear here. */
+function fieldHomeHtml(){
+  const shape = wsPkgShape();
+  const prog = pkgProgress(shape, "field");
+  const next = pkgNextStep(shape, "field");
+  const mark = st => st === "done" ? "&#10003;" : st === "part" ? "&#9685;" : "&#9675;";
+  const acts = ((WS && WS.activity) || []).slice(0, 4);
+  return `
+    <div class="ovgrid">
+      <div class="ovcard">
+        <h3>Assignment progress</h3>
+        <div class="ov-ring">${ringHtml(prog.pct)}</div>
+        <ul class="ov-mods">${prog.mods.map(([id, st, sub]) =>
+          `<li><button data-act="wsTab" data-tab="${MOD_TAB[id]}">
+             <span><b>${mark(st)}</b> ${MOD_LABEL[id]}</span><span style="color:var(--muted)">${esc(sub)}</span></button></li>`).join("")}</ul>
+      </div>
+      <div class="ovcard ov-next">
+        <h3>Next step</h3>
+        <div class="nx">${esc(next.label)}</div>
+        <button class="btn" data-act="wsTab" data-tab="${next.tab}">Go &rarr;</button>
+      </div>
+    </div>
+    ${acts.length ? `<div class="ovcard" style="margin-bottom:14px">
+      <h3>Recent activity</h3>
+      <ul class="ov-recent">${acts.map(e =>
+        `<li><span class="t">${esc(t12(e.at_time))}</span><span>${esc(String(e.description || "").slice(0, 90))}</span></li>`).join("")}</ul>
+      <div class="ov-foot"><button class="btn sm ghost" data-act="wsTab" data-tab="activity">View full timeline &rarr;</button></div>
+    </div>` : ""}`;
 }
 
 /* ADMIN &rarr; Billing & closing: invoicing the case and walking it closed —
