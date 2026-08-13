@@ -1179,12 +1179,31 @@ section('Evidence: stored privately, metered, and capped inside the free plan');
 
   ok('freed space uploads again', (await up(admin, mk('clip3.mp4', 1800, 'video/mp4'))).status === 201);
 
+  /* Links ride only within the case: a photo joins this case's subject, a
+     clip joins this case's moment, and another case's ids are refused. */
+  const subj = await jsonOf(await call(env, '/cases/API-EV1/subjects', { method: 'POST', cookie: admin,
+    body: { name: 'Sam Watched' } }));
+  await call(env, '/cases/API-EV1/activity', { method: 'POST', cookie: dana,
+    body: { at_date: '2026-08-13', at_time: '07:14', kind: 'activity',
+            description: 'Subject vehicle observed parked at residence.' } });
+  const entry = (await jsonOf(await call(env, '/cases/API-EV1/workspace', { cookie: admin }))).activity[0];
+  const linked = await jsonOf(await up(admin, mk('subj.jpg', 400, 'image/jpeg'), { subject_id: String(subj.id) }));
+  ok('a photo attaches to the subject', typeof linked.id === 'number');
+  const clip = await jsonOf(await up(admin, mk('moment.mp4', 400, 'video/mp4'), { entry_id: String(entry.id) }));
+  ok('a clip attaches to the moment', typeof clip.id === 'number');
+  const evList = (await jsonOf(await call(env, '/cases/API-EV1/workspace', { cookie: dana }))).evidence;
+  ok('the links come back with the workspace',
+     evList.find(e => e.filename === 'subj.jpg').subject_id === subj.id
+     && evList.find(e => e.filename === 'moment.mp4').entry_id === entry.id);
+  ok("another case's subject is refused, not silently dropped",
+     (await up(admin, mk('x.jpg', 100, 'image/jpeg'), { subject_id: '999999' })).status === 400);
+
   const st = await jsonOf(await call(env, '/storage', { cookie: admin }));
   ok('the storage meter is admin-only',
      (await call(env, '/storage', { cookie: dana })).status === 403
-     && st.storage.bytes_used === 3600);
+     && st.storage.bytes_used === 4400);
   ok('the public health check carries only the bare percentage',
-     (await jsonOf(await call(env, '/health'))).storage_pct === 36);
+     (await jsonOf(await call(env, '/health'))).storage_pct === 44);
 
   // Without the binding, uploads say exactly what is missing.
   const bare = freshEnv();

@@ -1556,7 +1556,19 @@ section('Evidence in the browser');
   await page.waitForTimeout(600);
   ok('the office classifies it', has(await text(page, '#dlgBody'), 'Client deliverable'));
 
-  await page.locator('[data-act="evDelete"]').click();
+  // Attach a photo to the subject built earlier: it appears on the card.
+  await page.locator('#ev_file').setInputFiles({
+    name: 'subject.jpg', mimeType: 'image/jpeg', buffer: Buffer.alloc(600, 66) });
+  await page.locator('#ev_link').selectOption({ label: 'John Subject' });
+  await page.locator('.btn', { hasText: 'Upload evidence' }).click();
+  await page.waitForTimeout(700);
+  await wsTab(page, 'Subject');
+  const subjCard = await text(page, '#dlgBody');
+  ok('the photo rides with the subject card', has(subjCard, 'Photos & files'));
+  ok('as an image thumbnail', await page.locator('.rcard img').count() >= 1);
+  await wsTab(page, 'Evidence');
+
+  await page.locator('[data-act="evDelete"]').first().click();
   await page.waitForTimeout(600);
   ok('a delete keeps the record on screen', has(await text(page, '#dlgBody'), 'the record stays'));
 

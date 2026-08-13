@@ -1282,6 +1282,10 @@ function activityPanel(){
             ${e.location ? `<div class="tl-m">at ${esc(e.location)}</div>` : ""}
             ${e.vehicle ? `<div class="tl-m">vehicle: ${esc(e.vehicle)}</div>` : ""}
             ${e.subject_documented || e.video_acquired || e.photo_acquired ? `<div>
+              ${((WS && WS.evidence) || []).filter(ev2 => ev2.entry_id === e.id && !ev2.deleted_at)
+                .map(ev2 => `<a class="tag rs-submitted" style="text-decoration:none"
+                  href="/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${ev2.id}/file"
+                  target="_blank" rel="noopener">&#128206; ${esc(ev2.filename)}</a>`).join("")}
               ${e.subject_documented ? '<span class="tag cap-sd">Subject documented</span>' : ""}
               ${e.video_acquired ? '<span class="tag cap-va">Video</span>' : ""}
               ${e.photo_acquired ? '<span class="tag cap-pa">Photo</span>' : ""}</div>` : ""}
@@ -1658,6 +1662,14 @@ function evidencePanel(){
         <label class="f"><span>Note <span class="opt">optional</span></span>
           <input id="ev_note" placeholder="e.g. Subject loading lumber, clip 2 of 3."></label>
       </div>
+      <label class="f"><span>Attach to <span class="opt">a subject's photo, or the activity moment a clip documents</span></span>
+        <select id="ev_link">
+          <option value="">Nothing in particular</option>
+          ${((WS && WS.subjects) || []).length ? `<optgroup label="Subjects">
+            ${WS.subjects.map(sj => `<option value="s:${sj.id}">${esc(sj.name)}</option>`).join("")}</optgroup>` : ""}
+          ${((WS && WS.activity) || []).length ? `<optgroup label="Recent activity">
+            ${WS.activity.slice(0, 8).map(a => `<option value="e:${a.id}">${esc(t12(a.at_time))} — ${esc(String(a.description || "").slice(0, 48))}</option>`).join("")}</optgroup>` : ""}
+        </select></label>
       <button class="btn" type="submit">Upload evidence</button>
       <p class="hint">The free-plan failsafe is on: uploads stop before storage could ever bill.
         Large video should be split into parts.</p>
@@ -1676,6 +1688,9 @@ async function uploadEvidenceFile(){
   fd.append("file", f);
   if($("ev_class")) fd.append("classification", $("ev_class").value);
   fd.append("note", $("ev_note").value);
+  const link = $("ev_link") ? $("ev_link").value : "";
+  if(link.startsWith("s:")) fd.append("subject_id", link.slice(2));
+  if(link.startsWith("e:")) fd.append("entry_id", link.slice(2));
   try{
     const res = await fetch(`/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence`,
       {method: "POST", credentials: "same-origin", body: fd});
@@ -2047,6 +2062,17 @@ function subjectsPanel(s){
         ${fr("Social accounts", sub.social_accounts)}${fr("Notes", sub.notes)}
       </dl>`}
       ${(sub.vehicles || []).length && !editing ? `<div style="margin-top:4px"><b style="font-size:.85rem">Vehicles</b>${sub.vehicles.map(vehLine).join("")}</div>` : ""}
+      ${(() => {
+        const media = ((WS && WS.evidence) || []).filter(e => e.subject_id === sub.id && !e.deleted_at);
+        return media.length && !editing ? `<div style="margin-top:6px"><b style="font-size:.85rem">Photos &amp; files</b>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">${media.map(e => {
+            const href = `/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${e.id}/file`;
+            return String(e.content_type || "").startsWith("image/")
+              ? `<a href="${href}" target="_blank" rel="noopener"><img src="${href}" alt="${esc(e.filename)}"
+                   style="max-height:72px;border-radius:6px;border:1px solid var(--line)"></a>`
+              : `<a class="tag rs-draft" style="text-decoration:none" href="${href}" target="_blank" rel="noopener">${esc(e.filename)}</a>`;
+          }).join("")}</div></div>` : "";
+      })()}
       ${SUBJ_FORM && SUBJ_FORM.mode === "veh" && SUBJ_FORM.sid === sub.id ? vehForm(sub) : ""}
     </div>`;
   };
