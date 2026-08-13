@@ -760,6 +760,7 @@ function shell(inner){
       + item("sheets", "&#128179; Rate sheets")
       + item("invoices", "&#129534; Invoices")
       + item("staff", "&#128101; Staff")
+      + item("settings", "&#9881; Settings")
       + `<button class="side-intake" data-act="tab" data-tab="newlead">+ Intake a Client</button>`
     : item("cases", "&#128193; My assignments")
       + item("today", "&#9728; Today")
@@ -1419,10 +1420,6 @@ function casesView(){
     <div class="bar">
       <h2 style="margin:0">Cases</h2>${filterChip}
       <input id="q" placeholder="${admin ? "Search case, client, carrier, claim no." : "Search case or subject"}" value="${esc(FILTER)}" data-act="filter">
-      ${SHOW_EXAMPLE ? "" : `<button class="btn sm ghost" data-act="showExample">Show an example</button>`}
-      ${admin ? `<button class="btn sm ghost" data-act="addDemo">Add a test case</button>${
-        CASES.some(c => isDemo(c.case_no))
-          ? `<button class="btn sm ghost" data-act="clearDemo">Remove test cases</button>` : ""}` : ""}
       <span class="count">${rows.length} of ${shown.length}${
         (s => s && (s.claims || s.consumer)
           ? ` · ${s.claims || 0} carrier · ${s.consumer || 0} private` : "")(SUMMARY)}</span>
@@ -1444,6 +1441,29 @@ function casesView(){
                 ? "No submissions yet. Intake forms appear here as they arrive."
                 : "Nothing assigned to you yet. Cases appear here when an admin assigns one.")
               + ` <button class="btn sm ghost" data-act="showExample" style="margin-left:8px">Show an example</button>`}</div>`}
+  </div>`;
+}
+
+/* UIBUILD P20 — the working material moved off the case list into Settings,
+   where trying things out is clearly separate from doing the work. The one
+   Hide button stays over the list, and the empty state still offers the
+   example, because teaching UI is not a test control. */
+function settingsView(){
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Settings</h2></div>
+    <h3 style="margin:6px 0 4px;font-size:1rem">Developer &amp; testing</h3>
+    <p class="note">Working material for trying the portal out. None of it touches a real case.</p>
+    <div class="actions">
+      ${SHOW_EXAMPLE
+        ? `<button class="btn sm ghost" data-act="hideExample">Hide the example cases</button>`
+        : `<button class="btn sm ghost" data-act="showExample">Show the example cases</button>`}
+      <button class="btn sm ghost" data-act="addDemo">Add a test case</button>
+      ${CASES.some(c => isDemo(c.case_no))
+        ? `<button class="btn sm ghost" data-act="clearDemo">Remove test cases</button>` : ""}
+    </div>
+    <p class="hint">The example cases are page-held demo data, never stored, and labelled wherever
+      they appear. A test case is a real row prefixed TEST- so it can be removed cleanly — removing
+      test cases never touches anything else.</p>
   </div>`;
 }
 
@@ -1552,6 +1572,7 @@ function paint(){
   app.innerHTML = shell(
       TAB === "dashboard" ? dashView()
     : TAB === "staff" ? staffView()
+    : TAB === "settings" ? settingsView()
     : TAB === "leads" ? leadsView()
     : TAB === "newlead" ? newLeadView()
     : TAB === "sheets" ? sheetsView()
@@ -3814,7 +3835,8 @@ async function endInvestigationDay(){
 }
 
 async function addDemoCase(){
-  try{ await api("/demo-case", {method:"POST"}); SHOW_EXAMPLE = false; await render(); }
+  // Adding one is for using one — land on the list where it now sits.
+  try{ await api("/demo-case", {method:"POST"}); SHOW_EXAMPLE = false; TAB = "cases"; await render(); }
   catch(e){ alert(e.message); }
 }
 
@@ -4164,7 +4186,7 @@ document.addEventListener("click", ev => {
     }
   }
   else if(act === "openCaseTab"){ openCase(el.dataset.case, el.dataset.tab); }
-  else if(act === "showExample"){ SHOW_EXAMPLE = true; paint(); }
+  else if(act === "showExample"){ SHOW_EXAMPLE = true; if(TAB === "settings") TAB = "cases"; paint(); }
   else if(act === "hideExample"){ SHOW_EXAMPLE = false; paint(); }
   else if(act === "logout"){ doLogout(); }
   else if(act === "openCase"){ openCase(el.dataset.case); }

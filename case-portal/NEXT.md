@@ -7,17 +7,22 @@ overflow pattern, guard tests). This file is the live queue and in-flight
 state. Update it when the queue moves; keep it short.
 
 Snapshot date: 2026-08-13. Branch: `claude/app-crashes-lockups-debug-jcy6kf`.
-Master is green through PR #47 (UIBUILD Phase 6). Suites at last green:
-worker 624, portal e2e 476 (intake 130, alerts 41).
+Master is green through PR #48 (UIBUILD Phase 7). Suites at last green:
+worker 624, portal e2e 481 (intake 130, alerts 41).
 
 ## The queue, in the owner's order
 
-1. **UIBUILD.md — Phase 8 (cleanup) is the last UI phase.** Phases 1–7
-   are DONE (ledger in UIBUILD.md has the details). Phase 8 (P20:
-   Show example / Add test case / Remove test cases move to a
-   Settings→Developer area for admins; consolidate any duplicate
-   navigation; confirm every button routes; desktop+mobile pass) closes
-   the handoff.
+1. **UIBUILD.md is COMPLETE** — all 8 phases shipped (PRs #42–#48 plus
+   Phase 8's PR). The ledger in UIBUILD.md records what each phase
+   became.
+2. **INTAKE-NA.md — intake "not available" states** is now the head of
+   the queue (the owner's order: after the UI work). Twelve-step
+   ledger in that file; the manual portal intake already honors the
+   core rule, but the PUBLIC intake forms and their server validation
+   are the actual work.
+3. **SURVEILLANCE.md — Active Surveillance Mode** (after the shared
+   model is stable; PWA-ready; a VIEW of the existing case, never a
+   separate database).
 2. **INTAKE-NA.md — intake "not available" states** (owner: after the UI
    work).
 3. **SURVEILLANCE.md — Active Surveillance Mode** (owner: after the shared
@@ -39,15 +44,16 @@ same landing-vs-click class of bug was then found and fixed twice more
 (openCase straight to the package tab, and the e2e harness now prints
 its report on an uncaught exception instead of dying silently).
 
-**Phases 3–6 shipped as PRs #44–#47** (deploys green; portal-setup was
-dispatched once, for Phase 4's report_versions schema change, and came
-back green). Note: PR #45's merge hit a GitHub 500 that had actually
-landed — master carries one redundant EMPTY commit (cb1b948 +
-519454e, identical trees); harmless, left alone on purpose. **Phase 7
-is built and green on the branch** (P15: the field case home with
-scope-aware pkgProgress/pkgNextStep, and the section bar as a fixed
-bottom navigation on phones; page-only). Ship as one PR, then Phase 8
-closes UIBUILD.
+**The entire UIBUILD handoff shipped this session**: Phases 1–7 as PRs
+#42–#48 (deploys green; portal-setup dispatched once, for Phase 4's
+report_versions schema change, and came back green), and **Phase 8 is
+built and green on the branch** (P20: Settings → Developer & testing
+holds the test controls, admin-only; page-only change). Ship Phase 8
+as the final UIBUILD PR, then the queue moves to INTAKE-NA.md.
+
+Note for the record: PR #45's merge hit a GitHub 500 that had actually
+landed — master carries one redundant EMPTY commit (cb1b948 + 519454e,
+identical trees); harmless, left alone on purpose.
 
 ## How to resume in a fresh session
 
