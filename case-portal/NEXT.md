@@ -7,16 +7,17 @@ overflow pattern, guard tests). This file is the live queue and in-flight
 state. Update it when the queue moves; keep it short.
 
 Snapshot date: 2026-08-13. Branch: `claude/app-crashes-lockups-debug-jcy6kf`.
-Master is green through PR #46 (UIBUILD Phase 5). Suites at last green:
-worker 624, portal e2e 466 (intake 130, alerts 41).
+Master is green through PR #47 (UIBUILD Phase 6). Suites at last green:
+worker 624, portal e2e 476 (intake 130, alerts 41).
 
 ## The queue, in the owner's order
 
-1. **UIBUILD.md — streamlined UI, phases 7–8, in order.** Phases 1–6 are
-   DONE (ledger in UIBUILD.md has the details). Phase 7 (Mobile: case
-   home; bottom nav; activity/evidence/report/back flows — P15) is
-   next, then Phase 8 (cleanup: move test controls to Settings, remove
-   duplicate legacy UI, wire every button, desktop+mobile test — P20).
+1. **UIBUILD.md — Phase 8 (cleanup) is the last UI phase.** Phases 1–7
+   are DONE (ledger in UIBUILD.md has the details). Phase 8 (P20:
+   Show example / Add test case / Remove test cases move to a
+   Settings→Developer area for admins; consolidate any duplicate
+   navigation; confirm every button routes; desktop+mobile pass) closes
+   the handoff.
 2. **INTAKE-NA.md — intake "not available" states** (owner: after the UI
    work).
 3. **SURVEILLANCE.md — Active Surveillance Mode** (owner: after the shared
@@ -38,16 +39,15 @@ same landing-vs-click class of bug was then found and fixed twice more
 (openCase straight to the package tab, and the e2e harness now prints
 its report on an uncaught exception instead of dying silently).
 
-**Phases 3–5 shipped as PRs #44–#46** (deploys green; portal-setup
-dispatched for Phase 4's report_versions schema change and green).
-Note: PR #45's merge hit a GitHub 500 that had actually landed —
-master carries one redundant EMPTY commit (cb1b948 + 519454e,
-identical trees); harmless, left alone on purpose. **Phase 6 is built
-and green on the branch** (P16 leads desk over the existing
-submissions, P17 manual intake via new admin-only POST /intakes, P18
-3-step send wizard with Worker-paired intake links; worker.js changed,
-schema did NOT — no portal-setup dispatch). Ship as one PR, then
-start Phase 7.
+**Phases 3–6 shipped as PRs #44–#47** (deploys green; portal-setup was
+dispatched once, for Phase 4's report_versions schema change, and came
+back green). Note: PR #45's merge hit a GitHub 500 that had actually
+landed — master carries one redundant EMPTY commit (cb1b948 +
+519454e, identical trees); harmless, left alone on purpose. **Phase 7
+is built and green on the branch** (P15: the field case home with
+scope-aware pkgProgress/pkgNextStep, and the section bar as a fixed
+bottom navigation on phones; page-only). Ship as one PR, then Phase 8
+closes UIBUILD.
 
 ## How to resume in a fresh session
 

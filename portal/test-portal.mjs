@@ -2071,6 +2071,48 @@ section('Leads and intakes: cards, decisions, and the phone-call lead');
   await page.close();
 }
 
+/* UIBUILD phase 7 (P15): the field's case home, and the phone gets a bottom
+   bar. */
+section('The field case home, on a desk and in a hand');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+  const home = await text(page, '#dlgBody');
+  ok('the assignment leads with its progress', has(home, 'Assignment progress'));
+  ok('the ring speaks percent to the field too', /\d+%/.test(home));
+  ok('one next step, with a GO',
+     has(home, 'Next step') && await page.locator('.ov-next .btn').count() === 1);
+  const fieldMods = await text(page, '.ov-mods');
+  ok('their modules only — never Build', !has(fieldMods, 'Build'));
+  ok('and never Invoice', !has(fieldMods, 'Invoice'));
+  ok('the assignment detail still follows', has(home, 'Pat Coleman'));
+  await page.close();
+}
+{
+  // A phone. The section bar pins under the thumb with short words.
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('dana');
+  await page.locator('#p').fill('FieldWork2026x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(800);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  ok('the section bar is the bottom navigation on a phone',
+     (await page.evaluate(() => getComputedStyle(document.querySelector('.wsecs')).position)) === 'fixed');
+  const box = await page.locator('.wsecs').boundingBox();
+  ok('and it sits at the bottom of the hand', box && box.y > 600, JSON.stringify(box));
+  ok('with thumb-size words', has(await text(page, '.wsecs'), 'Home'));
+  await page.locator('.wsecs button', { hasText: 'Evidence' }).click();
+  await page.waitForTimeout(350);
+  ok('the bottom bar navigates', has(await text(page, '.wstabs button.on'), 'Evidence'));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
