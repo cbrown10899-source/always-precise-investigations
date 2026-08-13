@@ -1499,6 +1499,67 @@ section('Subjects and vehicles: structured records, scoped to the case');
      && (await env.DB.prepare('SELECT MAX(LENGTH(name)) AS l FROM case_subjects').first()).l <= 200);
 }
 
+section('Communication log: the office writes, visibility decides who reads');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  for (const uname of ['dana', 'reed']) {
+    const l = (await jsonOf(await invite(env, admin, { username: uname, display_name: uname, role: 'investigator' }))).url;
+    const t = new URL(l, 'https://x.test').searchParams.get('invite');
+    await call(env, `/invite/${t}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  }
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const reed = (await login(env, 'reed', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find(u => u.username === 'dana').id;
+
+  await ingest(env, { case_no: 'API-CM1', carrier: 'Quiet Mutual', claim_number: 'QM-3',
+                      client_name: 'D. Reyes', subject_name: 'S' });
+  await call(env, '/submissions/API-CM1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+
+  ok('a communication needs a real method',
+     (await call(env, '/cases/API-CM1/comms', { method: 'POST', cookie: admin,
+       body: { comm_type: 'carrier_pigeon', at_date: '2026-08-13', summary: 'x' } })).status === 400);
+  ok('and a summary',
+     (await call(env, '/cases/API-CM1/comms', { method: 'POST', cookie: admin,
+       body: { comm_type: 'phone', at_date: '2026-08-13', summary: '  ' } })).status === 400);
+  ok('and a date',
+     (await call(env, '/cases/API-CM1/comms', { method: 'POST', cookie: admin,
+       body: { comm_type: 'phone', at_date: 'yesterday', summary: 'x' } })).status === 400);
+
+  ok('an admin logs a call with the adjuster, office-only',
+     (await call(env, '/cases/API-CM1/comms', { method: 'POST', cookie: admin,
+       body: { comm_type: 'phone', at_date: '2026-08-13', at_time: '09:15',
+               person: 'D. Reyes, adjuster', visibility: 'admin',
+               summary: 'Adjuster approved a second surveillance day.',
+               follow_up_date: '2026-08-15' } })).status === 201);
+  ok('and a team-visible instruction',
+     (await call(env, '/cases/API-CM1/comms', { method: 'POST', cookie: admin,
+       body: { comm_type: 'investigator', at_date: '2026-08-13',
+               visibility: 'team', summary: 'Told the field a second day is approved.' } })).status === 201);
+  ok('an unstated visibility defaults to admins only',
+     (await jsonOf(await call(env, '/cases/API-CM1/workspace', { cookie: admin }))).comms
+       .length === 2);
+
+  ok('the assigned investigator cannot write to the log',
+     (await call(env, '/cases/API-CM1/comms', { method: 'POST', cookie: dana,
+       body: { comm_type: 'phone', at_date: '2026-08-13', summary: 'x' } })).status === 403);
+  ok('an unassigned investigator does not even find the case',
+     (await call(env, '/cases/API-CM1/comms', { method: 'POST', cookie: reed,
+       body: { comm_type: 'phone', at_date: '2026-08-13', summary: 'x' } })).status === 404);
+
+  const aws = await jsonOf(await call(env, '/cases/API-CM1/workspace', { cookie: admin }));
+  ok('the office sees everything, follow-up included',
+     aws.comms.length === 2 && aws.comms.some(c => c.follow_up_date === '2026-08-15'));
+
+  const iws = await jsonOf(await call(env, '/cases/API-CM1/workspace', { cookie: dana }));
+  ok('the investigator sees only what visibility grants',
+     iws.comms.length === 1 && iws.comms[0].visibility === 'team');
+  ok('the adjuster call never reaches them',
+     !JSON.stringify(iws.comms).includes('D. Reyes'));
+}
+
 section('Password reset: a one-time link, nobody learns the password');
 {
   const env = freshEnv();

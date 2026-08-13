@@ -1080,6 +1080,15 @@ async function caseWorkspace(env, user, caseNo) {
        FROM case_offers o LEFT JOIN users u ON u.id = o.investigator_id
       WHERE o.case_no = ? ORDER BY o.id DESC LIMIT 50`).bind(caseNo).all() : { results: [] };
 
+  // Communication log (priority 18): visibility enforced in the query, like
+  // the notes above it.
+  const { results: comms } = await env.DB.prepare(
+    `SELECT c.id, c.comm_type, c.at_date, c.at_time, c.person, c.summary,
+            c.follow_up_date, c.visibility, c.created_at, u.display_name AS author
+       FROM case_comms c LEFT JOIN users u ON u.id = c.author_id
+      WHERE c.case_no = ? ${admin ? '' : "AND c.visibility != 'admin'"}
+      ORDER BY c.at_date DESC, c.at_time DESC, c.id DESC LIMIT 200`).bind(caseNo).all();
+
   const myOffer = admin ? null : await env.DB.prepare(
     `SELECT investigation_date, expected_hours, general_location, instructions,
             compensation_hourly, mileage_terms
@@ -1134,6 +1143,7 @@ async function caseWorkspace(env, user, caseNo) {
     reports: reports || [],
     expenses: expenses || [],
     notes: notes || [],
+    comms: comms || [],
     offers: offers || [],
     my_offer: myOffer || null,
   });
@@ -1435,6 +1445,40 @@ async function addNote(request, env, user, caseNo) {
     `INSERT INTO case_notes (case_no, author_id, note_type, visibility, body, created_at)
      VALUES (?, ?, ?, ?, ?, ?)`)
     .bind(caseNo, user.id, type, visibility, text, nowIso()).run();
+  return json({ ok: true, id: res.meta ? res.meta.last_row_id : null }, 201);
+}
+
+/* Communication log (HANDOFF priority 18). Office-authored: the client, the
+   adjuster and the billing contact are office relationships, so an
+   investigator never writes here and reads only what visibility grants —
+   enforced in the query, the notes posture. Documents communication only;
+   nothing is sent. */
+const COMM_TYPES = ['email', 'phone', 'text', 'client_update', 'investigator', 'authorization_request', 'internal'];
+
+async function addComm(request, env, user, caseNo) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  const body = await readJson(request);
+  const type = String(body.comm_type || '');
+  if (!COMM_TYPES.includes(type)) return json({ error: 'Pick how the communication happened.' }, 400);
+  const date = String(body.at_date || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json({ error: 'Date the communication.' }, 400);
+  const time = String(body.at_time || '');
+  if (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return json({ error: 'Time must be HH:MM.' }, 400);
+  const follow = String(body.follow_up_date || '').slice(0, 10);
+  if (follow && !/^\d{4}-\d{2}-\d{2}$/.test(follow)) return json({ error: 'Follow-up must be a date.' }, 400);
+  const summary = String(body.summary || '').trim().slice(0, 8000);
+  if (!summary) return json({ error: 'Summarize the communication.' }, 400);
+  let visibility = String(body.visibility || 'admin');
+  if (!['admin', 'team', 'client_eligible'].includes(visibility)) visibility = 'admin';
+
+  const res = await env.DB.prepare(
+    `INSERT INTO case_comms (case_no, comm_type, at_date, at_time, person, summary,
+       follow_up_date, visibility, author_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(caseNo, type, date, time || null,
+          String(body.person || '').trim().slice(0, 200) || null, summary,
+          follow || null, visibility, user.id, nowIso()).run();
   return json({ ok: true, id: res.meta ? res.meta.last_row_id : null }, 201);
 }
 
@@ -2048,7 +2092,7 @@ const EXPECTED_TABLES = [
   'users', 'sessions', 'submissions', 'login_fails', 'invites', 'ingest_rate',
   'case_types', 'case_meta', 'case_days', 'activity_log', 'activity_media', 'case_reports', 'app_config',
   'case_expenses', 'case_notes', 'user_rates', 'case_settings', 'password_resets', 'case_offers',
-  'case_details', 'case_subjects', 'subject_vehicles',
+  'case_details', 'case_subjects', 'subject_vehicles', 'case_comms',
 ];
 
 async function missingTables(env) {
@@ -2239,6 +2283,9 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/notes$/);
   if (m && method === 'POST') return addNote(request, env, user, m[1]);
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/comms$/);
+  if (m && method === 'POST') return addComm(request, env, user, m[1]);
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/reports\/generate$/);
   if (m && method === 'POST') return generateReport(request, env, user, m[1]);

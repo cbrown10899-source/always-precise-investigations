@@ -1075,7 +1075,8 @@ async function reloadWorkspace(){
 function wsTabs(){
   const admin = ME.role === "admin";
   const t = [["overview","Overview"], ["subject","Subject"], ["activity","Activity log"],
-             ["field","Field work"], ["reports","Reports"], ["expenses","Expenses"], ["notes","Internal notes"]];
+             ["field","Field work"], ["reports","Reports"], ["expenses","Expenses"], ["notes","Internal notes"],
+             ["comms","Comm log"]];
   // Authorization is the insurance panel; it appears once there is one, and
   // always for an admin so it can be set.
   if(admin || (WS && WS.authorization && WS.authorization.authorized_hours != null)) t.push(["auth","Authorization"]);
@@ -1417,6 +1418,63 @@ function notesPanel(){
       : `<div class="empty">No notes on this case yet.</div>`}`;
 }
 
+/* Priority 18 — the communication log. Office-authored: an admin records who
+   was contacted, when and how; visibility decides what the assigned
+   investigator sees, and the Worker's query enforces it. Documents
+   communication only — nothing is ever sent from here. */
+function commsPanel(){
+  const admin = ME.role === "admin";
+  const comms = (WS && WS.comms) || [];
+  const typeLabel = t => ({email:"Email", phone:"Phone call", text:"Text",
+    client_update:"Client update", investigator:"Investigator",
+    authorization_request:"Authorization request", internal:"Internal"})[t] || t;
+  const visLabel = v => v === "admin" ? "Admin only" : v === "client_eligible" ? "Client eligible" : "Team";
+  const today = new Date().toISOString().slice(0,10);
+
+  const composer = !admin ? "" : `
+    <form class="quick" data-act="addComm">
+      <div class="two">
+        <label class="f"><span>How</span>
+          <select id="c_type">${[["phone","Phone call"],["email","Email"],["text","Text"],
+            ["client_update","Client update"],["investigator","Investigator communication"],
+            ["authorization_request","Authorization request"],["internal","Internal"]]
+            .map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select></label>
+        <label class="f"><span>With</span><input id="c_person" placeholder="e.g. D. Reyes, adjuster"></label>
+      </div>
+      <div class="two">
+        <label class="f"><span>Date</span><input id="c_date" type="date" value="${today}"></label>
+        <label class="f"><span>Time <span class="opt">optional</span></span><input id="c_time" type="time"></label>
+      </div>
+      <label class="f"><span>What was said</span><textarea id="c_sum" rows="3"
+        placeholder="e.g. Adjuster approved a second day; written confirmation to follow by email."></textarea></label>
+      <div class="two">
+        <label class="f"><span>Follow up by <span class="opt">optional</span></span><input id="c_fup" type="date"></label>
+        <label class="f"><span>Who can see it</span>
+          <select id="c_vis">
+            <option value="admin">Admins only</option>
+            <option value="team">Admins + investigators on the case</option>
+            <option value="client_eligible">Eligible for a client-facing record</option>
+          </select></label>
+      </div>
+      <button class="btn" type="submit">Log the communication</button>
+      <p class="hint">This records the communication &mdash; nothing is sent from here, and
+        &ldquo;client eligible&rdquo; only marks it as allowed into a future client-facing record.</p>
+      ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+    </form>`;
+
+  return `${composer}
+    ${comms.length ? comms.map(c => `<div class="notecard">
+        <div class="rc-h"><span class="tag">${esc(typeLabel(c.comm_type))}</span>
+          ${c.person ? `<b style="font-size:.9rem">${esc(c.person)}</b>` : ""}
+          ${admin ? `<span class="tag ${c.visibility === "admin" ? "nv-admin" : c.visibility === "client_eligible" ? "nv-client" : "nv-team"}">${esc(visLabel(c.visibility))}</span>` : ""}</div>
+        <div class="notebody">${esc(c.summary)}</div>
+        <div class="tl-m">${esc(fmtDay(c.at_date))}${c.at_time ? ` &middot; ${esc(t12(c.at_time))}` : ""}${
+          c.follow_up_date ? ` &middot; <b>follow up ${esc(fmtDay(c.follow_up_date))}</b>` : ""} &middot; ${esc(c.author || "")}</div>
+      </div>`).join("")
+      : `<div class="empty">${admin ? "No communications logged on this case yet."
+          : "Nothing shared with you on this case yet."}</div>`}`;
+}
+
 function authAdminForm(){
   const a = (WS && WS.authorization) || {};
   const types = (WS && WS.case_types) || [];
@@ -1458,6 +1516,7 @@ function caseBodyHtml(){
     : WS_TAB === "reports"  ? reportsPanel()
     : WS_TAB === "expenses" ? expensesPanel()
     : WS_TAB === "notes"    ? notesPanel()
+    : WS_TAB === "comms"    ? commsPanel()
     : WS_TAB === "auth"     ? authPanel(a, admin) + (admin ? authAdminForm() : "")
     : WS_TAB === "assign"   ? assignPanel(s)
     : WS_TAB === "subject"  ? detailList(s, "subject") + caseDetailsPanel() + subjectsPanel(s)
@@ -1949,6 +2008,19 @@ async function addNoteEntry(){
   await reloadWorkspace();
 }
 
+async function addCommEntry(){
+  WS_ERR = "";
+  try{
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/comms`, {method:"POST", body:{
+      comm_type: $("c_type").value, person: $("c_person").value,
+      at_date: $("c_date").value, at_time: $("c_time").value,
+      summary: $("c_sum").value, follow_up_date: $("c_fup").value,
+      visibility: $("c_vis").value,
+    }});
+  }catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
 async function saveCaseDetails(){
   WS_ERR = "";
   const body = {};
@@ -2209,6 +2281,7 @@ document.addEventListener("submit", ev => {
   else if(a === "genReport") generateReportDraft();
   else if(a === "addExpense") addExpenseEntry();
   else if(a === "addNote") addNoteEntry();
+  else if(a === "addComm") addCommEntry();
   else if(a === "makeOffer") makeCaseOffer();
   else if(a === "saveDetails") saveCaseDetails();
   else if(a === "saveSubject") saveSubjectRec(el.dataset.id ? Number(el.dataset.id) : null);
