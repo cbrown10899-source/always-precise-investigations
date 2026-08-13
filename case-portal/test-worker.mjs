@@ -1194,6 +1194,44 @@ section('Notes: visibility is enforced in the query');
        body: { note_type: 'investigator', body: '  ' } })).status === 400);
 }
 
+section("My reports and my expenses are mine alone");
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  await ingest(env, { case_no: 'API-M1', subject_name: 'S', client_name: 'C' });
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const dana = users.users.find(u => u.username === 'dana');
+  await call(env, '/submissions/API-M1/assign', { method: 'POST', cookie: admin, body: { user_id: dana.id } });
+
+  // Dana works a day and leaves it unreported; the admin does the same on the
+  // same case — the desks must not bleed into each other.
+  for (const [ck, st, en] of [[inv, '07:00', '11:00'], [admin, '12:00', '14:00']]) {
+    await call(env, '/cases/API-M1/day/start', { method: 'POST', cookie: ck,
+      body: { day_date: '2026-08-12', start_time: st } });
+    await call(env, '/cases/API-M1/day/end', { method: 'POST', cookie: ck, body: { end_time: en } });
+  }
+  await call(env, '/cases/API-M1/expenses', { method: 'POST', cookie: inv,
+    body: { expense_date: '2026-08-12', category: 'parking', amount: 9, description: 'Dana parking' } });
+  await call(env, '/cases/API-M1/expenses', { method: 'POST', cookie: admin,
+    body: { expense_date: '2026-08-12', category: 'tolls', amount: 4, description: 'Admin toll' } });
+
+  const mine = await jsonOf(await call(env, '/my/reports', { cookie: inv }));
+  ok('their unreported day shows on their desk', mine.days_without_reports.length === 1);
+  ok("the admin's day does not", mine.days_without_reports[0].hours === 4);
+  const myx = await jsonOf(await call(env, '/my/expenses', { cookie: inv }));
+  ok('their expenses list is theirs alone',
+     myx.expenses.length === 1 && myx.expenses[0].description === 'Dana parking');
+  const adminx = await jsonOf(await call(env, '/my/expenses', { cookie: admin }));
+  ok("the admin's own desk is scoped the same way",
+     adminx.expenses.length === 1 && adminx.expenses[0].description === 'Admin toll');
+}
+
 section('The daily report builder');
 {
   const env = freshEnv();

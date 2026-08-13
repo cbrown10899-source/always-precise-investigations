@@ -1238,6 +1238,33 @@ async function addNote(request, env, user, caseNo) {
   return json({ ok: true, id: res.meta ? res.meta.last_row_id : null }, 201);
 }
 
+/* ------------------------------------------------- my work, across cases */
+
+/* An investigator's own desk: their reports and their expenses across every
+   case assigned to them, plus the completed days still owing a report. Scoped
+   to the caller by construction — there is no way to ask for someone else's. */
+async function myReports(env, user) {
+  const { results: reports } = await env.DB.prepare(
+    `SELECT r.id, r.case_no, r.report_date, r.status, r.review_note
+       FROM case_reports r WHERE r.investigator_id = ?
+      ORDER BY r.report_date DESC, r.id DESC LIMIT 100`).bind(user.id).all();
+  const { results: owed } = await env.DB.prepare(
+    `SELECT d.id AS day_id, d.case_no, d.day_date, d.hours
+       FROM case_days d LEFT JOIN case_reports r ON r.day_id = d.id
+      WHERE d.investigator_id = ? AND d.end_time IS NOT NULL AND r.id IS NULL
+      ORDER BY d.day_date DESC LIMIT 100`).bind(user.id).all();
+  return json({ reports: reports || [], days_without_reports: owed || [] });
+}
+
+async function myExpenses(env, user) {
+  const { results } = await env.DB.prepare(
+    `SELECT id, case_no, expense_date, category, amount, miles, description,
+            reimbursable, billable, internal, reviewed_at
+       FROM case_expenses WHERE investigator_id = ?
+      ORDER BY expense_date DESC, id DESC LIMIT 200`).bind(user.id).all();
+  return json({ expenses: results || [] });
+}
+
 /* ---------------------------------------------------------- demo cases */
 
 /* A real case to build and test against, without a real client in it.
@@ -1975,6 +2002,9 @@ async function route(request, env) {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return clearDemoCases(env);
   }
+
+  if (p === '/my/reports' && method === 'GET') return myReports(env, user);
+  if (p === '/my/expenses' && method === 'GET') return myExpenses(env, user);
 
   if (p === '/case-types' && method === 'GET') return json({ case_types: await listCaseTypes(env) });
   if (p === '/case-types' && method === 'POST') {
