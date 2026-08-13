@@ -7,15 +7,16 @@ overflow pattern, guard tests). This file is the live queue and in-flight
 state. Update it when the queue moves; keep it short.
 
 Snapshot date: 2026-08-13. Branch: `claude/app-crashes-lockups-debug-jcy6kf`.
-Master is green through PR #41. Suites at last green: worker 598, portal
-e2e 367 (intake 130, alerts 41).
+Master is green through PR #42 (UIBUILD Phase 1). Suites at last green:
+worker 601, portal e2e 393 (intake 130, alerts 41).
 
 ## The queue, in the owner's order
 
-1. **UIBUILD.md — streamlined UI, phases 2–8, in order.** Phase 1 is DONE
-   and shipping as one PR (see below). Phase 2 (case detail: Back to
-   Cases; four-section tabs; new Overview; package progress; Next Step
-   card; recent activity; evidence overview) is next.
+1. **UIBUILD.md — streamlined UI, phases 3–8, in order.** Phases 1 and 2
+   are DONE (ledger in UIBUILD.md has the details). Phase 3 (field
+   activity: Add Activity modal; Quick/Custom; searchable actions;
+   favorites; structured templates; More Details fold; clean timeline;
+   sticky mobile add) is next.
 2. **INTAKE-NA.md — intake "not available" states** (owner: after the UI
    work).
 3. **SURVEILLANCE.md — Active Surveillance Mode** (owner: after the shared
@@ -29,23 +30,23 @@ e2e 367 (intake 130, alerts 41).
 
 ## Just resolved (2026-08-13, this session)
 
-The dashboard e2e timeout is fixed and Phase 1 is green. The recorded
-lead (pkgCard throwing on the hostile row) was wrong: `pkgCard` renders
-the hostile row fine — everything passes through esc(), and a consumer
-case always carries a retainer object (`authorizationFor` defaults to
-`PERSONAL.retainer`), so no null-call. The actual bug: `loadPackages()`
-was only called from the **tab-click** handler, but an admin **lands** on
-the dashboard via `render()` (the BOOTED branch), which never fetched
-`/packages` — PKGS stayed null and dashView painted "Loading…" forever.
-Fix: `render()` now awaits `loadPackages()` when an admin is on the
-dashboard with no PKGS loaded; logout also resets PKGS. Second fix, in
-the harness: an uncaught Playwright timeout used to kill the run before
-the report printed (which is why the page-error FAIL line was never
-seen); test-portal.mjs now prints the accumulated report on
-uncaughtException/unhandledRejection, so a future crash still names what
-it saw. Suites: worker 598, portal 367 (+10 for Phase 1), intake 130,
-alerts 41 — all green. Shipping Phase 1 as one PR (no schema change — no
-portal-setup dispatch).
+**Phase 1 shipped as PR #42** (squash-merged; branch reset onto master).
+The dashboard e2e timeout's recorded lead (pkgCard throwing on the
+hostile row) was wrong — the actual bug was that nothing fetched
+`/packages` on the admin's dashboard LANDING (`render()`'s BOOTED
+branch); only the tab click did. Fixed in `render()`; logout resets
+PKGS; the same landing-vs-click bug was then found and fixed for the
+dashboard's Build jump (`openCase` straight to the package tab now
+loads the build). The e2e harness also prints its report on an
+uncaught exception now, instead of dying silently on a Playwright
+timeout.
+
+**Phase 2 is built and green on the branch** (case detail: P5 header,
+P6 four sections with WS_TAB-derived section state, P7 admin overview
+reusing pkgProgress/pkgNextStep, Billing & closing under Admin,
+workspace carries build_status/invoice_status admin-only). Ship it as
+one PR (no schema change — no portal-setup dispatch), then start
+Phase 3.
 
 ## How to resume in a fresh session
 

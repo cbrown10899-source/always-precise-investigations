@@ -194,9 +194,20 @@ const has = (haystack, needle) => haystack.toLowerCase().includes(needle.toLower
 // The list is newest-first, so never address a row by position.
 const rowFor = (page, caseNo) => page.locator('tbody tr', { hasText: caseNo }).first();
 // The case dialog is a workspace with tabs; most detail is no longer on the
-// first panel, so a test that wants a section has to open it.
+// first panel, so a test that wants a panel has to open it. Panels live
+// inside four sections now (UIBUILD P6) — when the wanted sub-tab is not in
+// the visible row, walk the section bar until it shows, the way a person
+// hunting for it would.
 async function wsTab(page, name) {
-  await page.locator('.wstabs button', { hasText: name }).click();
+  const tab = () => page.locator('.wstabs button', { hasText: name });
+  if (!(await tab().count())) {
+    for (const sec of await page.locator('.wsecs button').all()) {
+      await sec.click();
+      await page.waitForTimeout(180);
+      if (await tab().count()) break;
+    }
+  }
+  await tab().click();
   await page.waitForTimeout(200);
 }
 async function signIn(page, u, p) {
@@ -252,7 +263,7 @@ section('Admin case list');
   const subj = await text(page, '#dlgBody');
   ok('the claimant is labelled as a claimant', subj.includes('Claimant'));
   ok('the injury and restrictions are shown', subj.includes('Lumbar strain'));
-  ok('the case opens on a workspace with tabs', await page.locator('.wstabs button').count() >= 4);
+  ok('the case opens on a workspace with four sections', await page.locator('.wsecs button').count() === 4);
   await wsTab(page, 'Assignment');
   ok('an admin sees the assignment controls', await page.locator('#asg').count() === 1);
   await page.close();
@@ -333,6 +344,11 @@ section('Investigator scope');
   await wsTab(page, 'Subject');
   const isubj = await text(page, '#dlgBody');
   ok('the investigator gets the injury and restrictions', isubj.includes('Lumbar strain'));
+  const isecs = await text(page, '.wsecs');
+  ok('the investigator navigates their own four sections',
+     has(isecs, 'Assignment') && has(isecs, 'Activity') && has(isecs, 'Evidence') && has(isecs, 'Report'));
+  ok('nothing administrative is offered as a section', !has(isecs, 'Admin'));
+  await wsTab(page, 'Activity log');
   ok('the investigator has an Activity log tab', await page.locator('.wstabs button', { hasText: 'Activity log' }).count() === 1);
   ok('the investigator has a Field work tab', await page.locator('.wstabs button', { hasText: 'Field work' }).count() === 1);
   ok('the investigator has NO Assignment tab', await page.locator('.wstabs button', { hasText: 'Assignment' }).count() === 0);
@@ -627,7 +643,7 @@ section('Adding a test case from the portal');
   // It behaves like a real case, which is the whole point of having one.
   await page.locator('tbody tr', { hasText: 'TEST-' }).first().click();
   await page.waitForTimeout(500);
-  ok('it opens a full workspace', await page.locator('.wstabs button').count() >= 6);
+  ok('it opens a full workspace', await page.locator('.wsecs button').count() === 4);
   await wsTab(page, 'Authorization');
   const auth = await text(page, '#dlgBody');
   ok('it arrives with hours to work against', auth.includes('24 hours'));
@@ -846,9 +862,14 @@ section('The case workspace in the browser');
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(450);
 
-  const tabs = await text(page, '.wstabs');
-  for (const t of ['Overview', 'Subject', 'Activity log', 'Field work', 'Authorization', 'Assignment']) {
-    ok(`the workspace has a ${t} tab`, has(tabs, t), tabs);
+  const secbar = await text(page, '.wsecs');
+  for (const t of ['Overview', 'Fieldwork', 'Report & Evidence', 'Admin']) {
+    ok(`the workspace navigates by section: ${t}`, has(secbar, t), secbar);
+  }
+  // Every panel is still reachable behind its section.
+  for (const t of ['Subject', 'Activity log', 'Field work', 'Authorization', 'Assignment']) {
+    await wsTab(page, t);
+    ok(`the ${t} panel is still reachable`, has(await text(page, '.wstabs button.on'), t));
   }
 
   // The chain has to hold hands: Reports with nothing to report on points at
@@ -1007,12 +1028,12 @@ section('An investigator gets the same field tools, without the money');
   await signIn(page, 'dana', 'FieldWork2026x');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(450);
-  const tabs = await text(page, '.wstabs');
-  ok('they get the activity log', has(tabs, 'Activity log'));
-  ok('they get field work', has(tabs, 'Field work'));
-  ok('they do not get Assignment', !has(tabs, 'Assignment'));
+  const fsecs = await text(page, '.wsecs');
+  ok('they get their own sections', has(fsecs, 'Activity') && has(fsecs, 'Evidence') && has(fsecs, 'Report'));
+  ok('they do not get the Admin section', !has(fsecs, 'Admin'));
 
   await wsTab(page, 'Field work');
+  ok('they get field work', has(await text(page, '.wstabs button.on'), 'Field work'));
   ok('they can start their own day',
      await page.locator('.btn', { hasText: 'Start investigation' }).count() === 1);
 
@@ -1043,7 +1064,7 @@ section('The workspace is a full page, not a popup');
   ok('opening a case leaves no dialog element at all', await page.locator('dialog').count() === 0);
   ok('the workspace fills the page', await page.locator('.casepage').count() === 1);
   ok('the dashboard cards are out of the way', await page.locator('.stats').count() === 0);
-  ok('there is a way back', has(await text(page, '.pagebar'), 'All cases'));
+  ok('there is a way back', has(await text(page, '.pagebar'), 'Back to Cases'));
   await page.locator('.close').click();
   await page.waitForTimeout(500);
   ok('back returns to the case list', await page.locator('.stats').count() === 1);
@@ -1422,7 +1443,8 @@ section('Closing a case takes the checklist');
 
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(450);
-  ok('the closing checklist waits on the overview',
+  await wsTab(page, 'Billing & closing');
+  ok('the closing checklist waits under Billing & closing',
      has(await text(page, '#dlgBody'), 'Close the case'));
   await page.locator('[data-act="closeCase"]').click();
   await page.waitForTimeout(600);
@@ -1496,7 +1518,7 @@ section('An invoice from case to PAID');
   await page.locator('#m_hours').fill('8');
   await page.locator('.btn', { hasText: 'Save authorization' }).click();
   await page.waitForTimeout(500);
-  await wsTab(page, 'Overview');
+  await wsTab(page, 'Billing & closing');
   await page.locator('[data-act="createInvoiceAuth"]').click();
   await page.waitForTimeout(800);
 
@@ -1691,6 +1713,76 @@ section('The dashboard leads with case packages');
   await signIn(page, 'dana', 'FieldWork2026x');
   ok('an investigator keeps their own landing', has(await text(page, '.tabs button.on'), 'My assignments'));
   ok('and gets no intake door', !has(await text(page, '.tabs'), 'Intake a Client'));
+  await page.close();
+}
+
+/* UIBUILD phase 2: the case page — P5 header, P6 four sections, P7 overview.
+   Runs late in the suite on purpose: 4001 has authorization, days, a report,
+   a finalized build and an invoice by now, so the overview has real state to
+   draw and a real next step to compute. */
+section('The case page: four sections, one obvious next step');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+
+  const head = await text(page, '.caseheader');
+  ok('the header carries the case number', head.includes('API-20260812-4001'));
+  ok('the header names who is paying', has(head, 'Example Mutual'));
+  ok('and the claim', head.includes('WC-2026-88421'));
+  ok('and the claimant', head.includes('Pat Coleman'));
+  ok('and where the case stands', await page.locator('.caseheader .tag').count() >= 2);
+
+  const body = await text(page, '#dlgBody');
+  ok('the overview leads with the case summary', has(body, 'Case summary'));
+  ok('the summary carries the authorization', has(body, 'Authorized'));
+  ok('the package progress speaks percent', /\d+%/.test(body));
+  ok('one next step is computed', has(body, 'Next step'));
+  ok('recent activity is on the overview', has(body, 'Recent activity'));
+  ok('the evidence picture is on the overview', has(body, 'Evidence overview'));
+
+  // P22: the module lines route. The Report line lands on the Reports panel.
+  await page.locator('.ov-mods button', { hasText: 'Report' }).first().click();
+  await page.waitForTimeout(300);
+  ok('a module line routes to its panel', has(await text(page, '.wstabs button.on'), 'Reports'));
+
+  // And the one computed next step routes with a single GO. Every branch of
+  // pkgNextStep leads away from the overview, so landing anywhere else is
+  // the router working.
+  await wsTab(page, 'Overview');
+  await page.locator('.ov-next .btn').click();
+  await page.waitForTimeout(300);
+  ok('GO lands on the computed step', !has(await text(page, '.wstabs button.on'), 'Overview'));
+
+  // The intake detail kept its home behind the Overview section.
+  await wsTab(page, 'Intake details');
+  ok('the full intake is still a panel', has(await text(page, '#dlgBody'), 'Adjuster'));
+  await page.close();
+}
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+
+  const head = await text(page, '.caseheader');
+  ok('an investigator header shows the claimant', head.includes('Pat Coleman'));
+  ok('and never the carrier', !has(head, 'Example Mutual'));
+  ok('and never the claim number', !head.includes('WC-2026-88421'));
+  ok('and offers no Edit case', await page.locator('.caseheader .btn').count() === 0);
+
+  // Walk every section an investigator has; no sub-tab anywhere is money.
+  const seen = [];
+  for (const sec of await page.locator('.wsecs button').all()) {
+    await sec.click();
+    await page.waitForTimeout(180);
+    seen.push(await text(page, '.wstabs'));
+  }
+  const everything = seen.join(' ');
+  ok('no section hides a Billing panel', !has(everything, 'Billing'));
+  ok('no section hides a Package panel', !has(everything, 'Package'));
+  ok('no section hides an Assignment panel', !has(everything, 'Assignment'));
   await page.close();
 }
 

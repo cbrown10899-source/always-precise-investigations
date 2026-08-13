@@ -219,6 +219,36 @@
   .pc-next{display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1px solid var(--line);
     padding-top:10px;margin-top:4px;}
   .pc-next small{display:block;color:var(--muted);font-size:.72rem;}
+  /* UIBUILD Phase 2 — the case page: P5 header, P6 sections, P7 overview. */
+  .caseheader{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;align-items:flex-start;
+    margin-bottom:14px;}
+  .ch-client{font-size:.92rem;margin-top:4px;}
+  .ch-sub{font-size:.85rem;color:var(--muted);margin-top:2px;}
+  .ch-right{text-align:right;display:flex;flex-direction:column;gap:6px;align-items:flex-end;}
+  .ch-right .tag{cursor:pointer;}
+  .ch-line{font-size:.8rem;color:var(--muted);}
+  .wsecs{display:flex;gap:6px;overflow-x:auto;margin:0 0 10px;-webkit-overflow-scrolling:touch;}
+  .wsecs button{flex:none;font:inherit;font-size:.76rem;font-weight:800;letter-spacing:.05em;
+    text-transform:uppercase;background:#f2f5f8;border:1px solid var(--line);border-radius:9px;
+    color:var(--muted);padding:8px 14px;cursor:pointer;white-space:nowrap;}
+  .wsecs button.on{background:#13273f;border-color:#13273f;color:#fff;}
+  .ovgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:14px;}
+  .ovcard{background:#fff;border:1px solid var(--line);border-radius:12px;padding:13px 15px;}
+  .ovcard h3{margin:0 0 8px;font-size:.74rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);}
+  .ov-row{display:flex;justify-content:space-between;gap:10px;font-size:.88rem;padding:3px 0;}
+  .ov-row b{text-align:right;}
+  .ov-mods{list-style:none;margin:8px 0 0;padding:0;}
+  .ov-mods button{display:flex;justify-content:space-between;width:100%;gap:8px;font:inherit;font-size:.85rem;
+    background:none;border:0;border-bottom:1px solid var(--line);padding:6px 2px;cursor:pointer;text-align:left;}
+  .ov-mods li:last-child button{border-bottom:0;}
+  .ov-ring{display:flex;justify-content:center;margin-bottom:4px;}
+  .ov-next{background:#fbf7ee;border:1px solid #e3d3ae;}
+  .ov-next .nx{font-size:1.02rem;font-weight:800;color:#13273f;margin:2px 0 10px;}
+  .ov-recent{margin:0;padding:0;list-style:none;}
+  .ov-recent li{display:flex;gap:10px;font-size:.86rem;padding:5px 0;border-bottom:1px solid var(--line);}
+  .ov-recent li:last-child{border-bottom:0;}
+  .ov-recent .t{flex:0 0 auto;color:var(--muted);font-size:.78rem;padding-top:2px;}
+  .ov-foot{margin-top:10px;}
   @media print{
     body.printing-invoice *{visibility:hidden !important;}
     body.printing-invoice #invdoc, body.printing-invoice #invdoc *{visibility:visible !important;}
@@ -663,15 +693,23 @@ function pkgProgress(p){
   return { mods, done, total: mods.length, pct: Math.round((done / mods.length) * 100) };
 }
 
+/* One vocabulary for module labels and where each one lives, shared by the
+   dashboard cards and the case overview (UIBUILD P24). The tab keys are
+   WS_TAB keys — openCase() and the case page both route by them. */
+const MOD_LABEL = {activity: "Activity", report: "Report", photos: "Photos", video: "Video",
+                   build: "Build", invoice: "Invoice"};
+const MOD_TAB = {activity: "activity", report: "reports", photos: "evidence", video: "evidence",
+                 build: "package", invoice: "billing"};
+
 function pkgNextStep(p){
   if(p.open_day) return {label: "Continue activity log", tab: "activity"};
   if(!p.days) return {label: "Start investigation day", tab: "field"};
   if(!p.report_status) return {label: "Draft the report", tab: "reports"};
   if(!["approved", "delivered"].includes(p.report_status)) return {label: "Review report", tab: "reports"};
   if(p.build_status !== "finalized") return {label: "Build case package", tab: "package"};
-  if(!p.invoice_status) return {label: "Create invoice", tab: "overview"};
-  if(p.invoice_status !== "paid") return {label: "Track the invoice", tab: "overview"};
-  return {label: "Ready to close", tab: "overview"};
+  if(!p.invoice_status) return {label: "Create invoice", tab: "billing"};
+  if(p.invoice_status !== "paid") return {label: "Track the invoice", tab: "billing"};
+  return {label: "Ready to close", tab: "billing"};
 }
 
 function ringHtml(pct){
@@ -689,10 +727,6 @@ function ringHtml(pct){
 function pkgCard(p){
   const prog = pkgProgress(p);
   const next = pkgNextStep(p);
-  const modLabel = {activity: "Activity", report: "Report", photos: "Photos", video: "Video",
-                    build: "Build", invoice: "Invoice"};
-  const modTab = {activity: "activity", report: "reports", photos: "evidence", video: "evidence",
-                  build: "package", invoice: "overview"};
   const mark = st => st === "done" ? "&#10003;" : st === "part" ? "&#9685;" : "&#9675;";
   const authLine = p.kind === "claims"
     ? (p.authorized_hours != null
@@ -714,8 +748,8 @@ function pkgCard(p){
     </div>
     <div class="pc-mods">
       ${prog.mods.map(([id, st, sub]) => `<button class="pc-m ${st}" data-act="pkgJump"
-          data-case="${esc(p.case_no)}" data-tab="${modTab[id]}">
-        <b>${mark(st)}</b>${modLabel[id]}<div>${esc(sub)}</div></button>`).join("")}
+          data-case="${esc(p.case_no)}" data-tab="${MOD_TAB[id]}">
+        <b>${mark(st)}</b>${MOD_LABEL[id]}<div>${esc(sub)}</div></button>`).join("")}
     </div>
     <div class="pc-next">
       <div><small>Next step</small><b>${esc(next.label)}</b></div>
@@ -1196,7 +1230,7 @@ function paint(){
     // The workspace takes the whole page. The back button carries the same
     // .close class the dialog's X had, so muscle memory and tests both hold.
     app.innerHTML = `<div class="casepage">
-      <div class="pagebar"><button class="btn sm ghost close" data-act="backToCases">&larr; All cases</button></div>
+      <div class="pagebar"><button class="btn sm ghost close" data-act="backToCases">&larr; Back to Cases</button></div>
       <div class="card"><div class="dlg" id="dlgBody">${
         isExample(WS_CASE) ? exampleBodyHtml() : caseBodyHtml()}</div></div>
     </div>`;
@@ -1317,6 +1351,9 @@ async function openCase(caseNo, tab){
     ]);
     WS = { ...ws, submission: sub.submission };
   }catch(e){ alert(e.message); return; }
+  // Landing straight on the Package panel (the dashboard's Build jump) needs
+  // the build fetched, exactly as the tab click would have done.
+  if(WS_TAB === "package"){ PKG = null; return loadPackage(); }
   paintCase();
 }
 
@@ -1329,17 +1366,37 @@ async function reloadWorkspace(){
   paintCase();
 }
 
-function wsTabs(){
-  const admin = ME.role === "admin";
-  const t = [["overview","Overview"], ["subject","Subject"], ["activity","Activity log"],
-             ["field","Field work"], ["reports","Reports"], ["expenses","Expenses"], ["notes","Internal notes"],
-             ["comms","Comm log"], ["evidence","Evidence"], ["tasks","Tasks"]];
-  // Authorization is the insurance panel; it appears once there is one, and
-  // always for an admin so it can be set.
-  if(admin || (WS && WS.authorization && WS.authorization.authorized_hours != null)) t.push(["auth","Authorization"]);
-  if(admin) t.push(["package","Package"]);
-  if(admin) t.push(["assign","Assignment"]);
-  return t;
+/* UIBUILD P6 — the case page navigates in four sections, with the panels as
+   sub-tabs inside them. WS_TAB stays the single routing key (openCase, the
+   dashboard's pkgJump and every in-panel jump keep working unchanged); the
+   active section is DERIVED from it, never stored, so the two cannot drift.
+   An investigator's four sections are their own — nothing administrative. */
+function wsSections(){
+  if(ME.role === "admin"){
+    return [
+      ["overview",  "Overview",          [["overview","Overview"], ["details","Intake details"], ["subject","Subject"]]],
+      ["fieldwork", "Fieldwork",         [["field","Field work"], ["activity","Activity log"]]],
+      ["repev",     "Report & Evidence", [["reports","Reports"], ["evidence","Evidence"], ["package","Package"]]],
+      ["admin",     "Admin",             [["assign","Assignment"], ["auth","Authorization"], ["expenses","Expenses"],
+                                          ["notes","Internal notes"], ["comms","Comm log"], ["tasks","Tasks"],
+                                          ["billing","Billing & closing"]]],
+    ];
+  }
+  const assignment = [["overview","Overview"], ["subject","Subject"], ["tasks","Tasks"],
+                      ["comms","Comm log"], ["notes","Internal notes"]];
+  // The authorization view joins the assignment context once hours are set —
+  // an investigator works to a cap they can see, and nothing about money.
+  if(WS && WS.authorization && WS.authorization.authorized_hours != null) assignment.push(["auth","Authorization"]);
+  return [
+    ["assignment", "Assignment", assignment],
+    ["activity",   "Activity",   [["field","Field work"], ["activity","Activity log"], ["expenses","Expenses"]]],
+    ["evidence",   "Evidence",   [["evidence","Evidence"]]],
+    ["report",     "Report",     [["reports","Reports"]]],
+  ];
+}
+function wsSectionFor(tab){
+  const secs = wsSections();
+  return secs.find(s => s[2].some(t => t[0] === tab)) || secs[0];
 }
 
 function authPanel(a, admin){
@@ -2191,20 +2248,143 @@ function caseBodyHtml(){
     : WS_TAB === "auth"     ? authPanel(a, admin) + (admin ? authAdminForm() : "")
     : WS_TAB === "assign"   ? assignPanel(s)
     : WS_TAB === "subject"  ? detailList(s, "subject") + caseDetailsPanel() + subjectsPanel(s)
-    :                         myOfferBox() + detailList(s, "overview") + (a.authorized_hours != null ? authPanel(a, admin) : "")
-                              + (admin && !isExample(WS_CASE) ? `<div class="actions" style="border-top:1px solid var(--line);padding-top:12px;margin-top:10px">
-                                  <button class="btn sm" data-act="createInvoice" data-case="${esc(WS_CASE)}">Create invoice</button>
-                                  ${(s.kind === "claims" && a.authorized_hours != null) || s.kind !== "claims"
-                                    ? `<button class="btn sm ghost" data-act="createInvoiceAuth" data-case="${esc(WS_CASE)}">Create from ${s.kind === "claims" ? "authorization" : "retainer"}</button>` : ""}
-                                </div>` : "")
-                              + closurePanel();
+    : WS_TAB === "details"  ? detailList(s, "overview")
+    : WS_TAB === "billing"  ? billingPanel(s, a)
+    : admin                 ? overviewPanel(s, a)
+    :                         myOfferBox() + detailList(s, "overview") + (a.authorized_hours != null ? authPanel(a, admin) : "");
 
+  const sec = wsSectionFor(WS_TAB);
   return `
-    <h2>${esc(a.case_type || (s.kind === "claims" ? "Claim assignment" : "Client intake"))}</h2>
-    <div class="case">${esc(WS_CASE)}</div>
-    <div class="wstabs">${wsTabs().map(([k, lbl]) =>
+    ${caseHeader(s, a, admin)}
+    <div class="wsecs">${wsSections().map(([k, lbl]) =>
+      `<button class="${sec[0] === k ? "on" : ""}" data-act="wsSec" data-sec="${k}">${esc(lbl)}</button>`).join("")}</div>
+    <div class="wstabs">${sec[2].map(([k, lbl]) =>
       `<button class="${WS_TAB === k ? "on" : ""}" data-act="wsTab" data-tab="${k}">${esc(lbl)}</button>`).join("")}</div>
     <div class="wspanel">${panel}</div>`;
+}
+
+/* UIBUILD P5 — the case header. Identity on the left, state on the right.
+   Who is paying appears for the office only: an investigator's header is the
+   subject and the case number, mirroring what the Worker already redacts.
+   Status stays a single control on the Assignment panel — the header chip and
+   Edit case both route there rather than duplicating a live form. */
+function caseHeader(s, a, admin){
+  const p = s.payload || {};
+  const claim = s.kind === "claims";
+  const stage = (WS && WS.stage) || s.status || "open";
+  const assignee = admin && s.assigned_to ? USERS.find(u => u.id === s.assigned_to) : null;
+  const clientLine = claim ? (p.carrier || p.client_name || "") : (p.client_name || "");
+  return `<div class="caseheader">
+    <div>
+      <span class="tag ${claim ? "claims" : "consumer"}">${esc(a.case_type || (claim ? "Claim assignment" : "Client intake"))}</span>
+      <span class="case" style="display:inline-block;margin-left:8px">${esc(WS_CASE)}</span>
+      ${admin && clientLine ? `<div class="ch-client"><b>${esc(clientLine)}</b>${claim && p.claim_number ? ` &middot; Claim ${esc(p.claim_number)}` : ""}</div>` : ""}
+      ${p.subject_name ? `<div class="ch-sub">${claim ? "Claimant" : "Subject"}: ${esc(p.subject_name)}</div>` : ""}
+    </div>
+    <div class="ch-right">
+      ${admin
+        ? `<span class="tag ${esc(stage)}" data-act="wsTab" data-tab="assign" title="Change status on Assignment" style="cursor:pointer">${esc(label(stage))}</span>
+           <div class="ch-line">${assignee ? "Assigned: " + esc(assignee.display_name || assignee.username) : "Unassigned"}</div>
+           <button class="btn sm ghost" data-act="wsTab" data-tab="assign">Edit case</button>`
+        : `<span class="tag ${esc(stage)}">${esc(label(stage))}</span>`}
+    </div>
+  </div>`;
+}
+
+/* The case, in the same shape a /packages row has — so the overview reuses
+   pkgProgress and pkgNextStep instead of growing a second opinion (P24). */
+function wsPkgShape(){
+  const days = (WS && WS.days) || [];
+  const live = ((WS && WS.evidence) || []).filter(e => !e.deleted_at);
+  const reports = (WS && WS.reports) || [];
+  const best = reports.find(r => ["approved", "delivered"].includes(r.status))
+            || reports.find(r => r.status === "submitted") || reports[0] || null;
+  return {
+    activity_count: ((WS && WS.activity) || []).length,
+    report_status: best ? best.status : null,
+    photos: live.filter(e => String(e.content_type || "").startsWith("image/")).length,
+    videos: live.filter(e => String(e.content_type || "").startsWith("video/")).length,
+    build_status: (WS && WS.build_status) || null,
+    invoice_status: (WS && WS.invoice_status) || null,
+    days: days.length,
+    open_day: days.some(d => !d.end_time),
+  };
+}
+
+/* UIBUILD P7 — the admin's case overview: summary, package progress and ONE
+   next step across the top; recent activity and the evidence picture below.
+   Every line routes somewhere real (P22). */
+function overviewPanel(s, a){
+  const p = s.payload || {};
+  const claim = s.kind === "claims";
+  const shape = wsPkgShape();
+  const prog = pkgProgress(shape);
+  const next = pkgNextStep(shape);
+  const mark = st => st === "done" ? "&#10003;" : st === "part" ? "&#9685;" : "&#9675;";
+  const assignee = s.assigned_to ? USERS.find(u => u.id === s.assigned_to) : null;
+  const acts = ((WS && WS.activity) || []).slice(0, 5);
+  const docs = ((WS && WS.evidence) || []).filter(e => !e.deleted_at).length - shape.photos - shape.videos;
+  const row = (k, v) => v == null || v === "" ? "" : `<div class="ov-row"><span>${esc(k)}</span><b>${esc(v)}</b></div>`;
+  return `
+    <div class="ovgrid">
+      <div class="ovcard">
+        <h3>Case summary</h3>
+        ${claim
+          ? (a.authorized_hours != null
+              ? row("Authorized", a.authorized_hours + " hrs")
+                + row("Used", a.hours_used + " hrs")
+                + row("Remaining", a.hours_remaining + " hrs")
+              : row("Authorization", "Not set"))
+          : (a.retainer
+              ? row("Retainer", "$" + a.retainer.amount.toLocaleString())
+                + row("Balance", "$" + a.retainer.remaining.toLocaleString())
+              : row("Type", "Private client"))}
+        ${row("Requested start", p.start_date)}
+        ${row("Priority", p.priority)}
+        ${row("Investigator", assignee ? (assignee.display_name || assignee.username) : "Unassigned")}
+        ${row("Received", when(s.created_at))}
+      </div>
+      <div class="ovcard">
+        <h3>Case package progress</h3>
+        <div class="ov-ring">${ringHtml(prog.pct)}</div>
+        <ul class="ov-mods">${prog.mods.map(([id, st, sub]) =>
+          `<li><button data-act="wsTab" data-tab="${MOD_TAB[id]}">
+             <span><b>${mark(st)}</b> ${MOD_LABEL[id]}</span><span style="color:var(--muted)">${esc(sub)}</span></button></li>`).join("")}</ul>
+      </div>
+      <div class="ovcard ov-next">
+        <h3>Next step</h3>
+        <div class="nx">${esc(next.label)}</div>
+        <button class="btn" data-act="wsTab" data-tab="${next.tab}">Go &rarr;</button>
+      </div>
+    </div>
+    <div class="ovgrid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr))">
+      <div class="ovcard">
+        <h3>Recent activity</h3>
+        ${acts.length ? `<ul class="ov-recent">${acts.map(e =>
+            `<li><span class="t">${esc(t12(e.at_time))}</span><span>${esc(String(e.description || "").slice(0, 90))}</span></li>`).join("")}</ul>`
+          : `<div class="empty">No activity yet. The timeline starts with the first investigation day.</div>`}
+        <div class="ov-foot"><button class="btn sm ghost" data-act="wsTab" data-tab="activity">View full timeline &rarr;</button></div>
+      </div>
+      <div class="ovcard">
+        <h3>Evidence overview</h3>
+        <div class="ov-row"><span>Photos</span><b>${shape.photos}</b></div>
+        <div class="ov-row"><span>Video</span><b>${shape.videos}</b></div>
+        <div class="ov-row"><span>Documents</span><b>${docs}</b></div>
+        <div class="ov-foot"><button class="btn sm ghost" data-act="wsTab" data-tab="evidence">View all evidence &rarr;</button></div>
+      </div>
+    </div>`;
+}
+
+/* ADMIN &rarr; Billing & closing: invoicing the case and walking it closed —
+   the two things that used to ride the bottom of the old overview. */
+function billingPanel(s, a){
+  return `
+    ${!isExample(WS_CASE) ? `<div class="actions" style="padding-bottom:12px">
+        <button class="btn sm" data-act="createInvoice" data-case="${esc(WS_CASE)}">Create invoice</button>
+        ${(s.kind === "claims" && a.authorized_hours != null) || s.kind !== "claims"
+          ? `<button class="btn sm ghost" data-act="createInvoiceAuth" data-case="${esc(WS_CASE)}">Create from ${s.kind === "claims" ? "authorization" : "retainer"}</button>` : ""}
+      </div>` : ""}
+    ${closurePanel()}`;
 }
 
 /* The workspace is a full page, not a popup — a case is where the day's work
@@ -3284,6 +3464,11 @@ document.addEventListener("click", ev => {
   else if(act === "clearDemo"){ clearDemoCases(); }
   else if(act === "wsTab"){ if(WS_TAB !== el.dataset.tab) WS_NOTICE = ""; WS_TAB = el.dataset.tab; WS_ERR = "";
     if(WS_TAB === "package"){ PKG = null; loadPackage(); } else paintCase(); }
+  else if(act === "wsSec"){
+    // A section opens on its first panel; WS_TAB stays the only routing state.
+    const sec = wsSections().find(x => x[0] === el.dataset.sec);
+    if(sec){ if(WS_TAB !== sec[2][0][0]) WS_NOTICE = ""; WS_TAB = sec[2][0][0]; WS_ERR = "";
+      if(WS_TAB === "package"){ PKG = null; loadPackage(); } else paintCase(); } }
   else if(act === "qkind"){ QKIND = el.dataset.k; WS_ERR = ""; paintCase(); }
   else if(act === "subjNew"){ SUBJ_FORM = {mode:"new", pre:{}}; WS_ERR = ""; paintCase(); }
   else if(act === "subjFromIntake"){
