@@ -1090,6 +1090,58 @@ section('Notes: visibility is decided at the Worker, not the page');
   await inv.close();
 }
 
+/* The owner's exact repro: click a quick button, watch the form. Each kind
+   must swap the composer — a highlighted pill over an unchanged form reads as
+   broken because it is. */
+section('Each quick button changes the composer');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Activity log');
+
+  ok('Activity starts with the plain composer', await page.locator('#a_loc').count() === 1);
+
+  await page.locator('.qk2', { hasText: 'Mileage' }).click();
+  await page.waitForTimeout(250);
+  ok('Mileage swaps in a miles field', await page.locator('#a_miles').count() === 1);
+  ok('and drops the location field', await page.locator('#a_loc').count() === 0);
+
+  await page.locator('.qk2', { hasText: 'Expense' }).click();
+  await page.waitForTimeout(250);
+  ok('Expense swaps in amount and category',
+     await page.locator('#a_amt').count() === 1 && await page.locator('#a_cat').count() === 1);
+
+  await page.locator('.qk2', { hasText: 'Video' }).click();
+  await page.waitForTimeout(250);
+  const vid = await text(page, '#dlgBody');
+  ok('Video asks what the footage captures', has(vid, 'What the video captures'));
+  ok('and says the file attaches when evidence storage lands', has(vid, 'evidence storage'));
+
+  await page.locator('.qk2', { hasText: 'Location' }).click();
+  await page.waitForTimeout(250);
+  await page.locator('#a_desc').fill('ABC Fitness — regular morning gym.');
+  await page.locator('.btn', { hasText: 'Add to the log' }).click();
+  await page.waitForTimeout(400);
+  ok('a location entry without the location is refused on screen',
+     has(await text(page, '#dlgBody'), 'needs the location'));
+
+  // Mileage writes the expense AND marks the timeline.
+  await page.locator('.qk2', { hasText: 'Mileage' }).click();
+  await page.waitForTimeout(250);
+  await page.locator('#a_miles').fill('62');
+  await page.locator('#a_desc').fill('Office to subject residence and back');
+  await page.locator('.btn', { hasText: 'Record mileage' }).click();
+  await page.waitForTimeout(600);
+  const log = await text(page, '#dlgBody');
+  ok('the mileage moment lands on the timeline', log.includes('62 miles — Office to subject residence and back'));
+  await wsTab(page, 'Expenses');
+  const xp = await text(page, '#dlgBody');
+  ok('and the claim lands under Expenses for review', xp.includes('Office to subject residence and back'));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
