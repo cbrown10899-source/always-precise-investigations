@@ -827,6 +827,54 @@ async function listCaseTypes(env) {
   return results || [];
 }
 
+/* Private-case details (HANDOFF priority 16): the operational facts a case's
+   type calls for, conditional on that type. These lists are the allow-list —
+   a save stores only the active set's keys, so a field nobody decided to ask
+   for cannot arrive by accident. [key, label] pairs; the page renders from
+   what the Worker sends and decides nothing.
+
+   Objectives are framed as OBSERVE + DOCUMENT throughout. The application
+   makes no legal conclusions: investigators document facts; courts and
+   attorneys interpret them. No field here invites monitoring that the client
+   could not lawfully request. Subject and vehicle structured records are
+   priority 17, photographs wait on evidence storage (priority 6). */
+const DETAIL_SETS = {
+  infidelity: [
+    ['work_schedule', 'Normal work schedule'],
+    ['known_routine', 'Known routine'],
+    ['suspected_companion', 'Suspected companion (if known)'],
+    ['suspected_locations', 'Suspected locations'],
+    ['social_accounts', 'Known social accounts'],
+    ['upcoming_events', 'Upcoming events / travel'],
+    ['client_concerns', 'Client concerns'],
+    ['objectives', 'Investigation objectives'],
+  ],
+  custody: [
+    ['custody_schedule', 'Custody schedule'],
+    ['exchange_details', 'Exchange dates and locations'],
+    ['school_daycare', 'School / daycare'],
+    ['known_residences', 'Known residences'],
+    ['court_dates', 'Court dates'],
+    ['court_restrictions', 'Court restrictions supplied by the client'],
+    ['known_associates', 'Known associates'],
+    ['allegations', 'Specific allegations / concerns'],
+    ['objectives', 'Investigation objectives'],
+  ],
+  general: [
+    ['known_routine', 'Known routine'],
+    ['relevant_locations', 'Relevant locations'],
+    ['client_concerns', 'Client concerns'],
+    ['objectives', 'Investigation objectives'],
+  ],
+};
+
+function detailSetFor(caseType) {
+  const s = String(caseType || '');
+  if (/infidelity|adultery/i.test(s)) return 'infidelity';
+  if (/custody/i.test(s)) return 'custody';
+  return 'general';
+}
+
 async function caseSettings(env, caseNo) {
   return await env.DB.prepare(
     `SELECT client_hourly, client_mileage, show_client_identity
@@ -961,11 +1009,29 @@ async function caseWorkspace(env, user, caseNo) {
        FROM case_offers WHERE case_no = ? AND investigator_id = ? AND status = 'accepted'
       ORDER BY id DESC LIMIT 1`).bind(caseNo, user.id).first();
 
+  const auth = await authorizationFor(env, caseNo, admin);
+
+  /* Per-type details for private cases (priority 16). The case type picks the
+     field set; a claims case never has one — its claim details live in the
+     intake payload. Both roles read them: they are fieldwork facts. */
+  let details = null, detailSet = null, detailFields = null;
+  if (row.kind !== 'claims') {
+    detailSet = detailSetFor(auth && auth.case_type);
+    detailFields = DETAIL_SETS[detailSet];
+    const det = await env.DB.prepare(
+      'SELECT detail_json FROM case_details WHERE case_no = ?').bind(caseNo).first();
+    try { details = det && det.detail_json ? JSON.parse(det.detail_json) : {}; }
+    catch { details = {}; }
+  }
+
   return json({
     case_no: row.case_no,
     kind: row.kind,
     status: row.status,
-    authorization: await authorizationFor(env, caseNo, admin),
+    authorization: auth,
+    details,
+    detail_set: detailSet,
+    detail_fields: detailFields,
     case_types: admin ? await listCaseTypes(env) : [],
     activity: activity || [],
     days: days || [],
@@ -1887,6 +1953,7 @@ const EXPECTED_TABLES = [
   'users', 'sessions', 'submissions', 'login_fails', 'invites', 'ingest_rate',
   'case_types', 'case_meta', 'case_days', 'activity_log', 'activity_media', 'case_reports', 'app_config',
   'case_expenses', 'case_notes', 'user_rates', 'case_settings', 'password_resets', 'case_offers',
+  'case_details',
 ];
 
 async function missingTables(env) {
@@ -2158,6 +2225,38 @@ async function route(request, env) {
          show_client_identity = ?4, updated_by = ?5, updated_at = ?6`)
       .bind(m[1], ch, cm, show, user.id, nowIso()).run();
     return json({ ok: true, authorization: await authorizationFor(env, m[1], true) });
+  }
+
+  /* Private-case details (priority 16). Admin-only writes; the case's type
+     picks which keys are stored, and everything else in the body is dropped —
+     the allow-list again, so a field nobody decided to collect cannot land.
+     The save replaces the bag as a whole (the form submits the whole set) and
+     stamps who and when, per the handoff's audit rule. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/details$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    const sub = await env.DB.prepare('SELECT kind FROM submissions WHERE case_no = ?').bind(m[1]).first();
+    if (!sub) return json({ error: 'not found' }, 404);
+    if (sub.kind === 'claims') {
+      return json({ error: 'Details are for private cases — a claim assignment carries its own claim details.' }, 400);
+    }
+    const body = await readJson(request);
+    const meta = await env.DB.prepare(
+      `SELECT t.label FROM case_meta cm LEFT JOIN case_types t ON t.id = cm.case_type_id
+        WHERE cm.case_no = ?`).bind(m[1]).first();
+    const setKey = detailSetFor(meta && meta.label);
+    const out = {};
+    for (const [k] of DETAIL_SETS[setKey]) {
+      if (body[k] === undefined || body[k] === null) continue;
+      const v = String(body[k]).trim().slice(0, 2000);
+      if (v) out[k] = v;
+    }
+    await env.DB.prepare(
+      `INSERT INTO case_details (case_no, detail_json, created_by, created_at, updated_by, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?3, ?4)
+       ON CONFLICT(case_no) DO UPDATE SET detail_json = ?2, updated_by = ?3, updated_at = ?4`)
+      .bind(m[1], JSON.stringify(out), user.id, nowIso()).run();
+    return json({ ok: true, details: out, detail_set: setKey });
   }
 
   m = p.match(/^\/users\/(\d{1,12})\/rates$/);

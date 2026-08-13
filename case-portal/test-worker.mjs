@@ -1342,6 +1342,88 @@ section('Calendar: the month, scoped like everything else');
   ok('a malformed month falls back to the current one', /^\d{4}-\d{2}$/.test(fallback.month));
 }
 
+section('Private case details: the type decides the fields');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const tok = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find(u => u.username === 'dana').id;
+
+  await ingest(env, { case_no: 'API-PD1', service: 'Surveillance',
+                      client_name: 'Quiet Client', subject_name: 'S. Person' });
+  await ingest(env, { case_no: 'API-PD2', carrier: 'Some Mutual', claim_number: 'SM-9',
+                      client_name: 'An Adjuster', subject_name: 'Claimant' });
+
+  const types = (await jsonOf(await call(env, '/case-types', { cookie: admin }))).case_types;
+  const infId = types.find(t => t.label === 'Adultery / Infidelity').id;
+  const cusId = types.find(t => t.label === 'Child Custody').id;
+
+  // Untyped: the general set applies.
+  let ws = await jsonOf(await call(env, '/cases/API-PD1/workspace', { cookie: admin }));
+  ok('an untyped private case gets the general set', ws.detail_set === 'general'
+     && ws.detail_fields.some(([k]) => k === 'objectives'));
+
+  await call(env, '/cases/API-PD1/meta', { method: 'POST', cookie: admin, body: { case_type_id: infId } });
+  ws = await jsonOf(await call(env, '/cases/API-PD1/workspace', { cookie: admin }));
+  ok('typing it infidelity switches the set', ws.detail_set === 'infidelity'
+     && ws.detail_fields.some(([k]) => k === 'suspected_companion'));
+
+  ok('an investigator cannot write details',
+     (await call(env, '/cases/API-PD1/details', { method: 'POST', cookie: inv,
+       body: { objectives: 'x' } })).status === 403);
+  ok('a claims case refuses details outright',
+     (await call(env, '/cases/API-PD2/details', { method: 'POST', cookie: admin,
+       body: { objectives: 'x' } })).status === 400);
+  const cws = await jsonOf(await call(env, '/cases/API-PD2/workspace', { cookie: admin }));
+  ok('and its workspace carries no detail set at all',
+     cws.details === null && cws.detail_fields === null);
+
+  // The allow-list: active-set keys stored, everything else dropped.
+  const saved = await jsonOf(await call(env, '/cases/API-PD1/details', { method: 'POST', cookie: admin,
+    body: { suspected_companion: 'Coworker, first name Alex.',
+            known_routine: 'Gym at 6am, office by 8.',
+            objectives: 'Document comings and goings during the stated work schedule.',
+            custody_schedule: 'not an infidelity field',
+            made_up_key: 'never stored' } }));
+  ok('active-set keys are stored', saved.details.suspected_companion === 'Coworker, first name Alex.'
+     && saved.details.objectives.startsWith('Document'));
+  ok("keys from another type's set are dropped", saved.details.custody_schedule === undefined);
+  ok('unknown keys are dropped', saved.details.made_up_key === undefined);
+
+  ok('who saved it is stamped',
+     (await env.DB.prepare('SELECT updated_by FROM case_details WHERE case_no = ?')
+       .bind('API-PD1').first()).updated_by != null);
+
+  // The assigned investigator reads the fieldwork facts.
+  await call(env, '/submissions/API-PD1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+  const iws = await jsonOf(await call(env, '/cases/API-PD1/workspace', { cookie: inv }));
+  ok('the assigned investigator sees the details',
+     iws.details.suspected_companion === 'Coworker, first name Alex.'
+     && iws.detail_set === 'infidelity');
+  ok('and still never the client', !JSON.stringify(iws).includes('Quiet Client'));
+
+  // Retyping the case changes the set; the next save is filtered to it.
+  await call(env, '/cases/API-PD1/meta', { method: 'POST', cookie: admin, body: { case_type_id: cusId } });
+  ws = await jsonOf(await call(env, '/cases/API-PD1/workspace', { cookie: admin }));
+  ok('a custody case asks custody questions', ws.detail_set === 'custody'
+     && ws.detail_fields.some(([k]) => k === 'exchange_details'));
+  const re = await jsonOf(await call(env, '/cases/API-PD1/details', { method: 'POST', cookie: admin,
+    body: { custody_schedule: 'Alternating weeks, exchange Sunday 6pm.',
+            objectives: 'Document persons present and observed activity during the scheduled custody period.',
+            suspected_companion: 'now off-set' } }));
+  ok('custody keys store once the type says so', re.details.custody_schedule.startsWith('Alternating'));
+  ok('and the infidelity-only key is filtered out', re.details.suspected_companion === undefined);
+
+  ok('a missing case is a 404',
+     (await call(env, '/cases/API-NOPE/details', { method: 'POST', cookie: admin,
+       body: { objectives: 'x' } })).status === 404);
+}
+
 section('Password reset: a one-time link, nobody learns the password');
 {
   const env = freshEnv();

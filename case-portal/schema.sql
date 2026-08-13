@@ -340,3 +340,18 @@ CREATE TABLE IF NOT EXISTS app_config (
   updated_at TEXT
 );
 INSERT OR IGNORE INTO app_config (key, value) VALUES ('auth_warn_thresholds', '75,90,100');
+
+-- Per-type operational details for private cases (HANDOFF priority 16).
+-- One row per case: a JSON bag holding the fields that case's type calls
+-- for — custody schedule, suspected companion, court dates and so on. The
+-- Worker allow-lists the keys by case type, so nothing lands here that the
+-- active set does not name. Claims cases never get a row: a carrier
+-- assignment carries its own claim details in the intake payload.
+CREATE TABLE IF NOT EXISTS case_details (
+  case_no     TEXT PRIMARY KEY,
+  detail_json TEXT NOT NULL DEFAULT '{}',
+  created_by  INTEGER REFERENCES users(id),
+  created_at  TEXT,
+  updated_by  INTEGER REFERENCES users(id),
+  updated_at  TEXT
+);

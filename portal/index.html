@@ -1460,7 +1460,7 @@ function caseBodyHtml(){
     : WS_TAB === "notes"    ? notesPanel()
     : WS_TAB === "auth"     ? authPanel(a, admin) + (admin ? authAdminForm() : "")
     : WS_TAB === "assign"   ? assignPanel(s)
-    : WS_TAB === "subject"  ? detailList(s, "subject")
+    : WS_TAB === "subject"  ? detailList(s, "subject") + caseDetailsPanel()
     :                         myOfferBox() + detailList(s, "overview") + (a.authorized_hours != null ? authPanel(a, admin) : "");
 
   return `
@@ -1578,6 +1578,36 @@ function detailList(s, mode){
     ${row("Received", when(s.created_at))}
   </dl>
   ${sig ? `<div><div style="font-size:.8rem;color:var(--muted)">Signature</div><img class="sig" src="${esc(sig)}" alt="signature"></div>` : ""}`;
+}
+
+/* Priority 16 — the operational facts a private case's type calls for. The
+   Worker chooses the field set from the case type and sends [key, label]
+   pairs; this draws what arrives and decides nothing. Admin edits, an
+   investigator reads. Claims cases never have one — their claim details are
+   in the intake payload above. */
+function caseDetailsPanel(){
+  if(!WS || !WS.detail_fields) return "";
+  const d = WS.details || {};
+  if(ME.role !== "admin"){
+    const rows = WS.detail_fields.filter(([k]) => d[k]);
+    if(!rows.length) return "";
+    return `<h3 style="margin:18px 0 6px;font-size:1rem">Case details</h3>
+      <dl class="detail">${rows.map(([k, l]) => `<dt>${esc(l)}</dt><dd>${esc(d[k])}</dd>`).join("")}</dl>`;
+  }
+  return `<form class="quick" data-act="saveDetails" style="margin-top:16px">
+    <h3 style="margin:0 0 8px;font-size:1rem">Case details</h3>
+    <p class="hint" style="margin-bottom:10px">What this case type calls for. The assigned
+      investigator sees these beside the subject; the client's identity and billing never travel
+      with them. Frame objectives as <b>observe and document</b> &mdash; &ldquo;Document persons
+      present and observed activity during the scheduled custody period&rdquo; &mdash; and leave
+      what it means legally to courts and attorneys.</p>
+    ${WS.detail_fields.map(([k, l]) => `
+      <label class="f"><span>${esc(l)}${k === "objectives"
+          ? ` <span class="opt">observe and document &mdash; never a legal conclusion</span>` : ""}</span>
+        <textarea id="det_${k}" rows="2">${esc(d[k] || "")}</textarea></label>`).join("")}
+    <button class="btn" type="submit">Save details</button>
+    ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+  </form>`;
 }
 
 function myOfferBox(){
@@ -1789,6 +1819,18 @@ async function addNoteEntry(){
       body: $("n_body").value,
     }});
   }catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+async function saveCaseDetails(){
+  WS_ERR = "";
+  const body = {};
+  for(const [k] of (WS && WS.detail_fields) || []){
+    const el = $("det_" + k);
+    if(el) body[k] = el.value;
+  }
+  try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/details`, {method:"POST", body}); }
+  catch(e){ WS_ERR = e.message; }
   await reloadWorkspace();
 }
 
@@ -2030,6 +2072,7 @@ document.addEventListener("submit", ev => {
   else if(a === "addExpense") addExpenseEntry();
   else if(a === "addNote") addNoteEntry();
   else if(a === "makeOffer") makeCaseOffer();
+  else if(a === "saveDetails") saveCaseDetails();
 });
 
 document.addEventListener("input", ev => {

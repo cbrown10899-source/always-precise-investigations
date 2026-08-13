@@ -1239,6 +1239,42 @@ section('The calendar shows the month of work');
   await page.close();
 }
 
+/* Priority 16: the Subject tab of a private case carries the per-type details
+   form, and the field set follows the case type. */
+section('Private case details follow the case type');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+
+  await wsTab(page, 'Subject');
+  let body = await text(page, '#dlgBody');
+  ok('the details form is on the Subject tab', has(body, 'Case details'));
+  ok('objectives carry the observe-and-document framing', has(body, 'observe and document'));
+  ok('an untyped case asks the general questions', await page.locator('#det_known_routine').count() === 1
+     && await page.locator('#det_suspected_companion').count() === 0);
+  await page.locator('#det_objectives').fill('Document comings and goings during the stated schedule.');
+  await page.locator('#det_client_concerns').fill('Late unexplained absences.');
+  await page.locator('.btn', { hasText: 'Save details' }).click();
+  await page.waitForTimeout(600);
+  ok('the save survives the round trip',
+     (await page.locator('#det_objectives').inputValue()).startsWith('Document comings'));
+
+  // Give the case a type; the Subject tab asks that type's questions.
+  await wsTab(page, 'Authorization');
+  await page.locator('#m_type').selectOption({ label: 'Adultery / Infidelity' });
+  await page.locator('.btn', { hasText: 'Save authorization' }).click();
+  await page.waitForTimeout(600);
+  await wsTab(page, 'Subject');
+  body = await text(page, '#dlgBody');
+  ok('an infidelity case asks about the suspected companion', has(body, 'Suspected companion'));
+  ok('the shared fields kept their values',
+     (await page.locator('#det_objectives').inputValue()).startsWith('Document comings')
+     && (await page.locator('#det_client_concerns').inputValue()).startsWith('Late'));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
