@@ -8,13 +8,13 @@ Progress ledger:
 
 | Priority | Status |
 | --- | --- |
-| 1. Two separate rate-sheet models (`insurance_assignment` / `private_retainer`) | not started |
-| 2. Insurance sheet copy; remove "Additional fees — None" | not started |
-| 3. Private retainer sheet copy; remove "Additional fees — None" | not started |
-| 4. Mobile hierarchy — prices dominate | not started |
-| 5. Send preserves the selected sheet type | not started |
-| 6. Independent editing (separate configs) | not started |
-| 7. Internal insurance-authorization + private retainer-balance calculations | not started |
+| 1. Two separate rate-sheet models (`insurance_assignment` / `private_retainer`) | **done** — 2026-08-13 (separate ids, types and copy; retired ids 404) |
+| 2. Insurance sheet copy; remove "Additional fees — None" | **done** — 2026-08-13 (three packages + badge, Included in the Flat Rate, outside-area, Clear pricing box; internal discount language scrubbed from package notes) |
+| 3. Private retainer sheet copy; remove "Additional fees — None" | **done** — 2026-08-13 (deposit-against-work wording, investigative-time clarification, Straightforward Billing, If Additional Time Is Needed, testimony separately arranged) |
+| 4. Mobile hierarchy — prices dominate | **done** — 2026-08-13 (`.rs-big` price rows, badge, gold closing box; email mirrors it) |
+| 5. Send preserves the selected sheet type | **done** — 2026-08-13 (tested: private send has no package price, carrier send has no retainer) |
+| 6. Independent editing (separate configs) | **done** — 2026-08-13 (each sheet built from its own config block; nothing shared but the card UI) |
+| 7. Internal insurance-authorization + private retainer-balance calculations | **done** — 2026-08-13 (case_retainer table; admin-only balance on private cases: amount/received/applied/remaining/≈hours; claims cases name the authorized package; the two calculations never share a number — private default rate is now $100, claims stays $150) |
 
 ---
 

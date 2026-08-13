@@ -477,3 +477,18 @@ CREATE TABLE IF NOT EXISTS case_closure (
   updated_by     INTEGER REFERENCES users(id),
   updated_at     TEXT
 );
+
+-- Private retainer tracking (RATESHEETS.md admin side). One row per private
+-- case: the required retainer, and whether it has been received. What the
+-- work has consumed is computed from case_days at the case's rate — never
+-- stored, so it cannot drift. Internal only; no client-facing surface reads
+-- this, and the claims side never touches it (the two pricing models never
+-- share a calculation).
+CREATE TABLE IF NOT EXISTS case_retainer (
+  case_no         TEXT PRIMARY KEY,
+  retainer_amount REAL    NOT NULL DEFAULT 1500,
+  received        INTEGER NOT NULL DEFAULT 0,
+  received_at     TEXT,
+  updated_by      INTEGER REFERENCES users(id),
+  updated_at      TEXT
+);

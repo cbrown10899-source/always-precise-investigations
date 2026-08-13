@@ -693,28 +693,37 @@ section('Rate sheets');
   await page.locator('.tabs button', { hasText: 'Rate sheets' }).click();
   await page.waitForTimeout(400);
   const card = await text(page, '.card');
-  ok('the retainer sheet is offered', card.includes('$1,500 retainer'));
-  ok('it names its audience', has(card, 'Private clients'));
-  ok('the insurance sheet is offered', card.includes('Insurance assignment rates'));
-  ok('it names its audience', has(card, 'Carriers, TPAs'));
+  ok('the retainer product is offered by its unmistakable label',
+     card.includes('Private Client — $1,500 Retainer'));
+  ok('it names its audience', has(card, 'Private surveillance, domestic and family'));
+  ok('the insurance product is offered', card.includes('Insurance Assignment Rates'));
+  ok('it names its audience', has(card, 'carriers, TPAs'));
   ok('the page says none of it is on the website', has(card, 'Nothing here appears on the website'));
 
-  await page.locator('.sheet-card', { hasText: '$1,500 retainer' }).click();
+  await page.locator('.sheet-card', { hasText: '$1,500 Retainer' }).click();
   await page.waitForTimeout(300);
   const sheet = await page.locator('.card').nth(1).innerText();
   ok('the retainer sheet states the retainer', sheet.includes('$1,500'));
   ok('it states the hourly rate', sheet.includes('$100/hr'));
   ok('it states the minimum', has(sheet, '4-hour minimum'));
-  ok('it promises no additional fees', has(sheet, 'None'));
+  ok('the retainer reads as a deposit against the work',
+     has(sheet, 'applied directly to authorized investigative services'));
+  ok('"Additional fees — None" is gone', !has(sheet, 'Additional fees'));
+  ok('replaced by the plain-language promise', has(sheet, 'No routine add-on fees'));
+  ok('its confirmation line is its own', has(sheet, 'Your case. Your authorization.'));
   ok('there is somewhere to type the address', await page.locator('#sh_to').count() === 1);
 
-  await page.locator('.sheet-card', { hasText: 'Insurance assignment rates' }).click();
+  await page.locator('.sheet-card', { hasText: 'Insurance Assignment Rates' }).click();
   await page.waitForTimeout(300);
   const ins = await page.locator('.card').nth(1).innerText();
   ok('the insurance sheet lists the one-day block', ins.includes('$1,200'));
   ok('it lists the two-day block', ins.includes('$2,300'));
   ok('it lists the three-day block', ins.includes('$3,300'));
   ok('it states the overage rate', ins.includes('$150/hr'));
+  ok('the three-day block wears the recommendation badge',
+     has(ins, 'Recommended initial authorization'));
+  ok('"Additional fees — None" is gone here too', !has(ins, 'Additional fees'));
+  ok('its own confirmation line', has(ins, 'Clear pricing. No surprise billing.'));
   ok('the retainer figure is NOT on the carrier sheet', !ins.includes('$1,500'), ins);
 
   // Sending needs an address, and says so rather than failing silently.
@@ -738,7 +747,7 @@ section('An investigator gets no rates at all');
     (await fetch('/portal-api/pricing', { credentials: 'same-origin' })).status);
   ok('the rates endpoint refuses them', pricing === 403);
   const mail = await page.evaluate(async () =>
-    (await fetch('/portal-api/sheets/insurance/email', {
+    (await fetch('/portal-api/sheets/insurance_assignment/email', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ to: 'someone@example.com' }),
@@ -912,7 +921,7 @@ section('The case workspace in the browser');
   ok('remaining is worked out', auth.includes('2 hours'));
   ok('the 75% threshold warns', has(auth, '75%'));
   ok('mileage carried over', auth.includes('42'));
-  ok('the billable figure is shown to an admin', auth.includes('900'));
+  ok('the billable figure is shown to an admin, at the private rate', auth.includes('600'));
   await page.close();
 }
 
@@ -1418,6 +1427,36 @@ section('Closing a case takes the checklist');
   await page.waitForTimeout(700);
   ok('reopening from the status works',
      has(await rowFor(page, 'API-20260812-4002').innerText(), 'In progress'));
+  await page.close();
+}
+
+/* The private-retainer balance (RATESHEETS.md admin side): internal only,
+   driven from the Authorization tab of a private case. */
+section('The retainer balance on a private case');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Authorization');
+  ok('a private case offers the retainer fields', await page.locator('#m_ret').count() === 1);
+  await page.locator('#m_ret').fill('1500');
+  await page.locator('#m_retrec').check();
+  await page.locator('.btn', { hasText: 'Save authorization' }).click();
+  await page.waitForTimeout(600);
+  const auth = await text(page, '#dlgBody');
+  ok('the panel shows the retainer balance', has(auth, 'Remaining retainer'));
+  ok('received is recorded', has(auth, 'Received') && has(auth, 'Yes'));
+  ok('six recorded hours at the private rate leave $900', auth.includes('900'), auth.slice(0, 400));
+  await page.close();
+}
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Authorization');
+  ok('a claims case never offers retainer fields', await page.locator('#m_ret').count() === 0);
   await page.close();
 }
 

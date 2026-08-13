@@ -257,9 +257,13 @@ the homepage, both insurance pages and the two service pages.
 Pricing lives in the portal as two rate sheets an admin opens and emails
 (`rateSheets()` in `case-portal/worker.js`):
 
-- **`$1,500 retainer`** — private clients. $1,500 to begin applied to the work,
-  then $100/hr with a 4-hour minimum. `PERSONAL` in the Worker sets it.
-- **`Insurance assignment rates`** — carriers. The `RATES.packages` ladder.
+- **`private_retainer` ("$1,500 Retainer")** — private clients. The retainer is a
+  deposit applied to work billed at $100/hr, 4-hour minimum. `PERSONAL` in the
+  Worker sets it.
+- **`insurance_assignment` ("Insurance Assignment Rates")** — carriers. The
+  `RATES.packages` ladder, package/authorization-based. The two sheets are
+  separate products (see `case-portal/RATESHEETS.md`): separate config,
+  separate copy, never combined, and neither shows internal strategy.
 
 `GET /sheets` and `POST /sheets/:id/email` are admin-only; an investigator gets
 403 from both, and from `/pricing`. Sending goes through `sendMail()`, the same
@@ -385,8 +389,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 471 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 311 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 505 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 322 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,

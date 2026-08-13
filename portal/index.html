@@ -133,6 +133,20 @@
     border-radius:4px;padding:2px 5px;margin-top:3px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .cal-ev.cal-run{background:#1a6b3c;}
   .cal-ev.cal-offer{background:#fff;color:var(--teal);border:1px dashed var(--teal);}
+  /* Rate sheets: the numbers dominate (RATESHEETS.md mobile hierarchy). */
+  .rs-row{display:flex;justify-content:space-between;gap:14px;padding:13px 0;border-bottom:1px solid var(--line);align-items:flex-start;}
+  .rs-row:last-child{border-bottom:0;}
+  .rs-l{flex:1;}
+  .rs-sub{margin-left:8px;font-size:.78rem;color:var(--muted);font-weight:600;}
+  .rs-note{font-size:.84rem;color:var(--muted);margin-top:3px;max-width:56ch;}
+  .rs-v{white-space:nowrap;font-weight:700;padding-left:8px;}
+  .rs-big .rs-v{font-size:1.55rem;font-weight:800;color:var(--navy,#12305a);line-height:1.1;}
+  .rs-badge{display:inline-block;margin-left:8px;padding:2px 9px;border:1px solid #b7924c;color:#8a6d33;
+    border-radius:10px;font-size:.66rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;vertical-align:2px;}
+  .rs-close{margin:14px 0 4px;padding:13px 15px;background:#fbf7ee;border-left:3px solid #b7924c;border-radius:0 8px 8px 0;}
+  .rs-close b{display:block;margin-bottom:3px;}
+  .rs-close p{margin:0;font-size:.88rem;color:#44505c;}
+  @media(max-width:640px){.rs-big .rs-v{font-size:1.35rem;}}
   @media(max-width:640px){.cal-cell{min-height:54px;} .cal-ev{font-size:.58rem;padding:1px 3px;}}
   .comprow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:2px 0 8px;}
   .comprow input{width:90px;font:inherit;font-size:.85rem;border:1px solid var(--line);border-radius:6px;padding:6px 8px;}
@@ -771,7 +785,7 @@ function sheetsView(){
       client will receive, then send it to them.</p>
     <div class="sheet-grid">
       ${SHEETS.map(s => `<button class="sheet-card${s.id === OPEN_SHEET ? " on" : ""}" data-act="openSheet" data-sheet="${esc(s.id)}">
-        <div class="sheet-n">${esc(s.name)}</div>
+        <div class="sheet-n">${esc(s.selector_label || s.name)}</div>
         <div class="sheet-a">${esc(s.audience)}</div>
         <div class="sheet-s">${esc(s.summary)}</div>
         <div class="sheet-go">${s.id === OPEN_SHEET ? "Showing below" : "Open and send"}</div>
@@ -783,11 +797,13 @@ function sheetsView(){
       <span class="count">${esc(open.audience)}</span></div>
     <p class="lead">${esc(open.summary)}</p>
     <div class="feebox">
-      ${open.lines.map(l => `<div class="row">
-        <span><b>${esc(l.label)}</b><div class="sheet-note">${esc(l.note)}</div></span>
-        <b style="white-space:nowrap">${esc(l.value)}</b></div>`).join("")}
+      ${open.lines.map(l => `<div class="rs-row${l.big ? " rs-big" : ""}">
+        <span class="rs-l"><b>${esc(l.label)}</b>${l.sub ? `<span class="rs-sub">${esc(l.sub)}</span>` : ""}${
+          l.badge ? `<span class="rs-badge">${esc(l.badge)}</span>` : ""}
+          <div class="rs-note">${esc(l.note)}</div></span>
+        <span class="rs-v">${esc(l.value)}</span></div>`).join("")}
     </div>
-    <p class="note">${esc(open.closing)}</p>
+    <div class="rs-close"><b>${esc(open.closing_title)}</b><p>${esc(open.closing)}</p></div>
     <div class="actions" style="border-top:1px solid var(--line);padding-top:16px;margin-top:6px">
       <label class="f" style="flex:1 1 260px;margin-bottom:0"><span>Send it to</span>
         <input id="sh_to" type="email" placeholder="name@example.com" value="${esc(SHEET_MAIL)}"></label>
@@ -1120,12 +1136,22 @@ function authPanel(a, admin){
            : `<b>${esc(a.percent_used)}% of the authorization is used.</b> Past the ${esc(a.warn_level)}% mark.`}
        </div>` : ""}`
       : `<div class="row"><span>Authorized hours</span><span>Not set</span></div>`}
+    ${admin && a.package_price != null ? `
+      <div class="row"><span>Authorized package</span><b>$${esc(a.package_price.toLocaleString())} &middot; ${esc(a.package_label)}</b></div>` : ""}
     ${admin && a.authorized_budget != null ? `
       <div class="row" style="border-top:1px solid #cfe6ec;margin-top:8px;padding-top:8px">
         <span>Authorized budget</span><b>$${esc(a.authorized_budget.toLocaleString())}</b></div>
       <div class="row"><span>Billable so far</span><b>$${esc(a.billable_so_far.toLocaleString())}</b></div>
       <div class="row"><span>Remaining</span><b>$${esc(a.budget_remaining.toLocaleString())}</b></div>
       <div class="row"><span style="color:var(--muted);font-size:.82rem">Billed at $${esc(a.billed_at_rate)}/hr</span><span></span></div>` : ""}
+    ${admin && a.retainer ? `
+      <div class="row" style="border-top:1px solid #cfe6ec;margin-top:8px;padding-top:8px">
+        <span>Original retainer</span><b>$${esc(a.retainer.amount.toLocaleString())}</b></div>
+      <div class="row"><span>Received</span><b>${a.retainer.received ? "Yes" : "Not yet"}</b></div>
+      <div class="row"><span>Applied so far</span><b>$${esc(a.retainer.applied.toLocaleString())}</b></div>
+      <div class="row"><span>Remaining retainer</span><b>$${esc(a.retainer.remaining.toLocaleString())}</b></div>
+      ${a.retainer.approx_hours_remaining != null ? `<div class="row">
+        <span style="color:var(--muted);font-size:.82rem">&asymp; ${esc(a.retainer.approx_hours_remaining)} hours at this case's rate</span><span></span></div>` : ""}` : ""}
     ${a.miles_total ? `<div class="row"><span>Miles logged</span><span>${esc(a.miles_total)}</span></div>` : ""}
   </div>`;
 }
@@ -1623,6 +1649,14 @@ function authAdminForm(){
     <label class="f"><span>Client rate for this case <span class="opt">blank = the firm's standard rate.
         Mileage is never billed to a client &mdash; the all-in price covers it.</span></span>
       <input id="m_chourly" inputmode="decimal" value="${a.case_rate_set ? a.billed_at_rate : ""}"></label>
+    ${WS && WS.kind === "consumer" ? `
+    <div class="two">
+      <label class="f"><span>Retainer amount <span class="opt">the private model &mdash; a claims case never has one</span></span>
+        <input id="m_ret" inputmode="decimal" value="${a.retainer ? a.retainer.amount : ""}"></label>
+      <label class="cap" style="align-self:center;margin-top:14px">
+        <input type="checkbox" id="m_retrec" ${a.retainer && a.retainer.received ? "checked" : ""}>
+        <span>Retainer received</span></label>
+    </div>` : ""}
     <label class="cap" style="margin:2px 0 10px">
       <input type="checkbox" id="m_showclient" ${a.show_client_identity ? "checked" : ""}>
       <span>Allow the assigned investigator to see who the client is
@@ -2193,6 +2227,11 @@ async function saveCaseMeta(){
       client_hourly: $("m_chourly").value,
       show_client_identity: $("m_showclient").checked,
     }});
+    if($("m_ret")){
+      await api(`/cases/${encodeURIComponent(WS_CASE)}/retainer`, {method:"POST", body:{
+        retainer_amount: $("m_ret").value, received: $("m_retrec").checked,
+      }});
+    }
   }catch(e){ WS_ERR = e.message; }
   await reloadWorkspace();
 }
