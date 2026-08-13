@@ -1059,7 +1059,8 @@ function activityPanel(){
           <label class="f"><span>Miles</span><input id="a_miles" inputmode="decimal" placeholder="e.g. 62"></label>
           <label class="f"><span>From / to</span><input id="a_desc" placeholder="e.g. Office to subject residence and back"></label>
         </div>
-        <p class="hint">Recorded as a mileage claim under Expenses and marked on the timeline together.</p>`
+        <p class="hint">Recorded under Expenses and marked on the timeline together. Mileage is never
+          billed to a client &mdash; it is your reimbursement record, and the firm's for taxes.</p>`
       : QKIND === "expense" ? `
         <div class="two">
           <label class="f"><span>Amount</span><input id="a_amt" inputmode="decimal" placeholder="e.g. 14.50"></label>
@@ -1345,12 +1346,9 @@ function authAdminForm(){
       <label class="f"><span>Authorized hours</span><input id="m_hours" inputmode="decimal" value="${a.authorized_hours ?? ""}"></label>
       <label class="f"><span>Authorized budget</span><input id="m_budget" inputmode="decimal" value="${a.authorized_budget ?? ""}"></label>
     </div>
-    <div class="two">
-      <label class="f"><span>Client rate for this case <span class="opt">blank = the firm's standard rate</span></span>
-        <input id="m_chourly" inputmode="decimal" value="${a.case_rate_set ? a.billed_at_rate : ""}"></label>
-      <label class="f"><span>Client mileage rate <span class="opt">optional</span></span>
-        <input id="m_cmileage" inputmode="decimal" value="${a.client_mileage_rate ?? ""}"></label>
-    </div>
+    <label class="f"><span>Client rate for this case <span class="opt">blank = the firm's standard rate.
+        Mileage is never billed to a client &mdash; the all-in price covers it.</span></span>
+      <input id="m_chourly" inputmode="decimal" value="${a.case_rate_set ? a.billed_at_rate : ""}"></label>
     <label class="cap" style="margin:2px 0 10px">
       <input type="checkbox" id="m_showclient" ${a.show_client_identity ? "checked" : ""}>
       <span>Allow the assigned investigator to see who the client is
@@ -1546,7 +1544,14 @@ function assignPanel(s){
     ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
   </form>`;
 
-  return `${offerRows}${offerForm}<div class="actions">
+  const pendingOffer = offers.find(o => o.status === "offered");
+  const formOrWhy = s.assigned_to != null
+    ? `<p class="note" style="margin-top:14px">Assigned — to offer this case to someone else, unassign it first.</p>`
+    : pendingOffer
+    ? `<p class="note" style="margin-top:14px">Waiting on <b>${esc(pendingOffer.investigator || "")}</b> —
+       withdraw that offer to send a different one.</p>`
+    : offerForm;
+  return `${offerRows}${formOrWhy}<div class="actions">
       <label class="f"><span>Assigned to</span>
         <select id="asg">
           <option value="">— unassigned —</option>
@@ -1710,7 +1715,6 @@ async function saveCaseMeta(){
     }});
     await api(`/cases/${encodeURIComponent(WS_CASE)}/settings`, {method:"POST", body:{
       client_hourly: $("m_chourly").value,
-      client_mileage: $("m_cmileage").value,
       show_client_identity: $("m_showclient").checked,
     }});
   }catch(e){ WS_ERR = e.message; }

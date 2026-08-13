@@ -2095,6 +2095,19 @@ async function route(request, env) {
     const uid = parseInt(body.investigator_id, 10);
     const u = await env.DB.prepare('SELECT id FROM users WHERE id = ? AND active = 1').bind(uid).first();
     if (!u) return json({ error: 'Pick an active investigator.' }, 400);
+    // Owner-operator model: one offer out at a time, no competing. A case that
+    // is already assigned, or already has an offer pending, is not offered
+    // again until that is resolved.
+    const assigned = await env.DB.prepare(
+      'SELECT assigned_to FROM submissions WHERE case_no = ?').bind(m[1]).first();
+    if (assigned && assigned.assigned_to != null) {
+      return json({ error: 'This case is already assigned. Unassign it first.' }, 409);
+    }
+    const pending = await env.DB.prepare(
+      "SELECT id FROM case_offers WHERE case_no = ? AND status = 'offered'").bind(m[1]).first();
+    if (pending) {
+      return json({ error: 'An offer is already out on this case. Withdraw it to offer someone else.' }, 409);
+    }
     const num = v => { if (v === null || v === undefined || String(v).trim() === '') return null;
       const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : undefined; };
     const hours = num(body.expected_hours), comp = num(body.compensation_hourly);

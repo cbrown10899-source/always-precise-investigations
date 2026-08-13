@@ -1222,8 +1222,9 @@ section('Offers: the shape of the job before acceptance, the case only after');
        body: { investigator_id: danaId, investigation_date: '2026-08-20', expected_hours: 8,
                general_location: 'Lynchburg area', mileage_terms: 'standing rate',
                instructions: 'Meet at the Wal-Mart lot off 460. Subject is Hidden Subject.' } })).status === 201);
-  await call(env, '/cases/API-OF1/offer', { method: 'POST', cookie: admin,
-    body: { investigator_id: reedId, expected_hours: 8, general_location: 'Lynchburg area' } });
+  ok('no competing offers — a second while one is pending is refused',
+     (await call(env, '/cases/API-OF1/offer', { method: 'POST', cookie: admin,
+       body: { investigator_id: reedId, expected_hours: 8 } })).status === 409);
 
   /* THE BOUNDARY. Pending = the job's shape and their pay. Nothing else. */
   const pend = await jsonOf(await call(env, '/my/offers', { cookie: dana }));
@@ -1255,11 +1256,11 @@ section('Offers: the shape of the job before acceptance, the case only after');
   ok('the client stays redacted even after acceptance',
      !JSON.stringify(ws).includes('Secret Mutual'));
 
-  const reedView = await jsonOf(await call(env, '/my/offers', { cookie: reed }));
-  ok("the loser's pending offer was withdrawn automatically",
-     reedView.offers[0].status === 'withdrawn');
-  ok('a decided offer cannot be accepted afterwards',
-     (await call(env, `/my/offers/${reedView.offers[0].id}/accept`, { method: 'POST', cookie: reed })).status === 404);
+  ok('an assigned case cannot be offered at all',
+     (await call(env, '/cases/API-OF1/offer', { method: 'POST', cookie: admin,
+       body: { investigator_id: reedId } })).status === 409);
+  ok('a decided offer cannot be accepted again',
+     (await call(env, `/my/offers/${o.id}/accept`, { method: 'POST', cookie: dana })).status === 404);
 
   // Decline with a reason the office can read.
   await ingest(env, { case_no: 'API-OF2', subject_name: 'S2', client_name: 'C2' });
@@ -1272,11 +1273,12 @@ section('Offers: the shape of the job before acceptance, the case only after');
   const aws = await jsonOf(await call(env, '/cases/API-OF2/workspace', { cookie: admin }));
   ok('the office sees who declined and why',
      aws.offers[0].status === 'declined' && aws.offers[0].decline_reason === 'Out of town that week.');
-  ok('an admin can withdraw a pending offer', (await (async () => {
-    const o3 = await jsonOf(await call(env, '/cases/API-OF2/offer', { method: 'POST', cookie: admin,
-      body: { investigator_id: danaId } }));
-    return call(env, `/offers/${o3.id}/withdraw`, { method: 'POST', cookie: admin });
-  })()).status === 200);
+  // A decline resolves the case, so it can be offered again — then withdrawn.
+  const o3 = await jsonOf(await call(env, '/cases/API-OF2/offer', { method: 'POST', cookie: admin,
+    body: { investigator_id: danaId } }));
+  ok('a resolved case can be offered again', typeof o3.id === 'number');
+  ok('an admin can withdraw a pending offer',
+     (await call(env, `/offers/${o3.id}/withdraw`, { method: 'POST', cookie: admin })).status === 200);
 }
 
 section('Password reset: a one-time link, nobody learns the password');
