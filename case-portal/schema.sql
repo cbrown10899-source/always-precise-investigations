@@ -451,3 +451,29 @@ CREATE TABLE IF NOT EXISTS case_tasks (
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_case ON case_tasks(case_no, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_due  ON case_tasks(status, due_date);
+
+-- Case closure and extended statuses (HANDOFF priority 20). submissions.status
+-- is CHECK-constrained to four coarse values and ALTERs are off the table, so
+-- the nine operational stages live here and the coarse column is kept in sync
+-- (closed/cancelled -> closed, open -> new, assigned -> assigned, the rest ->
+-- in_progress) for everything that already reads it.
+CREATE TABLE IF NOT EXISTS case_status (
+  case_no TEXT PRIMARY KEY,
+  stage   TEXT NOT NULL CHECK (stage IN
+            ('open','assigned','in_progress','report_review','awaiting_client',
+             'complete','on_hold','cancelled','closed')),
+  set_by  INTEGER REFERENCES users(id),
+  set_at  TEXT
+);
+
+-- The closing checklist: eight human attestations, and the only door to the
+-- closed stage. The row keeps who closed the case and when; reopening clears
+-- the stamp but keeps the ticks as history.
+CREATE TABLE IF NOT EXISTS case_closure (
+  case_no        TEXT PRIMARY KEY,
+  checklist_json TEXT NOT NULL DEFAULT '{}',
+  closed_by      INTEGER REFERENCES users(id),
+  closed_at      TEXT,
+  updated_by     INTEGER REFERENCES users(id),
+  updated_at     TEXT
+);

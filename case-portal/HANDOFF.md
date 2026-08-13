@@ -29,7 +29,7 @@ Progress ledger (update as phases land):
 | 17. Subjects + vehicles | **done** — 2026-08-13 (structured records on the Subject tab, several per case, vehicles nested; both roles write on cases they can open, edits stamped, no delete; photographs join with priority 6) |
 | 18. Communication log | **done** — 2026-08-13 (Comm log tab: 7 methods, date/time/person/summary/follow-up, notes-style visibility enforced in the Worker; documents only, sends nothing) |
 | 19. Follow-up tasks | **done** — 2026-08-13 (Tasks tab: due date/priority/status, admin-created; an investigator sees only tasks assigned to them and can only mark theirs done; overdue = dashboard card, click-to-filter) |
-| 20. Case closure | not started |
+| 20. Case closure | **done** — 2026-08-13 (nine stages in case_status with the coarse column kept in sync; eight-item closing checklist is the only door to closed; Awaiting client / Ready to close dashboard cards; reopen from the status select) |
 | Phase 4 (client portal, redaction, safety, profitability) | not started |
 
 ---
