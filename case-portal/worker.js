@@ -717,11 +717,15 @@ function redactRow(row) {
   return rest;
 }
 
-function redactPayload(payload) {
+function redactPayload(payload, extra) {
   const kept = {};
   for (const k of FIELD_KEEP) if (payload[k] !== undefined) kept[k] = payload[k];
+  // Priority 10's admin toggle: revealing the client identity keeps exactly
+  // who the case is for — never how to bill them or reach them.
+  for (const k of extra || []) if (payload[k] !== undefined) kept[k] = payload[k];
   return kept;
 }
+const CLIENT_IDENTITY_FIELDS = ['carrier', 'claim_number', 'client_name'];
 
 async function listSubmissions(request, env, user) {
   const url = new URL(request.url);
@@ -760,7 +764,15 @@ async function getSubmission(env, user, caseNo) {
   if (user.role !== 'admin' && row.assigned_to !== user.id) return json({ error: 'not found' }, 404);
   let payload = {};
   try { payload = JSON.parse(row.payload); } catch { /* keep the row usable */ }
-  if (user.role !== 'admin') return json({ submission: { ...redactRow(row), payload: redactPayload(payload) } });
+  if (user.role !== 'admin') {
+    const st = await caseSettings(env, caseNo);
+    const reveal = st.show_client_identity ? CLIENT_IDENTITY_FIELDS : [];
+    const base = redactRow(row);
+    if (st.show_client_identity) {
+      base.carrier = row.carrier; base.claim_number = row.claim_number; base.client_name = row.client_name;
+    }
+    return json({ submission: { ...base, payload: redactPayload(payload, reveal) } });
+  }
   return json({ submission: { ...row, payload } });
 }
 
@@ -815,6 +827,13 @@ async function listCaseTypes(env) {
   return results || [];
 }
 
+async function caseSettings(env, caseNo) {
+  return await env.DB.prepare(
+    `SELECT client_hourly, client_mileage, show_client_identity
+       FROM case_settings WHERE case_no = ?`).bind(caseNo).first()
+    || { client_hourly: null, client_mileage: null, show_client_identity: 0 };
+}
+
 async function configValue(env, key, fallback) {
   const row = await env.DB.prepare('SELECT value FROM app_config WHERE key = ?').bind(key).first();
   return row && row.value != null ? row.value : fallback;
@@ -862,12 +881,17 @@ async function authorizationFor(env, caseNo, forAdmin) {
   // Money is commercial. An investigator is told the hours they are working to
   // and nothing about what the case is worth.
   if (forAdmin) {
+    const st = await caseSettings(env, caseNo);
+    const rate = st.client_hourly != null ? Number(st.client_hourly) : RATES.surveillance.standard;
     const budget = meta && meta.authorized_budget != null ? Number(meta.authorized_budget) : null;
-    const billable = Math.round(hoursUsed * RATES.surveillance.standard * 100) / 100;
+    const billable = Math.round(hoursUsed * rate * 100) / 100;
     out.authorized_budget = budget;
     out.billable_so_far = billable;
     out.budget_remaining = budget == null ? null : Math.round((budget - billable) * 100) / 100;
-    out.billed_at_rate = RATES.surveillance.standard;
+    out.billed_at_rate = rate;
+    out.case_rate_set = st.client_hourly != null;
+    out.client_mileage_rate = st.client_mileage;
+    out.show_client_identity = st.show_client_identity ? 1 : 0;
   }
   return out;
 }
@@ -1528,9 +1552,12 @@ async function setReportStatus(request, env, user, caseNo, id) {
 /* ----------------------------------------------------------------- users */
 
 async function listUsers(env) {
+  // includes each person's compensation so the Staff tab can edit it in place
   const { results } = await env.DB.prepare(
-    `SELECT id, username, display_name, role, active, created_at, last_login_at
-       FROM users ORDER BY role, username`).all();
+    `SELECT u.id, u.username, u.display_name, u.role, u.active, u.created_at, u.last_login_at,
+            r.hourly AS comp_hourly, r.mileage AS comp_mileage
+       FROM users u LEFT JOIN user_rates r ON r.user_id = u.id
+      ORDER BY u.role, u.username`).all();
   return json({ users: results || [] });
 }
 
@@ -1844,6 +1871,7 @@ const ADMIN_ONLY = 'This action needs an admin account.';
 const EXPECTED_TABLES = [
   'users', 'sessions', 'submissions', 'login_fails', 'invites', 'ingest_rate',
   'case_types', 'case_meta', 'case_days', 'activity_log', 'activity_media', 'case_reports', 'app_config',
+  'case_expenses', 'case_notes', 'user_rates', 'case_settings',
 ];
 
 async function missingTables(env) {
@@ -2001,6 +2029,53 @@ async function route(request, env) {
   if (p === '/demo-case/clear' && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return clearDemoCases(env);
+  }
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/settings$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    const exists = await env.DB.prepare('SELECT 1 AS x FROM submissions WHERE case_no = ?').bind(m[1]).first();
+    if (!exists) return json({ error: 'not found' }, 404);
+    const body = await readJson(request);
+    const num = v => { if (v === null || v === undefined || String(v).trim() === '') return null;
+      const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : undefined; };
+    const ch = num(body.client_hourly), cm = num(body.client_mileage);
+    if (ch === undefined || cm === undefined) return json({ error: 'Rates must be numbers, or blank.' }, 400);
+    const show = (body.show_client_identity === true || body.show_client_identity === 1 || body.show_client_identity === '1') ? 1 : 0;
+    await env.DB.prepare(
+      `INSERT INTO case_settings (case_no, client_hourly, client_mileage, show_client_identity, updated_by, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+       ON CONFLICT(case_no) DO UPDATE SET client_hourly = ?2, client_mileage = ?3,
+         show_client_identity = ?4, updated_by = ?5, updated_at = ?6`)
+      .bind(m[1], ch, cm, show, user.id, nowIso()).run();
+    return json({ ok: true, authorization: await authorizationFor(env, m[1], true) });
+  }
+
+  m = p.match(/^\/users\/(\d{1,12})\/rates$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    const uid = parseInt(m[1], 10);
+    const u = await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(uid).first();
+    if (!u) return json({ error: 'not found' }, 404);
+    const body = await readJson(request);
+    const num = v => { if (v === null || v === undefined || String(v).trim() === '') return null;
+      const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : undefined; };
+    const hourly = num(body.hourly), mileage = num(body.mileage);
+    if (hourly === undefined || mileage === undefined) return json({ error: 'Rates must be numbers, or blank.' }, 400);
+    await env.DB.prepare(
+      `INSERT INTO user_rates (user_id, hourly, mileage, updated_by, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5)
+       ON CONFLICT(user_id) DO UPDATE SET hourly = ?2, mileage = ?3, updated_by = ?4, updated_at = ?5`)
+      .bind(uid, hourly, mileage, user.id, nowIso()).run();
+    return json({ ok: true });
+  }
+
+  /* Their own compensation — an investigator should know what they are paid,
+     and it is the one rate they may see. */
+  if (p === '/my/comp' && method === 'GET') {
+    const r = await env.DB.prepare('SELECT hourly, mileage FROM user_rates WHERE user_id = ?')
+      .bind(user.id).first();
+    return json({ hourly: r ? r.hourly : null, mileage: r ? r.mileage : null });
   }
 
   if (p === '/my/reports' && method === 'GET') return myReports(env, user);

@@ -117,6 +117,8 @@
   .qk2{display:block;width:100%;text-align:center;font:inherit;font-size:.8rem;font-weight:700;
     padding:10px 4px;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer;}
   .qk2.on{border-color:var(--teal);background:#eaf5f7;color:var(--navy);}
+  .comprow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:2px 0 8px;}
+  .comprow input{width:90px;font:inherit;font-size:.85rem;border:1px solid var(--line);border-radius:6px;padding:6px 8px;}
   .capgrid{display:flex;gap:14px;flex-wrap:wrap;margin:2px 0 6px;}
   .cap{display:flex;gap:6px;align-items:center;font-size:.85rem;font-weight:600;cursor:pointer;}
   .cap input{width:17px;height:17px;}
@@ -257,7 +259,7 @@ const PHRASES = [
 let LOAD_ERR = "";        // why the portal could not load, shown rather than hidden
 let SCHEMA_MISSING = [];  // tables the database does not have yet
 let CARD_FILTER = null;   // {label, set:Set(case numbers)} — a dashboard card's cases
-let MY_REPORTS = null, MY_EXPENSES = null;   // the investigator's own desk, loaded on demand
+let MY_REPORTS = null, MY_EXPENSES = null, MY_COMP = null;   // the investigator's own desk, loaded on demand
 /* Examples show themselves on a first sign-in and can be recalled later. */
 let SHOW_EXAMPLE = false;
 
@@ -593,10 +595,14 @@ function myReportsView(){
 function myExpensesView(){
   if(!MY_EXPENSES) return `<div class="card"><div class="empty">Loading your expenses&hellip;</div></div>`;
   const list = MY_EXPENSES.expenses;
+  const comp = MY_COMP || {};
   const money = n => n == null ? "—" : "$" + Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
   const pending = list.filter(e => !e.reviewed_at);
   return `<div class="card">
     <div class="bar"><h2 style="margin:0">Your expenses</h2>
+      ${comp.hourly != null || comp.mileage != null ? `<span class="count">Your rate:
+        ${comp.hourly != null ? `$${esc(comp.hourly)}/hr` : ""}${comp.hourly != null && comp.mileage != null ? " · " : ""}${
+        comp.mileage != null ? `$${esc(comp.mileage)}/mi` : ""}</span>` : ""}
       ${pending.length ? `<span class="count">${pending.length} awaiting review</span>` : ""}</div>
     ${list.length ? `<div style="overflow-x:auto"><table>
       <thead><tr><th>Date</th><th>Case</th><th>What</th><th>Amount</th><th class="hide">Miles</th><th>Status</th></tr></thead>
@@ -746,7 +752,14 @@ function staffView(){
     <td class="hide">${when(u.last_login_at)}</td>
     <td style="white-space:nowrap">${u.id === ME.id ? "" :
       `<button class="btn sm ${u.active ? "danger" : "ghost"}" data-act="toggleActive" data-id="${u.id}" data-active="${u.active ? 0 : 1}">${u.active ? "Disable" : "Enable"}</button>`}
-    </td></tr>`).join("");
+    </td></tr>
+    <tr><td colspan="5" style="border-top:0;padding-top:0">
+      <div class="comprow" data-id="${u.id}">
+        <span class="tl-m">Compensation — theirs to see, never a client's rate:</span>
+        <input class="cr-h" inputmode="decimal" placeholder="$/hr" value="${u.comp_hourly ?? ""}">
+        <input class="cr-m" inputmode="decimal" placeholder="$/mi" value="${u.comp_mileage ?? ""}">
+        <button class="btn sm ghost" data-act="saveUserRates" data-id="${u.id}">Save</button>
+      </div></td></tr>`).join("");
 
   const pending = INVITES.length ? INVITES.map(i => `<tr>
     <td><b>${esc(i.display_name || i.username)}</b><div class="mono">${esc(i.username)}</div></td>
@@ -1291,6 +1304,17 @@ function authAdminForm(){
       <label class="f"><span>Authorized hours</span><input id="m_hours" inputmode="decimal" value="${a.authorized_hours ?? ""}"></label>
       <label class="f"><span>Authorized budget</span><input id="m_budget" inputmode="decimal" value="${a.authorized_budget ?? ""}"></label>
     </div>
+    <div class="two">
+      <label class="f"><span>Client rate for this case <span class="opt">blank = the firm's standard rate</span></span>
+        <input id="m_chourly" inputmode="decimal" value="${a.case_rate_set ? a.billed_at_rate : ""}"></label>
+      <label class="f"><span>Client mileage rate <span class="opt">optional</span></span>
+        <input id="m_cmileage" inputmode="decimal" value="${a.client_mileage_rate ?? ""}"></label>
+    </div>
+    <label class="cap" style="margin:2px 0 10px">
+      <input type="checkbox" id="m_showclient" ${a.show_client_identity ? "checked" : ""}>
+      <span>Allow the assigned investigator to see who the client is
+        <span class="opt">default no — reveals carrier, claim number and client name only; never
+        contacts, billing or rates</span></span></label>
     <button class="btn" type="submit">Save authorization</button>
     ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
   </form>`;
@@ -1593,8 +1617,23 @@ async function saveCaseMeta(){
       authorized_hours: $("m_hours").value,
       authorized_budget: $("m_budget").value,
     }});
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/settings`, {method:"POST", body:{
+      client_hourly: $("m_chourly").value,
+      client_mileage: $("m_cmileage").value,
+      show_client_identity: $("m_showclient").checked,
+    }});
   }catch(e){ WS_ERR = e.message; }
   await reloadWorkspace();
+}
+
+async function saveUserRates(id){
+  const row = document.querySelector(`.comprow[data-id="${id}"]`);
+  try{
+    await api(`/users/${id}/rates`, {method:"POST", body:{
+      hourly: row.querySelector(".cr-h").value, mileage: row.querySelector(".cr-m").value,
+    }});
+    await render();
+  }catch(e){ alert(e.message); }
 }
 
 async function saveCase(caseNo){
@@ -1672,7 +1711,10 @@ document.addEventListener("click", ev => {
   else if(act === "tab"){
     TAB = el.dataset.tab; paint();
     if(TAB === "myreports") api("/my/reports").then(d => { MY_REPORTS = d; paint(); }).catch(()=>{});
-    if(TAB === "myexpenses") api("/my/expenses").then(d => { MY_EXPENSES = d; paint(); }).catch(()=>{});
+    if(TAB === "myexpenses"){
+      api("/my/expenses").then(d => { MY_EXPENSES = d; paint(); }).catch(()=>{});
+      api("/my/comp").then(d => { MY_COMP = d; paint(); }).catch(()=>{});
+    }
   }
   else if(act === "openCaseTab"){ openCase(el.dataset.case, el.dataset.tab); }
   else if(act === "showExample"){ SHOW_EXAMPLE = true; paint(); }
@@ -1702,6 +1744,7 @@ document.addEventListener("click", ev => {
   else if(act === "saveReport"){ saveReportBody(Number(el.dataset.id)); }
   else if(act === "reportStatus"){ setReportStage(Number(el.dataset.id), el.dataset.to); }
   else if(act === "reviewExpense"){ reviewExpenseEntry(Number(el.dataset.id)); }
+  else if(act === "saveUserRates"){ saveUserRates(Number(el.dataset.id)); }
   else if(act === "openSheet"){
     OPEN_SHEET = OPEN_SHEET === el.dataset.sheet ? null : el.dataset.sheet;
     SHEET_MSG = ""; paint();

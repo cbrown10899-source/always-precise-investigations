@@ -21,8 +21,9 @@ Progress ledger (update as phases land):
 | 12. Expenses + Mileage | **done** — 2026-08-12 (three separate classifications; receipt images wait on priority 6 storage) |
 | 15. Case Notes + Visibility | **done** — 2026-08-12 (7 types, 3 visibilities, enforced in the Worker's query) |
 | 9. Investigator Role | **done** — 2026-08-13 (My assignments · Today · Reports · Expenses; Calendar/Availability join with 14) |
-| 10. Investigator Redaction | **done** in substance (FIELD_KEEP, workspace money stripping, note visibility) — the per-case "view client identity" toggle joins priority 11's config |
-| 11, 13, 14. Phase 2 remainder | not started |
+| 10. Investigator Redaction | **done** in substance (FIELD_KEEP, workspace money stripping, note visibility) — per-case "view client identity" toggle shipped with 11 |
+| 11. Rate Sheets / pay split | **done** — 2026-08-13 (per-user comp, per-case client rate, identity toggle; client-org rates await a client entity) |
+| 13, 14. Assignment acceptance · Calendar | not started |
 | 16–20. Phase 3 (case operations) | not started |
 | Phase 4 (client portal, redaction, safety, profitability) | not started |
 
