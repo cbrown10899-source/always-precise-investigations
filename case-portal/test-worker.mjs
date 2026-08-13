@@ -1194,6 +1194,91 @@ section('Notes: visibility is enforced in the query');
        body: { note_type: 'investigator', body: '  ' } })).status === 400);
 }
 
+section('Offers: the shape of the job before acceptance, the case only after');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  for (const uname of ['dana', 'reed']) {
+    const l = (await jsonOf(await invite(env, admin, { username: uname, display_name: uname, role: 'investigator' }))).url;
+    const t = new URL(l, 'https://x.test').searchParams.get('invite');
+    await call(env, `/invite/${t}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  }
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const reed = (await login(env, 'reed', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find(u => u.username === 'dana').id;
+  const reedId = users.users.find(u => u.username === 'reed').id;
+
+  await ingest(env, { case_no: 'API-OF1', carrier: 'Secret Mutual', claim_number: 'SM-1',
+                      subject_name: 'Hidden Subject', client_name: 'H. Adjuster' });
+  await call(env, '/users/' + danaId + '/rates', { method: 'POST', cookie: admin, body: { hourly: 55 } });
+
+  ok('an investigator cannot make offers',
+     (await call(env, '/cases/API-OF1/offer', { method: 'POST', cookie: dana,
+       body: { investigator_id: reedId } })).status === 403);
+  ok('an admin offers the case',
+     (await call(env, '/cases/API-OF1/offer', { method: 'POST', cookie: admin,
+       body: { investigator_id: danaId, investigation_date: '2026-08-20', expected_hours: 8,
+               general_location: 'Lynchburg area', mileage_terms: 'standing rate',
+               instructions: 'Meet at the Wal-Mart lot off 460. Subject is Hidden Subject.' } })).status === 201);
+  await call(env, '/cases/API-OF1/offer', { method: 'POST', cookie: admin,
+    body: { investigator_id: reedId, expected_hours: 8, general_location: 'Lynchburg area' } });
+
+  /* THE BOUNDARY. Pending = the job's shape and their pay. Nothing else. */
+  const pend = await jsonOf(await call(env, '/my/offers', { cookie: dana }));
+  const o = pend.offers[0];
+  ok('the offer shows date, hours, location', o.investigation_date === '2026-08-20'
+     && o.expected_hours === 8 && o.general_location === 'Lynchburg area');
+  ok('pay defaults to their standing rate', o.compensation_hourly === 55);
+  const thin = JSON.stringify(pend);
+  ok('NO case number before acceptance', !thin.includes('API-OF1'), thin);
+  ok('NO subject before acceptance', !thin.includes('Hidden Subject'));
+  ok('NO client before acceptance', !thin.includes('Secret Mutual'));
+  ok('NO instructions before acceptance', !thin.includes('Wal-Mart'));
+  ok('and no case access before acceptance',
+     (await call(env, '/cases/API-OF1/workspace', { cookie: dana })).status === 404);
+
+  ok("one investigator cannot answer another's offer",
+     (await call(env, `/my/offers/${o.id}/accept`, { method: 'POST', cookie: reed })).status === 404);
+
+  const acc = await jsonOf(await call(env, `/my/offers/${o.id}/accept`, { method: 'POST', cookie: dana }));
+  ok('accepting assigns the case', acc.status === 'accepted' && acc.case_no === 'API-OF1');
+  ok('the workspace opens after acceptance',
+     (await call(env, '/cases/API-OF1/workspace', { cookie: dana })).status === 200);
+  const mine = await jsonOf(await call(env, '/my/offers', { cookie: dana }));
+  ok('instructions arrive with acceptance',
+     JSON.stringify(mine).includes('Wal-Mart'));
+  const ws = await jsonOf(await call(env, '/cases/API-OF1/workspace', { cookie: dana }));
+  ok('the workspace carries their assignment terms',
+     ws.my_offer && ws.my_offer.compensation_hourly === 55 && ws.my_offer.instructions.includes('Wal-Mart'));
+  ok('the client stays redacted even after acceptance',
+     !JSON.stringify(ws).includes('Secret Mutual'));
+
+  const reedView = await jsonOf(await call(env, '/my/offers', { cookie: reed }));
+  ok("the loser's pending offer was withdrawn automatically",
+     reedView.offers[0].status === 'withdrawn');
+  ok('a decided offer cannot be accepted afterwards',
+     (await call(env, `/my/offers/${reedView.offers[0].id}/accept`, { method: 'POST', cookie: reed })).status === 404);
+
+  // Decline with a reason the office can read.
+  await ingest(env, { case_no: 'API-OF2', subject_name: 'S2', client_name: 'C2' });
+  const of2 = await jsonOf(await call(env, '/cases/API-OF2/offer', { method: 'POST', cookie: admin,
+    body: { investigator_id: reedId, expected_hours: 4 } }));
+  const rpend = await jsonOf(await call(env, '/my/offers', { cookie: reed }));
+  const rid = rpend.offers.find(x => x.status === 'offered').id;
+  await call(env, `/my/offers/${rid}/decline`, { method: 'POST', cookie: reed,
+    body: { reason: 'Out of town that week.' } });
+  const aws = await jsonOf(await call(env, '/cases/API-OF2/workspace', { cookie: admin }));
+  ok('the office sees who declined and why',
+     aws.offers[0].status === 'declined' && aws.offers[0].decline_reason === 'Out of town that week.');
+  ok('an admin can withdraw a pending offer', (await (async () => {
+    const o3 = await jsonOf(await call(env, '/cases/API-OF2/offer', { method: 'POST', cookie: admin,
+      body: { investigator_id: danaId } }));
+    return call(env, `/offers/${o3.id}/withdraw`, { method: 'POST', cookie: admin });
+  })()).status === 200);
+}
+
 section('Password reset: a one-time link, nobody learns the password');
 {
   const env = freshEnv();

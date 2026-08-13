@@ -948,6 +948,19 @@ async function caseWorkspace(env, user, caseNo) {
       WHERE n.case_no = ? ${admin ? '' : "AND n.visibility != 'admin'"}
       ORDER BY n.id DESC LIMIT 200`).bind(caseNo).all();
 
+  const { results: offers } = admin ? await env.DB.prepare(
+    `SELECT o.id, o.status, o.offered_at, o.responded_at, o.investigation_date, o.expected_hours,
+            o.general_location, o.compensation_hourly, o.mileage_terms, o.decline_reason,
+            u.display_name AS investigator
+       FROM case_offers o LEFT JOIN users u ON u.id = o.investigator_id
+      WHERE o.case_no = ? ORDER BY o.id DESC LIMIT 50`).bind(caseNo).all() : { results: [] };
+
+  const myOffer = admin ? null : await env.DB.prepare(
+    `SELECT investigation_date, expected_hours, general_location, instructions,
+            compensation_hourly, mileage_terms
+       FROM case_offers WHERE case_no = ? AND investigator_id = ? AND status = 'accepted'
+      ORDER BY id DESC LIMIT 1`).bind(caseNo, user.id).first();
+
   return json({
     case_no: row.case_no,
     kind: row.kind,
@@ -960,6 +973,8 @@ async function caseWorkspace(env, user, caseNo) {
     reports: reports || [],
     expenses: expenses || [],
     notes: notes || [],
+    offers: offers || [],
+    my_offer: myOffer || null,
   });
 }
 
@@ -1871,7 +1886,7 @@ const ADMIN_ONLY = 'This action needs an admin account.';
 const EXPECTED_TABLES = [
   'users', 'sessions', 'submissions', 'login_fails', 'invites', 'ingest_rate',
   'case_types', 'case_meta', 'case_days', 'activity_log', 'activity_media', 'case_reports', 'app_config',
-  'case_expenses', 'case_notes', 'user_rates', 'case_settings', 'password_resets',
+  'case_expenses', 'case_notes', 'user_rates', 'case_settings', 'password_resets', 'case_offers',
 ];
 
 async function missingTables(env) {
@@ -2071,6 +2086,47 @@ async function route(request, env) {
     return clearDemoCases(env);
   }
 
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/offer$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    const exists = await env.DB.prepare('SELECT 1 AS x FROM submissions WHERE case_no = ?').bind(m[1]).first();
+    if (!exists) return json({ error: 'not found' }, 404);
+    const body = await readJson(request);
+    const uid = parseInt(body.investigator_id, 10);
+    const u = await env.DB.prepare('SELECT id FROM users WHERE id = ? AND active = 1').bind(uid).first();
+    if (!u) return json({ error: 'Pick an active investigator.' }, 400);
+    const num = v => { if (v === null || v === undefined || String(v).trim() === '') return null;
+      const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : undefined; };
+    const hours = num(body.expected_hours), comp = num(body.compensation_hourly);
+    if (hours === undefined || comp === undefined) return json({ error: 'Hours and pay must be numbers, or blank.' }, 400);
+    // Default the pay to their standing rate so the offer is never blank by accident.
+    let pay = comp;
+    if (pay === null) {
+      const r = await env.DB.prepare('SELECT hourly FROM user_rates WHERE user_id = ?').bind(uid).first();
+      pay = r ? r.hourly : null;
+    }
+    const res = await env.DB.prepare(
+      `INSERT INTO case_offers (case_no, investigator_id, offered_by, offered_at, investigation_date,
+         expected_hours, general_location, instructions, compensation_hourly, mileage_terms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(m[1], uid, user.id, nowIso(),
+            String(body.investigation_date || '').slice(0, 10) || null,
+            hours, String(body.general_location || '').slice(0, 200) || null,
+            String(body.instructions || '').slice(0, 4000) || null,
+            pay, String(body.mileage_terms || '').slice(0, 200) || null).run();
+    return json({ ok: true, id: res.meta ? res.meta.last_row_id : null }, 201);
+  }
+
+  m = p.match(/^\/offers\/(\d{1,12})\/withdraw$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    const r = await env.DB.prepare(
+      `UPDATE case_offers SET status = 'withdrawn', responded_at = ? WHERE id = ? AND status = 'offered'`)
+      .bind(nowIso(), parseInt(m[1], 10)).run();
+    if (r.meta && r.meta.changes === 0) return json({ error: 'not found' }, 404);
+    return json({ ok: true });
+  }
+
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/settings$/);
   if (m && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
@@ -2112,6 +2168,65 @@ async function route(request, env) {
 
   /* Their own compensation — an investigator should know what they are paid,
      and it is the one rate they may see. */
+  /* Offers on my desk. A pending offer is deliberately thin: the job's shape
+     and my pay. No case number, no subject, no client — those arrive with
+     acceptance, and acceptance is what creates access. */
+  if (p === '/my/offers' && method === 'GET') {
+    const { results } = await env.DB.prepare(
+      `SELECT o.id, o.status, o.offered_at, o.responded_at, o.investigation_date,
+              o.expected_hours, o.general_location, o.mileage_terms,
+              o.compensation_hourly, o.instructions, o.case_no,
+              t.label AS case_type
+         FROM case_offers o
+         LEFT JOIN case_meta m ON m.case_no = o.case_no
+         LEFT JOIN case_types t ON t.id = m.case_type_id
+        WHERE o.investigator_id = ?
+        ORDER BY o.id DESC LIMIT 50`).bind(user.id).all();
+    const offers = (results || []).map(o => {
+      if (o.status === 'offered') {
+        const { case_no, instructions, ...thin } = o;
+        return thin;
+      }
+      return o;
+    });
+    return json({ offers });
+  }
+
+  m = p.match(/^\/my\/offers\/(\d{1,12})\/(accept|decline)$/);
+  if (m && method === 'POST') {
+    const oid = parseInt(m[1], 10), verb = m[2];
+    const offer = await env.DB.prepare(
+      'SELECT * FROM case_offers WHERE id = ? AND investigator_id = ?').bind(oid, user.id).first();
+    if (!offer || offer.status !== 'offered') return json({ error: 'not found' }, 404);
+
+    if (verb === 'decline') {
+      const reason = String((await readJson(request)).reason || '').slice(0, 500) || null;
+      await env.DB.prepare(
+        `UPDATE case_offers SET status = 'declined', responded_at = ?, decline_reason = ? WHERE id = ?`)
+        .bind(nowIso(), reason, oid).run();
+      return json({ ok: true, status: 'declined' });
+    }
+    // Accept: the case must still be free — first acceptance wins.
+    const row = await env.DB.prepare(
+      'SELECT assigned_to FROM submissions WHERE case_no = ?').bind(offer.case_no).first();
+    if (!row) return json({ error: 'not found' }, 404);
+    if (row.assigned_to != null && row.assigned_to !== user.id) {
+      await env.DB.prepare(
+        `UPDATE case_offers SET status = 'withdrawn', responded_at = ? WHERE id = ?`).bind(nowIso(), oid).run();
+      return json({ error: 'This assignment has already been taken.' }, 409);
+    }
+    await env.DB.prepare(
+      `UPDATE submissions SET assigned_to = ?, status = 'assigned' WHERE case_no = ?`)
+      .bind(user.id, offer.case_no).run();
+    await env.DB.prepare(
+      `UPDATE case_offers SET status = 'accepted', responded_at = ? WHERE id = ?`).bind(nowIso(), oid).run();
+    // Anyone else still holding a pending offer on this case loses it quietly.
+    await env.DB.prepare(
+      `UPDATE case_offers SET status = 'withdrawn', responded_at = ?
+        WHERE case_no = ? AND status = 'offered'`).bind(nowIso(), offer.case_no).run();
+    return json({ ok: true, status: 'accepted', case_no: offer.case_no });
+  }
+
   if (p === '/my/comp' && method === 'GET') {
     const r = await env.DB.prepare('SELECT hourly, mileage FROM user_rates WHERE user_id = ?')
       .bind(user.id).first();
