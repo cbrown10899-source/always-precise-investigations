@@ -534,7 +534,10 @@ async function emailSheet(request, env, id) {
     return json({ error: 'Too many emails in one minute — wait a moment and send again.' }, 429);
   }
 
-  const { text, html } = sheetEmail(sheet, note);
+  // The Options step (UIBUILD P18): include the sheet's own intake, or not.
+  // Which intake is never the caller's choice — SHEET_INTAKE pairs it.
+  const includeIntake = body.include_intake === true || body.include_intake === 1 || body.include_intake === '1';
+  const { text, html } = sheetEmail(sheet, note, includeIntake);
   const subject = caseNo
     ? `${sheet.name} — Always Precise Investigations (case ${caseNo})`
     : `${sheet.name} — Always Precise Investigations`;
@@ -549,6 +552,53 @@ async function emailSheet(request, env, id) {
     }, 502);
   }
   return json({ ok: true, sent_to: to, sheet: sheet.id });
+}
+
+/* Manual intake (UIBUILD P17): the office types in what a phone call or an
+   email brought, and it becomes a submission like any other — same table,
+   same workspace, no parallel lead store to drift. The only hard requirement
+   is knowing WHO: everything else can arrive later (INTAKE-NA's principle —
+   never force fake information to pass validation). */
+async function createManualIntake(request, env, user) {
+  const body = await readJson(request);
+  const kind = body.kind === 'claims' ? 'claims' : body.kind === 'consumer' ? 'consumer' : null;
+  if (!kind) return json({ error: 'Pick Insurance/Commercial or Private Client first.' }, 400);
+  const who = String((kind === 'claims' ? (body.carrier || body.client_name) : body.client_name) || '').trim();
+  if (!who) {
+    return json({ error: kind === 'claims'
+      ? 'Name the carrier or the assigning contact.' : 'Name the client.' }, 400);
+  }
+
+  const fields = ['service', 'client_name', 'client_email', 'client_phone', 'client_address',
+    'carrier', 'claim_number', 'policy_number', 'claim_type', 'date_of_loss',
+    'adjuster', 'adjuster_email', 'adjuster_phone', 'defense_counsel',
+    'subject_name', 'subject_address', 'subject_description', 'subject_relationship',
+    'objective', 'timeline', 'notes'];
+  const payload = {};
+  for (const f of fields) { const v = pick(body, f); if (v) payload[f] = v; }
+  payload.manual_intake = true;
+  payload.entered_by = user.display_name || user.username;
+
+  // Same number shape the public form mints; UNIQUE retries pick a new one.
+  for (let att = 0; att < 5; att++) {
+    const caseNo = 'API-' + nowIso().slice(0, 10).replace(/-/g, '') + '-'
+      + String(Math.floor(1000 + Math.random() * 9000));
+    try {
+      await env.DB.prepare(
+        `INSERT INTO submissions
+           (case_no, kind, service, client_name, client_email, client_phone,
+            subject_name, carrier, claim_number, payload, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .bind(caseNo, kind, payload.service || null,
+          payload.client_name || null, payload.client_email || null, payload.client_phone || null,
+          payload.subject_name || null, payload.carrier || null, payload.claim_number || null,
+          JSON.stringify(payload), nowIso()).run();
+      return json({ ok: true, case_no: caseNo }, 201);
+    } catch (e) {
+      if (!String(e).includes('UNIQUE')) throw e;
+    }
+  }
+  return json({ error: 'Could not allocate a case number — try again.' }, 500);
 }
 
 /* The dashboard's one job is answering "what needs my attention today?", so
@@ -675,7 +725,18 @@ async function caseSummary(env, user) {
 /* The email. Plain text alongside the HTML so it stays readable in a client
    that blocks markup, and so an adjuster forwarding it to their approver does
    not send them a broken page. */
-function sheetEmail(sheet, note) {
+/* The paired intake per sheet (UIBUILD P18). Decided HERE, by sheet id — the
+   page only says whether to include it, never which one, so a carrier can
+   never be handed the consumer door or the reverse. */
+const SHEET_INTAKE = {
+  insurance_assignment: { label: 'Insurance Assignment Intake',
+    url: 'https://alwayspreciseinvestigations.net/intake/?assignment=insurance' },
+  private_retainer: { label: 'Private Client Intake',
+    url: 'https://alwayspreciseinvestigations.net/intake/' },
+};
+
+function sheetEmail(sheet, note, includeIntake) {
+  const intake = includeIntake ? SHEET_INTAKE[sheet.id] : null;
   const rows = sheet.lines.map(l =>
     `  ${l.label}${l.sub ? ` (${l.sub})` : ''}: ${l.value}${l.badge ? `  ** ${l.badge} **` : ''}\n     ${l.note}`).join('\n');
   const text =
@@ -689,7 +750,7 @@ ${rows}
 
 ${sheet.closing_title}
 ${sheet.closing}
-
+${intake ? `\nReady to begin? The ${intake.label} takes a few minutes:\n${intake.url}\n` : ''}
 Questions: (434) 907-0975
 Always Precise Investigations, LLC`;
 
@@ -714,6 +775,10 @@ Always Precise Investigations, LLC`;
   </table>
   <p style="margin:0 0 4px;font-weight:800;color:#12305a">${escHtml(sheet.closing_title)}</p>
   <p style="margin:0 0 14px;font-size:.92rem">${escHtml(sheet.closing)}</p>
+  ${intake ? `<p style="margin:0 0 14px">
+    <a href="${escHtml(intake.url)}" style="display:inline-block;background:#12305a;color:#fff;
+       padding:11px 18px;border-radius:8px;text-decoration:none;font-weight:700">
+      Start the ${escHtml(intake.label)}</a></p>` : ''}
   <hr style="border:0;border-top:1px solid #dfe3e8">
   <p style="font-size:.82rem;color:#5c6775">Questions? (434) 907-0975<br>
      Always Precise Investigations, LLC</p>
@@ -3391,6 +3456,11 @@ async function route(request, env) {
   if (p === '/packages' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return casePackages(env);
+  }
+
+  if (p === '/intakes' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return createManualIntake(request, env, user);
   }
 
   if (p === '/external-storage' && method === 'GET') {
