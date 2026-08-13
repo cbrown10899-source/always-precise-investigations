@@ -23,6 +23,20 @@ Progress ledger (handoff phases):
 
 ---
 
+**Visual reference (owner mock, 2026-08-13):** the owner sent a rendered
+mock of the target: dark-navy LEFT SIDEBAR navigation (Dashboard · Cases ·
+Calendar · Rate Sheets · Invoices · Leads & Intakes · Clients · Reports ·
+Evidence · Expenses · Tasks · Staff · Settings, plus an "Intake a Client"
+button), Case Package cards with a PROGRESS RING ("71% Complete") over the
+block row, a Next Step button per card, case detail collapsed to
+Overview / Fieldwork / Report & Evidence / Admin with a Case Package
+Progress panel, an Add Activity sheet (searchable "What happened?" +
+favorites chips + time + details + flags + "Add more details" fold), rate
+sheets as two product cards with a 3-step SEND WIZARD including an
+"Include Insurance Assignment Intake Form" attachment option, and an
+Evidence Gallery of thumbnails with Photos/Video/Documents/All tabs.
+Build toward that picture with the existing design tokens.
+
 The handoff, in substance (25 priorities):
 
 **P1 — Case Package cards below the case list.** The table stays for
