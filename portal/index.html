@@ -257,6 +257,7 @@ const PHRASES = [
 let LOAD_ERR = "";        // why the portal could not load, shown rather than hidden
 let SCHEMA_MISSING = [];  // tables the database does not have yet
 let CARD_FILTER = null;   // {label, set:Set(case numbers)} — a dashboard card's cases
+let MY_REPORTS = null, MY_EXPENSES = null;   // the investigator's own desk, loaded on demand
 /* Examples show themselves on a first sign-in and can be recalled later. */
 let SHOW_EXAMPLE = false;
 
@@ -450,11 +451,17 @@ function inviteView(state){
 }
 
 function shell(inner){
+  // Simplified navigation for the field, exactly as the handoff draws it —
+  // not a miniature admin portal. Calendar and Availability join when their
+  // features exist rather than sitting as dead tabs.
   const tabs = ME.role === "admin"
     ? `<button class="${TAB==="cases"?"on":""}" data-act="tab" data-tab="cases">Cases</button>
        <button class="${TAB==="sheets"?"on":""}" data-act="tab" data-tab="sheets">Rate sheets</button>
        <button class="${TAB==="staff"?"on":""}" data-act="tab" data-tab="staff">Staff</button>`
-    : "";
+    : `<button class="${TAB==="cases"?"on":""}" data-act="tab" data-tab="cases">My assignments</button>
+       <button class="${TAB==="today"?"on":""}" data-act="tab" data-tab="today">Today</button>
+       <button class="${TAB==="myreports"?"on":""}" data-act="tab" data-tab="myreports">Reports</button>
+       <button class="${TAB==="myexpenses"?"on":""}" data-act="tab" data-tab="myexpenses">Expenses</button>`;
   // The schema notice comes first and is specific, because it is the one cause
   // that explains every other symptom at once.
   const schema = SCHEMA_MISSING.length ? `<div class="loaderr">
@@ -488,7 +495,7 @@ function shell(inner){
    fake zero. Drawn even when the portal is empty, because a page that shows
    nothing at all looks broken. */
 function summaryCards(){
-  if(TAB === "staff" || TAB === "sheets") return "";
+  if(TAB !== "cases" && TAB !== "today") return "";
   const s = SUMMARY || {};
   const shown = SHOW_EXAMPLE ? examplesFor(ME.role) : [];
   const admin = ME.role === "admin";
@@ -530,6 +537,82 @@ function summaryCards(){
     SHOW_EXAMPLE ? `<div class="ex-note" style="margin-bottom:16px">
       <b>These totals include the example</b> &mdash; they drop back to your real numbers when you hide it.
     </div>` : ""}`;
+}
+
+/* The investigator's day, answered directly: am I out now, what is assigned
+   to me, what do I owe. Everything here is already scoped by the Worker. */
+function todayView(){
+  const s = SUMMARY || {};
+  const active = s.active_now || [], due = s.reports_due || [];
+  const mine = CASES.filter(c => c.status !== "closed");
+  const caseRow = (no, extra) => {
+    const c = CASES.find(x => x.case_no === no) || { case_no: no };
+    return `<button class="rcard" data-act="openCase" data-case="${esc(no)}">
+      <div class="rc-h"><b class="mono">${esc(no)}</b> ${extra || ""}</div>
+      <div class="tl-m">${esc(c.subject_name || "")}</div></button>`;
+  };
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Today</h2></div>
+    ${active.length ? `<h3 class="tl-day">Out now — a day is running</h3>
+      <div class="rlist">${active.map(no => caseRow(no, '<span class="tag cap-sd">Running</span>')).join("")}</div>` : ""}
+    ${due.length ? `<h3 class="tl-day">Reports owed</h3>
+      <div class="rlist">${due.map(no => caseRow(no, '<span class="tag rs-needs_revision">Report due</span>')).join("")}</div>` : ""}
+    ${mine.length ? `<h3 class="tl-day">Your caseload</h3>
+      <div class="rlist">${mine.map(c => caseRow(c.case_no)).join("")}</div>`
+      : `<div class="empty">Nothing is assigned to you right now.</div>`}
+    ${!active.length && !due.length && mine.length
+      ? `<p class="note">Nothing is waiting on you beyond the caseload above.</p>` : ""}
+  </div>`;
+}
+
+/* Their reports across every case, and the completed days still owing one. */
+function myReportsView(){
+  if(!MY_REPORTS) return `<div class="card"><div class="empty">Loading your reports&hellip;</div></div>`;
+  const { reports, days_without_reports: owed } = MY_REPORTS;
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Your reports</h2></div>
+    ${owed.length ? `<div class="ex-note" style="margin-bottom:14px"><b>${owed.length}
+        ${owed.length === 1 ? "day is" : "days are"} waiting on a report.</b> Open one to draft it
+        from the activity log.</div>
+      <div class="rlist">${owed.map(d => `
+        <button class="rcard" data-act="openCaseTab" data-case="${esc(d.case_no)}" data-tab="reports">
+          <div class="rc-h"><b>${esc(fmtDay(d.day_date))}</b> <span class="tag rs-needs_revision">No report yet</span></div>
+          <div class="tl-m"><span class="mono">${esc(d.case_no)}</span>${d.hours != null ? ` · ${esc(d.hours)} hours` : ""}</div>
+        </button>`).join("")}</div>` : ""}
+    ${reports.length ? `<div class="rlist" style="margin-top:14px">${reports.map(r => `
+        <button class="rcard" data-act="openCaseTab" data-case="${esc(r.case_no)}" data-tab="reports">
+          <div class="rc-h"><b>${esc(fmtDay(r.report_date))}</b> <span class="tag rs-${esc(r.status)}">${esc(reportLabel(r.status))}</span></div>
+          <div class="tl-m"><span class="mono">${esc(r.case_no)}</span></div>
+          ${r.review_note ? `<div class="tl-n">Office note: ${esc(r.review_note)}</div>` : ""}
+        </button>`).join("")}</div>`
+      : owed.length ? "" : `<div class="empty">No reports yet. End an investigation day and draft one from its log.</div>`}
+  </div>`;
+}
+
+/* Their expenses across every case, with where each stands. */
+function myExpensesView(){
+  if(!MY_EXPENSES) return `<div class="card"><div class="empty">Loading your expenses&hellip;</div></div>`;
+  const list = MY_EXPENSES.expenses;
+  const money = n => n == null ? "—" : "$" + Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+  const pending = list.filter(e => !e.reviewed_at);
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Your expenses</h2>
+      ${pending.length ? `<span class="count">${pending.length} awaiting review</span>` : ""}</div>
+    ${list.length ? `<div style="overflow-x:auto"><table>
+      <thead><tr><th>Date</th><th>Case</th><th>What</th><th>Amount</th><th class="hide">Miles</th><th>Status</th></tr></thead>
+      <tbody>${list.map(e => `<tr class="click" data-act="openCaseTab" data-case="${esc(e.case_no)}" data-tab="expenses">
+        <td>${esc(fmtDay(e.expense_date))}</td>
+        <td class="mono">${esc(e.case_no)}</td>
+        <td>${esc(label(e.category) || e.category)}<div class="tl-m">${esc(e.description)}</div></td>
+        <td>${money(e.amount)}</td>
+        <td class="hide">${e.miles != null ? esc(e.miles) : "—"}</td>
+        <td>${e.reviewed_at
+            ? (e.reimbursable ? '<span class="tag xr">Reimbursing</span>' : '<span class="tag">Reviewed</span>')
+            : '<span class="tag new">Awaiting review</span>'}</td>
+      </tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">No expenses recorded yet. Log them from a case's Expenses tab, or the
+         Mileage and Expense quick buttons on the activity log.</div>`}
+  </div>`;
 }
 
 /* Two documents the office sends: the retainer sheet for a private client, the
@@ -733,7 +816,13 @@ function paint(){
     </div>`;
     return;
   }
-  app.innerHTML = shell(TAB === "staff" ? staffView() : TAB === "sheets" ? sheetsView() : casesView());
+  app.innerHTML = shell(
+      TAB === "staff" ? staffView()
+    : TAB === "sheets" ? sheetsView()
+    : TAB === "today" ? todayView()
+    : TAB === "myreports" ? myReportsView()
+    : TAB === "myexpenses" ? myExpensesView()
+    : casesView());
   const q = $("q");
   if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
 }
@@ -1580,7 +1669,12 @@ document.addEventListener("click", ev => {
   if(!el) return;
   const act = el.dataset.act;
   if(act === "backToCases"){ VIEW = "list"; render(); }
-  else if(act === "tab"){ TAB = el.dataset.tab; paint(); }
+  else if(act === "tab"){
+    TAB = el.dataset.tab; paint();
+    if(TAB === "myreports") api("/my/reports").then(d => { MY_REPORTS = d; paint(); }).catch(()=>{});
+    if(TAB === "myexpenses") api("/my/expenses").then(d => { MY_EXPENSES = d; paint(); }).catch(()=>{});
+  }
+  else if(act === "openCaseTab"){ openCase(el.dataset.case, el.dataset.tab); }
   else if(act === "showExample"){ SHOW_EXAMPLE = true; paint(); }
   else if(act === "hideExample"){ SHOW_EXAMPLE = false; paint(); }
   else if(act === "logout"){ doLogout(); }

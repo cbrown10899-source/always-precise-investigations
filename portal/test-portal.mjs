@@ -1157,6 +1157,33 @@ section('Each quick button changes the composer');
   await page.close();
 }
 
+/* Priority 9: the investigator navigation is a field desk, not a mini admin. */
+section("The investigator's own navigation");
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  const tabs = await text(page, '.tabs');
+  for (const t of ['My assignments', 'Today', 'Reports', 'Expenses']) {
+    ok(`the investigator gets ${t}`, has(tabs, t), tabs);
+  }
+  ok('and none of the office', !has(tabs, 'Rate sheets') && !has(tabs, 'Staff'));
+
+  await page.locator('.tabs button', { hasText: 'Today' }).click();
+  await page.waitForTimeout(300);
+  const today = await text(page, '.card');
+  ok('Today shows their caseload', today.includes('API-20260812-4001'));
+
+  await page.locator('.tabs button', { hasText: 'Reports' }).click();
+  await page.waitForTimeout(500);
+  const rep = await text(page, '.card');
+  ok('their Reports desk loads', has(rep, 'Your reports'), rep.slice(0, 120));
+
+  await page.locator('.tabs button', { hasText: 'Expenses' }).click();
+  await page.waitForTimeout(500);
+  ok('their Expenses desk loads', has(await text(page, '.card'), 'Your expenses'));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
