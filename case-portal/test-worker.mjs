@@ -1194,6 +1194,51 @@ section('Notes: visibility is enforced in the query');
        body: { note_type: 'investigator', body: '  ' } })).status === 400);
 }
 
+section('Password reset: a one-time link, nobody learns the password');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const tok = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const oldSession = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const dana = users.users.find(u => u.username === 'dana');
+
+  ok('an investigator cannot issue a reset link',
+     (await call(env, `/users/${dana.id}/reset-link`, { method: 'POST', cookie: oldSession })).status === 403);
+  const issued = await call(env, `/users/${dana.id}/reset-link`, { method: 'POST', cookie: admin });
+  ok('an admin can', issued.status === 201);
+  const url = (await jsonOf(issued)).url;
+  const rt = new URL(url, 'https://x.test').searchParams.get('reset');
+  ok('the link carries a 64-hex token', /^[0-9a-f]{64}$/.test(rt), url);
+
+  const info = await jsonOf(await call(env, `/reset/${rt}`));
+  ok('the link says who it is for, without a session', info.username === 'dana');
+
+  ok('a weak new password is refused',
+     (await call(env, `/reset/${rt}/accept`, { method: 'POST', body: { password: 'short' } })).status === 400);
+  const done = await call(env, `/reset/${rt}/accept`, { method: 'POST', body: { password: 'BrandNewPass26x' } });
+  ok('the holder sets their own password and is signed in', done.status === 200);
+
+  ok('every old session is dead',
+     (await call(env, '/auth/me', { cookie: oldSession })).status === 401);
+  ok('the old password no longer works',
+     (await call(env, '/auth/login', { method: 'POST', body: { username: 'dana', password: 'FieldWork2026x' } })).status === 401);
+  ok('the new one does',
+     (await call(env, '/auth/login', { method: 'POST', body: { username: 'dana', password: 'BrandNewPass26x' } })).status === 200);
+  ok('the link is single-use',
+     (await call(env, `/reset/${rt}/accept`, { method: 'POST', body: { password: 'AnotherPass26x' } })).status === 404);
+  ok('a made-up token is refused', (await call(env, `/reset/${'0'.repeat(64)}`)).status === 404);
+
+  const again = await jsonOf(await call(env, `/users/${dana.id}/reset-link`, { method: 'POST', cookie: admin }));
+  const rt2 = new URL(again.url, 'https://x.test').searchParams.get('reset');
+  await call(env, `/users/${dana.id}/reset-link`, { method: 'POST', cookie: admin });
+  ok('a fresh link retires the previous unused one',
+     (await call(env, `/reset/${rt2}`)).status === 404);
+}
+
 section('Client rate and investigator pay never share a field');
 {
   const env = freshEnv();
