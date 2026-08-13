@@ -863,7 +863,81 @@ section('Rate sheets and the emailed quote');
   ok('the send beyond the cap is a 429', s5.status === 429);
   ok('the refused send never reached the provider', providerCalls === 3);
 
+  /* UIBUILD P18 — the wizard's Options step: the sheet's OWN intake link,
+     included on request. Which intake is paired server-side by sheet id, so
+     the wrong door cannot be sent no matter what the page asks for. */
+  {
+    const env2 = freshEnv();
+    env2.RESEND_API_KEY = 'test-resend-key';
+    await bootstrapAdmin(env2);
+    const adm2 = (await login(env2, 'trever', 'FirstAdminPass1')).cookie;
+
+    ok('the carrier send can carry its intake door',
+       (await call(env2, '/sheets/insurance_assignment/email', { method: 'POST', cookie: adm2,
+         body: { to: 'adjuster@example.test', include_intake: true } })).status === 200);
+    ok('and it is the carrier door, in both parts',
+       lastBody.html.includes('/intake/?assignment=insurance')
+       && lastBody.text.includes('/intake/?assignment=insurance'));
+    ok('never the bare consumer intake beside it',
+       (lastBody.html.match(/\/intake\//g) || []).length ===
+       (lastBody.html.match(/\/intake\/\?assignment=insurance/g) || []).length);
+
+    await call(env2, '/sheets/private_retainer/email', { method: 'POST', cookie: adm2,
+      body: { to: 'client@example.test', include_intake: true } });
+    ok('the private send pairs the private intake',
+       lastBody.html.includes('/intake/') && !lastBody.html.includes('assignment=insurance'));
+
+    await call(env2, '/sheets/private_retainer/email', { method: 'POST', cookie: adm2,
+      body: { to: 'client@example.test' } });
+    ok('left unticked, no intake link rides along', !lastBody.html.includes('/intake/'));
+  }
+
   globalThis.fetch = realFetch;
+}
+
+/* UIBUILD P17 — the office types in what a phone call brought. Same table as
+   every other submission; no parallel lead store to drift. */
+section('Manual intake from the office');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  await call(env, `/invite/${new URL(link, 'https://x.test').searchParams.get('invite')}/accept`,
+    { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  ok('an investigator cannot create intakes',
+     (await call(env, '/intakes', { method: 'POST', cookie: inv,
+       body: { kind: 'consumer', client_name: 'X' } })).status === 403);
+  ok('no kind, no intake',
+     (await call(env, '/intakes', { method: 'POST', cookie: admin,
+       body: { client_name: 'X' } })).status === 400);
+  ok('a claims lead needs a carrier or a contact',
+     (await call(env, '/intakes', { method: 'POST', cookie: admin,
+       body: { kind: 'claims' } })).status === 400);
+  ok('a private lead needs the client name',
+     (await call(env, '/intakes', { method: 'POST', cookie: admin,
+       body: { kind: 'consumer', subject_name: 'S' } })).status === 400);
+
+  const made = await jsonOf(await call(env, '/intakes', { method: 'POST', cookie: admin,
+    body: { kind: 'claims', carrier: 'Phoned-In Mutual', adjuster: 'A. Caller',
+            client_name: 'A. Caller', claim_number: 'PM-77', subject_name: 'Claimant Q',
+            objective: 'Activity check' } }));
+  ok('a phoned-in assignment becomes a case', /^API-\d{8}-\d{4}$/.test(made.case_no), made.case_no);
+
+  const sub = await jsonOf(await call(env, `/submissions/${made.case_no}`, { cookie: admin }));
+  ok('it lands as a claims submission', sub.submission.kind === 'claims'
+     && sub.submission.carrier === 'Phoned-In Mutual');
+  ok('the payload records who typed it in',
+     sub.submission.payload.manual_intake === true && sub.submission.payload.entered_by === 'Trever');
+
+  // A thin lead is allowed on purpose: the office can hold what it knows.
+  const lead = await jsonOf(await call(env, '/intakes', { method: 'POST', cookie: admin,
+    body: { kind: 'consumer', client_name: 'Walk-in — name only' } }));
+  ok('a name alone is enough to hold a lead', /^API-/.test(lead.case_no));
+  const ws = await call(env, `/cases/${lead.case_no}/workspace`, { cookie: admin });
+  ok('and the lead opens as a full workspace', ws.status === 200);
 }
 
 section('The two internal calculations never share a number');

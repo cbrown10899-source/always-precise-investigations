@@ -756,7 +756,7 @@ section('Rate sheets');
   ok('"Additional fees — None" is gone', !has(sheet, 'Additional fees'));
   ok('replaced by the plain-language promise', has(sheet, 'No routine add-on fees'));
   ok('its confirmation line is its own', has(sheet, 'Your case. Your authorization.'));
-  ok('there is somewhere to type the address', await page.locator('#sh_to').count() === 1);
+  ok('the send wizard is the one door out', await page.locator('.btn', { hasText: 'Send this sheet' }).count() === 1);
 
   await page.locator('.sheet-card', { hasText: 'Insurance Assignment Rates' }).click();
   await page.waitForTimeout(300);
@@ -771,11 +771,32 @@ section('Rate sheets');
   ok('its own confirmation line', has(ins, 'Clear pricing. No surprise billing.'));
   ok('the retainer figure is NOT on the carrier sheet', !ins.includes('$1,500'), ins);
 
-  // Sending needs an address, and says so rather than failing silently.
-  await page.locator('.btn', { hasText: 'Email this sheet' }).click();
+  // UIBUILD P18: the 3-step wizard — Recipient, Options (the paired intake),
+  // Preview. On the carrier sheet the paired intake is the carrier door.
+  await page.locator('.btn', { hasText: 'Send this sheet' }).click();
   await page.waitForTimeout(300);
-  ok('sending with no address is refused',
-     has(await page.locator('.card').nth(1).innerText(), 'Enter the address'));
+  ok('the wizard opens on Recipient', has(await text(page, '.amsheet'), 'Send it to'));
+  await page.locator('.btn', { hasText: 'Next' }).click();
+  await page.waitForTimeout(250);
+  ok('an empty address is refused before moving on',
+     has(await text(page, '.amsheet'), 'Enter the address'));
+  await page.locator('#wiz_to').fill('adjuster@example.test');
+  await page.locator('.btn', { hasText: 'Next' }).click();
+  await page.waitForTimeout(250);
+  const opts = await text(page, '.amsheet');
+  ok('Options pairs the carrier intake, by name', has(opts, 'Insurance Assignment Intake'));
+  ok('and says the consumer picker is never offered', has(opts, 'never the consumer picker'));
+  await page.locator('.btn', { hasText: 'Next' }).click();
+  await page.waitForTimeout(250);
+  const prev = await text(page, '.amsheet');
+  ok('Preview names the recipient and the included intake',
+     has(prev, 'adjuster@example.test') && has(prev, 'link included'));
+  await page.locator('.btn', { hasText: 'Send it' }).click();
+  await page.waitForTimeout(500);
+  ok('with no mail key the wizard says exactly what is missing',
+     has(await text(page, '.amsheet'), 'not configured'));
+  await page.locator('.amx').click();
+  await page.waitForTimeout(250);
   await page.close();
 }
 
@@ -1992,6 +2013,61 @@ section('The case page: four sections, one obvious next step');
   ok('no section hides a Billing panel', !has(everything, 'Billing'));
   ok('no section hides a Package panel', !has(everything, 'Package'));
   ok('no section hides an Assignment panel', !has(everything, 'Assignment'));
+  await page.close();
+}
+
+/* UIBUILD phase 6: the leads desk, the manual intake, and both landing as
+   ordinary submissions — no parallel store. */
+section('Leads and intakes: cards, decisions, and the phone-call lead');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  ok('the office navigation carries Leads & intakes', has(await text(page, '.tabs'), 'Leads'));
+  await page.locator('.tabs button', { hasText: 'Leads' }).click();
+  await page.waitForTimeout(400);
+  const desk = await text(page, '#app');
+  ok('early-stage submissions wait as cards', await page.locator('.pcard').count() >= 1, desk.slice(0, 200));
+  ok('a card offers Review', await page.locator('.pcard .btn', { hasText: 'Review' }).count() >= 1);
+  ok('and Accept routes to the assignment decision',
+     await page.locator('.pcard .btn', { hasText: 'Accept' }).count() >= 1);
+  // The hostile row is stage new, so it sits on this desk too — as text.
+  ok('a hostile case number renders as text on the leads desk',
+     desk.includes('window.__pwned'));
+  ok('and still does not execute', (await page.evaluate(() => Boolean(window.__pwned))) === false);
+
+  // P17 — the phone-call lead: name only, saved, waiting under New.
+  await page.locator('.side-intake').click();
+  await page.waitForTimeout(400);
+  ok('the intake door asks who it is for', has(await text(page, '#app'), 'Private Client'));
+  await page.locator('.sheet-card', { hasText: 'Private Client' }).click();
+  await page.waitForTimeout(300);
+  ok('only the relevant questions follow', await page.locator('#nl_carrier').count() === 0
+     && await page.locator('#nl_client').count() === 1);
+  await page.locator('#nl_client').fill('Phone Lead Client');
+  await page.locator('.btn', { hasText: 'Save lead' }).click();
+  await page.waitForTimeout(900);
+  const after = await text(page, '#app');
+  ok('the lead saves and lands on the desk', has(after, 'Saved as API-'), after.slice(0, 200));
+  ok('and waits under New', has(after, 'Phone Lead Client'));
+
+  // The insurance path goes straight into the case when asked to.
+  await page.locator('.side-intake').click();
+  await page.waitForTimeout(400);
+  await page.locator('.sheet-card', { hasText: 'Insurance / Commercial' }).click();
+  await page.waitForTimeout(300);
+  ok('the carrier questions appear', await page.locator('#nl_carrier').count() === 1);
+  await page.locator('#nl_carrier').fill('Walkthrough Mutual');
+  await page.locator('#nl_claim').fill('WM-2026-001');
+  await page.locator('.btn', { hasText: 'Create case' }).click();
+  await page.waitForTimeout(1100);
+  ok('Create case opens the new case itself', await page.locator('.casepage').count() === 1);
+  ok('with the carrier in the header', has(await text(page, '.caseheader'), 'Walkthrough Mutual'));
+  await page.close();
+}
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  ok('an investigator gets no leads desk', !has(await text(page, '.tabs'), 'Leads'));
   await page.close();
 }
 

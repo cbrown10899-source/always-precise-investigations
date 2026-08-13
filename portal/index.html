@@ -190,7 +190,8 @@
     body.withnav .tabs button.on{background:#1f3a58;color:#fff;}
     body.withnav .tabs button:hover{background:#1a3350;color:#fff;}
     body.withnav .tabs .side-intake{margin-top:auto;display:block;text-align:center;background:var(--gold,#c99a3b);
-      color:#13273f;font-weight:800;border-radius:9px;padding:11px 12px;text-decoration:none;}
+      color:#13273f;font-weight:800;border-radius:9px;padding:11px 12px;text-decoration:none;
+      font:inherit;font-weight:800;border:0;cursor:pointer;width:100%;}
     body.withnav #app{margin-left:198px;}
   }
   @media(max-width:899px){
@@ -201,7 +202,8 @@
     body.withnav.navopen .tabs button{text-align:left;color:#c9d6e4;background:transparent;border-radius:8px;padding:11px 12px;}
     body.withnav.navopen .tabs button.on{background:#1f3a58;color:#fff;}
     body.withnav.navopen .tabs .side-intake{margin-top:auto;display:block;text-align:center;
-      background:var(--gold,#c99a3b);color:#13273f;font-weight:800;border-radius:9px;padding:11px;text-decoration:none;}
+      background:var(--gold,#c99a3b);color:#13273f;font-weight:800;border-radius:9px;padding:11px;text-decoration:none;
+      font:inherit;font-weight:800;border:0;cursor:pointer;width:100%;}
     .burger{display:inline-block;}
   }
   .burger{display:none;background:transparent;border:0;color:#fff;font-size:1.4rem;cursor:pointer;padding:4px 10px;}
@@ -312,6 +314,7 @@
     border-radius:14px;background:#fff;color:var(--muted);white-space:nowrap;}
   .pkg-step.done{border-color:#9fd3b2;background:#f4faf6;color:#1a6b3c;}
   .pkg-step.na{opacity:.55;}
+  .pkg-step.on{border-color:var(--teal);background:#eaf5f7;color:var(--navy);}
   @media print{
     body.printing-invoice *{visibility:hidden !important;}
     body.printing-invoice #invdoc, body.printing-invoice #invdoc *{visibility:visible !important;}
@@ -442,6 +445,9 @@ const app = $("app");
 let ME = null, TAB = "cases", CASES = [], USERS = [], INVITES = [], TOTAL = 0, FILTER = "", LAST_LINK = "", LAST_EMAILED = false;
 let RESET_BOX = null;   // {userId, url} — the reset link, shown AT the row it belongs to
 let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
+let NL = null;        // manual intake (UIBUILD P17): null | {kind, err}
+let SHEET_WIZ = null; // the 3-step send wizard (UIBUILD P18)
+let LEAD_MSG = "";    // one-shot confirmation on the leads desk
 let INVOICES = null, INV_OPEN = null, INV_MSG = "", INV_WARN = [], INV_EVENTS = [], INV_SETTINGS = null,
     INV_FILTER = {status: "", type: "", q: ""};
 // The open case workspace: which case, which tab, its loaded data, last error.
@@ -734,11 +740,12 @@ function shell(inner){
   const tabs = ME.role === "admin"
     ? item("dashboard", "&#8962; Dashboard")
       + item("cases", "&#128193; Cases")
+      + item("leads", "&#128234; Leads & intakes")
       + item("calendar", "&#128197; Calendar")
       + item("sheets", "&#128179; Rate sheets")
       + item("invoices", "&#129534; Invoices")
       + item("staff", "&#128101; Staff")
-      + `<a class="side-intake" href="/intake/" target="_blank" rel="noopener">+ Intake a Client</a>`
+      + `<button class="side-intake" data-act="tab" data-tab="newlead">+ Intake a Client</button>`
     : item("cases", "&#128193; My assignments")
       + item("today", "&#9728; Today")
       + item("calendar", "&#128197; Calendar")
@@ -1121,6 +1128,182 @@ function myExpensesView(){
 /* Two documents the office sends: the retainer sheet for a private client, the
    block ladder for a carrier. Neither is on the public site — a price is quoted
    to someone who asked, not published to everyone who visits. */
+/* UIBUILD P16 — Leads & intakes: every early-stage submission as a card the
+   office can act on. Leads ARE submissions — same table, same workspace, so
+   accepting one is just walking it forward, and nothing can drift. */
+function leadsView(){
+  const stageOf = c => c.stage || c.status;
+  const leadState = c => {
+    const st = stageOf(c);
+    if(st === "new") return ["New", "new"];
+    if(st === "awaiting_client") return ["More info requested", "awaiting_client"];
+    return ["Accepted", "assigned"];
+  };
+  const pool = CASES.filter(c => !["closed", "complete", "cancelled"].includes(stageOf(c)));
+  const fresh = pool.filter(c => ["new", "awaiting_client"].includes(stageOf(c)));
+  const accepted = pool.filter(c => !["new", "awaiting_client"].includes(stageOf(c))).slice(0, 6);
+
+  const card = c => {
+    const [lbl, tone] = leadState(c);
+    const claim = c.kind === "claims";
+    const open = ["new", "awaiting_client"].includes(stageOf(c));
+    return `<div class="pcard">
+      <div class="pc-top"><div>
+        <span class="tag ${claim ? "claims" : "consumer"}">${claim ? "Insurance" : "Private"}</span>
+        <span class="tag ${tone}">${lbl}</span>
+        <div style="font-weight:800;margin-top:5px">${esc(claim ? (c.carrier || c.client_name || "—") : (c.client_name || "—"))}</div>
+        <div style="font-size:.85rem;color:var(--muted)">${esc(c.subject_name || "")}</div>
+        ${c.claim_number ? `<div class="mono" style="font-size:.72rem;margin-top:2px">Claim ${esc(c.claim_number)}</div>` : ""}
+        <div class="mono" style="font-size:.72rem;margin-top:3px">${esc(c.case_no)}</div>
+        <div style="font-size:.76rem;color:var(--muted);margin-top:4px">Received ${when(c.created_at)}</div>
+      </div></div>
+      <div class="pc-next">
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn sm ghost" data-act="openCase" data-case="${esc(c.case_no)}">Review</button>
+          <button class="btn sm ghost" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="comms">Message</button>
+        </div>
+        ${open ? `<button class="btn sm" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="assign">Accept &rarr;</button>` : ""}
+      </div>
+    </div>`;
+  };
+
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Leads &amp; intakes</h2>
+      <span class="count">${fresh.length} awaiting a decision</span>
+      <button class="btn sm" data-act="tab" data-tab="newlead" style="margin-left:auto">+ Intake a client</button></div>
+    ${LEAD_MSG ? `<div class="note">${esc(LEAD_MSG)}</div>` : ""}
+    ${fresh.length ? `<div class="pkgcards">${fresh.map(card).join("")}</div>`
+      : `<div class="empty">Nothing waiting. New submissions and phoned-in leads land here the moment they exist.</div>`}
+    ${accepted.length ? `<h3 style="margin:18px 0 6px;font-size:1rem">Recently accepted</h3>
+      <div class="pkgcards">${accepted.map(card).join("")}</div>` : ""}
+  </div>`;
+}
+
+/* UIBUILD P17 — the office types in what a phone call brought. The first
+   choice is who it is for; only the relevant questions follow, and nothing
+   demands a placeholder — what is not known yet simply is not entered. */
+function newLeadView(){
+  const n = NL || {};
+  if(!n.kind){
+    return `<div class="card">
+      <div class="bar"><h2 style="margin:0">New client / lead</h2></div>
+      <p class="note">Who is this for? Only the relevant questions follow.</p>
+      <div class="sheet-grid">
+        <button class="sheet-card" data-act="nlKind" data-k="claims">
+          <div class="sheet-n">Insurance / Commercial</div>
+          <div class="sheet-s">A carrier, TPA, self-insured employer or defense firm assigning a claim.</div>
+          <div class="sheet-go">Start &rarr;</div></button>
+        <button class="sheet-card" data-act="nlKind" data-k="consumer">
+          <div class="sheet-n">Private Client</div>
+          <div class="sheet-s">An individual &mdash; surveillance, custody, process service.</div>
+          <div class="sheet-go">Start &rarr;</div></button>
+      </div>
+      <p class="hint">Prefer the client fill it in themselves? The public form is at
+        <a href="/intake/" target="_blank" rel="noopener">/intake/</a>; the carrier door is sent
+        from Rate sheets with its own intake link.</p>
+    </div>`;
+  }
+  const claim = n.kind === "claims";
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">${claim ? "New insurance / commercial lead" : "New private client lead"}</h2>
+      <button class="btn sm ghost" data-act="nlBack" style="margin-left:auto">&larr; Change type</button></div>
+    <div class="quick">
+      ${claim ? `
+        <div class="two">
+          <label class="f"><span>Carrier / TPA</span><input id="nl_carrier" placeholder="e.g. Example Mutual Insurance"></label>
+          <label class="f"><span>Assigning contact</span><input id="nl_client" placeholder="Adjuster or counsel name"></label>
+        </div>
+        <div class="two">
+          <label class="f"><span>Contact email <span class="opt">optional</span></span><input id="nl_email"></label>
+          <label class="f"><span>Contact phone <span class="opt">optional</span></span><input id="nl_phone"></label>
+        </div>
+        <div class="two">
+          <label class="f"><span>Claim number <span class="opt">optional</span></span><input id="nl_claim"></label>
+          <label class="f"><span>Policy number <span class="opt">optional</span></span><input id="nl_policy"></label>
+        </div>
+        <label class="f"><span>Claimant <span class="opt">optional</span></span><input id="nl_subject"></label>`
+      : `
+        <div class="two">
+          <label class="f"><span>Client name</span><input id="nl_client"></label>
+          <label class="f"><span>Service <span class="opt">optional</span></span>
+            <select id="nl_service"><option>Surveillance</option><option>Child custody</option>
+              <option>Process serving</option><option>Other</option></select></label>
+        </div>
+        <div class="two">
+          <label class="f"><span>Client email <span class="opt">optional</span></span><input id="nl_email"></label>
+          <label class="f"><span>Client phone <span class="opt">optional</span></span><input id="nl_phone"></label>
+        </div>
+        <label class="f"><span>Subject <span class="opt">optional</span></span><input id="nl_subject"></label>`}
+      <label class="f"><span>${claim ? "Scope / objective" : "Objective"} <span class="opt">optional</span></span>
+        <textarea id="nl_obj" rows="2"></textarea></label>
+      <div class="two">
+        <label class="f"><span>${claim ? "Deadline" : "Timeline"} <span class="opt">optional</span></span><input id="nl_deadline"></label>
+        <label class="f"><span>Notes <span class="opt">optional</span></span><input id="nl_notes"></label>
+      </div>
+      <div class="actions">
+        <button class="btn ghost" type="button" data-act="nlSave" data-open="0">Save lead</button>
+        <button class="btn" type="button" data-act="nlSave" data-open="1">Create case &rarr;</button>
+      </div>
+      <p class="hint">Nothing here forces a placeholder — what you do not have yet simply is not
+        entered, and the case fills in as it develops.</p>
+      ${n.err ? `<div class="err">${esc(n.err)}</div>` : ""}
+    </div>
+  </div>`;
+}
+
+/* UIBUILD P18 — the 3-step send wizard. The Options step offers exactly one
+   intake — the sheet's own, paired by the Worker — so the wrong door cannot
+   be sent from here even on a bad day. */
+function sheetWizardHtml(){
+  const w = SHEET_WIZ;
+  const sheet = SHEETS.find(s => s.id === w.sheet) || {};
+  const intakeLabel = w.sheet === "insurance_assignment"
+    ? "Insurance Assignment Intake" : "Private Client Intake";
+  const steps = ["Recipient", "Options", "Preview"];
+  const rail = `<div class="pkg-steps">${steps.map((s2, i) =>
+    `<span class="pkg-step ${w.step > i + 1 ? "done" : w.step === i + 1 ? "on" : ""}">${
+      w.step > i + 1 ? "&#10003;" : i + 1} ${s2}</span>`).join("")}</div>`;
+  const body =
+    w.step === 1 ? `
+      <label class="f"><span>Send it to</span>
+        <input id="wiz_to" type="email" value="${esc(w.to)}" placeholder="name@example.com"></label>
+      <div class="two">
+        <label class="f"><span>Case number <span class="opt">optional — subject line</span></span>
+          <input id="wiz_case" value="${esc(w.caseNo)}"></label>
+        <label class="f"><span>Add a line <span class="opt">optional</span></span>
+          <input id="wiz_note" value="${esc(w.note)}" placeholder="e.g. As discussed this morning."></label>
+      </div>`
+    : w.step === 2 ? `
+      <label class="cap" style="display:flex"><input type="checkbox" id="wiz_inc" ${w.include ? "checked" : ""}>
+        <span>Include the ${intakeLabel} form link</span></label>
+      <p class="hint">The matching intake is paired automatically. ${w.sheet === "insurance_assignment"
+        ? "Carriers land on the Secure Assignment Intake — never the consumer picker."
+        : "Private clients land on the standard intake."}</p>`
+    : `
+      <dl class="detail">
+        <dt>Sheet</dt><dd>${esc(sheet.name || w.sheet)}</dd>
+        <dt>To</dt><dd>${esc(w.to)}</dd>
+        ${w.caseNo ? `<dt>Case</dt><dd>${esc(w.caseNo)}</dd>` : ""}
+        ${w.note ? `<dt>Added line</dt><dd>${esc(w.note)}</dd>` : ""}
+        <dt>Intake form</dt><dd>${w.include ? intakeLabel + " link included" : "Not included"}</dd>
+      </dl>
+      <p class="hint">The email is the sheet exactly as shown on this page${w.include ? ", plus the intake button" : ""}.</p>`;
+  return `<div class="amwrap" data-act="wizClose">
+    <div class="amsheet" data-act="amNoop" role="dialog" aria-modal="true" aria-label="Send the rate sheet">
+      <div class="amhead"><b>Send &mdash; ${esc(sheet.selector_label || sheet.name || "")}</b>
+        <button class="amx" data-act="wizClose" aria-label="Close">&times;</button></div>
+      ${rail}
+      ${body}
+      <div class="actions" style="margin-top:12px">
+        ${w.step > 1 ? `<button class="btn ghost sm" data-act="wizStep" data-s="${w.step - 1}">&larr; Back</button>` : ""}
+        ${w.step < 3 ? `<button class="btn sm" data-act="wizStep" data-s="${w.step + 1}">Next &rarr;</button>`
+          : `<button class="btn sm" data-act="wizSend">Send it</button>`}
+      </div>
+      ${w.err ? `<div class="err">${esc(w.err)}</div>` : ""}
+    </div>
+  </div>`;
+}
+
 function sheetsView(){
   if(!SHEETS.length) return `<div class="card"><div class="empty">Loading rate sheets…</div></div>`;
   const open = SHEETS.find(s => s.id === OPEN_SHEET);
@@ -1150,16 +1333,11 @@ function sheetsView(){
     </div>
     <div class="rs-close"><b>${esc(open.closing_title)}</b><p>${esc(open.closing)}</p></div>
     <div class="actions" style="border-top:1px solid var(--line);padding-top:16px;margin-top:6px">
-      <label class="f" style="flex:1 1 260px;margin-bottom:0"><span>Send it to</span>
-        <input id="sh_to" type="email" placeholder="name@example.com" value="${esc(SHEET_MAIL)}"></label>
-      <label class="f" style="flex:1 1 220px;margin-bottom:0"><span>Case number (optional)</span>
-        <input id="sh_case" placeholder="Puts it in the subject line"></label>
-      <button class="btn" data-act="emailSheet" data-sheet="${esc(open.id)}">Email this sheet</button>
+      <button class="btn" data-act="shWiz" data-sheet="${esc(open.id)}">Send this sheet &rarr;</button>
     </div>
-    <label class="f"><span>Add a line to the message (optional)</span>
-      <input id="sh_note" placeholder="e.g. As discussed on the phone this morning."></label>
     ${SHEET_MSG ? `<div class="note" style="margin-top:4px">${esc(SHEET_MSG)}</div>` : ""}
-  </div>` : ""}`;
+  </div>` : ""}
+  ${SHEET_WIZ ? sheetWizardHtml() : ""}`;
 }
 
 function casesView(){
@@ -1348,6 +1526,8 @@ function paint(){
   app.innerHTML = shell(
       TAB === "dashboard" ? dashView()
     : TAB === "staff" ? staffView()
+    : TAB === "leads" ? leadsView()
+    : TAB === "newlead" ? newLeadView()
     : TAB === "sheets" ? sheetsView()
     : TAB === "invoices" ? invoicesView()
     : TAB === "today" ? todayView()
@@ -3853,21 +4033,49 @@ async function revokeInvite(id){
   catch(e){ alert(e.message); }
 }
 
-async function emailSheet(id){
-  const to = ($("sh_to").value || "").trim();
-  const note = ($("sh_note") ? $("sh_note").value : "").trim();
-  const caseNo = ($("sh_case") ? $("sh_case").value : "").trim();
-  SHEET_MAIL = to;
-  if(!to){ SHEET_MSG = "Enter the address to send it to."; paint(); return; }
-  const btn = document.querySelector('[data-act="emailSheet"]');
-  if(btn){ btn.disabled = true; btn.textContent = "Sending…"; }
+/* The wizard's inputs live in the DOM only while their step shows, so read
+   them back into state before every step change and before the send. */
+function wizCollect(){
+  if(!SHEET_WIZ) return;
+  if($("wiz_to")) SHEET_WIZ.to = $("wiz_to").value.trim();
+  if($("wiz_case")) SHEET_WIZ.caseNo = $("wiz_case").value.trim();
+  if($("wiz_note")) SHEET_WIZ.note = $("wiz_note").value.trim();
+  if($("wiz_inc")) SHEET_WIZ.include = $("wiz_inc").checked;
+}
+
+async function wizSend(){
+  wizCollect();
+  const w = SHEET_WIZ;
   try{
-    const r = await api(`/sheets/${encodeURIComponent(id)}/email`,
-      {method:"POST", body:{to, note, case_no:caseNo}});
-    SHEET_MSG = `Sent to ${r.sent_to}.`;
-    SHEET_MAIL = "";
-  }catch(e){ SHEET_MSG = e.message; }
+    const r = await api(`/sheets/${encodeURIComponent(w.sheet)}/email`,
+      {method:"POST", body:{to: w.to, note: w.note, case_no: w.caseNo, include_intake: w.include}});
+    SHEET_MSG = `Sent to ${r.sent_to}${w.include ? ", with the intake link" : ""}.`;
+    SHEET_WIZ = null;
+  }catch(e){ w.err = e.message; }
   paint();
+}
+
+/* Manual intake (P17): one POST, then either straight into the case or back
+   to the leads desk with the number in hand. */
+async function submitManualIntake(openAfter){
+  const g = id => { const el2 = $(id); return el2 ? el2.value : ""; };
+  const body = {
+    kind: NL.kind,
+    carrier: g("nl_carrier"), client_name: g("nl_client"),
+    client_email: g("nl_email"), client_phone: g("nl_phone"),
+    claim_number: g("nl_claim"), policy_number: g("nl_policy"),
+    subject_name: g("nl_subject"), objective: g("nl_obj"),
+    timeline: g("nl_deadline"), notes: g("nl_notes"),
+    service: NL.kind === "claims" ? "Insurance claim assignment" : g("nl_service"),
+  };
+  try{
+    const r = await api("/intakes", {method: "POST", body});
+    NL = null;
+    if(openAfter){ await render(); return openCase(r.case_no); }
+    LEAD_MSG = `Saved as ${r.case_no}. It waits under New until you accept it.`;
+    TAB = "leads";
+    await render();
+  }catch(e){ NL.err = e.message; paint(); }
 }
 
 /* --------------------------------------------------------- event routing */
@@ -3882,6 +4090,7 @@ document.addEventListener("click", ev => {
   else if(act === "navToggle"){ document.body.classList.toggle("navopen"); }
   else if(act === "pkgJump"){ openCase(el.dataset.case, el.dataset.tab === "overview" ? undefined : el.dataset.tab); }
   else if(act === "tab"){
+    if(TAB === "leads" && el.dataset.tab !== "leads") LEAD_MSG = "";
     TAB = el.dataset.tab; paint();
     if(TAB === "calendar") loadCalendar(CAL ? CAL.month : "");
     if(TAB === "invoices"){ INV_OPEN = null; INV_MSG = ""; loadInvoices(); }
@@ -4026,9 +4235,23 @@ document.addEventListener("click", ev => {
   }
   else if(act === "openSheet"){
     OPEN_SHEET = OPEN_SHEET === el.dataset.sheet ? null : el.dataset.sheet;
+    SHEET_MSG = ""; SHEET_WIZ = null; paint();
+  }
+  else if(act === "shWiz"){
+    SHEET_WIZ = {sheet: el.dataset.sheet, step: 1, to: "", caseNo: "", note: "", include: true, err: ""};
     SHEET_MSG = ""; paint();
   }
-  else if(act === "emailSheet"){ emailSheet(el.dataset.sheet); }
+  else if(act === "wizClose"){ SHEET_WIZ = null; paint(); }
+  else if(act === "wizStep"){
+    wizCollect();
+    const s2 = Number(el.dataset.s);
+    if(s2 > 1 && !SHEET_WIZ.to){ SHEET_WIZ.err = "Enter the address to send it to."; paint(); }
+    else { SHEET_WIZ.err = ""; SHEET_WIZ.step = s2; paint(); }
+  }
+  else if(act === "wizSend"){ wizSend(); }
+  else if(act === "nlKind"){ NL = {kind: el.dataset.k, err: ""}; paint(); }
+  else if(act === "nlBack"){ NL = {kind: null, err: ""}; paint(); }
+  else if(act === "nlSave"){ submitManualIntake(el.dataset.open === "1"); }
   else if(act === "copyLink"){
     navigator.clipboard.writeText(LAST_LINK).then(() => { el.textContent = "Copied"; });
   }
