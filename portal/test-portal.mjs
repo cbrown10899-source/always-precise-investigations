@@ -1846,6 +1846,9 @@ section('The case package, gated and printed');
   await page.waitForTimeout(700);
   body = await text(page, '#dlgBody');
   ok('a draft opens at version one', has(body, 'Draft v1'));
+  ok('the six build steps stand above the work (P13)', await page.locator('.pkg-steps').count() === 1);
+  ok('the contents read live', has(body, 'Package contents'));
+  ok('preview is offered before finalize', await page.locator('.btn', { hasText: 'Preview package' }).count() === 1);
 
   await page.locator('.pkg-item', { hasText: 'clip1.mp4' }).locator('.btn', { hasText: 'Add' }).click();
   await page.waitForTimeout(700);
@@ -1864,7 +1867,20 @@ section('The case package, gated and printed');
      has(body, 'provided separately'));
   await page.locator('[data-act="pkgDelivered"]').click();
   await page.waitForTimeout(700);
-  ok('delivery is stamped', has(await text(page, '#dlgBody'), 'Delivered'));
+  body = await text(page, '#dlgBody');
+  ok('delivery is stamped', has(body, 'Delivered'));
+
+  // UIBUILD P13/P14: the finished package reads as artifacts, each with a door.
+  const rail = await text(page, '.pkg-steps');
+  ok('the steps rail walks Review to Finalize', has(rail, 'Review') && has(rail, 'Finalize'));
+  ok('every artifact is itemized', has(body, 'Client package') && has(body, 'Evidence index'));
+  ok('the report row routes to the report', await page.locator('.btn', { hasText: 'Open report' }).count() === 1);
+  ok('video is honest while Dropbox is unconnected — no dead copy button',
+     await page.locator('[data-act="pkgCopyLink"]').count() === 0);
+  await page.locator('[data-act="evJump"]').click();
+  await page.waitForTimeout(350);
+  ok('Photographs routes into the gallery, filtered to Photos',
+     has(await text(page, '.evtab.on'), 'Photos'));
   await page.close();
 }
 {

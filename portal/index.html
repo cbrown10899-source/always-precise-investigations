@@ -306,6 +306,12 @@
     align-items:center;justify-content:center;font-size:2rem;}
   .ovthumbs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;}
   .ovthumbs img{width:56px;height:56px;object-fit:cover;border-radius:8px;}
+  /* UIBUILD Phase 5 — the Case Build steps rail (P13). */
+  .pkg-steps{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 12px;}
+  .pkg-step{font-size:.74rem;font-weight:700;padding:6px 10px;border:1px solid var(--line);
+    border-radius:14px;background:#fff;color:var(--muted);white-space:nowrap;}
+  .pkg-step.done{border-color:#9fd3b2;background:#f4faf6;color:#1a6b3c;}
+  .pkg-step.na{opacity:.55;}
   @media print{
     body.printing-invoice *{visibility:hidden !important;}
     body.printing-invoice #invdoc, body.printing-invoice #invdoc *{visibility:visible !important;}
@@ -2378,8 +2384,80 @@ function packagePanel(){
 
   const doc = pkgDocHtml();
 
-  return `${blocks}${missing}
+  /* UIBUILD P13 — the build's own six steps, each with a state. "n/a" is a
+     state too: a package type without video owes no video. */
+  const nPhoto = items.filter(i => i.role === "photo").length;
+  const nVideo = items.filter(i => i.role === "video").length;
+  const nDoc = items.filter(i => i.role === "document").length;
+  const videoWanted = ["report_photos_video", "full"].includes(b.package_type);
+  const steps = [
+    ["Review",   PKG.approved_report ? "done" : "none"],
+    ["Evidence", (nPhoto + nDoc) ? "done" : "none"],
+    ["Video",    !videoWanted ? "na" : nVideo ? "done" : "none"],
+    ["Package",  b.package_type ? "done" : "none"],
+    ["Preview",  PKG.report ? "done" : "none"],
+    ["Finalize", b.status === "finalized" ? "done" : "none"],
+  ];
+  const stepsRail = `<div class="pkg-steps">${steps.map(([lbl, st], i) =>
+    `<span class="pkg-step ${st}">${st === "done" ? "&#10003;" : st === "na" ? "&mdash;" : i + 1} ${lbl}${
+      st === "na" ? " (n/a)" : ""}</span>`).join("")}</div>`;
+
+  // P13 — what is in the box, in one glance.
+  const contents = `<div class="feebox" style="margin:10px 0">
+    <div class="row"><span><b>Package contents</b></span><span></span></div>
+    <div class="row"><span>Final report</span><b>${PKG.approved_report ? "Approved" : "Not attached"}</b></div>
+    <div class="row"><span>Photographs</span><b>${nPhoto}</b></div>
+    <div class="row"><span>Video</span><b>${videoWanted ? nVideo : "Not in this package type"}</b></div>
+    <div class="row"><span>Documents</span><b>${nDoc}</b></div>
+    <div class="row"><span>Evidence index</span><b>${items.length} exhibit${items.length === 1 ? "" : "s"}</b></div>
+  </div>`;
+
+  /* P13 — video delivery, honestly. A copy button only when a link exists;
+     otherwise the state of the world in plain words. */
+  const shares = (PKG.external_files || []).filter(x => x.external_share_url && !x.share_revoked_at);
+  const dropboxOff = PKG.providers && PKG.providers.dropbox && !PKG.providers.dropbox.configured;
+  const delivery = nVideo ? `<div class="feebox" style="margin:10px 0">
+    <div class="row"><span><b>Video delivery</b></span><span></span></div>
+    ${shares.length ? shares.map(x => `
+      <div class="row"><span>${esc(x.delivery_name || "Video link")}</span>
+        <button class="btn sm" data-act="pkgCopyLink" data-url="${esc(x.external_share_url)}">Copy video link</button></div>
+      ${x.share_expires_at ? `<div class="row"><span style="color:var(--muted);font-size:.82rem">Expires</span><span>${when(x.share_expires_at)}</span></div>` : ""}
+      ${x.share_created_at ? `<div class="row"><span style="color:var(--muted);font-size:.82rem">Created</span><span>${when(x.share_created_at)}</span></div>` : ""}`).join("")
+    : `<div class="row"><span style="color:var(--muted);font-size:.85rem">${dropboxOff
+        ? "Dropbox is not connected — video is provided separately for now."
+        : "No delivery link yet."}</span><span></span></div>`}
+  </div>` : "";
+
+  /* UIBUILD P14 — the completed package: every artifact, its state, one door. */
+  const completedView = `
+    ${contents}${delivery}
+    <div class="feebox">
+      <div class="row"><span><b>Package finalized</b> &mdash; v${b.version}</span>
+        <span>${when(b.finalized_at)}</span></div>
+      ${b.delivered_at ? `<div class="row"><span>Delivered</span><span>${when(b.delivered_at)}</span></div>` : ""}
+      <div class="row"><span>${pkgMark(PKG.approved_report ? "done" : "none")} Final report</span>
+        <button class="btn sm ghost" data-act="wsTab" data-tab="reports">Open report</button></div>
+      <div class="row"><span>${pkgMark(nPhoto ? "done" : "none")} Photographs (${nPhoto})</span>
+        <button class="btn sm ghost" data-act="evJump" data-t="photos">View</button></div>
+      ${videoWanted ? `<div class="row"><span>${pkgMark(nVideo ? "done" : "none")} Video (${nVideo})</span>
+        ${shares.length
+          ? `<button class="btn sm" data-act="pkgCopyLink" data-url="${esc(shares[0].external_share_url)}">Copy delivery link</button>`
+          : `<span style="color:var(--muted);font-size:.82rem">Provided separately</span>`}</div>` : ""}
+      <div class="row"><span>${pkgMark(items.length ? "done" : "none")} Evidence index (${items.length})</span>
+        <span style="color:var(--muted);font-size:.82rem">In the package document</span></div>
+      <div class="row"><span>${pkgMark(inv ? (inv.status === "paid" ? "done" : "part") : "none")} Invoice${inv ? " — " + esc(label(inv.status)) : ""}</span>
+        <button class="btn sm ghost" data-act="tab" data-tab="invoices">View</button></div>
+      <div class="row"><span>${pkgMark("done")} Client package</span>
+        <button class="btn sm" data-act="pkgPrint">Download</button></div>
+    </div>
+    <div class="actions">
+      ${!b.delivered_at ? `<button class="btn ghost" data-act="pkgDelivered">Mark delivered</button>` : ""}
+      <button class="btn ghost" data-act="pkgReopen">Reopen and rebuild</button>
+    </div>`;
+
+  return `${blocks}${stepsRail}${missing}
     ${b.status === "draft" ? `
+      ${contents}${delivery}
       <label class="f" style="max-width:340px"><span>Package type</span>
         <select data-act="pkgType">
           ${[["report_only","Report only"],["report_photos","Report + photos"],
@@ -2388,22 +2466,10 @@ function packagePanel(){
         </select></label>
       ${pick(photos, "Photos")}${pick(videos, "Video")}${pick(others, "Documents")}
       <div class="actions" style="border-top:1px solid var(--line);padding-top:12px;margin-top:10px">
+        <button class="btn ghost" data-act="pkgPrint">Preview package</button>
         <button class="btn" data-act="pkgFinalize">Finalize the package</button>
       </div>`
-    : `
-      <div class="feebox">
-        <div class="row"><span><b>Package finalized</b> &mdash; v${b.version}</span>
-          <span>${when(b.finalized_at)}</span></div>
-        ${b.delivered_at ? `<div class="row"><span>Delivered</span><span>${when(b.delivered_at)}</span></div>` : ""}
-        ${(PKG.providers && PKG.providers.dropbox && !PKG.providers.dropbox.configured && items.some(i => i.role === "video"))
-          ? `<div class="row"><span style="color:var(--muted);font-size:.85rem">Video delivery: Dropbox is not
-              connected &mdash; video is provided separately for now.</span><span></span></div>` : ""}
-      </div>
-      <div class="actions">
-        <button class="btn" data-act="pkgPrint">Print / Save the package PDF</button>
-        ${!b.delivered_at ? `<button class="btn ghost" data-act="pkgDelivered">Mark delivered</button>` : ""}
-        <button class="btn ghost" data-act="pkgReopen">Reopen and rebuild</button>
-      </div>`}
+    : completedView}
     ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
     ${doc}`;
 }
@@ -3935,6 +4001,12 @@ document.addEventListener("click", ev => {
     setTimeout(() => document.body.classList.remove("printing-report"), 400);
   }
   else if(act === "evTab"){ EV_TAB = el.dataset.t; paintCase(); }
+  else if(act === "evJump"){ EV_TAB = el.dataset.t || "all"; WS_TAB = "evidence"; WS_ERR = ""; paintCase(); }
+  else if(act === "pkgCopyLink"){
+    navigator.clipboard.writeText(el.dataset.url).then(
+      () => { el.textContent = "Copied"; setTimeout(() => paintCase(), 900); },
+      () => { prompt("Copy the link:", el.dataset.url); });
+  }
   else if(act === "saveReport"){ saveReportBody(Number(el.dataset.id)); }
   else if(act === "reportStatus"){ setReportStage(Number(el.dataset.id), el.dataset.to); }
   else if(act === "reviewExpense"){ reviewExpenseEntry(Number(el.dataset.id)); }
