@@ -9,10 +9,10 @@ Progress ledger:
 
 | Phase | Status |
 | --- | --- |
-| 1. Core invoice system (db, numbers, create-from-case, line items, insurance + private fields) | not started |
-| 2. Admin experience (review/edit, printable invoice document, dashboard, search/filter/statuses) | not started |
-| 3. BILL handoff (Mark ready, BILL reference fields, Copy billing details, Mark sent, manual payment entry) | not started |
-| 4. Financial controls (partial payments, adjustments, duplicate warnings, audit trail, closure) | not started |
+| 1. Core invoice system (db, numbers, create-from-case, line items, insurance + private fields) | **done** — 2026-08-13 (API-INV-YYYY-NNNN server-side; create-from-case pre-fills bill-to/refs; from-authorization bills the flat block or the retainer) |
+| 2. Admin experience (review/edit, printable invoice document, dashboard, search/filter/statuses) | **done** — 2026-08-13 (Invoices tab: summary cards, filterable book, detail editor, #invdoc print view — Print/Save as PDF isolates the document) |
+| 3. BILL handoff (Mark ready, BILL reference fields, Copy billing details, Mark sent, manual payment entry) | **done** — 2026-08-13 (ready→sent_to_bill gated; external ids stored generically; copy-details to clipboard; sent-to-BILL never means paid) |
+| 4. Financial controls (partial payments, adjustments, duplicate warnings, audit trail, closure) | **done** — 2026-08-13 (payments drive status by arithmetic; adjustments field; duplicate 409 + confirm; invoice_events trail; void locks the record) |
 | 5. LATER — verify BILL API, provider adapter, automated create/sync, client invoice portal | not started — do NOT build until core works |
 
 ---
