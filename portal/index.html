@@ -117,6 +117,17 @@
   .qk2{display:block;width:100%;text-align:center;font:inherit;font-size:.8rem;font-weight:700;
     padding:10px 4px;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer;}
   .qk2.on{border-color:var(--teal);background:#eaf5f7;color:var(--navy);}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
+  .cal-w{font-size:.68rem;font-weight:700;letter-spacing:.06em;color:var(--muted);text-align:center;padding:4px 0;}
+  .cal-cell{min-height:74px;border:1px solid var(--line);border-radius:8px;padding:4px;background:#fff;overflow:hidden;}
+  .cal-pad{background:transparent;border-color:transparent;}
+  .cal-today{border-color:var(--teal);box-shadow:0 0 0 1px var(--teal) inset;}
+  .cal-d{font-size:.72rem;font-weight:700;color:var(--muted);}
+  .cal-ev{display:block;font-size:.64rem;font-weight:700;letter-spacing:.02em;color:#fff;background:var(--teal);
+    border-radius:4px;padding:2px 5px;margin-top:3px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .cal-ev.cal-run{background:#1a6b3c;}
+  .cal-ev.cal-offer{background:#fff;color:var(--teal);border:1px dashed var(--teal);}
+  @media(max-width:640px){.cal-cell{min-height:54px;} .cal-ev{font-size:.58rem;padding:1px 3px;}}
   .comprow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:2px 0 8px;}
   .comprow input{width:90px;font:inherit;font-size:.85rem;border:1px solid var(--line);border-radius:6px;padding:6px 8px;}
   .capgrid{display:flex;gap:14px;flex-wrap:wrap;margin:2px 0 6px;}
@@ -260,6 +271,7 @@ let LOAD_ERR = "";        // why the portal could not load, shown rather than hi
 let SCHEMA_MISSING = [];  // tables the database does not have yet
 let CARD_FILTER = null;   // {label, set:Set(case numbers)} — a dashboard card's cases
 let MY_REPORTS = null, MY_EXPENSES = null, MY_COMP = null, OFFERS = [];   // the investigator's own desk
+let CAL = null;   // {month, days, offers}
 /* Examples show themselves on a first sign-in and can be recalled later. */
 let SHOW_EXAMPLE = false;
 
@@ -478,10 +490,12 @@ function shell(inner){
   // features exist rather than sitting as dead tabs.
   const tabs = ME.role === "admin"
     ? `<button class="${TAB==="cases"?"on":""}" data-act="tab" data-tab="cases">Cases</button>
+       <button class="${TAB==="calendar"?"on":""}" data-act="tab" data-tab="calendar">Calendar</button>
        <button class="${TAB==="sheets"?"on":""}" data-act="tab" data-tab="sheets">Rate sheets</button>
        <button class="${TAB==="staff"?"on":""}" data-act="tab" data-tab="staff">Staff</button>`
     : `<button class="${TAB==="cases"?"on":""}" data-act="tab" data-tab="cases">My assignments</button>
        <button class="${TAB==="today"?"on":""}" data-act="tab" data-tab="today">Today</button>
+       <button class="${TAB==="calendar"?"on":""}" data-act="tab" data-tab="calendar">Calendar</button>
        <button class="${TAB==="myreports"?"on":""}" data-act="tab" data-tab="myreports">Reports</button>
        <button class="${TAB==="myexpenses"?"on":""}" data-act="tab" data-tab="myexpenses">Expenses</button>`;
   // The schema notice comes first and is specific, because it is the one cause
@@ -517,7 +531,7 @@ function shell(inner){
    fake zero. Drawn even when the portal is empty, because a page that shows
    nothing at all looks broken. */
 function summaryCards(){
-  if(TAB !== "cases" && TAB !== "today") return "";
+  if(TAB !== "cases" && TAB !== "today") return "";   // calendar included in the exclusion
   const s = SUMMARY || {};
   const shown = SHOW_EXAMPLE ? examplesFor(ME.role) : [];
   const admin = ME.role === "admin";
@@ -563,6 +577,78 @@ function summaryCards(){
 
 /* The investigator's day, answered directly: am I out now, what is assigned
    to me, what do I owe. Everything here is already scoped by the Worker. */
+/* Short labels the way a wall calendar wants them, derived from the case
+   type so the list stays configuration-driven. */
+function calLabel(t, kind){
+  const s = String(t || "");
+  if(/surveillance/i.test(s)) return "SURV";
+  if(/statement/i.test(s)) return "STATEMENT";
+  if(/canvass|field/i.test(s)) return "CANVASS";
+  if(/custody/i.test(s)) return "CUSTODY";
+  if(/infidelity|adultery/i.test(s)) return "INFIDELITY";
+  if(/scene/i.test(s)) return "SCENE";
+  if(/background|social/i.test(s)) return "BACKGROUND";
+  if(/skip|locate/i.test(s)) return "LOCATE";
+  return kind === "claims" ? "INS" : "PRIVATE";
+}
+
+function calendarView(){
+  if(!CAL) return `<div class="card"><div class="empty">Loading the calendar&hellip;</div></div>`;
+  const [y, m] = CAL.month.split("-").map(Number);
+  const first = new Date(y, m - 1, 1);
+  const daysIn = new Date(y, m, 0).getDate();
+  const lead = first.getDay();
+  const now = new Date();   // local, like the grid — UTC would drift the ring near midnight
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+  const byDate = {};
+  for(const d of CAL.days){
+    (byDate[d.day_date] = byDate[d.day_date] || []).push({
+      kind: "day", label: calLabel(d.case_type, d.kind), case_no: d.case_no,
+      who: d.investigator, running: !d.end_time, hours: d.hours,
+    });
+  }
+  for(const o of CAL.offers){
+    (byDate[o.investigation_date] = byDate[o.investigation_date] || []).push({
+      kind: "offer", label: calLabel(o.case_type, o.kind), case_no: o.case_no || null,
+      who: o.investigator || null, loc: o.general_location,
+    });
+  }
+
+  let cells = "";
+  for(let i = 0; i < lead; i++) cells += `<div class="cal-cell cal-pad"></div>`;
+  for(let d = 1; d <= daysIn; d++){
+    const iso = `${CAL.month}-${String(d).padStart(2, "0")}`;
+    const evs = byDate[iso] || [];
+    cells += `<div class="cal-cell${iso === today ? " cal-today" : ""}">
+      <div class="cal-d">${d}</div>
+      ${evs.map(e => e.kind === "offer"
+        ? `<span class="cal-ev cal-offer" ${e.case_no ? `data-act="openCase" data-case="${esc(e.case_no)}"` : `data-act="tab" data-tab="today"`}
+             title="Offered${e.loc ? " — " + esc(e.loc) : ""}">◦ ${esc(e.label)}${e.who ? " · " + esc(e.who) : ""}</span>`
+        : `<span class="cal-ev${e.running ? " cal-run" : ""}" data-act="openCase" data-case="${esc(e.case_no)}"
+             title="${esc(e.case_no)}${e.who ? " — " + esc(e.who) : ""}">${esc(e.label)}${
+             ME.role === "admin" && e.who ? " · " + esc(e.who.split(" ")[0]) : ""}${e.hours != null ? ` · ${esc(e.hours)}h` : e.running ? " · out" : ""}</span>`
+      ).join("")}
+    </div>`;
+  }
+  const monthName = first.toLocaleDateString(undefined, {month: "long", year: "numeric"});
+  return `<div class="card">
+    <div class="bar">
+      <h2 style="margin:0">Calendar</h2>
+      <button class="btn sm ghost" data-act="calMonth" data-d="-1">&larr;</button>
+      <b>${esc(monthName)}</b>
+      <button class="btn sm ghost" data-act="calMonth" data-d="1">&rarr;</button>
+      <span class="count">${ME.role === "admin" ? "every investigator" : "your days and offers"}</span>
+    </div>
+    <div class="cal-grid">
+      ${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(w => `<div class="cal-w">${w}</div>`).join("")}
+      ${cells}
+    </div>
+    <p class="hint">Solid chips are investigation days — click one to open the case. Hollow chips are
+      pending offers.</p>
+  </div>`;
+}
+
 function todayView(){
   const s = SUMMARY || {};
   const pending = (OFFERS || []).filter(o => o.status === "offered");
@@ -871,6 +957,7 @@ function paint(){
       TAB === "staff" ? staffView()
     : TAB === "sheets" ? sheetsView()
     : TAB === "today" ? todayView()
+    : TAB === "calendar" ? calendarView()
     : TAB === "myreports" ? myReportsView()
     : TAB === "myexpenses" ? myExpensesView()
     : casesView());
@@ -1721,6 +1808,11 @@ async function saveCaseMeta(){
   await reloadWorkspace();
 }
 
+async function loadCalendar(month){
+  try{ CAL = await api("/calendar" + (month ? `?month=${month}` : "")); }catch(e){ CAL = {month: month || "", days: [], offers: []}; }
+  paint();
+}
+
 async function respondOffer(id, verb){
   const reasonEl = document.querySelector(`.of-reason[data-id="${id}"]`);
   try{
@@ -1857,6 +1949,7 @@ document.addEventListener("click", ev => {
   if(act === "backToCases"){ VIEW = "list"; render(); }
   else if(act === "tab"){
     TAB = el.dataset.tab; paint();
+    if(TAB === "calendar") loadCalendar(CAL ? CAL.month : "");
     if(TAB === "myreports") api("/my/reports").then(d => { MY_REPORTS = d; paint(); }).catch(()=>{});
     if(TAB === "myexpenses"){
       api("/my/expenses").then(d => { MY_EXPENSES = d; paint(); }).catch(()=>{});
@@ -1896,6 +1989,11 @@ document.addEventListener("click", ev => {
   else if(act === "acceptOffer"){ respondOffer(Number(el.dataset.id), "accept"); }
   else if(act === "declineOffer"){ respondOffer(Number(el.dataset.id), "decline"); }
   else if(act === "withdrawOffer"){ withdrawOffer(Number(el.dataset.id)); }
+  else if(act === "calMonth"){
+    const [y, m] = CAL.month.split("-").map(Number);
+    const n = new Date(y, m - 1 + Number(el.dataset.d), 1);
+    loadCalendar(`${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}`);
+  }
   else if(act === "openSheet"){
     OPEN_SHEET = OPEN_SHEET === el.dataset.sheet ? null : el.dataset.sheet;
     SHEET_MSG = ""; paint();

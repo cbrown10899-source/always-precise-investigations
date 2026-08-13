@@ -2240,6 +2240,45 @@ async function route(request, env) {
     return json({ ok: true, status: 'accepted', case_no: offer.case_no });
   }
 
+  /* The shared operational calendar (HANDOFF priority 14). Admin sees every
+     investigator's days and every pending offer; an investigator sees their
+     own. Events come from investigation days (worked or running) and offer
+     dates — a pending offer stays thin here exactly as it is on Today. */
+  if (p === '/calendar' && method === 'GET') {
+    const q = new URL(request.url).searchParams;
+    const month = /^\d{4}-\d{2}$/.test(q.get('month') || '') ? q.get('month') : nowIso().slice(0, 7);
+    const admin = user.role === 'admin';
+    const like = month + '%';
+
+    const { results: days } = await env.DB.prepare(
+      `SELECT d.id, d.case_no, d.day_date, d.start_time, d.end_time, d.hours,
+              u.display_name AS investigator, s.kind, t.label AS case_type
+         FROM case_days d
+         LEFT JOIN users u ON u.id = d.investigator_id
+         LEFT JOIN submissions s ON s.case_no = d.case_no
+         LEFT JOIN case_meta cm ON cm.case_no = d.case_no
+         LEFT JOIN case_types t ON t.id = cm.case_type_id
+        WHERE d.day_date LIKE ? ${admin ? '' : 'AND d.investigator_id = ?'}
+        ORDER BY d.day_date, d.start_time`)
+      .bind(...(admin ? [like] : [like, user.id])).all();
+
+    const { results: offers } = await env.DB.prepare(
+      `SELECT o.id, o.investigation_date, o.expected_hours, o.general_location, o.status,
+              ${admin ? 'o.case_no, u.display_name AS investigator,' : ''}
+              s.kind, t.label AS case_type
+         FROM case_offers o
+         LEFT JOIN users u ON u.id = o.investigator_id
+         LEFT JOIN submissions s ON s.case_no = o.case_no
+         LEFT JOIN case_meta cm ON cm.case_no = o.case_no
+         LEFT JOIN case_types t ON t.id = cm.case_type_id
+        WHERE o.status = 'offered' AND o.investigation_date LIKE ?
+          ${admin ? '' : 'AND o.investigator_id = ?'}
+        ORDER BY o.investigation_date`)
+      .bind(...(admin ? [like] : [like, user.id])).all();
+
+    return json({ month, days: days || [], offers: offers || [] });
+  }
+
   if (p === '/my/comp' && method === 'GET') {
     const r = await env.DB.prepare('SELECT hourly, mileage FROM user_rates WHERE user_id = ?')
       .bind(user.id).first();

@@ -1191,6 +1191,54 @@ section("The investigator's own navigation");
   await page.close();
 }
 
+/* The suite left two worked days this month, both the admin's — so the
+   calendar has real chips for the office and nothing for dana, which is
+   exactly the scoping to prove. */
+section('The calendar shows the month of work');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  ok('the office gets a Calendar tab', has(await text(page, '.tabs'), 'Calendar'));
+  await page.locator('.tabs button', { hasText: 'Calendar' }).click();
+  await page.waitForTimeout(600);
+  const grid = await text(page, '.cal-grid');
+  ok('a month grid renders with weekday headers', has(grid, 'Sun') && has(grid, 'Sat'));
+  ok('the admin calendar covers every investigator',
+     has(await text(page, '.card'), 'every investigator'));
+  const chips = await page.locator('.cal-ev').allInnerTexts();
+  ok('each worked day is a chip on its date', chips.length === 2, chips.join(' | '));
+  ok('an admin chip names who worked it', chips.every(c => has(c, 'Trever')), chips.join(' | '));
+  ok('and carries the hours', chips.some(c => /6h/.test(c)) && chips.some(c => /4h/.test(c)),
+     chips.join(' | '));
+
+  await page.locator('.cal-ev').first().click();
+  await page.waitForTimeout(600);
+  ok('clicking a solid chip opens the case', await page.locator('.casepage').count() === 1);
+  await page.locator('.close').click();
+  await page.waitForTimeout(400);
+
+  // Month navigation: last month has no work, and the same buttons come back.
+  await page.locator('.tabs button', { hasText: 'Calendar' }).click();
+  await page.waitForTimeout(400);
+  await page.locator('[data-act="calMonth"][data-d="-1"]').click();
+  await page.waitForTimeout(600);
+  ok('stepping back a month clears the chips', await page.locator('.cal-ev').count() === 0);
+  await page.locator('[data-act="calMonth"][data-d="1"]').click();
+  await page.waitForTimeout(600);
+  ok('and stepping forward brings the work back', await page.locator('.cal-ev').count() === 2);
+  await page.close();
+}
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  ok('an investigator gets the Calendar tab too', has(await text(page, '.tabs'), 'Calendar'));
+  await page.locator('.tabs button', { hasText: 'Calendar' }).click();
+  await page.waitForTimeout(600);
+  ok('scoped to their own days', has(await text(page, '.card'), 'your days and offers'));
+  ok("the admin's days are not on it", await page.locator('.cal-ev').count() === 0);
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();

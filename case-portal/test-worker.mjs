@@ -1281,6 +1281,67 @@ section('Offers: the shape of the job before acceptance, the case only after');
      (await call(env, `/offers/${o3.id}/withdraw`, { method: 'POST', cookie: admin })).status === 200);
 }
 
+section('Calendar: the month, scoped like everything else');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  for (const uname of ['dana', 'reed']) {
+    const l = (await jsonOf(await invite(env, admin, { username: uname, display_name: uname, role: 'investigator' }))).url;
+    const t = new URL(l, 'https://x.test').searchParams.get('invite');
+    await call(env, `/invite/${t}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  }
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const reed = (await login(env, 'reed', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find(u => u.username === 'dana').id;
+  const reedId = users.users.find(u => u.username === 'reed').id;
+
+  await ingest(env, { case_no: 'API-CAL1', subject_name: 'S1', client_name: 'Client One' });
+  await ingest(env, { case_no: 'API-CAL2', subject_name: 'S2', client_name: 'Client Two' });
+  await ingest(env, { case_no: 'API-CAL3', carrier: 'Quiet Casualty', subject_name: 'S3', client_name: 'C3' });
+  await call(env, '/submissions/API-CAL1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+  await call(env, '/submissions/API-CAL2/assign', { method: 'POST', cookie: admin, body: { user_id: reedId } });
+
+  await call(env, '/cases/API-CAL1/day/start', { method: 'POST', cookie: dana,
+    body: { day_date: '2026-08-12', start_time: '07:00' } });
+  await call(env, '/cases/API-CAL1/day/end', { method: 'POST', cookie: dana, body: { end_time: '15:00' } });
+  await call(env, '/cases/API-CAL2/day/start', { method: 'POST', cookie: reed,
+    body: { day_date: '2026-08-19', start_time: '06:00' } });
+  await call(env, '/cases/API-CAL3/offer', { method: 'POST', cookie: admin,
+    body: { investigator_id: reedId, investigation_date: '2026-08-21', expected_hours: 8,
+            general_location: 'Bedford area' } });
+
+  ok('the calendar needs a session', (await call(env, '/calendar?month=2026-08')).status === 401);
+
+  const a = await jsonOf(await call(env, '/calendar?month=2026-08', { cookie: admin }));
+  ok('admin sees every day worked that month', a.days.length === 2
+     && a.days.some(d => d.case_no === 'API-CAL1' && d.investigator === 'dana' && d.hours === 8)
+     && a.days.some(d => d.case_no === 'API-CAL2' && d.investigator === 'reed'));
+  ok('a still-running day is on it', a.days.find(d => d.case_no === 'API-CAL2').end_time === null);
+  ok('admin sees the pending offer with its case and person',
+     a.offers.length === 1 && a.offers[0].case_no === 'API-CAL3' && a.offers[0].investigator === 'reed'
+     && a.offers[0].investigation_date === '2026-08-21');
+
+  const dv = await jsonOf(await call(env, '/calendar?month=2026-08', { cookie: dana }));
+  ok('an investigator sees only their own days',
+     dv.days.length === 1 && dv.days[0].case_no === 'API-CAL1');
+  ok("and never another investigator's offer", dv.offers.length === 0);
+
+  const rv = await jsonOf(await call(env, '/calendar?month=2026-08', { cookie: reed }));
+  ok('their own pending offer is on their calendar',
+     rv.offers.length === 1 && rv.offers[0].investigation_date === '2026-08-21'
+     && rv.offers[0].general_location === 'Bedford area');
+  const thinCal = JSON.stringify(rv.offers);
+  ok('and stays thin — no case number before acceptance', !thinCal.includes('API-CAL3'), thinCal);
+  ok('nor the client behind it', !thinCal.includes('Quiet Casualty'));
+
+  const other = await jsonOf(await call(env, '/calendar?month=2026-09', { cookie: admin }));
+  ok('a different month is empty', other.days.length === 0 && other.offers.length === 0);
+  const fallback = await jsonOf(await call(env, '/calendar?month=nonsense', { cookie: admin }));
+  ok('a malformed month falls back to the current one', /^\d{4}-\d{2}$/.test(fallback.month));
+}
+
 section('Password reset: a one-time link, nobody learns the password');
 {
   const env = freshEnv();
