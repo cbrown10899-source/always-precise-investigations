@@ -306,6 +306,31 @@ CREATE TABLE IF NOT EXISTS password_resets (
   used_at    TEXT
 );
 
+-- Assignment offers (HANDOFF priority 13). An admin offers a case; the
+-- investigator accepts or declines. BEFORE acceptance they see the shape of
+-- the job — date, hours, general location, their compensation — and nothing
+-- that identifies the subject or the client. Acceptance is what assigns the
+-- case and opens the (redacted) workspace.
+CREATE TABLE IF NOT EXISTS case_offers (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no             TEXT    NOT NULL,
+  investigator_id     INTEGER NOT NULL REFERENCES users(id),
+  offered_by          INTEGER NOT NULL REFERENCES users(id),
+  offered_at          TEXT    NOT NULL,
+  investigation_date  TEXT,
+  expected_hours      REAL,
+  general_location    TEXT,
+  instructions        TEXT,               -- revealed only after acceptance
+  compensation_hourly REAL,               -- the investigator's pay, never a client rate
+  mileage_terms       TEXT,
+  status              TEXT    NOT NULL DEFAULT 'offered'
+                        CHECK (status IN ('offered','accepted','declined','withdrawn')),
+  responded_at        TEXT,
+  decline_reason      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_offers_case ON case_offers(case_no, status);
+CREATE INDEX IF NOT EXISTS idx_offers_inv  ON case_offers(investigator_id, status);
+
 -- Small configuration values (authorization warning thresholds and whatever
 -- comes next), so numbers like 75/90/100 are configuration, not code.
 CREATE TABLE IF NOT EXISTS app_config (
