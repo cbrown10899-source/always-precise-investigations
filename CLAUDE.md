@@ -389,12 +389,27 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 545 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 335 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 568 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 342 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
 so they catch SQL and permission mistakes rather than mocking past them.
+
+## The free-plan failsafe
+
+The owner runs Cloudflare on free tiers and wants zero possibility of a
+charge. Cloudflare has no spend cap, so **the Worker is the cap**: evidence
+uploads are refused at 9 GB of the 10 GB R2 free tier (507, `storage_cap`),
+at 75 MB per file, and at 50k uploads/month. The meter is
+`SUM(size_bytes) WHERE deleted_at IS NULL` in `case_evidence` — computed,
+never stored. The admin dashboard's Storage card warns at 75%, and
+`site-health.yml` opens a single GitHub issue when `/portal-api/health`'s
+`storage_pct` (a bare number, deliberately public) crosses 75. Limits are
+env-overridable (`STORAGE_HARD_CAP` etc.) so the tests exercise the
+refusals with real uploads. Do not raise the caps without the owner.
+A Cloudflare-side Budget Alert ($10 → owner's email) exists as the
+independent second net; it alerts, it cannot block.
 
 ## The /watch/ dashboard
 

@@ -64,3 +64,11 @@ INVITE_FROM = "Always Precise Investigations <portal@alwayspreciseinvestigations
 binding = "DB"
 database_name = "api-case-portal"
 database_id = "5268dd8e-ba3b-46ca-aba0-437a28cc3844"
+
+# Evidence storage (HANDOFF priority 6). The bucket is created by the
+# r2-setup.yml workflow BEFORE this binding ships — a binding to a missing
+# bucket breaks every deploy of the Worker. Private on purpose: objects are
+# served only through the Worker's own session checks, never publicly.
+[[r2_buckets]]
+binding = "EVIDENCE"
+bucket_name = "case-evidence"

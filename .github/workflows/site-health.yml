@@ -84,6 +84,36 @@ jobs:
 
           cat $R >> "$GITHUB_STEP_SUMMARY"
           [ "$FAILS" -eq 0 ]
+      - name: Evidence storage vs the free plan (warn at 75%)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          # The owner's standing request: hear about storage BEFORE it could
+          # ever bill. The Worker refuses uploads at the hard cap regardless —
+          # this is the early warning, not the enforcement.
+          PCT=$(curl -sS --max-time 15 "https://alwayspreciseinvestigations.net/portal-api/health" \
+            | jq -r '.storage_pct // 0' 2>/dev/null || echo 0)
+          echo "Evidence storage: ${PCT}% of the free tier"
+          if awk -v p="$PCT" 'BEGIN{exit !(p >= 75)}'; then
+            TITLE="Evidence storage at ${PCT}% of the free plan"
+            EXISTING=$(gh issue list -R "${{ github.repository }}" --state open \
+              --search "Evidence storage at in:title" --json number --jq '.[0].number' || true)
+            {
+              echo "Evidence storage is at **${PCT}%** of the R2 free tier (10 GB)."
+              echo ""
+              echo "Nothing can bill — the Worker refuses uploads at 90% — but it is time to"
+              echo "make room: clear delivered footage from closed cases (admin delete is"
+              echo "audited), or raise the plan if the caseload has genuinely outgrown it."
+            } > storage.md
+            if [ -n "$EXISTING" ]; then
+              gh issue edit "$EXISTING" -R "${{ github.repository }}" --title "$TITLE" --body-file storage.md
+            else
+              gh issue create -R "${{ github.repository }}" --title "$TITLE" --body-file storage.md
+            fi
+          fi
+
       - name: Report failure in one issue (no daily duplicates)
         if: failure()
         env:
