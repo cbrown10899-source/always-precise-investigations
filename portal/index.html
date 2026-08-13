@@ -284,6 +284,7 @@ const API = "/portal-api";
 const $ = id => document.getElementById(id);
 const app = $("app");
 let ME = null, TAB = "cases", CASES = [], USERS = [], INVITES = [], TOTAL = 0, FILTER = "", LAST_LINK = "", LAST_EMAILED = false;
+let RESET_BOX = null;   // {userId, url} — the reset link, shown AT the row it belongs to
 let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
 let INVOICES = null, INV_OPEN = null, INV_MSG = "", INV_WARN = [], INV_EVENTS = [], INV_SETTINGS = null,
     INV_FILTER = {status: "", type: "", q: ""};
@@ -935,7 +936,15 @@ function staffView(){
     <td style="white-space:nowrap">${u.id === ME.id ? "" :
       `<button class="btn sm ${u.active ? "danger" : "ghost"}" data-act="toggleActive" data-id="${u.id}" data-active="${u.active ? 0 : 1}">${u.active ? "Disable" : "Enable"}</button>`}
       <button class="btn sm ghost" data-act="resetLink" data-id="${u.id}">Reset password</button>
+      ${!u.active && u.id !== ME.id ? `<button class="btn sm ghost danger" data-act="deleteUser" data-id="${u.id}">Delete</button>` : ""}
     </td></tr>
+    ${RESET_BOX && RESET_BOX.userId === u.id ? `<tr><td colspan="5" style="border-top:0;padding-top:0">
+      <div class="linkbox">
+        <b>Password reset link for ${esc(u.display_name || u.username)} — works once, expires in 24 hours.
+           Send it to them yourself; it is not shown again.</b>
+        <code>${esc(RESET_BOX.url)}</code>
+        <button class="btn sm" data-act="copyResetLink">Copy link</button>
+      </div></td></tr>` : ""}
     <tr><td colspan="5" style="border-top:0;padding-top:0">
       <div class="comprow" data-id="${u.id}">
         <span class="tl-m">Compensation — theirs to see, never a client's rate:</span>
@@ -1100,7 +1109,7 @@ async function doAccept(token){
 
 async function doLogout(){
   try{ await api("/auth/logout", {method:"POST"}); }catch{}
-  ME = null; CASES = []; USERS = []; INVITES = []; TAB = "cases"; LAST_LINK = ""; LAST_EMAILED = false; paint();
+  ME = null; CASES = []; USERS = []; INVITES = []; TAB = "cases"; LAST_LINK = ""; LAST_EMAILED = false; RESET_BOX = null; paint();
 }
 
 /* The case workspace. A case is not a record to read, it is work in progress,
@@ -2721,11 +2730,24 @@ async function withdrawOffer(id){
 async function requestResetLink(id){
   try{
     const r = await api(`/users/${id}/reset-link`, {method:"POST"});
-    LAST_LINK = r.url; LAST_EMAILED = false;
-    await render();
-    const o = $("uok");
-    if(o) o.textContent = "Reset link created — send it to them yourself. It works once and expires in 24 hours.";
+    // The outcome appears AT the row that was clicked — it once rendered only
+    // in the invitation box far below, worded as an invitation, which read as
+    // the button doing nothing.
+    RESET_BOX = {userId: id, url: r.url};
+    paint();
   }catch(e){ alert(e.message); }
+}
+
+async function deleteUserAccount(id, alreadyConfirmed){
+  const u = USERS.find(x => x.id === id);
+  if(!alreadyConfirmed && !confirm(`Delete ${u ? (u.display_name || u.username) : "this account"} entirely? ` +
+    "This only works for an account with no recorded case work — otherwise it stays disabled, " +
+    "which is the right end state for anyone whose name is in the case history.")) return;
+  try{
+    await api(`/users/${id}/delete`, {method:"POST"});
+    await render();
+    alert("Account deleted.");
+  }catch(e){ alert(e.message); await render(); }
 }
 
 async function doResetAccept(token){
@@ -2789,7 +2811,15 @@ async function doInvite(){
 
 async function toggleActive(id, active){
   if(!active && !confirm("Disable this account? Any session they have open ends immediately.")) return;
-  try{ await api(`/users/${id}/active`, {method:"POST", body:{active: Boolean(active)}}); await render(); }
+  try{
+    await api(`/users/${id}/active`, {method:"POST", body:{active: Boolean(active)}});
+    await render();
+    if(!active && confirm("Disabled. Also delete the account entirely? " +
+      "Only possible when it has no recorded case work — otherwise it stays disabled for the history. " +
+      "OK to attempt the full delete, Cancel to keep it disabled.")){
+      await deleteUserAccount(id, true);
+    }
+  }
   catch(e){ alert(e.message); }
 }
 
@@ -2899,6 +2929,10 @@ document.addEventListener("click", ev => {
   else if(act === "reviewExpense"){ reviewExpenseEntry(Number(el.dataset.id)); }
   else if(act === "saveUserRates"){ saveUserRates(Number(el.dataset.id)); }
   else if(act === "resetLink"){ requestResetLink(Number(el.dataset.id)); }
+  else if(act === "deleteUser"){ deleteUserAccount(Number(el.dataset.id)); }
+  else if(act === "copyResetLink"){
+    if(RESET_BOX) navigator.clipboard.writeText(RESET_BOX.url).then(() => { el.textContent = "Copied"; });
+  }
   else if(act === "acceptOffer"){ respondOffer(Number(el.dataset.id), "accept"); }
   else if(act === "declineOffer"){ respondOffer(Number(el.dataset.id), "decline"); }
   else if(act === "withdrawOffer"){ withdrawOffer(Number(el.dataset.id)); }
