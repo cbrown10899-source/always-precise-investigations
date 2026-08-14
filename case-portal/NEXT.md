@@ -44,6 +44,24 @@ the owner's stated order**. That order is the work list.
 Plus the MEDIUM that belongs with 1 and 2: **every surveillance date is UTC
 while every surveillance time is local**, so evening work files a day late.
 
+**5. NEW FEATURE — private-client Cash App + Venmo payment options.** Owner
+work order, 2026-08-14, recorded verbatim in **`PAYMENTS.md`** next to this
+file. It sits here, *after* the four HIGH defects, on the owner's own
+instruction in the order itself: *"Do not abandon the current HIGH bug work to
+rebuild this immediately if a higher-priority verified defect is already in
+progress."* Each of 1–4 loses money or data silently; this adds a way to collect
+it. In one line: an **admin-only** central configuration for Cash App and Venmo
+(enabled · display name · handle · optional URL · optional instructions, and
+**no credentials of any kind stored**), a *Include Private Payment Instructions*
+option on the **private** send wizard beside the existing intake checkbox, a
+PAYMENT OPTIONS block on the private rate sheet, and admin-recorded retainer
+receipt. **Sending instructions must never mark the retainer paid** — it stays
+RETAINER PENDING until an admin records it. The whole thing is **private-client
+only**: never in the insurance sheet, the insurance intake, a carrier email, the
+insurance send wizard, or any investigator view. The order names seven boundary
+regression tests and a Codex review; both are part of the work, not optional
+extras. $1,500 / $100 hr / 4-hour minimum do not change.
+
 ### The rule that applies to every one of them
 
 **These are REVIEWER CLAIMS, not verified facts.** Each came from an
@@ -180,7 +198,50 @@ the §10 arrival sentence generator has **two** gaps, not one.
    the one place an investigator actually logs an arrival, from a parked car.
    P6 puts arrival templates in the field quick-activity explicitly.
 
-### ⚖️ OWNER DECISION — what a reassigned investigator keeps
+### ⚖️ ~~OWNER DECISION~~ — SETTLED 2026-08-14: **KEEP**
+
+**The owner chose Keep.** A reassigned investigator continues to see their own
+previously submitted reports, expense claims, calendar history and active-day
+records for a case that is no longer theirs. They worked those days and are owed
+the record of their own pay and their own filed work.
+
+**Keep is what the code already did, so nothing was rebuilt.** What was added is
+a guard test, because a decision whose implementation is "no code" is exactly the
+kind a later tidy-up silently reverses — someone reading `myReports()` and seeing
+it ignore `assigned_to` could reasonably mistake it for a scoping bug and "fix"
+it, destroying data the owner explicitly chose to keep.
+
+`test-worker.mjs` → **"A reassigned investigator keeps their own work, never the
+client"** (15 checks) asserts both halves, since Keep is only safe while the
+second holds:
+
+- **The work survives.** After reassignment the case 404s and leaves their list,
+  but their worked day, their expense, a day still running and their calendar
+  history all remain on `/my/reports`, `/my/expenses`, `/my/active`, `/calendar`.
+- **The client does not.** None of those four payloads carries the carrier, claim
+  number, policy number, adjuster name or email, billing email, or defense
+  counsel. `subject_name` on a running day stays, because that is fieldwork.
+- **A positive control** asserts the admin really is sent all nine of those
+  values on the same case — without it the four leak assertions would pass just
+  as happily on an empty payload or a renamed field, and prove nothing.
+
+**Two open findings touch this decision and are NOT closed by it**, because Keep
+answers what the *departing* investigator keeps, not these:
+
+- **HIGH #2** (stranded running day) is the same routes seen from the other end.
+  Keep says the old investigator still sees a day they left running; #2 says
+  *nobody can close it*. Fixing #2 must not remove the visibility Keep requires.
+- The LOW PERMISSIONS finding — *"the workspace scopes expenses, days and reports
+  by case rather than by investigator, so a reassigned case shows the NEW
+  investigator the previous one's money and hours"* — is the **mirror image** and
+  is still open. Keep is about your own record following you; that finding is
+  about someone else's pay being visible, which SURVEILLANCE P19 lists among the
+  things to hide. Marked "may be intended" by its reviewer; it now needs an
+  explicit owner answer of its own rather than being read as settled by Keep.
+
+The question below is closed; it is kept as the reasoning behind the answer.
+
+### ⚖️ The decision as it was originally put
 
 Raised by an independent Codex review of the permission boundary, 2026-08-14.
 **No behaviour was changed. Nothing here is a leak of client identity** — this

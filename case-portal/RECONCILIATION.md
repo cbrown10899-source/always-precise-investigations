@@ -325,6 +325,16 @@ precisely because two tests had encoded it as the rule.
 | **3** | **A backward invoice status transition can reopen a paid invoice and remove it from Outstanding.** `setInvoiceStatus` guards `sent_to_bill` and `sent_to_client`, but `draft` has **no guard**, and `ready` validates content rather than current status. A paid invoice can be set back to draft, its lines rewritten and adjustments applied, bypassing the `locked` check. Then `outstanding`, `drafts` and the dashboard SQL all filter on the **stored** status, so the receivable vanishes while `balance_due` stays honest. | HIGH | `case-portal/worker.js` ~2454-2489 (`setInvoiceStatus`), ~2349 / ~2357 / ~3063 (the aggregates) | Money that is owed stops being visible. API-level only — the page offers Back-to-draft only from `ready` — but the Worker is the stated enforcement point |
 | **4** | **The Case Build finalize gate strip can be hidden when the package is actually ready to finalize.** The gate strip renders only while `b.status !== "finalized"`, so reclassifying evidence to `do_not_use` *after* finalize leaves the warning invisible while Download still works. `pkgDocHtml` renders every `build_items` row with no classification check. | HIGH | `portal/index.html` ~2976 (the suppression), ~3160-3245 (`pkgDocHtml`), ~3069 (Download on the finalized view); `case-portal/worker.js` ~2678-2697 (`editEvidence` does not check finalized builds) | Held-back material can reach a client with the warning suppressed — the one outcome the classification system exists to prevent |
 
+**Queued behind them — a new owner work order, not a defect:** private-client
+**Cash App + Venmo payment options**, recorded verbatim in `PAYMENTS.md`. It is
+deliberately *fifth*, on the owner's own instruction not to abandon HIGH bug
+work for it. Its boundary is the same shape as the rate-sheet pairing already
+enforced in §0 and §A: **private client only**, never in an insurance sheet,
+insurance intake, carrier email, insurance send wizard or investigator view;
+admin-only configuration; **no credentials stored**; and sending the
+instructions must never mark the retainer paid. Seven named boundary regression
+tests and a Codex review ride with it.
+
 **The MEDIUM that rides with them:** every surveillance **date** is UTC while
 every surveillance **time** is local — `toISOString().slice(0,10)` against
 `toTimeString().slice(0,5)`. After 20:00 EDT the date is tomorrow's, so
