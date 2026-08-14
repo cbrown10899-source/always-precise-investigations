@@ -327,7 +327,7 @@ know the cap they are working to. The price fields (`package`, `package_price`,
 Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
-node intake/test-intake.mjs      # 178 checks; needs Playwright, skips cleanly without it
+node intake/test-intake.mjs      # 186 checks; needs Playwright, skips cleanly without it
 node visitor-alerts/test-worker.mjs   # 41 checks
 ```
 
@@ -403,7 +403,7 @@ Tests:
 
 ```bash
 node case-portal/test-worker.mjs   # 653 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 537 checks: the page against the real Worker
+node portal/test-portal.mjs        # 540 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,

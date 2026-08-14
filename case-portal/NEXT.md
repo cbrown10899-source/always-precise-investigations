@@ -36,8 +36,13 @@ portal e2e 537, intake 178, alerts 41.
 4. Case Build gap audit (multi-day reports, package types, real
    report+photos PDF — MASTER §13).
 5. Invoice / BILL gap audit (provider-neutral fields — MASTER §28).
-6. Public website / SEO, **and remove Social Media Search** everywhere
-   (MASTER §29–30).
+6. Public website / SEO. **Social Media Search is already removed** (§30):
+   it existed only on the insurance page — a service card, the FAQ, and,
+   more quietly, the JSON-LD offer catalogue and FAQPage — and is now
+   "Background & Public-Record Research" in all four, with a guard test
+   over every public page and the sitemap so it cannot creep back.
+   Background research stays, as the owner asked. The rest of §29 (hero,
+   two client paths, homepage order, meta/canonical audit) is untouched.
 7. Full insurance workflow audit, end to end (MASTER §38).
 8. Full private workflow audit, end to end (MASTER §39).
 9. Final responsive / accessibility / security pass.
@@ -46,10 +51,10 @@ portal e2e 537, intake 178, alerts 41.
 
 Record these here so they cannot be lost between phases:
 
-- **Requested vs Confirmed authorization** (MASTER §7). A package the client
-  picked on the intake is *requested*, never "approved". The admin confirms it,
-  and only the confirmed one carries a dollar figure. INTAKE-NA's
-  `authorized_hours_status: pending` is the first half of this.
+- ~~**Requested vs Confirmed authorization**~~ — **done.** The intake's own
+  hours read "Requested authorization"; the office's figure on the
+  Authorization panel reads "Confirmed authorization", and only that one is
+  ever paired with money. Tests hold both labels.
 - **Lead statuses are not case statuses** (MASTER §5): Lead · Rate Sheet Sent ·
   Intake Sent · Intake Received · Contacted · More Info Requested · Converted
   to Case · Declined · Closed Lead. The Phase-6 leads desk currently reuses

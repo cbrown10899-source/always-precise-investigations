@@ -218,6 +218,28 @@ section('The public form carries no pricing at all');
   }
 }
 
+/* The owner withdrew Social Media Search / Research from what the firm offers
+   (MASTER-HANDOFF §30). It has to stay gone from the copy AND from the
+   structured data, which is the half that quietly keeps advertising a service
+   long after the visible card is deleted. Background research stays. */
+section('Social media research is not offered anywhere public');
+{
+  const files = ['index.html', 'insurance-investigations/index.html',
+                 'insurance-investigations/vendor-information/index.html',
+                 'infidelity-investigations/index.html',
+                 'child-custody-investigations/index.html',
+                 'intake/index.html', 'sitemap.xml'];
+  for (const f of files) {
+    const full = path.join(ROOT, f);
+    if (!fs.existsSync(full)) continue;
+    const page = fs.readFileSync(full, 'utf8');
+    ok(`${f} does not offer social media research`, !/social\s*media/i.test(page),
+       (page.match(/[^\n]{0,40}social\s*media[^\n]{0,40}/i) || [''])[0]);
+  }
+  const ins = fs.readFileSync(path.join(ROOT, 'insurance-investigations/index.html'), 'utf8');
+  ok('background research is still offered', /Background\s*&amp;\s*Public-Record Research/i.test(ins));
+}
+
 /* ---------------------------------------------------------- carrier path */
 
 section('Carrier path — insurance claim assignment');

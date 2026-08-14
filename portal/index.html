@@ -1864,7 +1864,7 @@ function authPanel(a, admin){
   const hoursSet = a.authorized_hours != null;
   return `<div class="feebox">
     ${hoursSet ? `
-      <div class="row"><span>Authorized</span><b>${esc(a.authorized_hours)} hours</b></div>
+      <div class="row"><span>Confirmed authorization</span><b>${esc(a.authorized_hours)} hours</b></div>
       <div class="row"><span>Used</span><b>${esc(a.hours_used)} hours</b></div>
       <div class="row"><span>Remaining</span><b>${esc(a.hours_remaining)} hours</b></div>
       ${bar(a.hours_used, a.authorized_hours, a.percent_used, a.warn_level)}
@@ -3765,7 +3765,12 @@ function detailList(s, mode){
     ${claim ? "" : `${row("Address", p.client_address)}${row("Best time", p.best_time)}`}
     ${row(claim ? "Claimant" : "Subject", p.subject_name)}
     ${row(claim ? "Scope" : "Objective", p.objective)}
-    ${rowS("Authorized hours", p.authorized_hours, p.authorized_hours_status)}${row("Not to exceed", p.not_to_exceed)}
+    ${/* MASTER-HANDOFF §7: what the client picked on the intake is REQUESTED.
+          Calling it "authorized" would read as though the firm had approved a
+          package the client chose for themselves. The confirmed figure is the
+          one an admin sets on the Authorization panel, and only that one is
+          ever paired with money. */""}
+    ${rowS("Requested authorization", p.authorized_hours, p.authorized_hours_status)}${row("Not to exceed", p.not_to_exceed)}
     ${rowS("Requested start", p.start_date, p.start_date_status)}${row("Priority", p.priority)}
     ${row(claim ? "Deadline" : "Timeline", p.timeline)}${row("Attachments", p.attachments)}
     ${claim ? `${row("Billing reference", p.billing_reference)}${rowS("Invoices to", p.billing_email, p.billing_email_status)}${row("Billing notes", p.billing_notes)}` : ""}

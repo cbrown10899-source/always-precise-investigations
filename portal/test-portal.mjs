@@ -2088,6 +2088,32 @@ section('A partial intake reads as intentional, not broken');
   await page.close();
 }
 {
+  /* MASTER-HANDOFF §7: what a client picked is REQUESTED, never "approved" —
+     only what the office confirms is an authorization, and only that carries
+     a figure. */
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  // API-NA-2001 carries what the carrier asked for on the intake.
+  await rowFor(page, 'API-NA-2001').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Intake details');
+  const detail = await text(page, '#dlgBody');
+  ok('the intake\'s own hours read as requested', has(detail, 'Requested authorization'));
+  ok('and are never labelled authorized on their own',
+     !/\bAuthorized hours\b/.test(detail), detail.slice(0, 300));
+  await page.close();
+
+  // 4001 has a figure an admin actually confirmed.
+  const admin = await newPage();
+  await signIn(admin, 'trever', 'AdminPassword1x');
+  await rowFor(admin, 'API-20260812-4001').click();
+  await admin.waitForTimeout(450);
+  await wsTab(admin, 'Authorization');
+  ok('the office\'s figure is the confirmed one',
+     has(await text(admin, '#dlgBody'), 'Confirmed authorization'));
+  await admin.close();
+}
+{
   // The same case, seen from the field: the statuses that are fieldwork show,
   // the ones that name the carrier do not.
   const page = await newPage();
