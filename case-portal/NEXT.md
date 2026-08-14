@@ -88,8 +88,10 @@ check that reported clean on a broken schema, and the retainer double-count.
 ---
 
 Snapshot date: 2026-08-14. Branch: `claude/app-crashes-lockups-debug-psf6zd`.
-Master is green through PR #60 (`d640f82`). Suites at last green: worker 748,
-portal e2e 663, intake 186, alerts 41.
+Master is green through **PR #70 (`6429c03`)**. The counts are in the START
+HERE header above — worker 794, portal 670, intake 205, alerts 47. (This line
+used to repeat an older, lower set and contradict the header; one snapshot,
+in one place.)
 
 ---
 
