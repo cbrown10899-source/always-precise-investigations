@@ -12,8 +12,8 @@ its section 1 lists the shipped baseline and says explicitly: do not rebuild it.
 Read it for anything this file summarises.
 
 Snapshot date: 2026-08-13. Branch: `claude/app-crashes-lockups-debug-jcy6kf`.
-Master is green through PR #50. Suites at last green: worker 653,
-portal e2e 537, intake 178, alerts 41.
+Master is green through PR #54. Suites at last green: worker 664,
+portal e2e 585, intake 186, alerts 41.
 
 ## The queue, in the owner's order (MASTER-HANDOFF §42)
 
@@ -27,9 +27,12 @@ portal e2e 537, intake 178, alerts 41.
    file). Two things are genuinely outstanding and both need a human or an
    asset, not code: **real iPhone Safari / Android Chrome testing** (the
    camera picker and the phone's own dictation cannot be covered headlessly),
-   (the icon arrived 2026-08-14 and is in). A mobile draft-preview *reader* inside the mode is the
-   one nice-to-have left; the submit path already works through the full
-   report screen.
+   (the icon arrived 2026-08-14 and is in; the owner's first real phone
+   session on 2026-08-14 found and fixed four things — the phone had no
+   navigation at all, the first home-screen launch missed the field, the
+   timer was too big, and there was no way back inside the mode). A mobile
+   draft-preview *reader* inside the mode is the one nice-to-have left; the
+   submit path already works through the full report screen.
 3. Dropbox video delivery (needs DROPBOX_APP_KEY / DROPBOX_APP_SECRET /
    DROPBOX_REFRESH_TOKEN as Worker secrets + a fresh read of the API docs).
 4. Case Build gap audit (multi-day reports, package types, real
@@ -68,10 +71,22 @@ Record these here so they cannot be lost between phases:
 
 ## In flight right now
 
-Nothing. INTAKE-NA is shipped; **SURVEILLANCE.md is the head of the queue.**
-Ask the owner to re-upload `06_active_surveillance_mobile_large_reference.png`
-before starting it — it is the primary visual reference and the binaries were
-not committed.
+Nothing. The queue's head is item 3 (Dropbox), which is **blocked on the
+owner's Worker secrets** — so the first unblocked work is item 4, the Case
+Build gap audit. `node portal/screenshots.mjs` photographs 37 screens against
+the real stack whenever a visual check is wanted.
+
+Two owner decisions from 2026-08-14 that changed earlier rules, recorded in
+CLAUDE.md and worth not re-litigating:
+
+- **Evidence is client-deliverable on upload.** The firm shoots its own
+  footage and writes its own reports; nothing waits behind a review it would
+  only give itself. Holding something back is now the deliberate act
+  (Needs redaction / Internal only / Do not use), and the Case Build gate
+  still refuses those.
+- **An entry can be removed, but never erased.** `activity_removed` stamps
+  who and when; the row survives, the report skips it, and it can be put
+  back. The old "no delete route" rule survives in substance.
 
 ## How to resume in a fresh session
 

@@ -352,8 +352,14 @@
     font-weight:700;cursor:pointer;padding:6px 4px;}
   .sv-body{padding:18px 16px;max-width:640px;margin:0 auto;}
   .sv-day{font-size:.78rem;letter-spacing:.14em;text-transform:uppercase;color:#8fb4d9;text-align:center;}
-  .sv-timer{font-size:3.1rem;font-weight:800;letter-spacing:.02em;text-align:center;
-    font-variant-numeric:tabular-nums;margin:2px 0 2px;}
+  /* Big enough to read at a glance from the driver's seat, small enough that
+     it is not the whole screen — the owner's call after using it. */
+  .sv-timer{font-size:2rem;font-weight:800;letter-spacing:.02em;text-align:center;
+    font-variant-numeric:tabular-nums;margin:2px 0;}
+  /* Contextual back, inside the mode. Exit active mode leaves; this does not. */
+  .sv-back{background:none;border:0;color:#8fb4d9;font:inherit;font-size:.86rem;font-weight:700;
+    cursor:pointer;padding:8px 2px 12px;display:inline-block;}
+  .sv-backbar{padding:6px 16px 0;max-width:640px;margin:0 auto;}
   .sv-since{text-align:center;color:#8fb4d9;font-size:.82rem;margin-bottom:18px;}
   .sv-btn{display:block;width:100%;font:inherit;font-size:1rem;font-weight:800;padding:16px;
     border-radius:12px;border:0;cursor:pointer;background:#1f3a58;color:#fff;margin-bottom:10px;}
@@ -1954,7 +1960,14 @@ function activityPanel(){
     ${a.length ? Object.keys(byDay).map(d => `
       <div class="tl-day">${esc(fmtDay(d))}</div>
       <ol class="tl">
-        ${byDay[d].map(e => `<li class="tl-i">
+        ${byDay[d].map(e => e.removed_at ? `<li class="tl-i" style="opacity:.5">
+          <div class="tl-t">${esc(t12(e.at_time))}</div>
+          <div class="tl-b">
+            <div class="tl-d" style="text-decoration:line-through">${esc(e.description)}</div>
+            <div class="tl-m">Removed ${when(e.removed_at)}${e.removed_by ? " by " + esc(e.removed_by) : ""}
+              &mdash; kept on the record, left out of the report
+              <button class="tl-edit" data-act="actRestore" data-id="${e.id}">Put it back</button></div>
+          </div></li>` : `<li class="tl-i">
           <div class="tl-t">${esc(t12(e.at_time))}</div>
           <div class="tl-b">
             <span class="tag ${esc(e.kind)}">${esc(label(e.kind))}</span>
@@ -1972,7 +1985,8 @@ function activityPanel(){
               ${e.photo_acquired ? '<span class="tag cap-pa">Photo</span>' : ""}</div>` : ""}
             ${e.internal_note ? `<div class="tl-n">internal: ${esc(e.internal_note)}</div>` : ""}
             <div class="tl-m">${esc(e.investigator || "")}${e.edited_at ? " · edited" : ""}${
-              canEdit(e) ? `<button class="tl-edit" data-act="actEdit" data-id="${e.id}">Edit</button>` : ""}</div>
+              canEdit(e) ? `<button class="tl-edit" data-act="actEdit" data-id="${e.id}">Edit</button>
+                <button class="tl-edit" style="color:#a6392f" data-act="actDelete" data-id="${e.id}">Delete</button>` : ""}</div>
           </div></li>`).join("")}
       </ol>`).join("")
       : `<div class="empty">Nothing logged on this case yet. + Add activity starts the story.</div>`}
@@ -3073,7 +3087,7 @@ function wsPkgShape(){
   const best = reports.find(r => ["approved", "delivered"].includes(r.status))
             || reports.find(r => r.status === "submitted") || reports[0] || null;
   return {
-    activity_count: ((WS && WS.activity) || []).length,
+    activity_count: ((WS && WS.activity) || []).filter(e => !e.removed_at).length,
     report_status: best ? best.status : null,
     photos: live.filter(e => String(e.content_type || "").startsWith("image/")).length,
     videos: live.filter(e => String(e.content_type || "").startsWith("video/")).length,
@@ -3238,6 +3252,13 @@ function svView(){
   const p = s.payload || {};
   const claim = s.kind === "claims";
   const open = WS && WS.open_day;
+  /* SURVEILLANCE P25 — every screen inside the mode has a way back to the
+     field home that does NOT leave the mode. "Exit active mode" is the other
+     thing, and it is deliberately in the header, not next to this. */
+  const back = SV.tab !== "home" && WS
+    ? `<div class="sv-backbar">
+         <button class="sv-back" data-act="svTab" data-t="home">&larr; Back to active surveillance</button>
+       </div>` : "";
   const body =
       !WS            ? `<div class="sv-body"><div class="sv-card">Loading the assignment&hellip;</div></div>`
     : SV.tab === "activity" ? svActivityScreen()
@@ -3254,6 +3275,7 @@ function svView(){
       <span class="case">${esc(WS_CASE)}</span>
       <button class="sv-x" data-act="svExit">&larr; Exit active mode</button>
     </div>
+    ${back}
     ${body}
     <div class="sv-nav">
       ${[["home","&#8962;","Home"], ["activity","&#9998;","Activity"],
@@ -3457,14 +3479,24 @@ function svTimelineScreen(){
     const vi = mine.filter(x => String(x.content_type || "").startsWith("video/")).length;
     return (ph ? `&#128247; ${ph} ` : "") + (vi ? `&#127909; ${vi}` : "");
   };
+  const live = acts.filter(e => !e.removed_at);
   return `<div class="sv-body">
     ${SV.err ? `<div class="sv-err">${esc(SV.err)}</div>` : ""}
     <div class="sv-card">
-      <h3>Timeline &middot; ${acts.length} entr${acts.length === 1 ? "y" : "ies"}</h3>
-      ${acts.length ? `<ul class="sv-tl">${acts.map(e => `<li>
+      <h3>Timeline &middot; ${live.length} entr${live.length === 1 ? "y" : "ies"}</h3>
+      ${acts.length ? `<ul class="sv-tl">${acts.map(e => e.removed_at ? `<li style="opacity:.45">
+        <div class="t">${esc(t12(e.at_time))}</div>
+        <div style="text-decoration:line-through">${esc(e.description)}</div>
+        <div class="m">Removed ${when(e.removed_at)} &mdash; not in the report
+          <button class="sv-back" style="padding:2px 0 0" data-act="svRestore" data-id="${e.id}">Put it back</button></div>
+      </li>` : `<li>
         <div class="t">${esc(t12(e.at_time))}</div>
         <div>${esc(e.description)}</div>
-        <div class="m">${counts(e)}${e.location ? " &middot; " + esc(e.location) : ""}</div>
+        <div class="m">${counts(e)}${e.location ? " &middot; " + esc(e.location) : ""}${e.edited_at ? " &middot; edited" : ""}</div>
+        <div style="display:flex;gap:14px;margin-top:6px">
+          <button class="sv-back" style="padding:0" data-act="svEdit" data-id="${e.id}">Edit</button>
+          <button class="sv-back" style="padding:0;color:#e79a9a" data-act="svDelete" data-id="${e.id}">Delete</button>
+        </div>
       </li>`).join("")}</ul>` : `<div style="color:#8fb4d9">Nothing logged yet.</div>`}
     </div>
     <button class="sv-btn gold" data-act="svTab" data-t="activity">+ Add activity</button>
@@ -3480,21 +3512,25 @@ function svActivityScreen(){
     const now = new Date().toTimeString().slice(0,5);
     return `<div class="sv-body">
       ${SV.err ? `<div class="sv-err">${esc(SV.err)}</div>` : ""}
-      <button class="sv-x" style="padding:0 0 10px" data-act="svPick" data-line="">&larr; All actions</button>
+      <button class="sv-x" style="padding:0 0 10px" data-act="svPick" data-line="">&larr; ${
+        e.edit ? "Back to the timeline" : "All actions"}</button>
       <div class="sv-card">
         <label class="sv-f"><span>Time</span><input id="sv_time" type="time" value="${esc(e.time || now)}"></label>
         <label class="sv-f"><span>Details &mdash; edit freely</span>
           <textarea id="sv_desc" rows="4">${esc(e.text || "")}</textarea></label>
+        ${e.edit ? "" : `
         <label class="cap" style="color:#e8eef5"><input type="checkbox" id="sv_sd"><span>Subject documented</span></label>
         <label class="cap" style="color:#e8eef5"><input type="checkbox" id="sv_pa"><span>Photo taken</span></label>
-        <label class="cap" style="color:#e8eef5"><input type="checkbox" id="sv_va"><span>Video acquired</span></label>
-        <details style="margin-top:10px"><summary style="color:#8fb4d9;cursor:pointer">More details</summary>
-          <label class="sv-f" style="margin-top:8px"><span>Location</span><input id="sv_loc"></label>
-          <label class="sv-f"><span>Vehicle</span><input id="sv_veh"></label>
-          <label class="sv-f"><span>Internal note &mdash; never client-facing</span><input id="sv_note"></label>
+        <label class="cap" style="color:#e8eef5"><input type="checkbox" id="sv_va"><span>Video acquired</span></label>`}
+        <details style="margin-top:10px" ${e.edit && (e.loc || e.veh || e.note) ? "open" : ""}>
+          <summary style="color:#8fb4d9;cursor:pointer">More details</summary>
+          <label class="sv-f" style="margin-top:8px"><span>Location</span><input id="sv_loc" value="${esc(e.loc || "")}"></label>
+          <label class="sv-f"><span>Vehicle</span><input id="sv_veh" value="${esc(e.veh || "")}"></label>
+          <label class="sv-f"><span>Internal note &mdash; never client-facing</span><input id="sv_note" value="${esc(e.note || "")}"></label>
         </details>
       </div>
-      <button class="sv-btn gold" data-act="svSaveEntry">Save activity</button>
+      <button class="sv-btn gold" data-act="svSaveEntry">${e.edit ? "Save the correction" : "Save activity"}</button>
+      ${e.edit ? `<button class="sv-btn line" data-act="svDelete" data-id="${e.edit}">Delete this entry</button>` : ""}
     </div>`;
   }
   const favs = favLines();
@@ -3540,10 +3576,16 @@ function svEvidenceScreen(){
         ${isImg(e) ? `<a href="${url(e)}" target="_blank" rel="noopener"><img class="evthumb" src="${url(e)}" alt="" loading="lazy"></a>`
           : `<div class="evtile" style="background:#132538">${String(e.content_type || "").startsWith("video/") ? "&#127909;" : "&#128196;"}</div>`}
         <div style="font-size:.78rem;margin-top:5px;word-break:break-all">${esc(e.filename)}</div>
+        <div style="display:flex;gap:12px;margin-top:4px">
+          <button class="sv-back" style="padding:0;font-size:.76rem" data-act="svEvNote" data-id="${e.id}">Caption</button>
+          <button class="sv-back" style="padding:0;font-size:.76rem;color:#e79a9a" data-act="svEvDelete" data-id="${e.id}">Delete</button>
+        </div>
       </div>`).join("")}</div>` : `<div style="color:#8fb4d9">Nothing uploaded yet.</div>`}
     </div>
-    <div style="color:#8fb4d9;font-size:.8rem">Everything you upload lands as
-      <b>Needs review</b>. What reaches the client is the office's decision, in Case Build.</div>
+    <div style="color:#8fb4d9;font-size:.8rem">Photos and video are ready for the
+      report as soon as they are here &mdash; nothing waits on a review. Mark a file
+      <b>Needs redaction</b>, <b>Internal only</b> or <b>Do not use</b> in the office
+      view to hold it back from a client package.</div>
   </div>`;
 }
 
@@ -4467,6 +4509,19 @@ async function quickAddEntry(oneTapLine){
   await reloadWorkspace();
 }
 
+async function removeActivityEntry(id){
+  WS_ERR = "";
+  try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/activity/${id}/delete`, {method:"POST", body:{}}); }
+  catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+async function restoreActivityEntry(id){
+  WS_ERR = "";
+  try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/activity/${id}/restore`, {method:"POST", body:{}}); }
+  catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
 /* ---- Active Surveillance actions. Every one posts to a route that already
    existed: the mode adds screens, never a second way to store the work. ---- */
 
@@ -4496,8 +4551,55 @@ async function svEndDay(){
   await svReload();
 }
 
+/* Removing a line is a STAMPED removal, not an erase — the entry stays on the
+   record, greyed out, with a way to put it back, and the report skips it. */
+async function svDeleteEntry(id){
+  SV.err = "";
+  try{
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/activity/${id}/delete`, {method:"POST", body:{}});
+    SV.entry = null; SV.tab = "timeline";
+  }catch(e){ SV.err = e.message; }
+  await svReload();
+}
+async function svRestoreEntry(id){
+  SV.err = "";
+  try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/activity/${id}/restore`, {method:"POST", body:{}}); }
+  catch(e){ SV.err = e.message; }
+  await svReload();
+}
+async function svDeleteEvidence(id){
+  SV.err = "";
+  try{
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/evidence/${id}/delete`, {method:"POST", body:{}});
+    SV.ok = "Removed. The record of it stays with the office.";
+  }catch(e){ SV.err = e.message; SV.ok = ""; }
+  await svReload();
+}
+async function svCaptionEvidence(id){
+  const row = ((WS && WS.evidence) || []).find(x => x.id === id);
+  const note = prompt("What does this document?", (row && row.note) || "");
+  if(note === null) return;
+  SV.err = "";
+  try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/evidence/${id}`, {method:"POST", body:{note}}); }
+  catch(e){ SV.err = e.message; }
+  await svReload();
+}
+
 async function svSaveEntry(oneTap){
   SV.err = "";
+  // An edit changes the four fields the Worker allows and is stamped by it.
+  if(!oneTap && SV.entry && SV.entry.edit){
+    try{
+      await api(`/cases/${encodeURIComponent(WS_CASE)}/activity/${SV.entry.edit}`, {method:"POST", body:{
+        description: $("sv_desc").value,
+        location: $("sv_loc") ? $("sv_loc").value : "",
+        vehicle: $("sv_veh") ? $("sv_veh").value : "",
+        internal_note: $("sv_note") ? $("sv_note").value : "",
+      }});
+      SV.entry = null; SV.tab = "timeline";
+    }catch(e){ SV.err = e.message; }
+    return svReload();
+  }
   const now = new Date();
   const body = oneTap ? {
     kind: "activity", description: oneTap,
@@ -4988,6 +5090,11 @@ document.addEventListener("click", ev => {
         pre:{description: entry.description, location: entry.location,
              vehicle: entry.vehicle, internal_note: entry.internal_note}};
       paintCase(); } }
+  else if(act === "actDelete"){
+    if(confirm("Remove this entry from the timeline?\n\nIt stops appearing in the report. The record that it was removed, and by whom, stays — and you can put it back."))
+      removeActivityEntry(Number(el.dataset.id));
+  }
+  else if(act === "actRestore"){ restoreActivityEntry(Number(el.dataset.id)); }
   else if(act === "subjNew"){ SUBJ_FORM = {mode:"new", pre:{}}; WS_ERR = ""; paintCase(); }
   else if(act === "subjFromIntake"){
     const p = (WS && WS.submission && WS.submission.payload) || {};
@@ -5072,6 +5179,22 @@ document.addEventListener("click", ev => {
     SV.entry = {text: "", time: new Date().toTimeString().slice(0,5), note: true};
     SV.ok = ""; SV.err = ""; paint();
   }
+  else if(act === "svEdit"){
+    const e2 = ((WS && WS.activity) || []).find(x => x.id === Number(el.dataset.id));
+    if(e2){ SV.tab = "activity"; SV.err = ""; SV.ok = "";
+      SV.entry = {edit: e2.id, text: e2.description, time: e2.at_time,
+                  loc: e2.location, veh: e2.vehicle, note: e2.internal_note};
+      paint(); } }
+  else if(act === "svDelete"){
+    if(confirm("Remove this entry from the timeline?\n\nIt stops appearing in the report, and the office can still see that it was removed and put it back."))
+      svDeleteEntry(Number(el.dataset.id));
+  }
+  else if(act === "svRestore"){ svRestoreEntry(Number(el.dataset.id)); }
+  else if(act === "svEvDelete"){
+    if(confirm("Remove this file?\n\nThe record that it existed stays with the office."))
+      svDeleteEvidence(Number(el.dataset.id));
+  }
+  else if(act === "svEvNote"){ svCaptionEvidence(Number(el.dataset.id)); }
   else if(act === "svMic"){ svMic(); }
   else if(act === "svNoMic"){
     SV.err = "This browser has no in-app speech recognition. Your keyboard's own dictation works in every field here.";

@@ -1281,14 +1281,20 @@ async function caseWorkspace(env, user, caseNo) {
   if (!row) return json({ error: 'not found' }, 404);
   const admin = user.role === 'admin';
 
+  /* Removed entries still come back, stamped — the page greys them out with a
+     way to put one back, and the report skips them. Erasing the row outright
+     is what this deliberately does not do. */
   const { results: activity } = await env.DB.prepare(
     `SELECT a.id, a.day_id, a.at_date, a.at_time, a.kind, a.description, a.location,
             a.vehicle, a.internal_note, a.edited_at, u.display_name AS investigator,
             COALESCE(m.subject_documented, 0) AS subject_documented,
             COALESCE(m.video_acquired, 0) AS video_acquired,
-            COALESCE(m.photo_acquired, 0) AS photo_acquired
+            COALESCE(m.photo_acquired, 0) AS photo_acquired,
+            r.removed_at, ru.display_name AS removed_by
        FROM activity_log a LEFT JOIN users u ON u.id = a.investigator_id
        LEFT JOIN activity_media m ON m.entry_id = a.id
+       LEFT JOIN activity_removed r ON r.entry_id = a.id
+       LEFT JOIN users ru ON ru.id = r.removed_by
       WHERE a.case_no = ?
       ORDER BY a.at_date DESC, a.at_time DESC, a.id DESC
       LIMIT 500`).bind(caseNo).all();
@@ -1620,9 +1626,44 @@ async function addActivity(request, env, user, caseNo) {
   return json({ ok: true, id }, 201);
 }
 
-/* Edits are stamped, never silent. There is deliberately no delete route: an
-   investigative timeline that can be quietly erased is worth less in a
-   hearing than one that shows its corrections. */
+/* Removing an entry (owner's request, 2026-08-14). The rule that used to
+   forbid it still holds in substance: an investigative timeline that can be
+   quietly erased is worth less in a hearing than one that shows its
+   corrections. So this is a STAMPED removal, not an erase — the row stays,
+   who removed it and when is recorded, the report and the package skip it,
+   and the office can still see that it happened. Same shape as an evidence
+   delete, which has worked this way from the start. */
+async function removeActivity(request, env, user, caseNo, id) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const row = await env.DB.prepare(
+    'SELECT id, investigator_id FROM activity_log WHERE id = ? AND case_no = ?').bind(id, caseNo).first();
+  if (!row) return json({ error: 'not found' }, 404);
+  if (user.role !== 'admin' && row.investigator_id !== user.id) {
+    return json({ error: 'That entry belongs to another investigator.' }, 403);
+  }
+  const body = await readJson(request).catch(() => ({}));
+  await env.DB.prepare(
+    `INSERT INTO activity_removed (entry_id, removed_at, removed_by, reason)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(entry_id) DO UPDATE SET removed_at = ?2, removed_by = ?3, reason = ?4`)
+    .bind(id, nowIso(), user.id, String((body && body.reason) || '').slice(0, 500) || null).run();
+  return json({ ok: true, id });
+}
+
+/* Putting one back, for the mis-tap that removed the wrong line. */
+async function restoreActivity(env, user, caseNo, id) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const row = await env.DB.prepare(
+    'SELECT id, investigator_id FROM activity_log WHERE id = ? AND case_no = ?').bind(id, caseNo).first();
+  if (!row) return json({ error: 'not found' }, 404);
+  if (user.role !== 'admin' && row.investigator_id !== user.id) {
+    return json({ error: 'That entry belongs to another investigator.' }, 403);
+  }
+  await env.DB.prepare('DELETE FROM activity_removed WHERE entry_id = ?').bind(id).run();
+  return json({ ok: true, id });
+}
+
+/* Edits are stamped, never silent. */
 async function editActivity(request, env, user, caseNo, id) {
   if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
   const row = await env.DB.prepare(
@@ -2331,8 +2372,16 @@ async function uploadEvidence(request, env, user, caseNo) {
   }
 
   const filename = String(file.name || 'file').replace(/[^A-Za-z0-9._ -]/g, '_').slice(0, 120) || 'file';
-  const classification = user.role === 'admin' && EVIDENCE_CLASSES.includes(String(form.get('classification') || ''))
-    ? String(form.get('classification')) : 'needs_review';
+  /* Owner's decision, 2026-08-14: the firm shoots its own footage and writes
+     its own reports, so evidence should be usable in the report and the client
+     package the moment it is uploaded rather than waiting behind a review it
+     would only ever give itself. The default is therefore client-deliverable.
+     The classifications all still exist — Needs redaction, Internal only, Do
+     not use are how you HOLD something back — but holding back is now the
+     deliberate act, not the default. If outside investigators are ever engaged,
+     flip this default and the review gate returns. */
+  const asked = String(form.get('classification') || '');
+  const classification = EVIDENCE_CLASSES.includes(asked) ? asked : 'client_deliverable';
   const note = String(form.get('note') || '').trim().slice(0, 1000) || null;
 
   /* A photo can ride with a subject and a clip with the activity moment it
@@ -2902,13 +2951,17 @@ async function generateReport(request, env, user, caseNo) {
   const existing = await env.DB.prepare('SELECT id FROM case_reports WHERE day_id = ?').bind(dayId).first();
   if (existing) return json({ error: 'A report already exists for that day.', id: existing.id }, 409);
 
+  // A removed entry never reaches the report. The row still exists; the
+  // chronology simply does not carry it.
   const { results } = await env.DB.prepare(
     `SELECT a.at_time, a.description, a.location,
             COALESCE(m.subject_documented, 0) AS subject_documented,
             COALESCE(m.video_acquired, 0) AS video_acquired,
             COALESCE(m.photo_acquired, 0) AS photo_acquired
        FROM activity_log a LEFT JOIN activity_media m ON m.entry_id = a.id
-      WHERE a.case_no = ? AND a.day_id = ? ORDER BY a.at_time ASC, a.id ASC`).bind(caseNo, dayId).all();
+       LEFT JOIN activity_removed r ON r.entry_id = a.id
+      WHERE a.case_no = ? AND a.day_id = ? AND r.entry_id IS NULL
+      ORDER BY a.at_time ASC, a.id ASC`).bind(caseNo, dayId).all();
 
   const res = await env.DB.prepare(
     `INSERT INTO case_reports (case_no, day_id, investigator_id, report_date, status, body, created_at)
@@ -3350,6 +3403,7 @@ const EXPECTED_TABLES = [
   'case_status', 'case_closure', 'case_retainer',
   'invoices', 'invoice_lines', 'invoice_payments', 'invoice_events', 'case_evidence',
   'case_builds', 'build_items', 'external_files', 'build_events', 'report_versions',
+  'activity_removed',
 ];
 
 async function missingTables(env) {
@@ -3521,6 +3575,12 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/activity\/(\d{1,12})$/);
   if (m && method === 'POST') return editActivity(request, env, user, m[1], parseInt(m[2], 10));
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/activity\/(\d{1,12})\/delete$/);
+  if (m && method === 'POST') return removeActivity(request, env, user, m[1], parseInt(m[2], 10));
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/activity\/(\d{1,12})\/restore$/);
+  if (m && method === 'POST') return restoreActivity(env, user, m[1], parseInt(m[2], 10));
 
 
 

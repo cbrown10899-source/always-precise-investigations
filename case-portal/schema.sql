@@ -683,3 +683,20 @@ CREATE TABLE IF NOT EXISTS report_versions (
   submitted_by INTEGER REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_repvers ON report_versions(report_id);
+
+-- Removing an activity entry (owner's request, 2026-08-14). It is a STAMPED
+-- soft delete, never an erase: a timeline that can be quietly rewritten is
+-- worth less in a hearing than one that shows its corrections, and the same
+-- rule already governs evidence. The office can still see what was removed
+-- and by whom; the report and the client package simply skip it.
+--
+-- A separate table rather than columns on activity_log ON PURPOSE: schema.sql
+-- is re-applied by portal-setup.yml on every run and must stay idempotent.
+-- ALTER TABLE ADD COLUMN is not — the second run fails on a duplicate column
+-- and takes the whole apply with it.
+CREATE TABLE IF NOT EXISTS activity_removed (
+  entry_id   INTEGER PRIMARY KEY,
+  removed_at TEXT    NOT NULL,
+  removed_by INTEGER REFERENCES users(id),
+  reason     TEXT
+);
