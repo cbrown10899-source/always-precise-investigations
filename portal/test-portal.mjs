@@ -802,18 +802,21 @@ section('Rate sheets');
   // Preview. On the carrier sheet the paired intake is the carrier door.
   await page.locator('.btn', { hasText: 'Send this sheet' }).click();
   await page.waitForTimeout(300);
-  ok('the wizard opens on Recipient', has(await text(page, '.amsheet'), 'Send it to'));
-  await page.locator('.btn', { hasText: 'Next' }).click();
+  const first = await text(page, '.amsheet');
+  ok('the wizard opens on Recipient', has(first, 'Send it to'));
+  /* The owner's 2026-08-14 report: the include-intake choice existed on a
+     second step and was therefore never seen. It is now a named guarantee
+     that the checkbox is VISIBLE the moment the wizard opens. */
+  ok('the intake checkbox is on the FIRST screen, visible before any click',
+     await page.locator('#wiz_inc').isVisible());
+  ok('naming the carrier intake', has(first, 'Insurance Assignment Intake'));
+  ok('and saying the consumer picker is never offered', has(first, 'never the consumer picker'));
+  await page.locator('.btn', { hasText: 'Preview' }).click();
   await page.waitForTimeout(250);
   ok('an empty address is refused before moving on',
      has(await text(page, '.amsheet'), 'Enter the address'));
   await page.locator('#wiz_to').fill('adjuster@example.test');
-  await page.locator('.btn', { hasText: 'Next' }).click();
-  await page.waitForTimeout(250);
-  const opts = await text(page, '.amsheet');
-  ok('Options pairs the carrier intake, by name', has(opts, 'Insurance Assignment Intake'));
-  ok('and says the consumer picker is never offered', has(opts, 'never the consumer picker'));
-  await page.locator('.btn', { hasText: 'Next' }).click();
+  await page.locator('.btn', { hasText: 'Preview' }).click();
   await page.waitForTimeout(250);
   const prev = await text(page, '.amsheet');
   ok('Preview names the recipient and the included intake',
