@@ -11,9 +11,10 @@ truth** (recorded verbatim 2026-08-13). It supersedes nothing already shipped �
 its section 1 lists the shipped baseline and says explicitly: do not rebuild it.
 Read it for anything this file summarises.
 
-Snapshot date: 2026-08-13. Branch: `claude/app-crashes-lockups-debug-jcy6kf`.
-Master is green through PR #54. Suites at last green: worker 664,
-portal e2e 585, intake 186, alerts 41.
+Snapshot date: 2026-08-14. Branch: `claude/app-crashes-lockups-debug-psf6zd`.
+Master is green through PR #55 (`13432f8` — deploy, portal Worker, save-point
+and the portal-setup schema apply all came back success). Suites at last
+green: worker 699, portal e2e 607, intake 186, alerts 41.
 
 ## The queue, in the owner's order (MASTER-HANDOFF §42)
 
@@ -33,10 +34,16 @@ portal e2e 585, intake 186, alerts 41.
    timer was too big, and there was no way back inside the mode). A mobile
    draft-preview *reader* inside the mode is the one nice-to-have left; the
    submit path already works through the full report screen.
-3. Dropbox video delivery (needs DROPBOX_APP_KEY / DROPBOX_APP_SECRET /
-   DROPBOX_REFRESH_TOKEN as Worker secrets + a fresh read of the API docs).
-4. Case Build gap audit (multi-day reports, package types, real
-   report+photos PDF — MASTER §13).
+3. Dropbox video delivery — **BLOCKED on the owner**: needs DROPBOX_APP_KEY /
+   DROPBOX_APP_SECRET / DROPBOX_REFRESH_TOKEN as Worker secrets, plus a fresh
+   read of the API docs. Nothing in the codebase waits on it; the provider
+   reports not-configured and blocks nothing.
+4. ~~**Case Build gap audit**~~ — **COMPLETE** (ledger in `CASEBUILD.md`,
+   rules in CLAUDE.md under "The client package"). All of §13 closed:
+   multi-day packages via `build_reports` (a three-day case used to ship its
+   third day alone), the derived-plus-written Combined Summary, the Custom
+   package type as a marker rather than a CHECK-constraint change, and a
+   document that opens with case information and the assignment objective.
 5. Invoice / BILL gap audit (provider-neutral fields — MASTER §28).
 6. Public website / SEO. **Social Media Search is already removed** (§30):
    it existed only on the insurance page — a service card, the FAQ, and,
@@ -71,10 +78,17 @@ Record these here so they cannot be lost between phases:
 
 ## In flight right now
 
-Nothing. The queue's head is item 3 (Dropbox), which is **blocked on the
-owner's Worker secrets** — so the first unblocked work is item 4, the Case
-Build gap audit. `node portal/screenshots.mjs` photographs 37 screens against
-the real stack whenever a visual check is wanted.
+Nothing. Item 3 (Dropbox) stays **blocked on the owner's Worker secrets**, so
+the first unblocked work is item 5, the Invoice / BILL gap audit (MASTER §28).
+`node portal/screenshots.mjs` photographs 37 screens against the real stack
+whenever a visual check is wanted.
+
+One rule learned in item 4 and worth not re-learning: **a CHECK constraint
+cannot be widened from `schema.sql`.** SQLite needs a table rebuild for that,
+`schema.sql` is re-applied on every portal-setup run, and editing the
+constraint in place would leave fresh databases accepting a value the live one
+refuses — green tests, broken production. Use a side table, the way
+`build_custom` and `activity_removed` do.
 
 Two owner decisions from 2026-08-14 that changed earlier rules, recorded in
 CLAUDE.md and worth not re-litigating:

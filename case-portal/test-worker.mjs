@@ -1622,6 +1622,213 @@ section('Case Build: the package behind hard gates');
        .code === 'provider_not_configured');
 }
 
+/* MASTER §13 — "Do not assume one case = one day." A surveillance case runs
+   three days and approves three daily reports; the package used to ship the
+   third one alone, because case_builds.report_id holds exactly one. */
+section('Case Build: a package carries the whole investigation');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  await ingest(env, { case_no: 'API-MD1', kind: 'claims', service: 'Insurance claim assignment',
+                      carrier: 'Acme Mutual', claim_number: 'CLM-77', client_name: 'An Adjuster',
+                      subject_name: 'Dale Rivers', claim_type: 'Workers compensation',
+                      date_of_loss: '2026-03-04',
+                      objective: 'Establish activity level against the stated restrictions.' });
+
+  // Three worked days, each with its own approved report.
+  const repIds = [];
+  for (const [d, s, e] of [['2026-08-10', '07:00', '15:00'],
+                           ['2026-08-11', '06:30', '14:30'],
+                           ['2026-08-12', '08:00', '16:00']]) {
+    await call(env, '/cases/API-MD1/day/start', { method: 'POST', cookie: admin,
+      body: { day_date: d, start_time: s } });
+    await call(env, '/cases/API-MD1/activity', { method: 'POST', cookie: admin,
+      body: { at_date: d, at_time: '09:00', kind: 'activity', description: `Observation on ${d}.` } });
+    await call(env, '/cases/API-MD1/day/end', { method: 'POST', cookie: admin, body: { end_time: e } });
+  }
+  /* The workspace hands days back newest-first, which is right for a screen
+     and wrong for building Day 1 / Day 2 / Day 3 — so sort here and let
+     repIds[n] mean the nth day of the investigation. */
+  const days = (await jsonOf(await call(env, '/cases/API-MD1/workspace', { cookie: admin }))).days
+    .slice().sort((a, b) => a.day_date < b.day_date ? -1 : 1);
+  ok('three days are on the case', days.length === 3);
+  for (const day of days) {
+    const r = await jsonOf(await call(env, '/cases/API-MD1/reports/generate', { method: 'POST',
+      cookie: admin, body: { day_id: day.id } }));
+    repIds.push(r.id);
+    await call(env, `/cases/API-MD1/reports/${r.id}/status`, { method: 'POST', cookie: admin,
+      body: { status: 'submitted' } });
+  }
+  // Approve only the first two — the third stays out for now.
+  for (const id of repIds.slice(0, 2)) {
+    await call(env, `/cases/API-MD1/reports/${id}/status`, { method: 'POST', cookie: admin,
+      body: { status: 'approved' } });
+  }
+
+  let st = await jsonOf(await call(env, '/cases/API-MD1/build', { method: 'POST', cookie: admin }));
+  ok('opening a build attaches every approved day, not just the latest', st.reports.length === 2);
+  ok('the days come back oldest first, the order a reader expects',
+     st.reports[0].report_date === '2026-08-10' && st.reports[1].report_date === '2026-08-11');
+  ok('each day carries the hours and the investigator its section needs',
+     st.reports.every(r => r.hours != null && r.investigator));
+  ok('the unapproved third day is not in the package',
+     !st.reports.some(r => r.report_date === '2026-08-12'));
+  ok('and is not offered either, because it is not approved yet',
+     (st.available_reports || []).length === 0);
+  ok('the creation event says how many days it opened on',
+     st.events.some(e => e.action === 'created' && /2 approved reports/.test(e.detail || '')));
+
+  ok('an unapproved day cannot be forced into the package',
+     (await jsonOf(await call(env, `/build/${st.build.id}/reports`, { method: 'POST', cookie: admin,
+       body: { report_id: repIds[2] } }))).error.includes('approve it first'));
+
+  // Approve the third day AFTER the build was opened — the ordinary case.
+  await call(env, `/cases/API-MD1/reports/${repIds[2]}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'approved' } });
+  st = await jsonOf(await call(env, '/cases/API-MD1/build', { cookie: admin }));
+  ok('a day approved after the build opened is offered, not silently dropped',
+     st.available_reports.length === 1 && st.available_reports[0].report_date === '2026-08-12');
+
+  st = await jsonOf(await call(env, `/build/${st.build.id}/reports`, { method: 'POST', cookie: admin,
+    body: { report_id: repIds[2] } }));
+  ok('adding it puts the package back to three days, still in date order',
+     st.reports.length === 3 && st.reports[2].report_date === '2026-08-12'
+     && st.available_reports.length === 0);
+  ok('the same day cannot be added twice',
+     (await call(env, `/build/${st.build.id}/reports`, { method: 'POST', cookie: admin,
+       body: { report_id: repIds[2] } })).status === 409);
+
+  ok('the document has the case information a real report carries',
+     st.case_info.claim_number === 'CLM-77' && st.case_info.carrier === 'Acme Mutual'
+     && st.case_info.subject_name === 'Dale Rivers' && st.case_info.date_of_loss === '2026-03-04');
+  ok('and the assignment objective, which is the point of the whole file',
+     st.case_info.objective.includes('activity level against the stated restrictions'));
+
+  // The combined summary: written by an admin, never invented.
+  st = await jsonOf(await call(env, `/build/${st.build.id}/summary`, { method: 'POST', cookie: admin,
+    body: { body: 'Across three days the claimant was observed driving and lifting.' } }));
+  ok('the combined summary is stored on the package', st.summary.includes('driving and lifting'));
+  ok('writing it is on the audit trail', st.events.some(e => e.action === 'summary'));
+  ok('and it can be cleared again',
+     (await jsonOf(await call(env, `/build/${st.build.id}/summary`, { method: 'POST', cookie: admin,
+       body: { body: '' } }))).summary === '');
+
+  // Removing a day, and what happens to the primary report_id underneath.
+  const primary = st.build.report_id;
+  st = await jsonOf(await call(env, `/build/${st.build.id}/reports/${primary}/remove`,
+    { method: 'POST', cookie: admin }));
+  ok('a day can be dropped from the package', st.reports.length === 2
+     && !st.reports.some(r => r.id === primary));
+  ok('and the primary report moves to one still in the package',
+     st.build.report_id !== primary && st.reports.some(r => r.id === st.build.report_id));
+  ok('removing a day that is not in the package is a 404',
+     (await call(env, `/build/${st.build.id}/reports/${primary}/remove`,
+       { method: 'POST', cookie: admin })).status === 404);
+  st = await jsonOf(await call(env, `/build/${st.build.id}/reports`, { method: 'POST', cookie: admin,
+    body: { report_id: primary } }));
+  ok('and it goes back in', st.reports.length === 3);
+
+  // The gate now reasons over the whole set, by date.
+  await call(env, `/cases/API-MD1/reports/${repIds[1]}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'needs_revision' } });
+  st = await jsonOf(await call(env, '/cases/API-MD1/build', { cookie: admin }));
+  ok('one day sent back for revision gates the whole package, by date',
+     st.gates.some(g => g.includes('2026-08-11') && g.includes('needs_revision')));
+  ok('and finalize refuses on that same named day',
+     (await jsonOf(await call(env, `/build/${st.build.id}/finalize`, { method: 'POST', cookie: admin })))
+       .gates.some(g => g.includes('2026-08-11')));
+  await call(env, `/cases/API-MD1/reports/${repIds[1]}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'approved' } });
+  st = await jsonOf(await call(env, `/build/${st.build.id}/finalize`, { method: 'POST', cookie: admin }));
+  ok('with every day approved the three-day package finalizes',
+     st.build.status === 'finalized' && st.reports.length === 3);
+
+  ok('an investigator still has no build surface',
+     (await call(env, '/cases/API-MD1/build', { cookie: (await (async () => {
+       const link = (await jsonOf(await invite(env, admin,
+         { username: 'kim', display_name: 'Kim', role: 'investigator' }))).url;
+       const t = new URL(link, 'https://x.test').searchParams.get('invite');
+       await call(env, `/invite/${t}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+       return (await login(env, 'kim', 'FieldWork2026x')).cookie;
+     })()) })).status === 403);
+}
+
+/* MASTER §13 lists four package types and the fourth is Custom. It is a
+   marker table rather than a fifth enum value — see build_custom in
+   schema.sql — so what it stores and what it reports back differ on purpose. */
+section('Case Build: the Custom package');
+{
+  const env = freshEnv();
+  env.EVIDENCE = (() => {
+    const store = new Map();
+    return { async put(k, b, o) { store.set(k, { b, o }); },
+             async get(k) { const o = store.get(k); return o ? { body: o.b } : null; },
+             async delete(k) { store.delete(k); } };
+  })();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-CP1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+
+  await call(env, '/cases/API-CP1/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-13', start_time: '07:00' } });
+  await call(env, '/cases/API-CP1/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-08-13', at_time: '08:00', kind: 'activity', description: 'Observed.' } });
+  await call(env, '/cases/API-CP1/day/end', { method: 'POST', cookie: admin, body: { end_time: '15:00' } });
+  const dayId = (await jsonOf(await call(env, '/cases/API-CP1/workspace', { cookie: admin }))).days[0].id;
+  const rep = await jsonOf(await call(env, '/cases/API-CP1/reports/generate', { method: 'POST',
+    cookie: admin, body: { day_id: dayId } }));
+  await call(env, `/cases/API-CP1/reports/${rep.id}/status`, { method: 'POST', cookie: admin, body: { status: 'submitted' } });
+  await call(env, `/cases/API-CP1/reports/${rep.id}/status`, { method: 'POST', cookie: admin, body: { status: 'approved' } });
+
+  const up = (name, type, cls) => {
+    const fd = new FormData();
+    fd.append('file', new File([new Uint8Array(300).fill(65)], name, { type }));
+    fd.append('classification', cls);
+    return worker.fetch(new Request(API + '/cases/API-CP1/evidence', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  };
+  const clip = (await jsonOf(await up('clip.mp4', 'video/mp4', 'client_deliverable'))).id;
+  const held = (await jsonOf(await up('held.jpg', 'image/jpeg', 'internal_only'))).id;
+
+  let st = await jsonOf(await call(env, '/cases/API-CP1/build', { method: 'POST', cookie: admin }));
+  ok('a new build starts on a real type, not custom',
+     st.package_type === 'report_photos' && st.custom === false);
+  ok('a made-up package type is refused',
+     (await call(env, `/build/${st.build.id}/package`, { method: 'POST', cookie: admin,
+       body: { package_type: 'deluxe' } })).status === 400);
+
+  await call(env, `/build/${st.build.id}/items`, { method: 'POST', cookie: admin, body: { evidence_id: clip } });
+  st = await jsonOf(await call(env, '/cases/API-CP1/build', { cookie: admin }));
+  ok('a video in a photos-only package is still a gate',
+     st.gates.some(g => g.includes('package type does not include video')));
+
+  st = await jsonOf(await call(env, `/build/${st.build.id}/package`, { method: 'POST', cookie: admin,
+    body: { package_type: 'custom' } }));
+  ok('custom is accepted and reported back as custom', st.package_type === 'custom' && st.custom === true);
+  ok('the video gate does not apply to it — the admin chose the contents',
+     !st.gates.some(g => g.includes('package type does not include video')));
+  ok('what it stores underneath is a value the live database already allows',
+     ['report_only', 'report_photos', 'report_photos_video', 'full'].includes(st.build.package_type));
+  ok('picking custom is on the audit trail',
+     st.events.some(e => e.action === 'package_type' && e.detail === 'custom'));
+
+  ok('custom controls contents, NOT whether held-back material can ship',
+     (await jsonOf(await call(env, `/build/${st.build.id}/items`, { method: 'POST', cookie: admin,
+       body: { evidence_id: held } }))).error.includes('internal only'));
+
+  st = await jsonOf(await call(env, `/build/${st.build.id}/finalize`, { method: 'POST', cookie: admin }));
+  ok('a custom package finalizes', st.build.status === 'finalized');
+  st = await jsonOf(await call(env, `/build/${st.build.id}/reopen`, { method: 'POST', cookie: admin }));
+  ok('and is still custom after a reopen', st.package_type === 'custom');
+
+  st = await jsonOf(await call(env, `/build/${st.build.id}/package`, { method: 'POST', cookie: admin,
+    body: { package_type: 'full' } }));
+  ok('switching away from custom clears the marker',
+     st.package_type === 'full' && st.custom === false);
+}
+
 section('The dashboard summary');
 {
   const env = freshEnv();

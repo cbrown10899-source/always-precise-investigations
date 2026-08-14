@@ -700,3 +700,51 @@ CREATE TABLE IF NOT EXISTS activity_removed (
   removed_by INTEGER REFERENCES users(id),
   reason     TEXT
 );
+
+-- ---------------------------------------------------------------------------
+-- CASE BUILD, multi-day (MASTER §13: "Do not assume one case = one day.")
+--
+-- A surveillance case runs three days and produces three approved daily
+-- reports. `case_builds.report_id` holds one, so a package built from it
+-- shipped the LAST day and silently dropped the first two. This table is the
+-- ordered set of reports a package carries; `report_id` stays as the primary
+-- report so nothing that already reads it breaks.
+--
+-- A side table rather than more columns, for the reason recorded above
+-- `activity_removed`: schema.sql is re-applied on every portal-setup run and
+-- ALTER TABLE ADD COLUMN is not idempotent.
+CREATE TABLE IF NOT EXISTS build_reports (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  build_id  INTEGER NOT NULL,
+  report_id INTEGER NOT NULL,
+  sort      INTEGER NOT NULL DEFAULT 0,
+  added_by  INTEGER REFERENCES users(id),
+  added_at  TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_breports ON build_reports(build_id, report_id);
+
+-- The Combined Summary of a multi-day package (MASTER §13). The factual
+-- synopsis above it — dates, days, hours, exhibit counts — is DERIVED and
+-- never stored, because a stored copy goes stale the moment a day is added.
+-- This holds only the narrative paragraph an admin writes themselves.
+CREATE TABLE IF NOT EXISTS build_summary (
+  build_id   INTEGER PRIMARY KEY,
+  body       TEXT    NOT NULL DEFAULT '',
+  updated_at TEXT,
+  updated_by INTEGER REFERENCES users(id)
+);
+
+-- "Custom Package" (MASTER §13) — the admin controls the exact contents, so
+-- the type-based content gate does not apply to it.
+--
+-- A marker table rather than a fifth value in `case_builds.package_type` ON
+-- PURPOSE: that column carries a CHECK constraint, and widening a CHECK in
+-- SQLite means rebuilding the table. schema.sql cannot do that idempotently,
+-- and editing the constraint in place would leave a fresh database able to
+-- store 'custom' while the live one — created before the edit — still refuses
+-- it. That divergence would pass every test and fail only in production.
+CREATE TABLE IF NOT EXISTS build_custom (
+  build_id INTEGER PRIMARY KEY,
+  at       TEXT NOT NULL,
+  by       INTEGER REFERENCES users(id)
+);

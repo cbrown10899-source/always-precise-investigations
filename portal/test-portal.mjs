@@ -2660,6 +2660,106 @@ section('The home-screen launcher, and who is out now');
   await admin.close();
 }
 
+/* MASTER §13 — a three-day case in the package screen. Seeded here, at the
+   end of the run, so the extra case cannot shift the dashboard counts and
+   list assertions the earlier sections make. */
+section('A three-day package reads as one investigation');
+{
+  await post('/ingest', {
+    case_no: 'API-20260812-4003', service: 'Insurance Claim Assignment',
+    carrier: 'Example Mutual Insurance', claim_number: 'WC-2026-99000',
+    claim_type: "Workers' compensation", date_of_loss: '02/02/2026',
+    client_name: 'Dana Reyes', subject_name: 'Reese Alvarado',
+    objective: 'Document activity across a full working week.',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  const uid = db.prepare("SELECT id FROM users WHERE username = 'trever'").get().id;
+  const dayIds = [];
+  for (const [d, s, e, h] of [['2026-08-10', '07:00', '15:00', 8],
+                              ['2026-08-11', '06:30', '14:30', 8],
+                              ['2026-08-12', '08:00', '13:00', 5]]) {
+    const r = db.prepare(`INSERT INTO case_days
+      (case_no, investigator_id, day_date, start_time, end_time, hours, miles, created_at, ended_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run('API-20260812-4003', uid, d, s, e, h, 42, d + 'T12:00:00Z', d + 'T20:00:00Z');
+    dayIds.push(Number(r.lastInsertRowid));
+    db.prepare(`INSERT INTO case_reports
+      (case_no, day_id, investigator_id, report_date, status, body, created_at)
+      VALUES (?, ?, ?, ?, 'approved', ?, ?)`)
+      .run('API-20260812-4003', Number(r.lastInsertRowid), uid, d,
+           `Narrative for ${d}. Subject observed leaving the residence.`, d + 'T21:00:00Z');
+  }
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4003').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Package');
+  await page.waitForTimeout(700);
+  await page.locator('[data-act="pkgStart"]').click();
+  await page.waitForTimeout(800);
+
+  let body = await text(page, '#dlgBody');
+  ok('the package names its days', has(body, 'Days in this package'));
+  ok('all three days are in it, not just the last',
+     has(body, 'Investigation — Day 1') && has(body, 'Investigation — Day 2')
+     && has(body, 'Investigation — Day 3'));
+  ok('the contents line counts days rather than saying "one report"',
+     has(body, '3 days, approved'));
+  ok('the day total adds the hours up', has(body, '21 h'));
+
+  const doc = await text(page, '#pkgdoc');
+  ok('the document heads with case information', has(doc, 'CASE INFORMATION'));
+  ok('and carries the claim it belongs to', has(doc, 'WC-2026-99000'));
+  ok('and who it is prepared for', has(doc, 'Example Mutual Insurance'));
+  ok('the assignment objective is stated, not assumed',
+     has(doc, 'ASSIGNMENT OBJECTIVE') && has(doc, 'Document activity across a full working week'));
+  ok('every day gets its own titled section',
+     has(doc, 'INVESTIGATION — DAY 1') && has(doc, 'INVESTIGATION — DAY 3'));
+  ok('each day prints its own narrative',
+     has(doc, 'Narrative for 2026-08-10') && has(doc, 'Narrative for 2026-08-12'));
+  ok('the masthead reads as a span of days, not a single date',
+     has(doc, '3 days'));
+  ok('a multi-day package carries a combined summary', has(doc, 'COMBINED SUMMARY'));
+  ok('whose facts are derived, not typed', has(doc, '3 days of surveillance'));
+  ok('including the hours actually worked', has(doc, '21 hours of documented field time'));
+
+  // The admin's own paragraph sits above the derived facts.
+  await page.locator('[data-act="pkgSummary"]').fill('The claimant worked throughout.');
+  await page.locator('[data-act="pkgSummary"]').blur();
+  await page.waitForTimeout(800);
+  ok('the admin can write the summary in their own words',
+     has(await text(page, '#pkgdoc'), 'The claimant worked throughout'));
+
+  // Dropping a day, and putting it back.
+  await page.locator('.row', { hasText: 'Investigation — Day 2' })
+    .locator('.btn', { hasText: 'Remove' }).click();
+  await page.waitForTimeout(800);
+  body = await text(page, '#dlgBody');
+  ok('a day can be dropped from the package', has(body, '2 days, approved'));
+  ok('and is offered back, named', has(body, 'approved, not in the package'));
+  await page.locator('.btn', { hasText: 'Add day' }).click();
+  await page.waitForTimeout(800);
+  ok('adding it puts the investigation back together',
+     has(await text(page, '#dlgBody'), '3 days, approved'));
+
+  // The Custom package type (MASTER §13's fourth).
+  ok('Custom is one of the package types',
+     await page.locator('[data-act="pkgType"] option[value="custom"]').count() === 1);
+  await page.locator('[data-act="pkgType"]').selectOption('custom');
+  await page.waitForTimeout(800);
+  body = await text(page, '#dlgBody');
+  ok('choosing it says what it means', has(body, 'exactly what ships'));
+  ok('and it survives a repaint as the selected option',
+     await page.locator('[data-act="pkgType"]').inputValue() === 'custom');
+
+  await page.locator('[data-act="pkgFinalize"]').click();
+  await page.waitForTimeout(900);
+  ok('a three-day custom package finalizes',
+     has(await text(page, '#dlgBody'), 'Package finalized'));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
