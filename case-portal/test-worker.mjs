@@ -1904,6 +1904,96 @@ section('Case Build: the Custom package');
      st.package_type === 'full' && st.custom === false);
 }
 
+/* MASTER §31 — "Do not bury completed cases in a difficult archive." The desk
+   is one payload: every finished case and where its artifacts live. */
+section('Completed cases: finished work is findable');
+{
+  const env = freshEnv();
+  env.EVIDENCE = (() => {
+    const store = new Map();
+    return { async put(k, b, o) { store.set(k, { b, o }); },
+             async get(k) { const o = store.get(k); return o ? { body: o.b } : null; },
+             async delete(k) { store.delete(k); } };
+  })();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  await call(env, `/invite/${new URL(link, 'https://x.test').searchParams.get('invite')}/accept`,
+    { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  ok('the desk is the office\'s alone',
+     (await call(env, '/completed', { cookie: inv })).status === 403);
+  ok('an empty portal has an empty desk',
+     (await jsonOf(await call(env, '/completed', { cookie: admin }))).completed.length === 0);
+
+  await ingest(env, { case_no: 'API-DN1', kind: 'claims', carrier: 'Done Mutual',
+                      claim_number: 'DM-9', client_name: 'An Adjuster', subject_name: 'Finished Person' });
+  await ingest(env, { case_no: 'API-DN2', service: 'Surveillance',
+                      client_name: 'Paid Client', subject_name: 'Watched Person' });
+  await ingest(env, { case_no: 'API-DN3', service: 'Surveillance',
+                      client_name: 'Walked Away', subject_name: 'Never Started' });
+
+  ok('open cases are not on the desk',
+     (await jsonOf(await call(env, '/completed', { cookie: admin }))).completed.length === 0);
+
+  // Route one: the office says the work is complete.
+  await call(env, '/submissions/API-DN1/status', { method: 'POST', cookie: admin,
+    body: { status: 'complete' } });
+  let desk = (await jsonOf(await call(env, '/completed', { cookie: admin }))).completed;
+  ok('a case marked Complete lands on the desk',
+     desk.length === 1 && desk[0].case_no === 'API-DN1' && desk[0].stage === 'complete');
+  ok('with nothing invented for artifacts it does not have',
+     desk[0].approved_reports === 0 && desk[0].invoice === null && desk[0].share_url === null);
+
+  // Route two: a finalized client package IS completion of the work, even
+  // before the office administratively closes the case.
+  await call(env, '/cases/API-DN2/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-13', start_time: '07:00' } });
+  await call(env, '/cases/API-DN2/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-08-13', at_time: '08:00', kind: 'activity', description: 'Observed.' } });
+  await call(env, '/cases/API-DN2/day/end', { method: 'POST', cookie: admin, body: { end_time: '15:00' } });
+  const dayId = (await jsonOf(await call(env, '/cases/API-DN2/workspace', { cookie: admin }))).days[0].id;
+  const rep = await jsonOf(await call(env, '/cases/API-DN2/reports/generate', { method: 'POST',
+    cookie: admin, body: { day_id: dayId } }));
+  await call(env, `/cases/API-DN2/reports/${rep.id}/status`, { method: 'POST', cookie: admin, body: { status: 'submitted' } });
+  await call(env, `/cases/API-DN2/reports/${rep.id}/status`, { method: 'POST', cookie: admin, body: { status: 'approved' } });
+  const fd = new FormData();
+  fd.append('file', new File([new Uint8Array(300).fill(65)], 'p.jpg', { type: 'image/jpeg' }));
+  const up = await jsonOf(await worker.fetch(new Request(API + '/cases/API-DN2/evidence', {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env));
+  const st = await jsonOf(await call(env, '/cases/API-DN2/build', { method: 'POST', cookie: admin }));
+  await call(env, `/build/${st.build.id}/items`, { method: 'POST', cookie: admin, body: { evidence_id: up.id } });
+  await call(env, `/build/${st.build.id}/finalize`, { method: 'POST', cookie: admin });
+  await call(env, '/cases/API-DN2/invoices', { method: 'POST', cookie: admin, body: {} });
+
+  desk = (await jsonOf(await call(env, '/completed', { cookie: admin }))).completed;
+  ok('a finalized package lands the case on the desk without any stage change',
+     desk.length === 2 && desk.some(c => c.case_no === 'API-DN2'));
+  const dn2 = desk.find(c => c.case_no === 'API-DN2');
+  ok('the desk knows where every artifact is', dn2.build_id != null
+     && dn2.approved_reports === 1 && dn2.evidence_count === 1
+     && dn2.invoice && /^API-INV-/.test(dn2.invoice.invoice_no));
+  ok('the newest finished work leads the desk', desk[0].case_no === 'API-DN2');
+  ok('and no video link is claimed while none exists', dn2.share_url === null);
+
+  // A delivery link, once one exists, is offered for copying.
+  await env.DB.prepare(
+    `INSERT INTO external_files (evidence_id, storage_provider, external_share_url,
+       upload_status, created_at) VALUES (?, 'dropbox', 'https://dbx.example/s/abc', 'uploaded', ?)`)
+    .bind(up.id, '2026-08-14T00:00:00Z').run();
+  desk = (await jsonOf(await call(env, '/completed', { cookie: admin }))).completed;
+  ok('a live delivery link surfaces on the desk',
+     desk.find(c => c.case_no === 'API-DN2').share_url === 'https://dbx.example/s/abc');
+
+  // Cancelled is not completed: there is nothing to find.
+  await call(env, '/submissions/API-DN3/status', { method: 'POST', cookie: admin,
+    body: { status: 'cancelled' } });
+  desk = (await jsonOf(await call(env, '/completed', { cookie: admin }))).completed;
+  ok('a cancelled case never reads as completed',
+     !desk.some(c => c.case_no === 'API-DN3') && desk.length === 2);
+}
+
 section('The dashboard summary');
 {
   const env = freshEnv();

@@ -2816,6 +2816,60 @@ async function adminBuild(env, user, buildId) {
 }
 
 
+/* MASTER §31 — the Completed Cases desk. "Do not bury completed cases in a
+   difficult archive": one payload carrying every finished case and where its
+   artifacts live, so the page offers Open case / Final report / Evidence /
+   Client package / Invoice / Copy video link without a fetch per case.
+
+   Completed means the WORK is done: the stage says complete or closed, or a
+   finalized client package exists — a case can be finished before the office
+   has administratively closed it, and that is exactly when someone goes
+   looking for the report. Cancelled is deliberately absent: a cancelled case
+   has no deliverables to find. */
+async function completedCases(env) {
+  const { results } = await env.DB.prepare(
+    `SELECT s.case_no, s.kind, s.client_name, s.subject_name, s.carrier, s.created_at,
+            cs.stage, cs.set_at AS stage_at,
+            b.id AS build_id, b.version AS build_version, b.package_type,
+            b.finalized_at, b.delivered_at
+       FROM submissions s
+       LEFT JOIN case_status cs ON cs.case_no = s.case_no
+       LEFT JOIN case_builds b ON b.id =
+         (SELECT id FROM case_builds WHERE case_no = s.case_no AND status = 'finalized'
+           ORDER BY version DESC, id DESC LIMIT 1)
+      WHERE (cs.stage IN ('complete', 'closed') OR b.id IS NOT NULL)
+        AND (cs.stage IS NULL OR cs.stage != 'cancelled')
+      ORDER BY COALESCE(b.finalized_at, cs.set_at, s.created_at) DESC
+      LIMIT 200`).all();
+
+  const out = [];
+  for (const c of results || []) {
+    const reps = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM case_reports
+        WHERE case_no = ? AND status IN ('approved', 'delivered')`).bind(c.case_no).first();
+    const ev = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM case_evidence WHERE case_no = ? AND deleted_at IS NULL')
+      .bind(c.case_no).first();
+    const inv = await env.DB.prepare(
+      `SELECT id, invoice_no, status FROM invoices
+        WHERE case_no = ? AND status != 'void' ORDER BY id DESC LIMIT 1`).bind(c.case_no).first();
+    const share = await env.DB.prepare(
+      `SELECT x.external_share_url FROM external_files x
+         JOIN case_evidence e ON e.id = x.evidence_id
+        WHERE e.case_no = ? AND x.external_share_url IS NOT NULL
+          AND x.share_revoked_at IS NULL AND x.upload_status = 'uploaded'
+        ORDER BY x.id DESC LIMIT 1`).bind(c.case_no).first();
+    out.push({
+      ...c,
+      approved_reports: Number(reps && reps.n) || 0,
+      evidence_count: Number(ev && ev.n) || 0,
+      invoice: inv || null,
+      share_url: (share && share.external_share_url) || null,
+    });
+  }
+  return json({ completed: out, server_now: nowIso() });
+}
+
 /* The dashboard's Case Package cards (UIBUILD P3): per active case, the
    state of every workflow module in one payload, so the page can draw the
    ring, the blocks and one computed NEXT STEP without a fetch per case. */
@@ -3822,6 +3876,13 @@ async function route(request, env) {
   if (p === '/packages' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return casePackages(env);
+  }
+
+  // MASTER §31 — the office's view of finished work. Admin-only: the desk
+  // carries invoices and client identity, neither of which reaches the field.
+  if (p === '/completed' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return completedCases(env);
   }
 
   if (p === '/intakes' && method === 'POST') {
