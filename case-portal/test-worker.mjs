@@ -1459,9 +1459,14 @@ section("Invoices: the office's money desk, and BILL only collects");
   /* MASTER §28's private list: Retainer, Amount Applied, Additional
      Authorization, Balance. All derived, so a second invoice on the same case
      draws the retainer down rather than leaving a stale figure behind. */
+  /* These two numbers used to be 1500/0 — which encoded the bug rather than
+     the rule. Billing the retainer is asking for the DEPOSIT; no work has
+     been done, so nothing is applied and the whole retainer remains. The old
+     assertion made the client's own document say "Applied $1,500 · Remaining
+     $0" on the very invoice requesting it. */
   ok('a private invoice carries the retainer block',
-     priv.retainer && priv.retainer.amount === 1500 && priv.retainer.applied === 1500
-     && priv.retainer.balance === 0);
+     priv.retainer && priv.retainer.amount === 1500 && priv.retainer.applied === 0
+     && priv.retainer.balance === 1500);
   ok('it says whether the money is actually in', priv.retainer.received === false);
   ok('no additional authorization until one is set', priv.retainer.additional_authorized === null);
   ok('an insurance invoice has no retainer block — it is not that product',
@@ -3714,7 +3719,7 @@ section('End to end: a private client, sheet to completed');
      made.invoice.invoice_type === 'private' && made.invoice.lines[0].amount === 1500);
   ok('E2E-39: the retainer block rides the invoice — amount, applied, balance',
      made.invoice.retainer && made.invoice.retainer.amount === 1500
-     && made.invoice.retainer.applied === 1500 && made.invoice.retainer.balance === 0);
+     && made.invoice.retainer.applied === 0 && made.invoice.retainer.balance === 1500);
   // Drafts take no payments — the same gate every invoice obeys — so the
   // retainer invoice goes Ready and out to the client before it is paid.
   await call(env, `/invoices/${made.invoice.id}/status`, { method: 'POST', cookie: admin,
@@ -3733,7 +3738,89 @@ section('End to end: a private client, sheet to completed');
     .find(c => c.case_no === 'API-E39');
   ok('E2E-39: the completed desk holds the private file too',
      done && done.build_id != null && done.invoice && done.invoice.status === 'paid');
+  /* The retainer's whole purpose: WORK draws it down, the deposit does not. */
+  const work = (await jsonOf(await call(env, '/cases/API-E39/invoices', { method: 'POST',
+    cookie: admin, body: { confirm_duplicate: true } }))).invoice;
+  await call(env, `/invoices/${work.id}/lines`, { method: 'POST', cookie: admin,
+    body: { lines: [{ description: 'Surveillance, 6 hours', qty: 6, rate: 100, amount: 600 }] } });
+  const after = (await jsonOf(await call(env, `/invoices/${work.id}`, { cookie: admin }))).invoice;
+  ok('E2E-39: work billed after the retainer draws it down, and only work does',
+     after.retainer.applied === 600 && after.retainer.balance === 900);
+  ok('E2E-39: so the client is never told they are past a retainer they still hold',
+     after.retainer.balance > 0);
   globalThis.fetch = realFetch;
+}
+
+/* Boundary regressions found by the 2026-08-14 independent audit. Both were
+   real leaks across the investigator line, and BOTH suites passed while they
+   existed — which is the only reason they are worth their own section. */
+section('Two leaks the suite used to pass over');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  await call(env, `/invite/${new URL(link, 'https://x.test').searchParams.get('invite')}/accept`,
+    { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const danaId = (await jsonOf(await call(env, '/users', { cookie: admin })))
+    .users.find(u => u.username === 'dana').id;
+
+  await ingest(env, { case_no: 'API-LK1', carrier: 'Leak Mutual', client_name: 'A', subject_name: 'S' });
+  await call(env, '/submissions/API-LK1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+
+  /* An office note typed with the defaults went to the field. "Admin note" is
+     the FIRST option in the picker, and visibility defaulted to team. */
+  await call(env, '/cases/API-LK1/notes', { method: 'POST', cookie: admin,
+    body: { note_type: 'admin', body: 'Carrier agreed $135/hr preferred-volume on this file.' } });
+  await call(env, '/cases/API-LK1/notes', { method: 'POST', cookie: admin,
+    body: { note_type: 'strategy', body: 'Do not disclose the budget to the field.' } });
+  await call(env, '/cases/API-LK1/notes', { method: 'POST', cookie: admin,
+    body: { note_type: 'investigator', body: 'Park on the north side.' } });
+
+  const invNotes = (await jsonOf(await call(env, '/cases/API-LK1/workspace', { cookie: inv }))).notes;
+  ok('an admin note with no stated visibility stays in the office',
+     !JSON.stringify(invNotes).includes('preferred-volume'));
+  ok('and so does a strategy note',
+     !JSON.stringify(invNotes).includes('Do not disclose'));
+  ok('while a note written FOR the field still reaches it',
+     JSON.stringify(invNotes).includes('Park on the north side'));
+  ok('the office still sees all three',
+     (await jsonOf(await call(env, '/cases/API-LK1/workspace', { cookie: admin }))).notes.length === 3);
+
+  /* A pending offer is deliberately thin. Declining one — or an admin merely
+     withdrawing it, which needs no action from the investigator at all —
+     used to hand over the case number and the instructions it withheld. */
+  await ingest(env, { case_no: 'API-LK2', client_name: 'B', subject_name: 'Hidden Subject' });
+  const secret = 'Meet at the lot off 460. Subject is Hidden Subject.';
+  // The id comes back off the investigator's own list rather than the create
+  // response — fewer assumptions about a shape this test does not own.
+  const mk = async () => {
+    await call(env, '/cases/API-LK2/offer', { method: 'POST', cookie: admin,
+      body: { investigator_id: danaId, instructions: secret,
+              compensation_hourly: 30, expected_hours: 8 } });
+    const list = (await jsonOf(await call(env, '/my/offers', { cookie: inv }))).offers;
+    return list.find(o => o.status === 'offered') || list[0];
+  };
+  const mine = async () => JSON.stringify((await jsonOf(await call(env, '/my/offers', { cookie: inv }))).offers);
+
+  const o1 = await mk();
+  ok('a pending offer withholds the case and the instructions',
+     !(await mine()).includes('API-LK2') && !(await mine()).includes('Hidden Subject'));
+
+  await call(env, `/my/offers/${o1.id}/decline`, { method: 'POST', cookie: inv, body: {} });
+  ok('declining does not disclose what the offer withheld',
+     !(await mine()).includes('API-LK2') && !(await mine()).includes('Hidden Subject'));
+
+  const o2 = await mk();
+  await call(env, `/offers/${o2.id}/withdraw`, { method: 'POST', cookie: admin, body: {} });
+  ok('and neither does an admin withdrawing one — the field did nothing at all',
+     !(await mine()).includes('API-LK2') && !(await mine()).includes('Hidden Subject'));
+
+  const o3 = await mk();
+  await call(env, `/my/offers/${o3.id}/accept`, { method: 'POST', cookie: inv, body: {} });
+  ok('acceptance — and only acceptance — is what creates access',
+     (await mine()).includes('API-LK2') && (await mine()).includes('Hidden Subject'));
 }
 
 section('Origin guard and headers');

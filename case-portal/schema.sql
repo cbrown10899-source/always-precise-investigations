@@ -814,3 +814,19 @@ CREATE TABLE IF NOT EXISTS send_log (
   sent_at    TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sendlog_case ON send_log(case_no, id DESC);
+
+-- ---------------------------------------------------------------------------
+-- Which invoice IS the retainer (audit, 2026-08-14). The retainer is a
+-- DEPOSIT, and billing it is asking for that deposit — it is not work done.
+-- `retainerBlock` sums every live invoice's lines as "amount applied", so
+-- without this marker the retainer invoice consumed the retainer it was
+-- billing: the client's own document read "Applied $1,500 · Remaining $0" on
+-- the very invoice requesting it, and the next one said "Beyond the retainer"
+-- while money was still in hand.
+--
+-- A marker table rather than a column, for the standing idempotency reason.
+CREATE TABLE IF NOT EXISTS invoice_retainer (
+  invoice_id INTEGER PRIMARY KEY,
+  amount     REAL    NOT NULL,
+  at         TEXT    NOT NULL
+);

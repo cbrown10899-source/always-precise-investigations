@@ -258,3 +258,56 @@ device dictation, Face ID on /watch/).
 
 *(1 is started next per the audit's own instruction that the rate-sheet area
 be fixed first — the checkbox fix shipped with this report.)*
+
+---
+
+## OPEN FINDINGS from the five independent audits (2026-08-14)
+
+Five reviewers were run in parallel, 2026-08-14, one per area: permission
+boundaries, intake routing, report/evidence packaging, invoicing, and Active
+Surveillance Mode. All five came back NOT CLEAN. The findings below are the
+ones not yet fixed. Each was reported by its reviewer with a file:line
+citation, but **none of these has been independently verified by the
+orchestrator** — a reviewer's report is a claim, not a fact. Every item must
+be verified against the actual code before any fix is written.
+
+| Area | Finding | Severity | Reviewer's evidence | Status |
+| --- | --- | --- | --- | --- |
+| INVOICING | The retainer invoice consumes the retainer it bills. | HIGH | `retainerBlock` sums every line on every non-void invoice as applied, and `createInvoice` puts the retainer itself on an invoice as a line, so the deposit counts as work. A second invoice then prints "Beyond the retainer" to the client when money remains. `worker.js` `retainerBlock` ~2186; `createInvoice` ~2322. | BEING FIXED NOW |
+| INVOICING | A backward status transition reopens a paid invoice. | HIGH | `setInvoiceStatus` guards `sent_to_bill` and `sent_to_client` but `draft` has no guard, so a paid invoice can be set back to draft, its lines rewritten and adjustments applied, bypassing the locked check. `worker.js` ~2454-2489. | OPEN |
+| INVOICING | That same revert erases a live receivable. | HIGH | `outstanding`, `drafts` and the dashboard Outstanding SQL all filter on the STORED status, so one write hides real money while `balance_due` stays honest. `worker.js` ~2349, ~2357, ~3063. | OPEN |
+| INVOICING | Create from retainer ignores the case's own retainer amount. | MEDIUM | Binds the hard-coded `PERSONAL.retainer` while `retainerBlock` reads `case_retainer.retainer_amount`; a $2,500 case retainer bills $1,500. `worker.js` ~2326 vs ~2185. | OPEN |
+| INVOICING | Unsent drafts draw down the retainer on a client's document. | MEDIUM | `retainerBlock` filters only `status != void`; drafts are excluded from outstanding everywhere else. `worker.js` ~2187. | OPEN |
+| INVOICING | An overpayment is accepted and cannot be reversed. | MEDIUM | No ceiling on payment amount, no negative correcting entry allowed, document prints a negative balance without `Math.abs`. `worker.js` ~2516; `portal/index.html` ~4478. | OPEN |
+| INVOICING | Void invoices still report their cash in Paid this month. | LOW | Reduces over `full` rather than `live`. `worker.js` ~2354. | OPEN |
+| INVOICING | `nextInvoiceNo` is read-then-write with no atomicity and wedges permanently past 9999. | LOW | Lexicographic TEXT ordering means `'…-9999' > '…-10000'`, so the max never advances again. `worker.js` ~2146-2154. | OPEN |
+| PACKAGING | The finalize gate strip is hidden exactly when the package is shippable. | HIGH | `portal/index.html` ~2976 renders the gates only while status is draft, so reclassifying evidence to `do_not_use` after finalize leaves the warning invisible while Download still works. | OPEN |
+| PACKAGING | Deliberately removed days come back at finalize. | MEDIUM | Finalize reads zero attached reports as "this build predates `build_reports`" and re-seeds every approved report. `worker.js` ~4227-4240. | OPEN |
+| PACKAGING | `case_builds.report_id` can point at a report not in `build_reports` and not approved. | MEDIUM | The repair is guarded by `if (!b.report_id)`. `worker.js` ~4231. | OPEN |
+| PACKAGING | The report screen's Chronology shows removed entries unmarked. | MEDIUM | `portal/index.html` ~2453 lacks the `!e.removed_at` filter the timeline and surveillance views both have. | OPEN |
+| PACKAGING | An entry removed after the draft was generated stays in the report body forever. | MEDIUM | Regeneration is refused with 409; nothing re-derives and nothing warns. `worker.js` ~3352. | OPEN — note this may be intended, since the body is author-owned, but CLAUDE.md states flatly that the report skips removed entries. |
+| PACKAGING | Video exhibit numbers contradict each other inside one document. | LOW | Section numbers `i2+1`, index numbers `r.n`. `portal/index.html` ~3229 vs ~3237. | OPEN |
+| PACKAGING | Documents always reads 0. | LOW | Page filters `role === 'document'`; the Worker writes `'attachment'`. `portal/index.html` ~3002. | OPEN |
+| PACKAGING | A day approved after finalize is invisible, while `/completed` counts it. | LOW | `completedView` renders neither `daysPanel` nor the gate strip. | OPEN |
+| SURVEILLANCE | An open pause is closed at server now, not at the day's recorded end time, so a day can be recorded as 0 hours. | HIGH | `span` is wall-clock minutes between typed start and end; the open pause closes at `nowIso()` and its real elapsed is subtracted. Pause at noon, end the day at 20:00 with an honest 12:00 end time, and `Math.max(0, …)` floors a real 4-hour day to zero. `worker.js` ~1747-1766. | OPEN — HIGHEST of the surveillance findings. |
+| SURVEILLANCE | Reassigning a case strands a running day and its open pause permanently. | HIGH | `pause`/`resume`/`end` are scoped to both `caseFor` and `investigator_id = user.id`, so after a reassign nobody — not even an admin — can close the day. It stays in Out Now forever. `myActiveDay` also has no `assigned_to` filter, so the old investigator keeps being offered it and lands in a permanently loading screen. `worker.js` ~1693-1734, ~1020, ~3081. | OPEN |
+| SURVEILLANCE | Two of the three clock screens ignore the pause the server sends them. | MEDIUM | `svLauncher` (the PWA start URL) shows unpaused elapsed and says "Day running" while paused; the admin Out Now board shows raw wall-clock. `portal/index.html` ~3652-3659, ~1118-1133. | OPEN |
+| SURVEILLANCE | Every SV date is UTC while every SV time is local, so evening work is filed a day late. | MEDIUM | `toISOString().slice(0,10)` vs `toTimeString().slice(0,5)`. After 20:00 EDT the date is tomorrow. Affects `case_days.day_date`, `case_reports.report_date` and timeline ordering. `portal/index.html` ~3690-3691, ~5006, ~5009 and repo-wide. | OPEN |
+| SURVEILLANCE | `start_time` and `end_time` are never sanity-checked against the server's own clock. | MEDIUM | A day created seconds ago can be closed with an end time giving 23.98 h, flowing into authorization and invoicing. Mileage has a monotonicity check; time has none. | OPEN |
+| SURVEILLANCE | The skew is measured once; a device clock that changes AFTER load moves the display. | LOW | No `visibilitychange` or focus re-sync. Display-only, never reaches hours. | OPEN |
+| SURVEILLANCE | The pause race returns 500 rather than 409. | LOW | The partial unique index correctly rejects the loser but the constraint error escapes to the generic handler. | OPEN |
+| SURVEILLANCE | `case_day_pauses.day_id` has no `REFERENCES case_days(id)`. | LOW | Unlike every sibling table, this foreign key is not declared. | OPEN |
+| SURVEILLANCE | DST makes the subtraction unsound in a way the comment denies. | LOW | A local span across spring-forward is 240 wall minutes but 180 real; a day over 24h wraps to a tiny span while `paused_ms` stays real. | OPEN |
+| PERMISSIONS | `adminBuild` ignores its `user` argument. | LOW | Not exploitable today because of the blanket `/build/` gate, but the name promises a check that is not there. `worker.js` ~2959. | OPEN |
+| PERMISSIONS | The workspace scopes expenses, days and reports by case rather than by investigator. | LOW | A reassigned case shows the new investigator the previous one's money and hours. `worker.js` ~1445, ~1466, ~1470. | OPEN — may be intended. |
+| PERMISSIONS | `redactRow` is a delete-list applied over `SELECT s.*`. | STRUCTURAL | Safe today only because `submissions` has no money columns; a future denormalised column would leak by default — the exact failure mode `FIELD_KEEP` was made an allow-list to prevent. Suggested: a guard test asserting the non-admin response keys are a subset of a known list. | OPEN |
+| DOC | CLAUDE.md's "The rate card" section still describes `PACKAGES` and `HOURLY` in `intake/index.html` as live. | — | They were removed; the intake now sets no price at all. | OPEN — doc only. |
+
+The five reviewers also independently confirmed a long list of items as
+sound: the `FIELD_KEEP` allow-list and money gate, cross-case access blocked
+by `caseFor` at all 110 route dispatch points, no location data anywhere, no
+surveillance table, no hard delete of an activity entry, immutable submitted
+report versions, no evidence overwritten during build or print, Custom unable
+to ship held-back material, and no internal pricing on any client-facing
+surface. The findings already fixed are recorded in the git history at
+commit 4d53dc2.

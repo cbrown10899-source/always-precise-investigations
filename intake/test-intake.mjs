@@ -411,6 +411,10 @@ section('A partial assignment submits, and nothing is invented');
   await page.waitForTimeout(120);
   ok('an unknown date of loss removes the date box rather than asking for a fake one',
      await page.locator('[data-k="k_dol"]').count() === 0);
+  /* The placeholder guard below is only as good as what this fixture touches.
+     Prior surveillance offers a literal "Unknown" — the exact string the guard
+     bans — and nothing here selected it, so it sailed through. Select it. */
+  await page.locator('[data-k="k_prior"]').selectOption({ label: 'Unknown' });
   await advance(page);
 
   // Claimant: named, but nobody knows the address or the vehicle yet.
@@ -473,6 +477,16 @@ section('A partial assignment submits, and nothing is invented');
     ok('the vehicle description is empty', !stored.subject_description);
     ok('with its own status', stored.subject_description_status === 'not_available');
     ok('the authorization is marked pending', stored.authorized_hours_status === 'pending');
+    /* Its own preset LABEL is "Authorization pending" — writing that into the
+       value put a placeholder beside its own status, which is the one thing
+       INTAKE-NA forbids. Every other NA field asserts emptiness; this one
+       did not, so it was the gap the rule fell through. */
+    ok('and the hours themselves are empty, not the words "Authorization pending"',
+       !stored.authorized_hours);
+    ok('prior surveillance is empty rather than the word Unknown',
+       !stored.prior_surveillance);
+    ok('with its unavailability recorded as a status instead',
+       stored.prior_surveillance_status === 'unknown');
     ok('no start date was invented', !stored.start_date);
     ok('and the flexible choice is recorded', stored.start_date_status === 'flexible');
     ok('the billing contact is empty', !stored.billing_email);
@@ -492,8 +506,8 @@ section('A partial assignment submits, and nothing is invented');
     ok('the statuses are the only place unavailability is spelled out, one per gap',
        JSON.stringify(Object.keys(stored).filter(k => k.endsWith('_status')).sort())
        === JSON.stringify(['authorized_hours_status', 'billing_email_status',
-         'claim_number_status', 'date_of_loss_status', 'start_date_status',
-         'subject_address_status', 'subject_description_status']),
+         'claim_number_status', 'date_of_loss_status', 'prior_surveillance_status',
+         'start_date_status', 'subject_address_status', 'subject_description_status']),
        JSON.stringify(Object.keys(stored).filter(k => k.endsWith('_status')).sort()));
   }
 
