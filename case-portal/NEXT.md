@@ -11,6 +11,17 @@ truth** (recorded verbatim 2026-08-13).
 
 ## ⏰ FOR THE OWNER — read this first (morning of 2026-08-14)
 
+**Update, after your ChatGPT audit prompt:** the full reconciliation is in
+**`RECONCILIATION.md`** next to this file — every lettered section, granular
+rows, evidence per item. The headline: the rate-sheet intake checkbox existed
+at every layer and was E2E-tested, **but it sat on a second wizard step you
+had to click Next to reach — so you never saw it. That was a real visibility
+defect and it is fixed: the checkbox is now on the FIRST screen of the send
+panel**, and the sheet page says the option exists before you even open it.
+New genuine gaps the audit surfaced: **sheet send history (🔴, next code
+item)** and the lead event timeline (🟡). Dropbox remains honestly
+not-implemented, never faked. Nothing was found live-broken or UI-faked.
+
 Overnight, in your stated order, PRs #60–#64 shipped: the Completed Cases
 desk, lead statuses with both send actions on the lead card, the private
 intake door + intake link previews, the §38/§39 end-to-end walkthrough

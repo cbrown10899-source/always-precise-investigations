@@ -1546,7 +1546,12 @@ function sheetWizardHtml(){
   const sheet = SHEETS.find(s => s.id === w.sheet) || {};
   const intakeLabel = w.sheet === "insurance_assignment"
     ? "Insurance Assignment Intake" : "Private Client Intake";
-  const steps = ["Recipient", "Options", "Preview"];
+  /* The include-intake choice lives on the FIRST screen (owner, 2026-08-14).
+     It used to be a second step called Options, which meant it existed and
+     was tested and the owner still never saw it — a control you must click
+     Next to discover is not a visible option. One screen asks everything;
+     Preview shows exactly what will go. */
+  const steps = ["Recipient & options", "Preview"];
   const rail = `<div class="pkg-steps">${steps.map((s2, i) =>
     `<span class="pkg-step ${w.step > i + 1 ? "done" : w.step === i + 1 ? "on" : ""}">${
       w.step > i + 1 ? "&#10003;" : i + 1} ${s2}</span>`).join("")}</div>`;
@@ -1559,13 +1564,12 @@ function sheetWizardHtml(){
           <input id="wiz_case" value="${esc(w.caseNo)}"></label>
         <label class="f"><span>Add a line <span class="opt">optional</span></span>
           <input id="wiz_note" value="${esc(w.note)}" placeholder="e.g. As discussed this morning."></label>
-      </div>`
-    : w.step === 2 ? `
+      </div>
       <label class="cap" style="display:flex"><input type="checkbox" id="wiz_inc" ${w.include ? "checked" : ""}>
-        <span>Include the ${intakeLabel} form link</span></label>
+        <span>Include the <b>${intakeLabel}</b> form link</span></label>
       <p class="hint">The matching intake is paired automatically. ${w.sheet === "insurance_assignment"
         ? "Carriers land on the Secure Assignment Intake — never the consumer picker."
-        : "Private clients land on the standard intake."}</p>`
+        : "Private clients land on the private intake — the carrier path is never offered."}</p>`
     : `
       <dl class="detail">
         <dt>Sheet</dt><dd>${esc(sheet.name || w.sheet)}</dd>
@@ -1583,7 +1587,7 @@ function sheetWizardHtml(){
       ${body}
       <div class="actions" style="margin-top:12px">
         ${w.step > 1 ? `<button class="btn ghost sm" data-act="wizStep" data-s="${w.step - 1}">&larr; Back</button>` : ""}
-        ${w.step < 3 ? `<button class="btn sm" data-act="wizStep" data-s="${w.step + 1}">Next &rarr;</button>`
+        ${w.step < 2 ? `<button class="btn sm" data-act="wizStep" data-s="${w.step + 1}">Preview &rarr;</button>`
           : `<button class="btn sm" data-act="wizSend">Send it</button>`}
       </div>
       ${w.err ? `<div class="err">${esc(w.err)}</div>` : ""}
@@ -1621,6 +1625,8 @@ function sheetsView(){
     <div class="rs-close"><b>${esc(open.closing_title)}</b><p>${esc(open.closing)}</p></div>
     <div class="actions" style="border-top:1px solid var(--line);padding-top:16px;margin-top:6px">
       <button class="btn" data-act="shWiz" data-sheet="${esc(open.id)}">Send this sheet &rarr;</button>
+      <span class="opt" style="align-self:center">The send screen offers to include the ${
+        open.id === "insurance_assignment" ? "Insurance Assignment Intake" : "Private Client Intake"} link.</span>
     </div>
     ${SHEET_MSG ? `<div class="note" style="margin-top:4px">${esc(SHEET_MSG)}</div>` : ""}
   </div>` : ""}`;
