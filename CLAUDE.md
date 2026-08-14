@@ -5,6 +5,51 @@ No build step, no dependencies. Cloudflare Pages serves the repo root.
 
 Live: https://alwayspreciseinvestigations.net
 
+## Orchestration workflow
+
+When the session's main model is **Fable 5**, it is the orchestrator: plan,
+decompose, delegate, synthesize, keep its own context lean.
+
+| Work | Goes to |
+| --- | --- |
+| Architecture, schema/migration design, non-obvious debugging, security and data-boundary questions, "is this requirement actually met?" | `deep-reasoner` (Opus) |
+| Suites, greps and inventories, applying a decided change, docs and ledgers, test scaffolding | `fast-worker` (Sonnet) |
+| A second independent take on a hard call | Codex (`/codex:rescue --background`) — **a peer, not a reviewer** |
+
+**High-stakes decisions:** put Opus and Codex on the same problem in parallel,
+**neither shown the other's answer**, then synthesize. Two independent
+derivations that agree is evidence; one answer reviewed by a second model is
+mostly agreement bias.
+
+Both subagent definitions live in `.claude/agents/`. They are pinned to their
+models there, so `Agent(subagent_type: "deep-reasoner")` needs no `model`
+override.
+
+### What NOT to fan out on, in this repo specifically
+
+The portal is essentially **three enormous files** — `case-portal/worker.js`,
+`portal/index.html`, and their two suites. Parallel agents editing any one of
+them will clobber each other, and the loser fails silently because a
+`str.replace` that matches nothing still writes the file.
+
+So: **fan out on reading, serialize on writing.** Auditing, inventorying,
+tracing a boundary across the codebase — parallel, and the natural fit for
+this project's recurring "verify every requirement" work. Editing the same
+file — one agent at a time, or one agent for the whole file.
+
+`portal/test-portal.mjs` is Playwright and slow; it is worth handing to
+`fast-worker` while reasoning continues elsewhere, but two agents must not run
+it at once — they bind the same port.
+
+### The rule that outranks the workflow
+
+A subagent's report is a claim, not a fact. When one says a thing is done,
+the orchestrator wants the route, the table, the control and the test — the
+same evidence standard `RECONCILIATION.md` was written to enforce. Do not
+relay a subagent's conclusion to the owner as verified unless it came with
+that evidence, and do not let delegation become a way for an unchecked claim
+to reach them wearing a confident voice.
+
 ## Read this before querying GitHub Actions
 
 **Do not call `list_workflow_runs` (or any Actions listing) without narrowing it.**
@@ -409,7 +454,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 781 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 784 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 670 checks: the page against the real Worker
 ```
 
