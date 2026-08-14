@@ -1760,7 +1760,11 @@ function authPanel(a, admin){
            ? "<b>Authorization is used up.</b> Request more before any further work."
            : `<b>${esc(a.percent_used)}% of the authorization is used.</b> Past the ${esc(a.warn_level)}% mark.`}
        </div>` : ""}`
-      : `<div class="row"><span>Authorized hours</span><span>Not set</span></div>`}
+      : (((WS && WS.submission && WS.submission.payload) || {}).authorized_hours_status === "pending"
+          ? `<div class="row"><span>Authorized hours</span><b>Authorization pending</b></div>
+             <div class="warnline"><b>The carrier submitted this assignment with authorization pending.</b>
+               Confirm the hours with them before any billable field work starts.</div>`
+          : `<div class="row"><span>Authorized hours</span><span>Not set</span></div>`)}
     ${admin && a.package_price != null ? `
       <div class="row"><span>Authorized package</span><b>$${esc(a.package_price.toLocaleString())} &middot; ${esc(a.package_label)}</b></div>` : ""}
     ${admin && a.authorized_budget != null ? `

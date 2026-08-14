@@ -200,6 +200,19 @@ confirmed in writing, so there is no number to get wrong or to leak. The
 consumer blocks below are consumer pricing and must never appear on the claims
 path.
 
+**A field's value and its availability are separate things** (INTAKE-NA.md).
+Almost nothing is required: contact name, one contact method, the service, the
+carrier on the claims path, a claimant name *or* a claim number so the file can
+be identified, and a one-line objective. Everything else — claim number, date
+of loss, address, vehicle, start date, billing contact, the authorization
+itself — can be marked "I don't have this information right now", which
+disables the input and writes `<field>_status` beside an **empty** value.
+**Never write "N/A", "Unknown", 0000 or a placeholder date into a data field**;
+a test scans every value field for exactly those and fails. Statuses are the
+one place unavailability is spelled out, and `FIELD_KEEP` carries only the
+FIELD-side ones — an investigator is told the address is not known yet, never
+whether the carrier's claim number exists.
+
 ## Carrier rates are internal — and this file is public-adjacent
 
 The insurance rate strategy lives in `case-portal/PRICING.md`, with the
@@ -314,7 +327,7 @@ know the cap they are working to. The price fields (`package`, `package_price`,
 Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
-node intake/test-intake.mjs      # 130 checks; needs Playwright, skips cleanly without it
+node intake/test-intake.mjs      # 178 checks; needs Playwright, skips cleanly without it
 node visitor-alerts/test-worker.mjs   # 41 checks
 ```
 
@@ -389,8 +402,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 624 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 481 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 633 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 493 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,

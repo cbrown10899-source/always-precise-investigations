@@ -349,6 +349,43 @@ section('An investigator is not sent the client');
   const future = JSON.stringify(await jsonOf(await call(env, '/submissions/API-D', { cookie: inv })));
   ok('a field added to the intake later does not leak by default',
      !future.includes('CARRIER-CONFIDENTIAL'));
+
+  /* INTAKE-NA: a partial assignment ingests, and its availability statuses
+     obey the same wall as the values they describe. An investigator needs to
+     know the address is not known yet — that is fieldwork. Whether the CLAIM
+     NUMBER or the BILLING CONTACT is known is the office's business. */
+  await ingest(env, {
+    case_no: 'API-NA1', carrier: 'Urgent Mutual', client_name: 'A. Adjuster',
+    subject_name: 'Pat Claimant', objective: 'Activity versus restrictions',
+    claim_number: '', claim_number_status: 'not_available',
+    date_of_loss: '', date_of_loss_status: 'unknown',
+    subject_address: '', subject_address_status: 'not_available',
+    subject_description: '', subject_description_status: 'not_available',
+    authorized_hours: 'Authorization pending', authorized_hours_status: 'pending',
+    start_date: '', start_date_status: 'flexible',
+    billing_email: '', billing_email_status: 'not_available',
+  });
+  const naAdmin = await jsonOf(await call(env, '/submissions/API-NA1', { cookie: admin }));
+  ok('an intake with no claim number is accepted, not refused',
+     naAdmin.submission && naAdmin.submission.case_no === 'API-NA1');
+  ok('the office sees every status', naAdmin.submission.payload.claim_number_status === 'not_available'
+     && naAdmin.submission.payload.billing_email_status === 'not_available');
+  ok('and no fake value was stored in its place', !naAdmin.submission.payload.claim_number);
+
+  await call(env, '/submissions/API-NA1/assign', { method: 'POST', cookie: admin, body: { user_id: dana.id } });
+  const naInv = await jsonOf(await call(env, '/submissions/API-NA1', { cookie: inv }));
+  const naKept = naInv.submission.payload;
+  ok('the field is told the address is not known yet',
+     naKept.subject_address_status === 'not_available');
+  ok('and that the vehicle is not known yet',
+     naKept.subject_description_status === 'not_available');
+  ok('and that the authorization is still pending',
+     naKept.authorized_hours_status === 'pending');
+  ok('and that the start is flexible', naKept.start_date_status === 'flexible');
+  ok('but never whether the CLAIM NUMBER is known — that names the carrier',
+     naKept.claim_number_status === undefined);
+  ok('nor anything about the billing contact',
+     naKept.billing_email_status === undefined);
 }
 
 /* ------------------------------------------------------------- pricing */

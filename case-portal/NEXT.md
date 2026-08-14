@@ -12,13 +12,17 @@ its section 1 lists the shipped baseline and says explicitly: do not rebuild it.
 Read it for anything this file summarises.
 
 Snapshot date: 2026-08-13. Branch: `claude/app-crashes-lockups-debug-jcy6kf`.
-Master is green through PR #49. Suites at last green: worker 624,
-portal e2e 481, intake 130, alerts 41.
+Master is green through PR #49. Suites at last green: worker 633,
+portal e2e 493, intake 178, alerts 41.
 
 ## The queue, in the owner's order (MASTER-HANDOFF §42)
 
-1. **INTAKE-NA.md — NOW.** Public insurance form, public private form,
-   server validation, admin missing-info view. Ledger in that file.
+1. ~~**INTAKE-NA.md**~~ — **COMPLETE**, all twelve steps (ledger in that
+   file). Two deliberate non-builds recorded there: "request more
+   information" opens the Comm log rather than sending an automated email
+   (no email infrastructure yet, and the Comm log already IS that record),
+   and `not_applicable` exists in the model but no field offers it,
+   because nothing on either form is meaningfully N/A rather than unknown.
 2. **SURVEILLANCE.md — the next major workstream.** Launch/resume, the
    server-derived investigation timer, quick activity, favorites, voice
    entry, photo/video, timeline, mobile report, end-day review, PWA
@@ -57,10 +61,10 @@ Record these here so they cannot be lost between phases:
 
 ## In flight right now
 
-**INTAKE-NA is mid-build on the branch** (uncommitted → committed as WIP):
-the public form's NA controls, statuses on the payload, the review summary,
-FIELD_KEEP additions, and the admin "information still needed" view. Finish
-the ledger, run all four suites, ship as one PR.
+Nothing. INTAKE-NA is shipped; **SURVEILLANCE.md is the head of the queue.**
+Ask the owner to re-upload `06_active_surveillance_mobile_large_reference.png`
+before starting it — it is the primary visual reference and the binaries were
+not committed.
 
 ## How to resume in a fresh session
 
