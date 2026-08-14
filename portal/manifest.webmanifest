@@ -1,0 +1,16 @@
+{
+  "name": "API Surveillance",
+  "short_name": "Surveillance",
+  "description": "Active Surveillance Mode — the field view of an Always Precise case.",
+  "start_url": "/portal/?surveillance=1",
+  "scope": "/portal/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0d1826",
+  "theme_color": "#0d1826",
+  "icons": [
+    { "src": "/watch/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/watch/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/watch/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

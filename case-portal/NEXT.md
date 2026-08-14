@@ -12,8 +12,8 @@ its section 1 lists the shipped baseline and says explicitly: do not rebuild it.
 Read it for anything this file summarises.
 
 Snapshot date: 2026-08-13. Branch: `claude/app-crashes-lockups-debug-jcy6kf`.
-Master is green through PR #49. Suites at last green: worker 633,
-portal e2e 493, intake 178, alerts 41.
+Master is green through PR #50. Suites at last green: worker 653,
+portal e2e 537, intake 178, alerts 41.
 
 ## The queue, in the owner's order (MASTER-HANDOFF §42)
 
@@ -23,11 +23,14 @@ portal e2e 493, intake 178, alerts 41.
    (no email infrastructure yet, and the Comm log already IS that record),
    and `not_applicable` exists in the model but no field offers it,
    because nothing on either form is meaningfully N/A rather than unknown.
-2. **SURVEILLANCE.md — the next major workstream.** Launch/resume, the
-   server-derived investigation timer, quick activity, favorites, voice
-   entry, photo/video, timeline, mobile report, end-day review, PWA
-   readiness, admin "Out now". Ask the owner to re-upload
-   `06_active_surveillance_mobile_large_reference.png` when it starts.
+2. ~~**SURVEILLANCE.md**~~ — **phases 1–8 done**, 9 partly (ledger in that
+   file). Two things are genuinely outstanding and both need a human or an
+   asset, not code: **real iPhone Safari / Android Chrome testing** (the
+   camera picker and the phone's own dictation cannot be covered headlessly),
+   and **a distinct home-screen icon** — the manifest currently points at
+   `/watch/`'s icons. A mobile draft-preview *reader* inside the mode is the
+   one nice-to-have left; the submit path already works through the full
+   report screen.
 3. Dropbox video delivery (needs DROPBOX_APP_KEY / DROPBOX_APP_SECRET /
    DROPBOX_REFRESH_TOKEN as Worker secrets + a fresh read of the API docs).
 4. Case Build gap audit (multi-day reports, package types, real

@@ -402,8 +402,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 633 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 493 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 653 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 537 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
@@ -423,6 +423,31 @@ env-overridable (`STORAGE_HARD_CAP` etc.) so the tests exercise the
 refusals with real uploads. Do not raise the caps without the owner.
 A Cloudflare-side Budget Alert ($10 → owner's email) exists as the
 independent second net; it alerts, it cannot block.
+
+## Active Surveillance Mode
+
+`SV` in `portal/index.html` is the field view: a dark, one-handed, full-screen
+mode reached from a button on the assignment or from `/portal/?surveillance=1`
+(the PWA start URL, `portal/manifest.webmanifest`, "API Surveillance").
+
+**It is a VIEW of the case, and there must never be a surveillance table.**
+Every write goes through routes that already existed — `day/start`, `day/end`,
+`activity`, `evidence` — so leaving the mode leaves the work in the ordinary
+portal. Only two routes were added, and neither stores anything: `/my/active`
+(is a day running, else what could start one) and `/active` (admin: who is out).
+
+**The timer derives from the server.** `case_days.created_at` is the instant
+the day was recorded; the page measures its skew against the Worker's
+`server_now` once and computes elapsed from timestamps. It never counts ticks,
+so a reload, a sleeping phone or a wrong device clock cannot move it — there is
+a test that reloads mid-day and asserts the clock did not restart. The
+investigator's own `start_time` stays what the day's hours are computed from.
+
+Two rules worth keeping: **Out now carries no location** — no GPS in this
+phase, and a test asserts the payload has none — and **nothing spoken is ever
+auto-submitted**; the transcript is shown for review and only Use Text turns it
+into an entry. The privacy wording says only what is verifiable ("this page
+keeps no audio"), never the mockup's "never stored".
 
 ## The /watch/ dashboard
 

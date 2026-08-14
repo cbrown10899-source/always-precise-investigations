@@ -8,6 +8,12 @@
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#0e1a2c">
 <link rel="icon" href="/assets/logo-white.webp">
+<!-- Active Surveillance Mode is installable to a phone's home screen. It is
+     the same secured site, not a second app: the shortcut only starts at
+     ?surveillance=1, which opens the field launcher after the normal login. -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="API Surveillance">
 <style>
   :root{
     --navy:#0e1a2c; --navy-2:#13273f; --teal:#2f7d90; --teal-2:#3d97ad;
@@ -323,6 +329,68 @@
     align-items:center;justify-content:center;font-size:2rem;}
   .ovthumbs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;}
   .ovthumbs img{width:56px;height:56px;object-fit:cover;border-radius:8px;}
+  /* ---- Active Surveillance Mode (SURVEILLANCE.md). A dark field view of the
+     same case: usable one-handed, at dusk, from a vehicle. Large targets,
+     one primary action per screen, nothing that needs a careful tap. ---- */
+  body.surv{background:#0d1826;}
+  .sv{position:fixed;inset:0;background:#0d1826;color:#e8eef5;overflow-y:auto;
+    padding:0 0 96px;-webkit-overflow-scrolling:touch;z-index:70;}
+  .sv-head{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid #1e3149;
+    position:sticky;top:0;background:#0d1826;z-index:2;}
+  .sv-head .case{color:#8fb4d9;background:none;padding:0;font-size:.9rem;}
+  .sv-x{margin-left:auto;background:none;border:0;color:#8fb4d9;font:inherit;font-size:.82rem;
+    font-weight:700;cursor:pointer;padding:6px 4px;}
+  .sv-body{padding:18px 16px;max-width:640px;margin:0 auto;}
+  .sv-day{font-size:.78rem;letter-spacing:.14em;text-transform:uppercase;color:#8fb4d9;text-align:center;}
+  .sv-timer{font-size:3.1rem;font-weight:800;letter-spacing:.02em;text-align:center;
+    font-variant-numeric:tabular-nums;margin:2px 0 2px;}
+  .sv-since{text-align:center;color:#8fb4d9;font-size:.82rem;margin-bottom:18px;}
+  .sv-btn{display:block;width:100%;font:inherit;font-size:1rem;font-weight:800;padding:16px;
+    border-radius:12px;border:0;cursor:pointer;background:#1f3a58;color:#fff;margin-bottom:10px;}
+  .sv-btn.gold{background:var(--gold,#c99a3b);color:#13273f;}
+  .sv-btn.line{background:transparent;border:1.5px solid #2a456a;color:#e8eef5;}
+  .sv-quad{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0;}
+  .sv-q{font:inherit;font-size:.95rem;font-weight:700;padding:20px 10px;border-radius:12px;
+    border:1.5px solid #23405f;background:#132538;color:#e8eef5;cursor:pointer;text-align:center;}
+  .sv-q b{display:block;font-size:1.5rem;margin-bottom:4px;font-weight:400;}
+  .sv-card{background:#132538;border:1px solid #23405f;border-radius:12px;padding:14px 16px;margin-bottom:12px;}
+  .sv-card h3{margin:0 0 8px;font-size:.74rem;letter-spacing:.1em;text-transform:uppercase;color:#8fb4d9;}
+  .sv-row{display:flex;justify-content:space-between;gap:10px;padding:4px 0;font-size:.92rem;}
+  .sv-row b{text-align:right;}
+  .sv-f{display:block;margin-bottom:12px;}
+  .sv-f span{display:block;font-size:.82rem;color:#8fb4d9;margin-bottom:5px;}
+  .sv-f input,.sv-f textarea,.sv-f select{width:100%;font:inherit;font-size:1rem;padding:13px 12px;
+    border-radius:10px;border:1.5px solid #2a456a;background:#0d1826;color:#e8eef5;}
+  .sv-tl{list-style:none;margin:0;padding:0;}
+  .sv-tl li{border-bottom:1px solid #1e3149;padding:11px 0;}
+  .sv-tl .t{color:#8fb4d9;font-size:.8rem;font-variant-numeric:tabular-nums;}
+  .sv-tl .m{color:#8fb4d9;font-size:.8rem;margin-top:3px;}
+  .sv-nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:#132538;
+    border-top:1px solid #23405f;z-index:80;padding-bottom:env(safe-area-inset-bottom);}
+  .sv-nav button{flex:1;font:inherit;font-size:.7rem;font-weight:700;background:none;border:0;
+    color:#8fb4d9;padding:11px 2px;cursor:pointer;}
+  .sv-nav button b{display:block;font-size:1.1rem;font-weight:400;margin-bottom:2px;}
+  .sv-nav button.on{color:#fff;}
+  .sv-mic{width:100%;font:inherit;font-size:1rem;font-weight:800;padding:16px;border-radius:12px;
+    border:1.5px dashed #2a456a;background:#132538;color:#e8eef5;cursor:pointer;margin-bottom:10px;}
+  .sv-mic.live{border-style:solid;border-color:var(--gold,#c99a3b);color:var(--gold,#c99a3b);}
+  .sv-heard{background:#f4f7fa;color:#1c2531;border-radius:12px;padding:14px;margin-bottom:12px;}
+  .sv-heard textarea{width:100%;font:inherit;font-size:.95rem;border:1px solid #cfd8e0;
+    border-radius:8px;padding:10px;background:#fff;color:#1c2531;}
+  .sv-err{background:#3a1d1d;border:1px solid #6b2f2f;color:#ffc9c9;border-radius:10px;
+    padding:11px 13px;margin-bottom:12px;font-size:.9rem;}
+  .sv-ok{background:#12331f;border:1px solid #2c5f3d;color:#b7f0c9;border-radius:10px;
+    padding:14px;margin-bottom:12px;text-align:center;font-weight:700;}
+  .sv-warn{background:#3a2f14;border:1px solid #6b5a2f;color:#f0dfb7;border-radius:10px;
+    padding:11px 13px;margin-bottom:12px;font-size:.9rem;}
+  .sv-pick{display:block;width:100%;text-align:left;font:inherit;font-size:.95rem;padding:14px 13px;
+    border:1px solid #23405f;border-radius:10px;background:#132538;color:#e8eef5;cursor:pointer;margin-bottom:7px;}
+  .sv-cats{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0;}
+  .sv-cat{font:inherit;font-size:.78rem;font-weight:700;padding:9px 13px;border:1px solid #23405f;
+    border-radius:18px;background:#132538;color:#8fb4d9;cursor:pointer;}
+  .sv-cat.on{background:#1f3a58;color:#fff;border-color:#2f5480;}
+  .sv-launch{background:#132538;border:1px solid #23405f;border-radius:12px;padding:14px 16px;
+    margin-bottom:10px;cursor:pointer;width:100%;text-align:left;color:#e8eef5;font:inherit;}
   /* UIBUILD Phase 5 — the Case Build steps rail (P13). */
   .pkg-steps{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 12px;}
   .pkg-step{font-size:.74rem;font-weight:700;padding:6px 10px;border:1px solid var(--line);
@@ -467,6 +535,14 @@ let INVOICES = null, INV_OPEN = null, INV_MSG = "", INV_WARN = [], INV_EVENTS = 
     INV_FILTER = {status: "", type: "", q: ""};
 // The open case workspace: which case, which tab, its loaded data, last error.
 let WS = null, WS_CASE = null, WS_TAB = "overview", WS_ERR = "", WS_REPORT = null;
+/* Active Surveillance Mode. SV is the whole of its state: which screen, the
+   pending quick entry, the voice transcript awaiting review. The CASE data it
+   draws is WS — the same workspace every other screen reads, because this is a
+   view of the case and not a second copy of it. */
+let OUT_NOW = null;        // the office's live view of who is in the field
+let SV = null;             // null = not in the mode; else {tab, ...}
+let SV_SKEW = 0;           // server clock minus this device's, measured once
+let SV_TICK = null;        // the one interval that repaints the timer
 let REP_VIEW = "preview";  // the open report's sub-view (UIBUILD P11)
 let REP_VERS = {};         // fetched submitted-version history, per report id
 let EV_TAB = "all";        // which evidence gallery tab is showing (UIBUILD P12)
@@ -901,11 +977,42 @@ function pkgCard(p){
   </div>`;
 }
 
+/* SURVEILLANCE P18 — who is out right now. Operational only: who, which case,
+   when they started, how long, and how recently they logged something. No
+   location and no GPS — the handoff is explicit that this phase tracks nobody's
+   position. Drawn only when someone is actually out. */
+function outNowHtml(){
+  const rows = (OUT_NOW && OUT_NOW.out_now) || [];
+  if(!rows.length) return "";
+  const skew = OUT_NOW.server_now ? Date.parse(OUT_NOW.server_now) - Date.now() : 0;
+  const ago = iso => {
+    if(!iso) return "—";
+    const m = Math.max(0, Math.round(((Date.now() + skew) - Date.parse(iso)) / 60000));
+    return m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60}m`;
+  };
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Out now</h2>
+      <span class="count">${rows.length} in the field</span></div>
+    <div style="overflow-x:auto"><table>
+      <thead><tr><th>Investigator</th><th>Case</th><th>Started</th><th>Elapsed</th><th class="hide">Last activity</th></tr></thead>
+      <tbody>${rows.map(r => `<tr class="click" data-act="openCase" data-case="${esc(r.case_no)}">
+        <td><b>${esc(r.investigator || "—")}</b></td>
+        <td class="mono">${esc(r.case_no)}<div class="tl-m">${esc(r.subject_name || "")}</div></td>
+        <td>${esc(t12(r.start_time))}</td>
+        <td>${ago(r.started_at)}</td>
+        <td class="hide">${r.last_activity
+          ? `${esc(String(r.last_activity.description || "").slice(0, 44))}
+             <div class="tl-m">${ago(r.last_activity.created_at)} ago &middot; ${r.activity_count} total</div>`
+          : `<span class="tl-m">Nothing logged yet</span>`}</td>
+      </tr>`).join("")}</tbody></table></div>
+  </div>`;
+}
+
 function dashView(){
   if(!PKGS) return `<div class="card"><div class="empty">Loading the dashboard&hellip;</div></div>`;
   const out = PKGS.outstanding || 0;
   const active = (PKGS.packages || []);
-  return `
+  return `${outNowHtml()}
     <div class="stats" style="margin-top:0">
       <div class="stat ${out ? "click warn" : ""}" ${out ? `data-act="tab" data-tab="invoices"` : ""}>
         <div class="stat-n">$${esc(out.toLocaleString())}</div>
@@ -1558,6 +1665,10 @@ function paint(){
   $("who").hidden = false;
   $("who").innerHTML = `<b>${esc(ME.display_name || ME.username)}</b>${ME.role === "admin" ? "Admin" : "Investigator"}
     <button data-act="logout">Sign out</button>`;
+  // Active Surveillance takes the whole screen — it is a field view, not a
+  // panel inside the office one.
+  if(SV && SV.tab === "launcher"){ app.innerHTML = svLauncher(); return; }
+  if(SV && WS_CASE){ app.innerHTML = svView(); return; }
   if(VIEW === "case" && WS_CASE){
     // The workspace takes the whole page. The back button carries the same
     // .close class the dialog's X had, so muscle memory and tests both hold.
@@ -1634,6 +1745,8 @@ async function render(){
     // it — the tab click is not the only way in. Without this, the first
     // sign-in paints "Loading…" forever, because nothing ever fetches.
     if(TAB === "dashboard" && !PKGS) await loadPackages();
+    // Same rule for who-is-out: landed on, not only clicked into.
+    try{ OUT_NOW = await api("/active"); }catch(e){ OUT_NOW = null; }
   }
   paint();
 }
@@ -3019,6 +3132,438 @@ function overviewPanel(s, a){
     </div>`;
 }
 
+/* ===================== Active Surveillance Mode (SURVEILLANCE.md) =========
+   THE RULE, from the owner: this is a VIEW of the existing case. Same login,
+   same case, same investigation day, same activity log, same evidence, same
+   report. There is no surveillance table and there must never be one — leave
+   the mode and everything is already in the normal portal.
+   ========================================================================= */
+
+/* The timer derives from the SERVER's record of when the day was started
+   (case_days.created_at), corrected by the skew measured against the Worker's
+   own clock. Nothing counts ticks, so sleeping the phone, reloading, or a
+   device clock that is simply wrong cannot move it (P2). */
+function svElapsed(){
+  const d = WS && WS.open_day;
+  if(!d || !d.started_at) return null;
+  const ms = (Date.now() + SV_SKEW) - Date.parse(d.started_at);
+  return ms > 0 ? ms : 0;
+}
+function svClock(ms){
+  const s = Math.floor(ms / 1000);
+  const p = n => String(n).padStart(2, "0");
+  return `${p(Math.floor(s / 3600))}:${p(Math.floor(s / 60) % 60)}:${p(s % 60)}`;
+}
+function svTickStart(){
+  if(SV_TICK) clearInterval(SV_TICK);
+  SV_TICK = setInterval(() => {
+    const el = $("svTimer"), ms = svElapsed();
+    if(el && ms != null) el.textContent = svClock(ms);
+  }, 1000);
+}
+function svTickStop(){ if(SV_TICK){ clearInterval(SV_TICK); SV_TICK = null; } }
+
+async function openSurveillanceLauncher(){
+  SV = {tab: "launcher", entry: null, heard: null, err: "", ok: "", cat: "arrival", search: ""};
+  document.body.classList.add("surv");
+  paint();
+  try{ SV.launcher = await api("/my/active"); }
+  catch(e){ SV.launcher = {active: null, assignments: []}; SV.err = e.message; }
+  paint();
+}
+
+async function enterSurveillance(caseNo){
+  SV = {tab: "home", entry: null, heard: null, err: "", ok: "", cat: "arrival", search: ""};
+  document.body.classList.add("surv");
+  if(WS_CASE !== caseNo || !WS){
+    WS_CASE = caseNo; WS = null;
+    paint();
+    try{
+      const [sub, ws] = await Promise.all([
+        api("/submissions/" + encodeURIComponent(caseNo)),
+        api("/cases/" + encodeURIComponent(caseNo) + "/workspace"),
+      ]);
+      WS = { ...ws, submission: sub.submission };
+    }catch(e){ SV.err = e.message; }
+  }
+  if(WS && WS.server_now) SV_SKEW = Date.parse(WS.server_now) - Date.now();
+  svTickStart();
+  paint();
+}
+function exitSurveillance(){
+  svTickStop();
+  SV = null;
+  document.body.classList.remove("surv");
+  VIEW = "case"; WS_TAB = "overview";
+  paint();
+}
+async function svReload(){
+  try{
+    const ws = await api("/cases/" + encodeURIComponent(WS_CASE) + "/workspace");
+    WS = { ...ws, submission: WS ? WS.submission : null };
+    if(ws.server_now) SV_SKEW = Date.parse(ws.server_now) - Date.now();
+  }catch(e){ SV.err = e.message; }
+  paint();
+}
+
+function svView(){
+  const s = (WS && WS.submission) || {};
+  const p = s.payload || {};
+  const claim = s.kind === "claims";
+  const open = WS && WS.open_day;
+  const body =
+      !WS            ? `<div class="sv-body"><div class="sv-card">Loading the assignment&hellip;</div></div>`
+    : SV.tab === "activity" ? svActivityScreen()
+    : SV.tab === "timeline"  ? svTimelineScreen()
+    : SV.tab === "evidence"  ? svEvidenceScreen()
+    : SV.tab === "report"    ? svReportScreen()
+    : SV.tab === "case"      ? svCaseDrawer()
+    : SV.tab === "endday"    ? svEndDayScreen()
+    :                          svHomeScreen();
+
+  return `<div class="sv">
+    <div class="sv-head">
+      <span class="tag ${claim ? "claims" : "consumer"}">${claim ? "Claim" : "Private"}</span>
+      <span class="case">${esc(WS_CASE)}</span>
+      <button class="sv-x" data-act="svExit">&larr; Exit active mode</button>
+    </div>
+    ${body}
+    <div class="sv-nav">
+      ${[["home","&#8962;","Home"], ["activity","&#9998;","Activity"],
+         ["evidence","&#128247;","Evidence"], ["report","&#128196;","Report"],
+         ["case","&#8942;","Case"]].map(([k, ic, lbl]) =>
+        `<button class="${SV.tab === k || (k === "activity" && SV.tab === "timeline") ? "on" : ""}"
+           data-act="svTab" data-t="${k}"><b>${ic}</b>${lbl}</button>`).join("")}
+    </div>
+  </div>`;
+}
+
+/* SURVEILLANCE P16 — what the home-screen icon opens. With a day running it
+   resumes it; with none it lists the assignments that could start one. This is
+   the same signed-in website, not a second app. */
+function svLauncher(){
+  const d = SV.launcher || {};
+  const a = d.active;
+  if(a){
+    const skew = d.server_now ? Date.parse(d.server_now) - Date.now() : 0;
+    const ms = Math.max(0, (Date.now() + skew) - Date.parse(a.started_at));
+    return `<div class="sv">
+      <div class="sv-head"><span class="case">Active surveillance</span>
+        <button class="sv-x" data-act="svLeaveLauncher">&larr; The full portal</button></div>
+      <div class="sv-body">
+        <div class="sv-day">Day running</div>
+        <div class="sv-timer">${svClock(ms)}</div>
+        <div class="sv-since">${esc(a.case_no)}${a.subject_name ? " &middot; " + esc(a.subject_name) : ""}</div>
+        <button class="sv-btn gold" data-act="svEnter" data-case="${esc(a.case_no)}">Resume active surveillance</button>
+      </div></div>`;
+  }
+  const list = d.assignments || [];
+  return `<div class="sv">
+    <div class="sv-head"><span class="case">My surveillance assignments</span>
+      <button class="sv-x" data-act="svLeaveLauncher">&larr; The full portal</button></div>
+    <div class="sv-body">
+      ${list.length ? list.map(c => `<button class="sv-launch" data-act="svEnter" data-case="${esc(c.case_no)}">
+          <div style="font-weight:800">${esc(c.subject_name || c.case_no)}</div>
+          <div style="color:#8fb4d9;font-size:.82rem" class="mono">${esc(c.case_no)}</div>
+        </button>`).join("")
+        : `<div class="sv-card">No assignments yet. The office assigns cases and they appear here.</div>`}
+      <div style="color:#8fb4d9;font-size:.8rem;padding:8px 2px">
+        Opening one starts or resumes its investigation day.</div>
+    </div></div>`;
+}
+
+function svHomeScreen(){
+  const open = WS && WS.open_day;
+  const days = (WS && WS.days) || [];
+  const acts = (WS && WS.activity) || [];
+  const a = (WS && WS.authorization) || {};
+  const last = acts[0];
+  const note = (SV.err ? `<div class="sv-err">${esc(SV.err)}</div>` : "")
+             + (SV.ok ? `<div class="sv-ok">${esc(SV.ok)}</div>` : "");
+
+  if(!open){
+    // No day running: the one screen is starting one (P3).
+    const now = new Date().toTimeString().slice(0,5);
+    const today = new Date().toISOString().slice(0,10);
+    return `<div class="sv-body">
+      ${note}
+      <div class="sv-day">Day ${days.length + 1}</div>
+      <div class="sv-timer">--:--:--</div>
+      <div class="sv-since">No investigation day running.</div>
+      <div class="sv-card">
+        <h3>Start the day</h3>
+        <label class="sv-f"><span>Date</span><input id="sv_date" type="date" value="${today}"></label>
+        <label class="sv-f"><span>Start time</span><input id="sv_start" type="time" value="${now}"></label>
+        <label class="sv-f"><span>Beginning mileage <span style="opacity:.7">optional</span></span>
+          <input id="sv_smiles" inputmode="decimal"></label>
+      </div>
+      <button class="sv-btn gold" data-act="svStartDay">Start investigation day</button>
+    </div>`;
+  }
+
+  const ms = svElapsed();
+  return `<div class="sv-body">
+    ${note}
+    <div class="sv-day">Day ${days.length} &middot; running since ${esc(t12(open.start_time))}</div>
+    <div class="sv-timer" id="svTimer">${ms == null ? "--:--:--" : svClock(ms)}</div>
+    <div class="sv-since">${esc(fmtDay(open.day_date))}${
+      open.start_mileage != null ? ` &middot; started at ${esc(open.start_mileage)} miles` : ""}</div>
+    <button class="sv-btn gold" data-act="svTab" data-t="endday">End investigation day</button>
+
+    <div class="sv-quad">
+      <button class="sv-q" data-act="svTab" data-t="activity"><b>&#9998;</b>Activity</button>
+      <button class="sv-q" data-act="svPhoto"><b>&#128247;</b>Photo</button>
+      <button class="sv-q" data-act="svVideo"><b>&#127909;</b>Video</button>
+      <button class="sv-q" data-act="svNote"><b>&#128221;</b>Note</button>
+    </div>
+
+    ${svMicHtml()}
+
+    <div class="sv-card">
+      <h3>Last activity</h3>
+      ${last ? `<div class="sv-row"><span>${esc(t12(last.at_time))}</span></div>
+        <div style="font-size:.95rem">${esc(String(last.description || "").slice(0, 120))}</div>`
+       : `<div style="color:#8fb4d9">Nothing logged yet today.</div>`}
+      <button class="sv-btn line" style="margin-top:10px" data-act="svTab" data-t="timeline">View timeline</button>
+    </div>
+
+    ${a.authorized_hours != null ? `<div class="sv-card">
+      <h3>Authorization</h3>
+      <div class="sv-row"><span>Remaining</span><b>${esc(a.hours_remaining)} hours</b></div>
+      ${a.warn_level != null ? `<div class="sv-warn">${a.warn_level >= 100
+        ? "<b>Authorization is used up.</b> Contact the office before further work."
+        : `<b>${esc(a.percent_used)}% used.</b> Past the ${esc(a.warn_level)}% mark.`}</div>` : ""}
+    </div>` : ""}
+  </div>`;
+}
+
+/* Voice (P8). Level 1 is the phone's own keyboard dictation, which every text
+   field here already accepts. Level 2 is this: the browser's speech API where
+   it exists, ALWAYS reviewed before it becomes a log entry — nothing spoken is
+   ever submitted straight into the record. */
+function svMicHtml(){
+  const supported = typeof window !== "undefined"
+    && (window.SpeechRecognition || window.webkitSpeechRecognition);
+  if(SV.heard != null){
+    return `<div class="sv-heard">
+      <div style="font-weight:800;margin-bottom:6px">Heard &mdash; read it before it goes in</div>
+      <textarea id="sv_heard" rows="4">${esc(SV.heard)}</textarea>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn sm" data-act="svUseText">Use this text</button>
+        <button class="btn sm ghost" data-act="svDiscard">Discard</button>
+      </div>
+      <div style="font-size:.78rem;color:#5c6775;margin-top:8px">
+        Dictation is handled by your device or browser; this page keeps no audio.
+        Nothing is logged until you press Use.</div>
+    </div>`;
+  }
+  if(!supported){
+    return `<button class="sv-mic" data-act="svNoMic">&#127908; Tap to speak
+      <div style="font-weight:400;font-size:.78rem;opacity:.75;margin-top:4px">
+        Not available in this browser &mdash; the keyboard's own dictation works in every field</div></button>`;
+  }
+  return `<button class="sv-mic ${SV.listening ? "live" : ""}" data-act="svMic">
+    ${SV.listening ? "&#9679; Listening&hellip; tap to stop" : "&#127908; Tap to speak"}</button>`;
+}
+
+function svCaseDrawer(){
+  const s = (WS && WS.submission) || {};
+  const p = s.payload || {};
+  const claim = s.kind === "claims";
+  const a = (WS && WS.authorization) || {};
+  const subjects = (WS && WS.subjects) || [];
+  const row = (k, v) => v ? `<div class="sv-row"><span>${esc(k)}</span><b>${esc(v)}</b></div>` : "";
+  const na = (k, st) => !st ? "" : `<div class="sv-row"><span>${esc(k)}</span><b style="opacity:.7">Not known yet</b></div>`;
+  return `<div class="sv-body">
+    <div class="sv-card">
+      <h3>${claim ? "Claimant" : "Subject"}</h3>
+      ${row("Name", p.subject_name)}
+      ${p.subject_address ? row("Address", p.subject_address) : na("Address", p.subject_address_status)}
+      ${p.subject_description ? row("Vehicle / description", p.subject_description)
+        : na("Vehicle / description", p.subject_description_status)}
+      ${row(claim ? "Injury & restrictions" : "Relationship", p.subject_relationship)}
+    </div>
+    ${subjects.length ? `<div class="sv-card"><h3>Subjects on file</h3>
+      ${subjects.map(sj => `<div class="sv-row"><span>${esc(sj.name)}</span><b>${
+        (sj.vehicles || []).length} vehicle${(sj.vehicles || []).length === 1 ? "" : "s"}</b></div>`).join("")}
+    </div>` : ""}
+    <div class="sv-card">
+      <h3>The assignment</h3>
+      ${row(claim ? "Scope" : "Objective", p.objective)}
+      ${row("Permitted days", p.permitted_days)}${row("Permitted times", p.permitted_times)}
+      ${row("Weekend", p.weekend_authorized)}${row("Geographic limits", p.geographic_limits)}
+      ${row("Priority", p.priority)}
+      ${a.authorized_hours != null ? `<div class="sv-row"><span>Hours remaining</span><b>${esc(a.hours_remaining)}</b></div>`
+        : p.authorized_hours_status === "pending"
+        ? `<div class="sv-row"><span>Authorization</span><b>Pending</b></div>` : ""}
+      ${row("Field notes", p.notes)}
+    </div>
+    <div style="color:#8fb4d9;font-size:.8rem;padding:0 2px 8px">
+      This is the fieldwork view. Billing, the client's identity and the office's
+      notes stay with the office &mdash; the server never sends them here.</div>
+  </div>`;
+}
+
+function svTimelineScreen(){
+  const acts = (WS && WS.activity) || [];
+  const ev = ((WS && WS.evidence) || []).filter(e => !e.deleted_at);
+  const counts = e => {
+    const mine = ev.filter(x => x.entry_id === e.id);
+    const ph = mine.filter(x => String(x.content_type || "").startsWith("image/")).length;
+    const vi = mine.filter(x => String(x.content_type || "").startsWith("video/")).length;
+    return (ph ? `&#128247; ${ph} ` : "") + (vi ? `&#127909; ${vi}` : "");
+  };
+  return `<div class="sv-body">
+    ${SV.err ? `<div class="sv-err">${esc(SV.err)}</div>` : ""}
+    <div class="sv-card">
+      <h3>Timeline &middot; ${acts.length} entr${acts.length === 1 ? "y" : "ies"}</h3>
+      ${acts.length ? `<ul class="sv-tl">${acts.map(e => `<li>
+        <div class="t">${esc(t12(e.at_time))}</div>
+        <div>${esc(e.description)}</div>
+        <div class="m">${counts(e)}${e.location ? " &middot; " + esc(e.location) : ""}</div>
+      </li>`).join("")}</ul>` : `<div style="color:#8fb4d9">Nothing logged yet.</div>`}
+    </div>
+    <button class="sv-btn gold" data-act="svTab" data-t="activity">+ Add activity</button>
+  </div>`;
+}
+
+/* Quick activity (P5–P7). The same ACTION_GROUPS and favorites the desktop
+   sheet uses — one vocabulary, so a line starred in the office is starred in
+   the field. Every entry posts to the same /activity route. */
+function svActivityScreen(){
+  const e = SV.entry;
+  if(e){
+    const now = new Date().toTimeString().slice(0,5);
+    return `<div class="sv-body">
+      ${SV.err ? `<div class="sv-err">${esc(SV.err)}</div>` : ""}
+      <button class="sv-x" style="padding:0 0 10px" data-act="svPick" data-line="">&larr; All actions</button>
+      <div class="sv-card">
+        <label class="sv-f"><span>Time</span><input id="sv_time" type="time" value="${esc(e.time || now)}"></label>
+        <label class="sv-f"><span>Details &mdash; edit freely</span>
+          <textarea id="sv_desc" rows="4">${esc(e.text || "")}</textarea></label>
+        <label class="cap" style="color:#e8eef5"><input type="checkbox" id="sv_sd"><span>Subject documented</span></label>
+        <label class="cap" style="color:#e8eef5"><input type="checkbox" id="sv_pa"><span>Photo taken</span></label>
+        <label class="cap" style="color:#e8eef5"><input type="checkbox" id="sv_va"><span>Video acquired</span></label>
+        <details style="margin-top:10px"><summary style="color:#8fb4d9;cursor:pointer">More details</summary>
+          <label class="sv-f" style="margin-top:8px"><span>Location</span><input id="sv_loc"></label>
+          <label class="sv-f"><span>Vehicle</span><input id="sv_veh"></label>
+          <label class="sv-f"><span>Internal note &mdash; never client-facing</span><input id="sv_note"></label>
+        </details>
+      </div>
+      <button class="sv-btn gold" data-act="svSaveEntry">Save activity</button>
+    </div>`;
+  }
+  const favs = favLines();
+  const q = (SV.search || "").trim().toLowerCase();
+  const lines = q
+    ? [...new Set([...favs, ...ALL_LINES])].filter(l => l.toLowerCase().includes(q))
+    : (SV.cat === "fav" ? favs : ((ACTION_GROUPS.find(g => g[0] === SV.cat) || ACTION_GROUPS[0])[2]));
+  return `<div class="sv-body">
+    ${SV.err ? `<div class="sv-err">${esc(SV.err)}</div>` : ""}
+    ${SV.ok ? `<div class="sv-ok">${esc(SV.ok)}
+      <div style="margin-top:10px;display:flex;gap:8px">
+        <button class="btn sm" data-act="svAddAnother">Add another</button>
+        <button class="btn sm ghost" data-act="svTab" data-t="timeline">View timeline</button>
+      </div></div>` : ""}
+    <label class="sv-f"><span>Search or pick an action</span>
+      <input id="sv_q" value="${esc(SV.search || "")}" placeholder="Search&hellip;" data-act-input="svSearch"></label>
+    ${q ? "" : `<div class="sv-cats">
+      <button class="sv-cat ${SV.cat === "fav" ? "on" : ""}" data-act="svCat" data-c="fav">&#9733; Favorites</button>
+      ${ACTION_GROUPS.map(([k, lbl]) =>
+        `<button class="sv-cat ${SV.cat === k ? "on" : ""}" data-act="svCat" data-c="${k}">${lbl}</button>`).join("")}
+    </div>`}
+    ${lines.length ? lines.map(l =>
+      `<button class="sv-pick" data-act="svPick" data-line="${esc(l)}">${esc(l)}${
+        l === NO_CHANGE_LINE ? ` <span style="color:#8fb4d9;font-size:.78rem">&mdash; one tap</span>` : ""}</button>`).join("")
+      : `<div style="color:#8fb4d9">Nothing matches. Custom text works from any action.</div>`}
+  </div>`;
+}
+
+function svEvidenceScreen(){
+  const rows = ((WS && WS.evidence) || []).filter(e => !e.deleted_at);
+  const url = e => `/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${e.id}/file`;
+  const isImg = e => String(e.content_type || "").startsWith("image/");
+  return `<div class="sv-body">
+    ${SV.err ? `<div class="sv-err">${esc(SV.err)}</div>` : ""}
+    ${SV.ok ? `<div class="sv-ok">${esc(SV.ok)}</div>` : ""}
+    <div class="sv-quad">
+      <button class="sv-q" data-act="svPhoto"><b>&#128247;</b>Add photo</button>
+      <button class="sv-q" data-act="svVideo"><b>&#127909;</b>Add video</button>
+    </div>
+    <div class="sv-card">
+      <h3>On this case &middot; ${rows.length}</h3>
+      ${rows.length ? `<div class="evgrid">${rows.slice(0, 24).map(e => `<div class="evcard" style="background:#0d1826;border-color:#23405f">
+        ${isImg(e) ? `<a href="${url(e)}" target="_blank" rel="noopener"><img class="evthumb" src="${url(e)}" alt="" loading="lazy"></a>`
+          : `<div class="evtile" style="background:#132538">${String(e.content_type || "").startsWith("video/") ? "&#127909;" : "&#128196;"}</div>`}
+        <div style="font-size:.78rem;margin-top:5px;word-break:break-all">${esc(e.filename)}</div>
+      </div>`).join("")}</div>` : `<div style="color:#8fb4d9">Nothing uploaded yet.</div>`}
+    </div>
+    <div style="color:#8fb4d9;font-size:.8rem">Everything you upload lands as
+      <b>Needs review</b>. What reaches the client is the office's decision, in Case Build.</div>
+  </div>`;
+}
+
+function svReportScreen(){
+  const reports = (WS && WS.reports) || [];
+  const acts = (WS && WS.activity) || [];
+  const open = WS && WS.open_day;
+  const mine = reports[0];
+  return `<div class="sv-body">
+    ${SV.err ? `<div class="sv-err">${esc(SV.err)}</div>` : ""}
+    <div class="sv-card">
+      <h3>The report</h3>
+      ${mine
+        ? `<div class="sv-row"><span>${esc(fmtDay(mine.report_date))}</span><b>${esc(reportLabel(mine.status))}</b></div>
+           <div style="color:#8fb4d9;font-size:.85rem;margin-top:6px">
+             ${["submitted","approved","delivered"].includes(mine.status)
+               ? "With the office. The exact text you submitted is preserved."
+               : "A draft is waiting for you to read it through."}</div>`
+        : `<div style="color:#8fb4d9">Draft building from your activity timeline &mdash;
+             ${acts.length} entr${acts.length === 1 ? "y" : "ies"} so far.
+             ${open ? "End the day and the draft is written from them." : ""}</div>`}
+    </div>
+    <button class="sv-btn line" data-act="svFullReport">Open the full report screen</button>
+    <div style="color:#8fb4d9;font-size:.8rem;padding:8px 2px">
+      Submitting keeps the exact version you sent and puts it in the office's
+      review queue &mdash; the same workflow as the desktop portal.</div>
+  </div>`;
+}
+
+/* End day (P14). A confirmation with the totals, never a one-tap action and
+   never something a voice command can do. */
+function svEndDayScreen(){
+  const open = WS && WS.open_day;
+  if(!open) return `<div class="sv-body"><div class="sv-card">No day is running.</div></div>`;
+  const acts = ((WS && WS.activity) || []).filter(e => e.day_id === open.id);
+  const ev = ((WS && WS.evidence) || []).filter(e => !e.deleted_at);
+  const ph = ev.filter(e => String(e.content_type || "").startsWith("image/")).length;
+  const vi = ev.filter(e => String(e.content_type || "").startsWith("video/")).length;
+  const now = new Date().toTimeString().slice(0,5);
+  const ms = svElapsed();
+  return `<div class="sv-body">
+    ${SV.err ? `<div class="sv-err">${esc(SV.err)}</div>` : ""}
+    <button class="sv-x" style="padding:0 0 10px" data-act="svTab" data-t="home">&larr; Back to active surveillance</button>
+    <div class="sv-card">
+      <h3>Ending the day</h3>
+      <div class="sv-row"><span>Started</span><b>${esc(t12(open.start_time))}</b></div>
+      <div class="sv-row"><span>Elapsed</span><b>${ms == null ? "—" : svClock(ms)}</b></div>
+      <div class="sv-row"><span>Activity entries</span><b>${acts.length}</b></div>
+      <div class="sv-row"><span>Photos</span><b>${ph}</b></div>
+      <div class="sv-row"><span>Video</span><b>${vi}</b></div>
+      ${open.start_mileage != null ? `<div class="sv-row"><span>Beginning mileage</span><b>${esc(open.start_mileage)}</b></div>` : ""}
+    </div>
+    <div class="sv-card">
+      <label class="sv-f"><span>End time</span><input id="sv_end" type="time" value="${now}"></label>
+      <label class="sv-f"><span>Ending mileage <span style="opacity:.7">optional</span></span>
+        <input id="sv_emiles" inputmode="decimal"></label>
+      <label class="sv-f"><span>Summary of the day <span style="opacity:.7">optional</span></span>
+        <textarea id="sv_sum" rows="3" placeholder="What the day established, in your own words."></textarea></label>
+    </div>
+    <button class="sv-btn gold" data-act="svEndDay">End day &amp; review</button>
+    <button class="sv-btn line" data-act="svTab" data-t="home">Keep working</button>
+  </div>`;
+}
+
 /* UIBUILD P15 — the field's case home: the ring over what is theirs, one
    next step with GO, and the last moments — above the assignment detail.
    Field scope: build and invoice are the office's and never appear here. */
@@ -3028,7 +3573,13 @@ function fieldHomeHtml(){
   const next = pkgNextStep(shape, "field");
   const mark = st => st === "done" ? "&#10003;" : st === "part" ? "&#9685;" : "&#9675;";
   const acts = ((WS && WS.activity) || []).slice(0, 4);
+  const open = WS && WS.open_day;
   return `
+    <!-- SURVEILLANCE P1: the door into the field view, at the top of the
+         assignment where a phone finds it first. -->
+    <button class="btn" style="width:100%;padding:15px;font-size:1rem;margin-bottom:14px"
+      data-act="svEnter" data-case="${esc(WS_CASE)}">
+      ${open ? "&#9679; Resume active surveillance" : "Start active surveillance mode"}</button>
     <div class="ovgrid">
       <div class="ovcard">
         <h3>Assignment progress</h3>
@@ -3872,6 +4423,108 @@ async function quickAddEntry(oneTapLine){
   await reloadWorkspace();
 }
 
+/* ---- Active Surveillance actions. Every one posts to a route that already
+   existed: the mode adds screens, never a second way to store the work. ---- */
+
+async function svStartDay(){
+  SV.err = ""; SV.ok = "";
+  try{
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/day/start`, {method:"POST", body:{
+      day_date: $("sv_date").value, start_time: $("sv_start").value,
+      start_mileage: $("sv_smiles").value,
+    }});
+    SV.ok = "Day started.";
+  }catch(e){ SV.err = e.message; }
+  await svReload();
+  svTickStart();
+}
+
+async function svEndDay(){
+  SV.err = "";
+  try{
+    const r = await api(`/cases/${encodeURIComponent(WS_CASE)}/day/end`, {method:"POST", body:{
+      end_time: $("sv_end").value, end_mileage: $("sv_emiles").value, summary: $("sv_sum").value,
+    }});
+    SV.tab = "home";
+    SV.ok = `Day ended — ${r.hours} hours${r.miles != null ? `, ${r.miles} miles` : ""} recorded.`;
+    svTickStop();
+  }catch(e){ SV.err = e.message; }
+  await svReload();
+}
+
+async function svSaveEntry(oneTap){
+  SV.err = "";
+  const now = new Date();
+  const body = oneTap ? {
+    kind: "activity", description: oneTap,
+    at_date: now.toISOString().slice(0,10), at_time: now.toTimeString().slice(0,5),
+  } : {
+    kind: "activity",
+    at_date: new Date().toISOString().slice(0,10),
+    at_time: $("sv_time").value,
+    description: $("sv_desc").value,
+    location: $("sv_loc") ? $("sv_loc").value : "",
+    vehicle: $("sv_veh") ? $("sv_veh").value : "",
+    internal_note: $("sv_note") ? $("sv_note").value : "",
+    subject_documented: $("sv_sd") ? $("sv_sd").checked : false,
+    photo_acquired: $("sv_pa") ? $("sv_pa").checked : false,
+    video_acquired: $("sv_va") ? $("sv_va").checked : false,
+  };
+  try{
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/activity`, {method:"POST", body});
+    SV.entry = null;
+    SV.ok = "✓ Activity saved.";
+  }catch(e){ SV.err = e.message; }
+  await svReload();
+}
+
+/* Photo and video (P10/P11): the phone's own picker, straight to the same
+   evidence route. Classification is not offered — field uploads land as
+   needs_review and the office decides delivery, which is the existing rule. */
+function svPickFile(kind){
+  SV.err = ""; SV.ok = "";
+  const inp = document.createElement("input");
+  inp.type = "file";
+  inp.accept = kind === "photo" ? "image/*" : "video/*";
+  if(kind === "photo") inp.capture = "environment";
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0];
+    if(!f) return;
+    const fd = new FormData();
+    fd.append("file", f);
+    // Ride with the moment it documents when there is one.
+    const last = ((WS && WS.activity) || [])[0];
+    if(last) fd.append("entry_id", String(last.id));
+    SV.ok = "Uploading…"; paint();
+    try{
+      const res = await fetch(`/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence`,
+        {method:"POST", credentials:"same-origin", body: fd});
+      const d = await res.json().catch(() => ({}));
+      if(!res.ok) throw new Error(d.error || ("Upload failed (" + res.status + ")"));
+      SV.ok = `${kind === "photo" ? "Photo" : "Video"} stored${last ? " with the last entry" : ""}.`;
+    }catch(e){ SV.err = e.message; SV.ok = ""; }
+    await svReload();
+  };
+  inp.click();
+}
+
+/* Voice, level 2 (P8). The transcript is shown and never auto-submitted. */
+function svMic(){
+  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!Rec){ SV.err = "This browser has no speech recognition — the keyboard's dictation works in every field."; return paint(); }
+  if(SV.listening && SV._rec){ try{ SV._rec.stop(); }catch{} return; }
+  const r = new Rec();
+  r.lang = "en-US"; r.interimResults = false; r.maxAlternatives = 1;
+  r.onresult = ev => {
+    const said = [...ev.results].map(x => x[0].transcript).join(" ").trim();
+    SV.heard = said; SV.listening = false; paint();
+  };
+  r.onerror = ev => { SV.listening = false; SV.err = "Speech input stopped: " + (ev.error || "unknown"); paint(); };
+  r.onend = () => { if(SV.listening){ SV.listening = false; paint(); } };
+  SV._rec = r; SV.listening = true; SV.err = ""; paint();
+  try{ r.start(); }catch(e){ SV.listening = false; SV.err = e.message; paint(); }
+}
+
 async function startInvestigationDay(){
   WS_ERR = "";
   try{
@@ -4351,6 +5004,43 @@ document.addEventListener("click", ev => {
     window.print();
     setTimeout(() => document.body.classList.remove("printing-report"), 400);
   }
+  /* ---- Active Surveillance Mode ---- */
+  else if(act === "svEnter"){ enterSurveillance(el.dataset.case || WS_CASE); }
+  else if(act === "svLeaveLauncher"){ SV = null; document.body.classList.remove("surv"); render(); }
+  else if(act === "svExit"){ exitSurveillance(); }
+  else if(act === "svTab"){ SV.tab = el.dataset.t; SV.err = ""; if(el.dataset.t !== "activity") SV.ok = ""; paint(); }
+  else if(act === "svCat"){ SV.cat = el.dataset.c; SV.search = ""; paint(); }
+  else if(act === "svPick"){
+    const line = el.dataset.line;
+    if(!line){ SV.entry = null; SV.err = ""; paint(); }
+    else if(line === NO_CHANGE_LINE){ svSaveEntry(line); }          // one tap
+    else { SV.entry = {text: line, time: new Date().toTimeString().slice(0,5)}; SV.ok = ""; SV.err = ""; paint(); }
+  }
+  else if(act === "svAddAnother"){ SV.ok = ""; SV.entry = null; paint(); }
+  else if(act === "svStartDay"){ svStartDay(); }
+  else if(act === "svEndDay"){ svEndDay(); }
+  else if(act === "svSaveEntry"){ svSaveEntry(null); }
+  else if(act === "svPhoto"){ svPickFile("photo"); }
+  else if(act === "svVideo"){ svPickFile("video"); }
+  else if(act === "svNote"){
+    // A note is an activity entry the office reads and the client never does.
+    SV.tab = "activity";
+    SV.entry = {text: "", time: new Date().toTimeString().slice(0,5), note: true};
+    SV.ok = ""; SV.err = ""; paint();
+  }
+  else if(act === "svMic"){ svMic(); }
+  else if(act === "svNoMic"){
+    SV.err = "This browser has no in-app speech recognition. Your keyboard's own dictation works in every field here.";
+    paint();
+  }
+  else if(act === "svUseText"){
+    const t = $("sv_heard") ? $("sv_heard").value : "";
+    SV.heard = null; SV.tab = "activity";
+    SV.entry = {text: t, time: new Date().toTimeString().slice(0,5)};
+    paint();
+  }
+  else if(act === "svDiscard"){ SV.heard = null; paint(); }
+  else if(act === "svFullReport"){ exitSurveillance(); WS_TAB = "reports"; paintCase(); }
   else if(act === "evTab"){ EV_TAB = el.dataset.t; paintCase(); }
   else if(act === "evJump"){ EV_TAB = el.dataset.t || "all"; WS_TAB = "evidence"; WS_ERR = ""; paintCase(); }
   else if(act === "pkgCopyLink"){
@@ -4440,6 +5130,8 @@ document.addEventListener("submit", ev => {
 
 document.addEventListener("input", ev => {
   const din = ev.target.dataset ? ev.target.dataset.actInput : "";
+  if(din === "svSearch" && SV){ SV.search = ev.target.value; paint();
+    const q = $("sv_q"); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } return; }
   if(din === "amSearch" && ACT_MODAL){ ACT_MODAL.search = ev.target.value; paintCase(); return; }
   if(din === "amDirty" && ACT_MODAL){ ACT_MODAL.dirty = true; return; }
   if(din === "amArrival" && ACT_MODAL && !ACT_MODAL.dirty){
@@ -4481,6 +5173,13 @@ document.addEventListener("input", ev => {
   }
   try{
     ME = (await api("/auth/me")).user;   // resume an existing session
+    /* Launched from the home screen (SURVEILLANCE P16): go straight to the
+       field launcher — resume a running day, or list what could start one.
+       Signing in first still lands here, because the flag survives the load. */
+    if(new URLSearchParams(location.search).get("surveillance")){
+      await openSurveillanceLauncher();
+      return;
+    }
     await render();
   }catch{ paint(); }
 })();
