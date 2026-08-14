@@ -403,7 +403,7 @@ Tests:
 
 ```bash
 node case-portal/test-worker.mjs   # 722 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 635 checks: the page against the real Worker
+node portal/test-portal.mjs        # 643 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
@@ -514,6 +514,17 @@ connection cannot open two. **Breaks come off the billable total**: `hours` is
 what authorization and invoices draw against, so it is the WORKED figure, and
 the day-end message names the break that was subtracted rather than quietly
 returning a shorter day.
+
+**The phone's bottom bars must clear the screen edge.** Both the case section
+bar and the field bar are `position:fixed; bottom:0`, and both used to sit
+flush against it. `env(safe-area-inset-bottom)` reports **zero** on iOS unless
+the viewport meta carries `viewport-fit=cover`, which this page deliberately
+does not — so `calc(6px + env(...))` added nothing and the buttons landed on
+the home indicator, where a thumb cannot reach cleanly. Both now use
+`max(14px, env(safe-area-inset-bottom))`, which is correct in either mode and
+needs no viewport change. Targets are `min-height` 52/50px — Apple's minimum is
+44 — and a test measures both the height and the gap rather than trusting how
+it looks. Do not go back to `calc()`.
 
 **The field view has a top-level door.** `svLaunchButton()` used to render only
 inside a case's Overview tab, so on an iPad you had to open Cases, open a case
