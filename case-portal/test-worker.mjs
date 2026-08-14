@@ -3274,6 +3274,115 @@ section("My reports and my expenses are mine alone");
      adminx.expenses.length === 1 && adminx.expenses[0].description === 'Admin toll');
 }
 
+/* ------------------------------------------- what a reassigned investigator keeps
+ *
+ * OWNER DECISION, 2026-08-14: **Keep.** An investigator who is taken off a case
+ * still sees THEIR OWN filed work on it — the day they worked, the report they
+ * submitted, the expense they are owed — because removing it deletes their
+ * evidence of what they did and what they are due. `/my/*` and `/calendar`
+ * therefore scope by `investigator_id` (who created the record), NOT by the
+ * case's current `assigned_to`.
+ *
+ * This is the current behaviour, so the test is not here to change anything —
+ * it is here because a decision whose implementation is "no code" is exactly
+ * the kind a later tidy-up silently reverses. Someone reading `myReports()` and
+ * seeing it ignore `assigned_to` could reasonably think it a scoping bug and
+ * "fix" it. That would be a data loss the owner explicitly refused.
+ *
+ * It asserts BOTH halves, because Keep is only safe while the second holds:
+ *   1. the record survives reassignment, and
+ *   2. the client behind it still does not — no carrier, claim number, client
+ *      name, email or phone, on any of those routes, ever.
+ * The case itself is gone: the workspace 404s. What remains is her own work. */
+section('A reassigned investigator keeps their own work, never the client');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  for (const [u, n] of [['dana', 'Dana Field'], ['reed', 'Reed Cole']]) {
+    const link = (await jsonOf(await invite(env, admin, { username: u, display_name: n, role: 'investigator' }))).url;
+    const token = new URL(link, 'https://x.test').searchParams.get('invite');
+    await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  }
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find(u => u.username === 'dana').id;
+  const reedId = users.users.find(u => u.username === 'reed').id;
+
+  // Every client-identifying field the boundary names, on one case.
+  await ingest(env, {
+    case_no: 'API-RE1', subject_name: 'Pat Coleman', carrier: 'Quiet Mutual',
+    claim_number: 'QM-99812', policy_number: 'POL-4471', client_name: 'Quiet Mutual Claims',
+    client_email: 'adjuster@quietmutual.test', client_phone: '540-555-0142',
+    adjuster_name: 'R. Hale', adjuster_email: 'r.hale@quietmutual.test',
+    billing_email: 'ap@quietmutual.test', defense_counsel: 'Hale & Roe',
+  });
+  await call(env, '/submissions/API-RE1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+
+  // Dana works a day, files an expense, and leaves a second day running.
+  await call(env, '/cases/API-RE1/day/start', { method: 'POST', cookie: inv,
+    body: { day_date: '2026-08-12', start_time: '07:00' } });
+  await call(env, '/cases/API-RE1/day/end', { method: 'POST', cookie: inv, body: { end_time: '11:00' } });
+  await call(env, '/cases/API-RE1/expenses', { method: 'POST', cookie: inv,
+    body: { expense_date: '2026-08-12', category: 'parking', amount: 9, description: 'Dana parking' } });
+  await call(env, '/cases/API-RE1/day/start', { method: 'POST', cookie: inv,
+    body: { day_date: '2026-08-13', start_time: '06:30' } });
+
+  // The admin takes the case off her and gives it to Reed.
+  const re = await call(env, '/submissions/API-RE1/assign', { method: 'POST', cookie: admin, body: { user_id: reedId } });
+  ok('the case can be reassigned to another investigator', re.status === 200);
+  ok('the case itself is gone from the reassigned investigator',
+     (await call(env, '/submissions/API-RE1', { cookie: inv })).status === 404);
+  ok('and off their case list',
+     (await jsonOf(await call(env, '/submissions', { cookie: inv }))).total === 0);
+
+  // Half one — their own filed work survives it (the owner's "Keep").
+  const mine = await jsonOf(await call(env, '/my/reports', { cookie: inv }));
+  ok('the day they worked is still on their desk after reassignment',
+     mine.days_without_reports.some(d => d.case_no === 'API-RE1' && d.hours === 4));
+  const myx = await jsonOf(await call(env, '/my/expenses', { cookie: inv }));
+  ok('the expense they are owed survives it too',
+     myx.expenses.some(e => e.case_no === 'API-RE1' && e.description === 'Dana parking'));
+  const act = await jsonOf(await call(env, '/my/active', { cookie: inv }));
+  ok('a day still running stays theirs to resume',
+     act.active && act.active.case_no === 'API-RE1');
+  const cal = await jsonOf(await call(env, '/calendar?month=2026-08', { cookie: inv }));
+  ok('and their calendar history keeps the days they worked',
+     JSON.stringify(cal).includes('API-RE1'));
+
+  // Half two — and none of it carries the client. This is the firm line, and it
+  // is what makes half one safe rather than a slow leak of the client list.
+  const CLIENT = ['Quiet Mutual', 'QM-99812', 'POL-4471', 'adjuster@quietmutual.test',
+                  '540-555-0142', 'R. Hale', 'r.hale@quietmutual.test',
+                  'ap@quietmutual.test', 'Hale & Roe'];
+  // Positive control first. Without it every assertion below would also pass on
+  // an empty payload, a renamed field or an ingest that quietly dropped them —
+  // proving nothing. The admin must actually be able to see what the
+  // investigator must not.
+  const adminBlob = JSON.stringify(await jsonOf(await call(env, '/submissions/API-RE1', { cookie: admin })));
+  ok('control: the admin really is sent every one of those values',
+     CLIENT.every(v => adminBlob.includes(v)),
+     `missing from the admin view: ${CLIENT.filter(v => !adminBlob.includes(v)).join(', ')}`);
+  for (const [label, payload] of [['reports', mine], ['expenses', myx],
+                                  ['the running day', act], ['the calendar', cal]]) {
+    const blob = JSON.stringify(payload);
+    ok(`${label} — no carrier, claim, policy, adjuster, billing or counsel`,
+       CLIENT.every(v => !blob.includes(v)),
+       CLIENT.filter(v => blob.includes(v)).join(', '));
+  }
+  ok('the running day carries the subject, which is fieldwork, not the client',
+     act.active.subject_name === 'Pat Coleman');
+
+  // Reed gets the case; he does not get the client either.
+  const reed = (await login(env, 'reed', 'FieldWork2026x')).cookie;
+  const reedRes = await call(env, '/submissions/API-RE1', { cookie: reed });
+  const reedBlob = JSON.stringify(await jsonOf(reedRes));
+  ok('the new investigator can open the case', reedRes.status === 200);
+  ok('but is sent no more of the client than the last one was',
+     CLIENT.every(v => !reedBlob.includes(v)),
+     CLIENT.filter(v => reedBlob.includes(v)).join(', '));
+}
+
 section('The daily report builder');
 {
   const env = freshEnv();
