@@ -932,6 +932,114 @@ section('Rate sheets and the emailed quote');
   globalThis.fetch = realFetch;
 }
 
+/* MASTER §5 — a lead's lifecycle is not a case's. Nine statuses of its own,
+   and the two send actions that stamp themselves. */
+section('Lead statuses, and sends that stamp themselves');
+{
+  const realFetch = globalThis.fetch;
+  let lastBody = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      lastBody = JSON.parse(init.body);
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  await call(env, `/invite/${new URL(link, 'https://x.test').searchParams.get('invite')}/accept`,
+    { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  await ingest(env, { case_no: 'API-LD1', kind: 'claims', carrier: 'Lead Mutual',
+                      client_name: 'Casey Adjuster', client_email: 'casey@leadmutual.test',
+                      subject_name: 'Subject A' });
+  await ingest(env, { case_no: 'API-LD2', service: 'Surveillance',
+                      client_name: 'Pat Caller', client_email: 'pat@example.test',
+                      subject_name: 'Subject B' });
+
+  ok('the sales desk is the office\'s alone',
+     (await call(env, '/leads/API-LD1/status', { method: 'POST', cookie: inv,
+       body: { status: 'contacted' } })).status === 403
+     && (await call(env, '/leads/API-LD1/send-intake', { method: 'POST', cookie: inv,
+       body: { to: 'x@y.test' } })).status === 403);
+  ok('a made-up lead status is refused',
+     (await call(env, '/leads/API-LD1/status', { method: 'POST', cookie: admin,
+       body: { status: 'sold' } })).status === 400);
+  ok('and so is a case stage — the vocabularies never mix',
+     (await call(env, '/leads/API-LD1/status', { method: 'POST', cookie: admin,
+       body: { status: 'report_review' } })).status === 400);
+  ok('a lead that does not exist is a 404',
+     (await call(env, '/leads/API-NOPE/status', { method: 'POST', cookie: admin,
+       body: { status: 'contacted' } })).status === 404);
+
+  await call(env, '/leads/API-LD1/status', { method: 'POST', cookie: admin,
+    body: { status: 'contacted' } });
+  let list = (await jsonOf(await call(env, '/submissions', { cookie: admin }))).submissions;
+  ok('the list carries the lead status beside the case stage',
+     list.find(c => c.case_no === 'API-LD1').lead_status === 'contacted');
+  ok('a lead nobody touched carries none, not a fake default',
+     list.find(c => c.case_no === 'API-LD2').lead_status === null);
+  // Their list is empty here (nothing assigned), so prove the redaction on a
+  // row they CAN see: assign the lead, then look for the key.
+  const danaId = (await jsonOf(await call(env, '/users', { cookie: admin })))
+    .users.find(u => u.username === 'dana').id;
+  await call(env, '/submissions/API-LD1/assign', { method: 'POST', cookie: admin,
+    body: { user_id: danaId } });
+  const invRows = (await jsonOf(await call(env, '/submissions', { cookie: inv }))).submissions;
+  ok('an investigator\'s list never carries the sales desk',
+     invRows.length === 1 && !('lead_status' in invRows[0]) && !('client_email' in invRows[0]));
+
+  /* The system stamps what IT did. A sheet emailed against the lead's case
+     number moves it — and the door pairing stays server-side. */
+  await call(env, '/sheets/insurance_assignment/email', { method: 'POST', cookie: admin,
+    body: { to: 'casey@leadmutual.test', case_no: 'API-LD1' } });
+  list = (await jsonOf(await call(env, '/submissions', { cookie: admin }))).submissions;
+  ok('a sheet sent against the lead stamps Rate Sheet Sent',
+     list.find(c => c.case_no === 'API-LD1').lead_status === 'rate_sheet_sent');
+
+  await call(env, '/sheets/insurance_assignment/email', { method: 'POST', cookie: admin,
+    body: { to: 'casey@leadmutual.test', case_no: 'API-LD1', include_intake: true } });
+  list = (await jsonOf(await call(env, '/submissions', { cookie: admin }))).submissions;
+  ok('with the intake ticked the stamp is Intake Sent — the further of the two',
+     list.find(c => c.case_no === 'API-LD1').lead_status === 'intake_sent');
+
+  const si = await jsonOf(await call(env, '/leads/API-LD2/send-intake', { method: 'POST',
+    cookie: admin, body: { to: 'pat@example.test' } }));
+  ok('Send Intake sends the private door to a private lead',
+     si.ok === true && si.intake === 'Private Client Intake'
+     && lastBody.html.includes('/intake/') && !lastBody.html.includes('assignment=insurance'));
+  ok('and stamps Intake Sent', si.lead_status === 'intake_sent');
+
+  await call(env, '/leads/API-LD1/send-intake', { method: 'POST', cookie: admin,
+    body: { to: 'casey@leadmutual.test' } });
+  ok('a carrier lead can only ever be sent the carrier door',
+     lastBody.html.includes('/intake/?assignment=insurance'));
+  ok('a bad address never spends a send',
+     (await call(env, '/leads/API-LD2/send-intake', { method: 'POST', cookie: admin,
+       body: { to: 'not-an-address' } })).status === 400);
+
+  /* Once the office has DECIDED, the system never quietly moves the lead. */
+  await call(env, '/leads/API-LD1/status', { method: 'POST', cookie: admin,
+    body: { status: 'declined' } });
+  await call(env, '/sheets/insurance_assignment/email', { method: 'POST', cookie: admin,
+    body: { to: 'casey@leadmutual.test', case_no: 'API-LD1' } });
+  list = (await jsonOf(await call(env, '/submissions', { cookie: admin }))).submissions;
+  ok('a courtesy re-send does not reopen a declined lead',
+     list.find(c => c.case_no === 'API-LD1').lead_status === 'declined');
+  await call(env, '/leads/API-LD1/status', { method: 'POST', cookie: admin,
+    body: { status: 'converted' } });
+  ok('the office\'s own hand still moves it anywhere',
+     (await jsonOf(await call(env, '/submissions', { cookie: admin }))).submissions
+       .find(c => c.case_no === 'API-LD1').lead_status === 'converted');
+
+  globalThis.fetch = realFetch;
+}
+
 /* UIBUILD P17 — the office types in what a phone call brought. Same table as
    every other submission; no parallel lead store to drift. */
 section('Manual intake from the office');

@@ -510,7 +510,66 @@ function rateSheets() {
 
 function sheetById(id) { return rateSheets().find(s => s.id === id) || null; }
 
-async function emailSheet(request, env, id) {
+/* MASTER §5 — Send Intake from a lead. The email carries the intake link and
+   nothing priced. Which door is NEVER the caller's choice: the lead's own
+   kind picks it server-side, the same rule SHEET_INTAKE enforces — a carrier
+   lead can only ever be sent the carrier door. */
+async function sendLeadIntake(request, env, user, caseNo) {
+  const lead = await env.DB.prepare(
+    'SELECT case_no, kind, client_name FROM submissions WHERE case_no = ?').bind(caseNo).first();
+  if (!lead) return json({ error: 'not found' }, 404);
+
+  const body = await readJson(request);
+  const to = String(body.to || '').trim();
+  if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(to) || to.length > 200) {
+    return json({ error: 'Enter a valid email address.' }, 400);
+  }
+  if (!(await withinRateLimit(env, 'mail'))) {
+    return json({ error: 'Too many emails in one minute — wait a moment and send again.' }, 429);
+  }
+
+  const intake = SHEET_INTAKE[lead.kind === 'claims' ? 'insurance_assignment' : 'private_retainer'];
+  const greet = lead.client_name ? `${String(lead.client_name).slice(0, 80)},` : 'Hello,';
+  const text =
+`${greet}
+
+Here is the secure ${intake.label} for Always Precise Investigations. It takes a few minutes, and anything you do not have on hand can be marked "I don't have this information right now" and sent along later:
+
+${intake.url}
+
+Questions any time: (434) 907-0975.
+
+Always Precise Investigations, LLC — Va DCJS #11-9159`;
+  const html =
+`<div style="font-family:'Segoe UI',Arial,sans-serif;color:#1c2531;line-height:1.55;max-width:560px">
+  <p>${escHtml(greet)}</p>
+  <p>Here is the secure ${escHtml(intake.label)} for Always Precise Investigations. It takes a few
+     minutes, and anything you do not have on hand can be marked
+     &ldquo;I don&rsquo;t have this information right now&rdquo; and sent along later.</p>
+  <p><a href="${escHtml(intake.url)}" style="display:inline-block;background:#12305a;color:#fff;
+     padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700">
+     Start the ${escHtml(intake.label)}</a></p>
+  <p style="font-size:.9rem;color:#5c6775">Questions any time: (434) 907-0975.</p>
+  <p style="font-size:.85rem;color:#5c6775">Always Precise Investigations, LLC &middot; Va DCJS #11-9159</p>
+</div>`;
+
+  const mail = await sendMail(env, {
+    to, subject: `${intake.label} — Always Precise Investigations`, text, html });
+  if (!mail.sent) {
+    return json({
+      error: mail.reason === 'not_configured'
+        ? 'Email is not configured on the Worker. Add RESEND_API_KEY to send from here.'
+        : 'That did not send. Check the address and try again.',
+      reason: mail.reason,
+    }, 502);
+  }
+  await stampLead(env, user, caseNo, 'intake_sent');
+  return json({ ok: true, sent_to: to, intake: intake.label,
+                lead_status: (await env.DB.prepare(
+                  'SELECT status FROM lead_status WHERE case_no = ?').bind(caseNo).first() || {}).status });
+}
+
+async function emailSheet(request, env, user, id) {
   const sheet = sheetById(id);
   if (!sheet) return json({ error: 'no such rate sheet' }, 404);
 
@@ -550,6 +609,15 @@ async function emailSheet(request, env, id) {
         : 'That did not send. Check the address and try again.',
       reason: mail.reason,
     }, 502);
+  }
+  /* §5 — the system stamps what IT did. A sheet sent against a lead's case
+     number moves the lead to Rate Sheet Sent (with the intake ticked, the
+     intake went too, and Intake Sent is the further of the two). Manual
+     decisions are never overridden — see LEAD_DECIDED. */
+  if (caseNo) {
+    const lead = await env.DB.prepare('SELECT case_no FROM submissions WHERE case_no = ?')
+      .bind(caseNo).first();
+    if (lead) await stampLead(env, user, caseNo, includeIntake ? 'intake_sent' : 'rate_sheet_sent');
   }
   return json({ ok: true, sent_to: to, sheet: sheet.id });
 }
@@ -858,7 +926,7 @@ const FIELD_KEEP = [
    claim number is the carrier's own reference, so it names them just as
    plainly. Dropped from list rows and detail rows alike. */
 function redactRow(row) {
-  const { carrier, claim_number, client_name, client_email, client_phone, ...rest } = row;
+  const { carrier, claim_number, client_name, client_email, client_phone, lead_status, ...rest } = row;
   return rest;
 }
 
@@ -883,11 +951,12 @@ async function listSubmissions(request, env, user) {
   const binds = user.role === 'admin' ? [limit, offset] : [user.id, limit, offset];
 
   const { results } = await env.DB.prepare(
-    `SELECT s.case_no, s.kind, s.service, s.status, s.client_name, s.subject_name,
+    `SELECT s.case_no, s.kind, s.service, s.status, s.client_name, s.client_email, s.subject_name,
             s.carrier, s.claim_number, s.created_at, s.assigned_to, u.display_name AS assigned_name,
-            cs.stage
+            cs.stage, ls.status AS lead_status
        FROM submissions s LEFT JOIN users u ON u.id = s.assigned_to
        LEFT JOIN case_status cs ON cs.case_no = s.case_no
+       LEFT JOIN lead_status ls ON ls.case_no = s.case_no
        ${scope}
       ORDER BY s.created_at DESC LIMIT ? OFFSET ?`).bind(...binds).all();
 
@@ -948,6 +1017,27 @@ async function assignSubmission(request, env, user, caseNo) {
    closing checklist. */
 const STAGES = ['open', 'assigned', 'in_progress', 'report_review', 'awaiting_client',
   'complete', 'on_hold', 'cancelled', 'closed'];
+
+/* MASTER §5 — a lead's lifecycle, which is NOT a case's. These live in their
+   own table and their own vocabulary; "rate sheet sent" means nothing on a
+   case and "report review" means nothing on a lead. */
+const LEAD_STATUSES = ['lead', 'rate_sheet_sent', 'intake_sent', 'intake_received',
+  'contacted', 'more_info_requested', 'converted', 'declined', 'closed_lead'];
+// Once the office has decided (converted / declined / closed), the system
+// never quietly moves the lead again — a sheet re-sent to a declined lead is
+// a courtesy, not a reopening.
+const LEAD_DECIDED = ['converted', 'declined', 'closed_lead'];
+
+async function stampLead(env, user, caseNo, status, { manual = false } = {}) {
+  const cur = await env.DB.prepare('SELECT status FROM lead_status WHERE case_no = ?')
+    .bind(caseNo).first();
+  if (!manual && cur && LEAD_DECIDED.includes(cur.status)) return false;
+  await env.DB.prepare(
+    `INSERT INTO lead_status (case_no, status, set_by, set_at) VALUES (?1, ?2, ?3, ?4)
+     ON CONFLICT(case_no) DO UPDATE SET status = ?2, set_by = ?3, set_at = ?4`)
+    .bind(caseNo, status, user ? user.id : null, nowIso()).run();
+  return true;
+}
 const coarseFor = stage =>
   stage === 'closed' || stage === 'cancelled' ? 'closed'
   : stage === 'open' ? 'new'
@@ -3820,7 +3910,7 @@ async function route(request, env) {
   m = p.match(/^\/sheets\/([a-z_]{3,32})\/email$/);
   if (m && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
-    return emailSheet(request, env, m[1]);
+    return emailSheet(request, env, user, m[1]);
   }
 
   /* Counts for the dashboard. Scoped like everything else — an investigator's
@@ -3883,6 +3973,25 @@ async function route(request, env) {
   if (p === '/completed' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return completedCases(env);
+  }
+
+  // MASTER §5 — the sales desk. Both admin-only: a lead is office work.
+  m = p.match(/^\/leads\/([A-Za-z0-9-]{3,64})\/status$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    const st = String((await readJson(request)).status || '');
+    if (!LEAD_STATUSES.includes(st)) return json({ error: 'Pick a real lead status.' }, 400);
+    const lead = await env.DB.prepare('SELECT case_no FROM submissions WHERE case_no = ?')
+      .bind(m[1]).first();
+    if (!lead) return json({ error: 'not found' }, 404);
+    await stampLead(env, user, m[1], st, { manual: true });
+    return json({ ok: true, case_no: m[1], lead_status: st });
+  }
+
+  m = p.match(/^\/leads\/([A-Za-z0-9-]{3,64})\/send-intake$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return sendLeadIntake(request, env, user, m[1]);
   }
 
   if (p === '/intakes' && method === 'POST') {

@@ -776,3 +776,17 @@ CREATE INDEX IF NOT EXISTS idx_daypause ON case_day_pauses(day_id);
 -- check in the route, so two taps on a flaky connection cannot open two.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_daypause_open
   ON case_day_pauses(day_id) WHERE ended_at IS NULL;
+
+-- ---------------------------------------------------------------------------
+-- Lead statuses (MASTER §5). A lead's lifecycle is NOT a case's: "rate sheet
+-- sent" and "intake received" are sales-desk facts with no meaning on a case,
+-- and reusing case stages for them is what the 2026-08-14 audit flagged.
+-- A side table keyed by case_no, for the standing idempotency reason.
+CREATE TABLE IF NOT EXISTS lead_status (
+  case_no TEXT PRIMARY KEY,
+  status  TEXT NOT NULL CHECK (status IN
+            ('lead','rate_sheet_sent','intake_sent','intake_received','contacted',
+             'more_info_requested','converted','declined','closed_lead')),
+  set_by  INTEGER REFERENCES users(id),
+  set_at  TEXT
+);

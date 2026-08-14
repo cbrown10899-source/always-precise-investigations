@@ -10,8 +10,8 @@ state. Update it when the queue moves; keep it short.
 truth** (recorded verbatim 2026-08-13).
 
 Snapshot date: 2026-08-14. Branch: `claude/app-crashes-lockups-debug-psf6zd`.
-Master is green through PR #59 (`89de68b`). Suites at last green: worker 733,
-portal e2e 653, intake 186, alerts 41.
+Master is green through PR #60 (`d640f82`). Suites at last green: worker 748,
+portal e2e 663, intake 186, alerts 41.
 
 ---
 
@@ -84,9 +84,9 @@ Legend: ✅ done and verified · 🟡 partial · 🔴 not implemented ·
 | Choose Insurance / Commercial vs Private Client | ✅ | `nlKind` |
 | Save Lead | ✅ | `nlSave` → "Save lead" |
 | Create Case | ✅ | "Create case →" |
-| **Send Rate Sheet from the lead** | 🔴 | sending exists only as its own Rate-sheets tab flow. A lead has no send action on it |
-| **Send Intake from the lead** | 🔴 | same |
-| **Lead statuses distinct from case statuses** | 🔴 | zero occurrences of any lead-status vocabulary in worker, page or schema. The leads desk reuses case stages. §5 names nine: Lead · Rate Sheet Sent · Intake Sent · Intake Received · Contacted · More Info Requested · Converted to Case · Declined · Closed Lead |
+| **Send Rate Sheet from the lead** | ✅ **done 2026-08-14** | the card opens the SAME send wizard, prefilled — sheet picked by the lead's kind server-side, address and case number riding along. A successful send auto-stamps the lead |
+| **Send Intake from the lead** | ✅ **done 2026-08-14** | inline on the card; `/leads/:no/send-intake` pairs the door by the lead's kind (a carrier lead can only ever get the carrier door) and stamps Intake Sent |
+| **Lead statuses distinct from case statuses** | ✅ **done 2026-08-14** | `lead_status` side table, the nine §5 statuses, shown and set on the lead card. The system stamps only what IT did (sheet sent → Rate Sheet Sent; with intake → Intake Sent); a lead the office has DECIDED (converted / declined / closed) is never quietly moved by a re-send. `intake_received` is manual on purpose — a public intake carries no lead id, and guessing a match would be invented data |
 
 ### Case detail, activity, report, evidence (§8–§12)
 
@@ -229,9 +229,8 @@ quietly returning a shorter day.
 1. ~~**A top-level door into Active Surveillance Mode**~~ — ✅ done 2026-08-14.
 2. ~~**Pause / resume the day timer**~~ — ✅ done 2026-08-14.
 3. ~~**Completed Cases path** (§31)~~ — ✅ done 2026-08-14 (lens + desk, above).
-4. **Lead statuses** (§5) — nine of them, distinct from case statuses. 🔴
-5. **Send Rate Sheet / Send Intake from a lead** (§5) — the actions exist but
-   not where the workflow needs them. 🔴
+4. ~~**Lead statuses** (§5)~~ — ✅ done 2026-08-14.
+5. ~~**Send Rate Sheet / Send Intake from a lead** (§5)~~ — ✅ done 2026-08-14.
 6. **Public website §29** — hero, two client paths, homepage order. 🔴
    (Ask the owner about "Serving ALL of Virginia" first — see ⚠️ above.)
 7. **A private-only intake door** — `?assignment=private`, so the private rate
