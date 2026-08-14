@@ -168,6 +168,13 @@ Bare `/intake/` is unchanged and still offers all three services, for anyone who
 did not arrive via the insurance pages. There is a test that fails if a bare
 `/intake/` link reappears on a carrier page.
 
+**`/intake/?assignment=private` is the mirror door** — what the private rate
+sheet emails. The service step stays (a private client still chooses between
+surveillance and process serving) but the carrier path is not offered, and
+`pickSvc` refuses it even called directly. `SHEET_INTAKE` in the Worker pairs
+each sheet to its door server-side; the page only ever says *whether* to
+include a link, never which one.
+
 Known limit: the consumer step markup still sits in the shared file's `<script>`,
 so it is in View Source even though no carrier-facing screen renders it. The
 tests assert what an adjuster *sees*. Removing it from the source means splitting
@@ -327,7 +334,7 @@ know the cap they are working to. The price fields (`package`, `package_price`,
 Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
-node intake/test-intake.mjs      # 186 checks; needs Playwright, skips cleanly without it
+node intake/test-intake.mjs      # 193 checks; needs Playwright, skips cleanly without it
 node visitor-alerts/test-worker.mjs   # 41 checks
 ```
 

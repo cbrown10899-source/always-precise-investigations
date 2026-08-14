@@ -4,7 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Client Intake — Always Precise Investigations</title>
+<!-- noindex is deliberate: this form is reached by being sent the link, not by
+     search. The OG tags below are not for search either — they are what a mail
+     client or messenger draws when the emailed link is previewed. -->
 <meta name="robots" content="noindex">
+<meta name="description" content="Secure client intake for Always Precise Investigations, LLC. Send what you know now — anything you don't have on hand can follow later. Licensed Virginia private investigators, Va DCJS #11-9159.">
+<link rel="canonical" href="https://alwayspreciseinvestigations.net/intake/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Secure Client Intake — Always Precise Investigations">
+<meta property="og:description" content="A few minutes to open your file. Send what you know now — anything you don't have on hand can follow later.">
+<meta property="og:url" content="https://alwayspreciseinvestigations.net/intake/">
+<meta property="og:image" content="https://alwayspreciseinvestigations.net/assets/banner1.webp">
+<meta property="og:site_name" content="Always Precise Investigations">
+<meta property="og:locale" content="en_US">
 <meta name="theme-color" content="#0e1a2c">
 <style>
   :root{
@@ -191,6 +203,14 @@ const CASE_NO = "API-" + new Date().toISOString().slice(0,10).replace(/-/g,"") +
 const CARRIER_ONLY = /^(insurance|carrier|claims)$/i
   .test(new URLSearchParams(location.search).get("assignment") || "");
 
+/* And ?assignment=private is the other door (audit, 2026-08-14): the link the
+   PRIVATE rate sheet emails. A private client still chooses between
+   surveillance and process serving, so the picker stays — it just no longer
+   offers them an insurance claim assignment they were never going to file.
+   Bare /intake/ is unchanged and still offers all three. */
+const PRIVATE_ONLY = /^private$/i
+  .test(new URLSearchParams(location.search).get("assignment") || "");
+
 const S = { step:0, svc:CARRIER_ONLY ? "claims" : null, sig:null, files:[] };
 // A carrier assignment collects claim details and ends in invoicing, so the
 // claims path has its own step list; surveillance adds a step to choose how
@@ -352,10 +372,10 @@ function view(step){
       <input type="radio" name="svc" ${S.svc==="process"?"checked":""}><b>Process Serving</b>
       <div class="desc">Reliable service of legal documents across Virginia. We confirm the fee with you before we go.</div>
     </label>
-    <label class="opt" id="opt-claims" onclick="pickSvc('claims')">
+    ${PRIVATE_ONLY ? "" : `<label class="opt" id="opt-claims" onclick="pickSvc('claims')">
       <input type="radio" name="svc" ${S.svc==="claims"?"checked":""}><b>Insurance Claim Assignment</b>
       <div class="desc">For carriers, TPAs, self-insured employers and defense counsel. Workers' comp, auto and liability claims — billed to the carrier, nothing due at assignment.</div>
-    </label>
+    </label>`}
     ${navButtons()}
   </div>`;
 
@@ -579,7 +599,12 @@ function view(step){
 }
 
 /* ============ Step actions ============ */
-function pickSvc(k){ capture(); S.svc=k; render(); }
+function pickSvc(k){
+  // The private door does not offer the carrier path; refusing it here too
+  // means a stale link or a hand-typed value cannot reach it either.
+  if(PRIVATE_ONLY && k === "claims") return;
+  capture(); S.svc=k; render();
+}
 function pickAuth(k){ capture(); val.z_auth=k; render(); }
 function pickFiles(input){ S.files=[...input.files].map(f=>f.name); const n=$("filenote"); if(n) n.textContent = S.files.length? S.files.length+" file(s) attached: "+S.files.join(", ") : "Attach court papers or a photo of the subject if you have them."; }
 

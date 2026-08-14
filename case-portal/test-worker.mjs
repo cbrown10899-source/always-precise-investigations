@@ -921,8 +921,9 @@ section('Rate sheets and the emailed quote');
 
     await call(env2, '/sheets/private_retainer/email', { method: 'POST', cookie: adm2,
       body: { to: 'client@example.test', include_intake: true } });
-    ok('the private send pairs the private intake',
-       lastBody.html.includes('/intake/') && !lastBody.html.includes('assignment=insurance'));
+    ok('the private send pairs the private intake — its own door, not the picker',
+       lastBody.html.includes('/intake/?assignment=private')
+       && !lastBody.html.includes('assignment=insurance'));
 
     await call(env2, '/sheets/private_retainer/email', { method: 'POST', cookie: adm2,
       body: { to: 'client@example.test' } });
@@ -1012,7 +1013,8 @@ section('Lead statuses, and sends that stamp themselves');
     cookie: admin, body: { to: 'pat@example.test' } }));
   ok('Send Intake sends the private door to a private lead',
      si.ok === true && si.intake === 'Private Client Intake'
-     && lastBody.html.includes('/intake/') && !lastBody.html.includes('assignment=insurance'));
+     && lastBody.html.includes('/intake/?assignment=private')
+     && !lastBody.html.includes('assignment=insurance'));
   ok('and stamps Intake Sent', si.lead_status === 'intake_sent');
 
   await call(env, '/leads/API-LD1/send-intake', { method: 'POST', cookie: admin,
