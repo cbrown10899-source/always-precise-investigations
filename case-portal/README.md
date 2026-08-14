@@ -212,6 +212,84 @@ Worth knowing: the link in that email is a bearer credential. Whoever opens it
 first creates the account. That is why it is single-use, expires in 7 days, and
 can be revoked from the Staff tab.
 
+## Dropbox video delivery (optional, and not built yet)
+
+Surveillance video is too big for the free R2 tier and too big to email, so
+the plan is a delivery copy on Dropbox with a share link. **The integration
+is not written yet** — the provider reports "not connected" and the upload
+and share routes return 503/501 with the reason. Nothing else waits on it.
+
+The credentials are the owner's to create, and they are the blocker. When
+they exist, `portal-setup` pushes them and the build can begin.
+
+**1. Create the app.** Dropbox App Console → *Create app* →
+**Scoped access** → **App folder** (not Full Dropbox — an app folder confines
+this Worker to its own directory, which is the smaller blast radius and all
+the delivery copies need).
+
+**2. Give it scopes.** On the app's **Permissions** tab, tick:
+
+| Scope | Why |
+| --- | --- |
+| `files.content.write` | upload the delivery copy |
+| `files.content.read` | verify and re-fetch it |
+| `sharing.write` | create the delivery link, and revoke it |
+| `sharing.read` | read a link's state back |
+
+**Submit the permissions change before generating any token** — a token minted
+before the scopes are saved carries the old, narrower set and will fail at the
+API with a scope error that looks like a code bug.
+
+**3. Take the App key and App secret** from the Settings tab.
+
+**4. Mint a refresh token.** An access token expires in four hours, which is
+no use to a Worker; the refresh token is the one that lasts. Two steps:
+
+Open this in a browser (your app key, and `token_access_type=offline` is what
+makes it hand back a *refresh* token rather than only a short-lived one):
+
+```
+https://www.dropbox.com/oauth2/authorize?client_id=APP_KEY&response_type=code&token_access_type=offline
+```
+
+Approve, copy the code it shows, then exchange it — once, quickly, because the
+code is short-lived:
+
+```bash
+curl -u APP_KEY:APP_SECRET \
+  -d grant_type=authorization_code \
+  -d code=PASTED_CODE \
+  https://api.dropboxapi.com/oauth2/token
+```
+
+The JSON that comes back contains `refresh_token`. That is the third value.
+
+*If either request errors, check Dropbox's current OAuth guide rather than
+retrying blind — this flow is stable but it is theirs to change, and the
+integration work will re-read those docs anyway rather than trusting memory.*
+
+**5. Add all three as repository secrets** — *Settings → Secrets and variables
+→ Actions → New repository secret*, the same way as `RESEND_API_KEY`:
+
+- `DROPBOX_APP_KEY`
+- `DROPBOX_APP_SECRET`
+- `DROPBOX_REFRESH_TOKEN`
+
+**6. Re-run *Set up the case portal*** (Actions → the workflow → Run workflow,
+`create_admin: false`). It pushes all three to the Worker.
+
+It is **all three or none**: the workflow refuses a partial set and says so,
+because the Worker treats the provider as connected the moment the full set is
+present, and a half-configured provider would report "connected" and then fail
+at the API instead of failing honestly up front.
+
+**7. Confirm.** The Case Build screen's video section stops saying "Dropbox is
+not connected". `GET /portal-api/external-storage` reports
+`dropbox.configured: true`.
+
+At that point the upload, share-link and revoke work can be built against a
+real account — which is the remaining 🔴 in `RECONCILIATION.md`.
+
 **7. Check it**
 
 ```bash

@@ -1025,6 +1025,47 @@ section('Lead statuses, and sends that stamp themselves');
      (await call(env, '/leads/API-LD2/send-intake', { method: 'POST', cookie: admin,
        body: { to: 'not-an-address' } })).status === 400);
 
+  /* Send history (audit, 2026-08-14). Nothing recorded who was emailed what
+     or when, so a second send to the same adjuster was invisible. */
+  const wsSends = (await jsonOf(await call(env, '/cases/API-LD1/workspace', { cookie: admin }))).sends;
+  ok('every send is on the case record', wsSends.length === 3);
+  ok('newest first, naming who sent it and to whom',
+     wsSends[0].sent_by === 'Trever' && wsSends[0].recipient === 'casey@leadmutual.test');
+  ok('a rate sheet records WHICH sheet went',
+     wsSends.some(x => x.kind === 'rate_sheet' && x.sheet_id === 'insurance_assignment'));
+  ok('and which door rode with it, so the pairing is auditable afterwards',
+     wsSends.some(x => x.kind === 'rate_sheet' && x.door === null)
+     && wsSends.some(x => x.kind === 'rate_sheet' && /assignment=insurance/.test(x.door || '')));
+  ok('a standalone intake send is its own kind',
+     wsSends.some(x => x.kind === 'intake' && /assignment=insurance/.test(x.door || '')));
+  ok('the leads list carries the count without a fetch per card',
+     (await jsonOf(await call(env, '/submissions', { cookie: admin }))).submissions
+       .find(c => c.case_no === 'API-LD1').send_count === 3);
+
+  /* A FAILED send is the one the office most needs to see. */
+  const realFetch2 = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) return new Response('nope', { status: 500 });
+    return realFetch2(url, init);
+  };
+  ok('a refused send is reported, not swallowed',
+     (await call(env, '/leads/API-LD1/send-intake', { method: 'POST', cookie: admin,
+       body: { to: 'casey@leadmutual.test' } })).status === 502);
+  globalThis.fetch = realFetch2;
+  const afterFail = (await jsonOf(await call(env, '/cases/API-LD1/workspace', { cookie: admin }))).sends;
+  ok('and it is KEPT, marked failed', afterFail.length === 4 && afterFail[0].ok === 0);
+  ok('the failure does not count as a successful send',
+     (await jsonOf(await call(env, '/submissions', { cookie: admin }))).submissions
+       .find(c => c.case_no === 'API-LD1').send_count === 3);
+  ok('a failed send does not move the lead either',
+     (await jsonOf(await call(env, '/submissions', { cookie: admin }))).submissions
+       .find(c => c.case_no === 'API-LD1').lead_status === 'intake_sent');
+
+  ok('an investigator is never told who the client was emailed',
+     !('sends' in (await jsonOf(await call(env, '/cases/API-LD1/workspace', { cookie: inv }))))
+     && !('send_count' in (await jsonOf(await call(env, '/submissions', { cookie: inv })))
+       .submissions[0]));
+
   /* Once the office has DECIDED, the system never quietly moves the lead. */
   await call(env, '/leads/API-LD1/status', { method: 'POST', cookie: admin,
     body: { status: 'declined' } });

@@ -556,6 +556,8 @@ Always Precise Investigations, LLC — Va DCJS #11-9159`;
   const mail = await sendMail(env, {
     to, subject: `${intake.label} — Always Precise Investigations`, text, html });
   if (!mail.sent) {
+    await logSend(env, user, { case_no: caseNo, kind: 'intake', door: intake.url,
+      recipient: to, ok: 0, detail: mail.reason || 'send failed' });
     return json({
       error: mail.reason === 'not_configured'
         ? 'Email is not configured on the Worker. Add RESEND_API_KEY to send from here.'
@@ -563,6 +565,8 @@ Always Precise Investigations, LLC — Va DCJS #11-9159`;
       reason: mail.reason,
     }, 502);
   }
+  await logSend(env, user, { case_no: caseNo, kind: 'intake', door: intake.url,
+    recipient: to, ok: 1 });
   await stampLead(env, user, caseNo, 'intake_sent');
   return json({ ok: true, sent_to: to, intake: intake.label,
                 lead_status: (await env.DB.prepare(
@@ -596,6 +600,7 @@ async function emailSheet(request, env, user, id) {
   // The Options step (UIBUILD P18): include the sheet's own intake, or not.
   // Which intake is never the caller's choice — SHEET_INTAKE pairs it.
   const includeIntake = body.include_intake === true || body.include_intake === 1 || body.include_intake === '1';
+  const intakeUrl = includeIntake && SHEET_INTAKE[sheet.id] ? SHEET_INTAKE[sheet.id].url : null;
   const { text, html } = sheetEmail(sheet, note, includeIntake);
   const subject = caseNo
     ? `${sheet.name} — Always Precise Investigations (case ${caseNo})`
@@ -603,6 +608,8 @@ async function emailSheet(request, env, user, id) {
 
   const mail = await sendMail(env, { to, subject, text, html });
   if (!mail.sent) {
+    await logSend(env, user, { case_no: caseNo, kind: 'rate_sheet', sheet_id: sheet.id,
+      door: intakeUrl, recipient: to, ok: 0, detail: mail.reason || 'send failed' });
     return json({
       error: mail.reason === 'not_configured'
         ? 'Email is not configured on the Worker. Add RESEND_API_KEY to send from here.'
@@ -610,6 +617,8 @@ async function emailSheet(request, env, user, id) {
       reason: mail.reason,
     }, 502);
   }
+  await logSend(env, user, { case_no: caseNo, kind: 'rate_sheet', sheet_id: sheet.id,
+    door: intakeUrl, recipient: to, ok: 1 });
   /* §5 — the system stamps what IT did. A sheet sent against a lead's case
      number moves the lead to Rate Sheet Sent (with the intake ticked, the
      intake went too, and Intake Sent is the further of the two). Manual
@@ -929,7 +938,8 @@ const FIELD_KEEP = [
    claim number is the carrier's own reference, so it names them just as
    plainly. Dropped from list rows and detail rows alike. */
 function redactRow(row) {
-  const { carrier, claim_number, client_name, client_email, client_phone, lead_status, ...rest } = row;
+  const { carrier, claim_number, client_name, client_email, client_phone, lead_status,
+          send_count, last_sent_at, ...rest } = row;
   return rest;
 }
 
@@ -955,6 +965,8 @@ async function listSubmissions(request, env, user) {
 
   const { results } = await env.DB.prepare(
     `SELECT s.case_no, s.kind, s.service, s.status, s.client_name, s.client_email, s.subject_name,
+            (SELECT COUNT(*) FROM send_log sl WHERE sl.case_no = s.case_no AND sl.ok = 1) AS send_count,
+            (SELECT MAX(sent_at) FROM send_log sl WHERE sl.case_no = s.case_no AND sl.ok = 1) AS last_sent_at,
             s.carrier, s.claim_number, s.created_at, s.assigned_to, u.display_name AS assigned_name,
             cs.stage, ls.status AS lead_status
        FROM submissions s LEFT JOIN users u ON u.id = s.assigned_to
@@ -1030,6 +1042,21 @@ const LEAD_STATUSES = ['lead', 'rate_sheet_sent', 'intake_sent', 'intake_receive
 // never quietly moves the lead again — a sheet re-sent to a declined lead is
 // a courtesy, not a reopening.
 const LEAD_DECIDED = ['converted', 'declined', 'closed_lead'];
+
+/* Every send attempt, kept. Written even when the provider refused — a send
+   that failed is the one the office most needs to see, and a silent failure
+   is how "I sent that last week" becomes wrong. Never throws: recording the
+   attempt must not be able to break the send it is recording. */
+async function logSend(env, user, row) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO send_log (case_no, kind, sheet_id, door, recipient, ok, detail, sent_by, sent_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(row.case_no || null, row.kind, row.sheet_id || null, row.door || null,
+            row.recipient, row.ok ? 1 : 0, row.detail || null,
+            user ? user.id : null, nowIso()).run();
+  } catch { /* the send is the point; the log is the record of it */ }
+}
 
 async function stampLead(env, user, caseNo, status, { manual = false } = {}) {
   const cur = await env.DB.prepare('SELECT status FROM lead_status WHERE case_no = ?')
@@ -1552,7 +1579,13 @@ async function caseWorkspace(env, user, caseNo) {
     // The clock the field timer trusts. The page measures its own skew against
     // this once and never counts ticks, so sleeping the phone changes nothing.
     server_now: nowIso(),
-    ...(admin ? { build_status: buildStatus, invoice_status: invoiceStatus } : {}),
+    ...(admin ? { build_status: buildStatus, invoice_status: invoiceStatus,
+                  sends: (await env.DB.prepare(
+                    `SELECT l.kind, l.sheet_id, l.door, l.recipient, l.ok, l.detail, l.sent_at,
+                            u.display_name AS sent_by
+                       FROM send_log l LEFT JOIN users u ON u.id = l.sent_by
+                      WHERE l.case_no = ? ORDER BY l.id DESC LIMIT 25`)
+                    .bind(caseNo).all()).results || [] } : {}),
     authorization: auth,
     details,
     detail_set: detailSet,
