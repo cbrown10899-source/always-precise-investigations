@@ -7,138 +7,270 @@ overflow pattern, guard tests). This file is the live queue and in-flight
 state. Update it when the queue moves; keep it short.
 
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
-truth** (recorded verbatim 2026-08-13). It supersedes nothing already shipped —
-its section 1 lists the shipped baseline and says explicitly: do not rebuild it.
-Read it for anything this file summarises.
+truth** (recorded verbatim 2026-08-13).
 
 Snapshot date: 2026-08-14. Branch: `claude/app-crashes-lockups-debug-psf6zd`.
-Master is green through PR #55 (`13432f8` — deploy, portal Worker, save-point
-and the portal-setup schema apply all came back success). Suites at last
-green: worker 699, portal e2e 607, intake 186, alerts 41.
+Master is green through PR #57 (`a26f27b`). Suites at last green: worker 722,
+portal e2e 635, intake 186, alerts 41.
 
-## The queue, in the owner's order (MASTER-HANDOFF §42)
+---
 
-1. ~~**INTAKE-NA.md**~~ — **COMPLETE**, all twelve steps (ledger in that
-   file). Two deliberate non-builds recorded there: "request more
-   information" opens the Comm log rather than sending an automated email
-   (no email infrastructure yet, and the Comm log already IS that record),
-   and `not_applicable` exists in the model but no field offers it,
-   because nothing on either form is meaningfully N/A rather than unknown.
-2. ~~**SURVEILLANCE.md**~~ — **phases 1–8 done**, 9 partly (ledger in that
-   file). Two things are genuinely outstanding and both need a human or an
-   asset, not code: **real iPhone Safari / Android Chrome testing** (the
-   camera picker and the phone's own dictation cannot be covered headlessly),
-   (the icon arrived 2026-08-14 and is in; the owner's first real phone
-   session on 2026-08-14 found and fixed four things — the phone had no
-   navigation at all, the first home-screen launch missed the field, the
-   timer was too big, and there was no way back inside the mode). A mobile
-   draft-preview *reader* inside the mode is the one nice-to-have left; the
-   submit path already works through the full report screen.
-3. Dropbox video delivery — **BLOCKED on the owner**: needs DROPBOX_APP_KEY /
-   DROPBOX_APP_SECRET / DROPBOX_REFRESH_TOKEN as Worker secrets, plus a fresh
-   read of the API docs. Nothing in the codebase waits on it; the provider
-   reports not-configured and blocks nothing.
-4. ~~**Case Build gap audit**~~ — **COMPLETE** (ledger in `CASEBUILD.md`,
-   rules in CLAUDE.md under "The client package"). All of §13 closed:
-   multi-day packages via `build_reports` (a three-day case used to ship its
-   third day alone), the derived-plus-written Combined Summary, the Custom
-   package type as a marker rather than a CHECK-constraint change, and a
-   document that opens with case information and the assignment objective.
-5. ~~**Invoice / BILL gap audit**~~ — **COMPLETE** (ledger in `INVOICING.md`,
-   rules in CLAUDE.md under "Invoices"). Phases 1–4 held up under §28: every
-   general field, the whole provider-neutral set (`external_payment_id` lives
-   on `invoice_payments`, where a payment id belongs), and `overdue` already
-   derived rather than stored. Two gaps closed — Special Instructions on the
-   carrier side, and the private Retainer / Applied / Additional Authorization
-   / Balance block. **Write-Off was left alone on purpose**: §28 says "if
-   needed later", and it needs a CHECK change on `invoices.status`.
-6. Public website / SEO. **Social Media Search is already removed** (§30):
-   it existed only on the insurance page — a service card, the FAQ, and,
-   more quietly, the JSON-LD offer catalogue and FAQPage — and is now
-   "Background & Public-Record Research" in all four, with a guard test
-   over every public page and the sitemap so it cannot creep back.
-   Background research stays, as the owner asked. The rest of §29 (hero,
-   two client paths, homepage order, meta/canonical audit) is untouched.
-7. Full insurance workflow audit, end to end (MASTER §38).
-8. Full private workflow audit, end to end (MASTER §39).
-9. Final responsive / accessibility / security pass.
+## FULL RE-AUDIT, 2026-08-14 — read this before trusting anything below
 
-## Gaps the master handoff surfaced that no per-feature ledger holds yet
+The owner ordered a reconciliation of the **entire** master handoff against
+the **actual code on master**, explicitly because a PR touching an area is not
+evidence the requirement in that area is met. That audit was done. It changed
+this file's contents in both directions: it found work recorded here as
+outstanding that is in fact **shipped and enforced**, and it found
+requirements no ledger had ever recorded at all.
 
-Record these here so they cannot be lost between phases:
+**Two entries in the previous version of this file were simply wrong:**
 
-- ~~**Requested vs Confirmed authorization**~~ — **done.** The intake's own
-  hours read "Requested authorization"; the office's figure on the
-  Authorization panel reads "Confirmed authorization", and only that one is
-  ever paired with money. Tests hold both labels.
-- **Lead statuses are not case statuses** (MASTER §5): Lead · Rate Sheet Sent ·
-  Intake Sent · Intake Received · Contacted · More Info Requested · Converted
-  to Case · Declined · Closed Lead. The Phase-6 leads desk currently reuses
-  case stages.
-- **Completed Cases path** (MASTER §31) — an obvious route to the final report,
-  evidence index, client package, video link and invoice.
-- **"Allow investigator to view client identity"** as an explicit admin
-  permission, default No, enforced server-side (MASTER §33).
-- Sidebar targets not yet built: Clients, Reports, Evidence, Expenses, Tasks
-  as top-level nav (MASTER §8). Only build one when it has a real destination.
-- More quick-activity lines + Surveillance/End Day categories (MASTER §10).
+- **"Allow investigator to view client identity" (§33) was listed as a gap.
+  It is built and enforced server-side** — `case_settings.show_client_identity`
+  gates `CLIENT_IDENTITY_FIELDS` in `worker.js`, default off, and the setting
+  route is admin-only. It was never a gap; the note was inherited and never
+  checked.
+- **"Requested vs Confirmed authorization" was already marked done, and is.**
+  Verified: both labels exist in the page and are tested.
 
-## In flight right now
+**The audit's method, for whoever repeats it:** grep the actual identifiers in
+`worker.js`, `portal/index.html`, `schema.sql` and both test suites. A feature
+name appearing in a ledger, a PR title or a comment proves nothing. A route,
+a table, a rendered control and a test that fails without it are the evidence.
 
-Nothing. Item 3 (Dropbox) stays **blocked on the owner's Worker secrets**, so
-the first unblocked work is item 6, the rest of the public website / SEO work
-in MASTER §29 — hero, the two client paths, homepage order, and a meta and
-canonical audit. (Social Media Search, §30, is already removed and guarded.)
-`node portal/screenshots.mjs` photographs 37 screens against the real stack
-whenever a visual check is wanted.
+---
 
-One rule learned in item 4 and worth not re-learning: **a CHECK constraint
-cannot be widened from `schema.sql`.** SQLite needs a table rebuild for that,
-`schema.sql` is re-applied on every portal-setup run, and editing the
-constraint in place would leave fresh databases accepting a value the live one
-refuses — green tests, broken production. Use a side table, the way
-`build_custom` and `activity_removed` do.
+## Reconciliation checklist
 
-Two owner decisions from 2026-08-14 that changed earlier rules, recorded in
-CLAUDE.md and worth not re-litigating:
+Legend: ✅ done and verified · 🟡 partial · 🔴 not implemented ·
+⚠️ implemented but does not match the handoff · 🧪 built but under-tested
 
-- **Evidence is client-deliverable on upload.** The firm shoots its own
-  footage and writes its own reports; nothing waits behind a review it would
-  only give itself. Holding something back is now the deliberate act
-  (Needs redaction / Internal only / Do not use), and the Case Build gate
-  still refuses those.
-- **An entry can be removed, but never erased.** `activity_removed` stamps
-  who and when; the row survives, the report skips it, and it can be put
-  back. The old "no delete route" rule survives in substance.
+### Rate sheets and intake pairing (§3, §4)
+
+| Requirement | State | Evidence |
+| --- | --- | --- |
+| Two sheets, strictly separate | ✅ | `rateSheets()`; `RATESHEETS.md`; investigator gets 403 from `/sheets` and `/pricing` |
+| Insurance sheet → "Include Insurance Assignment Intake" | ✅ | `sheetWizardHtml()` step 2 label; portal e2e asserts it by name |
+| Private sheet → "Include Private Client Intake" | ✅ | same, `intakeLabel` ternary |
+| The pairing is decided **server-side**, not by the caller | ✅ | `SHEET_INTAKE` keyed by sheet id in `worker.js`; the page sends only `include_intake` boolean |
+| Insurance → insurance intake ONLY, no crossing | ✅ | worker test asserts every `/intake/` occurrence in both HTML and text parts carries `?assignment=insurance` |
+| Private → private intake ONLY | ⚠️ | the private sheet sends **bare `/intake/`**, which still offers all three services including the carrier path. Nothing hands a carrier the consumer door — that direction is airtight — but a private client *can* pick "insurance claim assignment" from the link they were sent. There is no `?assignment=private` door |
+| Unticked = no intake link at all | ✅ | worker test |
+| Client-facing insurance figures $1,200 / $2,300 / $3,300 / $150 hr | ✅ | `RATES.packages` + floor guard test |
+| Client-facing sheet hides band, rack rate, discount math, margin, compensation | ✅ | `RATESHEETS.md` separation; investigator 403s |
+| No awkward "Additional Fees — None" presentation | ✅ | copy reads as inclusive prose, not a nil line item |
+
+### Intake and INTAKE-NA (§6, §7)
+
+| Requirement | State | Evidence |
+| --- | --- | --- |
+| Public insurance intake exists | ✅ | `/intake/?assignment=insurance` |
+| Public private intake exists | 🟡 | bare `/intake/` is the shared picker, not a private-only door (see above) |
+| Structured provided / not_available states | ✅ | `naBox()`, `applyNaStates()`, `<field>_status` |
+| `not_applicable` exists in the model, offered nowhere | ✅ | deliberate, recorded in `INTAKE-NA.md` |
+| Never forced to invent information | ✅ | test scans every value field for "N/A", "unknown", 0000, placeholder dates |
+| Final review shows PROVIDED vs NOT AVAILABLE YET | ✅ | `naSummary()` |
+| Worker and portal status allow-lists synchronised | ✅ | exact sorted-set assertion over `FIELD_KEEP` statuses |
+| Admin can create a case from a partial intake | ✅ | only contact + service + one identifier required |
+| Original submission preserved | ✅ | `submissions.payload` never rewritten |
+| Requested vs Confirmed authorization | ✅ | both labels in the page, tested; only Confirmed is ever paired with money |
+
+### Manual intake and leads (§5)
+
+| Requirement | State | Evidence |
+| --- | --- | --- |
+| "+ Intake a Client" | ✅ | sidebar and leads bar, `data-tab="newlead"` |
+| Choose Insurance / Commercial vs Private Client | ✅ | `nlKind` |
+| Save Lead | ✅ | `nlSave` → "Save lead" |
+| Create Case | ✅ | "Create case →" |
+| **Send Rate Sheet from the lead** | 🔴 | sending exists only as its own Rate-sheets tab flow. A lead has no send action on it |
+| **Send Intake from the lead** | 🔴 | same |
+| **Lead statuses distinct from case statuses** | 🔴 | zero occurrences of any lead-status vocabulary in worker, page or schema. The leads desk reuses case stages. §5 names nine: Lead · Rate Sheet Sent · Intake Sent · Intake Received · Contacted · More Info Requested · Converted to Case · Declined · Closed Lead |
+
+### Case detail, activity, report, evidence (§8–§12)
+
+| Requirement | State | Evidence |
+| --- | --- | --- |
+| Activity log feeds the report draft | ✅ | `generateReport()` builds from `activity_log`, skipping removed entries |
+| Submit Report preserves a version | ✅ | `report_versions`; test asserts a later admin edit never touches a submitted version |
+| Admin reaches submitted / final report and a print-to-PDF | ✅ | `repPrint` |
+| Evidence gallery, classifications, soft delete | ✅ | |
+| Entry edit + delete (stamped, restorable) | ✅ | `activity_removed`, shipped #55 |
+| Sidebar targets Clients / Reports / Evidence / Expenses / Tasks as top-level nav | 🟡 | deliberate: only built when a target is real. Current nav is Dashboard · Cases · Leads & intakes · Calendar · Rate sheets · Invoices · Staff · Settings |
+| More quick-activity lines, Surveillance/End-Day categories (§10) | 🟡 | the shared vocabulary exists; the extra lines the handoff lists were not added |
+
+### Case Build (§13) and Case Package (§32)
+
+| Requirement | State | Evidence |
+| --- | --- | --- |
+| Report → review → photos → video → package → preview → finalize | ✅ | |
+| Report Only / Report + Photos / Full / **Custom** | ✅ | `build_custom` marker, PR #56 |
+| Multi-day: one report carrying Day 1..n + combined summary | ✅ | `build_reports`, PR #56 |
+| Report + photos document reads like a real report | ✅ | case information, assignment objective, per-day sections, captions, evidence index |
+| Original evidence never overwritten by a copy or thumbnail | ✅ | document references the original evidence route only |
+| Package card blocks each route to their module | ✅ | every block is a `pkgJump` with a real `MOD_TAB` target; no dead controls |
+| **Combined PDF is a real document, not just UI** | 🧪 | it is a real print stylesheet over real data and is asserted in e2e, but nothing verifies the *printed* artifact — only the rendered DOM |
+
+### Completed cases (§31)
+
+| Requirement | State | Evidence |
+| --- | --- | --- |
+| An obvious Completed Cases path | 🔴 | the case list has a **search box only** — no status filter, no completed view. The only "completed" surface is the finalized-package panel *inside* a case, which you must already know how to reach |
+| Per-case artifact actions from there | 🔴 | the actions exist inside the package panel; there is no completed-cases entry point that gathers them |
+
+### Video / Dropbox (§14)
+
+| Requirement | State | Evidence |
+| --- | --- | --- |
+| Add Video to Package | ✅ | role `video` items, gated by package type |
+| Provider architecture, generic fields | ✅ | `external_files`, `EXTERNAL_PROVIDERS` |
+| Video upload to Dropbox | 🔴 | route returns 501; no API client exists |
+| External file association | 🟡 | schema and reads exist; nothing writes them from a real upload |
+| Create share link / revoke link | 🔴 | not implemented |
+| Case Build + evidence index video reference | ✅ | document lists video and states delivery separately |
+
+**Dropbox is NOT done.** The Case Build screen naming Dropbox is a
+not-configured status message, not an integration. Blocked on the owner's
+`DROPBOX_APP_KEY` / `DROPBOX_APP_SECRET` / `DROPBOX_REFRESH_TOKEN`.
+
+### Invoices (§28)
+
+Audited in full 2026-08-14 (PR #57). Create-from-case, number, client, claim
+refs, service dates, line items, due date, terms, balance, status, print-to-PDF,
+BILL reference, manual and partial payments, duplicate warning and audit trail
+are all real and tested. `overdue` is derived against today, never stored.
+Special Instructions and the private Retainer / Applied / Additional
+Authorization / Balance block were the two gaps and are now closed.
+**Write-Off remains deliberately absent** — the owner's own "if needed later".
+
+### Active Surveillance Mode (§15–§27)
+
+Audited subfeature by subfeature rather than as one name.
+
+| Subfeature | State |
+| --- | --- |
+| Same authentication, same case, same database, no parallel tables | ✅ |
+| Start / resume investigation day | ✅ |
+| Persistent server-derived timer (survives reload, sleep, wrong clock) | ✅ |
+| Quick activity, searchable templates, favorites, one-tap No Change | ✅ |
+| Timeline | ✅ |
+| Photo capture (`capture="environment"`) and video upload | ✅ |
+| Evidence linking to the latest entry | ✅ |
+| Voice entry, transcript review, Use Text / Discard, never auto-submit | ✅ |
+| Report preview inside the mode | 🟡 hands off to the full report screen; a mobile draft reader is still the nice-to-have |
+| End day and review, with totals | ✅ |
+| Mileage | ✅ |
+| Bottom navigation | ✅ |
+| Case info drawer | ✅ `svCaseDrawer()` |
+| Remaining authorization (hours, never money) | ✅ |
+| Back inside the mode / Exit active mode | ✅ shipped #55 |
+| PWA manifest, icons, home-screen launch | ✅ |
+| Admin "Out now", no location of any kind | ✅ |
+| **A top-level way IN, without the home-screen icon** | ✅ **done 2026-08-14** — an "Active surveillance" item in the navigation, both roles, opening the same launcher `?surveillance=1` opens. Tested at iPad (1112×834) and phone (390×844) widths |
+| **Pause / resume the day timer** | ✅ **done 2026-08-14** — `case_day_pauses` spans, server-recorded. Elapsed is `(now - started) - closed spans`; an open pause freezes the display on `paused_at`. Breaks come off the billable total |
+
+**✅ FIXED 2026-08-14 — was: the launch button has no top-level door.** `svLaunchButton()` renders in
+exactly two places, `overviewPanel()` and `fieldHomeHtml()` — both of which are
+a *case's Overview tab*. There is no header button, no nav tab and nothing on
+the dashboard. So from Safari on an iPad you must sign in → Cases → open a
+case → Overview before the button exists. The only other door is
+`?surveillance=1`, which is the PWA start URL and therefore assumes the icon
+is already on the home screen. Owner reported this on 2026-08-14; fixed the same day. The
+case-level button stays as the shortcut — the nav item is the door.
+
+**✅ FIXED 2026-08-14 — was: pause does not exist.** No `pause` concept in `portal/index.html`,
+`worker.js` or `schema.sql`. When it is built the timer rule holds: the day's
+elapsed time derives from server timestamps and never from counted ticks, so
+paused spans must be **recorded server-side and subtracted**, not tracked in
+the browser. It was built that way: `case_day_pauses` holds the spans, a
+partial unique index allows only one open pause per day (so two taps on a
+flaky connection cannot open two), and `hours` at day end is the WORKED
+figure with the break subtracted — because `hours` is what authorization and
+invoices draw against. The day-end message names the break rather than
+quietly returning a shorter day.
+
+### Public website / SEO (§29, §30)
+
+| Requirement | State | Evidence |
+| --- | --- | --- |
+| Social Media Search removed everywhere | ✅ | zero occurrences across every public page; guard test |
+| Hero states surveillance for insurance, legal and private clients | 🔴 | hero is "Private Investigations, Done With Precision" |
+| Two client paths (Submit an Insurance Assignment / Request a Private Investigation) | 🔴 | zero occurrences; hero offers Contact Us and Call |
+| Portal login secondary | ✅ | already not prominent |
+| Homepage section order per §29 | 🔴 | current: hero → services → testimonials → about → CTA → locations |
+| Title / description / canonical / OG / JSON-LD on service pages | ✅ | all present on the homepage and the three service pages |
+| Same on `/intake/` | 🟡 | title only — **no meta description, no canonical, no OG** |
+| Do not invent coverage claims | ⚠️ | the homepage says **"Serving ALL of Virginia since 2014"** while the location pages are deliberately scoped to about an hour's drive (Roanoke, Lynchburg, Charlottesville, Danville, Bedford, Farmville). Those two claims disagree; §29 says not to state coverage unless verified. **Owner decision, not a code fix** |
+
+### Permissions (§33) and end-to-end (§38, §39)
+
+| Requirement | State | Evidence |
+| --- | --- | --- |
+| Admin vs investigator enforced server-side, not by hidden buttons | ✅ | 707 worker checks, including URL/API attempts at another investigator's case, billing, margin, invoices, rates |
+| `FIELD_KEEP` allow-list, page copy kept in sync | ✅ | drift test |
+| "Allow investigator to view client identity", default off | ✅ | `show_client_identity`, admin-only route — **this file previously said otherwise and was wrong** |
+| Full end-to-end insurance walk-through (§38) | 🧪 | every stage is covered by a test, but no single test walks one carrier case from intake to invoice |
+| Full end-to-end private walk-through (§39) | 🧪 | same |
+
+### Mobile / iPad (§41)
+
+| Requirement | State | Evidence |
+| --- | --- | --- |
+| Phone can reach the navigation | ✅ | burger fixed #54; e2e at 390×844 |
+| Field mode at phone width | ✅ | e2e |
+| iPad landscape | 🧪 | screenshots are taken at 834 but nothing asserts iPad-specific behaviour |
+| Real iPhone Safari / Android Chrome | 🔴 | needs the owner — camera picker and device dictation cannot be covered headlessly |
+
+---
+
+## TOP 10 REMAINING ITEMS, in priority order
+
+1. ~~**A top-level door into Active Surveillance Mode**~~ — ✅ done 2026-08-14.
+2. ~~**Pause / resume the day timer**~~ — ✅ done 2026-08-14.
+3. **Completed Cases path** (§31) — the office cannot find finished work. 🔴
+4. **Lead statuses** (§5) — nine of them, distinct from case statuses. 🔴
+5. **Send Rate Sheet / Send Intake from a lead** (§5) — the actions exist but
+   not where the workflow needs them. 🔴
+6. **Public website §29** — hero, two client paths, homepage order. 🔴
+   (Ask the owner about "Serving ALL of Virginia" first — see ⚠️ above.)
+7. **A private-only intake door** — `?assignment=private`, so the private rate
+   sheet stops sending a link that offers the carrier path. ⚠️
+8. **`/intake/` metadata** — description, canonical, OG. 🟡
+9. **Two end-to-end walk-through tests** (§38, §39) — one carrier case and one
+   private case, intake to invoice, in a single test each. 🧪
+10. **Dropbox video delivery** (§14) — 🔴, and **blocked on the owner's three
+    Worker secrets**. Everything above it is unblocked.
+
+Still needing the owner rather than code: real iPhone Safari and Android
+Chrome testing, the Dropbox credentials, and the Virginia coverage wording.
+
+---
 
 ## How to resume in a fresh session
 
-1. `git fetch origin && git checkout claude/app-crashes-lockups-debug-jcy6kf`
-2. Read this file, then `MASTER-HANDOFF.md`, then the ledger of whichever
-   handoff is at the head of the queue.
+1. `git fetch origin && git checkout claude/app-crashes-lockups-debug-psf6zd`
+2. Read this file, then `MASTER-HANDOFF.md`.
 3. Run the suites first: `node case-portal/test-worker.mjs`,
    `node portal/test-portal.mjs`, `node intake/test-intake.mjs`,
    `node visitor-alerts/test-worker.mjs`.
-4. Per-feature rhythm (unchanged all session): build → tests green → ledger
-   + CLAUDE.md counts → commit/push → PR → squash-merge → rebase dance →
-   portal-setup dispatch only when schema.sql changed.
+4. Per-feature rhythm: build → tests green → ledger + CLAUDE.md counts →
+   commit/push → PR → squash-merge → rebase dance → portal-setup dispatch
+   only when schema.sql changed.
+5. **Verify, do not assume.** The 2026-08-14 audit exists because a ledger
+   entry is not evidence. Grep the identifier, find the route, find the test.
 
 ## Owner context worth carrying
 
-- Free-plan failsafe is live and non-negotiable (Worker refuses uploads at
-  9 GB; site-health opens an issue at 75%; Cloudflare Budget Alert is the
-  independent net). Do not raise caps without the owner.
+- Free-plan failsafe is live and non-negotiable. Do not raise caps.
 - Two rate sheets are separate products; carrier pricing never public; no
   dollar figure in portal or intake HTML (guard tests enforce).
-- Investigator boundary: FIELD_KEEP allow-list; money/client identity
-  never reaches investigators; offers stay thin pre-acceptance.
-- The owner works from phone + desktop, sends handoffs mid-build, and
-  wants every handoff RECORDED VERBATIM in case-portal/ before building —
-  that rule already survived two near-losses this session.
-- Everything the owner has pasted so far IS recorded here: RATESHEETS,
-  INVOICING, CASEBUILD, INTAKE-NA, UXSIMPLIFY, UIBUILD, SURVEILLANCE, and
-  now MASTER-HANDOFF. Anything still only in ChatGPT: ask them to paste it,
-  record it to case-portal/ first, then build in their stated order.
+- Investigator boundary: `FIELD_KEEP` allow-list; money and client identity
+  never reach investigators unless an admin turns `show_client_identity` on.
+- The owner works from phone, iPad and desktop, sends handoffs mid-build, and
+  wants every handoff RECORDED VERBATIM in `case-portal/` before building.
 - Do not reintroduce a "landing vs click" load bug: any view that can be
   landed on directly must fetch what a later tab click would have fetched.
-  That class of bug cost this session three fixes (MASTER §1).
+- A CHECK constraint cannot be widened from `schema.sql`, and
+  `ALTER TABLE ADD COLUMN` is not idempotent. Use a companion table —
+  `activity_removed`, `build_custom` and `build_reports` are the precedents.

@@ -1110,8 +1110,50 @@ section('Active Surveillance: the same day, seen two ways');
   ok('and the day is an ordinary case day', asAdmin.days.length === 1
      && asAdmin.days[0].start_mileage === 52000);
 
-  await call(env, '/cases/API-SV1/day/end', { method: 'POST', cookie: inv,
-    body: { end_time: '11:30', end_mileage: 52040 } });
+  /* Pausing the day (owner, 2026-08-14). Every quantity is a SERVER
+     timestamp, so nothing the phone believes can move the clock. */
+  ok('a day that is running is not paused',
+     (await jsonOf(await call(env, '/cases/API-SV1/workspace', { cookie: inv })))
+       .open_day.paused_at === null);
+  const paused = await jsonOf(await call(env, '/cases/API-SV1/day/pause',
+    { method: 'POST', cookie: inv, body: { reason: 'Lunch' } }));
+  ok('pausing stamps the instant it started, server-side',
+     typeof paused.paused_at === 'string' && !Number.isNaN(Date.parse(paused.paused_at)));
+  ok('and nothing is closed yet, so nothing is subtracted', paused.paused_ms === 0);
+  ok('the workspace shows the day as paused',
+     (await jsonOf(await call(env, '/cases/API-SV1/workspace', { cookie: inv })))
+       .open_day.paused_at === paused.paused_at);
+  ok('the launcher agrees, so resuming on another device sees the same clock',
+     (await jsonOf(await call(env, '/my/active', { cookie: inv }))).active.paused_at === paused.paused_at);
+  ok('the office sees a paused investigator as paused, not stalled',
+     (await jsonOf(await call(env, '/active', { cookie: admin }))).out_now[0].paused_at !== null);
+
+  ok('pausing twice is refused — one open break at a time',
+     (await call(env, '/cases/API-SV1/day/pause', { method: 'POST', cookie: inv, body: {} })).status === 409);
+  ok('an investigator cannot pause a day on a case that is not theirs',
+     (await call(env, '/cases/API-SV2/day/pause', { method: 'POST', cookie: inv, body: {} })).status === 404);
+
+  const resumed = await jsonOf(await call(env, '/cases/API-SV1/day/resume',
+    { method: 'POST', cookie: inv, body: {} }));
+  ok('resuming closes the break and stops freezing the clock', resumed.paused_at === null);
+  ok('and the closed span is now what gets subtracted', resumed.paused_ms >= 0);
+  ok('resuming when nothing is paused is refused',
+     (await call(env, '/cases/API-SV1/day/resume', { method: 'POST', cookie: inv, body: {} })).status === 409);
+
+  /* A break comes off the billable total, because `hours` is what
+     authorization and invoices are drawn against. */
+  const dayId = (await jsonOf(await call(env, '/cases/API-SV1/workspace', { cookie: inv }))).open_day.id;
+  await env.DB.prepare(
+    `INSERT INTO case_day_pauses (day_id, started_at, ended_at) VALUES (?, ?, ?)`)
+    .bind(dayId, '2026-08-14T08:00:00.000Z', '2026-08-14T09:00:00.000Z').run();
+
+  const ended = await jsonOf(await call(env, '/cases/API-SV1/day/end', { method: 'POST', cookie: inv,
+    body: { end_time: '11:30', end_mileage: 52040 } }));
+  ok('the clock ran five hours', ended.span_hours === 5);
+  ok('an hour of it was a break', ended.paused_hours === 1);
+  ok('so the billable day is four hours, not five', ended.hours === 4);
+  ok('and that is what the case day stores',
+     (await jsonOf(await call(env, '/cases/API-SV1/workspace', { cookie: admin }))).days[0].hours === 4);
   ok('ending the day empties the office\'s Out now',
      (await jsonOf(await call(env, '/active', { cookie: admin }))).out_now.length === 0);
   ok('and the launcher goes back to offering assignments',

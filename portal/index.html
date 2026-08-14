@@ -204,6 +204,12 @@
     body.withnav .tabs .side-intake{margin-top:auto;display:block;text-align:center;background:var(--gold,#c99a3b);
       color:#13273f;font-weight:800;border-radius:9px;padding:11px 12px;text-decoration:none;
       font:inherit;font-weight:800;border:0;cursor:pointer;width:100%;}
+    /* The field door, at the top level. Outlined rather than gold: it is a
+       primary action but it must not out-shout "+ Intake a Client". */
+    body.withnav .tabs .side-surv{margin-top:14px;display:block;text-align:left;
+      background:#0d1826;color:#e8eef5;border:1px solid #23405f;border-radius:9px;
+      padding:10px 12px;font:inherit;font-weight:700;cursor:pointer;width:100%;}
+    body.withnav .tabs .side-surv:hover{background:#16283d;color:#fff;}
     body.withnav #app{margin-left:198px;}
   }
   @media(max-width:899px){
@@ -216,6 +222,9 @@
     body.withnav.navopen .tabs .side-intake{margin-top:auto;display:block;text-align:center;
       background:var(--gold,#c99a3b);color:#13273f;font-weight:800;border-radius:9px;padding:11px;text-decoration:none;
       font:inherit;font-weight:800;border:0;cursor:pointer;width:100%;}
+    body.withnav.navopen .tabs .side-surv{margin-top:14px;display:block;text-align:left;
+      background:#0d1826;color:#e8eef5;border:1px solid #23405f;border-radius:9px;
+      padding:11px 12px;font:inherit;font-weight:700;cursor:pointer;width:100%;}
     /* The base rule below is deliberately ABOVE this media query. It used to
        sit after it, and with equal specificity the later rule won: the burger
        was display:none at every width, the sidebar was hidden under 900px, and
@@ -356,6 +365,11 @@
      it is not the whole screen — the owner's call after using it. */
   .sv-timer{font-size:2rem;font-weight:800;letter-spacing:.02em;text-align:center;
     font-variant-numeric:tabular-nums;margin:2px 0;}
+  /* A stopped clock has to LOOK stopped at a glance in a car at dusk — the
+     number alone is not a signal, because a frozen number reads as a live one. */
+  .sv-timer.paused{color:#8fb4d9;}
+  .sv-timer.paused::after{content:" PAUSED";font-size:.72rem;letter-spacing:.14em;
+    vertical-align:middle;color:var(--gold,#c99a3b);}
   /* Contextual back, inside the mode. Exit active mode leaves; this does not. */
   .sv-back{background:none;border:0;color:#8fb4d9;font:inherit;font-size:.86rem;font-weight:700;
     cursor:pointer;padding:8px 2px 12px;display:inline-block;}
@@ -865,8 +879,10 @@ function shell(inner){
       + item("invoices", "&#129534; Invoices")
       + item("staff", "&#128101; Staff")
       + item("settings", "&#9881; Settings")
+      + `<button class="side-surv" data-act="surveillance">&#128373; Active surveillance</button>`
       + `<button class="side-intake" data-act="tab" data-tab="newlead">+ Intake a Client</button>`
     : item("cases", "&#128193; My assignments")
+      + `<button class="side-surv" data-act="surveillance">&#128373; Active surveillance</button>`
       + item("today", "&#9728; Today")
       + item("calendar", "&#128197; Calendar")
       + item("myreports", "&#128196; Reports")
@@ -3290,12 +3306,18 @@ function overviewPanel(s, a){
    (case_days.created_at), corrected by the skew measured against the Worker's
    own clock. Nothing counts ticks, so sleeping the phone, reloading, or a
    device clock that is simply wrong cannot move it (P2). */
+/* Breaks are subtracted, and a running pause FREEZES the display — because
+   `paused_at` is a server instant, so the number stops moving without anything
+   here counting or stopping a tick. Same rule as always: every quantity in
+   this sum comes from the server. */
 function svElapsed(){
   const d = WS && WS.open_day;
   if(!d || !d.started_at) return null;
-  const ms = (Date.now() + SV_SKEW) - Date.parse(d.started_at);
+  const upto = d.paused_at ? Date.parse(d.paused_at) : (Date.now() + SV_SKEW);
+  const ms = upto - Date.parse(d.started_at) - (Number(d.paused_ms) || 0);
   return ms > 0 ? ms : 0;
 }
+function svPaused(){ return Boolean(WS && WS.open_day && WS.open_day.paused_at); }
 function svClock(ms){
   const s = Math.floor(ms / 1000);
   const p = n => String(n).padStart(2, "0");
@@ -3476,11 +3498,18 @@ function svHomeScreen(){
   const ms = svElapsed();
   return `<div class="sv-body">
     ${note}
-    <div class="sv-day">Day ${days.length} &middot; running since ${esc(t12(open.start_time))}</div>
-    <div class="sv-timer" id="svTimer">${ms == null ? "--:--:--" : svClock(ms)}</div>
-    <div class="sv-since">${esc(fmtDay(open.day_date))}${
-      open.start_mileage != null ? ` &middot; started at ${esc(open.start_mileage)} miles` : ""}</div>
-    <button class="sv-btn gold" data-act="svTab" data-t="endday">End investigation day</button>
+    <div class="sv-day">Day ${days.length} &middot; ${svPaused()
+      ? "paused" : `running since ${esc(t12(open.start_time))}`}</div>
+    <div class="sv-timer${svPaused() ? " paused" : ""}" id="svTimer">${ms == null ? "--:--:--" : svClock(ms)}</div>
+    <div class="sv-since">${svPaused()
+      ? "On a break &mdash; the clock is stopped and this time is not billed"
+      : `${esc(fmtDay(open.day_date))}${
+          open.start_mileage != null ? ` &middot; started at ${esc(open.start_mileage)} miles` : ""}`}</div>
+    ${svPaused()
+      ? `<button class="sv-btn gold" data-act="svResume">Resume the day</button>
+         <button class="sv-btn line" data-act="svTab" data-t="endday">End investigation day</button>`
+      : `<button class="sv-btn gold" data-act="svTab" data-t="endday">End investigation day</button>
+         <button class="sv-btn line" data-act="svPause">Pause &mdash; taking a break</button>`}
 
     <div class="sv-quad">
       <button class="sv-q" data-act="svTab" data-t="activity"><b>&#9998;</b>Activity</button>
@@ -4676,6 +4705,28 @@ async function svStartDay(){
   svTickStart();
 }
 
+/* Pause and resume. The server records the span; this only asks. Nothing
+   here stops a tick — svElapsed() freezes on its own because `paused_at` is
+   a fixed server instant, so a reload while paused shows the same number. */
+async function svPauseDay(){
+  SV.err = ""; SV.ok = "";
+  try{
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/day/pause`, {method:"POST", body:{}});
+    SV.ok = "Paused — the clock is stopped.";
+  }catch(e){ SV.err = e.message; }
+  await svReload();
+}
+
+async function svResumeDay(){
+  SV.err = ""; SV.ok = "";
+  try{
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/day/resume`, {method:"POST", body:{}});
+    SV.ok = "Back on the clock.";
+  }catch(e){ SV.err = e.message; }
+  await svReload();
+  svTickStart();
+}
+
 async function svEndDay(){
   SV.err = "";
   try{
@@ -4683,7 +4734,8 @@ async function svEndDay(){
       end_time: $("sv_end").value, end_mileage: $("sv_emiles").value, summary: $("sv_sum").value,
     }});
     SV.tab = "home";
-    SV.ok = `Day ended — ${r.hours} hours${r.miles != null ? `, ${r.miles} miles` : ""} recorded.`;
+    SV.ok = `Day ended — ${r.hours} hours${r.miles != null ? `, ${r.miles} miles` : ""} recorded.`
+      + (r.paused_hours ? ` ${r.paused_hours} h of breaks came off the ${r.span_hours} h on the clock.` : "");
     svTickStop();
   }catch(e){ SV.err = e.message; }
   await svReload();
@@ -5168,6 +5220,15 @@ document.addEventListener("click", ev => {
   if(act === "backToCases"){ VIEW = "list"; render(); }
   else if(act === "navToggle"){ document.body.classList.toggle("navopen"); }
   else if(act === "pkgJump"){ openCase(el.dataset.case, el.dataset.tab === "overview" ? undefined : el.dataset.tab); }
+  /* The top-level door into the field view (owner, 2026-08-14). It used to
+     exist ONLY inside a case's Overview tab, so on an iPad you had to open
+     Cases, open a case and land on Overview before there was any way in —
+     and the only other door was ?surveillance=1, which assumes the icon is
+     already on the home screen. This is the same launcher that URL opens. */
+  else if(act === "surveillance"){
+    document.body.classList.remove("navopen");
+    openSurveillanceLauncher();
+  }
   else if(act === "tab"){
     if(TAB === "leads" && el.dataset.tab !== "leads") LEAD_MSG = "";
     TAB = el.dataset.tab; paint();
@@ -5310,6 +5371,8 @@ document.addEventListener("click", ev => {
   else if(act === "svAddAnother"){ SV.ok = ""; SV.entry = null; paint(); }
   else if(act === "svStartDay"){ svStartDay(); }
   else if(act === "svEndDay"){ svEndDay(); }
+  else if(act === "svPause"){ svPauseDay(); }
+  else if(act === "svResume"){ svResumeDay(); }
   else if(act === "svSaveEntry"){ svSaveEntry(null); }
   else if(act === "svPhoto"){ svPickFile("photo"); }
   else if(act === "svVideo"){ svPickFile("video"); }

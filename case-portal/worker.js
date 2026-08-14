@@ -1312,10 +1312,13 @@ async function caseWorkspace(env, user, caseNo) {
      sleeps, reloads or has a wrong clock cannot move it. `start_time` beside
      it stays the investigator's own recorded start, which is what the day's
      hours are computed from at the end. */
-  const openDay = await env.DB.prepare(
+  const openDayRow = await env.DB.prepare(
     `SELECT id, day_date, start_time, start_mileage, created_at AS started_at FROM case_days
       WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL
       ORDER BY id DESC LIMIT 1`).bind(caseNo, user.id).first();
+  // Breaks ride with the open day so the timer can subtract them and freeze.
+  const openDay = openDayRow
+    ? { ...openDayRow, ...(await dayPauseState(env, openDayRow.id)) } : null;
 
   const { results: reports } = await env.DB.prepare(
     `SELECT r.id, r.day_id, r.report_date, r.status, r.body, r.review_note,
@@ -1539,6 +1542,60 @@ async function startDay(request, env, user, caseNo) {
   return json({ ok: true, day_id: res.meta ? res.meta.last_row_id : null }, 201);
 }
 
+/* What the field timer needs to know about breaks (owner, 2026-08-14):
+   how much CLOSED paused time to subtract, and — if a pause is open right
+   now — the server instant it opened at, which is what the display freezes
+   on. Both are server timestamps, so nothing here can be moved by a phone
+   with a wrong clock. */
+async function dayPauseState(env, dayId) {
+  const { results } = await env.DB.prepare(
+    'SELECT started_at, ended_at FROM case_day_pauses WHERE day_id = ?').bind(dayId).all();
+  let closed = 0, openAt = null;
+  for (const p of results || []) {
+    if (p.ended_at) {
+      const ms = Date.parse(p.ended_at) - Date.parse(p.started_at);
+      if (Number.isFinite(ms) && ms > 0) closed += ms;
+    } else {
+      openAt = p.started_at;
+    }
+  }
+  return { paused_ms: closed, paused_at: openAt };
+}
+
+/* The caller's own running day. Pause and resume are scoped the same way
+   day/end is — you can only stop your own clock. */
+async function openDayFor(env, user, caseNo) {
+  return await env.DB.prepare(
+    `SELECT id, start_time FROM case_days
+      WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL
+      ORDER BY id DESC LIMIT 1`).bind(caseNo, user.id).first();
+}
+
+async function pauseDay(request, env, user, caseNo) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const day = await openDayFor(env, user, caseNo);
+  if (!day) return json({ error: 'No investigation day is running on this case.' }, 409);
+  const state = await dayPauseState(env, day.id);
+  if (state.paused_at) return json({ error: 'The day is already paused.' }, 409);
+  const reason = String((await readJson(request)).reason || '').slice(0, 200) || null;
+  await env.DB.prepare(
+    'INSERT INTO case_day_pauses (day_id, started_at, reason, by_user) VALUES (?, ?, ?, ?)')
+    .bind(day.id, nowIso(), reason, user.id).run();
+  return json({ ok: true, day_id: day.id, ...(await dayPauseState(env, day.id)), server_now: nowIso() });
+}
+
+async function resumeDay(env, user, caseNo) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const day = await openDayFor(env, user, caseNo);
+  if (!day) return json({ error: 'No investigation day is running on this case.' }, 409);
+  const state = await dayPauseState(env, day.id);
+  if (!state.paused_at) return json({ error: 'The day is not paused.' }, 409);
+  await env.DB.prepare(
+    'UPDATE case_day_pauses SET ended_at = ? WHERE day_id = ? AND ended_at IS NULL')
+    .bind(nowIso(), day.id).run();
+  return json({ ok: true, day_id: day.id, ...(await dayPauseState(env, day.id)), server_now: nowIso() });
+}
+
 async function endDay(request, env, user, caseNo) {
   if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
   const body = await readJson(request);
@@ -1564,7 +1621,24 @@ async function endDay(request, env, user, caseNo) {
   const mins = t => (parseInt(t.slice(0, 2), 10) * 60) + parseInt(t.slice(3, 5), 10);
   let span = mins(time) - mins(day.start_time);
   if (span < 0) span += 24 * 60;
-  const hours = Math.round((span / 60) * 100) / 100;
+
+  /* A day ended while still paused closes the pause first, so the arithmetic
+     below is over complete spans and no break is left hanging open. */
+  await env.DB.prepare(
+    'UPDATE case_day_pauses SET ended_at = ? WHERE day_id = ? AND ended_at IS NULL')
+    .bind(nowIso(), day.id).run();
+
+  /* Breaks come off the billable total. An investigator who stopped for an
+     hour did not work that hour, and `hours` is what authorization and
+     invoices are drawn against — so it is the WORKED figure. The paused total
+     is returned beside it rather than hidden, and the day-end review shows
+     both. A duration is timezone-independent, so subtracting spans measured
+     in UTC from a local-clock span is sound. */
+  const paused = (await dayPauseState(env, day.id)).paused_ms;
+  const pausedMins = Math.round(paused / 60000);
+  const worked = Math.max(0, span - pausedMins);
+  const hours = Math.round((worked / 60) * 100) / 100;
+  const pausedHours = Math.round((pausedMins / 60) * 100) / 100;
   const miles = endMiles != null && day.start_mileage != null
     ? Math.round((endMiles - day.start_mileage) * 10) / 10 : null;
 
@@ -1574,6 +1648,8 @@ async function endDay(request, env, user, caseNo) {
     .bind(time, endMiles, hours, miles, String(body.summary || '').slice(0, 4000), nowIso(), day.id).run();
 
   return json({ ok: true, day_id: day.id, hours, miles,
+                paused_hours: pausedHours,
+                span_hours: Math.round((span / 60) * 100) / 100,
                 authorization: await authorizationFor(env, caseNo, user.role === 'admin') });
 }
 
@@ -2843,7 +2919,8 @@ async function myActiveDay(env, user) {
     'SELECT COUNT(*) AS n FROM activity_log WHERE case_no = ? AND day_id = ?')
     .bind(row.case_no, row.id).first();
   return json({
-    active: { ...row, activity_count: Number(acts && acts.n) || 0 },
+    active: { ...row, activity_count: Number(acts && acts.n) || 0,
+              ...(await dayPauseState(env, row.id)) },
     server_now: nowIso(),
   });
 }
@@ -2870,6 +2947,7 @@ async function outNow(env) {
       .bind(d.case_no, d.id).first();
     out.push({
       ...d,
+      ...(await dayPauseState(env, d.id)),
       activity_count: Number(n && n.n) || 0,
       last_activity: last ? { at_time: last.at_time, description: last.description,
                               created_at: last.created_at } : null,
@@ -3712,6 +3790,14 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/day\/end$/);
   if (m && method === 'POST') return endDay(request, env, user, m[1]);
+
+  // Stopping the clock for a break. Scoped to the caller's own running day,
+  // exactly as day/end is — you can only pause a day you are working.
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/day\/pause$/);
+  if (m && method === 'POST') return pauseDay(request, env, user, m[1]);
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/day\/resume$/);
+  if (m && method === 'POST') return resumeDay(env, user, m[1]);
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/activity$/);
   if (m && method === 'POST') return addActivity(request, env, user, m[1]);
