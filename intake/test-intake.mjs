@@ -782,6 +782,33 @@ section('Carrier pages link to the carrier door');
      /\/insurance-investigations\/submit\/\*\s+\/intake\/\?assignment=insurance/.test(red));
 }
 
+/* MASTER §29 — the homepage speaks to all three audiences and offers the two
+   client paths, each through its OWN door of the intake. Guarded here so a
+   redesign cannot quietly drop a door or point both paths at the picker. */
+section('The homepage leads with the two client paths');
+{
+  const src = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const h1 = (src.match(/<h1>([^<]+)<\/h1>/) || [])[1] || '';
+  ok('the hero names insurance, legal and private clients',
+     /insurance/i.test(h1) && /legal/i.test(h1) && /private/i.test(h1), h1);
+  ok('Submit an Insurance Assignment goes through the carrier door',
+     /href="\/intake\/\?assignment=insurance"[^>]*>Submit an Insurance Assignment/.test(src));
+  ok('Request a Private Investigation goes through the private door',
+     /href="\/intake\/\?assignment=private"[^>]*>Request a Private Investigation/.test(src));
+  ok('no bare /intake/ link on the homepage either',
+     (src.match(/href="\/intake\/"/g) || []).length === 0);
+  ok('phone and contact remain, one row down',
+     src.includes('tel:+14349070975') && src.includes('openContact()'));
+  const how = (src.match(/<section id="how-it-works">[\s\S]*?<\/section>/) || [''])[0];
+  ok('How an Assignment Works walks four steps', (how.match(/<h3>/g) || []).length === 4);
+  ok('and quotes nothing', !how.includes('$'));
+  ok('the services grid leads with the claims work',
+     src.indexOf("Workers' Comp &amp; Auto Claims") < src.indexOf('<h3>Surveillance</h3>'));
+  ok('while every consumer service is still on it',
+     ['Infidelity', 'Child Custody', 'Surveillance', 'Process Serving']
+       .every(t => src.includes(`<h3>${t}</h3>`)));
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();

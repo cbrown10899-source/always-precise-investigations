@@ -9,6 +9,39 @@ state. Update it when the queue moves; keep it short.
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
 truth** (recorded verbatim 2026-08-13).
 
+## ⏰ FOR THE OWNER — read this first (morning of 2026-08-14)
+
+Overnight, in your stated order, PRs #60–#64 shipped: the Completed Cases
+desk, lead statuses with both send actions on the lead card, the private
+intake door + intake link previews, the §38/§39 end-to-end walkthrough
+tests (finding: **no dead ends existed**), and the §29 homepage work.
+Everything is merged, deployed and green. Decisions and looks that are
+YOURS, none of which block anything:
+
+1. **Look at the live homepage.** The hero now reads "Surveillance &
+   Investigation Services for Insurance, Legal and Private Clients" with two
+   buttons — *Submit an Insurance Assignment* and *Request a Private
+   Investigation* — above Contact/Call. A new "How an Assignment Works"
+   section sits under the services grid, and the claims card now leads that
+   grid. If you want §29's literal section order instead (dedicated
+   Insurance and Private sections), say so.
+2. **"Serving ALL of Virginia since 2014"** (hero tag + services blurb) vs.
+   the location pages deliberately scoped to about an hour's drive. §29 says
+   not to state coverage unless verified. Which is right? (Left untouched.)
+3. **On your phone**, try: the *Active surveillance* item in the nav, the
+   *Pause — taking a break* button on a running day (breaks now come off the
+   billable hours — flag if you'd rather they didn't), and the bottom bar
+   (bigger, icons, clear of the home indicator).
+4. **Dropbox** stays the one blocked feature — it needs DROPBOX_APP_KEY,
+   DROPBOX_APP_SECRET and DROPBOX_REFRESH_TOKEN as Worker secrets.
+5. Small notes: `intake_received` on a lead is set by hand (a public intake
+   carries no lead id, so auto-matching would be guesswork); Write-Off stays
+   deferred per your own "if needed later".
+
+Suites at last green: worker 770, portal e2e 663, intake 202, alerts 41.
+
+---
+
 Snapshot date: 2026-08-14. Branch: `claude/app-crashes-lockups-debug-psf6zd`.
 Master is green through PR #60 (`d640f82`). Suites at last green: worker 748,
 portal e2e 663, intake 186, alerts 41.
@@ -195,10 +228,10 @@ quietly returning a shorter day.
 | Requirement | State | Evidence |
 | --- | --- | --- |
 | Social Media Search removed everywhere | ✅ | zero occurrences across every public page; guard test |
-| Hero states surveillance for insurance, legal and private clients | 🔴 | hero is "Private Investigations, Done With Precision" |
-| Two client paths (Submit an Insurance Assignment / Request a Private Investigation) | 🔴 | zero occurrences; hero offers Contact Us and Call |
+| Hero states surveillance for insurance, legal and private clients | ✅ **done 2026-08-14** | "Surveillance & Investigation Services for Insurance, Legal and Private Clients" |
+| Two client paths (Submit an Insurance Assignment / Request a Private Investigation) | ✅ **done 2026-08-14** | the hero's primary row, each through its own intake door; Contact and Call remain one row down. Guard tests hold both doors and refuse a bare `/intake/` link |
 | Portal login secondary | ✅ | already not prominent |
-| Homepage section order per §29 | 🔴 | current: hero → services → testimonials → about → CTA → locations |
+| Homepage section order per §29 | 🟡 | hero → paths → services (claims card now leads the grid, every consumer service still on it) → **How an Assignment Works (new, four steps, quotes nothing)** → reviews → about → CTA → locations. A literal full reorder (dedicated Insurance and Private sections) was deliberately NOT done blind — §29 also says "do not make the homepage bloated", and the two-path hero already gives each audience its door. **Owner: eyeball the live homepage and say if you want the literal §29 order** |
 | Title / description / canonical / OG / JSON-LD on service pages | ✅ | all present on the homepage and the three service pages |
 | Same on `/intake/` | ✅ **done 2026-08-14** | description, canonical and OG added. `noindex` stays — the form is reached by being sent the link; the OG tags are for the preview a mail client draws when that link is shared |
 | Do not invent coverage claims | ⚠️ | the homepage says **"Serving ALL of Virginia since 2014"** while the location pages are deliberately scoped to about an hour's drive (Roanoke, Lynchburg, Charlottesville, Danville, Bedford, Farmville). Those two claims disagree; §29 says not to state coverage unless verified. **Owner decision, not a code fix** |
@@ -231,8 +264,9 @@ quietly returning a shorter day.
 3. ~~**Completed Cases path** (§31)~~ — ✅ done 2026-08-14 (lens + desk, above).
 4. ~~**Lead statuses** (§5)~~ — ✅ done 2026-08-14.
 5. ~~**Send Rate Sheet / Send Intake from a lead** (§5)~~ — ✅ done 2026-08-14.
-6. **Public website §29** — hero, two client paths, homepage order. 🔴
-   (Ask the owner about "Serving ALL of Virginia" first — see ⚠️ above.)
+6. ~~**Public website §29**~~ — ✅ substantively done 2026-08-14 (hero, two
+   paths, How an Assignment Works, claims card leads the grid). 🟡 remains
+   only on the literal section reorder — owner's call, see the table.
 7. ~~**A private-only intake door**~~ — ✅ done 2026-08-14.
 8. ~~**`/intake/` metadata**~~ — ✅ done 2026-08-14.
 9. ~~**Two end-to-end walk-through tests** (§38, §39)~~ — ✅ done 2026-08-14.

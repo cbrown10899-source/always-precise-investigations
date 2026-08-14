@@ -334,7 +334,7 @@ know the cap they are working to. The price fields (`package`, `package_price`,
 Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
-node intake/test-intake.mjs      # 193 checks; needs Playwright, skips cleanly without it
+node intake/test-intake.mjs      # 202 checks; needs Playwright, skips cleanly without it
 node visitor-alerts/test-worker.mjs   # 41 checks
 ```
 
