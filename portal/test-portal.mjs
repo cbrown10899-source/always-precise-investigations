@@ -2921,6 +2921,68 @@ section('A day can be paused, and a paused clock stays paused');
   await page.close();
 }
 
+/* The case bottom bar is the only navigation a phone has once a case is open,
+   and the owner could neither see it nor hit it (2026-08-14). It sat 6px off
+   the screen edge — `calc(6px + env(safe-area-inset-bottom))` adds nothing
+   when the browser reports an inset of zero, which iOS does without
+   viewport-fit=cover — and its targets were about 33px, under Apple's 44px
+   minimum. Numbers, not eyeballs, because "looks fine" is what shipped it. */
+section('The phone bottom bar can be seen and hit');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+  // An admin lands on the dashboard, and under 900px the nav is a drawer.
+  await page.locator('.burger').click();
+  await page.waitForTimeout(300);
+  await page.locator('.tabs button', { hasText: 'Cases' }).click();
+  await page.waitForTimeout(700);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(700);
+
+  const bar = page.locator('.casepage .wsecs');
+  ok('the bottom bar is there on a phone', await bar.isVisible());
+
+  const box = await bar.boundingBox();
+  const btns = page.locator('.casepage .wsecs button');
+  const n = await btns.count();
+  ok('it carries the four sections', n === 4);
+
+  let shortest = 1e9, lowestTop = 0;
+  for (let i = 0; i < n; i++) {
+    const b = await btns.nth(i).boundingBox();
+    shortest = Math.min(shortest, b.height);
+    lowestTop = Math.max(lowestTop, b.y + b.height);
+  }
+  ok(`every target clears Apple's 44px minimum (smallest ${Math.round(shortest)}px)`,
+     shortest >= 44, `${Math.round(shortest)}px`);
+
+  /* The one that actually bit: the tappable area must stop short of the
+     screen edge, where the home indicator lives and a thumb cannot land. */
+  const gap = 844 - lowestTop;
+  ok(`the buttons stand clear of the bottom edge (${Math.round(gap)}px)`, gap >= 12,
+     `${Math.round(gap)}px`);
+  ok('and the bar itself reaches the edge, so nothing shows through beneath it',
+     Math.round(box.y + box.height) >= 844);
+
+  ok('each section has an icon, not just a word in small caps',
+     await page.locator('.casepage .wsecs .sec-i').count() === 4);
+  ok('the section you are on is marked for a screen reader too',
+     await page.locator('.casepage .wsecs button[aria-current="page"]').count() === 1);
+
+  // Tapping still works — visibility changes must not break the routing.
+  await btns.nth(1).click();
+  await page.waitForTimeout(600);
+  ok('tapping a section switches to it',
+     has(await text(page, '.casepage .wsecs button.on'), 'Field'));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();

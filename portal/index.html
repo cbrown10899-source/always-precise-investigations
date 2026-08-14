@@ -260,19 +260,40 @@
     color:var(--muted);padding:8px 14px;cursor:pointer;white-space:nowrap;}
   .wsecs button.on{background:#13273f;border-color:#13273f;color:#fff;}
   .wsecs .sec-s{display:none;}
+  .wsecs .sec-i{display:none;}
   /* UIBUILD P15 — on a phone the section bar is the bottom navigation:
      fixed under the thumb, short labels, the add button pinned above it. */
   @media(max-width:640px){
+    /* The bottom bar is the ONLY navigation a phone has on a case, so it has
+       to announce itself. The owner could not see it or hit it (2026-08-14),
+       and it got three things wrong at once: it sat 6px off the screen edge,
+       its targets were about 33px tall — under Apple's 44px minimum — and it
+       was four small-caps words with nothing to recognise at a glance.
+
+       `max(14px, env(...))` is the load-bearing bit. Without
+       `viewport-fit=cover` iOS reports a safe-area inset of ZERO, so the old
+       calc() added nothing and the buttons pressed against the bottom edge,
+       where the home indicator lives and a thumb cannot land cleanly. The
+       max() guarantees real clearance whether or not the browser reports an
+       inset, and needs no change to the viewport meta. */
     .casepage .wsecs{position:fixed;left:0;right:0;bottom:0;z-index:65;background:#13273f;
-      margin:0;padding:6px 8px calc(6px + env(safe-area-inset-bottom));gap:4px;
-      justify-content:space-around;border-radius:0;}
-    .casepage .wsecs button{flex:1;background:transparent;border:0;color:#c9d6e4;
-      border-radius:8px;padding:9px 2px;text-align:center;}
+      margin:0;padding:6px 6px max(14px,env(safe-area-inset-bottom));gap:4px;
+      justify-content:space-around;border-radius:0;border-top:1px solid #2f5580;
+      box-shadow:0 -6px 18px rgba(9,18,30,.34);}
+    .casepage .wsecs button{flex:1;background:transparent;border:0;color:#dbe9f7;
+      border-radius:10px;padding:6px 2px;text-align:center;min-height:52px;position:relative;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+      font-size:.68rem;letter-spacing:.03em;}
+    .casepage .wsecs button .sec-i{display:block;font-size:1.3rem;line-height:1;}
     .casepage .wsecs button.on{background:#1f3a58;color:#fff;}
+    /* "You are here" has to survive a glance in a car at dusk, so it is a gold
+       cap rather than a slightly different navy. */
+    .casepage .wsecs button.on::before{content:"";position:absolute;top:-6px;left:24%;right:24%;
+      height:3px;border-radius:0 0 3px 3px;background:var(--gold,#c99a3b);}
     .casepage .wsecs .sec-l{display:none;}
     .casepage .wsecs .sec-s{display:inline;}
-    .casepage{padding-bottom:76px;}
-    .addact{bottom:74px;}
+    .casepage{padding-bottom:100px;}
+    .addact{bottom:96px;}
   }
   .ovgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:14px;}
   .ovcard{background:#fff;border:1px solid var(--line);border-radius:12px;padding:13px 15px;}
@@ -395,12 +416,17 @@
   .sv-tl li{border-bottom:1px solid #1e3149;padding:11px 0;}
   .sv-tl .t{color:#8fb4d9;font-size:.8rem;font-variant-numeric:tabular-nums;}
   .sv-tl .m{color:#8fb4d9;font-size:.8rem;margin-top:3px;}
+  /* Same clearance rule as the case bar above, for the same reason: with a
+     reported inset of zero this used to sit flush on the screen edge. */
   .sv-nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:#132538;
-    border-top:1px solid #23405f;z-index:80;padding-bottom:env(safe-area-inset-bottom);}
+    border-top:1px solid #2a4a70;z-index:80;box-shadow:0 -6px 18px rgba(5,11,20,.45);
+    padding-bottom:max(12px,env(safe-area-inset-bottom));}
   .sv-nav button{flex:1;font:inherit;font-size:.7rem;font-weight:700;background:none;border:0;
-    color:#8fb4d9;padding:11px 2px;cursor:pointer;}
-  .sv-nav button b{display:block;font-size:1.1rem;font-weight:400;margin-bottom:2px;}
+    color:#a8c6e4;padding:10px 2px;cursor:pointer;min-height:50px;position:relative;}
+  .sv-nav button b{display:block;font-size:1.25rem;font-weight:400;margin-bottom:2px;}
   .sv-nav button.on{color:#fff;}
+  .sv-nav button.on::before{content:"";position:absolute;top:0;left:24%;right:24%;height:3px;
+    border-radius:0 0 3px 3px;background:var(--gold,#c99a3b);}
   .sv-mic{width:100%;font:inherit;font-size:1rem;font-weight:800;padding:16px;border-radius:12px;
     border:1.5px dashed #2a456a;background:#132538;color:#e8eef5;cursor:pointer;margin-bottom:10px;}
   .sv-mic.live{border-style:solid;border-color:var(--gold,#c99a3b);color:var(--gold,#c99a3b);}
@@ -1871,16 +1897,19 @@ async function reloadWorkspace(){
    active section is DERIVED from it, never stored, so the two cannot drift.
    An investigator's four sections are their own — nothing administrative. */
 function wsSections(){
-  // The 4th element is the bottom-bar label (UIBUILD P15) — the same four
-  // sections, phone-width words.
+  /* The 4th element is the bottom-bar label (UIBUILD P15) — the same four
+     sections, phone-width words. The 5th is its icon: a word in small caps is
+     not something you recognise at a glance in a car, which is what the owner
+     hit on 2026-08-14. The glyphs match .sv-nav wherever the label does, so
+     the field bar and the case bar read as one system rather than two. */
   if(ME.role === "admin"){
     return [
-      ["overview",  "Overview",          [["overview","Overview"], ["details","Intake details"], ["subject","Subject"]], "Home"],
-      ["fieldwork", "Fieldwork",         [["field","Field work"], ["activity","Activity log"]], "Field"],
-      ["repev",     "Report & Evidence", [["reports","Reports"], ["evidence","Evidence"], ["package","Package"]], "Report"],
+      ["overview",  "Overview",          [["overview","Overview"], ["details","Intake details"], ["subject","Subject"]], "Home", "&#8962;"],
+      ["fieldwork", "Fieldwork",         [["field","Field work"], ["activity","Activity log"]], "Field", "&#128065;"],
+      ["repev",     "Report & Evidence", [["reports","Reports"], ["evidence","Evidence"], ["package","Package"]], "Report", "&#128196;"],
       ["admin",     "Admin",             [["assign","Assignment"], ["auth","Authorization"], ["expenses","Expenses"],
                                           ["notes","Internal notes"], ["comms","Comm log"], ["tasks","Tasks"],
-                                          ["billing","Billing & closing"]], "Admin"],
+                                          ["billing","Billing & closing"]], "Admin", "&#9881;"],
     ];
   }
   const assignment = [["overview","Overview"], ["subject","Subject"], ["tasks","Tasks"],
@@ -1889,10 +1918,10 @@ function wsSections(){
   // an investigator works to a cap they can see, and nothing about money.
   if(WS && WS.authorization && WS.authorization.authorized_hours != null) assignment.push(["auth","Authorization"]);
   return [
-    ["assignment", "Assignment", assignment, "Home"],
-    ["activity",   "Activity",   [["field","Field work"], ["activity","Activity log"], ["expenses","Expenses"]], "Activity"],
-    ["evidence",   "Evidence",   [["evidence","Evidence"]], "Evidence"],
-    ["report",     "Report",     [["reports","Reports"]], "Report"],
+    ["assignment", "Assignment", assignment, "Home", "&#8962;"],
+    ["activity",   "Activity",   [["field","Field work"], ["activity","Activity log"], ["expenses","Expenses"]], "Activity", "&#9998;"],
+    ["evidence",   "Evidence",   [["evidence","Evidence"]], "Evidence", "&#128247;"],
+    ["report",     "Report",     [["reports","Reports"]], "Report", "&#128196;"],
   ];
 }
 function wsSectionFor(tab){
@@ -3165,8 +3194,10 @@ function caseBodyHtml(){
   const sec = wsSectionFor(WS_TAB);
   return `
     ${caseHeader(s, a, admin)}
-    <div class="wsecs">${wsSections().map(([k, lbl, _tabs, short]) =>
-      `<button class="${sec[0] === k ? "on" : ""}" data-act="wsSec" data-sec="${k}"><span class="sec-l">${esc(lbl)}</span><span class="sec-s">${esc(short || lbl)}</span></button>`).join("")}</div>
+    <div class="wsecs">${wsSections().map(([k, lbl, _tabs, short, icon]) =>
+      `<button class="${sec[0] === k ? "on" : ""}" data-act="wsSec" data-sec="${k}"${
+        sec[0] === k ? ' aria-current="page"' : ""}><span class="sec-i" aria-hidden="true">${
+        icon || ""}</span><span class="sec-l">${esc(lbl)}</span><span class="sec-s">${esc(short || lbl)}</span></button>`).join("")}</div>
     <div class="wstabs">${sec[2].map(([k, lbl]) =>
       `<button class="${WS_TAB === k ? "on" : ""}" data-act="wsTab" data-tab="${k}">${esc(lbl)}</button>`).join("")}</div>
     <div class="wspanel">${panel}</div>`;
