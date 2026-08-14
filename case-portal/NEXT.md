@@ -10,8 +10,8 @@ state. Update it when the queue moves; keep it short.
 truth** (recorded verbatim 2026-08-13).
 
 Snapshot date: 2026-08-14. Branch: `claude/app-crashes-lockups-debug-psf6zd`.
-Master is green through PR #57 (`a26f27b`). Suites at last green: worker 707,
-portal e2e 618, intake 186, alerts 41.
+Master is green through PR #57 (`a26f27b`). Suites at last green: worker 722,
+portal e2e 635, intake 186, alerts 41.
 
 ---
 
@@ -167,25 +167,28 @@ Audited subfeature by subfeature rather than as one name.
 | Back inside the mode / Exit active mode | ✅ shipped #55 |
 | PWA manifest, icons, home-screen launch | ✅ |
 | Admin "Out now", no location of any kind | ✅ |
-| **A top-level way IN, without the home-screen icon** | 🔴 **see below** |
-| **Pause / resume the day timer** | 🔴 **see below** |
+| **A top-level way IN, without the home-screen icon** | ✅ **done 2026-08-14** — an "Active surveillance" item in the navigation, both roles, opening the same launcher `?surveillance=1` opens. Tested at iPad (1112×834) and phone (390×844) widths |
+| **Pause / resume the day timer** | ✅ **done 2026-08-14** — `case_day_pauses` spans, server-recorded. Elapsed is `(now - started) - closed spans`; an open pause freezes the display on `paused_at`. Breaks come off the billable total |
 
-**🔴 The launch button has no top-level door.** `svLaunchButton()` renders in
+**✅ FIXED 2026-08-14 — was: the launch button has no top-level door.** `svLaunchButton()` renders in
 exactly two places, `overviewPanel()` and `fieldHomeHtml()` — both of which are
 a *case's Overview tab*. There is no header button, no nav tab and nothing on
 the dashboard. So from Safari on an iPad you must sign in → Cases → open a
 case → Overview before the button exists. The only other door is
 `?surveillance=1`, which is the PWA start URL and therefore assumes the icon
-is already on the home screen. **Owner reported this on 2026-08-14 and it is
-the single highest-priority item.**
+is already on the home screen. Owner reported this on 2026-08-14; fixed the same day. The
+case-level button stays as the shortcut — the nav item is the door.
 
-**🔴 Pause does not exist.** No `pause` concept in `portal/index.html`,
+**✅ FIXED 2026-08-14 — was: pause does not exist.** No `pause` concept in `portal/index.html`,
 `worker.js` or `schema.sql`. When it is built the timer rule holds: the day's
 elapsed time derives from server timestamps and never from counted ticks, so
 paused spans must be **recorded server-side and subtracted**, not tracked in
-the browser. That means a companion table (`case_day_pauses`), not columns on
-`case_days` — `schema.sql` is re-applied on every portal-setup run and
-`ALTER TABLE ADD COLUMN` is not idempotent.
+the browser. It was built that way: `case_day_pauses` holds the spans, a
+partial unique index allows only one open pause per day (so two taps on a
+flaky connection cannot open two), and `hours` at day end is the WORKED
+figure with the break subtracted — because `hours` is what authorization and
+invoices draw against. The day-end message names the break rather than
+quietly returning a shorter day.
 
 ### Public website / SEO (§29, §30)
 
@@ -223,10 +226,8 @@ the browser. That means a companion table (`case_day_pauses`), not columns on
 
 ## TOP 10 REMAINING ITEMS, in priority order
 
-1. **A top-level door into Active Surveillance Mode** — owner-reported, blocks
-   real field use from an iPad. 🔴
-2. **Pause / resume the day timer** — owner-reported. Server-recorded pause
-   spans, companion table. 🔴
+1. ~~**A top-level door into Active Surveillance Mode**~~ — ✅ done 2026-08-14.
+2. ~~**Pause / resume the day timer**~~ — ✅ done 2026-08-14.
 3. **Completed Cases path** (§31) — the office cannot find finished work. 🔴
 4. **Lead statuses** (§5) — nine of them, distinct from case statuses. 🔴
 5. **Send Rate Sheet / Send Intake from a lead** (§5) — the actions exist but

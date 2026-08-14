@@ -748,3 +748,31 @@ CREATE TABLE IF NOT EXISTS build_custom (
   at       TEXT NOT NULL,
   by       INTEGER REFERENCES users(id)
 );
+
+-- ---------------------------------------------------------------------------
+-- Pausing an investigation day (owner, 2026-08-14). A break for lunch, or the
+-- subject going into a building for two hours, should stop the clock — and
+-- the client should not be billed for it.
+--
+-- Recorded as SPANS ON THE SERVER, never as a client-side counter, for the
+-- same reason the timer itself derives from `case_days.created_at`: a phone
+-- that sleeps, reloads or has a wrong clock must not be able to move the
+-- number. Elapsed is (now - started) - the paused spans, and while a pause is
+-- open the display freezes at the instant it opened.
+--
+-- A companion table rather than columns on `case_days`, for the reason
+-- recorded above `activity_removed`: schema.sql is re-applied on every
+-- portal-setup run and ALTER TABLE ADD COLUMN is not idempotent.
+CREATE TABLE IF NOT EXISTS case_day_pauses (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  day_id     INTEGER NOT NULL,
+  started_at TEXT    NOT NULL,
+  ended_at   TEXT,
+  reason     TEXT,
+  by_user    INTEGER REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_daypause ON case_day_pauses(day_id);
+-- At most one pause open per day. Enforced by the database rather than by a
+-- check in the route, so two taps on a flaky connection cannot open two.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_daypause_open
+  ON case_day_pauses(day_id) WHERE ended_at IS NULL;

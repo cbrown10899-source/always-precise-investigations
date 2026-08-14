@@ -2816,6 +2816,111 @@ section('A private invoice shows the retainer drawing down');
   await page.close();
 }
 
+/* The owner could not reach the field view from an iPad. svLaunchButton()
+   rendered in exactly two places and both were a case's Overview tab, so you
+   had to open Cases, open a case and land on Overview before any door
+   existed — and ?surveillance=1 assumes the icon is already on the home
+   screen. Tested at iPad width BECAUSE that is where it was reported. */
+section('The field view has a door you can find from anywhere');
+{
+  for (const [label, w, h] of [['iPad landscape', 1112, 834], ['phone', 390, 844]]) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
+    page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+    await page.goto(SITE + '/portal/');
+    await page.waitForTimeout(300);
+    await page.locator('#u').fill('dana');
+    await page.locator('#p').fill('FieldWork2026x');
+    await page.locator('#loginBtn').click();
+    await page.waitForTimeout(900);
+
+    if (w < 900) { await page.locator('.burger').click(); await page.waitForTimeout(300); }
+    ok(`${label}: the navigation offers Active surveillance without opening a case`,
+       await page.locator('.side-surv').isVisible());
+    await page.locator('.side-surv').click();
+    await page.waitForTimeout(800);
+    ok(`${label}: and it opens the field launcher`,
+       has(await text(page, 'body'), 'surveillance'));
+    ok(`${label}: from the launcher, without ever touching the home screen`,
+       await page.locator('.sv-launch, [data-act="svEnter"]').count() > 0);
+    await page.close();
+  }
+
+  // The office runs its own fieldwork too, so the same door is on both roles.
+  const admin = await newPage();
+  await signIn(admin, 'trever', 'AdminPassword1x');
+  ok('an admin has the same door', await admin.locator('.side-surv').isVisible());
+  await admin.close();
+}
+
+/* Pausing the day. The rule that must survive: the clock is derived from
+   server timestamps, never counted here — so a pause FREEZES it because
+   paused_at is a fixed instant, and a reload shows the same number. */
+section('A day can be paused, and a paused clock stays paused');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('dana');
+  await page.locator('#p').fill('FieldWork2026x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+  // Under 900px the sidebar is a drawer, so the burger comes first.
+  await page.locator('.burger').click();
+  await page.waitForTimeout(300);
+  await page.locator('.side-surv').click();
+  await page.waitForTimeout(800);
+  await page.locator('[data-act="svEnter"]').first().click();
+  await page.waitForTimeout(900);
+
+  /* An earlier section may have left a day running on this investigator —
+     that is the point of resume-anywhere. Start one only if none is. */
+  if (await page.locator('[data-act="svStartDay"]').count()) {
+    await page.locator('[data-act="svStartDay"]').click();
+    await page.waitForTimeout(900);
+  }
+  ok('the day is running', has(await text(page, '.sv-body'), 'running since'));
+  ok('and a break is offered', await page.locator('[data-act="svPause"]').count() === 1);
+
+  await page.locator('[data-act="svPause"]').click();
+  await page.waitForTimeout(900);
+  let body = await text(page, '.sv-body');
+  ok('pausing says so in words, not only in colour', has(body, 'paused'));
+  ok('and says the time is not billed', has(body, 'not billed'));
+  ok('the timer is marked paused', await page.locator('.sv-timer.paused').count() === 1);
+  ok('Pause is replaced by Resume — never both at once',
+     await page.locator('[data-act="svResume"]').count() === 1
+     && await page.locator('[data-act="svPause"]').count() === 0);
+  ok('ending the day is still reachable while paused',
+     await page.locator('[data-act="svTab"][data-t="endday"]').count() === 1);
+
+  /* The whole point: the pause lives on the SERVER, so it survives both the
+     seconds passing and the page going away. A reload leaves the mode (that
+     has always been true), so come back in through the new top-level door —
+     which is exactly how an investigator would recover in the field. */
+  const before = await page.locator('#svTimer').innerText();
+  await page.waitForTimeout(2200);
+  ok('a paused clock does not tick', (await page.locator('#svTimer').innerText()) === before);
+  await page.reload();
+  await page.waitForTimeout(1200);
+  await page.locator('.burger').click();
+  await page.waitForTimeout(300);
+  await page.locator('.side-surv').click();
+  await page.waitForTimeout(900);
+  await page.locator('[data-act="svEnter"]').first().click();
+  await page.waitForTimeout(900);
+  ok('coming back in, the day is still paused on the same number',
+     await page.locator('.sv-timer.paused').count() === 1
+     && (await page.locator('#svTimer').innerText()) === before);
+
+  await page.locator('[data-act="svResume"]').click();
+  await page.waitForTimeout(900);
+  ok('resuming puts it back on the clock',
+     await page.locator('.sv-timer.paused').count() === 0
+     && await page.locator('[data-act="svPause"]').count() === 1);
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();

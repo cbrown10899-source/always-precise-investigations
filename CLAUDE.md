@@ -402,8 +402,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 707 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 618 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 722 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 635 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
@@ -503,6 +503,25 @@ the day was recorded; the page measures its skew against the Worker's
 so a reload, a sleeping phone or a wrong device clock cannot move it — there is
 a test that reloads mid-day and asserts the clock did not restart. The
 investigator's own `start_time` stays what the day's hours are computed from.
+
+**Pausing obeys the same rule.** A break is a SPAN recorded server-side in
+`case_day_pauses`, and elapsed is `(now - started) - the closed spans`. While a
+pause is open the page substitutes the server's `paused_at` for `now`, so the
+display freezes without anything here stopping a tick — and it is still frozen,
+on the same number, after a reload. One open pause per day is enforced by a
+partial unique index, not by a check in the route, so two taps on a flaky
+connection cannot open two. **Breaks come off the billable total**: `hours` is
+what authorization and invoices draw against, so it is the WORKED figure, and
+the day-end message names the break that was subtracted rather than quietly
+returning a shorter day.
+
+**The field view has a top-level door.** `svLaunchButton()` used to render only
+inside a case's Overview tab, so on an iPad you had to open Cases, open a case
+and land on Overview before any way in existed — and `?surveillance=1` assumes
+the icon is already on the home screen. Both roles now carry an **Active
+surveillance** item in the navigation that opens the same launcher, and a test
+asserts it at iPad and phone widths. Do not remove it in favour of the
+case-level button; that button is the shortcut, not the door.
 
 **An entry can be removed but never erased** (owner, 2026-08-14). `activity_removed`
 is a companion table — not columns on `activity_log`, because `schema.sql` is
