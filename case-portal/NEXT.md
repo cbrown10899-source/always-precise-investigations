@@ -55,7 +55,7 @@ Legend: ✅ done and verified · 🟡 partial · 🔴 not implemented ·
 | Private sheet → "Include Private Client Intake" | ✅ | same, `intakeLabel` ternary |
 | The pairing is decided **server-side**, not by the caller | ✅ | `SHEET_INTAKE` keyed by sheet id in `worker.js`; the page sends only `include_intake` boolean |
 | Insurance → insurance intake ONLY, no crossing | ✅ | worker test asserts every `/intake/` occurrence in both HTML and text parts carries `?assignment=insurance` |
-| Private → private intake ONLY | ⚠️ | the private sheet sends **bare `/intake/`**, which still offers all three services including the carrier path. Nothing hands a carrier the consumer door — that direction is airtight — but a private client *can* pick "insurance claim assignment" from the link they were sent. There is no `?assignment=private` door |
+| Private → private intake ONLY | ✅ **done 2026-08-14** | `?assignment=private` — the picker without the carrier path, refused even when `pickSvc('claims')` is called directly. The private sheet and the lead send both email this door now |
 | Unticked = no intake link at all | ✅ | worker test |
 | Client-facing insurance figures $1,200 / $2,300 / $3,300 / $150 hr | ✅ | `RATES.packages` + floor guard test |
 | Client-facing sheet hides band, rack rate, discount math, margin, compensation | ✅ | `RATESHEETS.md` separation; investigator 403s |
@@ -66,7 +66,7 @@ Legend: ✅ done and verified · 🟡 partial · 🔴 not implemented ·
 | Requirement | State | Evidence |
 | --- | --- | --- |
 | Public insurance intake exists | ✅ | `/intake/?assignment=insurance` |
-| Public private intake exists | 🟡 | bare `/intake/` is the shared picker, not a private-only door (see above) |
+| Public private intake exists | ✅ | `?assignment=private` (2026-08-14); bare `/intake/` still offers all three for anyone arriving on their own |
 | Structured provided / not_available states | ✅ | `naBox()`, `applyNaStates()`, `<field>_status` |
 | `not_applicable` exists in the model, offered nowhere | ✅ | deliberate, recorded in `INTAKE-NA.md` |
 | Never forced to invent information | ✅ | test scans every value field for "N/A", "unknown", 0000, placeholder dates |
@@ -200,7 +200,7 @@ quietly returning a shorter day.
 | Portal login secondary | ✅ | already not prominent |
 | Homepage section order per §29 | 🔴 | current: hero → services → testimonials → about → CTA → locations |
 | Title / description / canonical / OG / JSON-LD on service pages | ✅ | all present on the homepage and the three service pages |
-| Same on `/intake/` | 🟡 | title only — **no meta description, no canonical, no OG** |
+| Same on `/intake/` | ✅ **done 2026-08-14** | description, canonical and OG added. `noindex` stays — the form is reached by being sent the link; the OG tags are for the preview a mail client draws when that link is shared |
 | Do not invent coverage claims | ⚠️ | the homepage says **"Serving ALL of Virginia since 2014"** while the location pages are deliberately scoped to about an hour's drive (Roanoke, Lynchburg, Charlottesville, Danville, Bedford, Farmville). Those two claims disagree; §29 says not to state coverage unless verified. **Owner decision, not a code fix** |
 
 ### Permissions (§33) and end-to-end (§38, §39)
@@ -233,9 +233,8 @@ quietly returning a shorter day.
 5. ~~**Send Rate Sheet / Send Intake from a lead** (§5)~~ — ✅ done 2026-08-14.
 6. **Public website §29** — hero, two client paths, homepage order. 🔴
    (Ask the owner about "Serving ALL of Virginia" first — see ⚠️ above.)
-7. **A private-only intake door** — `?assignment=private`, so the private rate
-   sheet stops sending a link that offers the carrier path. ⚠️
-8. **`/intake/` metadata** — description, canonical, OG. 🟡
+7. ~~**A private-only intake door**~~ — ✅ done 2026-08-14.
+8. ~~**`/intake/` metadata**~~ — ✅ done 2026-08-14.
 9. **Two end-to-end walk-through tests** (§38, §39) — one carrier case and one
    private case, intake to invoice, in a single test each. 🧪
 10. **Dropbox video delivery** (§14) — 🔴, and **blocked on the owner's three

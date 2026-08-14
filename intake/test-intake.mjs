@@ -732,6 +732,39 @@ section('Bare /intake/ still offers everything');
   await page.close();
 }
 
+/* The other door (audit 2026-08-14): what the PRIVATE rate sheet emails. A
+   private client still picks between the two consumer services — the step
+   stays — but the carrier path is simply not offered to them, the mirror of
+   the carrier door never offering the consumer picker. */
+section('The private door — /intake/?assignment=private');
+{
+  const page = await (await browser.newContext()).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(BASE + '?assignment=private');
+  await page.waitForTimeout(200);
+
+  ok('it is still the client intake — private clients see nothing renamed',
+     (await page.locator('.name').innerText()).includes('CLIENT INTAKE'));
+  await set(page, 'c_name', 'Riley Caller');
+  await set(page, 'c_phone', '4345550199');
+  await advance(page);
+  ok('the service step is still a choice', await heading(page) === 'What do you need?');
+  const services = await page.locator('.card').innerText();
+  ok('surveillance is offered', services.includes('Surveillance'));
+  ok('process serving is offered', services.includes('Process Serving'));
+  ok('the claim assignment is NOT — a private client is never offered carrier work',
+     !services.includes('Insurance Claim Assignment'));
+  ok('nor a rate beside anything, as ever', !services.includes('$'));
+
+  // The belt behind the missing card: even a hand-typed call cannot take it.
+  await page.evaluate(() => pickSvc('claims'));
+  await page.waitForTimeout(150);
+  ok('the door refuses the carrier path even when asked directly',
+     !(await page.locator('.card').innerText()).includes('Claim details')
+     && await page.evaluate(() => S.svc) !== 'claims');
+  await page.close();
+}
+
 /* Every carrier-facing button has to go through the door, or the isolation is
    decorative — one stale link puts an adjuster back on the consumer picker. */
 section('Carrier pages link to the carrier door');

@@ -800,7 +800,10 @@ const SHEET_INTAKE = {
   insurance_assignment: { label: 'Insurance Assignment Intake',
     url: 'https://alwayspreciseinvestigations.net/intake/?assignment=insurance' },
   private_retainer: { label: 'Private Client Intake',
-    url: 'https://alwayspreciseinvestigations.net/intake/' },
+    // The private door (audit 2026-08-14): the picker without the carrier
+    // path. A private client emailed this link is never offered a claim
+    // assignment with a private-client price beside it.
+    url: 'https://alwayspreciseinvestigations.net/intake/?assignment=private' },
 };
 
 function sheetEmail(sheet, note, includeIntake) {
