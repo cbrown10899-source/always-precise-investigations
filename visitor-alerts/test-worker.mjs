@@ -6,6 +6,7 @@
  *
  *   node visitor-alerts/test-worker.mjs
  */
+import fs from 'node:fs';
 import worker from './worker.js';
 
 /* ------------------------------------------------------------ test harness */
@@ -305,6 +306,35 @@ const call = (req, env) => worker.fetch(req, env);
   const again = await (await call(authed('/recent'), env)).json();
   ok('seeded totals are stable across reads', again.affTotal === 1 && again.visits30 === 1,
     `affTotal ${again.affTotal}, visits30 ${again.visits30}`);
+}
+
+/* The client script that feeds this Worker. It has no DOM harness, so these
+   are structural guards over the two bugs found on 2026-08-14 — both of which
+   lost real visits silently, which is the kind that never gets reported. */
+{
+  const src = fs.readFileSync(new URL('../beacon.js', import.meta.url), 'utf8');
+
+  /* A prerendered page BECOMES a real visit on activation, and it is the same
+     document — already parsed, already run. Returning meant that visit was
+     never counted, and the ones lost were the highest-intent: straight from
+     Chrome's address bar. */
+  ok('a prerender defers the beacon rather than killing it',
+     /prerenderingchange/.test(src));
+  ok('and does not bail out of the script on prerender',
+     !/document\.prerendering[^\n]*\breturn\b/.test(src));
+
+  /* The dwell timer used to check visibility once and forfeit if hidden — a
+     reader who tabbed away across the 4s mark and came back was never counted
+     unless they touched something. */
+  ok('the dwell timer re-arms when the tab is hidden rather than forfeiting',
+     /else\s+timer\s*=\s*setTimeout\(tick/.test(src));
+
+  // The privacy promises in its own header, still true.
+  ok('the beacon still sends only the path, never the query string',
+     /path:\s*location\.pathname/.test(src) && !/location\.search|location\.href/.test(src));
+  ok('it still honours Do Not Track and Global Privacy Control',
+     /doNotTrack/.test(src) && /globalPrivacyControl/.test(src));
+  ok('it still refuses to send cookies', /credentials:\s*'omit'/.test(src));
 }
 
 /* ----------------------------------------------------------------- report */

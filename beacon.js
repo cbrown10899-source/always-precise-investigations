@@ -18,9 +18,6 @@
   // Headless/automated browsers announce themselves here.
   if (navigator.webdriver) return;
 
-  // Chrome prerenders links the user has not clicked; those are not visits.
-  if (document.prerendering || document.visibilityState === 'prerender') return;
-
   var sent = false;
   var timer = null;
 
@@ -67,21 +64,48 @@
     for (var i = 0; i < EVENTS.length; i++) {
       window.addEventListener(EVENTS[i], onSignal, { capture: true, passive: true, once: true });
     }
-    // Or simply being on the page, visible, for a few seconds.
-    timer = setTimeout(function () {
+    /* Or simply being on the page, visible, for a few seconds. If the tab
+       happens to be hidden when this fires, RE-ARM rather than forfeit — it
+       used to just return, so a reader who tabbed away across the four-second
+       mark and came back was never counted unless they touched something. */
+    timer = setTimeout(function tick() {
+      if (sent) return;
       if (document.visibilityState === 'visible') send();
+      else timer = setTimeout(tick, 2000);
     }, 4000);
   }
 
-  if (document.visibilityState === 'visible') {
-    arm();
-  } else {
-    // Opened in a background tab — wait until it is actually looked at.
-    document.addEventListener('visibilitychange', function once() {
-      if (document.visibilityState === 'visible') {
-        document.removeEventListener('visibilitychange', once);
-        arm();
+  function start() {
+    if (document.visibilityState === 'visible') {
+      arm();
+    } else {
+      // Opened in a background tab — wait until it is actually looked at.
+      document.addEventListener('visibilitychange', function once() {
+        if (document.visibilityState === 'visible') {
+          document.removeEventListener('visibilitychange', once);
+          arm();
+        }
+      });
+    }
+  }
+
+  /* Chrome prerenders links the user has not clicked, and those are not
+     visits — but they BECOME one the moment the user navigates there, and
+     the prerendered document is the SAME document, already parsed and
+     already run. So this defers rather than returning: returning here meant
+     a real visit was never counted at all, and the visits it lost were the
+     highest-intent ones, arriving straight from the address bar. */
+  if (document.prerendering) {
+    document.addEventListener('prerenderingchange', start, { once: true });
+  } else if (document.visibilityState === 'prerender') {
+    // The older, deprecated prerender API — same deferral, its own event.
+    document.addEventListener('visibilitychange', function pre() {
+      if (document.visibilityState !== 'prerender') {
+        document.removeEventListener('visibilitychange', pre);
+        start();
       }
     });
+  } else {
+    start();
   }
 })();

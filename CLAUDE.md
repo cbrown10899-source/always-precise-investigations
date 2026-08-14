@@ -380,7 +380,7 @@ Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
 node intake/test-intake.mjs      # 202 checks; needs Playwright, skips cleanly without it
-node visitor-alerts/test-worker.mjs   # 41 checks
+node visitor-alerts/test-worker.mjs   # 47 checks
 ```
 
 Note the payment handles in `FIRM` are still personal accounts — the source
