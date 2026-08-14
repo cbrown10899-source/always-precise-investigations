@@ -102,6 +102,15 @@
   .chip{display:inline-flex;align-items:center;gap:6px;background:#eaf5f7;border:1px solid #b7dbe3;
     color:var(--navy);border-radius:999px;padding:3px 6px 3px 11px;font-size:.8rem;font-weight:700;}
   .chip button{border:0;background:none;font:inherit;font-size:1rem;cursor:pointer;color:var(--teal-ink,#1d5c6c);line-height:1;}
+  /* MASTER §31 — the Cases tab's lens and the Completed desk. */
+  .lensrow{display:flex;gap:6px;margin:0 0 12px;flex-wrap:wrap;}
+  .lens{font:inherit;font-size:.8rem;font-weight:700;padding:6px 14px;border-radius:999px;
+    border:1px solid var(--line);background:#fff;color:var(--muted);cursor:pointer;}
+  .lens.on{background:#13273f;border-color:#13273f;color:#fff;}
+  .donegrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px;}
+  .donecard{border:1px solid var(--line);border-radius:12px;padding:13px 15px;background:#fff;}
+  .dc-top{display:flex;justify-content:space-between;gap:10px;margin-bottom:10px;}
+  .dc-acts{display:flex;flex-wrap:wrap;gap:6px;border-top:1px solid var(--line);padding-top:10px;}
   /* rate sheets */
   .sheet-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:12px;}
   .sheet-card{text-align:left;background:#fff;border:1px solid var(--line);border-radius:10px;
@@ -673,6 +682,8 @@ function favToggle(line){
 let LOAD_ERR = "";        // why the portal could not load, shown rather than hidden
 let SCHEMA_MISSING = [];  // tables the database does not have yet
 let CARD_FILTER = null;   // {label, set:Set(case numbers)} — a dashboard card's cases
+let CASE_VIEW = "all";    // all | open | completed — the Cases tab's lens (MASTER §31)
+let COMPLETED = null;     // the /completed payload, fetched when the lens turns
 let MY_REPORTS = null, MY_EXPENSES = null, MY_COMP = null, OFFERS = [];   // the investigator's own desk
 let CAL = null;   // {month, days, offers}
 /* Examples show themselves on a first sign-in and can be recalled later. */
@@ -1552,7 +1563,11 @@ function casesView(){
   const base = CARD_FILTER
     ? CASES.filter(c => CARD_FILTER.set.has(c.case_no))
     : (SHOW_EXAMPLE ? CASES.concat(examplesFor(ME.role)) : CASES);
-  const shown = base;
+  /* MASTER §31 — the Cases tab's lens. Open hides finished work; Completed is
+     the artifact desk. Admin-only: an investigator's list is their
+     assignments, and the desk carries invoices and client identity. */
+  const terminal = c => ["complete", "closed", "cancelled"].includes(c.stage || "") || c.status === "closed";
+  const shown = admin && CASE_VIEW === "open" ? base.filter(c => !terminal(c)) : base;
   const rows = shown.filter(c => !q || [c.case_no, c.client_name, c.subject_name, c.carrier, c.claim_number]
     .some(v => (v || "").toLowerCase().includes(q)));
 
@@ -1593,6 +1608,22 @@ function casesView(){
          <button data-act="clearCardFilter" aria-label="Clear filter">&times;</button></span>`
     : "";
 
+  const lens = admin ? `<div class="lensrow">${
+    [["all", "All"], ["open", "Open"], ["completed", "Completed"]].map(([v, l]) =>
+      `<button class="lens ${CASE_VIEW === v ? "on" : ""}" data-act="caseView" data-v="${v}">${l}</button>`).join("")
+    }</div>` : "";
+
+  if(admin && CASE_VIEW === "completed"){
+    return `<div class="card">
+      <div class="bar">
+        <h2 style="margin:0">Cases</h2>
+        <input id="q" placeholder="Search case, client, carrier, claim no." value="${esc(FILTER)}" data-act="filter">
+      </div>
+      ${lens}
+      ${completedDesk(q)}
+    </div>`;
+  }
+
   return `<div class="card">
     <div class="bar">
       <h2 style="margin:0">Cases</h2>${filterChip}
@@ -1601,6 +1632,7 @@ function casesView(){
         (s => s && (s.claims || s.consumer)
           ? ` · ${s.claims || 0} carrier · ${s.consumer || 0} private` : "")(SUMMARY)}</span>
     </div>
+    ${lens}
     ${exBanner}
     ${more}
     ${rows.length ? `<div style="overflow-x:auto"><table>
@@ -1619,6 +1651,48 @@ function casesView(){
                 : "Nothing assigned to you yet. Cases appear here when an admin assigns one.")
               + ` <button class="btn sm ghost" data-act="showExample" style="margin-left:8px">Show an example</button>`}</div>`}
   </div>`;
+}
+
+/* MASTER §31 — the desk itself. Every finished case with its artifacts one
+   tap away, and a button only where the artifact exists (P22: no dead
+   controls). The deep links land on the tab that holds the download — the
+   reports tab has Print / Save as PDF, the package tab has Download and the
+   evidence index inside the document. */
+function completedDesk(q){
+  if(!COMPLETED) return `<div class="empty">Loading completed cases&hellip;</div>`;
+  if(COMPLETED.error) return `<div class="err">${esc(COMPLETED.error)}</div>`;
+  let list = COMPLETED.completed || [];
+  if(q) list = list.filter(c => [c.case_no, c.client_name, c.subject_name, c.carrier]
+    .some(v => (v || "").toLowerCase().includes(q)));
+  if(!list.length) return `<div class="empty">${q ? "Nothing completed matches that search."
+    : `Nothing is completed yet. A case lands on this desk when its stage is set to
+       <b>Complete</b>, it passes the closing checklist, or its client package is finalized.`}</div>`;
+  const go = (c, tab, lbl) => `<button class="btn sm ghost" data-act="pkgJump"
+      data-case="${esc(c.case_no)}" data-tab="${tab}">${lbl}</button>`;
+  return `<div class="donegrid">${list.map(c => `<div class="donecard">
+    <div class="dc-top">
+      <div>
+        <span class="tag ${c.kind === "claims" ? "claims" : "consumer"}">${c.kind === "claims" ? "Claim" : "Client"}</span>
+        <span class="tag ${esc(c.stage || "complete")}">${c.stage ? esc(label(c.stage)) : "Package finalized"}</span>
+        <div class="mono" style="font-weight:700;margin-top:6px">${esc(c.case_no)}</div>
+        <div style="font-size:.87rem;margin-top:2px">${esc(c.kind === "claims" ? (c.carrier || "") : (c.client_name || ""))}</div>
+        <div style="font-size:.83rem;color:var(--muted)">${esc(c.subject_name || "")}</div>
+      </div>
+      <div style="text-align:right;font-size:.79rem;color:var(--muted)">
+        ${c.finalized_at ? `Package v${esc(String(c.build_version))} &middot; ${when(c.finalized_at)}` : ""}
+        ${c.delivered_at ? `<br>Delivered ${when(c.delivered_at)}` : ""}
+        ${c.stage_at ? `<br>${esc(label(c.stage || ""))} ${when(c.stage_at)}` : ""}
+      </div>
+    </div>
+    <div class="dc-acts">
+      <button class="btn sm" data-act="openCase" data-case="${esc(c.case_no)}">Open case</button>
+      ${c.approved_reports ? go(c, "reports", `Final report${c.approved_reports > 1 ? ` &middot; ${c.approved_reports} days` : ""}`) : ""}
+      ${c.evidence_count ? go(c, "evidence", `Evidence &middot; ${c.evidence_count}`) : ""}
+      ${c.build_id ? go(c, "package", "Client package") : ""}
+      ${c.invoice ? go(c, "billing", `Invoice ${esc(c.invoice.invoice_no)}`) : ""}
+      ${c.share_url ? `<button class="btn sm" data-act="pkgCopyLink" data-url="${esc(c.share_url)}">Copy video link</button>` : ""}
+    </div>
+  </div>`).join("")}</div>`;
 }
 
 /* UIBUILD P20 — the working material moved off the case list into Settings,
@@ -5290,6 +5364,16 @@ document.addEventListener("click", ev => {
     paint();
   }
   else if(act === "clearCardFilter"){ CARD_FILTER = null; paint(); }
+  else if(act === "caseView"){
+    CASE_VIEW = el.dataset.v;
+    if(CASE_VIEW === "completed"){
+      // Fetched on every turn of the lens, so the desk is never stale after
+      // a case was closed in another tab — and errors show, not vanish.
+      COMPLETED = null; paint();
+      api("/completed").then(d => { COMPLETED = d; paint(); })
+        .catch(e => { COMPLETED = {completed: [], error: e.message}; paint(); });
+    } else paint();
+  }
   else if(act === "addDemo"){ addDemoCase(); }
   else if(act === "clearDemo"){ clearDemoCases(); }
   else if(act === "wsTab"){ if(WS_TAB !== el.dataset.tab){ WS_NOTICE = ""; ACT_MODAL = null; }

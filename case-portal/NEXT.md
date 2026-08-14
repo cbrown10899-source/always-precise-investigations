@@ -10,8 +10,8 @@ state. Update it when the queue moves; keep it short.
 truth** (recorded verbatim 2026-08-13).
 
 Snapshot date: 2026-08-14. Branch: `claude/app-crashes-lockups-debug-psf6zd`.
-Master is green through PR #57 (`a26f27b`). Suites at last green: worker 722,
-portal e2e 635, intake 186, alerts 41.
+Master is green through PR #59 (`89de68b`). Suites at last green: worker 733,
+portal e2e 653, intake 186, alerts 41.
 
 ---
 
@@ -116,8 +116,8 @@ Legend: ✅ done and verified · 🟡 partial · 🔴 not implemented ·
 
 | Requirement | State | Evidence |
 | --- | --- | --- |
-| An obvious Completed Cases path | 🔴 | the case list has a **search box only** — no status filter, no completed view. The only "completed" surface is the finalized-package panel *inside* a case, which you must already know how to reach |
-| Per-case artifact actions from there | 🔴 | the actions exist inside the package panel; there is no completed-cases entry point that gathers them |
+| An obvious Completed Cases path | ✅ **done 2026-08-14** | the Cases tab carries an All / Open / Completed lens (admin only). Completed = stage `complete` or `closed`, **or a finalized client package** — finished work is findable before the case is administratively closed. Cancelled is deliberately excluded: nothing to find |
+| Per-case artifact actions from there | ✅ **done 2026-08-14** | `/completed` (admin-only) carries per-case artifact state in one payload; each desk card offers Open case · Final report (with day count) · Evidence (with count) · Client package · Invoice (by number) · Copy video link — and **a button only where the artifact exists** (P22, no dead controls). Deep links land on the tab that holds the download |
 
 ### Video / Dropbox (§14)
 
@@ -228,7 +228,7 @@ quietly returning a shorter day.
 
 1. ~~**A top-level door into Active Surveillance Mode**~~ — ✅ done 2026-08-14.
 2. ~~**Pause / resume the day timer**~~ — ✅ done 2026-08-14.
-3. **Completed Cases path** (§31) — the office cannot find finished work. 🔴
+3. ~~**Completed Cases path** (§31)~~ — ✅ done 2026-08-14 (lens + desk, above).
 4. **Lead statuses** (§5) — nine of them, distinct from case statuses. 🔴
 5. **Send Rate Sheet / Send Intake from a lead** (§5) — the actions exist but
    not where the workflow needs them. 🔴

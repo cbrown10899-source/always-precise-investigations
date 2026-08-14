@@ -2983,6 +2983,53 @@ section('The phone bottom bar can be seen and hit');
   await page.close();
 }
 
+/* MASTER §31 — "Do not bury completed cases in a difficult archive." By this
+   point in the run 4002 and 4003 both carry finalized packages, which is what
+   makes them completed work; 4001 and 4004 have invoices but no finalized
+   build and no terminal stage, so they stay off the desk. */
+section('Completed cases are one obvious click away');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  ok('the Cases tab offers a lens', await page.locator('.lensrow').count() === 1);
+  ok('with Completed spelled out on it',
+     has(await text(page, '.lensrow'), 'Completed'));
+
+  await page.locator('.lens', { hasText: 'Completed' }).click();
+  await page.waitForTimeout(800);
+  const desk = await text(page, '.card');
+  ok('the desk lists the finished cases',
+     desk.includes('API-20260812-4002') && desk.includes('API-20260812-4003'));
+  ok('and not the merely-invoiced ones',
+     !desk.includes('API-20260812-4001') && !desk.includes('API-20260812-4004'));
+
+  const card4002 = page.locator('.donecard', { hasText: 'API-20260812-4002' });
+  ok('a card offers the case, the report, the evidence and the package',
+     await card4002.locator('.btn', { hasText: 'Open case' }).count() === 1
+     && await card4002.locator('.btn', { hasText: 'Final report' }).count() === 1
+     && await card4002.locator('.btn', { hasText: 'Evidence' }).count() === 1
+     && await card4002.locator('.btn', { hasText: 'Client package' }).count() === 1);
+  ok('no invoice button where no invoice exists — no dead controls',
+     await card4002.locator('.btn', { hasText: 'Invoice' }).count() === 0);
+  ok('no copy-link button while no delivery link exists',
+     await card4002.locator('.btn', { hasText: 'Copy video link' }).count() === 0);
+  ok('a three-day case says so on its report button',
+     has(await text(page, '.donecard:has-text("API-20260812-4003")'), '3 days'));
+
+  await card4002.locator('.btn', { hasText: 'Final report' }).click();
+  await page.waitForTimeout(800);
+  ok('Final report lands inside the case, on the Reports tab',
+     has(await text(page, '.wstabs button.on'), 'Reports'));
+  await page.close();
+}
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  ok('an investigator gets no lens and no desk',
+     await page.locator('.lensrow').count() === 0);
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
