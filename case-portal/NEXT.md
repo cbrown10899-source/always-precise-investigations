@@ -131,7 +131,7 @@ Legend: ✅ done and verified · 🟡 partial · 🔴 not implemented ·
 | Evidence gallery, classifications, soft delete | ✅ | |
 | Entry edit + delete (stamped, restorable) | ✅ | `activity_removed`, shipped #55 |
 | Sidebar targets Clients / Reports / Evidence / Expenses / Tasks as top-level nav | 🟡 | deliberate: only built when a target is real. Current nav is Dashboard · Cases · Leads & intakes · Calendar · Rate sheets · Invoices · Staff · Settings |
-| More quick-activity lines, Surveillance/End-Day categories (§10) | 🟡 | the shared vocabulary exists; the extra lines the handoff lists were not added |
+| More quick-activity lines, Surveillance/End-Day categories (§10) | ✅ **done 2026-08-14** | the physical-observation set (walking · standing · sitting · bending · stooping · reaching · carrying · lifting · pushing · pulling · loading · unloading · climbing stairs · shopping · yard work · recreational activity), business and meeting lines, the fuller no-activity and vehicle sets, and a Surveillance category of its own. Every line is a complete sentence, existing strings kept exactly (favorites are stored by text). The §10 **arrival sentence generator** (vehicles present / view / route → composed narrative) is the one §10 piece left — small, and worth the owner's feel for the wording |
 
 ### Case Build (§13) and Case Package (§32)
 
