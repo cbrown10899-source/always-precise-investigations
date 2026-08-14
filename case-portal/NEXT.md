@@ -9,47 +9,81 @@ state. Update it when the queue moves; keep it short.
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
 truth** (recorded verbatim 2026-08-13).
 
-## ⏰ FOR THE OWNER — read this first (morning of 2026-08-14)
+## ⏰ START HERE — handoff to the local session, 2026-08-14
 
-**Update, after your ChatGPT audit prompt:** the full reconciliation is in
-**`RECONCILIATION.md`** next to this file — every lettered section, granular
-rows, evidence per item. The headline: the rate-sheet intake checkbox existed
-at every layer and was E2E-tested, **but it sat on a second wizard step you
-had to click Next to reach — so you never saw it. That was a real visibility
-defect and it is fixed: the checkbox is now on the FIRST screen of the send
-panel**, and the sheet page says the option exists before you even open it.
-New genuine gaps the audit surfaced: **sheet send history (🔴, next code
-item)** and the lead event timeline (🟡). Dropbox remains honestly
-not-implemented, never faked. Nothing was found live-broken or UI-faked.
+**Implementation moved to the owner's local Claude Code + Codex.** This
+remote session stopped deliberately after recording the findings below; it
+did not begin any of the outstanding fixes. Nothing is half-done in the tree.
 
-Overnight, in your stated order, PRs #60–#64 shipped: the Completed Cases
-desk, lead statuses with both send actions on the lead card, the private
-intake door + intake link previews, the §38/§39 end-to-end walkthrough
-tests (finding: **no dead ends existed**), and the §29 homepage work.
-Everything is merged, deployed and green. Decisions and looks that are
-YOURS, none of which block anything:
+**Read `RECONCILIATION.md` first.** It carries the full reconciliation
+against the master handoff — every lettered section, granular rows, evidence
+per item — and at the top of its OPEN FINDINGS section, **the HIGH queue in
+the owner's stated order**. That order is the work list.
 
-1. **Look at the live homepage.** The hero now reads "Surveillance &
-   Investigation Services for Insurance, Legal and Private Clients" with two
-   buttons — *Submit an Insurance Assignment* and *Request a Private
-   Investigation* — above Contact/Call. A new "How an Assignment Works"
-   section sits under the services grid, and the claims card now leads that
-   grid. If you want §29's literal section order instead (dedicated
-   Insurance and Private sections), say so.
-2. **"Serving ALL of Virginia since 2014"** (hero tag + services blurb) vs.
-   the location pages deliberately scoped to about an hour's drive. §29 says
-   not to state coverage unless verified. Which is right? (Left untouched.)
-3. **On your phone**, try: the *Active surveillance* item in the nav, the
-   *Pause — taking a break* button on a running day (breaks now come off the
-   billable hours — flag if you'd rather they didn't), and the bottom bar
-   (bigger, icons, clear of the home indicator).
-4. **Dropbox** stays the one blocked feature — it needs DROPBOX_APP_KEY,
-   DROPBOX_APP_SECRET and DROPBOX_REFRESH_TOKEN as Worker secrets.
-5. Small notes: `intake_received` on a lead is set by hand (a public intake
-   carries no lead id, so auto-matching would be guesswork); Write-Off stays
-   deferred per your own "if needed later".
+### The HIGH queue, in the owner's order
 
-Suites at last green: worker 770, portal e2e 663, intake 202, alerts 41.
+1. **A running or open pause can record a real surveillance day as 0 hours.**
+   `worker.js` ~1747-1766. Highest because it destroys billable time silently
+   and `hours` is what authorization and invoices draw against.
+2. **Reassigning a case can strand a running investigation day** — nobody,
+   not even an admin, can close it afterwards. `worker.js` ~1693-1734, ~1020,
+   ~3081. No in-product recovery path exists.
+3. **A backward invoice status transition can reopen a paid invoice and
+   remove it from Outstanding.** `worker.js` ~2454-2489, ~2349, ~2357, ~3063.
+4. **The Case Build finalize gate strip can be hidden when the package is
+   actually ready to finalize**, so held-back material can ship with the
+   warning suppressed. `portal/index.html` ~2976, ~3160-3245, ~3069;
+   `worker.js` ~2678-2697.
+
+Plus the MEDIUM that belongs with 1 and 2: **every surveillance date is UTC
+while every surveillance time is local**, so evening work files a day late.
+
+### The rule that applies to every one of them
+
+**These are REVIEWER CLAIMS, not verified facts.** Each came from an
+independent audit with a file:line citation; none was independently
+re-verified before this session stopped. Verify against the actual code
+before writing a fix.
+
+That caution is not ceremonial. Today a confirmed bug — the retainer
+consuming itself — survived precisely because **two tests had encoded it as
+the rule**, asserting `applied === 1500 && balance === 0`. Expect the same
+shape: when a fix makes a test fail, decide which one is wrong before
+changing either.
+
+### What this session DID ship (all merged, all green)
+
+PRs #60–#69. The Completed Cases desk; lead statuses with both send actions
+on the lead card; the private intake door and intake link previews; §38/§39
+end-to-end walkthroughs as tests; the §29 homepage; the §10 field
+vocabulary; the send-history log; the visible intake checkbox on the send
+wizard's first screen; two beacon bugs that silently lost real visits; and
+from the audits — two boundary leaks (an office note reaching the field by
+default, and an offer disclosing on decline what it withheld while pending),
+a rate sheet sendable against a lead of the opposite kind, a removed entry's
+text printing as an exhibit caption, two intake placeholders, a `/health`
+check that reported clean on a broken schema, and the retainer double-count.
+
+**Suites at last green (2026-08-14, master `c60a584`):**
+
+| Suite | Checks |
+| --- | --- |
+| `case-portal/test-worker.mjs` | **794** |
+| `portal/test-portal.mjs` | **670** |
+| `intake/test-intake.mjs` | **205** |
+| `visitor-alerts/test-worker.mjs` | **47** |
+
+### Still the owner's, not code's
+
+- **"Serving ALL of Virginia since 2014"** vs. location pages scoped to about
+  an hour's drive. §29 says do not state coverage unless verified.
+- **The literal §29 homepage section order** (dedicated Insurance and Private
+  sections) — the two-path hero shipped instead, deliberately.
+- **Dropbox** — needs `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`,
+  `DROPBOX_REFRESH_TOKEN` as repository secrets; `portal-setup` pushes them
+  all-or-nothing, and `case-portal/README.md` has the app-console steps.
+- **Real iPhone Safari / Android Chrome**, including the camera picker and
+  device dictation — nothing headless can cover those.
 
 ---
 

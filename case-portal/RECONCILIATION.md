@@ -271,6 +271,37 @@ citation, but **none of these has been independently verified by the
 orchestrator** — a reviewer's report is a claim, not a fact. Every item must
 be verified against the actual code before any fix is written.
 
+### THE HIGH QUEUE — work these in this order (owner's order, 2026-08-14)
+
+Implementation of these is happening in the owner's **local Claude Code
+session with Codex**, not from a remote session. Nothing below has been
+started here.
+
+**Every one is still a REVIEWER CLAIM.** Verify each against the actual code
+before writing a fix — the reviewers were right four times today and wrong
+about mutation coverage once, and one of today's confirmed bugs survived
+precisely because two tests had encoded it as the rule.
+
+| # | Finding | Severity | Where the reviewer put it | Why it leads |
+| --- | --- | --- | --- | --- |
+| **1** | **A running or open pause can record a real surveillance day as 0 hours.** `span` is wall-clock minutes between the *typed* `start_time` and `end_time`; an open pause is closed at `nowIso()` and its **real** elapsed subtracted. The two are measured on different clocks. Pause at noon, end the day at 20:00 with an honest 12:00 end time → `worked = Math.max(0, 240 - 480)` = **0**. `Math.max` floors it silently. | HIGH | `case-portal/worker.js` ~1747-1766 (`endDay`); day-end screen pre-fills its end time at render, `portal/index.html` ~3972 | It destroys billable time silently, and `hours` is what authorization and invoices draw against. A wrong invoice is recoverable; a day recorded as zero is gone unless someone remembers |
+| **2** | **Reassigning a case can strand a running investigation day.** `pause`/`resume`/`end` are scoped to BOTH `caseFor()` and `investigator_id = user.id`, so after a reassign nobody — not even an admin — can close the day. It stays `end_time IS NULL` forever, permanently in Out Now, `hours` never written. `myActiveDay` has no `assigned_to` filter, so the old investigator is still offered it and lands in a permanently-loading screen. | HIGH | `case-portal/worker.js` ~1693-1734 (scoping), ~1020 (assign has no open-day check), ~3081 (`myActiveDay`) | No recovery path exists in the product at all. The only fix today is a hand-edit of D1 |
+| **3** | **A backward invoice status transition can reopen a paid invoice and remove it from Outstanding.** `setInvoiceStatus` guards `sent_to_bill` and `sent_to_client`, but `draft` has **no guard**, and `ready` validates content rather than current status. A paid invoice can be set back to draft, its lines rewritten and adjustments applied, bypassing the `locked` check. Then `outstanding`, `drafts` and the dashboard SQL all filter on the **stored** status, so the receivable vanishes while `balance_due` stays honest. | HIGH | `case-portal/worker.js` ~2454-2489 (`setInvoiceStatus`), ~2349 / ~2357 / ~3063 (the aggregates) | Money that is owed stops being visible. API-level only — the page offers Back-to-draft only from `ready` — but the Worker is the stated enforcement point |
+| **4** | **The Case Build finalize gate strip can be hidden when the package is actually ready to finalize.** The gate strip renders only while `b.status !== "finalized"`, so reclassifying evidence to `do_not_use` *after* finalize leaves the warning invisible while Download still works. `pkgDocHtml` renders every `build_items` row with no classification check. | HIGH | `portal/index.html` ~2976 (the suppression), ~3160-3245 (`pkgDocHtml`), ~3069 (Download on the finalized view); `case-portal/worker.js` ~2678-2697 (`editEvidence` does not check finalized builds) | Held-back material can reach a client with the warning suppressed — the one outcome the classification system exists to prevent |
+
+**The MEDIUM that rides with them:** every surveillance **date** is UTC while
+every surveillance **time** is local — `toISOString().slice(0,10)` against
+`toTimeString().slice(0,5)`. After 20:00 EDT the date is tomorrow's, so
+evening surveillance is filed a day late. It reaches `case_days.day_date`,
+`case_reports.report_date` (derived from it) and the timeline's
+`ORDER BY at_date DESC, at_time DESC`. `portal/index.html` ~3690-3691, ~5006,
+~5009, and the same pattern repo-wide (~2253, ~2305, ~2368, ~4863). Worth
+fixing alongside #1 and #2 since it is the same file and the same subject.
+
+Everything else stays in the table below. **Do not discard the unverified
+items** — they are labelled as claims, which is what they are, not as noise.
+
+
 | Area | Finding | Severity | Reviewer's evidence | Status |
 | --- | --- | --- | --- | --- |
 | INVOICING | The retainer invoice consumes the retainer it bills. | HIGH | `retainerBlock` sums every line on every non-void invoice as applied, and `createInvoice` puts the retainer itself on an invoice as a line, so the deposit counts as work. A second invoice then prints "Beyond the retainer" to the client when money remains. `worker.js` `retainerBlock` ~2186; `createInvoice` ~2322. | BEING FIXED NOW |
