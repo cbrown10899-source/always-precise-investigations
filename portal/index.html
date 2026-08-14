@@ -1434,6 +1434,8 @@ function leadsView(){
         ${c.claim_number ? `<div class="mono" style="font-size:.72rem;margin-top:2px">Claim ${esc(c.claim_number)}</div>` : ""}
         <div class="mono" style="font-size:.72rem;margin-top:3px">${esc(c.case_no)}</div>
         <div style="font-size:.76rem;color:var(--muted);margin-top:4px">Received ${when(c.created_at)}</div>
+        ${c.send_count ? `<div style="font-size:.76rem;color:var(--muted);margin-top:2px">
+          &#9993; ${c.send_count} sent &middot; last ${when(c.last_sent_at)}</div>` : ""}
       </div>
       <label class="f" style="margin:0"><span>Lead status</span>
         <select data-act="leadStatus" data-case="${esc(c.case_no)}">
@@ -2648,6 +2650,32 @@ function notesPanel(){
    was contacted, when and how; visibility decides what the assigned
    investigator sees, and the Worker's query enforces it. Documents
    communication only — nothing is ever sent from here. */
+/* The automated half of the Comm log (audit, 2026-08-14): what the SYSTEM
+   sent, beside what a person recorded. Admin-only, because it names the
+   client's own address. Failures are kept and shown as failures — a send
+   that silently vanished is how "I sent that last week" becomes wrong. */
+function sendsPanel(){
+  const sends = (WS && WS.sends) || [];
+  if(!sends.length) return "";
+  const doorName = d => !d ? "" : /assignment=insurance/.test(d) ? "Insurance Assignment Intake"
+    : /assignment=private/.test(d) ? "Private Client Intake" : "Client Intake";
+  return `<div class="feebox" style="margin-bottom:12px">
+    <div class="row"><span><b>Sent from the portal</b></span>
+      <span style="color:var(--muted);font-size:.82rem">${sends.length} record${sends.length === 1 ? "" : "s"}</span></div>
+    ${sends.map(x => `<div class="row">
+      <span>${x.ok ? "" : `<b style="color:var(--bad,#c14133)">Failed &middot; </b>`}${
+        x.kind === "rate_sheet"
+          ? `Rate sheet${x.sheet_id === "insurance_assignment" ? " — Insurance Assignment Rates"
+             : x.sheet_id === "private_retainer" ? " — Private Client Retainer" : ""}${
+             x.door ? ` <span class="opt">with the ${esc(doorName(x.door))}</span>` : ""}`
+          : `${esc(doorName(x.door) || "Intake")} link`}
+        <div style="font-size:.8rem;color:var(--muted)">to ${esc(x.recipient)}${
+          x.sent_by ? ` &middot; ${esc(x.sent_by)}` : ""}${
+          x.ok ? "" : ` &middot; ${esc(x.detail || "not sent")}`}</div></span>
+      <span style="font-size:.82rem;white-space:nowrap">${when(x.sent_at)}</span></div>`).join("")}
+  </div>`;
+}
+
 function commsPanel(){
   const admin = ME.role === "admin";
   const comms = (WS && WS.comms) || [];
@@ -2688,7 +2716,7 @@ function commsPanel(){
       ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
     </form>`;
 
-  return `${composer}
+  return `${composer}${sendsPanel()}
     ${comms.length ? comms.map(c => `<div class="notecard">
         <div class="rc-h"><span class="tag">${esc(typeLabel(c.comm_type))}</span>
           ${c.person ? `<b style="font-size:.9rem">${esc(c.person)}</b>` : ""}

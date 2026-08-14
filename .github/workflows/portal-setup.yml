@@ -203,6 +203,9 @@ jobs:
       - name: Put the secrets on the Worker
         env:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          DROPBOX_APP_KEY: ${{ secrets.DROPBOX_APP_KEY }}
+          DROPBOX_APP_SECRET: ${{ secrets.DROPBOX_APP_SECRET }}
+          DROPBOX_REFRESH_TOKEN: ${{ secrets.DROPBOX_REFRESH_TOKEN }}
         run: |
           set -euo pipefail
           cd case-portal
@@ -222,6 +225,25 @@ jobs:
             echo "Invitation email is configured."
           else
             echo "No RESEND_API_KEY set — invitations will return a link for you to send yourself."
+          fi
+
+          # Dropbox video delivery. All three or none: the Worker treats the
+          # provider as configured only when the full set is present, so
+          # pushing a partial set would flip it to "connected" and then fail
+          # at the API. Absent, the provider reports not-configured and
+          # nothing else waits on it.
+          if [ -n "${DROPBOX_APP_KEY:-}" ] && [ -n "${DROPBOX_APP_SECRET:-}" ] \
+             && [ -n "${DROPBOX_REFRESH_TOKEN:-}" ]; then
+            printf '%s' "$DROPBOX_APP_KEY"       | npx --yes wrangler secret put DROPBOX_APP_KEY
+            printf '%s' "$DROPBOX_APP_SECRET"    | npx --yes wrangler secret put DROPBOX_APP_SECRET
+            printf '%s' "$DROPBOX_REFRESH_TOKEN" | npx --yes wrangler secret put DROPBOX_REFRESH_TOKEN
+            echo "Dropbox credentials are on the Worker."
+          elif [ -n "${DROPBOX_APP_KEY:-}${DROPBOX_APP_SECRET:-}${DROPBOX_REFRESH_TOKEN:-}" ]; then
+            echo "::warning::Dropbox is PARTIALLY configured — all three of DROPBOX_APP_KEY,"
+            echo "::warning::DROPBOX_APP_SECRET and DROPBOX_REFRESH_TOKEN are needed. Skipping"
+            echo "::warning::all three so the provider keeps reporting not-connected honestly."
+          else
+            echo "No Dropbox secrets set — video delivery stays arranged separately."
           fi
 
       - name: Deploy the Worker with its binding and route

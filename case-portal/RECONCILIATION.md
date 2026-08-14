@@ -37,9 +37,13 @@ The owner's report was correct in substance; classification: 🟡 visibility —
 | Live | Visible in production | pipeline✓ | deploy green on merge; `/portal/*` is `no-store` so no cached old UI. **Owner check (30s): Rate sheets → open either sheet → "Send this sheet →" — the checkbox is on the first screen of the send panel** |
 | Strict pairing | No cross-path possible | ✅ | the carrier can never receive the picker (tested); the private client can never be offered the carrier path — `?assignment=private` drops it and `pickSvc('claims')` is refused even called directly (tested) |
 
-One genuinely missing piece found by this audit's own list: **Send history — 🔴.**
-Nothing records who a sheet was emailed to or when; the lead's status stamp is
-current-state, not a log. Queued as the top code fix.
+One genuinely missing piece found by this audit's own list: **Send history —
+🔴 → ✅ fixed 2026-08-14.** `send_log` records every rate-sheet and intake
+send: recipient, which sheet, **which door actually rode with it**, who sent
+it, when — and failures are kept and shown as failures, because a send that
+vanished silently is how "I sent that last week" becomes wrong. Shown in the
+case's Comm log under *Sent from the portal*, counted on the lead card.
+Admin-only; an investigator is never told who the client was emailed.
 
 ---
 
@@ -54,7 +58,7 @@ current-state, not a log. Queued as the top code fix.
 | No "Additional Fees — None" presentation | ✅ | inclusive prose ("mileage, travel time… are included"), not a nil line item |
 | Private $1,500 retainer, $100/hr, 4-hour minimum, applied-to-work, approval for more | ✅ | `PERSONAL` in `worker.js`; sheet copy carries each |
 | Send workflow: recipient / options / preview | ✅ | one-screen ask + preview (today's change) |
-| **Send history** | 🔴 | no record of sends — queued |
+| **Send history** | ✅ **done 2026-08-14** | `send_log`; Comm log panel + lead-card count; failed attempts kept and marked |
 
 ## B. Public intake forms
 
@@ -91,7 +95,7 @@ table as public intakes (no parallel store). ✅
 | Requirement | Status | Evidence |
 | --- | --- | --- |
 | Lead statuses (the nine) | ✅ | `lead_status` table + card select; system stamps only what it did; decided leads never quietly moved |
-| **Event timeline** (created → sheet sent → intake sent → received → accepted → case) | 🟡 | `lead_status` is **current state with one set_at/set_by**, not a history log. Created/converted moments exist implicitly (`created_at`, stamps) but there is no per-event trail. Queued with send history — one table can serve both |
+| **Event timeline** (created → sheet sent → intake sent → received → accepted → case) | ✅ mostly (2026-08-14) | `send_log` is the per-event trail for everything the system sends, with `created_at` and the status stamps either side of it. What remains unlogged is purely manual status changes (contacted, declined) — those show current state, not a history of hand edits |
 
 ## F/G. Case package cards and completion
 

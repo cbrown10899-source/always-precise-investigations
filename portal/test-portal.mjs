@@ -3094,6 +3094,20 @@ section('A lead has its own life, and its sends live on the card');
      await page.locator('#wiz_case').inputValue() === 'API-20260812-4005');
   await page.locator('.amx').click();
   await page.waitForTimeout(300);
+
+  /* The audit's 🔴: a failed send must be KEPT and shown, not swallowed.
+     Mail is unconfigured in this run, so the Send-intake attempt above was a
+     real failure — and it has to be on the record as one. Done last, because
+     opening the case leaves the leads desk behind. */
+  await page.locator('.pcard', { hasText: 'API-20260812-4005' })
+    .locator('.btn', { hasText: 'Review' }).click();
+  await page.waitForTimeout(700);
+  await wsTab(page, 'Comm log');
+  await page.waitForTimeout(500);
+  const log = await text(page, '#dlgBody');
+  ok('the Comm log records what the portal itself sent', has(log, 'Sent from the portal'));
+  ok('including the attempt that failed, marked failed', has(log, 'Failed'));
+  ok('naming who it went to', has(log, 'riley@example.test'));
   await page.close();
 }
 

@@ -790,3 +790,27 @@ CREATE TABLE IF NOT EXISTS lead_status (
   set_by  INTEGER REFERENCES users(id),
   set_at  TEXT
 );
+
+-- ---------------------------------------------------------------------------
+-- Send history (audit, 2026-08-14). Nothing recorded who was emailed a rate
+-- sheet or an intake link, or when — the lead's status was current-state
+-- only, so "we sent that on the 3rd" was unanswerable and a second send to
+-- the same adjuster was invisible.
+--
+-- One row per send ATTEMPT, written whether or not the provider took it: a
+-- send that failed is exactly the one an office needs to see. `door` records
+-- WHICH intake went, so the carrier/private pairing is auditable after the
+-- fact rather than only enforced at the moment of sending.
+CREATE TABLE IF NOT EXISTS send_log (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no    TEXT,                       -- null when a sheet is sent with no case
+  kind       TEXT    NOT NULL CHECK (kind IN ('rate_sheet','intake')),
+  sheet_id   TEXT,                       -- insurance_assignment | private_retainer
+  door       TEXT,                       -- the intake URL actually sent, if any
+  recipient  TEXT    NOT NULL,
+  ok         INTEGER NOT NULL DEFAULT 1, -- 0 when the provider refused it
+  detail     TEXT,                       -- the failure reason, when it failed
+  sent_by    INTEGER REFERENCES users(id),
+  sent_at    TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sendlog_case ON send_log(case_no, id DESC);
