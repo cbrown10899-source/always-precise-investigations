@@ -9,18 +9,26 @@ Progress ledger (handoff build order):
 
 | Step | Status |
 | --- | --- |
-| 1. Review required fields on both intake paths | not started |
-| 2. Reduce required fields to truly essential information | not started |
-| 3. Structured Not Available / N/A states (value + status, never literal "N/A" text) | not started |
-| 4. Flexible / Unknown options for dates | not started |
-| 5. Authorization Pending for insurance | not started |
-| 6. Final Review screen shows PROVIDED vs NOT AVAILABLE YET | not started |
-| 7. Server-side validation updated | not started |
-| 8. Data model updated (field statuses ride the payload) | not started |
-| 9. Admin intake review updated | not started |
-| 10. Missing Information summary (intentional vs accidental blanks) | not started |
-| 11. Convert-to-case verified with partial intake | not started |
-| 12. Mobile test both forms | not started |
+| 1. Review required fields on both intake paths | **done** — 2026-08-13 (audited: the gates were name + a contact method, then carrier AND claim number on the claims path, then the authorization preset) |
+| 2. Reduce required fields to truly essential information | **done** — 2026-08-13 (what remains: contact name, one contact method, service, carrier on the claims path, a claimant name OR a claim number so the file is identifiable, and a one-line objective — the owner's firm line. The claim number, date of loss, address, vehicle, start date, billing contact and authorization are all droppable now) |
+| 3. Structured Not Available / N/A states (value + status, never literal "N/A" text) | **done** — 2026-08-13 (`naBox()` renders a compact "I don't have this information right now" under the field; ticking it disables the input, keeps whatever was typed, and survives back/forward. The payload carries `<field>_status` beside an EMPTY value — `not_available` / `unknown` / `approximate` / `asap` / `flexible` / `tbd` / `pending`. A test scans every value field for "N/A", "Unknown", 0000 and 01/01/1900 and fails on any of them, while allowing the status fields to say so) |
+| 4. Flexible / Unknown options for dates | **done** — 2026-08-13 (date of loss: Exact / Approximate / Unknown, and Unknown removes the date box rather than asking for a fake one; requested start: Specific date / As soon as available / Flexible / To be determined) |
+| 5. Authorization Pending for insurance | **done** — 2026-08-13 (fifth preset beside 8/16/24/custom; submission proceeds; the portal's Authorization panel says "Authorization pending" with a warning line that the hours must be confirmed before billable field work, and never invents a figure) |
+| 6. Final Review screen shows PROVIDED vs NOT AVAILABLE YET | **done** — 2026-08-13 (the agreement step leads with a "Not available yet — and that's fine" box listing each gap in the submitter's own terms, above the terms they sign, plus the line "you can submit with the information currently available") |
+| 7. Server-side validation updated | **done** — 2026-08-13 (nothing to loosen — `/ingest` only ever required a well-formed `case_no`. A test now proves a claims intake with no claim number, no date of loss, no address and no billing contact is accepted rather than refused) |
+| 8. Data model updated (field statuses ride the payload) | **done** — 2026-08-13 (statuses ride the JSON payload; no schema change. `FIELD_KEEP` gained the five FIELD-SIDE statuses — subject address, description, date of loss, start date, authorized hours — and deliberately NOT `claim_number_status` or `billing_email_status`: whether the carrier's own reference exists is the office's business, and the allow-list keeps new statuses admin-only by default) |
+| 9. Admin intake review updated | **done** — 2026-08-13 (a marked field reads "Not available at submission" / "Unknown at submission" / "(approximate)" instead of going silently blank; the same rows in the field's Subject panel) |
+| 10. Missing Information summary (intentional vs accidental blanks) | **done** — 2026-08-13 (an "Information still needed" box above the intake detail, worded "marked unavailable at submission on purpose, never an error", with a button through to the Comm log to ask for the rest. Completeness reads as words — Ready for review / Additional information helpful / Missing critical information — never a percentage) |
+| 11. Convert-to-case verified with partial intake | **done** — 2026-08-13 (the partial intake opens, assigns and works as an ordinary case; an investigator on it is told the address and vehicle are not known yet and is never told whether a claim number exists) |
+| 12. Mobile test both forms | **done** — 2026-08-13 (the NA control is a full-width tap target in the existing design system; both paths walk end to end in the e2e) |
+
+**Not built, and deliberately:** "Request more information" is a button that
+opens the Comm log, not an automated email — the handoff asked for the data
+model now and no automation until email infrastructure is ready, and the
+Comm log already IS that record. The `not_applicable` status exists in the
+model but no field offers it yet: nothing on either form is meaningfully
+"not applicable" rather than "not known", and inventing a control for it
+would be the checkbox forest the handoff warns against.
 
 ---
 

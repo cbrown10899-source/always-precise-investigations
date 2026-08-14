@@ -2041,6 +2041,77 @@ section('The case page: four sections, one obvious next step');
   await page.close();
 }
 
+/* INTAKE-NA, admin side: a partial intake reads as intentional gaps, never as
+   a broken record — and the office is told what is still needed in words. */
+section('A partial intake reads as intentional, not broken');
+{
+  // Plant a submission the way the public form now writes one: values empty,
+  // availability carried beside them.
+  db.prepare(`INSERT INTO submissions (case_no, kind, status, carrier, client_name,
+                subject_name, payload, created_at)
+              VALUES (?, 'claims', 'new', ?, ?, ?, ?, ?)`)
+    .run('API-NA-2001', 'Urgent Mutual', 'A. Adjuster', 'Pat Claimant',
+      JSON.stringify({
+        carrier: 'Urgent Mutual', client_name: 'A. Adjuster', client_email: 'a@urgent.example',
+        subject_name: 'Pat Claimant', objective: 'Activity versus stated restrictions',
+        claim_number: '', claim_number_status: 'not_available',
+        date_of_loss: '', date_of_loss_status: 'unknown',
+        subject_address: '', subject_address_status: 'not_available',
+        authorized_hours: 'Authorization pending', authorized_hours_status: 'pending',
+        start_date: '', start_date_status: 'flexible',
+      }), new Date().toISOString());
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-NA-2001').click();
+  await page.waitForTimeout(500);
+  await wsTab(page, 'Intake details');
+  const body = await text(page, '#dlgBody');
+
+  ok('the office is told what is still needed', has(body, 'Information still needed'));
+  ok('and that the gaps were deliberate, not errors', has(body, 'never an error'));
+  ok('the claim number is named', has(body, 'Claim number'));
+  ok('the unknown date of loss is named', has(body, 'Date of loss'));
+  ok('the missing address is named', has(body, 'address'));
+  ok('the pending authorization is named', has(body, 'Authorization'));
+  ok('a marked field reads as unavailable rather than blank',
+     has(body, 'Not available at submission'));
+  ok('completeness is words, never a percentage',
+     has(body, 'Additional information helpful') && !/\d+%\s*complete/i.test(body));
+  ok('and there is a way to ask for the rest',
+     await page.locator('.btn', { hasText: 'Request it' }).count() === 1);
+
+  // The pending authorization must not read as a set figure anywhere.
+  await wsTab(page, 'Authorization');
+  ok('a pending authorization says so instead of inventing hours',
+     has(await text(page, '#dlgBody'), 'Pending'));
+  await page.close();
+}
+{
+  // The same case, seen from the field: the statuses that are fieldwork show,
+  // the ones that name the carrier do not.
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-NA-2001').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Assignment');
+  await page.locator('#asg').selectOption({ label: 'Dana Field' });
+  await page.locator('.btn', { hasText: 'Save' }).click();
+  await page.waitForTimeout(700);
+  await page.close();
+
+  const inv = await newPage();
+  await signIn(inv, 'dana', 'FieldWork2026x');
+  await rowFor(inv, 'API-NA-2001').click();
+  await inv.waitForTimeout(450);
+  await wsTab(inv, 'Subject');
+  const seen = await text(inv, '#dlgBody');
+  ok('the field is told the address is not known yet',
+     has(seen, 'Not available at submission'));
+  ok('and is never told whether the claim number exists', !has(seen, 'Claim number'));
+  await inv.close();
+}
+
 /* UIBUILD phase 6: the leads desk, the manual intake, and both landing as
    ordinary submissions — no parallel store. */
 section('Leads and intakes: cards, decisions, and the phone-call lead');
