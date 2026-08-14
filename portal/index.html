@@ -192,6 +192,7 @@
   #pkgdoc img{max-width:100%;border-radius:6px;}
   /* UIBUILD P1: the navigation rail. Same .tabs machinery, new shape — a
      fixed sidebar at desktop widths, a drawer behind the burger on mobile. */
+  .burger{display:none;background:transparent;border:0;color:#fff;font-size:1.4rem;cursor:pointer;padding:4px 10px;}
   @media(min-width:900px){
     body.withnav .tabs{position:fixed;left:0;top:58px;bottom:0;width:198px;flex-direction:column;
       align-items:stretch;gap:2px;padding:14px 10px;margin:0;background:#13273f;border-radius:0;
@@ -215,9 +216,13 @@
     body.withnav.navopen .tabs .side-intake{margin-top:auto;display:block;text-align:center;
       background:var(--gold,#c99a3b);color:#13273f;font-weight:800;border-radius:9px;padding:11px;text-decoration:none;
       font:inherit;font-weight:800;border:0;cursor:pointer;width:100%;}
+    /* The base rule below is deliberately ABOVE this media query. It used to
+       sit after it, and with equal specificity the later rule won: the burger
+       was display:none at every width, the sidebar was hidden under 900px, and
+       a phone had NO navigation at all while an iPad in landscape looked fine.
+       Never move the base rule back below this block. */
     .burger{display:inline-block;}
   }
-  .burger{display:none;background:transparent;border:0;color:#fff;font-size:1.4rem;cursor:pointer;padding:4px 10px;}
   /* Case Package cards (UIBUILD P3) */
   .pkgcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px;margin-top:10px;}
   .pcard{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;}
@@ -1773,6 +1778,11 @@ async function doLogin(){
   btn.disabled = true; btn.textContent = "Signing in…"; err.textContent = "";
   try{
     ME = (await api("/auth/login", {method:"POST", body:{username:$("u").value, password:$("p").value}})).user;
+    /* Launched from the home-screen shortcut with no session yet: the flag has
+       to survive the sign-in, or a freshly installed app drops you in the
+       office portal instead of the field. boot() only sees the flag when a
+       session already exists, which is the second time onwards. */
+    if(new URLSearchParams(location.search).get("surveillance")) return openSurveillanceLauncher();
     await render();
   }catch(e){
     err.textContent = e.message;

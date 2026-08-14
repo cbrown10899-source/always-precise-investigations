@@ -2378,6 +2378,68 @@ section('Active Surveillance Mode: a field view of the same case');
 /* The app's own icon: on the button in the portal and on the home screen, so
    the two are visibly one thing. A wrong path here fails silently in a way
    nobody notices until a phone shows a blank square. */
+/* A phone must be able to NAVIGATE. This shipped broken: the base .burger rule
+   sat after its own media query with equal specificity, so display:none won at
+   every width — the sidebar is hidden under 900px and the burger that opens the
+   drawer never appeared, leaving a phone with NO navigation at all while an
+   iPad in landscape looked perfect. Every suite passed, because every test
+   either ran wide or clicked inside the case page. */
+section('A phone can actually reach the navigation');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+
+  ok('the sidebar is out of the way on a phone', !(await page.locator('.tabs').isVisible()));
+  ok('but the burger that opens it IS visible', await page.locator('.burger').isVisible());
+  await page.locator('.burger').click();
+  await page.waitForTimeout(300);
+  ok('tapping it opens the drawer', await page.locator('.tabs').isVisible());
+  const drawer = await text(page, '.tabs');
+  for (const t of ['Dashboard', 'Cases', 'Leads', 'Invoices', 'Settings']) {
+    ok(`the drawer carries ${t}`, has(drawer, t), drawer);
+  }
+  await page.locator('.tabs button', { hasText: 'Leads' }).click();
+  await page.waitForTimeout(700);
+  ok('and navigating from it works', has(await text(page, '#app'), 'Leads'));
+  ok('the drawer closes behind you', !(await page.locator('.tabs').isVisible()));
+  await page.close();
+}
+{
+  // iPad portrait (834px) sits in the same band as a phone: drawer, not rail.
+  const page = await (await browser.newContext({ viewport: { width: 834, height: 1112 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+  ok('an iPad in portrait also gets the burger', await page.locator('.burger').isVisible());
+  await page.close();
+}
+{
+  // iPad landscape / laptop: the rail itself, and no burger.
+  const page = await (await browser.newContext({ viewport: { width: 1112, height: 834 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+  ok('a wide screen gets the fixed sidebar rail', await page.locator('.tabs').isVisible());
+  ok('and no burger', !(await page.locator('.burger').isVisible()));
+  const box = await page.locator('.tabs').boundingBox();
+  ok('which is genuinely a left rail', box && box.x === 0 && box.height > 400, JSON.stringify(box));
+  await page.close();
+}
+
 section('The Active Surveillance mark');
 {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'portal/manifest.webmanifest'), 'utf8'));
@@ -2428,6 +2490,25 @@ section('The Active Surveillance mark');
 /* The home-screen launcher (P16) and the office's live view (P18). */
 section('The home-screen launcher, and who is out now');
 {
+  /* A FRESHLY INSTALLED shortcut has no session yet: the flag must survive the
+     sign-in. It did not — boot() only checked it when a session already
+     existed, so the first launch after installing dropped the investigator in
+     the office portal instead of the field. */
+  const fresh = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  fresh.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await fresh.goto(SITE + '/portal/?surveillance=1');
+  await fresh.waitForTimeout(400);
+  ok('the shortcut asks for a sign-in when there is no session',
+     await fresh.locator('#loginBtn').count() === 1);
+  await fresh.locator('#u').fill('dana');
+  await fresh.locator('#p').fill('FieldWork2026x');
+  await fresh.locator('#loginBtn').click();
+  await fresh.waitForTimeout(1100);
+  ok('and signing in from it lands in the FIELD, not the office',
+     await fresh.locator('.sv').count() === 1,
+     (await fresh.locator('#app').innerText()).slice(0, 120));
+  await fresh.close();
+
   const page = await newPage();
   await signIn(page, 'dana', 'FieldWork2026x');
   await page.goto(SITE + '/portal/?surveillance=1');
