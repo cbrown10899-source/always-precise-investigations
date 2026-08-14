@@ -1905,9 +1905,13 @@ async function setTaskStatus(request, env, user, caseNo, taskId) {
 const INVOICE_STATUSES = ['draft', 'ready', 'sent_to_bill', 'sent_to_client', 'partially_paid', 'paid', 'void'];
 const PAYMENT_METHODS = ['ach', 'card', 'check', 'wire', 'other'];
 const BILLING_PROVIDERS = ['manual', 'bill', 'stripe', 'quickbooks', 'other'];
+/* MASTER §28's insurance list. `special_instructions` is a carrier's own
+   billing instruction — "submit through the vendor portal", "reference the PO
+   on every page" — so it rides with the references but prints as a paragraph,
+   not as a reference row. */
 const INVOICE_REF_KEYS = ['claim_number', 'policy_number', 'insured', 'claimant', 'date_of_loss',
   'client_reference', 'po_number', 'authorization_number', 'vendor_number', 'service_dates',
-  'assignment_type', 'adjuster'];
+  'assignment_type', 'adjuster', 'special_instructions'];
 
 const BILLING_DEFAULTS = {
   company_name: 'Always Precise Investigations, LLC',
@@ -1965,6 +1969,42 @@ function invoiceDisplayStatus(inv, money) {
   return inv.status;
 }
 
+/* MASTER §28's private list — Retainer, Amount Applied, Additional
+   Authorization, Balance. Derived on read like every other total here, so a
+   second invoice on the same case cannot leave a stale figure behind: the
+   retainer draws down across ALL of a case's live invoices, not just this one.
+
+   A negative balance is not an error — it is the case having run past the
+   retainer, which is exactly the moment the office needs to see it. */
+async function retainerBlock(env, inv) {
+  if (inv.invoice_type !== 'private') return null;
+  const ret = await env.DB.prepare(
+    'SELECT retainer_amount, received FROM case_retainer WHERE case_no = ?').bind(inv.case_no).first();
+  const amount = ret && ret.retainer_amount != null ? Number(ret.retainer_amount) : PERSONAL.retainer;
+  const { results: sib } = await env.DB.prepare(
+    `SELECT i.id, i.adjustments FROM invoices i WHERE i.case_no = ? AND i.status != 'void'`)
+    .bind(inv.case_no).all();
+  let applied = 0;
+  for (const s of sib || []) {
+    const row = await env.DB.prepare(
+      'SELECT COALESCE(SUM(amount), 0) AS t FROM invoice_lines WHERE invoice_id = ?').bind(s.id).first();
+    applied += Number((row && row.t) || 0) + Number(s.adjustments || 0);
+  }
+  applied = Math.round(applied * 100) / 100;
+  const meta = await env.DB.prepare(
+    'SELECT authorized_budget FROM case_meta WHERE case_no = ?').bind(inv.case_no).first();
+  const budget = meta && meta.authorized_budget != null ? Number(meta.authorized_budget) : null;
+  return {
+    amount,
+    received: !!(ret && ret.received),
+    applied,
+    balance: Math.round((amount - applied) * 100) / 100,
+    // Only "additional" when it is genuinely above the retainer.
+    additional_authorized: budget != null && budget > amount
+      ? Math.round((budget - amount) * 100) / 100 : null,
+  };
+}
+
 async function invoiceWithMoney(env, inv) {
   const { results: lines } = await env.DB.prepare(
     'SELECT id, sort, description, qty, rate, amount FROM invoice_lines WHERE invoice_id = ? ORDER BY sort, id')
@@ -1978,7 +2018,8 @@ async function invoiceWithMoney(env, inv) {
   let refs = {};
   try { refs = JSON.parse(inv.refs_json || '{}'); } catch { refs = {}; }
   return { ...inv, refs_json: undefined, refs, lines: lines || [], payments: payments || [],
-           ...money, display_status: invoiceDisplayStatus(inv, money) };
+           ...money, retainer: await retainerBlock(env, inv),
+           display_status: invoiceDisplayStatus(inv, money) };
 }
 
 /* What an invoice must carry before the office can call it Ready. Insurance

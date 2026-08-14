@@ -15,6 +15,20 @@ Progress ledger:
 | 4. Financial controls (partial payments, adjustments, duplicate warnings, audit trail, closure) | **done** — 2026-08-13 (payments drive status by arithmetic; adjustments field; duplicate 409 + confirm; invoice_events trail; void locks the record) |
 | 5. LATER — verify BILL API, provider adapter, automated create/sync, client invoice portal | not started — do NOT build until core works |
 
+**Audited against MASTER §28 on 2026-08-14.** Phases 1–4 held up: every
+general field, every status except the one the owner deferred, and the whole
+provider-neutral set including `external_payment_id` — which lives on
+`invoice_payments`, because a payment id belongs to a payment, not to an
+invoice. `overdue` was already right: computed against today on read, never
+stored, and never shown on a void or a draft. Two genuine gaps were found and
+closed, and one status was deliberately left alone:
+
+| §28 gap | Status |
+| --- | --- |
+| Special Instructions (insurance) | **done** — 2026-08-14. A carrier's own billing instruction — "submit through the vendor portal", "reference the PO on every page". It rides with the invoice references, so no schema change was needed: `refs_json` is a JSON blob and a new key costs nothing. It **prints as a paragraph**, not as another `<dt>` reference row, because that is what it is |
+| Private: Retainer · Amount Applied · Additional Authorization · Balance | **done** — 2026-08-14. Derived on read like every other total here. **Applied is summed across every live invoice on the case, not just the one being viewed** — otherwise a second invoice reads as though the first never happened. Voiding an invoice releases what it consumed. Additional authorization is `case_meta.authorized_budget` and only when it is genuinely above the retainer. A negative balance is not an error: it prints as "Beyond the retainer", which is exactly the moment the office needs to see it |
+| Write-Off | **deliberately not built.** §28 says "Write-Off if needed later" and this file's own status list says "(Write-Off later)". It is the owner's own deferral, not an oversight — and it would need a CHECK-constraint change on `invoices.status`, which cannot be done idempotently from `schema.sql`. When it is wanted, it goes in as a side table the way `build_custom` did |
+
 ---
 
 ## CORE OBJECTIVE

@@ -1727,6 +1727,20 @@ section('An invoice from case to PAID');
   ok('the document block is the printable review', await page.locator('#invdoc').count() === 1);
   ok('with the company name on it', has(await text(page, '#invdoc'), 'Always Precise Investigations'));
 
+  /* MASTER §28 — Special Instructions. A carrier's own billing instruction,
+     so it prints as a paragraph rather than as another reference row. */
+  ok('an insurance invoice asks for special instructions',
+     await page.locator('#ir_special_instructions').count() === 1);
+  await page.locator('#ir_special_instructions')
+    .fill('Submit through the vendor portal. Reference the PO on every page.');
+  await page.locator('.btn', { hasText: 'Save invoice' }).click();
+  await page.waitForTimeout(800);
+  const insDoc = await text(page, '#invdoc');
+  ok('and prints them on the document', has(insDoc, 'Special instructions')
+     && has(insDoc, 'Submit through the vendor portal'));
+  ok('a private-only retainer block stays off a carrier invoice',
+     !has(insDoc, 'Retainer held'));
+
   await page.locator('[data-act="invStatus"][data-s="ready"]').click();
   await page.waitForTimeout(500);
   ok('ready surfaces the carrier gaps as warnings', has(await text(page, '.card'), 'PO number'));
@@ -2757,6 +2771,48 @@ section('A three-day package reads as one investigation');
   await page.waitForTimeout(900);
   ok('a three-day custom package finalizes',
      has(await text(page, '#dlgBody'), 'Package finalized'));
+  await page.close();
+}
+
+/* MASTER §28's private list — Retainer, Amount Applied, Additional
+   Authorization, Balance. Seeded at the end for the same reason as above. */
+section('A private invoice shows the retainer drawing down');
+{
+  await post('/ingest', {
+    case_no: 'API-20260812-4004', service: 'Surveillance',
+    client_name: 'Morgan Hale', client_phone: '4345550188',
+    subject_name: 'Alex Hale', objective: 'Establish whereabouts on weekday evenings.',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4004').click();
+  await page.waitForTimeout(450);
+
+  /* A budget above the retainer is §28's "Additional Authorization". Set it
+     first so one invoice can show the whole block. */
+  await wsTab(page, 'Authorization');
+  await page.locator('#m_budget').fill('2500');
+  await page.locator('.btn', { hasText: 'Save authorization' }).click();
+  await page.waitForTimeout(600);
+
+  await wsTab(page, 'Billing & closing');
+  await page.locator('[data-act="createInvoiceAuth"]').click();
+  await page.waitForTimeout(900);
+
+  const body = await text(page, '.card');
+  ok('a private case opens on the retainer', has(body, 'Investigation Retainer'));
+  ok('the editor shows the retainer block', has(body, 'Retainer held'));
+  ok('and says whether the money is actually in', has(body, 'not yet received'));
+  ok('with what the case has drawn against it', has(body, 'Applied to date'));
+  ok('a budget above the retainer reads as an additional authorization',
+     has(body, 'Additional authorization'));
+
+  const doc = await text(page, '#invdoc');
+  ok('the document carries the retainer block too', has(doc, 'Retainer held'));
+  ok('and reads the remainder, not a mystery balance', has(doc, 'Retainer remaining'));
+  ok('a carrier-only special-instructions block stays off a private invoice',
+     !has(doc, 'Special instructions'));
   await page.close();
 }
 

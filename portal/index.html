@@ -4198,7 +4198,12 @@ function invoiceDocHtml(i){
     claimant:"Claimant", date_of_loss:"Date of loss", client_reference:"Client ref",
     po_number:"PO #", authorization_number:"Authorization #", vendor_number:"Vendor #",
     service_dates:"Service dates", assignment_type:"Assignment", adjuster:"Adjuster"};
-  const refs = Object.entries(i.refs || {}).filter(([, v]) => v);
+  /* Special instructions is a paragraph a carrier's AP desk wrote, not a
+     reference number — it prints as its own block below, never as a <dt>. */
+  const refs = Object.entries(i.refs || {})
+    .filter(([k, v]) => v && k !== "special_instructions");
+  const special = (i.refs || {}).special_instructions || "";
+  const ret = i.retainer;
   return `<div id="invdoc">
     <div class="doc-head">
       <div><h2>${esc(cfg.company_name || "")}</h2>
@@ -4232,6 +4237,17 @@ function invoiceDocHtml(i){
     ${i.amount_paid ? `<div style="text-align:right;font-size:.95rem">Invoice total ${usd(i.total)}
         &middot; Payments received ${usd(i.amount_paid)}</div>` : ""}
     <div class="doc-due">${i.amount_paid ? "Balance due" : "Total due"} <b>${usd(i.balance_due)}</b></div>
+    ${ret ? `<table class="doc-table" style="margin-top:12px"><tbody>
+      <tr><td style="width:60%"><b>Retainer held</b></td><td class="n">${usd(ret.amount)}${
+        ret.received ? "" : " <span style='color:var(--muted);font-size:.85rem'>(not yet received)</span>"}</td></tr>
+      <tr><td>Applied to date${
+        (i.lines || []).length ? "" : ""}</td><td class="n">${usd(ret.applied)}</td></tr>
+      ${ret.additional_authorized ? `<tr><td>Additional authorization</td>
+        <td class="n">${usd(ret.additional_authorized)}</td></tr>` : ""}
+      <tr><td><b>${ret.balance < 0 ? "Beyond the retainer" : "Retainer remaining"}</b></td>
+        <td class="n"><b>${usd(Math.abs(ret.balance))}</b></td></tr>
+    </tbody></table>` : ""}
+    ${special ? `<p style="font-size:.9rem;white-space:pre-line"><b>Special instructions</b><br>${esc(special)}</p>` : ""}
     ${i.client_notes ? `<p style="font-size:.9rem">${esc(i.client_notes)}</p>` : ""}
     <p style="font-size:.88rem;color:var(--muted)">${esc(cfg.payment_instructions || "")}</p>
     <p style="font-size:.85rem;border-top:1px solid var(--line);padding-top:10px;color:var(--muted)">${esc(cfg.invoice_footer || "")}</p>
@@ -4279,7 +4295,22 @@ function invoiceDetailView(){
         ${refIn("authorization_number", "Authorization #")}${refIn("vendor_number", "Vendor #")}
       </div><div class="two">
         ${refIn("adjuster", "Adjuster")}${refIn("service_dates", "Service dates")}
-      </div>` : `<div class="two">${refIn("service_dates", "Service dates")}${refIn("client_reference", "Client ref")}</div>`}
+      </div>
+      <label class="f"><span>Special instructions
+        <span class="opt">the carrier's own billing instruction &mdash; prints on the invoice</span></span>
+        <textarea id="ir_special_instructions" rows="2" ${editable ? "" : "disabled"}>${esc((i.refs || {}).special_instructions || "")}</textarea></label>`
+      : `<div class="two">${refIn("service_dates", "Service dates")}${refIn("client_reference", "Client ref")}</div>
+      ${i.retainer ? `<div class="feebox">
+        <div class="row"><span><b>Retainer</b></span>
+          <span style="color:var(--muted);font-size:.82rem">${i.retainer.received ? "received" : "not yet received"}</span></div>
+        <div class="row"><span>Retainer held</span><b>${usd(i.retainer.amount)}</b></div>
+        <div class="row"><span>Applied to date <span class="opt">every live invoice on this case</span></span>
+          <b>${usd(i.retainer.applied)}</b></div>
+        ${i.retainer.additional_authorized ? `<div class="row"><span>Additional authorization</span>
+          <b>${usd(i.retainer.additional_authorized)}</b></div>` : ""}
+        <div class="row"><span>${i.retainer.balance < 0 ? "Beyond the retainer" : "Retainer remaining"}</span>
+          <b>${usd(Math.abs(i.retainer.balance))}</b></div>
+      </div>` : ""}`}
       <label class="f"><span>Note to the client <span class="opt">prints on the invoice</span></span>
         <input id="iv_cnotes" value="${esc(i.client_notes || "")}" ${editable ? "" : "disabled"}></label>
       <label class="f"><span>Internal notes <span class="opt">never prints</span></span>
@@ -4375,7 +4406,8 @@ function invLinesFromDom(){
 async function saveInvoiceFields(){
   INV_MSG = "";
   const refs = {};
-  for(const k of ["claim_number","po_number","authorization_number","vendor_number","adjuster","service_dates","client_reference"]){
+  for(const k of ["claim_number","po_number","authorization_number","vendor_number","adjuster",
+                  "service_dates","client_reference","special_instructions"]){
     const el = $("ir_" + k); if(el) refs[k] = el.value;
   }
   try{
