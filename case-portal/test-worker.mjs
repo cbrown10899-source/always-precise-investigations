@@ -1332,6 +1332,88 @@ section('Active Surveillance: the same day, seen two ways');
      (await jsonOf(await call(env, '/my/active', { cookie: inv }))).active === null);
 }
 
+/* ------------------- a break must never eat the day it was taken inside of
+ *
+ * HIGH #1 from the 2026-08-14 audits, verified here before it was fixed.
+ *
+ * `span` is minutes between the TYPED start and end times — the investigator's
+ * own local clock. A pause is a pair of SERVER instants. Those are two
+ * different clocks, and the old code closed an open pause at `nowIso()`, which
+ * silently mixed them:
+ *
+ *   start 08:00, pause at noon, then at 20:00 file the day honestly as ending
+ *   at 12:00  ->  span 240 min, pause "ran" 8h, worked = max(0, 240 - 480) = 0
+ *
+ * A real four-hour day recorded as ZERO, floored by the `Math.max` so nothing
+ * anywhere said a number had been thrown away. `hours` is what authorization
+ * and invoices draw against, so this is billable time destroyed in place.
+ *
+ * The fix anchors the pause to the DAY, not to the wall clock: an open pause is
+ * closed at the instant the day ended — `case_days.created_at + span`, the same
+ * server timestamp the field timer already trusts — clamped so it can never
+ * close before it opened nor after now. A break that began at or after the
+ * day's claimed end therefore contributes nothing, which is the honest reading:
+ * they stopped working when the break started. */
+section('A break cannot eat the day it was taken inside of');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find(u => u.username === 'dana').id;
+
+  const HOUR = 3600000;
+  const iso = ms => new Date(ms).toISOString();
+
+  // One case per scenario, so an open pause in one cannot reach another.
+  const run = async (caseNo, pauseHoursIn, endTime) => {
+    await ingest(env, { case_no: caseNo, subject_name: 'Pat Coleman' });
+    await call(env, `/submissions/${caseNo}/assign`, { method: 'POST', cookie: admin, body: { user_id: danaId } });
+    await call(env, `/cases/${caseNo}/day/start`, { method: 'POST', cookie: inv,
+      body: { day_date: '2026-08-14', start_time: '08:00' } });
+    const dayId = (await jsonOf(await call(env, `/cases/${caseNo}/workspace`, { cookie: inv }))).open_day.id;
+    // The day was really recorded 8 hours ago; the break began `pauseHoursIn`
+    // hours into it. Both are server instants, exactly as the routes write them.
+    const t0 = Date.now() - 8 * HOUR;
+    await env.DB.prepare('UPDATE case_days SET created_at = ? WHERE id = ?').bind(iso(t0), dayId).run();
+    await call(env, `/cases/${caseNo}/day/pause`, { method: 'POST', cookie: inv, body: { reason: 'Break' } });
+    await env.DB.prepare('UPDATE case_day_pauses SET started_at = ? WHERE day_id = ? AND ended_at IS NULL')
+      .bind(iso(t0 + pauseHoursIn * HOUR), dayId).run();
+    return jsonOf(await call(env, `/cases/${caseNo}/day/end`, { method: 'POST', cookie: inv,
+      body: { end_time: endTime } }));
+  };
+
+  // The reviewer's own scenario: broke off at noon, filed it at eight.
+  const atEnd = await run('API-PZ1', 4, '12:00');
+  ok('the clock still ran the four hours that were typed', atEnd.span_hours === 4);
+  ok('a break that began as the day ended takes nothing off it', atEnd.paused_hours === 0);
+  ok('so a real four-hour day is four hours, not zero', atEnd.hours === 4);
+  ok('and zero is what the case day would have stored',
+     (await jsonOf(await call(env, '/cases/API-PZ1/workspace', { cookie: admin }))).days[0].hours === 4);
+
+  // A break genuinely inside the day still comes off it — the fix must not
+  // become a licence to stop subtracting breaks.
+  const midday = await run('API-PZ2', 2, '12:00');
+  ok('a break two hours in runs to the end of the day', midday.paused_hours === 2);
+  ok('and the billable day is what is left', midday.hours === 2);
+
+  // A break opened after the day's claimed end cannot make the day negative.
+  const after = await run('API-PZ3', 6, '12:00');
+  ok('a break opened after the day ended takes nothing', after.paused_hours === 0);
+  ok('and the day is still the full span', after.hours === 4);
+
+  // Whatever was subtracted is what the day-end screen is told, so the
+  // message can never name a break that did not come off.
+  for (const [label, r] of [['none', atEnd], ['a real break', midday], ['none again', after]]) {
+    ok(`the subtraction is reported honestly (${label})`,
+       Math.round((r.span_hours - r.paused_hours) * 100) / 100 === r.hours);
+  }
+}
+
 section('The two internal calculations never share a number');
 {
   const env = freshEnv();

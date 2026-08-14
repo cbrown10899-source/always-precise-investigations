@@ -1749,7 +1749,7 @@ async function endDay(request, env, user, caseNo) {
   if (!TIME_RE.test(time)) return json({ error: 'An end time is needed.' }, 400);
 
   const day = await env.DB.prepare(
-    `SELECT id, day_date, start_time, start_mileage FROM case_days
+    `SELECT id, day_date, start_time, start_mileage, created_at FROM case_days
       WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL ORDER BY id DESC LIMIT 1`)
     .bind(caseNo, user.id).first();
   if (!day) return json({ error: 'No investigation day is running on this case.' }, 409);
@@ -1769,10 +1769,36 @@ async function endDay(request, env, user, caseNo) {
   if (span < 0) span += 24 * 60;
 
   /* A day ended while still paused closes the pause first, so the arithmetic
-     below is over complete spans and no break is left hanging open. */
-  await env.DB.prepare(
-    'UPDATE case_day_pauses SET ended_at = ? WHERE day_id = ? AND ended_at IS NULL')
-    .bind(nowIso(), day.id).run();
+     below is over complete spans and no break is left hanging open.
+
+     It closes at the instant the DAY ended — never at `now`. This is the whole
+     of HIGH #1 (2026-08-14): `span` is minutes on the investigator's TYPED
+     clock, while a pause is a pair of SERVER instants, and closing an open
+     pause at `now` subtracted one from the other. Break off at noon, file the
+     day honestly at eight in the evening as having ended at 12:00, and a real
+     four-hour day became `Math.max(0, 240 - 480)` — zero, floored so silently
+     that the response still added up. `hours` is what authorization and
+     invoices draw against, so that was billable time destroyed in place.
+
+     `created_at` is the server instant the day was recorded — the same
+     timestamp the field timer already derives from, precisely because a
+     phone's clock cannot move it. The day therefore ended at
+     `created_at + span`, and a break is clamped to close no earlier than it
+     opened and no later than now. A break that began at or after the day's
+     claimed end contributes nothing, which is the honest reading of it: they
+     stopped working when the break began. */
+  const openPause = await env.DB.prepare(
+    'SELECT id, started_at FROM case_day_pauses WHERE day_id = ? AND ended_at IS NULL')
+    .bind(day.id).first();
+  if (openPause) {
+    const startedMs = Date.parse(openPause.started_at);
+    const dayEndMs = Date.parse(day.created_at) + span * 60000;
+    const closeMs = Number.isFinite(startedMs) && Number.isFinite(dayEndMs)
+      ? Math.max(startedMs, Math.min(dayEndMs, Date.now()))
+      : Date.now();
+    await env.DB.prepare('UPDATE case_day_pauses SET ended_at = ? WHERE id = ?')
+      .bind(new Date(closeMs).toISOString(), openPause.id).run();
+  }
 
   /* Breaks come off the billable total. An investigator who stopped for an
      hour did not work that hour, and `hours` is what authorization and
@@ -1781,8 +1807,14 @@ async function endDay(request, env, user, caseNo) {
      both. A duration is timezone-independent, so subtracting spans measured
      in UTC from a local-clock span is sound. */
   const paused = (await dayPauseState(env, day.id)).paused_ms;
-  const pausedMins = Math.round(paused / 60000);
-  const worked = Math.max(0, span - pausedMins);
+  /* Clamped to the span rather than floored to zero afterwards. Breaks totalling
+     more than the day they sit inside means the two clocks disagree, and the old
+     `Math.max(0, …)` answered that by throwing the day away without saying so.
+     Capping the subtraction keeps `worked` non-negative by construction AND
+     keeps `paused_hours` equal to what was actually taken off, so the day-end
+     screen can never name a break that did not come off the total. */
+  const pausedMins = Math.min(Math.round(paused / 60000), span);
+  const worked = span - pausedMins;
   const hours = Math.round((worked / 60) * 100) / 100;
   const pausedHours = Math.round((pausedMins / 60) * 100) / 100;
   const miles = endMiles != null && day.start_mileage != null

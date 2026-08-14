@@ -28,9 +28,17 @@ the owner's stated order**. That order is the work list.
 
 ### The HIGH queue, in the owner's order
 
-1. **A running or open pause can record a real surveillance day as 0 hours.**
-   `worker.js` ~1747-1766. Highest because it destroys billable time silently
-   and `hours` is what authorization and invoices draw against.
+1. ~~**A running or open pause can record a real surveillance day as 0 hours.**~~
+   ✅ **FIXED and VERIFIED 2026-08-14.** The claim was true, and was reproduced
+   as a failing test *before* anything was changed — a real four-hour day
+   recorded **0 hours**. An open pause is now closed at the instant the DAY
+   ended (`case_days.created_at + span`, the server timestamp the field timer
+   already trusts), clamped so it can close neither before it opened nor after
+   now; and the paused total is **clamped to the span** instead of the
+   difference being floored by `Math.max(0, …)`. A break inside the day still
+   comes off it — asserted, so this cannot become a licence to stop subtracting
+   breaks. `test-worker.mjs` → *"A break cannot eat the day it was taken inside
+   of"*, 11 checks. Worker 809 → 820.
 2. **Reassigning a case can strand a running investigation day** — nobody,
    not even an admin, can close it afterwards. `worker.js` ~1693-1734, ~1020,
    ~3081. No in-product recovery path exists.
