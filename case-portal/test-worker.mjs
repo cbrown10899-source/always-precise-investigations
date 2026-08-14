@@ -977,6 +977,83 @@ section('Manual intake from the office');
   ok('and the lead opens as a full workspace', ws.status === 200);
 }
 
+/* Active Surveillance Mode (SURVEILLANCE.md). No surveillance table exists and
+   none may be added: these routes only answer "am I out?" and "who is out?"
+   over the day records that already exist. */
+section('Active Surveillance: the same day, seen two ways');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  await call(env, `/invite/${new URL(link, 'https://x.test').searchParams.get('invite')}/accept`,
+    { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const danaId = (await jsonOf(await call(env, '/users', { cookie: admin })))
+    .users.find(u => u.username === 'dana').id;
+
+  await ingest(env, { case_no: 'API-SV1', carrier: 'Field Mutual', claim_number: 'FM-1',
+                      client_name: 'A. Adjuster', subject_name: 'Watched Person' });
+  await ingest(env, { case_no: 'API-SV2', client_name: 'Someone Else', subject_name: 'Not Yours' });
+  await call(env, '/submissions/API-SV1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+
+  // Nothing running yet: the launcher offers what could be started, scoped.
+  const idle = await jsonOf(await call(env, '/my/active', { cookie: inv }));
+  ok('with no day running the launcher says so', idle.active === null);
+  ok('and offers only their own assignments',
+     idle.assignments.length === 1 && idle.assignments[0].case_no === 'API-SV1');
+  ok('it carries the server clock the timer trusts', typeof idle.server_now === 'string');
+
+  ok('nobody is out yet',
+     (await jsonOf(await call(env, '/active', { cookie: admin }))).out_now.length === 0);
+  ok('and who-is-out is the office\'s view only',
+     (await call(env, '/active', { cookie: inv })).status === 403);
+
+  await call(env, '/cases/API-SV1/day/start', { method: 'POST', cookie: inv,
+    body: { day_date: '2026-08-14', start_time: '06:30', start_mileage: 52000 } });
+
+  /* The timer's source: the SERVER's instant, not anything the phone said. */
+  const ws = await jsonOf(await call(env, '/cases/API-SV1/workspace', { cookie: inv }));
+  ok('the open day carries a server-stamped start', typeof ws.open_day.started_at === 'string'
+     && !Number.isNaN(Date.parse(ws.open_day.started_at)));
+  ok('and the workspace carries the server clock beside it',
+     typeof ws.server_now === 'string' && !Number.isNaN(Date.parse(ws.server_now)));
+  ok('the recorded start time is still the investigator\'s own',
+     ws.open_day.start_time === '06:30');
+
+  const mine = await jsonOf(await call(env, '/my/active', { cookie: inv }));
+  ok('the launcher now resumes the running day', mine.active && mine.active.case_no === 'API-SV1');
+  ok('and names the subject for the field', mine.active.subject_name === 'Watched Person');
+
+  await call(env, '/cases/API-SV1/activity', { method: 'POST', cookie: inv,
+    body: { at_date: '2026-08-14', at_time: '06:45', description: 'Arrived in vicinity of subject residence.' } });
+
+  const out = await jsonOf(await call(env, '/active', { cookie: admin }));
+  ok('the office sees exactly one investigator out', out.out_now.length === 1);
+  const o = out.out_now[0];
+  ok('named, on their case', o.investigator === 'Dana' && o.case_no === 'API-SV1');
+  ok('with the start the day was recorded at', o.start_time === '06:30');
+  ok('and the last thing they logged',
+     o.last_activity && o.last_activity.description.includes('Arrived in vicinity'));
+  ok('and how much they have logged', o.activity_count === 1);
+  ok('but no location of any kind',
+     !('lat' in o) && !('lng' in o) && !JSON.stringify(o).toLowerCase().includes('gps'));
+
+  /* THE FINAL RULE: the field wrote to the ordinary tables. */
+  const asAdmin = await jsonOf(await call(env, '/cases/API-SV1/workspace', { cookie: admin }));
+  ok('the field entry is in the ordinary activity log',
+     asAdmin.activity.length === 1 && asAdmin.activity[0].description.includes('Arrived in vicinity'));
+  ok('and the day is an ordinary case day', asAdmin.days.length === 1
+     && asAdmin.days[0].start_mileage === 52000);
+
+  await call(env, '/cases/API-SV1/day/end', { method: 'POST', cookie: inv,
+    body: { end_time: '11:30', end_mileage: 52040 } });
+  ok('ending the day empties the office\'s Out now',
+     (await jsonOf(await call(env, '/active', { cookie: admin }))).out_now.length === 0);
+  ok('and the launcher goes back to offering assignments',
+     (await jsonOf(await call(env, '/my/active', { cookie: inv }))).active === null);
+}
+
 section('The two internal calculations never share a number');
 {
   const env = freshEnv();

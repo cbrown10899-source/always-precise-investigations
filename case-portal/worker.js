@@ -1301,8 +1301,13 @@ async function caseWorkspace(env, user, caseNo) {
 
   // The day this caller currently has running, if any — what turns the button
   // into END INVESTIGATION DAY.
+  /* `created_at` is the SERVER's instant for when this day was started, and it
+     is what the field timer derives from (SURVEILLANCE P2): a phone that
+     sleeps, reloads or has a wrong clock cannot move it. `start_time` beside
+     it stays the investigator's own recorded start, which is what the day's
+     hours are computed from at the end. */
   const openDay = await env.DB.prepare(
-    `SELECT id, day_date, start_time, start_mileage FROM case_days
+    `SELECT id, day_date, start_time, start_mileage, created_at AS started_at FROM case_days
       WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL
       ORDER BY id DESC LIMIT 1`).bind(caseNo, user.id).first();
 
@@ -1442,6 +1447,9 @@ async function caseWorkspace(env, user, caseNo) {
     status: row.status,
     stage,
     closure,
+    // The clock the field timer trusts. The page measures its own skew against
+    // this once and never counts ticks, so sleeping the phone changes nothing.
+    server_now: nowIso(),
     ...(admin ? { build_status: buildStatus, invoice_status: invoiceStatus } : {}),
     authorization: auth,
     details,
@@ -2614,6 +2622,70 @@ async function casePackages(env) {
   return json({ packages, outstanding: Math.round(outstanding * 100) / 100 });
 }
 
+/* Active Surveillance Mode (SURVEILLANCE.md).
+ *
+ * There is no surveillance table and there never will be: this is a VIEW of
+ * the case, the day, the activity log and the evidence that already exist.
+ * These two routes exist only because the mode needs to answer two questions
+ * the existing shapes do not — "do I have a day running anywhere?" (so the
+ * home-screen launch can resume it) and "who is out right now?" (P18). */
+
+async function myActiveDay(env, user) {
+  const row = await env.DB.prepare(
+    `SELECT d.id, d.case_no, d.day_date, d.start_time, d.start_mileage,
+            d.created_at AS started_at, s.kind, s.subject_name
+       FROM case_days d JOIN submissions s ON s.case_no = d.case_no
+      WHERE d.investigator_id = ? AND d.end_time IS NULL
+      ORDER BY d.id DESC LIMIT 1`).bind(user.id).first();
+  if (!row) {
+    // Nothing running: the launcher offers the assignments they could start.
+    const { results } = await env.DB.prepare(
+      `SELECT s.case_no, s.kind, s.subject_name, st.stage
+         FROM submissions s LEFT JOIN case_status st ON st.case_no = s.case_no
+        WHERE s.status != 'closed' ${user.role === 'admin' ? '' : 'AND s.assigned_to = ?'}
+        ORDER BY s.created_at DESC LIMIT 25`)
+      .bind(...(user.role === 'admin' ? [] : [user.id])).all();
+    return json({ active: null, server_now: nowIso(), assignments: results || [] });
+  }
+  const acts = await env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM activity_log WHERE case_no = ? AND day_id = ?')
+    .bind(row.case_no, row.id).first();
+  return json({
+    active: { ...row, activity_count: Number(acts && acts.n) || 0 },
+    server_now: nowIso(),
+  });
+}
+
+/* Who is out right now — operational only. No location, no GPS: the handoff
+   is explicit that this phase does not track anyone's position. */
+async function outNow(env) {
+  const { results } = await env.DB.prepare(
+    `SELECT d.id, d.case_no, d.day_date, d.start_time, d.created_at AS started_at,
+            u.display_name AS investigator, s.subject_name, s.kind
+       FROM case_days d
+       LEFT JOIN users u ON u.id = d.investigator_id
+       LEFT JOIN submissions s ON s.case_no = d.case_no
+      WHERE d.end_time IS NULL
+      ORDER BY d.created_at LIMIT 25`).all();
+  const out = [];
+  for (const d of results || []) {
+    const last = await env.DB.prepare(
+      `SELECT at_time, description, created_at FROM activity_log
+        WHERE case_no = ? AND day_id = ? ORDER BY id DESC LIMIT 1`)
+      .bind(d.case_no, d.id).first();
+    const n = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM activity_log WHERE case_no = ? AND day_id = ?')
+      .bind(d.case_no, d.id).first();
+    out.push({
+      ...d,
+      activity_count: Number(n && n.n) || 0,
+      last_activity: last ? { at_time: last.at_time, description: last.description,
+                              created_at: last.created_at } : null,
+    });
+  }
+  return json({ out_now: out, server_now: nowIso() });
+}
+
 /* ------------------------------------------------- my work, across cases */
 
 /* An investigator's own desk: their reports and their expenses across every
@@ -3466,6 +3538,14 @@ async function route(request, env) {
   if (p === '/intakes' && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return createManualIntake(request, env, user);
+  }
+
+  // Active Surveillance Mode: resume-anywhere for whoever is asking, and the
+  // office's view of who is out. Both scoped by the caller's own identity.
+  if (p === '/my/active' && method === 'GET') return myActiveDay(env, user);
+  if (p === '/active' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return outNow(env);
   }
 
   if (p === '/external-storage' && method === 'GET') {

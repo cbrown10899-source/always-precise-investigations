@@ -2209,6 +2209,188 @@ section('The field case home, on a desk and in a hand');
   await page.close();
 }
 
+/* Active Surveillance Mode (SURVEILLANCE.md). The rule under test throughout:
+   it is a VIEW of the existing case. Everything it writes must be visible in
+   the ordinary portal, because there is no second database. */
+section('Active Surveillance Mode: a field view of the same case');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('dana');
+  await page.locator('#p').fill('FieldWork2026x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  ok('the assignment offers the field mode',
+     await page.locator('[data-act="svEnter"]').count() === 1);
+  await page.locator('[data-act="svEnter"]').click();
+  await page.waitForTimeout(700);
+
+  ok('the field view takes the whole screen', await page.locator('.sv').count() === 1);
+  ok('it is the dark field interface',
+     (await page.evaluate(() => getComputedStyle(document.querySelector('.sv')).backgroundColor))
+       === 'rgb(13, 24, 38)');
+  ok('the case number is in the header', has(await text(page, '.sv-head'), 'API-20260812-4001'));
+  ok('there is an obvious way out', has(await text(page, '.sv-head'), 'Exit active mode'));
+  ok('and a bottom navigation for one hand', await page.locator('.sv-nav button').count() === 5);
+
+  // Day 4001 was ended by an earlier section, so this starts a fresh one.
+  ok('with no day running the one action is starting one',
+     await page.locator('[data-act="svStartDay"]').count() === 1);
+  await page.locator('#sv_start').fill('06:30');
+  await page.locator('#sv_smiles').fill('52000');
+  await page.locator('[data-act="svStartDay"]').click();
+  await page.waitForTimeout(900);
+
+  const home = await text(page, '.sv-body');
+  ok('the day starts and the timer appears', await page.locator('#svTimer').count() === 1);
+  ok('the timer reads as a clock', /\d\d:\d\d:\d\d/.test(await page.locator('#svTimer').innerText()));
+  ok('it says when the day started', has(home, '6:30 AM'));
+  ok('ending the day is the gold action', await page.locator('.sv-btn.gold').count() >= 1);
+  ok('the four quick actions are there',
+     has(home, 'Activity') && has(home, 'Photo') && has(home, 'Video') && has(home, 'Note'));
+
+  /* THE TIMER RULE (P2): elapsed derives from the server's record of the
+     start, so a reload cannot reset it and a wrong device clock cannot move
+     it. Reload and confirm it did not restart from zero. */
+  const before = await page.locator('#svTimer').innerText();
+  await page.reload();
+  await page.waitForTimeout(1200);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  await page.locator('[data-act="svEnter"]').click();
+  await page.waitForTimeout(800);
+  const after = await page.locator('#svTimer').innerText();
+  const secs = t => t.split(':').reduce((a, n) => a * 60 + Number(n), 0);
+  ok('a reload does not restart the timer', secs(after) >= secs(before), `${before} → ${after}`);
+  ok('and the day is resumed, not duplicated',
+     has(await text(page, '.sv-body'), '6:30 AM'));
+
+  // Quick activity: the same lines and favorites the office sheet uses.
+  await page.locator('.sv-nav button', { hasText: 'Activity' }).click();
+  await page.waitForTimeout(400);
+  ok('the field gets the same searchable actions',
+     await page.locator('#sv_q').count() === 1);
+  ok('with the same categories', has(await text(page, '.sv-cats'), 'Arrival'));
+  await page.locator('#sv_q').fill('visual contact');
+  await page.waitForTimeout(350);
+  ok('search finds a line', has(await text(page, '.sv-body'), 'Lost visual contact'));
+  await page.locator('#sv_q').fill('');
+  await page.waitForTimeout(350);
+
+  await page.locator('.sv-cat', { hasText: 'Arrival' }).click();
+  await page.waitForTimeout(250);
+  await page.locator('.sv-pick', { hasText: 'Arrived in vicinity of subject residence.' }).click();
+  await page.waitForTimeout(300);
+  ok('picking a line opens the entry with it filled in',
+     (await page.locator('#sv_desc').inputValue()).includes('Arrived in vicinity'));
+  await page.locator('#sv_pa').check();
+  await page.locator('[data-act="svSaveEntry"]').click();
+  await page.waitForTimeout(800);
+  ok('saving confirms in the field', has(await text(page, '.sv-body'), 'Activity saved'));
+  ok('and offers to add another', await page.locator('[data-act="svAddAnother"]').count() === 1);
+
+  // One-tap No change.
+  await page.locator('[data-act="svAddAnother"]').click();
+  await page.waitForTimeout(250);
+  await page.locator('.sv-cat', { hasText: 'No activity' }).click();
+  await page.waitForTimeout(250);
+  await page.locator('.sv-pick', { hasText: 'No change was noted during this period.' }).click();
+  await page.waitForTimeout(800);
+  ok('No change logs in one tap', has(await text(page, '.sv-body'), 'Activity saved'));
+
+  await page.locator('.sv-nav button', { hasText: 'Activity' }).click();
+  await page.waitForTimeout(300);
+  await page.locator('[data-act="svTab"][data-t="timeline"]').first().click().catch(() => {});
+  await page.waitForTimeout(300);
+
+  // The case drawer: fieldwork facts, never money.
+  await page.locator('.sv-nav button', { hasText: 'Case' }).click();
+  await page.waitForTimeout(400);
+  const drawer = await text(page, '.sv-body');
+  ok('the drawer carries the subject', has(drawer, 'Pat Coleman'));
+  ok('and the scope', has(drawer, 'Activity level'));
+  ok('it never carries the carrier', !has(drawer, 'Example Mutual'));
+  ok('nor a rate or a budget', !/\$\s?\d/.test(drawer), drawer.slice(0, 200));
+
+  // Ending the day is a confirmation with totals, never one tap.
+  await page.locator('.sv-nav button', { hasText: 'Home' }).click();
+  await page.waitForTimeout(400);
+  await page.locator('.sv-btn.gold', { hasText: 'End investigation day' }).click();
+  await page.waitForTimeout(400);
+  const end = await text(page, '.sv-body');
+  ok('ending shows the totals first', has(end, 'Activity entries') && has(end, 'Photos'));
+  ok('and offers to keep working instead',
+     await page.locator('.sv-btn', { hasText: 'Keep working' }).count() === 1);
+  await page.locator('#sv_end').fill('11:30');
+  await page.locator('#sv_emiles').fill('52040');
+  await page.locator('[data-act="svEndDay"]').click();
+  await page.waitForTimeout(1000);
+  ok('the day ends with its hours recorded', has(await text(page, '.sv-body'), 'Day ended'));
+
+  // THE POINT: leave the mode and the work is simply there in the portal.
+  await page.locator('[data-act="svExit"]').click();
+  await page.waitForTimeout(700);
+  ok('exiting returns to the ordinary case page', await page.locator('.casepage').count() === 1);
+  await wsTab(page, 'Activity log');
+  const log = await text(page, '#dlgBody');
+  ok('the field entries are in the normal activity log', has(log, 'Arrived in vicinity'));
+  ok('including the one-tap entry', has(log, 'No change was noted'));
+  await wsTab(page, 'Field work');
+  // The miles column is hidden at phone width, so assert on the window itself.
+  ok('and the day is an ordinary recorded day, start to end',
+     has(await text(page, '#dlgBody'), '6:30 AM–11:30 AM'));
+  await page.close();
+}
+
+/* The home-screen launcher (P16) and the office's live view (P18). */
+section('The home-screen launcher, and who is out now');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await page.goto(SITE + '/portal/?surveillance=1');
+  await page.waitForTimeout(900);
+  ok('the shortcut opens the field launcher', await page.locator('.sv').count() === 1);
+  const l = await text(page, '.sv');
+  ok('with no day running it lists the assignments', has(l, 'My surveillance assignments'));
+  ok('and names one', has(l, 'API-20260812-4001'));
+  ok('there is a way into the full portal', has(l, 'The full portal'));
+  await page.locator('[data-act="svEnter"]').first().click();
+  await page.waitForTimeout(900);
+  ok('and it opens straight into the field view of that case',
+     await page.locator('.sv-nav').count() === 1);
+
+  // Start a day so the office has someone to see.
+  await page.locator('#sv_start').fill('08:00');
+  await page.locator('[data-act="svStartDay"]').click();
+  await page.waitForTimeout(900);
+  ok('the day is running', await page.locator('#svTimer').count() === 1);
+
+  // Relaunching now resumes rather than asking again.
+  await page.goto(SITE + '/portal/?surveillance=1');
+  await page.waitForTimeout(900);
+  ok('relaunching offers to resume the running day',
+     has(await text(page, '.sv'), 'Resume active surveillance'));
+  ok('and shows its elapsed time', /\d\d:\d\d:\d\d/.test(await text(page, '.sv-timer')));
+  await page.close();
+
+  const admin = await newPage();
+  await signIn(admin, 'trever', 'AdminPassword1x');
+  await admin.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await admin.waitForTimeout(700);
+  const board = await text(admin, '#app');
+  ok('the office sees who is out now', has(board, 'Out now'));
+  ok('with the investigator named', has(board, 'Dana Field'));
+  ok('and the case', has(board, 'API-20260812-4001'));
+  ok('and no location tracking of any kind',
+     !has(board, 'GPS') && !has(board, 'location'));
+  await admin.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
