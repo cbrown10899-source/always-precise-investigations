@@ -27,8 +27,7 @@ portal e2e 537, intake 178, alerts 41.
    file). Two things are genuinely outstanding and both need a human or an
    asset, not code: **real iPhone Safari / Android Chrome testing** (the
    camera picker and the phone's own dictation cannot be covered headlessly),
-   and **a distinct home-screen icon** — the manifest currently points at
-   `/watch/`'s icons. A mobile draft-preview *reader* inside the mode is the
+   (the icon arrived 2026-08-14 and is in). A mobile draft-preview *reader* inside the mode is the
    one nice-to-have left; the submit path already works through the full
    report screen.
 3. Dropbox video delivery (needs DROPBOX_APP_KEY / DROPBOX_APP_SECRET /
