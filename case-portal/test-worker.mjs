@@ -1061,10 +1061,31 @@ section('Lead statuses, and sends that stamp themselves');
      (await jsonOf(await call(env, '/submissions', { cookie: admin }))).submissions
        .find(c => c.case_no === 'API-LD1').lead_status === 'intake_sent');
 
-  ok('an investigator is never told who the client was emailed',
-     !('sends' in (await jsonOf(await call(env, '/cases/API-LD1/workspace', { cookie: inv }))))
-     && !('send_count' in (await jsonOf(await call(env, '/submissions', { cookie: inv })))
-       .submissions[0]));
+  /* This was a key-name check, and a key-name check is weak twice over: it
+     passes the moment a key is renamed or nested, AND it passes on a 404,
+     because `!('sends' in {error:'not found'})` is true. It would have gone
+     green while testing nothing.
+
+     The recipient's own address is the thing that must not leave the Worker,
+     so assert on the VALUE, over the whole response body, on every route an
+     investigator can reach — and prove first that the workspace they got was
+     a real one. */
+  const seen = [];
+  for (const path of ['/submissions', '/submissions/API-LD1', '/cases/API-LD1/workspace',
+                      '/summary', '/my/active']) {
+    const r = await call(env, path, { cookie: inv });
+    seen.push([path, r.status, await r.text()]);
+  }
+  const at = p2 => seen.find(([x]) => x === p2);
+  ok('the investigator really can open that case — so the checks below are not vacuous',
+     at('/cases/API-LD1/workspace')[1] === 200 && at('/submissions/API-LD1')[1] === 200);
+  ok('no route hands an investigator an address the office emailed',
+     seen.every(([, , b]) => !b.includes('casey@leadmutual.test')
+                          && !b.includes('pat@example.test')));
+  ok('nor the count, the timestamp, or which sheet went',
+     seen.every(([, , b]) => !/send_count|last_sent_at|sheet_id/.test(b)));
+  ok('and the workspace has no sends key under any name',
+     !/"sends?"|"send_history"/.test(at('/cases/API-LD1/workspace')[2]));
 
   /* Once the office has DECIDED, the system never quietly moves the lead. */
   await call(env, '/leads/API-LD1/status', { method: 'POST', cookie: admin,
