@@ -6,63 +6,70 @@ squash merge, portal-setup dispatch after schema changes, Actions-listing
 overflow pattern, guard tests). This file is the live queue and in-flight
 state. Update it when the queue moves; keep it short.
 
+**`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
+truth** (recorded verbatim 2026-08-13). It supersedes nothing already shipped —
+its section 1 lists the shipped baseline and says explicitly: do not rebuild it.
+Read it for anything this file summarises.
+
 Snapshot date: 2026-08-13. Branch: `claude/app-crashes-lockups-debug-jcy6kf`.
-Master is green through PR #48 (UIBUILD Phase 7). Suites at last green:
-worker 624, portal e2e 481 (intake 130, alerts 41).
+Master is green through PR #49. Suites at last green: worker 624,
+portal e2e 481, intake 130, alerts 41.
 
-## The queue, in the owner's order
+## The queue, in the owner's order (MASTER-HANDOFF §42)
 
-1. **UIBUILD.md is COMPLETE** — all 8 phases shipped (PRs #42–#48 plus
-   Phase 8's PR). The ledger in UIBUILD.md records what each phase
-   became.
-2. **INTAKE-NA.md — intake "not available" states** is now the head of
-   the queue (the owner's order: after the UI work). Twelve-step
-   ledger in that file; the manual portal intake already honors the
-   core rule, but the PUBLIC intake forms and their server validation
-   are the actual work.
-3. **SURVEILLANCE.md — Active Surveillance Mode** (after the shared
-   model is stable; PWA-ready; a VIEW of the existing case, never a
-   separate database).
-2. **INTAKE-NA.md — intake "not available" states** (owner: after the UI
-   work).
-3. **SURVEILLANCE.md — Active Surveillance Mode** (owner: after the shared
-   model is stable; PWA-ready; a VIEW of the existing case, never a
-   separate database).
-4. Deliberately later: Dropbox live integration (needs the owner's Dropbox
-   app secrets — DROPBOX_APP_KEY / DROPBOX_APP_SECRET / DROPBOX_REFRESH_TOKEN
-   as Worker secrets, plus a fresh read of Dropbox's current API docs);
-   BILL live API; Phase-4 futures (client portal, redaction workflow,
-   field safety, profitability).
+1. **INTAKE-NA.md — NOW.** Public insurance form, public private form,
+   server validation, admin missing-info view. Ledger in that file.
+2. **SURVEILLANCE.md — the next major workstream.** Launch/resume, the
+   server-derived investigation timer, quick activity, favorites, voice
+   entry, photo/video, timeline, mobile report, end-day review, PWA
+   readiness, admin "Out now". Ask the owner to re-upload
+   `06_active_surveillance_mobile_large_reference.png` when it starts.
+3. Dropbox video delivery (needs DROPBOX_APP_KEY / DROPBOX_APP_SECRET /
+   DROPBOX_REFRESH_TOKEN as Worker secrets + a fresh read of the API docs).
+4. Case Build gap audit (multi-day reports, package types, real
+   report+photos PDF — MASTER §13).
+5. Invoice / BILL gap audit (provider-neutral fields — MASTER §28).
+6. Public website / SEO, **and remove Social Media Search** everywhere
+   (MASTER §29–30).
+7. Full insurance workflow audit, end to end (MASTER §38).
+8. Full private workflow audit, end to end (MASTER §39).
+9. Final responsive / accessibility / security pass.
 
-## Just resolved (2026-08-13, this session)
+## Gaps the master handoff surfaced that no per-feature ledger holds yet
 
-**Phase 1 shipped as PR #42, Phase 2 as PR #43** (both squash-merged,
-deploys green, branch reset onto master each time). The Phase-1 e2e
-timeout's recorded lead (pkgCard/hostile row) was wrong — the real bug
-was that nothing fetched `/packages` on the dashboard LANDING; the
-same landing-vs-click class of bug was then found and fixed twice more
-(openCase straight to the package tab, and the e2e harness now prints
-its report on an uncaught exception instead of dying silently).
+Record these here so they cannot be lost between phases:
 
-**The entire UIBUILD handoff shipped this session**: Phases 1–7 as PRs
-#42–#48 (deploys green; portal-setup dispatched once, for Phase 4's
-report_versions schema change, and came back green), and **Phase 8 is
-built and green on the branch** (P20: Settings → Developer & testing
-holds the test controls, admin-only; page-only change). Ship Phase 8
-as the final UIBUILD PR, then the queue moves to INTAKE-NA.md.
+- **Requested vs Confirmed authorization** (MASTER §7). A package the client
+  picked on the intake is *requested*, never "approved". The admin confirms it,
+  and only the confirmed one carries a dollar figure. INTAKE-NA's
+  `authorized_hours_status: pending` is the first half of this.
+- **Lead statuses are not case statuses** (MASTER §5): Lead · Rate Sheet Sent ·
+  Intake Sent · Intake Received · Contacted · More Info Requested · Converted
+  to Case · Declined · Closed Lead. The Phase-6 leads desk currently reuses
+  case stages.
+- **Completed Cases path** (MASTER §31) — an obvious route to the final report,
+  evidence index, client package, video link and invoice.
+- **"Allow investigator to view client identity"** as an explicit admin
+  permission, default No, enforced server-side (MASTER §33).
+- Sidebar targets not yet built: Clients, Reports, Evidence, Expenses, Tasks
+  as top-level nav (MASTER §8). Only build one when it has a real destination.
+- More quick-activity lines + Surveillance/End Day categories (MASTER §10).
 
-Note for the record: PR #45's merge hit a GitHub 500 that had actually
-landed — master carries one redundant EMPTY commit (cb1b948 + 519454e,
-identical trees); harmless, left alone on purpose.
+## In flight right now
+
+**INTAKE-NA is mid-build on the branch** (uncommitted → committed as WIP):
+the public form's NA controls, statuses on the payload, the review summary,
+FIELD_KEEP additions, and the admin "information still needed" view. Finish
+the ledger, run all four suites, ship as one PR.
 
 ## How to resume in a fresh session
 
 1. `git fetch origin && git checkout claude/app-crashes-lockups-debug-jcy6kf`
-2. Read this file, then the ledger of whichever handoff is at the head of
-   the queue.
-3. Run the suites first: `node case-portal/test-worker.mjs` and
-   `node portal/test-portal.mjs` — then continue down the queue (UIBUILD
-   Phase 2 is the head).
+2. Read this file, then `MASTER-HANDOFF.md`, then the ledger of whichever
+   handoff is at the head of the queue.
+3. Run the suites first: `node case-portal/test-worker.mjs`,
+   `node portal/test-portal.mjs`, `node intake/test-intake.mjs`,
+   `node visitor-alerts/test-worker.mjs`.
 4. Per-feature rhythm (unchanged all session): build → tests green → ledger
    + CLAUDE.md counts → commit/push → PR → squash-merge → rebase dance →
    portal-setup dispatch only when schema.sql changed.
@@ -79,8 +86,10 @@ identical trees); harmless, left alone on purpose.
 - The owner works from phone + desktop, sends handoffs mid-build, and
   wants every handoff RECORDED VERBATIM in case-portal/ before building —
   that rule already survived two near-losses this session.
-- The owner may hold FURTHER ChatGPT handoffs not yet pasted into any
-  session. Everything pasted so far IS recorded here (RATESHEETS,
-  INVOICING, CASEBUILD, INTAKE-NA, UXSIMPLIFY, UIBUILD, SURVEILLANCE).
-  Anything still only in ChatGPT: ask the owner to paste it, record it to
-  case-portal/ first, then build in their stated order.
+- Everything the owner has pasted so far IS recorded here: RATESHEETS,
+  INVOICING, CASEBUILD, INTAKE-NA, UXSIMPLIFY, UIBUILD, SURVEILLANCE, and
+  now MASTER-HANDOFF. Anything still only in ChatGPT: ask them to paste it,
+  record it to case-portal/ first, then build in their stated order.
+- Do not reintroduce a "landing vs click" load bug: any view that can be
+  landed on directly must fetch what a later tab click would have fetched.
+  That class of bug cost this session three fixes (MASTER §1).

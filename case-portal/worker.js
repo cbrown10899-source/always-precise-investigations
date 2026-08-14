@@ -847,6 +847,11 @@ const FIELD_KEEP = [
   // it is a budget, and a budget is commercial.
   'start_date', 'permitted_days', 'permitted_times', 'weekend_authorized',
   'priority', 'geographic_limits',
+  // INTAKE-NA: the availability of a field the investigator can already see.
+  // "Address not available yet" is field context; the statuses of office-side
+  // fields (claim number, billing) are deliberately NOT here.
+  'subject_address_status', 'subject_description_status', 'date_of_loss_status',
+  'start_date_status', 'authorized_hours_status',
 ];
 
 /* The denormalised columns carry the same identities as the payload does — a

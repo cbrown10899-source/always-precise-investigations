@@ -654,6 +654,8 @@ const FIELD_KEEP = [
   "claim_type", "date_of_loss", "prior_surveillance",
   "start_date", "permitted_days", "permitted_times", "weekend_authorized",
   "priority", "geographic_limits",
+  "subject_address_status", "subject_description_status", "date_of_loss_status",
+  "start_date_status", "authorized_hours_status",
 ];
 
 function redactExample(c) {
@@ -2963,7 +2965,8 @@ function overviewPanel(s, a){
               ? row("Authorized", a.authorized_hours + " hrs")
                 + row("Used", a.hours_used + " hrs")
                 + row("Remaining", a.hours_remaining + " hrs")
-              : row("Authorization", "Not set"))
+              : row("Authorization", p.authorized_hours_status === "pending"
+                  ? "Pending — confirm before field work" : "Not set"))
           : (a.retainer
               ? row("Retainer", "$" + a.retainer.amount.toLocaleString())
                 + row("Balance", "$" + a.retainer.remaining.toLocaleString())
@@ -3124,6 +3127,44 @@ function exampleBodyHtml(){
     ${controls}`;
   }
 
+/* INTAKE-NA: what a marked-unavailable field says on an admin's screen. The
+   submitter chose these words' meaning on the form; the review repeats them
+   rather than showing a blank that reads as an error. */
+const NA_WORDS = { not_available: "Not available at submission", unknown: "Unknown at submission",
+  approximate: "Approximate", asap: "As soon as available", flexible: "Flexible",
+  tbd: "To be determined", pending: "Authorization pending" };
+
+/* Intentionally-unavailable fields, in words — the INFORMATION STILL NEEDED
+   summary. Reads the redacted payload it is given, so an investigator's copy
+   lists only what they can already see. */
+function stillNeeded(p, claim){
+  const map = [
+    ["claim_number", "Claim number"], ["date_of_loss", "Date of loss"],
+    ["subject_address", claim ? "Claimant address" : "Subject address"],
+    ["subject_description", "Vehicle / description"],
+    ["start_date", "Requested start"], ["authorized_hours", "Authorization"],
+    ["billing_email", "Billing contact"],
+  ];
+  const items = [];
+  for(const [k, lbl] of map){
+    const st = p[k + "_status"];
+    if(st === "approximate" && p[k]) items.push(`${lbl} — approximate`);
+    else if(st && !p[k]) items.push(`${lbl} — ${(NA_WORDS[st] || st).toLowerCase()}`);
+  }
+  return items;
+}
+
+/* Completeness reads as words, never a score (INTAKE-NA). */
+function completeness(s){
+  const p = s.payload || {};
+  const claim = s.kind === "claims";
+  const contact = p.client_email || p.client_phone || p.adjuster_email || p.adjuster_phone;
+  const identity = claim ? (p.carrier && (p.subject_name || p.claim_number)) : p.client_name;
+  if(!contact || !identity) return ["Missing critical information", "rs-needs_revision"];
+  if(stillNeeded(p, claim).length) return ["Additional information helpful", "rs-submitted"];
+  return ["Ready for review", "rs-approved"];
+}
+
 /* The intake detail, split so the workspace can show what the field needs
    (subject) apart from what the office needs (everything). Both read from the
    same submission — the Worker has already removed whatever this role may not
@@ -3131,13 +3172,24 @@ function exampleBodyHtml(){
 function detailList(s, mode){
   const p = s.payload || {};
   const row = (k, v) => v ? `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>` : "";
+  const rowS = (k, v, st) => v
+    ? `<dt>${esc(k)}</dt><dd>${esc(v)}${st === "approximate" ? ' <i style="color:var(--muted)">(approximate)</i>' : ""}</dd>`
+    : st ? `<dt>${esc(k)}</dt><dd><i style="color:var(--muted)">${esc(NA_WORDS[st] || "Not available yet")}</i></dd>` : "";
   const claim = s.kind === "claims";
   const sig = safeImage(p.signature);
 
+  const needed = stillNeeded(p, claim);
+  const neededBox = needed.length ? `<div class="note" style="margin-bottom:12px">
+    <b>Information still needed</b> — marked unavailable at submission on purpose, never an error.
+    <ul style="margin:6px 0 0 18px">${needed.map(t => `<li>${esc(t)}</li>`).join("")}</ul>
+    <div style="margin-top:8px"><button class="btn sm ghost" data-act="wsTab" data-tab="comms">Request it via the Comm log</button>
+      <span style="font-size:.8rem;color:var(--muted)">The assignment is never treated as lost — details arrive as the case develops.</span></div>
+  </div>` : "";
+
   if(mode === "subject"){
-    return `<dl class="detail">
-      ${row(claim ? "Claimant" : "Subject", p.subject_name)}${row("Address", p.subject_address)}
-      ${row("Description", p.subject_description)}
+    return `${neededBox}<dl class="detail">
+      ${row(claim ? "Claimant" : "Subject", p.subject_name)}${rowS("Address", p.subject_address, p.subject_address_status)}
+      ${rowS("Description", p.subject_description, p.subject_description_status)}
       ${row(claim ? "Injury & restrictions" : "Relationship", p.subject_relationship)}
       ${row("Prior surveillance", p.prior_surveillance)}
       ${row(claim ? "Scope" : "Objective", p.objective)}
@@ -3146,19 +3198,22 @@ function detailList(s, mode){
       ${row("Field notes", p.notes)}
     </dl>`;
   }
-  return `<dl class="detail">
-    ${claim ? `${row("Carrier / TPA", p.carrier)}${row("Claim number", p.claim_number)}${row("Policy number", p.policy_number)}
-               ${row("Claim type", p.claim_type)}${row("Date of loss", p.date_of_loss)}${row("Adjuster", p.adjuster)}
+  const [words, tone] = completeness(s);
+  return `${ME.role === "admin" ? `<div style="margin-bottom:10px"><span class="tag ${tone}">${esc(words)}</span></div>` : ""}
+  ${neededBox}
+  <dl class="detail">
+    ${claim ? `${row("Carrier / TPA", p.carrier)}${rowS("Claim number", p.claim_number, p.claim_number_status)}${row("Policy number", p.policy_number)}
+               ${row("Claim type", p.claim_type)}${rowS("Date of loss", p.date_of_loss, p.date_of_loss_status)}${row("Adjuster", p.adjuster)}
                ${row("Adjuster email", p.adjuster_email)}${row("Adjuster phone", p.adjuster_phone)}
                ${row("Defense counsel", p.defense_counsel)}` : ""}
     ${row(claim ? "Assigning contact" : "Client", p.client_name)}${row("Phone", p.client_phone)}${row("Email", p.client_email)}
     ${claim ? "" : `${row("Address", p.client_address)}${row("Best time", p.best_time)}`}
     ${row(claim ? "Claimant" : "Subject", p.subject_name)}
     ${row(claim ? "Scope" : "Objective", p.objective)}
-    ${row("Authorized hours", p.authorized_hours)}${row("Not to exceed", p.not_to_exceed)}
-    ${row("Requested start", p.start_date)}${row("Priority", p.priority)}
+    ${rowS("Authorized hours", p.authorized_hours, p.authorized_hours_status)}${row("Not to exceed", p.not_to_exceed)}
+    ${rowS("Requested start", p.start_date, p.start_date_status)}${row("Priority", p.priority)}
     ${row(claim ? "Deadline" : "Timeline", p.timeline)}${row("Attachments", p.attachments)}
-    ${claim ? `${row("Billing reference", p.billing_reference)}${row("Invoices to", p.billing_email)}${row("Billing notes", p.billing_notes)}` : ""}
+    ${claim ? `${row("Billing reference", p.billing_reference)}${rowS("Invoices to", p.billing_email, p.billing_email_status)}${row("Billing notes", p.billing_notes)}` : ""}
     ${row(claim ? "Authorized by" : "Signed by", p.signed_name)}
     ${row("Received", when(s.created_at))}
   </dl>

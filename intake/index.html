@@ -59,6 +59,10 @@
   .agree h4{margin:10px 0 4px;font-size:.85rem;color:var(--ink);}
   .agree p{margin-bottom:8px;}
   .chk{display:flex;gap:10px;align-items:flex-start;font-size:.88rem;margin-bottom:14px;}
+  /* INTAKE-NA: the small "don't have this yet" control under a field. */
+  .na{display:flex;gap:7px;align-items:center;font-size:.8rem;color:var(--muted);margin:-8px 0 14px;cursor:pointer;}
+  .na input{width:auto;margin:0;}
+  input:disabled,textarea:disabled{background:#f2f5f8;color:#9aa4ae;}
   .chk input{margin-top:3px;flex:none;width:18px;height:18px;}
 
   .sigwrap{border:1px solid var(--line);border-radius:8px;background:#fff;position:relative;}
@@ -148,6 +152,7 @@ const AUTH_PRESETS = [
   { id:"a16",    label:"16 hours — 2 days", desc:"Two days, typically split to compare different days of the week." },
   { id:"a24",    label:"24 hours — 3 days", desc:"The usual initial authorization — enough to establish a pattern rather than a snapshot." },
   { id:"custom", label:"Custom authorization", desc:"Tell us the hours or the structure you need and we will work to it." },
+  { id:"pending", label:"Authorization pending", desc:"Submit the assignment now — we confirm the authorized hours with you before any billable field work starts." },
 ];
 const authPreset = id => AUTH_PRESETS.find(a => a.id === id) || null;
 
@@ -209,6 +214,45 @@ const $ = id => document.getElementById(id);
 const val = {};
 function capture(scope){ (scope||document).querySelectorAll("[data-k]").forEach(el=>{ val[el.dataset.k] = el.type==="checkbox" ? el.checked : el.value; }); }
 
+/* INTAKE-NA: value and availability are separate things. The control disables
+   the input and records the state; toggling back restores the input with
+   whatever was typed. Natural language only — nothing here says "N/A", and no
+   fake value is ever forced to pass validation. */
+function naBox(k, text){
+  return `<label class="na"><input type="checkbox" data-k="${k}_na" data-na-for="${k}" onchange="naFlip(this)"><span>${text || "I don't have this information right now"}</span></label>`;
+}
+function naFlip(box){
+  const input = document.querySelector(`[data-k="${box.dataset.naFor}"]`);
+  if(input) input.disabled = box.checked;
+  capture();
+}
+function applyNaStates(){
+  document.querySelectorAll("[data-na-for]").forEach(b => {
+    const t = document.querySelector(`[data-k="${b.dataset.naFor}"]`);
+    if(t) t.disabled = !!b.checked;
+  });
+}
+
+/* What the submitter marked as not-yet-known, in their words — drawn on the
+   review box before signing and on the final record. */
+function naSummary(){
+  const items = [];
+  const who = isClaims() ? "Claimant" : "Subject";
+  if(isClaims()){
+    if(val.k_claimno_na) items.push("Claim number — not available at submission");
+    if(val.k_dol_mode === "Unknown") items.push("Date of loss — unknown");
+    else if(val.k_dol_mode === "Approximate date" && (val.k_dol||"").trim()) items.push("Date of loss — approximate");
+  }
+  if(val.s_addr_na) items.push(who + " address — not available yet");
+  if(val.s_desc_na) items.push("Vehicle / description — not available yet");
+  if(isClaims()){
+    if(val.z_auth === "pending") items.push("Authorization — pending confirmation");
+    if(val.z_start_mode && val.z_start_mode !== "Specific date") items.push("Requested start — " + val.z_start_mode.toLowerCase());
+    if(val.b_email_na) items.push("Billing contact — to follow");
+  }
+  return items;
+}
+
 /* ============ Boot ============ */
 document.addEventListener("DOMContentLoaded", () => {
   $("caseno").textContent = CASE_NO;
@@ -242,7 +286,7 @@ function render(){
   if(step==="agreement") initSig();
   window.scrollTo(0,0);
 }
-function restore(){ document.querySelectorAll("[data-k]").forEach(el=>{ if(val[el.dataset.k]!==undefined){ if(el.type==="checkbox") el.checked=val[el.dataset.k]; else el.value=val[el.dataset.k]; } }); }
+function restore(){ document.querySelectorAll("[data-k]").forEach(el=>{ if(val[el.dataset.k]!==undefined){ if(el.type==="checkbox") el.checked=val[el.dataset.k]; else el.value=val[el.dataset.k]; } }); applyNaStates(); }
 
 function navButtons(nextLabel){
   return `<div class="nav">
@@ -259,7 +303,8 @@ function view(step){
   if(step==="info") return isClaims() ? `<div class="card">
     <h1 class="sr-page-title">Secure Assignment Intake</h1>
     <h2>Assigning contact</h2>
-    <p class="lead">Who is assigning this file, and how we reach you about it.</p>
+    <p class="lead">Who is assigning this file, and how we reach you about it.
+      Send us what you know now &mdash; anything you don't have yet can be provided later.</p>
     <label class="f"><span>Full name <b class="req">*</b></span><input type="text" data-k="c_name" autocomplete="name"></label>
     <div class="two">
       <label class="f"><span>Title</span><input type="text" data-k="c_title" placeholder="e.g. Claims Adjuster, SIU Investigator"></label>
@@ -283,7 +328,8 @@ function view(step){
   </div>` : `<div class="card">
     <h1 class="sr-page-title">Client Intake</h1>
     <h2>Your information</h2>
-    <p class="lead">Tell us how to reach you. Everything you share is confidential.</p>
+    <p class="lead">Tell us how to reach you. Everything you share is confidential.
+      Send us what you know now &mdash; anything you don't have yet can be provided later.</p>
     <label class="f"><span>Full name <b class="req">*</b></span><input type="text" data-k="c_name" autocomplete="name"></label>
     <div class="two">
       <label class="f"><span>Phone</span><input type="tel" data-k="c_phone" autocomplete="tel"></label>
@@ -318,9 +364,10 @@ function view(step){
     <p class="lead">Enough to open the file and match our report to yours.</p>
     <label class="f"><span>Carrier / TPA / employer <b class="req">*</b></span><input type="text" data-k="k_carrier" autocomplete="organization" placeholder="Company assigning the file"></label>
     <div class="two">
-      <label class="f"><span>Claim number <b class="req">*</b></span><input type="text" data-k="k_claimno"></label>
+      <label class="f"><span>Claim number</span><input type="text" data-k="k_claimno"></label>
       <label class="f"><span>Policy number</span><input type="text" data-k="k_policy"></label>
     </div>
+    ${naBox("k_claimno", "Claim number not available at this time — it never holds up an urgent assignment")}
     <div class="two">
       <label class="f"><span>Claim type</span>
         <select data-k="k_type">
@@ -332,7 +379,14 @@ function view(step){
           <option>Disability</option>
           <option>Other</option>
         </select></label>
-      <label class="f"><span>Date of loss</span><input type="text" data-k="k_dol" placeholder="MM/DD/YYYY"></label>
+      <label class="f"><span>Date of loss</span>
+        <select data-k="k_dol_mode" onchange="capture();render()" style="margin-bottom:6px">
+          <option>Exact date</option>
+          <option>Approximate date</option>
+          <option>Unknown</option>
+        </select>
+        ${val.k_dol_mode === "Unknown" ? "" : `<input type="text" data-k="k_dol" placeholder="${val.k_dol_mode === "Approximate date" ? "e.g. spring 2026, or around March" : "MM/DD/YYYY"}">`}
+      </label>
     </div>
     <label class="f"><span>Adjuster / assigning contact</span><input type="text" data-k="k_adjuster"></label>
     <div class="two">
@@ -358,9 +412,11 @@ function view(step){
     <p class="lead">${isClaims()
       ? "Who we are going out on. Addresses and vehicles are what make or break a first day in the field."
       : "Who or what should we look into? Share whatever you know — more detail helps."}</p>
-    <label class="f"><span>${isClaims()?"Claimant's name":"Subject's name"}</span><input type="text" data-k="s_name"></label>
-    <label class="f"><span>Known address or location</span><input type="text" data-k="s_addr"></label>
-    <label class="f"><span>Vehicle / physical description</span><input type="text" data-k="s_desc" placeholder="Make, model, color, plate, appearance…"></label>
+    <label class="f"><span>${isClaims()?"Claimant's name":"Subject's name"}${isClaims()?' <b class="req">*</b>':""}</span><input type="text" data-k="s_name"></label>
+    <label class="f"><span>Known address or location</span><input type="text" data-k="s_addr" placeholder="Full or partial — a general area helps, e.g. Forest, Virginia area"></label>
+    ${naBox("s_addr", "Exact address not available yet")}
+    <label class="f"><span>Vehicle / physical description</span><input type="text" data-k="s_desc" placeholder="Whatever you know — even &quot;white SUV&quot; helps"></label>
+    ${naBox("s_desc", "Vehicle information not available yet")}
     ${isClaims()
       ? `<label class="f"><span>Alleged injury &amp; stated restrictions</span><textarea data-k="s_rel" placeholder="Reported injury, work status, and any restrictions in the file…"></textarea></label>`
       : `<label class="f"><span>Relationship to you</span><input type="text" data-k="s_rel" placeholder="e.g. spouse, tenant, employee, defendant"></label>`}
@@ -401,7 +457,15 @@ function view(step){
 
     <div class="two">
       <label class="f"><span>Not-to-exceed amount</span><input type="text" data-k="z_nte" placeholder="Optional — a cap we will not pass without approval"></label>
-      <label class="f"><span>Requested start date</span><input type="date" data-k="z_start"></label>
+      <label class="f"><span>Requested start</span>
+        <select data-k="z_start_mode" onchange="capture();render()" style="margin-bottom:6px">
+          <option>Specific date</option>
+          <option>As soon as available</option>
+          <option>Flexible</option>
+          <option>To be determined</option>
+        </select>
+        ${(!val.z_start_mode || val.z_start_mode === "Specific date") ? `<input type="date" data-k="z_start">` : ""}
+      </label>
     </div>
     <div class="two">
       <label class="f"><span>Permitted days</span><input type="text" data-k="z_days" placeholder="e.g. weekdays only, or any day"></label>
@@ -449,6 +513,12 @@ function view(step){
       <p class="lead">${isClaims()
         ? `Please review the terms for this <b>${f?f.label.toLowerCase():"assignment"}</b> and authorize below.`
         : `Please review the terms for <b>${f?f.label:"the selected service"}</b> and sign below.`}</p>
+      ${(na => na.length ? `<div class="feebox">
+        <div class="row"><span><b>Not available yet &mdash; and that's fine</b></span><span></span></div>
+        ${na.map(t => `<div class="row"><span>${esc(t)}</span><span>Can follow later</span></div>`).join("")}
+      </div>
+      <p class="hint">You can submit with the information currently available. Additional details
+        can be provided later as the case develops.</p>` : "")(naSummary())}
       <div class="feebox">${feeLines}${dueLine}</div>
       <div class="agree">
       ${isClaims() ? `
@@ -499,6 +569,7 @@ function view(step){
       <div class="row due"><span>Due at assignment</span><span>Nothing — invoiced</span></div>
     </div>
     <label class="f"><span>Send invoices to</span><input type="email" data-k="b_email" placeholder="Accounts payable or billing email"></label>
+    ${naBox("b_email", "Billing contact to follow — invoicing details can come later")}
     <label class="f"><span>Billing notes</span><textarea data-k="b_notes" placeholder="Portal, invoicing requirements, required references…"></textarea></label>
     <p class="hint">We confirm the rate and any estimated hours in writing before going out. Questions on rates? Call ${FIRM.phone}.</p>
     ${navButtons("Submit assignment")}
@@ -540,12 +611,28 @@ function validate(step){
   }
   if(step==="service" && !S.svc) return "Please choose a service.";
   if(step==="authorization"){
-    if(!val.z_auth) return "Please choose how many hours you are authorizing.";
+    if(!val.z_auth) return "Please choose how many hours you are authorizing — or pick Authorization pending.";
     if(val.z_auth==="custom" && !(val.z_custom||"").trim()) return "Please describe the custom authorization.";
   }
+  /* INTAKE-NA core rule: the carrier is the one requirement here. A claim
+     number may genuinely not exist yet on an urgent assignment — the control
+     under the field records that instead of blocking. */
   if(step==="claim"){
     if(!(val.k_carrier||"").trim()) return "Please enter the carrier, TPA or employer assigning the file.";
-    if(!(val.k_claimno||"").trim()) return "Please enter the claim number.";
+  }
+  /* The file has to be identifiable: the claimant's name, or failing that the
+     claim number from the earlier step. Never both required — one. */
+  if(step==="subject" && isClaims()){
+    if(!(val.s_name||"").trim() && !(val.k_claimno||"").trim()){
+      return "Give us the claimant's name — or go back and add the claim number — so the file can be identified.";
+    }
+  }
+  /* The owner's firm line: contact plus a basic case purpose. Everything else
+     can follow, but an essentially empty form must not submit. */
+  if(step==="objective"){
+    if(!(val.o_goal||"").trim()) return isClaims()
+      ? "A sentence on what the file needs to establish is all we need to start."
+      : "Tell us briefly what you would like documented — a sentence is enough.";
   }
   if(step==="agreement"){
     if(!val.a_consent) return isClaims()
@@ -604,13 +691,29 @@ function buildPayload(){
         ? (val.z_custom||"Custom authorization")
         : (a ? a.label : ""),
       not_to_exceed:val.z_nte||"",
-      start_date:val.z_start||"",
+      start_date:(!val.z_start_mode || val.z_start_mode==="Specific date") ? (val.z_start||"") : "",
       permitted_days:val.z_days||"", permitted_times:val.z_times||"",
       weekend_authorized:val.z_weekend||"", priority:val.z_priority||"",
       geographic_limits:val.z_geo||"",
     });
     if(val.z_billing) p.billing_notes = [p.billing_notes, val.z_billing].filter(Boolean).join(" — ");
   }
+
+  /* INTAKE-NA status model: availability rides beside the value, and a status
+     key appears only when the state is not plain "provided". Values stay
+     empty — never a typed "Unknown" or a placeholder date. */
+  if(isClaims()){
+    if(val.k_claimno_na){ p.claim_number = ""; p.claim_number_status = "not_available"; }
+    if(val.k_dol_mode === "Unknown"){ p.date_of_loss = ""; p.date_of_loss_status = "unknown"; }
+    else if(val.k_dol_mode === "Approximate date" && (p.date_of_loss||"").trim()){ p.date_of_loss_status = "approximate"; }
+    if(val.z_auth === "pending"){ p.authorized_hours_status = "pending"; }
+    if(val.z_start_mode && val.z_start_mode !== "Specific date"){
+      p.start_date_status = ({"As soon as available":"asap","Flexible":"flexible","To be determined":"tbd"})[val.z_start_mode] || "flexible";
+    }
+    if(val.b_email_na){ p.billing_email = ""; p.billing_email_status = "not_available"; }
+  }
+  if(val.s_addr_na){ p.subject_address = ""; p.subject_address_status = "not_available"; }
+  if(val.s_desc_na){ p.subject_description = ""; p.subject_description_status = "not_available"; }
   return p;
 }
 /* What a submission is allowed to tell a third party.
@@ -682,6 +785,16 @@ async function finish(){
 /* ============ Final record ============ */
 function esc(s){ return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function row(label,v){ return v ? `<dt>${label}</dt><dd>${esc(v)}</dd>` : ""; }
+/* A field marked not-yet-known shows AS that on the record — the form accepted
+   the answer on purpose, and the printout should say so rather than go silent. */
+const NA_WORDS = { not_available:"Not available at submission", unknown:"Unknown at submission",
+  approximate:"Approximate", asap:"As soon as available", flexible:"Flexible",
+  tbd:"To be determined", pending:"Authorization pending" };
+function rowS(label, v, status){
+  if(v) return `<dt>${label}</dt><dd>${esc(v)}${status==="approximate" ? ' <i style="color:var(--muted)">(approximate)</i>' : ""}</dd>`;
+  if(status) return `<dt>${label}</dt><dd><i style="color:var(--muted)">${esc(NA_WORDS[status] || "Not available yet")}</i></dd>`;
+  return "";
+}
 function renderRecord(p, sent, threw, stored){
   document.querySelectorAll("#progress i").forEach(el=>el.classList.add("done"));
   const claims = isClaims();
@@ -695,11 +808,11 @@ function renderRecord(p, sent, threw, stored){
     <h2>${claims?"Claim Assignment":"Client Intake"} — ${esc(p.service)}</h2>
     <div>Case <span class="case">${esc(p.case_no)}</span></div>
     <dl>
-      ${claims?`${row("Carrier / TPA",p.carrier)}${row("Claim number",p.claim_number)}${row("Policy number",p.policy_number)}${row("Claim type",p.claim_type)}${row("Date of loss",p.date_of_loss)}${row("Adjuster",p.adjuster)}${row("Adjuster email",p.adjuster_email)}${row("Adjuster phone",p.adjuster_phone)}${row("Defense counsel",p.defense_counsel)}${row("Prior surveillance",p.prior_surveillance)}`:""}
+      ${claims?`${row("Carrier / TPA",p.carrier)}${rowS("Claim number",p.claim_number,p.claim_number_status)}${row("Policy number",p.policy_number)}${row("Claim type",p.claim_type)}${rowS("Date of loss",p.date_of_loss,p.date_of_loss_status)}${row("Adjuster",p.adjuster)}${row("Adjuster email",p.adjuster_email)}${row("Adjuster phone",p.adjuster_phone)}${row("Defense counsel",p.defense_counsel)}${row("Prior surveillance",p.prior_surveillance)}`:""}
       ${row(claims?"Assigning contact":"Name",p.client_name)}${row("Phone",p.client_phone)}${row("Email",p.client_email)}
       ${claims?"":`${row("Address",p.client_address)}${row("Best time",p.best_time)}`}
-      ${row(claims?"Claimant":"Subject",p.subject_name)}${row(claims?"Claimant address":"Subject address",p.subject_address)}${row("Description",p.subject_description)}${row(claims?"Injury & restrictions":"Relationship",p.subject_relationship)}
-      ${row(claims?"Scope":"Objective",p.objective)}${claims?`${row("Authorized hours",p.authorized_hours)}${row("Not to exceed",p.not_to_exceed)}${row("Requested start",p.start_date)}${row("Permitted days",p.permitted_days)}${row("Permitted times",p.permitted_times)}${row("Weekend",p.weekend_authorized)}${row("Priority",p.priority)}${row("Geographic limits",p.geographic_limits)}`:""}${row(claims?"Deadline":"Timeline",p.timeline)}${row("Notes",p.notes)}${row("Attachments",p.attachments)}
+      ${row(claims?"Claimant":"Subject",p.subject_name)}${rowS(claims?"Claimant address":"Subject address",p.subject_address,p.subject_address_status)}${rowS("Description",p.subject_description,p.subject_description_status)}${row(claims?"Injury & restrictions":"Relationship",p.subject_relationship)}
+      ${row(claims?"Scope":"Objective",p.objective)}${claims?`${rowS("Authorized hours",p.authorized_hours,p.authorized_hours_status)}${row("Not to exceed",p.not_to_exceed)}${rowS("Requested start",p.start_date,p.start_date_status)}${row("Permitted days",p.permitted_days)}${row("Permitted times",p.permitted_times)}${row("Weekend",p.weekend_authorized)}${row("Priority",p.priority)}${row("Geographic limits",p.geographic_limits)}`:""}${row(claims?"Deadline":"Timeline",p.timeline)}${row("Notes",p.notes)}${row("Attachments",p.attachments)}
       ${row("Service",p.service)}
       ${claims
         ? `${row("Billing","Invoiced to carrier")}${row("Billing reference / PO",p.billing_reference)}${row("Invoices to",p.billing_email)}${row("Billing notes",p.billing_notes)}`
