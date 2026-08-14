@@ -15,6 +15,12 @@ truth** (recorded verbatim 2026-08-13).
 remote session stopped deliberately after recording the findings below; it
 did not begin any of the outstanding fixes. Nothing is half-done in the tree.
 
+**The local session has since picked it up (2026-08-14).** What it has done so
+far, before touching the HIGH queue: discharged the WIP note left on the arrival
+generator commit (its e2e run had been in flight and its assertions unverified —
+they now run, 678/678), and settled the open OWNER DECISION on what a reassigned
+investigator keeps. See both below.
+
 **Read `RECONCILIATION.md` first.** It carries the full reconciliation
 against the master handoff — every lettered section, granular rows, evidence
 per item — and at the top of its OPEN FINDINGS section, **the HIGH queue in
@@ -87,11 +93,16 @@ check that reported clean on a broken schema, and the retainer double-count.
 
 ---
 
-Snapshot date: 2026-08-14. Branch: `claude/app-crashes-lockups-debug-psf6zd`.
-Master is green through **PR #70 (`6429c03`)**. The counts are in the START
-HERE header above — worker 794, portal 670, intake 205, alerts 47. (This line
-used to repeat an older, lower set and contradict the header; one snapshot,
-in one place.)
+Snapshot date: 2026-08-14. Branch: `claude/arrival-sentence-generator`, rebased
+onto master `aa107b4` (**PR #71**). The counts are in the START HERE header
+above — worker 794, portal 670, intake 205, alerts 47. (This line used to repeat
+an older, lower set and contradict the header; one snapshot, in one place.)
+
+> **Running the two browser suites on Windows needs a NODE_PATH.** Their loader
+> only falls back to Linux global paths, so a global Playwright install is
+> invisible to it: `NODE_PATH=$(npm root -g) node portal/test-portal.mjs`. Do
+> **not** fix this by installing into a local `node_modules` — `deploy.yml`
+> rsyncs the repo root to Cloudflare Pages and would publish it.
 
 ---
 
@@ -118,6 +129,95 @@ requirements no ledger had ever recorded at all.
 `worker.js`, `portal/index.html`, `schema.sql` and both test suites. A feature
 name appearing in a ledger, a PR title or a comment proves nothing. A route,
 a table, a rendered control and a test that fails without it are the evidence.
+
+---
+
+## SECOND AUDIT, 2026-08-14 (master `f330105`, after #65–#68)
+
+The re-audit above was written against master through **#64**. Four PRs landed
+after it, and this pass re-checked the whole master handoff against `f330105`
+with all four suites run on that SHA. **It supersedes the rows it names and
+nothing else.** Everything already shipped was left untouched.
+
+**Three ledger entries were stale or wrong, in the direction of understating
+what is built:**
+
+| Entry | Said | Actually |
+| --- | --- | --- |
+| Sheet send history | 🔴 "next code item"; `RECONCILIATION.md` TOP FIX #1 | ✅ **shipped #67** — `send_log`, `schema.sql:804`, 9 refs in `worker.js` |
+| Lead event timeline | 🟡 TOP FIX #2 | ✅ closed by the same table; only hand-edited status changes stay unlogged |
+| Arrival sentence generator | "the one §10 piece left" — reads as absent | 🟡 **it exists** — `amArrival` (`portal/index.html:5761`), inputs at 2266/2268, e2e at `test-portal.mjs:1381` |
+
+`RECONCILIATION.md` is a dated report and was deliberately **not** rewritten;
+its TOP FIXES list contradicts its own §A, and §A is the correct half. Read
+this section for the live queue.
+
+**Requirements NO ledger row had ever recorded — all found substantially
+built.** These were audited because the master handoff has sections the
+reconciliation checklist simply has no row for:
+
+| Master § | State | Evidence |
+| --- | --- | --- |
+| §34 investigator compensation vs client rate | ✅ | `user_rates` (hourly + mileage); admin writes `worker.js:4573`, investigator reads only their own at 4682 |
+| §35 expenses / mileage | ✅ | `case_expenses` CRUD `worker.js:1925–1978`, `/my/expenses` 4688; the three §35 concepts are real columns — `reimbursable` / `billable` / `internal` |
+| §36 communications & tasks | ✅ | `case_comms` 2041, `case_tasks` 2072–2093, surfaced on the dashboard at 788 |
+| §9 contextual back on deep screens | ✅ | Back to Cases 1897, All invoices 4511, Change type 1498, plus every surveillance back |
+
+The existing 🟡 on "Clients / Reports / Evidence / Expenses / Tasks as top-level
+nav" is accurate but misleading on its own: the **features** exist as case tabs
+(`expensesPanel` / `commsPanel` / `tasksPanel`, `portal/index.html:3358–3363`).
+Only their promotion to top-level nav is deferred, and deliberately.
+
+**The genuinely unfinished item, and it is larger than the ledger implied:**
+the §10 arrival sentence generator has **two** gaps, not one.
+
+1. **The position options do not exist.** MASTER §10 asks for vehicles present /
+   direct-or-indirect view / primary route of departure, and `SURVEILLANCE.md`
+   P6 names five — direct · indirect · primary-route · secondary · mobile. The
+   code has two free-text boxes (`qa_vp`, `qa_pos`).
+2. **It is desk-only.** `svEntryScreen` (`portal/index.html:3855–3879`) carries
+   no arrival extras at all, so the generator is missing from the field mode —
+   the one place an investigator actually logs an arrival, from a parked car.
+   P6 puts arrival templates in the field quick-activity explicitly.
+
+### ⚖️ OWNER DECISION — what a reassigned investigator keeps
+
+Raised by an independent Codex review of the permission boundary, 2026-08-14.
+**No behaviour was changed. Nothing here is a leak of client identity** — this
+is a scope question the owner has to answer, not a bug to fix quietly.
+
+**What is true today.** `/my/reports`, `/my/expenses`, `/my/active`, `/calendar`
+and resolved `/my/offers` scope by **who created the record**
+(`investigator_id = ?`), never by the case's current `submissions.assigned_to`.
+So when an admin reassigns a case, the previous investigator loses the
+workspace but these routes still return that case's **case number**, and
+`/my/active` also returns `subject_name` (`worker.js:3081–3087`). Their own
+expense amounts and their own submitted reports keep coming back, which §34 and
+§35 positively require for an investigator's OWN records.
+
+**The question:** should a reassigned investigator continue to see their own
+previously submitted reports, expense claims, calendar history and active-day
+records for a case that is no longer theirs?
+
+- *Keep* — they worked those days and are owed the record of their own pay and
+  their own filed work; removing it deletes their evidence of what they did.
+- *Scope to current assignment* — a case that is no longer theirs should
+  disappear entirely, case number and subject included.
+- *Split* — keep the money and the filed report, drop the case number, the
+  subject and anything about the case's continuing life.
+
+**The firm line, whichever way that goes:** a reassigned investigator must
+**never** regain client identity, carrier, claim number, billing details, or
+any access to the current state of that case unless an admin explicitly
+permits it. That part is not a decision — it is the boundary, and it holds
+today (`redactRow` drops all five denormalised client columns regardless of
+which route answered).
+
+Two things verified while raising this, so they are not re-litigated: the
+`show_client_identity` toggle revealing carrier / claim number / client name is
+**§33 working as specified**, default off and admin-only; and `/my/comp`
+returning the investigator's own hourly and mileage is **§34 working as
+specified**. Neither is a defect.
 
 ---
 
@@ -178,7 +278,7 @@ Legend: ✅ done and verified · 🟡 partial · 🔴 not implemented ·
 | Evidence gallery, classifications, soft delete | ✅ | |
 | Entry edit + delete (stamped, restorable) | ✅ | `activity_removed`, shipped #55 |
 | Sidebar targets Clients / Reports / Evidence / Expenses / Tasks as top-level nav | 🟡 | deliberate: only built when a target is real. Current nav is Dashboard · Cases · Leads & intakes · Calendar · Rate sheets · Invoices · Staff · Settings |
-| More quick-activity lines, Surveillance/End-Day categories (§10) | ✅ **done 2026-08-14** | the physical-observation set (walking · standing · sitting · bending · stooping · reaching · carrying · lifting · pushing · pulling · loading · unloading · climbing stairs · shopping · yard work · recreational activity), business and meeting lines, the fuller no-activity and vehicle sets, and a Surveillance category of its own. Every line is a complete sentence, existing strings kept exactly (favorites are stored by text). The §10 **arrival sentence generator** (vehicles present / view / route → composed narrative) is the one §10 piece left — small, and worth the owner's feel for the wording |
+| More quick-activity lines, Surveillance/End-Day categories (§10) | ✅ **done 2026-08-14** | the physical-observation set (walking · standing · sitting · bending · stooping · reaching · carrying · lifting · pushing · pulling · loading · unloading · climbing stairs · shopping · yard work · recreational activity), business and meeting lines, the fuller no-activity and vehicle sets, and a Surveillance category of its own. Every line is a complete sentence, existing strings kept exactly (favorites are stored by text). The §10 **arrival sentence generator** is the one §10 piece left — see the second audit above: it EXISTS on the desk sheet but has free-text position instead of P6's five options, and is absent from the field mode entirely |
 
 ### Case Build (§13) and Case Package (§32)
 
@@ -319,6 +419,18 @@ quietly returning a shorter day.
 9. ~~**Two end-to-end walk-through tests** (§38, §39)~~ — ✅ done 2026-08-14.
 10. **Dropbox video delivery** (§14) — 🔴, and **blocked on the owner's three
     Worker secrets**. Everything above it is unblocked.
+
+Added by the second audit (2026-08-14, master `f330105`), now the top of the
+queue because 1–9 are done and 10 is blocked:
+
+11. ~~**Sheet send history**~~ / ~~**lead event timeline**~~ — ✅ shipped #67;
+    they were still listed as TOP FIXES #1 and #2 in `RECONCILIATION.md`.
+12. **The §10 arrival sentence generator, finished** — 🟡 **IN PROGRESS.** Give
+    the position the five P6 options (direct · indirect · primary route ·
+    secondary · mobile) instead of a free-text box, and carry the generator
+    into the field mode, which does not have it. The generated line stays
+    editable and stops regenerating the moment it is hand-edited — that is what
+    keeps a template from becoming a fabricated fact.
 
 Still needing the owner rather than code: real iPhone Safari and Android
 Chrome testing, the Dropbox credentials, and the Virginia coverage wording.

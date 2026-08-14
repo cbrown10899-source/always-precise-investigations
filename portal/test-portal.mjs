@@ -1396,6 +1396,42 @@ section('Quick lines: search, favorites, one tap');
      built.includes('Arrived in vicinity of subject residence.')
        && built.includes("Sierra in the driveway present.")
        && built.includes('Established surveillance position with a clear view of the front door.'), built);
+
+  // P6's five position options, and the article each one needs to read right.
+  ok('view and placement are separate choices, not one five-way list',
+     await page.locator('#qa_view option').count() === 3
+       && await page.locator('#qa_place option').count() === 4);
+  await page.locator('#qa_view').selectOption('indirect');
+  await page.waitForTimeout(200);
+  const withView = await page.locator('#qa_desc').inputValue();
+  ok('an indirect view composes as a whole sentence',
+     withView.includes('Established an indirect surveillance position with a clear view of the front door.'),
+     withView);
+  // MASTER §10's canonical example combines BOTH — an indirect position ALONG
+  // the primary route of departure. One five-way select cannot express that
+  // sentence at all, which is why view and placement are independent.
+  await page.locator('#qa_pos').fill('');
+  await page.waitForTimeout(150);
+  await page.locator('#qa_place').selectOption('primary');
+  await page.waitForTimeout(250);
+  const canonical = await page.locator('#qa_desc').inputValue();
+  ok('MASTER §10\'s canonical combined sentence is reachable',
+     canonical.includes('Established an indirect surveillance position along the primary route of departure.'),
+     canonical);
+  await page.locator('#qa_place').selectOption('mobile');
+  await page.waitForTimeout(250);
+  ok('and mobile reads as the method, not a position',
+     (await page.locator('#qa_desc').inputValue()).includes('Established indirect mobile surveillance.'));
+  await page.locator('#qa_place').selectOption('');
+  await page.locator('#qa_pos').fill('with a clear view of the front door');
+  await page.waitForTimeout(250);
+  // The rule that keeps a template from becoming a fabricated fact.
+  await page.locator('#qa_desc').fill('Hand written by the investigator.');
+  await page.waitForTimeout(150);
+  await page.locator('#qa_vp').fill('Two vehicles');
+  await page.waitForTimeout(250);
+  ok('a hand-edited narrative is never overwritten by the generator',
+     (await page.locator('#qa_desc').inputValue()) === 'Hand written by the investigator.');
   await page.locator('.amx').click();
   await page.waitForTimeout(250);
 
@@ -2333,6 +2369,30 @@ section('Active Surveillance Mode: a field view of the same case');
   await page.waitForTimeout(300);
   ok('picking a line opens the entry with it filled in',
      (await page.locator('#sv_desc').inputValue()).includes('Arrived in vicinity'));
+
+  // The arrival generator reaches the field (MASTER §10 / SURVEILLANCE P6).
+  // It was desk-only, which is the one place an investigator is NOT sitting.
+  ok('the field asks the same arrival questions as the desk',
+     await page.locator('#sv_vp').count() === 1
+       && await page.locator('#sv_view').count() === 1
+       && await page.locator('#sv_place').count() === 1
+       && await page.locator('#sv_pos').count() === 1);
+  await page.locator('#sv_vp').fill('Two vehicles in the driveway');
+  await page.waitForTimeout(200);
+  await page.locator('#sv_view').selectOption('indirect');
+  await page.waitForTimeout(250);
+  const svBuilt = await page.locator('#sv_desc').inputValue();
+  ok('and composes the same sentence the desk sheet would',
+     svBuilt.includes('Arrived in vicinity of subject residence.')
+       && svBuilt.includes('Two vehicles in the driveway present.')
+       && svBuilt.includes('Established an indirect surveillance position.'), svBuilt);
+  await page.locator('#sv_place').selectOption('primary');
+  await page.waitForTimeout(250);
+  const svCanon = await page.locator('#sv_desc').inputValue();
+  ok('the canonical combined sentence is reachable in the field too',
+     svCanon.includes('Established an indirect surveillance position along the primary route of departure.'),
+     svCanon);
+
   await page.locator('#sv_pa').check();
   await page.locator('[data-act="svSaveEntry"]').click();
   await page.waitForTimeout(800);

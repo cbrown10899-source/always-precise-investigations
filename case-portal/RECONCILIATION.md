@@ -206,6 +206,42 @@ route); money fields never in `FIELD_KEEP`; list rows redacted (proven on a
 row they CAN see). The hostile-case-number XSS row is planted in the DB and
 tested. ✅ — **770 worker checks, none of this by hidden buttons.**
 
+### Addendum, 2026-08-14 — independent Codex review of this section
+
+An independent reviewer (Codex, given the boundary as written and no sight of
+this report) re-derived §X against master `f330105`. It **confirmed** the
+controls above: `/submissions` is SQL-scoped at `worker.js:963` rather than
+page-filtered; `FIELD_KEEP` is still a true allow-list with no intake field
+bypassing it; the Worker and portal copies match at 23 fields in the same
+order; `redactRow` drops all five denormalised client columns; `send_log`
+never appears in an investigator payload; and no boundary anywhere depends on
+hiding a UI element.
+
+Two of its flagged items were checked and **rejected as findings**, recorded
+here so they are not re-raised each audit:
+
+- *"`show_client_identity` reveals carrier / claim number / client name."* That
+  is §33 as specified — the toggle exists to do exactly that, is default off,
+  and its route is admin-only. `CLIENT_IDENTITY_FIELDS` (`worker.js:954`) is
+  deliberately narrow: who the case is for, never how to bill or reach them.
+- *"Investigators receive money fields."* `/my/comp` (`worker.js:4681`) returns
+  the caller's OWN hourly and mileage from `user_rates`, which §34 requires,
+  and `/my/expenses` returns their own claims, which §35 requires. The money
+  that must not reach them — client rate, margin, package price, invoices —
+  does not.
+
+One item **stands and is now an owner decision**, recorded in full in
+`NEXT.md`: the `/my/*` and `/calendar` routes scope by who created a record
+rather than by current assignment, so a reassigned investigator keeps seeing
+that case's number (and `subject_name` on `/my/active`). No client identity
+crosses; the question is whether the case should vanish entirely on
+reassignment. **Behaviour deliberately unchanged pending the owner.**
+
+One structural note, not a leak: case detail and workspace fetch the row and
+then enforce assignment in Worker JavaScript (`worker.js:990`, `1159`) rather
+than putting `assigned_to` in the SQL predicate. It fails closed, but it is not
+the SQL-only shape this document claims elsewhere.
+
 ## Y. iPad / mobile
 
 Headless coverage at 1112×834 and 390×844: burger + drawer, the surveillance

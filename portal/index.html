@@ -645,6 +645,58 @@ let ACT_MODAL = null;    // the Add Activity sheet (UIBUILD P8): null when close
    picked line never demands another field first. */
 const NO_CHANGE_LINE = "No change was noted during this period.";
 const ARRIVAL_LINE = "Arrived in vicinity of subject residence.";
+/* The arrival sentence generator (MASTER §10, SURVEILLANCE P6).
+
+   P6 lists five position options in one breath — direct, indirect, primary
+   route, secondary, mobile — but they are TWO independent things, and reading
+   them as one list is a mistake worth not repeating. MASTER §10's own canonical
+   example combines two of them at once:
+
+     "…established an indirect surveillance position along the primary route
+      of departure."
+
+   A single five-way choice cannot express that sentence: it forces indirect OR
+   primary. So VIEW (direct / indirect) and PLACEMENT (primary route / secondary
+   route / mobile) are separate, and either may stand alone. The article rides
+   with the view — "a direct", "an indirect" — because a generated line has to
+   read like a report sentence, not a filled-in blank.
+
+   Two rules this shape exists to keep. It composes ONLY from what the
+   investigator actually entered: leave a box empty and its clause never
+   appears, so the template can never assert a vehicle or a vantage nobody
+   observed. And it stops regenerating the moment the narrative is hand-edited
+   — past that point the hand is the author, and a later keystroke in an extras
+   box must not overwrite what a person wrote.
+
+   ONE function serves the desk sheet and the field mode, so a line composed in
+   the car and the same line composed at the office cannot drift apart. */
+const ARRIVAL_VIEW = [
+  ["direct",   "Direct view",   "direct"],
+  ["indirect", "Indirect view", "indirect"],
+];
+const ARRIVAL_PLACE = [
+  ["primary",   "Primary route of departure", "along the primary route of departure"],
+  ["secondary", "Secondary route",            "along a secondary route"],
+  ["mobile",    "Mobile surveillance",        ""],
+];
+function arrivalSentence(vp, view, place, pos){
+  const v = String(vp || "").trim().replace(/\.$/, "");
+  const p = String(pos || "").trim().replace(/\.$/, "");
+  const vw = (ARRIVAL_VIEW.find(o => o[0] === view) || [])[2] || "";
+  const pl = ARRIVAL_PLACE.find(o => o[0] === place);
+  let clause = "";
+  if(place === "mobile"){
+    // Mobile is not a position one establishes a view from — it is the method.
+    clause = `Established ${vw ? `${vw} ` : ""}mobile surveillance`;
+  } else if(vw || pl){
+    const art = vw === "indirect" ? "an" : "a";
+    clause = `Established ${vw ? `${art} ${vw}` : "a"} surveillance position${pl ? ` ${pl[2]}` : ""}`;
+  }
+  return ARRIVAL_LINE
+    + (v ? ` ${v} present.` : "")
+    + (clause ? ` ${clause}${p ? ` ${p}` : ""}.`
+       : p ? ` Established surveillance position ${p}.` : "");
+}
 /* MASTER §10's fuller vocabulary (2026-08-14). The physical-observation set
    is what a workers'-comp file actually logs — lifting, carrying, climbing —
    each a complete sentence so a one-tap entry reads like a report line, never
@@ -2264,7 +2316,19 @@ function amComposeHtml(){
     <div class="two">
       <label class="f"><span>Vehicles present <span class="opt">optional</span></span>
         <input id="qa_vp" placeholder="e.g. Subject&#39;s white GMC Sierra in the driveway" data-act-input="amArrival"></label>
-      <label class="f"><span>Surveillance position <span class="opt">optional</span></span>
+      <label class="f"><span>View <span class="opt">optional</span></span>
+        <select id="qa_view" data-act-input="amArrival">
+          <option value="">Not specified</option>
+          ${ARRIVAL_VIEW.map(o => `<option value="${o[0]}">${esc(o[1])}</option>`).join("")}
+        </select></label>
+    </div>
+    <div class="two">
+      <label class="f"><span>Position <span class="opt">optional</span></span>
+        <select id="qa_place" data-act-input="amArrival">
+          <option value="">Not specified</option>
+          ${ARRIVAL_PLACE.map(o => `<option value="${o[0]}">${esc(o[1])}</option>`).join("")}
+        </select></label>
+      <label class="f"><span>Position detail <span class="opt">optional</span></span>
         <input id="qa_pos" placeholder="e.g. with a clear view of the front door" data-act-input="amArrival"></label>
     </div>` : ""}
     <label class="f"><span>${m.edit ? "What happened" : "The line <span class=\"opt\">edit freely</span>"}</span>
@@ -3861,8 +3925,23 @@ function svActivityScreen(){
         e.edit ? "Back to the timeline" : "All actions"}</button>
       <div class="sv-card">
         <label class="sv-f"><span>Time</span><input id="sv_time" type="time" value="${esc(e.time || now)}"></label>
+        ${!e.edit && e.pick === ARRIVAL_LINE ? `
+        <label class="sv-f"><span>Vehicles present &mdash; optional</span>
+          <input id="sv_vp" data-act-input="svArrival" placeholder="e.g. Subject&#39;s white GMC Sierra in the driveway"></label>
+        <label class="sv-f"><span>View &mdash; optional</span>
+          <select id="sv_view" data-act-input="svArrival">
+            <option value="">Not specified</option>
+            ${ARRIVAL_VIEW.map(o => `<option value="${o[0]}">${esc(o[1])}</option>`).join("")}
+          </select></label>
+        <label class="sv-f"><span>Position &mdash; optional</span>
+          <select id="sv_place" data-act-input="svArrival">
+            <option value="">Not specified</option>
+            ${ARRIVAL_PLACE.map(o => `<option value="${o[0]}">${esc(o[1])}</option>`).join("")}
+          </select></label>
+        <label class="sv-f"><span>Position detail &mdash; optional</span>
+          <input id="sv_pos" data-act-input="svArrival" placeholder="e.g. with a clear view of the front door"></label>` : ""}
         <label class="sv-f"><span>Details &mdash; edit freely</span>
-          <textarea id="sv_desc" rows="4">${esc(e.text || "")}</textarea></label>
+          <textarea id="sv_desc" rows="4" data-act-input="svDirty">${esc(e.text || "")}</textarea></label>
         ${e.edit ? "" : `
         <label class="cap" style="color:#e8eef5"><input type="checkbox" id="sv_sd"><span>Subject documented</span></label>
         <label class="cap" style="color:#e8eef5"><input type="checkbox" id="sv_pa"><span>Photo taken</span></label>
@@ -5602,7 +5681,8 @@ document.addEventListener("click", ev => {
     const line = el.dataset.line;
     if(!line){ SV.entry = null; SV.err = ""; paint(); }
     else if(line === NO_CHANGE_LINE){ svSaveEntry(line); }          // one tap
-    else { SV.entry = {text: line, time: new Date().toTimeString().slice(0,5)}; SV.ok = ""; SV.err = ""; paint(); }
+    else { SV.entry = {text: line, pick: line, time: new Date().toTimeString().slice(0,5)};
+           SV.dirty = false; SV.ok = ""; SV.err = ""; paint(); }
   }
   else if(act === "svAddAnother"){ SV.ok = ""; SV.entry = null; paint(); }
   else if(act === "svStartDay"){ svStartDay(); }
@@ -5756,16 +5836,28 @@ document.addEventListener("input", ev => {
   const din = ev.target.dataset ? ev.target.dataset.actInput : "";
   if(din === "svSearch" && SV){ SV.search = ev.target.value; paint();
     const q = $("sv_q"); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } return; }
+  if(din === "svDirty" && SV){ SV.dirty = true; return; }
+  if(din === "svArrival" && SV && !SV.dirty){
+    // The same generator the desk sheet uses, so a line composed in the car and
+    // the same line composed at the office cannot read differently.
+    const d = $("sv_desc");
+    if(d) d.value = arrivalSentence(
+      $("sv_vp") ? $("sv_vp").value : "",
+      $("sv_view") ? $("sv_view").value : "",
+      $("sv_place") ? $("sv_place").value : "",
+      $("sv_pos") ? $("sv_pos").value : "");
+    return;
+  }
   if(din === "amSearch" && ACT_MODAL){ ACT_MODAL.search = ev.target.value; paintCase(); return; }
   if(din === "amDirty" && ACT_MODAL){ ACT_MODAL.dirty = true; return; }
   if(din === "amArrival" && ACT_MODAL && !ACT_MODAL.dirty){
     // The arrival template (P9): the extras generate the sentence — until the
     // narrative is hand-edited, which makes the hand the author.
-    const vp = ($("qa_vp") ? $("qa_vp").value : "").trim();
-    const pos = ($("qa_pos") ? $("qa_pos").value : "").trim();
-    if($("qa_desc")) $("qa_desc").value = ARRIVAL_LINE
-      + (vp ? ` ${vp.replace(/\.$/, "")} present.` : "")
-      + (pos ? ` Established surveillance position ${pos.replace(/\.$/, "")}.` : "");
+    if($("qa_desc")) $("qa_desc").value = arrivalSentence(
+      $("qa_vp") ? $("qa_vp").value : "",
+      $("qa_view") ? $("qa_view").value : "",
+      $("qa_place") ? $("qa_place").value : "",
+      $("qa_pos") ? $("qa_pos").value : "");
     return;
   }
   if(ev.target.dataset && ev.target.dataset.act === "filter"){ FILTER = ev.target.value; paint(); }
