@@ -2579,6 +2579,30 @@ async function setInvoiceStatus(request, env, user, id) {
   }
   if (inv.status === 'void') return json({ error: 'A void invoice stays void.' }, 400);
 
+  /* Money that has been received is not a draft any more — HIGH #3
+     (2026-08-14). `sent_to_bill` and `sent_to_client` were guarded and `ready`
+     validated only the CONTENT, but `draft` was guarded by nothing, so an
+     invoice with real payments against it could be walked backwards. Two
+     things followed. The edit lock is `!['draft','ready'].includes(status)`,
+     so lines and adjustments became rewritable underneath money already taken;
+     and `outstanding`, `drafts` and the dashboard all sum on the STORED
+     status, so a part-paid invoice dropped out of the receivable while
+     `balance_due` went on honestly saying it was owed. Money the office is
+     owed stopped being visible, which is the one thing an invoice list exists
+     to prevent.
+
+     Both unlocking statuses are refused once anything is recorded. The way back
+     from a paid invoice is Void, which is deliberate, kept in the record, and
+     already releases the retainer it consumed. */
+  if (status === 'draft' || status === 'ready') {
+    const paid = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM invoice_payments WHERE invoice_id = ?').bind(id).first();
+    if (Number(paid && paid.n) > 0) {
+      return json({ error: 'A payment has been recorded against this invoice, so it cannot go back to '
+        + status + '. Void it instead — that keeps the record and releases the retainer.' }, 400);
+    }
+  }
+
   if (status === 'ready') {
     const { results: lines } = await env.DB.prepare(
       'SELECT id FROM invoice_lines WHERE invoice_id = ?').bind(id).all();

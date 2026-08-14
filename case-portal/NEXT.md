@@ -54,8 +54,17 @@ the owner's stated order**. That order is the work list.
    stay credited to whoever worked them, not to whoever closed it.
    `test-worker.mjs` → *"A reassignment cannot strand a running day"*, 11
    checks. Worker 820 → 831.
-3. **A backward invoice status transition can reopen a paid invoice and
-   remove it from Outstanding.** `worker.js` ~2454-2489, ~2349, ~2357, ~3063.
+3. ~~**A backward invoice status transition can reopen a paid invoice and
+   remove it from Outstanding.**~~ ✅ **FIXED and VERIFIED 2026-08-14.** True:
+   `sent_to_bill` and `sent_to_client` were guarded and `ready` validated only
+   the CONTENT, but `draft` was guarded by nothing. `setInvoiceStatus` now
+   refuses **both** unlocking statuses once any payment is recorded — `ready`
+   as well as `draft`, since `ready` unlocks the same edits. The way back from a
+   paid invoice is Void, which is deliberate, kept in the record and already
+   releases the retainer it consumed; the refusal message says so. Back-to-draft
+   with nothing received is untouched and still works. `test-worker.mjs` → *"An
+   invoice with money against it cannot be put back to draft"*, 12 checks.
+   Worker 831 → 843.
 4. **The Case Build finalize gate strip can be hidden when the package is
    actually ready to finalize**, so held-back material can ship with the
    warning suppressed. `portal/index.html` ~2976, ~3160-3245, ~3069;

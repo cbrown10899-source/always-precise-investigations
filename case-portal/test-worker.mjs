@@ -1764,6 +1764,84 @@ section("Invoices: the office's money desk, and BILL only collects");
        .payment_instructions === 'Remit via the BILL payment request.');
 }
 
+/* ---------------- money that has been received is not a draft any more
+ *
+ * HIGH #3 from the 2026-08-14 audits, verified here before it was fixed.
+ *
+ * `setInvoiceStatus` guarded `sent_to_bill` and `sent_to_client`, and `ready`
+ * validated the CONTENT rather than the current status. `draft` was guarded by
+ * nothing at all. So an invoice with real money recorded against it could be
+ * put back to draft, and two things followed:
+ *
+ *   - the edit lock is `!['draft','ready'].includes(status)`, so its lines and
+ *     adjustments became rewritable underneath payments already taken;
+ *   - `outstanding` and the dashboard sum `status !== 'draft'` on the STORED
+ *     status, so a partly-paid invoice dropped out of the receivable while
+ *     `balance_due` went on honestly saying money was owed.
+ *
+ * Money the office is owed stops being visible, which is the one thing an
+ * invoice list exists to prevent. The fix refuses `draft` and `ready` once any
+ * payment is recorded: the way back is Void, which is already the deliberate,
+ * recorded, retainer-releasing door. */
+section('An invoice with money against it cannot be put back to draft');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  await ingest(env, { case_no: 'API-BD1', subject_name: 'Pat Coleman', carrier: 'Quiet Mutual',
+                      claim_number: 'QM-5', client_name: 'Quiet Mutual Claims' });
+  const iv = (await jsonOf(await call(env, '/cases/API-BD1/invoices', { method: 'POST', cookie: admin,
+    body: {} }))).invoice;
+  await call(env, `/invoices/${iv.id}/lines`, { method: 'POST', cookie: admin,
+    body: { lines: [{ description: '24-Hour Surveillance Authorization', amount: 3300 }] } });
+
+  // Back-to-draft is legitimate while nothing has been received.
+  await call(env, `/invoices/${iv.id}/status`, { method: 'POST', cookie: admin, body: { status: 'ready' } });
+  ok('a reviewed invoice with no payments can still go back to draft',
+     (await call(env, `/invoices/${iv.id}/status`, { method: 'POST', cookie: admin,
+       body: { status: 'draft' } })).status === 200);
+
+  await call(env, `/invoices/${iv.id}/status`, { method: 'POST', cookie: admin, body: { status: 'ready' } });
+  const part = (await jsonOf(await call(env, `/invoices/${iv.id}/payments`, { method: 'POST', cookie: admin,
+    body: { amount: 1000, paid_date: '2026-08-20', method: 'check' } }))).invoice;
+  ok('a part payment leaves real money owed', part.status === 'partially_paid' && part.balance_due === 2300);
+
+  const before = await jsonOf(await call(env, '/invoices', { cookie: admin }));
+  ok('and the office can see it in Outstanding', before.summary.outstanding === 2300);
+
+  // The defect, in one call.
+  const revert = await call(env, `/invoices/${iv.id}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'draft' } });
+  ok('a part-paid invoice is refused the way back to draft', revert.status === 400);
+  ok('and the refusal says why', /payment/i.test((await jsonOf(revert)).error || ''));
+  ok('nor can it be walked back to ready to unlock the same edits',
+     (await call(env, `/invoices/${iv.id}/status`, { method: 'POST', cookie: admin,
+       body: { status: 'ready' } })).status === 400);
+
+  const after = await jsonOf(await call(env, '/invoices', { cookie: admin }));
+  ok('so the receivable is still on the books', after.summary.outstanding === 2300);
+  ok('and it is still not counted as a draft', after.summary.drafts === 0);
+
+  const still = (await jsonOf(await call(env, `/invoices/${iv.id}`, { cookie: admin }))).invoice;
+  ok('the invoice keeps the status the payment gave it', still.status === 'partially_paid');
+  ok('and its lines stay locked against rewriting',
+     (await call(env, `/invoices/${iv.id}/lines`, { method: 'POST', cookie: admin,
+       body: { lines: [{ description: 'Rewritten', amount: 1 }] } })).status === 400);
+
+  // A fully paid one is refused for the same reason.
+  await call(env, `/invoices/${iv.id}/payments`, { method: 'POST', cookie: admin,
+    body: { amount: 2300, paid_date: '2026-08-27', method: 'check' } });
+  ok('a fully paid invoice is refused too',
+     (await call(env, `/invoices/${iv.id}/status`, { method: 'POST', cookie: admin,
+       body: { status: 'draft' } })).status === 400);
+
+  // Void is still the way back, and it is deliberate, recorded and releasing.
+  ok('void remains the door out of a paid invoice',
+     (await call(env, `/invoices/${iv.id}/status`, { method: 'POST', cookie: admin,
+       body: { status: 'void' } })).status === 200);
+}
+
 section('Evidence: stored privately, metered, and capped inside the free plan');
 {
   const fakeR2 = () => {
