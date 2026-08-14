@@ -44,7 +44,14 @@ green: worker 699, portal e2e 607, intake 186, alerts 41.
    third day alone), the derived-plus-written Combined Summary, the Custom
    package type as a marker rather than a CHECK-constraint change, and a
    document that opens with case information and the assignment objective.
-5. Invoice / BILL gap audit (provider-neutral fields — MASTER §28).
+5. ~~**Invoice / BILL gap audit**~~ — **COMPLETE** (ledger in `INVOICING.md`,
+   rules in CLAUDE.md under "Invoices"). Phases 1–4 held up under §28: every
+   general field, the whole provider-neutral set (`external_payment_id` lives
+   on `invoice_payments`, where a payment id belongs), and `overdue` already
+   derived rather than stored. Two gaps closed — Special Instructions on the
+   carrier side, and the private Retainer / Applied / Additional Authorization
+   / Balance block. **Write-Off was left alone on purpose**: §28 says "if
+   needed later", and it needs a CHECK change on `invoices.status`.
 6. Public website / SEO. **Social Media Search is already removed** (§30):
    it existed only on the insurance page — a service card, the FAQ, and,
    more quietly, the JSON-LD offer catalogue and FAQPage — and is now
@@ -79,7 +86,9 @@ Record these here so they cannot be lost between phases:
 ## In flight right now
 
 Nothing. Item 3 (Dropbox) stays **blocked on the owner's Worker secrets**, so
-the first unblocked work is item 5, the Invoice / BILL gap audit (MASTER §28).
+the first unblocked work is item 6, the rest of the public website / SEO work
+in MASTER §29 — hero, the two client paths, homepage order, and a meta and
+canonical audit. (Social Media Search, §30, is already removed and guarded.)
 `node portal/screenshots.mjs` photographs 37 screens against the real stack
 whenever a visual check is wanted.
 

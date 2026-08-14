@@ -1242,6 +1242,31 @@ section("Invoices: the office's money desk, and BILL only collects");
   ok('private terms are their own', priv.payment_terms === 'Due on receipt');
   ok('numbers stay sequential across types', /-0002$/.test(priv.invoice_no));
 
+  /* MASTER §28's private list: Retainer, Amount Applied, Additional
+     Authorization, Balance. All derived, so a second invoice on the same case
+     draws the retainer down rather than leaving a stale figure behind. */
+  ok('a private invoice carries the retainer block',
+     priv.retainer && priv.retainer.amount === 1500 && priv.retainer.applied === 1500
+     && priv.retainer.balance === 0);
+  ok('it says whether the money is actually in', priv.retainer.received === false);
+  ok('no additional authorization until one is set', priv.retainer.additional_authorized === null);
+  ok('an insurance invoice has no retainer block — it is not that product',
+     iv1.retainer === null);
+
+  await call(env, '/cases/API-IV2/meta', { method: 'POST', cookie: admin,
+    body: { authorized_budget: 2500 } });
+  const privAgain = (await jsonOf(await call(env, `/invoices/${priv.id}`, { cookie: admin }))).invoice;
+  ok('an authorized budget above the retainer reads as the additional authorization',
+     privAgain.retainer.additional_authorized === 1000);
+
+  /* §28's Special Instructions — the carrier's own billing instruction. */
+  const withSpecial = (await jsonOf(await call(env, `/invoices/${iv1.id}`, { method: 'POST', cookie: admin,
+    body: { refs: { ...iv1.refs, special_instructions: 'Submit through the vendor portal; PO on every page.' } } }))).invoice;
+  ok('special instructions are stored with the invoice references',
+     withSpecial.refs.special_instructions.includes('vendor portal'));
+  ok('and the claim references it rode in with are untouched',
+     withSpecial.refs.claim_number === 'WC-2026-11452');
+
   /* The gatekeeping: drafts take no payments, Ready validates, paid is
      arithmetic and never a button. */
   ok('a draft takes no payments',
@@ -1299,6 +1324,14 @@ section("Invoices: the office's money desk, and BILL only collects");
   ok('or paid',
      (await call(env, `/invoices/${priv.id}/payments`, { method: 'POST', cookie: admin,
        body: { amount: 5, paid_date: '2026-08-13' } })).status === 400);
+  /* A voided invoice must stop consuming the retainer, or the balance the
+     office reads is money the client never actually owed. */
+  ok('and it stops drawing down the retainer — the only invoice voided releases all of it',
+     (await (async () => {
+       const r = (await jsonOf(await call(env, `/invoices/${priv.id}`, { cookie: admin })))
+         .invoice.retainer;
+       return r.applied === 0 && r.balance === 1500;
+     })()));
   ok('or revived',
      (await call(env, `/invoices/${priv.id}/status`, { method: 'POST', cookie: admin,
        body: { status: 'ready' } })).status === 400);

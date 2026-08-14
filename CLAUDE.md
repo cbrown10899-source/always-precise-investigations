@@ -402,8 +402,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 699 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 607 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 707 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 618 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
@@ -446,6 +446,29 @@ redaction, internal only or do not use is still refused by name.
 **The document holds no copy of anything.** Every image points at the original
 evidence route; building, printing and finalizing touch `build_*` tables only.
 Original evidence must never be overwritten by a report copy or a thumbnail.
+
+## Invoices
+
+Money is arithmetic here, never a stored flag. Totals come from the lines and
+the payments on every read; `paid` is what a zero balance means, not a button;
+and **`overdue` is computed against today** so it cannot go stale, is never
+shown on a draft, and never on a void.
+
+The same rule now covers the private retainer. **Amount applied is summed
+across every live invoice on the case**, not just the one on screen —
+otherwise a second invoice reads as though the first never happened — and
+voiding one releases what it consumed. Additional authorization is
+`case_meta.authorized_budget`, and only when it is genuinely above the
+retainer. A negative balance is not an error: it prints as "Beyond the
+retainer", which is when the office most needs to see it.
+
+Sent to BILL is not paid. BILL collects; the portal stays the operational
+record, and nothing about a case depends on BILL existing.
+
+**Write-Off is deliberately absent.** MASTER §28 says "if needed later" and the
+owner's own status list agrees. When it is wanted it goes in as a side table —
+`invoices.status` carries a CHECK constraint, and see the `custom` note above
+for why that is not something to edit in place.
 
 ## The free-plan failsafe
 
