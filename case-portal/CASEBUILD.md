@@ -31,6 +31,17 @@ Progress ledger (handoff priorities):
 | 11. Completed-case delivery section | **done** in first form — 2026-08-13 (finalized panel: print, Mark delivered, Reopen; honest Dropbox status) |
 | 12. Audit / security testing | not started |
 
+The master handoff's §13 named three things this ledger's priority 0 had not
+actually covered. They were audited and closed on 2026-08-14:
+
+| §13 gap | Status |
+| --- | --- |
+| Multi-day cases — "Do not assume one case = one day" | **done** — 2026-08-14. `case_builds.report_id` holds exactly one report, so a three-day case shipped its **third day alone** and dropped the first two silently. `build_reports` is now the ordered set the package carries; opening a build attaches every approved day oldest-first, a day approved later is offered rather than lost, any day can be dropped and put back, and the gate names an unapproved day **by its date**. `report_id` stays and follows a day still in the package, so every older read keeps working |
+| Combined Summary | **done** — 2026-08-14. Two halves, deliberately. The facts — days, span, hours, miles, exhibit counts — are **derived at render time and never stored**, so adding a day cannot leave a stale sentence behind. The narrative paragraph above them is the admin's own, in `build_summary`; nothing writes prose on their behalf |
+| Package types — the fourth one, Custom | **done** — 2026-08-14. Custom means "what I selected is what ships", so it skips the type-based video gate — and **only** that one: held-back material is still refused by name. It is a marker in `build_custom`, not a fifth value in `package_type`, because that column carries a CHECK constraint and widening a CHECK in SQLite means rebuilding the table. Editing the constraint in place would have let a **fresh** database store `custom` while the **live** one refused it — a divergence that passes every test and fails only in production |
+| "Should look like a real investigative report" | **done** — 2026-08-14. The document now opens with CASE INFORMATION (case number, who it is prepared for, type, subject, claim number, date of loss, investigator, authorized hours, days of investigation), then ASSIGNMENT OBJECTIVE, then COMBINED SUMMARY where there is more than one day, then INVESTIGATION — DAY *n* per day with its own date, hours and investigator, then the photographs, the video listing and the evidence index that were already there. Absent facts are simply **absent** — no "N/A", the same rule the intake form works to |
+| "Original evidence must never be overwritten by report copies or thumbnails" | **held, and now written down.** Every `<img>` in the document points at the original evidence route; the package holds no copy and writes nothing back. Building, printing and finalizing a package touch `build_*` tables only |
+
 ---
 
 The handoff, in substance:

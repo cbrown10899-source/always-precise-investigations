@@ -402,12 +402,50 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 664 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 585 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 699 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 607 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
 so they catch SQL and permission mistakes rather than mocking past them.
+
+## The client package
+
+The Package tab builds what the client actually receives. Four things about it
+are load-bearing:
+
+**A case is not a day.** A surveillance case runs three days and approves three
+daily reports. `case_builds.report_id` holds exactly one, so a package built
+from it shipped the *last* day and dropped the rest without a word.
+`build_reports` is the ordered set the package carries — every approved day,
+oldest first, because that is the order Day 1 / Day 2 / Day 3 has to read in.
+A day approved after the build was opened appears as an offer, never silently.
+`report_id` still exists and still points at a report that is in the package,
+so older single-report reads keep working; do not delete it.
+
+**The Combined Summary is two halves on purpose.** The facts — days, span,
+hours, miles, exhibit counts — are derived when the document renders and are
+never stored, so adding a day cannot leave a stale sentence behind. The
+paragraph above them is the admin's own, in `build_summary`. Nothing writes
+narrative prose on their behalf, and nothing should start.
+
+**`custom` is a marker, not an enum value.** `case_builds.package_type` carries
+a CHECK constraint. Widening a CHECK in SQLite means rebuilding the table,
+which `schema.sql` — re-applied on every `portal-setup` run — cannot do
+idempotently. Editing the constraint in place would leave a **fresh** database
+able to store `custom` while the **live** one, created before the edit, still
+refused it: a divergence that passes every test and fails only in production.
+So Custom lives in `build_custom` and stores `full` underneath. The same
+reasoning already produced `activity_removed`; reach for a side table, not an
+`ALTER TABLE`.
+
+Custom skips the type-based video gate and **only** that one. It means "the
+admin chose the contents", not "anything may ship" — material marked needs
+redaction, internal only or do not use is still refused by name.
+
+**The document holds no copy of anything.** Every image points at the original
+evidence route; building, printing and finalizing touch `build_*` tables only.
+Original evidence must never be overwritten by a report copy or a thumbnail.
 
 ## The free-plan failsafe
 

@@ -2499,6 +2499,54 @@ async function latestApprovedReport(env, caseNo) {
       ORDER BY report_date DESC, id DESC LIMIT 1`).bind(caseNo).first();
 }
 
+/* Every approved day on the case, oldest first — the order a reader expects
+   Day 1, Day 2, Day 3 to appear in. */
+async function approvedReports(env, caseNo) {
+  const { results } = await env.DB.prepare(
+    `SELECT id, report_date, status, day_id FROM case_reports
+      WHERE case_no = ? AND status IN ('approved', 'delivered')
+      ORDER BY report_date ASC, id ASC`).bind(caseNo).all();
+  return results || [];
+}
+
+/* MASTER §13 — a package carries the whole investigation. When a build is
+   opened, every approved day is attached; the admin can drop one, and adding
+   a later day is one click. Ordered by the day's own date, never by the order
+   the office happened to approve them in. */
+async function seedBuildReports(env, buildId, caseNo, user) {
+  const reps = await approvedReports(env, caseNo);
+  let n = 0;
+  for (const r of reps) {
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO build_reports (build_id, report_id, sort, added_by, added_at)
+       VALUES (?, ?, ?, ?, ?)`).bind(buildId, r.id, n++, user ? user.id : null, nowIso()).run();
+  }
+  return reps;
+}
+
+/* The reports actually in a package, with the day each one covers so the
+   document can title its sections and total the hours. */
+async function buildReports(env, buildId, caseNo) {
+  const { results } = await env.DB.prepare(
+    `SELECT r.id, r.report_date, r.status, r.body, r.day_id, br.sort,
+            u.display_name AS investigator,
+            d.day_date, d.start_time, d.end_time, d.hours, d.miles, d.summary AS day_summary
+       FROM build_reports br
+       JOIN case_reports r ON r.id = br.report_id AND r.case_no = ?
+       LEFT JOIN users u ON u.id = r.investigator_id
+       LEFT JOIN case_days d ON d.id = r.day_id
+      WHERE br.build_id = ?
+      ORDER BY r.report_date ASC, br.sort ASC, r.id ASC`).bind(caseNo, buildId).all();
+  return results || [];
+}
+
+/* Whether this build is the Custom package. Read from the marker table for
+   the reason recorded above `build_custom` in schema.sql. */
+async function isCustomBuild(env, buildId) {
+  return Boolean(await env.DB.prepare('SELECT 1 AS x FROM build_custom WHERE build_id = ?')
+    .bind(buildId).first());
+}
+
 /* Everything the build screen needs in one fetch: the current build, its
    items joined to their evidence, what is eligible to add, and the gates as
    they stand — so FINALIZE never surprises. */
@@ -2515,6 +2563,7 @@ async function buildState(env, caseNo) {
       WHERE e.case_no = ? AND e.deleted_at IS NULL ORDER BY e.id`).bind(caseNo).all();
 
   let items = [], report = null, gates = [], events = [];
+  let reports = [], summary = '', custom = false;
   if (build) {
     ({ results: items } = await env.DB.prepare(
       `SELECT i.id, i.evidence_id, i.role, i.sort FROM build_items i
@@ -2524,7 +2573,12 @@ async function buildState(env, caseNo) {
         'SELECT id, report_date, status, body FROM case_reports WHERE id = ? AND case_no = ?')
         .bind(build.report_id, caseNo).first();
     }
-    gates = await buildGates(env, build, items || [], report);
+    reports = await buildReports(env, build.id, caseNo);
+    custom = await isCustomBuild(env, build.id);
+    const sum = await env.DB.prepare('SELECT body FROM build_summary WHERE build_id = ?')
+      .bind(build.id).first();
+    summary = (sum && sum.body) || '';
+    gates = await buildGates(env, build, items || [], report, reports, custom);
     ({ results: events } = await env.DB.prepare(
       `SELECT e.action, e.detail, e.at, u.display_name AS who
          FROM build_events e LEFT JOIN users u ON u.id = e.user_id
@@ -2540,11 +2594,45 @@ async function buildState(env, caseNo) {
     'SELECT id, invoice_no, status FROM invoices WHERE case_no = ? ORDER BY id DESC LIMIT 10')
     .bind(caseNo).all();
 
+  /* The document's masthead (MASTER §13: "case information", "assignment
+     objective"). Read here rather than leaned on from the workspace fetch so
+     the package renders the same whether or not the case screen loaded it —
+     the landing-vs-click rule, applied to a document. */
+  const sub = await env.DB.prepare(
+    `SELECT s.kind, s.service, s.subject_name, s.carrier, s.claim_number, s.payload,
+            t.label AS case_type, cm.authorized_hours, u.display_name AS investigator
+       FROM submissions s
+       LEFT JOIN case_meta cm ON cm.case_no = s.case_no
+       LEFT JOIN case_types t ON t.id = cm.case_type_id
+       LEFT JOIN users u ON u.id = s.assigned_to
+      WHERE s.case_no = ?`).bind(caseNo).first();
+  let payload = {};
+  try { payload = JSON.parse((sub && sub.payload) || '{}'); } catch { payload = {}; }
+  const caseInfo = sub ? {
+    kind: sub.kind, service: sub.service, case_type: sub.case_type,
+    subject_name: sub.subject_name || payload.subject_name || '',
+    carrier: sub.carrier || '', claim_number: sub.claim_number || '',
+    investigator: sub.investigator || '', authorized_hours: sub.authorized_hours,
+    objective: payload.objective || '', date_of_loss: payload.date_of_loss || '',
+    claim_type: payload.claim_type || '', geographic_limits: payload.geographic_limits || '',
+  } : null;
+
+  /* Approved days not in the package — the admin adds a later day without
+     rebuilding, and sees at a glance that one is missing. */
+  const inPkg = new Set(reports.map(r => r.id));
+  const available = (await approvedReports(env, caseNo)).filter(r => !inPkg.has(r.id));
+
   return {
     invoices: caseInvoices || [],
     build: build || null,
     report: report ? { id: report.id, report_date: report.report_date, status: report.status,
                        body: report.body } : null,
+    reports,
+    available_reports: available,
+    summary,
+    custom,
+    package_type: build ? (custom ? 'custom' : build.package_type) : null,
+    case_info: caseInfo,
     items: items || [],
     evidence: evidence || [],
     external_files: extRows || [],
@@ -2558,12 +2646,22 @@ async function buildState(env, caseNo) {
 
 /* The finalize gates, named plainly. Also used by the screen so the admin
    sees exactly what needs attention BEFORE pressing finalize. */
-async function buildGates(env, build, items, report) {
+async function buildGates(env, build, items, report, reports, custom) {
   const gates = [];
-  if (!build.report_id || !report) {
+  /* Multi-day: the package is judged on the SET of attached reports, not on
+     the one `report_id` happens to point at. A build opened before this
+     existed has no rows in build_reports, so fall back to the single report
+     rather than inventing a gate on an old package. */
+  const set = (reports && reports.length) ? reports
+    : (report ? [report] : []);
+  if (!set.length) {
     gates.push('No report is attached — approve a daily report first.');
-  } else if (!['approved', 'delivered'].includes(report.status)) {
-    gates.push(`The attached report is ${report.status} — it must be approved.`);
+  } else {
+    for (const r of set) {
+      if (!['approved', 'delivered'].includes(r.status)) {
+        gates.push(`The report of ${r.report_date} is ${r.status} — it must be approved.`);
+      }
+    }
   }
   const ids = items.map(i => i.evidence_id);
   for (const it of items) {
@@ -2584,8 +2682,12 @@ async function buildGates(env, build, items, report) {
       gates.push(`External upload failed for ${f.delivery_name || 'a file'} — retry or remove it before finalizing.`);
     }
   }
+  /* The Custom package is the admin saying "what I selected is what ships",
+     so the type-based content gate does not apply to it. The
+     client-deliverable gate above still does — Custom controls contents, not
+     whether internal-only material can reach a client. */
   const videos = items.filter(i => i.role === 'video');
-  if (videos.length && !['report_photos_video', 'full'].includes(build.package_type)) {
+  if (!custom && videos.length && !['report_photos_video', 'full'].includes(build.package_type)) {
     gates.push('Videos are selected but the package type does not include video — switch the package or remove them.');
   }
   return gates;
@@ -3633,9 +3735,81 @@ async function route(request, env) {
       `INSERT INTO case_builds (case_no, version, report_id, created_by, created_at, updated_by, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`)
       .bind(m[1], (Number(ver && ver.v) || 0) + 1, rep ? rep.id : null, user.id, now, user.id, now).run();
+    /* Every approved day goes in, not just the latest — a three-day case
+       used to ship its third day alone (MASTER §13). */
+    const seeded = await seedBuildReports(env, res.meta.last_row_id, m[1], user);
     await buildEvent(env, res.meta.last_row_id, user, 'created',
-      rep ? `on the approved report of ${rep.report_date}` : 'no approved report yet');
+      seeded.length > 1 ? `on ${seeded.length} approved reports, ${seeded[0].report_date} to ${seeded[seeded.length - 1].report_date}`
+        : rep ? `on the approved report of ${rep.report_date}` : 'no approved report yet');
     return json(await buildState(env, m[1]), 201);
+  }
+
+  /* Attach a day approved after the build was opened, or put one back. */
+  m = p.match(/^\/build\/(\d{1,12})\/reports$/);
+  if (m && method === 'POST') {
+    const b = await adminBuild(env, user, parseInt(m[1], 10));
+    if (!b) return json({ error: 'not found' }, 404);
+    if (b.status !== 'draft') return json({ error: 'Reopen the build to change it.' }, 400);
+    const rid = parseInt((await readJson(request)).report_id, 10);
+    const r = await env.DB.prepare(
+      'SELECT id, report_date, status FROM case_reports WHERE id = ? AND case_no = ?')
+      .bind(rid, b.case_no).first();
+    if (!r) return json({ error: 'That report is not on this case.' }, 400);
+    if (!['approved', 'delivered'].includes(r.status)) {
+      return json({ error: `The report of ${r.report_date} is ${r.status} — approve it first.` }, 400);
+    }
+    const dupe = await env.DB.prepare(
+      'SELECT id FROM build_reports WHERE build_id = ? AND report_id = ?').bind(b.id, rid).first();
+    if (dupe) return json({ error: 'Already in the package.' }, 409);
+    const sortRow = await env.DB.prepare(
+      'SELECT COALESCE(MAX(sort), -1) AS s FROM build_reports WHERE build_id = ?').bind(b.id).first();
+    await env.DB.prepare(
+      'INSERT INTO build_reports (build_id, report_id, sort, added_by, added_at) VALUES (?, ?, ?, ?, ?)')
+      .bind(b.id, rid, (Number(sortRow && sortRow.s) ?? -1) + 1, user.id, nowIso()).run();
+    if (!b.report_id) {
+      await env.DB.prepare('UPDATE case_builds SET report_id = ? WHERE id = ?').bind(rid, b.id).run();
+    }
+    await buildEvent(env, b.id, user, 'report_attached', `the report of ${r.report_date}`);
+    return json(await buildState(env, b.case_no), 201);
+  }
+
+  m = p.match(/^\/build\/(\d{1,12})\/reports\/(\d{1,12})\/remove$/);
+  if (m && method === 'POST') {
+    const b = await adminBuild(env, user, parseInt(m[1], 10));
+    if (!b) return json({ error: 'not found' }, 404);
+    if (b.status !== 'draft') return json({ error: 'Reopen the build to change it.' }, 400);
+    const rid = parseInt(m[2], 10);
+    const del = await env.DB.prepare('DELETE FROM build_reports WHERE build_id = ? AND report_id = ?')
+      .bind(b.id, rid).run();
+    if (del.meta && del.meta.changes === 0) return json({ error: 'not found' }, 404);
+    /* Keep report_id pointing at something that is still in the package —
+       it is what the older single-report reads use. */
+    if (b.report_id === rid) {
+      const next = await env.DB.prepare(
+        `SELECT r.id FROM build_reports br JOIN case_reports r ON r.id = br.report_id
+          WHERE br.build_id = ? ORDER BY r.report_date DESC, r.id DESC LIMIT 1`).bind(b.id).first();
+      await env.DB.prepare('UPDATE case_builds SET report_id = ? WHERE id = ?')
+        .bind(next ? next.id : null, b.id).run();
+    }
+    await buildEvent(env, b.id, user, 'report_removed', null);
+    return json(await buildState(env, b.case_no));
+  }
+
+  /* The Combined Summary an admin writes over a multi-day package. The
+     factual synopsis beside it is derived at render time and never stored. */
+  m = p.match(/^\/build\/(\d{1,12})\/summary$/);
+  if (m && method === 'POST') {
+    const b = await adminBuild(env, user, parseInt(m[1], 10));
+    if (!b) return json({ error: 'not found' }, 404);
+    if (b.status !== 'draft') return json({ error: 'Reopen the build to change it.' }, 400);
+    const body = String((await readJson(request)).body || '').slice(0, 20000);
+    await env.DB.prepare(
+      `INSERT INTO build_summary (build_id, body, updated_at, updated_by) VALUES (?, ?, ?, ?)
+       ON CONFLICT(build_id) DO UPDATE SET body = excluded.body,
+         updated_at = excluded.updated_at, updated_by = excluded.updated_by`)
+      .bind(b.id, body, nowIso(), user.id).run();
+    await buildEvent(env, b.id, user, 'summary', body ? 'combined summary written' : 'combined summary cleared');
+    return json(await buildState(env, b.case_no));
   }
 
   m = p.match(/^\/build\/(\d{1,12})\/package$/);
@@ -3644,11 +3818,22 @@ async function route(request, env) {
     if (!b) return json({ error: 'not found' }, 404);
     if (b.status !== 'draft') return json({ error: 'Reopen the build to change it.' }, 400);
     const pt = String((await readJson(request)).package_type || '');
-    if (!['report_only', 'report_photos', 'report_photos_video', 'full'].includes(pt)) {
+    if (!['report_only', 'report_photos', 'report_photos_video', 'full', 'custom'].includes(pt)) {
       return json({ error: 'Pick a real package type.' }, 400);
     }
+    /* 'custom' is a marker, not a stored enum value — see build_custom in
+       schema.sql. It stores as 'full' underneath because Custom is the
+       permissive case, so anything already reading package_type behaves
+       sanely on a database that has never heard of the marker. */
+    const stored = pt === 'custom' ? 'full' : pt;
     await env.DB.prepare('UPDATE case_builds SET package_type = ?, updated_by = ?, updated_at = ? WHERE id = ?')
-      .bind(pt, user.id, nowIso(), b.id).run();
+      .bind(stored, user.id, nowIso(), b.id).run();
+    if (pt === 'custom') {
+      await env.DB.prepare('INSERT OR IGNORE INTO build_custom (build_id, at, by) VALUES (?, ?, ?)')
+        .bind(b.id, nowIso(), user.id).run();
+    } else {
+      await env.DB.prepare('DELETE FROM build_custom WHERE build_id = ?').bind(b.id).run();
+    }
     await buildEvent(env, b.id, user, 'package_type', pt);
     return json(await buildState(env, b.case_no));
   }
@@ -3703,15 +3888,21 @@ async function route(request, env) {
     const b = await adminBuild(env, user, parseInt(m[1], 10));
     if (!b) return json({ error: 'not found' }, 404);
     if (b.status === 'finalized') return json({ error: 'Already finalized.' }, 400);
-    // A build opened before the report was approved binds it now, quietly —
-    // the gate only fires when there is genuinely nothing approved to bind.
-    if (!b.report_id) {
-      const rep = await latestApprovedReport(env, b.case_no);
-      if (rep) {
-        await env.DB.prepare('UPDATE case_builds SET report_id = ?, updated_by = ?, updated_at = ? WHERE id = ?')
-          .bind(rep.id, user.id, nowIso(), b.id).run();
-        b.report_id = rep.id;
-        await buildEvent(env, b.id, user, 'report_attached', `the approved report of ${rep.report_date}`);
+    /* A build opened before the reports were approved binds them now,
+       quietly — every approved day, not just the newest. The gate only fires
+       when there is genuinely nothing approved to bind. */
+    const attached = await buildReports(env, b.id, b.case_no);
+    if (!attached.length) {
+      const seeded = await seedBuildReports(env, b.id, b.case_no, user);
+      if (seeded.length) {
+        if (!b.report_id) {
+          const last = seeded[seeded.length - 1];
+          await env.DB.prepare('UPDATE case_builds SET report_id = ?, updated_by = ?, updated_at = ? WHERE id = ?')
+            .bind(last.id, user.id, nowIso(), b.id).run();
+          b.report_id = last.id;
+        }
+        await buildEvent(env, b.id, user, 'report_attached',
+          `${seeded.length} approved report(s) at finalize`);
       }
     }
     const { results: items } = await env.DB.prepare(
@@ -3719,7 +3910,8 @@ async function route(request, env) {
     const report = b.report_id ? await env.DB.prepare(
       'SELECT id, report_date, status FROM case_reports WHERE id = ? AND case_no = ?')
       .bind(b.report_id, b.case_no).first() : null;
-    const gates = await buildGates(env, b, items || [], report);
+    const gates = await buildGates(env, b, items || [], report,
+      await buildReports(env, b.id, b.case_no), await isCustomBuild(env, b.id));
     if (gates.length) return json({ error: 'Not ready to finalize.', gates }, 400);
     await env.DB.prepare(
       'UPDATE case_builds SET status = ?, finalized_by = ?, finalized_at = ?, updated_by = ?, updated_at = ? WHERE id = ?')

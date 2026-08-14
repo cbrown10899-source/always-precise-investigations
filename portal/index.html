@@ -2776,13 +2776,18 @@ function packagePanel(){
   const nPhoto = items.filter(i => i.role === "photo").length;
   const nVideo = items.filter(i => i.role === "video").length;
   const nDoc = items.filter(i => i.role === "document").length;
-  const videoWanted = ["report_photos_video", "full"].includes(b.package_type);
+  /* The effective package type — 'custom' is a marker beside the stored
+     column, not a value in it (see build_custom in schema.sql). Custom owes
+     no type-based judgement about video: the admin chose the contents. */
+  const ptype = PKG.package_type || b.package_type;
+  const videoWanted = ptype === "custom" || ["report_photos_video", "full"].includes(ptype);
+  const reps = PKG.reports || [];
   const steps = [
-    ["Review",   PKG.approved_report ? "done" : "none"],
+    ["Review",   reps.length ? "done" : "none"],
     ["Evidence", (nPhoto + nDoc) ? "done" : "none"],
     ["Video",    !videoWanted ? "na" : nVideo ? "done" : "none"],
-    ["Package",  b.package_type ? "done" : "none"],
-    ["Preview",  PKG.report ? "done" : "none"],
+    ["Package",  ptype ? "done" : "none"],
+    ["Preview",  reps.length ? "done" : "none"],
     ["Finalize", b.status === "finalized" ? "done" : "none"],
   ];
   const stepsRail = `<div class="pkg-steps">${steps.map(([lbl, st], i) =>
@@ -2792,7 +2797,9 @@ function packagePanel(){
   // P13 — what is in the box, in one glance.
   const contents = `<div class="feebox" style="margin:10px 0">
     <div class="row"><span><b>Package contents</b></span><span></span></div>
-    <div class="row"><span>Final report</span><b>${PKG.approved_report ? "Approved" : "Not attached"}</b></div>
+    <div class="row"><span>Final report</span><b>${reps.length
+      ? (reps.length === 1 ? "1 day, approved" : `${reps.length} days, approved`)
+      : "Not attached"}</b></div>
     <div class="row"><span>Photographs</span><b>${nPhoto}</b></div>
     <div class="row"><span>Video</span><b>${videoWanted ? nVideo : "Not in this package type"}</b></div>
     <div class="row"><span>Documents</span><b>${nDoc}</b></div>
@@ -2845,12 +2852,16 @@ function packagePanel(){
   return `${blocks}${stepsRail}${missing}
     ${b.status === "draft" ? `
       ${contents}${delivery}
+      ${daysPanel()}
       <label class="f" style="max-width:340px"><span>Package type</span>
         <select data-act="pkgType">
           ${[["report_only","Report only"],["report_photos","Report + photos"],
-             ["report_photos_video","Report + photos + video link"],["full","Full client package"]]
-            .map(([v, l]) => `<option value="${v}" ${b.package_type === v ? "selected" : ""}>${l}</option>`).join("")}
+             ["report_photos_video","Report + photos + video link"],["full","Full client package"],
+             ["custom","Custom package"]]
+            .map(([v, l]) => `<option value="${v}" ${ptype === v ? "selected" : ""}>${l}</option>`).join("")}
         </select></label>
+      ${ptype === "custom" ? `<p class="hint" style="margin:-4px 0 10px">The contents below are
+        exactly what ships. Only the client-deliverable rule still applies.</p>` : ""}
       ${pick(photos, "Photos")}${pick(videos, "Video")}${pick(others, "Documents")}
       <div class="actions" style="border-top:1px solid var(--line);padding-top:12px;margin-top:10px">
         <button class="btn ghost" data-act="pkgPrint">Preview package</button>
@@ -2861,8 +2872,67 @@ function packagePanel(){
     ${doc}`;
 }
 
-/* The document — exactly what prints (report, photographs, video listing,
-   evidence index). Photos are embedded; video is listed, never embedded. */
+/* MASTER §13 — "Do not assume one case = one day." Which approved days the
+   package carries, which are still out, and the Combined Summary that only
+   makes sense once there is more than one. */
+function daysPanel(){
+  const b = PKG && PKG.build;
+  if(!b) return "";
+  const reps = PKG.reports || [];
+  const avail = PKG.available_reports || [];
+  const draft = b.status === "draft";
+  const rows = reps.map((r, i) => `<div class="row">
+      <span><b>Investigation &mdash; Day ${i + 1}</b> &middot; ${esc(fmtDay(r.report_date))}${
+        r.hours != null ? ` &middot; ${esc(String(r.hours))} h` : ""}${
+        r.investigator ? ` &middot; ${esc(r.investigator)}` : ""}</span>
+      ${draft && reps.length > 1
+        ? `<button class="btn sm ghost" data-act="pkgRepRemove" data-id="${r.id}">Remove</button>`
+        : `<span style="color:var(--muted);font-size:.82rem">${esc(label(r.status))}</span>`}
+    </div>`).join("");
+  const availRows = draft ? avail.map(r => `<div class="row">
+      <span style="color:var(--muted)">${esc(fmtDay(r.report_date))} &mdash; approved, not in the package</span>
+      <button class="btn sm" data-act="pkgRepAdd" data-id="${r.id}">Add day</button>
+    </div>`).join("") : "";
+  const total = reps.reduce((n, r) => n + (Number(r.hours) || 0), 0);
+  return `<div class="feebox" style="margin:10px 0">
+    <div class="row"><span><b>Days in this package</b></span>
+      <span style="color:var(--muted);font-size:.82rem">${reps.length} day${reps.length === 1 ? "" : "s"}${
+        total ? ` &middot; ${Math.round(total * 10) / 10} h` : ""}</span></div>
+    ${rows || `<div class="row"><span style="color:var(--muted);font-size:.85rem">No approved report yet
+      &mdash; approve a daily report and it appears here.</span><span></span></div>`}
+    ${availRows}
+  </div>
+  ${reps.length > 1 && draft ? `<label class="f"><span>Combined summary
+    <span class="opt">optional &mdash; opens the multi-day report</span></span>
+    <textarea data-act="pkgSummary" rows="4" placeholder="One paragraph covering the investigation as a whole. The dates, days, hours and exhibit counts below are filled in for you.">${esc(PKG.summary || "")}</textarea></label>` : ""}`;
+}
+
+/* The factual half of the Combined Summary: derived at render time, never
+   stored, so adding a day cannot leave a stale sentence behind. */
+function pkgSynopsis(reps, nPhoto, nVideo){
+  if(!reps.length) return "";
+  const hours = reps.reduce((n, r) => n + (Number(r.hours) || 0), 0);
+  const miles = reps.reduce((n, r) => n + (Number(r.miles) || 0), 0);
+  const first = fmtDay(reps[0].report_date);
+  const last = fmtDay(reps[reps.length - 1].report_date);
+  const span = reps.length === 1 ? `on ${first}` : `between ${first} and ${last}`;
+  const bits = [`${reps.length} day${reps.length === 1 ? "" : "s"} of surveillance ${span}`];
+  if(hours) bits.push(`${Math.round(hours * 10) / 10} hours of documented field time`);
+  if(miles) bits.push(`${Math.round(miles)} miles travelled`);
+  const ex = [];
+  if(nPhoto) ex.push(`${nPhoto} photograph${nPhoto === 1 ? "" : "s"}`);
+  if(nVideo) ex.push(`${nVideo} video exhibit${nVideo === 1 ? "" : "s"}`);
+  if(ex.length) bits.push(ex.join(" and ") + " are included");
+  return bits.join("; ") + ".";
+}
+
+/* The document — exactly what prints (case information, objective, each
+   investigation day, combined summary, photographs, video listing, evidence
+   index). Photos are embedded; video is listed, never embedded.
+
+   Every <img> points at the ORIGINAL evidence route. The document holds no
+   copy and writes nothing back, so printing a package can never overwrite
+   the evidence it was built from (MASTER §13). */
 function pkgDocHtml(){
   const b = PKG && PKG.build;
   if(!b) return "";
@@ -2876,6 +2946,25 @@ function pkgDocHtml(){
   });
   const photos = rows.filter(r => r.role === "photo");
   const videos = rows.filter(r => r.role === "video");
+  /* Multi-day: every attached report, oldest first. Falls back to the single
+     report so a package built before build_reports existed still renders. */
+  const reps = (PKG.reports && PKG.reports.length) ? PKG.reports
+    : (PKG.report ? [PKG.report] : []);
+  const ci = PKG.case_info;
+  /* The masthead a carrier's file needs. Anything absent is simply absent —
+     no "N/A", no placeholder, the same rule the intake form works to. */
+  const infoRows = !ci ? [] : [
+    ["Case number", WS_CASE],
+    ["Prepared for", ci.carrier || ""],
+    ["Case type", ci.case_type || ci.service || ""],
+    ["Subject", ci.subject_name || ""],
+    ["Claim number", ci.claim_number || ""],
+    ["Date of loss", ci.date_of_loss ? fmtDay(ci.date_of_loss) : ""],
+    ["Claim type", ci.claim_type || ""],
+    ["Investigator", ci.investigator || ""],
+    ["Authorized hours", ci.authorized_hours != null ? String(ci.authorized_hours) : ""],
+    ["Days of investigation", reps.length ? String(reps.length) : ""],
+  ].filter(([, v]) => v);
   return `<h3 style="margin:18px 0 6px;font-size:1rem">The document <span class="opt">exactly what prints</span></h3>
   <div id="pkgdoc">
     <div class="doc-head">
@@ -2884,10 +2973,27 @@ function pkgDocHtml(){
       <div style="text-align:right">
         <div style="font-size:1.1rem;font-weight:800;letter-spacing:.05em">INVESTIGATIVE REPORT</div>
         <div><b>${esc(WS_CASE)}</b></div>
-        ${PKG.report ? `<div style="font-size:.88rem">Report of ${esc(fmtDay(PKG.report.report_date))}</div>` : ""}
+        ${reps.length ? `<div style="font-size:.88rem">${reps.length === 1
+          ? `Report of ${esc(fmtDay(reps[0].report_date))}`
+          : `${reps.length} days &middot; ${esc(fmtDay(reps[0].report_date))} &ndash; ${esc(fmtDay(reps[reps.length - 1].report_date))}`}</div>` : ""}
       </div>
     </div>
-    ${PKG.report ? `<div style="white-space:pre-line;font-size:.95rem">${esc(PKG.report.body)}</div>`
+    ${infoRows.length ? `<h3>CASE INFORMATION</h3>
+      <table class="doc-table"><tbody>${infoRows.map(([k, v]) =>
+        `<tr><td style="width:34%"><b>${esc(k)}</b></td><td>${esc(v)}</td></tr>`).join("")}</tbody></table>` : ""}
+    ${ci && ci.objective ? `<h3>ASSIGNMENT OBJECTIVE</h3>
+      <div style="white-space:pre-line;font-size:.95rem">${esc(ci.objective)}</div>` : ""}
+    ${reps.length > 1 ? `<h3>COMBINED SUMMARY</h3>
+      ${PKG.summary ? `<div style="white-space:pre-line;font-size:.95rem;margin-bottom:8px">${esc(PKG.summary)}</div>` : ""}
+      <div style="font-size:.95rem">${esc(pkgSynopsis(reps, photos.length, videos.length))}</div>` : ""}
+    ${reps.length ? reps.map((r, i) => `
+      <h3${i || infoRows.length || (ci && ci.objective) ? ` style="border-top:1px solid var(--line);padding-top:14px"` : ""}>${
+        reps.length > 1 ? `INVESTIGATION &mdash; DAY ${i + 1}` : "NARRATIVE"} <span style="font-weight:400;font-size:.85rem;color:var(--muted)">${
+        esc(fmtDay(r.report_date))}${r.start_time ? ` &middot; ${esc(t12(r.start_time))}${
+        r.end_time ? `&ndash;${esc(t12(r.end_time))}` : ""}` : ""}${
+        r.hours != null ? ` &middot; ${esc(String(r.hours))} h` : ""}${
+        r.investigator ? ` &middot; ${esc(r.investigator)}` : ""}</span></h3>
+      <div style="white-space:pre-line;font-size:.95rem">${esc(r.body)}</div>`).join("")
       : `<p style="color:var(--muted)">No report attached yet.</p>`}
     ${photos.length ? `<h3 style="border-top:1px solid var(--line);padding-top:14px">PHOTOGRAPHS</h3>
       ${photos.map(r => `<div style="margin:0 0 14px">
@@ -5130,6 +5236,8 @@ document.addEventListener("click", ev => {
   else if(act === "pkgStart"){ pkgApi(`/cases/${encodeURIComponent(WS_CASE)}/build`); }
   else if(act === "pkgAdd"){ pkgApi(`/build/${PKG.build.id}/items`, {evidence_id: Number(el.dataset.id)}); }
   else if(act === "pkgRemove"){ pkgApi(`/build/${PKG.build.id}/items/${el.dataset.id}/remove`); }
+  else if(act === "pkgRepAdd"){ pkgApi(`/build/${PKG.build.id}/reports`, {report_id: Number(el.dataset.id)}); }
+  else if(act === "pkgRepRemove"){ pkgApi(`/build/${PKG.build.id}/reports/${el.dataset.id}/remove`); }
   else if(act === "pkgFinalize"){ pkgApi(`/build/${PKG.build.id}/finalize`); }
   else if(act === "pkgReopen"){ pkgApi(`/build/${PKG.build.id}/reopen`); }
   else if(act === "pkgDelivered"){ pkgApi(`/build/${PKG.build.id}/delivered`); }
@@ -5317,6 +5425,9 @@ document.addEventListener("input", ev => {
   if(ev.target.dataset && ev.target.dataset.act === "invFilterQ"){ INV_FILTER.q = ev.target.value; loadInvoices(); }
   if(ev.target.dataset && ev.target.dataset.act === "evClass"){ setEvidenceClass(Number(ev.target.dataset.id), ev.target.value); }
   if(ev.target.dataset && ev.target.dataset.act === "pkgType"){ pkgApi(`/build/${PKG.build.id}/package`, {package_type: ev.target.value}); }
+  // Saves on blur, so the admin can write the paragraph without a repaint
+  // pulling the cursor out from under them mid-sentence.
+  if(ev.target.dataset && ev.target.dataset.act === "pkgSummary"){ pkgApi(`/build/${PKG.build.id}/summary`, {body: ev.target.value}); }
 });
 
 /* ------------------------------------------------------------------- boot */
