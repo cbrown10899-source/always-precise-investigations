@@ -111,7 +111,9 @@ const env = {
 // ONE server serves the page and mounts the Worker at /portal-api/*, because
 // that is how it is deployed. Serving the API from a second origin would let a
 // cross-site cookie bug pass unnoticed — which is exactly what it did before.
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.webp': 'image/webp' };
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.svg': 'image/svg+xml',
+                '.webp': 'image/webp', '.png': 'image/png',
+                '.webmanifest': 'application/manifest+json' };
 const server = http.createServer(async (req, res) => {
   if (req.url.startsWith('/portal-api')) {
     const chunks = [];
@@ -2370,6 +2372,56 @@ section('Active Surveillance Mode: a field view of the same case');
   // The miles column is hidden at phone width, so assert on the window itself.
   ok('and the day is an ordinary recorded day, start to end',
      has(await text(page, '#dlgBody'), '6:30 AM–11:30 AM'));
+  await page.close();
+}
+
+/* The app's own icon: on the button in the portal and on the home screen, so
+   the two are visibly one thing. A wrong path here fails silently in a way
+   nobody notices until a phone shows a blank square. */
+section('The Active Surveillance mark');
+{
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'portal/manifest.webmanifest'), 'utf8'));
+  ok('the home-screen name is the firm\'s', manifest.name === 'API Surveillance');
+  ok('it launches into the field, not the office', manifest.start_url === '/portal/?surveillance=1');
+  ok('it opens standalone, portrait, in the field colours',
+     manifest.display === 'standalone' && manifest.orientation === 'portrait'
+     && manifest.background_color === '#0d1826');
+  for (const i of manifest.icons) {
+    ok(`the ${i.sizes} icon exists in the repo`,
+       fs.existsSync(path.join(ROOT, 'portal', i.src)), i.src);
+    ok(`the ${i.sizes} icon is the portal's own, not borrowed from /watch/`,
+       !i.src.includes('/watch/'), i.src);
+  }
+  /* Not maskable on purpose: an Android mask crops the corners, which would
+     take the firm's banner off the top of the mark. */
+  ok('no icon is declared maskable', !manifest.icons.some(i => /maskable/.test(i.purpose || '')));
+  ok('an Apple touch icon is present too',
+     fs.existsSync(path.join(ROOT, 'portal/icon-180.png')));
+
+  /* The portal's CSP is default-src 'none', which silently blocks the manifest
+     — and therefore the whole install — unless manifest-src says otherwise.
+     Nothing on screen reports it; the Add to Home Screen option simply never
+     offers the app. */
+  const headers = fs.readFileSync(path.join(ROOT, '_headers'), 'utf8');
+  const portalCsp = (headers.split('/portal/*')[1] || '').split('\n')
+    .find(l => l.includes('Content-Security-Policy')) || '';
+  ok('the portal CSP allows its own manifest', /manifest-src 'self'/.test(portalCsp), portalCsp);
+  ok('and still allows only its own images', /img-src 'self' data:/.test(portalCsp));
+  ok('while defaulting to none', /default-src 'none'/.test(portalCsp));
+
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  ok('the launch button wears the app icon',
+     await page.locator('.sv-go img').count() === 1);
+  const served = await page.evaluate(async () => {
+    const r = await fetch(document.querySelector('.sv-go img').getAttribute('src'),
+      { credentials: 'same-origin' });
+    return { status: r.status, type: r.headers.get('content-type') };
+  });
+  ok('and that icon actually serves', served.status === 200 && /image\/png/.test(served.type || ''),
+     JSON.stringify(served));
   await page.close();
 }
 

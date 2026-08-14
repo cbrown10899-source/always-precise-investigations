@@ -10,10 +10,15 @@
 <link rel="icon" href="/assets/logo-white.webp">
 <!-- Active Surveillance Mode is installable to a phone's home screen. It is
      the same secured site, not a second app: the shortcut only starts at
-     ?surveillance=1, which opens the field launcher after the normal login. -->
+     ?surveillance=1, which opens the field launcher after the normal login.
+     The icons are the firm's own Active Surveillance mark — deliberately NOT
+     declared maskable, because an Android mask would crop the corners and take
+     the "Always Precise Investigations" banner off the top of it. -->
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="API Surveillance">
+<link rel="apple-touch-icon" href="icon-180.png">
 <style>
   :root{
     --navy:#0e1a2c; --navy-2:#13273f; --teal:#2f7d90; --teal-2:#3d97ad;
@@ -391,6 +396,16 @@
   .sv-cat.on{background:#1f3a58;color:#fff;border-color:#2f5480;}
   .sv-launch{background:#132538;border:1px solid #23405f;border-radius:12px;padding:14px 16px;
     margin-bottom:10px;cursor:pointer;width:100%;text-align:left;color:#e8eef5;font:inherit;}
+  /* The launch button IS the app icon — the same mark that sits on the phone's
+     home screen, so the two are recognisably one thing. */
+  .sv-go{display:flex;align-items:center;gap:14px;width:100%;font:inherit;text-align:left;
+    background:#0d1826;color:#e8eef5;border:1px solid #23405f;border-radius:14px;
+    padding:12px 16px 12px 12px;cursor:pointer;margin-bottom:14px;}
+  .sv-go img{width:56px;height:56px;border-radius:12px;flex:0 0 auto;}
+  .sv-go b{display:block;font-size:1rem;}
+  .sv-go span{display:block;font-size:.8rem;color:#8fb4d9;margin-top:2px;}
+  .sv-go .go{margin-left:auto;color:var(--gold,#c99a3b);font-weight:800;font-size:1.2rem;}
+  .sv-go.live{border-color:var(--gold,#c99a3b);}
   /* UIBUILD Phase 5 — the Case Build steps rail (P13). */
   .pkg-steps{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 12px;}
   .pkg-step{font-size:.74rem;font-weight:700;padding:6px 10px;border:1px solid var(--line);
@@ -3074,6 +3089,8 @@ function overviewPanel(s, a){
   const docs = ((WS && WS.evidence) || []).filter(e => !e.deleted_at).length - shape.photos - shape.videos;
   const row = (k, v) => v == null || v === "" ? "" : `<div class="ov-row"><span>${esc(k)}</span><b>${esc(v)}</b></div>`;
   return `
+    ${/* The office runs its own fieldwork too — the same door, same icon. */""}
+    ${svLaunchButton()}
     <div class="ovgrid">
       <div class="ovcard">
         <h3>Case summary</h3>
@@ -3236,6 +3253,23 @@ function svView(){
            data-act="svTab" data-t="${k}"><b>${ic}</b>${lbl}</button>`).join("")}
     </div>
   </div>`;
+}
+
+/* SURVEILLANCE P1 — the door into the field view, at the top of the case where
+   a phone finds it first. It wears the app's own icon, so the button in the
+   portal and the shortcut on the home screen are visibly the same thing. */
+function svLaunchButton(){
+  const open = WS && WS.open_day;
+  return `<button class="sv-go ${open ? "live" : ""}" data-act="svEnter" data-case="${esc(WS_CASE)}">
+    <img src="/portal/icon-192.png" alt="" width="56" height="56">
+    <div>
+      <b>${open ? "Resume active surveillance" : "Active Surveillance Mode"}</b>
+      <span>${open
+        ? "A day is running on this case &mdash; pick it back up"
+        : "The field view: start a day, log it one-handed, add photos"}</span>
+    </div>
+    <span class="go">&rarr;</span>
+  </button>`;
 }
 
 /* SURVEILLANCE P16 — what the home-screen icon opens. With a day running it
@@ -3573,13 +3607,8 @@ function fieldHomeHtml(){
   const next = pkgNextStep(shape, "field");
   const mark = st => st === "done" ? "&#10003;" : st === "part" ? "&#9685;" : "&#9675;";
   const acts = ((WS && WS.activity) || []).slice(0, 4);
-  const open = WS && WS.open_day;
   return `
-    <!-- SURVEILLANCE P1: the door into the field view, at the top of the
-         assignment where a phone finds it first. -->
-    <button class="btn" style="width:100%;padding:15px;font-size:1rem;margin-bottom:14px"
-      data-act="svEnter" data-case="${esc(WS_CASE)}">
-      ${open ? "&#9679; Resume active surveillance" : "Start active surveillance mode"}</button>
+    ${svLaunchButton()}
     <div class="ovgrid">
       <div class="ovcard">
         <h3>Assignment progress</h3>
