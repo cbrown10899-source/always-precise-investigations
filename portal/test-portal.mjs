@@ -3094,6 +3094,40 @@ section('A lead has its own life, and its sends live on the card');
   await page.close();
 }
 
+/* MASTER §10 — the fuller field vocabulary. One shared list, so a line
+   available at the desk is available in the car; the physical-observation
+   set is what a workers'-comp file actually logs. */
+section('The field vocabulary covers the physical observations');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('dana');
+  await page.locator('#p').fill('FieldWork2026x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+  await page.locator('.burger').click();
+  await page.waitForTimeout(300);
+  await page.locator('.side-surv').click();
+  await page.waitForTimeout(800);
+  await page.locator('[data-act="svEnter"]').first().click();
+  await page.waitForTimeout(900);
+  await page.locator('.sv-nav button', { hasText: 'Activity' }).click();
+  await page.waitForTimeout(500);
+
+  ok('Surveillance is a category of its own', has(await text(page, '.sv-cats'), 'Surveillance'));
+  await page.locator('#sv_q').fill('lifting');
+  await page.waitForTimeout(400);
+  ok('a workers\'-comp staple is one search away',
+     has(await text(page, '.sv-body'), 'Subject observed lifting.'));
+  await page.locator('#sv_q').fill('unable to safely');
+  await page.waitForTimeout(400);
+  ok('and so is breaking off safely',
+     has(await text(page, '.sv-body'), 'Unable to safely maintain visual contact.'));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();

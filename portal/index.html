@@ -645,15 +645,23 @@ let ACT_MODAL = null;    // the Add Activity sheet (UIBUILD P8): null when close
    picked line never demands another field first. */
 const NO_CHANGE_LINE = "No change was noted during this period.";
 const ARRIVAL_LINE = "Arrived in vicinity of subject residence.";
+/* MASTER §10's fuller vocabulary (2026-08-14). The physical-observation set
+   is what a workers'-comp file actually logs — lifting, carrying, climbing —
+   each a complete sentence so a one-tap entry reads like a report line, never
+   a bare word. Lines are accelerators only; nothing here invents a fact the
+   investigator did not observe. Existing strings are kept EXACTLY as they
+   were: favorites are stored by line text, and an edit would orphan them. */
 const ACTION_GROUPS = [
   ["arrival", "Arrival", [
     ARRIVAL_LINE,
     "Established stationary surveillance position.",
-    "Surveillance discontinued for the day.",
+    "Subject arrived at residence.",
   ]],
   ["nochange", "No activity", [
     NO_CHANGE_LINE,
     "No activity observed at the residence.",
+    "Residence remained quiet.",
+    "Vehicles remained at residence.",
   ]],
   ["subject", "Subject", [
     "Subject observed exiting the residence.",
@@ -661,18 +669,47 @@ const ACTION_GROUPS = [
     "Subject arrived at ",
     "Subject departed ",
     "Subject returned to residence.",
-    "Lost visual contact with subject vehicle in traffic.",
-    "Re-established visual contact with subject.",
+    "Subject entered vehicle.",
+    "Subject exited vehicle.",
+    "Subject observed walking.",
+    "Subject observed standing.",
+    "Subject observed sitting.",
+    "Subject observed bending.",
+    "Subject observed stooping.",
+    "Subject observed reaching.",
+    "Subject observed carrying.",
+    "Subject observed lifting.",
+    "Subject observed pushing.",
+    "Subject observed pulling.",
+    "Subject observed loading.",
+    "Subject observed unloading.",
+    "Subject observed climbing stairs.",
+    "Subject observed shopping.",
+    "Subject observed doing yard work.",
+    "Subject observed engaged in recreational activity.",
+    "Subject entered a business.",
+    "Subject exited a business.",
+    "Subject met with another individual.",
   ]],
   ["vehicle", "Vehicle", [
     "Subject vehicle observed parked at residence.",
     "Subject vehicle departed the residence.",
     "Subject vehicle returned to the residence.",
+    "Mobile surveillance initiated.",
+    "Subject vehicle stopped.",
+    "Subject vehicle parked.",
   ]],
   ["location", "Location", [
     "Subject entered the location.",
     "Subject exited the location.",
     "Subject observed inside the location.",
+  ]],
+  ["surv", "Surveillance", [
+    "Lost visual contact with subject vehicle in traffic.",
+    "Re-established visual contact with subject.",
+    "Changed surveillance position.",
+    "Unable to safely maintain visual contact.",
+    "Surveillance discontinued for the day.",
   ]],
 ];
 const ALL_LINES = ACTION_GROUPS.flatMap(g => g[2]);
