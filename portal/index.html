@@ -103,6 +103,13 @@
     color:var(--navy);border-radius:999px;padding:3px 6px 3px 11px;font-size:.8rem;font-weight:700;}
   .chip button{border:0;background:none;font:inherit;font-size:1rem;cursor:pointer;color:var(--teal-ink,#1d5c6c);line-height:1;}
   /* MASTER §31 — the Cases tab's lens and the Completed desk. */
+  .lead-send{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px;
+    padding-top:8px;border-top:1px dashed var(--line);}
+  .lead-send input{flex:1;min-width:170px;font:inherit;font-size:.85rem;border:1px solid var(--line);
+    border-radius:8px;padding:7px 10px;}
+  .tag[class*="lead-"]{background:#f4f0e6;border-color:#d9c9a3;color:#7a5f2a;}
+  .tag.lead-converted{background:#f4faf6;border-color:#9fd3b2;color:#1a6b3c;}
+  .tag.lead-declined,.tag.lead-closed_lead{background:#f5f5f5;border-color:#ccc;color:#666;}
   .lensrow{display:flex;gap:6px;margin:0 0 12px;flex-wrap:wrap;}
   .lens{font:inherit;font-size:.8rem;font-weight:700;padding:6px 14px;border-radius:999px;
     border:1px solid var(--line);background:#fff;color:var(--muted);cursor:pointer;}
@@ -605,6 +612,11 @@ let RESET_BOX = null;   // {userId, url} — the reset link, shown AT the row it
 let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
 let NL = null;        // manual intake (UIBUILD P17): null | {kind, err}
 let SHEET_WIZ = null; // the 3-step send wizard (UIBUILD P18)
+let LEAD_SEND = null; // {case_no, to, err, busy} — the inline Send-intake form (MASTER §5)
+/* MASTER §5 — the lead vocabulary, which is NOT the case vocabulary. */
+const LEAD_LABEL = {lead:"Lead", rate_sheet_sent:"Rate sheet sent", intake_sent:"Intake sent",
+  intake_received:"Intake received", contacted:"Contacted", more_info_requested:"More info requested",
+  converted:"Converted to case", declined:"Declined", closed_lead:"Closed lead"};
 let LEAD_MSG = "";    // one-shot confirmation on the leads desk
 let INVOICES = null, INV_OPEN = null, INV_MSG = "", INV_WARN = [], INV_EVENTS = [], INV_SETTINGS = null,
     INV_FILTER = {status: "", type: "", q: ""};
@@ -946,7 +958,10 @@ function shell(inner){
       <div style="font-size:.82rem;margin-top:6px">Nothing below is necessarily the whole picture
         while this is showing.</div>
     </div>` : "";
-  return `<div class="tabs">${tabs}</div>${schema}${problem}${summaryCards()}${inner}`;
+  /* The send wizard is an overlay, mounted here rather than inside the Rate
+     sheets view so a lead card can open it too (MASTER §5). */
+  return `<div class="tabs">${tabs}</div>${schema}${problem}${summaryCards()}${inner}${
+    SHEET_WIZ ? sheetWizardHtml() : ""}`;
 }
 
 
@@ -1362,21 +1377,41 @@ function leadsView(){
     const [lbl, tone] = leadState(c);
     const claim = c.kind === "claims";
     const open = ["new", "awaiting_client"].includes(stageOf(c));
+    /* MASTER §5 — the lead's own status, beside (never instead of) the intake
+       state. The select is the office's hand; the two sends stamp themselves. */
+    const ls = c.lead_status || "lead";
+    const sendRow = LEAD_SEND && LEAD_SEND.case_no === c.case_no ? `
+      <div class="lead-send">
+        <input id="ls_to" type="email" placeholder="name@example.com" value="${esc(LEAD_SEND.to)}">
+        <button class="btn sm" data-act="leadIntakeSend" data-case="${esc(c.case_no)}"${LEAD_SEND.busy ? " disabled" : ""}>${LEAD_SEND.busy ? "Sending&hellip;" : "Send"}</button>
+        <button class="btn sm ghost" data-act="leadIntakeCancel">Cancel</button>
+        ${LEAD_SEND.err ? `<div class="err" style="flex-basis:100%;margin:4px 0 0">${esc(LEAD_SEND.err)}</div>` : ""}
+      </div>` : "";
     return `<div class="pcard">
       <div class="pc-top"><div>
         <span class="tag ${claim ? "claims" : "consumer"}">${claim ? "Insurance" : "Private"}</span>
         <span class="tag ${tone}">${lbl}</span>
+        <span class="tag lead-${esc(ls)}">${esc(LEAD_LABEL[ls] || ls)}</span>
         <div style="font-weight:800;margin-top:5px">${esc(claim ? (c.carrier || c.client_name || "—") : (c.client_name || "—"))}</div>
         <div style="font-size:.85rem;color:var(--muted)">${esc(c.subject_name || "")}</div>
         ${c.claim_number ? `<div class="mono" style="font-size:.72rem;margin-top:2px">Claim ${esc(c.claim_number)}</div>` : ""}
         <div class="mono" style="font-size:.72rem;margin-top:3px">${esc(c.case_no)}</div>
         <div style="font-size:.76rem;color:var(--muted);margin-top:4px">Received ${when(c.created_at)}</div>
-      </div></div>
+      </div>
+      <label class="f" style="margin:0"><span>Lead status</span>
+        <select data-act="leadStatus" data-case="${esc(c.case_no)}">
+          ${Object.entries(LEAD_LABEL).map(([v, l]) =>
+            `<option value="${v}" ${ls === v ? "selected" : ""}>${l}</option>`).join("")}
+        </select></label>
+      </div>
       <div class="pc-next">
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn sm ghost" data-act="openCase" data-case="${esc(c.case_no)}">Review</button>
           <button class="btn sm ghost" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="comms">Message</button>
+          <button class="btn sm ghost" data-act="leadSheet" data-case="${esc(c.case_no)}" data-kind="${esc(c.kind)}">Send rate sheet</button>
+          <button class="btn sm ghost" data-act="leadIntake" data-case="${esc(c.case_no)}">Send intake</button>
         </div>
+        ${sendRow}
         ${open ? `<button class="btn sm" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="assign">Accept &rarr;</button>` : ""}
       </div>
     </div>`;
@@ -1551,8 +1586,7 @@ function sheetsView(){
       <button class="btn" data-act="shWiz" data-sheet="${esc(open.id)}">Send this sheet &rarr;</button>
     </div>
     ${SHEET_MSG ? `<div class="note" style="margin-top:4px">${esc(SHEET_MSG)}</div>` : ""}
-  </div>` : ""}
-  ${SHEET_WIZ ? sheetWizardHtml() : ""}`;
+  </div>` : ""}`;
 }
 
 function casesView(){
@@ -5286,9 +5320,25 @@ async function wizSend(){
     const r = await api(`/sheets/${encodeURIComponent(w.sheet)}/email`,
       {method:"POST", body:{to: w.to, note: w.note, case_no: w.caseNo, include_intake: w.include}});
     SHEET_MSG = `Sent to ${r.sent_to}${w.include ? ", with the intake link" : ""}.`;
+    if(w.fromLead){ LEAD_MSG = SHEET_MSG; SHEET_WIZ = null; return render(); }
     SHEET_WIZ = null;
   }catch(e){ w.err = e.message; }
   paint();
+}
+
+/* MASTER §5 — Send Intake, from the card. The Worker pairs the door by the
+   lead's kind and stamps Intake Sent; this only asks and repaints. */
+async function sendLeadIntakeMail(caseNo){
+  const inp = $("ls_to");
+  if(inp) LEAD_SEND.to = inp.value;
+  LEAD_SEND.busy = true; LEAD_SEND.err = ""; paint();
+  try{
+    const r = await api(`/leads/${encodeURIComponent(caseNo)}/send-intake`,
+      {method:"POST", body:{to: LEAD_SEND.to}});
+    LEAD_MSG = `${r.intake} sent to ${r.sent_to}.`;
+    LEAD_SEND = null;
+    await render();
+  }catch(e){ LEAD_SEND.busy = false; LEAD_SEND.err = e.message; paint(); }
 }
 
 /* Manual intake (P17): one POST, then either straight into the case or back
@@ -5558,6 +5608,24 @@ document.addEventListener("click", ev => {
     SHEET_WIZ = {sheet: el.dataset.sheet, step: 1, to: "", caseNo: "", note: "", include: true, err: ""};
     SHEET_MSG = ""; paint();
   }
+  /* MASTER §5 — the same wizard, opened FROM the lead: the sheet is picked by
+     the lead's kind (never by the caller), the address and case number are
+     pre-filled, and a successful send stamps the lead server-side. */
+  else if(act === "leadSheet"){
+    const c = CASES.find(x => x.case_no === el.dataset.case) || {};
+    SHEET_WIZ = {sheet: el.dataset.kind === "claims" ? "insurance_assignment" : "private_retainer",
+                 step: 1, to: c.client_email || "", caseNo: el.dataset.case, note: "",
+                 include: true, err: "", fromLead: true};
+    SHEET_MSG = ""; paint();
+  }
+  else if(act === "leadIntake"){
+    const c = CASES.find(x => x.case_no === el.dataset.case) || {};
+    LEAD_SEND = {case_no: el.dataset.case, to: c.client_email || "", err: "", busy: false};
+    paint();
+    const inp = $("ls_to"); if(inp) inp.focus();
+  }
+  else if(act === "leadIntakeCancel"){ LEAD_SEND = null; paint(); }
+  else if(act === "leadIntakeSend"){ sendLeadIntakeMail(el.dataset.case); }
   else if(act === "wizClose"){ SHEET_WIZ = null; paint(); }
   else if(act === "wizStep"){
     wizCollect();
@@ -5635,6 +5703,13 @@ document.addEventListener("input", ev => {
   if(ev.target.dataset && ev.target.dataset.act === "invFilterQ"){ INV_FILTER.q = ev.target.value; loadInvoices(); }
   if(ev.target.dataset && ev.target.dataset.act === "evClass"){ setEvidenceClass(Number(ev.target.dataset.id), ev.target.value); }
   if(ev.target.dataset && ev.target.dataset.act === "pkgType"){ pkgApi(`/build/${PKG.build.id}/package`, {package_type: ev.target.value}); }
+  if(ev.target.dataset && ev.target.dataset.act === "leadStatus"){
+    const caseNo = ev.target.dataset.case, v = ev.target.value;
+    api(`/leads/${encodeURIComponent(caseNo)}/status`, {method:"POST", body:{status: v}})
+      .then(() => { const c = CASES.find(x => x.case_no === caseNo); if(c) c.lead_status = v;
+                    LEAD_MSG = `${caseNo} — ${LEAD_LABEL[v] || v}.`; paint(); })
+      .catch(e => { LEAD_MSG = e.message; paint(); });
+  }
   // Saves on blur, so the admin can write the paragraph without a repaint
   // pulling the cursor out from under them mid-sentence.
   if(ev.target.dataset && ev.target.dataset.act === "pkgSummary"){ pkgApi(`/build/${PKG.build.id}/summary`, {body: ev.target.value}); }

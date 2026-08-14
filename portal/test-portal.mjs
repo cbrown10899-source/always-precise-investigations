@@ -3030,6 +3030,70 @@ section('Completed cases are one obvious click away');
   await page.close();
 }
 
+/* MASTER §5 — the sales desk: a lead's own statuses, and Send Rate Sheet /
+   Send Intake living ON the lead rather than three tabs away. */
+section('A lead has its own life, and its sends live on the card');
+{
+  await post('/ingest', {
+    case_no: 'API-20260812-4005', service: 'Surveillance',
+    client_name: 'Riley Caller', client_email: 'riley@example.test',
+    client_phone: '4345550199', subject_name: 'Sam Watched',
+    objective: 'Phoned in — wants weekend coverage.',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Leads' }).click();
+  await page.waitForTimeout(600);
+
+  const card = page.locator('.pcard', { hasText: 'API-20260812-4005' });
+  ok('a fresh lead is on the desk', await card.count() === 1);
+  ok('with the lead vocabulary, not the case one',
+     has(await card.innerText(), 'Lead status'));
+  ok('and both send actions on the card',
+     await card.locator('.btn', { hasText: 'Send rate sheet' }).count() === 1
+     && await card.locator('.btn', { hasText: 'Send intake' }).count() === 1);
+
+  // The office's own hand: set Contacted, and it survives a full reload.
+  await card.locator('select[data-act="leadStatus"]').selectOption('contacted');
+  await page.waitForTimeout(600);
+  await page.reload();
+  await page.waitForTimeout(900);
+  await page.locator('.tabs button', { hasText: 'Leads' }).click();
+  await page.waitForTimeout(600);
+  ok('a status set by hand survives a reload',
+     await page.locator('.pcard', { hasText: 'API-20260812-4005' })
+       .locator('select[data-act="leadStatus"]').inputValue() === 'contacted');
+
+  // Send intake, inline: prefilled from the lead, honest when mail is off.
+  const card2 = page.locator('.pcard', { hasText: 'API-20260812-4005' });
+  await card2.locator('.btn', { hasText: 'Send intake' }).click();
+  await page.waitForTimeout(400);
+  ok('the address is prefilled from the lead',
+     await page.locator('#ls_to').inputValue() === 'riley@example.test');
+  await card2.locator('[data-act="leadIntakeSend"]').click();
+  await page.waitForTimeout(700);
+  ok('with no mail key the card says exactly what is missing',
+     has(await card2.innerText(), 'not configured'));
+  await card2.locator('.btn', { hasText: 'Cancel' }).click();
+  await page.waitForTimeout(300);
+
+  // Send rate sheet: the SAME wizard, opened from the lead, prefilled — and
+  // the sheet picked by the lead's kind, never by the caller.
+  await card2.locator('.btn', { hasText: 'Send rate sheet' }).click();
+  await page.waitForTimeout(400);
+  ok('the send wizard opens from the leads desk', await page.locator('.amsheet').count() === 1);
+  ok('on the private sheet, because this is a private lead',
+     has(await text(page, '.amsheet'), 'Retainer'));
+  ok('addressed to the lead already',
+     await page.locator('#wiz_to').inputValue() === 'riley@example.test');
+  ok('with the case number riding along',
+     await page.locator('#wiz_case').inputValue() === 'API-20260812-4005');
+  await page.locator('.amx').click();
+  await page.waitForTimeout(300);
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
