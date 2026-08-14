@@ -52,9 +52,24 @@ the owner's stated order**. That order is the work list.
 Plus the MEDIUM that belongs with 1 and 2: **every surveillance date is UTC
 while every surveillance time is local**, so evening work files a day late.
 
-**5. NEW FEATURE — private-client Cash App + Venmo payment options.** Owner
-work order, 2026-08-14, recorded verbatim in **`PAYMENTS.md`** next to this
-file. It sits here, *after* the four HIGH defects, on the owner's own
+**5. NEW FEATURE — private-client payment options and the onboarding send flow.**
+**Two** owner work orders, 2026-08-14, both recorded verbatim in **`PAYMENTS.md`**
+next to this file; the second is a superset of the first and governs where they
+differ. Together they cover the payment configuration *and* the onboarding UX
+around it: a Send Payment Options action on private lead cards, a readable NEXT
+STEP block replacing the tiny gray helper text beside *Send this sheet →*,
+independent Cash App / Venmo toggles revealed when Payment Options is ticked, a
+standalone payment send that does not resend the sheet, one email carrying only
+the sections actually selected, a RETAINER PENDING next-action state on a
+returned intake, a sent confirmation listing exactly what went, and the same
+clearer send area for Insurance **with no payment options on it at all**. 14
+boundary regression tests are named, up from 7.
+
+Two lines in the second order are load-bearing and easy to lose to a helpful
+default: **never invent a payment URL from a handle** (a fabricated
+`cash.app/$handle` that resolves to a real stranger sends a client's retainer to
+the wrong person — the URL is admin-entered or absent), and **sending
+instructions never marks the retainer paid**. It sits here, *after* the four HIGH defects, on the owner's own
 instruction in the order itself: *"Do not abandon the current HIGH bug work to
 rebuild this immediately if a higher-priority verified defect is already in
 progress."* Each of 1–4 loses money or data silently; this adds a way to collect
