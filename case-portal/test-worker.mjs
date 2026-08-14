@@ -980,6 +980,70 @@ section('Manual intake from the office');
 /* Active Surveillance Mode (SURVEILLANCE.md). No surveillance table exists and
    none may be added: these routes only answer "am I out?" and "who is out?"
    over the day records that already exist. */
+/* Removing a line, the owner's request of 2026-08-14. The old rule — no delete
+   route, because a timeline that can be quietly erased is worth less in a
+   hearing — survives in substance: this REMOVES from the report, and stamps
+   who did it, but the entry itself is never destroyed. */
+section('An entry can be removed, but never quietly erased');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  await call(env, `/invite/${new URL(link, 'https://x.test').searchParams.get('invite')}/accept`,
+    { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const danaId = (await jsonOf(await call(env, '/users', { cookie: admin })))
+    .users.find(u => u.username === 'dana').id;
+
+  await ingest(env, { case_no: 'API-DEL1', client_name: 'C', subject_name: 'S' });
+  await call(env, '/submissions/API-DEL1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+  await call(env, '/cases/API-DEL1/day/start', { method: 'POST', cookie: inv,
+    body: { day_date: '2026-08-14', start_time: '07:00' } });
+  for (const [t, d] of [['07:05', 'Arrived in vicinity of subject residence.'],
+                        ['07:10', 'asdf test line'],
+                        ['07:20', 'Subject departed residence.']]) {
+    await call(env, '/cases/API-DEL1/activity', { method: 'POST', cookie: inv,
+      body: { at_date: '2026-08-14', at_time: t, description: d } });
+  }
+  let ws = await jsonOf(await call(env, '/cases/API-DEL1/workspace', { cookie: inv }));
+  const junk = ws.activity.find(a => a.description === 'asdf test line');
+
+  ok('a stray line can be removed',
+     (await call(env, `/cases/API-DEL1/activity/${junk.id}/delete`, { method: 'POST', cookie: inv, body: {} })).status === 200);
+
+  ws = await jsonOf(await call(env, '/cases/API-DEL1/workspace', { cookie: inv }));
+  const gone = ws.activity.find(a => a.id === junk.id);
+  ok('the entry is NOT destroyed — it comes back stamped', gone && gone.removed_at);
+  ok('and says who removed it', gone.removed_by === 'Dana');
+  ok('its words are still there to be read', gone.description === 'asdf test line');
+
+  const gen = await jsonOf(await call(env, '/cases/API-DEL1/reports/generate', { method: 'POST', cookie: inv,
+    body: { day_id: ws.days[0].id } }));
+  const body = (await jsonOf(await call(env, '/cases/API-DEL1/workspace', { cookie: inv }))).reports[0].body;
+  ok('the report leaves the removed line out', !body.includes('asdf test line'), body.slice(0, 300));
+  ok('and still carries the real ones',
+     body.includes('Arrived in vicinity') && body.includes('departed residence'));
+  ok('the report counted only what remains', gen.entries === 2);
+
+  ok('a mis-tap can be undone',
+     (await call(env, `/cases/API-DEL1/activity/${junk.id}/restore`, { method: 'POST', cookie: inv })).status === 200);
+  ok('and the entry is ordinary again',
+     !(await jsonOf(await call(env, '/cases/API-DEL1/workspace', { cookie: inv })))
+       .activity.find(a => a.id === junk.id).removed_at);
+
+  // Somebody else's line is not yours to remove.
+  await ingest(env, { case_no: 'API-DEL2', client_name: 'C2', subject_name: 'S2' });
+  await call(env, '/cases/API-DEL2/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-08-14', at_time: '08:00', description: "The office's own note." } });
+  const other = (await jsonOf(await call(env, '/cases/API-DEL2/workspace', { cookie: admin }))).activity[0];
+  await call(env, '/submissions/API-DEL2/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+  ok("an investigator cannot remove another person's entry",
+     (await call(env, `/cases/API-DEL2/activity/${other.id}/delete`, { method: 'POST', cookie: inv, body: {} })).status === 403);
+  ok('but the office can', (await call(env, `/cases/API-DEL2/activity/${other.id}/delete`,
+     { method: 'POST', cookie: admin, body: {} })).status === 200);
+}
+
 section('Active Surveillance: the same day, seen two ways');
 {
   const env = freshEnv();
@@ -1324,8 +1388,11 @@ section('Evidence: stored privately, metered, and capped inside the free plan');
      && first.usage.percent_of_free === 18);
 
   let ws = await jsonOf(await call(env, '/cases/API-EV1/workspace', { cookie: dana }));
-  ok('an investigator cannot classify — it lands needs_review',
-     ws.evidence[0].classification === 'needs_review' && ws.evidence[0].note === 'Subject at the gym.');
+  /* Owner's decision, 2026-08-14: an upload is ready for the report the moment
+     it exists — the firm shoots its own footage and writes its own reports, so
+     nothing waits behind a review it would only give itself. */
+  ok('a field upload is client-deliverable straight away',
+     ws.evidence[0].classification === 'client_deliverable' && ws.evidence[0].note === 'Subject at the gym.');
 
   await up(admin, mk('clip2.mp4', 1800, 'video/mp4'), { classification: 'internal_only' });
   ok('an admin classifies at upload',
@@ -1476,7 +1543,12 @@ section('Case Build: the package behind hard gates');
   };
   const mk = (name, bytes, type) => new File([new Uint8Array(bytes).fill(65)], name, { type });
   const photo1 = (await jsonOf(await up(mk('photo1.jpg', 300, 'image/jpeg'), { classification: 'client_deliverable' }))).id;
-  const photo2 = (await jsonOf(await up(mk('photo2.jpg', 300, 'image/jpeg')))).id;   // needs_review
+  // Held back ON PURPOSE. Since 2026-08-14 an upload defaults to
+  // client-deliverable — the firm shoots its own footage and writes its own
+  // reports — so holding something back is now the deliberate act, and this
+  // is what the gate exists to catch.
+  const photo2 = (await jsonOf(await up(mk('photo2.jpg', 300, 'image/jpeg'),
+    { classification: 'needs_redaction' }))).id;
   const clip = (await jsonOf(await up(mk('clip.mp4', 900, 'video/mp4'), { classification: 'client_deliverable' }))).id;
   const doc = (await jsonOf(await up(mk('summary.pdf', 200, 'application/pdf'), { classification: 'client_deliverable' }))).id;
 
@@ -1488,9 +1560,9 @@ section('Case Build: the package behind hard gates');
   ok('the gate names the missing approval',
      st.gates.some(g => g.includes('approve') || g.includes('approved')));
 
-  ok('a needs-review photo is refused with its reason',
+  ok('a file held back on purpose is refused, with its reason',
      (await jsonOf(await call(env, `/build/${st.build.id}/items`, { method: 'POST', cookie: admin,
-       body: { evidence_id: photo2 } }))).error.includes('needs review'));
+       body: { evidence_id: photo2 } }))).error.includes('needs redaction'));
   await call(env, `/build/${st.build.id}/items`, { method: 'POST', cookie: admin, body: { evidence_id: photo1 } });
   await call(env, `/build/${st.build.id}/items`, { method: 'POST', cookie: admin, body: { evidence_id: clip } });
   await call(env, `/build/${st.build.id}/items`, { method: 'POST', cookie: admin, body: { evidence_id: doc } });

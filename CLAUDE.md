@@ -402,8 +402,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 653 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 570 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 664 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 585 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
@@ -442,6 +442,21 @@ the day was recorded; the page measures its skew against the Worker's
 so a reload, a sleeping phone or a wrong device clock cannot move it — there is
 a test that reloads mid-day and asserts the clock did not restart. The
 investigator's own `start_time` stays what the day's hours are computed from.
+
+**An entry can be removed but never erased** (owner, 2026-08-14). `activity_removed`
+is a companion table — not columns on `activity_log`, because `schema.sql` is
+re-applied on every portal-setup run and `ALTER TABLE ADD COLUMN` is not
+idempotent. A removed entry still comes back from the workspace, stamped with
+who removed it and when; the page strikes it through and offers to put it back,
+and the report and package skip it. Evidence has always worked this way.
+
+**Field uploads are client-deliverable by default** (owner, 2026-08-14). The
+firm shoots its own footage and writes its own reports, so nothing waits behind
+a review it would only give itself. The classifications all still exist —
+Needs redaction, Internal only, Do not use are how you deliberately HOLD
+something back, and the Case Build gate still refuses those. If outside
+investigators are ever engaged, flip the default in `addEvidence` and the
+review gate returns.
 
 Two rules worth keeping: **Out now carries no location** — no GPS in this
 phase, and a test asserts the payload has none — and **nothing spoken is ever

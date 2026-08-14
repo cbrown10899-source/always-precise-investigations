@@ -1398,7 +1398,7 @@ section('Quick lines: search, favorites, one tap');
 
   // The unobtrusive Edit (P10): correct an entry from the timeline.
   await page.locator('.tl-i', { hasText: 'Subject returned to residence.' })
-    .locator('.tl-edit').click();
+    .locator('.tl-edit', { hasText: 'Edit' }).click();
   await page.waitForTimeout(300);
   ok('Edit opens the correction form with the entry in it',
      (await page.locator('#qa_desc').inputValue()) === 'Subject returned to residence.');
@@ -2484,6 +2484,116 @@ section('The Active Surveillance mark');
   });
   ok('and that icon actually serves', served.status === 200 && /image\/png/.test(served.type || ''),
      JSON.stringify(served));
+  await page.close();
+}
+
+/* Straight from using it in the field on 2026-08-14: a way back that does not
+   leave the mode, and Edit/Delete on the things you just logged. */
+section('Back, edit and delete, from the field');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('dana');
+  await page.locator('#p').fill('FieldWork2026x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(600);
+  await page.locator('[data-act="svEnter"]').click();
+  await page.waitForTimeout(800);
+
+  // Earlier sections ended this case's day, so start one to work inside.
+  if (await page.locator('[data-act="svStartDay"]').count()) {
+    await page.locator('#sv_start').fill('05:45');
+    await page.locator('[data-act="svStartDay"]').click();
+    await page.waitForTimeout(1000);
+  }
+  ok('the home screen needs no back button', await page.locator('.sv-backbar').count() === 0);
+  await page.locator('.sv-nav button', { hasText: 'Evidence' }).click();
+  await page.waitForTimeout(500);
+  ok('every other screen has one', await page.locator('.sv-backbar').count() === 1);
+  ok('and it goes back WITHOUT leaving the mode',
+     has(await text(page, '.sv-backbar'), 'Back to active surveillance'));
+  await page.locator('.sv-back').first().click();
+  await page.waitForTimeout(500);
+  ok('tapping it lands on the field home, still in the mode',
+     await page.locator('.sv-nav').count() === 1 && await page.locator('.sv-backbar').count() === 0);
+  ok('and Exit active mode is still the separate thing',
+     has(await text(page, '.sv-head'), 'Exit active mode'));
+
+  // Log a line, then correct it, then remove it — all from the phone.
+  await page.locator('.sv-nav button', { hasText: 'Activity' }).click();
+  await page.waitForTimeout(400);
+  await page.locator('.sv-cat', { hasText: 'Vehicle' }).click();
+  await page.waitForTimeout(250);
+  await page.locator('.sv-pick').first().click();
+  await page.waitForTimeout(300);
+  await page.locator('#sv_desc').fill('Typo entry to be corrected.');
+  await page.locator('[data-act="svSaveEntry"]').click();
+  await page.waitForTimeout(900);
+
+  await page.locator('.sv-nav button', { hasText: 'Home' }).click();
+  await page.waitForTimeout(400);
+  await page.locator('[data-act="svTab"][data-t="timeline"]').first().click();
+  await page.waitForTimeout(500);
+  const line = () => page.locator('.sv-tl li', { hasText: 'Typo entry to be corrected.' });
+  ok('the timeline offers Edit on the entry', await line().locator('[data-act="svEdit"]').count() === 1);
+  ok('and Delete', await line().locator('[data-act="svDelete"]').count() === 1);
+
+  await line().locator('[data-act="svEdit"]').click();
+  await page.waitForTimeout(400);
+  ok('Edit opens the entry with its own words',
+     (await page.locator('#sv_desc').inputValue()) === 'Typo entry to be corrected.');
+  await page.locator('#sv_desc').fill('Subject vehicle departed the residence.');
+  await page.locator('.sv-btn.gold', { hasText: 'Save the correction' }).click();
+  await page.waitForTimeout(900);
+  ok('the correction is on the timeline',
+     has(await text(page, '.sv-tl'), 'Subject vehicle departed the residence.'));
+
+  page.on('dialog', d => d.accept());
+  await page.locator('.sv-tl li', { hasText: 'Subject vehicle departed the residence.' })
+    .locator('[data-act="svDelete"]').click();
+  await page.waitForTimeout(1000);
+  const tl = await text(page, '.sv-tl');
+  ok('a removed entry is struck through rather than vanishing', has(tl, 'Removed'));
+  ok('it says it is out of the report', has(tl, 'not in the report'));
+  ok('and offers to put it back',
+     await page.locator('[data-act="svRestore"]').count() >= 1);
+  await page.locator('[data-act="svRestore"]').first().click();
+  await page.waitForTimeout(900);
+  ok('restoring makes it ordinary again',
+     !has(await text(page, '.sv-tl'), 'Removed'));
+
+  // Evidence gets the same two controls.
+  await page.locator('.sv-nav button', { hasText: 'Evidence' }).click();
+  await page.waitForTimeout(600);
+  if (await page.locator('.evcard').count()) {
+    ok('an evidence card offers a caption', await page.locator('[data-act="svEvNote"]').count() >= 1);
+    ok('and a delete', await page.locator('[data-act="svEvDelete"]').count() >= 1);
+  }
+  ok('and the field is told its uploads are ready for the report, not held back',
+     has(await text(page, '.sv-body'), 'ready for the'));
+
+  // Leave the world as we found it — the next section expects no day running.
+  await page.locator('.sv-nav button', { hasText: 'Home' }).click();
+  await page.waitForTimeout(400);
+  await page.locator('.sv-btn.gold', { hasText: 'End investigation day' }).click();
+  await page.waitForTimeout(500);
+  await page.locator('[data-act="svEndDay"]').click();
+  await page.waitForTimeout(900);
+  await page.close();
+}
+{
+  // The office side of the same removal, and the timer that got smaller.
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  await wsTab(page, 'Activity log');
+  ok('the office timeline offers Delete too',
+     await page.locator('.tl-edit', { hasText: 'Delete' }).count() >= 1);
   await page.close();
 }
 
