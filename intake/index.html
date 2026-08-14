@@ -731,7 +731,16 @@ function buildPayload(){
     if(val.k_claimno_na){ p.claim_number = ""; p.claim_number_status = "not_available"; }
     if(val.k_dol_mode === "Unknown"){ p.date_of_loss = ""; p.date_of_loss_status = "unknown"; }
     else if(val.k_dol_mode === "Approximate date" && (p.date_of_loss||"").trim()){ p.date_of_loss_status = "approximate"; }
-    if(val.z_auth === "pending"){ p.authorized_hours_status = "pending"; }
+    /* The pending preset's own LABEL is "Authorization pending", and writing
+       it into the value put a placeholder beside its own status — the one
+       thing INTAKE-NA forbids, and the only NA field that still did it.
+       Blank the value; the status is where the gap is spelled out. */
+    if(val.z_auth === "pending"){ p.authorized_hours = ""; p.authorized_hours_status = "pending"; }
+    /* Same rule for prior surveillance. Its select offered a literal
+       "Unknown", which is exactly the string the placeholder guard bans —
+       and prior_surveillance is in FIELD_KEEP, so an investigator was shown
+       the word rather than the empty-value/status pair. */
+    if(val.k_prior === "Unknown"){ p.prior_surveillance = ""; p.prior_surveillance_status = "unknown"; }
     if(val.z_start_mode && val.z_start_mode !== "Specific date"){
       p.start_date_status = ({"As soon as available":"asap","Flexible":"flexible","To be determined":"tbd"})[val.z_start_mode] || "flexible";
     }

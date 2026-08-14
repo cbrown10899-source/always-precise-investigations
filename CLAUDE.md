@@ -379,7 +379,7 @@ know the cap they are working to. The price fields (`package`, `package_price`,
 Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
-node intake/test-intake.mjs      # 202 checks; needs Playwright, skips cleanly without it
+node intake/test-intake.mjs      # 205 checks; needs Playwright, skips cleanly without it
 node visitor-alerts/test-worker.mjs   # 47 checks
 ```
 
@@ -454,7 +454,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 784 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 792 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 670 checks: the page against the real Worker
 ```
 

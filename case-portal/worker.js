@@ -593,6 +593,26 @@ async function emailSheet(request, env, user, id) {
     .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').slice(0, 500);
   const caseNo = String(body.case_no || '').replace(/[^\x20-\x7e]/g, '').slice(0, 64);
 
+  /* A sheet sent AGAINST a lead must match that lead (audit, 2026-08-14).
+     The intake door has always been paired to the sheet server-side, but
+     nothing checked the sheet was the right one for the case — so the private
+     sheet could be emailed against a claims lead, putting consumer pricing
+     AND the consumer picker in front of an adjuster. The page picks correctly;
+     the API did not care, and the API is the boundary. */
+  if (caseNo) {
+    const lead = await env.DB.prepare('SELECT kind FROM submissions WHERE case_no = ?')
+      .bind(caseNo).first();
+    if (lead) {
+      const wanted = lead.kind === 'claims' ? 'insurance_assignment' : 'private_retainer';
+      if (sheet.id !== wanted) {
+        return json({ error: lead.kind === 'claims'
+          ? `${caseNo} is a claim assignment — send it the Insurance Assignment Rates, never the consumer sheet.`
+          : `${caseNo} is a private client — send it the Private Client Retainer, never the carrier sheet.`,
+          expected_sheet: wanted }, 400);
+      }
+    }
+  }
+
   if (!(await withinRateLimit(env, 'mail'))) {
     return json({ error: 'Too many emails in one minute — wait a moment and send again.' }, 429);
   }
@@ -624,7 +644,7 @@ async function emailSheet(request, env, user, id) {
      intake went too, and Intake Sent is the further of the two). Manual
      decisions are never overridden — see LEAD_DECIDED. */
   if (caseNo) {
-    const lead = await env.DB.prepare('SELECT case_no FROM submissions WHERE case_no = ?')
+    const lead = await env.DB.prepare('SELECT case_no, kind FROM submissions WHERE case_no = ?')
       .bind(caseNo).first();
     if (lead) await stampLead(env, user, caseNo, includeIntake ? 'intake_sent' : 'rate_sheet_sent');
   }
@@ -1999,7 +2019,15 @@ async function addNote(request, env, user, caseNo) {
 
   // An investigator cannot write a note they would not be allowed to read,
   // and only the office decides what is eligible for a client-facing record.
-  let visibility = String(body.visibility || 'team');
+  /* The default follows the TYPE, the way addComm already does (audit,
+     2026-08-14). Four of these are office record types, the enforcement
+     query filters on `visibility` and never on `note_type`, and the default
+     was 'team' — so an admin note typed and saved without touching the
+     visibility select went straight to the assigned investigator. It is the
+     default UI path, not a contrived one: "Admin note" is the first option
+     in the list. An office note now defaults to the office. */
+  const OFFICE_NOTES = ['admin', 'strategy', 'billing', 'client_comm'];
+  let visibility = String(body.visibility || (OFFICE_NOTES.includes(type) ? 'admin' : 'team'));
   if (!['admin', 'team', 'client_eligible'].includes(visibility)) visibility = 'team';
   if (!admin) visibility = 'team';
 
@@ -2800,9 +2828,18 @@ async function buildState(env, caseNo) {
 
   const { results: evidence } = await env.DB.prepare(
     `SELECT e.id, e.filename, e.content_type, e.size_bytes, e.classification, e.entry_id,
-            e.note, e.uploaded_at, a.at_time AS entry_time, a.at_date AS entry_date,
-            a.description AS entry_description
-       FROM case_evidence e LEFT JOIN activity_log a ON a.id = e.entry_id
+            e.note, e.uploaded_at,
+            CASE WHEN ar.entry_id IS NULL THEN a.at_time END AS entry_time,
+            CASE WHEN ar.entry_id IS NULL THEN a.at_date END AS entry_date,
+            /* A removed entry's text must not become an exhibit caption. The
+               report already skips removed entries; the package borrowed the
+               description straight off the join and did not. The photo itself
+               is untouched — it was never removed — it simply stops speaking
+               in the words of a line the office struck out. */
+            CASE WHEN ar.entry_id IS NULL THEN a.description END AS entry_description
+       FROM case_evidence e
+       LEFT JOIN activity_log a ON a.id = e.entry_id
+       LEFT JOIN activity_removed ar ON ar.entry_id = a.id
       WHERE e.case_no = ? AND e.deleted_at IS NULL ORDER BY e.id`).bind(caseNo).all();
 
   let items = [], report = null, gates = [], events = [];
@@ -3804,7 +3841,11 @@ const EXPECTED_TABLES = [
   'case_status', 'case_closure', 'case_retainer',
   'invoices', 'invoice_lines', 'invoice_payments', 'invoice_events', 'case_evidence',
   'case_builds', 'build_items', 'external_files', 'build_events', 'report_versions',
-  'activity_removed',
+  /* Every table added after this list was first written. Leaving one out makes
+     /health report a clean schema on a database that then 503s on every
+     workspace load — the check saying "fine" is worse than no check. */
+  'activity_removed', 'build_reports', 'build_summary', 'build_custom',
+  'case_day_pauses', 'lead_status', 'send_log',
 ];
 
 async function missingTables(env) {
@@ -4593,12 +4634,16 @@ async function route(request, env) {
          LEFT JOIN case_types t ON t.id = m.case_type_id
         WHERE o.investigator_id = ?
         ORDER BY o.id DESC LIMIT 50`).bind(user.id).all();
+    /* ACCEPTANCE is what creates access — so anything that is not accepted
+       stays thin (audit, 2026-08-14). It used to thin only the 'offered'
+       state, which meant declining an offer, or an admin merely WITHDRAWING
+       one, handed over the case number and the full instructions the pending
+       offer had deliberately withheld. Withdrawal takes no action by the
+       investigator at all: they could learn a case they never accepted. */
     const offers = (results || []).map(o => {
-      if (o.status === 'offered') {
-        const { case_no, instructions, ...thin } = o;
-        return thin;
-      }
-      return o;
+      if (o.status === 'accepted') return o;
+      const { case_no, instructions, ...thin } = o;
+      return thin;
     });
     return json({ offers });
   }
