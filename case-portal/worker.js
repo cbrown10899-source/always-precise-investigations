@@ -1717,10 +1717,51 @@ async function openDayFor(env, user, caseNo) {
       ORDER BY id DESC LIMIT 1`).bind(caseNo, user.id).first();
 }
 
+/* Which running day this caller may act on — HIGH #2 (2026-08-14).
+ *
+ * Pause, resume and end used to require BOTH `caseFor()` and
+ * `investigator_id = user.id`, which closed every door at once the moment a
+ * case was reassigned with a day running: the original investigator now failed
+ * `caseFor`, and the new investigator and the admin both failed the
+ * investigator match. The day stayed open forever — permanently in Out Now,
+ * `hours` never written — with no way to fix it inside the product at all.
+ *
+ * The rule that made that scoping right is kept: you can only stop your OWN
+ * clock. Two doors are added around it.
+ *
+ *   - **Your own running day stays yours** whether or not the case still is.
+ *     This is the owner's KEEP decision applied where it matters most: you
+ *     started that clock and you are the one who knows when you stopped.
+ *   - **An admin can close a day nobody else can reach.** A recovery path that
+ *     does not exist is how a day ends up hand-edited in D1.
+ *
+ * A different investigator still cannot touch someone else's clock, and a
+ * caller with no claim on the case at all gets the same 404 as before — so
+ * nothing here reveals whether a day is running on a case they cannot see. */
+const DAY_COLS = 'id, day_date, start_time, start_mileage, created_at, investigator_id';
+async function openDayForAction(env, user, caseNo) {
+  const own = await env.DB.prepare(
+    `SELECT ${DAY_COLS} FROM case_days
+      WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL
+      ORDER BY id DESC LIMIT 1`).bind(caseNo, user.id).first();
+  if (own) return { day: own };
+
+  // No day of their own here, so the ordinary case boundary applies.
+  if (!(await caseFor(env, user, caseNo))) return { status: 404, error: 'not found' };
+
+  if (user.role === 'admin') {
+    const any = await env.DB.prepare(
+      `SELECT ${DAY_COLS} FROM case_days
+        WHERE case_no = ? AND end_time IS NULL ORDER BY id DESC LIMIT 1`).bind(caseNo).first();
+    if (any) return { day: any };
+  }
+  return { status: 409, error: 'No investigation day is running on this case.' };
+}
+
 async function pauseDay(request, env, user, caseNo) {
-  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
-  const day = await openDayFor(env, user, caseNo);
-  if (!day) return json({ error: 'No investigation day is running on this case.' }, 409);
+  const found = await openDayForAction(env, user, caseNo);
+  if (!found.day) return json({ error: found.error }, found.status);
+  const day = found.day;
   const state = await dayPauseState(env, day.id);
   if (state.paused_at) return json({ error: 'The day is already paused.' }, 409);
   const reason = String((await readJson(request)).reason || '').slice(0, 200) || null;
@@ -1731,9 +1772,9 @@ async function pauseDay(request, env, user, caseNo) {
 }
 
 async function resumeDay(env, user, caseNo) {
-  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
-  const day = await openDayFor(env, user, caseNo);
-  if (!day) return json({ error: 'No investigation day is running on this case.' }, 409);
+  const found = await openDayForAction(env, user, caseNo);
+  if (!found.day) return json({ error: found.error }, found.status);
+  const day = found.day;
   const state = await dayPauseState(env, day.id);
   if (!state.paused_at) return json({ error: 'The day is not paused.' }, 409);
   await env.DB.prepare(
@@ -1743,16 +1784,13 @@ async function resumeDay(env, user, caseNo) {
 }
 
 async function endDay(request, env, user, caseNo) {
-  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const found = await openDayForAction(env, user, caseNo);
+  if (!found.day) return json({ error: found.error }, found.status);
+  const day = found.day;
+
   const body = await readJson(request);
   const time = String(body.end_time || '');
   if (!TIME_RE.test(time)) return json({ error: 'An end time is needed.' }, 400);
-
-  const day = await env.DB.prepare(
-    `SELECT id, day_date, start_time, start_mileage, created_at FROM case_days
-      WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL ORDER BY id DESC LIMIT 1`)
-    .bind(caseNo, user.id).first();
-  if (!day) return json({ error: 'No investigation day is running on this case.' }, 409);
 
   const endMiles = body.end_mileage === '' || body.end_mileage == null ? null : Number(body.end_mileage);
   if (endMiles !== null && !(Number.isFinite(endMiles) && endMiles >= 0)) {

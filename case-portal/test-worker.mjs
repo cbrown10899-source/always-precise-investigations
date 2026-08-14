@@ -1414,6 +1414,99 @@ section('A break cannot eat the day it was taken inside of');
   }
 }
 
+/* ------------------------- a reassignment must never strand a running day
+ *
+ * HIGH #2 from the 2026-08-14 audits, verified here before it was fixed.
+ *
+ * `pause`, `resume` and `end` were scoped to BOTH `caseFor()` and
+ * `investigator_id = user.id`. Reassign a case with a day running and every
+ * door closed at once: the original investigator failed `caseFor` (404), the
+ * new investigator and the admin failed the `investigator_id` match (409). The
+ * day stayed `end_time IS NULL` forever — permanently in Out Now, `hours` never
+ * written, and no way to fix it inside the product at all.
+ *
+ * The fix keeps the rule that made the scoping right in the first place — you
+ * can only stop your OWN clock — and adds the two doors that were missing:
+ *   - your own running day stays yours whether or not the case still is, which
+ *     is the owner's KEEP decision applied to the one route that matters most;
+ *   - an admin can close a day nobody else can reach, because a recovery path
+ *     that does not exist is how a day ends up hand-edited in D1.
+ * A different investigator still cannot touch someone else's clock. */
+section('A reassignment cannot strand a running day');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  for (const [u, n] of [['dana', 'Dana Field'], ['reed', 'Reed Cole']]) {
+    const link = (await jsonOf(await invite(env, admin, { username: u, display_name: n, role: 'investigator' }))).url;
+    const token = new URL(link, 'https://x.test').searchParams.get('invite');
+    await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  }
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const reed = (await login(env, 'reed', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find(u => u.username === 'dana').id;
+  const reedId = users.users.find(u => u.username === 'reed').id;
+
+  // A case with Dana's day running and a break open, then handed to Reed.
+  const strand = async (caseNo) => {
+    await ingest(env, { case_no: caseNo, subject_name: 'Pat Coleman' });
+    await call(env, `/submissions/${caseNo}/assign`, { method: 'POST', cookie: admin, body: { user_id: danaId } });
+    await call(env, `/cases/${caseNo}/day/start`, { method: 'POST', cookie: inv,
+      body: { day_date: '2026-08-14', start_time: '08:00' } });
+    await call(env, `/cases/${caseNo}/day/pause`, { method: 'POST', cookie: inv, body: { reason: 'Break' } });
+    await call(env, `/submissions/${caseNo}/assign`, { method: 'POST', cookie: admin, body: { user_id: reedId } });
+  };
+
+  await strand('API-ST1');
+  ok('the office can see the day is still out there',
+     (await jsonOf(await call(env, '/active', { cookie: admin }))).out_now.length === 1);
+
+  // The investigator who worked it can still close it — their clock, their day,
+  // and they are the one who knows when they stopped.
+  const byOwner = await call(env, '/cases/API-ST1/day/end', { method: 'POST', cookie: inv,
+    body: { end_time: '12:00' } });
+  ok('the investigator who worked the day can still end it', byOwner.status === 200);
+  ok('and it is recorded as a real day, not zero', (await jsonOf(byOwner)).hours === 4);
+  ok('which empties Out now',
+     (await jsonOf(await call(env, '/active', { cookie: admin }))).out_now.length === 0);
+
+  // And an admin can close one nobody else can reach.
+  await strand('API-ST2');
+  const byAdmin = await call(env, '/cases/API-ST2/day/end', { method: 'POST', cookie: admin,
+    body: { end_time: '12:00' } });
+  ok('an admin can close a day that would otherwise be stranded', byAdmin.status === 200);
+  const ws = await jsonOf(await call(env, '/cases/API-ST2/workspace', { cookie: admin }));
+  ok('the hours stay credited to whoever actually worked them',
+     ws.days[0].investigator_id === danaId && ws.days[0].hours === 4);
+
+  // But a reassignment is not a licence over someone else's clock.
+  await strand('API-ST3');
+  ok("the new investigator cannot end another investigator's day",
+     (await call(env, '/cases/API-ST3/day/end', { method: 'POST', cookie: reed,
+       body: { end_time: '12:00' } })).status === 409);
+  ok("nor pause or resume it",
+     (await call(env, '/cases/API-ST3/day/pause', { method: 'POST', cookie: reed, body: {} })).status === 409
+     && (await call(env, '/cases/API-ST3/day/resume', { method: 'POST', cookie: reed, body: {} })).status === 409);
+  ok('and it is still running, because refusing is not the same as closing',
+     (await jsonOf(await call(env, '/active', { cookie: admin }))).out_now.length === 1);
+  // A case Reed was never on at all: the ordinary boundary is untouched, and it
+  // answers 404 rather than 409, so nothing here leaks whether a day is running
+  // on a case the caller cannot see.
+  await ingest(env, { case_no: 'API-ST4', subject_name: 'Pat Coleman' });
+  await call(env, '/submissions/API-ST4/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+  await call(env, '/cases/API-ST4/day/start', { method: 'POST', cookie: inv,
+    body: { day_date: '2026-08-14', start_time: '08:00' } });
+  ok('an investigator with no connection to the case still gets nothing',
+     (await call(env, '/cases/API-ST4/day/end', { method: 'POST', cookie: reed,
+       body: { end_time: '12:00' } })).status === 404);
+
+  // The break the day was left on still comes off it, via the HIGH #1 rule.
+  const owner2 = await jsonOf(await call(env, '/cases/API-ST3/day/end', { method: 'POST', cookie: inv,
+    body: { end_time: '12:00' } }));
+  ok('and the owner can still close it afterwards', owner2.hours === 4);
+}
+
 section('The two internal calculations never share a number');
 {
   const env = freshEnv();

@@ -39,9 +39,21 @@ the owner's stated order**. That order is the work list.
    comes off it — asserted, so this cannot become a licence to stop subtracting
    breaks. `test-worker.mjs` → *"A break cannot eat the day it was taken inside
    of"*, 11 checks. Worker 809 → 820.
-2. **Reassigning a case can strand a running investigation day** — nobody,
-   not even an admin, can close it afterwards. `worker.js` ~1693-1734, ~1020,
-   ~3081. No in-product recovery path exists.
+2. ~~**Reassigning a case can strand a running investigation day**~~ ✅ **FIXED
+   and VERIFIED 2026-08-14.** True as reported, and reproduced first: reassign
+   a case with a day running and every door shut at once — the old investigator
+   failed `caseFor` (404), the new one and the admin failed the
+   `investigator_id` match (409). `openDayForAction()` keeps the rule that made
+   the scoping right — you can only stop your OWN clock — and adds the two
+   doors that were missing: **your own running day stays yours** whether or not
+   the case still is (the KEEP decision applied where it matters most — you
+   started that clock and know when you stopped), and **an admin can close a day
+   nobody else can reach**. A different investigator still cannot touch someone
+   else's clock, and a caller with no claim on the case still gets 404, so
+   nothing reveals whether a day is running on a case they cannot see. Hours
+   stay credited to whoever worked them, not to whoever closed it.
+   `test-worker.mjs` → *"A reassignment cannot strand a running day"*, 11
+   checks. Worker 820 → 831.
 3. **A backward invoice status transition can reopen a paid invoice and
    remove it from Outstanding.** `worker.js` ~2454-2489, ~2349, ~2357, ~3063.
 4. **The Case Build finalize gate strip can be hidden when the package is
