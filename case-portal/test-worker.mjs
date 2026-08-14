@@ -1459,9 +1459,14 @@ section("Invoices: the office's money desk, and BILL only collects");
   /* MASTER §28's private list: Retainer, Amount Applied, Additional
      Authorization, Balance. All derived, so a second invoice on the same case
      draws the retainer down rather than leaving a stale figure behind. */
+  /* These two numbers used to be 1500/0 — which encoded the bug rather than
+     the rule. Billing the retainer is asking for the DEPOSIT; no work has
+     been done, so nothing is applied and the whole retainer remains. The old
+     assertion made the client's own document say "Applied $1,500 · Remaining
+     $0" on the very invoice requesting it. */
   ok('a private invoice carries the retainer block',
-     priv.retainer && priv.retainer.amount === 1500 && priv.retainer.applied === 1500
-     && priv.retainer.balance === 0);
+     priv.retainer && priv.retainer.amount === 1500 && priv.retainer.applied === 0
+     && priv.retainer.balance === 1500);
   ok('it says whether the money is actually in', priv.retainer.received === false);
   ok('no additional authorization until one is set', priv.retainer.additional_authorized === null);
   ok('an insurance invoice has no retainer block — it is not that product',
@@ -3714,7 +3719,7 @@ section('End to end: a private client, sheet to completed');
      made.invoice.invoice_type === 'private' && made.invoice.lines[0].amount === 1500);
   ok('E2E-39: the retainer block rides the invoice — amount, applied, balance',
      made.invoice.retainer && made.invoice.retainer.amount === 1500
-     && made.invoice.retainer.applied === 1500 && made.invoice.retainer.balance === 0);
+     && made.invoice.retainer.applied === 0 && made.invoice.retainer.balance === 1500);
   // Drafts take no payments — the same gate every invoice obeys — so the
   // retainer invoice goes Ready and out to the client before it is paid.
   await call(env, `/invoices/${made.invoice.id}/status`, { method: 'POST', cookie: admin,
@@ -3733,6 +3738,16 @@ section('End to end: a private client, sheet to completed');
     .find(c => c.case_no === 'API-E39');
   ok('E2E-39: the completed desk holds the private file too',
      done && done.build_id != null && done.invoice && done.invoice.status === 'paid');
+  /* The retainer's whole purpose: WORK draws it down, the deposit does not. */
+  const work = (await jsonOf(await call(env, '/cases/API-E39/invoices', { method: 'POST',
+    cookie: admin, body: { confirm_duplicate: true } }))).invoice;
+  await call(env, `/invoices/${work.id}/lines`, { method: 'POST', cookie: admin,
+    body: { lines: [{ description: 'Surveillance, 6 hours', qty: 6, rate: 100, amount: 600 }] } });
+  const after = (await jsonOf(await call(env, `/invoices/${work.id}`, { cookie: admin }))).invoice;
+  ok('E2E-39: work billed after the retainer draws it down, and only work does',
+     after.retainer.applied === 600 && after.retainer.balance === 900);
+  ok('E2E-39: so the client is never told they are past a retainer they still hold',
+     after.retainer.balance > 0);
   globalThis.fetch = realFetch;
 }
 

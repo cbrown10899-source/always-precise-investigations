@@ -2214,8 +2214,15 @@ async function retainerBlock(env, inv) {
   const { results: sib } = await env.DB.prepare(
     `SELECT i.id, i.adjustments FROM invoices i WHERE i.case_no = ? AND i.status != 'void'`)
     .bind(inv.case_no).all();
+  /* "Applied" is WORK billed against the deposit — so the invoice that bills
+     the deposit itself is excluded (audit, 2026-08-14). Counting it made the
+     retainer consume itself: the client's own document read "Applied $1,500 ·
+     Remaining $0" on the very invoice asking for it. */
   let applied = 0;
   for (const s of sib || []) {
+    const isRetainer = await env.DB.prepare(
+      'SELECT 1 AS x FROM invoice_retainer WHERE invoice_id = ?').bind(s.id).first();
+    if (isRetainer) continue;
     const row = await env.DB.prepare(
       'SELECT COALESCE(SUM(amount), 0) AS t FROM invoice_lines WHERE invoice_id = ?').bind(s.id).first();
     applied += Number((row && row.t) || 0) + Number(s.adjustments || 0);
@@ -2348,10 +2355,22 @@ async function createInvoice(request, env, user, caseNo) {
                 Math.round(hours * RATES.surveillance.standard * 100) / 100).run();
       }
     } else {
+      /* The case's OWN agreed retainer, not the firm default — an admin can
+         set a different one, and `retainerBlock` already reads that figure,
+         so billing the default made the invoice contradict the block printed
+         directly beneath it (audit, 2026-08-14). */
+      const ret = await env.DB.prepare(
+        'SELECT retainer_amount FROM case_retainer WHERE case_no = ?').bind(caseNo).first();
+      const retAmount = ret && ret.retainer_amount != null
+        ? Number(ret.retainer_amount) : PERSONAL.retainer;
       await env.DB.prepare(
         `INSERT INTO invoice_lines (invoice_id, sort, description, qty, rate, amount)
          VALUES (?, 0, 'Investigation Retainer', 1, NULL, ?)`)
-        .bind(id, PERSONAL.retainer).run();
+        .bind(id, retAmount).run();
+      // Mark it, so the deposit is never counted as work against itself.
+      await env.DB.prepare(
+        'INSERT OR IGNORE INTO invoice_retainer (invoice_id, amount, at) VALUES (?, ?, ?)')
+        .bind(id, retAmount, nowIso()).run();
       await env.DB.prepare('UPDATE invoices SET client_notes = ? WHERE id = ?')
         .bind('Retainer is applied toward authorized investigative services.', id).run();
     }
@@ -3845,7 +3864,7 @@ const EXPECTED_TABLES = [
      /health report a clean schema on a database that then 503s on every
      workspace load — the check saying "fine" is worse than no check. */
   'activity_removed', 'build_reports', 'build_summary', 'build_custom',
-  'case_day_pauses', 'lead_status', 'send_log',
+  'case_day_pauses', 'lead_status', 'send_log', 'invoice_retainer',
 ];
 
 async function missingTables(env) {
