@@ -210,8 +210,8 @@ quietly returning a shorter day.
 | Admin vs investigator enforced server-side, not by hidden buttons | ✅ | 707 worker checks, including URL/API attempts at another investigator's case, billing, margin, invoices, rates |
 | `FIELD_KEEP` allow-list, page copy kept in sync | ✅ | drift test |
 | "Allow investigator to view client identity", default off | ✅ | `show_client_identity`, admin-only route — **this file previously said otherwise and was wrong** |
-| Full end-to-end insurance walk-through (§38) | 🧪 | every stage is covered by a test, but no single test walks one carrier case from intake to invoice |
-| Full end-to-end private walk-through (§39) | 🧪 | same |
+| Full end-to-end insurance walk-through (§38) | ✅ **done 2026-08-14** | one section, one case: sheet (carrier door stamped on the lead) → partial intake with unknowns → confirm 24 h/$3,300 (admin-only price) → assign → field day with photo+video (client-deliverable on upload) → report from the timeline → build finalized (Dropbox honestly unconfigured) → flat $3,300 invoice → BILL ref → paid by arithmetic → on the completed desk with every artifact. **Finding: no dead ends existed** |
+| Full end-to-end private walk-through (§39) | ✅ **done 2026-08-14** | same shape, retainer model throughout: private door on the sheet, $1,500 received, work, build, retainer-typed invoice with the §28 block, paid, completed. The two billing models never blur |
 
 ### Mobile / iPad (§41)
 
@@ -235,8 +235,7 @@ quietly returning a shorter day.
    (Ask the owner about "Serving ALL of Virginia" first — see ⚠️ above.)
 7. ~~**A private-only intake door**~~ — ✅ done 2026-08-14.
 8. ~~**`/intake/` metadata**~~ — ✅ done 2026-08-14.
-9. **Two end-to-end walk-through tests** (§38, §39) — one carrier case and one
-   private case, intake to invoice, in a single test each. 🧪
+9. ~~**Two end-to-end walk-through tests** (§38, §39)~~ — ✅ done 2026-08-14.
 10. **Dropbox video delivery** (§14) — 🔴, and **blocked on the owner's three
     Worker secrets**. Everything above it is unblocked.
 

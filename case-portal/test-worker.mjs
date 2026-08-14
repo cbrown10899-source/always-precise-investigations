@@ -3410,6 +3410,270 @@ section('An investigator cannot reach an unassigned case by URL');
        body: { description: 'rewritten' } })).status === 403);
 }
 
+/* MASTER §38 — the whole carrier chain, one case, no dead ends: sheet →
+   intake → review → confirm → assign → field → report → build → invoice →
+   BILL → paid → completed. Every hop is a route that already has its own
+   section; THIS section proves they connect. */
+section('End to end: a carrier assignment, sheet to completed');
+{
+  const realFetch = globalThis.fetch;
+  let lastBody = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      lastBody = JSON.parse(init.body);
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.EVIDENCE = (() => {
+    const store = new Map();
+    return { async put(k, b, o) { store.set(k, { b, o }); },
+             async get(k) { const o = store.get(k); return o ? { body: o.b } : null; },
+             async delete(k) { store.delete(k); } };
+  })();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  await call(env, `/invite/${new URL(link, 'https://x.test').searchParams.get('invite')}/accept`,
+    { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const danaId = (await jsonOf(await call(env, '/users', { cookie: admin })))
+    .users.find(u => u.username === 'dana').id;
+
+  // 1. The adjuster's call becomes a lead; the sheet goes out with its door.
+  const led = await jsonOf(await call(env, '/intakes', { method: 'POST', cookie: admin,
+    body: { kind: 'claims', carrier: 'EndToEnd Mutual', client_name: 'Alex Adjuster',
+            client_email: 'alex@e2emutual.test' } }));
+  await call(env, `/sheets/insurance_assignment/email`, { method: 'POST', cookie: admin,
+    body: { to: 'alex@e2emutual.test', case_no: led.case_no, include_intake: true } });
+  ok('E2E-38: the sheet email carries the carrier door',
+     lastBody.html.includes('/intake/?assignment=insurance'));
+  ok('E2E-38: and the lead is stamped Intake Sent',
+     (await jsonOf(await call(env, '/submissions', { cookie: admin }))).submissions
+       .find(c => c.case_no === led.case_no).lead_status === 'intake_sent');
+
+  // 2. The adjuster submits, partially — unknowns marked, never invented.
+  await ingest(env, { case_no: 'API-E38', kind: 'claims', service: 'Insurance claim assignment',
+    carrier: 'EndToEnd Mutual', client_name: 'Alex Adjuster', client_email: 'alex@e2emutual.test',
+    subject_name: 'Jordan Claimant', claim_type: "Workers' compensation",
+    objective: 'Activity level versus stated restrictions.',
+    claim_number: '', claim_number_status: 'unknown',
+    subject_address: '', subject_address_status: 'unknown' });
+  await call(env, `/leads/${led.case_no}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'converted' } });
+  const listed = (await jsonOf(await call(env, '/submissions', { cookie: admin }))).submissions;
+  ok('E2E-38: the intake is on the office\'s list to review',
+     listed.some(c => c.case_no === 'API-E38' && c.status === 'new'));
+
+  // 3. The office confirms 24 hours — which is the $3,300 block, admin-only.
+  await call(env, '/cases/API-E38/meta', { method: 'POST', cookie: admin,
+    body: { authorized_hours: 24 } });
+  const authAdmin = (await jsonOf(await call(env, '/cases/API-E38/workspace', { cookie: admin }))).authorization;
+  ok('E2E-38: 24 confirmed hours read as the $3,300 block for the office',
+     authAdmin.authorized_hours === 24 && authAdmin.package_price === 3300);
+
+  // 4. Assigned; the investigator sees the work and none of the money.
+  await call(env, '/submissions/API-E38/assign', { method: 'POST', cookie: admin,
+    body: { user_id: danaId } });
+  const wsInv = await jsonOf(await call(env, '/cases/API-E38/workspace', { cookie: inv }));
+  const subInv = (await jsonOf(await call(env, '/submissions/API-E38', { cookie: inv }))).submission;
+  ok('E2E-38: the field gets the cap and the unknowns, never the carrier',
+     wsInv.authorization.authorized_hours === 24
+     && !('package_price' in wsInv.authorization)
+     && subInv.payload.subject_address_status === 'unknown'
+     && !('claim_number' in subInv.payload) && !('claim_number_status' in subInv.payload)
+     && !JSON.stringify(subInv.payload).includes('EndToEnd Mutual'));
+
+  // 5. The field day: start, quick entry, a spoken note reviewed into an
+  // entry (the transcript path lands here as an ordinary activity), photo,
+  // video, end. Same routes the mode uses.
+  await call(env, '/cases/API-E38/day/start', { method: 'POST', cookie: inv,
+    body: { day_date: '2026-08-14', start_time: '06:30', start_mileage: 41000 } });
+  await call(env, '/cases/API-E38/activity', { method: 'POST', cookie: inv,
+    body: { at_date: '2026-08-14', at_time: '06:45', kind: 'activity',
+            description: 'Arrived in vicinity of subject residence.' } });
+  await call(env, '/cases/API-E38/activity', { method: 'POST', cookie: inv,
+    body: { at_date: '2026-08-14', at_time: '08:10', kind: 'activity',
+            description: 'Subject observed loading equipment into pickup — dictated in the field and reviewed before saving.' } });
+  const upl = async (name, type) => {
+    const fd = new FormData();
+    fd.append('file', new File([new Uint8Array(400).fill(65)], name, { type }));
+    return jsonOf(await worker.fetch(new Request(API + '/cases/API-E38/evidence', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: inv }, body: fd }), env));
+  };
+  const ph = await upl('subject-0810.jpg', 'image/jpeg');
+  const vd = await upl('subject-0812.mp4', 'video/mp4');
+  const evList = (await jsonOf(await call(env, '/cases/API-E38/workspace', { cookie: inv }))).evidence;
+  ok('E2E-38: field uploads are client-deliverable straight away',
+     evList.find(e => e.id === ph.id).classification === 'client_deliverable'
+     && evList.find(e => e.id === vd.id).classification === 'client_deliverable');
+  const ended = await jsonOf(await call(env, '/cases/API-E38/day/end', { method: 'POST', cookie: inv,
+    body: { end_time: '14:30', end_mileage: 41062 } }));
+  ok('E2E-38: the day banked its hours and miles', ended.hours === 8 && ended.miles === 62);
+
+  // 6. Report: drafted from the day, submitted, approved.
+  const dayId = (await jsonOf(await call(env, '/cases/API-E38/workspace', { cookie: inv }))).days[0].id;
+  const rep = await jsonOf(await call(env, '/cases/API-E38/reports/generate', { method: 'POST',
+    cookie: inv, body: { day_id: dayId } }));
+  const drafted = (await jsonOf(await call(env, '/cases/API-E38/workspace', { cookie: inv })))
+    .reports.find(r => r.id === rep.id);
+  ok('E2E-38: the draft is built from the timeline', drafted.body.includes('loading equipment'));
+  await call(env, `/cases/API-E38/reports/${rep.id}/status`, { method: 'POST', cookie: inv,
+    body: { status: 'submitted' } });
+  await call(env, `/cases/API-E38/reports/${rep.id}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'approved' } });
+
+  // 7. Case Build: report + selected photos + the video, finalized. Dropbox
+  // stays honestly unconfigured and blocks nothing.
+  let st = await jsonOf(await call(env, '/cases/API-E38/build', { method: 'POST', cookie: admin }));
+  await call(env, `/build/${st.build.id}/items`, { method: 'POST', cookie: admin,
+    body: { evidence_id: ph.id } });
+  await call(env, `/build/${st.build.id}/items`, { method: 'POST', cookie: admin,
+    body: { evidence_id: vd.id } });
+  await call(env, `/build/${st.build.id}/package`, { method: 'POST', cookie: admin,
+    body: { package_type: 'report_photos_video' } });
+  ok('E2E-38: Dropbox reports not configured rather than pretending',
+     (await jsonOf(await call(env, '/external-storage', { cookie: admin })))
+       .providers.dropbox.configured === false);
+  st = await jsonOf(await call(env, `/build/${st.build.id}/finalize`, { method: 'POST', cookie: admin }));
+  ok('E2E-38: the package finalizes with the report and both exhibits',
+     st.build.status === 'finalized' && st.items.length === 2 && st.reports.length === 1);
+
+  // 8. Money: the block invoices flat, goes to BILL, and arithmetic pays it.
+  const made = await jsonOf(await call(env, '/cases/API-E38/invoices', { method: 'POST', cookie: admin,
+    body: { from_authorization: true } }));
+  ok('E2E-38: the invoice bills the confirmed block, flat',
+     made.invoice.lines[0].amount === 3300 && made.invoice.lines[0].rate === null);
+  await call(env, `/invoices/${made.invoice.id}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'ready' } });
+  await call(env, `/invoices/${made.invoice.id}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'sent_to_bill' } });
+  await call(env, `/invoices/${made.invoice.id}/bill`, { method: 'POST', cookie: admin,
+    body: { external_invoice_id: 'BILL-E38' } });
+  const sent = await jsonOf(await call(env, `/invoices/${made.invoice.id}`, { cookie: admin }));
+  ok('E2E-38: sent to BILL is stamped and is NOT paid',
+     sent.invoice.status === 'sent_to_bill' && sent.invoice.balance_due === 3300);
+  const paid = await jsonOf(await call(env, `/invoices/${made.invoice.id}/payments`, { method: 'POST',
+    cookie: admin, body: { amount: 3300, paid_date: '2026-09-02', method: 'ach', provider: 'bill',
+                           external_payment_id: 'PAY-E38' } }));
+  ok('E2E-38: the balance reaching zero is what makes it paid',
+     paid.invoice.status === 'paid' && paid.invoice.balance_due === 0);
+
+  // 9. Completed: the desk finds it with every artifact in reach.
+  await call(env, '/submissions/API-E38/status', { method: 'POST', cookie: admin,
+    body: { status: 'complete' } });
+  const desk = (await jsonOf(await call(env, '/completed', { cookie: admin }))).completed;
+  const done = desk.find(c => c.case_no === 'API-E38');
+  ok('E2E-38: the completed desk holds the whole file',
+     done && done.build_id != null && done.approved_reports === 1
+     && done.evidence_count === 2 && done.invoice && done.invoice.status === 'paid');
+  globalThis.fetch = realFetch;
+}
+
+/* MASTER §39 — the private chain, kept strictly apart from the carrier's:
+   retainer instead of blocks, and the retainer block on the invoice. */
+section('End to end: a private client, sheet to completed');
+{
+  const realFetch = globalThis.fetch;
+  let lastBody = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      lastBody = JSON.parse(init.body);
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.EVIDENCE = (() => {
+    const store = new Map();
+    return { async put(k, b, o) { store.set(k, { b, o }); },
+             async get(k) { const o = store.get(k); return o ? { body: o.b } : null; },
+             async delete(k) { store.delete(k); } };
+  })();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  // 1. The private sheet goes out with the PRIVATE door — never the picker.
+  const led = await jsonOf(await call(env, '/intakes', { method: 'POST', cookie: admin,
+    body: { kind: 'consumer', client_name: 'Morgan Hale', client_email: 'morgan@example.test',
+            service: 'Surveillance' } }));
+  await call(env, `/sheets/private_retainer/email`, { method: 'POST', cookie: admin,
+    body: { to: 'morgan@example.test', case_no: led.case_no, include_intake: true } });
+  ok('E2E-39: the private sheet carries the private door',
+     lastBody.html.includes('/intake/?assignment=private')
+     && !lastBody.html.includes('assignment=insurance'));
+
+  // 2. A partial intake — the address can follow later.
+  await ingest(env, { case_no: 'API-E39', service: 'Surveillance',
+    client_name: 'Morgan Hale', client_email: 'morgan@example.test',
+    subject_name: 'Alex Hale', objective: 'Weekday evening whereabouts.',
+    subject_address: '', subject_address_status: 'unknown' });
+  await call(env, `/leads/${led.case_no}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'converted' } });
+
+  // 3. The retainer workflow: recorded, then received. Refused on a claim.
+  ok('E2E-39: a retainer cannot be put on a claim assignment',
+     (await call(env, '/cases/API-E39/retainer', { method: 'POST', cookie: admin,
+       body: { received: true } })).status === 200);
+  const auth = (await jsonOf(await call(env, '/cases/API-E39/workspace', { cookie: admin }))).authorization;
+  ok('E2E-39: the retainer reads received at $1,500',
+     auth.retainer && auth.retainer.amount === 1500 && auth.retainer.received === true);
+
+  // 4. The work: a day, an entry, a photo, the report approved.
+  await call(env, '/cases/API-E39/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-14', start_time: '18:00' } });
+  await call(env, '/cases/API-E39/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-08-14', at_time: '19:20', kind: 'activity',
+            description: 'Subject departed residence alone.' } });
+  const fd = new FormData();
+  fd.append('file', new File([new Uint8Array(300).fill(65)], 'evening.jpg', { type: 'image/jpeg' }));
+  const ph = await jsonOf(await worker.fetch(new Request(API + '/cases/API-E39/evidence', {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env));
+  await call(env, '/cases/API-E39/day/end', { method: 'POST', cookie: admin, body: { end_time: '22:00' } });
+  const dayId = (await jsonOf(await call(env, '/cases/API-E39/workspace', { cookie: admin }))).days[0].id;
+  const rep = await jsonOf(await call(env, '/cases/API-E39/reports/generate', { method: 'POST',
+    cookie: admin, body: { day_id: dayId } }));
+  await call(env, `/cases/API-E39/reports/${rep.id}/status`, { method: 'POST', cookie: admin, body: { status: 'submitted' } });
+  await call(env, `/cases/API-E39/reports/${rep.id}/status`, { method: 'POST', cookie: admin, body: { status: 'approved' } });
+
+  // 5. Build and finalize.
+  let st = await jsonOf(await call(env, '/cases/API-E39/build', { method: 'POST', cookie: admin }));
+  await call(env, `/build/${st.build.id}/items`, { method: 'POST', cookie: admin, body: { evidence_id: ph.id } });
+  st = await jsonOf(await call(env, `/build/${st.build.id}/finalize`, { method: 'POST', cookie: admin }));
+  ok('E2E-39: the private package finalizes', st.build.status === 'finalized');
+
+  // 6. The money stays the retainer model — never the carrier's.
+  const made = await jsonOf(await call(env, '/cases/API-E39/invoices', { method: 'POST', cookie: admin,
+    body: { from_authorization: true } }));
+  ok('E2E-39: the invoice opens on the retainer, typed private',
+     made.invoice.invoice_type === 'private' && made.invoice.lines[0].amount === 1500);
+  ok('E2E-39: the retainer block rides the invoice — amount, applied, balance',
+     made.invoice.retainer && made.invoice.retainer.amount === 1500
+     && made.invoice.retainer.applied === 1500 && made.invoice.retainer.balance === 0);
+  // Drafts take no payments — the same gate every invoice obeys — so the
+  // retainer invoice goes Ready and out to the client before it is paid.
+  await call(env, `/invoices/${made.invoice.id}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'ready' } });
+  await call(env, `/invoices/${made.invoice.id}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'sent_to_client' } });
+  const paid = await jsonOf(await call(env, `/invoices/${made.invoice.id}/payments`, { method: 'POST',
+    cookie: admin, body: { amount: 1500, paid_date: '2026-08-20', method: 'other',
+                           notes: 'Retainer received before work began' } }));
+  ok('E2E-39: paid by arithmetic, like every invoice here', paid.invoice.status === 'paid');
+
+  // 7. Completed, findable, and the two products never blur.
+  await call(env, '/submissions/API-E39/status', { method: 'POST', cookie: admin,
+    body: { status: 'complete' } });
+  const done = (await jsonOf(await call(env, '/completed', { cookie: admin }))).completed
+    .find(c => c.case_no === 'API-E39');
+  ok('E2E-39: the completed desk holds the private file too',
+     done && done.build_id != null && done.invoice && done.invoice.status === 'paid');
+  globalThis.fetch = realFetch;
+}
+
 section('Origin guard and headers');
 {
   const env = freshEnv();
