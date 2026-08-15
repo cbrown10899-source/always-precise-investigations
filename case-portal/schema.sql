@@ -830,3 +830,55 @@ CREATE TABLE IF NOT EXISTS invoice_retainer (
   amount     REAL    NOT NULL,
   at         TEXT    NOT NULL
 );
+
+-- ---------------------------------------------------------------------------
+-- PRIVATE-CLIENT PAYMENT METHODS (PAYMENTS.md, owner 2026-08-14).
+--
+-- Admin-only configuration so a handle is entered ONCE and never duplicated
+-- across templates. What is stored is deliberately the whole of it: whether the
+-- method is offered, the name a client sees, the handle, an OPTIONAL
+-- admin-entered payment URL, and optional instructions.
+--
+-- NO CREDENTIALS. No password, access token, account login or payment secret
+-- belongs in this table, and none is stored. Everything here is information the
+-- firm hands a client on purpose; if a value would be damaging to read, it does
+-- not go here.
+--
+-- `method` carries NO CHECK constraint, deliberately. schema.sql is re-applied
+-- on every portal-setup run and CREATE TABLE IF NOT EXISTS is a no-op against a
+-- database that already has the table — so a CHECK edited here would bind a
+-- FRESH database while the LIVE one kept the old one, which passes every test
+-- and fails only in production. The allowed methods live in the Worker, where
+-- adding a third one is an ordinary change. Same reasoning as build_custom.
+CREATE TABLE IF NOT EXISTS payment_methods (
+  method       TEXT PRIMARY KEY,          -- cash_app | venmo (validated in the Worker)
+  enabled      INTEGER NOT NULL DEFAULT 0,
+  display_name TEXT    NOT NULL DEFAULT '',
+  handle       TEXT    NOT NULL DEFAULT '',
+  url          TEXT    NOT NULL DEFAULT '',  -- admin-entered only; NEVER derived from the handle
+  instructions TEXT    NOT NULL DEFAULT '',
+  updated_by   INTEGER REFERENCES users(id),
+  updated_at   TEXT
+);
+
+-- Payment instructions that were actually sent. A companion table rather than a
+-- new `send_log.kind`, for the reason written above: send_log.kind carries a
+-- CHECK, and widening it in schema.sql would bind only fresh databases.
+--
+-- This is what the sent-confirmation reads back from, so the client is told what
+-- WENT rather than what was asked for — the same class of mistake as marking a
+-- retainer paid because instructions were sent. Failures are kept and marked,
+-- because a send that vanished silently is how "I sent that last week" goes
+-- wrong.
+CREATE TABLE IF NOT EXISTS payment_send (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no    TEXT,                        -- null when sent with no case or lead
+  recipient  TEXT    NOT NULL,
+  methods    TEXT    NOT NULL DEFAULT '', -- the method ids actually included, comma-separated
+  with_sheet INTEGER NOT NULL DEFAULT 0,  -- 1 when it rode along with a rate sheet
+  ok         INTEGER NOT NULL DEFAULT 1,
+  detail     TEXT,
+  sent_by    INTEGER REFERENCES users(id),
+  sent_at    TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_paysend_case ON payment_send(case_no, id DESC);

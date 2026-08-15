@@ -233,7 +233,7 @@ all four HIGH defects fixed):**
 
 | Suite | Checks |
 | --- | --- |
-| `case-portal/test-worker.mjs` | **849** |
+| `case-portal/test-worker.mjs` | **879** |
 | `portal/test-portal.mjs` | **713** |
 | `intake/test-intake.mjs` | **205** |
 | `visitor-alerts/test-worker.mjs` | **47** |
@@ -254,7 +254,7 @@ all four HIGH defects fixed):**
 
 Snapshot date: 2026-08-14. Branch: `claude/arrival-sentence-generator`, rebased
 onto master `aa107b4` (**PR #71**). The counts are in the START HERE header
-above — worker 849, portal 713, intake 205, alerts 47. (This line used to repeat
+above — worker 879, portal 713, intake 205, alerts 47. (This line used to repeat
 an older, lower set and contradict the header; one snapshot, in one place.)
 
 > **Running the two browser suites on Windows needs a NODE_PATH.** Their loader

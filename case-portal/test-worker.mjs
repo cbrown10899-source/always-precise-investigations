@@ -3687,6 +3687,189 @@ section('A reassigned investigator keeps their own work, never the client');
      CLIENT.filter(v => reedBlob.includes(v)).join(', '));
 }
 
+/* PAYMENTS.md, owner 2026-08-14 — the private-client payment configuration.
+   The whole feature is a boundary: Cash App and Venmo belong to the PRIVATE
+   client path and nowhere else, the configuration is the office's alone, and
+   the two lines easiest to lose to a helpful default are that a payment URL is
+   never invented from a handle and that no credential is ever stored. */
+section('Private-client payment methods are the office\'s own configuration');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  await call(env, `/invite/${new URL(link, 'https://x.test').searchParams.get('invite')}/accept`,
+    { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  // 7.7 / 15: the configuration is admin-only on BOTH verbs. A 403 on write
+  // alone would leave where the firm's money arrives browsable by the field.
+  ok('an investigator cannot read the payment configuration',
+     (await call(env, '/payment-methods', { cookie: inv })).status === 403);
+  ok('nor write it',
+     (await call(env, '/payment-methods/venmo', { method: 'POST', cookie: inv,
+       body: { enabled: true, handle: '@someone-else' } })).status === 403);
+
+  const start = (await jsonOf(await call(env, '/payment-methods', { cookie: admin }))).methods;
+  ok('both methods exist unconfigured, and both are off', start.length === 2
+     && start.every(m => m.enabled === false && m.handle === ''));
+  ok('and they are the two the owner named',
+     start.map(m => m.id).sort().join() === 'cash_app,venmo');
+
+  // A method with nowhere to send money would render an empty PAYMENT OPTIONS
+  // block — worse than omitting it, because it reads as a forgotten detail.
+  ok('a method cannot be enabled with nowhere to send money',
+     (await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
+       body: { enabled: true } })).status === 400);
+
+  /* THE SHARPEST LINE IN THE ORDER: the URL is admin-entered or absent, never
+     built from the handle. A fabricated cash.app/$handle that resolves to a
+     real stranger sends a client's retainer to the wrong person. */
+  ok('a handle alone is accepted',
+     (await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
+       body: { enabled: true, handle: '@AlwaysPrecise', display_name: 'Venmo' } })).status === 200);
+  const afterHandle = (await jsonOf(await call(env, '/payment-methods', { cookie: admin })))
+    .methods.find(m => m.id === 'venmo');
+  ok('and NO url is invented from it', afterHandle.url === '');
+  ok('the handle is stored as given', afterHandle.handle === '@AlwaysPrecise');
+
+  // A link that cannot be a payment link is refused rather than silently
+  // blanked, or an admin believes clients are being sent one when they are not.
+  for (const bad of ['javascript:alert(1)', 'data:text/html,x', 'cash.app/$x', 'ftp://x.test/a']) {
+    ok(`a ${bad.split(':')[0]} link is refused outright`,
+       (await call(env, '/payment-methods/cash_app', { method: 'POST', cookie: admin,
+         body: { enabled: true, handle: '$Always', url: bad } })).status === 400);
+  }
+  ok('a real https link is kept',
+     (await call(env, '/payment-methods/cash_app', { method: 'POST', cookie: admin,
+       body: { enabled: true, handle: '$Always', url: 'https://cash.app/$AlwaysPrecise' } })).status === 200);
+
+  // Nothing resembling a credential has a column to live in.
+  const cols = (await env.DB.prepare("SELECT name FROM pragma_table_info('payment_methods')").all())
+    .results.map(c => c.name);
+  ok('the table has no column for a password, token or secret',
+     !cols.some(c => /pass|token|secret|credential|login|key/i.test(c)), cols.join());
+
+  // An unknown method is not quietly created.
+  ok('an unknown payment method is refused',
+     (await call(env, '/payment-methods/zelle', { method: 'POST', cookie: admin,
+       body: { enabled: true, handle: 'x' } })).status === 404);
+}
+
+/* The boundary the order is actually about: which EMAIL may carry a payment
+   handle. Asserted on the bytes the provider was handed, in BOTH MIME parts —
+   the same standard the intake-door pairing is held to, because an HTML-only
+   assertion passes while the text part leaks. */
+section('Payment instructions ride with the private client and no one else');
+{
+  const realFetch = globalThis.fetch;
+  let lastBody = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      lastBody = JSON.parse(init.body);
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  await call(env, '/payment-methods/cash_app', { method: 'POST', cookie: admin,
+    body: { enabled: true, display_name: 'Cash App', handle: '$AlwaysPrecise',
+            url: 'https://cash.app/$AlwaysPrecise' } });
+  await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
+    body: { enabled: true, display_name: 'Venmo', handle: '@AlwaysPrecise' } });
+
+  const both = s => `${s.html}\n${s.text}`;   // every assertion covers both parts
+  const has = (hay, needle) => String(hay).toLowerCase().includes(String(needle).toLowerCase());
+
+  // 1. Private sheet CAN carry them.
+  lastBody = null;
+  const sent = await jsonOf(await call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body: { to: 'client@example.com', include_payment: true } }));
+  ok('the private sheet carries the payment block', has(both(lastBody), 'PAYMENT OPTIONS'));
+  ok('with both handles, in both parts',
+     lastBody.html.includes('$AlwaysPrecise') && lastBody.text.includes('$AlwaysPrecise')
+     && lastBody.html.includes('@AlwaysPrecise') && lastBody.text.includes('@AlwaysPrecise'));
+  ok('the retainer amount is named', has(both(lastBody), '$1,500'));
+
+  // 7. Clickable only where a URL was ENTERED — never invented from a handle.
+  ok('the configured link becomes a button', lastBody.html.includes('https://cash.app/$AlwaysPrecise'));
+  ok('and the handle-only method is shown as a handle, with no invented link',
+     !/href="[^"]*@AlwaysPrecise/.test(lastBody.html)
+     && !lastBody.html.includes('venmo.com/@AlwaysPrecise')
+     && !lastBody.text.includes('venmo.com'));
+
+  // 12/13. The confirmation lists what actually went.
+  ok('the confirmation names the sheet, and both methods',
+     sent.included && sent.included.rate_sheet === '$1,500 Retainer'
+     && sent.included.payment_methods.map(m => m.id).sort().join() === 'cash_app,venmo');
+  ok('and it does not claim an intake went when none did', sent.included.intake === null);
+
+  // 2/7. The carrier sheet may NEVER carry them — refused, not quietly dropped.
+  lastBody = null;
+  const refused = await call(env, '/sheets/insurance_assignment/email',
+    { method: 'POST', cookie: admin, body: { to: 'adjuster@carrier.example', include_payment: true } });
+  ok('asking for payment options on the carrier sheet is refused', refused.status === 400);
+  ok('and nothing was emailed at all', lastBody === null);
+
+  // The carrier sheet sent normally still carries no trace of either handle.
+  lastBody = null;
+  await call(env, '/sheets/insurance_assignment/email',
+    { method: 'POST', cookie: admin, body: { to: 'adjuster@carrier.example', include_intake: true } });
+  /* The handles specifically, not the bare firm name — the carrier email
+     legitimately carries alwayspreciseinvestigations.net in its intake link,
+     and asserting on that substring would fail for the wrong reason. */
+  const carrier = both(lastBody).toLowerCase();
+  ok('a carrier email names no payment method at all',
+     !carrier.includes('cash app') && !carrier.includes('venmo')
+     && !carrier.includes('$alwaysprecise') && !carrier.includes('@alwaysprecise')
+     && !carrier.includes('payment options') && !carrier.includes('cash.app'));
+
+  // 5/6/10. Each method is independently switchable, and OFF means absent.
+  await call(env, '/payment-methods/cash_app', { method: 'POST', cookie: admin,
+    body: { enabled: false, handle: '$AlwaysPrecise', url: 'https://cash.app/$AlwaysPrecise' } });
+  lastBody = null;
+  await call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body: { to: 'client@example.com', include_payment: true } });
+  ok('a disabled method does not render', !has(both(lastBody), '$AlwaysPrecise'));
+  ok('while the one still enabled does', has(both(lastBody), '@AlwaysPrecise'));
+
+  // The per-send selection can narrow, but never widen past the configuration.
+  await call(env, '/payment-methods/cash_app', { method: 'POST', cookie: admin,
+    body: { enabled: false, handle: '$AlwaysPrecise' } });
+  lastBody = null;
+  const narrowed = await jsonOf(await call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin,
+      body: { to: 'client@example.com', include_payment: true, methods: ['cash_app', 'venmo'] } }));
+  ok('asking for a disabled method does not switch it on',
+     !has(both(lastBody), '$AlwaysPrecise')
+     && narrowed.included.payment_methods.map(m => m.id).join() === 'venmo');
+
+  // 11. Escaping — the handle is admin-entered and lands in HTML.
+  await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
+    body: { enabled: true, display_name: 'Venmo', handle: '@a<script>alert(1)</script>' } });
+  lastBody = null;
+  await call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body: { to: 'client@example.com', include_payment: true } });
+  ok('a handle carrying markup is escaped, not rendered',
+     !lastBody.html.includes('<script>') && lastBody.html.includes('&lt;script&gt;'));
+
+  // With nothing enabled at all, the send says so rather than mailing an empty
+  // PAYMENT OPTIONS heading.
+  await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
+    body: { enabled: false, handle: '@AlwaysPrecise' } });
+  ok('including payment with nothing configured is refused',
+     (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+       body: { to: 'client@example.com', include_payment: true } })).status === 400);
+
+  globalThis.fetch = realFetch;
+}
+
 section('The daily report builder');
 {
   const env = freshEnv();
