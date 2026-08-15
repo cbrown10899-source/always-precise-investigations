@@ -1370,6 +1370,69 @@ section('A surveillance date is the date where the investigator is standing');
      drifted > 0, `${drifted} of 2 drifted`);
 }
 
+/* PAYMENTS.md §3 — payment options on the private send wizard, independently
+   selectable. The Worker has accepted include_payment since #80; until now
+   nothing in the portal could send it, so the feature existed and no admin
+   could reach it. The boundary is asserted from the other side too: the
+   carrier wizard must not render the section at all. */
+section('The private send wizard offers payment options; the carrier one never does');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Rate sheets' }).click();
+  await page.waitForTimeout(700);
+
+  // The carrier sheet first — the absence matters more than the presence.
+  await page.locator('.sheet-card', { hasText: 'Insurance Assignment Rates' }).click();
+  await page.waitForTimeout(400);
+  await page.locator('.btn', { hasText: 'Send this sheet' }).click();
+  await page.waitForTimeout(700);
+  const carrier = await text(page, '.amsheet');
+  ok('the carrier wizard offers its own intake', has(carrier, 'Insurance Assignment Intake'));
+  ok('and no payment options whatsoever',
+     !has(carrier, 'payment options') && !has(carrier, 'Cash App') && !has(carrier, 'Venmo'));
+  ok('not even as a hidden control',
+     await page.locator('#wiz_pay').count() === 0
+     && await page.locator('.wiz-pm').count() === 0);
+  // The close BUTTON, not the overlay — the overlay also carries wizClose and
+  // the dialog sits on top of it, so a click there can land on the dialog.
+  await page.locator('.amx').first().click();
+  await page.waitForTimeout(300);
+
+  // The private sheet.
+  await page.locator('.sheet-card', { hasText: 'Retainer' }).first().click();
+  await page.waitForTimeout(400);
+  await page.locator('.btn', { hasText: 'Send this sheet' }).click();
+  await page.waitForTimeout(900);
+  ok('the private wizard offers payment options', await page.locator('#wiz_pay').count() === 1);
+  ok('with both methods independently tickable', await page.locator('.wiz-pm').count() === 2);
+  ok('and both start selected, which is the onboarding email the owner described',
+     await page.locator('.wiz-pm:checked').count() === 2);
+
+  // Independently selectable: drop one, and the preview says so.
+  await page.locator('.wiz-pm[data-pm="cash_app"]').uncheck();
+  await page.locator('#wiz_to').fill('client@example.com');
+  await page.locator('.btn', { hasText: 'Preview' }).click();
+  await page.waitForTimeout(500);
+  const preview = await text(page, '.amsheet');
+  ok('the preview names only the method still ticked',
+     has(preview, 'Venmo') && !has(preview, 'Cash App'), preview.slice(0, 300));
+  ok('and states that sending does not mark the retainer paid',
+     has(preview, 'does not mark the retainer paid'));
+
+  // Unticking payment entirely reads as Not included.
+  await page.locator('.btn', { hasText: 'Back' }).click();
+  await page.waitForTimeout(400);
+  await page.locator('#wiz_pay').uncheck();
+  await page.waitForTimeout(400);
+  ok('unticking payment hides the method list', await page.locator('.wiz-pm').count() === 0);
+  await page.locator('.btn', { hasText: 'Preview' }).click();
+  await page.waitForTimeout(500);
+  ok('and the preview says payment options are not included',
+     has(await text(page, '.amsheet'), 'Not included'));
+  await page.close();
+}
+
 /* The Worker refuses a send when a method is switched on with no payment link,
    and that refusal says "add a link in Settings". This screen is what makes
    that sentence true — it shipped as an error with nowhere to go, which is a
