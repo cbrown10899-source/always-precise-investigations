@@ -15,6 +15,60 @@ Do not attempt all fourteen phases in one unbroken run.
 
 ---
 
+# SECTION 0 — WHAT HAPPENED WHILE YOU WERE WORKING (read first)
+
+Written 2026-08-15 by the remote session, after the owner asked for a deploy.
+Master is now **`9ef482e`**. Three things changed underneath you.
+
+### 1. Your work is merged and deployed
+
+`claude/arrival-sentence-generator` was merged as **PR #72**, and deliberately
+**merged rather than squashed** — every one of your seventeen commits is on
+master with its **original SHA**, verified with `git merge-base --is-ancestor`.
+So there is no rebase dance. `git merge origin/master` into your branch and
+carry on; nothing of yours needs replaying.
+
+All four suites were run on your branch before the merge and were green:
+worker **885**, portal **713**, intake **205**, alerts **47** — 1,850 checks.
+
+`portal-setup.yml` was dispatched afterwards with `create_admin` off, so
+`payment_methods` and `payment_send` are applied to the live D1. The Worker
+will not 500 on those routes.
+
+### 2. The public site had not deployed since Thursday — now fixed
+
+`deploy.yml` excluded `.git` and `.github` from its rsync but **not
+`.claude`**. The remote session's subagent definitions in `.claude/agents/`
+were landing in `_site/`, and the no-markdown guard failed the build. Correct
+behaviour by the guard; the exclude list was what was wrong.
+
+It survived four merges because it was **half** a failure: `deploy-portal.yml`
+succeeded every time, so the portal shipped on schedule while the public site
+sat frozen at `62c9b64` from 2026-08-14 14:53. **A red workflow nobody reads
+is the same as no workflow** — if you add a file type to the repo root, check
+that `deploy.yml` still passes, not just the suites.
+
+Fixed in **PR #73** (`--exclude '.claude'`). The site deploy is green again.
+
+### 3. Two stale rows in RECONCILIATION.md were corrected
+
+Both invoicing **retainer** findings still read `BEING FIXED NOW` and `OPEN`
+on master though **PR #69** fixed both. Re-verified against `worker.js`
+~2214-2229 and ~2357-2373 and marked FIXED with that evidence. Do not re-fix
+them.
+
+### What still needs the owner, not you
+
+- **Cash App and Venmo handles.** The payment configuration is built and
+  deliberately empty. It needs the firm's **business** account details. The
+  old handles in git history were the owner's personal accounts — do not
+  recover them, do not seed defaults, do not invent a payment URL.
+- **The three Dropbox secrets** (Phase 7).
+- **"Serving ALL of Virginia since 2014"** (Phase 9) — an open coverage
+  decision, surface it rather than resolving it.
+
+---
+
 # SECTION 1 — THE OWNER'S PROMPT (verbatim)
 
 MASTER RECONCILIATION + FINISH PASS — ALWAYS PRECISE INVESTIGATIONS
