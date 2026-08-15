@@ -63,7 +63,7 @@ sensitive ever removed this way needs a purge, not just a deploy.
 | Private payment: lead-card Send Payment Options, standalone send, RETAINER PENDING / Record Payment, history | **NOT CODED** — next in queue |
 | Portal ops plan (nav, dashboard, tasks, search, contacts…) | **NOT CODED** — see `PORTAL-OPS.md`, phased |
 | Activity edit/delete convention | **PARTIAL** — `activity_removed` shipped #55; audit against the requirement before building |
-| Active Surveillance voice command mode | **NOT CODED** — spec arrived corrupted, see `PORTAL-OPS.md` |
+| Active Surveillance voice command mode | **NOT CODED** — spec recorded in `SURVEILLANCE-VOICE.md` (§1–16, five gaps listed); speech input, one activity API, activity_removed and caseFor already exist — audit before building |
 | Deploy allow-list + artifact test | **LIVE VERIFIED** — merged #75/#77/#78, deploy green at 936414b, build stamp matches, internal files 404 |
 
 
