@@ -55,9 +55,28 @@ recognized structured command** while Voice Mode is active in the foreground.
 an actual Activity Log record **through the existing activity API**. It must
 NOT simply display text on the mobile screen.
 
-Each voice-created activity carries the same fields as a manual one: case ID ·
-surveillance day · timestamp · [activity] type · activity text ·
-investigator/user ID · [TRUNCATED — one further field] · existing audit fields.
+Each voice-created activity carries the normal activity fields **plus
+`source = voice`** *(recovered 2026-08-15, transmission 2 of 5)*.
+
+The intended fields: case ID · surveillance day · timestamp · activity type ·
+**standardized** activity text · investigator/user ID · **`source = voice`** ·
+audit fields.
+
+This uses the **SAME** existing Activity API and data model as manual activity.
+
+> **Implementation note, not an owner instruction.** `activity_log` has no
+> `source` column today, and `ALTER TABLE ADD COLUMN` is not idempotent —
+> `schema.sql` is re-applied on every `portal-setup` run, so adding one there
+> would bind a fresh database and not the live one. The standing precedent is a
+> companion table (`activity_removed`, `build_custom`, `build_reports`), which
+> also keeps `source` out of the way of every existing read. Decide it
+> deliberately when this is built; do not reach for `ALTER TABLE`.
+>
+> Note also what `source` is FOR: it marks how the entry was captured, and must
+> not become a licence to treat voice entries differently. §11 is explicit that
+> they use the same Edit / Remove system, and §12 that voice and buttons
+> converge on the same canonical types — a spoken entry is not privileged or
+> immutable because it came from speech recognition.
 
 It must immediately appear in **LAST ACTIVITY** and the **ACTIVITY LOG /
 TIMELINE**, and feed draft report derivation exactly like a manual activity.
@@ -292,8 +311,7 @@ header, and Last Activity edit/remove on the Home screen.
 ## STILL MISSING — needs re-sending
 
 1. ~~§7 entirely~~ — **RECOVERED 2026-08-15** (transmission 1 of 5).
-2. **§3** — one activity field between "investigator/user ID" and "existing
-   audit fields".
+2. ~~§3 field~~ — **RECOVERED 2026-08-15** (transmission 2 of 5): `source = voice`.
 3. **§4** — canonical names for "changing position" and the `INDIRECT_VIEW` /
    `STATIONARY_SURVEILLANCE` / `NO_CHANGE` / `MOBILE_CHECK` spoken aliases.
 4. **§6B** — the free-form dictation flow beyond "requires review before save".
