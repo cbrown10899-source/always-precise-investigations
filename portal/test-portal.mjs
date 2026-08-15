@@ -3458,6 +3458,33 @@ section('An entry started before midnight is filed before midnight');
   await page.close();
 }
 
+/* The last way the two halves could disagree, and the only one that cannot be
+   driven from a test: every pairing used to read the clock TWICE — once for
+   the date, once for the time — and two reads can fall either side of
+   midnight. The window is sub-millisecond, so it would never reproduce and
+   would look like a mystery if it ever fired: tomorrow's date beside last
+   night's time, sorting ahead of everything before it. A fixed test clock
+   makes both reads identical, so no behavioural test can reach it. The
+   invariant is therefore held at the source: one instant, both halves. */
+section('A date and its time come from one reading of the clock');
+{
+  const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+  const pairedReads = [
+    /const now = new Date\(\)\.toTimeString\(\)\.slice\(0,5\);\s*const today = ymdLocal\(\);/,
+    /const today = ymdLocal\(\);\s*const now = new Date\(\)\.toTimeString\(\)\.slice\(0,5\);/,
+    /time: new Date\(\)\.toTimeString\(\)\.slice\(0,5\), date: ymdLocal\(\)/,
+  ];
+  ok('no date/time pair is built from two separate clock reads',
+     !pairedReads.some(re => re.test(src)),
+     String(pairedReads.findIndex(re => re.test(src))));
+  ok('the pairing helper exists and is what the screens use',
+     /function stampNow\(\)/.test(src) && (src.match(/stampNow\(\)/g) || []).length >= 5,
+     String((src.match(/stampNow\(\)/g) || []).length));
+  /* Date-only and time-only readings are fine and deliberately still allowed —
+     an expense date or a day-end time has no counterpart to disagree with. */
+  ok('single-value readings are left alone', /const today = ymdLocal\(\);/.test(src));
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();

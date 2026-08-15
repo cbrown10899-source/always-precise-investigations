@@ -137,7 +137,7 @@ UTC-11 bracket the clock, so whatever the hour a run starts at least one is on a
 different calendar date from UTC, and a counter asserts that actually happened —
 a green run can never mean "neither zone drifted today, so nothing was tested".
 With the composer reverted the test reports the bug verbatim: date `2026-08-15`,
-time `14:04`, local `2026-08-14`. Portal 699 → 710.
+time `14:04`, local `2026-08-14`. Portal 699 → 713.
 
 **Making both halves local was not enough**, and the Codex stop-time review
 caught the remainder: in the field the TIME is stamped when an entry is
@@ -150,6 +150,16 @@ were checked and are fine — they read date and time from fields rendered
 together. Driven across a real rollover with the page clock held at 23:58 then
 00:03; with the fix reverted the test reports `at_date 2026-08-11` beside
 `at_time 23:58`.
+
+**And one more, also from the stop-time review:** every pairing read the clock
+**twice** — once for the date, once for the time — and two reads can fall either
+side of midnight. Sub-millisecond, so it would never reproduce and would look
+like a mystery if it fired: tomorrow's date beside last night's time. A fixed
+test clock makes both reads identical, so **no behavioural test can reach it**;
+`stampNow()` makes the invariant structural instead (one instant, both halves)
+and a source-level guard fails if any pairing goes back to two reads. Date-only
+and time-only readings are deliberately still allowed — an expense date has no
+counterpart to disagree with.
 
 **Three other uses of the pattern were examined and deliberately left:**
 `worker.js:2462` is date arithmetic on a `YYYY-MM-DD` string, where UTC is stable
@@ -224,7 +234,7 @@ all four HIGH defects fixed):**
 | Suite | Checks |
 | --- | --- |
 | `case-portal/test-worker.mjs` | **849** |
-| `portal/test-portal.mjs` | **710** |
+| `portal/test-portal.mjs` | **713** |
 | `intake/test-intake.mjs` | **205** |
 | `visitor-alerts/test-worker.mjs` | **47** |
 
@@ -244,7 +254,7 @@ all four HIGH defects fixed):**
 
 Snapshot date: 2026-08-14. Branch: `claude/arrival-sentence-generator`, rebased
 onto master `aa107b4` (**PR #71**). The counts are in the START HERE header
-above — worker 849, portal 710, intake 205, alerts 47. (This line used to repeat
+above — worker 849, portal 713, intake 205, alerts 47. (This line used to repeat
 an older, lower set and contradict the header; one snapshot, in one place.)
 
 > **Running the two browser suites on Windows needs a NODE_PATH.** Their loader

@@ -842,6 +842,24 @@ function ymdLocal(d){
   const p = n => String(n).padStart(2, "0");
   return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`;
 }
+const hmLocal = d => (d || new Date()).toTimeString().slice(0,5);
+
+/* A date and a time that belong to each other, from ONE reading of the clock.
+
+   Every pairing in this file used to call `new Date()` twice — once for the
+   date, once for the time — and two readings can fall either side of midnight.
+   The window is sub-millisecond and it would be indistinguishable from a
+   mystery if it ever fired: an entry stamped 23:59:59.9997 on one day and
+   00:00:00.0001 on the next, filed with tomorrow's date and last night's time,
+   sorting ahead of everything before it. Nothing detects that afterwards.
+
+   So the invariant is made structural rather than improbable: one instant,
+   both halves. Use this anywhere a date and a time are captured together;
+   `ymdLocal` and `hmLocal` alone are for when only one of them is wanted. */
+function stampNow(){
+  const d = new Date();
+  return { date: ymdLocal(d), time: hmLocal(d) };
+}
 
 function safeImage(src){
   return typeof src === "string" && /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(src) ? src : "";
@@ -2323,8 +2341,7 @@ function amSearchBox(){
    the same shape, minus what the Worker does not allow to change. */
 function amComposeHtml(){
   const m = ACT_MODAL;
-  const now = new Date().toTimeString().slice(0,5);
-  const today = ymdLocal();
+  const { date: today, time: now } = stampNow();
   const pre = m.pre || {};
   const isArrival = !m.edit && m.pick === ARRIVAL_LINE;
   return `<form class="amform" data-act="quickAdd">
@@ -2387,8 +2404,7 @@ function amComposeHtml(){
 /* The Custom tab: the free-form composer, kinds and all — including Mileage
    and Expense, which write the money record and mark the timeline together. */
 function amCustomHtml(){
-  const today = ymdLocal();
-  const now = new Date().toTimeString().slice(0,5);
+  const { date: today, time: now } = stampNow();
   return `<form class="amform" data-act="addActivity">
     <div class="qgrid">
       ${["activity","location","vehicle","note","mileage","expense"].map(k =>
@@ -2450,8 +2466,7 @@ function fieldPanel(){
       <button class="btn sm" data-act="wsTab" data-tab="reports" style="margin-left:8px">Draft the daily report</button>
     </div>` : "";
   const days = (WS && WS.days) || [];
-  const today = ymdLocal();
-  const now = new Date().toTimeString().slice(0,5);
+  const { date: today, time: now } = stampNow();
   return `
     ${notice}
     ${open
@@ -3874,8 +3889,7 @@ function svHomeScreen(){
 
   if(!open){
     // No day running: the one screen is starting one (P3).
-    const now = new Date().toTimeString().slice(0,5);
-    const today = ymdLocal();
+    const { date: today, time: now } = stampNow();
     return `<div class="sv-body">
       ${note}
       <div class="sv-day">Day ${days.length + 1}</div>
@@ -5808,7 +5822,7 @@ document.addEventListener("click", ev => {
     const line = el.dataset.line;
     if(!line){ SV.entry = null; SV.err = ""; paint(); }
     else if(line === NO_CHANGE_LINE){ svSaveEntry(line); }          // one tap
-    else { SV.entry = {text: line, pick: line, time: new Date().toTimeString().slice(0,5), date: ymdLocal()};
+    else { SV.entry = {text: line, pick: line, ...stampNow()};
            SV.dirty = false; SV.ok = ""; SV.err = ""; paint(); }
   }
   else if(act === "svAddAnother"){ SV.ok = ""; SV.entry = null; paint(); }
@@ -5822,7 +5836,7 @@ document.addEventListener("click", ev => {
   else if(act === "svNote"){
     // A note is an activity entry the office reads and the client never does.
     SV.tab = "activity";
-    SV.entry = {text: "", time: new Date().toTimeString().slice(0,5), date: ymdLocal(), note: true};
+    SV.entry = {text: "", ...stampNow(), note: true};
     SV.ok = ""; SV.err = ""; paint();
   }
   else if(act === "svEdit"){
@@ -5849,7 +5863,7 @@ document.addEventListener("click", ev => {
   else if(act === "svUseText"){
     const t = $("sv_heard") ? $("sv_heard").value : "";
     SV.heard = null; SV.tab = "activity";
-    SV.entry = {text: t, time: new Date().toTimeString().slice(0,5), date: ymdLocal()};
+    SV.entry = {text: t, ...stampNow()};
     paint();
   }
   else if(act === "svDiscard"){ SV.heard = null; paint(); }
