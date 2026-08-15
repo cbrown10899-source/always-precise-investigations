@@ -1,14 +1,14 @@
 # ACTIVE SURVEILLANCE — VOICE COMMAND MODE (INTERNAL)
 
-**Owner handoff, 2026-08-15, plus the recovery addendum restoring §8–16.**
-Recorded before building, per the standing rule.
+**Owner handoff, 2026-08-15, restored in full across five recovery
+transmissions.** Recorded before building, per the standing rule.
 
-> **⚠️ TRANSMISSION NOTE.** This handoff arrived in two parts, both degrading
-> at the end. §1–6 came from the first; §8–16 from the addendum sent to replace
-> what was lost after "approximately section 7". Lines marked **[TRUNCATED]**
-> are exactly as received. Lines marked **[inferred]** are a reading through a
-> gap and are NOT the owner's words — confirm before building them. Remaining
-> gaps are listed at the bottom.
+> **TRANSMISSION NOTE — now complete.** This handoff arrived in pieces, each
+> degrading at the end, and was restored across five recovery transmissions.
+> **Every section §1–§16 has now been received.** What remains marked
+> [TRUNCATED] is a handful of SPOKEN ALIASES in the §4 table, which the owner
+> instructed must not be inferred; every canonical command id is known.
+> [inferred] marks a reading through a gap and is NOT the owner's words.
 
 **This is real functionality, not mockup work.** Preserve the existing case,
 activity, report, evidence, audit, authorization and Active Surveillance
@@ -123,6 +123,7 @@ explicit: **do not infer or recreate any corrupted or truncated alias.** They
 stay as received until the full phrase is sent. Aliases are extensible by
 design, so an incomplete list delays nothing — an invented one would put words
 in an investigator's mouth and map them to a real Activity Log record.
+
 **A fragment reading "…at residence" → "…RESIDENCE" also arrived, and is NOT
 recorded as a command.** Neither half of it is legible — an ellipsis is not an
 identifier — and it sat between `NO_CHANGE_RESIDENCE` and
@@ -145,7 +146,6 @@ mean different things. These are §7's ambiguity case, and they are the reason
 "Mobile check" is also the wake word followed by a common noun, so it will be
 heard often and by accident. Neither pair may be resolved by picking the closer
 match: **§7 governs — offer the candidates, or create nothing.**
-
 
 Design the registry so **additional aliases and standardized phrases can be
 added later.**
@@ -344,12 +344,52 @@ admin-only contexts.
 **Use the same authorization boundaries as manual activity creation. Do not
 rely on hidden UI controls for security.**
 
-## §16 LIMITATION
+## §16 CURRENT WEB / PWA LIMITATION
 
-For the current browser/PWA implementation, **Voice Command Mode is a
-FOREGROUND feature.** Continuous listening while [the phone is locked or the
-app is backgrounded — TRUNCATED] is not available. The remainder of §16 and
-everything after it was corrupted.
+*(Completed 2026-08-15, transmission 5 of 5. Spec now complete.)*
+
+**Voice Command Mode is FOREGROUND functionality** in the current browser/PWA
+implementation.
+
+**Do not claim reliable continuous microphone listening while:**
+
+- the iPhone is locked
+- Safari / the browser is suspended
+- the page is terminated
+- the app is fully backgrounded
+
+**Design the centralized command registry and Activity API so a future native
+iOS/Android app or wrapper can reuse them.**
+
+> This is a truth-in-labelling rule, and it is the same one the privacy wording
+> already follows: say only what is verifiable. An investigator who believes
+> the phone is listening in their pocket will stop narrating, and the day's log
+> will have a hole in it that nobody notices until the report is written. The
+> honest failure — "Voice Mode stopped when the screen locked" — costs one
+> restart. The dishonest one costs the evidence.
+>
+> The registry requirement is why §4 insists on ONE centralized registry rather
+> than phrase matching spread through the UI: a native wrapper can adopt a
+> registry and an API, and cannot adopt logic tangled into a web view.
+
+## §16.1 MOBILE PRIORITY
+
+Keep the Active Surveillance status/timer **compact**.
+
+Put these controls **high enough for easy thumb reach**: Quick Activity ·
+Voice Mode · [Last] Activity · Photo · Video · End Investigation Day.
+
+**Do not stack unnecessary informational blocks above the controls
+investigators actually need.**
+
+Use **large tap targets, minimal scrolling, a one-handed layout, and clear
+success/error states.**
+
+> This restates §1 as a rule rather than a layout, and it matches the visual
+> finding the owner sent separately about mobile Active Surveillance. The two
+> agreeing is worth noting: the compact header is not a cosmetic preference,
+> it is what puts the controls where a thumb can reach them while the
+> investigator is holding a camera in the other hand.
 
 ---
 
@@ -374,7 +414,7 @@ The genuinely new work is therefore: the wake-phrase loop, the command
 registry, standardized sentence mapping, idempotency, the compact status
 header, and Last Activity edit/remove on the Home screen.
 
-## STILL MISSING — needs re-sending
+## RECOVERY LOG — all five transmissions received
 
 1. ~~§7 entirely~~ — **RECOVERED 2026-08-15** (transmission 1 of 5).
 2. ~~§3 field~~ — **RECOVERED 2026-08-15** (transmission 2 of 5): `source = voice`.
@@ -385,4 +425,4 @@ header, and Last Activity edit/remove on the Home screen.
    received; by owner instruction those are **not** to be inferred, and the
    note under the table says so.
 4. ~~§6B free-form dictation flow~~ — **RECOVERED 2026-08-15** (transmission 4 of 5).
-5. **§16** — the limitation sentence, and anything after it.
+5. ~~§16 tail~~ — **RECOVERED 2026-08-15** (transmission 5 of 5).
