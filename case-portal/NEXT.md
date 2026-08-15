@@ -122,10 +122,30 @@ the owner's stated order**. That order is the work list.
    contradicting itself inside one document is a **pre-existing LOW**, already in
    the findings table, untouched here.
 
-**All four HIGH defects are now fixed and verified.** The queue's next code item
-is the MEDIUM that belongs with 1 and 2: **every surveillance date is UTC while
-every surveillance time is local**, so evening work files a day late. Then item
-5 below, the private-client payment work.
+**All four HIGH defects are now fixed and verified**, and so is the MEDIUM that
+rode with 1 and 2: ~~every surveillance date is UTC while every surveillance time
+is local~~ ✅ **FIXED and VERIFIED 2026-08-14.** True at all eleven sites, each
+one a date a human means by "today" — the activity composer and its Custom tab,
+the day panel, expenses, comms, tasks, the field day-start screen, the invoice
+payment date, and the three submit paths posting `at_date` beside a local
+`at_time`. `ymdLocal()` reads the local calendar date and sits beside `fmtDay()`,
+which already guarded the return trip for the same reason.
+
+Driven in **two real timezones** rather than by calling the helper, because the
+bug was never in a helper — it was in what the screens rendered. UTC+14 and
+UTC-11 bracket the clock, so whatever the hour a run starts at least one is on a
+different calendar date from UTC, and a counter asserts that actually happened —
+a green run can never mean "neither zone drifted today, so nothing was tested".
+With the composer reverted the test reports the bug verbatim: date `2026-08-15`,
+time `14:04`, local `2026-08-14`. Portal 699 → 705.
+
+**Three other uses of the pattern were examined and deliberately left:**
+`worker.js:2462` is date arithmetic on a `YYYY-MM-DD` string, where UTC is stable
+and correct; `visitor-alerts` buckets analytics by day inside a Worker that runs
+in UTC; and intake's case **number** is an identifier minted on an arbitrary
+client's clock, not a record of when work happened, so UTC is steadier there.
+
+**The queue's next code item is item 5 below — the private-client payment work.**
 
 **5. NEW FEATURE — private-client payment options and the onboarding send flow.**
 **Two** owner work orders, 2026-08-14, both recorded verbatim in **`PAYMENTS.md`**
@@ -192,7 +212,7 @@ all four HIGH defects fixed):**
 | Suite | Checks |
 | --- | --- |
 | `case-portal/test-worker.mjs` | **849** |
-| `portal/test-portal.mjs` | **699** |
+| `portal/test-portal.mjs` | **705** |
 | `intake/test-intake.mjs` | **205** |
 | `visitor-alerts/test-worker.mjs` | **47** |
 
@@ -212,7 +232,7 @@ all four HIGH defects fixed):**
 
 Snapshot date: 2026-08-14. Branch: `claude/arrival-sentence-generator`, rebased
 onto master `aa107b4` (**PR #71**). The counts are in the START HERE header
-above — worker 849, portal 699, intake 205, alerts 47. (This line used to repeat
+above — worker 849, portal 705, intake 205, alerts 47. (This line used to repeat
 an older, lower set and contradict the header; one snapshot, in one place.)
 
 > **Running the two browser suites on Windows needs a NODE_PATH.** Their loader
