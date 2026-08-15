@@ -1973,8 +1973,36 @@ section('The retainer balance on a private case');
   ok('the panel shows received and outstanding',
      has(paid, 'Received') && has(paid, 'Outstanding'));
 
-  /* A payment recorded in error is VOIDED, not deleted — the record keeps what
-     was believed at the time. Unticking a checkbox must never erase money. */
+  /* A 409 MUST BE RECOVERABLE FROM THIS SCREEN. The Worker refuses a token
+     whose payment never landed, saying nothing was saved. If the page kept that
+     token, pressing Record payment again would answer 409 for ever — an error
+     telling the admin to try again, on a button that cannot.
+
+     The orphan-token state itself is planted in the Worker suite, which can
+     write the table directly. Here the REAL handler runs against a stubbed 409
+     and the state it leaves is inspected: the token must be gone, so the next
+     press is a fresh attempt. Driving the real function rather than
+     re-implementing its branch, which would only prove the test. */
+  {
+    await page.locator('[data-act="retOpen"]').first().click();
+    await page.waitForTimeout(300);
+    await page.locator('#ret_amt').fill('42');
+    const outcome = await page.evaluate(async () => {
+      const real = window.fetch;
+      window.fetch = async () => new Response(JSON.stringify({
+        error: 'That payment did not finish recording. Try again — nothing was saved.',
+      }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+      RET_TOKEN = 'ui-dead-token';
+      try { await recordRetainerPayment(true); } finally { window.fetch = real; }
+      return { token: RET_TOKEN, msg: RET_MSG, err: RET_ERR, formOpen: RET_FORM };
+    });
+    ok('a 409 is surfaced to the admin, not swallowed',
+       outcome.err === true && outcome.msg.includes('nothing was saved'), outcome.msg);
+    ok('the dead token is dropped, so the next press is a fresh attempt',
+       outcome.token === '', outcome.token);
+    ok('and the form stays open to be pressed again', outcome.formOpen === true);
+  }
+
   ok('each recorded payment offers a void', await page.locator('[data-act="retVoid"]').count() >= 1);
   await page.locator('[data-act="retVoid"]').first().click();
   await page.waitForTimeout(900);
