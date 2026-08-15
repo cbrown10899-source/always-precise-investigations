@@ -2054,6 +2054,43 @@ section('The retainer balance on a private case');
     ok('and pressing it starts a genuinely new attempt', after.token === '');
     ok('with the form still open and the offer withdrawn',
        after.open === true && after.stuck === false);
+    /* AND THE FIGURE THEY TYPED IS STILL THERE. Every paint rebuilds these
+       inputs, so the amount used to be wiped by the repaint — and the next
+       press then sent `received: true` with no figure, which marks the case
+       received with NOTHING behind it. The admin means "retry my $310"; the
+       case would read as paid with $0 received. */
+    ok('and the amount they entered survived the repaint',
+       await page.locator('#ret_amt').inputValue() === '42',
+       await page.locator('#ret_amt').inputValue());
+  }
+
+  /* A PAYMENT WITH NO FIGURE IS REFUSED HERE. `received: true` with no amount
+     is the office's bare flag, not a payment, and this button must never
+     produce one by accident. */
+  {
+    await page.locator('[data-act="retCancel"]').first().click();
+    await page.waitForTimeout(200);
+    await page.locator('[data-act="retOpen"]').first().click();
+    await page.waitForTimeout(300);
+    ok('the amount is no longer offered as optional',
+       !(await page.locator('#ret_amt').locator('xpath=../span').innerText()).toLowerCase().includes('optional'));
+    /* Asserted as "the write never happened" rather than by reading the status
+       afterwards: this case already holds a payment, so it legitimately reads
+       as received and an absolute check would pass whatever the button did. The
+       question is whether a blank amount reaches the route that sets the flag,
+       and the answer has to be no. */
+    const blank = await page.evaluate(async () => {
+      const real = window.fetch;
+      const calls = [];
+      window.fetch = async (u, o) => { calls.push(String(u)); return real(u, o); };
+      try { await recordRetainerPayment(true); } finally { window.fetch = real; }
+      return { msg: RET_MSG, err: RET_ERR, posted: calls.some(u => /\/retainer$/.test(u)) };
+    });
+    ok('recording with no amount is refused, with the reason',
+       blank.err === true && blank.msg.includes('nothing behind it'), blank.msg);
+    ok('and nothing was sent that could set the received flag', blank.posted === false);
+    await page.locator('[data-act="retCancel"]').first().click();
+    await page.waitForTimeout(200);
   }
 
   ok('each recorded payment offers a void', await page.locator('[data-act="retVoid"]').count() >= 1);
