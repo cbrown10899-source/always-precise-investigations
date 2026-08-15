@@ -28,6 +28,7 @@ jobs:
           rsync -a \
             --exclude '.git' \
             --exclude '.github' \
+            --exclude '.claude' \
             --exclude '_site' \
             --exclude 'visitor-alerts' \
             --exclude 'case-portal' \
@@ -41,6 +42,11 @@ jobs:
           # boundary is enforced, which is a map for anyone probing them.
           # case-portal/ is excluded above and is the only home for anything
           # internal; a rate sheet in the repo root would be served verbatim.
+          # .claude/ is excluded for the same reason and was not, until
+          # 2026-08-15: agent definitions landed in .claude/agents/*.md and
+          # this guard caught them, which is exactly its job — but it meant
+          # every deploy failed silently to the site for four merges while the
+          # Worker kept shipping. Tooling config is not site content.
           for leak in CLAUDE.md README.md PRICING.md; do
             if [ -e "_site/$leak" ]; then echo "::error::$leak staged for deploy"; exit 1; fi
           done
