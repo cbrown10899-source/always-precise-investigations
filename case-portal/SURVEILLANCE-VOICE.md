@@ -169,10 +169,42 @@ Two distinct behaviours.
 **A. Structured command** — confidently recognized. Save the standardized
 activity entry → brief confirmation → return to listening.
 
-**B. Free-form dictation** — entered by "Mobile, note". [TRUNCATED.] The
-owner-approved decision list states: **free-form dictation requires review
-before save**, which matches the existing rule that nothing spoken is ever
-auto-submitted.
+**B. Free-form dictation** *(recovered 2026-08-15, transmission 4 of 5).*
+
+`"Mobile, note"` starts `FREE_FORM_DICTATION_MODE`. After that command, listen
+for the investigator's free-form dictated note.
+
+**Do NOT automatically save dictated prose.** Show:
+
+```
+NOTE
+[text]
+
+[ SAVE ]   [ EDIT ]   [ DISCARD ]
+```
+
+- **SAVE** — creates the intended note/activity **only after user
+  confirmation**.
+- **EDIT** — correction before saving.
+- **DISCARD** — no record.
+
+After Save or Discard, return to the normal Voice Mode state:
+`LISTENING FOR "MOBILE…"`.
+
+**Free-form speech must never silently become an official Activity Log
+entry.**
+
+> This is §7's rule applied to the other half of the feature. §7 says an
+> AMBIGUOUS command must not file itself; §6B says dictated PROSE must not
+> either, even though it was heard perfectly. The two together mean the only
+> thing that ever writes an Activity Log record without a human confirming it
+> is a structured command matched with confidence — everything else stops and
+> asks.
+>
+> The portal already works this way today: `SV.heard` holds the transcript and
+> only Use Text turns it into an entry. §6B renames the controls (SAVE / EDIT /
+> DISCARD) and adds the return to listening; it does not reverse the existing
+> behaviour, so this is a smaller build than it looks.
 
 ## §7 AMBIGUOUS COMMANDS — NEVER GUESS
 
@@ -352,5 +384,5 @@ header, and Last Activity edit/remove on the Home screen.
    surveillance"). Some rows still carry a partial spoken phrase exactly as
    received; by owner instruction those are **not** to be inferred, and the
    note under the table says so.
-4. **§6B** — the free-form dictation flow beyond "requires review before save".
+4. ~~§6B free-form dictation flow~~ — **RECOVERED 2026-08-15** (transmission 4 of 5).
 5. **§16** — the limitation sentence, and anything after it.
