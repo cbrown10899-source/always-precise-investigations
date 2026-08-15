@@ -97,8 +97,27 @@ function allFiles(dir, base = '') {
   return out;
 }
 
+/* The first thing stage() does is delete its target, recursively. That is
+   correct for a build directory and catastrophic for anything else, and the
+   difference is one mistyped argument: `node .github/stage-site.mjs .` would
+   erase the repository. The cost of being wrong here is unbounded and the
+   check is three comparisons, so it is not left to care. */
+function assertSafeTarget(dest) {
+  const inside = p => dest === p || p.startsWith(dest + path.sep);
+  if (inside(ROOT)) {
+    throw new Error(`refusing to stage into "${dest}": it is the repository, or contains it`);
+  }
+  if (fs.existsSync(path.join(dest, '.git'))) {
+    throw new Error(`refusing to stage into "${dest}": it looks like a git working tree`);
+  }
+  if (fs.existsSync(dest) && !fs.statSync(dest).isDirectory()) {
+    throw new Error(`refusing to stage into "${dest}": it is a file`);
+  }
+}
+
 export function stage(target) {
   const dest = path.resolve(target);
+  assertSafeTarget(dest);
   fs.rmSync(dest, { recursive: true, force: true });
   fs.mkdirSync(dest, { recursive: true });
 

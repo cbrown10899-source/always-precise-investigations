@@ -124,7 +124,7 @@ published. The stager **fails if a listed path is missing**, so a renamed
 directory is caught at build time instead of by someone finding a 404 later.
 
 ```bash
-node .github/test-deploy.mjs   # 47 checks: what may and may not be published
+node .github/test-deploy.mjs   # 52 checks: what may and may not be published
 ```
 
 It runs the real stager and asserts both halves — that the site is complete,

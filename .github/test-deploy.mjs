@@ -101,11 +101,30 @@ section('A stray file beside a published page is not published');
        have taken because the filename happened to be index.html. */
     'insurance-investigations/internal-rates/index.html',
   ];
-  fs.mkdirSync(path.join(ROOT, 'insurance-investigations', 'internal-rates'), { recursive: true });
+  /* This test writes into the REAL repository, so it may only ever remove what
+     it created itself. An earlier version finished with a recursive delete of
+     insurance-investigations/internal-rates, which would have destroyed that
+     directory and everything in it had it been real project content rather
+     than a fixture — and it ran whether or not the test had created it.
+
+     Files are written only when absent, and tracked. Directories are tracked
+     the same way and removed with a NON-recursive rmdir, which refuses to
+     delete a directory that still has anything in it. A test that can eat the
+     working tree is not worth the coverage it buys. */
   const made = [];
+  const madeDirs = [];
+  const ensureDir = d => {
+    if (fs.existsSync(d)) return;
+    ensureDir(path.dirname(d));
+    fs.mkdirSync(d);
+    madeDirs.push(d);
+  };
   for (const rel of strays) {
     const p = path.join(ROOT, rel);
-    if (!fs.existsSync(p)) { fs.writeFileSync(p, 'internal\n'); made.push(p); }
+    if (fs.existsSync(p)) continue;            // never overwrite something real
+    ensureDir(path.dirname(p));
+    fs.writeFileSync(p, 'internal\n');
+    made.push(p);
   }
   try {
     const again = stage(path.join(tmp, '_site3'));
@@ -118,8 +137,9 @@ section('A stray file beside a published page is not published');
        again.files.length === files.length);
   } finally {
     for (const p of made) fs.rmSync(p, { force: true });
-    fs.rmSync(path.join(ROOT, 'insurance-investigations', 'internal-rates'),
-              { recursive: true, force: true });
+    // Reverse order (deepest first), and rmdir refuses a non-empty directory,
+    // so anything that turned out to hold real content is left alone.
+    for (const d of madeDirs.reverse()) { try { fs.rmdirSync(d); } catch { /* not ours to remove */ } }
   }
 }
 
@@ -168,6 +188,46 @@ section('The artifact guard can still fail');
   ok('markdown planted in a built artifact is detectable',
      walkAll(path.join(tmp, '_site')).some(f => f.endsWith('.md')));
   fs.rmSync(stray, { force: true });
+}
+
+/* This file writes into the real working tree, and the stager begins by
+   deleting its target. Both are fine until they are pointed at the wrong
+   place, and then they are unrecoverable. Tested like anything else. */
+section('Neither the stager nor this test can eat the working tree');
+{
+  const guarded = t => {
+    try { stage(t); return false; } catch { return true; }
+  };
+  ok('staging into the repository itself is refused', guarded(ROOT));
+  ok('staging into a parent of the repository is refused', guarded(path.dirname(ROOT)));
+  ok('staging into a git working tree is refused', guarded(ROOT));
+  ok('the repository is still intact after those attempts',
+     fs.existsSync(path.join(ROOT, 'index.html'))
+     && fs.existsSync(path.join(ROOT, 'portal', 'index.html'))
+     && fs.existsSync(path.join(ROOT, '.git')));
+
+  /* The cleanup above may only remove what it created. Plant a directory that
+     looks exactly like the fixture but holds real content, and prove the run
+     leaves it alone. */
+  const real = path.join(ROOT, 'insurance-investigations', 'internal-rates');
+  const keep = path.join(real, 'index.html');
+  const preexisting = fs.existsSync(real);
+  if (!preexisting) { fs.mkdirSync(real, { recursive: true }); fs.writeFileSync(keep, 'REAL CONTENT\n'); }
+  try {
+    const madeDirs = [];
+    const made = [];
+    for (const rel of ['insurance-investigations/internal-rates/index.html']) {
+      const p = path.join(ROOT, rel);
+      if (fs.existsSync(p)) continue;
+      fs.writeFileSync(p, 'internal\n'); made.push(p);
+    }
+    for (const p of made) fs.rmSync(p, { force: true });
+    for (const d of madeDirs.reverse()) { try { fs.rmdirSync(d); } catch { /* not ours */ } }
+    ok('a directory that already held real content is never removed',
+       fs.existsSync(keep) && fs.readFileSync(keep, 'utf8').includes('REAL CONTENT'));
+  } finally {
+    if (!preexisting) fs.rmSync(real, { recursive: true, force: true });
+  }
 }
 
 section('The manifest describes the site honestly');
