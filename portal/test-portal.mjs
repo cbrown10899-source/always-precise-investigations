@@ -2019,6 +2019,41 @@ section('The retainer balance on a private case');
     ok('and the attempt keeps its token, so a retry cannot read as a new payment',
        outcome.token === 'ui-attempt-token', outcome.token);
     ok('and the form stays open to be pressed again', outcome.formOpen === true);
+    ok('and an ordinary failure offers no way to reissue the token',
+       await page.locator('[data-act="retNewAttempt"]').count() === 0);
+  }
+
+  /* THE ONE ATTEMPT THAT CANNOT BE RETRIED AS ITSELF. A claim left by the old
+     two-step version may or may not have money behind it, so its token is
+     unusable for ever — keeping it would mean the payment could never be
+     recorded from this screen. The escape is a NEW attempt, and it has to be
+     pressed: the page must not reissue a token on its own, because the question
+     "was that money already recorded" is answered by the payment list, which is
+     on this same screen. */
+  {
+    const stuck = await page.evaluate(async () => {
+      const real = window.fetch;
+      window.fetch = async () => new Response(JSON.stringify({
+        error: 'An earlier version of the portal started recording this payment and did not '
+             + 'finish saying whether it succeeded. Check the payments listed on this case.',
+        code: 'payment_indeterminate',
+      }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+      RET_TOKEN = 'ui-legacy-token';
+      try { await recordRetainerPayment(true); } finally { window.fetch = real; }
+      return { token: RET_TOKEN, msg: RET_MSG, stuck: RET_STUCK };
+    });
+    ok('the admin is told which check to make, not just that it failed',
+       stuck.msg.includes('Check the payments listed on this case'), stuck.msg);
+    ok('the token is still not reissued behind their back',
+       stuck.token === 'ui-legacy-token', stuck.token);
+    ok('but a way past it is now offered',
+       await page.locator('[data-act="retNewAttempt"]').count() === 1);
+    await page.locator('[data-act="retNewAttempt"]').first().click();
+    await page.waitForTimeout(300);
+    const after = await page.evaluate(() => ({ token: RET_TOKEN, stuck: RET_STUCK, open: RET_FORM }));
+    ok('and pressing it starts a genuinely new attempt', after.token === '');
+    ok('with the form still open and the offer withdrawn',
+       after.open === true && after.stuck === false);
   }
 
   ok('each recorded payment offers a void', await page.locator('[data-act="retVoid"]').count() >= 1);

@@ -1669,6 +1669,16 @@ async function configValue(env, key, fallback) {
 
    Thresholds are configuration (app_config), not constants sprinkled through
    the code — 75/90/100 today, whatever the office wants tomorrow. */
+/* The one answer the code is not allowed to guess. `code` is what the page
+   keys off; the sentence is what the admin reads, and it names the check they
+   have to make rather than telling them to try again. */
+const INDETERMINATE_PAYMENT = {
+  error: 'An earlier version of the portal started recording this payment and did not '
+       + 'finish saying whether it succeeded. Check the payments listed on this case: if '
+       + 'it is already there, nothing more is needed. If it is not, start a new attempt.',
+  code: 'payment_indeterminate',
+};
+
 /* RECORD A PAYMENT AND CLAIM ITS TOKEN AS ONE FACT.
 
    D1's batch() is a single transaction, so both statements commit or neither
@@ -1685,8 +1695,11 @@ async function configValue(env, key, fallback) {
    already taken. The raise is caught by the caller and read as "already
    recorded", which is what it is.
 
-   Returns true when the payment was written, false when the token had already
-   been used — the idempotent case, which is a success from the caller's side. */
+   Returns 'recorded' when the payment was written, 'duplicate' when the token
+   had already been used and the money is provably on the ledger — the
+   idempotent case, a success from the caller's side — and 'indeterminate' for a
+   claim left by the earlier two-step version, whose outcome no code here can
+   establish. See the catch for why that third answer has to exist. */
 async function recordRetainerPayment(env, caseNo, token, row, userId) {
   const at = nowIso();
   const insertPayment = env.DB.prepare(
@@ -1694,7 +1707,7 @@ async function recordRetainerPayment(env, caseNo, token, row, userId) {
        recorded_by, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
     .bind(caseNo, row.amount, row.method, row.paid_on, row.reference, userId, at);
 
-  if (!token) { await insertPayment.run(); return true; }
+  if (!token) { await insertPayment.run(); return 'recorded'; }
 
   try {
     /* The payment goes in FIRST so its id is the one the claim points at.
@@ -1707,7 +1720,7 @@ async function recordRetainerPayment(env, caseNo, token, row, userId) {
         `INSERT INTO retainer_payment_token (token, case_no, payment_id, claimed_at)
          VALUES (?, ?, last_insert_rowid(), ?)`).bind(token, caseNo, at),
     ]);
-    return true;
+    return 'recorded';
   } catch (e) {
     /* "Already recorded" has to be PROVEN, not guessed from an error message.
        The batch holds TWO inserts, so a payment that fails its own constraint
@@ -1728,15 +1741,34 @@ async function recordRetainerPayment(env, caseNo, token, row, userId) {
 
        So the proof follows the claim through to a payment row ON THIS CASE.
        That is only sound because the two now commit together and the claim
-       carries the id: a stranded legacy claim has a NULL payment_id and proves
-       nothing, which is correct — it raises, and the admin's next attempt
-       carries a freshly generated token that cannot collide. An error they can
-       see and retry past, rather than a success that never happened. */
+       carries the id. */
     const paid = await env.DB.prepare(
       `SELECT p.id FROM retainer_payment_token t
          JOIN retainer_payment p ON p.id = t.payment_id
         WHERE t.token = ? AND t.case_no = ?`).bind(token, caseNo).first();
-    if (paid) return false;   // genuinely already recorded, and the money is there
+    if (paid) return 'duplicate';   // already recorded, and the money is there
+
+    /* A LEGACY CLAIM IS NOT PROOF EITHER WAY, AND MUST NOT BE GUESSED AT.
+
+       The two-step version wrote the claim first and the payment second, and
+       never filled in payment_id — so a NULL one means "an attempt was made by
+       that code" and NOTHING about whether the money landed. Both outcomes look
+       identical: the payment may have committed and the response been dropped,
+       or the attempt may have died in between.
+
+       Adopting the claim and writing the payment would duplicate the first
+       case. Answering "already recorded" would lose the second. Both were
+       tried in earlier rounds of this guard and both are wrong, because the
+       information needed to choose is not in the database.
+
+       So the code stops and says exactly that. This is the ONE place a person
+       has to decide, and they can: the payment list is on the same screen. The
+       route turns this into a specific refusal rather than a 500, and the page
+       offers to start a fresh attempt — a new token, deliberately pressed. */
+    const legacy = await env.DB.prepare(
+      `SELECT 1 AS x FROM retainer_payment_token
+        WHERE token = ? AND case_no = ? AND payment_id IS NULL`).bind(token, caseNo).first();
+    if (legacy) return 'indeterminate';
     throw e;
   }
 }
@@ -5144,8 +5176,12 @@ async function route(request, env) {
        checkbox is not a reason to erase a payment history. */
     if (received && rcAmount !== null && rcAmount > 0) {
       const tok = clean(body.client_token, 64);
-      await recordRetainerPayment(env, m[1], tok,
+      const outcome = await recordRetainerPayment(env, m[1], tok,
         { amount: rcAmount, method: rcMethod, paid_on: rcPaidOn, reference: rcRef }, user.id);
+      /* Nothing else on this request may proceed on an outcome nobody knows —
+         the retainer row must not be marked received on the strength of a
+         payment that may not exist. */
+      if (outcome === 'indeterminate') return json(INDETERMINATE_PAYMENT, 409);
     }
 
     await env.DB.prepare(
@@ -5205,8 +5241,9 @@ async function route(request, env) {
        state: from the caller's side the payment IS recorded, which is the whole
        point of an idempotency key. Erroring here would make a dropped response
        look like a failure and invite the very retry that duplicates. */
-    await recordRetainerPayment(env, m[1], tok,
+    const outcome = await recordRetainerPayment(env, m[1], tok,
       { amount: amt, method: meth, paid_on: on, reference: clean(body.reference, 200) }, user.id);
+    if (outcome === 'indeterminate') return json(INDETERMINATE_PAYMENT, 409);
     return json({ ok: true, authorization: await authorizationFor(env, m[1], true) });
   }
 
