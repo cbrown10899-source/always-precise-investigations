@@ -1,0 +1,269 @@
+# ACTIVE SURVEILLANCE — VOICE COMMAND MODE (INTERNAL)
+
+**Owner handoff, 2026-08-15, plus the recovery addendum restoring §8–16.**
+Recorded before building, per the standing rule.
+
+> **⚠️ TRANSMISSION NOTE.** This handoff arrived in two parts, both degrading
+> at the end. §1–7 came from the first; §8–16 from the addendum sent to replace
+> what was lost after "approximately section 7". Lines marked **[TRUNCATED]**
+> are exactly as received. Lines marked **[inferred]** are a reading through a
+> gap and are NOT the owner's words — confirm before building them. Remaining
+> gaps are listed at the bottom.
+
+**This is real functionality, not mockup work.** Preserve the existing case,
+activity, report, evidence, audit, authorization and Active Surveillance
+architecture. **Do NOT create a parallel activity database.** Everything voice
+creates uses the SAME activity records, API, timeline and report generation as
+manually entered activity.
+
+---
+
+## §1 MOBILE HOME — STREAMLINE
+
+The large surveillance timer consumes too much mobile screen. Replace it with a
+**compact persistent status header**:
+
+```
+● ACTIVE   02:18:47
+CASE API-2026-0178   DAY 2
+```
+
+Keep the current case, surveillance day, elapsed time and active status, but
+**reduce vertical space substantially.** Use the reclaimed area for: QUICK
+ACTIVITY · VOICE COMMAND MODE · LAST ACTIVITY · PHOTO · VIDEO · NOTE · END
+INVESTIGATION DAY.
+
+Bottom navigation remains: Home · Activity · Evidence · Report · More.
+
+## §2 VOICE COMMAND MODE
+
+Explicit user control: **[ VOICE MODE ON / OFF ]**. It must **NOT activate
+automatically** when Active Surveillance opens.
+
+When ON and microphone permission is granted, show a clear active state:
+`🎙 LISTENING FOR "MOBILE…"`. The wake phrase is **MOBILE**.
+
+The loop: listening for "Mobile" → detect "Mobile" → listen for one command →
+interpret command → [create the activity, inferred] → return to listening.
+
+The investigator **should not need to touch the microphone button after every
+recognized structured command** while Voice Mode is active in the foreground.
+
+## §3 VOICE COMMANDS MUST CREATE REAL ACTIVITY
+
+**The most important requirement.** A recognized structured command must create
+an actual Activity Log record **through the existing activity API**. It must
+NOT simply display text on the mobile screen.
+
+Each voice-created activity carries the same fields as a manual one: case ID ·
+surveillance day · timestamp · [activity] type · activity text ·
+investigator/user ID · [TRUNCATED — one further field] · existing audit fields.
+
+It must immediately appear in **LAST ACTIVITY** and the **ACTIVITY LOG /
+TIMELINE**, and feed draft report derivation exactly like a manual activity.
+
+## §4 COMMAND REGISTRY
+
+**ONE centralized command registry.** No scattered phrase matching through UI
+components. Shape: spoken aliases → canonical command → activity type →
+[sentence] → optional structured fields.
+
+| Spoken | Canonical |
+| --- | --- |
+| "Mobile, arrival" | `ARRIVAL` |
+| "…at residence" [TRUNCATED] | `…RESIDENCE` |
+| [TRUNCATED] | `NO_CHANGE` |
+| "Mobile, no change at residence" | `NO_CHANGE_RESIDENCE` → "No change observed at the residence." |
+| "Mobile, doing a drive-by check of residence" | `MOBILE_RESIDENCE_CHECK` → "Mobile check of residence was conducted." |
+| "Mobile, drive-by check" | `MOBILE_RESIDENCE_CHECK` |
+| "…check" [TRUNCATED] | `MOBILE_CHECK` |
+| "Mobile, subject observed" | `SUBJECT_OBSERVED` |
+| "…departed" | `SUBJECT_DEPARTED` |
+| "Mobile, subject arrived" | `SUBJECT_ARRIVED` |
+| "Mobile, subject returned" | `SUBJECT_RETURNED` |
+| "…observed" (vehicle) | `VEHICLE_OBSERVED` |
+| "Mobile, subject vehicle present" | `SUBJECT_VEHICLE_PRESENT` |
+| "…vehicle absent" | `SUBJECT_VEHICLE_ABSENT` |
+| "Mobile, lost visual" | `LOST_VISUAL` |
+| "Mobile, regained visual" | `REGAINED_VISUAL` |
+| "Mobile, changing position" | [canonical name TRUNCATED] |
+| "Mobile, direct view" | `DIRECT_VIEW` |
+| [TRUNCATED] | `INDIRECT_VIEW` |
+| "…no activity" | `NO_ACTIVITY` |
+| [TRUNCATED] | `STATIONARY_SURVEILLANCE` |
+| "…conducting mobile surveillance" | `MOBILE_SURVEILLANCE` |
+| "Mobile, note" | `FREE_FORM_DICTATION_MODE` |
+
+Design the registry so **additional aliases and standardized phrases can be
+added later.**
+
+## §5 STANDARDIZED ACTIVITY TEXT
+
+Known commands store standardized language, not the raw transcript.
+
+- Spoken: *"Mobile, doing a drive-by check of residence, stand by."*
+  Stored: *"[Mobile check of] residence was conducted."*
+- Spoken: *"Mobile, no change at residence."*
+  Stored: *"[No change observed at the] residence."*
+
+The raw transcript **may optionally be retained as internal diagnostic
+metadata**, but must **NOT replace the standardized activity text.**
+
+## §6 COMMANDS VS FREE-FORM DICTATION
+
+Two distinct behaviours.
+
+**A. Structured command** — confidently recognized. Save the standardized
+activity entry → brief confirmation → return to listening.
+
+**B. Free-form dictation** — entered by "Mobile, note". [TRUNCATED.] The
+owner-approved decision list states: **free-form dictation requires review
+before save**, which matches the existing rule that nothing spoken is ever
+auto-submitted.
+
+## §7 — [NOT RECEIVED]
+
+Lost in the first transmission and not covered by the addendum, which begins at
+§8. **Needs re-sending.**
+
+---
+
+## §8 DUPLICATE PROTECTION
+
+Speech recognition can emit **repeated final results**. A single spoken command
+must never create duplicate Activity Log entries.
+
+**Use command/event idempotency rather than relying only on matching text.**
+
+> "Mobile, no change at residence" recognized twice by the speech engine during
+> the same recognition cycle → **ONE** Activity Log record.
+
+**Retries caused by connection/offline synchronisation must also not create
+duplicates.**
+
+## §9 VOICE CONFIRMATION
+
+After a structured command is successfully saved, show a brief confirmation —
+e.g. `NO CHANGE · [10:42] AM`, or `MOBILE CHECK · [added to the] Activity Log`.
+
+Optional: a short tone. **Do not use lengthy spoken responses.**
+
+After success, **automatically return to** `LISTENING FOR "MOBILE…"`.
+
+## §10 LAST ACTIVITY
+
+Active Surveillance mobile Home shows, prominently:
+
+```
+LAST ACTIVITY
+10:42 AM
+[No change] observed at the residence.
+[ Edit ] [ Remove ]
+```
+
+The investigator must be able to **correct the most recent activity without
+navigating away from the Active Surveillance Home screen.**
+
+## §11 EDIT / REMOVE — VOICE AND MANUAL ACTIVITY
+
+Voice-created activity uses the **SAME** Edit / Remove system as manual
+activity. Normal editable rows expose `•••` → Edit · Remove.
+
+**EDIT:** repopulated activity form → field corrections → update the live
+timeline → update derived draft report content where appropriate → preserve
+audit history → **never rewrite immutable submitted report snapshots.**
+
+**REMOVE:** uses the existing soft-delete / removal architecture. A removed
+activity must disappear from the active timeline, be excluded from future
+generated reports, be excluded from future Case Build / client packages, remain
+available in authorized audit/history, and record **who removed it and when.**
+
+Provide `REMOVED [ Undo ]`, restoring the **original record** — not a duplicate
+replacement record.
+
+## §12 QUICK ACTIVITY AND VOICE MUST SHARE LOGIC
+
+Quick Activity buttons and voice commands must converge on the **same canonical
+activity types and the same standardized sentence generator.**
+
+Quick Activity examples: Arrival · Mobile Check · Subject · Vehicle · Location.
+
+Identical behaviour for **voice vs buttons vs manual entry.** All ultimately use
+the existing activity API and data architecture.
+
+## §13 PHOTO / VIDEO VOICE COMMANDS
+
+Support "Mobile, take photo" and "Mobile, video".
+
+Respect browser/iPhone security and permission requirements. If the browser
+requires a user gesture before actual capture: **open/prepare the correct
+capture interface**, and **do not claim a photo or video was captured until it
+actually was.**
+
+**Never fake evidence creation.**
+
+## §14 MICROPHONE STATE / PRIVACY
+
+Voice Mode requires **explicit user activation**. Do NOT automatically start
+microphone processing when Active Surveillance opens.
+
+Display states clearly: `VOICE MODE OFF` · `LISTENING FOR "MOBILE…"` ·
+`[LISTENING, inferred]…` · `PROCESSING…` · `[PERMISSION] REQUIRED` ·
+`[ACTION] NEEDED`.
+
+Requires all of: an investigator · an authorized current case · an active
+surveillance session · explicit Voice Mode ON.
+
+When OFF: the microphone is inactive.
+
+## §15 AUTHORIZATION
+
+**Enforce voice activity authorization SERVER-SIDE.**
+
+Voice commands must not allow an investigator to write activity to: another
+investigator's unauthorized case · a case they are not permitted to work ·
+[finalized/closed, inferred] cases where new activity is prohibited ·
+admin-only contexts.
+
+**Use the same authorization boundaries as manual activity creation. Do not
+rely on hidden UI controls for security.**
+
+## §16 LIMITATION
+
+For the current browser/PWA implementation, **Voice Command Mode is a
+FOREGROUND feature.** Continuous listening while [the phone is locked or the
+app is backgrounded — TRUNCATED] is not available. The remainder of §16 and
+everything after it was corrupted.
+
+---
+
+## WHAT IS ALREADY BUILT — audit before writing anything
+
+- **Speech input exists.** `SV._rec` / `svListen` in `portal/index.html` uses
+  `SpeechRecognition`, shows a listening state, and offers the transcript for
+  review with Use Text / Discard. **Nothing spoken is auto-submitted**, which is
+  §6B's rule already in force.
+- **Activity creation is one API.** Voice, quick lines and the custom composer
+  all POST `/cases/:no/activity`; there is no parallel store to remove.
+- **Edit and remove exist.** `activity_removed` (#55) soft-deletes with who and
+  when, strikes the row through, offers restore, and excludes the entry from
+  reports and packages — most of §11's REMOVE list.
+- **Server-side authorization exists.** `caseFor()` gates every activity write,
+  so §15 is largely a matter of confirming voice uses the same path rather than
+  building new checks.
+- **The privacy wording rule.** CLAUDE.md: say only what is verifiable ("this
+  page keeps no audio"), never "never stored".
+
+The genuinely new work is therefore: the wake-phrase loop, the command
+registry, standardized sentence mapping, idempotency, the compact status
+header, and Last Activity edit/remove on the Home screen.
+
+## STILL MISSING — needs re-sending
+
+1. **§7 entirely** — the addendum starts at §8.
+2. **§3** — one activity field between "investigator/user ID" and "existing
+   audit fields".
+3. **§4** — canonical names for "changing position" and the `INDIRECT_VIEW` /
+   `STATIONARY_SURVEILLANCE` / `NO_CHANGE` / `MOBILE_CHECK` spoken aliases.
+4. **§6B** — the free-form dictation flow beyond "requires review before save".
+5. **§16** — the limitation sentence, and anything after it.
