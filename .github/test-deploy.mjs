@@ -27,7 +27,7 @@ const section = t => results.push(`\n${t}`);
 
 const ROOT = path.resolve(path.join(import.meta.dirname, '..'));
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'api-site-'));
-const { files, problems } = stage(path.join(tmp, '_site'));
+const { files, skipped, problems } = stage(path.join(tmp, "_site"));
 
 section('The artifact builds at all');
 ok('staging reports no problems', problems.length === 0, problems.join(' | '));
@@ -77,6 +77,40 @@ ok('the database schema is not published', !files.some(f => f.endsWith('.sql')))
 /* The allow-list is only a boundary while things OUTSIDE it stay outside. A
    file dropped in the repo root — the exact shape of the incident — must be
    ignored rather than published or fatal. */
+/* The hole the first version of this allow-list had: it named DIRECTORIES and
+   copied them whole, so the boundary was default-deny at the top level and
+   default-ALLOW inside anything listed. A note dropped beside a published page
+   would have shipped. These plant files INSIDE allowed directories, which is
+   where the claim "anything not listed is not deployed" actually gets tested. */
+section('A stray file beside a published page is not published');
+{
+  const strays = [
+    'portal/internal-note.txt',
+    'portal/index.html.bak',
+    'intake/client-list.csv',
+    'assets/original-pricing.pdf',
+    '.well-known/notes.txt',
+    'watch/passcode.txt',
+  ];
+  const made = [];
+  for (const rel of strays) {
+    const p = path.join(ROOT, rel);
+    if (!fs.existsSync(p)) { fs.writeFileSync(p, 'internal\n'); made.push(p); }
+  }
+  try {
+    const again = stage(path.join(tmp, '_site3'));
+    for (const rel of strays) {
+      ok(`${rel} is not published`, !again.files.includes(rel));
+    }
+    ok('and none of them failed the build either', again.problems.length === 0,
+       again.problems.join(' | '));
+    ok('the real site is unchanged by their presence',
+       again.files.length === files.length);
+  } finally {
+    for (const p of made) fs.rmSync(p, { force: true });
+  }
+}
+
 section('A new file in the repository cannot reach the internet by default');
 {
   const intruders = [
@@ -128,10 +162,18 @@ section('The manifest describes the site honestly');
 {
   const manifest = fs.readFileSync(path.join(ROOT, '.github', 'deploy-manifest.txt'), 'utf8')
     .split(/\r?\n/).map(l => l.replace(/#.*$/, '').trim()).filter(Boolean);
-  ok('every listed path exists', manifest.every(m => fs.existsSync(path.join(ROOT, m))),
-     manifest.filter(m => !fs.existsSync(path.join(ROOT, m))).join());
+  /* A pattern matching nothing is a renamed or deleted page about to vanish
+     from the site quietly; the stager already refuses to build in that case. */
+  ok('every pattern matches something', problems.length === 0);
   ok('nothing internal is listed',
-     !manifest.some(m => ['case-portal', 'visitor-alerts', '.claude', '.github'].includes(m)));
+     !manifest.some(m => /^(case-portal|visitor-alerts|\.claude|\.github)(\/|$)/.test(m)));
+  /* Patterns must be FILE patterns. A bare directory name would silently
+     restore recursive copying if the stager ever grew that behaviour back. */
+  ok('no pattern is a bare directory',
+     manifest.every(m => m.includes('.') || m.startsWith('_')),
+     manifest.filter(m => !m.includes('.') && !m.startsWith('_')).join());
+  ok('the skipped set is real — most of the repo is NOT published',
+     skipped.length > files.length, `${skipped.length} skipped vs ${files.length} published`);
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });
