@@ -1656,6 +1656,69 @@ section('The two internal calculations never share a number');
        body.includes('COALESCE(?2, ?6)'));
   }
 
+  /* PARTIAL RETAINER PAYMENTS (owner confirmation, 2026-08-15). The worked
+     example from the owner: agreed $3,000, two payments of $1,000, so RECEIVED
+     is $2,000 and OUTSTANDING is $1,000. A second payment must never overwrite
+     the first — that is the whole reason payments are a log. */
+  await call(env, '/cases/API-RB3/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 3000, received: false } });
+  await call(env, '/cases/API-RB3/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 1000, method: 'venmo', paid_on: '2026-08-10', reference: 'first' } });
+  const half = await jsonOf(await call(env, '/cases/API-RB3/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 1000, method: 'check', paid_on: '2026-08-14', reference: 'second' } }));
+  const rb3 = half.authorization.retainer;
+  ok('two instalments both count — the second does not overwrite the first',
+     rb3.payments.length === 2 && rb3.received_total === 2000, JSON.stringify(rb3.received_total));
+  ok('the agreed retainer is untouched by paying against it', rb3.agreed === 3000);
+  ok('outstanding is agreed minus received', rb3.outstanding === 1000);
+  ok('and the case reads as part paid, not paid and not pending',
+     rb3.status === 'part_paid', rb3.status);
+  ok('each payment keeps its own method, date and reference',
+     rb3.payments[0].method === 'venmo' && rb3.payments[0].paid_on === '2026-08-10'
+     && rb3.payments[0].reference === 'first'
+     && rb3.payments[1].method_label === 'Check' && rb3.payments[1].reference === 'second');
+  ok('and each is stamped with who recorded it',
+     rb3.payments.every(x => x.recorded_by && x.recorded_at));
+
+  /* REMAINING keeps its own meaning. The owner was explicit that the unpaid
+     balance is OUTSTANDING, because `remaining` already means the retainer not
+     yet consumed by work. Both appear here and they are different numbers. */
+  ok('remaining still means the money work has not consumed, not the unpaid balance',
+     rb3.remaining === 3000 - rb3.applied && rb3.remaining !== rb3.outstanding,
+     `${rb3.remaining} vs ${rb3.outstanding}`);
+
+  ok('a payment with no amount is refused — a total cannot skip a row',
+     (await call(env, '/cases/API-RB3/retainer/payment', { method: 'POST', cookie: admin,
+       body: { method: 'cash' } })).status === 400);
+  ok('and so is a negative one',
+     (await call(env, '/cases/API-RB3/retainer/payment', { method: 'POST', cookie: admin,
+       body: { amount: -50, method: 'cash' } })).status === 400);
+  ok('an unaccepted method is refused on a payment too',
+     (await call(env, '/cases/API-RB3/retainer/payment', { method: 'POST', cookie: admin,
+       body: { amount: 100, method: 'card' } })).status === 400);
+  ok('an investigator cannot record a payment',
+     (await call(env, '/cases/API-RB3/retainer/payment', { method: 'POST', cookie: inv,
+       body: { amount: 100 } })).status === 403);
+  ok('and a claim assignment has no retainer to pay',
+     (await call(env, '/cases/API-RB2/retainer/payment', { method: 'POST', cookie: admin,
+       body: { amount: 100 } })).status === 400);
+
+  /* Correcting a payment VOIDS it. History is not rewritten: the row stays, so
+     the record still shows what was believed and who corrected it. */
+  const voided = await jsonOf(await call(env,
+    `/cases/API-RB3/retainer/payment/${rb3.payments[0].id}/void`,
+    { method: 'POST', cookie: admin, body: { reason: 'recorded twice' } }));
+  const afterVoid = voided.authorization.retainer;
+  ok('voiding a payment stops it counting', afterVoid.received_total === 1000);
+  ok('and outstanding follows it', afterVoid.outstanding === 2000);
+  ok('but the payment is still in the record, marked',
+     afterVoid.payments.length === 2
+     && afterVoid.payments.find(x => x.voided) !== undefined);
+  ok('stamped with who voided it and why',
+     afterVoid.payments.find(x => x.voided).voided_by
+     && afterVoid.payments.find(x => x.voided).void_reason === 'recorded twice');
+  ok('and the agreed retainer is STILL untouched', afterVoid.agreed === 3000);
+
   /* THE RULE THE FEATURE TURNS ON: sending instructions is not being paid. */
   await env.DB.prepare(
     `INSERT INTO payment_send (case_no, recipient, methods, with_sheet, ok, sent_at)

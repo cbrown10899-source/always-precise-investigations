@@ -1669,6 +1669,51 @@ async function configValue(env, key, fallback) {
 
    Thresholds are configuration (app_config), not constants sprinkled through
    the code — 75/90/100 today, whatever the office wants tomorrow. */
+/* What a private client has actually paid, across instalments.
+
+   TOTAL RECEIVED is the sum of every VALID payment row — voided ones stay in
+   the log and stop counting, so a mistake is corrected without the record
+   losing what was believed at the time.
+
+   The legacy single receipt still counts, and only when the log is empty. A row
+   written to retainer_receipt before the log existed is real money; ignoring it
+   would understate what the client paid, and counting it alongside a log
+   entry that replaced it would double it. Empty-log is the only state where it
+   can be the truth. */
+async function retainerPaid(env, caseNo) {
+  const { results } = await env.DB.prepare(
+    `SELECT p.id, p.amount, p.method, p.paid_on, p.reference, p.recorded_at,
+            u.display_name AS recorded_by,
+            v.voided_at, v.reason AS void_reason, vu.display_name AS voided_by
+       FROM retainer_payment p
+       LEFT JOIN users u ON u.id = p.recorded_by
+       LEFT JOIN retainer_payment_void v ON v.payment_id = p.id
+       LEFT JOIN users vu ON vu.id = v.voided_by
+      WHERE p.case_no = ? ORDER BY p.id`).bind(caseNo).all();
+
+  const payments = (results || []).map(r => ({
+    id: r.id, amount: Number(r.amount),
+    method: r.method || '', method_label: RETAINER_METHOD_LABEL[r.method] || r.method || '',
+    paid_on: r.paid_on || '', reference: r.reference || '',
+    recorded_by: r.recorded_by || '', recorded_at: r.recorded_at || '',
+    voided: !!r.voided_at, voided_by: r.voided_by || '', voided_at: r.voided_at || '',
+    void_reason: r.void_reason || '',
+  }));
+
+  let total = payments.filter(p => !p.voided)
+    .reduce((s, p) => s + (Number.isFinite(p.amount) ? p.amount : 0), 0);
+
+  let legacy = null;
+  if (!payments.length) {
+    legacy = await env.DB.prepare(
+      `SELECT r.amount, r.method, r.paid_on, r.reference, r.recorded_at, u.display_name AS recorded_by
+         FROM retainer_receipt r LEFT JOIN users u ON u.id = r.recorded_by
+        WHERE r.case_no = ?`).bind(caseNo).first();
+    if (legacy && legacy.amount != null) total += Number(legacy.amount);
+  }
+  return { payments, total: Math.round(total * 100) / 100, legacy };
+}
+
 async function authorizationFor(env, caseNo, forAdmin) {
   const meta = await env.DB.prepare(
     `SELECT m.authorized_hours, m.authorized_budget, m.case_type_id, t.label AS case_type, t.side
@@ -1738,22 +1783,40 @@ async function authorizationFor(env, caseNo, forAdmin) {
         'SELECT retainer_amount, received FROM case_retainer WHERE case_no = ?').bind(caseNo).first();
       const amount = ret && ret.retainer_amount != null ? Number(ret.retainer_amount) : PERSONAL.retainer;
       const applied = Math.round(hoursUsed * rate * 100) / 100;
-      /* What was ACTUALLY received, when a receipt has been recorded. The flag
-         says money arrived; this says which money, so the office can check its
-         own record against a bank statement. */
-      const rc = await env.DB.prepare(
-        `SELECT r.amount, r.method, r.paid_on, r.reference, r.recorded_at, u.display_name AS recorded_by
-           FROM retainer_receipt r LEFT JOIN users u ON u.id = r.recorded_by
-          WHERE r.case_no = ?`).bind(caseNo).first();
+      const paid = await retainerPaid(env, caseNo);
+      /* The legacy single receipt, still shown when it is the only record —
+         see retainerPaid for why it still counts. */
+      const rc = paid.legacy;
+      /* THREE MONEY FIGURES, AND THEY ARE NOT INTERCHANGEABLE (owner, 2026-08-15).
+
+         agreed      — what the client agreed to pay
+         received    — what has actually arrived, summed across instalments
+         outstanding — agreed minus received: what the client still owes
+
+         `remaining` below is a FOURTH figure and keeps its existing meaning:
+         agreed minus the work already applied against it. The owner was
+         explicit that "Remaining" must not be reused for the unpaid balance,
+         because these two answer different questions and a screen showing both
+         under one word would misstate money in whichever direction the reader
+         assumed. */
+      const received = paid.total;
+      const outstanding = Math.round((amount - received) * 100) / 100;
       out.retainer = {
         amount,
-        received: !!(ret && ret.received),
+        agreed: amount,
+        received_total: received,
+        outstanding,
+        received: received > 0 || !!(ret && ret.received),
+        payments: paid.payments,
         applied,
         remaining: Math.round((amount - applied) * 100) / 100,
         approx_hours_remaining: rate > 0 ? Math.round(((amount - applied) / rate) * 10) / 10 : null,
-        /* PENDING until an admin records it. Sending payment instructions never
-           reaches this — payment_send records that the firm asked. */
-        status: (ret && ret.received) ? 'received' : 'pending',
+        /* PENDING until money is recorded, PART PAID while some has arrived and
+           some has not. Sending payment instructions never reaches any of this —
+           payment_send records that the firm asked, which is not being paid. */
+        status: received > 0
+          ? (outstanding > 0 ? 'part_paid' : 'received')
+          : ((ret && ret.received) ? 'received' : 'pending'),
         receipt: rc ? {
           amount: rc.amount == null ? null : Number(rc.amount),
           method: rc.method || '', method_label: RETAINER_METHOD_LABEL[rc.method] || rc.method || '',
@@ -4330,6 +4393,7 @@ const EXPECTED_TABLES = [
   'activity_removed', 'build_reports', 'build_summary', 'build_custom',
   'case_day_pauses', 'lead_status', 'send_log', 'invoice_retainer',
   'payment_methods', 'payment_send', 'retainer_receipt',
+  'retainer_payment', 'retainer_payment_void',
 ];
 
 async function missingTables(env) {
@@ -5011,6 +5075,60 @@ async function route(request, env) {
          received_at = CASE WHEN ?3 = 1 THEN COALESCE(case_retainer.received_at, ?4) ELSE NULL END,
          updated_by = ?5, updated_at = ?4`)
       .bind(m[1], amount, received, nowIso(), user.id, PERSONAL.retainer).run();
+    return json({ ok: true, authorization: await authorizationFor(env, m[1], true) });
+  }
+
+  /* A retainer INSTALMENT. Additive: a second payment never overwrites a first,
+     because a client paying $1,000 twice against a $3,000 retainer has paid
+     $2,000 and the record has to say so. Private cases only — a claim
+     assignment is authorized in hour blocks and has no retainer to pay. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/retainer\/payment$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    const sub = await env.DB.prepare('SELECT kind FROM submissions WHERE case_no = ?').bind(m[1]).first();
+    if (!sub) return json({ error: 'not found' }, 404);
+    if (sub.kind === 'claims') {
+      return json({ error: 'Retainers are the private-client model — a claim assignment is authorized in hour blocks.' }, 400);
+    }
+    const body = await readJson(request);
+    const clean = (v, max) => String(v == null ? '' : v)
+      .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, max);
+    const amt = Number(body.amount);
+    /* An amount is required HERE, unlike the older combined route: a payment
+       with no figure cannot be summed, and a total that silently skips a row
+       is worse than a refusal. */
+    if (!Number.isFinite(amt) || amt <= 0) {
+      return json({ error: 'A payment needs a positive amount.' }, 400);
+    }
+    const meth = clean(body.method, 32);
+    if (meth && !RETAINER_METHODS.includes(meth)) {
+      return json({ error: 'Pick a real payment method.' }, 400);
+    }
+    const on = clean(body.paid_on, 10);
+    if (on && !/^\d{4}-\d{2}-\d{2}$/.test(on)) {
+      return json({ error: 'The payment date should be a calendar date.' }, 400);
+    }
+    await env.DB.prepare(
+      `INSERT INTO retainer_payment (case_no, amount, method, paid_on, reference, recorded_by, recorded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .bind(m[1], amt, meth, on, clean(body.reference, 200), user.id, nowIso()).run();
+    return json({ ok: true, authorization: await authorizationFor(env, m[1], true) });
+  }
+
+  /* Correcting a payment VOIDS it. The row stays, so the record still shows
+     what was believed at the time and who corrected it — history is not
+     rewritten, the same rule evidence and submitted reports already follow. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/retainer\/payment\/(\d+)\/void$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    const row = await env.DB.prepare(
+      'SELECT id FROM retainer_payment WHERE id = ? AND case_no = ?').bind(m[2], m[1]).first();
+    if (!row) return json({ error: 'not found' }, 404);
+    const body = await readJson(request);
+    await env.DB.prepare(
+      `INSERT INTO retainer_payment_void (payment_id, reason, voided_by, voided_at)
+       VALUES (?1, ?2, ?3, ?4) ON CONFLICT(payment_id) DO NOTHING`)
+      .bind(row.id, String(body.reason || '').slice(0, 200), user.id, nowIso()).run();
     return json({ ok: true, authorization: await authorizationFor(env, m[1], true) });
   }
 
