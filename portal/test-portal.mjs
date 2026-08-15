@@ -2113,6 +2113,29 @@ section('The retainer balance on a private case');
      after.payments[0].reference === 'Venmo note: retainer');
   ok('while the agreed retainer is untouched by any of it', after.agreed === 1500);
   ok('six recorded hours at the private rate leave $900', auth.includes('900'), auth.slice(0, 400));
+
+  /* AN UNFINISHED PAYMENT DOES NOT FOLLOW THE ADMIN TO THE NEXT CASE. All of
+     this form's state is page-level, so a failed attempt used to leave the form
+     open on whatever case was opened next — carrying the amount typed for
+     someone else, and the first case's idempotency token. A figure prefilled
+     against another client's retainer is found when the money is reconciled, if
+     then. Last in this section because it navigates away deliberately. */
+  {
+    await page.evaluate(() => { RET_FORM = true; RET_DRAFT = { amt: '777' }; RET_TOKEN = 'left-behind'; RET_STUCK = true; });
+    const stranded = await page.evaluate(() => ({ token: RET_TOKEN, draft: RET_DRAFT.amt, open: RET_FORM }));
+    ok('the failed attempt is held on the case it belongs to',
+       stranded.open === true && stranded.draft === '777' && stranded.token === 'left-behind');
+    await page.evaluate(() => openCase('API-20260812-4001'));
+    await page.waitForTimeout(700);
+    const moved = await page.evaluate(() => ({
+      token: RET_TOKEN, draft: RET_DRAFT.amt, open: RET_FORM, stuck: RET_STUCK, msg: RET_MSG,
+    }));
+    ok('opening another case does not carry the amount across',
+       moved.draft === undefined, String(moved.draft));
+    ok('nor the token that belongs to the first case', moved.token === '');
+    ok('and the next case is not met with a form already open',
+       moved.open === false && moved.stuck === false && moved.msg === '');
+  }
   await page.close();
 }
 {
