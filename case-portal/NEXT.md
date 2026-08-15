@@ -65,13 +65,53 @@ the owner's stated order**. That order is the work list.
    with nothing received is untouched and still works. `test-worker.mjs` → *"An
    invoice with money against it cannot be put back to draft"*, 12 checks.
    Worker 831 → 843.
-4. **The Case Build finalize gate strip can be hidden when the package is
-   actually ready to finalize**, so held-back material can ship with the
-   warning suppressed. `portal/index.html` ~2976, ~3160-3245, ~3069;
-   `worker.js` ~2678-2697.
+4. ~~**The Case Build finalize gate strip can be hidden when the package is
+   actually ready to finalize**, so held-back material can ship with the warning
+   suppressed.~~ ✅ **FIXED and VERIFIED 2026-08-14.** True as reported, and
+   reproduced first: with the page reverted the gate/document assertions fail.
+   The claim was also **understated** — an independent Codex review found the
+   same material shipping through a **second door**, and that one mattered more.
 
-Plus the MEDIUM that belongs with 1 and 2: **every surveillance date is UTC
-while every surveillance time is local**, so evening work files a day late.
+   **The reproduction caught a worthless test.** The check guarding the outcome
+   that matters — held-back material not printing — passed on the broken code,
+   because it looked for the FILENAME, which the document renders only when an
+   item has no note. It now counts exhibit rows in the printed index, which
+   cannot pass vacuously. Expect this shape; it is the same failure the retainer
+   bug had.
+
+   **The fix.** The gates are no longer hidden on a finalized build (only the
+   wording changes). The document prints only what is still cleared to ship and
+   NAMES what it withheld, distinguishing material **held back** from material
+   **deleted** — `buildState` drops deleted rows entirely, so calling a deleted
+   file "no longer client-deliverable" sends the admin to the wrong problem.
+
+   **Reclassifying after finalize stays allowed** — a guard refusing it would
+   preserve the unsafe classification at the exact moment someone is withdrawing
+   it. Instead every exit re-reads current state: printing re-reads the package
+   first (and abandons rather than falling back on stale data), and **the
+   delivery link is filtered too**. That was the second door: the document
+   refused to print a held-back video while a Copy button beside it handed over
+   the same file. It is now offered only while the evidence is IN the package and
+   still cleared to ship — on the package panel and on `/completed`, which had
+   not even honoured `deleted_at` though the evidence count beside it did.
+   Membership is what makes the desk agree with the package panel, which always
+   required it.
+
+   `test-worker.mjs` completed-desk section, 6 new checks; `test-portal.mjs` →
+   *"A finalized package still says when something has been held back"*, 18
+   checks. Worker 843 → 849, portal 678 → 696.
+
+   **Left undone deliberately, not passed off as complete:** provider-side share
+   revocation needs a Dropbox client that does not exist (blocked on the owner's
+   three secrets) — this stops the portal OFFERING a link it should not, which is
+   the half that can be got wrong today; and the video/index exhibit numbering
+   contradicting itself inside one document is a **pre-existing LOW**, already in
+   the findings table, untouched here.
+
+**All four HIGH defects are now fixed and verified.** The queue's next code item
+is the MEDIUM that belongs with 1 and 2: **every surveillance date is UTC while
+every surveillance time is local**, so evening work files a day late. Then item
+5 below, the private-client payment work.
 
 **5. NEW FEATURE — private-client payment options and the onboarding send flow.**
 **Two** owner work orders, 2026-08-14, both recorded verbatim in **`PAYMENTS.md`**
@@ -132,12 +172,13 @@ a rate sheet sendable against a lead of the opposite kind, a removed entry's
 text printing as an exhibit caption, two intake placeholders, a `/health`
 check that reported clean on a broken schema, and the retainer double-count.
 
-**Suites at last green (2026-08-14, master `c60a584`):**
+**Suites at last green (2026-08-14, branch `claude/arrival-sentence-generator`,
+all four HIGH defects fixed):**
 
 | Suite | Checks |
 | --- | --- |
-| `case-portal/test-worker.mjs` | **794** |
-| `portal/test-portal.mjs` | **670** |
+| `case-portal/test-worker.mjs` | **849** |
+| `portal/test-portal.mjs` | **696** |
 | `intake/test-intake.mjs` | **205** |
 | `visitor-alerts/test-worker.mjs` | **47** |
 
@@ -157,7 +198,7 @@ check that reported clean on a broken schema, and the retainer double-count.
 
 Snapshot date: 2026-08-14. Branch: `claude/arrival-sentence-generator`, rebased
 onto master `aa107b4` (**PR #71**). The counts are in the START HERE header
-above — worker 794, portal 670, intake 205, alerts 47. (This line used to repeat
+above — worker 849, portal 696, intake 205, alerts 47. (This line used to repeat
 an older, lower set and contradict the header; one snapshot, in one place.)
 
 > **Running the two browser suites on Windows needs a NODE_PATH.** Their loader
