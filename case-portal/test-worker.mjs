@@ -1563,14 +1563,19 @@ section('The two internal calculations never share a number');
   const paid = await jsonOf(await call(env, '/cases/API-RB1/retainer', { method: 'POST', cookie: admin,
     body: { retainer_amount: 2000, received: true, amount_received: 2000, method: 'venmo',
             paid_on: '2026-08-14', reference: 'Venmo note: case RB1' } }));
-  const rcpt = paid.authorization.retainer.receipt;
-  ok('the receipt records the amount, method, date and reference',
+  // Money entered here lands in the LEDGER, not a per-case receipt row — one
+  // place money arrives, whichever screen recorded it.
+  const rcpt = (paid.authorization.retainer.payments || [])[0];
+  ok('the payment records the amount, method, date and reference',
      rcpt && rcpt.amount === 2000 && rcpt.method === 'venmo'
      && rcpt.paid_on === '2026-08-14' && rcpt.reference === 'Venmo note: case RB1');
   ok('and names the method in words the office reads', rcpt.method_label === 'Venmo');
   ok('and stamps who recorded it', !!rcpt.recorded_by && !!rcpt.recorded_at);
   ok('the retainer reads as received rather than pending',
      paid.authorization.retainer.status === 'received');
+  ok('and received totals what actually arrived',
+     paid.authorization.retainer.received_total === 2000
+     && paid.authorization.retainer.outstanding === 0);
 
   ok('an invented payment method is refused',
      (await call(env, '/cases/API-RB1/retainer', { method: 'POST', cookie: admin,
@@ -1597,13 +1602,26 @@ section('The two internal calculations never share a number');
      (await call(env, '/cases/API-RB1/retainer', { method: 'POST', cookie: admin,
        body: { retainer_amount: 2000, received: true } })).status === 200);
 
-  /* Un-marking it means the money is not in. A receipt left behind would leave
-     the case asserting a payment it no longer claims to have. */
+  /* UN-MARKING NO LONGER ERASES PAYMENTS. It used to delete the receipt row,
+     which was defensible when a case held exactly one; against a ledger it
+     would destroy a payment history because someone unticked a checkbox. The
+     flag and the money are separate facts, and the way to reverse a payment is
+     to void that payment, on the record. */
   const undone = await jsonOf(await call(env, '/cases/API-RB1/retainer', { method: 'POST', cookie: admin,
     body: { retainer_amount: 2000, received: false } }));
-  ok('un-marking the retainer clears the receipt with it',
-     undone.authorization.retainer.receipt === null
-     && undone.authorization.retainer.status === 'pending');
+  ok('un-marking the flag does not erase what was recorded as paid',
+     undone.authorization.retainer.payments.length >= 1);
+  ok('and the case still reports the money it actually has',
+     undone.authorization.retainer.received_total === 2000);
+  // Voiding every payment is what genuinely returns a case to pending.
+  for (const pmt of undone.authorization.retainer.payments) {
+    await call(env, `/cases/API-RB1/retainer/payment/${pmt.id}/void`,
+      { method: 'POST', cookie: admin, body: { reason: 'test reset' } });
+  }
+  const cleared = (await jsonOf(await call(env, '/cases/API-RB1/workspace', { cookie: admin })))
+    .authorization.retainer;
+  ok('voiding the payments is what returns it to pending',
+     cleared.received_total === 0 && cleared.status === 'pending');
 
   /* A CUSTOM RETAINER SURVIVES EVERY OTHER WRITE TO THIS ROUTE.
 
@@ -1719,15 +1737,73 @@ section('The two internal calculations never share a number');
      && afterVoid.payments.find(x => x.voided).void_reason === 'recorded twice');
   ok('and the agreed retainer is STILL untouched', afterVoid.agreed === 3000);
 
-  /* THE RULE THE FEATURE TURNS ON: sending instructions is not being paid. */
+  /* A LEGACY RECEIPT IS STILL MONEY. Rows written before the ledger existed
+     were briefly counted only while the log was empty, so a case holding a
+     $1,500 receipt that then took a $500 instalment reported $500 received and
+     lost the $1,500 silently. Money already recorded does not stop being money
+     because a newer row arrived beside it. Planted directly, because nothing
+     creates one of these any more — which is what makes counting it safe. */
+  await ingest(env, { case_no: 'API-RB4', service: 'Surveillance', client_name: 'R. Client', subject_name: 'U' });
+  await call(env, '/cases/API-RB4/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 3000, received: false } });
+  await env.DB.prepare(
+    `INSERT INTO retainer_receipt (case_no, amount, method, paid_on, reference, recorded_by, recorded_at)
+     VALUES ('API-RB4', 1500, 'check', '2026-08-01', 'legacy row', ?, ?)`)
+    .bind(1, '2026-08-01T00:00:00Z').run();
+  const legacyOnly = (await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
+    .authorization.retainer;
+  ok('a legacy receipt counts on its own', legacyOnly.received_total === 1500);
+  await call(env, '/cases/API-RB4/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 500, method: 'cash', paid_on: '2026-08-12' } });
+  const legacyPlus = (await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
+    .authorization.retainer;
+  ok('and KEEPS counting once a newer instalment arrives beside it',
+     legacyPlus.received_total === 2000, String(legacyPlus.received_total));
+  ok('with outstanding following the true total', legacyPlus.outstanding === 1000);
+
+  /* A RETRY MUST NOT CHARGE TWICE. A dropped response, a double tap or an
+     offline replay delivers the same recorded payment again, and an additive
+     ledger takes every arrival at face value unless something stops it. */
+  const rbTok = 'attempt-rb4-0001';
+  await call(env, '/cases/API-RB4/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 250, method: 'venmo', client_token: rbTok } });
+  const replay = await call(env, '/cases/API-RB4/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 250, method: 'venmo', client_token: rbTok } });
+  ok('a replayed payment is accepted rather than erroring', replay.status === 200);
+  ok('but it is only counted once',
+     (await jsonOf(replay)).authorization.retainer.received_total === 2250,
+     String((await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
+       .authorization.retainer.received_total));
+  ok('and only one row exists for that attempt',
+     (await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
+       .authorization.retainer.payments.filter(x => x.amount === 250).length === 1);
+  ok('while a genuinely separate payment of the same size still counts',
+     (await jsonOf(await call(env, '/cases/API-RB4/retainer/payment', { method: 'POST', cookie: admin,
+       body: { amount: 250, method: 'venmo', client_token: 'attempt-rb4-0002' } })))
+       .authorization.retainer.received_total === 2500);
+
+  /* THE RULE THE FEATURE TURNS ON: sending instructions is not being paid.
+
+     Asserted as "changes NOTHING" rather than "reads as pending". A case may
+     legitimately hold money already, so an absolute check would pass or fail
+     for reasons having nothing to do with the send — the question is whether
+     asking for money moves the ledger, and the answer must be no whatever the
+     ledger currently says. */
+  const beforeSend = (await jsonOf(await call(env, '/cases/API-RB1/workspace', { cookie: admin })))
+    .authorization.retainer;
   await env.DB.prepare(
     `INSERT INTO payment_send (case_no, recipient, methods, with_sheet, ok, sent_at)
      VALUES ('API-RB1', 'client@example.com', 'venmo', 1, 1, ?)`).bind('2026-08-15T00:00:00Z').run();
-  const afterSend = await jsonOf(await call(env, '/cases/API-RB1/workspace', { cookie: admin }));
-  ok('a sent payment instruction does NOT mark the retainer received',
-     afterSend.authorization.retainer.received === false
-     && afterSend.authorization.retainer.status === 'pending'
-     && afterSend.authorization.retainer.receipt === null);
+  const afterSend = (await jsonOf(await call(env, '/cases/API-RB1/workspace', { cookie: admin })))
+    .authorization.retainer;
+  ok('a sent payment instruction moves no money at all',
+     afterSend.received_total === beforeSend.received_total
+     && afterSend.outstanding === beforeSend.outstanding
+     && afterSend.status === beforeSend.status
+     && afterSend.payments.length === beforeSend.payments.length,
+     `${beforeSend.received_total} -> ${afterSend.received_total}`);
+  ok('and does not touch the agreed retainer either',
+     afterSend.agreed === beforeSend.agreed);
 
   await call(env, '/submissions/API-RB1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
   const iws = await jsonOf(await call(env, '/cases/API-RB1/workspace', { cookie: inv }));

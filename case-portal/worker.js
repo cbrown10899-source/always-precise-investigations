@@ -1703,14 +1703,21 @@ async function retainerPaid(env, caseNo) {
   let total = payments.filter(p => !p.voided)
     .reduce((s, p) => s + (Number.isFinite(p.amount) ? p.amount : 0), 0);
 
-  let legacy = null;
-  if (!payments.length) {
-    legacy = await env.DB.prepare(
-      `SELECT r.amount, r.method, r.paid_on, r.reference, r.recorded_at, u.display_name AS recorded_by
-         FROM retainer_receipt r LEFT JOIN users u ON u.id = r.recorded_by
-        WHERE r.case_no = ?`).bind(caseNo).first();
-    if (legacy && legacy.amount != null) total += Number(legacy.amount);
-  }
+  /* THE LEGACY ROW ALWAYS COUNTS. It was briefly counted only when the log was
+     empty, and that undercounts: a case with a $1,500 receipt from before the
+     log existed, taking a $500 instalment afterwards, would have reported $500
+     received and lost the $1,500 without a word. Money already recorded does
+     not stop being money because a newer row arrived beside it.
+
+     Double-counting is prevented at the WRITE end instead — nothing creates a
+     legacy row any more, so at most one exists per case and it can never be the
+     same payment as a log entry. That is the durable version of the rule; the
+     read-side condition was a guess about intent. */
+  const legacy = await env.DB.prepare(
+    `SELECT r.amount, r.method, r.paid_on, r.reference, r.recorded_at, u.display_name AS recorded_by
+       FROM retainer_receipt r LEFT JOIN users u ON u.id = r.recorded_by
+      WHERE r.case_no = ?`).bind(caseNo).first();
+  if (legacy && legacy.amount != null) total += Number(legacy.amount);
   return { payments, total: Math.round(total * 100) / 100, legacy };
 }
 
@@ -1814,9 +1821,17 @@ async function authorizationFor(env, caseNo, forAdmin) {
         /* PENDING until money is recorded, PART PAID while some has arrived and
            some has not. Sending payment instructions never reaches any of this —
            payment_send records that the firm asked, which is not being paid. */
+        /* ONCE A CASE HAS PAYMENT HISTORY, THE MONEY DECIDES. The old
+           `received` flag is an admin ticking "it's in" without saying how
+           much; it still speaks for cases that predate the ledger and have no
+           rows at all. But on a case whose only payment has been voided, the
+           flag would keep announcing "received" over a ledger holding nothing
+           — the screen contradicting the money, in the direction that says the
+           firm has been paid when it has not. */
         status: received > 0
           ? (outstanding > 0 ? 'part_paid' : 'received')
-          : ((ret && ret.received) ? 'received' : 'pending'),
+          : (paid.payments.length || paid.legacy ? 'pending'
+             : ((ret && ret.received) ? 'received' : 'pending')),
         receipt: rc ? {
           amount: rc.amount == null ? null : Number(rc.amount),
           method: rc.method || '', method_label: RETAINER_METHOD_LABEL[rc.method] || rc.method || '',
@@ -5048,18 +5063,27 @@ async function route(request, env) {
     }
     const rcRef = clean(body.reference, 200);
 
-    if (received) {
+    /* MONEY IS RECORDED IN THE LOG, NOT HERE. This route used to write
+       retainer_receipt, which is keyed by case_no and therefore holds one
+       instalment — and it kept creating new legacy rows after the log existed,
+       which is what made the totals ambiguous. It now writes a payment like any
+       other, so there is exactly one place money enters the ledger.
+
+       A payment only lands if a figure was given: `received: true` on its own
+       is the office ticking "the money is in" without saying how much, which is
+       the flag, not a payment.
+
+       Un-marking no longer deletes anything. A payment recorded in error is
+       voided through its own route, which keeps the record; unticking a
+       checkbox is not a reason to erase a payment history. */
+    if (received && rcAmount !== null && rcAmount > 0) {
       await env.DB.prepare(
-        `INSERT INTO retainer_receipt (case_no, amount, method, paid_on, reference, recorded_by, recorded_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-         ON CONFLICT(case_no) DO UPDATE SET amount = ?2, method = ?3, paid_on = ?4,
-           reference = ?5, recorded_by = ?6, recorded_at = ?7`)
-        .bind(m[1], rcAmount, rcMethod, rcPaidOn, rcRef, user.id, nowIso()).run();
-    } else {
-      /* Un-marking the retainer means the money is not in. Leaving a receipt
-         behind would leave the case asserting a payment it no longer claims to
-         have — the row goes with the flag. */
-      await env.DB.prepare('DELETE FROM retainer_receipt WHERE case_no = ?').bind(m[1]).run();
+        `INSERT INTO retainer_payment (case_no, amount, method, paid_on, reference,
+           client_token, recorded_by, recorded_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(client_token) WHERE client_token IS NOT NULL DO NOTHING`)
+        .bind(m[1], rcAmount, rcMethod, rcPaidOn, rcRef,
+              clean(body.client_token, 64) || null, user.id, nowIso()).run();
     }
 
     await env.DB.prepare(
@@ -5108,10 +5132,19 @@ async function route(request, env) {
     if (on && !/^\d{4}-\d{2}-\d{2}$/.test(on)) {
       return json({ error: 'The payment date should be a calendar date.' }, 400);
     }
+    /* IDEMPOTENT. A retry, a double tap or an offline replay delivers the same
+       payment twice, and an additive ledger would take both — two rows, twice
+       the money, a total nobody can reconcile against the bank. The token is
+       one per payment ATTEMPT, and the second arrival does nothing rather than
+       erroring, so a client retrying after a dropped response still sees the
+       state it expected. */
     await env.DB.prepare(
-      `INSERT INTO retainer_payment (case_no, amount, method, paid_on, reference, recorded_by, recorded_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`)
-      .bind(m[1], amt, meth, on, clean(body.reference, 200), user.id, nowIso()).run();
+      `INSERT INTO retainer_payment (case_no, amount, method, paid_on, reference,
+         client_token, recorded_by, recorded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(client_token) WHERE client_token IS NOT NULL DO NOTHING`)
+      .bind(m[1], amt, meth, on, clean(body.reference, 200),
+            clean(body.client_token, 64) || null, user.id, nowIso()).run();
     return json({ ok: true, authorization: await authorizationFor(env, m[1], true) });
   }
 

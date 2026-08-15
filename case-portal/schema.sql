@@ -931,10 +931,23 @@ CREATE TABLE IF NOT EXISTS retainer_payment (
   method      TEXT,               -- validated in the Worker, no CHECK (see above)
   paid_on     TEXT,               -- the calendar date the CLIENT paid
   reference   TEXT,
+  client_token TEXT,              -- idempotency, see the unique index below
   recorded_by INTEGER REFERENCES users(id),
   recorded_at TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_retpay_case ON retainer_payment(case_no, id);
+
+-- A RETRY MUST NOT CHARGE THE CLIENT TWICE. A flaky connection, a double tap or
+-- an offline replay can deliver the same recorded payment more than once, and
+-- an additive ledger takes every arrival at face value — two rows, twice the
+-- money, and a total nobody can reconcile. The page sends one token per payment
+-- ATTEMPT; a second arrival carrying it is refused by this index and the insert
+-- does nothing.
+--
+-- Partial UNIQUE so rows written without a token — anything from before this
+-- existed — are unaffected rather than colliding with each other on NULL.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_retpay_token
+  ON retainer_payment(client_token) WHERE client_token IS NOT NULL;
 
 -- A voided payment stays in the log and stops counting. Companion table, not a
 -- column, for the standing idempotency reason.
