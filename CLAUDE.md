@@ -497,7 +497,7 @@ Tests:
 
 ```bash
 node case-portal/test-worker.mjs   # 969 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 753 checks: the page against the real Worker
+node portal/test-portal.mjs        # 757 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,

@@ -1821,9 +1821,17 @@ async function authorizationFor(env, caseNo, forAdmin) {
         /* PENDING until money is recorded, PART PAID while some has arrived and
            some has not. Sending payment instructions never reaches any of this —
            payment_send records that the firm asked, which is not being paid. */
+        /* ONCE A CASE HAS PAYMENT HISTORY, THE MONEY DECIDES. The old
+           `received` flag is an admin ticking "it's in" without saying how
+           much; it still speaks for cases that predate the ledger and have no
+           rows at all. But on a case whose only payment has been voided, the
+           flag would keep announcing "received" over a ledger holding nothing
+           — the screen contradicting the money, in the direction that says the
+           firm has been paid when it has not. */
         status: received > 0
           ? (outstanding > 0 ? 'part_paid' : 'received')
-          : ((ret && ret.received) ? 'received' : 'pending'),
+          : (paid.payments.length || paid.legacy ? 'pending'
+             : ((ret && ret.received) ? 'received' : 'pending')),
         receipt: rc ? {
           amount: rc.amount == null ? null : Number(rc.amount),
           method: rc.method || '', method_label: RETAINER_METHOD_LABEL[rc.method] || rc.method || '',

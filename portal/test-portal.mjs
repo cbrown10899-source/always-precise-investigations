@@ -1967,12 +1967,33 @@ section('The retainer balance on a private case');
   ok('and the reference', has(paid, 'Venmo note: retainer'));
   ok('stamped with who recorded it', has(paid, 'Recorded by'));
 
-  await page.locator('[data-act="retUndo"]').click();
-  await page.waitForTimeout(800);
-  const undone = await text(page, '#dlgBody');
-  ok('and it can be put back to pending', has(undone, 'Retainer pending'));
-  ok('which clears the receipt with it',
-     !has(undone, 'Venmo note: retainer'), undone.slice(0, 300));
+  /* The owner's three figures, labelled apart. OUTSTANDING is what the client
+     still owes; `remaining` above it is the retainer the work has not consumed,
+     and the two must never share a word. */
+  ok('the panel shows received and outstanding',
+     has(paid, 'Received') && has(paid, 'Outstanding'));
+
+  /* A payment recorded in error is VOIDED, not deleted — the record keeps what
+     was believed at the time. Unticking a checkbox must never erase money. */
+  ok('each recorded payment offers a void', await page.locator('[data-act="retVoid"]').count() >= 1);
+  await page.locator('[data-act="retVoid"]').first().click();
+  await page.waitForTimeout(900);
+  /* Read the effect from the API rather than the panel: the workspace reload
+     lands on the case's default tab, and chasing the dialog around would test
+     navigation rather than the money. */
+  const after = await page.evaluate(async () => {
+    const w = await (await fetch('/portal-api/cases/API-20260812-4002/workspace',
+      { headers: { Accept: 'application/json' } })).json();
+    return w.authorization.retainer;
+  });
+  ok('voiding the payment returns the case to pending',
+     after.received_total === 0 && after.status === 'pending',
+     `${after.received_total} / ${after.status}`);
+  ok('but the payment is still on the record, marked voided',
+     after.payments.length === 1 && after.payments[0].voided === true);
+  ok('and the reference it carried is not erased',
+     after.payments[0].reference === 'Venmo note: retainer');
+  ok('while the agreed retainer is untouched by any of it', after.agreed === 1500);
   ok('six recorded hours at the private rate leave $900', auth.includes('900'), auth.slice(0, 400));
   await page.close();
 }
