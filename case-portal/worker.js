@@ -518,9 +518,29 @@ function sheetById(id) { return rateSheets().find(s => s.id === id) || null; }
    investigator view. The boundary is the same shape as the intake pairing
    already enforced by SHEET_INTAKE — decided HERE, server-side, from the sheet
    id, never from anything the caller says. */
+/* The firm's payment destinations, given by the owner 2026-08-15.
+ *
+ * THE DISPLAY TEXT AND THE URL ARE SEPARATE VALUES AND NEITHER IS DERIVED FROM
+ * THE OTHER. Venmo shows `@Trever-Brown-9` because that is how a Venmo handle
+ * is written, while its URL path is `/u/Trever-Brown-9` with no `@` — the
+ * owner was explicit that the symbol is display only and must not enter the
+ * path. Build one from the other and you produce venmo.com/u/@Trever-Brown-9,
+ * which is not the firm's page; a client who taps it either lands nowhere or
+ * on somebody else, holding a retainer. There is no derivation anywhere in
+ * this file and there must never be one.
+ *
+ * These live in case-portal/, which is excluded from the Pages deploy, so they
+ * are not published with the site. They are not secrets either — a payment
+ * destination is something a client is handed on purpose — but they are the
+ * firm's, and an admin can change any of them from Settings without a code
+ * change. A row in payment_methods overrides what is here. */
 const PAY_METHODS = [
-  { id: 'cash_app', label: 'Cash App' },
-  { id: 'venmo', label: 'Venmo' },
+  { id: 'cash_app', label: 'Cash App',
+    display_name: 'Cash App', handle: '$TreverB',
+    url: 'https://cash.app/$TreverB' },
+  { id: 'venmo', label: 'Venmo',
+    display_name: 'Venmo', handle: '@Trever-Brown-9',
+    url: 'https://venmo.com/u/Trever-Brown-9' },   // no @ in the path, deliberately
 ];
 /* rateSheets() has its own local `money`; this is the same formatting for the
    payment block, which is built outside that function. */
@@ -551,8 +571,20 @@ async function paymentConfig(env) {
     `SELECT method, enabled, display_name, handle, url, instructions, updated_at
        FROM payment_methods`).all();
   const byId = Object.fromEntries((results || []).map(r => [r.method, r]));
+  /* No row yet means the firm's own details above, ON. The owner supplied both
+     destinations and asked for both to be clickable, so the out-of-the-box
+     state is the working one rather than an empty form somebody has to find.
+     A saved row wins completely — configuring a method is how you change or
+     switch one off. */
   return PAY_METHODS.map(m => {
-    const row = byId[m.id] || {};
+    const row = byId[m.id];
+    if (!row) {
+      return {
+        id: m.id, label: m.label, enabled: true,
+        display_name: m.display_name, handle: m.handle, url: m.url,
+        instructions: '', updated_at: null, from_default: true,
+      };
+    }
     return {
       id: m.id, label: m.label,
       enabled: Number(row.enabled) === 1,
@@ -561,6 +593,7 @@ async function paymentConfig(env) {
       url: row.url || '',
       instructions: row.instructions || '',
       updated_at: row.updated_at || null,
+      from_default: false,
     };
   });
 }
@@ -583,8 +616,11 @@ async function paymentOptionsFor(env, wanted) {
      to "send them all", the exact opposite of what was asked. The caller
      refuses the send rather than mailing an empty PAYMENT OPTIONS heading. */
   const pick = Array.isArray(wanted) ? all.filter(m => wanted.includes(m.id)) : all;
+  /* A client is only ever offered a method that is enabled AND has a working
+     link. Every payment option they see is a tappable action, so a method
+     without a URL is not shown as text — it is not shown. */
   return pick
-    .filter(m => m.enabled && (m.handle.trim() || safePayUrl(m.url)))
+    .filter(m => m.enabled && safePayUrl(m.url))
     .map(m => ({
       id: m.id,
       label: m.display_name.trim() || m.label,
@@ -614,10 +650,21 @@ async function setPaymentMethod(request, env, user, id) {
   }
 
   const enabled = body.enabled === true || body.enabled === 1 || body.enabled === '1' ? 1 : 0;
-  /* Enabling a method with nowhere to send money would put an empty PAYMENT
-     OPTIONS block in front of a client. */
-  if (enabled && !handle && !url) {
-    return json({ error: 'Give a handle or a payment link before enabling this method.' }, 400);
+  /* EVERY OFFERED METHOD MUST BE CLICKABLE (owner, 2026-08-15), so a method
+     cannot be enabled without a payment URL. The earlier order allowed a
+     handle on its own and rendered it as plain text; the later one governs,
+     and this is the structural way to honour it — a method with no link simply
+     cannot be turned on, rather than being turned on and quietly degrading to
+     text that a client has to retype.
+
+     The URL is still admin-entered and is NEVER derived from the handle. Those
+     two rules only look opposed: the answer is that both destinations have a
+     real URL, not that the code invents one. */
+  if (enabled && !url) {
+    return json({ error: handle
+      ? 'This method needs a payment link before it can be offered — every payment '
+        + 'option a client sees has to be tappable, and a link is never guessed from a handle.'
+      : 'Give a payment link and a handle before enabling this method.' }, 400);
   }
 
   await env.DB.prepare(
@@ -1022,11 +1069,20 @@ PAYMENT OPTIONS
 A ${usd(PERSONAL.retainer)} retainer is required to begin investigative services.
 The retainer may be submitted using one of the approved methods below.
 ${pay.map(m => `
-${m.label.toUpperCase()}
-${m.handle ? `  ${m.handle}` : ''}${m.url ? `\n  ${m.url}` : ''}${m.instructions ? `\n  ${m.instructions}` : ''}`).join('')}
+PAY WITH ${m.label.toUpperCase()}
+${m.handle ? `  ${m.handle}\n` : ''}  ${m.url}${m.instructions ? `\n  ${m.instructions}` : ''}`).join('')}
 `;
 }
 
+/* THE WHOLE CARD IS THE LINK (owner, 2026-08-15) — "make the entire payment
+   button/card clickable, not just a tiny text link", and on a phone tapping it
+   opens the provider. So the anchor is the outer element and everything, the
+   handle included, sits inside it: a thumb landing anywhere on the card pays.
+   A small inline link beside static text is the thing this replaced.
+
+   Written with inline styles and no flexbox because it has to survive Outlook
+   and Gmail, which drop most CSS. `display:block` on the anchor is what makes
+   the whole rectangle tappable in every client that renders anything at all. */
 function paymentBlockHtml(pay) {
   if (!pay.length) return '';
   return `<div style="margin:0 0 18px;padding:16px 18px;background:#f4f8fa;border:1px solid #dfe7ec;border-radius:10px">
@@ -1034,14 +1090,16 @@ function paymentBlockHtml(pay) {
     <p style="margin:0 0 14px;font-size:.92rem">A <b>${escHtml(usd(PERSONAL.retainer))}</b> retainer is
       required to begin investigative services. The retainer may be submitted using one of the
       approved methods below.</p>
-    ${pay.map(m => `<div style="margin:0 0 12px">
-      <div style="font-weight:700;color:#12305a">${escHtml(m.label)}</div>
-      ${m.handle ? `<div style="font-size:1.05rem;font-weight:700;letter-spacing:.01em">${escHtml(m.handle)}</div>` : ''}
-      ${m.instructions ? `<div style="font-size:.86rem;color:#5c6775">${escHtml(m.instructions)}</div>` : ''}
-      ${m.url ? `<p style="margin:6px 0 0"><a href="${escHtml(m.url)}"
-         style="display:inline-block;background:#12305a;color:#fff;padding:9px 16px;border-radius:8px;
-                text-decoration:none;font-weight:700;font-size:.9rem">Pay with ${escHtml(m.label)}</a></p>` : ''}
-    </div>`).join('')}
+    ${pay.map(m => `<a href="${escHtml(m.url)}"
+      style="display:block;margin:0 0 10px;padding:14px 16px;background:#12305a;border-radius:10px;
+             text-decoration:none;color:#ffffff;font-family:'Segoe UI',Arial,sans-serif">
+      <span style="display:block;font-weight:800;letter-spacing:.05em;font-size:.95rem;color:#ffffff">
+        PAY WITH ${escHtml(m.label.toUpperCase())}</span>
+      ${m.handle ? `<span style="display:block;margin-top:4px;font-size:1.05rem;font-weight:700;color:#dce6f2">${
+        escHtml(m.handle)}</span>` : ''}
+      ${m.instructions ? `<span style="display:block;margin-top:4px;font-size:.85rem;color:#b9c9dd">${
+        escHtml(m.instructions)}</span>` : ''}
+    </a>`).join('')}
   </div>`;
 }
 
