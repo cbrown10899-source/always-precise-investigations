@@ -882,3 +882,37 @@ CREATE TABLE IF NOT EXISTS payment_send (
   sent_at    TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_paysend_case ON payment_send(case_no, id DESC);
+
+-- ---------------------------------------------------------------------------
+-- WHAT WAS ACTUALLY RECEIVED against a private client's retainer (PAYMENTS.md
+-- §5/§11, owner 2026-08-15).
+--
+-- `case_retainer.received` is a 0/1 flag: it can say that money arrived, and
+-- nothing about WHICH money. The office needs the amount, how it came, the day
+-- the client paid and a reference, or "the retainer is in" is a claim nobody
+-- can check against a bank statement six weeks later.
+--
+-- A companion table rather than columns on case_retainer, for the standing
+-- idempotency reason: schema.sql is re-applied on every portal-setup run and
+-- ALTER TABLE ADD COLUMN is not idempotent, so columns added there would bind
+-- a FRESH database while the live one kept the old shape. Same reasoning as
+-- activity_removed, build_custom and invoice_retainer.
+--
+-- `method` deliberately carries NO CHECK constraint. A CHECK cannot be widened
+-- in place for exactly the same reason, and the owner's list of payment methods
+-- is the kind of thing that gains an entry. The allowed values live in the
+-- Worker.
+--
+-- SENDING INSTRUCTIONS NEVER WRITES THIS ROW. It is created only when an admin
+-- records the money, which is the whole point: payment_send records that the
+-- firm asked, this records that the client paid, and the two must never be
+-- confused for one another.
+CREATE TABLE IF NOT EXISTS retainer_receipt (
+  case_no     TEXT PRIMARY KEY,
+  amount      REAL,
+  method      TEXT,      -- cash_app | venmo | check | cash | card | ach_bill | other
+  paid_on     TEXT,      -- the calendar date the CLIENT paid, not when it was typed
+  reference   TEXT,      -- cheque number, transaction note, whatever identifies it
+  recorded_by INTEGER REFERENCES users(id),
+  recorded_at TEXT
+);
