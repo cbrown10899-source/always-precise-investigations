@@ -64,6 +64,8 @@ sensitive ever removed this way needs a purge, not just a deploy.
 | Portal ops plan (nav, dashboard, tasks, search, contacts…) | **NOT CODED** — see `PORTAL-OPS.md`, phased |
 | Activity edit/delete convention | **PARTIAL** — `activity_removed` shipped #55; audit against the requirement before building |
 | Active Surveillance voice command mode | **NOT CODED** — spec arrived corrupted, see `PORTAL-OPS.md` |
+| Deploy allow-list + artifact test | **LIVE VERIFIED** — merged #75/#77/#78, deploy green at 936414b, build stamp matches, internal files 404 |
+
 
 **Deployment is answerable in one request now.** `/.well-known/build.txt`
 carries the live short SHA; compare it with `git rev-parse --short=7
@@ -75,7 +77,6 @@ desktop should read as a consistently dark/navy portal rather than a large
 light canvas beside a dark sidebar; and mobile Active Surveillance should not
 stack informational blocks before the investigator reaches usable controls —
 compact status at the top, Quick Activity and Voice Mode high in thumb reach.
-| Deploy allow-list + artifact test | **LIVE VERIFIED** — merged #75/#77/#78, deploy green at 936414b, build stamp matches, internal files 404 |
 
 **Needs the owner, not code** (WORK-ORDER §0): the firm's **business** Cash App
 and Venmo details — the handles in git history are personal accounts, so do not
