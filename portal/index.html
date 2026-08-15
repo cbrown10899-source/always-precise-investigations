@@ -1002,7 +1002,16 @@ async function api(path, opts = {}){
   let data = {};
   try { data = await res.json(); } catch {}
   if(res.status === 401 && ME){ ME = null; paint(); throw new Error("Your session ended. Please sign in again."); }
-  if(!res.ok) throw new Error(data.error || "That did not work. Please try again.");
+  if(!res.ok){
+    /* Carry the status and the body on the error. Callers that need to act on
+       WHICH failure it was — a stale idempotency token, a finalize refused by
+       its gates — cannot tell from a message string, and matching on prose is
+       how a rule ends up encoded in two places. */
+    const err = new Error(data.error || "That did not work. Please try again.");
+    err.status = res.status;
+    Object.assign(err, data);
+    throw err;
+  }
   return data;
 }
 
@@ -2074,7 +2083,15 @@ async function recordRetainerPayment(received){
       ? "Payment recorded. The retainer now reads as received."
       : "Cleared — the retainer is pending again.";
     await reloadWorkspace();
-  }catch(e){ RET_MSG = e.message; RET_ERR = true; paintCase(); }
+  }catch(e){
+    /* A 409 means the previous attempt claimed its token and never finished
+       writing, so nothing was saved and THAT token is dead. Keeping it would
+       make Record payment answer 409 for ever — an error telling the admin to
+       try again, on a button that cannot. Dropping it makes the next press a
+       fresh attempt, which is the recovery the message promises. */
+    if(e.status === 409) RET_TOKEN = "";
+    RET_MSG = e.message; RET_ERR = true; paintCase();
+  }
 }
 
 /* Voiding keeps the row. A payment recorded in error is corrected on the
@@ -2086,7 +2103,15 @@ async function voidRetainerPayment(id){
       {method: "POST", body: {reason: "corrected in the portal"}});
     RET_MSG = "Payment voided. It stays on the record, marked.";
     await reloadWorkspace();
-  }catch(e){ RET_MSG = e.message; RET_ERR = true; paintCase(); }
+  }catch(e){
+    /* A 409 means the previous attempt claimed its token and never finished
+       writing, so nothing was saved and THAT token is dead. Keeping it would
+       make Record payment answer 409 for ever — an error telling the admin to
+       try again, on a button that cannot. Dropping the token turns the next
+       press into a fresh attempt, which is the recovery the message promises. */
+    if(e.status === 409) RET_TOKEN = "";
+    RET_MSG = e.message; RET_ERR = true; paintCase();
+  }
 }
 
 async function loadPaymentMethods(){
