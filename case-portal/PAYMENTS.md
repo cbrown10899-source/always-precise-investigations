@@ -66,9 +66,28 @@ displays the selected amount · returned intake preserves the selected amount ·
 **partial payments calculate correctly** · Record Payment never resets the
 agreed retainer · Insurance never sees this selector.
 
-### State of this selector, audited 2026-08-15 — reader's note, not owner instruction
+### State of this selector — **CODED + TESTED 2026-08-15**
 
-**Part 2 is done. Part 1 is not.** The two were recorded together and are easy
+**Both parts are now built.** The selector sits on the private send wizard as
+`$1,500 Standard / $2,000 / $3,000 / Custom amount…`, writes
+`case_retainer.retainer_amount` through the route that already existed, and the
+preview re-reads the sheet from the server so it can never show a figure the
+case does not hold. `$100/hr` and the four-hour minimum are untouched, and the
+carrier wizard renders no selector at all.
+
+Three defects were found while building it and fixed with controls that print
+each bug: an absent `received` meant "not received" (so raising the agreed
+retainer **un-received a paid one**); zero was storable (record says $0, client's
+sheet says $1,500); and an untouched selector would have written the standard
+figure over a case that had agreed more, as a side effect of previewing an
+email. All seven of the owner's named tests are in `test-worker.mjs`, with the
+UI driven in `test-portal.mjs`. Worker 997 → 1033, portal 789 → 806.
+
+The audit note below is kept as the record of what was found and why.
+
+### The audit that preceded it, 2026-08-15 — reader's note, not owner instruction
+
+**Part 2 was done. Part 1 was not.** The two were recorded together and are easy
 to read as one item; they are not.
 
 - **The agreed figure is carried everywhere it is read** — `agreedRetainer()`

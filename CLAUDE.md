@@ -366,7 +366,22 @@ Pricing lives in the portal as two rate sheets an admin opens and emails
 
 - **`private_retainer` ("$1,500 Retainer")** — private clients. The retainer is a
   deposit applied to work billed at $100/hr, 4-hour minimum. `PERSONAL` in the
-  Worker sets it.
+  Worker sets the **standard** figure, and it is only a starting point:
+  `case_retainer.retainer_amount` holds what a particular client actually
+  agreed, an admin picks it from $1,500 / $2,000 / $3,000 / Custom on the
+  private send wizard, and `agreedRetainer()` is the single read that feeds the
+  sheet, the subject line, the payment block and the preview. **The rate and the
+  4-hour minimum are not per-case** — only the retainer is. A retainer of zero
+  is refused, because `rateSheets()` falls back to the standard for anything not
+  above zero and the record would then disagree with the client's own sheet.
+
+  Two rules hold this together and are easy to break by accident. **An absent
+  field means unchanged, in both columns:** posting only an amount must not
+  un-receive a paid retainer, and posting only a receipt must not reset the
+  agreed figure. And **an untouched selector writes nothing** — opened from Rate
+  sheets there is no case number yet, so it shows the standard figure, and
+  saving that would re-cut a client's retainer as a side effect of previewing an
+  email.
 - **`insurance_assignment` ("Insurance Assignment Rates")** — carriers. The
   `RATES.packages` ladder, package/authorization-based. The two sheets are
   separate products (see `case-portal/RATESHEETS.md`): separate config,
@@ -496,8 +511,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 997 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 789 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 1033 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 806 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,

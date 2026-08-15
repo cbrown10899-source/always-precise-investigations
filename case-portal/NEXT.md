@@ -117,7 +117,7 @@ elsewhere in this file. **Do not rebuild anything already LIVE VERIFIED.**
 
 | # | Item | State |
 | --- | --- | --- |
-| 1 | Custom Private Retainer Selector | 🔴 NOT CODED — presets, in the send flow |
+| 1 | Custom Private Retainer Selector | **CODED + TESTED**, awaiting merge — see below |
 | 2 | Lead-card Send Payment Options | 🔴 NOT CODED — `PAYMENTS.md` step 9 |
 | 3 | Standalone Payment Options dialog | 🔴 NOT CODED — step 12; `payment_send.with_sheet` is the seam |
 | 4 | NEXT STEP helper block | 🔴 NOT CODED — steps 10 and 17 |
@@ -125,6 +125,53 @@ elsewhere in this file. **Do not rebuild anything already LIVE VERIFIED.**
 | 6 | Real intake alerts / archive | 🔴 NOT CODED — `INTAKE-OPS.md` §1 and §2; **archive part 2 has never arrived** |
 | 7 | Portal Ops Phase 1 onward | 🔴 NOT CODED — `PORTAL-OPS.md`, phased |
 | 8 | Active Surveillance voice-command mode | 🔴 NOT CODED — **after core Portal Ops is stable**, owner's condition |
+
+### Item 1 — Custom Private Retainer Selector: CODED + TESTED
+
+`$1,500 Standard / $2,000 / $3,000 / Custom` on the **private** send wizard,
+writing `case_retainer.retainer_amount` through the route that already existed.
+The storage, the guards and the carry-through were live already and were **not**
+rebuilt; what shipped is the control and three safety fixes it needed.
+
+| Owner's named test | Where |
+| --- | --- |
+| each preset works | `test-worker.mjs` — each of the three posted and read back |
+| custom amount works | the owner's own $2,500, stored exactly, not rounded to a preset |
+| rate sheet displays the selected amount | both MIME parts of the **real email**, plus the subject line |
+| returned intake preserves the selected amount | the intake row is untouched, and a **second** send carries the same figure |
+| partial payments calculate correctly | two instalments against a chosen retainer, not the standard one |
+| Record Payment never resets the agreed retainer | asserted, and its mirror below |
+| Insurance never sees this selector | claims case refused by the Worker; carrier wizard renders no selector; an adjuster's email carries no retainer wording |
+
+**Three defects were found and fixed while building it**, each with a control run
+that prints the bug:
+
+1. **An absent `received` meant "not received".** The selector sends an amount
+   and knows nothing about the money, so raising an agreed retainer would have
+   **un-received a retainer that had genuinely been paid** — the case reading
+   PENDING with the payments still in the log underneath. Absent now means
+   unchanged, the same rule the amount already had. Control: *"raising the agreed
+   retainer does not un-receive it — false"*.
+2. **Zero was storable.** `rateSheets()` falls back to the standard for anything
+   not above zero, so a stored 0 put $0 in the record and $1,500 in front of the
+   client — the record and the document disagreeing in silence. Refused now.
+3. **An untouched selector would have overwritten the case.** Opened from Rate
+   sheets there is no case number, so it shows the standard figure; writing that
+   on the way to Preview re-cut the client's retainer as a **side effect of
+   looking at an email**. Control: the preview came back reading
+   *"Private Client — $1,500 Retainer"* on a case that had just agreed $3,000.
+
+**One test of mine was wrong and the code was right**, recorded because that is
+the point of the discipline: the flag guard was first written against a case
+that already had payments, where `received` is decided by the money and not the
+flag at all — it would have passed no matter what the flag did. It is driven on
+a payment-free case now. A second one tried to email the carrier sheet against a
+private case; the sheet/lead pairing guard correctly refuses that, so the carrier
+boundary is asserted where a carrier actually is.
+
+**Suites:** worker 997 → **1033**, portal 789 → **806**. All five green.
+**Still DEPLOYED-not-LIVE-VERIFIED once merged**, for the standing reason: the
+Worker's email output is not observable without an authenticated admin session.
 
 **Every item is tracked through the owner's six states: CODED → TESTED →
 PUSHED → MERGED → DEPLOYED → LIVE VERIFIED.** The words done, shipped and
