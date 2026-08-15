@@ -210,6 +210,22 @@ section('Neither the stager nor this test can eat the working tree');
                         '.github', '.claude', 'private-investigator']) {
     ok(`staging into ${target}/ is refused`, guarded(path.join(ROOT, target)));
   }
+  /* A directory whose NAME begins with two dots is inside the repository, but
+     `rel.startsWith('..')` calls it outside — so the containment test waved
+     through exactly the path it was written to catch. Segments, not prefixes.
+     Created here only if absent, and removed with a non-recursive rmdir. */
+  {
+    const odd = path.join(ROOT, '..staging');
+    const mine = !fs.existsSync(odd);
+    if (mine) fs.mkdirSync(odd);
+    try {
+      ok('a directory named "..staging" inside the repo is still refused', guarded(odd));
+      ok('and it survives the attempt', fs.existsSync(odd));
+    } finally {
+      if (mine) { try { fs.rmdirSync(odd); } catch { /* not ours to remove */ } }
+    }
+  }
+
   ok('and nothing under those paths was touched',
      fs.existsSync(path.join(ROOT, 'portal', 'index.html'))
      && fs.existsSync(path.join(ROOT, 'case-portal', 'worker.js'))
@@ -246,6 +262,17 @@ section('Neither the stager nor this test can eat the working tree');
     ok('but it would have allowed portal/ to be deleted — hence the extra clause',
        !oldGuardWouldRefuse(path.join(ROOT, 'portal'))
        && !oldGuardWouldRefuse(path.join(ROOT, 'case-portal')));
+
+    /* And the same for the prefix-vs-segment bug, kept as evidence rather than
+       prose: a string prefix test classifies an in-repo "..staging" as being
+       outside the repository, which is precisely backwards. */
+    const prefixTest = rel => rel !== '' && !rel.startsWith('..');
+    const segmentTest = rel => rel !== '' && rel.split(path.sep)[0] !== '..';
+    ok('a string-prefix containment test calls "..staging" outside the repo',
+       !prefixTest('..staging'));
+    ok('while a segment test correctly calls it inside', segmentTest('..staging'));
+    ok('and both still agree that a real escape is outside',
+       !prefixTest(`..${path.sep}elsewhere`) && !segmentTest(`..${path.sep}elsewhere`));
   }
 
   /* The cleanup above may only remove what it created. Plant a directory that

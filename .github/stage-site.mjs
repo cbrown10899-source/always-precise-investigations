@@ -121,8 +121,16 @@ function assertSafeTarget(dest) {
      has any business deleting it. Tests stage into a temp directory, which is
      outside the repository and therefore unaffected by this rule. */
   const rel = path.relative(ROOT, dest);
-  const insideRepo = rel && !rel.startsWith('..') && !path.isAbsolute(rel);
-  if (insideRepo && rel.split(path.sep)[0] !== BUILD_DIR) {
+  const segments = rel.split(path.sep);
+  /* Compare SEGMENTS, not string prefixes. `rel.startsWith('..')` looks like a
+     containment test and is not one: a directory legitimately named `..cache`
+     or `..staging` inside the repo relativises to `..staging`, which that test
+     reads as "outside the repository" — so the one path that most needs
+     refusing gets waved through and deleted. Only a segment that IS `..`
+     means we have climbed out. */
+  const escapes = segments[0] === '..';
+  const insideRepo = rel !== '' && !escapes && !path.isAbsolute(rel);
+  if (insideRepo && segments[0] !== BUILD_DIR) {
     throw new Error(`refusing to stage into "${rel}": inside the repository, `
                   + `only ${BUILD_DIR}/ may be rebuilt`);
   }
