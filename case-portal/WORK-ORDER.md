@@ -64,8 +64,9 @@ them.
   old handles in git history were the owner's personal accounts — do not
   recover them, do not seed defaults, do not invent a payment URL.
 - **The three Dropbox secrets** (Phase 7).
-- **"Serving ALL of Virginia since 2014"** (Phase 9) — an open coverage
-  decision, surface it rather than resolving it.
+- ~~**"Serving ALL of Virginia since 2014"** (Phase 9)~~ — **RESOLVED by the
+  owner, 2026-08-15.** Both rate sheets state that travel outside the normal
+  service area is quoted and agreed before the work is scheduled.
 
 ---
 

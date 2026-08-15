@@ -3528,7 +3528,17 @@ section('The field view has a door you can find from anywhere');
     await page.locator('#loginBtn').click();
     await page.waitForTimeout(900);
 
-    if (w < 900) { await page.locator('.burger').click(); await page.waitForTimeout(300); }
+    /* THE DOOR HAS TO BE HITTABLE, not merely present (owner, 2026-08-15). At
+       1.4rem with 4px of padding the burger measured about 30px square — under
+       Apple's 44px minimum and half the 50-52px this file uses for every other
+       phone control. Measured, because "it looks fine" is how it stayed that
+       size while the navigation it opens was being tested. */
+    if (w < 900) {
+      const b = await page.locator('.burger').boundingBox();
+      ok(`${label}: the menu button clears the 44px minimum`,
+         b.height >= 44 && b.width >= 44, `${Math.round(b.width)}x${Math.round(b.height)}`);
+      await page.locator('.burger').click(); await page.waitForTimeout(300);
+    }
     ok(`${label}: the navigation offers Active surveillance without opening a case`,
        await page.locator('.side-surv').isVisible());
     await page.locator('.side-surv').click();
@@ -3784,6 +3794,28 @@ section('A lead has its own life, and its sends live on the card');
      await page.locator('#wiz_to').inputValue() === 'riley@example.test');
   ok('with the case number riding along',
      await page.locator('#wiz_case').inputValue() === 'API-20260812-4005');
+
+  /* THE PREVIEW IS THE DOCUMENT THAT WILL BE SENT. SHEETS is fetched once at
+     sign-in with no case in hand, so it always holds the standard retainer —
+     the wizard has to re-read the sheet for THIS case or the admin reads
+     $1,500 on screen and the client receives the $3,000 that was agreed. */
+  await page.evaluate(async () => {
+    await api('/cases/API-20260812-4005/retainer', { method: 'POST', body: { retainer_amount: 3000 } });
+    await wizSheetLoad();
+  });
+  await page.waitForTimeout(600);
+  await page.locator('[data-act="wizStep"]', { hasText: 'Preview' }).click();
+  await page.waitForTimeout(700);
+  const preview = await text(page, '.amsheet');
+  ok('the preview shows the retainer this case agreed',
+     preview.includes('$3,000'), preview.slice(0, 240));
+  ok('and not the standard one beside it', !preview.includes('$1,500'));
+  // The dialog's own heading is the selector label, so it has to agree too —
+  // a header saying one figure over a preview saying another is worse than
+  // either being wrong alone.
+  ok('and the heading over it agrees',
+     (await text(page, '.amhead')).includes('$3,000'), await text(page, '.amhead'));
+
   await page.locator('.amx').click();
   await page.waitForTimeout(300);
 

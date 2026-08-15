@@ -22,10 +22,10 @@ did not. Every suite passed the whole time.
 
 | Component | Master SHA | Deployed SHA | Status | Verified at | How |
 | --- | --- | --- | --- | --- | --- |
-| Public site | `936414b` | **`936414b`** | **LIVE VERIFIED** | 2026-08-15 04:5x UTC | `/.well-known/build.txt` reports `commit: 936414b`, which IS master. First time this repo can answer "what is live" without inference |
-| `/portal/` page | `936414b` | `936414b` | **LIVE VERIFIED** | 2026-08-15 | served page diffed against `origin/master:portal/index.html`: **two changed lines, both Cloudflare's injected bot script**. Headers `no-store`, `noindex, nofollow, noarchive`, `nosniff`, `no-referrer`. Negative check: `Cash App` / `Venmo` / `payment-methods` absent — correct, no payment UI is built |
-| Worker / API (`api-case-portal`) | `936414b` | `173d9db` **and current** | **DEPLOYED**, provenance-verified | 2026-08-15 | `deploy-portal.yml` succeeded at `173d9db`; `git diff 173d9db origin/master -- case-portal/worker.js` is **empty**; no commit touches `worker.js` after it (that workflow only fires on pushes touching it). So the running source IS master's, established by provenance rather than by probing the instance |
-| D1 schema (`payment_methods`, `payment_send`) | `936414b` | applied | **LIVE VERIFIED** | 2026-08-15 | `schema.sql` identical between `173d9db` and master; `/portal-api/health` → `missing_tables:[]` |
+| Public site | `b2f2b6d` | **`b2f2b6d`** | **LIVE VERIFIED** | 2026-08-15, re-checked after #122 | `/.well-known/build.txt` reports `commit: 936414b`, which IS master. First time this repo can answer "what is live" without inference |
+| `/portal/` page | `b2f2b6d` | `b2f2b6d` | **LIVE VERIFIED** | 2026-08-15, re-checked after #122 | served page diffed against `origin/master:portal/index.html`: **two changed lines, both Cloudflare's injected bot script**. Headers `no-store`, `noindex, nofollow, noarchive`, `nosniff`, `no-referrer`. Negative check: `Cash App` / `Venmo` / `payment-methods` absent — correct, no payment UI is built |
+| Worker / API (`api-case-portal`) | `b2f2b6d` | `b2f2b6d` | **DEPLOYED**, provenance-verified | 2026-08-15 | `deploy-portal.yml` succeeded at `173d9db`; `git diff 173d9db origin/master -- case-portal/worker.js` is **empty**; no commit touches `worker.js` after it (that workflow only fires on pushes touching it). So the running source IS master's, established by provenance rather than by probing the instance |
+| D1 schema (incl. `retainer_payment`, `retainer_payment_token`) | `b2f2b6d` | applied | **LIVE VERIFIED** | 2026-08-15 | `schema.sql` identical between `173d9db` and master; `/portal-api/health` → `missing_tables:[]` |
 
 **Why the Worker is DEPLOYED and not LIVE VERIFIED.** Its build is not
 externally observable: authentication runs before routing, so a route that
@@ -63,7 +63,9 @@ sensitive ever removed this way needs a purge, not just a deploy.
 | Retainer ledger: AGREED / RECEIVED / OUTSTANDING, instalments, void-not-delete | **LIVE VERIFIED** — worker at master |
 | Retainer payment idempotency (payment + token in one transaction) | **LIVE VERIFIED** — #107/#108/#110/#112/#114/#116/#118/#120 at `c4e96c4`; build.txt matches master, both deploys green, served page carries the token-keeping branch and the new-attempt recovery, which keeps the typed amount and refuses a blank one; worker 986, portal 780 |
 | Private payment: lead-card Send Payment Options, standalone send, RETAINER PENDING / Record Payment, history | **NOT CODED** — next in queue |
-| Custom private retainer selector ($1,500 / $2,000 / $3,000 / Custom) | **PARTIAL** — the stored `retainer_amount` is honoured and preserved end to end, but the **selector is not built** and `rateSheets()` / `paymentBlockText` still print the standard figure, so a $3,000 case emails a sheet saying $1,500 |
+| Private retainer: the agreed figure drives sheet, subject, email, payment block and preview | **OPEN until LIVE VERIFIED** — CODED + TESTED. `agreedRetainer()` reads the case; `rateSheets(retainer)`, `sheetById(id, retainer)`, `paymentBlockText/Html(pay, retainer)` and `GET /sheets?case=` all take it, and the wizard re-reads the sheet for its case. Control run printed the bug verbatim: subject `$1,500 Retainer — … (case API-RET3K)` on a $3,000 case. Worker 997, portal 789 |
+| Custom private retainer **selector** ($1,500 / $2,000 / $3,000 / Custom) | **NOT CODED** — the amount is honoured and now carried everywhere once set, but nothing on screen sets it to $2,000 or $3,000 yet |
+| Mobile menu button hit target | **OPEN until LIVE VERIFIED** — CODED + TESTED. Was **38x35** measured (owner reported ~30px); now `min-width/min-height:50px` with the glyph left at 1.4rem, matching the 50-52px this file uses elsewhere. A test measures it at phone width |
 | Real intake alerts | **NOT CODED** — requirements recorded in `INTAKE-OPS.md` §1 |
 | Intake archive / sample cleanup | **NOT CODED** — part 1 recorded in `INTAKE-OPS.md` §2; **part 2 has not arrived** |
 | Portal ops plan (nav, dashboard, tasks, search, contacts…) | **NOT CODED** — see `PORTAL-OPS.md`, phased |
@@ -86,8 +88,13 @@ compact status at the top, Quick Activity and Voice Mode high in thumb reach.
 
 **Needs the owner, not code** (WORK-ORDER §0): the firm's **business** Cash App
 and Venmo details — the handles in git history are personal accounts, so do not
-recover them, do not seed defaults, do not invent a payment URL; the three
-Dropbox secrets; and the "Serving ALL of Virginia" coverage wording.
+recover them, do not seed defaults, do not invent a payment URL; and the three
+Dropbox secrets.
+
+**RESOLVED, not open (owner, 2026-08-15): the Virginia coverage wording.** Both
+rate sheets already state that significant travel outside the normal service
+area is quoted and approved before the work is scheduled, which is the promise
+the wording was needed for. It is off the needs-owner list; do not put it back.
 
 ---
 
@@ -322,8 +329,6 @@ all four HIGH defects fixed):**
 
 ### Still the owner's, not code's
 
-- **"Serving ALL of Virginia since 2014"** vs. location pages scoped to about
-  an hour's drive. §29 says do not state coverage unless verified.
 - **The literal §29 homepage section order** (dedicated Insurance and Private
   sections) — the two-path hero shipped instead, deliberately.
 - **Dropbox** — needs `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`,
@@ -665,7 +670,7 @@ quietly returning a shorter day.
 | Homepage section order per §29 | 🟡 | hero → paths → services (claims card now leads the grid, every consumer service still on it) → **How an Assignment Works (new, four steps, quotes nothing)** → reviews → about → CTA → locations. A literal full reorder (dedicated Insurance and Private sections) was deliberately NOT done blind — §29 also says "do not make the homepage bloated", and the two-path hero already gives each audience its door. **Owner: eyeball the live homepage and say if you want the literal §29 order** |
 | Title / description / canonical / OG / JSON-LD on service pages | ✅ | all present on the homepage and the three service pages |
 | Same on `/intake/` | ✅ **done 2026-08-14** | description, canonical and OG added. `noindex` stays — the form is reached by being sent the link; the OG tags are for the preview a mail client draws when that link is shared |
-| Do not invent coverage claims | ⚠️ | the homepage says **"Serving ALL of Virginia since 2014"** while the location pages are deliberately scoped to about an hour's drive (Roanoke, Lynchburg, Charlottesville, Danville, Bedford, Farmville). Those two claims disagree; §29 says not to state coverage unless verified. **Owner decision, not a code fix** |
+| Do not invent coverage claims | ✅ **RESOLVED by the owner, 2026-08-15** | both rate sheets state that significant travel outside the normal service area is quoted and approved before the work is scheduled, which is the promise §29 wanted. No longer an owner decision; do not reopen it |
 
 ### Permissions (§33) and end-to-end (§38, §39)
 
@@ -717,7 +722,8 @@ queue because 1–9 are done and 10 is blocked:
     keeps a template from becoming a fabricated fact.
 
 Still needing the owner rather than code: real iPhone Safari and Android
-Chrome testing, the Dropbox credentials, and the Virginia coverage wording.
+Chrome testing, and the Dropbox credentials. (The Virginia coverage wording
+was RESOLVED by the owner on 2026-08-15 — see the top of this file.)
 
 ---
 

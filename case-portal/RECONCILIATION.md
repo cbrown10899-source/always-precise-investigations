@@ -193,8 +193,9 @@ page, nav, footer, sitemap, FAQ and JSON-LD**, with a guard test. ✅ Titles,
 descriptions, canonicals, OG and structured data present on the homepage and
 all three service pages; `/intake/` gained description/canonical/OG
 2026-08-14 (noindex deliberate — the link is *sent*, and OG is for the
-preview). ⚠️ open owner decision: "Serving ALL of Virginia" vs the
-hour's-drive location pages.
+preview). ✅ the "Serving ALL of Virginia" wording was RESOLVED by the
+owner on 2026-08-15: both rate sheets say travel outside the normal service
+area is quoted and agreed before the work is scheduled.
 
 ## X. Role security — server-side, tested by attempting it
 

@@ -208,7 +208,14 @@
   #pkgdoc img{max-width:100%;border-radius:6px;}
   /* UIBUILD P1: the navigation rail. Same .tabs machinery, new shape — a
      fixed sidebar at desktop widths, a drawer behind the burger on mobile. */
-  .burger{display:none;background:transparent;border:0;color:#fff;font-size:1.4rem;cursor:pointer;padding:4px 10px;}
+  /* THE ICON IS SMALL; THE TARGET IS NOT (owner, 2026-08-15). At 1.4rem with
+     4px of padding this was about 30px square — under Apple's 44px minimum and
+     well under the 50-52px this file uses for every other phone control. The
+     glyph stays compact and the button grows around it, so nothing looks
+     heavier and a thumb lands on it. Measured by a test at phone width, not
+     eyeballed. */
+  .burger{display:none;background:transparent;border:0;color:#fff;font-size:1.4rem;cursor:pointer;
+    padding:0;min-width:50px;min-height:50px;align-items:center;justify-content:center;}
   @media(min-width:900px){
     body.withnav .tabs{position:fixed;left:0;top:58px;bottom:0;width:198px;flex-direction:column;
       align-items:stretch;gap:2px;padding:14px 10px;margin:0;background:#13273f;border-radius:0;
@@ -246,7 +253,9 @@
        was display:none at every width, the sidebar was hidden under 900px, and
        a phone had NO navigation at all while an iPad in landscape looked fine.
        Never move the base rule back below this block. */
-    .burger{display:inline-block;}
+    /* inline-flex, not inline-block: the centring above only applies to a flex
+       container, and without it the 50px box holds an off-centre glyph. */
+    .burger{display:inline-flex;}
   }
   /* Case Package cards (UIBUILD P3) */
   .pkgcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px;margin-top:10px;}
@@ -1752,9 +1761,26 @@ function wizPaymentHtml(w){
   </div>`;
 }
 
+/* THE SHEET THIS CASE WILL BE SENT, not the standard one. `SHEETS` is fetched
+   once at sign-in with no case in hand, so it always carries the default
+   retainer; a case that agreed a different figure has to re-read the sheet for
+   itself, or the admin previews one number and the client receives another —
+   which is what was happening. Failure leaves the
+   default sheet in place rather than emptying the preview — a stale figure is
+   corrected by the Worker at send time, a blank screen helps nobody. */
+async function wizSheetLoad(){
+  const w = SHEET_WIZ;
+  if(!w || !w.caseNo) return;
+  try{
+    const r = await api(`/sheets?case=${encodeURIComponent(w.caseNo)}`);
+    if(SHEET_WIZ === w) w.sheetData = (r.sheets || []).find(s => s.id === w.sheet) || null;
+  }catch(e){ /* keep the default sheet */ }
+  paint();
+}
+
 function sheetWizardHtml(){
   const w = SHEET_WIZ;
-  const sheet = SHEETS.find(s => s.id === w.sheet) || {};
+  const sheet = w.sheetData || SHEETS.find(s => s.id === w.sheet) || {};
   const intakeLabel = w.sheet === "insurance_assignment"
     ? "Insurance Assignment Intake" : "Private Client Intake";
   /* The include-intake choice lives on the FIRST screen (owner, 2026-08-14).
@@ -6375,7 +6401,7 @@ document.addEventListener("click", ev => {
     SHEET_WIZ = {sheet: el.dataset.kind === "claims" ? "insurance_assignment" : "private_retainer",
                  step: 1, to: c.client_email || "", caseNo: el.dataset.case, note: "",
                  include: true, pay: true, payMethods: [], err: "", fromLead: true};
-    SHEET_MSG = ""; wizPaymentLoad(); paint();
+    SHEET_MSG = ""; wizPaymentLoad(); wizSheetLoad(); paint();
   }
   else if(act === "leadIntake"){
     const c = CASES.find(x => x.case_no === el.dataset.case) || {};
@@ -6391,7 +6417,10 @@ document.addEventListener("click", ev => {
     wizCollect();
     const s2 = Number(el.dataset.s);
     if(s2 > 1 && !SHEET_WIZ.to){ SHEET_WIZ.err = "Enter the address to send it to."; paint(); }
-    else { SHEET_WIZ.err = ""; SHEET_WIZ.step = s2; paint(); }
+    /* The case number can be TYPED on step 1, so the sheet is re-read on the
+       way to Preview: the retainer belongs to the case, and the preview has to
+       be the document that will actually be sent. */
+    else { SHEET_WIZ.err = ""; SHEET_WIZ.step = s2; paint(); if(s2 > 1) wizSheetLoad(); }
   }
   else if(act === "wizSend"){ wizSend(); }
   else if(act === "nlKind"){ NL = {kind: el.dataset.k, err: ""}; paint(); }
