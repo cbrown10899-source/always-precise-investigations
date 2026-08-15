@@ -1669,17 +1669,30 @@ async function configValue(env, key, fallback) {
 
    Thresholds are configuration (app_config), not constants sprinkled through
    the code — 75/90/100 today, whatever the office wants tomorrow. */
+/* Claim an idempotency token BEFORE writing money. The primary key is the gate:
+   exactly one caller can insert a given token, and meta.changes says whether we
+   were that caller. A retry therefore writes nothing and still gets the state it
+   expected, rather than an error it would reasonably retry again.
+
+   A COMPANION TABLE, because the token cannot live on retainer_payment. That
+   table already exists in the live database and CREATE TABLE IF NOT EXISTS will
+   never add a column to it — which is exactly what went wrong: portal-setup
+   failed with "no such column: client_token" while the deployed Worker was
+   already inserting one. */
+async function claimPaymentToken(env, caseNo, token) {
+  if (!token) return true;   // nothing offered, nothing to dedupe against
+  const r = await env.DB.prepare(
+    `INSERT INTO retainer_payment_token (token, case_no, claimed_at)
+     VALUES (?, ?, ?) ON CONFLICT(token) DO NOTHING`)
+    .bind(token, caseNo, nowIso()).run();
+  return Number(r && r.meta && r.meta.changes) === 1;
+}
+
 /* What a private client has actually paid, across instalments.
 
-   TOTAL RECEIVED is the sum of every VALID payment row — voided ones stay in
-   the log and stop counting, so a mistake is corrected without the record
-   losing what was believed at the time.
-
-   The legacy single receipt still counts, and only when the log is empty. A row
-   written to retainer_receipt before the log existed is real money; ignoring it
-   would understate what the client paid, and counting it alongside a log
-   entry that replaced it would double it. Empty-log is the only state where it
-   can be the truth. */
+   TOTAL RECEIVED is the sum of every VALID payment — voided ones stay in the
+   log and stop counting, so a mistake is corrected without the record losing
+   what was believed at the time. */
 async function retainerPaid(env, caseNo) {
   const { results } = await env.DB.prepare(
     `SELECT p.id, p.amount, p.method, p.paid_on, p.reference, p.recorded_at,
@@ -4408,7 +4421,7 @@ const EXPECTED_TABLES = [
   'activity_removed', 'build_reports', 'build_summary', 'build_custom',
   'case_day_pauses', 'lead_status', 'send_log', 'invoice_retainer',
   'payment_methods', 'payment_send', 'retainer_receipt',
-  'retainer_payment', 'retainer_payment_void',
+  'retainer_payment', 'retainer_payment_void', 'retainer_payment_token',
 ];
 
 async function missingTables(env) {
@@ -5077,13 +5090,13 @@ async function route(request, env) {
        voided through its own route, which keeps the record; unticking a
        checkbox is not a reason to erase a payment history. */
     if (received && rcAmount !== null && rcAmount > 0) {
-      await env.DB.prepare(
-        `INSERT INTO retainer_payment (case_no, amount, method, paid_on, reference,
-           client_token, recorded_by, recorded_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-         ON CONFLICT(client_token) WHERE client_token IS NOT NULL DO NOTHING`)
-        .bind(m[1], rcAmount, rcMethod, rcPaidOn, rcRef,
-              clean(body.client_token, 64) || null, user.id, nowIso()).run();
+      const tok = clean(body.client_token, 64);
+      if (await claimPaymentToken(env, m[1], tok)) {
+        await env.DB.prepare(
+          `INSERT INTO retainer_payment (case_no, amount, method, paid_on, reference,
+             recorded_by, recorded_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`)
+          .bind(m[1], rcAmount, rcMethod, rcPaidOn, rcRef, user.id, nowIso()).run();
+      }
     }
 
     await env.DB.prepare(
@@ -5138,13 +5151,17 @@ async function route(request, env) {
        one per payment ATTEMPT, and the second arrival does nothing rather than
        erroring, so a client retrying after a dropped response still sees the
        state it expected. */
-    await env.DB.prepare(
-      `INSERT INTO retainer_payment (case_no, amount, method, paid_on, reference,
-         client_token, recorded_by, recorded_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(client_token) WHERE client_token IS NOT NULL DO NOTHING`)
-      .bind(m[1], amt, meth, on, clean(body.reference, 200),
-            clean(body.client_token, 64) || null, user.id, nowIso()).run();
+    const tok = clean(body.client_token, 64);
+    if (await claimPaymentToken(env, m[1], tok)) {
+      const ins = await env.DB.prepare(
+        `INSERT INTO retainer_payment (case_no, amount, method, paid_on, reference,
+           recorded_by, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .bind(m[1], amt, meth, on, clean(body.reference, 200), user.id, nowIso()).run();
+      if (tok) {
+        await env.DB.prepare('UPDATE retainer_payment_token SET payment_id = ? WHERE token = ?')
+          .bind(ins && ins.meta ? ins.meta.last_row_id : null, tok).run();
+      }
+    }
     return json({ ok: true, authorization: await authorizationFor(env, m[1], true) });
   }
 
