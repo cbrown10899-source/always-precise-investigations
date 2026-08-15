@@ -9,6 +9,49 @@ state. Update it when the queue moves; keep it short.
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
 truth** (recorded verbatim 2026-08-13).
 
+## 🚦 DEPLOYMENT MATRIX — 2026-08-15
+
+**Nothing is complete until it is LIVE VERIFIED.** The states are CODED →
+TESTED → PUSHED → MERGED → DEPLOYED → LIVE VERIFIED, and the words DONE,
+SHIPPED and IMPLEMENTED mean the last of those, never the first.
+
+This matrix exists because the two halves of the system drifted apart for four
+days without anything saying so: `deploy-portal.yml` kept shipping the Worker
+while `deploy.yml` failed, so the portal followed master and the public site
+did not. Every suite passed the whole time.
+
+| Component | Master SHA | Deployed | Status | Verified at | How |
+| --- | --- | --- | --- | --- | --- |
+| Public site + `/portal/` page | `5af1356` | content-verified current | **LIVE VERIFIED** | 2026-08-15 | served `/portal/` contains `stampNow`, `ymdLocal`, `pkgShipping`, `pkgWithheldNote`, "This finalized package needs attention" |
+| Worker / API (`api-case-portal`) | `5af1356` | assumed current | **DEPLOYED** (not SHA-verified) | 2026-08-15 | `/portal-api/health` → `ok:true`, `missing_tables:[]`. **The running build cannot be identified from outside**: auth precedes routing, so a real route and a fake one both return 401 |
+| D1 schema (`payment_methods`, `payment_send`) | `5af1356` | applied | **LIVE VERIFIED** | 2026-08-15 | `portal-setup.yml` dispatched after #72 (WORK-ORDER §0); `missing_tables:[]` confirms it independently |
+
+**The honest gap:** the Worker's deployed SHA is not externally observable. The
+site now stamps `/.well-known/build.txt`; the Worker has no equivalent, so
+"which Worker build is live" still needs the Actions log or an authenticated
+check. Do not write LIVE VERIFIED against the Worker on the strength of
+`/health` alone — it answers "a Worker is up", not "this Worker is up".
+
+### Feature states, this session's work
+
+| Item | State |
+| --- | --- |
+| HIGH #1 break/pause 0-hours | LIVE VERIFIED (Worker: DEPLOYED, see caveat) |
+| HIGH #2 stranded running day | LIVE VERIFIED (Worker: DEPLOYED, see caveat) |
+| HIGH #3 paid invoice back to draft | LIVE VERIFIED (Worker: DEPLOYED, see caveat) |
+| HIGH #4 held-back material + delivery link | **LIVE VERIFIED** — page identifiers confirmed served |
+| UTC/local surveillance date + midnight pairing | **LIVE VERIFIED** — `ymdLocal`/`stampNow` confirmed served |
+| Private payment configuration + sheet boundary | MERGED + DEPLOYED; **not LIVE VERIFIED** — admin-only routes need an authenticated check, and **no handles are configured**, so nothing renders yet |
+| Private payment UX (wizard toggles, lead card, standalone send, retainer receipt, history) | **NOT CODED** — steps 9–18 of `PAYMENTS.md` |
+| Deploy allow-list + artifact test | CODED + TESTED; awaiting PR |
+
+**Needs the owner, not code** (WORK-ORDER §0): the firm's **business** Cash App
+and Venmo details — the handles in git history are personal accounts, so do not
+recover them, do not seed defaults, do not invent a payment URL; the three
+Dropbox secrets; and the "Serving ALL of Virginia" coverage wording.
+
+---
+
 ## ⏰ START HERE — handoff to the local session, 2026-08-14
 
 **Implementation moved to the owner's local Claude Code + Codex.** This

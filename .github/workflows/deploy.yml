@@ -22,44 +22,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Stage public site (exclude non-site files)
+      # The artifact is built from an explicit ALLOW-LIST
+      # (.github/deploy-manifest.txt), not from the repository minus a list of
+      # excludes. That distinction is the whole reason this step was rewritten:
+      # with excludes, every new file and directory was public by default and a
+      # guard was the only thing between it and the internet. On 2026-08-14
+      # .claude/agents/*.md arrived, the markdown guard correctly refused it,
+      # and THE PUBLIC SITE STOPPED DEPLOYING for four merges — while
+      # deploy-portal.yml kept shipping the Worker, so the portal moved and the
+      # website did not, with nothing saying so. Adding one more --exclude fixes
+      # that instance and leaves the next one waiting.
+      #
+      # The stager also FAILS if a listed path has gone missing, so a renamed
+      # page is caught here rather than by someone finding a 404 weeks later.
+      #
+      # .github/test-deploy.mjs runs this same script and asserts what may and
+      # may not appear in the artifact. Run it after touching either file.
+      - name: Stage public site (explicit allow-list)
+        run: node .github/stage-site.mjs _site
+
+      - name: Prove the artifact is safe to publish
+        run: node .github/test-deploy.mjs
+
+      # "Has the site actually deployed?" was unanswerable from outside for four
+      # days, which is how the freeze went unnoticed. This makes it one request:
+      #   curl https://alwayspreciseinvestigations.net/.well-known/build.txt
+      # Written AFTER the guard runs, so the artifact test sees a pure tree.
+      # It publishes a short commit hash and a timestamp and nothing else — no
+      # branch, no message, no author. If even that is unwanted, delete this
+      # step; nothing depends on the file.
+      - name: Stamp the build so "what is live" is answerable
         run: |
-          mkdir _site
-          rsync -a \
-            --exclude '.git' \
-            --exclude '.github' \
-            --exclude '.claude' \
-            --exclude '_site' \
-            --exclude 'visitor-alerts' \
-            --exclude 'case-portal' \
-            --exclude 'build-locations.py' \
-            --exclude 'README.md' \
-            --exclude 'CLAUDE.md' \
-            --exclude '*.mjs' \
-            ./ _site/
-          # Internal notes must never reach the public site. CLAUDE.md was
-          # being published until 2026-08-12 — it describes where each
-          # boundary is enforced, which is a map for anyone probing them.
-          # case-portal/ is excluded above and is the only home for anything
-          # internal; a rate sheet in the repo root would be served verbatim.
-          # .claude/ is excluded for the same reason and was not, until
-          # 2026-08-15: agent definitions landed in .claude/agents/*.md and
-          # this guard caught them, which is exactly its job — but it meant
-          # every deploy failed silently to the site for four merges while the
-          # Worker kept shipping. Tooling config is not site content.
-          for leak in CLAUDE.md README.md PRICING.md; do
-            if [ -e "_site/$leak" ]; then echo "::error::$leak staged for deploy"; exit 1; fi
-          done
-          if find _site -name '*.md' | grep -q .; then
-            echo "::error::markdown staged for deploy:"; find _site -name '*.md'; exit 1
-          fi
-          # Test suites are not part of the site. They were served publicly
-          # until 2026-08-12 — no secrets in them, but a public copy of the
-          # test harness is a map of exactly what the defenses check.
-          if find _site -name '*.mjs' | grep -q .; then
-            echo "::error::test files staged for deploy:"; find _site -name '*.mjs'; exit 1
-          fi
-          echo "Files to deploy:"; find _site -type f | wc -l
+          mkdir -p _site/.well-known
+          printf 'commit: %s\nbuilt:  %s\n' \
+            "$(echo "$GITHUB_SHA" | cut -c1-7)" \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > _site/.well-known/build.txt
+          cat _site/.well-known/build.txt
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
