@@ -3393,6 +3393,71 @@ section('The field vocabulary covers the physical observations');
   await page.close();
 }
 
+/* Making both halves local was not enough. In the field the TIME is stamped
+   when the entry is started and the DATE was taken when Save was finally
+   tapped — two different instants. Start an entry at 23:58, finish typing it
+   at 00:03, and it filed on the new day carrying the old day's time; the
+   timeline orders by at_date then at_time, so it sorted ahead of everything
+   that genuinely came before it. This is the one place a surveillance log
+   crosses midnight as a matter of routine, so it is driven across a real
+   rollover with the page's clock held, not asserted about a helper. */
+section('An entry started before midnight is filed before midnight');
+{
+  const page = await (await browser.newContext({
+    viewport: { width: 390, height: 844 }, timezoneId: 'America/New_York' })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  // 03:58Z is 23:58 the previous evening in EDT — two minutes before rollover.
+  await page.clock.setFixedTime(new Date('2026-08-11T03:58:00Z'));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('dana');
+  await page.locator('#p').fill('FieldWork2026x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(600);
+  await page.locator('[data-act="svEnter"]').first().click();
+  await page.waitForTimeout(800);
+  if (await page.locator('[data-act="svStartDay"]').count()) {
+    await page.locator('[data-act="svStartDay"]').click();
+    await page.waitForTimeout(800);
+  }
+
+  await page.locator('.sv-nav button', { hasText: 'Activity' }).click();
+  await page.waitForTimeout(500);
+  await page.locator('#sv_q').fill('lost visual');
+  await page.waitForTimeout(400);
+  await page.locator('.sv-pick').first().click();
+  await page.waitForTimeout(400);
+
+  const stamped = await page.evaluate(() => ({ date: SV.entry && SV.entry.date, time: SV.entry && SV.entry.time }));
+  ok('the entry is stamped with the local date when it is STARTED',
+     stamped.date === '2026-08-10' && stamped.time === '23:58', JSON.stringify(stamped));
+
+  const marker = 'Rollover check ' + stamped.time;
+  await page.locator('#sv_desc').fill(marker);
+
+  // Midnight passes while the investigator is still typing.
+  await page.clock.setFixedTime(new Date('2026-08-11T04:03:00Z'));
+  await page.locator('[data-act="svSaveEntry"]').click();
+  await page.waitForTimeout(900);
+  ok('it still saves after the day has turned',
+     has(await text(page, '.sv-body'), 'Activity saved'));
+
+  const stored = await page.evaluate(async m => {
+    const w = await (await fetch('/portal-api/cases/API-20260812-4001/workspace',
+      { headers: { Accept: 'application/json' } })).json();
+    return (w.activity || []).find(a => (a.description || '').includes(m)) || null;
+  }, marker);
+  ok('the entry reached the log', !!stored, marker);
+  ok('and it is filed on the evening it was started, not the morning it was saved',
+     stored && stored.at_date === '2026-08-10', stored && JSON.stringify(
+       { at_date: stored.at_date, at_time: stored.at_time }));
+  ok('with the time it was started, so date and time agree',
+     stored && stored.at_time === '23:58', stored && stored.at_time);
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();

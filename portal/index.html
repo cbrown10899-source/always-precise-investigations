@@ -5208,7 +5208,15 @@ async function svSaveEntry(oneTap){
     at_date: ymdLocal(now), at_time: now.toTimeString().slice(0,5),
   } : {
     kind: "activity",
-    at_date: ymdLocal(),
+    /* The date that goes with THIS time, not the date it happens to be when
+       the button is finally tapped. `sv_time` was stamped when the entry was
+       started; taking the date at submit pairs two different instants, so an
+       entry begun at 23:58 and saved at 00:02 filed on the new day carrying
+       the old day's time — and the timeline orders by at_date then at_time, so
+       it sorted ahead of everything that really came before it. Making both
+       halves local was not enough; they have to be the SAME moment. The
+       fallback covers an entry restored without a stamp. */
+    at_date: SV.entry.date || ymdLocal(),
     at_time: $("sv_time").value,
     description: $("sv_desc").value,
     location: $("sv_loc") ? $("sv_loc").value : "",
@@ -5800,7 +5808,7 @@ document.addEventListener("click", ev => {
     const line = el.dataset.line;
     if(!line){ SV.entry = null; SV.err = ""; paint(); }
     else if(line === NO_CHANGE_LINE){ svSaveEntry(line); }          // one tap
-    else { SV.entry = {text: line, pick: line, time: new Date().toTimeString().slice(0,5)};
+    else { SV.entry = {text: line, pick: line, time: new Date().toTimeString().slice(0,5), date: ymdLocal()};
            SV.dirty = false; SV.ok = ""; SV.err = ""; paint(); }
   }
   else if(act === "svAddAnother"){ SV.ok = ""; SV.entry = null; paint(); }
@@ -5814,7 +5822,7 @@ document.addEventListener("click", ev => {
   else if(act === "svNote"){
     // A note is an activity entry the office reads and the client never does.
     SV.tab = "activity";
-    SV.entry = {text: "", time: new Date().toTimeString().slice(0,5), note: true};
+    SV.entry = {text: "", time: new Date().toTimeString().slice(0,5), date: ymdLocal(), note: true};
     SV.ok = ""; SV.err = ""; paint();
   }
   else if(act === "svEdit"){
@@ -5841,7 +5849,7 @@ document.addEventListener("click", ev => {
   else if(act === "svUseText"){
     const t = $("sv_heard") ? $("sv_heard").value : "";
     SV.heard = null; SV.tab = "activity";
-    SV.entry = {text: t, time: new Date().toTimeString().slice(0,5)};
+    SV.entry = {text: t, time: new Date().toTimeString().slice(0,5), date: ymdLocal()};
     paint();
   }
   else if(act === "svDiscard"){ SV.heard = null; paint(); }
