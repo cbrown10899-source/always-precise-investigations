@@ -90,7 +90,6 @@ components. Shape: spoken aliases → canonical command → activity type →
 | Spoken | Canonical |
 | --- | --- |
 | "Mobile, arrival" | `ARRIVAL` |
-| "…at residence" [TRUNCATED] | `…RESIDENCE` |
 | "Mobile, no change" | `NO_CHANGE` |
 | "Mobile, no change at residence" | `NO_CHANGE_RESIDENCE` → "No change observed at the residence." |
 | "Mobile, doing a drive-by check of residence" | `MOBILE_RESIDENCE_CHECK` → "Mobile check of residence was conducted." |
@@ -112,6 +111,33 @@ components. Shape: spoken aliases → canonical command → activity type →
 | [TRUNCATED] | `STATIONARY_SURVEILLANCE` |
 | "…conducting mobile surveillance" | `MOBILE_SURVEILLANCE` |
 | "Mobile, note" | `FREE_FORM_DICTATION_MODE` |
+
+**One alias is still unread:** the phrase that reaches `STATIONARY_SURVEILLANCE`.
+Its canonical id is known; the words that trigger it are not.
+
+**A fragment reading "…at residence" → "…RESIDENCE" also arrived, and is NOT
+recorded as a command.** Neither half of it is legible — an ellipsis is not an
+identifier — and it sat between `NO_CHANGE_RESIDENCE` and
+`MOBILE_RESIDENCE_CHECK`, both of which end the same way. It is far likelier to
+be a truncation artefact of one of those two than a twenty-fourth command.
+Listing it as a row would assert that a command exists on the evidence of a
+fragment, which is how a guess quietly becomes a requirement.
+
+### Near-collisions the registry has to resolve, not inherit
+
+The recovered ids make two pairs visible that differ by a couple of words and
+mean different things. These are §7's ambiguity case, and they are the reason
+§7 exists:
+
+| These sound alike | And mean different things |
+| --- | --- |
+| "Mobile check" → `MOBILE_CHECK` | "Mobile, drive-by check" → `MOBILE_RESIDENCE_CHECK` |
+| "Mobile, no change" → `NO_CHANGE` | "Mobile, no change at residence" → `NO_CHANGE_RESIDENCE` |
+
+"Mobile check" is also the wake word followed by a common noun, so it will be
+heard often and by accident. Neither pair may be resolved by picking the closer
+match: **§7 governs — offer the candidates, or create nothing.**
+
 
 Design the registry so **additional aliases and standardized phrases can be
 added later.**
@@ -312,11 +338,11 @@ header, and Last Activity edit/remove on the Home screen.
 
 1. ~~§7 entirely~~ — **RECOVERED 2026-08-15** (transmission 1 of 5).
 2. ~~§3 field~~ — **RECOVERED 2026-08-15** (transmission 2 of 5): `source = voice`.
-3. ~~§4 canonical names~~ — **RECOVERED 2026-08-15** (transmission 3 of 5):
-   `POSITION_CHANGE`, `DIRECT_VIEW`, `INDIRECT_VIEW`, `NO_CHANGE`,
-   `MOBILE_CHECK`. **Two spoken aliases are still unread** and stay marked
-   [TRUNCATED] in the table: the phrase reaching `…RESIDENCE` and the one
-   reaching `STATIONARY_SURVEILLANCE`. Both canonical ids are known and
-   aliases are explicitly extensible, so this does not block the registry.
+3. **§4 spoken aliases — PARTIAL, not complete.** The canonical ids arrived
+   (transmission 3 of 5): `POSITION_CHANGE`, `DIRECT_VIEW`, `INDIRECT_VIEW`,
+   `NO_CHANGE`, `MOBILE_CHECK`. **The phrase that reaches
+   `STATIONARY_SURVEILLANCE` is still unread**, so this item is NOT closed —
+   striking it through because most of it arrived is the same mistake as
+   calling a feature done because it is coded.
 4. **§6B** — the free-form dictation flow beyond "requires review before save".
 5. **§16** — the limitation sentence, and anything after it.
