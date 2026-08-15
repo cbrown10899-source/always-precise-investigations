@@ -20,17 +20,31 @@ days without anything saying so: `deploy-portal.yml` kept shipping the Worker
 while `deploy.yml` failed, so the portal followed master and the public site
 did not. Every suite passed the whole time.
 
-| Component | Master SHA | Deployed | Status | Verified at | How |
+| Component | Master SHA | Deployed SHA | Status | Verified at | How |
 | --- | --- | --- | --- | --- | --- |
-| Public site + `/portal/` page | `5af1356` | byte-identical to master | **LIVE VERIFIED** | 2026-08-15 | served `/portal/` diffed against `origin/master:portal/index.html`: **two changed lines, both Cloudflare's injected bot script**, nothing else. Headers `no-store`, `noindex, nofollow, noarchive`, `nosniff`, `no-referrer`. Negative check: `Cash App` / `Venmo` / `payment-methods` all absent, which is correct — no payment UI is built |
-| Worker / API (`api-case-portal`) | `5af1356` | assumed current | **DEPLOYED** (not SHA-verified) | 2026-08-15 | `/portal-api/health` → `ok:true`, `missing_tables:[]`. **The running build cannot be identified from outside**: auth precedes routing, so a real route and a fake one both return 401 |
-| D1 schema (`payment_methods`, `payment_send`) | `5af1356` | applied | **LIVE VERIFIED** | 2026-08-15 | `portal-setup.yml` dispatched after #72 (WORK-ORDER §0); `missing_tables:[]` confirms it independently |
+| Public site | `936414b` | **`936414b`** | **LIVE VERIFIED** | 2026-08-15 04:5x UTC | `/.well-known/build.txt` reports `commit: 936414b`, which IS master. First time this repo can answer "what is live" without inference |
+| `/portal/` page | `936414b` | `936414b` | **LIVE VERIFIED** | 2026-08-15 | served page diffed against `origin/master:portal/index.html`: **two changed lines, both Cloudflare's injected bot script**. Headers `no-store`, `noindex, nofollow, noarchive`, `nosniff`, `no-referrer`. Negative check: `Cash App` / `Venmo` / `payment-methods` absent — correct, no payment UI is built |
+| Worker / API (`api-case-portal`) | `936414b` | `173d9db` **and current** | **DEPLOYED**, provenance-verified | 2026-08-15 | `deploy-portal.yml` succeeded at `173d9db`; `git diff 173d9db origin/master -- case-portal/worker.js` is **empty**; no commit touches `worker.js` after it (that workflow only fires on pushes touching it). So the running source IS master's, established by provenance rather than by probing the instance |
+| D1 schema (`payment_methods`, `payment_send`) | `936414b` | applied | **LIVE VERIFIED** | 2026-08-15 | `schema.sql` identical between `173d9db` and master; `/portal-api/health` → `missing_tables:[]` |
 
-**The honest gap:** the Worker's deployed SHA is not externally observable. The
-site now stamps `/.well-known/build.txt`; the Worker has no equivalent, so
-"which Worker build is live" still needs the Actions log or an authenticated
-check. Do not write LIVE VERIFIED against the Worker on the strength of
-`/health` alone — it answers "a Worker is up", not "this Worker is up".
+**Why the Worker is DEPLOYED and not LIVE VERIFIED.** Its build is not
+externally observable: authentication runs before routing, so a route that
+exists and one that does not both return 401, and `/health` answers "a Worker is
+up", never "this Worker is up". The chain above is provenance — workflow green
+at a SHA whose `worker.js` is byte-identical to master's, with nothing touching
+it since. That is strong, and it is still not the same as exercising the code.
+Behavioural confirmation needs an authenticated admin session. Do not upgrade
+this row on the strength of `/health`.
+
+**⚠️ ONE THING IS FIXED AT ORIGIN BUT STILL PUBLIC FROM CACHE.** `/.gitignore`
+was being served (it was in the old deny-list artifact and is not in the
+allow-list one). A cache-busted request now 404s, so it is genuinely gone from
+the deployment — but the edge still answers 200 from a cached copy: `Age: 4917`,
+`Cache-Control: public, s-maxage=604800`, so **up to seven days**. It names only
+an internal tooling script, so the severity is low, but the general lesson is
+not: *removing a file from the artifact does not unpublish it.* **Owner action:
+purge that path in the Cloudflare dashboard** (or accept the week). Anything
+sensitive ever removed this way needs a purge, not just a deploy.
 
 ### Feature states, this session's work
 
@@ -43,7 +57,7 @@ check. Do not write LIVE VERIFIED against the Worker on the strength of
 | UTC/local surveillance date + midnight pairing | **LIVE VERIFIED** — `ymdLocal`/`stampNow` confirmed served |
 | Private payment configuration + sheet boundary | MERGED + DEPLOYED; **not LIVE VERIFIED** — admin-only routes need an authenticated check, and **no handles are configured**, so nothing renders yet |
 | Private payment UX (wizard toggles, lead card, standalone send, retainer receipt, history) | **NOT CODED** — steps 9–18 of `PAYMENTS.md` |
-| Deploy allow-list + artifact test | CODED + TESTED; awaiting PR |
+| Deploy allow-list + artifact test | **LIVE VERIFIED** — merged #75/#77/#78, deploy green at 936414b, build stamp matches, internal files 404 |
 
 **Needs the owner, not code** (WORK-ORDER §0): the firm's **business** Cash App
 and Venmo details — the handles in git history are personal accounts, so do not
