@@ -2161,6 +2161,43 @@ section('The retainer balance on a private case');
   await page.close();
 }
 
+/* SIGNING OUT MUST LEAVE NOTHING BEHIND FOR THE NEXT PERSON. All of this is
+   page-level state about one signed-in person's work, and a portal on a shared
+   desk gets used by two people in a row. The retainer draft is money typed for
+   one client; the workspace is rows the Worker served THAT user, so landing an
+   investigator back in an admin's open case shows them the client name and
+   claim number the redaction exists to withhold. The Worker's boundary was
+   never breached — the page was still holding an answer it had already been
+   given. */
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(500);
+  await page.evaluate(() => { RET_FORM = true; RET_DRAFT = { amt: '650' }; RET_TOKEN = 'admin-attempt'; });
+  const before = await page.evaluate(() => ({ view: VIEW, wsCase: WS_CASE, token: RET_TOKEN }));
+  ok('the admin has a case open and a payment half-entered',
+     before.view === 'case' && before.wsCase === 'API-20260812-4002' && before.token === 'admin-attempt');
+
+  await page.locator('[data-act="logout"]').first().click();
+  await page.waitForTimeout(600);
+  const out = await page.evaluate(() => ({
+    token: RET_TOKEN, draft: RET_DRAFT.amt, retCase: RET_CASE, wsCase: WS_CASE, ws: WS, view: VIEW,
+  }));
+  ok('signing out clears the half-entered payment',
+     out.token === '' && out.draft === undefined && out.retCase === null);
+  ok('and the case workspace it was drawn from',
+     out.wsCase === null && out.ws === null && out.view === 'list');
+
+  await signIn(page, 'dana', 'FieldWork2026x');
+  const next = await page.evaluate(() => ({ view: VIEW, wsCase: WS_CASE, token: RET_TOKEN, draft: RET_DRAFT.amt }));
+  ok('so the next person signs in to their own list, not the last one’s case',
+     next.view === 'list' && next.wsCase === null);
+  ok('with no trace of the amount typed before them',
+     next.token === '' && next.draft === undefined);
+  await page.close();
+}
+
 /* The invoice workflow (INVOICING.md): CASE -> CREATE -> REVIEW -> document ->
    BILL -> payment -> PAID, driven through the page. */
 section('An invoice from case to PAID');
