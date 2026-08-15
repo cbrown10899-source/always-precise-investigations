@@ -2084,12 +2084,12 @@ async function recordRetainerPayment(received){
       : "Cleared — the retainer is pending again.";
     await reloadWorkspace();
   }catch(e){
-    /* A 409 means the previous attempt claimed its token and never finished
-       writing, so nothing was saved and THAT token is dead. Keeping it would
-       make Record payment answer 409 for ever — an error telling the admin to
-       try again, on a button that cannot. Dropping it makes the next press a
-       fresh attempt, which is the recovery the message promises. */
-    if(e.status === 409) RET_TOKEN = "";
+    /* THE TOKEN IS KEPT ON PURPOSE. An error here means this attempt did not
+       record, and pressing again must be a RETRY OF THE SAME ATTEMPT — same
+       token, so the server can tell it apart from a genuinely second payment.
+       Dropping it on failure is what used to turn one slow press into two
+       recorded payments: the retry looked new, because nothing tied it to the
+       attempt that may still have been in flight. */
     RET_MSG = e.message; RET_ERR = true; paintCase();
   }
 }
@@ -2104,12 +2104,6 @@ async function voidRetainerPayment(id){
     RET_MSG = "Payment voided. It stays on the record, marked.";
     await reloadWorkspace();
   }catch(e){
-    /* A 409 means the previous attempt claimed its token and never finished
-       writing, so nothing was saved and THAT token is dead. Keeping it would
-       make Record payment answer 409 for ever — an error telling the admin to
-       try again, on a button that cannot. Dropping the token turns the next
-       press into a fresh attempt, which is the recovery the message promises. */
-    if(e.status === 409) RET_TOKEN = "";
     RET_MSG = e.message; RET_ERR = true; paintCase();
   }
 }

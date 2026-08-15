@@ -1669,12 +1669,6 @@ async function configValue(env, key, fallback) {
 
    Thresholds are configuration (app_config), not constants sprinkled through
    the code — 75/90/100 today, whatever the office wants tomorrow. */
-/* Claim an idempotency token BEFORE writing money. The primary key is the gate:
-   exactly one caller can insert a given token, and meta.changes says whether we
-   were that caller. A retry therefore writes nothing and still gets the state it
-   expected, rather than an error it would reasonably retry again.
-
-
 /* RECORD A PAYMENT AND CLAIM ITS TOKEN AS ONE FACT.
 
    D1's batch() is a single transaction, so both statements commit or neither
@@ -1703,11 +1697,15 @@ async function recordRetainerPayment(env, caseNo, token, row, userId) {
   if (!token) { await insertPayment.run(); return true; }
 
   try {
+    /* The payment goes in FIRST so its id is the one the claim points at.
+       Sequential inside the transaction, so last_insert_rowid() is this
+       payment. If the token is taken the second statement raises and the whole
+       thing rolls back — the payment is not written, which is the point. */
     await env.DB.batch([
-      env.DB.prepare(
-        `INSERT INTO retainer_payment_token (token, case_no, claimed_at)
-         VALUES (?, ?, ?)`).bind(token, caseNo, at),
       insertPayment,
+      env.DB.prepare(
+        `INSERT INTO retainer_payment_token (token, case_no, payment_id, claimed_at)
+         VALUES (?, ?, last_insert_rowid(), ?)`).bind(token, caseNo, at),
     ]);
     return true;
   } catch (e) {
@@ -1719,13 +1717,26 @@ async function recordRetainerPayment(env, caseNo, token, row, userId) {
        that vanishes silently is worse than the duplicate this guard exists to
        prevent.
 
-       The claimed token is the only proof, and it is a sound one: it commits
-       WITH its payment, so a token row on disk means the money is on disk too.
-       Anything else failed for its own reasons and must be raised, not
-       acknowledged. */
-    const claimed = await env.DB.prepare(
-      'SELECT 1 AS x FROM retainer_payment_token WHERE token = ?').bind(token).first();
-    if (claimed) return false;   // genuinely already recorded
+       AND THE CLAIM ITSELF IS NOT THE PROOF — the money is. A bare "this token
+       exists" still permits a false success in two ways. The token is a GLOBAL
+       primary key, so a claim belonging to a different case would answer for
+       this one. And claims written by the earlier two-step version are already
+       in the live database with nothing behind them: that code inserted the
+       token first and the payment second, so any attempt that died between the
+       two left a stranded claim. Reading one of those as "already recorded"
+       would answer 200 for ever on a payment that was never written.
+
+       So the proof follows the claim through to a payment row ON THIS CASE.
+       That is only sound because the two now commit together and the claim
+       carries the id: a stranded legacy claim has a NULL payment_id and proves
+       nothing, which is correct — it raises, and the admin's next attempt
+       carries a freshly generated token that cannot collide. An error they can
+       see and retry past, rather than a success that never happened. */
+    const paid = await env.DB.prepare(
+      `SELECT p.id FROM retainer_payment_token t
+         JOIN retainer_payment p ON p.id = t.payment_id
+        WHERE t.token = ? AND t.case_no = ?`).bind(token, caseNo).first();
+    if (paid) return false;   // genuinely already recorded, and the money is there
     throw e;
   }
 }

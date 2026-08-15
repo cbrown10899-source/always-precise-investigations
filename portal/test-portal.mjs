@@ -1992,16 +1992,15 @@ section('The retainer balance on a private case');
   ok('the panel shows received and outstanding',
      has(paid, 'Received') && has(paid, 'Outstanding'));
 
-  /* A 409 MUST BE RECOVERABLE FROM THIS SCREEN. The Worker refuses a token
-     whose payment never landed, saying nothing was saved. If the page kept that
-     token, pressing Record payment again would answer 409 for ever — an error
-     telling the admin to try again, on a button that cannot.
+  /* A FAILED ATTEMPT KEEPS ITS TOKEN. The page used to clear it on an error,
+     which is how one slow press became two recorded payments: the retry looked
+     like a new payment because nothing tied it to the attempt that might still
+     have been in flight. Keeping the token means the retry IS the same attempt
+     and the server can refuse it as such.
 
-     The orphan-token state itself is planted in the Worker suite, which can
-     write the table directly. Here the REAL handler runs against a stubbed 409
-     and the state it leaves is inspected: the token must be gone, so the next
-     press is a fresh attempt. Driving the real function rather than
-     re-implementing its branch, which would only prove the test. */
+     The real handler runs against a stubbed failure and the state it leaves is
+     inspected — driving the function rather than re-implementing its branch,
+     which would only prove the test. */
   {
     await page.locator('[data-act="retOpen"]').first().click();
     await page.waitForTimeout(300);
@@ -2010,15 +2009,15 @@ section('The retainer balance on a private case');
       const real = window.fetch;
       window.fetch = async () => new Response(JSON.stringify({
         error: 'That payment did not finish recording. Try again — nothing was saved.',
-      }), { status: 409, headers: { 'Content-Type': 'application/json' } });
-      RET_TOKEN = 'ui-dead-token';
+      }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      RET_TOKEN = 'ui-attempt-token';
       try { await recordRetainerPayment(true); } finally { window.fetch = real; }
       return { token: RET_TOKEN, msg: RET_MSG, err: RET_ERR, formOpen: RET_FORM };
     });
-    ok('a 409 is surfaced to the admin, not swallowed',
+    ok('a failure is surfaced to the admin, not swallowed',
        outcome.err === true && outcome.msg.includes('nothing was saved'), outcome.msg);
-    ok('the dead token is dropped, so the next press is a fresh attempt',
-       outcome.token === '', outcome.token);
+    ok('and the attempt keeps its token, so a retry cannot read as a new payment',
+       outcome.token === 'ui-attempt-token', outcome.token);
     ok('and the form stays open to be pressed again', outcome.formOpen === true);
   }
 

@@ -1870,6 +1870,45 @@ section('The two internal calculations never share a number');
   ok('with the money finally on the ledger',
      retriedTotal === beforeFail + 400, String(retriedTotal));
 
+  /* A STRANDED LEGACY CLAIM PROVES NOTHING.
+
+     The earlier two-step version wrote the token first and the payment second,
+     so an attempt that died between them left a claim with no money behind it —
+     and those rows are in the live database now. A proof that only asks "does
+     this token exist" reads one of them as "already recorded" and answers 200
+     for ever on a payment that was never written. Planted exactly as that code
+     would have left it: payment_id NULL. */
+  await env.DB.prepare(
+    `INSERT INTO retainer_payment_token (token, case_no, payment_id, claimed_at)
+     VALUES ('legacy-stranded-1', 'API-RB4', NULL, ?)`).bind('2026-08-15T00:00:00Z').run();
+  const beforeStranded = (await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
+    .authorization.retainer.received_total;
+  const stranded = await call(env, '/cases/API-RB4/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 310, method: 'cash', client_token: 'legacy-stranded-1' } });
+  ok('a claim with no payment behind it is NOT answered as already recorded',
+     stranded.status !== 200, String(stranded.status));
+  ok('and it did not quietly count either',
+     (await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
+       .authorization.retainer.received_total === beforeStranded);
+
+  /* AND A CLAIM BELONGING TO ANOTHER CASE ANSWERS FOR THAT CASE ONLY. The token
+     is a GLOBAL primary key, so without a case check one case's recorded
+     payment would stand as proof for a different case's unwritten one. */
+  await call(env, '/cases/API-RB1/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 120, method: 'cash', client_token: 'shared-token-1' } });
+  const beforeCross = (await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
+    .authorization.retainer.received_total;
+  const crossed = await call(env, '/cases/API-RB4/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 500, method: 'cash', client_token: 'shared-token-1' } });
+  ok('another case’s claim is not proof for this one', crossed.status !== 200,
+     String(crossed.status));
+  ok('and no money crossed between the two cases',
+     (await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
+       .authorization.retainer.received_total === beforeCross);
+  ok('while the case that really was paid still reads its own payment',
+     (await jsonOf(await call(env, '/cases/API-RB1/workspace', { cookie: admin })))
+       .authorization.retainer.payments.some(x => x.amount === 120));
+
   /* THE RULE THE FEATURE TURNS ON: sending instructions is not being paid.
 
      Asserted as "changes NOTHING" rather than "reads as pending". A case may
