@@ -96,11 +96,19 @@ emits a long step summary.
 
 ## What reaches the public site — an allow-list, not an exclude list
 
-`.github/deploy-manifest.txt` names every path that is site content.
-`.github/stage-site.mjs` builds `_site/` from it, and `deploy.yml` runs that
-script. **Anything not listed is not deployed** — a new handoff note, agent
-definition or tooling directory cannot reach the internet by being added to
-the repo, and cannot break the deploy either.
+`.github/deploy-manifest.txt` holds **file patterns** for everything that is
+site content. `.github/stage-site.mjs` matches them against the repository and
+builds `_site/` from the files that match, and `deploy.yml` runs that script.
+**A file that matches no pattern is not deployed** — a new handoff note, agent
+definition or tooling file cannot reach the internet by being added to the
+repo, and cannot break the deploy either.
+
+**The patterns are file-level on purpose.** The first version of this list named
+directories and copied them whole, which is default-deny at the top level and
+default-**allow** inside anything listed: `portal/` was allowed, so
+`portal/anything.txt` would have shipped. That is the same hole one level down,
+and the comment above it claimed otherwise. Name files, use `*` and `**`, and
+do not reintroduce a bare directory entry — a test fails if one appears.
 
 This replaced a list of `rsync --exclude` flags, and the reason is worth
 keeping: with excludes, everything was public **by default**, and the only
@@ -116,7 +124,7 @@ published. The stager **fails if a listed path is missing**, so a renamed
 directory is caught at build time instead of by someone finding a 404 later.
 
 ```bash
-node .github/test-deploy.mjs   # 31 checks: what may and may not be published
+node .github/test-deploy.mjs   # 47 checks: what may and may not be published
 ```
 
 It runs the real stager and asserts both halves — that the site is complete,

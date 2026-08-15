@@ -1,33 +1,30 @@
 # WHAT THE PUBLIC SITE IS MADE OF — the deploy allow-list.
 #
-# Every path here is copied to the Cloudflare Pages artifact. Anything in the
-# repository that is NOT listed here is not deployed, and cannot become
-# deployed by being added to the repo.
+# Every line is a PATTERN matched against the files in this repository. A file
+# is published only if it matches one. Nothing else is copied — not a stray
+# note, not a backup, not a new tooling file, wherever it sits.
 #
-# This replaced a deny-list of --exclude flags, which had the failure mode you
-# would expect: every new top-level file or directory was public BY DEFAULT and
-# the only thing standing between it and the internet was a guard that failed
-# the whole build. On 2026-08-14 that is exactly what happened — .claude/agents/
-# arrived, the markdown guard fired, and the public site stopped following
-# master for four merges while the Worker kept deploying, so the two halves of
-# the system drifted apart without anything saying so.
+# PATTERNS ARE FILE-LEVEL, ON PURPOSE. An earlier version of this list named
+# DIRECTORIES and copied them recursively, which made the boundary default-deny
+# at the top level and default-ALLOW inside anything listed: `portal/` was
+# allowed, so `portal/anything-at-all.txt` would have been published. That is
+# the same failure this list exists to prevent, one level down. Name files.
 #
-# The guard was right. The list was wrong. With an allow-list a new agent
-# definition, handoff note or tooling directory is simply not site content, and
-# the deploy is unaffected.
+#   *   matches within one path segment
+#   **  matches zero or more whole segments
 #
-# Live is served from the repo root, so a path listed here appears at the same
-# path on the domain: `intake` -> /intake/.
+# Live is served from the repo root, so a published path appears at the same
+# path on the domain: `intake/index.html` -> /intake/.
 #
-# ADDING A PAGE: add its path here, or it will not be published — and the stager
-# fails loudly if a listed path is missing, so a renamed directory is caught at
-# build time rather than by someone noticing a 404 weeks later.
+# ADDING A PAGE OR ASSET: add it here, or it is not published. The stager fails
+# if a pattern matches NOTHING, so a renamed or deleted page is caught at build
+# time rather than by someone finding a 404 weeks later.
 #
 # NOT LISTED, DELIBERATELY: .claude (agent definitions), .github (workflows,
-# this file, the stager and its test), case-portal (Worker source, PRICING.md,
-# the handoff and reconciliation notes), visitor-alerts (Worker source),
-# build-locations.py (the generator; its OUTPUT is published, not the script),
-# CLAUDE.md and README.md, and .gitignore.
+# this file, the stager and its test), case-portal (Worker source, PRICING.md
+# and every handoff note), visitor-alerts (Worker source), build-locations.py
+# (the generator — its OUTPUT is the site, not the script), CLAUDE.md,
+# README.md, .gitignore, and every test suite.
 
 # --- Cloudflare Pages configuration -----------------------------------------
 _headers
@@ -40,22 +37,52 @@ privacy.html
 robots.txt
 sitemap.xml
 beacon.js
-assets
-.well-known
+.well-known/security.txt
+
+# --- images and brand assets -------------------------------------------------
+# Named one by one, not `assets/*.webp`. A wildcard here would publish whatever
+# lands in this directory next, unreviewed — and an images folder is exactly
+# where a case photograph gets dropped "just to look at it". Adding a brand
+# asset is a deliberate line in this file.
+assets/banner1.webp
+assets/logo-white.webp
+assets/logo-lockup.svg
+assets/review1.webp
+assets/review2.webp
+assets/review3.webp
 
 # --- service pages -----------------------------------------------------------
-insurance-investigations
-infidelity-investigations
-child-custody-investigations
+insurance-investigations/index.html
+insurance-investigations/vendor-information/index.html
+infidelity-investigations/index.html
+child-custody-investigations/index.html
 
-# --- generated location pages (build-locations.py writes these) --------------
-private-investigator
+# --- generated location pages ------------------------------------------------
+# THE ONE WILDCARD IN THIS FILE, and it is deliberate. build-locations.py
+# generates these from its PLACES list, and build-locations.yml regenerates,
+# commits and deploys them on its own. Naming each city here would mean a new
+# market silently failed to publish until someone remembered this file — the
+# generator's whole point is that it does not need remembering.
+#
+# It is kept as tight as it can be: exactly one directory deep, and the
+# filename is fixed, so the only thing it can ever publish is a location page.
+private-investigator/index.html
+private-investigator/*/index.html
 
 # --- the intake form ---------------------------------------------------------
-intake
+intake/index.html
 
-# --- the staff case portal (noindex; a page, not the Worker) -----------------
-portal
+# --- the staff case portal: a PAGE, never the Worker (noindex) ---------------
+portal/index.html
+portal/manifest.webmanifest
+portal/icon-180.png
+portal/icon-192.png
+portal/icon-512.png
 
 # --- the private visitor dashboard (noindex) ---------------------------------
-watch
+watch/index.html
+watch/manifest.webmanifest
+watch/sw.js
+watch/icon-180.png
+watch/icon-192.png
+watch/icon-512.png
