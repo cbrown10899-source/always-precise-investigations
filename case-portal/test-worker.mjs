@@ -1788,16 +1788,26 @@ section('The two internal calculations never share a number');
   await env.DB.prepare(
     `INSERT INTO retainer_payment_token (token, case_no, claimed_at)
      VALUES ('attempt-rb4-orphan', 'API-RB4', ?)`).bind('2026-08-15T00:00:00Z').run();
-  const retried = await jsonOf(await call(env, '/cases/API-RB4/retainer/payment',
+  const beforeOrphan = (await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
+    .authorization.retainer.received_total;
+  const orphan = await call(env, '/cases/API-RB4/retainer/payment',
     { method: 'POST', cookie: admin,
-      body: { amount: 125, method: 'cash', client_token: 'attempt-rb4-orphan' } }));
-  ok('a retry after a failed write is accepted, not swallowed',
-     retried.authorization.retainer.payments.some(x => x.amount === 125));
-  ok('and the token then becomes binding, so a further replay is deduped',
+      body: { amount: 125, method: 'cash', client_token: 'attempt-rb4-orphan' } });
+  ok('a token held with no payment behind it is refused, not silently ignored',
+     orphan.status === 409, String(orphan.status));
+  ok('and it says nothing was saved, so the admin knows to try again',
+     String((await jsonOf(orphan)).error).includes('nothing was saved'));
+  ok('nothing was written on that attempt',
+     (await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
+       .authorization.retainer.received_total === beforeOrphan);
+  /* Reusing an unfinished claim would be a race, not a recovery: two
+     simultaneous submits would both find no payment linked and both write one.
+     Recovery is a NEW attempt, which is what the page produces. */
+  ok('while a fresh attempt records the money',
      (await jsonOf(await call(env, '/cases/API-RB4/retainer/payment',
        { method: 'POST', cookie: admin,
-         body: { amount: 125, method: 'cash', client_token: 'attempt-rb4-orphan' } })))
-       .authorization.retainer.payments.filter(x => x.amount === 125).length === 1);
+         body: { amount: 125, method: 'cash', client_token: 'attempt-rb4-orphan-retry' } })))
+       .authorization.retainer.received_total === beforeOrphan + 125);
 
   // Relative, so earlier blocks adding payments cannot make this pass or fail
   // for reasons unrelated to what it is testing.

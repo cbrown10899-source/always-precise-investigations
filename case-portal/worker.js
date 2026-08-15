@@ -1680,26 +1680,31 @@ async function configValue(env, key, fallback) {
    failed with "no such column: client_token" while the deployed Worker was
    already inserting one. */
 async function claimPaymentToken(env, caseNo, token) {
-  if (!token) return true;   // nothing offered, nothing to dedupe against
+  if (!token) return 'claimed';   // nothing offered, nothing to dedupe against
   const r = await env.DB.prepare(
     `INSERT INTO retainer_payment_token (token, case_no, claimed_at)
      VALUES (?, ?, ?) ON CONFLICT(token) DO NOTHING`)
     .bind(token, caseNo, nowIso()).run();
-  if (Number(r && r.meta && r.meta.changes) === 1) return true;
+  if (Number(r && r.meta && r.meta.changes) === 1) return 'claimed';
 
-  /* THE TOKEN IS TAKEN — but by what? A claim is only meaningful once the
-     payment it guards exists. If the previous attempt claimed the token and
-     then failed to write the payment, the token would block every retry and
-     the money would be lost silently: the client paid, the firm has no record,
-     and pressing the button again does nothing.
+  /* THE TOKEN IS TAKEN, AND THE ONLY ATOMIC FACT IS THAT WE DID NOT TAKE IT.
 
-     That is a worse outcome than the duplicate this guards against, because a
-     duplicate can be voided and a payment nobody recorded cannot be recovered.
-     So an unfinished claim is reusable, and only a claim with a payment
-     attached actually stops a retry. */
+     A previous version asked "is a payment linked yet?" and proceeded when the
+     answer was no, so an unfinished claim could be reused. That reads as
+     recovery and is a race: two near-simultaneous submits — the double tap this
+     whole mechanism exists for — both find no link and both write a payment.
+     The recovery path reopened the very failure the guard was for.
+
+     Whether the claim finished is still worth knowing, but only to decide what
+     to TELL the caller, never to decide whether to write. A linked claim is a
+     genuine duplicate and the caller gets the state it expected. An unlinked
+     one means an earlier attempt died mid-write, which is a real condition the
+     admin must hear about — answered with an error rather than a silent
+     no-op, because silence is how a payment goes missing. Retrying produces a
+     new token and works. */
   const held = await env.DB.prepare(
     'SELECT payment_id FROM retainer_payment_token WHERE token = ?').bind(token).first();
-  return !(held && held.payment_id != null);
+  return (held && held.payment_id != null) ? 'duplicate' : 'incomplete';
 }
 
 /* Release a claim whose payment did not get written, so the retry that follows
@@ -5117,7 +5122,11 @@ async function route(request, env) {
        checkbox is not a reason to erase a payment history. */
     if (received && rcAmount !== null && rcAmount > 0) {
       const tok = clean(body.client_token, 64);
-      if (await claimPaymentToken(env, m[1], tok)) {
+      const claim = await claimPaymentToken(env, m[1], tok);
+      if (claim === 'incomplete') {
+        return json({ error: 'That payment did not finish recording. Try again — nothing was saved.' }, 409);
+      }
+      if (claim === 'claimed') {
         try {
           const ins = await env.DB.prepare(
             `INSERT INTO retainer_payment (case_no, amount, method, paid_on, reference,
@@ -5187,7 +5196,11 @@ async function route(request, env) {
        erroring, so a client retrying after a dropped response still sees the
        state it expected. */
     const tok = clean(body.client_token, 64);
-    if (await claimPaymentToken(env, m[1], tok)) {
+    const claim = await claimPaymentToken(env, m[1], tok);
+    if (claim === 'incomplete') {
+      return json({ error: 'That payment did not finish recording. Try again — nothing was saved.' }, 409);
+    }
+    if (claim === 'claimed') {
       try {
         const ins = await env.DB.prepare(
           `INSERT INTO retainer_payment (case_no, amount, method, paid_on, reference,
