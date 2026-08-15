@@ -1030,7 +1030,10 @@ async function api(path, opts = {}){
   });
   let data = {};
   try { data = await res.json(); } catch {}
-  if(res.status === 401 && ME){ ME = null; paint(); throw new Error("Your session ended. Please sign in again."); }
+  /* A session that ended is a session boundary too — the same clear-down as
+     signing out, or an expiry leaves the next person exactly where the last one
+     was standing. */
+  if(res.status === 401 && ME){ ME = null; sessionForget(); paint(); throw new Error("Your session ended. Please sign in again."); }
   if(!res.ok){
     /* Carry the status and the body on the error. Callers that need to act on
        WHICH failure it was — a stale idempotency token, a finalize refused by
@@ -2395,9 +2398,27 @@ async function doAccept(token){
   }
 }
 
+/* A SESSION BOUNDARY IS A HARDER RESET THAN A CASE CHANGE.
+
+   Everything cleared here is page-level state about ONE signed-in person's
+   work, and none of it may survive into whoever signs in next. On a shared
+   machine it did: the case they had open, the workspace rows the Worker served
+   THEM, and any unfinished payment all persisted, so the next sign-in landed
+   straight back in the previous user's case drawn from the previous user's
+   data. An investigator signing in after an admin would be looking at the
+   client name and claim number that `redactRow` exists to withhold — the
+   boundary is enforced in the Worker, but this page was still holding the
+   answer it had already been given. */
+function sessionForget(){
+  retainerReset(); RET_CASE = null;
+  WS = null; WS_CASE = null; WS_TAB = "overview"; WS_ERR = ""; WS_REPORT = null;
+  VIEW = "list"; SV = null; document.body.classList.remove("surv");
+}
+
 async function doLogout(){
   try{ await api("/auth/logout", {method:"POST"}); }catch{}
-  ME = null; CASES = []; USERS = []; INVITES = []; PKGS = null; TAB = "cases"; LAST_LINK = ""; LAST_EMAILED = false; RESET_BOX = null; paint();
+  ME = null; CASES = []; USERS = []; INVITES = []; PKGS = null; TAB = "cases"; LAST_LINK = ""; LAST_EMAILED = false; RESET_BOX = null;
+  sessionForget(); paint();
 }
 
 /* The case workspace. A case is not a record to read, it is work in progress,
