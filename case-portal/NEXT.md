@@ -22,7 +22,7 @@ did not. Every suite passed the whole time.
 
 | Component | Master SHA | Deployed | Status | Verified at | How |
 | --- | --- | --- | --- | --- | --- |
-| Public site + `/portal/` page | `5af1356` | content-verified current | **LIVE VERIFIED** | 2026-08-15 | served `/portal/` contains `stampNow`, `ymdLocal`, `pkgShipping`, `pkgWithheldNote`, "This finalized package needs attention" |
+| Public site + `/portal/` page | `5af1356` | byte-identical to master | **LIVE VERIFIED** | 2026-08-15 | served `/portal/` diffed against `origin/master:portal/index.html`: **two changed lines, both Cloudflare's injected bot script**, nothing else. Headers `no-store`, `noindex, nofollow, noarchive`, `nosniff`, `no-referrer`. Negative check: `Cash App` / `Venmo` / `payment-methods` all absent, which is correct — no payment UI is built |
 | Worker / API (`api-case-portal`) | `5af1356` | assumed current | **DEPLOYED** (not SHA-verified) | 2026-08-15 | `/portal-api/health` → `ok:true`, `missing_tables:[]`. **The running build cannot be identified from outside**: auth precedes routing, so a real route and a fake one both return 401 |
 | D1 schema (`payment_methods`, `payment_send`) | `5af1356` | applied | **LIVE VERIFIED** | 2026-08-15 | `portal-setup.yml` dispatched after #72 (WORK-ORDER §0); `missing_tables:[]` confirms it independently |
 
