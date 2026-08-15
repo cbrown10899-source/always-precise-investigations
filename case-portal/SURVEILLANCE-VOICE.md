@@ -108,13 +108,21 @@ components. Shape: spoken aliases → canonical command → activity type →
 | "Mobile, direct view" | `DIRECT_VIEW` |
 | "Mobile, indirect view" | `INDIRECT_VIEW` |
 | "…no activity" | `NO_ACTIVITY` |
-| [TRUNCATED] | `STATIONARY_SURVEILLANCE` |
+| "Mobile, stationary surveillance" | `STATIONARY_SURVEILLANCE` |
 | "…conducting mobile surveillance" | `MOBILE_SURVEILLANCE` |
 | "Mobile, note" | `FREE_FORM_DICTATION_MODE` |
 
-**One alias is still unread:** the phrase that reaches `STATIONARY_SURVEILLANCE`.
-Its canonical id is known; the words that trigger it are not.
+**Every canonical id and its primary alias has now arrived** (transmission 3B
+closed the last one). `STATIONARY_SURVEILLANCE` is a structured command and
+uses the same canonical Activity Log architecture as the rest.
 
+**Several rows above still show a PARTIAL spoken phrase** — "…departed",
+"…observed", "…vehicle absent", "…no activity", "…conducting mobile
+surveillance". Those are exactly what arrived. The owner's instruction is
+explicit: **do not infer or recreate any corrupted or truncated alias.** They
+stay as received until the full phrase is sent. Aliases are extensible by
+design, so an incomplete list delays nothing — an invented one would put words
+in an investigator's mouth and map them to a real Activity Log record.
 **A fragment reading "…at residence" → "…RESIDENCE" also arrived, and is NOT
 recorded as a command.** Neither half of it is legible — an ellipsis is not an
 identifier — and it sat between `NO_CHANGE_RESIDENCE` and
@@ -338,11 +346,11 @@ header, and Last Activity edit/remove on the Home screen.
 
 1. ~~§7 entirely~~ — **RECOVERED 2026-08-15** (transmission 1 of 5).
 2. ~~§3 field~~ — **RECOVERED 2026-08-15** (transmission 2 of 5): `source = voice`.
-3. **§4 spoken aliases — PARTIAL, not complete.** The canonical ids arrived
-   (transmission 3 of 5): `POSITION_CHANGE`, `DIRECT_VIEW`, `INDIRECT_VIEW`,
-   `NO_CHANGE`, `MOBILE_CHECK`. **The phrase that reaches
-   `STATIONARY_SURVEILLANCE` is still unread**, so this item is NOT closed —
-   striking it through because most of it arrived is the same mistake as
-   calling a feature done because it is coded.
+3. ~~§4 canonical ids and aliases~~ — **RECOVERED** across transmissions 3 and
+   3B: `POSITION_CHANGE`, `DIRECT_VIEW`, `INDIRECT_VIEW`, `NO_CHANGE`,
+   `MOBILE_CHECK`, and `STATIONARY_SURVEILLANCE` ("Mobile, stationary
+   surveillance"). Some rows still carry a partial spoken phrase exactly as
+   received; by owner instruction those are **not** to be inferred, and the
+   note under the table says so.
 4. **§6B** — the free-form dictation flow beyond "requires review before save".
 5. **§16** — the limitation sentence, and anything after it.
