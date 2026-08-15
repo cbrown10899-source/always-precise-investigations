@@ -609,6 +609,11 @@ const $ = id => document.getElementById(id);
 const app = $("app");
 let ME = null, TAB = "cases", CASES = [], USERS = [], INVITES = [], TOTAL = 0, FILTER = "", LAST_LINK = "", LAST_EMAILED = false;
 let RESET_BOX = null;   // {userId, url} — the reset link, shown AT the row it belongs to
+/* Private-client payment configuration. Admin-only and fetched, never held in
+   this file — the handles belong to the firm, not to the page source. */
+let PAYCFG = null;      // [{id,label,enabled,display_name,handle,url,instructions,from_default}]
+let PAY_MSG = "";
+let PAY_ERR = false;
 let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
 let NL = null;        // manual intake (UIBUILD P17): null | {kind, err}
 let SHEET_WIZ = null; // the 3-step send wizard (UIBUILD P18)
@@ -1869,8 +1874,73 @@ function completedDesk(q){
    where trying things out is clearly separate from doing the work. The one
    Hide button stays over the list, and the empty state still offers the
    example, because teaching UI is not a test control. */
-function settingsView(){
+/* PRIVATE CLIENT PAYMENT METHODS (PAYMENTS.md §2/§8, owner 2026-08-15).
+
+   This screen exists because the Worker refuses a send when a method is
+   switched on with no payment link, and that refusal said "add a link in
+   Settings" while no such screen existed — an error with no way to act on it.
+   An admin was blocked from sending and had nothing to click.
+
+   PRIVATE CLIENT ONLY. Nothing here is offered on an insurance sheet, a
+   carrier email or the insurance wizard; the Worker decides that from the
+   sheet id and the page never gets a vote. The handles themselves arrive from
+   an admin-only route, so they are not in this file and not in the page source
+   an investigator could read — only the labels are.
+
+   NO CREDENTIALS. There is no field for a password, a token or an account
+   login, and the Worker has no column to store one. */
+function paymentSettingsHtml(){
+  if(ME.role !== "admin") return "";
+  if(!PAYCFG) return `<div class="card"><div class="bar"><h2 style="margin:0">Private client payment methods</h2></div>
+    <div class="empty">Loading payment methods&hellip;</div></div>`;
+
+  const row = m => {
+    const clickable = !!(m.url || "").trim();
+    return `<div class="feebox" style="margin:0 0 12px" data-pay="${esc(m.id)}">
+      <div class="row"><span><b>${esc(m.label)}</b>${m.from_default
+        ? ` <span class="opt">firm default</span>` : ""}</span>
+        <span>${m.enabled
+          ? (clickable ? `<span class="tag closed">On</span>`
+                       : `<span class="tag rs-needs_revision">On, but not sendable</span>`)
+          : `<span class="tag new">Off</span>`}</span></div>
+      ${m.enabled && !clickable ? `<p class="hint" style="color:var(--bad)">
+        This method is switched on but has no payment link, so it cannot be offered to a client
+        and a send that includes it will be refused. Add the link below, or switch it off.</p>` : ""}
+      <label class="f"><span>Show to the client as</span>
+        <input id="pm_name_${esc(m.id)}" value="${esc(m.display_name)}" placeholder="${esc(m.label)}"></label>
+      <label class="f"><span>Handle <span class="opt">shown to the client, exactly as typed</span></span>
+        <input id="pm_handle_${esc(m.id)}" value="${esc(m.handle)}"
+          placeholder="${m.id === "venmo" ? "@Your-Venmo-Name" : "$YourCashtag"}"></label>
+      <label class="f"><span>Payment link <span class="opt">required while this method is on</span></span>
+        <input id="pm_url_${esc(m.id)}" value="${esc(m.url)}"
+          placeholder="${m.id === "venmo" ? "https://venmo.com/u/Your-Venmo-Name" : "https://cash.app/$YourCashtag"}"></label>
+      <p class="hint">The link is never built from the handle. A Venmo handle is written with an
+        @ and its web address is not &mdash; guessing one from the other sends a client somewhere
+        that is not yours. Paste the address from the app.</p>
+      <label class="f"><span>Instructions <span class="opt">optional</span></span>
+        <input id="pm_note_${esc(m.id)}" value="${esc(m.instructions)}"
+          placeholder="e.g. Include your case number in the note"></label>
+      <div class="actions">
+        <button class="btn sm" data-act="paySave" data-id="${esc(m.id)}" data-on="1">Save and switch on</button>
+        <button class="btn sm ghost" data-act="paySave" data-id="${esc(m.id)}" data-on="0">Save and switch off</button>
+      </div>
+    </div>`;
+  };
+
   return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Private client payment methods</h2></div>
+    <p class="note">Where a private client sends the retainer. These appear only on the
+      <b>private</b> rate sheet and its send flow &mdash; never on an insurance sheet, a carrier
+      email, or anything an investigator can see.</p>
+    ${PAY_MSG ? `<div class="${PAY_ERR ? "err" : "linkbox"}">${esc(PAY_MSG)}</div>` : ""}
+    ${PAYCFG.map(row).join("")}
+    <p class="hint">No password, login or account credential is stored here, and there is nowhere
+      to put one. Everything on this screen is information the firm hands a client on purpose.</p>
+  </div>`;
+}
+
+function settingsView(){
+  return `${paymentSettingsHtml()}<div class="card">
     <div class="bar"><h2 style="margin:0">Settings</h2></div>
     <h3 style="margin:6px 0 4px;font-size:1rem">Developer &amp; testing</h3>
     <p class="note">Working material for trying the portal out. None of it touches a real case.</p>
@@ -1886,6 +1956,31 @@ function settingsView(){
       they appear. A test case is a real row prefixed TEST- so it can be removed cleanly — removing
       test cases never touches anything else.</p>
   </div>`;
+}
+
+async function loadPaymentMethods(){
+  try{ PAYCFG = (await api("/payment-methods")).methods; }
+  catch(e){ PAYCFG = []; PAY_MSG = e.message; PAY_ERR = true; }
+  paint();
+}
+
+/* Saving is the recovery path for the Worker's refusal, so the WORKER'S OWN
+   words are shown on failure rather than a generic "could not save" — it is
+   the message that says which method and what is missing, and paraphrasing it
+   here would be a second place for the rule to drift. */
+async function savePaymentMethod(id, enable){
+  const v = k => { const el = $(`pm_${k}_${id}`); return el ? el.value : ""; };
+  PAY_MSG = ""; PAY_ERR = false;
+  try{
+    const r = await api(`/payment-methods/${encodeURIComponent(id)}`, {method: "POST", body: {
+      enabled: enable,
+      display_name: v("name"), handle: v("handle"), url: v("url"), instructions: v("note"),
+    }});
+    PAYCFG = r.methods;
+    const m = (PAYCFG || []).find(x => x.id === id);
+    PAY_MSG = `${m ? m.label : "Payment method"} saved — ${enable ? "clients will be offered it" : "switched off"}.`;
+  }catch(e){ PAY_MSG = e.message; PAY_ERR = true; }
+  paint();
 }
 
 function staffView(){
@@ -5685,6 +5780,7 @@ document.addEventListener("click", ev => {
     if(TAB === "calendar") loadCalendar(CAL ? CAL.month : "");
     if(TAB === "invoices"){ INV_OPEN = null; INV_MSG = ""; loadInvoices(); }
     if(TAB === "dashboard"){ PKGS = null; loadPackages(); }
+    if(TAB === "settings" && ME.role === "admin"){ PAY_MSG = ""; PAY_ERR = false; loadPaymentMethods(); }
     document.body.classList.remove("navopen");
     if(TAB === "myreports") api("/my/reports").then(d => { MY_REPORTS = d; paint(); }).catch(()=>{});
     if(TAB === "myexpenses"){
@@ -5693,6 +5789,7 @@ document.addEventListener("click", ev => {
     }
   }
   else if(act === "openCaseTab"){ openCase(el.dataset.case, el.dataset.tab); }
+  else if(act === "paySave"){ savePaymentMethod(el.dataset.id, el.dataset.on === "1"); }
   else if(act === "showExample"){ SHOW_EXAMPLE = true; if(TAB === "settings") TAB = "cases"; paint(); }
   else if(act === "hideExample"){ SHOW_EXAMPLE = false; paint(); }
   else if(act === "logout"){ doLogout(); }
