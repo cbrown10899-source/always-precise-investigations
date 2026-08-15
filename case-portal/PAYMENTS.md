@@ -11,6 +11,58 @@ priority verified defect is already in progress."* So this sits **after the four
 HIGH defects** in `RECONCILIATION.md`'s HIGH QUEUE — each of which loses money or
 data silently — and before the MEDIUM/LOW backlog.
 
+## ⚠️ OWNER ADDITION, 2026-08-15 — CUSTOM PRIVATE RETAINER (part 1 of 2)
+
+**Private-client retainers are not always $1,500.**
+
+Before sending a **private** rate sheet or intake, an admin must be able to
+choose the retainer:
+
+- **$1,500 Standard**
+- **$2,000**
+- **$3,000**
+- **Custom Amount…**
+
+Choosing Custom Amount shows a **CUSTOM RETAINER [ amount ]** field, validated
+as a **positive dollar amount**.
+
+**The selected amount becomes the AGREED RETAINER for that specific private
+client/case.**
+
+**Do not change $100/hour or the 4-hour minimum.**
+**Do not add this selector to Insurance workflows.**
+
+> **Part 2 of 2 had not arrived when this was recorded.** Written down so it
+> survives context loss; building waits for part 2, which may bear on the same
+> screens.
+
+### What this touches — reader's note, not owner instruction
+
+`PERSONAL.retainer` (1500) is a **constant** used in three places, and two of
+them are client-facing:
+
+1. `rateSheets()` builds the private sheet's name, summary and "Retainer to
+   begin" line from it — so a case agreed at $3,000 would email the client a
+   sheet saying $1,500.
+2. `paymentBlockText`/`paymentBlockHtml` print "A $1,500 retainer is required to
+   begin investigative services" in the payment-options block of that same
+   email.
+3. The retainer route uses it as the default for a case with no retainer row,
+   which stays correct and should not change.
+
+So the agreed figure has to reach **the sheet and the payment block at send
+time**, not only the case record. The storage already exists —
+`case_retainer.retainer_amount` holds a per-case amount and `retainerBlock`
+reads it — so what is missing is the selector and the plumbing into those two
+builders.
+
+**One thing part 2 should settle rather than have me assume:** the wizard can
+send a sheet against a **lead**, which may have no case row yet. Whether
+choosing a retainer there writes `case_retainer` immediately, or only rides
+along with that one email, decides whether the agreed retainer is a property of
+the **case** or of the **send**. The owner's phrasing — *"becomes the AGREED
+RETAINER for that specific private client/case"* — reads as the former.
+
 ## ⚠️ OWNER CORRECTION, 2026-08-15 — the accepted payment methods
 
 **Credit Card and Other are REMOVED.** The Record Payment methods are exactly:
