@@ -91,11 +91,11 @@ components. Shape: spoken aliases → canonical command → activity type →
 | --- | --- |
 | "Mobile, arrival" | `ARRIVAL` |
 | "…at residence" [TRUNCATED] | `…RESIDENCE` |
-| [TRUNCATED] | `NO_CHANGE` |
+| "Mobile, no change" | `NO_CHANGE` |
 | "Mobile, no change at residence" | `NO_CHANGE_RESIDENCE` → "No change observed at the residence." |
 | "Mobile, doing a drive-by check of residence" | `MOBILE_RESIDENCE_CHECK` → "Mobile check of residence was conducted." |
 | "Mobile, drive-by check" | `MOBILE_RESIDENCE_CHECK` |
-| "…check" [TRUNCATED] | `MOBILE_CHECK` |
+| "Mobile check" | `MOBILE_CHECK` |
 | "Mobile, subject observed" | `SUBJECT_OBSERVED` |
 | "…departed" | `SUBJECT_DEPARTED` |
 | "Mobile, subject arrived" | `SUBJECT_ARRIVED` |
@@ -105,9 +105,9 @@ components. Shape: spoken aliases → canonical command → activity type →
 | "…vehicle absent" | `SUBJECT_VEHICLE_ABSENT` |
 | "Mobile, lost visual" | `LOST_VISUAL` |
 | "Mobile, regained visual" | `REGAINED_VISUAL` |
-| "Mobile, changing position" | [canonical name TRUNCATED] |
+| "Mobile, changing position" | `POSITION_CHANGE` |
 | "Mobile, direct view" | `DIRECT_VIEW` |
-| [TRUNCATED] | `INDIRECT_VIEW` |
+| "Mobile, indirect view" | `INDIRECT_VIEW` |
 | "…no activity" | `NO_ACTIVITY` |
 | [TRUNCATED] | `STATIONARY_SURVEILLANCE` |
 | "…conducting mobile surveillance" | `MOBILE_SURVEILLANCE` |
@@ -312,7 +312,11 @@ header, and Last Activity edit/remove on the Home screen.
 
 1. ~~§7 entirely~~ — **RECOVERED 2026-08-15** (transmission 1 of 5).
 2. ~~§3 field~~ — **RECOVERED 2026-08-15** (transmission 2 of 5): `source = voice`.
-3. **§4** — canonical names for "changing position" and the `INDIRECT_VIEW` /
-   `STATIONARY_SURVEILLANCE` / `NO_CHANGE` / `MOBILE_CHECK` spoken aliases.
+3. ~~§4 canonical names~~ — **RECOVERED 2026-08-15** (transmission 3 of 5):
+   `POSITION_CHANGE`, `DIRECT_VIEW`, `INDIRECT_VIEW`, `NO_CHANGE`,
+   `MOBILE_CHECK`. **Two spoken aliases are still unread** and stay marked
+   [TRUNCATED] in the table: the phrase reaching `…RESIDENCE` and the one
+   reaching `STATIONARY_SURVEILLANCE`. Both canonical ids are known and
+   aliases are explicitly extensible, so this does not block the registry.
 4. **§6B** — the free-form dictation flow beyond "requires review before save".
 5. **§16** — the limitation sentence, and anything after it.
