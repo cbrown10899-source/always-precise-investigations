@@ -2125,6 +2125,19 @@ section('The retainer balance on a private case');
     const stranded = await page.evaluate(() => ({ token: RET_TOKEN, draft: RET_DRAFT.amt, open: RET_FORM }));
     ok('the failed attempt is held on the case it belongs to',
        stranded.open === true && stranded.draft === '777' && stranded.token === 'left-behind');
+
+    /* AND REOPENING THE SAME CASE LEAVES IT ALONE. A tab, a reload or the same
+       row clicked again all run openCase, and clearing the token there would
+       hand a fresh one to a press that may be retrying a write which did
+       commit — the duplicate this guard exists to prevent, reintroduced by the
+       cleanup that was meant to stop the state leaking. */
+    await page.evaluate(() => openCase('API-20260812-4002'));
+    await page.waitForTimeout(700);
+    const same = await page.evaluate(() => ({ token: RET_TOKEN, draft: RET_DRAFT.amt, open: RET_FORM }));
+    ok('reopening the same case keeps the attempt and its token',
+       same.token === 'left-behind' && same.draft === '777' && same.open === true,
+       `${same.token} / ${same.draft} / ${same.open}`);
+
     await page.evaluate(() => openCase('API-20260812-4001'));
     await page.waitForTimeout(700);
     const moved = await page.evaluate(() => ({
