@@ -1777,10 +1777,36 @@ section('The two internal calculations never share a number');
   ok('and only one row exists for that attempt',
      (await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
        .authorization.retainer.payments.filter(x => x.amount === 250).length === 1);
+  /* A CLAIMED TOKEN WHOSE PAYMENT NEVER LANDED MUST NOT BLOCK THE RETRY.
+     Claiming before writing stops a double charge, but if the write then fails
+     the token would consume itself and every retry would do nothing — the
+     client has paid, the firm has no record, and the button appears to work.
+     That is worse than the duplicate it guards against, because a duplicate
+     can be voided and an unrecorded payment cannot be recovered. Planted
+     directly, because a claim with no payment is exactly what a failed write
+     leaves behind. */
+  await env.DB.prepare(
+    `INSERT INTO retainer_payment_token (token, case_no, claimed_at)
+     VALUES ('attempt-rb4-orphan', 'API-RB4', ?)`).bind('2026-08-15T00:00:00Z').run();
+  const retried = await jsonOf(await call(env, '/cases/API-RB4/retainer/payment',
+    { method: 'POST', cookie: admin,
+      body: { amount: 125, method: 'cash', client_token: 'attempt-rb4-orphan' } }));
+  ok('a retry after a failed write is accepted, not swallowed',
+     retried.authorization.retainer.payments.some(x => x.amount === 125));
+  ok('and the token then becomes binding, so a further replay is deduped',
+     (await jsonOf(await call(env, '/cases/API-RB4/retainer/payment',
+       { method: 'POST', cookie: admin,
+         body: { amount: 125, method: 'cash', client_token: 'attempt-rb4-orphan' } })))
+       .authorization.retainer.payments.filter(x => x.amount === 125).length === 1);
+
+  // Relative, so earlier blocks adding payments cannot make this pass or fail
+  // for reasons unrelated to what it is testing.
+  const beforeSeparate = (await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
+    .authorization.retainer.received_total;
   ok('while a genuinely separate payment of the same size still counts',
      (await jsonOf(await call(env, '/cases/API-RB4/retainer/payment', { method: 'POST', cookie: admin,
        body: { amount: 250, method: 'venmo', client_token: 'attempt-rb4-0002' } })))
-       .authorization.retainer.received_total === 2500);
+       .authorization.retainer.received_total === beforeSeparate + 250);
 
   /* THE RULE THE FEATURE TURNS ON: sending instructions is not being paid.
 
