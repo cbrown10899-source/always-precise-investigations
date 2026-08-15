@@ -66,6 +66,30 @@ displays the selected amount · returned intake preserves the selected amount ·
 **partial payments calculate correctly** · Record Payment never resets the
 agreed retainer · Insurance never sees this selector.
 
+### State of this selector, audited 2026-08-15 — reader's note, not owner instruction
+
+**Part 2 is done. Part 1 is not.** The two were recorded together and are easy
+to read as one item; they are not.
+
+- **The agreed figure is carried everywhere it is read** — `agreedRetainer()`
+  `worker.js:461` reads `case_retainer.retainer_amount` and falls back to
+  `PERSONAL.retainer` only when the case has none; `rateSheets(retainer)`,
+  `sheetById(id, retainer)`, `paymentBlockText/Html(pay, retainer)` and
+  `GET /sheets?case=` all take it, and the send re-reads it for its own case at
+  `worker.js:847` **before** building the sheet. **DEPLOYED at `4e053c2`.**
+- **What sets it today is one free-text box**, not the preset selector. `m_ret`
+  (`portal/index.html:3993`) sits on the private case's settings panel — value
+  only, no `$1,500 / $2,000 / $3,000 / Custom` presets, no validation beyond the
+  Worker's, and **it is on the case panel rather than in the private send flow**,
+  which is where the owner's order puts the choice: *"Before sending a private
+  rate sheet or intake, an admin must be able to choose the retainer."*
+
+So this is **not** a from-scratch build and must not be treated as one. The
+storage, the route, the guards and the whole carry-through are live. What is
+missing is the **control in the send flow** — and `NEXT.md` previously said
+"nothing on screen sets it", which overstated the gap and would have sent
+someone looking for a route that already exists.
+
 ### Two things part 2 settles, and one it creates — reader's note
 
 It settles the open question from part 1: the agreed amount is a property of the
@@ -146,18 +170,37 @@ to prevent.
 Enforced in `RETAINER_METHODS` (`worker.js`), with a test asserting each of the
 five is accepted and that `card` and `other` are refused.
 
-Progress ledger:
+## ⚠️ LEDGER CORRECTED 2026-08-15 — it was understating the build by eight steps
 
-| Step | Status |
-| --- | --- |
-| 1. Central admin-only payment-method configuration | not started |
-| 2. Private rate sheet PAYMENT OPTIONS section | not started |
-| 3. Private send wizard "Include Private Payment Instructions" | not started |
-| 4. Email preview shows sheet / intake / payment instructions | not started |
-| 5. Retainer status + record-a-payment fields | not started |
-| 6. Case history events | not started |
-| 7. The seven boundary regression tests | not started |
-| 8. Codex independent review of the boundary | not started |
+**This ledger said steps 1–8 were "not started". Seven of them are shipped and
+on master.** It was never updated as #80–#85 landed, so a fresh session reading
+it would have rebuilt an admin settings screen, a wizard section and an email
+builder that already exist — which is precisely what the owner's *"do not
+rebuild already-completed UI"* forbids.
+
+The correction below was made by grepping the identifiers, not by reading PR
+titles. Each row carries the route, the function or the table that is the
+evidence. **The same audit corrected `NEXT.md` in the same direction**; see the
+matching note there.
+
+States are the owner's: **CODED → TESTED → PUSHED → MERGED → DEPLOYED → LIVE
+VERIFIED.** Nothing here is called LIVE VERIFIED unless something outside this
+repo was observed. Worker-side email content **cannot** reach LIVE VERIFIED by
+probing — authentication runs before routing, so the Worker's output is not
+externally observable, and those rows stop at DEPLOYED on purpose.
+
+Progress ledger — first handoff, steps 1–8:
+
+| Step | State | Evidence |
+| --- | --- | --- |
+| 1. Central admin-only payment-method configuration | **LIVE VERIFIED** | `payment_methods` table; `paymentConfig()` `worker.js:608`; admin-only `GET /payment-methods` `:4693` and `PUT /payment-methods/:id` `:4698`; `paymentSettingsHtml()` `portal/index.html:2039`. Verified live #82/#84 |
+| 2. Private rate sheet PAYMENT OPTIONS section | **DEPLOYED** | `paymentBlockText()` `worker.js:1137`, `paymentBlockHtml()` `:1158`, both spliced into `sheetEmail()` at `:1196` / `:1221`. Worker-side — not externally observable |
+| 3. Private send wizard "Include Private Payment Instructions" | **LIVE VERIFIED** | `wizPaymentHtml()` `portal/index.html:1741`; `include_payment` `worker.js:865`; **refused, not dropped**, on the insurance sheet at `:867` |
+| 4. Email preview shows sheet / intake / payment instructions | **DEPLOYED** | preview `<dt>Payment options</dt>` `portal/index.html:1818`, with the standing line that sending does not mark the retainer paid at `:1826` |
+| 5. Retainer status + record-a-payment fields | **LIVE VERIFIED** | `recordRetainerPayment()` `portal/index.html:2120`; `RETAINER_METHOD_OPTIONS` `:2608`; `RETAINER_METHODS` `worker.js:442`; `POST /cases/:no/retainer/payment` `:5241` and its void at `:5287`. Idempotency verified live across #107–#120 |
+| 6. Case history events | 🟡 **PARTIAL — written, never read** | `logPaymentSend()` `worker.js:1431` writes `payment_send`, called at `:905` (failed send) and `:928` (successful). There is **zero `FROM payment_send`** anywhere in the Worker. The record is being kept correctly and nothing surfaces it in the comm log or case history |
+| 7. The seven boundary regression tests | **TESTED** | three named sections in `test-worker.mjs`: *"Both payment methods are clickable, with the firm's own destinations"* `:4166`, *"Private-client payment methods are the office's own configuration"* `:4324`, *"Payment instructions ride with the private client and no one else"* `:4422` |
+| 8. Codex independent review of the boundary | **NO EVIDENCE EITHER WAY** | no session record says this was run against the merged boundary. Treated as outstanding rather than assumed done — the wrong assumption here is the expensive one |
 
 ## Notes taken while recording, not owner instructions
 
@@ -391,18 +434,20 @@ still show no payment options at all. Its test list grows from 7 items to 14.
 **Where the two orders differ, this one governs**, being later and more
 specific. The first order's ledger tracks steps 1–8; the additions are here:
 
-| Step | Status |
-| --- | --- |
-| 9. Private lead card: Send Payment Options action | not started |
-| 10. Private rate-sheet NEXT STEP helper block (not a gray footnote) | not started |
-| 11. Wizard: Payment Options reveals independent Cash App / Venmo toggles | not started |
-| 12. Standalone Send Payment Options dialog | not started |
-| 13. One email carrying sheet + intake + payment, sections only when selected | not started |
-| 14. Clickable payment links — never an invented URL | not started |
-| 15. Returned-intake card: RETAINER PENDING + next actions | not started |
-| 16. Sent confirmation listing exactly what went | not started |
-| 17. Insurance send area: same clearer UX, still no payment options | not started |
-| 18. The 14 boundary regression tests | not started |
+**Corrected 2026-08-15 by the same audit** — five of these ten were shipped too.
+
+| Step | State | Evidence |
+| --- | --- | --- |
+| 9. Private lead card: Send Payment Options action | 🔴 **NOT CODED** | the card carries `leadSheet` and `leadIntake` only — `portal/index.html:1613-1614`. **Next in the queue** |
+| 10. Private rate-sheet NEXT STEP helper block (not a gray footnote) | 🔴 **NOT CODED** | the three `Next step` strings in the page (`:1267`, `:4137`, `:4692`) are the case-health next step and two panel headings, none of them the send-area block this asks for |
+| 11. Wizard: Payment Options reveals independent Cash App / Venmo toggles | **LIVE VERIFIED** | `SHEET_WIZ.payMethods` `portal/index.html:1736`, `wizPaymentSendable()` `:1722`. Verified live #85 |
+| 12. Standalone Send Payment Options dialog | 🔴 **NOT CODED** | both `logPaymentSend()` calls pass `with_sheet: 1` (`worker.js:906`, `:929`). No `with_sheet: 0` path exists anywhere — **the column was added in anticipation of this step and is the seam to build against** |
+| 13. One email carrying sheet + intake + payment, sections only when selected | **DEPLOYED** | `sheetEmail(sheet, note, includeIntake, payment, retainer)` `worker.js:895`; each section renders only on its own flag |
+| 14. Clickable payment links — never an invented URL | **DEPLOYED**, and structurally enforced | `paymentOptionsFor()` offers only a method with an **admin-entered** link, and `worker.js:879-885` **refuses the whole send by name** when an enabled method has none — *"switched on but has no payment link… Add a link in Settings, or switch it off"*. The rule is not a convention here; there is no code path that can derive a URL from a handle |
+| 15. Returned-intake card: RETAINER PENDING + next actions | 🟡 **PARTIAL** | Retainer pending (`portal/index.html:2583`) and Record Payment (`:2593`) are built **on the case Overview panel**. The Leads & Intakes card has neither, which is the surface §10 of the second handoff actually names |
+| 16. Sent confirmation listing exactly what went | **DEPLOYED** | Worker returns `included{rate_sheet, intake, payment_methods}` `worker.js:934-939`; the page reads it back at `portal/index.html:6087-6094` and appends *"The retainer is still pending until you record it."* Read from the send record, not echoed from the form — as the reader's note below required |
+| 17. Insurance send area: same clearer UX, still no payment options | 🟡 **PARTIAL** | the **no-payment half is enforced and loud** (`worker.js:867` refuses rather than drops). The *clearer UX* half is step 10 and is not built |
+| 18. The 14 boundary regression tests | 🟡 **PARTIAL** | the three sections at `test-worker.mjs:4166` / `:4324` / `:4422` cover the boundary that exists. The checks for items 9, 10 and 12 cannot exist yet — they ride with those builds |
 
 ### Reader's note, not an owner instruction
 
