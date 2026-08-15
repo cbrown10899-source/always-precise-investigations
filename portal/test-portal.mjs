@@ -1993,6 +1993,123 @@ section('The case package, gated and printed');
   await page.close();
 }
 
+/* HIGH #4 (2026-08-14). The finalize gate refuses held-back material, but it
+   runs AT finalize and nothing re-ran afterwards. Reclassify a photo to "do not
+   use" on a package that is already finalized and two things used to happen at
+   once: the gate strip was suppressed — it rendered only while the status was
+   NOT finalized, which is exactly when Download works — and the document went
+   on printing the photo, because it rendered every build_items row with no
+   classification check. Held-back material reaching a client is the one outcome
+   the classification system exists to prevent. This drives the real screens:
+   the package 4002 finalized in the section above is the subject. */
+section('A finalized package still says when something has been held back');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Package');
+  await page.waitForTimeout(800);
+
+  /* The exhibits the document actually PRINTS, read off the rendered evidence
+     index rather than off the payload. Counting these is the assertion that
+     matters: the caption falls back note -> entry description -> filename, so
+     checking for a filename passes vacuously whenever the item has a note —
+     which is exactly what happened, and it let the broken document through. */
+  const exhibits = () => page.evaluate(() => {
+    const t = [...document.querySelectorAll('#pkgdoc table.doc-table')]
+      .find(x => x.querySelector('thead'));
+    return t ? [...t.querySelectorAll('tbody tr')].map(r => r.textContent.trim()) : [];
+  });
+
+  let body = await text(page, '#dlgBody');
+  ok('the package under test is the finalized one', has(body, 'Finalized') || has(body, 'Delivered'));
+  ok('and its document carries an evidence index to begin with', has(body, 'EVIDENCE INDEX'));
+  ok('with nothing withheld yet', !has(body, 'withheld'));
+
+  const before = await exhibits();
+  ok('the document prints exhibits to begin with', before.length > 0, `${before.length} rows`);
+
+  /* This package holds exactly one item and it is clip1.mp4, a video, put there
+     by the section above; the build is finalized, so nothing can be added to it
+     here. That bounds what this section can prove, and the bound is worth
+     stating: the photo <img> path is NOT separately exercised. It does not need
+     to be — `photos` and `videos` are both derived from the one filtered `rows`
+     (portal/index.html), so the exhibit-count assertion below covers the same
+     filter that governs the image tag. If a photo ever joins this package,
+     assert the <img> for it directly rather than trusting that sentence. */
+  const held = await page.evaluate(async () => {
+    const b = await (await fetch('/portal-api/cases/API-20260812-4002/build',
+      { headers: { Accept: 'application/json' } })).json();
+    const it = (b.items || [])[0];
+    if (!it) return { id: 0, caption: '', ok: false,
+                      why: `no build items (${(b.items || []).length})` };
+    const ev = (b.evidence || []).find(e => e.id === it.evidence_id) || {};
+    const r = await fetch(`/portal-api/cases/API-20260812-4002/evidence/${it.evidence_id}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ classification: 'do_not_use' }) });
+    // The caption the document would render for it — the same fallback chain.
+    return { id: it.evidence_id, role: it.role, ok: r.ok, why: `status ${r.status}`,
+             caption: ev.note || ev.entry_description || ev.filename || '' };
+  });
+  ok('an item in the finalized package could be reclassified — and the write was accepted',
+     !!held && held.id > 0 && held.ok === true, held && held.why);
+
+  await wsTab(page, 'Overview');
+  await page.waitForTimeout(250);
+  await wsTab(page, 'Package');
+  await page.waitForTimeout(800);
+  body = await text(page, '#dlgBody');
+
+  ok('the finalized package now warns rather than staying silent',
+     has(body, 'This finalized package needs attention'));
+  ok('and the warning names the material by its classification',
+     has(body, 'do not use'));
+  ok('the document says an item was withheld', has(body, 'withheld'));
+  ok('and says where to deal with it', has(body, 'reclassify or unselect in Evidence'));
+  ok('and says WHY it was withheld, not merely that it was',
+     has(body, 'no longer marked client-deliverable'));
+  ok('while making clear the material still exists on the case',
+     has(body, 'Nothing is removed from the case'));
+
+  /* The half that actually ships material to a client. One exhibit fewer is
+     printed, and the held-back one's own caption is gone from the document. */
+  const after = await exhibits();
+  ok('the document prints one exhibit fewer', after.length === before.length - 1,
+     `${before.length} -> ${after.length}`);
+  ok('and the held-back exhibit is the one that went',
+     !!held.caption && !after.some(r => r.includes(held.caption)), held.caption);
+  ok('its caption appears nowhere else in the document',
+     !!held.caption && !has(await text(page, '#pkgdoc'), held.caption));
+
+  /* The exhibit's whole section goes with it, not just its index row — the
+     held-back item is this package's only video, so VIDEO EVIDENCE and the
+     delivery sentence that names it must both stop being printed. */
+  const doc = await text(page, '#pkgdoc');
+  ok('the section that presented it is gone from the document too',
+     !has(doc, 'VIDEO EVIDENCE') && !has(doc, 'provided separately'));
+  /* Nothing in the document may still point a client's browser at the file. */
+  const stillLinked = await page.evaluate(id =>
+    (document.querySelector('#pkgdoc') || {}).innerHTML?.includes(`/evidence/${id}/`) || false, held.id);
+  ok('and nothing in it still points at the evidence route for that file', !stillLinked);
+
+  // Put it back, so the rest of the suite sees the package it expects.
+  await page.evaluate(async (id) => {
+    await fetch(`/portal-api/cases/API-20260812-4002/evidence/${id}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ classification: 'client_deliverable' }) });
+  }, held.id);
+  await wsTab(page, 'Overview');
+  await page.waitForTimeout(250);
+  await wsTab(page, 'Package');
+  await page.waitForTimeout(800);
+  ok('and reclassifying it back clears the warning',
+     !has(await text(page, '#dlgBody'), 'This finalized package needs attention'));
+  ok('and puts the exhibit back in the document',
+     (await exhibits()).length === before.length);
+  await page.close();
+}
+
 /* UIBUILD phase 1: the sidebar, the dashboard landing, the package cards
    and Continue Case routing. */
 section('The dashboard leads with case packages');

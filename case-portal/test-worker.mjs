@@ -2416,6 +2416,57 @@ section('Completed cases: finished work is findable');
   ok('a live delivery link surfaces on the desk',
      desk.find(c => c.case_no === 'API-DN2').share_url === 'https://dbx.example/s/abc');
 
+  /* HIGH #4 (2026-08-14). "Copy video link" is a delivery path, so it carries
+     the same rule as the package document: hold the material back and the link
+     goes with it. This query filtered on the link alone, so a video
+     reclassified to do-not-use — or soft-deleted, which the evidence count
+     beside it already honoured — kept its Copy button on the completed desk
+     long after the document had stopped printing it. Reclassifying is how an
+     admin withdraws something; it must reach every door, not just the one. */
+  const shareOf = async () => (await jsonOf(await call(env, '/completed', { cookie: admin })))
+    .completed.find(c => c.case_no === 'API-DN2').share_url;
+
+  /* Membership, the condition that makes this desk agree with the package
+     panel. A file that is cleared to ship but was never selected into the
+     finalized package is not part of what the client received, so its link is
+     not the desk's to hand out. The newer id is deliberate: ORDER BY x.id DESC
+     means an unpackaged file would otherwise WIN and mask the packaged one. */
+  const loose = await jsonOf(await worker.fetch(new Request(API + '/cases/API-DN2/evidence', {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin },
+    body: (() => { const f = new FormData();
+      f.append('file', new File([new Uint8Array(120).fill(66)], 'loose.mp4', { type: 'video/mp4' }));
+      return f; })() }), env));
+  await env.DB.prepare(
+    `INSERT INTO external_files (evidence_id, storage_provider, external_share_url,
+       upload_status, created_at) VALUES (?, 'dropbox', 'https://dbx.example/s/loose', 'uploaded', ?)`)
+    .bind(loose.id, '2026-08-14T01:00:00Z').run();
+  ok('a link on evidence outside the finalized package is never offered',
+     (await shareOf()) === 'https://dbx.example/s/abc');
+  ok('and it is still refused once it is client-deliverable — being cleared is not being chosen',
+     (await call(env, `/cases/API-DN2/evidence/${loose.id}`, { method: 'POST', cookie: admin,
+       body: { classification: 'client_deliverable' } })).status === 200
+     && (await shareOf()) === 'https://dbx.example/s/abc');
+
+  ok('holding the video back withdraws its delivery link too',
+     (await call(env, `/cases/API-DN2/evidence/${up.id}`, { method: 'POST', cookie: admin,
+       body: { classification: 'do_not_use' } })).status === 200
+     && (await shareOf()) === null);
+  ok('and the other held classifications withdraw it just the same',
+     (await call(env, `/cases/API-DN2/evidence/${up.id}`, { method: 'POST', cookie: admin,
+       body: { classification: 'needs_redaction' } })).status === 200
+     && (await shareOf()) === null
+     && (await call(env, `/cases/API-DN2/evidence/${up.id}`, { method: 'POST', cookie: admin,
+       body: { classification: 'internal_only' } })).status === 200
+     && (await shareOf()) === null);
+  ok('clearing it again brings the link back — this is a filter, not a one-way door',
+     (await call(env, `/cases/API-DN2/evidence/${up.id}`, { method: 'POST', cookie: admin,
+       body: { classification: 'client_deliverable' } })).status === 200
+     && (await shareOf()) === 'https://dbx.example/s/abc');
+  ok('and deleting the evidence withdraws the link as well',
+     (await call(env, `/cases/API-DN2/evidence/${up.id}/delete`,
+       { method: 'POST', cookie: admin })).status === 200
+     && (await shareOf()) === null);
+
   // Cancelled is not completed: there is nothing to find.
   await call(env, '/submissions/API-DN3/status', { method: 'POST', cookie: admin,
     body: { status: 'cancelled' } });

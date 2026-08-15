@@ -3129,12 +3129,31 @@ async function completedCases(env) {
     const inv = await env.DB.prepare(
       `SELECT id, invoice_no, status FROM invoices
         WHERE case_no = ? AND status != 'void' ORDER BY id DESC LIMIT 1`).bind(c.case_no).first();
+    /* The completed desk offers this URL as "Copy video link", so it is a
+       delivery path and carries the same rule as the package document — HIGH #4
+       (2026-08-14). It filtered on the link alone: a video reclassified to
+       do-not-use, or soft-deleted, kept its Copy button here long after the
+       document stopped printing it. The evidence count two lines above already
+       honours deleted_at; this did not.
+
+       Membership is the third condition, and the one that makes this agree with
+       the package panel, which has always required it (`inPkg`). This desk is
+       the archive of DELIVERED work, so the only link it may hand out is one
+       belonging to material actually selected into the finalized package. A
+       file merely sitting on the case — never chosen, or chosen and then taken
+       out again — is not part of what the client received, and offering its
+       link here would deliver by the back door exactly what the build screen
+       declined to put in the front. No finalized build means no package
+       delivery, so `build_id` being NULL yields no link at all. */
     const share = await env.DB.prepare(
       `SELECT x.external_share_url FROM external_files x
          JOIN case_evidence e ON e.id = x.evidence_id
         WHERE e.case_no = ? AND x.external_share_url IS NOT NULL
           AND x.share_revoked_at IS NULL AND x.upload_status = 'uploaded'
-        ORDER BY x.id DESC LIMIT 1`).bind(c.case_no).first();
+          AND e.deleted_at IS NULL AND e.classification = 'client_deliverable'
+          AND EXISTS (SELECT 1 FROM build_items bi
+                       WHERE bi.build_id = ? AND bi.evidence_id = x.evidence_id)
+        ORDER BY x.id DESC LIMIT 1`).bind(c.case_no, c.build_id).first();
     out.push({
       ...c,
       approved_reports: Number(reps && reps.n) || 0,

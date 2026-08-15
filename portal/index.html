@@ -3037,9 +3037,22 @@ function packagePanel(){
 
   /* What's missing (UXSIMPLIFY P16): only what stands between here and
      finalized, each line the Worker's own words. */
-  const missing = PKG.gates.length && b.status !== "finalized" ? `
+  /* On a FINALIZED package the same gates are still the truth, and they used to
+     be hidden — HIGH #4 (2026-08-14). The strip rendered only while the status
+     was not "finalized", which is precisely when Download works, so material
+     reclassified to "do not use" after finalizing left no warning anywhere on
+     the one screen that ships it. The gates are not suppressed any more; only
+     the wording changes, because "to finish this package" is the wrong sentence
+     for something already finished. */
+  const missing = !PKG.gates.length ? "" : b.status !== "finalized" ? `
     <div class="pkg-miss"><b>To finish this package</b>
-      <ul>${PKG.gates.map(g => `<li>${esc(g)}</li>`).join("")}</ul></div>` : "";
+      <ul>${PKG.gates.map(g => `<li>${esc(g)}</li>`).join("")}</ul></div>` : `
+    <div class="pkg-miss"><b>This finalized package needs attention</b>
+      <p style="margin:4px 0">It was finalized when everything in it was cleared to ship.
+        Something has changed since:</p>
+      <ul>${PKG.gates.map(g => `<li>${esc(g)}</li>`).join("")}</ul>
+      <p style="margin:4px 0">Anything no longer client-deliverable is already left out of the
+        document below. Nothing is deleted &mdash; reclassify it, or build a new version.</p></div>`;
 
   const pick = (list, kind) => list.length ? `
     <h3 style="margin:14px 0 4px;font-size:.95rem">${kind}</h3>
@@ -3096,7 +3109,21 @@ function packagePanel(){
 
   /* P13 — video delivery, honestly. A copy button only when a link exists;
      otherwise the state of the world in plain words. */
-  const shares = (PKG.external_files || []).filter(x => x.external_share_url && !x.share_revoked_at);
+  /* A delivery link is the OTHER way held-back material reaches a client, and
+     it used to be filtered on the link alone — HIGH #4 (2026-08-14). The
+     document now refuses anything not client-deliverable, but a share URL sits
+     beside it with a Copy button and hands over the same file, so hold a video
+     back and the document dropped it while the link still shipped it. The link
+     is only offered while the evidence behind it is IN this package and still
+     cleared to ship; `ev` already excludes deleted rows, so a deleted file has
+     no link to copy either. Provider-side revocation is a separate thing and
+     is not built (Dropbox is unconfigured) — this stops the portal OFFERING a
+     link it should not, which is the half that exists to be got wrong today. */
+  const shares = (PKG.external_files || []).filter(x => {
+    if(!x.external_share_url || x.share_revoked_at) return false;
+    const e = ev.find(y => y.id === x.evidence_id);
+    return !!e && eligible(e) && inPkg(e.id);
+  });
   const dropboxOff = PKG.providers && PKG.providers.dropbox && !PKG.providers.dropbox.configured;
   const delivery = nVideo ? `<div class="feebox" style="margin:10px 0">
     <div class="row"><span><b>Video delivery</b></span><span></span></div>
@@ -3226,7 +3253,29 @@ function pkgDocHtml(){
   if(!b) return "";
   const items = PKG.items || [];
   const evById = Object.fromEntries((PKG.evidence || []).map(e => [e.id, e]));
-  const rows = items.map((i, n) => {
+  /* The document prints only what is still cleared to ship — HIGH #4
+     (2026-08-14). The finalize gate refuses held-back material, but it runs at
+     finalize and nothing re-ran afterwards: reclassify a photo to "do not use"
+     on a package already finalized and it went on printing, while the gate
+     strip that would have said so was suppressed on exactly the finalized
+     builds where Download still worked. Held-back material reaching a client
+     is the single outcome the classification system exists to prevent, so the
+     check belongs where the material is rendered, not only where it is
+     approved. Withheld items are COUNTED and named below rather than silently
+     dropped — a document that quietly loses an exhibit is its own problem. */
+  const shipping = e => e && !e.deleted_at && e.classification === "client_deliverable";
+  /* Two different reasons an item does not ship, and the note must not confuse
+     them: buildState's evidence query already drops deleted rows, so a deleted
+     item is simply ABSENT from PKG.evidence rather than present-and-reclassified.
+     Saying "no longer marked client-deliverable" about a deleted file sends the
+     admin to a classification that is not the problem. */
+  const gone = items.filter(i => !evById[i.evidence_id]).length;
+  const heldBack = items.filter(i => {
+    const e = evById[i.evidence_id];
+    return e && !shipping(e);
+  }).length;
+  const withheld = gone + heldBack;
+  const rows = items.filter(i => shipping(evById[i.evidence_id])).map((i, n) => {
     const e = evById[i.evidence_id] || {};
     return { n: n + 1, role: i.role, e,
       time: e.entry_time ? t12(e.entry_time) : "",
@@ -3295,6 +3344,11 @@ function pkgDocHtml(){
       </div>`).join("")}
       <p style="font-size:.9rem"><b>VIDEO DELIVERY</b> &mdash; Selected video evidence is provided
         through the accompanying electronic evidence delivery. Video package reference: ${esc(WS_CASE)}.</p>` : ""}
+    ${withheld ? `<p class="doc-withheld" style="border-top:1px solid var(--line);padding-top:10px;font-size:.9rem">
+      <b>${withheld} item${withheld === 1 ? "" : "s"} withheld.</b> Selected for this package but
+      not included here${heldBack ? ` &mdash; ${heldBack} no longer marked client-deliverable` : ""}${
+      gone ? `${heldBack ? "," : " &mdash;"} ${gone} deleted from evidence` : ""}.
+      Nothing is removed from the case; reclassify or unselect in Evidence.</p>` : ""}
     ${rows.length ? `<h3 style="border-top:1px solid var(--line);padding-top:14px">EVIDENCE INDEX</h3>
       <table class="doc-table"><thead><tr><th>Exhibit</th><th>Time</th><th>Type</th><th>Description</th><th>Delivery</th></tr></thead>
         <tbody>${rows.map(r => `<tr>
@@ -3306,6 +3360,23 @@ function pkgDocHtml(){
       Prepared by Always Precise Investigations, LLC. The investigator may provide testimony
       regarding their own observations when appropriate and separately arranged.</p>
   </div>`;
+}
+
+/* Printing re-reads the package first — HIGH #4 (2026-08-14). The document
+   filters held-back material at RENDER time, which is only as fresh as the DOM
+   it rendered into. The package tab loads once on entry, so an admin who held
+   something back from another tab, another device or the Evidence tab of a
+   second window could still hit Download here and print the copy this screen
+   drew before the change. Reloading first costs one request at the only moment
+   that matters, and it is the moment the file leaves the building. If the
+   reload fails the print is abandoned rather than falling back on stale data —
+   printing nothing is recoverable, printing held-back material is not. */
+async function pkgPrint(){
+  await loadPackage();
+  if(!PKG){ WS_ERR = WS_ERR || "Could not re-check the package before printing."; paintCase(); return; }
+  document.body.classList.add("printing-package");
+  window.print();
+  setTimeout(() => document.body.classList.remove("printing-package"), 400);
 }
 
 async function pkgApi(path, body){
@@ -5649,11 +5720,7 @@ document.addEventListener("click", ev => {
   else if(act === "pkgFinalize"){ pkgApi(`/build/${PKG.build.id}/finalize`); }
   else if(act === "pkgReopen"){ pkgApi(`/build/${PKG.build.id}/reopen`); }
   else if(act === "pkgDelivered"){ pkgApi(`/build/${PKG.build.id}/delivered`); }
-  else if(act === "pkgPrint"){
-    document.body.classList.add("printing-package");
-    window.print();
-    setTimeout(() => document.body.classList.remove("printing-package"), 400);
-  }
+  else if(act === "pkgPrint"){ pkgPrint(); }
   else if(act === "createInvoice"){ createInvoiceFor(el.dataset.case, false); }
   else if(act === "createInvoiceAuth"){ createInvoiceFor(el.dataset.case, true); }
   else if(act === "openReport"){
