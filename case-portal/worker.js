@@ -445,20 +445,40 @@ const RETAINER_METHOD_LABEL = {
   ach_bill: 'ACH / BILL',
 };
 
-function rateSheets() {
+/* THE AGREED RETAINER IS THE CASE'S, NOT THE STANDARD ONE.
+
+   `PERSONAL.retainer` is where a private case starts. Once the office agrees
+   $2,000 or $3,000 with a client, THAT is the figure the sheet, the subject
+   line, the payment block and the on-screen preview must all carry — a case
+   whose stored retainer is $3,000 was emailing a sheet that said $1,500, which
+   is a wrong number in front of the person who agreed the right one.
+
+   One read, passed down, so the four places cannot disagree. The rate and the
+   4-hour minimum are unchanged: only the retainer is per-case. */
+async function agreedRetainer(env, caseNo) {
+  if (!caseNo) return PERSONAL.retainer;
+  const row = await env.DB.prepare(
+    'SELECT retainer_amount FROM case_retainer WHERE case_no = ?').bind(caseNo).first();
+  return row && row.retainer_amount != null ? Number(row.retainer_amount) : PERSONAL.retainer;
+}
+
+function rateSheets(retainer) {
   const money = n => '$' + Number(n).toLocaleString('en-US');
+  /* Anything absent, zero or unparseable falls back to the standard figure —
+     a sheet must never print $0 or NaN at a client. */
+  const ret = Number(retainer) > 0 ? Number(retainer) : PERSONAL.retainer;
   return [
     {
       id: 'private_retainer',
       type: 'retainer',
-      name: `${money(PERSONAL.retainer)} Retainer`,
-      selector_label: `Private Client — ${money(PERSONAL.retainer)} Retainer`,
+      name: `${money(ret)} Retainer`,
+      selector_label: `Private Client — ${money(ret)} Retainer`,
       audience: 'Private surveillance, domestic and family investigations',
-      summary: `A ${money(PERSONAL.retainer)} retainer is required to begin. The retainer is `
+      summary: `A ${money(ret)} retainer is required to begin. The retainer is `
              + `applied directly to authorized investigative services billed at `
              + `${money(PERSONAL.hourly)} per hour.`,
       lines: [
-        { label: 'Retainer to begin', value: money(PERSONAL.retainer), big: true,
+        { label: 'Retainer to begin', value: money(ret), big: true,
           sub: 'Applied to the work — not an extra fee',
           note: 'Applied in full toward authorized investigative services. It is not a '
               + 'separate fee — your retainer funds the work performed on your case.' },
@@ -527,7 +547,7 @@ function rateSheets() {
   ];
 }
 
-function sheetById(id) { return rateSheets().find(s => s.id === id) || null; }
+function sheetById(id, retainer) { return rateSheets(retainer).find(s => s.id === id) || null; }
 
 /* ---- Private-client payment methods (PAYMENTS.md, owner 2026-08-14) ----
 
@@ -778,8 +798,10 @@ Always Precise Investigations, LLC — Va DCJS #11-9159`;
 }
 
 async function emailSheet(request, env, user, id) {
-  const sheet = sheetById(id);
-  if (!sheet) return json({ error: 'no such rate sheet' }, 404);
+  /* The sheet is built AFTER the case number is known, because the case is
+     what says how much the retainer is. Built before it, every private client
+     is quoted the standard figure regardless of what was agreed with them. */
+  if (!sheetById(id)) return json({ error: 'no such rate sheet' }, 404);
 
   const body = await readJson(request);
   const to = String(body.to || '').trim();
@@ -808,7 +830,7 @@ async function emailSheet(request, env, user, id) {
       .bind(caseNo).first();
     if (lead) {
       const wanted = lead.kind === 'claims' ? 'insurance_assignment' : 'private_retainer';
-      if (sheet.id !== wanted) {
+      if (id !== wanted) {
         return json({ error: lead.kind === 'claims'
           ? `${caseNo} is a claim assignment — send it the Insurance Assignment Rates, never the consumer sheet.`
           : `${caseNo} is a private client — send it the Private Client Retainer, never the carrier sheet.`,
@@ -820,6 +842,10 @@ async function emailSheet(request, env, user, id) {
   if (!(await withinRateLimit(env, 'mail'))) {
     return json({ error: 'Too many emails in one minute — wait a moment and send again.' }, 429);
   }
+
+  // Now the case is known and checked, so the sheet can carry ITS retainer.
+  const retainer = await agreedRetainer(env, caseNo);
+  const sheet = sheetById(id, retainer);
 
   // The Options step (UIBUILD P18): include the sheet's own intake, or not.
   // Which intake is never the caller's choice — SHEET_INTAKE pairs it.
@@ -866,7 +892,7 @@ async function emailSheet(request, env, user, id) {
         + 'before including payment instructions.' }, 400);
   }
 
-  const { text, html } = sheetEmail(sheet, note, includeIntake, payment);
+  const { text, html } = sheetEmail(sheet, note, includeIntake, payment, retainer);
   const subject = caseNo
     ? `${sheet.name} — Always Precise Investigations (case ${caseNo})`
     : `${sheet.name} — Always Precise Investigations`;
@@ -1108,11 +1134,11 @@ const SHEET_INTAKE = {
    handle shows the handle, plainly and in full — it is NEVER turned into a
    link, because a guessed payment URL that resolves to a real stranger sends
    the retainer to the wrong person. */
-function paymentBlockText(pay) {
+function paymentBlockText(pay, retainer) {
   if (!pay.length) return '';
   return `
 PAYMENT OPTIONS
-A ${usd(PERSONAL.retainer)} retainer is required to begin investigative services.
+A ${usd(Number(retainer) > 0 ? retainer : PERSONAL.retainer)} retainer is required to begin investigative services.
 The retainer may be submitted using one of the approved methods below.
 ${pay.map(m => `
 PAY WITH ${m.label.toUpperCase()}
@@ -1129,11 +1155,11 @@ ${m.handle ? `  ${m.handle}\n` : ''}  ${m.url}${m.instructions ? `\n  ${m.instru
    Written with inline styles and no flexbox because it has to survive Outlook
    and Gmail, which drop most CSS. `display:block` on the anchor is what makes
    the whole rectangle tappable in every client that renders anything at all. */
-function paymentBlockHtml(pay) {
+function paymentBlockHtml(pay, retainer) {
   if (!pay.length) return '';
   return `<div style="margin:0 0 18px;padding:16px 18px;background:#f4f8fa;border:1px solid #dfe7ec;border-radius:10px">
     <p style="margin:0 0 6px;font-weight:800;color:#12305a;letter-spacing:.04em">PAYMENT OPTIONS</p>
-    <p style="margin:0 0 14px;font-size:.92rem">A <b>${escHtml(usd(PERSONAL.retainer))}</b> retainer is
+    <p style="margin:0 0 14px;font-size:.92rem">A <b>${escHtml(usd(Number(retainer) > 0 ? retainer : PERSONAL.retainer))}</b> retainer is
       required to begin investigative services. The retainer may be submitted using one of the
       approved methods below.</p>
     ${pay.map(m => `<a href="${escHtml(m.url)}"
@@ -1149,7 +1175,7 @@ function paymentBlockHtml(pay) {
   </div>`;
 }
 
-function sheetEmail(sheet, note, includeIntake, pay) {
+function sheetEmail(sheet, note, includeIntake, pay, retainer) {
   const intake = includeIntake ? SHEET_INTAKE[sheet.id] : null;
   /* Belt and braces on the boundary: even called wrongly, the carrier sheet
      cannot carry a consumer payment handle. */
@@ -1167,7 +1193,7 @@ ${rows}
 
 ${sheet.closing_title}
 ${sheet.closing}
-${paymentBlockText(payment)}${intake ? `\nReady to begin? The ${intake.label} takes a few minutes:\n${intake.url}\n` : ''}
+${paymentBlockText(payment, retainer)}${intake ? `\nReady to begin? The ${intake.label} takes a few minutes:\n${intake.url}\n` : ''}
 Questions: (434) 907-0975
 Always Precise Investigations, LLC`;
 
@@ -1192,7 +1218,7 @@ Always Precise Investigations, LLC`;
   </table>
   <p style="margin:0 0 4px;font-weight:800;color:#12305a">${escHtml(sheet.closing_title)}</p>
   <p style="margin:0 0 14px;font-size:.92rem">${escHtml(sheet.closing)}</p>
-  ${paymentBlockHtml(payment)}
+  ${paymentBlockHtml(payment, retainer)}
   ${intake ? `<p style="margin:0 0 14px">
     <a href="${escHtml(intake.url)}" style="display:inline-block;background:#12305a;color:#fff;
        padding:11px 18px;border-radius:8px;text-decoration:none;font-weight:700">
@@ -4642,7 +4668,15 @@ async function route(request, env) {
      are: a price the firm has not chosen to quote yet is not public. */
   if (p === '/sheets' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
-    return json({ sheets: rateSheets(), email_configured: Boolean(env.RESEND_API_KEY) });
+    /* ?case= makes the PREVIEW the same document as the send. Without it the
+       admin reads $1,500 on screen, presses send, and the client receives the
+       $3,000 that was actually agreed — or worse, believes the screen. Same
+       pinning as the case number itself: untrusted, so it is matched to the
+       pattern before it reaches a query. */
+    const wantCase = url.searchParams.get('case') || '';
+    const caseNo = /^[A-Za-z0-9-]{3,64}$/.test(wantCase) ? wantCase : '';
+    return json({ sheets: rateSheets(await agreedRetainer(env, caseNo)),
+                  email_configured: Boolean(env.RESEND_API_KEY) });
   }
 
   m = p.match(/^\/sheets\/([a-z_]{3,32})\/email$/);

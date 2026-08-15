@@ -955,6 +955,74 @@ section('Rate sheets and the emailed quote');
   globalThis.fetch = realFetch;
 }
 
+/* THE AGREED RETAINER IS WHAT THE CLIENT IS SENT.
+
+   A case whose stored retainer is $3,000 was emailed a sheet saying $1,500 —
+   the standard figure, printed at the one person who agreed a different one.
+   The number has to come from the CASE in the subject line, the sheet body, the
+   payment block and the preview alike, or they contradict each other in front
+   of the client. Its own section because it needs its own send budget: the cap
+   is three a minute and the sheets section spends all of them. */
+section('A private sheet carries the retainer that case agreed');
+{
+  const realFetch = globalThis.fetch;
+  let lastBody = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      lastBody = JSON.parse(init.body);
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-RET3K', service: 'Surveillance',
+                      client_name: 'Pat Private', client_email: 'pat@example.test',
+                      subject_name: 'Subject A' });
+
+  const before = await jsonOf(await call(env, '/sheets?case=API-RET3K', { cookie: admin }));
+  ok('a case that has agreed nothing yet previews the standard retainer',
+     before.sheets.find(s => s.id === 'private_retainer').name.includes('$1,500'));
+
+  await call(env, '/cases/API-RET3K/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 3000 } });
+
+  const sent = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'client@example.test', case_no: 'API-RET3K' } });
+  ok('a sheet for a $3,000 case sends', sent.status === 200, String(sent.status));
+  ok('and says $3,000, not the standard figure',
+     lastBody.html.includes('$3,000') && !lastBody.html.includes('$1,500'));
+  ok('in the subject line too', lastBody.subject.includes('$3,000'), lastBody.subject);
+  ok('and in the plain-text part, which is what some clients read',
+     lastBody.text.includes('$3,000') && !lastBody.text.includes('$1,500'));
+  ok('while the hourly rate and the 4-hour minimum are untouched',
+     lastBody.text.includes('$100/hr') && lastBody.text.includes('4-hour minimum'));
+
+  /* THE PREVIEW IS THE SAME DOCUMENT. An admin who reads $1,500 on screen and
+     sends $3,000 has been told one thing and done another. */
+  const prev = await jsonOf(await call(env, '/sheets?case=API-RET3K', { cookie: admin }));
+  const priv = prev.sheets.find(s => s.id === 'private_retainer');
+  ok('the previewed sheet carries the case’s own retainer',
+     priv.name.includes('$3,000') && priv.summary.includes('$3,000'), priv.name);
+  ok('and its headline line agrees', priv.lines[0].value === '$3,000', priv.lines[0].value);
+
+  ok('a sheet asked for with no case is still the standard retainer',
+     (await jsonOf(await call(env, '/sheets', { cookie: admin })))
+       .sheets.find(s => s.id === 'private_retainer').name.includes('$1,500'));
+  ok('and a case number that is not one is ignored rather than queried',
+     (await jsonOf(await call(env, '/sheets?case=' + encodeURIComponent("' OR 1=1--"), { cookie: admin })))
+       .sheets.find(s => s.id === 'private_retainer').name.includes('$1,500'));
+
+  const carrier = prev.sheets.find(s => s.id === 'insurance_assignment');
+  ok('the carrier sheet is untouched by any of it',
+     carrier.name === 'Insurance Assignment Rates' && !JSON.stringify(carrier).includes('3,000'));
+
+  globalThis.fetch = realFetch;
+}
+
 /* MASTER §5 — a lead's lifecycle is not a case's. Nine statuses of its own,
    and the two send actions that stamp themselves. */
 section('Lead statuses, and sends that stamp themselves');
