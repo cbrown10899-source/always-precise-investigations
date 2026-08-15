@@ -907,6 +907,48 @@ CREATE INDEX IF NOT EXISTS idx_paysend_case ON payment_send(case_no, id DESC);
 -- records the money, which is the whole point: payment_send records that the
 -- firm asked, this records that the client paid, and the two must never be
 -- confused for one another.
+-- ---------------------------------------------------------------------------
+-- RETAINER PAYMENTS, ADDITIVE (owner confirmation 2026-08-15).
+--
+-- A private client may pay a retainer in instalments: agreed $3,000, then
+-- $1,000 and $1,000, giving RECEIVED $2,000 and OUTSTANDING $1,000. So payments
+-- are a LOG keyed by id, never one row per case — a second payment must not
+-- overwrite the first, and TOTAL RECEIVED is the sum across the case.
+--
+-- This supersedes retainer_receipt below, which is keyed by case_no and can
+-- therefore hold only the latest instalment. That table is left in place rather
+-- than dropped: schema.sql is re-applied on every portal-setup run and cannot
+-- drop anything idempotently. Any row already written there is still counted,
+-- once, by the read — see the Worker.
+--
+-- HISTORY IS NOT REWRITTEN. A payment recorded in error is VOIDED, never edited
+-- or deleted, so the record still shows what was believed at the time and who
+-- corrected it. Same reasoning as activity_removed and the invoice void path.
+CREATE TABLE IF NOT EXISTS retainer_payment (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no     TEXT    NOT NULL,
+  amount      REAL    NOT NULL,
+  method      TEXT,               -- validated in the Worker, no CHECK (see above)
+  paid_on     TEXT,               -- the calendar date the CLIENT paid
+  reference   TEXT,
+  recorded_by INTEGER REFERENCES users(id),
+  recorded_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_retpay_case ON retainer_payment(case_no, id);
+
+-- A voided payment stays in the log and stops counting. Companion table, not a
+-- column, for the standing idempotency reason.
+CREATE TABLE IF NOT EXISTS retainer_payment_void (
+  payment_id INTEGER PRIMARY KEY,
+  reason     TEXT,
+  voided_by  INTEGER REFERENCES users(id),
+  voided_at  TEXT NOT NULL
+);
+
+-- ---------------------------------------------------------------------------
+-- SUPERSEDED by retainer_payment above. Kept because schema.sql cannot drop a
+-- table idempotently, and because a row written here before the log existed is
+-- still real money that must keep counting.
 CREATE TABLE IF NOT EXISTS retainer_receipt (
   case_no     TEXT PRIMARY KEY,
   amount      REAL,
