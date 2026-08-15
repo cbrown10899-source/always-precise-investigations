@@ -201,10 +201,52 @@ section('Neither the stager nor this test can eat the working tree');
   ok('staging into the repository itself is refused', guarded(ROOT));
   ok('staging into a parent of the repository is refused', guarded(path.dirname(ROOT)));
   ok('staging into a git working tree is refused', guarded(ROOT));
+
+  /* The middle ground the first guard missed: a directory INSIDE the repo.
+     Refusing the root while leaving everything under it open is not a guard —
+     that is where the source actually lives. Each of these would have been
+     deleted recursively. */
+  for (const target of ['portal', 'case-portal', 'assets', 'intake',
+                        '.github', '.claude', 'private-investigator']) {
+    ok(`staging into ${target}/ is refused`, guarded(path.join(ROOT, target)));
+  }
+  ok('and nothing under those paths was touched',
+     fs.existsSync(path.join(ROOT, 'portal', 'index.html'))
+     && fs.existsSync(path.join(ROOT, 'case-portal', 'worker.js'))
+     && fs.existsSync(path.join(ROOT, 'assets', 'logo-lockup.svg'))
+     && fs.existsSync(path.join(ROOT, '.github', 'stage-site.mjs')));
+
+  /* The build directory itself must still work, or the guard has broken the
+     deploy instead of protecting it. */
+  {
+    const build = path.join(ROOT, '_site');
+    const preexisting = fs.existsSync(build);
+    let built = null;
+    try { built = stage(build); } catch (e) { built = { error: e.message }; }
+    ok('the build directory is still allowed — deploy.yml stages into _site/',
+       built && Array.isArray(built.files) && built.files.includes('index.html'),
+       built && built.error);
+    if (!preexisting) fs.rmSync(build, { recursive: true, force: true });
+  }
+
   ok('the repository is still intact after those attempts',
      fs.existsSync(path.join(ROOT, 'index.html'))
      && fs.existsSync(path.join(ROOT, 'portal', 'index.html'))
      && fs.existsSync(path.join(ROOT, '.git')));
+
+  /* The control for a delete-guard cannot be "remove the guard and see what
+     happens" — that deletes the repository. So the OLD predicate is written
+     out here instead and shown to be insufficient on its own. It refused the
+     root and anything above it, and waved `portal/` straight through. This
+     documents why the in-repo clause exists and cannot destroy anything. */
+  {
+    const oldGuardWouldRefuse = dest =>
+      dest === ROOT || ROOT.startsWith(dest + path.sep);
+    ok('the old guard did catch the repository root', oldGuardWouldRefuse(ROOT));
+    ok('but it would have allowed portal/ to be deleted — hence the extra clause',
+       !oldGuardWouldRefuse(path.join(ROOT, 'portal'))
+       && !oldGuardWouldRefuse(path.join(ROOT, 'case-portal')));
+  }
 
   /* The cleanup above may only remove what it created. Plant a directory that
      looks exactly like the fixture but holds real content, and prove the run

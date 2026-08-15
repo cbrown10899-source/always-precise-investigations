@@ -102,11 +102,31 @@ function allFiles(dir, base = '') {
    difference is one mistyped argument: `node .github/stage-site.mjs .` would
    erase the repository. The cost of being wrong here is unbounded and the
    check is three comparisons, so it is not left to care. */
+const BUILD_DIR = '_site';   // the only directory inside the repo this may delete
+
 function assertSafeTarget(dest) {
-  const inside = p => dest === p || p.startsWith(dest + path.sep);
-  if (inside(ROOT)) {
+  // At or above the repository: the catastrophic cases.
+  if (dest === ROOT || ROOT.startsWith(dest + path.sep)) {
     throw new Error(`refusing to stage into "${dest}": it is the repository, or contains it`);
   }
+
+  /* INSIDE the repository is the dangerous middle ground, and the first
+     version of this guard missed it entirely: it refused the repo root and
+     anything above, so `stage('portal')` sailed through and would have deleted
+     the portal page, and `stage('case-portal')` the Worker source. Blocking
+     the root while leaving every directory under it open is not a guard.
+
+     Only the build directory may be rebuilt. Everything else inside the repo
+     is either source or generated output that belongs to git, and nothing here
+     has any business deleting it. Tests stage into a temp directory, which is
+     outside the repository and therefore unaffected by this rule. */
+  const rel = path.relative(ROOT, dest);
+  const insideRepo = rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+  if (insideRepo && rel.split(path.sep)[0] !== BUILD_DIR) {
+    throw new Error(`refusing to stage into "${rel}": inside the repository, `
+                  + `only ${BUILD_DIR}/ may be rebuilt`);
+  }
+
   if (fs.existsSync(path.join(dest, '.git'))) {
     throw new Error(`refusing to stage into "${dest}": it looks like a git working tree`);
   }
