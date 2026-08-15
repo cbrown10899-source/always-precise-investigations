@@ -59,7 +59,14 @@ function d1(db) {
       try {
         for (const st of stmts) out.push(st.run());
         db.exec('COMMIT');
-      } catch (e) { db.exec('ROLLBACK'); throw e; }
+      } catch (e) {
+        /* Rolling back must not replace the error that caused it. If ROLLBACK
+           throws — SQLite may already have unwound the transaction itself —
+           the original cause is lost, and worse, every later statement runs
+           inside a transaction nobody closed. */
+        try { db.exec('ROLLBACK'); } catch { /* already unwound */ }
+        throw e;
+      }
       return out;
     },
   };
@@ -1820,6 +1827,48 @@ section('The two internal calculations never share a number');
      (await jsonOf(await call(env, '/cases/API-RB4/retainer/payment', { method: 'POST', cookie: admin,
        body: { amount: 250, method: 'venmo', client_token: 'attempt-rb4-0002' } })))
        .authorization.retainer.received_total === beforeSeparate + 250);
+
+  /* A WRITE THAT FAILED MUST NOT BE REPORTED AS SUCCESS.
+
+     The batch holds two inserts, and the catch used to read any error mentioning
+     a constraint as "already recorded". So a payment that failed its OWN
+     constraint rolled the whole batch back, wrote nothing, and was answered 200:
+     the admin is told the money is on file and the ledger is empty. Money that
+     disappears quietly is worse than the duplicate the token exists to stop.
+
+     Forced with a temporary unique index, which is the cheapest way to make the
+     payment insert — and only the payment insert — fail for a reason that is
+     not the token. */
+  await env.DB.prepare(
+    `CREATE UNIQUE INDEX tmp_one_ref ON retainer_payment(reference)
+      WHERE reference = 'REF-CLASH'`).run();
+  await env.DB.prepare(
+    `INSERT INTO retainer_payment (case_no, amount, method, reference, recorded_at)
+     VALUES ('API-RB4', 75, 'cash', 'REF-CLASH', ?)`).bind('2026-08-15T00:00:00Z').run();
+  const beforeFail = (await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
+    .authorization.retainer.received_total;
+  const failed = await call(env, '/cases/API-RB4/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 400, method: 'cash', reference: 'REF-CLASH', client_token: 'attempt-rb4-0003' } });
+  ok('a payment that could not be written is NOT answered with success',
+     failed.status !== 200, String(failed.status));
+  const afterFail = (await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
+    .authorization.retainer;
+  ok('and the ledger did not gain it', afterFail.received_total === beforeFail,
+     String(afterFail.received_total) + ' vs ' + String(beforeFail));
+  ok('and no row was left behind for it',
+     !afterFail.payments.some(x => x.amount === 400));
+
+  /* THE OTHER HALF OF THE ROLLBACK: the token must not stay claimed. If a
+     rolled-back attempt left its claim on disk, the client's honest retry
+     would be told "already recorded" forever and the money would never land —
+     the failure would be permanent instead of retryable. */
+  await env.DB.prepare('DROP INDEX tmp_one_ref').run();
+  const retried = await call(env, '/cases/API-RB4/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 400, method: 'cash', reference: 'REF-CLASH', client_token: 'attempt-rb4-0003' } });
+  ok('and once the cause is gone the same attempt still records', retried.status === 200);
+  const retriedTotal = (await jsonOf(retried)).authorization.retainer.received_total;
+  ok('with the money finally on the ledger',
+     retriedTotal === beforeFail + 400, String(retriedTotal));
 
   /* THE RULE THE FEATURE TURNS ON: sending instructions is not being paid.
 
