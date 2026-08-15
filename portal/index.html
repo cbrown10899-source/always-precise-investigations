@@ -647,6 +647,17 @@ function retainerReset(){
   RET_FORM = false; RET_MSG = ""; RET_ERR = false;
   RET_STUCK = false; RET_TOKEN = ""; RET_DRAFT = {};
 }
+/* Which case the state above belongs to. */
+let RET_CASE = null;
+/* Opening a case clears that form only if it is a DIFFERENT case. Returning to
+   the same one — a tab, a reload, the same row clicked again — must leave an
+   unfinished attempt exactly as it was: its token is what makes the next press
+   a RETRY rather than a second payment. Clearing it there would hand a fresh
+   token to a press that may be retrying a write which did commit, which is the
+   duplicate this whole guard exists to prevent. */
+function retainerEnter(caseNo){
+  if(RET_CASE !== caseNo){ retainerReset(); RET_CASE = caseNo; }
+}
 let PAY_MSG = "";
 let PAY_ERR = false;
 let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
@@ -2402,7 +2413,7 @@ async function openCase(caseNo, tab){
      someone else, and still holding the first case's idempotency token. A
      prefilled amount on another client's retainer is the kind of mistake that
      is only found when the money is reconciled. */
-  retainerReset();
+  retainerEnter(caseNo);
   if(isExample(caseNo)){
     WS = null;   // examples are page-held demo data; they have no live workspace
     return paintCase();
@@ -4140,7 +4151,7 @@ async function enterSurveillance(caseNo){
   SV = {tab: "home", entry: null, heard: null, err: "", ok: "", cat: "arrival", search: ""};
   document.body.classList.add("surv");
   if(WS_CASE !== caseNo || !WS){
-    WS_CASE = caseNo; WS = null; retainerReset();
+    WS_CASE = caseNo; WS = null; retainerEnter(caseNo);
     paint();
     try{
       const [sub, ws] = await Promise.all([
@@ -4643,7 +4654,7 @@ function billingPanel(s, a){
    happens, and work does not happen through a keyhole. paint() routes here. */
 function paintCase(){ paint(); }
 
-async function openExampleCase(caseNo){ WS_CASE = caseNo; WS = null; VIEW = "case"; retainerReset(); paint(); }
+async function openExampleCase(caseNo){ WS_CASE = caseNo; WS = null; VIEW = "case"; retainerEnter(caseNo); paint(); }
 
 function exampleBodyHtml(){
   const s = examplesFor(ME.role).find(c => c.case_no === WS_CASE);
