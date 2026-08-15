@@ -910,7 +910,7 @@ CREATE INDEX IF NOT EXISTS idx_paysend_case ON payment_send(case_no, id DESC);
 CREATE TABLE IF NOT EXISTS retainer_receipt (
   case_no     TEXT PRIMARY KEY,
   amount      REAL,
-  method      TEXT,      -- cash_app | venmo | check | cash | card | ach_bill | other
+  method      TEXT,      -- cash_app | venmo | check | cash | ach_bill (Worker validates)
   paid_on     TEXT,      -- the calendar date the CLIENT paid, not when it was typed
   reference   TEXT,      -- cheque number, transaction note, whatever identifies it
   recorded_by INTEGER REFERENCES users(id),

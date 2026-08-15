@@ -11,6 +11,26 @@ priority verified defect is already in progress."* So this sits **after the four
 HIGH defects** in `RECONCILIATION.md`'s HIGH QUEUE — each of which loses money or
 data silently — and before the MEDIUM/LOW backlog.
 
+## ⚠️ OWNER CORRECTION, 2026-08-15 — the accepted payment methods
+
+**Credit Card and Other are REMOVED.** The Record Payment methods are exactly:
+
+**Cash App · Venmo · Check · Cash · ACH / BILL**
+
+Both verbatim handoffs below list Credit Card and Other; **this correction is
+later and governs.** The handoffs are not edited — they are the record of what
+was asked for, and rewriting them would destroy the only copy of that.
+
+The firm does not accept the two that were removed. Offering a method it cannot
+take invites a client to try paying by one, and that failure lands on the client
+mid-retainer while the office only learns of it when the money never arrives.
+"Other" is worse than useless in a payment record: it states that money came in
+by a means nobody wrote down, which is the precise thing a payment record exists
+to prevent.
+
+Enforced in `RETAINER_METHODS` (`worker.js`), with a test asserting each of the
+five is accepted and that `card` and `other` are refused.
+
 Progress ledger:
 
 | Step | Status |
