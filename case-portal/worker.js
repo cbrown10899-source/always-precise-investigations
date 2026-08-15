@@ -4934,9 +4934,25 @@ async function route(request, env) {
       return json({ error: 'Retainers are the private-client model — a claim assignment is authorized in hour blocks.' }, 400);
     }
     const body = await readJson(request);
+    /* AN ABSENT AMOUNT MEANS UNCHANGED, NOT "BACK TO THE DEFAULT".
+
+       This defaulted to PERSONAL.retainer whenever the field was missing, and
+       the upsert below writes retainer_amount unconditionally — so any caller
+       that did not resend the figure silently reset it. Record Payment is
+       exactly such a caller: it sends the receipt, not the amount. A case
+       agreed at $2,500 dropped to $1,500 the moment the office recorded the
+       money arriving, and `remaining` then recomputed against a retainer the
+       client never agreed to. Nothing announced it.
+
+       The default belongs where there is genuinely nothing to preserve — a
+       case with no retainer row yet. */
+    const existing = await env.DB.prepare(
+      'SELECT retainer_amount FROM case_retainer WHERE case_no = ?').bind(m[1]).first();
     const raw = body.retainer_amount;
-    const amount = raw === undefined || raw === null || String(raw).trim() === ''
-      ? PERSONAL.retainer : Number(raw);
+    const absent = raw === undefined || raw === null || String(raw).trim() === '';
+    const amount = !absent ? Number(raw)
+      : (existing && existing.retainer_amount != null ? Number(existing.retainer_amount)
+                                                      : PERSONAL.retainer);
     if (!Number.isFinite(amount) || amount < 0) return json({ error: 'The retainer must be a number.' }, 400);
     const received = body.received === true || body.received === 1 || body.received === '1' ? 1 : 0;
 

@@ -1605,6 +1605,34 @@ section('The two internal calculations never share a number');
      undone.authorization.retainer.receipt === null
      && undone.authorization.retainer.status === 'pending');
 
+  /* A CUSTOM RETAINER SURVIVES EVERY OTHER WRITE TO THIS ROUTE.
+
+     An absent retainer_amount used to mean "reset to $1,500", and Record
+     Payment sends the receipt without the amount — so a case agreed at $2,500
+     silently dropped to the default the moment the office recorded the money,
+     with `remaining` recomputed against a figure the client never agreed to. */
+  await call(env, '/cases/API-RB1/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 2500, received: false } });
+  const kept = await jsonOf(await call(env, '/cases/API-RB1/retainer', { method: 'POST', cookie: admin,
+    body: { received: true, method: 'check', amount_received: 2500 } }));
+  ok('recording a payment does not reset a custom retainer',
+     kept.authorization.retainer.amount === 2500, String(kept.authorization.retainer.amount));
+  const keptBack = await jsonOf(await call(env, '/cases/API-RB1/retainer', { method: 'POST', cookie: admin,
+    body: { received: false } }));
+  ok('and neither does undoing it', keptBack.authorization.retainer.amount === 2500,
+     String(keptBack.authorization.retainer.amount));
+  ok('the balance stays computed against the agreed figure',
+     keptBack.authorization.retainer.remaining === 2500 - keptBack.authorization.retainer.applied);
+  // A case that has never had a retainer row: the default still applies there,
+  // which is the one place it is genuinely correct.
+  await ingest(env, { case_no: 'API-RB3', service: 'Surveillance', client_name: 'Q. Client', subject_name: 'T' });
+  ok('while a case with no retainer row still starts at the standard $1,500',
+     (await jsonOf(await call(env, '/cases/API-RB3/retainer', { method: 'POST', cookie: admin,
+       body: { received: false } }))).authorization.retainer.amount === 1500);
+  ok('and an explicit amount still changes it',
+     (await jsonOf(await call(env, '/cases/API-RB1/retainer', { method: 'POST', cookie: admin,
+       body: { retainer_amount: 1800, received: false } }))).authorization.retainer.amount === 1800);
+
   /* THE RULE THE FEATURE TURNS ON: sending instructions is not being paid. */
   await env.DB.prepare(
     `INSERT INTO payment_send (case_no, recipient, methods, with_sheet, ok, sent_at)
