@@ -4,7 +4,7 @@
 Recorded before building, per the standing rule.
 
 > **⚠️ TRANSMISSION NOTE.** This handoff arrived in two parts, both degrading
-> at the end. §1–7 came from the first; §8–16 from the addendum sent to replace
+> at the end. §1–6 came from the first; §8–16 from the addendum sent to replace
 > what was lost after "approximately section 7". Lines marked **[TRUNCATED]**
 > are exactly as received. Lines marked **[inferred]** are a reading through a
 > gap and are NOT the owner's words — confirm before building them. Remaining
@@ -121,10 +121,41 @@ owner-approved decision list states: **free-form dictation requires review
 before save**, which matches the existing rule that nothing spoken is ever
 auto-submitted.
 
-## §7 — [NOT RECEIVED]
+## §7 AMBIGUOUS COMMANDS — NEVER GUESS
 
-Lost in the first transmission and not covered by the addendum, which begins at
-§8. **Needs re-sending.**
+*(Recovered 2026-08-15, transmission 1 of 5.)*
+
+When match confidence is low, recognition is incomplete, or **multiple commands
+could match**:
+
+**DO NOT CREATE AN ACTIVITY.**
+
+```
+I HEARD:
+"Mobile change…"
+
+DID YOU MEAN:
+[ No Change ]
+[ Change Position ]
+[ Try Again ]
+[ Cancel ]
+```
+
+**No ambiguous voice phrase may silently become an official Activity Log
+record.**
+
+> This is the rule the rest of the voice feature has to be built around, not a
+> nicety bolted on at the end. An activity entry is evidence: it feeds the
+> daily report, the client package and, eventually, testimony. A misheard
+> phrase that files itself is worse than one that files nothing, because
+> nothing announces it — the investigator moves on believing the log says what
+> they said. "Mobile change" is the owner's own example and it is a good one:
+> `NO_CHANGE` and `CHANGE_POSITION` are opposite facts about the same minute.
+>
+> It also sets the default for the registry in §4. A phrase that matches
+> nothing is not a free-form note and must not quietly become one — free-form
+> is entered deliberately, by saying "Mobile, note" (§6B), and it requires
+> review before save in any case.
 
 ---
 
@@ -260,7 +291,7 @@ header, and Last Activity edit/remove on the Home screen.
 
 ## STILL MISSING — needs re-sending
 
-1. **§7 entirely** — the addendum starts at §8.
+1. ~~§7 entirely~~ — **RECOVERED 2026-08-15** (transmission 1 of 5).
 2. **§3** — one activity field between "investigator/user ID" and "existing
    audit fields".
 3. **§4** — canonical names for "changing position" and the `INDIRECT_VIEW` /
