@@ -12,12 +12,13 @@
  * 2026-08-14 .claude/agents/*.md arrived, the markdown guard fired, and the
  * PUBLIC SITE STOPPED DEPLOYING for four merges — while deploy-portal.yml kept
  * shipping the Worker, so the two halves of the system drifted apart with
- * nothing saying so. The guard was right; the list was wrong. Adding one more
- * --exclude fixes that instance and leaves the next one waiting.
+ * nothing saying so. The guard was right; the list was wrong.
  *
- * With an allow-list, a new agent definition, handoff note or tooling
- * directory is simply not site content. It cannot reach the artifact, and it
- * cannot break the deploy either.
+ * WHY FILE PATTERNS AND NOT DIRECTORIES. The first version of this allow-list
+ * named directories and copied them whole. That is default-deny at the top
+ * level and default-ALLOW inside anything listed — `portal/` was allowed, so
+ * `portal/anything.txt` would have shipped. The same hole, one level down, and
+ * the comment above it claimed otherwise. Patterns match FILES.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -25,15 +26,11 @@ import path from 'node:path';
 const ROOT = path.resolve(path.join(import.meta.dirname, '..'));
 const MANIFEST = path.join(ROOT, '.github', 'deploy-manifest.txt');
 
-/* File types that are never site content, even inside a directory that IS.
- * The suites live beside the pages they exercise (intake/test-intake.mjs,
- * portal/test-portal.mjs), and a public copy of the test harness is a map of
- * exactly what the defences check. This is a second, narrower boundary INSIDE
- * an allowed path — not a substitute for the allow-list. */
-const NEVER_SHIP = new Set(['.mjs', '.md', '.py', '.sh', '.sql']);
+/* Never walked at all: huge, or never site content under any pattern. */
+const SKIP_DIRS = new Set(['.git', 'node_modules', '_site']);
 
-/* Belt and braces. If any of these ever appears in the artifact, something has
- * gone wrong in a way the allow-list did not anticipate, and shipping is worse
+/* Belt and braces. If any of these ever reaches the artifact, something has
+ * gone wrong in a way the patterns did not anticipate, and shipping is worse
  * than failing. CLAUDE.md was served publicly until 2026-08-12; it describes
  * where every boundary is enforced, which is a map for anyone probing them. */
 const NEVER_PRESENT = [
@@ -41,15 +38,15 @@ const NEVER_PRESENT = [
   { test: p => p.split('/').includes('.github'), why: 'workflow and deploy config' },
   { test: p => p.split('/').includes('case-portal'), why: 'Worker source, pricing and handoff notes' },
   { test: p => p.split('/').includes('visitor-alerts'), why: 'Worker source' },
-  { test: p => p.endsWith('.md'), why: 'internal documentation' },
+  { test: p => p.toLowerCase().endsWith('.md'), why: 'internal documentation' },
   { test: p => p.endsWith('.mjs'), why: 'test suite' },
-  { test: p => /(^|\/)(CLAUDE|README|PRICING|NEXT|RECONCILIATION|MASTER-HANDOFF|PAYMENTS|WORK-ORDER)\.md$/i.test(p),
-    why: 'internal handoff document' },
+  { test: p => p.endsWith('.py'), why: 'the page generator' },
+  { test: p => p.endsWith('.sql'), why: 'database schema' },
 ];
 
-/* The site is broken in a quieter way if these vanish, so their ABSENCE is a
- * build failure too. A renamed directory would otherwise publish a site with a
- * hole in it and pass every guard. */
+/* The site is broken in a quieter way if these vanish, so their ABSENCE fails
+ * the build too. A renamed directory would otherwise publish a site with a
+ * hole in it and pass every other check. */
 const MUST_EXIST = [
   'index.html', '_headers', '_redirects', 'robots.txt',
   'portal/index.html', 'intake/index.html',
@@ -62,26 +59,39 @@ function readManifest() {
     .filter(Boolean);
 }
 
-function copyInto(src, destDir, rel) {
-  const st = fs.statSync(src);
-  if (st.isDirectory()) {
-    fs.mkdirSync(path.join(destDir, rel), { recursive: true });
-    for (const entry of fs.readdirSync(src)) {
-      copyInto(path.join(src, entry), destDir, path.posix.join(rel, entry));
+/* `*` within a segment, `**` across zero or more whole segments. Written out
+ * rather than pulled in, because a deploy boundary should not depend on a
+ * package resolving the way you assumed. */
+function globToRegExp(glob) {
+  const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parts = glob.split('/');
+  let re = '^';
+  parts.forEach((seg, i) => {
+    const last = i === parts.length - 1;
+    if (seg === '**') {
+      /* Zero or more WHOLE segments, each carrying its own trailing slash, so
+         a doubled star between two segments matches both "a/b.html" and
+         "a/c/b.html". The slash belongs to the group rather than being emitted
+         separately: written outside, matching zero segments also ate the
+         separator, and then nothing matched at all. */
+      re += last ? '.*' : '(?:[^/]+/)*';
+      return;
     }
-    return;
-  }
-  if (NEVER_SHIP.has(path.extname(src).toLowerCase())) return;   // pruned, by type
-  fs.mkdirSync(path.join(destDir, path.dirname(rel)), { recursive: true });
-  fs.copyFileSync(src, path.join(destDir, rel));
+    re += seg.split('*').map(esc).join('[^/]*');
+    if (!last) re += '/';
+  });
+  return new RegExp(`${re}$`);
 }
 
-function walk(dir, base = '') {
+function allFiles(dir, base = '') {
   const out = [];
   for (const entry of fs.readdirSync(dir)) {
+    if (!base && SKIP_DIRS.has(entry)) continue;
     const full = path.join(dir, entry);
-    const rel = base ? path.posix.join(base, entry) : entry;
-    if (fs.statSync(full).isDirectory()) out.push(...walk(full, rel));
+    const rel = base ? `${base}/${entry}` : entry;
+    let st;
+    try { st = fs.statSync(full); } catch { continue; }
+    if (st.isDirectory()) out.push(...allFiles(full, rel));
     else out.push(rel);
   }
   return out;
@@ -93,18 +103,25 @@ export function stage(target) {
   fs.mkdirSync(dest, { recursive: true });
 
   const problems = [];
-  for (const item of readManifest()) {
-    const src = path.join(ROOT, item);
-    if (!fs.existsSync(src)) {
-      // A listed path that has gone is a real failure: it means a page was
-      // renamed or removed and the site would quietly lose it.
-      problems.push(`manifest lists "${item}", which does not exist in the repository`);
-      continue;
-    }
-    copyInto(src, dest, item);
+  const patterns = readManifest().map(p => ({ glob: p, re: globToRegExp(p), hits: 0 }));
+  const repo = allFiles(ROOT);
+
+  const files = [];
+  const skipped = [];
+  for (const rel of repo) {
+    const hit = patterns.find(p => p.re.test(rel));
+    if (!hit) { skipped.push(rel); continue; }
+    hit.hits++;
+    fs.mkdirSync(path.join(dest, path.dirname(rel)), { recursive: true });
+    fs.copyFileSync(path.join(ROOT, rel), path.join(dest, rel));
+    files.push(rel);
   }
 
-  const files = walk(dest);
+  /* A pattern matching nothing means a page was renamed or deleted and the
+     site is about to lose it quietly. */
+  for (const p of patterns) {
+    if (!p.hits) problems.push(`the pattern "${p.glob}" matches no file in the repository`);
+  }
   for (const f of files) {
     for (const rule of NEVER_PRESENT) {
       if (rule.test(f)) problems.push(`${f} must never be deployed (${rule.why})`);
@@ -113,17 +130,18 @@ export function stage(target) {
   for (const need of MUST_EXIST) {
     if (!files.includes(need)) problems.push(`the site is missing ${need}`);
   }
-  return { files, problems };
+  return { files: files.sort(), skipped, problems };
 }
 
 /* Run directly (the workflow) rather than imported (the test). */
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.meta.filename)) {
   const target = process.argv[2] || '_site';
-  const { files, problems } = stage(target);
+  const { files, skipped, problems } = stage(target);
   for (const p of problems) console.error(`::error::${p}`);
   if (problems.length) {
     console.error(`\nRefusing to deploy: ${problems.length} problem(s) with the artifact.`);
     process.exit(1);
   }
   console.log(`Staged ${files.length} files into ${target}/ from the deploy allow-list.`);
+  console.log(`Not published (${skipped.length} repository files matched no pattern).`);
 }
