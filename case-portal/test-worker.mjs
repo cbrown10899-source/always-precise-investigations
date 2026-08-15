@@ -4567,6 +4567,207 @@ section('Payment instructions ride with the private client and no one else');
   globalThis.fetch = realFetch;
 }
 
+/* THE CUSTOM PRIVATE RETAINER (PAYMENTS.md, owner 2026-08-15, parts 1 and 2).
+   The owner named seven tests; each is labelled below with the words they used.
+   Two more guard the selector itself, because a control that WRITES the agreed
+   figure can break things a control that merely reads it could not. */
+section('The retainer a private case agreed is the retainer it keeps');
+{
+  const realFetch = globalThis.fetch;
+  let lastBody = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      lastBody = JSON.parse(init.body);
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const both = s => `${s.html}\n${s.text}`;
+
+  await ingest(env, { case_no: 'API-SEL1', service: 'Surveillance',
+                      client_name: 'P. Client', subject_name: 'S' });
+  await ingest(env, { case_no: 'API-SELC', carrier: 'Acme Mutual', claim_number: 'AM-9',
+                      client_name: 'A. Adjuster', subject_name: 'C' });
+
+  const agreedOf = async caseNo => (await jsonOf(await call(env,
+    `/cases/${caseNo}/workspace`, { cookie: admin }))).authorization.retainer;
+  const setRetainer = (caseNo, body) => call(env, `/cases/${caseNo}/retainer`,
+    { method: 'POST', cookie: admin, body });
+
+  /* OWNER TEST 1 — "each preset works". Driven through the same route the
+     selector posts to, one preset at a time, reading the stored figure back
+     rather than trusting the 200. */
+  for (const preset of [1500, 2000, 3000]) {
+    await setRetainer('API-SEL1', { retainer_amount: preset });
+    const r = (await agreedOf('API-SEL1')).agreed;
+    ok(`the $${preset.toLocaleString()} preset is stored and read back`, r === preset, String(r));
+  }
+
+  /* OWNER TEST 2 — "custom amount works", using the owner's own worked example
+     of $2,500, which is deliberately NOT one of the presets. */
+  await setRetainer('API-SEL1', { retainer_amount: 2500 });
+  ok('a custom $2,500 is stored exactly, not rounded to a preset',
+     (await agreedOf('API-SEL1')).agreed === 2500);
+
+  /* The selector opens on what the case already agreed, so the figure has to
+     come back as a NUMBER. Parsing it out of the sheet name would preselect the
+     wrong preset the day someone rewords the name. */
+  const sheetsFor = await jsonOf(await call(env, '/sheets?case=API-SEL1', { cookie: admin }));
+  ok('the sheets payload carries the resolved retainer as a number',
+     sheetsFor.retainer === 2500, JSON.stringify(sheetsFor.retainer));
+  ok('and a case with nothing agreed resolves to the standard figure',
+     (await jsonOf(await call(env, '/sheets?case=API-SELC', { cookie: admin }))).retainer === 1500);
+
+  /* OWNER TEST 3 — "rate sheet displays the selected amount". The document the
+     CLIENT receives, not the preview: both MIME parts of the real email. */
+  await setRetainer('API-SEL1', { retainer_amount: 3000 });
+  lastBody = null;
+  const sent = await jsonOf(await call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin,
+      body: { to: 'client@example.com', case_no: 'API-SEL1' } }));
+  ok('the emailed sheet states the agreed $3,000, in both parts',
+     both(lastBody).includes('$3,000'), 'no $3,000 in the sent body');
+  ok('and never the standard $1,500 the case did not agree',
+     !both(lastBody).includes('$1,500'));
+  ok('the subject line carries it too',
+     lastBody.subject.includes('$3,000') && !lastBody.subject.includes('$1,500'),
+     lastBody.subject);
+  ok('and the confirmation names the sheet that actually went',
+     sent.included.rate_sheet === '$3,000 Retainer', sent.included.rate_sheet);
+
+  /* OWNER TEST 4 — "returned intake preserves the selected amount". The intake
+     row is untouched by any of this, and the agreed figure survives a re-read
+     and a second send rather than living only in the request that set it. */
+  const sub = await jsonOf(await call(env, '/submissions', { cookie: admin }));
+  const row = (sub.submissions || []).find(s => s.case_no === 'API-SEL1');
+  ok('the original intake is still the intake it was', !!row && row.case_no === 'API-SEL1');
+  ok('and the agreed retainer survives being read again',
+     (await agreedOf('API-SEL1')).agreed === 3000);
+  lastBody = null;
+  await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'client@example.com', case_no: 'API-SEL1' } });
+  ok('a second send carries the same agreed figure, not the default',
+     both(lastBody).includes('$3,000') && !both(lastBody).includes('$1,500'));
+
+  /* OWNER TEST 5 — "partial payments calculate correctly", against a CHOSEN
+     retainer rather than the standard one. $3,000 agreed, $1,000 and $500 in. */
+  await call(env, '/cases/API-SEL1/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 1000, method: 'venmo', paid_on: '2026-08-10' } });
+  const part = (await jsonOf(await call(env, '/cases/API-SEL1/retainer/payment',
+    { method: 'POST', cookie: admin,
+      body: { amount: 500, method: 'check', paid_on: '2026-08-12' } }))).authorization.retainer;
+  ok('received totals both instalments against the agreed $3,000',
+     part.agreed === 3000 && part.received_total === 1500, JSON.stringify(part.received_total));
+  ok('and outstanding is the agreed figure minus what arrived',
+     part.outstanding === 1500, String(part.outstanding));
+  ok('part paid, not paid', part.status === 'part_paid', part.status);
+
+  /* OWNER TEST 6 — "Record Payment never resets the agreed retainer". */
+  ok('recording money leaves the agreed $3,000 exactly where it was',
+     (await agreedOf('API-SEL1')).agreed === 3000);
+  await setRetainer('API-SEL1', { received: true });
+  ok('and ticking the received flag with no amount does not reset it either',
+     (await agreedOf('API-SEL1')).agreed === 3000);
+
+  await setRetainer('API-SEL1', { retainer_amount: 4000 });
+  const after = await agreedOf('API-SEL1');
+  ok('the new agreed figure is stored', after.agreed === 4000);
+  ok('and every payment is still counted underneath it',
+     after.received_total === 1500, String(after.received_total));
+
+  /* THE MIRROR OF TEST 6, and the reason the Worker changed with this feature.
+     `received` used to default to 0 whenever a caller did not send it, so the
+     SELECTOR — which sends an amount and knows nothing about the money — would
+     have un-received a retainer that had genuinely been paid. Raising what was
+     agreed is not a statement that the money went away.
+
+     Driven on a case with NO payments on purpose. On API-SEL1 the flag cannot
+     be observed at all: `received` there is true because $1,500 has genuinely
+     arrived, and once a case has payment history the money decides. A guard
+     asserted over there would pass no matter what the flag did — the same
+     vacuous shape this project has been caught by twice before. */
+  await ingest(env, { case_no: 'API-SEL2', service: 'Surveillance',
+                      client_name: 'Q. Client', subject_name: 'T' });
+  await setRetainer('API-SEL2', { retainer_amount: 1500, received: true });
+  const flagged = await agreedOf('API-SEL2');
+  ok('a case with no payments reads as received purely on the flag',
+     flagged.received === true && flagged.received_total === 0,
+     JSON.stringify([flagged.received, flagged.received_total]));
+  await setRetainer('API-SEL2', { retainer_amount: 3000 });
+  const raised = await agreedOf('API-SEL2');
+  ok('raising the agreed retainer does not un-receive it',
+     raised.received === true, JSON.stringify(raised.received));
+  ok('and the raise itself landed', raised.agreed === 3000);
+  /* Unticking is still a real answer and still works — this is preservation of
+     silence, not a freeze. Without this the guard above could be satisfied by a
+     route that had simply stopped listening to the flag. */
+  await setRetainer('API-SEL2', { received: false });
+  ok('but explicitly unticking it still un-marks it',
+     (await agreedOf('API-SEL2')).received === false);
+  ok('and unticking left the agreed figure alone',
+     (await agreedOf('API-SEL2')).agreed === 3000);
+
+  /* A ZERO RETAINER IS REFUSED. `rateSheets()` falls back to the standard for
+     anything not above zero, so a stored 0 would leave the case saying $0 while
+     the client's sheet said $1,500 — the record and the document disagreeing in
+     silence, which is the defect #123 fixed from the other end. */
+  ok('a zero retainer is refused rather than stored',
+     (await setRetainer('API-SEL1', { retainer_amount: 0 })).status === 400);
+  ok('and so is a negative one',
+     (await setRetainer('API-SEL1', { retainer_amount: -100 })).status === 400);
+  ok('a retainer that is not a number is still refused',
+     (await setRetainer('API-SEL1', { retainer_amount: 'lots' })).status === 400);
+  ok('and none of those refusals changed the stored figure',
+     (await agreedOf('API-SEL1')).agreed === 4000);
+
+  /* OWNER TEST 7 — "Insurance never sees this selector." Enforced in the Worker,
+     not by the page declining to draw it: a claim assignment is authorized in
+     hour blocks and has no retainer at all. */
+  ok('a claims case refuses a retainer amount outright',
+     (await setRetainer('API-SELC', { retainer_amount: 3000 })).status === 400);
+  ok('and still has no retainer record to show',
+     (await jsonOf(await call(env, '/cases/API-SELC/workspace', { cookie: admin })))
+       .authorization.retainer === undefined);
+  const insSheet = (await jsonOf(await call(env, '/sheets?case=API-SEL1', { cookie: admin })))
+    .sheets.find(s => s.id === 'insurance_assignment');
+  ok('the insurance sheet names no retainer even beside a private case that has one',
+     !JSON.stringify(insSheet).includes('Retainer')
+     && !JSON.stringify(insSheet).includes('4,000'),
+     JSON.stringify(insSheet).slice(0, 120));
+  /* The carrier sheet cannot even be sent against that private case — the
+     sheet/lead pairing guard refuses it — so the carrier boundary is checked
+     where a carrier actually is, on the claims lead. Both halves matter: the
+     refusal, and what the adjuster who legitimately gets a sheet is told. */
+  ok('the carrier sheet cannot be sent against a private case at all',
+     (await call(env, '/sheets/insurance_assignment/email', { method: 'POST', cookie: admin,
+       body: { to: 'adjuster@example.com', case_no: 'API-SEL1' } })).status === 400);
+  lastBody = null;
+  await call(env, '/sheets/insurance_assignment/email', { method: 'POST', cookie: admin,
+    body: { to: 'adjuster@example.com', case_no: 'API-SELC' } });
+  ok('and the adjuster who does get a sheet is quoted no retainer of any kind',
+     !both(lastBody).includes('$4,000') && !both(lastBody).toLowerCase().includes('retainer'),
+     'retainer wording reached a carrier');
+
+  /* The selector is admin-only, like every other money control. */
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const tok = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  ok('an investigator cannot set the agreed retainer',
+     (await call(env, '/cases/API-SEL1/retainer', { method: 'POST', cookie: inv,
+       body: { retainer_amount: 1 } })).status === 403);
+  ok('and cannot read the sheets that would name it',
+     (await call(env, '/sheets?case=API-SEL1', { cookie: inv })).status === 403);
+
+  globalThis.fetch = realFetch;
+}
+
 section('The daily report builder');
 {
   const env = freshEnv();

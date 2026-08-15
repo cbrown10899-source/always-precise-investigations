@@ -1452,6 +1452,112 @@ section('The private send wizard offers payment options; the carrier one never d
   await page.close();
 }
 
+/* PAYMENTS.md, owner 2026-08-15 — the CUSTOM PRIVATE RETAINER SELECTOR.
+   The Worker has stored a per-case retainer since #97 and carried it through
+   the sheet since #123; what did not exist was any way to CHOOSE it before
+   sending. Driven here as an admin actually uses it, because the storage was
+   never the missing half. */
+section('A private retainer is chosen before the sheet goes, and never reset by accident');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Rate sheets' }).click();
+  await page.waitForTimeout(700);
+
+  /* The carrier side first — the absence is the requirement. An insurance
+     assignment is authorized in hour blocks, so a retainer selector on it would
+     be offering the wrong billing model entirely. */
+  await page.locator('.sheet-card', { hasText: 'Insurance Assignment Rates' }).click();
+  await page.waitForTimeout(400);
+  await page.locator('.btn', { hasText: 'Send this sheet' }).click();
+  await page.waitForTimeout(700);
+  ok('the carrier wizard has no retainer selector at all',
+     await page.locator('#wiz_ret').count() === 0);
+  ok('and does not mention an agreed retainer',
+     !has(await text(page, '.amsheet'), 'Agreed retainer'));
+  await page.locator('.amx').click();
+  await page.waitForTimeout(300);
+
+  // The private side.
+  await page.locator('.sheet-card', { hasText: 'Retainer' }).first().click();
+  await page.waitForTimeout(400);
+  await page.locator('.btn', { hasText: 'Send this sheet' }).click();
+  await page.waitForTimeout(900);
+  ok('the private wizard offers the retainer selector',
+     await page.locator('#wiz_ret').count() === 1);
+  const opts = await page.locator('#wiz_ret option').allInnerTexts();
+  ok('with the owner\'s four choices, standard first',
+     opts.length === 4 && has(opts[0], '$1,500') && has(opts[0], 'Standard')
+     && has(opts[1], '$2,000') && has(opts[2], '$3,000') && has(opts[3], 'Custom'),
+     JSON.stringify(opts));
+  ok('and opens on the standard figure', await page.locator('#wiz_ret').inputValue() === '1500');
+  ok('the custom box stays out of the way until it is wanted',
+     await page.locator('#wiz_retc').count() === 0);
+
+  // Custom reveals its field, and an empty one is refused rather than sent.
+  await page.locator('#wiz_ret').selectOption('custom');
+  await page.waitForTimeout(400);
+  ok('choosing Custom reveals the amount field',
+     await page.locator('#wiz_retc').isVisible());
+  await page.locator('#wiz_to').fill('client@example.com');
+  await page.locator('#wiz_case').fill('API-20260812-4002');
+  await page.locator('.btn', { hasText: 'Preview' }).click();
+  await page.waitForTimeout(500);
+  ok('an empty custom retainer is refused before anything is sent',
+     has(await text(page, '.amsheet'), 'above zero'), await text(page, '.amsheet'));
+  ok('and it did not advance to Preview on the strength of a blank box',
+     await page.locator('#wiz_ret').count() === 1);
+  /* Zero is refused for the same reason the Worker refuses it: the sheet falls
+     back to the standard figure for anything not above zero, so a stored 0
+     would put $0 in the record and $1,500 in front of the client. */
+  await page.locator('#wiz_retc').fill('0');
+  await page.locator('.btn', { hasText: 'Preview' }).click();
+  await page.waitForTimeout(500);
+  ok('and so is a zero one', has(await text(page, '.amsheet'), 'above zero'));
+
+  // A real preset, carried all the way into the preview.
+  await page.locator('#wiz_ret').selectOption('3000');
+  await page.waitForTimeout(400);
+  ok('picking a preset hides the custom box again',
+     await page.locator('#wiz_retc').count() === 0);
+  await page.locator('.btn', { hasText: 'Preview' }).click();
+  await page.waitForTimeout(900);
+  const prev = await text(page, '.amsheet');
+  ok('the preview states the agreed retainer', has(prev, 'Agreed retainer') && has(prev, '$3,000'), prev);
+  ok('and the sheet it names is the $3,000 one, not the standard',
+     has(prev, '$3,000 Retainer') && !has(prev, '$1,500'), prev);
+  await page.locator('.amx').click();
+  await page.waitForTimeout(400);
+
+  /* THE GUARD THAT MAKES THE FEATURE SAFE. Reopened from Rate sheets there is
+     no case number yet, so the selector shows the standard $1,500 because it
+     has nothing else to show. Typing the case number and previewing must NOT
+     write that untouched default over the $3,000 just agreed — otherwise
+     looking at an email silently re-cuts the client's retainer. */
+  await page.locator('.btn', { hasText: 'Send this sheet' }).click();
+  await page.waitForTimeout(900);
+  ok('a freshly opened wizard shows the standard, having no case to read yet',
+     await page.locator('#wiz_ret').inputValue() === '1500');
+  await page.locator('#wiz_to').fill('client@example.com');
+  await page.locator('#wiz_case').fill('API-20260812-4002');
+  await page.locator('.btn', { hasText: 'Preview' }).click();
+  await page.waitForTimeout(1000);
+  const untouched = await text(page, '.amsheet');
+  ok('an untouched selector does not overwrite what the case already agreed',
+     has(untouched, '$3,000') && !has(untouched, '$1,500'), untouched);
+  ok('and the preview reads back the real figure rather than what was on screen',
+     has(untouched, 'Agreed retainer') && has(untouched, '$3,000'));
+
+  /* And the selector then shows the truth, so the next admin to open it is not
+     misled by the default they arrived on. */
+  await page.locator('.btn', { hasText: 'Back' }).click();
+  await page.waitForTimeout(600);
+  ok('the selector has caught up to the case it is now pointed at',
+     await page.locator('#wiz_ret').inputValue() === '3000',
+     await page.locator('#wiz_ret').inputValue());
+  await page.close();
+}
+
 /* The Worker refuses a send when a method is switched on with no payment link,
    and that refusal says "add a link in Settings". This screen is what makes
    that sentence true — it shipped as an error with nowhere to go, which is a

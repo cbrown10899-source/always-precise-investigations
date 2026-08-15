@@ -4675,7 +4675,14 @@ async function route(request, env) {
        pattern before it reaches a query. */
     const wantCase = url.searchParams.get('case') || '';
     const caseNo = /^[A-Za-z0-9-]{3,64}$/.test(wantCase) ? wantCase : '';
-    return json({ sheets: rateSheets(await agreedRetainer(env, caseNo)),
+    /* The RESOLVED figure travels beside the sheets, because the selector has
+       to open on what this case already agreed. Parsing it back out of the
+       sheet's name ("$3,000 Retainer") would work until someone reworded the
+       name, and would then quietly preselect the wrong preset — the selector
+       must read a number, not a sentence. */
+    const retainer = await agreedRetainer(env, caseNo);
+    return json({ sheets: rateSheets(retainer),
+                  retainer,
                   email_configured: Boolean(env.RESEND_API_KEY) });
   }
 
@@ -5159,8 +5166,18 @@ async function route(request, env) {
        case with no retainer row yet. */
     const raw = body.retainer_amount;
     const absent = raw === undefined || raw === null || String(raw).trim() === '';
-    if (!absent && !(Number.isFinite(Number(raw)) && Number(raw) >= 0)) {
+    if (!absent && !Number.isFinite(Number(raw))) {
       return json({ error: 'The retainer must be a number.' }, 400);
+    }
+    /* ZERO IS REFUSED, and it is not pedantry (owner: "validated as a positive
+       dollar amount"). `rateSheets()` falls back to PERSONAL.retainer for
+       anything not above zero, so a stored 0 would leave the case record saying
+       $0 while the sheet the client receives says $1,500 — the record and the
+       document disagreeing, silently, which is the exact defect #123 fixed in
+       the other direction. Refuse it at the door rather than let the two drift. */
+    if (!absent && Number(raw) <= 0) {
+      return json({ error: 'The retainer has to be more than $0. To record that this case has no '
+                         + 'retainer, leave the amount alone rather than setting it to zero.' }, 400);
     }
     /* NULL means "leave it alone", and the SQL below resolves that against the
        row's own current value. Reading the amount here and writing it back
@@ -5170,7 +5187,23 @@ async function route(request, env) {
        same private case — one adjusting the retainer, one recording the
        payment — is an ordinary Monday, not a race worth ignoring. */
     const amount = absent ? null : Number(raw);
-    const received = body.received === true || body.received === 1 || body.received === '1' ? 1 : 0;
+    /* AN ABSENT `received` MEANS UNCHANGED TOO — the same rule as the amount,
+       for the same reason, in the other column.
+
+       This read `body.received === true ? 1 : 0`, so a caller that sent only
+       the amount silently set received back to 0 and cleared received_at. The
+       retainer SELECTOR is exactly such a caller: it changes the agreed figure
+       and knows nothing about whether the money arrived. Raising an agreed
+       retainer from $1,500 to $3,000 would have un-received a retainer that had
+       genuinely been paid, and the case would read RETAINER PENDING with the
+       payments still sitting in the log underneath.
+
+       `false` is still a real answer and still un-marks it — the settings panel
+       unticks that box on purpose. Only undefined and null mean "I am not
+       talking about this". */
+    const recAbsent = body.received === undefined || body.received === null;
+    const received = recAbsent ? null
+      : (body.received === true || body.received === 1 || body.received === '1' ? 1 : 0);
 
     /* THE RECEIPT: what actually arrived (PAYMENTS.md §5/§11). `received` on
        its own is a flag — it can say money came in and nothing about which
@@ -5208,7 +5241,7 @@ async function route(request, env) {
        Un-marking no longer deletes anything. A payment recorded in error is
        voided through its own route, which keeps the record; unticking a
        checkbox is not a reason to erase a payment history. */
-    if (received && rcAmount !== null && rcAmount > 0) {
+    if (received === 1 && rcAmount !== null && rcAmount > 0) {
       const tok = clean(body.client_token, 64);
       const outcome = await recordRetainerPayment(env, m[1], tok,
         { amount: rcAmount, method: rcMethod, paid_on: rcPaidOn, reference: rcRef }, user.id);
@@ -5222,13 +5255,21 @@ async function route(request, env) {
       /* ?2 NULL = the caller said nothing about the amount. On a new row that
          means the standard retainer (?6); on an existing one it means the value
          already there, resolved inside the UPDATE so no other write can slip
-         between a read and this statement. */
+         between a read and this statement.
+
+         ?3 NULL = the caller said nothing about receipt, and resolves the same
+         way: 0 on a brand-new row (a retainer nobody has mentioned has not
+         arrived), and the row's own current value on an existing one. Both
+         columns are preserved by the statement rather than by a prior read, so
+         two admins on one private case cannot overwrite each other. */
       `INSERT INTO case_retainer (case_no, retainer_amount, received, received_at, updated_by, updated_at)
-       VALUES (?1, COALESCE(?2, ?6), ?3, CASE WHEN ?3 = 1 THEN ?4 ELSE NULL END, ?5, ?4)
+       VALUES (?1, COALESCE(?2, ?6), COALESCE(?3, 0),
+               CASE WHEN COALESCE(?3, 0) = 1 THEN ?4 ELSE NULL END, ?5, ?4)
        ON CONFLICT(case_no) DO UPDATE SET
          retainer_amount = COALESCE(?2, case_retainer.retainer_amount),
-         received = ?3,
-         received_at = CASE WHEN ?3 = 1 THEN COALESCE(case_retainer.received_at, ?4) ELSE NULL END,
+         received = COALESCE(?3, case_retainer.received),
+         received_at = CASE WHEN COALESCE(?3, case_retainer.received) = 1
+                            THEN COALESCE(case_retainer.received_at, ?4) ELSE NULL END,
          updated_by = ?5, updated_at = ?4`)
       .bind(m[1], amount, received, nowIso(), user.id, PERSONAL.retainer).run();
     return json({ ok: true, authorization: await authorizationFor(env, m[1], true) });

@@ -1761,6 +1761,119 @@ function wizPaymentHtml(w){
   </div>`;
 }
 
+/* THE AGREED RETAINER, CHOSEN BEFORE THE SEND (PAYMENTS.md, owner 2026-08-15).
+
+   PRIVATE SHEET ONLY — this returns nothing at all for the carrier one, the
+   same shape as the payment section above, and the Worker refuses a retainer on
+   a claims case independently. An insurance assignment is authorized in hour
+   blocks; a retainer selector on it would be offering the wrong billing model.
+
+   The figure is a property of the CASE, not of this email — the owner's wording
+   is "becomes the AGREED RETAINER for that specific private client/case" — so
+   it is written to `case_retainer` and everything downstream re-reads it. The
+   hourly rate and the 4-hour minimum are untouched and must stay that way.
+
+   The standard figure is only the STARTING point, never a reset: a case that
+   agreed a higher one opens this selector on that higher one, and an amount
+   matching no preset opens Custom with the real figure in the box rather than
+   snapping to the nearest button.
+
+   No figure is written in this file, here or anywhere else — a guard test fails
+   on a dollar amount in the portal HTML, and these presets are numbers the
+   `money()` helper decorates at render time. */
+const RETAINER_PRESETS = [1500, 2000, 3000];
+
+/* Null means "not a usable amount", which is how the caller distinguishes an
+   empty Custom box from a real choice. Currency decoration is stripped because
+   an admin who types a currency symbol and a comma has said exactly what they
+   meant. */
+function wizRetainerWanted(w){
+  const raw = w.retainerPick === "custom" ? w.retainerCustom : w.retainerPick;
+  const n = Number(String(raw == null ? "" : raw).replace(/[$,\s]/g, ""));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function wizRetainerInit(w){
+  const v = Number(w.retainer);
+  if(!Number.isFinite(v) || v <= 0) return;
+  if(RETAINER_PRESETS.includes(v)){ w.retainerPick = String(v); w.retainerCustom = ""; }
+  else { w.retainerPick = "custom"; w.retainerCustom = String(v); }
+}
+
+function wizRetainerHtml(w){
+  if(w.sheet !== "private_retainer") return "";
+  const money = n => "$" + Number(n).toLocaleString("en-US");
+  const pick = w.retainerPick || String(RETAINER_PRESETS[0]);
+  return `<div class="feebox" style="margin:10px 0">
+    <label class="f" style="margin:0"><span>Agreed retainer
+      <span class="opt">what this client is being asked for</span></span>
+      <select id="wiz_ret" data-act="wizRetPick">
+        ${RETAINER_PRESETS.map(v => `<option value="${v}"${pick === String(v) ? " selected" : ""}
+          >${money(v)}${v === RETAINER_PRESETS[0] ? " Standard" : ""}</option>`).join("")}
+        <option value="custom"${pick === "custom" ? " selected" : ""}>Custom amount&hellip;</option>
+      </select></label>
+    ${pick === "custom" ? `<label class="f" style="margin:8px 0 0"><span>Custom retainer</span>
+      <input id="wiz_retc" inputmode="decimal" placeholder="e.g. 2500"
+        data-act-input="wizRetDirty" value="${esc(w.retainerCustom || "")}"></label>` : ""}
+    <p class="hint">${!w.caseNo
+      ? `Enter the case number above to change this. The agreed figure is recorded against the
+         case, so there is nowhere to keep it without one.`
+      : w.retainer == null
+        /* Honest about what is on screen: this is the standard figure, not a
+           reading of the case. Saying otherwise would invite an admin to treat
+           an unloaded default as confirmation of what the client agreed. */
+        ? `Preview reads back what <b>${esc(w.caseNo)}</b> has already agreed. Change this only to
+           agree a different figure &mdash; leaving it alone keeps whatever the case holds.`
+        : `This becomes the agreed retainer for <b>${esc(w.caseNo)}</b>, and is what the sheet, the
+           subject line and the payment block all carry. The hourly rate and the four-hour minimum
+           do not change.`}</p>
+  </div>`;
+}
+
+/* Written on the way to Preview, so the preview is the document that will
+   actually be sent — the same reason the sheet itself is re-read there. If this
+   write fails the admin does not advance, rather than previewing a figure the
+   case does not hold.
+
+   It sends ONLY the amount. An absent `received` now means "unchanged" in the
+   Worker, so changing what was agreed can never un-receive a retainer that was
+   genuinely paid. */
+async function wizRetainerSave(){
+  const w = SHEET_WIZ;
+  if(!w || w.sheet !== "private_retainer") return true;
+  /* NOTHING IS WRITTEN UNLESS SOMEONE CHOSE SOMETHING, and this guard is the
+     whole safety of the feature.
+
+     Opened from Rate sheets there is no case number yet, so the selector shows
+     the standard figure because it has nothing else to show. Writing that
+     untouched default on the way to Preview would cut a case that had agreed a
+     larger retainer back to the standard one — silently, as a side effect of
+     looking at an email. An untouched selector is not a choice, and the case
+     keeps what it agreed. */
+  if(!w.retainerTouched) return true;
+  const want = wizRetainerWanted(w);
+  if(want == null){
+    w.err = "Enter the custom retainer as a dollar amount above zero.";
+    return false;
+  }
+  if(w.retainer != null && want === w.retainer) return true;
+  if(!w.caseNo){
+    /* No case, no record. The standard sheet still sends — it is the default
+       document and preserves nothing — but a CHOSEN figure with nowhere to live
+       would be a number the client is quoted and the office cannot look up. */
+    if(w.retainer == null && want === RETAINER_PRESETS[0]) return true;
+    w.err = "Enter the case number this retainer belongs to — the agreed figure is recorded "
+          + "against the case, and there is nowhere to keep it without one.";
+    return false;
+  }
+  try{
+    await api(`/cases/${encodeURIComponent(w.caseNo)}/retainer`,
+      {method:"POST", body:{retainer_amount: want}});
+    w.retainer = want;
+    return true;
+  }catch(e){ w.err = e.message; return false; }
+}
+
 /* THE SHEET THIS CASE WILL BE SENT, not the standard one. `SHEETS` is fetched
    once at sign-in with no case in hand, so it always carries the default
    retainer; a case that agreed a different figure has to re-read the sheet for
@@ -1773,7 +1886,17 @@ async function wizSheetLoad(){
   if(!w || !w.caseNo) return;
   try{
     const r = await api(`/sheets?case=${encodeURIComponent(w.caseNo)}`);
-    if(SHEET_WIZ === w) w.sheetData = (r.sheets || []).find(s => s.id === w.sheet) || null;
+    if(SHEET_WIZ === w){
+      w.sheetData = (r.sheets || []).find(s => s.id === w.sheet) || null;
+      /* The selector opens on what the case ALREADY agreed — but never on top
+         of a choice the admin has just made. Without the `retainerTouched`
+         guard the re-read on the way to Preview would snap the figure they just
+         chose back to whatever was stored a moment earlier. */
+      if(r.retainer != null){
+        w.retainer = Number(r.retainer);
+        if(!w.retainerTouched) wizRetainerInit(w);
+      }
+    }
   }catch(e){ /* keep the default sheet */ }
   paint();
 }
@@ -1807,12 +1930,15 @@ function sheetWizardHtml(){
       <p class="hint">The matching intake is paired automatically. ${w.sheet === "insurance_assignment"
         ? "Carriers land on the Secure Assignment Intake — never the consumer picker."
         : "Private clients land on the private intake — the carrier path is never offered."}</p>
+      ${wizRetainerHtml(w)}
       ${wizPaymentHtml(w)}`
     : `
       <dl class="detail">
         <dt>Sheet</dt><dd>${esc(sheet.name || w.sheet)}</dd>
         <dt>To</dt><dd>${esc(w.to)}</dd>
         ${w.caseNo ? `<dt>Case</dt><dd>${esc(w.caseNo)}</dd>` : ""}
+        ${w.sheet === "private_retainer" && w.retainer != null
+          ? `<dt>Agreed retainer</dt><dd>$${esc(Number(w.retainer).toLocaleString("en-US"))}</dd>` : ""}
         ${w.note ? `<dt>Added line</dt><dd>${esc(w.note)}</dd>` : ""}
         <dt>Intake form</dt><dd>${w.include ? intakeLabel + " link included" : "Not included"}</dd>
         ${w.sheet === "private_retainer" ? `<dt>Payment options</dt><dd>${
@@ -6064,6 +6190,8 @@ function wizCollect(){
   if($("wiz_case")) SHEET_WIZ.caseNo = $("wiz_case").value.trim();
   if($("wiz_note")) SHEET_WIZ.note = $("wiz_note").value.trim();
   if($("wiz_inc")) SHEET_WIZ.include = $("wiz_inc").checked;
+  if($("wiz_ret")) SHEET_WIZ.retainerPick = $("wiz_ret").value;
+  if($("wiz_retc")) SHEET_WIZ.retainerCustom = $("wiz_retc").value.trim();
   if($("wiz_pay")) SHEET_WIZ.pay = $("wiz_pay").checked;
   const boxes = [...document.querySelectorAll(".wiz-pm")];
   if(boxes.length){
@@ -6390,7 +6518,9 @@ document.addEventListener("click", ev => {
   }
   else if(act === "shWiz"){
     SHEET_WIZ = {sheet: el.dataset.sheet, step: 1, to: "", caseNo: "", note: "", include: true,
-                 pay: true, payMethods: [], err: ""};
+                 pay: true, payMethods: [], err: "",
+                 retainer: null, retainerPick: String(RETAINER_PRESETS[0]),
+                 retainerCustom: "", retainerTouched: false};
     SHEET_MSG = ""; wizPaymentLoad(); paint();
   }
   /* MASTER §5 — the same wizard, opened FROM the lead: the sheet is picked by
@@ -6400,7 +6530,11 @@ document.addEventListener("click", ev => {
     const c = CASES.find(x => x.case_no === el.dataset.case) || {};
     SHEET_WIZ = {sheet: el.dataset.kind === "claims" ? "insurance_assignment" : "private_retainer",
                  step: 1, to: c.client_email || "", caseNo: el.dataset.case, note: "",
-                 include: true, pay: true, payMethods: [], err: "", fromLead: true};
+                 include: true, pay: true, payMethods: [], err: "", fromLead: true,
+                 retainer: null, retainerPick: String(RETAINER_PRESETS[0]),
+                 retainerCustom: "", retainerTouched: false};
+    /* wizSheetLoad also brings back the case's agreed retainer, so the selector
+       opens on what this client already agreed rather than on the standard. */
     SHEET_MSG = ""; wizPaymentLoad(); wizSheetLoad(); paint();
   }
   else if(act === "leadIntake"){
@@ -6419,8 +6553,19 @@ document.addEventListener("click", ev => {
     if(s2 > 1 && !SHEET_WIZ.to){ SHEET_WIZ.err = "Enter the address to send it to."; paint(); }
     /* The case number can be TYPED on step 1, so the sheet is re-read on the
        way to Preview: the retainer belongs to the case, and the preview has to
-       be the document that will actually be sent. */
-    else { SHEET_WIZ.err = ""; SHEET_WIZ.step = s2; paint(); if(s2 > 1) wizSheetLoad(); }
+       be the document that will actually be sent.
+       The agreed retainer is WRITTEN first, for the same reason — the sheet is
+       then re-read from the server and shows the figure the case actually
+       holds, so the preview can never display an amount that was not stored. */
+    else if(s2 > 1){
+      SHEET_WIZ.err = "";
+      wizRetainerSave().then(okd => {
+        if(!SHEET_WIZ) return;
+        if(!okd) return paint();
+        SHEET_WIZ.step = s2; paint(); wizSheetLoad();
+      });
+    }
+    else { SHEET_WIZ.err = ""; SHEET_WIZ.step = s2; paint(); }
   }
   else if(act === "wizSend"){ wizSend(); }
   else if(act === "nlKind"){ NL = {kind: el.dataset.k, err: ""}; paint(); }
@@ -6475,6 +6620,9 @@ document.addEventListener("input", ev => {
   if(din === "svSearch" && SV){ SV.search = ev.target.value; paint();
     const q = $("sv_q"); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } return; }
   if(din === "svDirty" && SV){ SV.dirty = true; return; }
+  /* Typing a custom retainer counts as choosing one. No repaint — the box the
+     cursor is sitting in must not be rebuilt underneath it mid-number. */
+  if(din === "wizRetDirty" && SHEET_WIZ){ SHEET_WIZ.retainerTouched = true; return; }
   if(din === "svArrival" && SV && !SV.dirty){
     // The same generator the desk sheet uses, so a line composed in the car and
     // the same line composed at the office cannot read differently.
@@ -6504,6 +6652,9 @@ document.addEventListener("input", ev => {
   if(ev.target.dataset && ev.target.dataset.act === "invFilterQ"){ INV_FILTER.q = ev.target.value; loadInvoices(); }
   if(ev.target.dataset && ev.target.dataset.act === "evClass"){ setEvidenceClass(Number(ev.target.dataset.id), ev.target.value); }
   if(ev.target.dataset && ev.target.dataset.act === "pkgType"){ pkgApi(`/build/${PKG.build.id}/package`, {package_type: ev.target.value}); }
+  if(ev.target.dataset && ev.target.dataset.act === "wizRetPick" && SHEET_WIZ){
+    wizCollect(); SHEET_WIZ.retainerTouched = true; SHEET_WIZ.err = ""; paint();
+  }
   if(ev.target.dataset && ev.target.dataset.act === "leadStatus"){
     const caseNo = ev.target.dataset.case, v = ev.target.value;
     api(`/leads/${encodeURIComponent(caseNo)}/status`, {method:"POST", body:{status: v}})

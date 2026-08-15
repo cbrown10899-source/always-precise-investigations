@@ -9,6 +9,34 @@ state. Update it when the queue moves; keep it short.
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
 truth** (recorded verbatim 2026-08-13).
 
+## 🔍 LEDGER AUDIT, 2026-08-15 — this file and `PAYMENTS.md` were both behind the code
+
+A status pass at master `cd37d28` re-derived the queue **from the identifiers in
+`worker.js`, `portal/index.html` and `test-worker.mjs`**, not from these ledgers.
+Both files were wrong, and **both were wrong in the same direction: they
+understated what is built.** That is the third time this repo has recorded that
+exact drift (see the 2026-08-14 re-audit and second audit below), so it is a
+pattern rather than an accident — a ledger row is written when work is *queued*
+and nobody goes back to it when the work *lands*.
+
+What was corrected:
+
+| Where | Said | Actually |
+| --- | --- | --- |
+| `PAYMENTS.md` steps 1–8 | all "not started" | **seven of eight are shipped** — admin config, sheet block, wizard section, preview, record-payment, the boundary tests. Only case-history surfacing is genuinely partial |
+| `PAYMENTS.md` steps 9–18 | all "not started" | **five of ten are shipped** — independent toggles, one-email assembly, never-invent-a-URL, the sent confirmation, and half of the insurance boundary |
+| This file, custom retainer selector | "nothing on screen sets it" | a free-text box does set it; the **presets in the send flow** are what is missing |
+| This file, lead-card payment row | one row, "NOT CODED" | four items in **four different states**, one of them LIVE VERIFIED |
+
+**The cost of leaving this uncorrected was concrete:** the owner's standing
+instruction is *"do not rebuild already-completed UI"*, and a session starting
+from the old ledgers would have rebuilt an admin settings screen, a wizard
+section, an email builder and a Record Payment flow that already work — the
+Record Payment one having been verified live across eight PRs.
+
+**Method, for whoever repeats it:** grep the identifier, find the route, find
+the control, find the test. A row in this file is not evidence of anything.
+
 ## 🚦 DEPLOYMENT MATRIX — 2026-08-15
 
 **Nothing is complete until it is LIVE VERIFIED.** The states are CODED →
@@ -22,10 +50,19 @@ did not. Every suite passed the whole time.
 
 | Component | Master SHA | Deployed SHA | Status | Verified at | How |
 | --- | --- | --- | --- | --- | --- |
-| Public site | `b2f2b6d` | **`b2f2b6d`** | **LIVE VERIFIED** | 2026-08-15, re-checked after #122 | `/.well-known/build.txt` reports `commit: 936414b`, which IS master. First time this repo can answer "what is live" without inference |
-| `/portal/` page | `b2f2b6d` | `b2f2b6d` | **LIVE VERIFIED** | 2026-08-15, re-checked after #122 | served page diffed against `origin/master:portal/index.html`: **two changed lines, both Cloudflare's injected bot script**. Headers `no-store`, `noindex, nofollow, noarchive`, `nosniff`, `no-referrer`. Negative check: `Cash App` / `Venmo` / `payment-methods` absent — correct, no payment UI is built |
-| Worker / API (`api-case-portal`) | `b2f2b6d` | `b2f2b6d` | **DEPLOYED**, provenance-verified | 2026-08-15 | `deploy-portal.yml` succeeded at `173d9db`; `git diff 173d9db origin/master -- case-portal/worker.js` is **empty**; no commit touches `worker.js` after it (that workflow only fires on pushes touching it). So the running source IS master's, established by provenance rather than by probing the instance |
-| D1 schema (incl. `retainer_payment`, `retainer_payment_token`) | `b2f2b6d` | applied | **LIVE VERIFIED** | 2026-08-15 | `schema.sql` identical between `173d9db` and master; `/portal-api/health` → `missing_tables:[]` |
+| Public site | `cd37d28` | **`cd37d28`** | **LIVE VERIFIED** | 2026-08-15, re-checked at session start after #124 | `/.well-known/build.txt` reports `commit: cd37d28`, `built: 2026-08-15T22:24:30Z` — **exactly master**. This repo can answer "what is live" without inference |
+| `/portal/` page | `cd37d28` | `cd37d28` | **LIVE VERIFIED** | 2026-08-15, re-checked after #124 | served page fetched cache-busted: 200, 376 KB, headers `no-store`, `noindex, nofollow, noarchive`. Positive identifier check on the served bytes: `sessionForget` ✓, `wizSheetLoad` ✓, `retainerEnter` ✓, `m_ret` ✓. (`agreedRetainer` correctly absent — it is Worker-side.) The earlier negative check for `Cash App` / `Venmo` is **now stale and was removed**: the payment UI IS built, so their absence would be a defect, not a pass |
+| Worker / API (`api-case-portal`) | `cd37d28` | `4e053c2` source | **DEPLOYED**, provenance-verified | 2026-08-15 | last commit touching `case-portal/worker.js` is `4e053c2`; `cd37d28` touched **only two `.md` files**, so nothing has changed the Worker since its last green deploy. The running source IS master's, established by provenance rather than by probing the instance |
+| D1 schema (incl. `retainer_payment`, `retainer_payment_token`) | `cd37d28` | applied | **LIVE VERIFIED** | 2026-08-15 | last commit touching `schema.sql` is `35607d5`, well behind the last green portal deploy; `/portal-api/health` → `{"ok":true,"configured":true,"email":true,"missing_tables":[],"storage_pct":0}` |
+
+**All four suites re-run at `cd37d28` this session, not inherited from the ledger:**
+
+| Suite | Result |
+| --- | --- |
+| `case-portal/test-worker.mjs` | **997 passed, 0 failed** |
+| `portal/test-portal.mjs` | **789 passed, 0 failed** |
+| `intake/test-intake.mjs` | **205 passed, 0 failed** |
+| `visitor-alerts/test-worker.mjs` | **47 passed, 0 failed** |
 
 **Why the Worker is DEPLOYED and not LIVE VERIFIED.** Its build is not
 externally observable: authentication runs before routing, so a route that
@@ -39,8 +76,10 @@ this row on the strength of `/health`.
 **⚠️ ONE THING IS FIXED AT ORIGIN BUT STILL PUBLIC FROM CACHE.** `/.gitignore`
 was being served (it was in the old deny-list artifact and is not in the
 allow-list one). A cache-busted request now 404s, so it is genuinely gone from
-the deployment — but the edge still answers 200 from a cached copy: `Age: 4917`,
-`Cache-Control: public, s-maxage=604800`, so **up to seven days**. It names only
+the deployment — but the edge still answers 200 from a cached copy.
+**Re-measured 2026-08-15 at session start: still 200, `Age: 68139`** (~19 hours
+into a `s-maxage=604800` week), so it has **not** aged out and will not for
+several days yet. It names only
 an internal tooling script, so the severity is low, but the general lesson is
 not: *removing a file from the artifact does not unpublish it.* **Owner action:
 purge that path in the Cloudflare dashboard** (or accept the week). Anything
@@ -52,22 +91,93 @@ sensitive ever removed this way needs a purge, not just a deploy.
 `4e053c2`; the site and the Worker are both deployed at it and build.txt
 agrees. Nothing is half-done in the tree and no branch is open.
 
-**The next unfinished item is the one thing that would close out the retainer
-work: the CUSTOM PRIVATE RETAINER SELECTOR.** The stored figure is now honoured
-everywhere it is read — sheet, subject line, email body, payment block and
-preview — but **nothing on screen sets it.** `$1,500 / $2,000 / $3,000 /
-Custom` has to become a control on the private case, writing
-`case_retainer.retainer_amount`; the route and the guards for it already
-exist (a payment must never reset it, and it must never appear on an insurance
-workflow). Until then a $3,000 agreement can only be recorded through the API.
+**The next unfinished item is the CUSTOM PRIVATE RETAINER SELECTOR.** The stored
+figure is honoured everywhere it is read — sheet, subject line, email body,
+payment block and preview.
+
+**Correction, 2026-08-15:** this section previously said *"nothing on screen
+sets it"*, and that was wrong. A free-text **Retainer amount** box exists —
+`m_ret`, `portal/index.html:3993` — on the private case's settings panel,
+posting to `POST /cases/:no/retainer`. What is missing is narrower and more
+specific than "a control": the **`$1,500 / $2,000 / $3,000 / Custom` presets, in
+the private send flow**, which is where the owner's order puts the choice —
+*"Before sending a private rate sheet or intake."* A $3,000 agreement can be
+recorded today; it just cannot be **chosen at the moment of sending**, and the
+presets do not exist anywhere. Do not rebuild the storage, the route or the
+carry-through; all three are live.
 
 Two things needing an authenticated admin session rather than code, both
 carried forward: proving the $3,000 sheet end-to-end against the live Worker,
 and the private payment configuration rows below.
 
-Then, in the queue's order: lead-card **Send Payment Options** and the
-standalone send dialog; **real intake alerts** and **intake archive**
-(`INTAKE-OPS.md`, archive part 2 still not arrived); Portal Ops Phase 1.
+## ✅ OWNER QUEUE — CONFIRMED 2026-08-15
+
+The owner confirmed this order explicitly. It supersedes any ordering implied
+elsewhere in this file. **Do not rebuild anything already LIVE VERIFIED.**
+
+| # | Item | State |
+| --- | --- | --- |
+| 1 | Custom Private Retainer Selector | **CODED + TESTED**, awaiting merge — see below |
+| 2 | Lead-card Send Payment Options | 🔴 NOT CODED — `PAYMENTS.md` step 9 |
+| 3 | Standalone Payment Options dialog | 🔴 NOT CODED — step 12; `payment_send.with_sheet` is the seam |
+| 4 | NEXT STEP helper block | 🔴 NOT CODED — steps 10 and 17 |
+| 5 | Retainer Pending lead/intake actions | 🟡 PARTIAL — built on the case panel, absent from the leads card (step 15) |
+| 6 | Real intake alerts / archive | 🔴 NOT CODED — `INTAKE-OPS.md` §1 and §2; **archive part 2 has never arrived** |
+| 7 | Portal Ops Phase 1 onward | 🔴 NOT CODED — `PORTAL-OPS.md`, phased |
+| 8 | Active Surveillance voice-command mode | 🔴 NOT CODED — **after core Portal Ops is stable**, owner's condition |
+
+### Item 1 — Custom Private Retainer Selector: CODED + TESTED
+
+`$1,500 Standard / $2,000 / $3,000 / Custom` on the **private** send wizard,
+writing `case_retainer.retainer_amount` through the route that already existed.
+The storage, the guards and the carry-through were live already and were **not**
+rebuilt; what shipped is the control and three safety fixes it needed.
+
+| Owner's named test | Where |
+| --- | --- |
+| each preset works | `test-worker.mjs` — each of the three posted and read back |
+| custom amount works | the owner's own $2,500, stored exactly, not rounded to a preset |
+| rate sheet displays the selected amount | both MIME parts of the **real email**, plus the subject line |
+| returned intake preserves the selected amount | the intake row is untouched, and a **second** send carries the same figure |
+| partial payments calculate correctly | two instalments against a chosen retainer, not the standard one |
+| Record Payment never resets the agreed retainer | asserted, and its mirror below |
+| Insurance never sees this selector | claims case refused by the Worker; carrier wizard renders no selector; an adjuster's email carries no retainer wording |
+
+**Three defects were found and fixed while building it**, each with a control run
+that prints the bug:
+
+1. **An absent `received` meant "not received".** The selector sends an amount
+   and knows nothing about the money, so raising an agreed retainer would have
+   **un-received a retainer that had genuinely been paid** — the case reading
+   PENDING with the payments still in the log underneath. Absent now means
+   unchanged, the same rule the amount already had. Control: *"raising the agreed
+   retainer does not un-receive it — false"*.
+2. **Zero was storable.** `rateSheets()` falls back to the standard for anything
+   not above zero, so a stored 0 put $0 in the record and $1,500 in front of the
+   client — the record and the document disagreeing in silence. Refused now.
+3. **An untouched selector would have overwritten the case.** Opened from Rate
+   sheets there is no case number, so it shows the standard figure; writing that
+   on the way to Preview re-cut the client's retainer as a **side effect of
+   looking at an email**. Control: the preview came back reading
+   *"Private Client — $1,500 Retainer"* on a case that had just agreed $3,000.
+
+**One test of mine was wrong and the code was right**, recorded because that is
+the point of the discipline: the flag guard was first written against a case
+that already had payments, where `received` is decided by the money and not the
+flag at all — it would have passed no matter what the flag did. It is driven on
+a payment-free case now. A second one tried to email the carrier sheet against a
+private case; the sheet/lead pairing guard correctly refuses that, so the carrier
+boundary is asserted where a carrier actually is.
+
+**Suites:** worker 997 → **1033**, portal 789 → **806**. All five green.
+**Still DEPLOYED-not-LIVE-VERIFIED once merged**, for the standing reason: the
+Worker's email output is not observable without an authenticated admin session.
+
+**Every item is tracked through the owner's six states: CODED → TESTED →
+PUSHED → MERGED → DEPLOYED → LIVE VERIFIED.** The words done, shipped and
+implemented mean the last of those. Worker-side behaviour that authentication
+hides from an unauthenticated probe stops at **DEPLOYED** and says so — see the
+caveat above; do not promote such a row on the strength of `/health`.
 
 ---
 
@@ -87,9 +197,9 @@ standalone send dialog; **real intake alerts** and **intake archive**
 | Private payment: send-wizard toggles, independently selectable | **LIVE VERIFIED** — #85, portal 740 |
 | Retainer ledger: AGREED / RECEIVED / OUTSTANDING, instalments, void-not-delete | **LIVE VERIFIED** — worker at master |
 | Retainer payment idempotency (payment + token in one transaction) | **LIVE VERIFIED** — #107/#108/#110/#112/#114/#116/#118/#120 at `c4e96c4`; build.txt matches master, both deploys green, served page carries the token-keeping branch and the new-attempt recovery, which keeps the typed amount and refuses a blank one; worker 986, portal 780 |
-| Private payment: lead-card Send Payment Options, standalone send, RETAINER PENDING / Record Payment, history | **NOT CODED** — next in queue |
+| Private payment: lead-card Send Payment Options, standalone send, RETAINER PENDING / Record Payment, history | **CORRECTED 2026-08-15 — this row bundled four things in four different states and called them all NOT CODED.** Split: **RETAINER PENDING / Record Payment is LIVE VERIFIED** on the case Overview panel (`portal/index.html:2583`, `:2593`, idempotency proven across #107–#120) and must not be rebuilt — what is missing is the same state on the *leads* card. **History is PARTIAL**: `logPaymentSend()` writes `payment_send` (`worker.js:1431`, called at `:905`/`:928`) and **nothing ever reads it** — zero `FROM payment_send` in the Worker. **Lead-card Send Payment Options and the standalone send are genuinely NOT CODED** — queue items 2 and 3 |
 | Private retainer: the agreed figure drives sheet, subject, email, payment block and preview | **DEPLOYED at `4e053c2`; page half LIVE VERIFIED, Worker half NOT** — the served page carries `wizSheetLoad` and `/sheets?case=`, and both deploys are green at master. The Worker's own output is **not externally observable** (auth runs before routing), so proving a real $3,000 case emails $3,000 needs an authenticated admin session — see the caveat above. CODED + TESTED: `agreedRetainer()` reads the case; `rateSheets(retainer)`, `sheetById(id, retainer)`, `paymentBlockText/Html(pay, retainer)` and `GET /sheets?case=` all take it, and the wizard re-reads the sheet for its case. Control run printed the bug verbatim: subject `$1,500 Retainer — … (case API-RET3K)` on a $3,000 case. Worker 997, portal 789 |
-| Custom private retainer **selector** ($1,500 / $2,000 / $3,000 / Custom) | **NOT CODED** — the amount is honoured and now carried everywhere once set, but nothing on screen sets it to $2,000 or $3,000 yet |
+| Custom private retainer **selector** ($1,500 / $2,000 / $3,000 / Custom) | **NOT CODED**, but narrower than this row used to claim. It said *"nothing on screen sets it"*; a free-text **Retainer amount** box (`m_ret`, `portal/index.html:3993` → `POST /cases/:no/retainer`) does set it, on the case settings panel. Missing: the **four presets**, and the choice being available **in the private send flow**, which is where the owner's order puts it. Storage, route, guards and carry-through are all live — queue item 1 |
 | Mobile menu button hit target | **LIVE VERIFIED** — #123 at `4e053c2`. Measured on the production page at 390px wide: **50x50**, up from the **38x35** the control reproduced (owner reported ~30px). Glyph left at 1.4rem; a test measures it at phone width |
 | Real intake alerts | **NOT CODED** — requirements recorded in `INTAKE-OPS.md` §1 |
 | Intake archive / sample cleanup | **NOT CODED** — part 1 recorded in `INTAKE-OPS.md` §2; **part 2 has not arrived** |
