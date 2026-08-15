@@ -3772,6 +3772,88 @@ section('Both payment methods are clickable, with the firm\'s own destinations')
   globalThis.fetch = realFetch;
 }
 
+/* THE UPGRADE PATH. Enabling a method with only a handle used to be allowed,
+   and rows saved under that rule still exist. Once every option had to be
+   tappable, the filter started dropping them — so a send could succeed while
+   the client quietly received one payment option instead of two, and nobody
+   would go looking. Planted straight into the table, because the API now
+   refuses to create such a row and this is about the ones already there. */
+section('A method left switched on without a link is never dropped in silence');
+{
+  const realFetch = globalThis.fetch;
+  let lastBody = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      lastBody = JSON.parse(init.body);
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const has = (hay, needle) => String(hay).toLowerCase().includes(String(needle).toLowerCase());
+
+  // A legacy row: enabled, a handle, and no link — legal when it was written.
+  await env.DB.prepare(
+    `INSERT INTO payment_methods (method, enabled, display_name, handle, url, instructions, updated_at)
+     VALUES ('venmo', 1, 'Venmo', '@LegacyHandle', '', '', ?)`).bind('2026-08-14T00:00:00Z').run();
+
+  lastBody = null;
+  const refused = await call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body: { to: 'client@example.com', include_payment: true } });
+  ok('the send is refused rather than quietly dropping the method', refused.status === 400);
+  ok('and nothing was emailed', lastBody === null);
+  const err = (await jsonOf(refused));
+  ok('the refusal names the method that cannot be offered', has(err.error, 'Venmo'));
+  ok('and says where to fix it', has(err.error, 'Add a link in Settings'));
+  ok('and identifies it to the page', (err.needs_link || []).join() === 'venmo');
+
+  /* The wrong fix would be to fall back to the built-in URL. This row carries
+     a DIFFERENT handle, so inheriting the firm's link would point the client
+     at the firm's page while the screen showed @LegacyHandle — money to the
+     wrong destination, silently. Assert it never happens. */
+  ok('the firm\'s own link is NEVER substituted for a broken row',
+     !has(String(err.error), 'venmo.com/u/Trever-Brown-9'));
+
+  // Not selected means not a problem: the broken row is simply not requested.
+  lastBody = null;
+  const okSend = await jsonOf(await call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin,
+      body: { to: 'client@example.com', include_payment: true, methods: ['cash_app'] } }));
+  ok('a send that does not ask for the broken method still works',
+     okSend.included.payment_methods.map(m => m.id).join() === 'cash_app');
+  ok('and it carries the Cash App link', lastBody.html.includes('https://cash.app/$TreverB'));
+  ok('and nothing of the broken method rides along', !has(lastBody.html, '@LegacyHandle'));
+
+  // Fixing it in Settings clears the refusal.
+  ok('giving it a link makes it sendable again',
+     (await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
+       body: { enabled: true, display_name: 'Venmo', handle: '@LegacyHandle',
+               url: 'https://venmo.com/u/LegacyHandle' } })).status === 200);
+  lastBody = null;
+  const fixed = await jsonOf(await call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body: { to: 'client@example.com', include_payment: true } }));
+  ok('both methods are offered once the link exists',
+     fixed.included.payment_methods.map(m => m.id).sort().join() === 'cash_app,venmo');
+  ok('and the client is sent the link the ADMIN entered, not the built-in one',
+     lastBody.html.includes('https://venmo.com/u/LegacyHandle')
+     && !lastBody.html.includes('venmo.com/u/Trever-Brown-9'));
+
+  // Switching it off is the other valid answer, and needs no link.
+  ok('turning it off is accepted without a link',
+     (await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
+       body: { enabled: false, handle: '@LegacyHandle' } })).status === 200);
+  const off = await jsonOf(await call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body: { to: 'client@example.com', include_payment: true } }));
+  ok('and then the send succeeds with the remaining method',
+     off.included.payment_methods.map(m => m.id).join() === 'cash_app');
+
+  globalThis.fetch = realFetch;
+}
+
 section('Private-client payment methods are the office\'s own configuration');
 {
   const env = freshEnv();

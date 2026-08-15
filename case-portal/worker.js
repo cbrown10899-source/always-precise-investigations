@@ -606,7 +606,7 @@ async function paymentConfig(env) {
    `wanted` is the admin's per-send selection. Anything not enabled centrally is
    dropped regardless of what the caller asked for, so the send wizard cannot
    turn on a method the configuration has off. */
-async function paymentOptionsFor(env, wanted) {
+async function paymentOptionsFor(env, wanted, unusableOut = []) {
   const all = await paymentConfig(env);
   /* NO SELECTION and AN EMPTY SELECTION are different answers, and conflating
      them is how unticking every method sent every method. `null` means the
@@ -616,11 +616,26 @@ async function paymentOptionsFor(env, wanted) {
      to "send them all", the exact opposite of what was asked. The caller
      refuses the send rather than mailing an empty PAYMENT OPTIONS heading. */
   const pick = Array.isArray(wanted) ? all.filter(m => wanted.includes(m.id)) : all;
-  /* A client is only ever offered a method that is enabled AND has a working
-     link. Every payment option they see is a tappable action, so a method
-     without a URL is not shown as text — it is not shown. */
-  return pick
-    .filter(m => m.enabled && safePayUrl(m.url))
+
+  /* A method that is switched ON but has no link is a BROKEN CONFIGURATION,
+     and it must never be quietly skipped.
+
+     Enabling without a URL used to be allowed, and rows saved under that rule
+     still exist. Once every option had to be tappable, this filter started
+     dropping them — so an admin could send a sheet, see it succeed, and never
+     learn that Venmo was missing from what the client received. Silent loss of
+     a payment option is worse than a refusal: nobody goes looking for it.
+
+     The caller is told, by name, and refuses the send. Falling back to the
+     built-in URL instead would be far worse than either: a stored row with a
+     DIFFERENT handle would inherit the firm's link, and the client would pay
+     the wrong destination while the screen said everything was fine. Nothing
+     here guesses a URL, and that includes guessing it from ourselves. */
+  const enabled = pick.filter(m => m.enabled);
+  unusableOut.push(...enabled.filter(m => !safePayUrl(m.url)));
+
+  return enabled
+    .filter(m => safePayUrl(m.url))
     .map(m => ({
       id: m.id,
       label: m.display_name.trim() || m.label,
@@ -810,7 +825,19 @@ async function emailSheet(request, env, user, id) {
   }
   const wantedMethods = Array.isArray(body.methods)
     ? body.methods.map(x => String(x)).filter(x => PAY_IDS.includes(x)) : null;
-  const payment = includePayment ? await paymentOptionsFor(env, wantedMethods) : [];
+  const brokenMethods = [];
+  const payment = includePayment ? await paymentOptionsFor(env, wantedMethods, brokenMethods) : [];
+
+  /* A method switched on with no link cannot be offered, and must not be
+     dropped in silence — the admin would see a successful send and never learn
+     the client got one option instead of two. Named, refused, fixable. */
+  if (includePayment && brokenMethods.length) {
+    const names = brokenMethods.map(m => m.display_name || m.label).join(' and ');
+    return json({ error: `${names} is switched on but has no payment link, so it cannot be `
+                       + `offered — every payment option a client sees has to be tappable. `
+                       + `Add a link in Settings, or switch it off.`,
+                  needs_link: brokenMethods.map(m => m.id) }, 400);
+  }
   if (includePayment && !payment.length) {
     /* Two different reasons for nothing to send, and they need different
        sentences: one is answered in this dialog, the other in Settings. */
