@@ -1633,6 +1633,29 @@ section('The two internal calculations never share a number');
      (await jsonOf(await call(env, '/cases/API-RB1/retainer', { method: 'POST', cookie: admin,
        body: { retainer_amount: 1800, received: false } }))).authorization.retainer.amount === 1800);
 
+  /* Preservation is resolved INSIDE the statement, and that is a STRUCTURAL
+     property this harness cannot test behaviourally: its SQLite runs each
+     request to completion, so two calls fired with Promise.all never actually
+     interleave. A concurrency test here passes whether the code reads first or
+     not — it looks like coverage and is worth nothing.
+
+     So the shape is asserted instead. A read-then-write would let two admins on
+     one private case — one adjusting the retainer, one recording the payment —
+     silently restore a figure the other had already superseded, which is an
+     ordinary Monday rather than an exotic race. */
+  {
+    const src = fs.readFileSync(new URL('./worker.js', import.meta.url), 'utf8');
+    const route = src.slice(src.indexOf("/^\\/cases\\/([A-Za-z0-9-]{3,64})\\/retainer$/"));
+    const body = route.slice(0, route.indexOf('/closure$/'));
+    ok('the retainer amount is preserved by the UPDATE, not by a prior read',
+       body.includes('COALESCE(?2, case_retainer.retainer_amount)'));
+    ok('and nothing reads retainer_amount before writing it',
+       !/SELECT[^;]*retainer_amount[^;]*FROM case_retainer/i.test(body),
+       (body.match(/SELECT[^;]*retainer_amount[^;]*FROM case_retainer/i) || [''])[0]);
+    ok('a brand-new row still falls back to the standard retainer',
+       body.includes('COALESCE(?2, ?6)'));
+  }
+
   /* THE RULE THE FEATURE TURNS ON: sending instructions is not being paid. */
   await env.DB.prepare(
     `INSERT INTO payment_send (case_no, recipient, methods, with_sheet, ok, sent_at)

@@ -4946,14 +4946,19 @@ async function route(request, env) {
 
        The default belongs where there is genuinely nothing to preserve — a
        case with no retainer row yet. */
-    const existing = await env.DB.prepare(
-      'SELECT retainer_amount FROM case_retainer WHERE case_no = ?').bind(m[1]).first();
     const raw = body.retainer_amount;
     const absent = raw === undefined || raw === null || String(raw).trim() === '';
-    const amount = !absent ? Number(raw)
-      : (existing && existing.retainer_amount != null ? Number(existing.retainer_amount)
-                                                      : PERSONAL.retainer);
-    if (!Number.isFinite(amount) || amount < 0) return json({ error: 'The retainer must be a number.' }, 400);
+    if (!absent && !(Number.isFinite(Number(raw)) && Number(raw) >= 0)) {
+      return json({ error: 'The retainer must be a number.' }, 400);
+    }
+    /* NULL means "leave it alone", and the SQL below resolves that against the
+       row's own current value. Reading the amount here and writing it back
+       would be read-then-write: a concurrent request that changed the retainer
+       between the SELECT and the upsert would be silently overwritten by this
+       one, putting back a figure that was already superseded. Two admins on the
+       same private case — one adjusting the retainer, one recording the
+       payment — is an ordinary Monday, not a race worth ignoring. */
+    const amount = absent ? null : Number(raw);
     const received = body.received === true || body.received === 1 || body.received === '1' ? 1 : 0;
 
     /* THE RECEIPT: what actually arrived (PAYMENTS.md §5/§11). `received` on
@@ -4994,12 +4999,18 @@ async function route(request, env) {
     }
 
     await env.DB.prepare(
+      /* ?2 NULL = the caller said nothing about the amount. On a new row that
+         means the standard retainer (?6); on an existing one it means the value
+         already there, resolved inside the UPDATE so no other write can slip
+         between a read and this statement. */
       `INSERT INTO case_retainer (case_no, retainer_amount, received, received_at, updated_by, updated_at)
-       VALUES (?1, ?2, ?3, CASE WHEN ?3 = 1 THEN ?4 ELSE NULL END, ?5, ?4)
-       ON CONFLICT(case_no) DO UPDATE SET retainer_amount = ?2, received = ?3,
+       VALUES (?1, COALESCE(?2, ?6), ?3, CASE WHEN ?3 = 1 THEN ?4 ELSE NULL END, ?5, ?4)
+       ON CONFLICT(case_no) DO UPDATE SET
+         retainer_amount = COALESCE(?2, case_retainer.retainer_amount),
+         received = ?3,
          received_at = CASE WHEN ?3 = 1 THEN COALESCE(case_retainer.received_at, ?4) ELSE NULL END,
          updated_by = ?5, updated_at = ?4`)
-      .bind(m[1], amount, received, nowIso(), user.id).run();
+      .bind(m[1], amount, received, nowIso(), user.id, PERSONAL.retainer).run();
     return json({ ok: true, authorization: await authorizationFor(env, m[1], true) });
   }
 
