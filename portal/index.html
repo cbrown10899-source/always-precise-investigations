@@ -2995,6 +2995,47 @@ function pkgMark(state){   // done | part | none | warn — never color alone
        : '<span class="pk-s">&#9675;</span>';
 }
 
+/* Which selected items still ship, and which do not — HIGH #4 (2026-08-14).
+   One place, because the document FILTERS on this and the admin notice COUNTS
+   it, and a document that printed one set while the screen reported another
+   would be worse than either mistake alone.
+
+   Two different reasons an item does not ship, and they must not be confused:
+   buildState's evidence query already drops deleted rows, so a deleted item is
+   simply ABSENT from PKG.evidence rather than present-and-reclassified. Calling
+   a deleted file "no longer client-deliverable" sends the admin to a
+   classification that is not the problem. */
+function pkgShipping(){
+  const items = (PKG && PKG.items) || [];
+  const evById = Object.fromEntries(((PKG && PKG.evidence) || []).map(e => [e.id, e]));
+  const ships = e => e && !e.deleted_at && e.classification === "client_deliverable";
+  return {
+    evById,
+    ship: items.filter(i => ships(evById[i.evidence_id])),
+    gone: items.filter(i => !evById[i.evidence_id]).length,
+    heldBack: items.filter(i => { const e = evById[i.evidence_id]; return e && !ships(e); }).length,
+  };
+}
+
+/* The admin's half of the same fact, and it lives OUTSIDE #pkgdoc on purpose —
+   the print stylesheet makes only #pkgdoc visible, so this is seen on screen
+   and never by the client. The office needs to know an exhibit it selected is
+   not going out; the client must not be told that withheld evidence exists at
+   all, which is the whole point of withholding it. */
+function pkgWithheldNote(){
+  const { gone, heldBack } = pkgShipping();
+  const n = gone + heldBack;
+  if(!n) return "";
+  const why = [
+    heldBack ? `${heldBack} no longer marked client-deliverable` : "",
+    gone ? `${gone} deleted from evidence` : "",
+  ].filter(Boolean).join(", ");
+  return `<div class="pkg-miss"><b>${n} selected item${n === 1 ? "" : "s"} withheld from the document</b>
+    <p style="margin:4px 0">${esc(why)}. The document below prints without ${n === 1 ? "it" : "them"},
+      and says nothing about ${n === 1 ? "it" : "them"} &mdash; the client is never told that withheld
+      material exists. Nothing is removed from the case; reclassify or unselect in Evidence.</p></div>`;
+}
+
 function packagePanel(){
   if(!PKG) return `<div class="empty">Loading the package&hellip;</div>`;
   const b = PKG.build;
@@ -3164,7 +3205,7 @@ function packagePanel(){
       <button class="btn ghost" data-act="pkgReopen">Reopen and rebuild</button>
     </div>`;
 
-  return `${blocks}${stepsRail}${missing}
+  return `${blocks}${stepsRail}${missing}${pkgWithheldNote()}
     ${b.status === "draft" ? `
       ${contents}${delivery}
       ${daysPanel()}
@@ -3263,19 +3304,7 @@ function pkgDocHtml(){
      check belongs where the material is rendered, not only where it is
      approved. Withheld items are COUNTED and named below rather than silently
      dropped — a document that quietly loses an exhibit is its own problem. */
-  const shipping = e => e && !e.deleted_at && e.classification === "client_deliverable";
-  /* Two different reasons an item does not ship, and the note must not confuse
-     them: buildState's evidence query already drops deleted rows, so a deleted
-     item is simply ABSENT from PKG.evidence rather than present-and-reclassified.
-     Saying "no longer marked client-deliverable" about a deleted file sends the
-     admin to a classification that is not the problem. */
-  const gone = items.filter(i => !evById[i.evidence_id]).length;
-  const heldBack = items.filter(i => {
-    const e = evById[i.evidence_id];
-    return e && !shipping(e);
-  }).length;
-  const withheld = gone + heldBack;
-  const rows = items.filter(i => shipping(evById[i.evidence_id])).map((i, n) => {
+  const rows = pkgShipping().ship.map((i, n) => {
     const e = evById[i.evidence_id] || {};
     return { n: n + 1, role: i.role, e,
       time: e.entry_time ? t12(e.entry_time) : "",
@@ -3344,11 +3373,13 @@ function pkgDocHtml(){
       </div>`).join("")}
       <p style="font-size:.9rem"><b>VIDEO DELIVERY</b> &mdash; Selected video evidence is provided
         through the accompanying electronic evidence delivery. Video package reference: ${esc(WS_CASE)}.</p>` : ""}
-    ${withheld ? `<p class="doc-withheld" style="border-top:1px solid var(--line);padding-top:10px;font-size:.9rem">
-      <b>${withheld} item${withheld === 1 ? "" : "s"} withheld.</b> Selected for this package but
-      not included here${heldBack ? ` &mdash; ${heldBack} no longer marked client-deliverable` : ""}${
-      gone ? `${heldBack ? "," : " &mdash;"} ${gone} deleted from evidence` : ""}.
-      Nothing is removed from the case; reclassify or unselect in Evidence.</p>` : ""}
+    ${""/* Nothing about withheld material belongs in HERE. #pkgdoc is the only
+          region the print stylesheet leaves visible, so anything inside it is
+          the CLIENT's document — and a client must never be told that evidence
+          exists which the firm classified internal-only, needs-redaction or
+          do-not-use. Naming a count would disclose the very material the
+          classification withholds. The admin is told instead, on the package
+          screen, which does not print: see pkgWithheldNote(). */}
     ${rows.length ? `<h3 style="border-top:1px solid var(--line);padding-top:14px">EVIDENCE INDEX</h3>
       <table class="doc-table"><thead><tr><th>Exhibit</th><th>Time</th><th>Type</th><th>Description</th><th>Delivery</th></tr></thead>
         <tbody>${rows.map(r => `<tr>

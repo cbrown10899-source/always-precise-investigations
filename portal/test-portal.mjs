@@ -2065,12 +2065,32 @@ section('A finalized package still says when something has been held back');
      has(body, 'This finalized package needs attention'));
   ok('and the warning names the material by its classification',
      has(body, 'do not use'));
-  ok('the document says an item was withheld', has(body, 'withheld'));
+  ok('the package screen tells the OFFICE an item was withheld', has(body, 'withheld'));
   ok('and says where to deal with it', has(body, 'reclassify or unselect in Evidence'));
   ok('and says WHY it was withheld, not merely that it was',
      has(body, 'no longer marked client-deliverable'));
   ok('while making clear the material still exists on the case',
      has(body, 'Nothing is removed from the case'));
+
+  /* And the CLIENT is told none of it. #pkgdoc is the only region the print
+     stylesheet leaves visible, so anything inside it is the document that
+     leaves the building. A count of withheld exhibits would disclose that
+     evidence exists which was classified internal-only, needs-redaction or
+     do-not-use — announcing precisely what the classification withholds. The
+     first version of this fix put the notice inside #pkgdoc and did exactly
+     that; the structural check below is what stops it coming back. */
+  const docText = await text(page, '#pkgdoc');
+  ok('but the client’s own document says nothing about anything withheld',
+     !has(docText, 'withheld') && !has(docText, 'client-deliverable')
+     && !has(docText, 'do not use') && !has(docText, 'internal only'));
+  ok('and the notice is not inside the printed region at all',
+     await page.evaluate(() => !document.querySelector('#pkgdoc .pkg-miss')));
+  ok('the gate strip that carries it is outside the printed region too',
+     await page.evaluate(() => {
+       const g = [...document.querySelectorAll('.pkg-miss')];
+       const doc = document.querySelector('#pkgdoc');
+       return g.length > 0 && !g.some(x => doc && doc.contains(x));
+     }));
 
   /* The half that actually ships material to a client. One exhibit fewer is
      printed, and the held-back one's own caption is gone from the document. */
