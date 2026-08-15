@@ -56,7 +56,25 @@ sensitive ever removed this way needs a purge, not just a deploy.
 | HIGH #4 held-back material + delivery link | **LIVE VERIFIED** — page identifiers confirmed served |
 | UTC/local surveillance date + midnight pairing | **LIVE VERIFIED** — `ymdLocal`/`stampNow` confirmed served |
 | Private payment configuration + sheet boundary | MERGED + DEPLOYED; **not LIVE VERIFIED** — admin-only routes need an authenticated check, and **no handles are configured**, so nothing renders yet |
-| Private payment UX (wizard toggles, lead card, standalone send, retainer receipt, history) | **NOT CODED** — steps 9–18 of `PAYMENTS.md` |
+| Private payment: both methods clickable, real destinations | **LIVE VERIFIED** — #80, worker 903 |
+| Private payment: legacy row never dropped in silence | **LIVE VERIFIED** — #81, worker 917 |
+| Private payment: admin Settings screen | **LIVE VERIFIED** — #82/#84, portal 730 |
+| Private payment: send-wizard toggles, independently selectable | **LIVE VERIFIED** — #85, portal 740 |
+| Private payment: lead-card Send Payment Options, standalone send, RETAINER PENDING / Record Payment, history | **NOT CODED** — next in queue |
+| Portal ops plan (nav, dashboard, tasks, search, contacts…) | **NOT CODED** — see `PORTAL-OPS.md`, phased |
+| Activity edit/delete convention | **PARTIAL** — `activity_removed` shipped #55; audit against the requirement before building |
+| Active Surveillance voice command mode | **NOT CODED** — spec arrived corrupted, see `PORTAL-OPS.md` |
+
+**Deployment is answerable in one request now.** `/.well-known/build.txt`
+carries the live short SHA; compare it with `git rev-parse --short=7
+origin/master`. Every row above marked LIVE VERIFIED was checked that way, or
+by diffing the served page against master.
+
+**Two visual findings carried forward from the owner, not yet actioned:**
+desktop should read as a consistently dark/navy portal rather than a large
+light canvas beside a dark sidebar; and mobile Active Surveillance should not
+stack informational blocks before the investigator reaches usable controls —
+compact status at the top, Quick Activity and Voice Mode high in thumb reach.
 | Deploy allow-list + artifact test | **LIVE VERIFIED** — merged #75/#77/#78, deploy green at 936414b, build stamp matches, internal files 404 |
 
 **Needs the owner, not code** (WORK-ORDER §0): the firm's **business** Cash App
