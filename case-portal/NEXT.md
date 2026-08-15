@@ -61,7 +61,7 @@ sensitive ever removed this way needs a purge, not just a deploy.
 | Private payment: admin Settings screen | **LIVE VERIFIED** — #82/#84, portal 730 |
 | Private payment: send-wizard toggles, independently selectable | **LIVE VERIFIED** — #85, portal 740 |
 | Retainer ledger: AGREED / RECEIVED / OUTSTANDING, instalments, void-not-delete | **LIVE VERIFIED** — worker at master |
-| Retainer payment idempotency (payment + token in one transaction) | **LIVE VERIFIED** — #107/#108/#110/#112 at `d830f45`; build.txt matches master, both deploys green, served page carries the token-keeping branch and the new-attempt recovery; worker 986 |
+| Retainer payment idempotency (payment + token in one transaction) | **LIVE VERIFIED** — #107/#108/#110/#112/#114 at `a1095a0`; build.txt matches master, both deploys green, served page carries the token-keeping branch and the new-attempt recovery, which keeps the typed amount and refuses a blank one; worker 986, portal 770 |
 | Private payment: lead-card Send Payment Options, standalone send, RETAINER PENDING / Record Payment, history | **NOT CODED** — next in queue |
 | Custom private retainer selector ($1,500 / $2,000 / $3,000 / Custom) | **PARTIAL** — the stored `retainer_amount` is honoured and preserved end to end, but the **selector is not built** and `rateSheets()` / `paymentBlockText` still print the standard figure, so a $3,000 case emails a sheet saying $1,500 |
 | Real intake alerts | **NOT CODED** — requirements recorded in `INTAKE-OPS.md` §1 |
