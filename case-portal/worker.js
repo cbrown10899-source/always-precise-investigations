@@ -426,6 +426,25 @@ const AUTH_PRESETS = [8, 16, 24];
    a figure that is set elsewhere. */
 const PERSONAL = { retainer: 1500, hourly: 100, minHours: 4 };
 
+/* How a private client's retainer can arrive (PAYMENTS.md §5/§11, corrected by
+   the owner 2026-08-15). Validated here rather than by a CHECK constraint on
+   the table: schema.sql is re-applied on every portal-setup run and a CHECK
+   cannot be widened in place, so a list that changes belongs in code — which
+   this one promptly did.
+
+   CREDIT CARD AND OTHER ARE DELIBERATELY ABSENT. The firm does not accept
+   them. Offering a method it cannot take invites a client to try paying by one,
+   and that failure lands on the client mid-retainer while the office only finds
+   out when the money never arrives. "Other" is worse than useless in a payment
+   record: it states that money came in by a means nobody wrote down, which is
+   the precise thing a payment record exists to prevent. The original handoff
+   listed both; the correction is later and governs. */
+const RETAINER_METHODS = ['cash_app', 'venmo', 'check', 'cash', 'ach_bill'];
+const RETAINER_METHOD_LABEL = {
+  cash_app: 'Cash App', venmo: 'Venmo', check: 'Check', cash: 'Cash',
+  ach_bill: 'ACH / BILL',
+};
+
 function rateSheets() {
   const money = n => '$' + Number(n).toLocaleString('en-US');
   return [
@@ -1719,12 +1738,28 @@ async function authorizationFor(env, caseNo, forAdmin) {
         'SELECT retainer_amount, received FROM case_retainer WHERE case_no = ?').bind(caseNo).first();
       const amount = ret && ret.retainer_amount != null ? Number(ret.retainer_amount) : PERSONAL.retainer;
       const applied = Math.round(hoursUsed * rate * 100) / 100;
+      /* What was ACTUALLY received, when a receipt has been recorded. The flag
+         says money arrived; this says which money, so the office can check its
+         own record against a bank statement. */
+      const rc = await env.DB.prepare(
+        `SELECT r.amount, r.method, r.paid_on, r.reference, r.recorded_at, u.display_name AS recorded_by
+           FROM retainer_receipt r LEFT JOIN users u ON u.id = r.recorded_by
+          WHERE r.case_no = ?`).bind(caseNo).first();
       out.retainer = {
         amount,
         received: !!(ret && ret.received),
         applied,
         remaining: Math.round((amount - applied) * 100) / 100,
         approx_hours_remaining: rate > 0 ? Math.round(((amount - applied) / rate) * 10) / 10 : null,
+        /* PENDING until an admin records it. Sending payment instructions never
+           reaches this — payment_send records that the firm asked. */
+        status: (ret && ret.received) ? 'received' : 'pending',
+        receipt: rc ? {
+          amount: rc.amount == null ? null : Number(rc.amount),
+          method: rc.method || '', method_label: RETAINER_METHOD_LABEL[rc.method] || rc.method || '',
+          paid_on: rc.paid_on || '', reference: rc.reference || '',
+          recorded_by: rc.recorded_by || '', recorded_at: rc.recorded_at || '',
+        } : null,
       };
     }
     out.show_client_identity = st.show_client_identity ? 1 : 0;
@@ -4294,7 +4329,7 @@ const EXPECTED_TABLES = [
      workspace load — the check saying "fine" is worse than no check. */
   'activity_removed', 'build_reports', 'build_summary', 'build_custom',
   'case_day_pauses', 'lead_status', 'send_log', 'invoice_retainer',
-  'payment_methods', 'payment_send',
+  'payment_methods', 'payment_send', 'retainer_receipt',
 ];
 
 async function missingTables(env) {
@@ -4904,6 +4939,44 @@ async function route(request, env) {
       ? PERSONAL.retainer : Number(raw);
     if (!Number.isFinite(amount) || amount < 0) return json({ error: 'The retainer must be a number.' }, 400);
     const received = body.received === true || body.received === 1 || body.received === '1' ? 1 : 0;
+
+    /* THE RECEIPT: what actually arrived (PAYMENTS.md §5/§11). `received` on
+       its own is a flag — it can say money came in and nothing about which
+       money, so nobody can reconcile it against a bank statement later. The
+       details are optional, because an admin who knows the money landed should
+       not be blocked from saying so while they hunt for the reference. */
+    const clean = (v, max) => String(v == null ? '' : v)
+      .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, max);
+    const rcMethod = clean(body.method, 32);
+    if (rcMethod && !RETAINER_METHODS.includes(rcMethod)) {
+      return json({ error: 'Pick a real payment method.' }, 400);
+    }
+    const rcPaidOn = clean(body.paid_on, 10);
+    if (rcPaidOn && !/^\d{4}-\d{2}-\d{2}$/.test(rcPaidOn)) {
+      return json({ error: 'The payment date should be a calendar date.' }, 400);
+    }
+    const rcRaw = body.amount_received;
+    const rcAmount = rcRaw === undefined || rcRaw === null || String(rcRaw).trim() === ''
+      ? null : Number(rcRaw);
+    if (rcAmount !== null && !(Number.isFinite(rcAmount) && rcAmount >= 0)) {
+      return json({ error: 'The amount received must be a number.' }, 400);
+    }
+    const rcRef = clean(body.reference, 200);
+
+    if (received) {
+      await env.DB.prepare(
+        `INSERT INTO retainer_receipt (case_no, amount, method, paid_on, reference, recorded_by, recorded_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT(case_no) DO UPDATE SET amount = ?2, method = ?3, paid_on = ?4,
+           reference = ?5, recorded_by = ?6, recorded_at = ?7`)
+        .bind(m[1], rcAmount, rcMethod, rcPaidOn, rcRef, user.id, nowIso()).run();
+    } else {
+      /* Un-marking the retainer means the money is not in. Leaving a receipt
+         behind would leave the case asserting a payment it no longer claims to
+         have — the row goes with the flag. */
+      await env.DB.prepare('DELETE FROM retainer_receipt WHERE case_no = ?').bind(m[1]).run();
+    }
+
     await env.DB.prepare(
       `INSERT INTO case_retainer (case_no, retainer_amount, received, received_at, updated_by, updated_at)
        VALUES (?1, ?2, ?3, CASE WHEN ?3 = 1 THEN ?4 ELSE NULL END, ?5, ?4)

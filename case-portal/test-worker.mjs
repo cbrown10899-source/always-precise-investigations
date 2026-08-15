@@ -1556,6 +1556,65 @@ section('The two internal calculations never share a number');
      set.authorization.retainer.amount === 2000 && set.authorization.retainer.received === true
      && set.authorization.retainer.remaining === 1400);
 
+  /* PAYMENTS.md §5/§11 — WHAT arrived, not merely that something did. A bare
+     received flag cannot be reconciled against a bank statement six weeks
+     later, which is the whole reason for recording the money rather than
+     ticking a box. */
+  const paid = await jsonOf(await call(env, '/cases/API-RB1/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 2000, received: true, amount_received: 2000, method: 'venmo',
+            paid_on: '2026-08-14', reference: 'Venmo note: case RB1' } }));
+  const rcpt = paid.authorization.retainer.receipt;
+  ok('the receipt records the amount, method, date and reference',
+     rcpt && rcpt.amount === 2000 && rcpt.method === 'venmo'
+     && rcpt.paid_on === '2026-08-14' && rcpt.reference === 'Venmo note: case RB1');
+  ok('and names the method in words the office reads', rcpt.method_label === 'Venmo');
+  ok('and stamps who recorded it', !!rcpt.recorded_by && !!rcpt.recorded_at);
+  ok('the retainer reads as received rather than pending',
+     paid.authorization.retainer.status === 'received');
+
+  ok('an invented payment method is refused',
+     (await call(env, '/cases/API-RB1/retainer', { method: 'POST', cookie: admin,
+       body: { received: true, method: 'bitcoin' } })).status === 400);
+
+  /* Owner correction 2026-08-15: the firm does not take these, so they are not
+     offered. Offering a method it cannot accept pushes the failure onto the
+     client mid-retainer, and "other" records that money arrived by a means
+     nobody wrote down — the one thing a payment record exists to prevent. */
+  for (const gone of ['card', 'other']) {
+    ok(`${gone} is not an accepted retainer method`,
+       (await call(env, '/cases/API-RB1/retainer', { method: 'POST', cookie: admin,
+         body: { received: true, method: gone } })).status === 400);
+  }
+  for (const kept of ['cash_app', 'venmo', 'check', 'cash', 'ach_bill']) {
+    ok(`${kept} is accepted`,
+       (await call(env, '/cases/API-RB1/retainer', { method: 'POST', cookie: admin,
+         body: { retainer_amount: 2000, received: true, method: kept } })).status === 200);
+  }
+  ok('and a payment date that is not a date is refused',
+     (await call(env, '/cases/API-RB1/retainer', { method: 'POST', cookie: admin,
+       body: { received: true, method: 'cash', paid_on: 'last tuesday' } })).status === 400);
+  ok('but the details stay OPTIONAL — knowing it landed is enough to say so',
+     (await call(env, '/cases/API-RB1/retainer', { method: 'POST', cookie: admin,
+       body: { retainer_amount: 2000, received: true } })).status === 200);
+
+  /* Un-marking it means the money is not in. A receipt left behind would leave
+     the case asserting a payment it no longer claims to have. */
+  const undone = await jsonOf(await call(env, '/cases/API-RB1/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 2000, received: false } }));
+  ok('un-marking the retainer clears the receipt with it',
+     undone.authorization.retainer.receipt === null
+     && undone.authorization.retainer.status === 'pending');
+
+  /* THE RULE THE FEATURE TURNS ON: sending instructions is not being paid. */
+  await env.DB.prepare(
+    `INSERT INTO payment_send (case_no, recipient, methods, with_sheet, ok, sent_at)
+     VALUES ('API-RB1', 'client@example.com', 'venmo', 1, 1, ?)`).bind('2026-08-15T00:00:00Z').run();
+  const afterSend = await jsonOf(await call(env, '/cases/API-RB1/workspace', { cookie: admin }));
+  ok('a sent payment instruction does NOT mark the retainer received',
+     afterSend.authorization.retainer.received === false
+     && afterSend.authorization.retainer.status === 'pending'
+     && afterSend.authorization.retainer.receipt === null);
+
   await call(env, '/submissions/API-RB1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
   const iws = await jsonOf(await call(env, '/cases/API-RB1/workspace', { cookie: inv }));
   ok('none of it ever reaches an investigator',
