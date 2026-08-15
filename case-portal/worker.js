@@ -1685,7 +1685,33 @@ async function claimPaymentToken(env, caseNo, token) {
     `INSERT INTO retainer_payment_token (token, case_no, claimed_at)
      VALUES (?, ?, ?) ON CONFLICT(token) DO NOTHING`)
     .bind(token, caseNo, nowIso()).run();
-  return Number(r && r.meta && r.meta.changes) === 1;
+  if (Number(r && r.meta && r.meta.changes) === 1) return true;
+
+  /* THE TOKEN IS TAKEN — but by what? A claim is only meaningful once the
+     payment it guards exists. If the previous attempt claimed the token and
+     then failed to write the payment, the token would block every retry and
+     the money would be lost silently: the client paid, the firm has no record,
+     and pressing the button again does nothing.
+
+     That is a worse outcome than the duplicate this guards against, because a
+     duplicate can be voided and a payment nobody recorded cannot be recovered.
+     So an unfinished claim is reusable, and only a claim with a payment
+     attached actually stops a retry. */
+  const held = await env.DB.prepare(
+    'SELECT payment_id FROM retainer_payment_token WHERE token = ?').bind(token).first();
+  return !(held && held.payment_id != null);
+}
+
+/* Release a claim whose payment did not get written, so the retry that follows
+   is not silently swallowed. Called on the failure path; the reusable-claim
+   rule above covers the case where the process dies before this runs. */
+async function releasePaymentToken(env, token) {
+  if (!token) return;
+  try {
+    await env.DB.prepare(
+      'DELETE FROM retainer_payment_token WHERE token = ? AND payment_id IS NULL')
+      .bind(token).run();
+  } catch { /* the retry path is the backstop */ }
 }
 
 /* What a private client has actually paid, across instalments.
@@ -5092,10 +5118,19 @@ async function route(request, env) {
     if (received && rcAmount !== null && rcAmount > 0) {
       const tok = clean(body.client_token, 64);
       if (await claimPaymentToken(env, m[1], tok)) {
-        await env.DB.prepare(
-          `INSERT INTO retainer_payment (case_no, amount, method, paid_on, reference,
-             recorded_by, recorded_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`)
-          .bind(m[1], rcAmount, rcMethod, rcPaidOn, rcRef, user.id, nowIso()).run();
+        try {
+          const ins = await env.DB.prepare(
+            `INSERT INTO retainer_payment (case_no, amount, method, paid_on, reference,
+               recorded_by, recorded_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`)
+            .bind(m[1], rcAmount, rcMethod, rcPaidOn, rcRef, user.id, nowIso()).run();
+          if (tok) {
+            await env.DB.prepare('UPDATE retainer_payment_token SET payment_id = ? WHERE token = ?')
+              .bind(ins && ins.meta ? ins.meta.last_row_id : null, tok).run();
+          }
+        } catch (e) {
+          await releasePaymentToken(env, tok);
+          throw e;
+        }
       }
     }
 
@@ -5153,13 +5188,21 @@ async function route(request, env) {
        state it expected. */
     const tok = clean(body.client_token, 64);
     if (await claimPaymentToken(env, m[1], tok)) {
-      const ins = await env.DB.prepare(
-        `INSERT INTO retainer_payment (case_no, amount, method, paid_on, reference,
-           recorded_by, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-        .bind(m[1], amt, meth, on, clean(body.reference, 200), user.id, nowIso()).run();
-      if (tok) {
-        await env.DB.prepare('UPDATE retainer_payment_token SET payment_id = ? WHERE token = ?')
-          .bind(ins && ins.meta ? ins.meta.last_row_id : null, tok).run();
+      try {
+        const ins = await env.DB.prepare(
+          `INSERT INTO retainer_payment (case_no, amount, method, paid_on, reference,
+             recorded_by, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+          .bind(m[1], amt, meth, on, clean(body.reference, 200), user.id, nowIso()).run();
+        /* Linking the claim to the payment is what makes the claim binding.
+           Until this runs the token is reusable, so a failure between the two
+           leaves a retry possible rather than a payment lost. */
+        if (tok) {
+          await env.DB.prepare('UPDATE retainer_payment_token SET payment_id = ? WHERE token = ?')
+            .bind(ins && ins.meta ? ins.meta.last_row_id : null, tok).run();
+        }
+      } catch (e) {
+        await releasePaymentToken(env, tok);
+        throw e;
       }
     }
     return json({ ok: true, authorization: await authorizationFor(env, m[1], true) });
