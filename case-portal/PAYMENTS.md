@@ -11,7 +11,7 @@ priority verified defect is already in progress."* So this sits **after the four
 HIGH defects** in `RECONCILIATION.md`'s HIGH QUEUE — each of which loses money or
 data silently — and before the MEDIUM/LOW backlog.
 
-## ⚠️ OWNER ADDITION, 2026-08-15 — CUSTOM PRIVATE RETAINER (part 1 of 2)
+## ⚠️ OWNER ADDITION, 2026-08-15 — CUSTOM PRIVATE RETAINER (parts 1 and 2)
 
 **Private-client retainers are not always $1,500.**
 
@@ -32,9 +32,72 @@ client/case.**
 **Do not change $100/hour or the 4-hour minimum.**
 **Do not add this selector to Insurance workflows.**
 
-> **Part 2 of 2 had not arrived when this was recorded.** Written down so it
-> survives context loss; building waits for part 2, which may bear on the same
-> screens.
+### Part 2 of 2 — carry the agreed retainer through the whole private flow
+
+The selected retainer travels with everything the private flow sends.
+
+Admin selects **Retainer = $2,000**, then sends the Private Rate Sheet, the
+Intake Form and Payment Options. **The client-facing Private Rate Sheet must
+show `RETAINER: $2,000`**, and **the intake/send record must preserve that same
+agreed amount.**
+
+| Selected | Preserved |
+| --- | --- |
+| Standard | $1,500 |
+| $2,000 | $2,000 |
+| $3,000 | $3,000 |
+| Custom $2,500 | $2,500 |
+
+**RECORD PAYMENT MUST NEVER RESET THE AGREED RETAINER:**
+
+```
+AGREED RETAINER   $3,000
+RECEIVED          $2,000
+REMAINING         $1,000
+```
+
+**Sending Cash App/Venmo instructions does NOT count as payment received.**
+
+Allowed received-payment methods remain exactly: **Cash App · Venmo · Check ·
+Cash · ACH / BILL.**
+
+**Tests required:** each preset works · custom amount works · rate sheet
+displays the selected amount · returned intake preserves the selected amount ·
+**partial payments calculate correctly** · Record Payment never resets the
+agreed retainer · Insurance never sees this selector.
+
+### Two things part 2 settles, and one it creates — reader's note
+
+It settles the open question from part 1: the agreed amount is a property of the
+**case**, and it must also ride with the **send**, because the sheet the client
+receives has to show it.
+
+It also confirms the fix already shipped in #97/#98 — *Record Payment must never
+reset the agreed retainer* is exactly the defect found there, so that work
+stands rather than needing redoing.
+
+**What it creates: "REMAINING" now means something new.** Today
+`retainer.remaining` is *agreed minus work applied* — how much of the client's
+money the recorded hours have not yet consumed. The owner's block means *agreed
+minus received* — how much of the retainer the client still owes. **Those are
+different numbers and both are wanted:**
+
+| Figure | Means | Exists? |
+| --- | --- | --- |
+| Agreed | what the client agreed to pay | ✅ `case_retainer.retainer_amount` |
+| Received | what has actually arrived | partly — one receipt row |
+| Remaining (owed) | agreed − received | ❌ new |
+| Applied | work billed against it | ✅ |
+| Remaining (unused) | agreed − applied | ✅ — must not be renamed |
+
+Naming both "remaining" on one screen would be a money bug waiting to happen.
+
+**And partial payments imply more than one payment.** `retainer_receipt` is
+keyed by `case_no`, so it holds exactly one — a second payment overwrites the
+first, and "received" would report the last instalment rather than the total.
+Supporting instalments needs a payment **log** keyed by id with
+`received = SUM(amount)`. That is a schema decision, and the standing rule
+applies: a new table, not an altered one.
 
 ### What this touches — reader's note, not owner instruction
 
