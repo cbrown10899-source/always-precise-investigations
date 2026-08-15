@@ -60,7 +60,12 @@ sensitive ever removed this way needs a purge, not just a deploy.
 | Private payment: legacy row never dropped in silence | **LIVE VERIFIED** — #81, worker 917 |
 | Private payment: admin Settings screen | **LIVE VERIFIED** — #82/#84, portal 730 |
 | Private payment: send-wizard toggles, independently selectable | **LIVE VERIFIED** — #85, portal 740 |
+| Retainer ledger: AGREED / RECEIVED / OUTSTANDING, instalments, void-not-delete | **LIVE VERIFIED** — worker at master |
+| Retainer payment idempotency (payment + token in one transaction) | **LIVE VERIFIED** — #107, then #108 at `2f91f4c`, deploy-portal green, worker 976 |
 | Private payment: lead-card Send Payment Options, standalone send, RETAINER PENDING / Record Payment, history | **NOT CODED** — next in queue |
+| Custom private retainer selector ($1,500 / $2,000 / $3,000 / Custom) | **PARTIAL** — the stored `retainer_amount` is honoured and preserved end to end, but the **selector is not built** and `rateSheets()` / `paymentBlockText` still print the standard figure, so a $3,000 case emails a sheet saying $1,500 |
+| Real intake alerts | **NOT CODED** — requirements recorded in `INTAKE-OPS.md` §1 |
+| Intake archive / sample cleanup | **NOT CODED** — part 1 recorded in `INTAKE-OPS.md` §2; **part 2 has not arrived** |
 | Portal ops plan (nav, dashboard, tasks, search, contacts…) | **NOT CODED** — see `PORTAL-OPS.md`, phased |
 | Activity edit/delete convention | **PARTIAL** — `activity_removed` shipped #55; audit against the requirement before building |
 | Active Surveillance voice command mode | **NOT CODED** — spec recorded in `SURVEILLANCE-VOICE.md` (§1–16, five gaps listed); speech input, one activity API, activity_removed and caseFor already exist — audit before building |
