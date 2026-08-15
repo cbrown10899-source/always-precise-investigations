@@ -419,7 +419,10 @@ section('Example view');
      !has(await text(page, '.bar'), 'test case') && !has(await text(page, '.bar'), 'example'));
   await page.locator('.tabs button', { hasText: 'Settings' }).click();
   await page.waitForTimeout(300);
-  ok('Settings holds the developer area', has(await text(page, '.card'), 'Developer & testing'));
+  // Across the whole view, not the first card — Settings holds more than one
+  // now, and this check is about the area existing, not about its position.
+  ok('Settings holds the developer area',
+     has(await page.locator('#app').innerText(), 'Developer & testing'));
   await page.locator('.btn', { hasText: 'Show the example cases' }).click();
   await page.waitForTimeout(300);
   ok('showing the example lands where the example is',
@@ -1365,6 +1368,66 @@ section('A surveillance date is the date where the investigator is standing');
   }
   ok('at least one zone was on a different UTC date — otherwise this section proves nothing',
      drifted > 0, `${drifted} of 2 drifted`);
+}
+
+/* The Worker refuses a send when a method is switched on with no payment link,
+   and that refusal says "add a link in Settings". This screen is what makes
+   that sentence true — it shipped as an error with nowhere to go, which is a
+   dead end rather than a guard. Tested as the recovery path it has to be. */
+section('Payment methods can be configured, and a broken one can be repaired');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Settings' }).click();
+  await page.waitForTimeout(700);
+  const body = await page.locator('#app').innerText();
+
+  ok('Settings carries the private-client payment methods',
+     has(body, 'Private client payment methods'));
+  ok('and says plainly that they are private-client only',
+     has(body, 'never on an insurance sheet'));
+  ok('both methods are listed', has(body, 'Cash App') && has(body, 'Venmo'));
+  ok('with the firm\'s configured handles shown',
+     (await page.locator('#pm_handle_cash_app').inputValue()) === '$TreverB'
+     && (await page.locator('#pm_handle_venmo').inputValue()) === '@Trever-Brown-9');
+  ok('and their links, which the admin can edit',
+     (await page.locator('#pm_url_venmo').inputValue()) === 'https://venmo.com/u/Trever-Brown-9');
+  ok('the screen warns against building a link from a handle',
+     has(body, 'never built from the handle'));
+  ok('and states that no credential is stored',
+     has(body, 'No password, login or account credential is stored'));
+  ok('there is no field for a password or token',
+     await page.locator('input[type="password"]').count() === 0);
+
+  /* The recovery path itself: break it the way a legacy row is broken, and
+     confirm the screen both explains it and can fix it. */
+  await page.locator('#pm_url_venmo').fill('');
+  await page.locator('.feebox[data-pay="venmo"] .btn', { hasText: 'Save and switch on' }).click();
+  await page.waitForTimeout(700);
+  const broken = await page.locator('#app').innerText();
+  ok('saving it on with no link is refused, in the Worker\'s own words',
+     has(broken, 'needs a payment link') || has(broken, 'cannot be offered'), broken.slice(0, 200));
+
+  await page.locator('#pm_url_venmo').fill('https://venmo.com/u/Trever-Brown-9');
+  await page.locator('.feebox[data-pay="venmo"] .btn', { hasText: 'Save and switch on' }).click();
+  await page.waitForTimeout(700);
+  ok('and supplying the link fixes it from this screen',
+     has(await page.locator('#app').innerText(), 'saved'));
+
+  await page.close();
+}
+{
+  // The field must never see where the firm's money arrives.
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  const nav = await text(page, '.tabs');
+  ok('an investigator has no Settings tab at all', !has(nav, 'Settings'));
+  const seen = await page.evaluate(async () => {
+    const r = await fetch('/portal-api/payment-methods', { headers: { Accept: 'application/json' } });
+    return r.status;
+  });
+  ok('and the route refuses them directly', seen === 403, String(seen));
+  await page.close();
 }
 
 /* UIBUILD phase 3 (P8/P9): the Quick tab — stock lines behind a search and
