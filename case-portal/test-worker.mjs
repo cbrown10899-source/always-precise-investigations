@@ -3850,6 +3850,34 @@ section('Payment instructions ride with the private client and no one else');
      !has(both(lastBody), '$AlwaysPrecise')
      && narrowed.included.payment_methods.map(m => m.id).join() === 'venmo');
 
+  /* Unticking BOTH methods must send NEITHER. This read as "no preference" and
+     fell through to every enabled method — the precise opposite of the request,
+     and it defeated the independent per-method control the order asks for. No
+     selection and an empty selection are different answers. */
+  await call(env, '/payment-methods/cash_app', { method: 'POST', cookie: admin,
+    body: { enabled: true, display_name: 'Cash App', handle: '$AlwaysPrecise' } });
+  lastBody = null;
+  const none = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'client@example.com', include_payment: true, methods: [] } });
+  ok('unticking every payment method sends none of them', none.status === 400);
+  ok('and nothing was emailed', lastBody === null);
+  ok('the refusal is answerable here, not in Settings',
+     has((await jsonOf(none)).error, 'Choose at least one payment method'));
+
+  // A selection of only unknown ids is the same answer: none.
+  lastBody = null;
+  ok('a selection of nothing real is refused too',
+     (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+       body: { to: 'client@example.com', include_payment: true, methods: ['zelle'] } })).status === 400
+     && lastBody === null);
+
+  // And omitting the field entirely still means "whatever is enabled".
+  lastBody = null;
+  const dflt = await jsonOf(await call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body: { to: 'client@example.com', include_payment: true } }));
+  ok('saying nothing about methods still sends the enabled ones',
+     dflt.included.payment_methods.map(m => m.id).sort().join() === 'cash_app,venmo');
+
   // 11. Escaping — the handle is admin-entered and lands in HTML.
   await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
     body: { enabled: true, display_name: 'Venmo', handle: '@a<script>alert(1)</script>' } });
@@ -3863,9 +3891,15 @@ section('Payment instructions ride with the private client and no one else');
   // PAYMENT OPTIONS heading.
   await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
     body: { enabled: false, handle: '@AlwaysPrecise' } });
+  await call(env, '/payment-methods/cash_app', { method: 'POST', cookie: admin,
+    body: { enabled: false, handle: '$AlwaysPrecise' } });
   ok('including payment with nothing configured is refused',
      (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
        body: { to: 'client@example.com', include_payment: true } })).status === 400);
+  ok('and that refusal points at Settings, where it can actually be answered',
+     has((await jsonOf(await call(env, '/sheets/private_retainer/email', { method: 'POST',
+       cookie: admin, body: { to: 'client@example.com', include_payment: true } }))).error,
+       'Set one up in Settings'));
 
   globalThis.fetch = realFetch;
 }

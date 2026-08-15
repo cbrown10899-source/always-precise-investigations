@@ -575,9 +575,14 @@ async function paymentConfig(env) {
    turn on a method the configuration has off. */
 async function paymentOptionsFor(env, wanted) {
   const all = await paymentConfig(env);
-  const pick = Array.isArray(wanted) && wanted.length
-    ? all.filter(m => wanted.includes(m.id))
-    : all;
+  /* NO SELECTION and AN EMPTY SELECTION are different answers, and conflating
+     them is how unticking every method sent every method. `null` means the
+     caller expressed no preference — take whatever is enabled. An empty ARRAY
+     means the admin looked at the list and chose none, which can only ever
+     yield nothing; testing `wanted.length` here made 0 falsy and fell through
+     to "send them all", the exact opposite of what was asked. The caller
+     refuses the send rather than mailing an empty PAYMENT OPTIONS heading. */
+  const pick = Array.isArray(wanted) ? all.filter(m => wanted.includes(m.id)) : all;
   return pick
     .filter(m => m.enabled && (m.handle.trim() || safePayUrl(m.url)))
     .map(m => ({
@@ -760,8 +765,12 @@ async function emailSheet(request, env, user, id) {
     ? body.methods.map(x => String(x)).filter(x => PAY_IDS.includes(x)) : null;
   const payment = includePayment ? await paymentOptionsFor(env, wantedMethods) : [];
   if (includePayment && !payment.length) {
-    return json({ error: 'No payment method is enabled and configured. Set one up in Settings '
-                       + 'before including payment instructions.' }, 400);
+    /* Two different reasons for nothing to send, and they need different
+       sentences: one is answered in this dialog, the other in Settings. */
+    return json({ error: wantedMethods && !wantedMethods.length
+      ? 'Choose at least one payment method, or untick payment instructions.'
+      : 'No payment method is enabled and configured. Set one up in Settings '
+        + 'before including payment instructions.' }, 400);
   }
 
   const { text, html } = sheetEmail(sheet, note, includeIntake, payment);
