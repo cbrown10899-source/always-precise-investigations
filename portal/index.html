@@ -1647,6 +1647,61 @@ function newLeadView(){
 /* UIBUILD P18 — the 3-step send wizard. The Options step offers exactly one
    intake — the sheet's own, paired by the Worker — so the wrong door cannot
    be sent from here even on a bad day. */
+/* Payment options on the send wizard (PAYMENTS.md §3, owner 2026-08-15).
+
+   PRIVATE SHEET ONLY, and this function returns nothing at all for the carrier
+   one — no hidden section, no disabled control, nothing an adjuster's sheet
+   could ever render. The Worker refuses `include_payment` on the insurance
+   sheet regardless, so this is the second of two independent gates rather than
+   the only one.
+
+   Cash App and Venmo are independently selectable, and only methods that are
+   actually sendable are offered: a method with no payment link cannot be
+   ticked here, because the send would be refused and the client would get an
+   option they cannot tap. That refusal has a repair screen now, and this
+   points at it by name. */
+function wizPaymentSendable(){
+  return (PAYCFG || []).filter(m => m.enabled && (m.url || "").trim());
+}
+
+/* The wizard opens from Rate sheets and from a lead, neither of which has been
+   near Settings, so the configuration is fetched on demand. Everything
+   sendable starts ticked: the owner's onboarding flow sends the sheet, the
+   intake and both payment options together, and an admin unticks what they do
+   not want rather than hunting for what they do. */
+async function wizPaymentLoad(){
+  if(!SHEET_WIZ || SHEET_WIZ.sheet !== "private_retainer") return;
+  if(!PAYCFG) await loadPaymentMethods();
+  if(!SHEET_WIZ) return;
+  if(!(SHEET_WIZ.payMethods || []).length){
+    SHEET_WIZ.payMethods = wizPaymentSendable().map(m => m.id);
+  }
+  paint();
+}
+
+function wizPaymentHtml(w){
+  if(w.sheet !== "private_retainer") return "";
+  if(!PAYCFG) return `<p class="hint">Checking payment options&hellip;</p>`;
+  const usable = wizPaymentSendable();
+  if(!usable.length){
+    return `<div class="feebox" style="margin:10px 0">
+      <div class="row"><span><b>Payment options</b></span><span class="tag new">None ready</span></div>
+      <p class="hint">No payment method is switched on with a payment link, so none can be included.
+        Settings &rarr; Private client payment methods.</p></div>`;
+  }
+  return `<div class="feebox" style="margin:10px 0">
+    <label class="cap" style="display:flex"><input type="checkbox" id="wiz_pay" data-act="wizPayToggle" ${w.pay ? "checked" : ""}>
+      <span>Include <b>payment options</b> so the client can pay the retainer from the email</span></label>
+    ${w.pay ? `<div style="margin:8px 0 0 22px">
+      ${usable.map(m => `<label class="cap" style="display:flex">
+        <input type="checkbox" class="wiz-pm" data-pm="${esc(m.id)}"
+          ${(w.payMethods || []).includes(m.id) ? "checked" : ""}>
+        <span>${esc(m.display_name || m.label)} <span class="opt">${esc(m.handle)}</span></span></label>`).join("")}
+      <p class="hint">Each is a button the client taps. Tick either or both.</p>
+    </div>` : ""}
+  </div>`;
+}
+
 function sheetWizardHtml(){
   const w = SHEET_WIZ;
   const sheet = SHEETS.find(s => s.id === w.sheet) || {};
@@ -1675,7 +1730,8 @@ function sheetWizardHtml(){
         <span>Include the <b>${intakeLabel}</b> form link</span></label>
       <p class="hint">The matching intake is paired automatically. ${w.sheet === "insurance_assignment"
         ? "Carriers land on the Secure Assignment Intake — never the consumer picker."
-        : "Private clients land on the private intake — the carrier path is never offered."}</p>`
+        : "Private clients land on the private intake — the carrier path is never offered."}</p>
+      ${wizPaymentHtml(w)}`
     : `
       <dl class="detail">
         <dt>Sheet</dt><dd>${esc(sheet.name || w.sheet)}</dd>
@@ -1683,8 +1739,15 @@ function sheetWizardHtml(){
         ${w.caseNo ? `<dt>Case</dt><dd>${esc(w.caseNo)}</dd>` : ""}
         ${w.note ? `<dt>Added line</dt><dd>${esc(w.note)}</dd>` : ""}
         <dt>Intake form</dt><dd>${w.include ? intakeLabel + " link included" : "Not included"}</dd>
+        ${w.sheet === "private_retainer" ? `<dt>Payment options</dt><dd>${
+          w.pay && (w.payMethods || []).length
+            ? wizPaymentSendable().filter(m => w.payMethods.includes(m.id))
+                .map(m => esc(m.display_name || m.label)).join(" + ")
+            : "Not included"}</dd>` : ""}
       </dl>
-      <p class="hint">The email is the sheet exactly as shown on this page${w.include ? ", plus the intake button" : ""}.</p>`;
+      <p class="hint">The email is the sheet exactly as shown on this page${w.include ? ", plus the intake button" : ""}${
+        w.sheet === "private_retainer" && w.pay && (w.payMethods || []).length ? ", plus the payment buttons" : ""}.
+        Sending payment instructions does not mark the retainer paid.</p>`;
   return `<div class="amwrap" data-act="wizClose">
     <div class="amsheet" data-act="amNoop" role="dialog" aria-modal="true" aria-label="Send the rate sheet">
       <div class="amhead"><b>Send &mdash; ${esc(sheet.selector_label || sheet.name || "")}</b>
@@ -5722,15 +5785,34 @@ function wizCollect(){
   if($("wiz_case")) SHEET_WIZ.caseNo = $("wiz_case").value.trim();
   if($("wiz_note")) SHEET_WIZ.note = $("wiz_note").value.trim();
   if($("wiz_inc")) SHEET_WIZ.include = $("wiz_inc").checked;
+  if($("wiz_pay")) SHEET_WIZ.pay = $("wiz_pay").checked;
+  const boxes = [...document.querySelectorAll(".wiz-pm")];
+  if(boxes.length){
+    SHEET_WIZ.payMethods = boxes.filter(b => b.checked).map(b => b.dataset.pm);
+  }
 }
 
 async function wizSend(){
   wizCollect();
   const w = SHEET_WIZ;
+  /* Only the private sheet may carry payment, and only what was ticked. The
+     Worker decides this too, from the sheet id — sending the flag here for a
+     carrier sheet would be refused rather than obeyed. */
+  const paying = w.sheet === "private_retainer" && w.pay && (w.payMethods || []).length;
   try{
     const r = await api(`/sheets/${encodeURIComponent(w.sheet)}/email`,
-      {method:"POST", body:{to: w.to, note: w.note, case_no: w.caseNo, include_intake: w.include}});
-    SHEET_MSG = `Sent to ${r.sent_to}${w.include ? ", with the intake link" : ""}.`;
+      {method:"POST", body:{to: w.to, note: w.note, case_no: w.caseNo, include_intake: w.include,
+        ...(paying ? {include_payment: true, methods: w.payMethods} : {})}});
+    /* §13 — say what actually WENT, read back from the Worker's own answer
+       rather than from the boxes that were ticked. */
+    const inc = r.included || {};
+    const bits = [];
+    if(w.include) bits.push("the intake link");
+    if((inc.payment_methods || []).length){
+      bits.push(inc.payment_methods.map(m => m.label).join(" and "));
+    }
+    SHEET_MSG = `Sent to ${r.sent_to}${bits.length ? ", with " + bits.join(" and ") : ""}.`
+      + ((inc.payment_methods || []).length ? " The retainer is still pending until you record it." : "");
     if(w.fromLead){ LEAD_MSG = SHEET_MSG; SHEET_WIZ = null; return render(); }
     SHEET_WIZ = null;
   }catch(e){ w.err = e.message; }
@@ -6019,8 +6101,9 @@ document.addEventListener("click", ev => {
     SHEET_MSG = ""; SHEET_WIZ = null; paint();
   }
   else if(act === "shWiz"){
-    SHEET_WIZ = {sheet: el.dataset.sheet, step: 1, to: "", caseNo: "", note: "", include: true, err: ""};
-    SHEET_MSG = ""; paint();
+    SHEET_WIZ = {sheet: el.dataset.sheet, step: 1, to: "", caseNo: "", note: "", include: true,
+                 pay: true, payMethods: [], err: ""};
+    SHEET_MSG = ""; wizPaymentLoad(); paint();
   }
   /* MASTER §5 — the same wizard, opened FROM the lead: the sheet is picked by
      the lead's kind (never by the caller), the address and case number are
@@ -6029,8 +6112,8 @@ document.addEventListener("click", ev => {
     const c = CASES.find(x => x.case_no === el.dataset.case) || {};
     SHEET_WIZ = {sheet: el.dataset.kind === "claims" ? "insurance_assignment" : "private_retainer",
                  step: 1, to: c.client_email || "", caseNo: el.dataset.case, note: "",
-                 include: true, err: "", fromLead: true};
-    SHEET_MSG = ""; paint();
+                 include: true, pay: true, payMethods: [], err: "", fromLead: true};
+    SHEET_MSG = ""; wizPaymentLoad(); paint();
   }
   else if(act === "leadIntake"){
     const c = CASES.find(x => x.case_no === el.dataset.case) || {};
@@ -6040,6 +6123,7 @@ document.addEventListener("click", ev => {
   }
   else if(act === "leadIntakeCancel"){ LEAD_SEND = null; paint(); }
   else if(act === "leadIntakeSend"){ sendLeadIntakeMail(el.dataset.case); }
+  else if(act === "wizPayToggle"){ wizCollect(); paint(); }
   else if(act === "wizClose"){ SHEET_WIZ = null; paint(); }
   else if(act === "wizStep"){
     wizCollect();
