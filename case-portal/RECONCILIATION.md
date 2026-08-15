@@ -17,6 +17,25 @@ Where that chain is the evidence, Live? says **pipeline✓**. The owner's
 
 ---
 
+
+## Session close, 2026-08-15 — state at master `4e053c2`
+
+Recorded on the owner's stop-at-clean-handoff instruction. **NEXT.md carries
+the live queue; this is the evidence line for what closed today.**
+
+| Claim | Evidence |
+| --- | --- |
+| Retainer payment cannot be recorded twice, lost, or falsely acknowledged | #107/#108/#110/#112/#114/#116/#118 — payment and token in one `batch()`; "already recorded" proven by a payment row on **this case**, never by the claim alone; a legacy claim answers `payment_indeterminate` with a pressed recovery rather than a guess. Worker 997 |
+| A blank amount cannot mark a case received | #114 — control prints the false success verbatim: *"Payment recorded. The retainer now reads as received."* |
+| Page state does not cross a case or a session | #116/#118/#120/#122 — `retainerEnter` clears on a **different** case only; `sessionForget()` on sign-out **and** on 401. Before #120 the next sign-in landed in the previous user's case, drawn from their data |
+| A private client is sent the retainer their case agreed | #123 — control prints the bug: subject `$1,500 Retainer — … (case API-RET3K)` on a $3,000 case. **Worker half not live-verified** (auth precedes routing) |
+| The mobile menu button is reachable | #123 — **50x50 measured on the production page**, from **38x35** |
+| Virginia coverage wording | **RESOLVED by the owner.** Was open in three files; struck from all three |
+
+**What is NOT closed:** the custom retainer **selector** (nothing on screen
+sets $2,000 or $3,000), the live-Worker proof of the $3,000 sheet, and
+everything below it in the queue. See NEXT.md → NEXT UNFINISHED ITEM.
+
 ## 0. THE HEADLINE ITEM — rate sheet → correct intake, all layers
 
 ChatGPT's hypothesis was "backend pairing built, control never surfaced."

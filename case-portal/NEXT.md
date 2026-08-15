@@ -46,6 +46,31 @@ not: *removing a file from the artifact does not unpublish it.* **Owner action:
 purge that path in the Cloudflare dashboard** (or accept the week). Anything
 sensitive ever removed this way needs a purge, not just a deploy.
 
+## ▶ NEXT UNFINISHED ITEM (stopped here, 2026-08-15)
+
+**Stopped at a clean handoff on the owner's instruction.** Master is
+`4e053c2`; the site and the Worker are both deployed at it and build.txt
+agrees. Nothing is half-done in the tree and no branch is open.
+
+**The next unfinished item is the one thing that would close out the retainer
+work: the CUSTOM PRIVATE RETAINER SELECTOR.** The stored figure is now honoured
+everywhere it is read — sheet, subject line, email body, payment block and
+preview — but **nothing on screen sets it.** `$1,500 / $2,000 / $3,000 /
+Custom` has to become a control on the private case, writing
+`case_retainer.retainer_amount`; the route and the guards for it already
+exist (a payment must never reset it, and it must never appear on an insurance
+workflow). Until then a $3,000 agreement can only be recorded through the API.
+
+Two things needing an authenticated admin session rather than code, both
+carried forward: proving the $3,000 sheet end-to-end against the live Worker,
+and the private payment configuration rows below.
+
+Then, in the queue's order: lead-card **Send Payment Options** and the
+standalone send dialog; **real intake alerts** and **intake archive**
+(`INTAKE-OPS.md`, archive part 2 still not arrived); Portal Ops Phase 1.
+
+---
+
 ### Feature states, this session's work
 
 | Item | State |
@@ -63,9 +88,9 @@ sensitive ever removed this way needs a purge, not just a deploy.
 | Retainer ledger: AGREED / RECEIVED / OUTSTANDING, instalments, void-not-delete | **LIVE VERIFIED** — worker at master |
 | Retainer payment idempotency (payment + token in one transaction) | **LIVE VERIFIED** — #107/#108/#110/#112/#114/#116/#118/#120 at `c4e96c4`; build.txt matches master, both deploys green, served page carries the token-keeping branch and the new-attempt recovery, which keeps the typed amount and refuses a blank one; worker 986, portal 780 |
 | Private payment: lead-card Send Payment Options, standalone send, RETAINER PENDING / Record Payment, history | **NOT CODED** — next in queue |
-| Private retainer: the agreed figure drives sheet, subject, email, payment block and preview | **OPEN until LIVE VERIFIED** — CODED + TESTED. `agreedRetainer()` reads the case; `rateSheets(retainer)`, `sheetById(id, retainer)`, `paymentBlockText/Html(pay, retainer)` and `GET /sheets?case=` all take it, and the wizard re-reads the sheet for its case. Control run printed the bug verbatim: subject `$1,500 Retainer — … (case API-RET3K)` on a $3,000 case. Worker 997, portal 789 |
+| Private retainer: the agreed figure drives sheet, subject, email, payment block and preview | **DEPLOYED at `4e053c2`; page half LIVE VERIFIED, Worker half NOT** — the served page carries `wizSheetLoad` and `/sheets?case=`, and both deploys are green at master. The Worker's own output is **not externally observable** (auth runs before routing), so proving a real $3,000 case emails $3,000 needs an authenticated admin session — see the caveat above. CODED + TESTED: `agreedRetainer()` reads the case; `rateSheets(retainer)`, `sheetById(id, retainer)`, `paymentBlockText/Html(pay, retainer)` and `GET /sheets?case=` all take it, and the wizard re-reads the sheet for its case. Control run printed the bug verbatim: subject `$1,500 Retainer — … (case API-RET3K)` on a $3,000 case. Worker 997, portal 789 |
 | Custom private retainer **selector** ($1,500 / $2,000 / $3,000 / Custom) | **NOT CODED** — the amount is honoured and now carried everywhere once set, but nothing on screen sets it to $2,000 or $3,000 yet |
-| Mobile menu button hit target | **OPEN until LIVE VERIFIED** — CODED + TESTED. Was **38x35** measured (owner reported ~30px); now `min-width/min-height:50px` with the glyph left at 1.4rem, matching the 50-52px this file uses elsewhere. A test measures it at phone width |
+| Mobile menu button hit target | **LIVE VERIFIED** — #123 at `4e053c2`. Measured on the production page at 390px wide: **50x50**, up from the **38x35** the control reproduced (owner reported ~30px). Glyph left at 1.4rem; a test measures it at phone width |
 | Real intake alerts | **NOT CODED** — requirements recorded in `INTAKE-OPS.md` §1 |
 | Intake archive / sample cleanup | **NOT CODED** — part 1 recorded in `INTAKE-OPS.md` §2; **part 2 has not arrived** |
 | Portal ops plan (nav, dashboard, tasks, search, contacts…) | **NOT CODED** — see `PORTAL-OPS.md`, phased |
