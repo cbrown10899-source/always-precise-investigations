@@ -61,7 +61,7 @@ sensitive ever removed this way needs a purge, not just a deploy.
 | Private payment: admin Settings screen | **LIVE VERIFIED** — #82/#84, portal 730 |
 | Private payment: send-wizard toggles, independently selectable | **LIVE VERIFIED** — #85, portal 740 |
 | Retainer ledger: AGREED / RECEIVED / OUTSTANDING, instalments, void-not-delete | **LIVE VERIFIED** — worker at master |
-| Retainer payment idempotency (payment + token in one transaction) | **LIVE VERIFIED** — #107/#108/#110/#112/#114/#116/#118 at `6fd3893`; build.txt matches master, both deploys green, served page carries the token-keeping branch and the new-attempt recovery, which keeps the typed amount and refuses a blank one; worker 986, portal 775 |
+| Retainer payment idempotency (payment + token in one transaction) | **LIVE VERIFIED** — #107/#108/#110/#112/#114/#116/#118/#120 at `c4e96c4`; build.txt matches master, both deploys green, served page carries the token-keeping branch and the new-attempt recovery, which keeps the typed amount and refuses a blank one; worker 986, portal 780 |
 | Private payment: lead-card Send Payment Options, standalone send, RETAINER PENDING / Record Payment, history | **NOT CODED** — next in queue |
 | Custom private retainer selector ($1,500 / $2,000 / $3,000 / Custom) | **PARTIAL** — the stored `retainer_amount` is honoured and preserved end to end, but the **selector is not built** and `rateSheets()` / `paymentBlockText` still print the standard figure, so a $3,000 case emails a sheet saying $1,500 |
 | Real intake alerts | **NOT CODED** — requirements recorded in `INTAKE-OPS.md` §1 |
@@ -69,6 +69,7 @@ sensitive ever removed this way needs a purge, not just a deploy.
 | Portal ops plan (nav, dashboard, tasks, search, contacts…) | **NOT CODED** — see `PORTAL-OPS.md`, phased |
 | Activity edit/delete convention | **PARTIAL** — `activity_removed` shipped #55; audit against the requirement before building |
 | Active Surveillance voice command mode | **NOT CODED** — spec recorded in `SURVEILLANCE-VOICE.md` (§1–16, five gaps listed); speech input, one activity API, activity_removed and caseFor already exist — audit before building |
+| Page state does not cross a session boundary | **LIVE VERIFIED** — #120 at `c4e96c4`. `sessionForget()` on sign-out and on 401. Before it, the next sign-in on a shared machine landed in the **previous user's open case, drawn from the previous user's workspace data** — an investigator after an admin would see the client name and claim number `redactRow` withholds. The Worker was never wrong; the page kept an answer it had been given |
 | Deploy allow-list + artifact test | **LIVE VERIFIED** — merged #75/#77/#78, deploy green at 936414b, build stamp matches, internal files 404 |
 
 
