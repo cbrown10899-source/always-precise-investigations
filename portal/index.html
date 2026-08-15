@@ -1033,7 +1033,7 @@ async function api(path, opts = {}){
   /* A session that ended is a session boundary too — the same clear-down as
      signing out, or an expiry leaves the next person exactly where the last one
      was standing. */
-  if(res.status === 401 && ME){ ME = null; sessionForget(); paint(); throw new Error("Your session ended. Please sign in again."); }
+  if(res.status === 401 && ME){ sessionForget(); paint(); throw new Error("Your session ended. Please sign in again."); }
   if(!res.ok){
     /* Carry the status and the body on the error. Callers that need to act on
        WHICH failure it was — a stale idempotency token, a finalize refused by
@@ -2410,14 +2410,31 @@ async function doAccept(token){
    boundary is enforced in the Worker, but this page was still holding the
    answer it had already been given. */
 function sessionForget(){
+  ME = null; TAB = "cases"; FILTER = ""; TOTAL = 0;
+  /* Everything the Worker answered for THAT person. The case list carries
+     client names and carriers; USERS and INVITES are admin-only; LAST_LINK and
+     RESET_BOX are a live invitation and a live password-reset URL. */
+  CASES = []; USERS = []; INVITES = []; PKGS = null; OUT_NOW = null;
+  LAST_LINK = ""; LAST_EMAILED = false; RESET_BOX = null;
+  PAYCFG = null; PAY_DRAFT = {}; PAY_MSG = ""; PAY_ERR = false;
+  SUMMARY = null; SHEETS = []; SHEET_MAIL = ""; OPEN_SHEET = null; SHEET_MSG = ""; SHEET_WIZ = null;
+  NL = null; LEAD_SEND = null; LEAD_MSG = "";
+  INVOICES = null; INV_OPEN = null; INV_MSG = ""; INV_WARN = []; INV_EVENTS = [];
+  INV_SETTINGS = null; INV_FILTER = {status: "", type: "", q: ""};
   retainerReset(); RET_CASE = null;
   WS = null; WS_CASE = null; WS_TAB = "overview"; WS_ERR = ""; WS_REPORT = null;
-  VIEW = "list"; SV = null; document.body.classList.remove("surv");
+  WS_NOTICE = ""; ACT_MODAL = null; REP_VIEW = "preview"; REP_VERS = {}; EV_TAB = "all";
+  VIEW = "list"; SV = null; SV_SKEW = 0; svTickStop();
+  document.body.classList.remove("surv");
 }
 
 async function doLogout(){
   try{ await api("/auth/logout", {method:"POST"}); }catch{}
-  ME = null; CASES = []; USERS = []; INVITES = []; PKGS = null; TAB = "cases"; LAST_LINK = ""; LAST_EMAILED = false; RESET_BOX = null;
+  /* The whole clear-down, and nothing beside it. A second list here is how the
+     expiry path came to clear less than this one did: sessionForget() held the
+     workspace while doLogout held the case list, so a session that TIMED OUT
+     left an admin's cases, invitations and reset links sitting in the page for
+     whoever signed in next. One owner, both boundaries. */
   sessionForget(); paint();
 }
 

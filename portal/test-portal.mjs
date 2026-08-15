@@ -2198,6 +2198,41 @@ section('The retainer balance on a private case');
   await page.close();
 }
 
+/* A SESSION THAT EXPIRES IS THE SAME BOUNDARY AS SIGNING OUT, and it was not
+   clearing the same things: the workspace clear-down lived in sessionForget()
+   while the case list, invitations and reset links were cleared only by the
+   Sign out button. A portal left open until the cookie expired therefore kept
+   an admin's cases — with client names and carriers — plus any live invitation
+   or password-reset URL, for whoever signed in next. Driven through the REAL
+   401 handler rather than by calling the clear-down directly. */
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.waitForTimeout(400);
+  const loaded = await page.evaluate(() => ({ cases: CASES.length, me: !!ME }));
+  ok('the admin has their case list loaded', loaded.cases > 0 && loaded.me === true);
+
+  const expired = await page.evaluate(async () => {
+    LAST_LINK = 'https://example.invalid/invite/abc123';
+    RESET_BOX = { userId: 9, url: 'https://example.invalid/reset/def456' };
+    const real = window.fetch;
+    window.fetch = async () => new Response(JSON.stringify({ error: 'unauthorized' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } });
+    try { await api('/cases'); } catch (e) { /* the expiry is the point */ }
+    finally { window.fetch = real; }
+    return { me: ME, cases: CASES.length, link: LAST_LINK, reset: RESET_BOX, users: USERS.length };
+  });
+  ok('an expired session signs the page out', expired.me === null);
+  ok('and takes the case list with it', expired.cases === 0, String(expired.cases));
+  ok('and the invitation and reset links it was holding',
+     expired.link === '' && expired.reset === null);
+
+  await signIn(page, 'dana', 'FieldWork2026x');
+  const after = await page.evaluate(() => ({ cases: CASES.length, mine: CASES.every(c => c.assigned_to_me !== false) }));
+  ok('the investigator’s list is their own, fetched fresh', after.cases >= 0 && after.mine === true);
+  await page.close();
+}
+
 /* The invoice workflow (INVOICING.md): CASE -> CREATE -> REVIEW -> document ->
    BILL -> payment -> PAID, driven through the page. */
 section('An invoice from case to PAID');
