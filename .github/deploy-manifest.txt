@@ -40,16 +40,34 @@ beacon.js
 .well-known/security.txt
 
 # --- images and brand assets -------------------------------------------------
-assets/*.webp
-assets/*.svg
+# Named one by one, not `assets/*.webp`. A wildcard here would publish whatever
+# lands in this directory next, unreviewed — and an images folder is exactly
+# where a case photograph gets dropped "just to look at it". Adding a brand
+# asset is a deliberate line in this file.
+assets/banner1.webp
+assets/logo-white.webp
+assets/logo-lockup.svg
+assets/review1.webp
+assets/review2.webp
+assets/review3.webp
 
-# --- service pages (insurance also has vendor-information/) ------------------
-insurance-investigations/**/index.html
+# --- service pages -----------------------------------------------------------
+insurance-investigations/index.html
+insurance-investigations/vendor-information/index.html
 infidelity-investigations/index.html
 child-custody-investigations/index.html
 
-# --- generated location pages (build-locations.py writes these) --------------
-private-investigator/**/index.html
+# --- generated location pages ------------------------------------------------
+# THE ONE WILDCARD IN THIS FILE, and it is deliberate. build-locations.py
+# generates these from its PLACES list, and build-locations.yml regenerates,
+# commits and deploys them on its own. Naming each city here would mean a new
+# market silently failed to publish until someone remembered this file — the
+# generator's whole point is that it does not need remembering.
+#
+# It is kept as tight as it can be: exactly one directory deep, and the
+# filename is fixed, so the only thing it can ever publish is a location page.
+private-investigator/index.html
+private-investigator/*/index.html
 
 # --- the intake form ---------------------------------------------------------
 intake/index.html
@@ -57,10 +75,14 @@ intake/index.html
 # --- the staff case portal: a PAGE, never the Worker (noindex) ---------------
 portal/index.html
 portal/manifest.webmanifest
-portal/icon-*.png
+portal/icon-180.png
+portal/icon-192.png
+portal/icon-512.png
 
 # --- the private visitor dashboard (noindex) ---------------------------------
 watch/index.html
 watch/manifest.webmanifest
 watch/sw.js
-watch/icon-*.png
+watch/icon-180.png
+watch/icon-192.png
+watch/icon-512.png

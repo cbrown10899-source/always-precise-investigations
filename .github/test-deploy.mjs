@@ -88,10 +88,20 @@ section('A stray file beside a published page is not published');
     'portal/internal-note.txt',
     'portal/index.html.bak',
     'intake/client-list.csv',
-    'assets/original-pricing.pdf',
     '.well-known/notes.txt',
     'watch/passcode.txt',
+    /* The ones a wildcard would have published. An images directory is where a
+       case photograph gets dropped "just to look at it", and `assets/*.webp`
+       would have put it on the public site the next time master deployed. */
+    'assets/original-pricing.pdf',
+    'assets/claimant-surveillance.webp',
+    'assets/draft-logo.svg',
+    'portal/icon-internal.png',
+    /* And a whole extra service page, which `insurance-investigations/**` would
+       have taken because the filename happened to be index.html. */
+    'insurance-investigations/internal-rates/index.html',
   ];
+  fs.mkdirSync(path.join(ROOT, 'insurance-investigations', 'internal-rates'), { recursive: true });
   const made = [];
   for (const rel of strays) {
     const p = path.join(ROOT, rel);
@@ -108,6 +118,8 @@ section('A stray file beside a published page is not published');
        again.files.length === files.length);
   } finally {
     for (const p of made) fs.rmSync(p, { force: true });
+    fs.rmSync(path.join(ROOT, 'insurance-investigations', 'internal-rates'),
+              { recursive: true, force: true });
   }
 }
 
@@ -172,6 +184,18 @@ section('The manifest describes the site honestly');
   ok('no pattern is a bare directory',
      manifest.every(m => m.includes('.') || m.startsWith('_')),
      manifest.filter(m => !m.includes('.') && !m.startsWith('_')).join());
+
+  /* A wildcard publishes files nobody has looked at yet. Every one that CAN be
+     enumerated is enumerated, so exactly one survives: the generated location
+     pages, where build-locations.yml regenerates, commits and deploys on its
+     own and naming each city would mean a new market silently failed to
+     publish. Any second wildcard is a decision, and has to be made here. */
+  const wild = manifest.filter(m => m.includes('*'));
+  ok('the generated location pages are the ONLY wildcard in the manifest',
+     wild.length === 1 && wild[0] === 'private-investigator/*/index.html',
+     wild.join(' | '));
+  ok('and even that one is a single level with a fixed filename',
+     wild.every(m => !m.includes('**') && m.endsWith('/index.html')));
   ok('the skipped set is real — most of the repo is NOT published',
      skipped.length > files.length, `${skipped.length} skipped vs ${files.length} published`);
 }
