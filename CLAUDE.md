@@ -94,6 +94,40 @@ Do not "fix" this by adding `per_page` back. It was tried and it does nothing.
 The same caution applies to `get_job_logs` on this repo: `site-health.yml`
 emits a long step summary.
 
+## What reaches the public site — an allow-list, not an exclude list
+
+`.github/deploy-manifest.txt` names every path that is site content.
+`.github/stage-site.mjs` builds `_site/` from it, and `deploy.yml` runs that
+script. **Anything not listed is not deployed** — a new handoff note, agent
+definition or tooling directory cannot reach the internet by being added to
+the repo, and cannot break the deploy either.
+
+This replaced a list of `rsync --exclude` flags, and the reason is worth
+keeping: with excludes, everything was public **by default**, and the only
+thing between a new file and the internet was a guard that failed the whole
+build. On 2026-08-14 `.claude/agents/*.md` arrived, the markdown guard
+correctly refused it, and **the public site stopped deploying for four merges
+while `deploy-portal.yml` kept shipping the Worker** — so the portal moved and
+the website did not, with nothing saying so. A red workflow nobody reads is the
+same as no workflow. The guard was right; the list was wrong.
+
+Adding a page means adding its path to the manifest, or it will not be
+published. The stager **fails if a listed path is missing**, so a renamed
+directory is caught at build time instead of by someone finding a 404 later.
+
+```bash
+node .github/test-deploy.mjs   # 31 checks: what may and may not be published
+```
+
+It runs the real stager and asserts both halves — that the site is complete,
+and that `.claude/**`, `case-portal/**`, every `.md`, every `.mjs`, the schema
+and the generator stay out. One check plants a file in the repo root and an
+agent definition in `.claude/agents/` and proves they are ignored **without
+failing the build**, which is the incident itself.
+
+`/.well-known/build.txt` carries the deployed short SHA and build time, so
+"is the site actually current?" is one request rather than a guess.
+
 ## Deploy topology
 
 Nine workflows, all in `.github/workflows/`:

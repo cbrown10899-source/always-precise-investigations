@@ -1,0 +1,61 @@
+# WHAT THE PUBLIC SITE IS MADE OF — the deploy allow-list.
+#
+# Every path here is copied to the Cloudflare Pages artifact. Anything in the
+# repository that is NOT listed here is not deployed, and cannot become
+# deployed by being added to the repo.
+#
+# This replaced a deny-list of --exclude flags, which had the failure mode you
+# would expect: every new top-level file or directory was public BY DEFAULT and
+# the only thing standing between it and the internet was a guard that failed
+# the whole build. On 2026-08-14 that is exactly what happened — .claude/agents/
+# arrived, the markdown guard fired, and the public site stopped following
+# master for four merges while the Worker kept deploying, so the two halves of
+# the system drifted apart without anything saying so.
+#
+# The guard was right. The list was wrong. With an allow-list a new agent
+# definition, handoff note or tooling directory is simply not site content, and
+# the deploy is unaffected.
+#
+# Live is served from the repo root, so a path listed here appears at the same
+# path on the domain: `intake` -> /intake/.
+#
+# ADDING A PAGE: add its path here, or it will not be published — and the stager
+# fails loudly if a listed path is missing, so a renamed directory is caught at
+# build time rather than by someone noticing a 404 weeks later.
+#
+# NOT LISTED, DELIBERATELY: .claude (agent definitions), .github (workflows,
+# this file, the stager and its test), case-portal (Worker source, PRICING.md,
+# the handoff and reconciliation notes), visitor-alerts (Worker source),
+# build-locations.py (the generator; its OUTPUT is published, not the script),
+# CLAUDE.md and README.md, and .gitignore.
+
+# --- Cloudflare Pages configuration -----------------------------------------
+_headers
+_redirects
+
+# --- the site itself ---------------------------------------------------------
+index.html
+404.html
+privacy.html
+robots.txt
+sitemap.xml
+beacon.js
+assets
+.well-known
+
+# --- service pages -----------------------------------------------------------
+insurance-investigations
+infidelity-investigations
+child-custody-investigations
+
+# --- generated location pages (build-locations.py writes these) --------------
+private-investigator
+
+# --- the intake form ---------------------------------------------------------
+intake
+
+# --- the staff case portal (noindex; a page, not the Worker) -----------------
+portal
+
+# --- the private visitor dashboard (noindex) ---------------------------------
+watch

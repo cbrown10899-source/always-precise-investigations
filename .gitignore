@@ -1,3 +1,6 @@
 
 # Screenshot output — generated on demand by portal/screenshots.mjs
 .screenshots/
+
+# Deploy artifact — built by .github/stage-site.mjs, never committed
+_site/
