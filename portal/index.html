@@ -629,6 +629,12 @@ let RET_ERR = false;
    success and when the form opens, so a NEW payment is never mistaken for a
    retry of the last one. */
 let RET_TOKEN = "";
+/* Set when the Worker says an old attempt's outcome cannot be established. The
+   only escape is a NEW attempt, and it has to be the admin's decision — the
+   page must not quietly reissue a token, because "nobody knows whether that
+   money was recorded" is answered by looking at the payment list, not by
+   pressing the same button harder. */
+let RET_STUCK = false;
 let PAY_MSG = "";
 let PAY_ERR = false;
 let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
@@ -2061,7 +2067,7 @@ function settingsView(){
    case must not keep asserting a payment it no longer claims to have. */
 async function recordRetainerPayment(received){
   const v = id => { const el = $(id); return el ? el.value.trim() : ""; };
-  RET_MSG = ""; RET_ERR = false;
+  RET_MSG = ""; RET_ERR = false; RET_STUCK = false;
   const body = { received };
   if(received){
     const amt = v("ret_amt"), meth = v("ret_method"), date = v("ret_date"), ref = v("ret_ref");
@@ -2089,7 +2095,14 @@ async function recordRetainerPayment(received){
        token, so the server can tell it apart from a genuinely second payment.
        Dropping it on failure is what used to turn one slow press into two
        recorded payments: the retry looked new, because nothing tied it to the
-       attempt that may still have been in flight. */
+       attempt that may still have been in flight.
+
+       The ONE exception is an attempt the Worker cannot resolve — a claim left
+       by the old two-step version, where the money may or may not have landed.
+       That token is unusable for ever, so the offer is an explicit new attempt.
+       Still not automatic: the admin reads the payment list first, which is on
+       this same screen, and decides. */
+    if(e.code === "payment_indeterminate") RET_STUCK = true;
     RET_MSG = e.message; RET_ERR = true; paintCase();
   }
 }
@@ -2549,6 +2562,9 @@ function retainerFormHtml(r){
     <p class="hint">Everything except the fact of payment is optional &mdash; record it now and
       fill in the reference when you have it.</p>
     ${RET_MSG ? `<div class="${RET_ERR ? "err" : "linkbox"}">${esc(RET_MSG)}</div>` : ""}
+    ${RET_STUCK ? `<div class="actions">
+      <button class="btn sm" data-act="retNewAttempt">Start a new attempt</button>
+    </div>` : ""}
   </div>`;
 }
 
@@ -6052,8 +6068,12 @@ document.addEventListener("click", ev => {
   }
   else if(act === "openCaseTab"){ openCase(el.dataset.case, el.dataset.tab); }
   else if(act === "paySave"){ savePaymentMethod(el.dataset.id, el.dataset.on === "1"); }
-  else if(act === "retOpen"){ RET_FORM = true; RET_MSG = ""; RET_ERR = false; RET_TOKEN = ""; paintCase(); }
-  else if(act === "retCancel"){ RET_FORM = false; RET_MSG = ""; RET_ERR = false; paintCase(); }
+  else if(act === "retOpen"){ RET_FORM = true; RET_MSG = ""; RET_ERR = false; RET_STUCK = false; RET_TOKEN = ""; paintCase(); }
+  else if(act === "retCancel"){ RET_FORM = false; RET_MSG = ""; RET_ERR = false; RET_STUCK = false; paintCase(); }
+  /* A NEW attempt, chosen by the admin after reading the payment list. The
+     token is dropped only here — never on an ordinary failure, where the same
+     token is what stops a retry from recording the money twice. */
+  else if(act === "retNewAttempt"){ RET_TOKEN = ""; RET_STUCK = false; RET_MSG = ""; RET_ERR = false; paintCase(); }
   else if(act === "retSave"){ recordRetainerPayment(true); }
   else if(act === "retUndo"){ recordRetainerPayment(false); }
   else if(act === "retVoid"){ voidRetainerPayment(el.dataset.id); }

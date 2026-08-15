@@ -1887,9 +1887,32 @@ section('The two internal calculations never share a number');
     body: { amount: 310, method: 'cash', client_token: 'legacy-stranded-1' } });
   ok('a claim with no payment behind it is NOT answered as already recorded',
      stranded.status !== 200, String(stranded.status));
+  const strandedBody = await jsonOf(stranded);
+  /* NOR adopted and written, which is the other wrong answer. The old code
+     never filled payment_id even when it succeeded, so a NULL one means the
+     money MAY have landed. Writing it would duplicate; calling it recorded
+     would lose it. The database does not hold what is needed to choose. */
+  ok('it is refused specifically, so the page can act on which failure it was',
+     strandedBody.code === 'payment_indeterminate', String(strandedBody.code));
+  ok('and the refusal names the check the admin has to make',
+     /payments listed on this case/i.test(String(strandedBody.error)), String(strandedBody.error));
   ok('and it did not quietly count either',
      (await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
        .authorization.retainer.received_total === beforeStranded);
+
+  /* AND IT IS RECOVERABLE. A refusal with no way past it is a payment that can
+     never be recorded — the admin reads the list, decides the money is not
+     there, and a NEW attempt records it exactly once. */
+  const fresh = await call(env, '/cases/API-RB4/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 310, method: 'cash', client_token: 'legacy-stranded-1-retry' } });
+  ok('a new attempt gets past it', fresh.status === 200);
+  ok('and records the money exactly once',
+     (await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
+       .authorization.retainer.received_total === beforeStranded + 310);
+  ok('while the stranded claim is left alone, not rewritten',
+     (await env.DB.prepare(
+       `SELECT payment_id FROM retainer_payment_token WHERE token = 'legacy-stranded-1'`).first())
+       .payment_id === null);
 
   /* AND A CLAIM BELONGING TO ANOTHER CASE ANSWERS FOR THAT CASE ONLY. The token
      is a GLOBAL primary key, so without a case check one case's recorded
