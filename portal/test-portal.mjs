@@ -1316,6 +1316,57 @@ section('The Custom tab carries every composer');
   await page.close();
 }
 
+/* Every surveillance DATE came from toISOString() — UTC — while every
+   surveillance TIME came from toTimeString() — local. On the same line, in the
+   same record. In EDT that is four hours of disagreement every evening: at
+   20:15 on the 14th the page filed 2026-08-15 beside 20:15, so evening work
+   (most of this firm's) was recorded a day late with the previous day's times,
+   and it reached case_days.day_date, the derived case_reports.report_date and
+   the timeline's ORDER BY. Driven in two real timezones rather than by calling
+   the helper, because the bug was never in a helper — it was in what the
+   screens rendered. */
+section('A surveillance date is the date where the investigator is standing');
+{
+  /* UTC+14 and UTC-11 bracket the clock: whatever the hour when this suite
+     runs, at least one of them is on a different calendar date from UTC. The
+     counter at the end asserts that actually happened, so a green run can
+     never mean "neither zone drifted today, so nothing was tested". */
+  let drifted = 0;
+  for (const [tz, nick] of [['Pacific/Kiritimati', 'UTC+14'], ['Pacific/Pago_Pago', 'UTC-11']]) {
+    const page = await (await browser.newContext({
+      viewport: { width: 1200, height: 900 }, timezoneId: tz })).newPage();
+    page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+    await page.goto(SITE + '/portal/');
+    await page.waitForTimeout(250);
+    await signIn(page, 'trever', 'AdminPassword1x');
+    await rowFor(page, 'API-20260812-4001').click();
+    await page.waitForTimeout(450);
+    await wsTab(page, 'Activity log');
+    await openComposer(page);
+
+    const seen = await page.evaluate(() => {
+      const d = new Date(), p = n => String(n).padStart(2, '0');
+      return {
+        date: document.querySelector('#a_date').value,
+        time: document.querySelector('#a_time').value,
+        local: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`,
+        utc: d.toISOString().slice(0, 10),
+      };
+    });
+    ok(`${nick}: the date offered is the local calendar date, not the UTC one`,
+       seen.date === seen.local, JSON.stringify(seen));
+    ok(`${nick}: and a time is offered beside it`, /^\d\d:\d\d$/.test(seen.time), seen.time);
+    if (seen.local !== seen.utc) {
+      drifted++;
+      ok(`${nick}: this zone genuinely disagreed with UTC, so the date above was the real test`,
+         seen.date !== seen.utc, JSON.stringify(seen));
+    }
+    await page.close();
+  }
+  ok('at least one zone was on a different UTC date — otherwise this section proves nothing',
+     drifted > 0, `${drifted} of 2 drifted`);
+}
+
 /* UIBUILD phase 3 (P8/P9): the Quick tab — stock lines behind a search and
    categories, favorites first, one-tap No change, and the arrival template
    that writes the sentence. */

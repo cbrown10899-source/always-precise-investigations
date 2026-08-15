@@ -822,6 +822,27 @@ function fmtDay(d){
   return isNaN(t) ? String(d) : t.toLocaleDateString(undefined, {weekday:"short", month:"short", day:"numeric", year:"numeric"});
 }
 
+/* The calendar date HERE, where the investigator is standing.
+
+   Every surveillance DATE used to come from `toISOString().slice(0,10)` while
+   every surveillance TIME came from `toTimeString().slice(0,5)` — UTC against
+   local, on the same line and in the same submitted record. In EDT that is
+   four hours of disagreement every evening: at 20:15 on the 14th the page
+   filed `2026-08-15` beside `20:15`, so evening surveillance — the bulk of
+   this firm's work — was recorded a day late, with the times of the day
+   before. It reached `case_days.day_date`, `case_reports.report_date` (which
+   the Worker derives from it) and the timeline's ORDER BY, so a day could sort
+   ahead of itself.
+
+   `fmtDay` above already guards the reverse trip for the same reason. Use this
+   for any date a HUMAN means by "today"; keep `toISOString()` for instants,
+   which are genuinely UTC and stored that way. */
+function ymdLocal(d){
+  const t = d || new Date();
+  const p = n => String(n).padStart(2, "0");
+  return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`;
+}
+
 function safeImage(src){
   return typeof src === "string" && /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(src) ? src : "";
 }
@@ -2303,7 +2324,7 @@ function amSearchBox(){
 function amComposeHtml(){
   const m = ACT_MODAL;
   const now = new Date().toTimeString().slice(0,5);
-  const today = new Date().toISOString().slice(0,10);
+  const today = ymdLocal();
   const pre = m.pre || {};
   const isArrival = !m.edit && m.pick === ARRIVAL_LINE;
   return `<form class="amform" data-act="quickAdd">
@@ -2366,7 +2387,7 @@ function amComposeHtml(){
 /* The Custom tab: the free-form composer, kinds and all — including Mileage
    and Expense, which write the money record and mark the timeline together. */
 function amCustomHtml(){
-  const today = new Date().toISOString().slice(0,10);
+  const today = ymdLocal();
   const now = new Date().toTimeString().slice(0,5);
   return `<form class="amform" data-act="addActivity">
     <div class="qgrid">
@@ -2429,7 +2450,7 @@ function fieldPanel(){
       <button class="btn sm" data-act="wsTab" data-tab="reports" style="margin-left:8px">Draft the daily report</button>
     </div>` : "";
   const days = (WS && WS.days) || [];
-  const today = new Date().toISOString().slice(0,10);
+  const today = ymdLocal();
   const now = new Date().toTimeString().slice(0,5);
   return `
     ${notice}
@@ -2619,7 +2640,7 @@ const reportLabel = s => ({draft:"Draft", submitted:"Submitted", needs_revision:
 function expensesPanel(){
   const admin = ME.role === "admin";
   const list = (WS && WS.expenses) || [];
-  const today = new Date().toISOString().slice(0,10);
+  const today = ymdLocal();
   const cats = [["mileage","Mileage"],["tolls","Tolls"],["parking","Parking"],["hotel","Hotel"],
     ["airfare","Airfare"],["rental","Rental vehicle"],["records","Records"],["database","Database"],
     ["equipment","Equipment"],["meals","Meals (if authorized)"],["other","Other"]];
@@ -2747,7 +2768,7 @@ function commsPanel(){
     client_update:"Client update", investigator:"Investigator",
     authorization_request:"Authorization request", internal:"Internal"})[t] || t;
   const visLabel = v => v === "admin" ? "Admin only" : v === "client_eligible" ? "Client eligible" : "Team";
-  const today = new Date().toISOString().slice(0,10);
+  const today = ymdLocal();
 
   const composer = !admin ? "" : `
     <form class="quick" data-act="addComm">
@@ -3428,7 +3449,7 @@ async function pkgApi(path, body){
 function tasksPanel(){
   const admin = ME.role === "admin";
   const tasks = (WS && WS.tasks) || [];
-  const today = new Date().toISOString().slice(0,10);
+  const today = ymdLocal();
   const priTag = p => p === "urgent" ? `<span class="tag rs-needs_revision">urgent</span>`
     : p === "high" ? `<span class="tag rs-submitted">high</span>`
     : p === "low" ? `<span class="tag rs-draft">low</span>` : "";
@@ -3854,7 +3875,7 @@ function svHomeScreen(){
   if(!open){
     // No day running: the one screen is starting one (P3).
     const now = new Date().toTimeString().slice(0,5);
-    const today = new Date().toISOString().slice(0,10);
+    const today = ymdLocal();
     return `<div class="sv-body">
       ${note}
       <div class="sv-day">Day ${days.length + 1}</div>
@@ -4774,7 +4795,7 @@ function invoiceDetailView(){
     ${i.status !== "void" ? `<form class="quick" data-act="invPay" style="margin-top:8px">
       <div class="two">
         <label class="f"><span>Amount</span><input id="ip_amt" inputmode="decimal"></label>
-        <label class="f"><span>Date</span><input id="ip_date" type="date" value="${new Date().toISOString().slice(0,10)}"></label>
+        <label class="f"><span>Date</span><input id="ip_date" type="date" value="${ymdLocal()}"></label>
       </div>
       <div class="two">
         <label class="f"><span>Method</span><select id="ip_method">${["ach","check","card","wire","other"]
@@ -5041,7 +5062,7 @@ async function quickAddEntry(oneTapLine){
       const now = new Date();
       const body = oneTapLine ? {
         kind: "activity", description: oneTapLine,
-        at_date: now.toISOString().slice(0,10), at_time: now.toTimeString().slice(0,5),
+        at_date: ymdLocal(now), at_time: now.toTimeString().slice(0,5),
       } : {
         kind: "activity",
         at_date: $("qa_date").value, at_time: $("qa_time").value,
@@ -5184,10 +5205,10 @@ async function svSaveEntry(oneTap){
   const now = new Date();
   const body = oneTap ? {
     kind: "activity", description: oneTap,
-    at_date: now.toISOString().slice(0,10), at_time: now.toTimeString().slice(0,5),
+    at_date: ymdLocal(now), at_time: now.toTimeString().slice(0,5),
   } : {
     kind: "activity",
-    at_date: new Date().toISOString().slice(0,10),
+    at_date: ymdLocal(),
     at_time: $("sv_time").value,
     description: $("sv_desc").value,
     location: $("sv_loc") ? $("sv_loc").value : "",
