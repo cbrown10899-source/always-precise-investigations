@@ -455,7 +455,7 @@ Tests:
 
 ```bash
 node case-portal/test-worker.mjs   # 849 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 696 checks: the page against the real Worker
+node portal/test-portal.mjs        # 699 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
@@ -511,6 +511,17 @@ Reclassifying a finalized package's material is deliberately still allowed:
 refusing it would preserve the unsafe classification at exactly the moment
 someone is trying to withdraw it. Do not "simplify" any of these back to a
 single check at finalize.
+
+**Nothing about withheld material may sit inside `#pkgdoc`.** The print
+stylesheet makes only `#pkgdoc` visible, so everything in it is the client's
+document — and a *count* of withheld exhibits announces that evidence exists
+which was classified internal only, needs redaction or do not use. The first
+version of this fix put the notice there and disclosed exactly what the
+classification withholds. The office is told on the package screen
+(`pkgWithheldNote()`, outside the printed region); the document prints the
+deliverable material with contiguous numbering and explains no gap. Tests
+assert structurally that no gate strip lives inside `#pkgdoc`, so the guard
+survives a rewording.
 
 ## Invoices
 

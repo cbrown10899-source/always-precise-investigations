@@ -97,9 +97,23 @@ the owner's stated order**. That order is the work list.
    Membership is what makes the desk agree with the package panel, which always
    required it.
 
+   **The first version of this fix then had a defect of its own**, caught by the
+   Codex stop-time review: the withheld notice was rendered **inside `#pkgdoc`**,
+   the only region the print stylesheet leaves visible — so the client's document
+   was announcing "1 item withheld — no longer marked client-deliverable". A
+   count of withheld exhibits discloses that evidence exists which was classified
+   internal only, needs redaction or do not use, which is exactly what the
+   classification withholds. The office still needs to know it is not shipping
+   what it selected, so the notice moved to the package screen beside the gate
+   strip; the document prints the deliverable material with contiguous numbers
+   and explains no gap. `pkgShipping()` is now the single predicate behind both
+   the filter and the count, so screen and document cannot disagree.
+
    `test-worker.mjs` completed-desk section, 6 new checks; `test-portal.mjs` →
-   *"A finalized package still says when something has been held back"*, 18
-   checks. Worker 843 → 849, portal 678 → 696.
+   *"A finalized package still says when something has been held back"*, 21
+   checks. Worker 843 → 849, portal 678 → 699. Three of those checks are the
+   disclosure guards, and one is **structural** — no gate strip anywhere inside
+   `#pkgdoc` — so it survives any rewording.
 
    **Left undone deliberately, not passed off as complete:** provider-side share
    revocation needs a Dropbox client that does not exist (blocked on the owner's
@@ -178,7 +192,7 @@ all four HIGH defects fixed):**
 | Suite | Checks |
 | --- | --- |
 | `case-portal/test-worker.mjs` | **849** |
-| `portal/test-portal.mjs` | **696** |
+| `portal/test-portal.mjs` | **699** |
 | `intake/test-intake.mjs` | **205** |
 | `visitor-alerts/test-worker.mjs` | **47** |
 
@@ -198,7 +212,7 @@ all four HIGH defects fixed):**
 
 Snapshot date: 2026-08-14. Branch: `claude/arrival-sentence-generator`, rebased
 onto master `aa107b4` (**PR #71**). The counts are in the START HERE header
-above — worker 849, portal 696, intake 205, alerts 47. (This line used to repeat
+above — worker 849, portal 699, intake 205, alerts 47. (This line used to repeat
 an older, lower set and contradict the header; one snapshot, in one place.)
 
 > **Running the two browser suites on Windows needs a NODE_PATH.** Their loader
