@@ -1711,8 +1711,21 @@ async function recordRetainerPayment(env, caseNo, token, row, userId) {
     ]);
     return true;
   } catch (e) {
-    const msg = String((e && e.message) || e);
-    if (/UNIQUE|constraint/i.test(msg)) return false;   // already recorded
+    /* "Already recorded" has to be PROVEN, not guessed from an error message.
+       The batch holds TWO inserts, so a payment that fails its own constraint
+       rolls the whole thing back and writes NOTHING — and a message test
+       matching "constraint" answered that with "already recorded", telling the
+       admin the money was on file while the ledger stayed empty. A payment
+       that vanishes silently is worse than the duplicate this guard exists to
+       prevent.
+
+       The claimed token is the only proof, and it is a sound one: it commits
+       WITH its payment, so a token row on disk means the money is on disk too.
+       Anything else failed for its own reasons and must be raised, not
+       acknowledged. */
+    const claimed = await env.DB.prepare(
+      'SELECT 1 AS x FROM retainer_payment_token WHERE token = ?').bind(token).first();
+    if (claimed) return false;   // genuinely already recorded
     throw e;
   }
 }

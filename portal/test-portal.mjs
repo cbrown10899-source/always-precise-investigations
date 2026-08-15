@@ -96,7 +96,12 @@ function d1(db) {
       try {
         for (const st of stmts) out.push(st.run());
         db.exec('COMMIT');
-      } catch (e) { db.exec('ROLLBACK'); throw e; }
+      } catch (e) {
+        /* Rolling back must not replace the error that caused it, and must not
+           leave a transaction open for every statement after it. */
+        try { db.exec('ROLLBACK'); } catch { /* already unwound */ }
+        throw e;
+      }
       return out;
     },
   };
