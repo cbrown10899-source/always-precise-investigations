@@ -1921,7 +1921,58 @@ section('The retainer balance on a private case');
   await page.waitForTimeout(600);
   const auth = await text(page, '#dlgBody');
   ok('the panel shows the retainer balance', has(auth, 'Remaining retainer'));
-  ok('received is recorded', has(auth, 'Received') && has(auth, 'Yes'));
+  // The bare Yes/No row became a status, so the panel reads as a state rather
+  // than a checkbox someone has to interpret.
+  ok('received is recorded', has(auth, 'Retainer received'));
+
+  /* PAYMENTS.md §5/§11 — RETAINER PENDING until an admin records the money,
+     and recording it means saying WHAT arrived. */
+  await page.locator('#m_retrec').uncheck();
+  await page.locator('.btn', { hasText: 'Save authorization' }).click();
+  await page.waitForTimeout(600);
+  ok('un-ticking it puts the case back to pending',
+     has(await text(page, '#dlgBody'), 'Retainer pending'));
+  ok('and offers to record the payment',
+     await page.locator('[data-act="retOpen"]').count() === 1);
+  ok('while saying plainly that sending instructions is not payment',
+     has(await text(page, '#dlgBody'), 'does not mark it paid'));
+
+  await page.locator('[data-act="retOpen"]').click();
+  await page.waitForTimeout(300);
+  ok('the form asks for amount, method, date and reference',
+     await page.locator('#ret_amt').count() === 1 && await page.locator('#ret_method').count() === 1
+     && await page.locator('#ret_date').count() === 1 && await page.locator('#ret_ref').count() === 1);
+
+  /* Owner correction 2026-08-15: the firm does not accept these two, so they
+     are not offered — a method it cannot take pushes the failure onto the
+     client mid-retainer. */
+  const methods = await page.locator('#ret_method option').allInnerTexts();
+  ok('the five accepted methods are offered',
+     ['Cash App', 'Venmo', 'Check', 'Cash', 'ACH / BILL'].every(m => methods.includes(m)),
+     methods.join('|'));
+  ok('and credit card and other are not selectable',
+     !methods.some(m => /credit|other/i.test(m)), methods.join('|'));
+
+  await page.locator('#ret_amt').fill('1500');
+  await page.locator('#ret_method').selectOption('venmo');
+  await page.locator('#ret_date').fill('2026-08-14');
+  await page.locator('#ret_ref').fill('Venmo note: retainer');
+  await page.locator('[data-act="retSave"]').click();
+  await page.waitForTimeout(800);
+  const paid = await text(page, '#dlgBody');
+  ok('recording it moves the case to received', has(paid, 'Retainer received'));
+  ok('and the panel shows what actually arrived',
+     has(paid, 'Venmo') && has(paid, '1,500'), paid.slice(0, 400));
+  ok('with the date the client paid', has(paid, 'Aug'));
+  ok('and the reference', has(paid, 'Venmo note: retainer'));
+  ok('stamped with who recorded it', has(paid, 'Recorded by'));
+
+  await page.locator('[data-act="retUndo"]').click();
+  await page.waitForTimeout(800);
+  const undone = await text(page, '#dlgBody');
+  ok('and it can be put back to pending', has(undone, 'Retainer pending'));
+  ok('which clears the receipt with it',
+     !has(undone, 'Venmo note: retainer'), undone.slice(0, 300));
   ok('six recorded hours at the private rate leave $900', auth.includes('900'), auth.slice(0, 400));
   await page.close();
 }
