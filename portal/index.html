@@ -612,6 +612,14 @@ let RESET_BOX = null;   // {userId, url} — the reset link, shown AT the row it
 /* Private-client payment configuration. Admin-only and fetched, never held in
    this file — the handles belong to the firm, not to the page source. */
 let PAYCFG = null;      // [{id,label,enabled,display_name,handle,url,instructions,from_default}]
+/* What the admin typed but has not successfully saved, per method.
+   A failed save repaints from PAYCFG — the last SERVER state — which threw
+   away their edits, and did something worse than that: if they had
+   deliberately CLEARED the payment link, the repaint put the old one back, so
+   the form showed a link present while the error said it was missing. The
+   screen contradicted itself about the one field the refusal was about.
+   Kept until the save succeeds. */
+let PAY_DRAFT = {};
 let PAY_MSG = "";
 let PAY_ERR = false;
 let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
@@ -1896,6 +1904,12 @@ function paymentSettingsHtml(){
 
   const row = m => {
     const clickable = !!(m.url || "").trim();
+    /* Show what the admin last typed, not what the server last stored — but
+       ONLY where they actually typed something. `d[k] || m[k]` would be the
+       bug all over again: an empty string is a deliberate answer ("I cleared
+       this"), and falling back on it restores the value they just removed. */
+    const d = PAY_DRAFT[m.id];
+    const val = k => (d && d[k] !== undefined) ? d[k] : m[k];
     return `<div class="feebox" style="margin:0 0 12px" data-pay="${esc(m.id)}">
       <div class="row"><span><b>${esc(m.label)}</b>${m.from_default
         ? ` <span class="opt">firm default</span>` : ""}</span>
@@ -1903,22 +1917,24 @@ function paymentSettingsHtml(){
           ? (clickable ? `<span class="tag closed">On</span>`
                        : `<span class="tag rs-needs_revision">On, but not sendable</span>`)
           : `<span class="tag new">Off</span>`}</span></div>
+      ${d ? `<p class="hint" style="color:var(--bad)"><b>Not saved yet.</b> The boxes below are what
+        you typed. The state on the right is what clients get until this saves.</p>` : ""}
       ${m.enabled && !clickable ? `<p class="hint" style="color:var(--bad)">
         This method is switched on but has no payment link, so it cannot be offered to a client
         and a send that includes it will be refused. Add the link below, or switch it off.</p>` : ""}
       <label class="f"><span>Show to the client as</span>
-        <input id="pm_name_${esc(m.id)}" value="${esc(m.display_name)}" placeholder="${esc(m.label)}"></label>
+        <input id="pm_name_${esc(m.id)}" value="${esc(val("display_name"))}" placeholder="${esc(m.label)}"></label>
       <label class="f"><span>Handle <span class="opt">shown to the client, exactly as typed</span></span>
-        <input id="pm_handle_${esc(m.id)}" value="${esc(m.handle)}"
+        <input id="pm_handle_${esc(m.id)}" value="${esc(val("handle"))}"
           placeholder="${m.id === "venmo" ? "@Your-Venmo-Name" : "$YourCashtag"}"></label>
       <label class="f"><span>Payment link <span class="opt">required while this method is on</span></span>
-        <input id="pm_url_${esc(m.id)}" value="${esc(m.url)}"
+        <input id="pm_url_${esc(m.id)}" value="${esc(val("url"))}"
           placeholder="${m.id === "venmo" ? "https://venmo.com/u/Your-Venmo-Name" : "https://cash.app/$YourCashtag"}"></label>
       <p class="hint">The link is never built from the handle. A Venmo handle is written with an
         @ and its web address is not &mdash; guessing one from the other sends a client somewhere
         that is not yours. Paste the address from the app.</p>
       <label class="f"><span>Instructions <span class="opt">optional</span></span>
-        <input id="pm_note_${esc(m.id)}" value="${esc(m.instructions)}"
+        <input id="pm_note_${esc(m.id)}" value="${esc(val("instructions"))}"
           placeholder="e.g. Include your case number in the note"></label>
       <div class="actions">
         <button class="btn sm" data-act="paySave" data-id="${esc(m.id)}" data-on="1">Save and switch on</button>
@@ -1971,12 +1987,17 @@ async function loadPaymentMethods(){
 async function savePaymentMethod(id, enable){
   const v = k => { const el = $(`pm_${k}_${id}`); return el ? el.value : ""; };
   PAY_MSG = ""; PAY_ERR = false;
+  /* Captured BEFORE the request, so a refusal leaves the admin looking at
+     their own words rather than at the values the server still holds. */
+  PAY_DRAFT[id] = { display_name: v("name"), handle: v("handle"),
+                    url: v("url"), instructions: v("note") };
   try{
     const r = await api(`/payment-methods/${encodeURIComponent(id)}`, {method: "POST", body: {
       enabled: enable,
       display_name: v("name"), handle: v("handle"), url: v("url"), instructions: v("note"),
     }});
     PAYCFG = r.methods;
+    delete PAY_DRAFT[id];   // saved: the server's copy is now the truth
     const m = (PAYCFG || []).find(x => x.id === id);
     PAY_MSG = `${m ? m.label : "Payment method"} saved — ${enable ? "clients will be offered it" : "switched off"}.`;
   }catch(e){ PAY_MSG = e.message; PAY_ERR = true; }
@@ -5780,7 +5801,11 @@ document.addEventListener("click", ev => {
     if(TAB === "calendar") loadCalendar(CAL ? CAL.month : "");
     if(TAB === "invoices"){ INV_OPEN = null; INV_MSG = ""; loadInvoices(); }
     if(TAB === "dashboard"){ PKGS = null; loadPackages(); }
-    if(TAB === "settings" && ME.role === "admin"){ PAY_MSG = ""; PAY_ERR = false; loadPaymentMethods(); }
+    // Arriving at Settings is a fresh start: drafts are for recovering from a
+    // refusal in front of you, not for surviving a trip around the portal.
+    if(TAB === "settings" && ME.role === "admin"){
+      PAY_MSG = ""; PAY_ERR = false; PAY_DRAFT = {}; loadPaymentMethods();
+    }
     document.body.classList.remove("navopen");
     if(TAB === "myreports") api("/my/reports").then(d => { MY_REPORTS = d; paint(); }).catch(()=>{});
     if(TAB === "myexpenses"){

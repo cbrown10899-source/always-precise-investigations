@@ -1408,11 +1408,31 @@ section('Payment methods can be configured, and a broken one can be repaired');
   ok('saving it on with no link is refused, in the Worker\'s own words',
      has(broken, 'needs a payment link') || has(broken, 'cannot be offered'), broken.slice(0, 200));
 
+  /* A refusal must leave the admin looking at their OWN words. Repainting from
+     the server threw the edits away — and where they had deliberately cleared
+     the link, put the old one back, so the form showed a link present while
+     the error said it was missing. */
+  ok('the cleared link stays cleared after the refusal',
+     (await page.locator('#pm_url_venmo').inputValue()) === '');
+  ok('and the row says the boxes are not saved yet', has(broken, 'Not saved yet'));
+
+  await page.locator('#pm_handle_venmo').fill('@Trever-Brown-9-EDITED');
+  await page.locator('.feebox[data-pay="venmo"] .btn', { hasText: 'Save and switch on' }).click();
+  await page.waitForTimeout(700);
+  ok('a second refusal keeps the newly typed handle too',
+     (await page.locator('#pm_handle_venmo').inputValue()) === '@Trever-Brown-9-EDITED'
+     && (await page.locator('#pm_url_venmo').inputValue()) === '');
+
+  await page.locator('#pm_handle_venmo').fill('@Trever-Brown-9');
   await page.locator('#pm_url_venmo').fill('https://venmo.com/u/Trever-Brown-9');
   await page.locator('.feebox[data-pay="venmo"] .btn', { hasText: 'Save and switch on' }).click();
   await page.waitForTimeout(700);
-  ok('and supplying the link fixes it from this screen',
-     has(await page.locator('#app').innerText(), 'saved'));
+  const done = await page.locator('#app').innerText();
+  ok('and supplying the link fixes it from this screen', has(done, 'saved'));
+  ok('the unsaved marker clears once it is saved', !has(done, 'Not saved yet'));
+  ok('and the saved values are the ones that went in',
+     (await page.locator('#pm_url_venmo').inputValue()) === 'https://venmo.com/u/Trever-Brown-9'
+     && (await page.locator('#pm_handle_venmo').inputValue()) === '@Trever-Brown-9');
 
   await page.close();
 }
