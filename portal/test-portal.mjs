@@ -85,6 +85,20 @@ function d1(db) {
       };
       return stmt;
     },
+    /* D1's batch() is one transaction: all its statements commit or none do.
+       The Worker relies on that to write a retainer payment and claim its
+       idempotency token as a single fact. This mock lacked it, so the route
+       threw here while the worker suite passed — the two harnesses have to
+       model the same database. */
+    batch(stmts) {
+      const out = [];
+      db.exec('BEGIN');
+      try {
+        for (const st of stmts) out.push(st.run());
+        db.exec('COMMIT');
+      } catch (e) { db.exec('ROLLBACK'); throw e; }
+      return out;
+    },
   };
 }
 

@@ -47,6 +47,21 @@ function d1(db) {
       };
       return stmt;
     },
+    /* D1's batch() runs its statements in ONE transaction: all commit or none
+       do. Mirrored here because the Worker depends on that atomicity to write a
+       payment and claim its idempotency token as a single fact. If the mock ran
+       them separately the tests would pass while production kept a gap between
+       the two — which is exactly the gap that let a double-click duplicate a
+       payment. */
+    batch(stmts) {
+      const out = [];
+      db.exec('BEGIN');
+      try {
+        for (const st of stmts) out.push(st.run());
+        db.exec('COMMIT');
+      } catch (e) { db.exec('ROLLBACK'); throw e; }
+      return out;
+    },
   };
 }
 
@@ -1777,37 +1792,25 @@ section('The two internal calculations never share a number');
   ok('and only one row exists for that attempt',
      (await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
        .authorization.retainer.payments.filter(x => x.amount === 250).length === 1);
-  /* A CLAIMED TOKEN WHOSE PAYMENT NEVER LANDED MUST NOT BLOCK THE RETRY.
-     Claiming before writing stops a double charge, but if the write then fails
-     the token would consume itself and every retry would do nothing — the
-     client has paid, the firm has no record, and the button appears to work.
-     That is worse than the duplicate it guards against, because a duplicate
-     can be voided and an unrecorded payment cannot be recovered. Planted
-     directly, because a claim with no payment is exactly what a failed write
-     leaves behind. */
-  await env.DB.prepare(
-    `INSERT INTO retainer_payment_token (token, case_no, claimed_at)
-     VALUES ('attempt-rb4-orphan', 'API-RB4', ?)`).bind('2026-08-15T00:00:00Z').run();
-  const beforeOrphan = (await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
+
+  /* THE DOUBLE CLICK, which is what this guard is really for. Both presses
+     carry the same token; the second must write nothing and still answer 200,
+     because from the caller side the payment IS recorded. Erroring would make
+     a dropped response look like a failure and invite the retry that
+     duplicates. The payment and its token are written in ONE transaction, so
+     there is no instant where the claim exists without the money behind it. */
+  const beforeDouble = (await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
     .authorization.retainer.received_total;
-  const orphan = await call(env, '/cases/API-RB4/retainer/payment',
-    { method: 'POST', cookie: admin,
-      body: { amount: 125, method: 'cash', client_token: 'attempt-rb4-orphan' } });
-  ok('a token held with no payment behind it is refused, not silently ignored',
-     orphan.status === 409, String(orphan.status));
-  ok('and it says nothing was saved, so the admin knows to try again',
-     String((await jsonOf(orphan)).error).includes('nothing was saved'));
-  ok('nothing was written on that attempt',
+  const both = await Promise.all([
+    call(env, '/cases/API-RB4/retainer/payment', { method: 'POST', cookie: admin,
+      body: { amount: 90, method: 'cash', client_token: 'double-click-1' } }),
+    call(env, '/cases/API-RB4/retainer/payment', { method: 'POST', cookie: admin,
+      body: { amount: 90, method: 'cash', client_token: 'double-click-1' } }),
+  ]);
+  ok('both presses are accepted', both.every(r => r.status === 200));
+  ok('but the money is counted once',
      (await jsonOf(await call(env, '/cases/API-RB4/workspace', { cookie: admin })))
-       .authorization.retainer.received_total === beforeOrphan);
-  /* Reusing an unfinished claim would be a race, not a recovery: two
-     simultaneous submits would both find no payment linked and both write one.
-     Recovery is a NEW attempt, which is what the page produces. */
-  ok('while a fresh attempt records the money',
-     (await jsonOf(await call(env, '/cases/API-RB4/retainer/payment',
-       { method: 'POST', cookie: admin,
-         body: { amount: 125, method: 'cash', client_token: 'attempt-rb4-orphan-retry' } })))
-       .authorization.retainer.received_total === beforeOrphan + 125);
+       .authorization.retainer.received_total === beforeDouble + 90);
 
   // Relative, so earlier blocks adding payments cannot make this pass or fail
   // for reasons unrelated to what it is testing.
