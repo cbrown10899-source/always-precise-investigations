@@ -1332,6 +1332,181 @@ section('Active Surveillance: the same day, seen two ways');
      (await jsonOf(await call(env, '/my/active', { cookie: inv }))).active === null);
 }
 
+/* ------------------- a break must never eat the day it was taken inside of
+ *
+ * HIGH #1 from the 2026-08-14 audits, verified here before it was fixed.
+ *
+ * `span` is minutes between the TYPED start and end times — the investigator's
+ * own local clock. A pause is a pair of SERVER instants. Those are two
+ * different clocks, and the old code closed an open pause at `nowIso()`, which
+ * silently mixed them:
+ *
+ *   start 08:00, pause at noon, then at 20:00 file the day honestly as ending
+ *   at 12:00  ->  span 240 min, pause "ran" 8h, worked = max(0, 240 - 480) = 0
+ *
+ * A real four-hour day recorded as ZERO, floored by the `Math.max` so nothing
+ * anywhere said a number had been thrown away. `hours` is what authorization
+ * and invoices draw against, so this is billable time destroyed in place.
+ *
+ * The fix anchors the pause to the DAY, not to the wall clock: an open pause is
+ * closed at the instant the day ended — `case_days.created_at + span`, the same
+ * server timestamp the field timer already trusts — clamped so it can never
+ * close before it opened nor after now. A break that began at or after the
+ * day's claimed end therefore contributes nothing, which is the honest reading:
+ * they stopped working when the break started. */
+section('A break cannot eat the day it was taken inside of');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find(u => u.username === 'dana').id;
+
+  const HOUR = 3600000;
+  const iso = ms => new Date(ms).toISOString();
+
+  // One case per scenario, so an open pause in one cannot reach another.
+  const run = async (caseNo, pauseHoursIn, endTime) => {
+    await ingest(env, { case_no: caseNo, subject_name: 'Pat Coleman' });
+    await call(env, `/submissions/${caseNo}/assign`, { method: 'POST', cookie: admin, body: { user_id: danaId } });
+    await call(env, `/cases/${caseNo}/day/start`, { method: 'POST', cookie: inv,
+      body: { day_date: '2026-08-14', start_time: '08:00' } });
+    const dayId = (await jsonOf(await call(env, `/cases/${caseNo}/workspace`, { cookie: inv }))).open_day.id;
+    // The day was really recorded 8 hours ago; the break began `pauseHoursIn`
+    // hours into it. Both are server instants, exactly as the routes write them.
+    const t0 = Date.now() - 8 * HOUR;
+    await env.DB.prepare('UPDATE case_days SET created_at = ? WHERE id = ?').bind(iso(t0), dayId).run();
+    await call(env, `/cases/${caseNo}/day/pause`, { method: 'POST', cookie: inv, body: { reason: 'Break' } });
+    await env.DB.prepare('UPDATE case_day_pauses SET started_at = ? WHERE day_id = ? AND ended_at IS NULL')
+      .bind(iso(t0 + pauseHoursIn * HOUR), dayId).run();
+    return jsonOf(await call(env, `/cases/${caseNo}/day/end`, { method: 'POST', cookie: inv,
+      body: { end_time: endTime } }));
+  };
+
+  // The reviewer's own scenario: broke off at noon, filed it at eight.
+  const atEnd = await run('API-PZ1', 4, '12:00');
+  ok('the clock still ran the four hours that were typed', atEnd.span_hours === 4);
+  ok('a break that began as the day ended takes nothing off it', atEnd.paused_hours === 0);
+  ok('so a real four-hour day is four hours, not zero', atEnd.hours === 4);
+  ok('and zero is what the case day would have stored',
+     (await jsonOf(await call(env, '/cases/API-PZ1/workspace', { cookie: admin }))).days[0].hours === 4);
+
+  // A break genuinely inside the day still comes off it — the fix must not
+  // become a licence to stop subtracting breaks.
+  const midday = await run('API-PZ2', 2, '12:00');
+  ok('a break two hours in runs to the end of the day', midday.paused_hours === 2);
+  ok('and the billable day is what is left', midday.hours === 2);
+
+  // A break opened after the day's claimed end cannot make the day negative.
+  const after = await run('API-PZ3', 6, '12:00');
+  ok('a break opened after the day ended takes nothing', after.paused_hours === 0);
+  ok('and the day is still the full span', after.hours === 4);
+
+  // Whatever was subtracted is what the day-end screen is told, so the
+  // message can never name a break that did not come off.
+  for (const [label, r] of [['none', atEnd], ['a real break', midday], ['none again', after]]) {
+    ok(`the subtraction is reported honestly (${label})`,
+       Math.round((r.span_hours - r.paused_hours) * 100) / 100 === r.hours);
+  }
+}
+
+/* ------------------------- a reassignment must never strand a running day
+ *
+ * HIGH #2 from the 2026-08-14 audits, verified here before it was fixed.
+ *
+ * `pause`, `resume` and `end` were scoped to BOTH `caseFor()` and
+ * `investigator_id = user.id`. Reassign a case with a day running and every
+ * door closed at once: the original investigator failed `caseFor` (404), the
+ * new investigator and the admin failed the `investigator_id` match (409). The
+ * day stayed `end_time IS NULL` forever — permanently in Out Now, `hours` never
+ * written, and no way to fix it inside the product at all.
+ *
+ * The fix keeps the rule that made the scoping right in the first place — you
+ * can only stop your OWN clock — and adds the two doors that were missing:
+ *   - your own running day stays yours whether or not the case still is, which
+ *     is the owner's KEEP decision applied to the one route that matters most;
+ *   - an admin can close a day nobody else can reach, because a recovery path
+ *     that does not exist is how a day ends up hand-edited in D1.
+ * A different investigator still cannot touch someone else's clock. */
+section('A reassignment cannot strand a running day');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  for (const [u, n] of [['dana', 'Dana Field'], ['reed', 'Reed Cole']]) {
+    const link = (await jsonOf(await invite(env, admin, { username: u, display_name: n, role: 'investigator' }))).url;
+    const token = new URL(link, 'https://x.test').searchParams.get('invite');
+    await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  }
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const reed = (await login(env, 'reed', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find(u => u.username === 'dana').id;
+  const reedId = users.users.find(u => u.username === 'reed').id;
+
+  // A case with Dana's day running and a break open, then handed to Reed.
+  const strand = async (caseNo) => {
+    await ingest(env, { case_no: caseNo, subject_name: 'Pat Coleman' });
+    await call(env, `/submissions/${caseNo}/assign`, { method: 'POST', cookie: admin, body: { user_id: danaId } });
+    await call(env, `/cases/${caseNo}/day/start`, { method: 'POST', cookie: inv,
+      body: { day_date: '2026-08-14', start_time: '08:00' } });
+    await call(env, `/cases/${caseNo}/day/pause`, { method: 'POST', cookie: inv, body: { reason: 'Break' } });
+    await call(env, `/submissions/${caseNo}/assign`, { method: 'POST', cookie: admin, body: { user_id: reedId } });
+  };
+
+  await strand('API-ST1');
+  ok('the office can see the day is still out there',
+     (await jsonOf(await call(env, '/active', { cookie: admin }))).out_now.length === 1);
+
+  // The investigator who worked it can still close it — their clock, their day,
+  // and they are the one who knows when they stopped.
+  const byOwner = await call(env, '/cases/API-ST1/day/end', { method: 'POST', cookie: inv,
+    body: { end_time: '12:00' } });
+  ok('the investigator who worked the day can still end it', byOwner.status === 200);
+  ok('and it is recorded as a real day, not zero', (await jsonOf(byOwner)).hours === 4);
+  ok('which empties Out now',
+     (await jsonOf(await call(env, '/active', { cookie: admin }))).out_now.length === 0);
+
+  // And an admin can close one nobody else can reach.
+  await strand('API-ST2');
+  const byAdmin = await call(env, '/cases/API-ST2/day/end', { method: 'POST', cookie: admin,
+    body: { end_time: '12:00' } });
+  ok('an admin can close a day that would otherwise be stranded', byAdmin.status === 200);
+  const ws = await jsonOf(await call(env, '/cases/API-ST2/workspace', { cookie: admin }));
+  ok('the hours stay credited to whoever actually worked them',
+     ws.days[0].investigator_id === danaId && ws.days[0].hours === 4);
+
+  // But a reassignment is not a licence over someone else's clock.
+  await strand('API-ST3');
+  ok("the new investigator cannot end another investigator's day",
+     (await call(env, '/cases/API-ST3/day/end', { method: 'POST', cookie: reed,
+       body: { end_time: '12:00' } })).status === 409);
+  ok("nor pause or resume it",
+     (await call(env, '/cases/API-ST3/day/pause', { method: 'POST', cookie: reed, body: {} })).status === 409
+     && (await call(env, '/cases/API-ST3/day/resume', { method: 'POST', cookie: reed, body: {} })).status === 409);
+  ok('and it is still running, because refusing is not the same as closing',
+     (await jsonOf(await call(env, '/active', { cookie: admin }))).out_now.length === 1);
+  // A case Reed was never on at all: the ordinary boundary is untouched, and it
+  // answers 404 rather than 409, so nothing here leaks whether a day is running
+  // on a case the caller cannot see.
+  await ingest(env, { case_no: 'API-ST4', subject_name: 'Pat Coleman' });
+  await call(env, '/submissions/API-ST4/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+  await call(env, '/cases/API-ST4/day/start', { method: 'POST', cookie: inv,
+    body: { day_date: '2026-08-14', start_time: '08:00' } });
+  ok('an investigator with no connection to the case still gets nothing',
+     (await call(env, '/cases/API-ST4/day/end', { method: 'POST', cookie: reed,
+       body: { end_time: '12:00' } })).status === 404);
+
+  // The break the day was left on still comes off it, via the HIGH #1 rule.
+  const owner2 = await jsonOf(await call(env, '/cases/API-ST3/day/end', { method: 'POST', cookie: inv,
+    body: { end_time: '12:00' } }));
+  ok('and the owner can still close it afterwards', owner2.hours === 4);
+}
+
 section('The two internal calculations never share a number');
 {
   const env = freshEnv();
@@ -1587,6 +1762,84 @@ section("Invoices: the office's money desk, and BILL only collects");
   ok('billing settings round-trip',
      (await jsonOf(await call(env, '/billing-settings', { cookie: admin }))).settings
        .payment_instructions === 'Remit via the BILL payment request.');
+}
+
+/* ---------------- money that has been received is not a draft any more
+ *
+ * HIGH #3 from the 2026-08-14 audits, verified here before it was fixed.
+ *
+ * `setInvoiceStatus` guarded `sent_to_bill` and `sent_to_client`, and `ready`
+ * validated the CONTENT rather than the current status. `draft` was guarded by
+ * nothing at all. So an invoice with real money recorded against it could be
+ * put back to draft, and two things followed:
+ *
+ *   - the edit lock is `!['draft','ready'].includes(status)`, so its lines and
+ *     adjustments became rewritable underneath payments already taken;
+ *   - `outstanding` and the dashboard sum `status !== 'draft'` on the STORED
+ *     status, so a partly-paid invoice dropped out of the receivable while
+ *     `balance_due` went on honestly saying money was owed.
+ *
+ * Money the office is owed stops being visible, which is the one thing an
+ * invoice list exists to prevent. The fix refuses `draft` and `ready` once any
+ * payment is recorded: the way back is Void, which is already the deliberate,
+ * recorded, retainer-releasing door. */
+section('An invoice with money against it cannot be put back to draft');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  await ingest(env, { case_no: 'API-BD1', subject_name: 'Pat Coleman', carrier: 'Quiet Mutual',
+                      claim_number: 'QM-5', client_name: 'Quiet Mutual Claims' });
+  const iv = (await jsonOf(await call(env, '/cases/API-BD1/invoices', { method: 'POST', cookie: admin,
+    body: {} }))).invoice;
+  await call(env, `/invoices/${iv.id}/lines`, { method: 'POST', cookie: admin,
+    body: { lines: [{ description: '24-Hour Surveillance Authorization', amount: 3300 }] } });
+
+  // Back-to-draft is legitimate while nothing has been received.
+  await call(env, `/invoices/${iv.id}/status`, { method: 'POST', cookie: admin, body: { status: 'ready' } });
+  ok('a reviewed invoice with no payments can still go back to draft',
+     (await call(env, `/invoices/${iv.id}/status`, { method: 'POST', cookie: admin,
+       body: { status: 'draft' } })).status === 200);
+
+  await call(env, `/invoices/${iv.id}/status`, { method: 'POST', cookie: admin, body: { status: 'ready' } });
+  const part = (await jsonOf(await call(env, `/invoices/${iv.id}/payments`, { method: 'POST', cookie: admin,
+    body: { amount: 1000, paid_date: '2026-08-20', method: 'check' } }))).invoice;
+  ok('a part payment leaves real money owed', part.status === 'partially_paid' && part.balance_due === 2300);
+
+  const before = await jsonOf(await call(env, '/invoices', { cookie: admin }));
+  ok('and the office can see it in Outstanding', before.summary.outstanding === 2300);
+
+  // The defect, in one call.
+  const revert = await call(env, `/invoices/${iv.id}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'draft' } });
+  ok('a part-paid invoice is refused the way back to draft', revert.status === 400);
+  ok('and the refusal says why', /payment/i.test((await jsonOf(revert)).error || ''));
+  ok('nor can it be walked back to ready to unlock the same edits',
+     (await call(env, `/invoices/${iv.id}/status`, { method: 'POST', cookie: admin,
+       body: { status: 'ready' } })).status === 400);
+
+  const after = await jsonOf(await call(env, '/invoices', { cookie: admin }));
+  ok('so the receivable is still on the books', after.summary.outstanding === 2300);
+  ok('and it is still not counted as a draft', after.summary.drafts === 0);
+
+  const still = (await jsonOf(await call(env, `/invoices/${iv.id}`, { cookie: admin }))).invoice;
+  ok('the invoice keeps the status the payment gave it', still.status === 'partially_paid');
+  ok('and its lines stay locked against rewriting',
+     (await call(env, `/invoices/${iv.id}/lines`, { method: 'POST', cookie: admin,
+       body: { lines: [{ description: 'Rewritten', amount: 1 }] } })).status === 400);
+
+  // A fully paid one is refused for the same reason.
+  await call(env, `/invoices/${iv.id}/payments`, { method: 'POST', cookie: admin,
+    body: { amount: 2300, paid_date: '2026-08-27', method: 'check' } });
+  ok('a fully paid invoice is refused too',
+     (await call(env, `/invoices/${iv.id}/status`, { method: 'POST', cookie: admin,
+       body: { status: 'draft' } })).status === 400);
+
+  // Void is still the way back, and it is deliberate, recorded and releasing.
+  ok('void remains the door out of a paid invoice',
+     (await call(env, `/invoices/${iv.id}/status`, { method: 'POST', cookie: admin,
+       body: { status: 'void' } })).status === 200);
 }
 
 section('Evidence: stored privately, metered, and capped inside the free plan');
@@ -2162,6 +2415,57 @@ section('Completed cases: finished work is findable');
   desk = (await jsonOf(await call(env, '/completed', { cookie: admin }))).completed;
   ok('a live delivery link surfaces on the desk',
      desk.find(c => c.case_no === 'API-DN2').share_url === 'https://dbx.example/s/abc');
+
+  /* HIGH #4 (2026-08-14). "Copy video link" is a delivery path, so it carries
+     the same rule as the package document: hold the material back and the link
+     goes with it. This query filtered on the link alone, so a video
+     reclassified to do-not-use — or soft-deleted, which the evidence count
+     beside it already honoured — kept its Copy button on the completed desk
+     long after the document had stopped printing it. Reclassifying is how an
+     admin withdraws something; it must reach every door, not just the one. */
+  const shareOf = async () => (await jsonOf(await call(env, '/completed', { cookie: admin })))
+    .completed.find(c => c.case_no === 'API-DN2').share_url;
+
+  /* Membership, the condition that makes this desk agree with the package
+     panel. A file that is cleared to ship but was never selected into the
+     finalized package is not part of what the client received, so its link is
+     not the desk's to hand out. The newer id is deliberate: ORDER BY x.id DESC
+     means an unpackaged file would otherwise WIN and mask the packaged one. */
+  const loose = await jsonOf(await worker.fetch(new Request(API + '/cases/API-DN2/evidence', {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin },
+    body: (() => { const f = new FormData();
+      f.append('file', new File([new Uint8Array(120).fill(66)], 'loose.mp4', { type: 'video/mp4' }));
+      return f; })() }), env));
+  await env.DB.prepare(
+    `INSERT INTO external_files (evidence_id, storage_provider, external_share_url,
+       upload_status, created_at) VALUES (?, 'dropbox', 'https://dbx.example/s/loose', 'uploaded', ?)`)
+    .bind(loose.id, '2026-08-14T01:00:00Z').run();
+  ok('a link on evidence outside the finalized package is never offered',
+     (await shareOf()) === 'https://dbx.example/s/abc');
+  ok('and it is still refused once it is client-deliverable — being cleared is not being chosen',
+     (await call(env, `/cases/API-DN2/evidence/${loose.id}`, { method: 'POST', cookie: admin,
+       body: { classification: 'client_deliverable' } })).status === 200
+     && (await shareOf()) === 'https://dbx.example/s/abc');
+
+  ok('holding the video back withdraws its delivery link too',
+     (await call(env, `/cases/API-DN2/evidence/${up.id}`, { method: 'POST', cookie: admin,
+       body: { classification: 'do_not_use' } })).status === 200
+     && (await shareOf()) === null);
+  ok('and the other held classifications withdraw it just the same',
+     (await call(env, `/cases/API-DN2/evidence/${up.id}`, { method: 'POST', cookie: admin,
+       body: { classification: 'needs_redaction' } })).status === 200
+     && (await shareOf()) === null
+     && (await call(env, `/cases/API-DN2/evidence/${up.id}`, { method: 'POST', cookie: admin,
+       body: { classification: 'internal_only' } })).status === 200
+     && (await shareOf()) === null);
+  ok('clearing it again brings the link back — this is a filter, not a one-way door',
+     (await call(env, `/cases/API-DN2/evidence/${up.id}`, { method: 'POST', cookie: admin,
+       body: { classification: 'client_deliverable' } })).status === 200
+     && (await shareOf()) === 'https://dbx.example/s/abc');
+  ok('and deleting the evidence withdraws the link as well',
+     (await call(env, `/cases/API-DN2/evidence/${up.id}/delete`,
+       { method: 'POST', cookie: admin })).status === 200
+     && (await shareOf()) === null);
 
   // Cancelled is not completed: there is nothing to find.
   await call(env, '/submissions/API-DN3/status', { method: 'POST', cookie: admin,
@@ -3272,6 +3576,332 @@ section("My reports and my expenses are mine alone");
   const adminx = await jsonOf(await call(env, '/my/expenses', { cookie: admin }));
   ok("the admin's own desk is scoped the same way",
      adminx.expenses.length === 1 && adminx.expenses[0].description === 'Admin toll');
+}
+
+/* ------------------------------------------- what a reassigned investigator keeps
+ *
+ * OWNER DECISION, 2026-08-14: **Keep.** An investigator who is taken off a case
+ * still sees THEIR OWN filed work on it — the day they worked, the report they
+ * submitted, the expense they are owed — because removing it deletes their
+ * evidence of what they did and what they are due. `/my/*` and `/calendar`
+ * therefore scope by `investigator_id` (who created the record), NOT by the
+ * case's current `assigned_to`.
+ *
+ * This is the current behaviour, so the test is not here to change anything —
+ * it is here because a decision whose implementation is "no code" is exactly
+ * the kind a later tidy-up silently reverses. Someone reading `myReports()` and
+ * seeing it ignore `assigned_to` could reasonably think it a scoping bug and
+ * "fix" it. That would be a data loss the owner explicitly refused.
+ *
+ * It asserts BOTH halves, because Keep is only safe while the second holds:
+ *   1. the record survives reassignment, and
+ *   2. the client behind it still does not — no carrier, claim number, client
+ *      name, email or phone, on any of those routes, ever.
+ * The case itself is gone: the workspace 404s. What remains is her own work. */
+section('A reassigned investigator keeps their own work, never the client');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  for (const [u, n] of [['dana', 'Dana Field'], ['reed', 'Reed Cole']]) {
+    const link = (await jsonOf(await invite(env, admin, { username: u, display_name: n, role: 'investigator' }))).url;
+    const token = new URL(link, 'https://x.test').searchParams.get('invite');
+    await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  }
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find(u => u.username === 'dana').id;
+  const reedId = users.users.find(u => u.username === 'reed').id;
+
+  // Every client-identifying field the boundary names, on one case.
+  await ingest(env, {
+    case_no: 'API-RE1', subject_name: 'Pat Coleman', carrier: 'Quiet Mutual',
+    claim_number: 'QM-99812', policy_number: 'POL-4471', client_name: 'Quiet Mutual Claims',
+    client_email: 'adjuster@quietmutual.test', client_phone: '540-555-0142',
+    adjuster_name: 'R. Hale', adjuster_email: 'r.hale@quietmutual.test',
+    billing_email: 'ap@quietmutual.test', defense_counsel: 'Hale & Roe',
+  });
+  await call(env, '/submissions/API-RE1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+
+  // Dana works a day, files an expense, and leaves a second day running.
+  await call(env, '/cases/API-RE1/day/start', { method: 'POST', cookie: inv,
+    body: { day_date: '2026-08-12', start_time: '07:00' } });
+  await call(env, '/cases/API-RE1/day/end', { method: 'POST', cookie: inv, body: { end_time: '11:00' } });
+  await call(env, '/cases/API-RE1/expenses', { method: 'POST', cookie: inv,
+    body: { expense_date: '2026-08-12', category: 'parking', amount: 9, description: 'Dana parking' } });
+  await call(env, '/cases/API-RE1/day/start', { method: 'POST', cookie: inv,
+    body: { day_date: '2026-08-13', start_time: '06:30' } });
+
+  // The admin takes the case off her and gives it to Reed.
+  const re = await call(env, '/submissions/API-RE1/assign', { method: 'POST', cookie: admin, body: { user_id: reedId } });
+  ok('the case can be reassigned to another investigator', re.status === 200);
+  ok('the case itself is gone from the reassigned investigator',
+     (await call(env, '/submissions/API-RE1', { cookie: inv })).status === 404);
+  ok('and off their case list',
+     (await jsonOf(await call(env, '/submissions', { cookie: inv }))).total === 0);
+
+  // Half one — their own filed work survives it (the owner's "Keep").
+  const mine = await jsonOf(await call(env, '/my/reports', { cookie: inv }));
+  ok('the day they worked is still on their desk after reassignment',
+     mine.days_without_reports.some(d => d.case_no === 'API-RE1' && d.hours === 4));
+  const myx = await jsonOf(await call(env, '/my/expenses', { cookie: inv }));
+  ok('the expense they are owed survives it too',
+     myx.expenses.some(e => e.case_no === 'API-RE1' && e.description === 'Dana parking'));
+  const act = await jsonOf(await call(env, '/my/active', { cookie: inv }));
+  ok('a day still running stays theirs to resume',
+     act.active && act.active.case_no === 'API-RE1');
+  const cal = await jsonOf(await call(env, '/calendar?month=2026-08', { cookie: inv }));
+  ok('and their calendar history keeps the days they worked',
+     JSON.stringify(cal).includes('API-RE1'));
+
+  // Half two — and none of it carries the client. This is the firm line, and it
+  // is what makes half one safe rather than a slow leak of the client list.
+  const CLIENT = ['Quiet Mutual', 'QM-99812', 'POL-4471', 'adjuster@quietmutual.test',
+                  '540-555-0142', 'R. Hale', 'r.hale@quietmutual.test',
+                  'ap@quietmutual.test', 'Hale & Roe'];
+  // Positive control first. Without it every assertion below would also pass on
+  // an empty payload, a renamed field or an ingest that quietly dropped them —
+  // proving nothing. The admin must actually be able to see what the
+  // investigator must not.
+  const adminBlob = JSON.stringify(await jsonOf(await call(env, '/submissions/API-RE1', { cookie: admin })));
+  ok('control: the admin really is sent every one of those values',
+     CLIENT.every(v => adminBlob.includes(v)),
+     `missing from the admin view: ${CLIENT.filter(v => !adminBlob.includes(v)).join(', ')}`);
+  for (const [label, payload] of [['reports', mine], ['expenses', myx],
+                                  ['the running day', act], ['the calendar', cal]]) {
+    const blob = JSON.stringify(payload);
+    ok(`${label} — no carrier, claim, policy, adjuster, billing or counsel`,
+       CLIENT.every(v => !blob.includes(v)),
+       CLIENT.filter(v => blob.includes(v)).join(', '));
+  }
+  ok('the running day carries the subject, which is fieldwork, not the client',
+     act.active.subject_name === 'Pat Coleman');
+
+  // Reed gets the case; he does not get the client either.
+  const reed = (await login(env, 'reed', 'FieldWork2026x')).cookie;
+  const reedRes = await call(env, '/submissions/API-RE1', { cookie: reed });
+  const reedBlob = JSON.stringify(await jsonOf(reedRes));
+  ok('the new investigator can open the case', reedRes.status === 200);
+  ok('but is sent no more of the client than the last one was',
+     CLIENT.every(v => !reedBlob.includes(v)),
+     CLIENT.filter(v => reedBlob.includes(v)).join(', '));
+}
+
+/* PAYMENTS.md, owner 2026-08-14 — the private-client payment configuration.
+   The whole feature is a boundary: Cash App and Venmo belong to the PRIVATE
+   client path and nowhere else, the configuration is the office's alone, and
+   the two lines easiest to lose to a helpful default are that a payment URL is
+   never invented from a handle and that no credential is ever stored. */
+section('Private-client payment methods are the office\'s own configuration');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  await call(env, `/invite/${new URL(link, 'https://x.test').searchParams.get('invite')}/accept`,
+    { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  // 7.7 / 15: the configuration is admin-only on BOTH verbs. A 403 on write
+  // alone would leave where the firm's money arrives browsable by the field.
+  ok('an investigator cannot read the payment configuration',
+     (await call(env, '/payment-methods', { cookie: inv })).status === 403);
+  ok('nor write it',
+     (await call(env, '/payment-methods/venmo', { method: 'POST', cookie: inv,
+       body: { enabled: true, handle: '@someone-else' } })).status === 403);
+
+  const start = (await jsonOf(await call(env, '/payment-methods', { cookie: admin }))).methods;
+  ok('both methods exist unconfigured, and both are off', start.length === 2
+     && start.every(m => m.enabled === false && m.handle === ''));
+  ok('and they are the two the owner named',
+     start.map(m => m.id).sort().join() === 'cash_app,venmo');
+
+  // A method with nowhere to send money would render an empty PAYMENT OPTIONS
+  // block — worse than omitting it, because it reads as a forgotten detail.
+  ok('a method cannot be enabled with nowhere to send money',
+     (await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
+       body: { enabled: true } })).status === 400);
+
+  /* THE SHARPEST LINE IN THE ORDER: the URL is admin-entered or absent, never
+     built from the handle. A fabricated cash.app/$handle that resolves to a
+     real stranger sends a client's retainer to the wrong person. */
+  ok('a handle alone is accepted',
+     (await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
+       body: { enabled: true, handle: '@AlwaysPrecise', display_name: 'Venmo' } })).status === 200);
+  const afterHandle = (await jsonOf(await call(env, '/payment-methods', { cookie: admin })))
+    .methods.find(m => m.id === 'venmo');
+  ok('and NO url is invented from it', afterHandle.url === '');
+  ok('the handle is stored as given', afterHandle.handle === '@AlwaysPrecise');
+
+  // A link that cannot be a payment link is refused rather than silently
+  // blanked, or an admin believes clients are being sent one when they are not.
+  for (const bad of ['javascript:alert(1)', 'data:text/html,x', 'cash.app/$x', 'ftp://x.test/a']) {
+    ok(`a ${bad.split(':')[0]} link is refused outright`,
+       (await call(env, '/payment-methods/cash_app', { method: 'POST', cookie: admin,
+         body: { enabled: true, handle: '$Always', url: bad } })).status === 400);
+  }
+  ok('a real https link is kept',
+     (await call(env, '/payment-methods/cash_app', { method: 'POST', cookie: admin,
+       body: { enabled: true, handle: '$Always', url: 'https://cash.app/$AlwaysPrecise' } })).status === 200);
+
+  // Nothing resembling a credential has a column to live in.
+  const cols = (await env.DB.prepare("SELECT name FROM pragma_table_info('payment_methods')").all())
+    .results.map(c => c.name);
+  ok('the table has no column for a password, token or secret',
+     !cols.some(c => /pass|token|secret|credential|login|key/i.test(c)), cols.join());
+
+  // An unknown method is not quietly created.
+  ok('an unknown payment method is refused',
+     (await call(env, '/payment-methods/zelle', { method: 'POST', cookie: admin,
+       body: { enabled: true, handle: 'x' } })).status === 404);
+}
+
+/* The boundary the order is actually about: which EMAIL may carry a payment
+   handle. Asserted on the bytes the provider was handed, in BOTH MIME parts —
+   the same standard the intake-door pairing is held to, because an HTML-only
+   assertion passes while the text part leaks. */
+section('Payment instructions ride with the private client and no one else');
+{
+  const realFetch = globalThis.fetch;
+  let lastBody = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      lastBody = JSON.parse(init.body);
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  await call(env, '/payment-methods/cash_app', { method: 'POST', cookie: admin,
+    body: { enabled: true, display_name: 'Cash App', handle: '$AlwaysPrecise',
+            url: 'https://cash.app/$AlwaysPrecise' } });
+  await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
+    body: { enabled: true, display_name: 'Venmo', handle: '@AlwaysPrecise' } });
+
+  const both = s => `${s.html}\n${s.text}`;   // every assertion covers both parts
+  const has = (hay, needle) => String(hay).toLowerCase().includes(String(needle).toLowerCase());
+
+  // 1. Private sheet CAN carry them.
+  lastBody = null;
+  const sent = await jsonOf(await call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body: { to: 'client@example.com', include_payment: true } }));
+  ok('the private sheet carries the payment block', has(both(lastBody), 'PAYMENT OPTIONS'));
+  ok('with both handles, in both parts',
+     lastBody.html.includes('$AlwaysPrecise') && lastBody.text.includes('$AlwaysPrecise')
+     && lastBody.html.includes('@AlwaysPrecise') && lastBody.text.includes('@AlwaysPrecise'));
+  ok('the retainer amount is named', has(both(lastBody), '$1,500'));
+
+  // 7. Clickable only where a URL was ENTERED — never invented from a handle.
+  ok('the configured link becomes a button', lastBody.html.includes('https://cash.app/$AlwaysPrecise'));
+  ok('and the handle-only method is shown as a handle, with no invented link',
+     !/href="[^"]*@AlwaysPrecise/.test(lastBody.html)
+     && !lastBody.html.includes('venmo.com/@AlwaysPrecise')
+     && !lastBody.text.includes('venmo.com'));
+
+  // 12/13. The confirmation lists what actually went.
+  ok('the confirmation names the sheet, and both methods',
+     sent.included && sent.included.rate_sheet === '$1,500 Retainer'
+     && sent.included.payment_methods.map(m => m.id).sort().join() === 'cash_app,venmo');
+  ok('and it does not claim an intake went when none did', sent.included.intake === null);
+
+  // 2/7. The carrier sheet may NEVER carry them — refused, not quietly dropped.
+  lastBody = null;
+  const refused = await call(env, '/sheets/insurance_assignment/email',
+    { method: 'POST', cookie: admin, body: { to: 'adjuster@carrier.example', include_payment: true } });
+  ok('asking for payment options on the carrier sheet is refused', refused.status === 400);
+  ok('and nothing was emailed at all', lastBody === null);
+
+  // The carrier sheet sent normally still carries no trace of either handle.
+  lastBody = null;
+  await call(env, '/sheets/insurance_assignment/email',
+    { method: 'POST', cookie: admin, body: { to: 'adjuster@carrier.example', include_intake: true } });
+  /* The handles specifically, not the bare firm name — the carrier email
+     legitimately carries alwayspreciseinvestigations.net in its intake link,
+     and asserting on that substring would fail for the wrong reason. */
+  const carrier = both(lastBody).toLowerCase();
+  ok('a carrier email names no payment method at all',
+     !carrier.includes('cash app') && !carrier.includes('venmo')
+     && !carrier.includes('$alwaysprecise') && !carrier.includes('@alwaysprecise')
+     && !carrier.includes('payment options') && !carrier.includes('cash.app'));
+
+  // 5/6/10. Each method is independently switchable, and OFF means absent.
+  await call(env, '/payment-methods/cash_app', { method: 'POST', cookie: admin,
+    body: { enabled: false, handle: '$AlwaysPrecise', url: 'https://cash.app/$AlwaysPrecise' } });
+  lastBody = null;
+  await call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body: { to: 'client@example.com', include_payment: true } });
+  ok('a disabled method does not render', !has(both(lastBody), '$AlwaysPrecise'));
+  ok('while the one still enabled does', has(both(lastBody), '@AlwaysPrecise'));
+
+  // The per-send selection can narrow, but never widen past the configuration.
+  await call(env, '/payment-methods/cash_app', { method: 'POST', cookie: admin,
+    body: { enabled: false, handle: '$AlwaysPrecise' } });
+  lastBody = null;
+  const narrowed = await jsonOf(await call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin,
+      body: { to: 'client@example.com', include_payment: true, methods: ['cash_app', 'venmo'] } }));
+  ok('asking for a disabled method does not switch it on',
+     !has(both(lastBody), '$AlwaysPrecise')
+     && narrowed.included.payment_methods.map(m => m.id).join() === 'venmo');
+
+  /* Unticking BOTH methods must send NEITHER. This read as "no preference" and
+     fell through to every enabled method — the precise opposite of the request,
+     and it defeated the independent per-method control the order asks for. No
+     selection and an empty selection are different answers. */
+  await call(env, '/payment-methods/cash_app', { method: 'POST', cookie: admin,
+    body: { enabled: true, display_name: 'Cash App', handle: '$AlwaysPrecise' } });
+  lastBody = null;
+  const none = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'client@example.com', include_payment: true, methods: [] } });
+  ok('unticking every payment method sends none of them', none.status === 400);
+  ok('and nothing was emailed', lastBody === null);
+  ok('the refusal is answerable here, not in Settings',
+     has((await jsonOf(none)).error, 'Choose at least one payment method'));
+
+  // A selection of only unknown ids is the same answer: none.
+  lastBody = null;
+  ok('a selection of nothing real is refused too',
+     (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+       body: { to: 'client@example.com', include_payment: true, methods: ['zelle'] } })).status === 400
+     && lastBody === null);
+
+  // And omitting the field entirely still means "whatever is enabled".
+  lastBody = null;
+  const dflt = await jsonOf(await call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body: { to: 'client@example.com', include_payment: true } }));
+  ok('saying nothing about methods still sends the enabled ones',
+     dflt.included.payment_methods.map(m => m.id).sort().join() === 'cash_app,venmo');
+
+  // 11. Escaping — the handle is admin-entered and lands in HTML.
+  await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
+    body: { enabled: true, display_name: 'Venmo', handle: '@a<script>alert(1)</script>' } });
+  lastBody = null;
+  await call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body: { to: 'client@example.com', include_payment: true } });
+  ok('a handle carrying markup is escaped, not rendered',
+     !lastBody.html.includes('<script>') && lastBody.html.includes('&lt;script&gt;'));
+
+  // With nothing enabled at all, the send says so rather than mailing an empty
+  // PAYMENT OPTIONS heading.
+  await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
+    body: { enabled: false, handle: '@AlwaysPrecise' } });
+  await call(env, '/payment-methods/cash_app', { method: 'POST', cookie: admin,
+    body: { enabled: false, handle: '$AlwaysPrecise' } });
+  ok('including payment with nothing configured is refused',
+     (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+       body: { to: 'client@example.com', include_payment: true } })).status === 400);
+  ok('and that refusal points at Settings, where it can actually be answered',
+     has((await jsonOf(await call(env, '/sheets/private_retainer/email', { method: 'POST',
+       cookie: admin, body: { to: 'client@example.com', include_payment: true } }))).error,
+       'Set one up in Settings'));
+
+  globalThis.fetch = realFetch;
 }
 
 section('The daily report builder');

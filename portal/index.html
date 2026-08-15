@@ -645,6 +645,58 @@ let ACT_MODAL = null;    // the Add Activity sheet (UIBUILD P8): null when close
    picked line never demands another field first. */
 const NO_CHANGE_LINE = "No change was noted during this period.";
 const ARRIVAL_LINE = "Arrived in vicinity of subject residence.";
+/* The arrival sentence generator (MASTER §10, SURVEILLANCE P6).
+
+   P6 lists five position options in one breath — direct, indirect, primary
+   route, secondary, mobile — but they are TWO independent things, and reading
+   them as one list is a mistake worth not repeating. MASTER §10's own canonical
+   example combines two of them at once:
+
+     "…established an indirect surveillance position along the primary route
+      of departure."
+
+   A single five-way choice cannot express that sentence: it forces indirect OR
+   primary. So VIEW (direct / indirect) and PLACEMENT (primary route / secondary
+   route / mobile) are separate, and either may stand alone. The article rides
+   with the view — "a direct", "an indirect" — because a generated line has to
+   read like a report sentence, not a filled-in blank.
+
+   Two rules this shape exists to keep. It composes ONLY from what the
+   investigator actually entered: leave a box empty and its clause never
+   appears, so the template can never assert a vehicle or a vantage nobody
+   observed. And it stops regenerating the moment the narrative is hand-edited
+   — past that point the hand is the author, and a later keystroke in an extras
+   box must not overwrite what a person wrote.
+
+   ONE function serves the desk sheet and the field mode, so a line composed in
+   the car and the same line composed at the office cannot drift apart. */
+const ARRIVAL_VIEW = [
+  ["direct",   "Direct view",   "direct"],
+  ["indirect", "Indirect view", "indirect"],
+];
+const ARRIVAL_PLACE = [
+  ["primary",   "Primary route of departure", "along the primary route of departure"],
+  ["secondary", "Secondary route",            "along a secondary route"],
+  ["mobile",    "Mobile surveillance",        ""],
+];
+function arrivalSentence(vp, view, place, pos){
+  const v = String(vp || "").trim().replace(/\.$/, "");
+  const p = String(pos || "").trim().replace(/\.$/, "");
+  const vw = (ARRIVAL_VIEW.find(o => o[0] === view) || [])[2] || "";
+  const pl = ARRIVAL_PLACE.find(o => o[0] === place);
+  let clause = "";
+  if(place === "mobile"){
+    // Mobile is not a position one establishes a view from — it is the method.
+    clause = `Established ${vw ? `${vw} ` : ""}mobile surveillance`;
+  } else if(vw || pl){
+    const art = vw === "indirect" ? "an" : "a";
+    clause = `Established ${vw ? `${art} ${vw}` : "a"} surveillance position${pl ? ` ${pl[2]}` : ""}`;
+  }
+  return ARRIVAL_LINE
+    + (v ? ` ${v} present.` : "")
+    + (clause ? ` ${clause}${p ? ` ${p}` : ""}.`
+       : p ? ` Established surveillance position ${p}.` : "");
+}
 /* MASTER §10's fuller vocabulary (2026-08-14). The physical-observation set
    is what a workers'-comp file actually logs — lifting, carrying, climbing —
    each a complete sentence so a one-tap entry reads like a report line, never
@@ -768,6 +820,45 @@ function t12(hhmm){
 function fmtDay(d){
   const t = new Date(String(d) + "T00:00:00");   // local midnight — no timezone drift
   return isNaN(t) ? String(d) : t.toLocaleDateString(undefined, {weekday:"short", month:"short", day:"numeric", year:"numeric"});
+}
+
+/* The calendar date HERE, where the investigator is standing.
+
+   Every surveillance DATE used to come from `toISOString().slice(0,10)` while
+   every surveillance TIME came from `toTimeString().slice(0,5)` — UTC against
+   local, on the same line and in the same submitted record. In EDT that is
+   four hours of disagreement every evening: at 20:15 on the 14th the page
+   filed `2026-08-15` beside `20:15`, so evening surveillance — the bulk of
+   this firm's work — was recorded a day late, with the times of the day
+   before. It reached `case_days.day_date`, `case_reports.report_date` (which
+   the Worker derives from it) and the timeline's ORDER BY, so a day could sort
+   ahead of itself.
+
+   `fmtDay` above already guards the reverse trip for the same reason. Use this
+   for any date a HUMAN means by "today"; keep `toISOString()` for instants,
+   which are genuinely UTC and stored that way. */
+function ymdLocal(d){
+  const t = d || new Date();
+  const p = n => String(n).padStart(2, "0");
+  return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`;
+}
+const hmLocal = d => (d || new Date()).toTimeString().slice(0,5);
+
+/* A date and a time that belong to each other, from ONE reading of the clock.
+
+   Every pairing in this file used to call `new Date()` twice — once for the
+   date, once for the time — and two readings can fall either side of midnight.
+   The window is sub-millisecond and it would be indistinguishable from a
+   mystery if it ever fired: an entry stamped 23:59:59.9997 on one day and
+   00:00:00.0001 on the next, filed with tomorrow's date and last night's time,
+   sorting ahead of everything before it. Nothing detects that afterwards.
+
+   So the invariant is made structural rather than improbable: one instant,
+   both halves. Use this anywhere a date and a time are captured together;
+   `ymdLocal` and `hmLocal` alone are for when only one of them is wanted. */
+function stampNow(){
+  const d = new Date();
+  return { date: ymdLocal(d), time: hmLocal(d) };
 }
 
 function safeImage(src){
@@ -2250,8 +2341,7 @@ function amSearchBox(){
    the same shape, minus what the Worker does not allow to change. */
 function amComposeHtml(){
   const m = ACT_MODAL;
-  const now = new Date().toTimeString().slice(0,5);
-  const today = new Date().toISOString().slice(0,10);
+  const { date: today, time: now } = stampNow();
   const pre = m.pre || {};
   const isArrival = !m.edit && m.pick === ARRIVAL_LINE;
   return `<form class="amform" data-act="quickAdd">
@@ -2264,7 +2354,19 @@ function amComposeHtml(){
     <div class="two">
       <label class="f"><span>Vehicles present <span class="opt">optional</span></span>
         <input id="qa_vp" placeholder="e.g. Subject&#39;s white GMC Sierra in the driveway" data-act-input="amArrival"></label>
-      <label class="f"><span>Surveillance position <span class="opt">optional</span></span>
+      <label class="f"><span>View <span class="opt">optional</span></span>
+        <select id="qa_view" data-act-input="amArrival">
+          <option value="">Not specified</option>
+          ${ARRIVAL_VIEW.map(o => `<option value="${o[0]}">${esc(o[1])}</option>`).join("")}
+        </select></label>
+    </div>
+    <div class="two">
+      <label class="f"><span>Position <span class="opt">optional</span></span>
+        <select id="qa_place" data-act-input="amArrival">
+          <option value="">Not specified</option>
+          ${ARRIVAL_PLACE.map(o => `<option value="${o[0]}">${esc(o[1])}</option>`).join("")}
+        </select></label>
+      <label class="f"><span>Position detail <span class="opt">optional</span></span>
         <input id="qa_pos" placeholder="e.g. with a clear view of the front door" data-act-input="amArrival"></label>
     </div>` : ""}
     <label class="f"><span>${m.edit ? "What happened" : "The line <span class=\"opt\">edit freely</span>"}</span>
@@ -2302,8 +2404,7 @@ function amComposeHtml(){
 /* The Custom tab: the free-form composer, kinds and all — including Mileage
    and Expense, which write the money record and mark the timeline together. */
 function amCustomHtml(){
-  const today = new Date().toISOString().slice(0,10);
-  const now = new Date().toTimeString().slice(0,5);
+  const { date: today, time: now } = stampNow();
   return `<form class="amform" data-act="addActivity">
     <div class="qgrid">
       ${["activity","location","vehicle","note","mileage","expense"].map(k =>
@@ -2365,8 +2466,7 @@ function fieldPanel(){
       <button class="btn sm" data-act="wsTab" data-tab="reports" style="margin-left:8px">Draft the daily report</button>
     </div>` : "";
   const days = (WS && WS.days) || [];
-  const today = new Date().toISOString().slice(0,10);
-  const now = new Date().toTimeString().slice(0,5);
+  const { date: today, time: now } = stampNow();
   return `
     ${notice}
     ${open
@@ -2555,7 +2655,7 @@ const reportLabel = s => ({draft:"Draft", submitted:"Submitted", needs_revision:
 function expensesPanel(){
   const admin = ME.role === "admin";
   const list = (WS && WS.expenses) || [];
-  const today = new Date().toISOString().slice(0,10);
+  const today = ymdLocal();
   const cats = [["mileage","Mileage"],["tolls","Tolls"],["parking","Parking"],["hotel","Hotel"],
     ["airfare","Airfare"],["rental","Rental vehicle"],["records","Records"],["database","Database"],
     ["equipment","Equipment"],["meals","Meals (if authorized)"],["other","Other"]];
@@ -2683,7 +2783,7 @@ function commsPanel(){
     client_update:"Client update", investigator:"Investigator",
     authorization_request:"Authorization request", internal:"Internal"})[t] || t;
   const visLabel = v => v === "admin" ? "Admin only" : v === "client_eligible" ? "Client eligible" : "Team";
-  const today = new Date().toISOString().slice(0,10);
+  const today = ymdLocal();
 
   const composer = !admin ? "" : `
     <form class="quick" data-act="addComm">
@@ -2931,6 +3031,47 @@ function pkgMark(state){   // done | part | none | warn — never color alone
        : '<span class="pk-s">&#9675;</span>';
 }
 
+/* Which selected items still ship, and which do not — HIGH #4 (2026-08-14).
+   One place, because the document FILTERS on this and the admin notice COUNTS
+   it, and a document that printed one set while the screen reported another
+   would be worse than either mistake alone.
+
+   Two different reasons an item does not ship, and they must not be confused:
+   buildState's evidence query already drops deleted rows, so a deleted item is
+   simply ABSENT from PKG.evidence rather than present-and-reclassified. Calling
+   a deleted file "no longer client-deliverable" sends the admin to a
+   classification that is not the problem. */
+function pkgShipping(){
+  const items = (PKG && PKG.items) || [];
+  const evById = Object.fromEntries(((PKG && PKG.evidence) || []).map(e => [e.id, e]));
+  const ships = e => e && !e.deleted_at && e.classification === "client_deliverable";
+  return {
+    evById,
+    ship: items.filter(i => ships(evById[i.evidence_id])),
+    gone: items.filter(i => !evById[i.evidence_id]).length,
+    heldBack: items.filter(i => { const e = evById[i.evidence_id]; return e && !ships(e); }).length,
+  };
+}
+
+/* The admin's half of the same fact, and it lives OUTSIDE #pkgdoc on purpose —
+   the print stylesheet makes only #pkgdoc visible, so this is seen on screen
+   and never by the client. The office needs to know an exhibit it selected is
+   not going out; the client must not be told that withheld evidence exists at
+   all, which is the whole point of withholding it. */
+function pkgWithheldNote(){
+  const { gone, heldBack } = pkgShipping();
+  const n = gone + heldBack;
+  if(!n) return "";
+  const why = [
+    heldBack ? `${heldBack} no longer marked client-deliverable` : "",
+    gone ? `${gone} deleted from evidence` : "",
+  ].filter(Boolean).join(", ");
+  return `<div class="pkg-miss"><b>${n} selected item${n === 1 ? "" : "s"} withheld from the document</b>
+    <p style="margin:4px 0">${esc(why)}. The document below prints without ${n === 1 ? "it" : "them"},
+      and says nothing about ${n === 1 ? "it" : "them"} &mdash; the client is never told that withheld
+      material exists. Nothing is removed from the case; reclassify or unselect in Evidence.</p></div>`;
+}
+
 function packagePanel(){
   if(!PKG) return `<div class="empty">Loading the package&hellip;</div>`;
   const b = PKG.build;
@@ -2973,9 +3114,22 @@ function packagePanel(){
 
   /* What's missing (UXSIMPLIFY P16): only what stands between here and
      finalized, each line the Worker's own words. */
-  const missing = PKG.gates.length && b.status !== "finalized" ? `
+  /* On a FINALIZED package the same gates are still the truth, and they used to
+     be hidden — HIGH #4 (2026-08-14). The strip rendered only while the status
+     was not "finalized", which is precisely when Download works, so material
+     reclassified to "do not use" after finalizing left no warning anywhere on
+     the one screen that ships it. The gates are not suppressed any more; only
+     the wording changes, because "to finish this package" is the wrong sentence
+     for something already finished. */
+  const missing = !PKG.gates.length ? "" : b.status !== "finalized" ? `
     <div class="pkg-miss"><b>To finish this package</b>
-      <ul>${PKG.gates.map(g => `<li>${esc(g)}</li>`).join("")}</ul></div>` : "";
+      <ul>${PKG.gates.map(g => `<li>${esc(g)}</li>`).join("")}</ul></div>` : `
+    <div class="pkg-miss"><b>This finalized package needs attention</b>
+      <p style="margin:4px 0">It was finalized when everything in it was cleared to ship.
+        Something has changed since:</p>
+      <ul>${PKG.gates.map(g => `<li>${esc(g)}</li>`).join("")}</ul>
+      <p style="margin:4px 0">Anything no longer client-deliverable is already left out of the
+        document below. Nothing is deleted &mdash; reclassify it, or build a new version.</p></div>`;
 
   const pick = (list, kind) => list.length ? `
     <h3 style="margin:14px 0 4px;font-size:.95rem">${kind}</h3>
@@ -3032,7 +3186,21 @@ function packagePanel(){
 
   /* P13 — video delivery, honestly. A copy button only when a link exists;
      otherwise the state of the world in plain words. */
-  const shares = (PKG.external_files || []).filter(x => x.external_share_url && !x.share_revoked_at);
+  /* A delivery link is the OTHER way held-back material reaches a client, and
+     it used to be filtered on the link alone — HIGH #4 (2026-08-14). The
+     document now refuses anything not client-deliverable, but a share URL sits
+     beside it with a Copy button and hands over the same file, so hold a video
+     back and the document dropped it while the link still shipped it. The link
+     is only offered while the evidence behind it is IN this package and still
+     cleared to ship; `ev` already excludes deleted rows, so a deleted file has
+     no link to copy either. Provider-side revocation is a separate thing and
+     is not built (Dropbox is unconfigured) — this stops the portal OFFERING a
+     link it should not, which is the half that exists to be got wrong today. */
+  const shares = (PKG.external_files || []).filter(x => {
+    if(!x.external_share_url || x.share_revoked_at) return false;
+    const e = ev.find(y => y.id === x.evidence_id);
+    return !!e && eligible(e) && inPkg(e.id);
+  });
   const dropboxOff = PKG.providers && PKG.providers.dropbox && !PKG.providers.dropbox.configured;
   const delivery = nVideo ? `<div class="feebox" style="margin:10px 0">
     <div class="row"><span><b>Video delivery</b></span><span></span></div>
@@ -3073,7 +3241,7 @@ function packagePanel(){
       <button class="btn ghost" data-act="pkgReopen">Reopen and rebuild</button>
     </div>`;
 
-  return `${blocks}${stepsRail}${missing}
+  return `${blocks}${stepsRail}${missing}${pkgWithheldNote()}
     ${b.status === "draft" ? `
       ${contents}${delivery}
       ${daysPanel()}
@@ -3162,7 +3330,17 @@ function pkgDocHtml(){
   if(!b) return "";
   const items = PKG.items || [];
   const evById = Object.fromEntries((PKG.evidence || []).map(e => [e.id, e]));
-  const rows = items.map((i, n) => {
+  /* The document prints only what is still cleared to ship — HIGH #4
+     (2026-08-14). The finalize gate refuses held-back material, but it runs at
+     finalize and nothing re-ran afterwards: reclassify a photo to "do not use"
+     on a package already finalized and it went on printing, while the gate
+     strip that would have said so was suppressed on exactly the finalized
+     builds where Download still worked. Held-back material reaching a client
+     is the single outcome the classification system exists to prevent, so the
+     check belongs where the material is rendered, not only where it is
+     approved. Withheld items are COUNTED and named below rather than silently
+     dropped — a document that quietly loses an exhibit is its own problem. */
+  const rows = pkgShipping().ship.map((i, n) => {
     const e = evById[i.evidence_id] || {};
     return { n: n + 1, role: i.role, e,
       time: e.entry_time ? t12(e.entry_time) : "",
@@ -3231,6 +3409,13 @@ function pkgDocHtml(){
       </div>`).join("")}
       <p style="font-size:.9rem"><b>VIDEO DELIVERY</b> &mdash; Selected video evidence is provided
         through the accompanying electronic evidence delivery. Video package reference: ${esc(WS_CASE)}.</p>` : ""}
+    ${""/* Nothing about withheld material belongs in HERE. #pkgdoc is the only
+          region the print stylesheet leaves visible, so anything inside it is
+          the CLIENT's document — and a client must never be told that evidence
+          exists which the firm classified internal-only, needs-redaction or
+          do-not-use. Naming a count would disclose the very material the
+          classification withholds. The admin is told instead, on the package
+          screen, which does not print: see pkgWithheldNote(). */}
     ${rows.length ? `<h3 style="border-top:1px solid var(--line);padding-top:14px">EVIDENCE INDEX</h3>
       <table class="doc-table"><thead><tr><th>Exhibit</th><th>Time</th><th>Type</th><th>Description</th><th>Delivery</th></tr></thead>
         <tbody>${rows.map(r => `<tr>
@@ -3242,6 +3427,23 @@ function pkgDocHtml(){
       Prepared by Always Precise Investigations, LLC. The investigator may provide testimony
       regarding their own observations when appropriate and separately arranged.</p>
   </div>`;
+}
+
+/* Printing re-reads the package first — HIGH #4 (2026-08-14). The document
+   filters held-back material at RENDER time, which is only as fresh as the DOM
+   it rendered into. The package tab loads once on entry, so an admin who held
+   something back from another tab, another device or the Evidence tab of a
+   second window could still hit Download here and print the copy this screen
+   drew before the change. Reloading first costs one request at the only moment
+   that matters, and it is the moment the file leaves the building. If the
+   reload fails the print is abandoned rather than falling back on stale data —
+   printing nothing is recoverable, printing held-back material is not. */
+async function pkgPrint(){
+  await loadPackage();
+  if(!PKG){ WS_ERR = WS_ERR || "Could not re-check the package before printing."; paintCase(); return; }
+  document.body.classList.add("printing-package");
+  window.print();
+  setTimeout(() => document.body.classList.remove("printing-package"), 400);
 }
 
 async function pkgApi(path, body){
@@ -3262,7 +3464,7 @@ async function pkgApi(path, body){
 function tasksPanel(){
   const admin = ME.role === "admin";
   const tasks = (WS && WS.tasks) || [];
-  const today = new Date().toISOString().slice(0,10);
+  const today = ymdLocal();
   const priTag = p => p === "urgent" ? `<span class="tag rs-needs_revision">urgent</span>`
     : p === "high" ? `<span class="tag rs-submitted">high</span>`
     : p === "low" ? `<span class="tag rs-draft">low</span>` : "";
@@ -3687,8 +3889,7 @@ function svHomeScreen(){
 
   if(!open){
     // No day running: the one screen is starting one (P3).
-    const now = new Date().toTimeString().slice(0,5);
-    const today = new Date().toISOString().slice(0,10);
+    const { date: today, time: now } = stampNow();
     return `<div class="sv-body">
       ${note}
       <div class="sv-day">Day ${days.length + 1}</div>
@@ -3861,8 +4062,23 @@ function svActivityScreen(){
         e.edit ? "Back to the timeline" : "All actions"}</button>
       <div class="sv-card">
         <label class="sv-f"><span>Time</span><input id="sv_time" type="time" value="${esc(e.time || now)}"></label>
+        ${!e.edit && e.pick === ARRIVAL_LINE ? `
+        <label class="sv-f"><span>Vehicles present &mdash; optional</span>
+          <input id="sv_vp" data-act-input="svArrival" placeholder="e.g. Subject&#39;s white GMC Sierra in the driveway"></label>
+        <label class="sv-f"><span>View &mdash; optional</span>
+          <select id="sv_view" data-act-input="svArrival">
+            <option value="">Not specified</option>
+            ${ARRIVAL_VIEW.map(o => `<option value="${o[0]}">${esc(o[1])}</option>`).join("")}
+          </select></label>
+        <label class="sv-f"><span>Position &mdash; optional</span>
+          <select id="sv_place" data-act-input="svArrival">
+            <option value="">Not specified</option>
+            ${ARRIVAL_PLACE.map(o => `<option value="${o[0]}">${esc(o[1])}</option>`).join("")}
+          </select></label>
+        <label class="sv-f"><span>Position detail &mdash; optional</span>
+          <input id="sv_pos" data-act-input="svArrival" placeholder="e.g. with a clear view of the front door"></label>` : ""}
         <label class="sv-f"><span>Details &mdash; edit freely</span>
-          <textarea id="sv_desc" rows="4">${esc(e.text || "")}</textarea></label>
+          <textarea id="sv_desc" rows="4" data-act-input="svDirty">${esc(e.text || "")}</textarea></label>
         ${e.edit ? "" : `
         <label class="cap" style="color:#e8eef5"><input type="checkbox" id="sv_sd"><span>Subject documented</span></label>
         <label class="cap" style="color:#e8eef5"><input type="checkbox" id="sv_pa"><span>Photo taken</span></label>
@@ -4593,7 +4809,7 @@ function invoiceDetailView(){
     ${i.status !== "void" ? `<form class="quick" data-act="invPay" style="margin-top:8px">
       <div class="two">
         <label class="f"><span>Amount</span><input id="ip_amt" inputmode="decimal"></label>
-        <label class="f"><span>Date</span><input id="ip_date" type="date" value="${new Date().toISOString().slice(0,10)}"></label>
+        <label class="f"><span>Date</span><input id="ip_date" type="date" value="${ymdLocal()}"></label>
       </div>
       <div class="two">
         <label class="f"><span>Method</span><select id="ip_method">${["ach","check","card","wire","other"]
@@ -4860,7 +5076,7 @@ async function quickAddEntry(oneTapLine){
       const now = new Date();
       const body = oneTapLine ? {
         kind: "activity", description: oneTapLine,
-        at_date: now.toISOString().slice(0,10), at_time: now.toTimeString().slice(0,5),
+        at_date: ymdLocal(now), at_time: now.toTimeString().slice(0,5),
       } : {
         kind: "activity",
         at_date: $("qa_date").value, at_time: $("qa_time").value,
@@ -5003,10 +5219,18 @@ async function svSaveEntry(oneTap){
   const now = new Date();
   const body = oneTap ? {
     kind: "activity", description: oneTap,
-    at_date: now.toISOString().slice(0,10), at_time: now.toTimeString().slice(0,5),
+    at_date: ymdLocal(now), at_time: now.toTimeString().slice(0,5),
   } : {
     kind: "activity",
-    at_date: new Date().toISOString().slice(0,10),
+    /* The date that goes with THIS time, not the date it happens to be when
+       the button is finally tapped. `sv_time` was stamped when the entry was
+       started; taking the date at submit pairs two different instants, so an
+       entry begun at 23:58 and saved at 00:02 filed on the new day carrying
+       the old day's time — and the timeline orders by at_date then at_time, so
+       it sorted ahead of everything that really came before it. Making both
+       halves local was not enough; they have to be the SAME moment. The
+       fallback covers an entry restored without a stamp. */
+    at_date: SV.entry.date || ymdLocal(),
     at_time: $("sv_time").value,
     description: $("sv_desc").value,
     location: $("sv_loc") ? $("sv_loc").value : "",
@@ -5570,11 +5794,7 @@ document.addEventListener("click", ev => {
   else if(act === "pkgFinalize"){ pkgApi(`/build/${PKG.build.id}/finalize`); }
   else if(act === "pkgReopen"){ pkgApi(`/build/${PKG.build.id}/reopen`); }
   else if(act === "pkgDelivered"){ pkgApi(`/build/${PKG.build.id}/delivered`); }
-  else if(act === "pkgPrint"){
-    document.body.classList.add("printing-package");
-    window.print();
-    setTimeout(() => document.body.classList.remove("printing-package"), 400);
-  }
+  else if(act === "pkgPrint"){ pkgPrint(); }
   else if(act === "createInvoice"){ createInvoiceFor(el.dataset.case, false); }
   else if(act === "createInvoiceAuth"){ createInvoiceFor(el.dataset.case, true); }
   else if(act === "openReport"){
@@ -5602,7 +5822,8 @@ document.addEventListener("click", ev => {
     const line = el.dataset.line;
     if(!line){ SV.entry = null; SV.err = ""; paint(); }
     else if(line === NO_CHANGE_LINE){ svSaveEntry(line); }          // one tap
-    else { SV.entry = {text: line, time: new Date().toTimeString().slice(0,5)}; SV.ok = ""; SV.err = ""; paint(); }
+    else { SV.entry = {text: line, pick: line, ...stampNow()};
+           SV.dirty = false; SV.ok = ""; SV.err = ""; paint(); }
   }
   else if(act === "svAddAnother"){ SV.ok = ""; SV.entry = null; paint(); }
   else if(act === "svStartDay"){ svStartDay(); }
@@ -5615,7 +5836,7 @@ document.addEventListener("click", ev => {
   else if(act === "svNote"){
     // A note is an activity entry the office reads and the client never does.
     SV.tab = "activity";
-    SV.entry = {text: "", time: new Date().toTimeString().slice(0,5), note: true};
+    SV.entry = {text: "", ...stampNow(), note: true};
     SV.ok = ""; SV.err = ""; paint();
   }
   else if(act === "svEdit"){
@@ -5642,7 +5863,7 @@ document.addEventListener("click", ev => {
   else if(act === "svUseText"){
     const t = $("sv_heard") ? $("sv_heard").value : "";
     SV.heard = null; SV.tab = "activity";
-    SV.entry = {text: t, time: new Date().toTimeString().slice(0,5)};
+    SV.entry = {text: t, ...stampNow()};
     paint();
   }
   else if(act === "svDiscard"){ SV.heard = null; paint(); }
@@ -5756,16 +5977,28 @@ document.addEventListener("input", ev => {
   const din = ev.target.dataset ? ev.target.dataset.actInput : "";
   if(din === "svSearch" && SV){ SV.search = ev.target.value; paint();
     const q = $("sv_q"); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } return; }
+  if(din === "svDirty" && SV){ SV.dirty = true; return; }
+  if(din === "svArrival" && SV && !SV.dirty){
+    // The same generator the desk sheet uses, so a line composed in the car and
+    // the same line composed at the office cannot read differently.
+    const d = $("sv_desc");
+    if(d) d.value = arrivalSentence(
+      $("sv_vp") ? $("sv_vp").value : "",
+      $("sv_view") ? $("sv_view").value : "",
+      $("sv_place") ? $("sv_place").value : "",
+      $("sv_pos") ? $("sv_pos").value : "");
+    return;
+  }
   if(din === "amSearch" && ACT_MODAL){ ACT_MODAL.search = ev.target.value; paintCase(); return; }
   if(din === "amDirty" && ACT_MODAL){ ACT_MODAL.dirty = true; return; }
   if(din === "amArrival" && ACT_MODAL && !ACT_MODAL.dirty){
     // The arrival template (P9): the extras generate the sentence — until the
     // narrative is hand-edited, which makes the hand the author.
-    const vp = ($("qa_vp") ? $("qa_vp").value : "").trim();
-    const pos = ($("qa_pos") ? $("qa_pos").value : "").trim();
-    if($("qa_desc")) $("qa_desc").value = ARRIVAL_LINE
-      + (vp ? ` ${vp.replace(/\.$/, "")} present.` : "")
-      + (pos ? ` Established surveillance position ${pos.replace(/\.$/, "")}.` : "");
+    if($("qa_desc")) $("qa_desc").value = arrivalSentence(
+      $("qa_vp") ? $("qa_vp").value : "",
+      $("qa_view") ? $("qa_view").value : "",
+      $("qa_place") ? $("qa_place").value : "",
+      $("qa_pos") ? $("qa_pos").value : "");
     return;
   }
   if(ev.target.dataset && ev.target.dataset.act === "filter"){ FILTER = ev.target.value; paint(); }

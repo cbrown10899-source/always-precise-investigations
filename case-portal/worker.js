@@ -510,6 +510,129 @@ function rateSheets() {
 
 function sheetById(id) { return rateSheets().find(s => s.id === id) || null; }
 
+/* ---- Private-client payment methods (PAYMENTS.md, owner 2026-08-14) ----
+
+   PRIVATE CLIENT ONLY. Cash App and Venmo may appear on the private retainer
+   sheet and its send flow, and nowhere else: not in the insurance sheet, the
+   insurance intake, a carrier email, the insurance send wizard, or any
+   investigator view. The boundary is the same shape as the intake pairing
+   already enforced by SHEET_INTAKE — decided HERE, server-side, from the sheet
+   id, never from anything the caller says. */
+const PAY_METHODS = [
+  { id: 'cash_app', label: 'Cash App' },
+  { id: 'venmo', label: 'Venmo' },
+];
+/* rateSheets() has its own local `money`; this is the same formatting for the
+   payment block, which is built outside that function. */
+const usd = n => '$' + Number(n).toLocaleString('en-US');
+const PAY_IDS = PAY_METHODS.map(m => m.id);
+
+/* The only sheet that may ever carry payment instructions. A function rather
+   than a bare comparison so the rule has one name and one place to change. */
+const sheetTakesPayment = sheetId => sheetId === 'private_retainer';
+
+/* A payment URL is admin-entered or ABSENT — it is never built from a handle.
+   The order is explicit about this and it is the sharpest line in it: a
+   fabricated `cash.app/$handle` that happens to resolve to a real stranger
+   sends a client's retainer to the wrong person. So there is no derivation
+   here, and there must never be one. Only http(s) is accepted, so a stored
+   value can never become `javascript:` in a mail client or the page. */
+function safePayUrl(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  let u;
+  try { u = new URL(s); } catch { return ''; }
+  return (u.protocol === 'https:' || u.protocol === 'http:') ? u.href : '';
+}
+
+/* Every configured method, admin-facing. */
+async function paymentConfig(env) {
+  const { results } = await env.DB.prepare(
+    `SELECT method, enabled, display_name, handle, url, instructions, updated_at
+       FROM payment_methods`).all();
+  const byId = Object.fromEntries((results || []).map(r => [r.method, r]));
+  return PAY_METHODS.map(m => {
+    const row = byId[m.id] || {};
+    return {
+      id: m.id, label: m.label,
+      enabled: Number(row.enabled) === 1,
+      display_name: row.display_name || '',
+      handle: row.handle || '',
+      url: row.url || '',
+      instructions: row.instructions || '',
+      updated_at: row.updated_at || null,
+    };
+  });
+}
+
+/* What a CLIENT may be shown: only methods that are enabled AND actually have
+   something to pay to. A method ticked on with no handle and no URL would
+   render an empty instruction, which is worse than omitting it — it looks like
+   the firm forgot to say where the money goes.
+
+   `wanted` is the admin's per-send selection. Anything not enabled centrally is
+   dropped regardless of what the caller asked for, so the send wizard cannot
+   turn on a method the configuration has off. */
+async function paymentOptionsFor(env, wanted) {
+  const all = await paymentConfig(env);
+  /* NO SELECTION and AN EMPTY SELECTION are different answers, and conflating
+     them is how unticking every method sent every method. `null` means the
+     caller expressed no preference — take whatever is enabled. An empty ARRAY
+     means the admin looked at the list and chose none, which can only ever
+     yield nothing; testing `wanted.length` here made 0 falsy and fell through
+     to "send them all", the exact opposite of what was asked. The caller
+     refuses the send rather than mailing an empty PAYMENT OPTIONS heading. */
+  const pick = Array.isArray(wanted) ? all.filter(m => wanted.includes(m.id)) : all;
+  return pick
+    .filter(m => m.enabled && (m.handle.trim() || safePayUrl(m.url)))
+    .map(m => ({
+      id: m.id,
+      label: m.display_name.trim() || m.label,
+      handle: m.handle.trim(),
+      url: safePayUrl(m.url),
+      instructions: m.instructions.trim(),
+    }));
+}
+
+async function setPaymentMethod(request, env, user, id) {
+  if (!PAY_IDS.includes(id)) return json({ error: 'no such payment method' }, 404);
+  const body = await readJson(request);
+
+  const clean = (v, max) => String(v == null ? '' : v)
+    .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, max);
+  const handle = clean(body.handle, 80);
+  const display = clean(body.display_name, 80);
+  const instructions = clean(body.instructions, 500);
+
+  /* An unusable URL is refused rather than quietly dropped. Silently blanking
+     it would leave an admin believing a link was configured when clients are
+     being shown only a handle. */
+  const rawUrl = String(body.url == null ? '' : body.url).trim();
+  const url = safePayUrl(rawUrl);
+  if (rawUrl && !url) {
+    return json({ error: 'A payment link must be a full http(s) URL, or left empty.' }, 400);
+  }
+
+  const enabled = body.enabled === true || body.enabled === 1 || body.enabled === '1' ? 1 : 0;
+  /* Enabling a method with nowhere to send money would put an empty PAYMENT
+     OPTIONS block in front of a client. */
+  if (enabled && !handle && !url) {
+    return json({ error: 'Give a handle or a payment link before enabling this method.' }, 400);
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO payment_methods (method, enabled, display_name, handle, url, instructions,
+       updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(method) DO UPDATE SET enabled = excluded.enabled,
+       display_name = excluded.display_name, handle = excluded.handle, url = excluded.url,
+       instructions = excluded.instructions, updated_by = excluded.updated_by,
+       updated_at = excluded.updated_at`)
+    .bind(id, enabled, display, handle, url, instructions, user.id, nowIso()).run();
+
+  return json({ ok: true, methods: await paymentConfig(env) });
+}
+
 /* MASTER §5 — Send Intake from a lead. The email carries the intake link and
    nothing priced. Which door is NEVER the caller's choice: the lead's own
    kind picks it server-side, the same rule SHEET_INTAKE enforces — a carrier
@@ -621,7 +744,36 @@ async function emailSheet(request, env, user, id) {
   // Which intake is never the caller's choice — SHEET_INTAKE pairs it.
   const includeIntake = body.include_intake === true || body.include_intake === 1 || body.include_intake === '1';
   const intakeUrl = includeIntake && SHEET_INTAKE[sheet.id] ? SHEET_INTAKE[sheet.id].url : null;
-  const { text, html } = sheetEmail(sheet, note, includeIntake);
+
+  /* Payment instructions ride only with the PRIVATE sheet (PAYMENTS.md).
+     Asking for them on the carrier sheet is REFUSED rather than quietly
+     dropped: the client is equally safe either way, but a silent drop hides
+     the fact that something asked for it, and the whole point of this feature
+     is that a carrier never sees a consumer payment handle. If that request
+     ever arrives, someone wants to know.
+
+     `methods` is the admin's per-send selection. It can only ever narrow what
+     the central configuration has enabled — paymentOptionsFor drops anything
+     not enabled there, so the wizard cannot switch a method on. */
+  const includePayment = body.include_payment === true || body.include_payment === 1
+    || body.include_payment === '1';
+  if (includePayment && !sheetTakesPayment(sheet.id)) {
+    return json({ error: 'Payment options are private-client only and cannot be sent with the '
+                       + 'Insurance Assignment Rates.' }, 400);
+  }
+  const wantedMethods = Array.isArray(body.methods)
+    ? body.methods.map(x => String(x)).filter(x => PAY_IDS.includes(x)) : null;
+  const payment = includePayment ? await paymentOptionsFor(env, wantedMethods) : [];
+  if (includePayment && !payment.length) {
+    /* Two different reasons for nothing to send, and they need different
+       sentences: one is answered in this dialog, the other in Settings. */
+    return json({ error: wantedMethods && !wantedMethods.length
+      ? 'Choose at least one payment method, or untick payment instructions.'
+      : 'No payment method is enabled and configured. Set one up in Settings '
+        + 'before including payment instructions.' }, 400);
+  }
+
+  const { text, html } = sheetEmail(sheet, note, includeIntake, payment);
   const subject = caseNo
     ? `${sheet.name} — Always Precise Investigations (case ${caseNo})`
     : `${sheet.name} — Always Precise Investigations`;
@@ -630,6 +782,11 @@ async function emailSheet(request, env, user, id) {
   if (!mail.sent) {
     await logSend(env, user, { case_no: caseNo, kind: 'rate_sheet', sheet_id: sheet.id,
       door: intakeUrl, recipient: to, ok: 0, detail: mail.reason || 'send failed' });
+    if (payment.length) {
+      await logPaymentSend(env, user, { case_no: caseNo, recipient: to,
+        methods: payment.map(x => x.id), with_sheet: 1, ok: 0,
+        detail: mail.reason || 'send failed' });
+    }
     return json({
       error: mail.reason === 'not_configured'
         ? 'Email is not configured on the Worker. Add RESEND_API_KEY to send from here.'
@@ -648,7 +805,19 @@ async function emailSheet(request, env, user, id) {
       .bind(caseNo).first();
     if (lead) await stampLead(env, user, caseNo, includeIntake ? 'intake_sent' : 'rate_sheet_sent');
   }
-  return json({ ok: true, sent_to: to, sheet: sheet.id });
+  if (payment.length) {
+    await logPaymentSend(env, user, { case_no: caseNo, recipient: to,
+      methods: payment.map(x => x.id), with_sheet: 1, ok: 1 });
+  }
+  /* §13 — the confirmation lists exactly what WENT. Read back from the record
+     of the send rather than echoed from the request, and note that sending
+     instructions says nothing whatever about the retainer being paid. */
+  return json({ ok: true, sent_to: to, sheet: sheet.id,
+    included: {
+      rate_sheet: sheet.name,
+      intake: includeIntake && SHEET_INTAKE[sheet.id] ? SHEET_INTAKE[sheet.id].label : null,
+      payment_methods: payment.map(x => ({ id: x.id, label: x.label })),
+    } });
 }
 
 /* Manual intake (UIBUILD P17): the office types in what a phone call or an
@@ -835,8 +1004,52 @@ const SHEET_INTAKE = {
     url: 'https://alwayspreciseinvestigations.net/intake/?assignment=private' },
 };
 
-function sheetEmail(sheet, note, includeIntake) {
+/* The PAYMENT OPTIONS block, in both MIME parts (PAYMENTS.md §3/§6/§7).
+
+   `pay` reaches here already filtered by the caller — enabled, private sheet
+   only, and each entry with something real to pay to. This function does not
+   decide WHETHER payment may appear; that decision is made once, server-side,
+   from the sheet id, so there is no second place for it to go wrong.
+
+   A method with an admin-entered URL becomes a button. A method with only a
+   handle shows the handle, plainly and in full — it is NEVER turned into a
+   link, because a guessed payment URL that resolves to a real stranger sends
+   the retainer to the wrong person. */
+function paymentBlockText(pay) {
+  if (!pay.length) return '';
+  return `
+PAYMENT OPTIONS
+A ${usd(PERSONAL.retainer)} retainer is required to begin investigative services.
+The retainer may be submitted using one of the approved methods below.
+${pay.map(m => `
+${m.label.toUpperCase()}
+${m.handle ? `  ${m.handle}` : ''}${m.url ? `\n  ${m.url}` : ''}${m.instructions ? `\n  ${m.instructions}` : ''}`).join('')}
+`;
+}
+
+function paymentBlockHtml(pay) {
+  if (!pay.length) return '';
+  return `<div style="margin:0 0 18px;padding:16px 18px;background:#f4f8fa;border:1px solid #dfe7ec;border-radius:10px">
+    <p style="margin:0 0 6px;font-weight:800;color:#12305a;letter-spacing:.04em">PAYMENT OPTIONS</p>
+    <p style="margin:0 0 14px;font-size:.92rem">A <b>${escHtml(usd(PERSONAL.retainer))}</b> retainer is
+      required to begin investigative services. The retainer may be submitted using one of the
+      approved methods below.</p>
+    ${pay.map(m => `<div style="margin:0 0 12px">
+      <div style="font-weight:700;color:#12305a">${escHtml(m.label)}</div>
+      ${m.handle ? `<div style="font-size:1.05rem;font-weight:700;letter-spacing:.01em">${escHtml(m.handle)}</div>` : ''}
+      ${m.instructions ? `<div style="font-size:.86rem;color:#5c6775">${escHtml(m.instructions)}</div>` : ''}
+      ${m.url ? `<p style="margin:6px 0 0"><a href="${escHtml(m.url)}"
+         style="display:inline-block;background:#12305a;color:#fff;padding:9px 16px;border-radius:8px;
+                text-decoration:none;font-weight:700;font-size:.9rem">Pay with ${escHtml(m.label)}</a></p>` : ''}
+    </div>`).join('')}
+  </div>`;
+}
+
+function sheetEmail(sheet, note, includeIntake, pay) {
   const intake = includeIntake ? SHEET_INTAKE[sheet.id] : null;
+  /* Belt and braces on the boundary: even called wrongly, the carrier sheet
+     cannot carry a consumer payment handle. */
+  const payment = (sheetTakesPayment(sheet.id) && Array.isArray(pay)) ? pay : [];
   const rows = sheet.lines.map(l =>
     `  ${l.label}${l.sub ? ` (${l.sub})` : ''}: ${l.value}${l.badge ? `  ** ${l.badge} **` : ''}\n     ${l.note}`).join('\n');
   const text =
@@ -850,7 +1063,7 @@ ${rows}
 
 ${sheet.closing_title}
 ${sheet.closing}
-${intake ? `\nReady to begin? The ${intake.label} takes a few minutes:\n${intake.url}\n` : ''}
+${paymentBlockText(payment)}${intake ? `\nReady to begin? The ${intake.label} takes a few minutes:\n${intake.url}\n` : ''}
 Questions: (434) 907-0975
 Always Precise Investigations, LLC`;
 
@@ -875,6 +1088,7 @@ Always Precise Investigations, LLC`;
   </table>
   <p style="margin:0 0 4px;font-weight:800;color:#12305a">${escHtml(sheet.closing_title)}</p>
   <p style="margin:0 0 14px;font-size:.92rem">${escHtml(sheet.closing)}</p>
+  ${paymentBlockHtml(payment)}
   ${intake ? `<p style="margin:0 0 14px">
     <a href="${escHtml(intake.url)}" style="display:inline-block;background:#12305a;color:#fff;
        padding:11px 18px;border-radius:8px;text-decoration:none;font-weight:700">
@@ -1074,6 +1288,23 @@ async function logSend(env, user, row) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .bind(row.case_no || null, row.kind, row.sheet_id || null, row.door || null,
             row.recipient, row.ok ? 1 : 0, row.detail || null,
+            user ? user.id : null, nowIso()).run();
+  } catch { /* the send is the point; the log is the record of it */ }
+}
+
+/* What payment instructions actually went, and to whom (PAYMENTS.md §13).
+   The confirmation and the case history both read back from THIS, never from
+   the form that was submitted — otherwise they report what was asked for
+   rather than what was sent, which is the same class of mistake as marking a
+   retainer paid because instructions were emailed. Failures are kept and
+   marked for the same reason send_log keeps them. */
+async function logPaymentSend(env, user, row) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO payment_send (case_no, recipient, methods, with_sheet, ok, detail, sent_by, sent_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(row.case_no || null, row.recipient, (row.methods || []).join(','),
+            row.with_sheet ? 1 : 0, row.ok ? 1 : 0, row.detail || null,
             user ? user.id : null, nowIso()).run();
   } catch { /* the send is the point; the log is the record of it */ }
 }
@@ -1717,10 +1948,51 @@ async function openDayFor(env, user, caseNo) {
       ORDER BY id DESC LIMIT 1`).bind(caseNo, user.id).first();
 }
 
+/* Which running day this caller may act on — HIGH #2 (2026-08-14).
+ *
+ * Pause, resume and end used to require BOTH `caseFor()` and
+ * `investigator_id = user.id`, which closed every door at once the moment a
+ * case was reassigned with a day running: the original investigator now failed
+ * `caseFor`, and the new investigator and the admin both failed the
+ * investigator match. The day stayed open forever — permanently in Out Now,
+ * `hours` never written — with no way to fix it inside the product at all.
+ *
+ * The rule that made that scoping right is kept: you can only stop your OWN
+ * clock. Two doors are added around it.
+ *
+ *   - **Your own running day stays yours** whether or not the case still is.
+ *     This is the owner's KEEP decision applied where it matters most: you
+ *     started that clock and you are the one who knows when you stopped.
+ *   - **An admin can close a day nobody else can reach.** A recovery path that
+ *     does not exist is how a day ends up hand-edited in D1.
+ *
+ * A different investigator still cannot touch someone else's clock, and a
+ * caller with no claim on the case at all gets the same 404 as before — so
+ * nothing here reveals whether a day is running on a case they cannot see. */
+const DAY_COLS = 'id, day_date, start_time, start_mileage, created_at, investigator_id';
+async function openDayForAction(env, user, caseNo) {
+  const own = await env.DB.prepare(
+    `SELECT ${DAY_COLS} FROM case_days
+      WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL
+      ORDER BY id DESC LIMIT 1`).bind(caseNo, user.id).first();
+  if (own) return { day: own };
+
+  // No day of their own here, so the ordinary case boundary applies.
+  if (!(await caseFor(env, user, caseNo))) return { status: 404, error: 'not found' };
+
+  if (user.role === 'admin') {
+    const any = await env.DB.prepare(
+      `SELECT ${DAY_COLS} FROM case_days
+        WHERE case_no = ? AND end_time IS NULL ORDER BY id DESC LIMIT 1`).bind(caseNo).first();
+    if (any) return { day: any };
+  }
+  return { status: 409, error: 'No investigation day is running on this case.' };
+}
+
 async function pauseDay(request, env, user, caseNo) {
-  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
-  const day = await openDayFor(env, user, caseNo);
-  if (!day) return json({ error: 'No investigation day is running on this case.' }, 409);
+  const found = await openDayForAction(env, user, caseNo);
+  if (!found.day) return json({ error: found.error }, found.status);
+  const day = found.day;
   const state = await dayPauseState(env, day.id);
   if (state.paused_at) return json({ error: 'The day is already paused.' }, 409);
   const reason = String((await readJson(request)).reason || '').slice(0, 200) || null;
@@ -1731,9 +2003,9 @@ async function pauseDay(request, env, user, caseNo) {
 }
 
 async function resumeDay(env, user, caseNo) {
-  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
-  const day = await openDayFor(env, user, caseNo);
-  if (!day) return json({ error: 'No investigation day is running on this case.' }, 409);
+  const found = await openDayForAction(env, user, caseNo);
+  if (!found.day) return json({ error: found.error }, found.status);
+  const day = found.day;
   const state = await dayPauseState(env, day.id);
   if (!state.paused_at) return json({ error: 'The day is not paused.' }, 409);
   await env.DB.prepare(
@@ -1743,16 +2015,13 @@ async function resumeDay(env, user, caseNo) {
 }
 
 async function endDay(request, env, user, caseNo) {
-  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const found = await openDayForAction(env, user, caseNo);
+  if (!found.day) return json({ error: found.error }, found.status);
+  const day = found.day;
+
   const body = await readJson(request);
   const time = String(body.end_time || '');
   if (!TIME_RE.test(time)) return json({ error: 'An end time is needed.' }, 400);
-
-  const day = await env.DB.prepare(
-    `SELECT id, day_date, start_time, start_mileage FROM case_days
-      WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL ORDER BY id DESC LIMIT 1`)
-    .bind(caseNo, user.id).first();
-  if (!day) return json({ error: 'No investigation day is running on this case.' }, 409);
 
   const endMiles = body.end_mileage === '' || body.end_mileage == null ? null : Number(body.end_mileage);
   if (endMiles !== null && !(Number.isFinite(endMiles) && endMiles >= 0)) {
@@ -1769,10 +2038,36 @@ async function endDay(request, env, user, caseNo) {
   if (span < 0) span += 24 * 60;
 
   /* A day ended while still paused closes the pause first, so the arithmetic
-     below is over complete spans and no break is left hanging open. */
-  await env.DB.prepare(
-    'UPDATE case_day_pauses SET ended_at = ? WHERE day_id = ? AND ended_at IS NULL')
-    .bind(nowIso(), day.id).run();
+     below is over complete spans and no break is left hanging open.
+
+     It closes at the instant the DAY ended — never at `now`. This is the whole
+     of HIGH #1 (2026-08-14): `span` is minutes on the investigator's TYPED
+     clock, while a pause is a pair of SERVER instants, and closing an open
+     pause at `now` subtracted one from the other. Break off at noon, file the
+     day honestly at eight in the evening as having ended at 12:00, and a real
+     four-hour day became `Math.max(0, 240 - 480)` — zero, floored so silently
+     that the response still added up. `hours` is what authorization and
+     invoices draw against, so that was billable time destroyed in place.
+
+     `created_at` is the server instant the day was recorded — the same
+     timestamp the field timer already derives from, precisely because a
+     phone's clock cannot move it. The day therefore ended at
+     `created_at + span`, and a break is clamped to close no earlier than it
+     opened and no later than now. A break that began at or after the day's
+     claimed end contributes nothing, which is the honest reading of it: they
+     stopped working when the break began. */
+  const openPause = await env.DB.prepare(
+    'SELECT id, started_at FROM case_day_pauses WHERE day_id = ? AND ended_at IS NULL')
+    .bind(day.id).first();
+  if (openPause) {
+    const startedMs = Date.parse(openPause.started_at);
+    const dayEndMs = Date.parse(day.created_at) + span * 60000;
+    const closeMs = Number.isFinite(startedMs) && Number.isFinite(dayEndMs)
+      ? Math.max(startedMs, Math.min(dayEndMs, Date.now()))
+      : Date.now();
+    await env.DB.prepare('UPDATE case_day_pauses SET ended_at = ? WHERE id = ?')
+      .bind(new Date(closeMs).toISOString(), openPause.id).run();
+  }
 
   /* Breaks come off the billable total. An investigator who stopped for an
      hour did not work that hour, and `hours` is what authorization and
@@ -1781,8 +2076,14 @@ async function endDay(request, env, user, caseNo) {
      both. A duration is timezone-independent, so subtracting spans measured
      in UTC from a local-clock span is sound. */
   const paused = (await dayPauseState(env, day.id)).paused_ms;
-  const pausedMins = Math.round(paused / 60000);
-  const worked = Math.max(0, span - pausedMins);
+  /* Clamped to the span rather than floored to zero afterwards. Breaks totalling
+     more than the day they sit inside means the two clocks disagree, and the old
+     `Math.max(0, …)` answered that by throwing the day away without saying so.
+     Capping the subtraction keeps `worked` non-negative by construction AND
+     keeps `paused_hours` equal to what was actually taken off, so the day-end
+     screen can never name a break that did not come off the total. */
+  const pausedMins = Math.min(Math.round(paused / 60000), span);
+  const worked = span - pausedMins;
   const hours = Math.round((worked / 60) * 100) / 100;
   const pausedHours = Math.round((pausedMins / 60) * 100) / 100;
   const miles = endMiles != null && day.start_mileage != null
@@ -2509,6 +2810,30 @@ async function setInvoiceStatus(request, env, user, id) {
   }
   if (inv.status === 'void') return json({ error: 'A void invoice stays void.' }, 400);
 
+  /* Money that has been received is not a draft any more — HIGH #3
+     (2026-08-14). `sent_to_bill` and `sent_to_client` were guarded and `ready`
+     validated only the CONTENT, but `draft` was guarded by nothing, so an
+     invoice with real payments against it could be walked backwards. Two
+     things followed. The edit lock is `!['draft','ready'].includes(status)`,
+     so lines and adjustments became rewritable underneath money already taken;
+     and `outstanding`, `drafts` and the dashboard all sum on the STORED
+     status, so a part-paid invoice dropped out of the receivable while
+     `balance_due` went on honestly saying it was owed. Money the office is
+     owed stopped being visible, which is the one thing an invoice list exists
+     to prevent.
+
+     Both unlocking statuses are refused once anything is recorded. The way back
+     from a paid invoice is Void, which is deliberate, kept in the record, and
+     already releases the retainer it consumed. */
+  if (status === 'draft' || status === 'ready') {
+    const paid = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM invoice_payments WHERE invoice_id = ?').bind(id).first();
+    if (Number(paid && paid.n) > 0) {
+      return json({ error: 'A payment has been recorded against this invoice, so it cannot go back to '
+        + status + '. Void it instead — that keeps the record and releases the retainer.' }, 400);
+    }
+  }
+
   if (status === 'ready') {
     const { results: lines } = await env.DB.prepare(
       'SELECT id FROM invoice_lines WHERE invoice_id = ?').bind(id).all();
@@ -3035,12 +3360,31 @@ async function completedCases(env) {
     const inv = await env.DB.prepare(
       `SELECT id, invoice_no, status FROM invoices
         WHERE case_no = ? AND status != 'void' ORDER BY id DESC LIMIT 1`).bind(c.case_no).first();
+    /* The completed desk offers this URL as "Copy video link", so it is a
+       delivery path and carries the same rule as the package document — HIGH #4
+       (2026-08-14). It filtered on the link alone: a video reclassified to
+       do-not-use, or soft-deleted, kept its Copy button here long after the
+       document stopped printing it. The evidence count two lines above already
+       honours deleted_at; this did not.
+
+       Membership is the third condition, and the one that makes this agree with
+       the package panel, which has always required it (`inPkg`). This desk is
+       the archive of DELIVERED work, so the only link it may hand out is one
+       belonging to material actually selected into the finalized package. A
+       file merely sitting on the case — never chosen, or chosen and then taken
+       out again — is not part of what the client received, and offering its
+       link here would deliver by the back door exactly what the build screen
+       declined to put in the front. No finalized build means no package
+       delivery, so `build_id` being NULL yields no link at all. */
     const share = await env.DB.prepare(
       `SELECT x.external_share_url FROM external_files x
          JOIN case_evidence e ON e.id = x.evidence_id
         WHERE e.case_no = ? AND x.external_share_url IS NOT NULL
           AND x.share_revoked_at IS NULL AND x.upload_status = 'uploaded'
-        ORDER BY x.id DESC LIMIT 1`).bind(c.case_no).first();
+          AND e.deleted_at IS NULL AND e.classification = 'client_deliverable'
+          AND EXISTS (SELECT 1 FROM build_items bi
+                       WHERE bi.build_id = ? AND bi.evidence_id = x.evidence_id)
+        ORDER BY x.id DESC LIMIT 1`).bind(c.case_no, c.build_id).first();
     out.push({
       ...c,
       approved_reports: Number(reps && reps.n) || 0,
@@ -3865,6 +4209,7 @@ const EXPECTED_TABLES = [
      workspace load — the check saying "fine" is worse than no check. */
   'activity_removed', 'build_reports', 'build_summary', 'build_custom',
   'case_day_pauses', 'lead_status', 'send_log', 'invoice_retainer',
+  'payment_methods', 'payment_send',
 ];
 
 async function missingTables(env) {
@@ -4007,6 +4352,22 @@ async function route(request, env) {
   if (m && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return emailSheet(request, env, user, m[1]);
+  }
+
+  /* Private-client payment configuration (PAYMENTS.md). Admin-only on both
+     verbs: an investigator has no business knowing where the firm's money
+     arrives, and the handle is the firm's, not the case's. Read is gated as
+     hard as write — a 403 on POST alone would leave the configuration
+     browsable. */
+  if (p === '/payment-methods' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return json({ methods: await paymentConfig(env) });
+  }
+
+  m = p.match(/^\/payment-methods\/([a-z_]{3,32})$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return setPaymentMethod(request, env, user, m[1]);
   }
 
   /* Counts for the dashboard. Scoped like everything else — an investigator's

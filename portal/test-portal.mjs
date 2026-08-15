@@ -1316,6 +1316,57 @@ section('The Custom tab carries every composer');
   await page.close();
 }
 
+/* Every surveillance DATE came from toISOString() — UTC — while every
+   surveillance TIME came from toTimeString() — local. On the same line, in the
+   same record. In EDT that is four hours of disagreement every evening: at
+   20:15 on the 14th the page filed 2026-08-15 beside 20:15, so evening work
+   (most of this firm's) was recorded a day late with the previous day's times,
+   and it reached case_days.day_date, the derived case_reports.report_date and
+   the timeline's ORDER BY. Driven in two real timezones rather than by calling
+   the helper, because the bug was never in a helper — it was in what the
+   screens rendered. */
+section('A surveillance date is the date where the investigator is standing');
+{
+  /* UTC+14 and UTC-11 bracket the clock: whatever the hour when this suite
+     runs, at least one of them is on a different calendar date from UTC. The
+     counter at the end asserts that actually happened, so a green run can
+     never mean "neither zone drifted today, so nothing was tested". */
+  let drifted = 0;
+  for (const [tz, nick] of [['Pacific/Kiritimati', 'UTC+14'], ['Pacific/Pago_Pago', 'UTC-11']]) {
+    const page = await (await browser.newContext({
+      viewport: { width: 1200, height: 900 }, timezoneId: tz })).newPage();
+    page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+    await page.goto(SITE + '/portal/');
+    await page.waitForTimeout(250);
+    await signIn(page, 'trever', 'AdminPassword1x');
+    await rowFor(page, 'API-20260812-4001').click();
+    await page.waitForTimeout(450);
+    await wsTab(page, 'Activity log');
+    await openComposer(page);
+
+    const seen = await page.evaluate(() => {
+      const d = new Date(), p = n => String(n).padStart(2, '0');
+      return {
+        date: document.querySelector('#a_date').value,
+        time: document.querySelector('#a_time').value,
+        local: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`,
+        utc: d.toISOString().slice(0, 10),
+      };
+    });
+    ok(`${nick}: the date offered is the local calendar date, not the UTC one`,
+       seen.date === seen.local, JSON.stringify(seen));
+    ok(`${nick}: and a time is offered beside it`, /^\d\d:\d\d$/.test(seen.time), seen.time);
+    if (seen.local !== seen.utc) {
+      drifted++;
+      ok(`${nick}: this zone genuinely disagreed with UTC, so the date above was the real test`,
+         seen.date !== seen.utc, JSON.stringify(seen));
+    }
+    await page.close();
+  }
+  ok('at least one zone was on a different UTC date — otherwise this section proves nothing',
+     drifted > 0, `${drifted} of 2 drifted`);
+}
+
 /* UIBUILD phase 3 (P8/P9): the Quick tab — stock lines behind a search and
    categories, favorites first, one-tap No change, and the arrival template
    that writes the sentence. */
@@ -1396,6 +1447,42 @@ section('Quick lines: search, favorites, one tap');
      built.includes('Arrived in vicinity of subject residence.')
        && built.includes("Sierra in the driveway present.")
        && built.includes('Established surveillance position with a clear view of the front door.'), built);
+
+  // P6's five position options, and the article each one needs to read right.
+  ok('view and placement are separate choices, not one five-way list',
+     await page.locator('#qa_view option').count() === 3
+       && await page.locator('#qa_place option').count() === 4);
+  await page.locator('#qa_view').selectOption('indirect');
+  await page.waitForTimeout(200);
+  const withView = await page.locator('#qa_desc').inputValue();
+  ok('an indirect view composes as a whole sentence',
+     withView.includes('Established an indirect surveillance position with a clear view of the front door.'),
+     withView);
+  // MASTER §10's canonical example combines BOTH — an indirect position ALONG
+  // the primary route of departure. One five-way select cannot express that
+  // sentence at all, which is why view and placement are independent.
+  await page.locator('#qa_pos').fill('');
+  await page.waitForTimeout(150);
+  await page.locator('#qa_place').selectOption('primary');
+  await page.waitForTimeout(250);
+  const canonical = await page.locator('#qa_desc').inputValue();
+  ok('MASTER §10\'s canonical combined sentence is reachable',
+     canonical.includes('Established an indirect surveillance position along the primary route of departure.'),
+     canonical);
+  await page.locator('#qa_place').selectOption('mobile');
+  await page.waitForTimeout(250);
+  ok('and mobile reads as the method, not a position',
+     (await page.locator('#qa_desc').inputValue()).includes('Established indirect mobile surveillance.'));
+  await page.locator('#qa_place').selectOption('');
+  await page.locator('#qa_pos').fill('with a clear view of the front door');
+  await page.waitForTimeout(250);
+  // The rule that keeps a template from becoming a fabricated fact.
+  await page.locator('#qa_desc').fill('Hand written by the investigator.');
+  await page.waitForTimeout(150);
+  await page.locator('#qa_vp').fill('Two vehicles');
+  await page.waitForTimeout(250);
+  ok('a hand-edited narrative is never overwritten by the generator',
+     (await page.locator('#qa_desc').inputValue()) === 'Hand written by the investigator.');
   await page.locator('.amx').click();
   await page.waitForTimeout(250);
 
@@ -1957,6 +2044,143 @@ section('The case package, gated and printed');
   await page.close();
 }
 
+/* HIGH #4 (2026-08-14). The finalize gate refuses held-back material, but it
+   runs AT finalize and nothing re-ran afterwards. Reclassify a photo to "do not
+   use" on a package that is already finalized and two things used to happen at
+   once: the gate strip was suppressed — it rendered only while the status was
+   NOT finalized, which is exactly when Download works — and the document went
+   on printing the photo, because it rendered every build_items row with no
+   classification check. Held-back material reaching a client is the one outcome
+   the classification system exists to prevent. This drives the real screens:
+   the package 4002 finalized in the section above is the subject. */
+section('A finalized package still says when something has been held back');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Package');
+  await page.waitForTimeout(800);
+
+  /* The exhibits the document actually PRINTS, read off the rendered evidence
+     index rather than off the payload. Counting these is the assertion that
+     matters: the caption falls back note -> entry description -> filename, so
+     checking for a filename passes vacuously whenever the item has a note —
+     which is exactly what happened, and it let the broken document through. */
+  const exhibits = () => page.evaluate(() => {
+    const t = [...document.querySelectorAll('#pkgdoc table.doc-table')]
+      .find(x => x.querySelector('thead'));
+    return t ? [...t.querySelectorAll('tbody tr')].map(r => r.textContent.trim()) : [];
+  });
+
+  let body = await text(page, '#dlgBody');
+  ok('the package under test is the finalized one', has(body, 'Finalized') || has(body, 'Delivered'));
+  ok('and its document carries an evidence index to begin with', has(body, 'EVIDENCE INDEX'));
+  ok('with nothing withheld yet', !has(body, 'withheld'));
+
+  const before = await exhibits();
+  ok('the document prints exhibits to begin with', before.length > 0, `${before.length} rows`);
+
+  /* This package holds exactly one item and it is clip1.mp4, a video, put there
+     by the section above; the build is finalized, so nothing can be added to it
+     here. That bounds what this section can prove, and the bound is worth
+     stating: the photo <img> path is NOT separately exercised. It does not need
+     to be — `photos` and `videos` are both derived from the one filtered `rows`
+     (portal/index.html), so the exhibit-count assertion below covers the same
+     filter that governs the image tag. If a photo ever joins this package,
+     assert the <img> for it directly rather than trusting that sentence. */
+  const held = await page.evaluate(async () => {
+    const b = await (await fetch('/portal-api/cases/API-20260812-4002/build',
+      { headers: { Accept: 'application/json' } })).json();
+    const it = (b.items || [])[0];
+    if (!it) return { id: 0, caption: '', ok: false,
+                      why: `no build items (${(b.items || []).length})` };
+    const ev = (b.evidence || []).find(e => e.id === it.evidence_id) || {};
+    const r = await fetch(`/portal-api/cases/API-20260812-4002/evidence/${it.evidence_id}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ classification: 'do_not_use' }) });
+    // The caption the document would render for it — the same fallback chain.
+    return { id: it.evidence_id, role: it.role, ok: r.ok, why: `status ${r.status}`,
+             caption: ev.note || ev.entry_description || ev.filename || '' };
+  });
+  ok('an item in the finalized package could be reclassified — and the write was accepted',
+     !!held && held.id > 0 && held.ok === true, held && held.why);
+
+  await wsTab(page, 'Overview');
+  await page.waitForTimeout(250);
+  await wsTab(page, 'Package');
+  await page.waitForTimeout(800);
+  body = await text(page, '#dlgBody');
+
+  ok('the finalized package now warns rather than staying silent',
+     has(body, 'This finalized package needs attention'));
+  ok('and the warning names the material by its classification',
+     has(body, 'do not use'));
+  ok('the package screen tells the OFFICE an item was withheld', has(body, 'withheld'));
+  ok('and says where to deal with it', has(body, 'reclassify or unselect in Evidence'));
+  ok('and says WHY it was withheld, not merely that it was',
+     has(body, 'no longer marked client-deliverable'));
+  ok('while making clear the material still exists on the case',
+     has(body, 'Nothing is removed from the case'));
+
+  /* And the CLIENT is told none of it. #pkgdoc is the only region the print
+     stylesheet leaves visible, so anything inside it is the document that
+     leaves the building. A count of withheld exhibits would disclose that
+     evidence exists which was classified internal-only, needs-redaction or
+     do-not-use — announcing precisely what the classification withholds. The
+     first version of this fix put the notice inside #pkgdoc and did exactly
+     that; the structural check below is what stops it coming back. */
+  const docText = await text(page, '#pkgdoc');
+  ok('but the client’s own document says nothing about anything withheld',
+     !has(docText, 'withheld') && !has(docText, 'client-deliverable')
+     && !has(docText, 'do not use') && !has(docText, 'internal only'));
+  ok('and the notice is not inside the printed region at all',
+     await page.evaluate(() => !document.querySelector('#pkgdoc .pkg-miss')));
+  ok('the gate strip that carries it is outside the printed region too',
+     await page.evaluate(() => {
+       const g = [...document.querySelectorAll('.pkg-miss')];
+       const doc = document.querySelector('#pkgdoc');
+       return g.length > 0 && !g.some(x => doc && doc.contains(x));
+     }));
+
+  /* The half that actually ships material to a client. One exhibit fewer is
+     printed, and the held-back one's own caption is gone from the document. */
+  const after = await exhibits();
+  ok('the document prints one exhibit fewer', after.length === before.length - 1,
+     `${before.length} -> ${after.length}`);
+  ok('and the held-back exhibit is the one that went',
+     !!held.caption && !after.some(r => r.includes(held.caption)), held.caption);
+  ok('its caption appears nowhere else in the document',
+     !!held.caption && !has(await text(page, '#pkgdoc'), held.caption));
+
+  /* The exhibit's whole section goes with it, not just its index row — the
+     held-back item is this package's only video, so VIDEO EVIDENCE and the
+     delivery sentence that names it must both stop being printed. */
+  const doc = await text(page, '#pkgdoc');
+  ok('the section that presented it is gone from the document too',
+     !has(doc, 'VIDEO EVIDENCE') && !has(doc, 'provided separately'));
+  /* Nothing in the document may still point a client's browser at the file. */
+  const stillLinked = await page.evaluate(id =>
+    (document.querySelector('#pkgdoc') || {}).innerHTML?.includes(`/evidence/${id}/`) || false, held.id);
+  ok('and nothing in it still points at the evidence route for that file', !stillLinked);
+
+  // Put it back, so the rest of the suite sees the package it expects.
+  await page.evaluate(async (id) => {
+    await fetch(`/portal-api/cases/API-20260812-4002/evidence/${id}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ classification: 'client_deliverable' }) });
+  }, held.id);
+  await wsTab(page, 'Overview');
+  await page.waitForTimeout(250);
+  await wsTab(page, 'Package');
+  await page.waitForTimeout(800);
+  ok('and reclassifying it back clears the warning',
+     !has(await text(page, '#dlgBody'), 'This finalized package needs attention'));
+  ok('and puts the exhibit back in the document',
+     (await exhibits()).length === before.length);
+  await page.close();
+}
+
 /* UIBUILD phase 1: the sidebar, the dashboard landing, the package cards
    and Continue Case routing. */
 section('The dashboard leads with case packages');
@@ -2333,6 +2557,30 @@ section('Active Surveillance Mode: a field view of the same case');
   await page.waitForTimeout(300);
   ok('picking a line opens the entry with it filled in',
      (await page.locator('#sv_desc').inputValue()).includes('Arrived in vicinity'));
+
+  // The arrival generator reaches the field (MASTER §10 / SURVEILLANCE P6).
+  // It was desk-only, which is the one place an investigator is NOT sitting.
+  ok('the field asks the same arrival questions as the desk',
+     await page.locator('#sv_vp').count() === 1
+       && await page.locator('#sv_view').count() === 1
+       && await page.locator('#sv_place').count() === 1
+       && await page.locator('#sv_pos').count() === 1);
+  await page.locator('#sv_vp').fill('Two vehicles in the driveway');
+  await page.waitForTimeout(200);
+  await page.locator('#sv_view').selectOption('indirect');
+  await page.waitForTimeout(250);
+  const svBuilt = await page.locator('#sv_desc').inputValue();
+  ok('and composes the same sentence the desk sheet would',
+     svBuilt.includes('Arrived in vicinity of subject residence.')
+       && svBuilt.includes('Two vehicles in the driveway present.')
+       && svBuilt.includes('Established an indirect surveillance position.'), svBuilt);
+  await page.locator('#sv_place').selectOption('primary');
+  await page.waitForTimeout(250);
+  const svCanon = await page.locator('#sv_desc').inputValue();
+  ok('the canonical combined sentence is reachable in the field too',
+     svCanon.includes('Established an indirect surveillance position along the primary route of departure.'),
+     svCanon);
+
   await page.locator('#sv_pa').check();
   await page.locator('[data-act="svSaveEntry"]').click();
   await page.waitForTimeout(800);
@@ -3143,6 +3391,98 @@ section('The field vocabulary covers the physical observations');
   ok('and so is breaking off safely',
      has(await text(page, '.sv-body'), 'Unable to safely maintain visual contact.'));
   await page.close();
+}
+
+/* Making both halves local was not enough. In the field the TIME is stamped
+   when the entry is started and the DATE was taken when Save was finally
+   tapped — two different instants. Start an entry at 23:58, finish typing it
+   at 00:03, and it filed on the new day carrying the old day's time; the
+   timeline orders by at_date then at_time, so it sorted ahead of everything
+   that genuinely came before it. This is the one place a surveillance log
+   crosses midnight as a matter of routine, so it is driven across a real
+   rollover with the page's clock held, not asserted about a helper. */
+section('An entry started before midnight is filed before midnight');
+{
+  const page = await (await browser.newContext({
+    viewport: { width: 390, height: 844 }, timezoneId: 'America/New_York' })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  // 03:58Z is 23:58 the previous evening in EDT — two minutes before rollover.
+  await page.clock.setFixedTime(new Date('2026-08-11T03:58:00Z'));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('dana');
+  await page.locator('#p').fill('FieldWork2026x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(600);
+  await page.locator('[data-act="svEnter"]').first().click();
+  await page.waitForTimeout(800);
+  if (await page.locator('[data-act="svStartDay"]').count()) {
+    await page.locator('[data-act="svStartDay"]').click();
+    await page.waitForTimeout(800);
+  }
+
+  await page.locator('.sv-nav button', { hasText: 'Activity' }).click();
+  await page.waitForTimeout(500);
+  await page.locator('#sv_q').fill('lost visual');
+  await page.waitForTimeout(400);
+  await page.locator('.sv-pick').first().click();
+  await page.waitForTimeout(400);
+
+  const stamped = await page.evaluate(() => ({ date: SV.entry && SV.entry.date, time: SV.entry && SV.entry.time }));
+  ok('the entry is stamped with the local date when it is STARTED',
+     stamped.date === '2026-08-10' && stamped.time === '23:58', JSON.stringify(stamped));
+
+  const marker = 'Rollover check ' + stamped.time;
+  await page.locator('#sv_desc').fill(marker);
+
+  // Midnight passes while the investigator is still typing.
+  await page.clock.setFixedTime(new Date('2026-08-11T04:03:00Z'));
+  await page.locator('[data-act="svSaveEntry"]').click();
+  await page.waitForTimeout(900);
+  ok('it still saves after the day has turned',
+     has(await text(page, '.sv-body'), 'Activity saved'));
+
+  const stored = await page.evaluate(async m => {
+    const w = await (await fetch('/portal-api/cases/API-20260812-4001/workspace',
+      { headers: { Accept: 'application/json' } })).json();
+    return (w.activity || []).find(a => (a.description || '').includes(m)) || null;
+  }, marker);
+  ok('the entry reached the log', !!stored, marker);
+  ok('and it is filed on the evening it was started, not the morning it was saved',
+     stored && stored.at_date === '2026-08-10', stored && JSON.stringify(
+       { at_date: stored.at_date, at_time: stored.at_time }));
+  ok('with the time it was started, so date and time agree',
+     stored && stored.at_time === '23:58', stored && stored.at_time);
+  await page.close();
+}
+
+/* The last way the two halves could disagree, and the only one that cannot be
+   driven from a test: every pairing used to read the clock TWICE — once for
+   the date, once for the time — and two reads can fall either side of
+   midnight. The window is sub-millisecond, so it would never reproduce and
+   would look like a mystery if it ever fired: tomorrow's date beside last
+   night's time, sorting ahead of everything before it. A fixed test clock
+   makes both reads identical, so no behavioural test can reach it. The
+   invariant is therefore held at the source: one instant, both halves. */
+section('A date and its time come from one reading of the clock');
+{
+  const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+  const pairedReads = [
+    /const now = new Date\(\)\.toTimeString\(\)\.slice\(0,5\);\s*const today = ymdLocal\(\);/,
+    /const today = ymdLocal\(\);\s*const now = new Date\(\)\.toTimeString\(\)\.slice\(0,5\);/,
+    /time: new Date\(\)\.toTimeString\(\)\.slice\(0,5\), date: ymdLocal\(\)/,
+  ];
+  ok('no date/time pair is built from two separate clock reads',
+     !pairedReads.some(re => re.test(src)),
+     String(pairedReads.findIndex(re => re.test(src))));
+  ok('the pairing helper exists and is what the screens use',
+     /function stampNow\(\)/.test(src) && (src.match(/stampNow\(\)/g) || []).length >= 5,
+     String((src.match(/stampNow\(\)/g) || []).length));
+  /* Date-only and time-only readings are fine and deliberately still allowed —
+     an expense date or a day-end time has no counterpart to disagree with. */
+  ok('single-value readings are left alone', /const today = ymdLocal\(\);/.test(src));
 }
 
 /* ------------------------------------------------------------------ report */

@@ -454,8 +454,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 794 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 670 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 885 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 713 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
@@ -498,6 +498,30 @@ redaction, internal only or do not use is still refused by name.
 **The document holds no copy of anything.** Every image points at the original
 evidence route; building, printing and finalizing touch `build_*` tables only.
 Original evidence must never be overwritten by a report copy or a thumbnail.
+
+**The classification is checked where the material LEAVES, not only where it is
+approved.** The finalize gate runs once, at finalize; holding something back
+afterwards has to reach a package that is already finalized. So the document
+renders only currently-deliverable evidence and names what it withheld, the
+gate strip stays visible on a finalized build, printing re-reads the package
+first (a stale tab would otherwise print the copy it drew before the change),
+and a delivery link is offered only while its evidence is **in the package and
+still cleared to ship** — on the package panel and on `/completed` alike.
+Reclassifying a finalized package's material is deliberately still allowed:
+refusing it would preserve the unsafe classification at exactly the moment
+someone is trying to withdraw it. Do not "simplify" any of these back to a
+single check at finalize.
+
+**Nothing about withheld material may sit inside `#pkgdoc`.** The print
+stylesheet makes only `#pkgdoc` visible, so everything in it is the client's
+document — and a *count* of withheld exhibits announces that evidence exists
+which was classified internal only, needs redaction or do not use. The first
+version of this fix put the notice there and disclosed exactly what the
+classification withholds. The office is told on the package screen
+(`pkgWithheldNote()`, outside the printed region); the document prints the
+deliverable material with contiguous numbering and explains no gap. Tests
+assert structurally that no gate strip lives inside `#pkgdoc`, so the guard
+survives a rewording.
 
 ## Invoices
 
