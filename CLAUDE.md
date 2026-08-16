@@ -387,8 +387,21 @@ Pricing lives in the portal as two rate sheets an admin opens and emails
   separate products (see `case-portal/RATESHEETS.md`): separate config,
   separate copy, never combined, and neither shows internal strategy.
 
+**Payment instructions can also go on their own.** `POST /payment-options/email`
+sends the PAYMENT OPTIONS block with no rate sheet and no intake attached, from
+a **Send payment options** action on a private lead card — so instructions can
+follow later without resending the sheet, which a client would reasonably read
+as the terms having changed. Three rules hold it: a **claims case is refused by
+name** (never quietly emptied); **nothing about it marks the retainer paid**
+(`payment_send` records that the firm asked, `retainer_payment` records arrival,
+and they are separate tables so no later edit can confuse them); and **the lead
+is not stamped**, because none of the nine §5 lead statuses describes a payment
+and moving it would write an event that did not happen. The email reuses
+`paymentBlockText/Html` rather than restating them — two renderings of the same
+instructions drift, and the one that drifts is the one nobody is looking at.
+
 `GET /sheets` and `POST /sheets/:id/email` are admin-only; an investigator gets
-403 from both, and from `/pricing`. Sending goes through `sendMail()`, the same
+403 from both, from `/payment-options/email`, and from `/pricing`. Sending goes through `sendMail()`, the same
 Resend path the invitations use, and never throws — a provider outage costs a
 copy-and-paste, not a lost quote.
 
@@ -511,8 +524,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1033 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 806 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 1057 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 824 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,

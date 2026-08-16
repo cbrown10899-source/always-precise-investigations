@@ -4567,6 +4567,173 @@ section('Payment instructions ride with the private client and no one else');
   globalThis.fetch = realFetch;
 }
 
+/* SEND PAYMENT OPTIONS ON ITS OWN (PAYMENTS.md second handoff §1/§4/§15).
+   "This allows payment instructions to be sent later without resending the rate
+   sheet." The boundary is the same one the sheet already enforces, checked from
+   both ends: a private client can be sent them, a carrier never can. */
+section('Payment instructions can go on their own, and never to a carrier');
+{
+  const realFetch = globalThis.fetch;
+  let lastBody = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      lastBody = JSON.parse(init.body);
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const both = s => `${s.html}\n${s.text}`;
+  const has = (hay, needle) => String(hay).toLowerCase().includes(String(needle).toLowerCase());
+
+  await call(env, '/payment-methods/cash_app', { method: 'POST', cookie: admin,
+    body: { enabled: true, display_name: 'Cash App', handle: '$AlwaysPrecise',
+            url: 'https://cash.app/$AlwaysPrecise' } });
+  await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
+    body: { enabled: true, display_name: 'Venmo', handle: '@AlwaysPrecise',
+            url: 'https://venmo.com/u/AlwaysPrecise' } });
+
+  await ingest(env, { case_no: 'API-PO1', service: 'Surveillance',
+                      client_name: 'P. Client', subject_name: 'S' });
+  await ingest(env, { case_no: 'API-POC', carrier: 'Acme Mutual', claim_number: 'AM-3',
+                      client_name: 'A. Adjuster', subject_name: 'C' });
+
+  // §15.1 — a private lead CAN be sent payment options, with no sheet attached.
+  lastBody = null;
+  const sent = await jsonOf(await call(env, '/payment-options/email', { method: 'POST',
+    cookie: admin, body: { to: 'client@example.com', name: 'Jane', case_no: 'API-PO1' } }));
+  ok('a private client can be sent payment options on their own', sent.ok === true);
+  ok('the email carries the payment block', has(both(lastBody), 'PAYMENT OPTIONS'));
+  ok('with both configured destinations, in both parts',
+     lastBody.html.includes('https://cash.app/$AlwaysPrecise')
+     && lastBody.text.includes('https://cash.app/$AlwaysPrecise')
+     && lastBody.html.includes('venmo.com/u/AlwaysPrecise'));
+  ok('and greets them by the name that was entered', has(both(lastBody), 'Jane'));
+  /* The point of the feature: no rate sheet rides along. A client who already
+     has the sheet receiving a second copy would reasonably read it as the terms
+     having changed. */
+  /* Asserted on strings only the SHEET has. "retainer to begin" is not one of
+     them — the shared payment block says "required to begin investigative
+     services", so a naive absence check there fails on the feature's own
+     correct wording rather than on a rate sheet sneaking in. */
+  ok('but NOT the rate sheet — that is the whole point of sending these alone',
+     !has(both(lastBody), 'Investigative rate')
+     && !has(both(lastBody), 'Straightforward billing')
+     && !has(both(lastBody), 'Applied to the work')
+     && !has(both(lastBody), '/hr'),
+     both(lastBody).slice(0, 200));
+  ok('nor an intake link', !has(both(lastBody), '/intake/'));
+  ok('the subject names the case it belongs to', lastBody.subject.includes('API-PO1'));
+
+  // §15.9 — and it says, in the answer itself, that nothing was marked paid.
+  ok('the answer states plainly that no retainer was marked paid',
+     sent.retainer_marked_paid === false);
+  const ret = (await jsonOf(await call(env, '/cases/API-PO1/workspace', { cookie: admin })))
+    .authorization.retainer;
+  ok('and the case really is still pending, with no money against it',
+     ret.status === 'pending' && ret.received_total === 0 && ret.received === false,
+     JSON.stringify([ret.status, ret.received_total]));
+
+  /* THE SEND IS RECORDED, AND DISTINGUISHABLE from one that rode with a sheet.
+     `with_sheet` existed before this route did, precisely for this. */
+  const log = await env.DB.prepare(
+    'SELECT recipient, methods, with_sheet, ok FROM payment_send WHERE case_no = ?')
+    .bind('API-PO1').all();
+  ok('the send is written to payment_send', (log.results || []).length === 1);
+  ok('marked as having gone WITHOUT a sheet',
+     Number(log.results[0].with_sheet) === 0, String(log.results[0].with_sheet));
+  ok('naming the recipient and both methods',
+     log.results[0].recipient === 'client@example.com'
+     && log.results[0].methods.split(',').sort().join() === 'cash_app,venmo');
+
+  /* THE LEAD IS NOT STAMPED. The nine §5 statuses describe the rate sheet and
+     the intake; there is no payment status among them, so moving the lead would
+     put an event in the history that did not happen. */
+  const lead = await env.DB.prepare('SELECT status FROM lead_status WHERE case_no = ?')
+    .bind('API-PO1').first();
+  ok('and the lead is NOT moved to Rate Sheet Sent by it', !lead || lead.status === 'lead',
+     JSON.stringify(lead));
+
+  // §15.2 — a carrier never can. Refused by name, not quietly emptied.
+  lastBody = null;
+  const refused = await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+    body: { to: 'adjuster@carrier.example', case_no: 'API-POC' } });
+  ok('a claim assignment is refused outright', refused.status === 400);
+  ok('and nothing whatsoever was emailed', lastBody === null);
+  ok('the refusal says why, in words the office can act on',
+     has((await jsonOf(await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+       body: { to: 'adjuster@carrier.example', case_no: 'API-POC' } }))).error,
+       'never sent to a carrier'));
+
+  // §15.5/15.6/15.10 — each method independently, and OFF means absent.
+  lastBody = null;
+  await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+    body: { to: 'client@example.com', case_no: 'API-PO1', methods: ['venmo'] } });
+  ok('one method alone sends only that one',
+     has(both(lastBody), '@AlwaysPrecise') && !has(both(lastBody), '$AlwaysPrecise'));
+  ok('choosing none is refused rather than sent as an empty heading',
+     (await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+       body: { to: 'client@example.com', methods: [] } })).status === 400);
+
+  /* §15.11 — a handle carrying markup is escaped, never rendered. Admin-entered
+     text reaches an HTML email part. */
+  await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
+    body: { enabled: true, display_name: 'Venmo', handle: '<script>alert(1)</script>',
+            url: 'https://venmo.com/u/AlwaysPrecise' } });
+  lastBody = null;
+  await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+    body: { to: 'client@example.com', methods: ['venmo'] } });
+  ok('a handle carrying markup is escaped, not rendered',
+     !lastBody.html.includes('<script>') && lastBody.html.includes('&lt;script&gt;'));
+
+  /* A method switched on with no link is named and refused — the same failure
+     the sheet send already refuses, because a silently missing payment option
+     is one nobody goes looking for.
+
+     Planted directly, because the configuration route REFUSES to save an
+     enabled method with no link — which is correct, and is why rows like this
+     can only be legacy ones written before that rule existed. */
+  await env.DB.prepare(
+    `UPDATE payment_methods SET url = '' WHERE method = 'venmo'`).run();
+  const broken = await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+    body: { to: 'client@example.com', methods: ['venmo'] } });
+  ok('a method with no link is refused here too', broken.status === 400);
+  ok('and the refusal points at Settings, where it can be fixed',
+     has((await jsonOf(broken)).error, 'Add a link in Settings'));
+
+  // §15.7 — the retainer this client agreed, not the standard one.
+  await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
+    body: { enabled: true, display_name: 'Venmo', handle: '@AlwaysPrecise',
+            url: 'https://venmo.com/u/AlwaysPrecise' } });
+  await call(env, '/cases/API-PO1/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 3000 } });
+  lastBody = null;
+  await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+    body: { to: 'client@example.com', case_no: 'API-PO1' } });
+  ok('the standalone email quotes the retainer THIS case agreed',
+     has(both(lastBody), '$3,000') && !has(both(lastBody), '$1,500'),
+     both(lastBody).slice(0, 200));
+
+  // Admin-only, like every other money route.
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const tok = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  ok('an investigator cannot send payment instructions',
+     (await call(env, '/payment-options/email', { method: 'POST', cookie: inv,
+       body: { to: 'client@example.com' } })).status === 403);
+  ok('and a bad address is refused before an email is spent',
+     (await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+       body: { to: 'not-an-address' } })).status === 400);
+
+  globalThis.fetch = realFetch;
+}
+
 /* THE CUSTOM PRIVATE RETAINER (PAYMENTS.md, owner 2026-08-15, parts 1 and 2).
    The owner named seven tests; each is labelled below with the words they used.
    Two more guard the selector itself, because a control that WRITES the agreed

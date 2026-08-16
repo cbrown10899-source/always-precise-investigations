@@ -939,6 +939,111 @@ async function emailSheet(request, env, user, id) {
     } });
 }
 
+/* SEND PAYMENT OPTIONS ON THEIR OWN (PAYMENTS.md second handoff §1/§4).
+
+   The private lead card's third send action. Everything about the boundary is
+   decided HERE, not by the card declining to draw a button — the card is a
+   convenience and the Worker is the enforcement point, the same split the
+   rate-sheet pairing already uses.
+
+   THREE RULES, and each has cost something somewhere in this system before:
+
+   1. A CLAIMS LEAD IS REFUSED BY NAME, not quietly given an empty email. The
+      whole point of the feature is that a carrier never sees a consumer payment
+      handle, and a silent drop hides the fact that something asked for one.
+
+   2. NOTHING HERE MARKS THE RETAINER PAID. Asking for money is not receiving
+      it. `payment_send` records that the firm asked; `retainer_payment` records
+      arrival; they are separate tables so the two cannot be confused by a
+      well-meaning edit later.
+
+   3. THE LEAD IS NOT STAMPED. The nine §5 lead statuses describe the rate
+      sheet and the intake, and there is no payment status among them — so
+      moving the lead to "Rate Sheet Sent" because payment instructions went
+      would put a false event in the history. The send is recorded in
+      `payment_send`, which is where it belongs. */
+async function emailPaymentOptions(request, env, user) {
+  const body = await readJson(request);
+  const to = String(body.to || '').trim();
+  if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(to) || to.length > 200) {
+    return json({ error: 'Enter a valid email address.' }, 400);
+  }
+  /* Same scrubbing as the sheet send: these reach an email body and a subject
+     line, and a CR/LF smuggled into a header is how one email becomes several. */
+  const clean = (v, max) => String(v == null ? '' : v)
+    .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').slice(0, max);
+  const note = clean(body.note, 500);
+  const name = clean(body.name, 120);
+  const caseNo = String(body.case_no || '').replace(/[^\x20-\x7e]/g, '').slice(0, 64);
+
+  /* RULE 1. A lead the office knows about decides this; an unknown case number
+     is treated as no case rather than as permission, so a typo cannot turn a
+     carrier into a private client. */
+  if (caseNo) {
+    const lead = await env.DB.prepare('SELECT kind FROM submissions WHERE case_no = ?')
+      .bind(caseNo).first();
+    if (lead && lead.kind === 'claims') {
+      return json({ error: `${caseNo} is a claim assignment. Cash App and Venmo are private-client `
+                         + `payment methods and are never sent to a carrier or TPA.` }, 400);
+    }
+  }
+
+  if (!(await withinRateLimit(env, 'mail'))) {
+    return json({ error: 'Too many emails in one minute — wait a moment and send again.' }, 429);
+  }
+
+  const wantedMethods = Array.isArray(body.methods)
+    ? body.methods.map(x => String(x)).filter(x => PAY_IDS.includes(x)) : null;
+  const brokenMethods = [];
+  const payment = await paymentOptionsFor(env, wantedMethods, brokenMethods);
+
+  // Same two refusals, in the same words, as the sheet send — one of them is
+  // answered in this dialog and the other in Settings.
+  if (brokenMethods.length) {
+    const names = brokenMethods.map(m => m.display_name || m.label).join(' and ');
+    return json({ error: `${names} is switched on but has no payment link, so it cannot be `
+                       + `offered — every payment option a client sees has to be tappable. `
+                       + `Add a link in Settings, or switch it off.`,
+                  needs_link: brokenMethods.map(m => m.id) }, 400);
+  }
+  if (!payment.length) {
+    return json({ error: wantedMethods && !wantedMethods.length
+      ? 'Choose at least one payment method.'
+      : 'No payment method is enabled and configured. Set one up in Settings '
+        + 'before sending payment instructions.' }, 400);
+  }
+
+  // The case's OWN agreed retainer, so this email and the sheet quote the same
+  // figure. A client told one number by the sheet and another by the payment
+  // email has been given a reason to distrust both.
+  const retainer = await agreedRetainer(env, caseNo);
+  const { text, html } = paymentOnlyEmail(payment, retainer, note, name);
+  const subject = caseNo
+    ? `Payment options — Always Precise Investigations (case ${caseNo})`
+    : 'Payment options — Always Precise Investigations';
+
+  const mail = await sendMail(env, { to, subject, text, html });
+  if (!mail.sent) {
+    await logPaymentSend(env, user, { case_no: caseNo, recipient: to,
+      methods: payment.map(x => x.id), with_sheet: 0, ok: 0,
+      detail: mail.reason || 'send failed' });
+    return json({
+      error: mail.reason === 'not_configured'
+        ? 'Email is not configured on the Worker. Add RESEND_API_KEY to send from here.'
+        : 'That did not send. Check the address and try again.',
+      reason: mail.reason,
+    }, 502);
+  }
+  /* with_sheet: 0 is what makes this send distinguishable from the one that
+     rode along with a rate sheet. The column existed before the route did. */
+  await logPaymentSend(env, user, { case_no: caseNo, recipient: to,
+    methods: payment.map(x => x.id), with_sheet: 0, ok: 1 });
+
+  // RULE 2, said out loud in the answer the page shows.
+  return json({ ok: true, sent_to: to, retainer_marked_paid: false,
+    included: { payment_methods: payment.map(x => ({ id: x.id, label: x.label })) } });
+}
+
 /* Manual intake (UIBUILD P17): the office types in what a phone call or an
    email brought, and it becomes a submission like any other — same table,
    same workspace, no parallel lead store to drift. The only hard requirement
@@ -1223,6 +1328,55 @@ Always Precise Investigations, LLC`;
     <a href="${escHtml(intake.url)}" style="display:inline-block;background:#12305a;color:#fff;
        padding:11px 18px;border-radius:8px;text-decoration:none;font-weight:700">
       Start the ${escHtml(intake.label)}</a></p>` : ''}
+  <hr style="border:0;border-top:1px solid #dfe3e8">
+  <p style="font-size:.82rem;color:#5c6775">Questions? (434) 907-0975<br>
+     Always Precise Investigations, LLC</p>
+</div>`;
+  return { text, html };
+}
+
+/* THE PAYMENT INSTRUCTIONS ON THEIR OWN (PAYMENTS.md second handoff §4/§6).
+
+   "This allows payment instructions to be sent later without resending the rate
+   sheet." So this is the same PAYMENT OPTIONS block the sheet carries, with a
+   short covering note around it and no rate lines at all — a client who already
+   has the sheet does not need a second copy of it, and sending one invites them
+   to think the terms changed.
+
+   It reuses `paymentBlockText/Html` rather than restating them. Two renderings
+   of the same instructions would drift, and the one that drifts is the one
+   nobody is looking at.
+
+   `retainer` is the case's agreed figure, so a client who agreed more than the
+   standard is told what THEY agreed here too — the same rule the sheet follows. */
+function paymentOnlyEmail(pay, retainer, note, name) {
+  const hi = name ? `${name},` : 'Hello,';
+  const text =
+`Always Precise Investigations, LLC — Va DCJS #11-9159
+
+${hi}
+
+Here are the ways you can send the retainer to begin your investigation.
+${note ? `\n${note}\n` : ''}${paymentBlockText(pay, retainer)}
+If you have already submitted the intake form, nothing further is needed once
+the retainer arrives — we will confirm receipt and schedule the work.
+
+Questions: (434) 907-0975
+Always Precise Investigations, LLC`;
+
+  const html =
+`<div style="font-family:'Segoe UI',Arial,sans-serif;color:#1c2531;line-height:1.55;max-width:560px">
+  <p style="margin:0 0 4px;font-size:.82rem;color:#5c6775;letter-spacing:.04em;text-transform:uppercase">
+    Always Precise Investigations, LLC &middot; Va DCJS #11-9159</p>
+  <h2 style="margin:0 0 14px;color:#12305a">Payment options</h2>
+  <p style="margin:0 0 14px">${escHtml(hi)}</p>
+  <p style="margin:0 0 18px">Here are the ways you can send the retainer to begin your
+    investigation.</p>
+  ${note ? `<p style="margin:0 0 18px;padding:12px 14px;background:#f4f8fa;border-left:3px solid #2f7d90">${escHtml(note)}</p>` : ''}
+  ${paymentBlockHtml(pay, retainer)}
+  <p style="margin:0 0 14px;font-size:.92rem">If you have already submitted the intake form,
+    nothing further is needed once the retainer arrives &mdash; we will confirm receipt and
+    schedule the work.</p>
   <hr style="border:0;border-top:1px solid #dfe3e8">
   <p style="font-size:.82rem;color:#5c6775">Questions? (434) 907-0975<br>
      Always Precise Investigations, LLC</p>
@@ -4690,6 +4844,15 @@ async function route(request, env) {
   if (m && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return emailSheet(request, env, user, m[1]);
+  }
+
+  /* Payment instructions WITHOUT the sheet (PAYMENTS.md second handoff §4).
+     Admin-only like every other money route — an investigator has no business
+     asking a client for the retainer, and knowing where the firm's money
+     arrives is not fieldwork. */
+  if (p === '/payment-options/email' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return emailPaymentOptions(request, env, user);
   }
 
   /* Private-client payment configuration (PAYMENTS.md). Admin-only on both

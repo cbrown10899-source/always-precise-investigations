@@ -1558,6 +1558,100 @@ section('A private retainer is chosen before the sheet goes, and never reset by 
   await page.close();
 }
 
+/* PAYMENTS.md second handoff §1/§4 — SEND PAYMENT OPTIONS from the lead card,
+   and the standalone dialog it opens. "This allows payment instructions to be
+   sent later without resending the rate sheet."
+
+   The boundary is asserted from both ends on the same desk, which is the point:
+   a private card offers it, an insurance card beside it does not. */
+section('A private lead can be sent payment options; an insurance lead cannot');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Leads' }).click();
+  await page.waitForTimeout(600);
+
+  const priv = page.locator('.pcard', { hasText: 'API-20260812-4002' });
+  const ins = page.locator('.pcard', { hasText: 'API-20260812-4001' });
+  ok('both a private and an insurance lead are on the desk',
+     await priv.count() === 1 && await ins.count() === 1);
+
+  // §15.1 / §15.2 — the whole boundary, on two cards side by side.
+  ok('the private card offers Send payment options',
+     await priv.locator('.btn', { hasText: 'Send payment options' }).count() === 1);
+  ok('the insurance card does NOT, anywhere on it',
+     await ins.locator('.btn', { hasText: 'Send payment options' }).count() === 0);
+  ok('and the insurance card still offers its own two sends',
+     await ins.locator('.btn', { hasText: 'Send rate sheet' }).count() === 1
+     && await ins.locator('.btn', { hasText: 'Send intake' }).count() === 1);
+  ok('the private card keeps its existing actions too — nothing was displaced',
+     await priv.locator('.btn', { hasText: 'Review' }).count() === 1
+     && await priv.locator('.btn', { hasText: 'Send rate sheet' }).count() === 1
+     && await priv.locator('.btn', { hasText: 'Send intake' }).count() === 1);
+
+  // The dialog.
+  await priv.locator('.btn', { hasText: 'Send payment options' }).click();
+  await page.waitForTimeout(900);
+  ok('the standalone dialog opens', await page.locator('.amsheet').count() === 1);
+  ok('titled as payment options, not as a rate sheet send',
+     has(await text(page, '.amhead'), 'Send payment options'));
+  ok('with the case number riding along',
+     await page.locator('#ps_case').inputValue() === 'API-20260812-4002');
+  ok('both methods are offered, independently tickable',
+     await page.locator('.ps-pm').count() === 2);
+  ok('and both start ticked, which is the onboarding default',
+     await page.locator('.ps-pm:checked').count() === 2);
+
+  // An address is required before anything can be spent on a send.
+  await page.locator('#ps_to').fill('');
+  await page.locator('[data-act="paySendStep"]').click();
+  await page.waitForTimeout(400);
+  ok('an empty address is refused before moving on',
+     has(await text(page, '.amsheet'), 'Enter the address'));
+
+  /* Choosing NO method is refused rather than sent as an empty PAYMENT OPTIONS
+     heading — the same refusal the Worker makes, answered where it can be
+     fixed. */
+  await page.locator('#ps_to').fill('client@example.test');
+  await page.locator('.ps-pm[data-pm="cash_app"]').uncheck();
+  await page.locator('.ps-pm[data-pm="venmo"]').uncheck();
+  await page.locator('[data-act="paySendStep"]').click();
+  await page.waitForTimeout(400);
+  ok('choosing no payment method at all is refused',
+     has(await text(page, '.amsheet'), 'at least one payment method'));
+
+  // One method, then preview.
+  await page.locator('.ps-pm[data-pm="venmo"]').check();
+  await page.locator('[data-act="paySendStep"]').click();
+  await page.waitForTimeout(600);
+  const prev = await text(page, '.amsheet');
+  ok('the preview names only the method still ticked',
+     has(prev, 'Venmo') && !has(prev, 'Cash App'), prev.slice(0, 300));
+  /* The reason this dialog exists at all, stated on the screen where an admin
+     would otherwise assume the opposite. */
+  ok('and says plainly that the rate sheet is NOT included',
+     has(prev, 'Not included') && has(prev, 'payment instructions only'), prev.slice(0, 400));
+  ok('and that sending does not mark the retainer paid',
+     has(prev, 'does not mark the retainer paid'));
+
+  /* Mail is unconfigured in this run, so a send is a REAL failure — and it has
+     to be reported as one rather than swallowed into a success message. A send
+     that vanished silently is how "I sent that last week" becomes wrong. */
+  await page.locator('[data-act="paySendGo"]').click();
+  await page.waitForTimeout(900);
+  ok('a failed send says so instead of claiming success',
+     has(await text(page, '.amsheet'), 'not configured'), await text(page, '.amsheet'));
+  ok('and the dialog stays open on the failure, rather than closing over it',
+     await page.locator('.amsheet').count() === 1);
+
+  await page.locator('.amx').click();
+  await page.waitForTimeout(300);
+  ok('closing returns to the desk with the cards intact',
+     await page.locator('.amsheet').count() === 0
+     && await page.locator('.pcard').count() >= 2);
+  await page.close();
+}
+
 /* The Worker refuses a send when a method is switched on with no payment link,
    and that refusal says "add a link in Settings". This screen is what makes
    that sentence true — it shipped as an error with nowhere to go, which is a
