@@ -1868,6 +1868,9 @@ async function wizLinkCase(){
       return paint();
     }
     w.caseNo = want; w.reference = "";
+    // Same flag the preview read sets — see wizRetainerSave for why the skip
+    // must know whether the figure is stored or merely the default.
+    w.retainerStored = r.retainer_stored === true;
     if(r.retainer != null){
       w.retainer = Number(r.retainer);
       if(!w.retainerTouched) wizRetainerInit(w);
@@ -1904,7 +1907,12 @@ async function wizRetainerSave(){
     w.err = "Enter the custom retainer as a dollar amount above zero.";
     return false;
   }
-  if(w.retainer != null && want === w.retainer) return true;
+  /* The skip is only safe when the figure is genuinely STORED. `w.retainer` is
+     whatever the read returned, and a read with nothing stored returns the
+     standard — so comparing against it made "agreed the standard figure" write
+     nothing at all, and that agreement would then move on its own the day the
+     standard changed. `retainerStored` is the server saying which it was. */
+  if(w.retainerStored && w.retainer != null && want === w.retainer) return true;
   try{
     if(w.caseNo){
       await api(`/cases/${encodeURIComponent(w.caseNo)}/retainer`,
@@ -1948,6 +1956,7 @@ async function wizSheetLoad(){
          of a choice the admin has just made. Without the `retainerTouched`
          guard the re-read on the way to Preview would snap the figure they just
          chose back to whatever was stored a moment earlier. */
+      w.retainerStored = r.retainer_stored === true;
       if(r.retainer != null){
         w.retainer = Number(r.retainer);
         if(!w.retainerTouched) wizRetainerInit(w);
@@ -6523,12 +6532,16 @@ async function wizSend(){
   try{
     /* `case_no` only when a case was explicitly LINKED; otherwise the typed
        value travels as `reference`, which is subject-line text and is never
-       looked up. With no case there is nothing to read a retainer from, so the
-       chosen figure rides along for this email. */
+       looked up.
+
+       NO RETAINER IS SENT. The agreed figure was persisted on the way to
+       Preview and the Worker reads it from there — sending it again would make
+       this a second writer, and the selector's current value is not evidence
+       that anybody chose it. That is how an untouched selector quietly reduced
+       an agreement that had already been made. */
     const r = await api(`/sheets/${encodeURIComponent(w.sheet)}/email`,
       {method:"POST", body:{to: w.to, note: w.note, include_intake: w.include,
-        ...(w.caseNo ? {case_no: w.caseNo}
-                     : {reference: w.reference, retainer: wizRetainerWanted(w)}),
+        ...(w.caseNo ? {case_no: w.caseNo} : {reference: w.reference}),
         ...(paying ? {include_payment: true, methods: w.payMethods} : {})}});
     /* §13 — say what actually WENT, read back from the Worker's own answer
        rather than from the boxes that were ticked. */
