@@ -767,7 +767,7 @@ section('Rate sheets');
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  await page.locator('.tabs button', { hasText: 'Rate sheets' }).click();
+  await page.locator('.tabs button', { hasText: 'Rate Sheets' }).click();
   await page.waitForTimeout(400);
   const card = await text(page, '.card');
   ok('the retainer product is offered by its unmistakable label',
@@ -839,7 +839,7 @@ section('An investigator gets no rates at all');
 {
   const page = await newPage();
   await signIn(page, 'dana', 'FieldWork2026x');
-  ok('there is no Rate sheets tab', !(await text(page, '.tabs')).includes('Rate sheets'));
+  ok('there is no Rate Sheets tab', !(await text(page, '.tabs')).includes('Rate Sheets'));
 
   const sheets = await page.evaluate(async () =>
     (await fetch('/portal-api/sheets', { credentials: 'same-origin' })).status);
@@ -1381,7 +1381,7 @@ section('The private send wizard offers payment options; the carrier one never d
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  await page.locator('.tabs button', { hasText: 'Rate sheets' }).click();
+  await page.locator('.tabs button', { hasText: 'Rate Sheets' }).click();
   await page.waitForTimeout(700);
 
   // The carrier sheet first — the absence matters more than the presence.
@@ -1444,7 +1444,7 @@ section('A private retainer is chosen before the sheet goes, and never reset by 
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  await page.locator('.tabs button', { hasText: 'Rate sheets' }).click();
+  await page.locator('.tabs button', { hasText: 'Rate Sheets' }).click();
   await page.waitForTimeout(700);
 
   /* The carrier side first — the absence is the requirement. An insurance
@@ -1551,7 +1551,7 @@ section('A private lead can be sent payment options; an insurance lead cannot');
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  await page.locator('.tabs button', { hasText: 'Leads' }).click();
+  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
   await page.waitForTimeout(600);
 
   const priv = page.locator('.pcard', { hasText: 'API-20260812-4002' });
@@ -1652,7 +1652,7 @@ section('An unmatched case reference does not block Preview');
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  await page.locator('.tabs button', { hasText: 'Rate sheets' }).click();
+  await page.locator('.tabs button', { hasText: 'Rate Sheets' }).click();
   await page.waitForTimeout(500);
   await page.locator('.sheet-card', { hasText: 'Retainer' }).first().click();
   await page.waitForTimeout(400);
@@ -1684,7 +1684,7 @@ section('Sending works before anyone is on the desk, and the history shows it');
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  await page.locator('.tabs button', { hasText: 'Rate sheets' }).click();
+  await page.locator('.tabs button', { hasText: 'Rate Sheets' }).click();
   await page.waitForTimeout(800);
   const view = await text(page, '#app');
 
@@ -1764,7 +1764,7 @@ section('Sending works before anyone is on the desk, and the history shows it');
      view both handle a null case. */
   await page.locator('.tabs button', { hasText: 'Cases' }).click();
   await page.waitForTimeout(300);
-  await page.locator('.tabs button', { hasText: 'Rate sheets' }).click();
+  await page.locator('.tabs button', { hasText: 'Rate Sheets' }).click();
   await page.waitForTimeout(900);
   const hist = await text(page, '#app');
   ok('the screen carries a recent sends history', has(hist, 'Recent sends'));
@@ -1788,7 +1788,7 @@ section('Sending works before anyone is on the desk, and the history shows it');
     status: 500, contentType: 'application/json', body: '{"error":"the history is unavailable"}' }));
   await page.locator('.tabs button', { hasText: 'Cases' }).click();
   await page.waitForTimeout(300);
-  await page.locator('.tabs button', { hasText: 'Rate sheets' }).click();
+  await page.locator('.tabs button', { hasText: 'Rate Sheets' }).click();
   await page.waitForTimeout(900);
   const broken = await text(page, '#app');
   ok('a history that failed to load does NOT claim nothing was sent',
@@ -2033,7 +2033,7 @@ section("The investigator's own navigation");
   for (const t of ['My assignments', 'Today', 'Reports', 'Expenses']) {
     ok(`the investigator gets ${t}`, has(tabs, t), tabs);
   }
-  ok('and none of the office', !has(tabs, 'Rate sheets') && !has(tabs, 'Staff'));
+  ok('and none of the office', !has(tabs, 'Rate Sheets') && !has(tabs, 'Staff'));
 
   await page.locator('.tabs button', { hasText: 'Today' }).click();
   await page.waitForTimeout(300);
@@ -3289,7 +3289,7 @@ section('An invoice from case to PAID');
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  ok('the office gets an Invoices tab', has(await text(page, '.tabs'), 'Invoices'));
+  ok('the office gets a Billing tab', has(await text(page, '.tabs'), 'Billing'));
 
   // Authorize 8 hours on the claims case, then bill it as the flat block.
   await rowFor(page, 'API-20260812-4001').click();
@@ -3348,7 +3348,7 @@ section('An invoice from case to PAID');
 {
   const page = await newPage();
   await signIn(page, 'dana', 'FieldWork2026x');
-  ok('an investigator has no Invoices tab', !has(await text(page, '.tabs'), 'Invoices'));
+  ok('an investigator has no Billing tab', !has(await text(page, '.tabs'), 'Billing'));
   const st = await page.evaluate(async () =>
     (await fetch('/portal-api/invoices', { credentials: 'same-origin' })).status);
   ok('and the invoice book refuses them', st === 403);
@@ -3881,8 +3881,8 @@ section('Leads and intakes: cards, decisions, and the phone-call lead');
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  ok('the office navigation carries Leads & intakes', has(await text(page, '.tabs'), 'Leads'));
-  await page.locator('.tabs button', { hasText: 'Leads' }).click();
+  ok('the office navigation carries Intakes', has(await text(page, '.tabs'), 'Intakes'));
+  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
   await page.waitForTimeout(400);
   const desk = await text(page, '#app');
   ok('early-stage submissions wait as cards', await page.locator('.pcard').count() >= 1, desk.slice(0, 200));
@@ -3926,7 +3926,7 @@ section('Leads and intakes: cards, decisions, and the phone-call lead');
 {
   const page = await newPage();
   await signIn(page, 'dana', 'FieldWork2026x');
-  ok('an investigator gets no leads desk', !has(await text(page, '.tabs'), 'Leads'));
+  ok('an investigator gets no intakes desk', !has(await text(page, '.tabs'), 'Intakes'));
   await page.close();
 }
 
@@ -4143,6 +4143,161 @@ section('Active Surveillance Mode: a field view of the same case');
    drawer never appeared, leaving a phone with NO navigation at all while an
    iPad in landscape looked perfect. Every suite passed, because every test
    either ran wide or clicked inside the case page. */
+/* THE GROUPED NAVIGATION RAIL (owner, 2026-08-16). Three labelled groups, the
+   renamed doors, and the two ACTIONS in their own separated block.
+
+   The labels moved and the TAB KEYS did not, which is the whole reason this
+   change is safe: `paint()` and every loader route on the key, so a rename can
+   never move a destination or a permission. The tests below assert the label
+   and the key separately, on purpose. */
+section('The navigation rail is grouped, renamed, and reachable');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const nav = await text(page, '.tabs');
+
+  for (const g of ['Operations', 'Delivery & Billing', 'Team & System']) {
+    ok(`the office rail carries the ${g} group`, has(nav, g), nav);
+  }
+  const groups = await page.locator('.tabs .navgrp').allInnerTexts();
+  ok('there are exactly three of them, in the intended order',
+     groups.map(s => s.trim().toLowerCase()).join('|') === 'operations|delivery & billing|team & system',
+     groups.join('|'));
+
+  /* A HEADER IS A LABEL, NOT A DOOR. Rendered as a button it would be tabbable,
+     focusable, counted as a destination, and — the real hazard — a candidate
+     for every `.tabs button` hasText click in this suite. */
+  ok('a group header is never a button', await page.locator('.tabs button.navgrp').count() === 0);
+  ok('and never carries an action', await page.locator('.navgrp[data-act]').count() === 0);
+
+  // The renames, in both directions: the new word is there and the old one is gone.
+  ok('Leads & intakes is now Intakes', has(nav, 'Intakes') && !has(nav, 'Leads'), nav);
+  ok('Invoices is now Billing', has(nav, 'Billing') && !has(nav, 'Invoices'), nav);
+  ok('Rate sheets is now title-cased', (await text(page, '.tabs')).includes('Rate Sheets'));
+
+  // ...and the destinations behind them did not move.
+  for (const [label, key] of [['Intakes', 'leads'], ['Billing', 'invoices'], ['Rate Sheets', 'sheets']]) {
+    ok(`${label} still opens data-tab="${key}"`,
+       await page.locator(`.tabs button[data-tab="${key}"]`).count() === 1);
+  }
+
+  // The separated action block.
+  ok('the field and intake doors sit in one separated block',
+     await page.locator('.navfoot').count() === 1);
+  ok('Active Surveillance is inside it',
+     await page.locator('.navfoot .side-surv').count() === 1);
+  ok('so is the intake door', await page.locator('.navfoot .side-intake').count() === 1);
+  ok('and no destination is in there with them',
+     await page.locator('.navfoot button').count() === 2);
+  const lastGroup = await page.locator('.tabs .navgrp').last().boundingBox();
+  const footBox = await page.locator('.navfoot').boundingBox();
+  ok('the block genuinely sits below every group',
+     footBox && lastGroup && footBox.y > lastGroup.y, JSON.stringify([lastGroup, footBox]));
+
+  /* WHERE YOU ARE IS NOT CARRIED BY COLOUR ALONE. The gold rule and the changed
+     background are the look; aria-current is the fact. */
+  ok('the current destination is marked for a screen reader too',
+     await page.locator('.tabs button.on[aria-current="page"]').count() === 1);
+
+  // Reports & Packages — a top-level destination assembled from two existing routes.
+  await page.locator('.tabs button', { hasText: 'Reports & Packages' }).click();
+  await page.waitForTimeout(900);
+  const dl = await text(page, '#app');
+  for (const b of ['Ready to build', 'Packages ready', 'Recently completed']) {
+    ok(`Reports & Packages carries the ${b} band`, has(dl, b), dl.slice(0, 240));
+    /* Either there is work in it or there is a sentence saying what will fill
+       it. A band that is simply blank is the state this portal keeps refusing
+       to ship — it reads the same as a band that failed to load. */
+    const card = page.locator('.card', { hasText: b }).first();
+    ok(`${b} shows work or an empty state that explains itself`,
+       (await card.locator('.pkgcards, .donegrid').count()) > 0
+       || (await card.locator('.empty').count()) > 0,
+       (await card.innerText()).slice(0, 200));
+  }
+  ok('and no fabricated case reached it', !dl.includes('EXAMPLE-'), dl.slice(0, 240));
+
+  /* NO NEW BACKEND. The screen is the two routes that already existed; if a
+     third were ever needed this is where it would show up. */
+  const codes = await page.evaluate(() => Promise.all(
+    ['/portal-api/packages', '/portal-api/completed']
+      .map(u => fetch(u, { headers: { Accept: 'application/json' } }).then(r => r.status))));
+  ok('it reuses /packages and /completed, both already live',
+     codes.join(',') === '200,200', codes.join(','));
+
+  // The Cases lens it now shares a loader with must still work.
+  await page.locator('.tabs button', { hasText: 'Cases' }).click();
+  await page.waitForTimeout(400);
+  await page.locator('.lens', { hasText: 'Completed' }).click();
+  await page.waitForTimeout(800);
+  ok('and the Completed lens inside Cases still loads from the same one writer',
+     (await page.locator('.donegrid, .empty').count()) > 0);
+  await page.close();
+}
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  const nav = await text(page, '.tabs');
+  ok('an investigator gets no Reports & Packages door', !has(nav, 'Reports & Packages'), nav);
+  ok('nor Billing, Rate Sheets or Staff',
+     !has(nav, 'Billing') && !has(nav, 'Rate Sheets') && !has(nav, 'Staff'), nav);
+  ok('their rail is grouped too', await page.locator('.tabs .navgrp').count() === 2);
+  ok('Active Surveillance is in its own block for them as well',
+     await page.locator('.navfoot .side-surv').count() === 1);
+  ok('with no intake door beside it', await page.locator('.navfoot .side-intake').count() === 0);
+  /* THE RAIL IS NOT THE BOUNDARY. Not drawing a door is presentation; the
+     Worker refusing the routes behind it is the security property. */
+  const s = await page.evaluate(() => Promise.all(
+    ['/portal-api/packages', '/portal-api/completed']
+      .map(u => fetch(u, { headers: { Accept: 'application/json' } }).then(r => r.status))));
+  ok('and both routes behind that door still refuse them directly',
+     s.join(',') === '403,403', s.join(','));
+  await page.close();
+}
+
+/* MEASURED, NOT EYEBALLED. Apple's minimum is 44px and this file holds every
+   other phone control to 50-52px; the rail's own padding left an item under
+   the line, which is exactly how the burger shipped at 30px. */
+section('The rail on a phone: 44px targets and nothing sideways');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+  await page.locator('.burger').click();
+  await page.waitForTimeout(400);
+
+  let smallest = 999, which = '';
+  for (const b of await page.locator('.tabs button').all()) {
+    const box = await b.boundingBox();
+    if (box && box.height < smallest) { smallest = box.height; which = (await b.innerText()).trim(); }
+  }
+  ok('every drawer target clears 44px', smallest >= 44, `smallest ${smallest}px on "${which}"`);
+
+  const surv = await page.locator('.navfoot .side-surv').boundingBox();
+  ok('including the field door', surv && surv.height >= 44, JSON.stringify(surv));
+
+  /* SCOPED TO THE RAIL ON PURPOSE. A page-wide overflow check here would be
+     measuring the case cards, not the navigation: `.pcard` is a grid item with
+     the default min-width:auto, so this suite's deliberately hostile long case
+     number widens its own track past the phone. That is a real `.pcard`
+     property, it predates this change, and it belongs to whoever next touches
+     the dashboard — not to an assertion in the navigation section, where it
+     would fail for a reason nobody reading the section name would guess. */
+  const rail = await page.evaluate(() => {
+    const t = document.querySelector('.tabs');
+    const r = t.getBoundingClientRect();
+    return { over: Math.round(t.scrollWidth - t.clientWidth), right: Math.round(r.right), vw: window.innerWidth };
+  });
+  ok('the group headers do not push the drawer wider than itself', rail.over <= 1, JSON.stringify(rail));
+  ok('and the drawer stays inside the phone', rail.right <= rail.vw + 1, JSON.stringify(rail));
+  await page.close();
+}
+
+
 section('A phone can actually reach the navigation');
 {
   const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
@@ -4160,12 +4315,12 @@ section('A phone can actually reach the navigation');
   await page.waitForTimeout(300);
   ok('tapping it opens the drawer', await page.locator('.tabs').isVisible());
   const drawer = await text(page, '.tabs');
-  for (const t of ['Dashboard', 'Cases', 'Leads', 'Invoices', 'Settings']) {
+  for (const t of ['Dashboard', 'Cases', 'Intakes', 'Billing', 'Settings']) {
     ok(`the drawer carries ${t}`, has(drawer, t), drawer);
   }
-  await page.locator('.tabs button', { hasText: 'Leads' }).click();
+  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
   await page.waitForTimeout(700);
-  ok('and navigating from it works', has(await text(page, '#app'), 'Leads'));
+  ok('and navigating from it works', has(await text(page, '#app'), 'awaiting a decision'));
   ok('the drawer closes behind you', !(await page.locator('.tabs').isVisible()));
   await page.close();
 }
@@ -4798,7 +4953,7 @@ section('A lead has its own life, and its sends live on the card');
 
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  await page.locator('.tabs button', { hasText: 'Leads' }).click();
+  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
   await page.waitForTimeout(600);
 
   const card = page.locator('.pcard', { hasText: 'API-20260812-4005' });
@@ -4814,7 +4969,7 @@ section('A lead has its own life, and its sends live on the card');
   await page.waitForTimeout(600);
   await page.reload();
   await page.waitForTimeout(900);
-  await page.locator('.tabs button', { hasText: 'Leads' }).click();
+  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
   await page.waitForTimeout(600);
   ok('a status set by hand survives a reload',
      await page.locator('.pcard', { hasText: 'API-20260812-4005' })

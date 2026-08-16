@@ -216,6 +216,30 @@
      eyeballed. */
   .burger{display:none;background:transparent;border:0;color:#fff;font-size:1.4rem;cursor:pointer;
     padding:0;min-width:50px;min-height:50px;align-items:center;justify-content:center;}
+  /* NAVIGATION GROUPS (owner, 2026-08-16). The rail was eight flat doors that
+     said nothing about which part of the business each belongs to. Three
+     labelled groups do.
+
+     The headers are DIVs, never buttons. Every selector in this file and in the
+     suite reaches the rail as `.tabs button`, so a header rendered as a button
+     would be tabbable, focusable, counted as a destination and — worst — a
+     candidate for a `hasText` click. A div cannot be any of those by accident. */
+  .navgrp{font-size:.67rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;
+    color:#7f97b3;padding:15px 12px 5px;-webkit-user-select:none;user-select:none;}
+  .navgrp:first-child{padding-top:2px;}
+  /* 44px is Apple's minimum and this file holds every other phone control to
+     50-52px. The rail's own padding put a desktop item at about 41px and a
+     drawer item barely over the line; the floor is stated rather than implied,
+     and a test measures it at phone width. */
+  body.withnav .tabs button{min-height:44px;}
+  /* The rail's one gold accent: it marks where you are, ALONGSIDE the changed
+     background and aria-current, never instead of them. Nothing in this portal
+     may be carried by colour alone. */
+  body.withnav .tabs button.on{box-shadow:inset 3px 0 0 var(--gold);}
+  /* The two doors that DO something rather than going somewhere, kept apart
+     from the destinations above them and pinned to the foot of the rail. */
+  .navfoot{margin-top:auto;display:flex;flex-direction:column;gap:10px;
+    padding-top:16px;border-top:1px solid #23405f;}
   @media(min-width:900px){
     body.withnav .tabs{position:fixed;left:0;top:58px;bottom:0;width:198px;flex-direction:column;
       align-items:stretch;gap:2px;padding:14px 10px;margin:0;background:#13273f;border-radius:0;
@@ -224,12 +248,15 @@
       padding:9px 12px;font-weight:600;}
     body.withnav .tabs button.on{background:#1f3a58;color:#fff;}
     body.withnav .tabs button:hover{background:#1a3350;color:#fff;}
-    body.withnav .tabs .side-intake{margin-top:auto;display:block;text-align:center;background:var(--gold,#c99a3b);
+    /* .navfoot owns the pin to the bottom now; these two only describe
+       themselves. Two rules both claiming margin-top is how one of them
+       silently stops mattering. */
+    body.withnav .tabs .side-intake{display:block;text-align:center;background:var(--gold,#c99a3b);
       color:#13273f;font-weight:800;border-radius:9px;padding:11px 12px;text-decoration:none;
       font:inherit;font-weight:800;border:0;cursor:pointer;width:100%;}
     /* The field door, at the top level. Outlined rather than gold: it is a
        primary action but it must not out-shout "+ Intake a Client". */
-    body.withnav .tabs .side-surv{margin-top:14px;display:block;text-align:left;
+    body.withnav .tabs .side-surv{display:block;text-align:left;
       background:#0d1826;color:#e8eef5;border:1px solid #23405f;border-radius:9px;
       padding:10px 12px;font:inherit;font-weight:700;cursor:pointer;width:100%;}
     body.withnav .tabs .side-surv:hover{background:#16283d;color:#fff;}
@@ -237,15 +264,21 @@
   }
   @media(max-width:899px){
     body.withnav .tabs{display:none;}
+    /* The drawer runs to bottom:0, so its foot block lands on the home
+       indicator unless it is cleared. max() is correct whether or not the
+       viewport reports an inset — calc(14px + env(...)) adds nothing at all
+       without viewport-fit=cover, which this page deliberately does not set.
+       The field bar and the case section bar already use exactly this. */
     body.withnav.navopen .tabs{display:flex;position:fixed;left:0;top:0;bottom:0;width:76%;max-width:300px;
-      flex-direction:column;align-items:stretch;gap:2px;padding:60px 12px 14px;background:#13273f;z-index:60;
+      flex-direction:column;align-items:stretch;gap:2px;background:#13273f;z-index:60;
+      padding:60px 12px max(14px, env(safe-area-inset-bottom));
       overflow-y:auto;box-shadow:0 0 0 100vmax rgba(9,18,30,.45);}
     body.withnav.navopen .tabs button{text-align:left;color:#c9d6e4;background:transparent;border-radius:8px;padding:11px 12px;}
     body.withnav.navopen .tabs button.on{background:#1f3a58;color:#fff;}
-    body.withnav.navopen .tabs .side-intake{margin-top:auto;display:block;text-align:center;
+    body.withnav.navopen .tabs .side-intake{display:block;text-align:center;
       background:var(--gold,#c99a3b);color:#13273f;font-weight:800;border-radius:9px;padding:11px;text-decoration:none;
       font:inherit;font-weight:800;border:0;cursor:pointer;width:100%;}
-    body.withnav.navopen .tabs .side-surv{margin-top:14px;display:block;text-align:left;
+    body.withnav.navopen .tabs .side-surv{display:block;text-align:left;
       background:#0d1826;color:#e8eef5;border:1px solid #23405f;border-radius:9px;
       padding:11px 12px;font:inherit;font-weight:700;cursor:pointer;width:100%;}
     /* The base rule below is deliberately ABOVE this media query. It used to
@@ -257,6 +290,9 @@
        container, and without it the 50px box holds an off-centre glyph. */
     .burger{display:inline-flex;}
   }
+  /* Reports & Packages stacks three existing panels; the gap lives on the
+     container so no panel carries a margin that depends on its position. */
+  .deliverystack{display:grid;gap:14px;}
   /* Case Package cards (UIBUILD P3) */
   .pkgcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px;margin-top:10px;}
   .pcard{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;}
@@ -1049,27 +1085,53 @@ function resetView(state){
 }
 
 function shell(inner){
-  // Simplified navigation for the field, exactly as the handoff draws it —
-  // not a miniature admin portal. Calendar and Availability join when their
-  // features exist rather than sitting as dead tabs.
-  const item = (id, label) => `<button class="${TAB === id ? "on" : ""}" data-act="tab" data-tab="${id}">${label}</button>`;
-  const tabs = ME.role === "admin"
-    ? item("dashboard", "&#8962; Dashboard")
-      + item("cases", "&#128193; Cases")
-      + item("leads", "&#128234; Leads & intakes")
-      + item("calendar", "&#128197; Calendar")
-      + item("sheets", "&#128179; Rate sheets")
-      + item("invoices", "&#129534; Invoices")
-      + item("staff", "&#128101; Staff")
-      + item("settings", "&#9881; Settings")
-      + `<button class="side-surv" data-act="surveillance">&#128373; Active surveillance</button>`
-      + `<button class="side-intake" data-act="tab" data-tab="newlead">+ Intake a Client</button>`
-    : item("cases", "&#128193; My assignments")
-      + `<button class="side-surv" data-act="surveillance">&#128373; Active surveillance</button>`
-      + item("today", "&#9728; Today")
-      + item("calendar", "&#128197; Calendar")
-      + item("myreports", "&#128196; Reports")
-      + item("myexpenses", "&#129534; Expenses");
+  /* Simplified navigation for the field, exactly as the handoff draws it —
+     not a miniature admin portal. Calendar and Availability join when their
+     features exist rather than sitting as dead tabs.
+
+     GROUPED (owner, 2026-08-16). The same doors and the same TAB keys — the
+     keys are what `paint()` and every loader route on, so renaming a LABEL
+     never renames a destination. `leads`, `invoices` and `sheets` are still
+     the keys behind Intakes, Billing and Rate Sheets.
+
+     Tasks & Follow-ups and Clients & Contacts are deliberately absent. Neither
+     has a cross-case route behind it, and this file's rule is that a tab
+     arrives with its feature rather than sitting dead. */
+  const item = (id, label) => `<button class="${TAB === id ? "on" : ""}"${
+    TAB === id ? ` aria-current="page"` : ""} data-act="tab" data-tab="${id}">${label}</button>`;
+  const group = (title, ...items) => `<div class="navgrp">${title}</div>${items.join("")}`;
+
+  /* The two doors that DO something rather than going somewhere. Kept in one
+     separated block at the foot of the rail so they read as actions, and so
+     Active Surveillance — the field view's only top-level entrance — is not
+     buried mid-list where it sat for the investigator. */
+  const foot = `<div class="navfoot">
+    <button class="side-surv" data-act="surveillance">&#128373; Active Surveillance</button>${
+    ME.role === "admin"
+      ? `<button class="side-intake" data-act="tab" data-tab="newlead">+ Intake a Client</button>` : ""}
+  </div>`;
+
+  const tabs = (ME.role === "admin"
+    ? group("Operations",
+        item("dashboard", "&#8962; Dashboard"),
+        item("cases", "&#128193; Cases"),
+        item("leads", "&#128234; Intakes"),
+        item("calendar", "&#128197; Calendar"))
+      + group("Delivery &amp; Billing",
+        item("delivery", "&#128230; Reports &amp; Packages"),
+        item("sheets", "&#128179; Rate Sheets"),
+        item("invoices", "&#129534; Billing"))
+      + group("Team &amp; System",
+        item("staff", "&#128101; Staff"),
+        item("settings", "&#9881; Settings"))
+    : group("Operations",
+        item("cases", "&#128193; My assignments"),
+        item("today", "&#9728; Today"),
+        item("calendar", "&#128197; Calendar"))
+      + group("Delivery",
+        item("myreports", "&#128196; Reports"),
+        item("myexpenses", "&#129534; Expenses"))
+    ) + foot;
   // The schema notice comes first and is specific, because it is the one cause
   // that explains every other symptom at once.
   const schema = SCHEMA_MISSING.length ? `<div class="loaderr">
@@ -1112,6 +1174,17 @@ async function loadPackages(){
   try{ PKGS = await api("/packages"); }
   catch(e){ PKGS = {packages: [], outstanding: 0}; LOAD_ERR = e.message; }
   paint();
+}
+
+/* One writer for the completed desk, because it now has two doors — the Cases
+   lens and Reports & Packages. Fetched on every arrival so the desk is never
+   stale after a case was closed in another tab, and a failure is CARRIED
+   (completedDesk draws COMPLETED.error) rather than painting an empty desk,
+   which would read as "nothing has ever been finished". */
+function loadCompleted(){
+  COMPLETED = null; paint();
+  return api("/completed").then(d => { COMPLETED = d; paint(); })
+    .catch(e => { COMPLETED = {completed: [], error: e.message}; paint(); });
 }
 
 /* scope "field" (UIBUILD P15) is the investigator's version of both helpers:
@@ -1554,7 +1627,7 @@ function leadsView(){
   };
 
   return `<div class="card">
-    <div class="bar"><h2 style="margin:0">Leads &amp; intakes</h2>
+    <div class="bar"><h2 style="margin:0">Intakes</h2>
       <span class="count">${fresh.length} awaiting a decision</span>
       <button class="btn sm" data-act="tab" data-tab="newlead" style="margin-left:auto">+ Intake a client</button></div>
     ${LEAD_MSG ? `<div class="note">${esc(LEAD_MSG)}</div>` : ""}
@@ -2364,6 +2437,55 @@ function completedDesk(q){
   </div>`).join("")}</div>`;
 }
 
+/* REPORTS & PACKAGES (owner, 2026-08-16) — a top-level destination assembled
+   from two routes that already existed. `/packages` is the same payload the
+   dashboard reads; `/completed` is the desk that was reachable only by turning
+   a lens inside Cases, which is a strange place to keep "what did we finish".
+   There is no new Worker route, no new query and no new table behind this
+   screen, and the dashboard is untouched.
+
+   THE TWO BANDS ARE DERIVED, NOT STORED. "Ready to build" and "Packages ready"
+   read the same fields `pkgNextStep` already decides on — an approved report
+   with no finalized build, and a finalized build — so the three screens cannot
+   disagree about what stage a case is at.
+
+   Both routes are admin-only in the Worker, which is why the investigator's
+   rail does not carry this and why the role check below is a guard rather than
+   the boundary. The boundary is in `worker.js`, as always. */
+function deliveryView(){
+  if(ME.role !== "admin") return casesView();
+  /* Three states kept apart, the way the case list keeps them: did not load,
+     loaded and genuinely empty, and — for the completed half, inside
+     completedDesk — failed. An empty screen must never stand in for a screen
+     that could not be read. */
+  if(!PKGS) return `<div class="card"><div class="empty">Loading reports and packages&hellip;</div></div>`;
+  const all = PKGS.packages || [];
+  const ready = all.filter(p => ["approved", "delivered"].includes(p.report_status)
+    && p.build_status !== "finalized");
+  const built = all.filter(p => p.build_status === "finalized");
+
+  const band = (title, count, list, empty) => `<div class="card">
+    <div class="bar"><h2 style="margin:0">${title}</h2>
+      <span class="count">${count}</span></div>
+    ${list.length ? `<div class="pkgcards">${list.map(pkgCard).join("")}</div>`
+      : `<div class="empty">${empty}</div>`}
+  </div>`;
+
+  return `<div class="deliverystack">
+    ${band("Ready to build", `${ready.length} awaiting a package`, ready,
+      `Nothing is waiting on a package. A case arrives here once its report is
+       approved and no client package has been finalized yet.`)}
+    ${band("Packages ready", `${built.length} finalized`, built,
+      `No finalized packages yet. A package is built and finalized from a
+       case's Package tab.`)}
+    <div class="card">
+      <div class="bar"><h2 style="margin:0">Recently completed</h2>
+        <span class="count">closed, complete, or package finalized</span></div>
+      ${completedDesk("")}
+    </div>
+  </div>`;
+}
+
 /* UIBUILD P20 — the working material moved off the case list into Settings,
    where trying things out is clearly separate from doing the work. The one
    Hide button stays over the list, and the empty state still offers the
@@ -2824,6 +2946,7 @@ function paint(){
     : TAB === "leads" ? leadsView()
     : TAB === "newlead" ? newLeadView()
     : TAB === "sheets" ? sheetsView()
+    : TAB === "delivery" ? deliveryView()
     : TAB === "invoices" ? invoicesView()
     : TAB === "today" ? todayView()
     : TAB === "calendar" ? calendarView()
@@ -7021,6 +7144,10 @@ document.addEventListener("click", ev => {
        is fetched when that screen is opened rather than held from sign-in. */
     if(TAB === "sheets" && ME.role === "admin"){ SEND_MSG = ""; loadSends(); }
     if(TAB === "dashboard"){ PKGS = null; loadPackages(); }
+    /* Reports & Packages reads the two routes it is assembled from, both
+       admin-only in the Worker. Fetched on arrival for the same reason the
+       dashboard refetches: a stale package stage is a wrong next step. */
+    if(TAB === "delivery" && ME.role === "admin"){ PKGS = null; loadPackages(); loadCompleted(); }
     // Arriving at Settings is a fresh start: drafts are for recovering from a
     // refusal in front of you, not for surviving a trip around the portal.
     if(TAB === "settings" && ME.role === "admin"){
@@ -7075,13 +7202,8 @@ document.addEventListener("click", ev => {
        it reloads rather than repaints. Painting alone would show the previous
        set under the new label. */
     if(CASE_VIEW === "archived" || CASE_VIEW === "deleted" || wasQueried){ render(); }
-    else if(CASE_VIEW === "completed"){
-      // Fetched on every turn of the lens, so the desk is never stale after
-      // a case was closed in another tab — and errors show, not vanish.
-      COMPLETED = null; paint();
-      api("/completed").then(d => { COMPLETED = d; paint(); })
-        .catch(e => { COMPLETED = {completed: [], error: e.message}; paint(); });
-    } else paint();
+    else if(CASE_VIEW === "completed"){ loadCompleted(); }
+    else paint();
   }
   else if(act === "addDemo"){ addDemoCase(); }
   else if(act === "clearDemo"){ clearDemoCases(); }
