@@ -433,6 +433,17 @@ refused by name. A genuinely new prospect matches nothing and sends normally,
 which is asserted — without that assertion this guard could quietly become the
 block the owner removed.
 
+**It matches exactly, on named fields only, and that is not a detail.** The
+first version scanned the whole payload with `instr` — a *substring* search — so
+a private client at `jane@example.com` was refused because an unrelated claims
+payload contained `mary.jane@example.com`. A guard that blocks real private
+clients is the same class of workflow defect this whole area exists to fix, and
+worse for being dressed as a security refusal naming a claim the client has
+nothing to do with. `json_extract` on `adjuster_email` / `billing_email` plus an
+equality test on `client_email` is what it does now, wrapped in `json_valid`
+inside a CASE because `json_extract` *raises* on malformed JSON and a boundary
+check must never turn one bad row into a failed send.
+
 Its limit is stated rather than papered over: it recognises addresses the system
 has **seen**. An adjuster who has never appeared on a claims intake is not known
 to be one. It closes the realistic case — emailing someone already on a claim —
@@ -570,8 +581,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1105 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 843 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 1120 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 850 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,

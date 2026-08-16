@@ -4740,6 +4740,43 @@ section('Payment instructions can go on their own, and never to a carrier');
        body: { to: 'stranger@example.com', name: 'New Caller' } })).status === 200);
   ok('and their payment options really went', lastBody !== null);
 
+  /* THE GUARD MUST NOT REJECT UNRELATED PRIVATE CLIENTS (Codex stop-time
+     review, second pass). The first version searched the whole payload with
+     `instr`, a SUBSTRING search — so a private client at `jane@example.com` was
+     refused because an unrelated claims payload contained
+     `mary.jane@example.com`. That is a real workflow block wearing a security
+     refusal, and it names a claim assignment the client has nothing to do with.
+
+     Planted as the exact shape that broke: one address a strict suffix of the
+     other, in a claims payload, in the field the guard reads. */
+  await ingest(env, { case_no: 'API-POC3', carrier: 'Gamma Mutual', claim_number: 'GM-1',
+                      client_name: 'G. Adjuster', client_email: 'mary.jane@example.com',
+                      adjuster_email: 'mary.jane@example.com', subject_name: 'E' });
+  lastBody = null;
+  const suffix = await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+    body: { to: 'jane@example.com', name: 'Jane' } });
+  ok('a private client whose address is a SUFFIX of a carrier\'s is not refused',
+     suffix.status === 200, String(suffix.status));
+  ok('and their payment options really went', lastBody !== null);
+  /* The positive control beside it — without this, the assertion above would
+     pass just as happily on a guard that had stopped working altogether. */
+  lastBody = null;
+  ok('while the carrier whose address it really is IS still refused',
+     (await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+       body: { to: 'mary.jane@example.com' } })).status === 400);
+  ok('and nothing went to them', lastBody === null);
+  /* An address sitting in free text rather than an email field is not a
+     carrier contact either — `json_extract` reads named fields, so a note
+     mentioning someone cannot blocklist them. */
+  await ingest(env, { case_no: 'API-POC4', carrier: 'Delta Mutual', claim_number: 'DM-1',
+                      client_name: 'D. Adjuster', client_email: 'd.adjuster@carrier.example',
+                      objective: 'Forward anything to referrals@example.com', subject_name: 'F' });
+  lastBody = null;
+  ok('an address merely mentioned in a note does not become a carrier contact',
+     (await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+       body: { to: 'referrals@example.com' } })).status === 200);
+  ok('and that send really went', lastBody !== null);
+
   /* WHAT PRE-CASE DID NOT RELAX. A reference that DOES resolve to a claim
      assignment is still refused — the separation the owner asked to preserve
      rests on the product being sent and on this check, not on whether a lookup

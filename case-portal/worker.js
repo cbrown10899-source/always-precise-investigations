@@ -608,12 +608,28 @@ const sheetTakesPayment = sheetId => sheetId === 'private_retainer';
    pre-case flow. It only fires on an address the system already holds against
    a claims submission.
 
-   `client_email` is the denormalised column the schema keeps so queries do not
-   parse JSON, and it is checked first. The payload is also scanned, because on
-   a claims intake the adjuster's address can be in `adjuster_email` or
-   `billing_email` rather than `client_email` — `instr` is used rather than
-   `json_extract` to avoid depending on the JSON extension in a boundary check.
-   Volume here is a few hundred rows, so a scan is not a concern.
+   MATCHING IS EXACT, ON NAMED FIELDS ONLY (Codex stop-time review, second
+   pass — "the carrier guard can reject unrelated private clients").
+
+   The first version scanned the whole payload with `instr`, which is a
+   SUBSTRING search, so a private client at `jane@example.com` was refused
+   because some unrelated claims payload happened to contain
+   `mary.jane@example.com`. Confirmed rather than reasoned about: `instr` finds
+   the shorter address at position 7 of the longer one. A guard that stops real
+   private clients being sent payment instructions is a workflow defect of
+   exactly the kind this unit exists to fix — and a confusing one, since the
+   refusal names a claim assignment the client has nothing to do with.
+
+   So the payload is read with `json_extract` on the two fields that actually
+   hold a carrier's address, and compared for EQUALITY. `client_email` — the
+   denormalised column the schema keeps so queries need not parse JSON — is
+   compared the same way. A substring can no longer match anything, and neither
+   can an address quoted inside a free-text note.
+
+   `json_valid` guards the extract inside a CASE, because `json_extract` RAISES
+   on malformed JSON rather than returning null, and a boundary check must never
+   be able to turn one bad row into a failed send. CASE is used rather than AND
+   because it is the form whose evaluation order SQLite guarantees.
 
    KNOWN LIMIT, stated rather than papered over: this recognises addresses the
    system has SEEN. An adjuster who has never appeared on a claims intake is not
@@ -626,7 +642,11 @@ async function recipientIsCarrier(env, to) {
     `SELECT case_no FROM submissions
       WHERE kind = 'claims'
         AND (lower(COALESCE(client_email, '')) = ?1
-             OR instr(lower(COALESCE(payload, '')), ?1) > 0)
+             OR CASE WHEN json_valid(payload)
+                     THEN ?1 IN (
+                       lower(COALESCE(json_extract(payload, '$.adjuster_email'), '')),
+                       lower(COALESCE(json_extract(payload, '$.billing_email'), '')))
+                     ELSE 0 END)
       LIMIT 1`).bind(addr).first();
   return row ? row.case_no : null;
 }
