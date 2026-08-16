@@ -2610,6 +2610,105 @@ section('The retainer balance on a private case');
 
 /* The invoice workflow (INVOICING.md): CASE -> CREATE -> REVIEW -> document ->
    BILL -> payment -> PAID, driven through the page. */
+/* RECORD PAYMENT IS ON THE CASE OVERVIEW (owner, WORKFLOW-SIMPLIFICATION §1 —
+   "Make Record Payment easy to reach").
+
+   It existed only inside the retainer block on Admin → Authorization: a section
+   group and a tab in, then a scroll. Overview had been showing Retainer and
+   Balance the whole time with no way to act on them and no pointer to where you
+   could. These assert the control is on the panel a case OPENS on, that it is
+   the SAME form and the same flow rather than a second one, and that the money
+   boundary did not move. */
+section('Record payment is reachable from the case overview');
+{
+  await post('/ingest', {
+    case_no: 'API-20260812-4009', service: 'Surveillance',
+    client_name: 'Overview Client', client_phone: '4345550199',
+    subject_name: 'Overview Subject', objective: 'Establish whereabouts',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4009').click();
+  await page.waitForTimeout(500);
+
+  /* Deliberately NO wsTab() call between opening the case and finding the
+     control. A test that navigated first would pass just as well before this
+     change, and would be proving nothing. */
+  const summary = await text(page, '.ovcard');
+  ok('the case opens on a summary carrying the retainer and the balance',
+     has(summary, 'Retainer') && has(summary, 'Balance'), summary.slice(0, 200));
+  ok('and Record payment is right there, with no tab to find first',
+     await page.locator('.ovcard [data-act="retOpen"]').count() === 1);
+  ok('offered once, not duplicated onto the page',
+     await page.locator('[data-act="retOpen"]').count() === 1);
+
+  await page.locator('.ovcard [data-act="retOpen"]').click();
+  await page.waitForTimeout(300);
+  ok('it opens the existing form, in place on the overview',
+     await page.locator('.ovcard #ret_amt').count() === 1
+     && await page.locator('.ovcard #ret_method').count() === 1
+     && await page.locator('.ovcard #ret_date').count() === 1
+     && await page.locator('.ovcard #ret_ref').count() === 1);
+  const methods = await page.locator('#ret_method option').allInnerTexts();
+  ok('with the same five accepted methods and nothing else',
+     ['Cash App', 'Venmo', 'Check', 'Cash', 'ACH / BILL'].every(m => methods.includes(m))
+     && !methods.some(m => /credit|other/i.test(m)), methods.join('|'));
+
+  await page.locator('#ret_amt').fill('600');
+  await page.locator('#ret_method').selectOption('cash_app');
+  await page.locator('#ret_date').fill('2026-08-15');
+  await page.locator('#ret_ref').fill('Cash App note: deposit');
+  await page.locator('[data-act="retSave"]').click();
+  await page.waitForTimeout(900);
+  ok('recording it from the overview is confirmed there',
+     has(await text(page, '.ovcard'), 'Payment recorded'), (await text(page, '.ovcard')).slice(0, 200));
+  ok('and the form closes behind it',
+     await page.locator('.ovcard #ret_amt').count() === 0);
+
+  /* THE SAME FLOW, NOT A SECOND ONE. The payment started on the overview has
+     to be the payment the Authorization panel knows about — same route, same
+     ledger — or the office would have two places that disagree about money. */
+  await wsTab(page, 'Authorization');
+  const auth = await text(page, '#dlgBody');
+  ok('the payment recorded from the overview is on the Authorization panel',
+     has(auth, 'Cash App') && has(auth, '600'), auth.slice(0, 400));
+  ok('with the reference typed on the overview',
+     has(auth, 'Cash App note: deposit'));
+  ok('and it counts as money received, not merely requested',
+     has(auth, 'Retainer received') && has(auth, 'Received'));
+  ok('the Authorization panel still offers its own Record payment',
+     await page.locator('[data-act="retOpen"]').count() === 1);
+  await page.close();
+}
+{
+  /* A CLAIM ASSIGNMENT IS NOT A RETAINER CASE. The route refuses one by name;
+     the overview must not offer the control in the first place. */
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  ok('a claim assignment offers no Record payment on its overview',
+     await page.locator('[data-act="retOpen"]').count() === 0);
+  ok('and shows authorization rather than a retainer',
+     has(await text(page, '.ovcard'), 'Authoriz'), (await text(page, '.ovcard')).slice(0, 200));
+  await page.close();
+}
+{
+  /* An investigator never reaches a money control. The overview panel is on
+     the admin branch of the dispatch and `retainer` is admin-only in the
+     payload; this is the third guard, asserted on the screen itself. */
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  ok('an investigator opening their case gets no Record payment control',
+     await page.locator('[data-act="retOpen"]').count() === 0);
+  ok('and no retainer figure anywhere on it',
+     !has(await text(page, '#dlgBody'), 'retainer'), (await text(page, '#dlgBody')).slice(0, 200));
+  await page.close();
+}
+
 section('An invoice from case to PAID');
 {
   const page = await newPage();

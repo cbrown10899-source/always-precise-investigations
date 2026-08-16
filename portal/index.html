@@ -3091,6 +3091,32 @@ function retainerFormHtml(r){
   </div>`;
 }
 
+/* RECORD PAYMENT WHERE THE MONEY IS ALREADY SHOWN (owner, WORKFLOW-SIMPLIFICATION
+   §1 — "Make Record Payment easy to reach").
+
+   The control existed only inside the retainer block on Admin &rarr; Authorization,
+   which is a section group and a tab deep: Cases, the case, Admin, Authorization,
+   then scroll. Overview had been showing Retainer and Balance the whole time and
+   offered no way to act on them, and no pointer to where you could.
+
+   THIS IS THE SAME CONTROL, not a second one. Same `retOpen` action, same
+   `retainerFormHtml`, same `RET_*` state, same route — so a payment started here
+   and a payment started on Authorization are the one flow, including the
+   idempotency token and the indeterminate-attempt escape. Nothing about
+   recording a payment changes; only where it can be started.
+
+   Money stays admin-only on both sides: `overviewPanel` is reached only on the
+   admin branch of the panel dispatch, and `authorizationFor` puts `retainer` in
+   the payload only `if (forAdmin)`. The role check here is the third, because a
+   control that spends money should not rely on a caller staying admin-only. */
+function ovRecordPaymentHtml(r){
+  if(ME.role !== "admin" || !r) return "";
+  return `<div class="ov-row"><span>Payment</span>
+      <button class="btn sm" data-act="retOpen">Record payment</button></div>
+    ${RET_FORM ? retainerFormHtml(r) : ""}
+    ${!RET_FORM && RET_MSG ? `<div class="${RET_ERR ? "err" : "linkbox"}">${esc(RET_MSG)}</div>` : ""}`;
+}
+
 /* The activity panel is the TIMELINE (UIBUILD P10): the day's story first,
    with one prominent + Add activity that opens the sheet. The form no longer
    sits on the page. */
@@ -4535,6 +4561,7 @@ function overviewPanel(s, a){
           : (a.retainer
               ? row("Retainer", "$" + a.retainer.amount.toLocaleString())
                 + row("Balance", "$" + a.retainer.remaining.toLocaleString())
+                + ovRecordPaymentHtml(a.retainer)
               : row("Type", "Private client"))}
         ${row("Requested start", p.start_date)}
         ${row("Priority", p.priority)}
