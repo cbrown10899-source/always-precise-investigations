@@ -6835,6 +6835,26 @@ section('A deleted case cannot be worked on, and stops appearing in working view
   ok('with a refusal naming restore as the way back',
      /restore the case/i.test(arcBody.error || ''), arcBody.error);
   ok('and flagged as archived rather than deleted', arcBody.case_archived === true);
+  /* THE BODY-ADDRESSED ROUTES ARE THE HALF THAT WENT MISSING. The two send
+     routes name their case in the body, where the router's gate cannot see it,
+     so they check for themselves — and the first version taught them only the
+     deleted rule. An archived case went on emailing clients and writing
+     send_log rows long after every path-addressed write was refused. */
+  lastBody = null;
+  const arcSheet = await call(env, '/sheets/private_retainer/email', { method: 'POST',
+    cookie: admin, body: { to: 'gone@example.com', case_no: 'API-GONE-1', include_intake: true } });
+  ok('a rate sheet cannot be emailed against an ARCHIVED case either',
+     arcSheet.status === 409, String(arcSheet.status));
+  ok('and nothing was sent', lastBody === null);
+  lastBody = null;
+  const arcPay = await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+    body: { to: 'gone@example.com', case_no: 'API-GONE-1', methods: ['venmo'] } });
+  ok('nor payment instructions', arcPay.status === 409, String(arcPay.status));
+  ok('and nothing was sent for those either', lastBody === null);
+  ok('so no send was recorded against an archived case',
+     Number(env.DB.prepare(
+       "SELECT COUNT(*) AS n FROM send_log WHERE case_no = 'API-GONE-1'").first().n) === 0);
+
   ok('an archived case leaves the dashboard alerts too',
      !JSON.stringify(await jsonOf(await call(env, '/summary', { cookie: admin })))
        .includes('API-GONE-1'));

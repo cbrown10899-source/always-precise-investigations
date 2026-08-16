@@ -617,7 +617,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1329 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 1334 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 906 checks: the page against the real Worker
 ```
 
@@ -778,8 +778,14 @@ well as a filter:
 - **Invoices and builds are addressed by id**, so the case number is not in the
   path; the gate resolves it.
 - **The two send routes name the case in the BODY**, so the router cannot see
-  it and each checks for itself. An *unresolvable* reference still sends — the
-  pre-case rule — only a case that exists and is deleted is refused.
+  it and each checks for itself, through **one shared `caseSendRefusal()`**.
+  That helper exists because the first version was two copies and they drifted
+  immediately: both learned the deleted rule and neither learned the archived
+  one, so an archived case went on emailing clients and writing `send_log` rows
+  long after every path-addressed write was refused. A third send route must not
+  be able to pick up half the rule. An *unresolvable* reference still sends —
+  the pre-case rule — only a case that exists and has been filed away is
+  refused.
 - **`/delete` and `/undelete` are the way out** and pass the gate. Matched on
   the whole path: `/cases/:no/activity/:id/delete` also ends in "delete", and
   letting that through would leave a deleted case's timeline editable.

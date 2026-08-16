@@ -1082,12 +1082,12 @@ async function emailSheet(request, env, user, id) {
       .bind(caseNo).first();
     if (lead) {
       /* The case is named in the BODY here, not the path, so the router's gate
-         does not see it. A deleted case must not be able to email a client —
-         that was the worst of what the first version allowed, and it really
-         sent. An UNRESOLVABLE reference still sends, as the pre-case work
-         requires: only a case that exists and is deleted is refused. */
-      const gone = await deletedOf(env, caseNo);
-      if (gone) return json({ error: DELETED_CASE(caseNo), case_deleted: true }, 409);
+         does not see it. A deleted or archived case must not be able to email a
+         client — that was the worst of what earlier versions allowed, and it
+         really sent. An UNRESOLVABLE reference still sends, as the pre-case work
+         requires: only a case that exists and has been filed away is refused. */
+      const refusal = await caseSendRefusal(env, caseNo);
+      if (refusal) return refusal;
       linkedCase = caseNo;
       const wanted = lead.kind === 'claims' ? 'insurance_assignment' : 'private_retainer';
       if (id !== wanted) {
@@ -1318,9 +1318,10 @@ async function emailPaymentOptions(request, env, user) {
     }
     // Past the refusal, so anything found here is a private lead: a real case.
     if (lead) {
-      // Same body-not-path reason as the sheet send: the router cannot see it.
-      const gone = await deletedOf(env, caseNo);
-      if (gone) return json({ error: DELETED_CASE(caseNo), case_deleted: true }, 409);
+      // Same body-not-path reason as the sheet send, and the same one helper —
+      // two copies of this rule is exactly how the archived half went missing.
+      const refusal = await caseSendRefusal(env, caseNo);
+      if (refusal) return refusal;
       linkedCase = caseNo;
     }
   }
@@ -2103,6 +2104,26 @@ const DELETED_CASE = caseNo =>
 const ARCHIVED_CASE = caseNo =>
   `${caseNo} is archived, so nothing can be recorded against it. `
   + 'Restore the case first — it comes back exactly as it was.';
+
+/* THE SEND ROUTES NAME THEIR CASE IN THE BODY, where the router's gate cannot
+   see it, so they have to ask for themselves.
+
+   ONE function rather than two copies, because the first version of this was
+   two copies and they drifted immediately: both learned the deleted rule and
+   neither learned the archived one, so an archived case went on emailing
+   clients and writing `send_log` rows long after every path-addressed write was
+   refused (Codex stop-time review, 2026-08-16). A third send route must not be
+   able to pick up half the rule.
+
+   Called ONLY once the reference has resolved to a real case. An unresolvable
+   one still sends — that is the pre-case rule, and it is not weakened here. */
+async function caseSendRefusal(env, caseNo) {
+  const gone = await deletedOf(env, caseNo);
+  if (gone) return json({ error: DELETED_CASE(caseNo), case_deleted: true }, 409);
+  const filed = await archiveOf(env, caseNo);
+  if (filed) return json({ error: ARCHIVED_CASE(caseNo), case_archived: true }, 409);
+  return null;
+}
 
 /* A DAY THAT IS STILL RUNNING CANNOT BE FILED AWAY. Archiving or deleting a
    case whose clock is open would strand that day: the case leaves the views, so
