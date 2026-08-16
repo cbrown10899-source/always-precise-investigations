@@ -617,8 +617,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1452 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 945 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 1464 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 947 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
@@ -944,6 +944,14 @@ be open: one admin at the desk could silently end the day of one standing in the
 rain. It now takes `allowOthers`, set **only** by `/cases/:no/day/end-other` —
 its own route, its own control, its own confirmation. End, pause and resume never
 set it, so they can only ever touch the caller's own session.
+
+**The confirmation is bound to the session it ends.** The page draws one
+button per running session, each labelled with a different person, and the
+request carries that session's `day_id`. It used to carry nothing while the
+Worker took the newest open day — so with two admins out, the button saying one
+name ended the other's clock. An absent id is honoured only when exactly ONE
+session is running (the recovery case, where there is nothing to get wrong) and
+refused with `ambiguous` when there is more than one.
 
 **A separate route rather than a flag on `/day/end`**, so the ordinary control
 cannot reach it however it is called. A flag is one stray `true` away from being

@@ -7464,6 +7464,69 @@ section('Two admins can be out on one case, and neither can stop the other by ac
      ws.days.every(d => d.hours != null) && ws.days.length === 2,
      JSON.stringify(ws.days.map(d => [d.investigator_id, d.hours])));
 
+  /* THE CONFIRMATION MUST NAME THE SESSION IT ENDS (Codex stop-time review,
+     2026-08-16).
+
+     The page draws one button per running session, each labelled with a
+     different person. The request used to name nobody and the Worker took the
+     NEWEST open day — so with two admins out, the button saying "Bea" ended
+     Cal's. Reproduced exactly that way. */
+  await ingest(env, { case_no: 'API-3ADM', service: 'Surveillance',
+                      client_name: 'Three Up', subject_name: 'S' });
+  const cLink = (await jsonOf(await invite(env, a,
+    { username: 'third_admin', display_name: 'Cal Newer', role: 'admin' }))).url;
+  const cTk = new URL(cLink, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${cTk}/accept`, { method: 'POST', body: { password: 'ThirdAdmin2026x' } });
+  const c = (await login(env, 'third_admin', 'ThirdAdmin2026x')).cookie;
+
+  await call(env, '/cases/API-3ADM/day/start', { method: 'POST', cookie: b,
+    body: { day_date: '2026-08-17', start_time: '07:00' } });   // the OLDER session
+  await call(env, '/cases/API-3ADM/day/start', { method: 'POST', cookie: c,
+    body: { day_date: '2026-08-17', start_time: '08:00' } });   // the NEWER one
+  const openTwo = ((await jsonOf(await call(env, '/cases/API-3ADM/workspace', { cookie: a })))
+    .days || []).filter(d => !d.end_time);
+  ok('two other admins are out on the same case', openTwo.length === 2, String(openTwo.length));
+  const older = openTwo.find(d => /Second Admin/.test(d.investigator || ''));
+  const newer = openTwo.find(d => /Cal Newer/.test(d.investigator || ''));
+  ok('and the older one is not the one the Worker would reach by default',
+     Boolean(older && newer) && older.id < newer.id);
+
+  /* NAMING NOBODY IS NOW REFUSED rather than guessed. */
+  const guess = await call(env, '/cases/API-3ADM/day/end-other', { method: 'POST', cookie: a,
+    body: { end_time: '12:00' } });
+  ok('ending "whichever" is refused while more than one session is running',
+     guess.status === 409, String(guess.status));
+  const gBody = await jsonOf(guess);
+  ok('and the refusal says why rather than just failing',
+     /which one/i.test(gBody.error || ''), gBody.error);
+  ok('flagged as ambiguous for the page', gBody.ambiguous === true);
+  ok('and nothing was ended by the refusal',
+     ((await jsonOf(await call(env, '/cases/API-3ADM/workspace', { cookie: a }))).days || [])
+       .filter(d => !d.end_time).length === 2);
+
+  /* NAMING THE OLDER SESSION ENDS THE OLDER SESSION — the whole defect. */
+  ok('naming a session ends that one',
+     (await call(env, '/cases/API-3ADM/day/end-other', { method: 'POST', cookie: a,
+       body: { end_time: '12:00', day_id: older.id } })).status === 200);
+  const left = ((await jsonOf(await call(env, '/cases/API-3ADM/workspace', { cookie: a })))
+    .days || []).filter(d => !d.end_time);
+  ok('and the OTHER admin is still out — not the newest by accident',
+     left.length === 1 && /Cal Newer/.test(left[0].investigator || ''),
+     left.map(d => d.investigator).join(','));
+
+  ok('a session id from another case is refused',
+     (await call(env, '/cases/API-2ADM/day/end-other', { method: 'POST', cookie: a,
+       body: { end_time: '12:00', day_id: left[0].id } })).status === 409);
+  ok('and one already ended is refused rather than silently re-ended',
+     (await call(env, '/cases/API-3ADM/day/end-other', { method: 'POST', cookie: a,
+       body: { end_time: '12:00', day_id: older.id } })).status === 409);
+  ok('the ordinary End still cannot address someone else\'s day by id',
+     (await call(env, '/cases/API-3ADM/day/end', { method: 'POST', cookie: a,
+       body: { end_time: '12:00', day_id: left[0].id } })).status === 409);
+  ok('and that day is still running after the attempt',
+     ((await jsonOf(await call(env, '/cases/API-3ADM/workspace', { cookie: a }))).days || [])
+       .filter(d => !d.end_time).length === 1);
+
   /* An investigator can never reach the separate action. */
   const iLink = (await jsonOf(await invite(env, a,
     { username: 'twoadm_inv', display_name: 'Field', role: 'investigator' }))).url;

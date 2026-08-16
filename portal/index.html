@@ -6515,7 +6515,11 @@ function otherAdminDayHtml(ownOpen){
       <span><b>${esc(d.investigator || "Another admin")} has a day running</b> since
         ${esc(t12(d.start_time))} on ${esc(fmtDay(d.day_date))}. Starting your own below runs
         alongside theirs.</span>
-      <button class="btn sm ghost" data-act="endOtherDay">End their session</button>
+      ${/* The button carries the DAY it is labelled for. It used to carry
+            nothing, and the Worker ended whichever session was newest — so with
+            two admins out, the button saying "Bea" ended Cal's day. */""}
+      <button class="btn sm ghost" data-act="endOtherDay"
+        data-id="${d.id}" data-who="${esc(d.investigator || "the other admin")}">End their session</button>
     </div>`).join("") +
     (DAY_OTHER ? `<div class="err">${esc(DAY_OTHER)}</div>` : "");
 }
@@ -6536,8 +6540,10 @@ async function endInvestigationDay(){
   await reloadWorkspace();
 }
 
-async function endOtherAdminsDay(){
-  if(!confirm("End the other admin's session?\n\n" +
+/* The confirmation NAMES the person and the request carries their DAY — the two
+   have to agree, or a button labelled for one admin ends another's clock. */
+async function endOtherAdminsDay(dayId, who){
+  if(!confirm(`End ${who}'s session?\n\n` +
     "They are out on this case now. Their hours are recorded to them, and this " +
     "cannot be undone from here — they would have to start a new day.")) return;
   WS_ERR = ""; DAY_OTHER = "";
@@ -6548,7 +6554,7 @@ async function endOtherAdminsDay(){
        of the press is the honest one. Mileage and summary are theirs to know,
        not this admin's to invent. */
     const r = await api(`/cases/${encodeURIComponent(WS_CASE)}/day/end-other`, {method:"POST", body:{
-      end_time: new Date().toTimeString().slice(0, 5),
+      end_time: new Date().toTimeString().slice(0, 5), day_id: dayId,
     }});
     WS_NOTICE = `Their day was ended — ${r.hours} hours recorded to them.`;
   }catch(e){ WS_ERR = e.message; }
@@ -7130,7 +7136,7 @@ document.addEventListener("click", ev => {
   else if(act === "svAddAnother"){ SV.ok = ""; SV.entry = null; paint(); }
   else if(act === "svStartDay"){ svStartDay(); }
   else if(act === "svEndDay"){ svEndDay(); }
-  else if(act === "endOtherDay"){ endOtherAdminsDay(); }
+  else if(act === "endOtherDay"){ endOtherAdminsDay(el.dataset.id, el.dataset.who); }
   else if(act === "svPause"){ svPauseDay(); }
   else if(act === "svResume"){ svResumeDay(); }
   else if(act === "svSaveEntry"){ svSaveEntry(null); }

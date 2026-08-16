@@ -2582,6 +2582,16 @@ section('A second admin sees whose day is running, and cannot end it by press');
      await second.locator('[data-act="endDay"]').count() === 0);
   ok('but a separate End their session action is',
      await second.locator('[data-act="endOtherDay"]').count() === 1);
+  /* THE BUTTON CARRIES THE SESSION IT IS LABELLED FOR. It used to carry
+     nothing, and the Worker ended whichever day was newest — so with two admins
+     out, the button saying one name ended the other's clock. */
+  const btn = second.locator('[data-act="endOtherDay"]').first();
+  ok('the action names the session it would end',
+     /^\d+$/.test((await btn.getAttribute('data-id')) || ''),
+     await btn.getAttribute('data-id'));
+  ok('and the person it belongs to, so the confirm can say their name',
+     ((await btn.getAttribute('data-who')) || '').includes('Trever'),
+     await btn.getAttribute('data-who'));
   ok('and the form to start their OWN day is still right there',
      await second.locator('[data-act="startDay"]').count() === 1);
 

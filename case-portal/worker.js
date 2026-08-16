@@ -3163,7 +3163,7 @@ async function openDayFor(env, user, caseNo) {
  * caller with no claim on the case at all gets the same 404 as before — so
  * nothing here reveals whether a day is running on a case they cannot see. */
 const DAY_COLS = 'id, day_date, start_time, start_mileage, created_at, investigator_id';
-async function openDayForAction(env, user, caseNo, { allowOthers = false } = {}) {
+async function openDayForAction(env, user, caseNo, { allowOthers = false, dayId = null } = {}) {
   const own = await env.DB.prepare(
     `SELECT ${DAY_COLS} FROM case_days
       WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL
@@ -3188,10 +3188,38 @@ async function openDayForAction(env, user, caseNo, { allowOthers = false } = {})
      up hand-edited in D1 (HIGH #2); one reachable by accident is how an
      investigator loses the clock they are standing in the rain with. */
   if (allowOthers && user.role === 'admin') {
-    const any = await env.DB.prepare(
+    /* THE CONFIRMATION MUST NAME THE SESSION IT ENDS (Codex stop-time review,
+       2026-08-16).
+
+       This used to take `ORDER BY id DESC LIMIT 1` — the NEWEST open day — while
+       the page drew one button per running session, each labelled with a
+       different person. With two admins out, pressing the button that said
+       "Bea Older" ended Cal Newer's day. Reproduced exactly that way before the
+       fix: the button named a person and the request named nobody.
+
+       So the day is addressed by id. Absent, it is honoured only when there is
+       exactly ONE session to mean — the HIGH #2 recovery call, where there is
+       no ambiguity to get wrong — and refused outright when there is more than
+       one, because guessing is how the wrong person's clock stops. */
+    if (dayId) {
+      const one = await env.DB.prepare(
+        `SELECT ${DAY_COLS} FROM case_days
+          WHERE id = ? AND case_no = ? AND end_time IS NULL`).bind(dayId, caseNo).first();
+      if (!one) {
+        return { status: 409, error: 'That session is not running on this case any more — '
+                                   + 'it may already have been ended. Reload and look again.' };
+      }
+      return { day: one };
+    }
+    const { results: openDays } = await env.DB.prepare(
       `SELECT ${DAY_COLS} FROM case_days
-        WHERE case_no = ? AND end_time IS NULL ORDER BY id DESC LIMIT 1`).bind(caseNo).first();
-    if (any) return { day: any };
+        WHERE case_no = ? AND end_time IS NULL ORDER BY id DESC`).bind(caseNo).all();
+    if ((openDays || []).length > 1) {
+      return { status: 409, ambiguous: true,
+        error: `${openDays.length} sessions are running on this case. Say which one to end — `
+             + 'ending "whichever" would stop the wrong person\'s clock.' };
+    }
+    if (openDays && openDays[0]) return { day: openDays[0] };
   }
 
   /* An admin pressing the ordinary control on someone else's running day is
@@ -3217,8 +3245,11 @@ async function openDayForAction(env, user, caseNo, { allowOthers = false } = {})
 async function pauseDay(request, env, user, caseNo) {
   const found = await openDayForAction(env, user, caseNo);
   if (!found.day) {
-    return json({ error: found.error, ...(found.other_session ? { other_session: true } : {}) },
-      found.status);
+    /* Forward the flags the page acts on: whose session it is, and whether
+       more than one is running. The page must not have to parse a sentence. */
+    return json({ error: found.error,
+      ...(found.other_session ? { other_session: true } : {}),
+      ...(found.ambiguous ? { ambiguous: true } : {}) }, found.status);
   }
   const day = found.day;
   const state = await dayPauseState(env, day.id);
@@ -3233,8 +3264,11 @@ async function pauseDay(request, env, user, caseNo) {
 async function resumeDay(env, user, caseNo) {
   const found = await openDayForAction(env, user, caseNo);
   if (!found.day) {
-    return json({ error: found.error, ...(found.other_session ? { other_session: true } : {}) },
-      found.status);
+    /* Forward the flags the page acts on: whose session it is, and whether
+       more than one is running. The page must not have to parse a sentence. */
+    return json({ error: found.error,
+      ...(found.other_session ? { other_session: true } : {}),
+      ...(found.ambiguous ? { ambiguous: true } : {}) }, found.status);
   }
   const day = found.day;
   const state = await dayPauseState(env, day.id);
@@ -3246,14 +3280,22 @@ async function resumeDay(env, user, caseNo) {
 }
 
 async function endDay(request, env, user, caseNo, opts) {
-  const found = await openDayForAction(env, user, caseNo, opts);
+  /* The body is read FIRST so the session being ended can be named in it.
+     `day_id` is honoured ONLY on the explicit end-other route; the ordinary End
+     never sets allowOthers, so it can never address anyone else's day. */
+  const body = await readJson(request);
+  const wantDay = opts && opts.allowOthers && /^\d{1,12}$/.test(String(body.day_id || ''))
+    ? parseInt(body.day_id, 10) : null;
+  const found = await openDayForAction(env, user, caseNo, { ...(opts || {}), dayId: wantDay });
   if (!found.day) {
-    return json({ error: found.error, ...(found.other_session ? { other_session: true } : {}) },
-      found.status);
+    /* Forward the flags the page acts on: whose session it is, and whether
+       more than one is running. The page must not have to parse a sentence. */
+    return json({ error: found.error,
+      ...(found.other_session ? { other_session: true } : {}),
+      ...(found.ambiguous ? { ambiguous: true } : {}) }, found.status);
   }
   const day = found.day;
 
-  const body = await readJson(request);
   const time = String(body.end_time || '');
   if (!TIME_RE.test(time)) return json({ error: 'An end time is needed.' }, 400);
 
