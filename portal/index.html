@@ -852,7 +852,10 @@ function favToggle(line){
 let LOAD_ERR = "";        // why the portal could not load, shown rather than hidden
 let SCHEMA_MISSING = [];  // tables the database does not have yet
 let CARD_FILTER = null;   // {label, set:Set(case numbers)} — a dashboard card's cases
-let CASE_VIEW = "all";    // all | open | completed — the Cases tab's lens (MASTER §31)
+// all | open | completed | archived — the Cases tab's lens (MASTER §31).
+// `archived` is a different QUERY, not a filter over the loaded rows: the
+// Worker keeps archived cases out of every other view.
+let CASE_VIEW = "all";
 let COMPLETED = null;     // the /completed payload, fetched when the lens turns
 let MY_REPORTS = null, MY_EXPENSES = null, MY_COMP = null, OFFERS = [];   // the investigator's own desk
 let CAL = null;   // {month, days, offers}
@@ -2345,7 +2348,7 @@ function casesView(){
     : "";
 
   const lens = admin ? `<div class="lensrow">${
-    [["all", "All"], ["open", "Open"], ["completed", "Completed"]].map(([v, l]) =>
+    [["all", "All"], ["open", "Open"], ["completed", "Completed"], ["archived", "Archived"], ["deleted", "Deleted"]].map(([v, l]) =>
       `<button class="lens ${CASE_VIEW === v ? "on" : ""}" data-act="caseView" data-v="${v}">${l}</button>`).join("")
     }</div>` : "";
 
@@ -2764,7 +2767,10 @@ async function render(){
   LOAD_ERR = "";
   let listed = false;
   try{
-    const d = await api("/submissions?limit=200");
+    /* The archived lens is a different set, not a filter: the Worker excludes
+       archived cases from every other view, so asking for them is a query. */
+    const d = await api("/submissions?limit=200"
+      + (CASE_VIEW === "archived" || CASE_VIEW === "deleted" ? "&view=" + CASE_VIEW : ""));
     CASES = Array.isArray(d.submissions) ? d.submissions : [];
     TOTAL = d.total || 0;
     listed = true;
@@ -3746,11 +3752,25 @@ function closurePanel(){
   if(ME.role !== "admin" || !WS || !WS.closure) return "";
   const c = WS.closure;
   if(c.closed_at){
+    /* REOPEN IS A BUTTON, NOT AN INSTRUCTION (owner, WORKFLOW-SIMPLIFICATION §2).
+
+       This used to read "Reopen by setting a status above and saving." Nothing
+       was above it: the closing panel renders in Admin → Billing & closing and
+       the status selector lives in Admin → Assignment, a different tab. The one
+       sentence telling an admin how to undo a closure pointed off the screen and
+       did not name where to go.
+
+       It is the SAME route the status selector posts to — `/submissions/:no/status`
+       with a stage of `open` — so `setStatus` clears `closed_by`/`closed_at` and
+       keeps the checklist ticks as history, exactly as before. No new status, and
+       closing still goes only through the checklist. */
     return `<div class="feebox" style="margin-top:14px">
       <div class="row"><span><b>Case closed</b></span>
         <span>${esc(c.closed_by || "")} &middot; ${when(c.closed_at)}</span></div>
-      <div class="row"><span style="color:var(--muted);font-size:.85rem">Reopen by setting a status
-        above and saving.</span><span></span></div>
+      <div class="row"><span style="color:var(--muted);font-size:.85rem">Reopening keeps every tick
+        below as history &mdash; nothing is lost by opening it again.</span>
+        <button class="btn sm ghost" data-act="reopenCase">Reopen case</button></div>
+      ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
     </div>`;
   }
   const done = c.items.filter(([k]) => c.checklist[k]).length;
@@ -3785,6 +3805,115 @@ async function doCloseCase(){
   if(WS_ERR) return;
   WS_ERR = "";
   try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/close`, {method:"POST", body:{}}); }
+  catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+/* ARCHIVE (owner, WORKFLOW-SIMPLIFICATION §2): "Archive preserves everything and
+   is restorable." It sits beside closing because both are lifecycle, but it is
+   NOT closing — a case can be archived at any stage, and archiving one changes
+   nothing about the case itself. Restoring puts it back in the active lists at
+   the stage it already had, because that stage was never touched. */
+function archivePanel(){
+  if(ME.role !== "admin" || !WS) return "";
+  const a = WS.archived;
+  if(a){
+    return `<div class="feebox" style="margin-top:14px">
+      <div class="row"><span><b>Case archived</b></span>
+        <span>${esc(a.archived_by || "")}${a.archived_by ? " &middot; " : ""}${when(a.archived_at)}</span></div>
+      <div class="row"><span style="color:var(--muted);font-size:.85rem">Everything on the case is
+        kept. Restoring returns it to the active lists at the stage it already had.</span>
+        <button class="btn sm ghost" data-act="restoreCase">Restore case</button></div>
+      ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+    </div>`;
+  }
+  return `<div class="feebox" style="margin-top:14px">
+    <div class="row"><span><b>Archive</b></span>
+      <button class="btn sm ghost" data-act="archiveCase">Archive case</button></div>
+    <div class="row"><span style="color:var(--muted);font-size:.85rem">An archived case leaves the
+      active lists and is found under the Archived lens. Nothing is deleted, and it can be restored
+      at any time.</span><span></span></div>
+    ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+  </div>`;
+}
+
+async function archiveCase(){
+  WS_ERR = "";
+  try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/archive`, {method:"POST", body:{}}); }
+  catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+async function restoreCase(){
+  WS_ERR = "";
+  try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/restore`, {method:"POST", body:{}}); }
+  catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+/* DELETE CASE — a tombstone, never a purge (owner, §2 answer). It reaches
+   further than Archive: the case leaves every ordinary view, Archived included,
+   and is found only under Deleted. Nothing is destroyed, and an admin can put
+   it back — the promise `activity_removed`, the invoice void and evidence
+   `deleted_at` all already make. */
+function deletedPanel(){
+  if(ME.role !== "admin" || !WS) return "";
+  const d = WS.deleted;
+  if(d){
+    return `<div class="feebox" style="margin-top:14px">
+      <div class="row"><span><b>Case deleted</b></span>
+        <span>${esc(d.deleted_by || "")}${d.deleted_by ? " &middot; " : ""}${when(d.deleted_at)}</span></div>
+      ${d.reason ? `<div class="row"><span style="color:var(--muted);font-size:.85rem">${esc(d.reason)}</span><span></span></div>` : ""}
+      <div class="row"><span style="color:var(--muted);font-size:.85rem">Nothing was destroyed &mdash;
+        the case, its activity, reports, evidence, invoices and payment history are all still
+        here.</span>
+        <button class="btn sm ghost" data-act="undeleteCase">Put the case back</button></div>
+      ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+    </div>`;
+  }
+  return `<div class="feebox" style="margin-top:14px">
+    <div class="row"><span><b>Delete case</b></span>
+      <button class="btn sm ghost" data-act="deleteCase">Delete case</button></div>
+    <div class="row"><span style="color:var(--muted);font-size:.85rem">For a case that should not be
+      in the working set at all. It leaves every list, including Archived, and is found under
+      Deleted. Nothing is destroyed and an admin can put it back.</span><span></span></div>
+    ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+  </div>`;
+}
+
+async function deleteCase(){
+  /* Confirmed, the way every other destructive action on this page is. The
+     wording says what actually happens: this is not a purge, and saying so at
+     the moment of pressing is the difference between an admin who knows the
+     work is recoverable and one who believes they have destroyed it. */
+  if(!confirm("Delete this case?\n\n" +
+    "It leaves every list, including Archived, and is found under Deleted.\n\n" +
+    "Nothing is destroyed — the activity log, reports, evidence, invoices and payment " +
+    "history all stay, and an admin can put the case back.")) return;
+  WS_ERR = "";
+  try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/delete`, {method:"POST", body:{}}); }
+  catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+async function undeleteCase(){
+  WS_ERR = "";
+  try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/undelete`, {method:"POST", body:{}}); }
+  catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+/* The other direction, through the route the status selector already uses.
+   `open` is an existing stage — nothing new is introduced, and the Worker is
+   what clears the closing stamp while leaving the ticks alone.
+
+   It stays ON the case rather than returning to the list: an admin reopening a
+   case is about to do something with it, and `saveCase` only drops back to the
+   list because it is editing from the assignment form. */
+async function reopenCase(){
+  WS_ERR = "";
+  try{ await api(`/submissions/${encodeURIComponent(WS_CASE)}/status`,
+    {method:"POST", body:{status: "open"}}); }
   catch(e){ WS_ERR = e.message; }
   await reloadWorkspace();
 }
@@ -5153,7 +5282,9 @@ function billingPanel(s, a){
         ${(s.kind === "claims" && a.authorized_hours != null) || s.kind !== "claims"
           ? `<button class="btn sm ghost" data-act="createInvoiceAuth" data-case="${esc(WS_CASE)}">Create from ${s.kind === "claims" ? "authorization" : "retainer"}</button>` : ""}
       </div>` : ""}
-    ${closurePanel()}`;
+    ${closurePanel()}
+    ${archivePanel()}
+    ${deletedPanel()}`;
 }
 
 /* The workspace is a full page, not a popup — a case is where the day's work
@@ -6653,8 +6784,13 @@ document.addEventListener("click", ev => {
   }
   else if(act === "clearCardFilter"){ CARD_FILTER = null; paint(); }
   else if(act === "caseView"){
+    const wasQueried = CASE_VIEW === "archived" || CASE_VIEW === "deleted";
     CASE_VIEW = el.dataset.v;
-    if(CASE_VIEW === "completed"){
+    /* Turning the archived lens on or off changes WHICH CASES ARE FETCHED, so
+       it reloads rather than repaints. Painting alone would show the previous
+       set under the new label. */
+    if(CASE_VIEW === "archived" || CASE_VIEW === "deleted" || wasQueried){ render(); }
+    else if(CASE_VIEW === "completed"){
       // Fetched on every turn of the lens, so the desk is never stale after
       // a case was closed in another tab — and errors show, not vanish.
       COMPLETED = null; paint();
@@ -6710,6 +6846,11 @@ document.addEventListener("click", ev => {
   else if(act === "subjCancel"){ SUBJ_FORM = null; WS_ERR = ""; paintCase(); }
   else if(act === "taskStatus"){ setTaskStat(Number(el.dataset.id), el.dataset.s); }
   else if(act === "closeCase"){ doCloseCase(); }
+  else if(act === "reopenCase"){ reopenCase(); }
+  else if(act === "archiveCase"){ archiveCase(); }
+  else if(act === "restoreCase"){ restoreCase(); }
+  else if(act === "deleteCase"){ deleteCase(); }
+  else if(act === "undeleteCase"){ undeleteCase(); }
   else if(act === "invOpen"){ openInvoice(Number(el.dataset.id)); }
   else if(act === "invBack"){ INV_OPEN = null; INV_MSG = ""; loadInvoices(); }
   else if(act === "invStatus"){ setInvStatus(el.dataset.s); }

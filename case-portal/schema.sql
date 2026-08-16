@@ -478,6 +478,59 @@ CREATE TABLE IF NOT EXISTS case_closure (
   updated_at     TEXT
 );
 
+-- ---------------------------------------------------------------------------
+-- ARCHIVED (owner, WORKFLOW-SIMPLIFICATION §2): "Archive preserves everything
+-- and is restorable." A REAL state, separate from Completed and Cancelled — a
+-- case leaves the active lists and is found under Archived, with nothing about
+-- the case itself altered.
+--
+-- A COMPANION TABLE, NOT A STATUS. `submissions.status` carries a CHECK
+-- constraint and `case_status.stage` is validated against STAGES; widening
+-- either means rebuilding the table, which schema.sql — re-applied on every
+-- portal-setup run — cannot do idempotently. Editing the CHECK in place would
+-- leave a FRESH database able to store the new value while the LIVE one, made
+-- before the edit, still refused it: a divergence that passes every test and
+-- fails only in production. Same reasoning as `activity_removed` and
+-- `build_custom`.
+--
+-- It also means archiving is orthogonal to the stage. A case can be archived
+-- while closed, complete or on hold, and restoring puts back exactly the stage
+-- it had — because the stage was never touched.
+--
+-- Restoring DELETES the row, the way `activity_removed` does. What is preserved
+-- is the CASE; the archive marker is not itself history.
+CREATE TABLE IF NOT EXISTS case_archive (
+  case_no     TEXT PRIMARY KEY,
+  archived_by INTEGER REFERENCES users(id),
+  archived_at TEXT NOT NULL
+);
+
+-- ---------------------------------------------------------------------------
+-- DELETE CASE (owner, WORKFLOW-SIMPLIFICATION §2 answer): "an Admin-only
+-- soft-delete/tombstone that removes it from normal views but preserves
+-- records", and "a true irreversible data purge is NOT needed now."
+--
+-- SO NOTHING IS DESTROYED. Not the submission, not evidence, not reports, not
+-- invoices, not payment history, not the send or audit logs. This table is a
+-- marker and the ONLY thing a delete writes — exactly like `case_archive`, and
+-- for the same reason: a tombstone that deleted rows would not be a tombstone.
+--
+-- WHY IT IS NOT JUST ARCHIVE. Archived is a normal end state and browsable
+-- under its own lens; deleted means the case should not be in the working set
+-- at all, so it leaves EVERY ordinary view including Archived. An admin can
+-- still find it under Deleted and put it back — nothing the office does in the
+-- portal is unrecoverable in the portal, which is the promise `activity_removed`,
+-- the invoice void and evidence `deleted_at` all already make.
+--
+-- `reason` is optional and free text, kept because "why is this case gone" is
+-- the question a tombstone exists to answer.
+CREATE TABLE IF NOT EXISTS case_deleted (
+  case_no    TEXT PRIMARY KEY,
+  reason     TEXT,
+  deleted_by INTEGER REFERENCES users(id),
+  deleted_at TEXT NOT NULL
+);
+
 -- Private retainer tracking (RATESHEETS.md admin side). One row per private
 -- case: the required retainer, and whether it has been received. What the
 -- work has consumed is computed from case_days at the case's rate — never

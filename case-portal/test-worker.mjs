@@ -6395,6 +6395,524 @@ section('Two admin accounts see the same data');
   globalThis.fetch = realFetch;
 }
 
+/* ARCHIVE AND RESTORE (owner, WORKFLOW-SIMPLIFICATION §2 — "Archive preserves
+   everything and is restorable").
+
+   A companion table, not a status: `submissions.status` carries a CHECK and
+   `case_status.stage` is validated against STAGES, and widening either is the
+   non-idempotent rebuild schema.sql cannot do. So the assertions below are as
+   much about what archiving does NOT touch as about what it does. */
+section('A case can be archived and restored, and nothing else moves');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  await ingest(env, { case_no: 'API-ARC-1', service: 'Surveillance',
+                      client_name: 'Archie Client', subject_name: 'S' });
+  await ingest(env, { case_no: 'API-ARC-2', service: 'Surveillance',
+                      client_name: 'Stays Put', subject_name: 'S' });
+
+  // A stage that is NOT the default, so "restores to the stage it had" means
+  // something rather than coinciding with the initial value.
+  await call(env, '/submissions/API-ARC-1/status', { method: 'POST', cookie: admin,
+    body: { status: 'awaiting_client' } });
+
+  const listOf = async (view = '') => (await jsonOf(await call(env,
+    `/submissions?limit=200${view}`, { cookie: admin })));
+  const before = await listOf();
+  ok('both cases start in the active list',
+     (before.submissions || []).map(r => r.case_no).sort().join() === 'API-ARC-1,API-ARC-2');
+  ok('and the total counts them', before.total === 2, String(before.total));
+
+  const arch = await call(env, '/cases/API-ARC-1/archive', { method: 'POST', cookie: admin, body: {} });
+  ok('an admin can archive a case', arch.status === 200, String(arch.status));
+
+  const after = await listOf();
+  ok('the archived case leaves the active list',
+     (after.submissions || []).map(r => r.case_no).join() === 'API-ARC-2',
+     (after.submissions || []).map(r => r.case_no).join());
+  ok('and the total follows the rows rather than contradicting them',
+     after.total === 1, String(after.total));
+
+  const only = await listOf('&view=archived');
+  ok('the archived lens shows exactly the archived one',
+     (only.submissions || []).map(r => r.case_no).join() === 'API-ARC-1',
+     (only.submissions || []).map(r => r.case_no).join());
+  ok('stamped with when it was archived',
+     Boolean((only.submissions || [])[0] || {}).valueOf() && (only.submissions[0].archived_at || '') !== '');
+
+  /* NOTHING ELSE MOVED. The stage, the status and the case record are what they
+     were — that is what "preserves everything" has to mean, and it is the whole
+     reason this is a companion table rather than a new status value. */
+  const ws = await jsonOf(await call(env, '/cases/API-ARC-1/workspace', { cookie: admin }));
+  ok('the stage is untouched by archiving', ws.stage === 'awaiting_client', String(ws.stage));
+  ok('and the workspace still opens in full', ws.case_no === 'API-ARC-1');
+  ok('and says it is archived, with who and when',
+     ws.archived && ws.archived.archived_at && ws.archived.archived_by === 'Trever',
+     JSON.stringify(ws.archived));
+  const sub = await jsonOf(await call(env, '/submissions/API-ARC-1', { cookie: admin }));
+  ok('the case record itself is still readable and intact',
+     (sub.submission || {}).client_name === 'Archie Client');
+
+  // Archiving twice is a no-op rather than an error — a double tap on a flaky
+  // connection must not be a failure the office has to interpret.
+  ok('archiving an already-archived case is a no-op',
+     (await call(env, '/cases/API-ARC-1/archive', { method: 'POST', cookie: admin, body: {} })).status === 200);
+  ok('and it is still archived exactly once',
+     ((await listOf('&view=archived')).submissions || []).length === 1);
+
+  const back = await call(env, '/cases/API-ARC-1/restore', { method: 'POST', cookie: admin, body: {} });
+  ok('an admin can restore it', back.status === 200, String(back.status));
+  const restored = await listOf();
+  ok('and it returns to the active list',
+     (restored.submissions || []).map(r => r.case_no).sort().join() === 'API-ARC-1,API-ARC-2');
+  ok('at the stage it already had, because that was never touched',
+     (await jsonOf(await call(env, '/cases/API-ARC-1/workspace', { cookie: admin }))).stage
+       === 'awaiting_client');
+  ok('the archived lens is empty again',
+     ((await listOf('&view=archived')).submissions || []).length === 0);
+  ok('restoring one that is not archived is a no-op, not an error',
+     (await call(env, '/cases/API-ARC-2/restore', { method: 'POST', cookie: admin, body: {} })).status === 200);
+  ok('archiving a case that does not exist is a 404',
+     (await call(env, '/cases/API-NOPE-9/archive', { method: 'POST', cookie: admin, body: {} })).status === 404);
+
+  /* Admin-only, like every other lifecycle control. */
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'arc_inv', display_name: 'Field', role: 'investigator' }))).url;
+  const tk = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tk}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const field = (await login(env, 'arc_inv', 'FieldWork2026x')).cookie;
+  ok('an investigator cannot archive',
+     (await call(env, '/cases/API-ARC-2/archive', { method: 'POST', cookie: field, body: {} })).status === 403);
+  ok('nor restore',
+     (await call(env, '/cases/API-ARC-2/restore', { method: 'POST', cookie: field, body: {} })).status === 403);
+
+  /* An investigator's own list obeys the archive too — the case leaves their
+     view, and the scoping that hides other people's cases still applies. */
+  await call(env, '/submissions/API-ARC-2/assign', { method: 'POST', cookie: admin,
+    body: { user_id: (await jsonOf(await call(env, '/auth/me', { cookie: field }))).user.id } });
+  ok('the investigator sees their assigned case',
+     ((await jsonOf(await call(env, '/submissions', { cookie: field }))).submissions || [])
+       .some(r => r.case_no === 'API-ARC-2'));
+  await call(env, '/cases/API-ARC-2/archive', { method: 'POST', cookie: admin, body: {} });
+  ok('and stops seeing it once the office archives it',
+     ((await jsonOf(await call(env, '/submissions', { cookie: field }))).submissions || [])
+       .every(r => r.case_no !== 'API-ARC-2'));
+}
+
+/* DELETE CASE IS A TOMBSTONE (owner: "an Admin-only soft-delete/tombstone that
+   removes it from normal views but preserves records", and "a true irreversible
+   data purge is NOT needed now").
+
+   The assertions that matter most are the ones proving NOTHING WAS DESTROYED —
+   a delete that deleted rows would not be a tombstone. It differs from archive
+   in REACH, not in destructiveness: it leaves every ordinary view including
+   Archived, and comes back only under its own lens. */
+section('Deleting a case is a tombstone, and nothing is destroyed');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  await ingest(env, { case_no: 'API-DEL-A', service: 'Surveillance',
+                      client_name: 'Deleted Client', client_email: 'del@example.com',
+                      subject_name: 'Subject A', objective: 'Establish whereabouts' });
+  await ingest(env, { case_no: 'API-DEL-B', service: 'Surveillance',
+                      client_name: 'Stays Put', subject_name: 'Subject B' });
+
+  // Real work on the case, so "preserves records" is testable rather than
+  // vacuous: a day, an activity entry, a report and an invoice.
+  await call(env, '/cases/API-DEL-A/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-14', start_time: '07:00' } });
+  await call(env, '/cases/API-DEL-A/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-08-14', at_time: '07:20', description: 'Observed the subject leave.' } });
+  await call(env, '/cases/API-DEL-A/day/end', { method: 'POST', cookie: admin,
+    body: { end_time: '11:00' } });
+  const dayA = (await jsonOf(await call(env, '/cases/API-DEL-A/workspace', { cookie: admin }))).days[0];
+  await call(env, '/cases/API-DEL-A/reports/generate', { method: 'POST', cookie: admin,
+    body: { day_id: dayA.id } });
+  const invA = (await jsonOf(await call(env, '/cases/API-DEL-A/invoices', { method: 'POST',
+    cookie: admin, body: {} }))).invoice;
+
+  const rowCount = t => Number(env.DB.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first().n);
+  const beforeRows = {
+    submissions: rowCount('submissions'), activity: rowCount('activity_log'),
+    days: rowCount('case_days'), reports: rowCount('case_reports'),
+    invoices: rowCount('invoices'),
+  };
+
+  const listOf = async (view = '') => await jsonOf(await call(env,
+    `/submissions?limit=200${view}`, { cookie: admin }));
+
+  const del = await call(env, '/cases/API-DEL-A/delete', { method: 'POST', cookie: admin,
+    body: { reason: 'opened against the wrong client' } });
+  ok('an admin can delete a case', del.status === 200, String(del.status));
+
+  /* NOT ONE ROW WENT ANYWHERE. This is the whole point of the feature. */
+  ok('the submission row still exists', rowCount('submissions') === beforeRows.submissions);
+  ok('the activity log is untouched', rowCount('activity_log') === beforeRows.activity);
+  ok('the day is untouched', rowCount('case_days') === beforeRows.days);
+  ok('the report is untouched', rowCount('case_reports') === beforeRows.reports);
+  ok('the invoice is untouched', rowCount('invoices') === beforeRows.invoices);
+  ok('and the invoice is still readable by id',
+     (await jsonOf(await call(env, `/invoices/${invA.id}`, { cookie: admin }))).invoice.id === invA.id);
+
+  ok('the deleted case leaves the active list',
+     (await listOf()).submissions.map(r => r.case_no).join() === 'API-DEL-B');
+  ok('and it is NOT under Archived either — delete reaches further than archive',
+     ((await listOf('&view=archived')).submissions || []).every(r => r.case_no !== 'API-DEL-A'));
+  const only = await listOf('&view=deleted');
+  ok('it is found under the Deleted lens',
+     (only.submissions || []).map(r => r.case_no).join() === 'API-DEL-A');
+  ok('carrying when it was deleted', (only.submissions[0].deleted_at || '') !== '');
+
+  const ws = await jsonOf(await call(env, '/cases/API-DEL-A/workspace', { cookie: admin }));
+  ok('the case still opens in full, or it could never be restored', ws.case_no === 'API-DEL-A');
+  ok('with its activity still on it', (ws.activity || []).length === 1);
+  ok('and its report', (ws.reports || []).length === 1);
+  ok('and it says it is deleted, with who, when and why',
+     ws.deleted && ws.deleted.deleted_by === 'Trever'
+     && ws.deleted.reason === 'opened against the wrong client', JSON.stringify(ws.deleted));
+
+  ok('deleting twice is a no-op rather than an error',
+     (await call(env, '/cases/API-DEL-A/delete', { method: 'POST', cookie: admin, body: {} })).status === 200);
+  ok('and the first reason is not overwritten by the second attempt',
+     (await jsonOf(await call(env, '/cases/API-DEL-A/workspace', { cookie: admin })))
+       .deleted.reason === 'opened against the wrong client');
+
+  const back = await call(env, '/cases/API-DEL-A/undelete', { method: 'POST', cookie: admin, body: {} });
+  ok('an admin can put it back', back.status === 200, String(back.status));
+  ok('and it returns to the active list',
+     (await listOf()).submissions.map(r => r.case_no).sort().join() === 'API-DEL-A,API-DEL-B');
+  ok('the Deleted lens is empty again',
+     ((await listOf('&view=deleted')).submissions || []).length === 0);
+
+  /* ARCHIVED AND DELETED TOGETHER. A deleted case leaves the Archived lens; put
+     back, it is archived again — because deleting never touched the archive. */
+  await call(env, '/cases/API-DEL-A/archive', { method: 'POST', cookie: admin, body: {} });
+  await call(env, '/cases/API-DEL-A/delete', { method: 'POST', cookie: admin, body: {} });
+  ok('an archived case that is deleted leaves Archived',
+     ((await listOf('&view=archived')).submissions || []).every(r => r.case_no !== 'API-DEL-A'));
+  ok('and shows under Deleted instead',
+     (await listOf('&view=deleted')).submissions.map(r => r.case_no).join() === 'API-DEL-A');
+  await call(env, '/cases/API-DEL-A/undelete', { method: 'POST', cookie: admin, body: {} });
+  ok('undeleting restores it to Archived, because the archive was never touched',
+     (await listOf('&view=archived')).submissions.map(r => r.case_no).join() === 'API-DEL-A');
+  await call(env, '/cases/API-DEL-A/restore', { method: 'POST', cookie: admin, body: {} });
+
+  /* The Completed desk is an ordinary view too. */
+  await call(env, '/submissions/API-DEL-A/status', { method: 'POST', cookie: admin,
+    body: { status: 'complete' } });
+  ok('a completed case is on the completed desk',
+     ((await jsonOf(await call(env, '/completed', { cookie: admin }))).completed || [])
+       .some(r => r.case_no === 'API-DEL-A'));
+  await call(env, '/cases/API-DEL-A/delete', { method: 'POST', cookie: admin, body: {} });
+  ok('deleting takes it off the completed desk as well',
+     ((await jsonOf(await call(env, '/completed', { cookie: admin }))).completed || [])
+       .every(r => r.case_no !== 'API-DEL-A'));
+  await call(env, '/cases/API-DEL-A/undelete', { method: 'POST', cookie: admin, body: {} });
+  await call(env, '/cases/API-DEL-A/archive', { method: 'POST', cookie: admin, body: {} });
+  ok('and archiving takes it off that desk too',
+     ((await jsonOf(await call(env, '/completed', { cookie: admin }))).completed || [])
+       .every(r => r.case_no !== 'API-DEL-A'));
+  await call(env, '/cases/API-DEL-A/restore', { method: 'POST', cookie: admin, body: {} });
+
+  ok('deleting a case that does not exist is a 404',
+     (await call(env, '/cases/API-NOPE-7/delete', { method: 'POST', cookie: admin, body: {} })).status === 404);
+
+  /* Admin-only, and an investigator cannot reach the lens either. */
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'del_inv', display_name: 'Field', role: 'investigator' }))).url;
+  const tk = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tk}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const field = (await login(env, 'del_inv', 'FieldWork2026x')).cookie;
+  ok('an investigator cannot delete',
+     (await call(env, '/cases/API-DEL-B/delete', { method: 'POST', cookie: field, body: {} })).status === 403);
+  ok('nor undelete',
+     (await call(env, '/cases/API-DEL-B/undelete', { method: 'POST', cookie: field, body: {} })).status === 403);
+  await call(env, '/submissions/API-DEL-B/assign', { method: 'POST', cookie: admin,
+    body: { user_id: (await jsonOf(await call(env, '/auth/me', { cookie: field }))).user.id } });
+  await call(env, '/cases/API-DEL-B/delete', { method: 'POST', cookie: admin, body: {} });
+  ok('a deleted case leaves the investigator\'s list too',
+     ((await jsonOf(await call(env, '/submissions', { cookie: field }))).submissions || [])
+       .every(r => r.case_no !== 'API-DEL-B'));
+  /* And asking for the deleted lens as an investigator does NOT hand it over —
+     it falls back to their ordinary list rather than becoming a way in. */
+  ok('and asking for the Deleted lens gives an investigator nothing extra',
+     ((await jsonOf(await call(env, '/submissions?view=deleted', { cookie: field }))).submissions || [])
+       .every(r => r.case_no !== 'API-DEL-B'));
+}
+
+/* A DELETED CASE DOES NOT PARTICIPATE IN WORK (Codex stop-time review,
+   2026-08-16 — "deleted cases remain operational and visible in ordinary
+   workflow paths").
+
+   Hiding it from the lists was only half of "removes it from normal views".
+   Reproduced against the first version: a deleted case could still start a day,
+   log activity, raise an invoice and EMAIL THE CLIENT A RATE SHEET — which
+   really sent — and it reappeared in Active surveillance, the dashboard alerts
+   and the calendar as soon as a day was running on it.
+
+   Reads stay open on purpose: an admin has to be able to look at a deleted case
+   to decide whether to put it back, and the workspace is where that button is. */
+section('A deleted case cannot be worked on, and stops appearing in working views');
+{
+  const realFetch = globalThis.fetch;
+  let lastBody = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      lastBody = JSON.parse(init.body);
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
+    body: { enabled: true, display_name: 'Venmo', handle: '@AlwaysPrecise',
+            url: 'https://venmo.com/u/AlwaysPrecise' } });
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'gone_inv', display_name: 'Field', role: 'investigator' }))).url;
+  const tk = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tk}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const field = (await login(env, 'gone_inv', 'FieldWork2026x')).cookie;
+  const fieldId = (await jsonOf(await call(env, '/auth/me', { cookie: field }))).user.id;
+
+  await ingest(env, { case_no: 'API-GONE-1', service: 'Surveillance',
+                      client_name: 'Gone Client', client_email: 'gone@example.com',
+                      subject_name: 'S' });
+
+  /* A RUNNING CLOCK CANNOT BE FILED AWAY (Codex stop-time review, 2026-08-16 —
+     "hidden rows can suppress live work").
+
+     Archiving or deleting a case whose day is still open would strand it: the
+     case leaves the working views, so nobody sees the clock running, and the
+     write gate then refuses the very request that would end it. The
+     investigator is left with a clock they cannot stop and an office that
+     cannot see them. Both are refused while a day is open, which is also what
+     makes hiding the case safe afterwards — nothing live can be behind it. */
+  await call(env, '/cases/API-GONE-1/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-16', start_time: '07:00' } });
+  ok('a case with a running day IS on Out now',
+     JSON.stringify(await jsonOf(await call(env, '/active', { cookie: admin })))
+       .includes('API-GONE-1'));
+  const delRunning = await call(env, '/cases/API-GONE-1/delete', { method: 'POST',
+    cookie: admin, body: {} });
+  ok('deleting a case with a day still running is refused', delRunning.status === 409,
+     String(delRunning.status));
+  ok('and the refusal names the day rather than only saying no',
+     /still running/i.test((await jsonOf(delRunning)).error || ''),
+     (await jsonOf(delRunning)).error);
+  const arcRunning = await call(env, '/cases/API-GONE-1/archive', { method: 'POST',
+    cookie: admin, body: {} });
+  ok('archiving one is refused for the same reason', arcRunning.status === 409,
+     String(arcRunning.status));
+  ok('so live work can never be hidden behind either state',
+     JSON.stringify(await jsonOf(await call(env, '/active', { cookie: admin })))
+       .includes('API-GONE-1'));
+
+  await call(env, '/cases/API-GONE-1/day/end', { method: 'POST', cookie: admin,
+    body: { end_time: '12:00' } });
+  await call(env, '/cases/API-GONE-1/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-08-16', at_time: '07:30', description: 'Observed the subject.' } });
+  const invBefore = (await jsonOf(await call(env, '/cases/API-GONE-1/invoices',
+    { method: 'POST', cookie: admin, body: {} }))).invoice;
+  // An offer made BEFORE the delete, so accepting it afterwards is a real
+  // attempt rather than a route that could not be reached anyway.
+  await call(env, '/cases/API-GONE-1/offer', { method: 'POST', cookie: admin,
+    body: { investigator_id: fieldId, investigation_date: '2026-08-20', expected_hours: 8 } });
+  const offer = ((await jsonOf(await call(env, '/my/offers', { cookie: field }))).offers || [])[0];
+
+  ok('with the day ended, the case can be deleted',
+     (await call(env, '/cases/API-GONE-1/delete', { method: 'POST', cookie: admin,
+       body: { reason: 'opened in error' } })).status === 200);
+
+  const gone = r => r.status === 409;
+  ok('a day cannot be started on a deleted case',
+     gone(await call(env, '/cases/API-GONE-1/day/start', { method: 'POST', cookie: admin,
+       body: { day_date: '2026-08-17', start_time: '08:00' } })));
+  ok('activity cannot be logged',
+     gone(await call(env, '/cases/API-GONE-1/activity', { method: 'POST', cookie: admin,
+       body: { at_date: '2026-08-16', at_time: '07:10', description: 'still logging' } })));
+  ok('an invoice cannot be raised',
+     gone(await call(env, '/cases/API-GONE-1/invoices', { method: 'POST', cookie: admin, body: {} })));
+  ok('an existing invoice cannot be edited by id either — the case number is not in that path',
+     gone(await call(env, `/invoices/${invBefore.id}/status`, { method: 'POST', cookie: admin,
+       body: { status: 'ready' } })));
+  ok('it cannot be assigned',
+     gone(await call(env, '/submissions/API-GONE-1/assign', { method: 'POST', cookie: admin,
+       body: { user_id: null } })));
+  ok('its status cannot be changed',
+     gone(await call(env, '/submissions/API-GONE-1/status', { method: 'POST', cookie: admin,
+       body: { status: 'complete' } })));
+  ok('and it cannot be archived while deleted',
+     gone(await call(env, '/cases/API-GONE-1/archive', { method: 'POST', cookie: admin, body: {} })));
+
+  /* OFFERS ARE ADDRESSED BY THEIR OWN ID, and this was the way in the first
+     version of the gate missed: accepting assigns the investigator and moves
+     the case's stage, on a case the office had deleted. */
+  if (offer) {
+    ok('an investigator cannot accept an offer on a deleted case',
+       gone(await call(env, `/my/offers/${offer.id}/accept`, { method: 'POST', cookie: field, body: {} })));
+    ok('nor decline it into a record against that case',
+       gone(await call(env, `/my/offers/${offer.id}/decline`, { method: 'POST', cookie: field, body: {} })));
+  } else {
+    ok('an investigator cannot accept an offer on a deleted case (no offer made)', false,
+       'the fixture failed to create an offer');
+    ok('nor decline it into a record against that case (no offer made)', false, '');
+  }
+
+  /* THE WORST OF WHAT THE FIRST VERSION ALLOWED: a client email from a case the
+     office had deleted. The case is named in the BODY here, so the router's
+     gate cannot see it and the send route checks for itself. */
+  lastBody = null;
+  const sheet = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'gone@example.com', case_no: 'API-GONE-1', include_intake: true } });
+  ok('a rate sheet cannot be emailed against a deleted case', gone(sheet), String(sheet.status));
+  ok('and nothing whatsoever was sent', lastBody === null);
+  lastBody = null;
+  ok('nor can payment instructions',
+     gone(await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+       body: { to: 'gone@example.com', case_no: 'API-GONE-1', methods: ['venmo'] } })));
+  ok('and nothing was sent for those either', lastBody === null);
+
+  /* The refusal names the way out rather than only saying no. */
+  const why = await jsonOf(await call(env, '/cases/API-GONE-1/activity', { method: 'POST',
+    cookie: admin, body: { at_date: '2026-08-16', at_time: '09:00', description: 'x' } }));
+  ok('the refusal says the case is deleted and how to undo it',
+     /deleted/i.test(why.error || '') && /put the case back/i.test(why.error || ''), why.error);
+  ok('and is flagged so the page can act on it rather than parse the sentence',
+     why.case_deleted === true);
+
+  /* THE SUFFIX TRAP: `/activity/:id/delete` also ends in "delete". Letting it
+     through the gate would leave a deleted case's timeline editable. */
+  const entry = ((await jsonOf(await call(env, '/cases/API-GONE-1/workspace',
+    { cookie: admin }))).activity || [])[0];
+  ok('removing an activity entry on a deleted case is refused too',
+     Boolean(entry) && gone(await call(env, `/cases/API-GONE-1/activity/${entry.id}/delete`,
+       { method: 'POST', cookie: admin, body: {} })));
+
+  /* IT LEAVES THE WORKING VIEWS. */
+  ok('it is not in the dashboard alerts',
+     !JSON.stringify(await jsonOf(await call(env, '/summary', { cookie: admin })))
+       .includes('API-GONE-1'));
+  ok('nor on the calendar',
+     !JSON.stringify(await jsonOf(await call(env, '/calendar?month=2026-08', { cookie: admin })))
+       .includes('API-GONE-1'));
+
+  /* BUT IT CAN STILL BE READ, or it could never be reviewed and put back. */
+  ok('the workspace still opens',
+     (await call(env, '/cases/API-GONE-1/workspace', { cookie: admin })).status === 200);
+  ok('the case record still reads',
+     (await call(env, '/submissions/API-GONE-1', { cookie: admin })).status === 200);
+  ok('and the invoice can still be read, just not changed',
+     (await call(env, `/invoices/${invBefore.id}`, { cookie: admin })).status === 200);
+
+  /* AND THE WAY OUT WORKS. */
+  ok('deleting it again is still a no-op, not a refusal',
+     (await call(env, '/cases/API-GONE-1/delete', { method: 'POST', cookie: admin, body: {} })).status === 200);
+  ok('and putting it back is allowed through the gate',
+     (await call(env, '/cases/API-GONE-1/undelete', { method: 'POST', cookie: admin, body: {} })).status === 200);
+  ok('after which work resumes',
+     (await call(env, '/cases/API-GONE-1/activity', { method: 'POST', cookie: admin,
+       body: { at_date: '2026-08-16', at_time: '09:30', description: 'back at it' } })).status === 201);
+
+  /* ARCHIVED GATES WRITES TOO, and that is what closes the suppression hole:
+     a case out of the working views cannot also be accumulating work. */
+  ok('a case with no day running can be archived',
+     (await call(env, '/cases/API-GONE-1/archive', { method: 'POST', cookie: admin, body: {} })).status === 200);
+  const arcRefusal = await call(env, '/cases/API-GONE-1/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-08-16', at_time: '10:00', description: 'archived, so refused' } });
+  ok('and then nothing can be recorded against it', arcRefusal.status === 409,
+     String(arcRefusal.status));
+  // Read ONCE: a Response body can only be consumed once, and the second read
+  // comes back empty — which reads as a failed assertion rather than a bug here.
+  const arcBody = await jsonOf(arcRefusal);
+  ok('with a refusal naming restore as the way back',
+     /restore the case/i.test(arcBody.error || ''), arcBody.error);
+  ok('and flagged as archived rather than deleted', arcBody.case_archived === true);
+  /* THE BODY-ADDRESSED ROUTES ARE THE HALF THAT WENT MISSING. The two send
+     routes name their case in the body, where the router's gate cannot see it,
+     so they check for themselves — and the first version taught them only the
+     deleted rule. An archived case went on emailing clients and writing
+     send_log rows long after every path-addressed write was refused. */
+  lastBody = null;
+  const arcSheet = await call(env, '/sheets/private_retainer/email', { method: 'POST',
+    cookie: admin, body: { to: 'gone@example.com', case_no: 'API-GONE-1', include_intake: true } });
+  ok('a rate sheet cannot be emailed against an ARCHIVED case either',
+     arcSheet.status === 409, String(arcSheet.status));
+  ok('and nothing was sent', lastBody === null);
+  lastBody = null;
+  const arcPay = await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+    body: { to: 'gone@example.com', case_no: 'API-GONE-1', methods: ['venmo'] } });
+  ok('nor payment instructions', arcPay.status === 409, String(arcPay.status));
+  ok('and nothing was sent for those either', lastBody === null);
+  ok('so no send was recorded against an archived case',
+     Number(env.DB.prepare(
+       "SELECT COUNT(*) AS n FROM send_log WHERE case_no = 'API-GONE-1'").first().n) === 0);
+
+  ok('an archived case leaves the dashboard alerts too',
+     !JSON.stringify(await jsonOf(await call(env, '/summary', { cookie: admin })))
+       .includes('API-GONE-1'));
+  ok('restoring it lets work resume',
+     (await call(env, '/cases/API-GONE-1/restore', { method: 'POST', cookie: admin, body: {} })).status === 200
+     && (await call(env, '/cases/API-GONE-1/activity', { method: 'POST', cookie: admin,
+       body: { at_date: '2026-08-16', at_time: '10:30', description: 'restored' } })).status === 201);
+  ok('and an archived case can still be deleted — delete reaches further',
+     (await call(env, '/cases/API-GONE-1/archive', { method: 'POST', cookie: admin, body: {} })).status === 200
+     && (await call(env, '/cases/API-GONE-1/delete', { method: 'POST', cookie: admin, body: {} })).status === 200);
+
+  globalThis.fetch = realFetch;
+}
+
+/* THE DEPLOY ORDER IS A REAL FAILURE MODE HERE. The Worker ships on push;
+   `case_archive` arrives on a MANUAL portal-setup dispatch. Between the two the
+   table does not exist on the live database, and a join against a missing table
+   would take out the case list — the most-used view in the portal, and the same
+   shape as the `client_token` column that never reached production. */
+section('The case list survives a database that has not been set up yet');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-NOARC-1', service: 'Surveillance',
+                      client_name: 'Before Setup', subject_name: 'S' });
+  // Exactly the state a live database is in between the two deploys.
+  env.DB.prepare('DROP TABLE IF EXISTS case_archive').run();
+  env.DB.prepare('DROP TABLE IF EXISTS case_deleted').run();
+
+  const res = await call(env, '/submissions?limit=200', { cookie: admin });
+  ok('the case list still answers', res.status === 200, String(res.status));
+  const body = await jsonOf(res);
+  ok('and still lists the case', (body.submissions || []).map(r => r.case_no).join() === 'API-NOARC-1');
+  ok('reporting no archive stamp rather than failing',
+     (body.submissions || [])[0].archived_at === null);
+  ok('the workspace opens too',
+     (await call(env, '/cases/API-NOARC-1/workspace', { cookie: admin })).status === 200);
+  ok('and reports the case as not archived',
+     (await jsonOf(await call(env, '/cases/API-NOARC-1/workspace', { cookie: admin }))).archived === null);
+  /* Archiving is REFUSED with a sentence naming the fix, rather than throwing.
+     "It did not work" and "run the setup workflow" are different messages. */
+  const refused = await call(env, '/cases/API-NOARC-1/archive', { method: 'POST', cookie: admin, body: {} });
+  ok('archiving is refused with the reason and the remedy',
+     refused.status === 503 && /portal-setup/.test((await jsonOf(refused)).error || ''),
+     String(refused.status));
+  const refusedDel = await call(env, '/cases/API-NOARC-1/delete', { method: 'POST', cookie: admin, body: {} });
+  ok('deleting is refused the same way, with the remedy',
+     refusedDel.status === 503 && /portal-setup/.test((await jsonOf(refusedDel)).error || ''),
+     String(refusedDel.status));
+  ok('and the completed desk still answers rather than going down with them',
+     (await call(env, '/completed', { cookie: admin })).status === 200);
+  // Health is how the office finds out the dispatch has not been run.
+  const health = await jsonOf(await call(env, '/health'));
+  ok('health names case_archive',  (health.missing_tables || []).includes('case_archive'));
+  ok('and names case_deleted too', (health.missing_tables || []).includes('case_deleted'));
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

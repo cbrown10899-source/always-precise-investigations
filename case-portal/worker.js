@@ -1081,6 +1081,13 @@ async function emailSheet(request, env, user, id) {
     const lead = await env.DB.prepare('SELECT kind FROM submissions WHERE case_no = ?')
       .bind(caseNo).first();
     if (lead) {
+      /* The case is named in the BODY here, not the path, so the router's gate
+         does not see it. A deleted or archived case must not be able to email a
+         client — that was the worst of what earlier versions allowed, and it
+         really sent. An UNRESOLVABLE reference still sends, as the pre-case work
+         requires: only a case that exists and has been filed away is refused. */
+      const refusal = await caseSendRefusal(env, caseNo);
+      if (refusal) return refusal;
       linkedCase = caseNo;
       const wanted = lead.kind === 'claims' ? 'insurance_assignment' : 'private_retainer';
       if (id !== wanted) {
@@ -1310,7 +1317,13 @@ async function emailPaymentOptions(request, env, user) {
                          + `payment methods and are never sent to a carrier or TPA.` }, 400);
     }
     // Past the refusal, so anything found here is a private lead: a real case.
-    if (lead) linkedCase = caseNo;
+    if (lead) {
+      // Same body-not-path reason as the sheet send, and the same one helper —
+      // two copies of this rule is exactly how the archived half went missing.
+      const refusal = await caseSendRefusal(env, caseNo);
+      if (refusal) return refusal;
+      linkedCase = caseNo;
+    }
   }
 
   if (!(await withinRateLimit(env, 'mail'))) {
@@ -1430,7 +1443,24 @@ async function createManualIntake(request, env, user) {
    compute instead of failing the whole strip. */
 async function caseSummary(env, user) {
   const admin = user.role === 'admin';
-  const scope = admin ? '' : 'WHERE assigned_to = ?';
+  const missing = await missingTables(env);
+  const have = t => !missing.includes(t);
+
+  /* THE ALERTS STRIP IS "WHAT NEEDS MY ATTENTION TODAY", so a case the office
+     archived or deleted does not belong in it. Without this a deleted case came
+     straight back into Needs assignment and Out now the moment a day was
+     running on it — hidden from the list and loud on the dashboard above it
+     (Codex stop-time review, 2026-08-16).
+
+     Guarded on the tables existing, for the deploy-order reason the case list
+     already documents. */
+  const hide = [
+    have('case_archive') ? 'AND case_no NOT IN (SELECT case_no FROM case_archive)' : '',
+    have('case_deleted') ? 'AND case_no NOT IN (SELECT case_no FROM case_deleted)' : '',
+  ].filter(Boolean).join(' ');
+  const scope = admin
+    ? (hide ? `WHERE 1 = 1 ${hide}` : '')
+    : `WHERE assigned_to = ? ${hide}`;
   const binds = admin ? [] : [user.id];
   const { results } = await env.DB.prepare(
     `SELECT status, kind, COUNT(*) AS n FROM submissions ${scope} GROUP BY status, kind`)
@@ -1447,12 +1477,11 @@ async function caseSummary(env, user) {
 
   if (admin) {
     const row = await env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM submissions WHERE assigned_to IS NULL AND status != 'closed'").first();
+      `SELECT COUNT(*) AS n FROM submissions
+        WHERE assigned_to IS NULL AND status != 'closed' ${hide}`).first();
     out.unassigned = row ? Number(row.n) || 0 : 0;
   }
 
-  const missing = await missingTables(env);
-  const have = t => !missing.includes(t);
   const cap = a => a.slice(0, 100);
 
   // Out in the field right now: a day someone started and has not ended.
@@ -1537,7 +1566,31 @@ async function caseSummary(env, user) {
     out.tasks_overdue = cap((late || []).map(r => r.case_no));
   }
 
+  /* Every alert above is a list of case numbers built by its own query. The
+     archived and deleted ones are removed ONCE, here, rather than by copying
+     the same NOT IN into each — the copy is what gets forgotten the day a
+     seventh alert is added. */
+  const hidden = await hiddenCases(env);
+  if (hidden.size) {
+    for (const k of Object.keys(out)) {
+      if (Array.isArray(out[k])) out[k] = out[k].filter(c => !hidden.has(c));
+    }
+  }
+
   return json({ summary: out });
+}
+
+/* Case numbers that have left the working set: archived or deleted. Guarded on
+   each table existing, for the standing deploy-order reason. */
+async function hiddenCases(env) {
+  const missing = await missingTables(env);
+  const out = new Set();
+  for (const t of ['case_archive', 'case_deleted']) {
+    if (missing.includes(t)) continue;
+    const { results } = await env.DB.prepare(`SELECT case_no FROM ${t}`).all();
+    for (const r of results || []) out.add(r.case_no);
+  }
+  return out;
 }
 
 /* The email. Plain text alongside the HTML so it stays readable in a client
@@ -1804,26 +1857,63 @@ async function listSubmissions(request, env, user) {
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10) || 50, LIST_LIMIT_MAX);
   const offset = Math.max(parseInt(url.searchParams.get('offset') || '0', 10) || 0, 0);
 
+  /* ARCHIVED LEAVES THE ACTIVE LIST (owner, WORKFLOW-SIMPLIFICATION §2) and is
+     found under its own lens. `?view=archived` asks for exactly the archived
+     ones; every other view excludes them.
+
+     GUARDED, because schema.sql is applied by a MANUAL portal-setup dispatch
+     while the Worker deploys on push. Between the two, `case_archive` does not
+     exist on the live database — and a join against a missing table would take
+     out the case list itself, which is the single most-used view in the portal.
+     The same failure mode as the `client_token` column that never reached the
+     live database, and the same guard the dashboard already uses. */
+  const missing = await missingTables(env);
+  const haveArchive = !missing.includes('case_archive');
+  const haveDeleted = !missing.includes('case_deleted');
+  const view = url.searchParams.get('view') || '';
+  const wantArchived = view === 'archived';
+  /* Deleted is admin-only: an investigator asking for it gets their ordinary
+     list, not a view of what the office has taken out of circulation. */
+  const wantDeleted = view === 'deleted' && user.role === 'admin';
+  const archJoin = haveArchive ? 'LEFT JOIN case_archive ar ON ar.case_no = s.case_no' : '';
+  const archCol = haveArchive ? 'ar.archived_at' : 'NULL AS archived_at';
+  const delJoin = haveDeleted ? 'LEFT JOIN case_deleted del ON del.case_no = s.case_no' : '';
+  const delCol = haveDeleted ? 'del.deleted_at' : 'NULL AS deleted_at';
+  const joins = `${archJoin} ${delJoin}`;
+
+  const conds = [];
+  const where = [];
   // An investigator sees only what is assigned to them. This is enforced here,
   // in the query, rather than by the page hiding rows.
-  const scope = user.role === 'admin' ? '' : 'WHERE s.assigned_to = ?';
-  const binds = user.role === 'admin' ? [limit, offset] : [user.id, limit, offset];
+  if (user.role !== 'admin') { conds.push('s.assigned_to = ?'); where.push(user.id); }
+  /* A DELETED CASE LEAVES EVERY ORDINARY VIEW, Archived included — that is what
+     makes it a delete rather than a second archive. It comes back only under
+     its own lens, where an admin can restore it. */
+  if (haveDeleted) conds.push(wantDeleted ? 'del.case_no IS NOT NULL' : 'del.case_no IS NULL');
+  if (haveArchive && !wantDeleted) {
+    conds.push(wantArchived ? 'ar.case_no IS NOT NULL' : 'ar.case_no IS NULL');
+  }
+  const scope = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+  const binds = [...where, limit, offset];
 
   const { results } = await env.DB.prepare(
     `SELECT s.case_no, s.kind, s.service, s.status, s.client_name, s.client_email, s.subject_name,
             (SELECT COUNT(*) FROM send_log sl WHERE sl.case_no = s.case_no AND sl.ok = 1) AS send_count,
             (SELECT MAX(sent_at) FROM send_log sl WHERE sl.case_no = s.case_no AND sl.ok = 1) AS last_sent_at,
             s.carrier, s.claim_number, s.created_at, s.assigned_to, u.display_name AS assigned_name,
-            cs.stage, ls.status AS lead_status
+            cs.stage, ls.status AS lead_status, ${archCol}, ${delCol}
        FROM submissions s LEFT JOIN users u ON u.id = s.assigned_to
        LEFT JOIN case_status cs ON cs.case_no = s.case_no
        LEFT JOIN lead_status ls ON ls.case_no = s.case_no
+       ${joins}
        ${scope}
       ORDER BY s.created_at DESC LIMIT ? OFFSET ?`).bind(...binds).all();
 
-  const countRow = await (user.role === 'admin'
-    ? env.DB.prepare('SELECT COUNT(*) AS n FROM submissions').first()
-    : env.DB.prepare('SELECT COUNT(*) AS n FROM submissions WHERE assigned_to = ?').bind(user.id).first());
+  /* The total has to count the SAME set the rows came from, or the list says
+     "12 of 40" while showing the 12 that are not archived. */
+  const countRow = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM submissions s ${joins} ${scope}`)
+    .bind(...where).first();
 
   const rows = results || [];
   return json({
@@ -1975,6 +2065,91 @@ async function setStatus(request, env, user, caseNo) {
   }
   await setStage(env, user, caseNo, stage);
   return json({ ok: true, case_no: caseNo, status: stage });
+}
+
+/* The archive marker for a case, or null when it is not archived.
+
+   Guarded for the same deploy-order reason as the case list: the Worker ships
+   on push, `case_archive` arrives on a manual portal-setup dispatch, and a
+   workspace that threw in between would take the whole case screen down. */
+async function archiveOf(env, caseNo) {
+  if ((await missingTables(env)).includes('case_archive')) return null;
+  const row = await env.DB.prepare(
+    `SELECT a.archived_at, u.display_name AS archived_by
+       FROM case_archive a LEFT JOIN users u ON u.id = a.archived_by
+      WHERE a.case_no = ?`).bind(caseNo).first();
+  return row ? { archived_at: row.archived_at, archived_by: row.archived_by || '' } : null;
+}
+
+/* One sentence for every refusal on a deleted case, so the office reads the
+   same thing wherever it hits — and one that names the way out rather than
+   just saying no. */
+const DELETED_CASE = caseNo =>
+  `${caseNo} has been deleted, so nothing can be recorded or sent against it. `
+  + 'Put the case back first — nothing was destroyed.';
+
+/* ARCHIVED GATES WRITES TOO, and the reason is the hole it closes rather than
+   tidiness (Codex stop-time review, 2026-08-16 — "hidden rows can suppress live
+   work").
+
+   Archiving takes a case out of the working views. If work could still be
+   recorded against it, that work would be invisible: an investigator out in the
+   field on an archived case would not appear on Out now, and reports falling due
+   on it would not reach the alerts. Hiding a case and letting it stay workable
+   are the two halves of a silent failure.
+
+   So the two go together — out of the views, out of the work — and the way back
+   is one button. "Archived" means finished, and finishing something you are
+   still doing is the contradiction, not the refusal. */
+const ARCHIVED_CASE = caseNo =>
+  `${caseNo} is archived, so nothing can be recorded against it. `
+  + 'Restore the case first — it comes back exactly as it was.';
+
+/* THE SEND ROUTES NAME THEIR CASE IN THE BODY, where the router's gate cannot
+   see it, so they have to ask for themselves.
+
+   ONE function rather than two copies, because the first version of this was
+   two copies and they drifted immediately: both learned the deleted rule and
+   neither learned the archived one, so an archived case went on emailing
+   clients and writing `send_log` rows long after every path-addressed write was
+   refused (Codex stop-time review, 2026-08-16). A third send route must not be
+   able to pick up half the rule.
+
+   Called ONLY once the reference has resolved to a real case. An unresolvable
+   one still sends — that is the pre-case rule, and it is not weakened here. */
+async function caseSendRefusal(env, caseNo) {
+  const gone = await deletedOf(env, caseNo);
+  if (gone) return json({ error: DELETED_CASE(caseNo), case_deleted: true }, 409);
+  const filed = await archiveOf(env, caseNo);
+  if (filed) return json({ error: ARCHIVED_CASE(caseNo), case_archived: true }, 409);
+  return null;
+}
+
+/* A DAY THAT IS STILL RUNNING CANNOT BE FILED AWAY. Archiving or deleting a
+   case whose clock is open would strand that day: the case leaves the views, so
+   nobody sees it running, and the gate then refuses the very request that would
+   end it. The investigator is left with a clock they cannot stop and an office
+   that cannot see them. Refused here instead, naming the day. */
+async function openDayBlocking(env, caseNo) {
+  if ((await missingTables(env)).includes('case_days')) return null;
+  return env.DB.prepare(
+    `SELECT d.id, d.day_date, u.display_name AS investigator
+       FROM case_days d LEFT JOIN users u ON u.id = d.investigator_id
+      WHERE d.case_no = ? AND d.end_time IS NULL ORDER BY d.id DESC LIMIT 1`)
+    .bind(caseNo).first();
+}
+
+/* The delete tombstone, or null. Guarded like `archiveOf`, and for the same
+   deploy-order reason. */
+async function deletedOf(env, caseNo) {
+  if ((await missingTables(env)).includes('case_deleted')) return null;
+  const row = await env.DB.prepare(
+    `SELECT d.deleted_at, d.reason, u.display_name AS deleted_by
+       FROM case_deleted d LEFT JOIN users u ON u.id = d.deleted_by
+      WHERE d.case_no = ?`).bind(caseNo).first();
+  return row
+    ? { deleted_at: row.deleted_at, deleted_by: row.deleted_by || '', reason: row.reason || '' }
+    : null;
 }
 
 async function saveClosure(request, env, user, caseNo) {
@@ -2634,7 +2809,8 @@ async function caseWorkspace(env, user, caseNo) {
     // The clock the field timer trusts. The page measures its own skew against
     // this once and never counts ticks, so sleeping the phone changes nothing.
     server_now: nowIso(),
-    ...(admin ? { build_status: buildStatus, invoice_status: invoiceStatus,
+    ...(admin ? { archived: await archiveOf(env, caseNo), deleted: await deletedOf(env, caseNo),
+                  build_status: buildStatus, invoice_status: invoiceStatus,
                   sends: (await env.DB.prepare(
                     `SELECT l.kind, l.sheet_id, l.door, l.recipient, l.ok, l.detail, l.sent_at,
                             u.display_name AS sent_by
@@ -4138,6 +4314,18 @@ async function adminBuild(env, user, buildId) {
    looking for the report. Cancelled is deliberately absent: a cancelled case
    has no deliverables to find. */
 async function completedCases(env) {
+  /* THE COMPLETED DESK IS AN ORDINARY VIEW, so archived and deleted cases leave
+     it too. "Leaves active views" would be a half-truth if a case the office
+     archived kept appearing on the desk it reads to see what is finished.
+
+     Both exclusions are guarded on the table existing, for the same
+     deploy-order reason as the case list — this desk must not go down in the
+     window between the Worker deploying and portal-setup being dispatched. */
+  const missing = await missingTables(env);
+  const notArchived = missing.includes('case_archive') ? ''
+    : 'AND s.case_no NOT IN (SELECT case_no FROM case_archive)';
+  const notDeleted = missing.includes('case_deleted') ? ''
+    : 'AND s.case_no NOT IN (SELECT case_no FROM case_deleted)';
   const { results } = await env.DB.prepare(
     `SELECT s.case_no, s.kind, s.client_name, s.subject_name, s.carrier, s.created_at,
             cs.stage, cs.set_at AS stage_at,
@@ -4150,6 +4338,8 @@ async function completedCases(env) {
            ORDER BY version DESC, id DESC LIMIT 1)
       WHERE (cs.stage IN ('complete', 'closed') OR b.id IS NOT NULL)
         AND (cs.stage IS NULL OR cs.stage != 'cancelled')
+        ${notArchived}
+        ${notDeleted}
       ORDER BY COALESCE(b.finalized_at, cs.set_at, s.created_at) DESC
       LIMIT 200`).all();
 
@@ -4320,8 +4510,12 @@ async function outNow(env) {
        LEFT JOIN submissions s ON s.case_no = d.case_no
       WHERE d.end_time IS NULL
       ORDER BY d.created_at LIMIT 25`).all();
+  /* Out now is an ordinary working view, so an archived or deleted case does
+     not belong on it — a day left running on a case the office removed would
+     otherwise keep announcing itself here for ever. */
+  const hidden = await hiddenCases(env);
   const out = [];
-  for (const d of results || []) {
+  for (const d of (results || []).filter(d => !hidden.has(d.case_no))) {
     const last = await env.DB.prepare(
       `SELECT at_time, description, created_at FROM activity_log
         WHERE case_no = ? AND day_id = ? ORDER BY id DESC LIMIT 1`)
@@ -5013,7 +5207,7 @@ const EXPECTED_TABLES = [
      workspace load — the check saying "fine" is worse than no check. */
   'activity_removed', 'build_reports', 'build_summary', 'build_custom',
   'case_day_pauses', 'lead_status', 'send_log', 'invoice_retainer',
-  'payment_methods', 'payment_send', 'retainer_receipt',
+  'payment_methods', 'payment_send', 'retainer_receipt', 'case_archive', 'case_deleted',
   'retainer_payment', 'retainer_payment_void', 'retainer_payment_token',
 ];
 
@@ -5114,6 +5308,66 @@ async function route(request, env) {
   if (!user) return json({ error: 'Not signed in.' }, 401);
 
   if (p === '/auth/me') return json({ user });
+
+  /* A DELETED CASE DOES NOT PARTICIPATE IN WORK (Codex stop-time review,
+     2026-08-16 — "deleted cases remain operational and visible in ordinary
+     workflow paths").
+
+     Hiding a deleted case from the lists was only half of "removes it from
+     normal views". Reproduced against the first version: a deleted case could
+     still start a day, log activity, raise an invoice and — worst of it —
+     EMAIL THE CLIENT A RATE SHEET, which really sent. It also came back into
+     Active surveillance, the dashboard alerts and the calendar the moment a day
+     was running on it.
+
+     So the tombstone is a gate as well as a filter. Reads stay open on purpose:
+     an admin has to be able to look at a deleted case to decide whether to put
+     it back, and the workspace is where the Put-the-case-back button lives.
+     WRITES are refused, at one chokepoint rather than in thirty routes, because
+     a per-route check is a list somebody will add to and forget.
+
+     `/undelete` is the one write that must still work — it is the way out. */
+  if (method !== 'GET') {
+    const cm = p.match(/^\/(?:cases|submissions|leads)\/([A-Za-z0-9-]{3,64})(?:\/|$)/);
+    /* Invoices and package builds are addressed by their own ID, so the case
+       number is never in the path. Resolved here rather than left to each of
+       their routes to remember. */
+    const im = p.match(/^\/invoices\/(\d{1,12})(?:\/|$)/);
+    const bm = p.match(/^\/build\/(\d{1,12})(?:\/|$)/);
+    /* OFFERS ARE ADDRESSED BY ID TOO, and they were the way in that the first
+       version of this gate missed: an investigator could accept an offer on a
+       deleted case, which assigns them to it and moves its stage. */
+    const om = p.match(/^\/(?:my\/)?offers\/(\d{1,12})(?:\/|$)/);
+    let subject = cm ? cm[1] : null;
+    if (!subject && (im || bm || om)) {
+      const [table, id] = im ? ['invoices', im[1]]
+        : bm ? ['case_builds', bm[1]] : ['case_offers', om[1]];
+      const row = await env.DB.prepare(`SELECT case_no FROM ${table} WHERE id = ?`)
+        .bind(id).first();
+      subject = row && row.case_no ? row.case_no : null;
+    }
+    /* The writes that must still work, matched on the WHOLE path rather than a
+       suffix — `/cases/:no/activity/:id/delete` also ends in "delete", and
+       letting that through would leave a deleted case's timeline editable.
+
+       Delete and undelete always pass: they are the way out of deleted, and
+       deleting twice stays a no-op so a double tap on a flaky connection is not
+       an error the office has to interpret. Archive and restore pass only when
+       the case is NOT deleted — a deleted case is not archivable. */
+    const isDeleteRoute  = /^\/cases\/[A-Za-z0-9-]{3,64}\/(?:un)?delete$/.test(p);
+    const isArchiveRoute = /^\/cases\/[A-Za-z0-9-]{3,64}\/(?:archive|restore)$/.test(p);
+    if (subject) {
+      const gone = await deletedOf(env, subject);
+      if (gone && !isDeleteRoute) {
+        return json({ error: DELETED_CASE(subject), case_deleted: true }, 409);
+      }
+      if (!gone && !isDeleteRoute && !isArchiveRoute) {
+        const filed = await archiveOf(env, subject);
+        if (filed) return json({ error: ARCHIVED_CASE(subject), case_archived: true }, 409);
+      }
+    }
+  }
+
   if (p === '/submissions' && method === 'GET') return listSubmissions(request, env, user);
 
   let m = p.match(/^\/submissions\/([A-Za-z0-9-]{3,64})$/);
@@ -5857,6 +6111,101 @@ async function route(request, env) {
     return saveClosure(request, env, user, m[1]);
   }
 
+  /* ARCHIVE AND RESTORE (owner, WORKFLOW-SIMPLIFICATION §2). Admin-only, like
+     every other lifecycle control.
+
+     NOTHING ABOUT THE CASE IS TOUCHED — not the stage, not the status, not a
+     row anywhere else. Archiving writes one marker and restoring removes it,
+     so "preserves everything and is restorable" is true by construction rather
+     than by remembering to put things back. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/archive$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if ((await missingTables(env)).includes('case_archive')) {
+      return json({ error: 'Archiving is not set up on this database yet. Run the portal-setup '
+                         + 'workflow once and try again.' }, 503);
+    }
+    const sub = await env.DB.prepare('SELECT case_no FROM submissions WHERE case_no = ?')
+      .bind(m[1]).first();
+    if (!sub) return json({ error: 'not found' }, 404);
+    const running = await openDayBlocking(env, m[1]);
+    if (running) {
+      return json({ error: `${m[1]} has a day still running${
+        running.investigator ? ` — ${running.investigator}'s, from ${running.day_date}` : ''
+      }. End it before archiving, or the clock keeps going where nobody can see it.`,
+        open_day: true }, 409);
+    }
+    await env.DB.prepare(
+      `INSERT INTO case_archive (case_no, archived_by, archived_at) VALUES (?1, ?2, ?3)
+       ON CONFLICT(case_no) DO NOTHING`).bind(m[1], user.id, nowIso()).run();
+    return json({ ok: true, case_no: m[1], archived: await archiveOf(env, m[1]) });
+  }
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/restore$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if ((await missingTables(env)).includes('case_archive')) {
+      return json({ error: 'Archiving is not set up on this database yet. Run the portal-setup '
+                         + 'workflow once and try again.' }, 503);
+    }
+    const sub = await env.DB.prepare('SELECT case_no FROM submissions WHERE case_no = ?')
+      .bind(m[1]).first();
+    if (!sub) return json({ error: 'not found' }, 404);
+    await env.DB.prepare('DELETE FROM case_archive WHERE case_no = ?').bind(m[1]).run();
+    return json({ ok: true, case_no: m[1], archived: null });
+  }
+
+  /* DELETE CASE — a tombstone, never a purge (owner, WORKFLOW-SIMPLIFICATION §2
+     answer). Admin-only.
+
+     The ONLY write is the marker. Nothing is removed: not the submission, not
+     evidence, not reports, not invoices, not payment history, not the send or
+     audit logs. A delete that deleted rows would not be a tombstone, and the
+     owner ruled a true purge is not wanted.
+
+     It differs from archive in REACH, not in destructiveness: a deleted case
+     leaves every ordinary view including Archived, and comes back only under
+     the Deleted lens — where an admin can restore it. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/delete$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if ((await missingTables(env)).includes('case_deleted')) {
+      return json({ error: 'Deleting is not set up on this database yet. Run the portal-setup '
+                         + 'workflow once and try again.' }, 503);
+    }
+    const sub = await env.DB.prepare('SELECT case_no FROM submissions WHERE case_no = ?')
+      .bind(m[1]).first();
+    if (!sub) return json({ error: 'not found' }, 404);
+    const running = await openDayBlocking(env, m[1]);
+    if (running) {
+      return json({ error: `${m[1]} has a day still running${
+        running.investigator ? ` — ${running.investigator}'s, from ${running.day_date}` : ''
+      }. End it before deleting, or the clock keeps going where nobody can see it `
+        + 'and nobody can stop it.', open_day: true }, 409);
+    }
+    const body = await readJson(request);
+    const reason = String(body.reason == null ? '' : body.reason)
+      .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 200);
+    await env.DB.prepare(
+      `INSERT INTO case_deleted (case_no, reason, deleted_by, deleted_at) VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT(case_no) DO NOTHING`).bind(m[1], reason || null, user.id, nowIso()).run();
+    return json({ ok: true, case_no: m[1], deleted: await deletedOf(env, m[1]) });
+  }
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/undelete$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if ((await missingTables(env)).includes('case_deleted')) {
+      return json({ error: 'Deleting is not set up on this database yet. Run the portal-setup '
+                         + 'workflow once and try again.' }, 503);
+    }
+    const sub = await env.DB.prepare('SELECT case_no FROM submissions WHERE case_no = ?')
+      .bind(m[1]).first();
+    if (!sub) return json({ error: 'not found' }, 404);
+    await env.DB.prepare('DELETE FROM case_deleted WHERE case_no = ?').bind(m[1]).run();
+    return json({ ok: true, case_no: m[1], deleted: null });
+  }
+
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/close$/);
   if (m && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
@@ -6109,8 +6458,12 @@ async function route(request, env) {
       .bind(...(admin ? [like] : [like, user.id])).all();
 
     const { results: offers } = await env.DB.prepare(
+      /* `case_no` is selected for BOTH roles so archived and deleted cases can
+         be filtered out below, then deleted again from an investigator's rows —
+         it is deliberately not theirs to see, and it never reaches the
+         response. */
       `SELECT o.id, o.investigation_date, o.expected_hours, o.general_location, o.status,
-              ${admin ? 'o.case_no, u.display_name AS investigator,' : ''}
+              o.case_no, ${admin ? 'u.display_name AS investigator,' : ''}
               s.kind, t.label AS case_type
          FROM case_offers o
          LEFT JOIN users u ON u.id = o.investigator_id
@@ -6122,7 +6475,14 @@ async function route(request, env) {
         ORDER BY o.investigation_date`)
       .bind(...(admin ? [like] : [like, user.id])).all();
 
-    return json({ month, days: days || [], offers: offers || [] });
+    /* The calendar is a working view too. Filtered here rather than in both
+       queries, and the investigator's rows give `case_no` back up afterwards. */
+    const hidden = await hiddenCases(env);
+    const calDays = (days || []).filter(d => !hidden.has(d.case_no));
+    const calOffers = (offers || []).filter(o => !hidden.has(o.case_no))
+      .map(o => { if (admin) return o; const { case_no, ...rest } = o; return rest; });
+
+    return json({ month, days: calDays, offers: calOffers });
   }
 
   if (p === '/my/comp' && method === 'GET') {

@@ -617,8 +617,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1228 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 869 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 1334 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 906 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
@@ -708,6 +708,112 @@ record, and nothing about a case depends on BILL existing.
 owner's own status list agrees. When it is wanted it goes in as a side table —
 `invoices.status` carries a CHECK constraint, and see the `custom` note above
 for why that is not something to edit in place.
+
+## Case lifecycle — closed, reopened, archived
+
+**Closing goes through the checklist and nothing else.** `setStatus` refuses
+`closed` outright and says so; `closeCase` is the only door. **Reopening is a
+button on the panel where the closure happened** — it posts the existing
+`/submissions/:no/status` with the existing `open` stage, so the Worker clears
+the closing stamp and the eight ticks stay as history. It used to be a sentence
+saying "set a status above and save", and nothing was above it: the closing
+panel is Admin → Billing & closing while the status selector is Admin →
+Assignment, a different tab. Do not put that instruction back.
+
+**ARCHIVED is a companion table, not a status** (`case_archive`).
+`submissions.status` carries a CHECK and `case_status.stage` is validated
+against `STAGES`; widening either is the non-idempotent rebuild `schema.sql`
+cannot do, and editing a CHECK in place leaves a **fresh** database accepting
+the new value while the **live** one still refuses it. Same reasoning as
+`activity_removed` and `build_custom`.
+
+Because it is only a marker, archiving touches nothing: a case can be archived
+at any stage and restores to the stage it already had. "Preserves everything"
+is structural, not remembered.
+
+**The archive read is guarded, and that guard is load-bearing.** `schema.sql`
+arrives by a **manual** `portal-setup.yml` dispatch while the Worker deploys on
+push, so between the two `case_archive` does not exist on the live database. A
+join against a missing table would take out the case list — the most-used view
+in the portal, and the same shape as the `client_token` column that never
+reached production. `listSubmissions` and the workspace check `missingTables`
+first and degrade to "not archived"; the archive route returns 503 naming the
+workflow to run. **Adding a table means adding that guard too.**
+
+The Cases lens gained **Archived**, and it is a different *query* rather than a
+filter over loaded rows — the Worker excludes archived cases from every other
+view, so turning the lens reloads.
+
+**Delete Case is a tombstone and never a purge** (`case_deleted`). The owner's
+answer is explicit: *"an Admin-only soft-delete/tombstone that removes it from
+normal views but preserves records"*, and *"a true irreversible data purge is
+NOT needed now."* The only write is the marker. Nothing is removed — not the
+submission, not evidence, reports, invoices, payment history, or the send and
+audit logs — and a test asserts the row counts are unchanged across a delete on
+a case carrying a day, an activity entry, a report and an invoice.
+
+**It differs from archive in REACH, not in destructiveness.** Archived is a
+normal end state, browsable under its own lens. Deleted means the case should
+not be in the working set at all, so it leaves **every** ordinary view including
+Archived and the Completed desk, and returns only under **Deleted** — where an
+admin can put it back. Deleting never touches the archive marker, so a case that
+was archived is archived again when it is put back.
+
+That recoverability is the point, not a convenience: `activity_removed` offers
+"Put it back", a voided payment prints struck-through, deleted evidence still
+reads *"removed — the record stays"*. **Nothing the office does in the portal is
+unrecoverable in the portal.** If a real purge is ever wanted it is a different
+feature with a different name, and the owner has said it is not wanted now.
+
+**A deleted case does not participate in work, and hiding it from the lists was
+only half of that.** The first version was filter-only, and a deleted case could
+still start a day, log activity, raise an invoice and **email the client a rate
+sheet** — which really sent — while reappearing in Out now, the dashboard alerts
+and the calendar the moment a day ran on it. So the tombstone is a **gate** as
+well as a filter:
+
+- **One chokepoint in `route()`**, not a check in thirty routes — a per-route
+  list is one somebody adds to and forgets. Any non-GET on
+  `/cases|submissions|leads/:no/...` is refused with 409 and `case_deleted`.
+- **Invoices and builds are addressed by id**, so the case number is not in the
+  path; the gate resolves it.
+- **The two send routes name the case in the BODY**, so the router cannot see
+  it and each checks for itself, through **one shared `caseSendRefusal()`**.
+  That helper exists because the first version was two copies and they drifted
+  immediately: both learned the deleted rule and neither learned the archived
+  one, so an archived case went on emailing clients and writing `send_log` rows
+  long after every path-addressed write was refused. A third send route must not
+  be able to pick up half the rule. An *unresolvable* reference still sends —
+  the pre-case rule — only a case that exists and has been filed away is
+  refused.
+- **`/delete` and `/undelete` are the way out** and pass the gate. Matched on
+  the whole path: `/cases/:no/activity/:id/delete` also ends in "delete", and
+  letting that through would leave a deleted case's timeline editable.
+- **Reads stay open on purpose.** An admin has to be able to read a deleted case
+  to decide whether to put it back, and the workspace is where that button is.
+
+**Archived gates writes as well, and that is what makes hiding it safe.** The
+first version let an archived case stay workable while removing it from the
+working views — the two halves of a silent failure. An investigator out in the
+field on an archived case would not appear on Out now; reports falling due on it
+would not reach the alerts. Out of the views and out of the work go together,
+and the way back is one button. Archived means *finished*, and finishing
+something you are still doing is the contradiction, not the refusal.
+
+**Archiving or deleting a case with a day still running is refused**, naming the
+day. Otherwise the day is stranded: the case leaves the views so nobody sees the
+clock, and the gate then refuses the very request that would end it — an
+investigator with a clock they cannot stop and an office that cannot see them.
+Refusing at the door is also what makes the filtering safe, because nothing live
+can ever be behind a hidden case.
+
+`caseSummary`, `outNow` and the calendar filter both sets through
+`hiddenCases()`, once, rather than repeating a `NOT IN` in each query.
+
+**Offers are addressed by their own id**, and that was the actionable route the
+first gate missed: accepting one assigns the investigator and moves the case's
+stage. `/offers/:id/*` and `/my/offers/:id/*` resolve through the gate like
+invoices and builds.
 
 ## The free-plan failsafe
 

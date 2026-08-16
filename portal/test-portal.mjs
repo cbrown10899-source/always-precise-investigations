@@ -2299,6 +2299,239 @@ section('Closing a case takes the checklist');
   await page.close();
 }
 
+/* REOPEN IS A BUTTON ON THE CLOSED PANEL (owner, WORKFLOW-SIMPLIFICATION §2).
+
+   The closed-case panel used to say "Reopen by setting a status above and
+   saving." Nothing was above it: the closing panel renders in Admin → Billing
+   & closing while the status selector lives in Admin → Assignment, a different
+   tab. The one sentence explaining how to undo a closure pointed off the screen
+   and did not name where to go.
+
+   The section above still reopens through the status selector, deliberately —
+   that path has to keep working. These assert the direct one, on the panel where
+   the closure happened. */
+section('A closed case can be reopened where it was closed');
+{
+  await post('/ingest', {
+    case_no: 'API-20260812-4010', service: 'Surveillance',
+    client_name: 'Reopen Client', subject_name: 'Reopen Subject',
+    objective: 'Establish whereabouts',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4010').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Billing & closing');
+  ok('an open case offers no Reopen button',
+     await page.locator('[data-act="reopenCase"]').count() === 0);
+
+  for (const k of ['field_work','activity_logs','evidence','report','admin_review',
+                   'deliverables','expenses','billing']) {
+    await page.locator('#cl_' + k).check();
+  }
+  await page.locator('[data-act="closeCase"]').click();
+  await page.waitForTimeout(700);
+  const closed = await text(page, '#dlgBody');
+  ok('the case closes through the checklist as before', has(closed, 'Case closed'));
+
+  /* THE POINT OF THE CHANGE. No wsTab() call here — the control has to be on
+     the panel the admin is already looking at, or this proves nothing. */
+  ok('and Reopen case is right there on the closed panel',
+     await page.locator('[data-act="reopenCase"]').count() === 1);
+  ok('the instruction pointing at another tab is gone',
+     !has(closed, 'setting a status above'), closed.slice(0, 300));
+
+  await page.locator('[data-act="reopenCase"]').click();
+  await page.waitForTimeout(800);
+  const back = await text(page, '#dlgBody');
+  ok('pressing it reopens the case without leaving the panel',
+     has(back, 'Close the case') && !has(back, 'Case closed'), back.slice(0, 300));
+  /* "Reopening keeps every tick below as history" — the checklist is what the
+     office confirmed, and losing it would make reopening cost eight decisions. */
+  ok('and every tick survives as history', has(back, '8/8 confirmed'), back.slice(0, 300));
+  ok('so the case can be closed again without redoing the checklist',
+     await page.locator('[data-act="closeCase"]').count() === 1);
+
+  await page.locator('.close').click();
+  await page.waitForTimeout(500);
+  ok('the list shows it open again',
+     !has(await rowFor(page, 'API-20260812-4010').innerText(), 'Closed'),
+     await rowFor(page, 'API-20260812-4010').innerText());
+  await page.close();
+}
+{
+  /* The closing panel is admin-only in full, so the button cannot reach the
+     field. Dana is assigned the claims case; neither panel nor control. */
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  ok('an investigator gets no Reopen control',
+     await page.locator('[data-act="reopenCase"]').count() === 0);
+  ok('nor the closing checklist it belongs to',
+     !has(await text(page, '#dlgBody'), 'Close the case'));
+  await page.close();
+}
+
+/* ARCHIVE AND RESTORE ON THE SCREEN (owner, WORKFLOW-SIMPLIFICATION §2).
+
+   The case is archived and then restored inside this section: the suite shares
+   one database, and leaving a case out of the active list would silently change
+   what every later section sees. */
+section('A case can be archived and brought back');
+{
+  await post('/ingest', {
+    case_no: 'API-20260812-4011', service: 'Surveillance',
+    client_name: 'Archive Client', subject_name: 'Archive Subject',
+    objective: 'Establish whereabouts',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  ok('the Cases tab offers an Archived lens',
+     await page.locator('.lens', { hasText: 'Archived' }).count() === 1);
+  ok('and the new case starts in the active list',
+     await rowFor(page, 'API-20260812-4011').count() === 1);
+
+  await rowFor(page, 'API-20260812-4011').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Billing & closing');
+  ok('Archive sits beside closing, where the lifecycle lives',
+     await page.locator('[data-act="archiveCase"]').count() === 1);
+  ok('and says plainly that nothing is deleted',
+     has(await text(page, '#dlgBody'), 'Nothing is deleted'));
+
+  await page.locator('[data-act="archiveCase"]').click();
+  await page.waitForTimeout(800);
+  const arch = await text(page, '#dlgBody');
+  ok('archiving is confirmed on the case, with who and when',
+     has(arch, 'Case archived') && has(arch, 'Trever'), arch.slice(0, 300));
+  ok('and the offer becomes Restore, without leaving the panel',
+     await page.locator('[data-act="restoreCase"]').count() === 1
+     && await page.locator('[data-act="archiveCase"]').count() === 0);
+
+  await page.locator('.close').click();
+  await page.waitForTimeout(600);
+  ok('the archived case has left the active list',
+     await rowFor(page, 'API-20260812-4011').count() === 0);
+
+  await page.locator('.lens', { hasText: 'Archived' }).click();
+  await page.waitForTimeout(800);
+  ok('and is found under the Archived lens',
+     await rowFor(page, 'API-20260812-4011').count() === 1);
+  ok('which shows only archived cases',
+     await rowFor(page, 'API-20260812-4002').count() === 0);
+
+  /* PUT IT BACK, and leave the database as this section found it. */
+  await rowFor(page, 'API-20260812-4011').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Billing & closing');
+  await page.locator('[data-act="restoreCase"]').click();
+  await page.waitForTimeout(800);
+  ok('restoring is offered from the archived case itself',
+     await page.locator('[data-act="archiveCase"]').count() === 1);
+  await page.locator('.close').click();
+  await page.waitForTimeout(600);
+  await page.locator('.lens', { hasText: 'All' }).click();
+  await page.waitForTimeout(800);
+  ok('and the case is back in the active list',
+     await rowFor(page, 'API-20260812-4011').count() === 1);
+  await page.close();
+}
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  ok('an investigator gets no Archived lens',
+     await page.locator('.lens', { hasText: 'Archived' }).count() === 0);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  ok('nor any archive control on a case',
+     await page.locator('[data-act="archiveCase"]').count() === 0
+     && await page.locator('[data-act="restoreCase"]').count() === 0);
+  await page.close();
+}
+
+/* DELETE CASE ON THE SCREEN — a tombstone, never a purge (owner, §2 answer).
+   Deleted and then put back inside this section, so the shared database is left
+   as it was found. */
+section('A case can be deleted as a tombstone and put back');
+{
+  await post('/ingest', {
+    case_no: 'API-20260812-4012', service: 'Surveillance',
+    client_name: 'Delete Client', subject_name: 'Delete Subject',
+    objective: 'Establish whereabouts',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  const page = await newPage();
+  page.on('dialog', d => d.accept());   // the confirm every destructive action here uses
+  await signIn(page, 'trever', 'AdminPassword1x');
+  ok('the Cases tab offers a Deleted lens',
+     await page.locator('.lens', { hasText: 'Deleted' }).count() === 1);
+
+  await rowFor(page, 'API-20260812-4012').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Billing & closing');
+  ok('Delete case sits with the other lifecycle controls',
+     await page.locator('[data-act="deleteCase"]').count() === 1);
+  ok('and says at rest that nothing is destroyed',
+     has(await text(page, '#dlgBody'), 'Nothing is destroyed'));
+
+  await page.locator('[data-act="deleteCase"]').click();
+  await page.waitForTimeout(900);
+  const del = await text(page, '#dlgBody');
+  ok('deleting is confirmed on the case, with who and when',
+     has(del, 'Case deleted') && has(del, 'Trever'), del.slice(0, 300));
+  ok('and names what survived, not merely that it is gone',
+     has(del, 'activity') && has(del, 'invoices'), del.slice(0, 400));
+  ok('the offer becomes Put the case back',
+     await page.locator('[data-act="undeleteCase"]').count() === 1
+     && await page.locator('[data-act="deleteCase"]').count() === 0);
+
+  /* THE CASE STILL OPENS IN FULL — it has to, or it could never be restored. */
+  ok('and the workspace is still usable', await page.locator('.wstabs').count() >= 1);
+
+  await page.locator('.close').click();
+  await page.waitForTimeout(600);
+  ok('the deleted case has left the active list',
+     await rowFor(page, 'API-20260812-4012').count() === 0);
+  await page.locator('.lens', { hasText: 'Archived' }).click();
+  await page.waitForTimeout(800);
+  ok('and is NOT under Archived — delete reaches further than archive',
+     await rowFor(page, 'API-20260812-4012').count() === 0);
+  await page.locator('.lens', { hasText: 'Deleted' }).click();
+  await page.waitForTimeout(800);
+  ok('it is found under Deleted',
+     await rowFor(page, 'API-20260812-4012').count() === 1);
+
+  await rowFor(page, 'API-20260812-4012').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Billing & closing');
+  await page.locator('[data-act="undeleteCase"]').click();
+  await page.waitForTimeout(900);
+  ok('putting it back is offered from the deleted case itself',
+     await page.locator('[data-act="deleteCase"]').count() === 1);
+  await page.locator('.close').click();
+  await page.waitForTimeout(600);
+  await page.locator('.lens', { hasText: 'All' }).click();
+  await page.waitForTimeout(800);
+  ok('and the case is back in the active list',
+     await rowFor(page, 'API-20260812-4012').count() === 1);
+  await page.close();
+}
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  ok('an investigator gets no Deleted lens',
+     await page.locator('.lens', { hasText: 'Deleted' }).count() === 0);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  ok('nor any delete control on a case',
+     await page.locator('[data-act="deleteCase"]').count() === 0
+     && await page.locator('[data-act="undeleteCase"]').count() === 0);
+  await page.close();
+}
+
 /* The private-retainer balance (RATESHEETS.md admin side): internal only,
    driven from the Authorization tab of a private case. */
 section('The retainer balance on a private case');
