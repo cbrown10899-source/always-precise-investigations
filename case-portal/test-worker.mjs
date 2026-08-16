@@ -6644,6 +6644,157 @@ section('Deleting a case is a tombstone, and nothing is destroyed');
        .every(r => r.case_no !== 'API-DEL-B'));
 }
 
+/* A DELETED CASE DOES NOT PARTICIPATE IN WORK (Codex stop-time review,
+   2026-08-16 — "deleted cases remain operational and visible in ordinary
+   workflow paths").
+
+   Hiding it from the lists was only half of "removes it from normal views".
+   Reproduced against the first version: a deleted case could still start a day,
+   log activity, raise an invoice and EMAIL THE CLIENT A RATE SHEET — which
+   really sent — and it reappeared in Active surveillance, the dashboard alerts
+   and the calendar as soon as a day was running on it.
+
+   Reads stay open on purpose: an admin has to be able to look at a deleted case
+   to decide whether to put it back, and the workspace is where that button is. */
+section('A deleted case cannot be worked on, and stops appearing in working views');
+{
+  const realFetch = globalThis.fetch;
+  let lastBody = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      lastBody = JSON.parse(init.body);
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
+    body: { enabled: true, display_name: 'Venmo', handle: '@AlwaysPrecise',
+            url: 'https://venmo.com/u/AlwaysPrecise' } });
+
+  await ingest(env, { case_no: 'API-GONE-1', service: 'Surveillance',
+                      client_name: 'Gone Client', client_email: 'gone@example.com',
+                      subject_name: 'S' });
+  // A day left RUNNING before the delete, so the dashboard and Out now have
+  // something to keep announcing if the filter is not there.
+  await call(env, '/cases/API-GONE-1/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-16', start_time: '07:00' } });
+  const invBefore = (await jsonOf(await call(env, '/cases/API-GONE-1/invoices',
+    { method: 'POST', cookie: admin, body: {} }))).invoice;
+
+  await call(env, '/cases/API-GONE-1/delete', { method: 'POST', cookie: admin,
+    body: { reason: 'opened in error' } });
+
+  const gone = r => r.status === 409;
+  ok('a day cannot be started on a deleted case',
+     gone(await call(env, '/cases/API-GONE-1/day/start', { method: 'POST', cookie: admin,
+       body: { day_date: '2026-08-17', start_time: '08:00' } })));
+  ok('and the running day cannot be ended on it either',
+     gone(await call(env, '/cases/API-GONE-1/day/end', { method: 'POST', cookie: admin,
+       body: { end_time: '12:00' } })));
+  ok('activity cannot be logged',
+     gone(await call(env, '/cases/API-GONE-1/activity', { method: 'POST', cookie: admin,
+       body: { at_date: '2026-08-16', at_time: '07:10', description: 'still logging' } })));
+  ok('an invoice cannot be raised',
+     gone(await call(env, '/cases/API-GONE-1/invoices', { method: 'POST', cookie: admin, body: {} })));
+  ok('an existing invoice cannot be edited by id either — the case number is not in that path',
+     gone(await call(env, `/invoices/${invBefore.id}/status`, { method: 'POST', cookie: admin,
+       body: { status: 'ready' } })));
+  ok('it cannot be assigned',
+     gone(await call(env, '/submissions/API-GONE-1/assign', { method: 'POST', cookie: admin,
+       body: { user_id: null } })));
+  ok('its status cannot be changed',
+     gone(await call(env, '/submissions/API-GONE-1/status', { method: 'POST', cookie: admin,
+       body: { status: 'complete' } })));
+  ok('and it cannot be archived while deleted',
+     gone(await call(env, '/cases/API-GONE-1/archive', { method: 'POST', cookie: admin, body: {} })));
+
+  /* THE WORST OF WHAT THE FIRST VERSION ALLOWED: a client email from a case the
+     office had deleted. The case is named in the BODY here, so the router's
+     gate cannot see it and the send route checks for itself. */
+  lastBody = null;
+  const sheet = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'gone@example.com', case_no: 'API-GONE-1', include_intake: true } });
+  ok('a rate sheet cannot be emailed against a deleted case', gone(sheet), String(sheet.status));
+  ok('and nothing whatsoever was sent', lastBody === null);
+  lastBody = null;
+  ok('nor can payment instructions',
+     gone(await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+       body: { to: 'gone@example.com', case_no: 'API-GONE-1', methods: ['venmo'] } })));
+  ok('and nothing was sent for those either', lastBody === null);
+
+  /* The refusal names the way out rather than only saying no. */
+  const why = await jsonOf(await call(env, '/cases/API-GONE-1/activity', { method: 'POST',
+    cookie: admin, body: { at_date: '2026-08-16', at_time: '09:00', description: 'x' } }));
+  ok('the refusal says the case is deleted and how to undo it',
+     /deleted/i.test(why.error || '') && /put the case back/i.test(why.error || ''), why.error);
+  ok('and is flagged so the page can act on it rather than parse the sentence',
+     why.case_deleted === true);
+
+  /* THE SUFFIX TRAP: `/activity/:id/delete` also ends in "delete". Letting it
+     through the gate would leave a deleted case's timeline editable. */
+  const entry = ((await jsonOf(await call(env, '/cases/API-GONE-1/workspace',
+    { cookie: admin }))).activity || [])[0];
+  if (entry) {
+    ok('removing an activity entry on a deleted case is refused too',
+       gone(await call(env, `/cases/API-GONE-1/activity/${entry.id}/delete`,
+         { method: 'POST', cookie: admin, body: {} })));
+  } else {
+    ok('removing an activity entry on a deleted case is refused too (no entry to try)', true);
+  }
+
+  /* IT LEAVES THE WORKING VIEWS, including with a day still running on it. */
+  ok('it is not on Out now, despite the running day',
+     !JSON.stringify(await jsonOf(await call(env, '/active', { cookie: admin })))
+       .includes('API-GONE-1'));
+  ok('nor in the dashboard alerts',
+     !JSON.stringify(await jsonOf(await call(env, '/summary', { cookie: admin })))
+       .includes('API-GONE-1'));
+  ok('nor on the calendar',
+     !JSON.stringify(await jsonOf(await call(env, '/calendar?month=2026-08', { cookie: admin })))
+       .includes('API-GONE-1'));
+
+  /* BUT IT CAN STILL BE READ, or it could never be reviewed and put back. */
+  ok('the workspace still opens',
+     (await call(env, '/cases/API-GONE-1/workspace', { cookie: admin })).status === 200);
+  ok('the case record still reads',
+     (await call(env, '/submissions/API-GONE-1', { cookie: admin })).status === 200);
+  ok('and the invoice can still be read, just not changed',
+     (await call(env, `/invoices/${invBefore.id}`, { cookie: admin })).status === 200);
+
+  /* AND THE WAY OUT WORKS. */
+  ok('deleting it again is still a no-op, not a refusal',
+     (await call(env, '/cases/API-GONE-1/delete', { method: 'POST', cookie: admin, body: {} })).status === 200);
+  ok('and putting it back is allowed through the gate',
+     (await call(env, '/cases/API-GONE-1/undelete', { method: 'POST', cookie: admin, body: {} })).status === 200);
+  ok('after which work resumes',
+     (await call(env, '/cases/API-GONE-1/activity', { method: 'POST', cookie: admin,
+       body: { at_date: '2026-08-16', at_time: '09:30', description: 'back at it' } })).status === 201);
+  ok('and it is on Out now again, with the day that never stopped running',
+     JSON.stringify(await jsonOf(await call(env, '/active', { cookie: admin })))
+       .includes('API-GONE-1'));
+
+  /* ARCHIVED IS THE SAME KIND OF NOT-WORKING-ON-IT for the dashboard, which was
+     the other half of the same defect. Archiving does NOT gate writes — an
+     archived case is finished, not removed — so only the views are asserted. */
+  await call(env, '/cases/API-GONE-1/archive', { method: 'POST', cookie: admin, body: {} });
+  ok('an archived case leaves the dashboard alerts too',
+     !JSON.stringify(await jsonOf(await call(env, '/summary', { cookie: admin })))
+       .includes('API-GONE-1'));
+  ok('and Out now',
+     !JSON.stringify(await jsonOf(await call(env, '/active', { cookie: admin })))
+       .includes('API-GONE-1'));
+  ok('but it can still be worked on, because archived is not deleted',
+     (await call(env, '/cases/API-GONE-1/activity', { method: 'POST', cookie: admin,
+       body: { at_date: '2026-08-16', at_time: '10:00', description: 'archived, not gone' } })).status === 201);
+
+  globalThis.fetch = realFetch;
+}
+
 /* THE DEPLOY ORDER IS A REAL FAILURE MODE HERE. The Worker ships on push;
    `case_archive` arrives on a MANUAL portal-setup dispatch. Between the two the
    table does not exist on the live database, and a join against a missing table

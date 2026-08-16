@@ -1081,6 +1081,13 @@ async function emailSheet(request, env, user, id) {
     const lead = await env.DB.prepare('SELECT kind FROM submissions WHERE case_no = ?')
       .bind(caseNo).first();
     if (lead) {
+      /* The case is named in the BODY here, not the path, so the router's gate
+         does not see it. A deleted case must not be able to email a client —
+         that was the worst of what the first version allowed, and it really
+         sent. An UNRESOLVABLE reference still sends, as the pre-case work
+         requires: only a case that exists and is deleted is refused. */
+      const gone = await deletedOf(env, caseNo);
+      if (gone) return json({ error: DELETED_CASE(caseNo), case_deleted: true }, 409);
       linkedCase = caseNo;
       const wanted = lead.kind === 'claims' ? 'insurance_assignment' : 'private_retainer';
       if (id !== wanted) {
@@ -1310,7 +1317,12 @@ async function emailPaymentOptions(request, env, user) {
                          + `payment methods and are never sent to a carrier or TPA.` }, 400);
     }
     // Past the refusal, so anything found here is a private lead: a real case.
-    if (lead) linkedCase = caseNo;
+    if (lead) {
+      // Same body-not-path reason as the sheet send: the router cannot see it.
+      const gone = await deletedOf(env, caseNo);
+      if (gone) return json({ error: DELETED_CASE(caseNo), case_deleted: true }, 409);
+      linkedCase = caseNo;
+    }
   }
 
   if (!(await withinRateLimit(env, 'mail'))) {
@@ -1430,7 +1442,24 @@ async function createManualIntake(request, env, user) {
    compute instead of failing the whole strip. */
 async function caseSummary(env, user) {
   const admin = user.role === 'admin';
-  const scope = admin ? '' : 'WHERE assigned_to = ?';
+  const missing = await missingTables(env);
+  const have = t => !missing.includes(t);
+
+  /* THE ALERTS STRIP IS "WHAT NEEDS MY ATTENTION TODAY", so a case the office
+     archived or deleted does not belong in it. Without this a deleted case came
+     straight back into Needs assignment and Out now the moment a day was
+     running on it — hidden from the list and loud on the dashboard above it
+     (Codex stop-time review, 2026-08-16).
+
+     Guarded on the tables existing, for the deploy-order reason the case list
+     already documents. */
+  const hide = [
+    have('case_archive') ? 'AND case_no NOT IN (SELECT case_no FROM case_archive)' : '',
+    have('case_deleted') ? 'AND case_no NOT IN (SELECT case_no FROM case_deleted)' : '',
+  ].filter(Boolean).join(' ');
+  const scope = admin
+    ? (hide ? `WHERE 1 = 1 ${hide}` : '')
+    : `WHERE assigned_to = ? ${hide}`;
   const binds = admin ? [] : [user.id];
   const { results } = await env.DB.prepare(
     `SELECT status, kind, COUNT(*) AS n FROM submissions ${scope} GROUP BY status, kind`)
@@ -1447,12 +1476,11 @@ async function caseSummary(env, user) {
 
   if (admin) {
     const row = await env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM submissions WHERE assigned_to IS NULL AND status != 'closed'").first();
+      `SELECT COUNT(*) AS n FROM submissions
+        WHERE assigned_to IS NULL AND status != 'closed' ${hide}`).first();
     out.unassigned = row ? Number(row.n) || 0 : 0;
   }
 
-  const missing = await missingTables(env);
-  const have = t => !missing.includes(t);
   const cap = a => a.slice(0, 100);
 
   // Out in the field right now: a day someone started and has not ended.
@@ -1537,7 +1565,31 @@ async function caseSummary(env, user) {
     out.tasks_overdue = cap((late || []).map(r => r.case_no));
   }
 
+  /* Every alert above is a list of case numbers built by its own query. The
+     archived and deleted ones are removed ONCE, here, rather than by copying
+     the same NOT IN into each — the copy is what gets forgotten the day a
+     seventh alert is added. */
+  const hidden = await hiddenCases(env);
+  if (hidden.size) {
+    for (const k of Object.keys(out)) {
+      if (Array.isArray(out[k])) out[k] = out[k].filter(c => !hidden.has(c));
+    }
+  }
+
   return json({ summary: out });
+}
+
+/* Case numbers that have left the working set: archived or deleted. Guarded on
+   each table existing, for the standing deploy-order reason. */
+async function hiddenCases(env) {
+  const missing = await missingTables(env);
+  const out = new Set();
+  for (const t of ['case_archive', 'case_deleted']) {
+    if (missing.includes(t)) continue;
+    const { results } = await env.DB.prepare(`SELECT case_no FROM ${t}`).all();
+    for (const r of results || []) out.add(r.case_no);
+  }
+  return out;
 }
 
 /* The email. Plain text alongside the HTML so it stays readable in a client
@@ -2027,6 +2079,13 @@ async function archiveOf(env, caseNo) {
       WHERE a.case_no = ?`).bind(caseNo).first();
   return row ? { archived_at: row.archived_at, archived_by: row.archived_by || '' } : null;
 }
+
+/* One sentence for every refusal on a deleted case, so the office reads the
+   same thing wherever it hits — and one that names the way out rather than
+   just saying no. */
+const DELETED_CASE = caseNo =>
+  `${caseNo} has been deleted, so nothing can be recorded or sent against it. `
+  + 'Put the case back first — nothing was destroyed.';
 
 /* The delete tombstone, or null. Guarded like `archiveOf`, and for the same
    deploy-order reason. */
@@ -4399,8 +4458,12 @@ async function outNow(env) {
        LEFT JOIN submissions s ON s.case_no = d.case_no
       WHERE d.end_time IS NULL
       ORDER BY d.created_at LIMIT 25`).all();
+  /* Out now is an ordinary working view, so an archived or deleted case does
+     not belong on it — a day left running on a case the office removed would
+     otherwise keep announcing itself here for ever. */
+  const hidden = await hiddenCases(env);
   const out = [];
-  for (const d of results || []) {
+  for (const d of (results || []).filter(d => !hidden.has(d.case_no))) {
     const last = await env.DB.prepare(
       `SELECT at_time, description, created_at FROM activity_log
         WHERE case_no = ? AND day_id = ? ORDER BY id DESC LIMIT 1`)
@@ -5193,6 +5256,53 @@ async function route(request, env) {
   if (!user) return json({ error: 'Not signed in.' }, 401);
 
   if (p === '/auth/me') return json({ user });
+
+  /* A DELETED CASE DOES NOT PARTICIPATE IN WORK (Codex stop-time review,
+     2026-08-16 — "deleted cases remain operational and visible in ordinary
+     workflow paths").
+
+     Hiding a deleted case from the lists was only half of "removes it from
+     normal views". Reproduced against the first version: a deleted case could
+     still start a day, log activity, raise an invoice and — worst of it —
+     EMAIL THE CLIENT A RATE SHEET, which really sent. It also came back into
+     Active surveillance, the dashboard alerts and the calendar the moment a day
+     was running on it.
+
+     So the tombstone is a gate as well as a filter. Reads stay open on purpose:
+     an admin has to be able to look at a deleted case to decide whether to put
+     it back, and the workspace is where the Put-the-case-back button lives.
+     WRITES are refused, at one chokepoint rather than in thirty routes, because
+     a per-route check is a list somebody will add to and forget.
+
+     `/undelete` is the one write that must still work — it is the way out. */
+  if (method !== 'GET') {
+    const cm = p.match(/^\/(?:cases|submissions|leads)\/([A-Za-z0-9-]{3,64})(?:\/|$)/);
+    /* Invoices and package builds are addressed by their own ID, so the case
+       number is never in the path. Resolved here rather than left to each of
+       their routes to remember. */
+    const im = p.match(/^\/invoices\/(\d{1,12})(?:\/|$)/);
+    const bm = p.match(/^\/build\/(\d{1,12})(?:\/|$)/);
+    let subject = cm ? cm[1] : null;
+    if (!subject && (im || bm)) {
+      const row = im
+        ? await env.DB.prepare('SELECT case_no FROM invoices WHERE id = ?').bind(im[1]).first()
+        : await env.DB.prepare('SELECT case_no FROM case_builds WHERE id = ?').bind(bm[1]).first();
+      subject = row && row.case_no ? row.case_no : null;
+    }
+    /* The two writes that must still work on a deleted case: putting it back,
+       and deleting it again (which stays a no-op, so a double tap on a flaky
+       connection is not an error the office has to interpret).
+
+       Matched on the WHOLE path, not a suffix — `/cases/:no/activity/:id/delete`
+       also ends in "delete", and letting that through would leave the timeline
+       of a deleted case editable. */
+    const wayOut = /^\/cases\/[A-Za-z0-9-]{3,64}\/(?:un)?delete$/.test(p);
+    if (subject && !wayOut) {
+      const gone = await deletedOf(env, subject);
+      if (gone) return json({ error: DELETED_CASE(subject), case_deleted: true }, 409);
+    }
+  }
+
   if (p === '/submissions' && method === 'GET') return listSubmissions(request, env, user);
 
   let m = p.match(/^\/submissions\/([A-Za-z0-9-]{3,64})$/);
@@ -6269,8 +6379,12 @@ async function route(request, env) {
       .bind(...(admin ? [like] : [like, user.id])).all();
 
     const { results: offers } = await env.DB.prepare(
+      /* `case_no` is selected for BOTH roles so archived and deleted cases can
+         be filtered out below, then deleted again from an investigator's rows —
+         it is deliberately not theirs to see, and it never reaches the
+         response. */
       `SELECT o.id, o.investigation_date, o.expected_hours, o.general_location, o.status,
-              ${admin ? 'o.case_no, u.display_name AS investigator,' : ''}
+              o.case_no, ${admin ? 'u.display_name AS investigator,' : ''}
               s.kind, t.label AS case_type
          FROM case_offers o
          LEFT JOIN users u ON u.id = o.investigator_id
@@ -6282,7 +6396,14 @@ async function route(request, env) {
         ORDER BY o.investigation_date`)
       .bind(...(admin ? [like] : [like, user.id])).all();
 
-    return json({ month, days: days || [], offers: offers || [] });
+    /* The calendar is a working view too. Filtered here rather than in both
+       queries, and the investigator's rows give `case_no` back up afterwards. */
+    const hidden = await hiddenCases(env);
+    const calDays = (days || []).filter(d => !hidden.has(d.case_no));
+    const calOffers = (offers || []).filter(o => !hidden.has(o.case_no))
+      .map(o => { if (admin) return o; const { case_no, ...rest } = o; return rest; });
+
+    return json({ month, days: calDays, offers: calOffers });
   }
 
   if (p === '/my/comp' && method === 'GET') {

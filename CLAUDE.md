@@ -617,7 +617,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1292 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 1320 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 906 checks: the page against the real Worker
 ```
 
@@ -764,6 +764,32 @@ That recoverability is the point, not a convenience: `activity_removed` offers
 reads *"removed — the record stays"*. **Nothing the office does in the portal is
 unrecoverable in the portal.** If a real purge is ever wanted it is a different
 feature with a different name, and the owner has said it is not wanted now.
+
+**A deleted case does not participate in work, and hiding it from the lists was
+only half of that.** The first version was filter-only, and a deleted case could
+still start a day, log activity, raise an invoice and **email the client a rate
+sheet** — which really sent — while reappearing in Out now, the dashboard alerts
+and the calendar the moment a day ran on it. So the tombstone is a **gate** as
+well as a filter:
+
+- **One chokepoint in `route()`**, not a check in thirty routes — a per-route
+  list is one somebody adds to and forgets. Any non-GET on
+  `/cases|submissions|leads/:no/...` is refused with 409 and `case_deleted`.
+- **Invoices and builds are addressed by id**, so the case number is not in the
+  path; the gate resolves it.
+- **The two send routes name the case in the BODY**, so the router cannot see
+  it and each checks for itself. An *unresolvable* reference still sends — the
+  pre-case rule — only a case that exists and is deleted is refused.
+- **`/delete` and `/undelete` are the way out** and pass the gate. Matched on
+  the whole path: `/cases/:no/activity/:id/delete` also ends in "delete", and
+  letting that through would leave a deleted case's timeline editable.
+- **Reads stay open on purpose.** An admin has to be able to read a deleted case
+  to decide whether to put it back, and the workspace is where that button is.
+
+**Archived leaves the working views too but does NOT gate writes** — archived
+means finished, not removed. `caseSummary`, `outNow` and the calendar filter
+both sets through `hiddenCases()`, once, rather than repeating a `NOT IN` in
+each query.
 
 ## The free-plan failsafe
 
