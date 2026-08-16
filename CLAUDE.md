@@ -617,8 +617,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1228 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 869 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 1258 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 892 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
@@ -708,6 +708,41 @@ record, and nothing about a case depends on BILL existing.
 owner's own status list agrees. When it is wanted it goes in as a side table —
 `invoices.status` carries a CHECK constraint, and see the `custom` note above
 for why that is not something to edit in place.
+
+## Case lifecycle — closed, reopened, archived
+
+**Closing goes through the checklist and nothing else.** `setStatus` refuses
+`closed` outright and says so; `closeCase` is the only door. **Reopening is a
+button on the panel where the closure happened** — it posts the existing
+`/submissions/:no/status` with the existing `open` stage, so the Worker clears
+the closing stamp and the eight ticks stay as history. It used to be a sentence
+saying "set a status above and save", and nothing was above it: the closing
+panel is Admin → Billing & closing while the status selector is Admin →
+Assignment, a different tab. Do not put that instruction back.
+
+**ARCHIVED is a companion table, not a status** (`case_archive`).
+`submissions.status` carries a CHECK and `case_status.stage` is validated
+against `STAGES`; widening either is the non-idempotent rebuild `schema.sql`
+cannot do, and editing a CHECK in place leaves a **fresh** database accepting
+the new value while the **live** one still refuses it. Same reasoning as
+`activity_removed` and `build_custom`.
+
+Because it is only a marker, archiving touches nothing: a case can be archived
+at any stage and restores to the stage it already had. "Preserves everything"
+is structural, not remembered.
+
+**The archive read is guarded, and that guard is load-bearing.** `schema.sql`
+arrives by a **manual** `portal-setup.yml` dispatch while the Worker deploys on
+push, so between the two `case_archive` does not exist on the live database. A
+join against a missing table would take out the case list — the most-used view
+in the portal, and the same shape as the `client_token` column that never
+reached production. `listSubmissions` and the workspace check `missingTables`
+first and degrade to "not archived"; the archive route returns 503 naming the
+workflow to run. **Adding a table means adding that guard too.**
+
+The Cases lens gained **Archived**, and it is a different *query* rather than a
+filter over loaded rows — the Worker excludes archived cases from every other
+view, so turning the lens reloads.
 
 ## The free-plan failsafe
 
