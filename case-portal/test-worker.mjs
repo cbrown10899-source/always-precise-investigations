@@ -4946,6 +4946,63 @@ section('Every send works before a case exists, and still works after one does')
   ok('and the payment route is private by construction',
      await ctxOf('/payment-options/email', { to: 'a@b.co' }) === 'private');
 
+  /* EVERY CLIENT-FACING SEND REPORTS A CONTEXT (Codex stop-time review,
+     2026-08-15 — "the context refactor leaves an existing send route outside
+     its claimed invariant").
+
+     `sendLeadIntake` was that route. It paired the intake with a bare ternary
+     — `kind === 'claims' ? insurance : private` — so anything it did not
+     recognise defaulted into PRIVATE, the side that carries payment methods.
+     `submissions.kind` is CHECK-constrained so nothing could reach it today,
+     but a guard whose safety lives in a constraint somewhere else is one
+     widening away from being wrong.
+
+     Asserted for all four routes at once, so a fifth added later has to declare
+     itself rather than quietly sitting outside the invariant. */
+  const leadCtx = await jsonOf(await call(env, '/leads/API-PC-P/send-intake',
+    { method: 'POST', cookie: admin, body: { to: 'jane@example.com' } }));
+  ok('the lead intake send reports a context, and it is the lead\'s own',
+     leadCtx.send_context === 'private', JSON.stringify(leadCtx.send_context));
+  const leadCtxC = await jsonOf(await call(env, '/leads/API-PC-C/send-intake',
+    { method: 'POST', cookie: admin, body: { to: 'adjuster@carrier.example' } }));
+  ok('and a claims lead reports the insurance context',
+     leadCtxC.send_context === 'insurance', JSON.stringify(leadCtxC.send_context));
+  /* FAILING CLOSED on an unrecognised kind is a STRUCTURAL property, because
+     the state cannot be reached behaviourally: `submissions.kind` is
+     CHECK-constrained and the database refuses to hold anything else. Trying to
+     plant one returns `CHECK constraint failed: kind IN ('consumer','claims')`.
+
+     That is exactly why the old ternary was dangerous rather than harmless —
+     its safety lived in a constraint in another file, and it would have started
+     defaulting to PRIVATE the day that constraint was widened. So the shape is
+     asserted instead: no intake pairing may be written as a ternary on `kind`,
+     which is the form that must pick a side for anything it does not know. The
+     same reasoning already produced the read-then-write guard on the retainer
+     route and the one-clock-read guard in the page. */
+  {
+    const src = fs.readFileSync(new URL('./worker.js', import.meta.url), 'utf8');
+    const pairing = /SHEET_INTAKE\[[^\]]*\?[^\]]*:[^\]]*\]/;
+    ok('no intake is paired by a ternary that must guess a side',
+       !pairing.test(src), (src.match(pairing) || [''])[0]);
+    ok('the context-to-intake mapping is a declared table',
+       src.includes('const CONTEXT_SHEET = {') && src.includes('intakeForContext'));
+    // Two call sites — the lead-card send and the pre-case send. The definition
+    // is `intakeForContext = ctx =>`, so it does not match this pattern.
+    ok('and both intake senders derive it from the context',
+       (src.match(/intakeForContext\(/g) || []).length === 2,
+       String((src.match(/intakeForContext\(/g) || []).length));
+    /* Codex design review, 2026-08-15: every caller gated on the context before
+       reaching `paymentOptionsFor`, so nothing could get through — but the
+       safety lived in call-site convention rather than in the function handing
+       out the payment methods. A fifth caller would have inherited nothing and
+       would have looked correct. The gate is in the function too now, and it
+       fails closed on the `null` an omitted argument supplies. */
+    ok('paymentOptionsFor refuses on its own, not only at its call sites',
+       /async function paymentOptionsFor[\s\S]{0,1400}?CONTEXT_TAKES_PAYMENT\(context\)/.test(src));
+    ok('and every call passes a context in',
+       (src.match(/paymentOptionsFor\(env, wantedMethods, brokenMethods\)/g) || []).length === 0);
+  }
+
   /* Payment never leaks into an insurance context, tried five ways: to a
      private client's address, to a carrier's, with no case, with a private
      case, and with a claims case. The recipient is varied deliberately, because

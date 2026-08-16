@@ -626,6 +626,17 @@ const KIND_CONTEXT = { consumer: SEND_CONTEXT.PRIVATE, claims: SEND_CONTEXT.INSU
 const contextForSheet = sheetId => SHEET_CONTEXT[sheetId] || null;
 const contextForKind  = kind    => KIND_CONTEXT[kind] || null;
 
+/* The inverse: which product a context sends. Declared rather than derived with
+   a ternary, because a ternary has to pick a side for anything it does not
+   recognise and the wrong side here is the one carrying payment methods. This
+   returns undefined for an unknown context and every caller refuses on it, so
+   an unrecognised value fails CLOSED. */
+const CONTEXT_SHEET = {
+  [SEND_CONTEXT.PRIVATE]:   'private_retainer',
+  [SEND_CONTEXT.INSURANCE]: 'insurance_assignment',
+};
+const intakeForContext = ctx => SHEET_INTAKE[CONTEXT_SHEET[ctx]];
+
 /* The only rule payment options need. Everything that used to be spread across
    a sheet-id comparison and a recipient lookup is this one line. */
 const CONTEXT_TAKES_PAYMENT = ctx => ctx === SEND_CONTEXT.PRIVATE;
@@ -689,7 +700,21 @@ async function paymentConfig(env) {
    `wanted` is the admin's per-send selection. Anything not enabled centrally is
    dropped regardless of what the caller asked for, so the send wizard cannot
    turn on a method the configuration has off. */
-async function paymentOptionsFor(env, wanted, unusableOut = []) {
+async function paymentOptionsFor(env, wanted, unusableOut = [], context = null) {
+  /* THE CONTEXT IS CHECKED HERE, NOT ONLY AT THE CALL SITES (Codex design
+     review, 2026-08-15).
+
+     Every caller already gated on the context before reaching this function, so
+     nothing could get through — but the review's point stands: the safety lived
+     in call-site convention rather than in the function that actually hands out
+     payment methods. A fifth caller added later would inherit no protection at
+     all, and it would look correct.
+
+     So the boundary is here as well. `context` is required to be the private
+     one; anything else — including the `null` a careless new caller would pass
+     by omission — returns nothing. It fails CLOSED, which is the opposite of
+     what a defaulted parameter usually does, and is the point. */
+  if (!CONTEXT_TAKES_PAYMENT(context)) return [];
   const all = await paymentConfig(env);
   /* NO SELECTION and AN EMPTY SELECTION are different answers, and conflating
      them is how unticking every method sent every method. `null` means the
@@ -812,10 +837,32 @@ Always Precise Investigations, LLC — Va DCJS #11-9159`;
   return { text, html };
 }
 
+/* THIS ROUTE IS INSIDE THE CONTEXT MODEL TOO (Codex stop-time review,
+   2026-08-15 — "the context refactor leaves an existing send route outside its
+   claimed invariant").
+
+   It was the one client-facing send that had not been brought in. It paired the
+   intake with a bare ternary — `kind === 'claims' ? insurance : private` — which
+   is worse than merely inconsistent: a ternary must pick a side for anything it
+   does not recognise, and the side it picked was PRIVATE, the one that carries
+   payment methods. `submissions.kind` is CHECK-constrained today so nothing
+   could reach it, but a guard whose safety depends on a constraint somewhere
+   else is a guard waiting for that constraint to be widened.
+
+   `contextForKind` returns null for anything it does not know and this refuses
+   on it, so an unrecognised kind now fails CLOSED rather than defaulting into
+   the payment-carrying side. */
 async function sendLeadIntake(request, env, user, caseNo) {
   const lead = await env.DB.prepare(
     'SELECT case_no, kind, client_name FROM submissions WHERE case_no = ?').bind(caseNo).first();
   if (!lead) return json({ error: 'not found' }, 404);
+
+  const context = contextForKind(lead.kind);
+  const intake = intakeForContext(context);
+  if (!context || !intake) {
+    return json({ error: `${caseNo} does not say whether it is a private client or a claim `
+                       + `assignment, so the right intake form cannot be chosen.` }, 409);
+  }
 
   const body = await readJson(request);
   const to = String(body.to || '').trim();
@@ -826,7 +873,6 @@ async function sendLeadIntake(request, env, user, caseNo) {
     return json({ error: 'Too many emails in one minute — wait a moment and send again.' }, 429);
   }
 
-  const intake = SHEET_INTAKE[lead.kind === 'claims' ? 'insurance_assignment' : 'private_retainer'];
   const { text, html } = intakeInviteEmail(intake, lead.client_name);
 
   const mail = await sendMail(env, {
@@ -844,7 +890,7 @@ async function sendLeadIntake(request, env, user, caseNo) {
   await logSend(env, user, { case_no: caseNo, kind: 'intake', door: intake.url,
     recipient: to, ok: 1 });
   await stampLead(env, user, caseNo, 'intake_sent');
-  return json({ ok: true, sent_to: to, intake: intake.label,
+  return json({ ok: true, sent_to: to, intake: intake.label, send_context: context,
                 lead_status: (await env.DB.prepare(
                   'SELECT status FROM lead_status WHERE case_no = ?').bind(caseNo).first() || {}).status });
 }
@@ -934,7 +980,9 @@ async function sendPreCaseIntake(request, env, user) {
     return json({ error: 'Too many emails in one minute — wait a moment and send again.' }, 429);
   }
 
-  const intake = SHEET_INTAKE[kind === 'claims' ? 'insurance_assignment' : 'private_retainer'];
+  // Derived from the context, not from a ternary that must guess for anything
+  // it does not recognise — see `intakeForContext`.
+  const intake = intakeForContext(context);
   const { text, html } = intakeInviteEmail(intake, name);
   const mail = await sendMail(env, {
     to, subject: `${intake.label} — Always Precise Investigations`, text, html });
@@ -1049,7 +1097,10 @@ async function emailSheet(request, env, user, id) {
   const wantedMethods = Array.isArray(body.methods)
     ? body.methods.map(x => String(x)).filter(x => PAY_IDS.includes(x)) : null;
   const brokenMethods = [];
-  const payment = includePayment ? await paymentOptionsFor(env, wantedMethods, brokenMethods) : [];
+  // The sheet's own context is passed through, so the refusal is the function's
+  // as well as this route's — two independent gates, not one repeated.
+  const payment = includePayment
+    ? await paymentOptionsFor(env, wantedMethods, brokenMethods, contextForSheet(sheet.id)) : [];
 
   /* A method switched on with no link cannot be offered, and must not be
      dropped in silence — the admin would see a successful send and never learn
@@ -1213,7 +1264,8 @@ async function emailPaymentOptions(request, env, user) {
   const wantedMethods = Array.isArray(body.methods)
     ? body.methods.map(x => String(x)).filter(x => PAY_IDS.includes(x)) : null;
   const brokenMethods = [];
-  const payment = await paymentOptionsFor(env, wantedMethods, brokenMethods);
+  const payment = await paymentOptionsFor(env, wantedMethods, brokenMethods,
+    SEND_CONTEXT.PRIVATE);
 
   // Same two refusals, in the same words, as the sheet send — one of them is
   // answered in this dialog and the other in Settings.

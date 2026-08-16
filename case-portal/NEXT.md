@@ -922,6 +922,32 @@ finding. A reference mistyped so badly it matches no row no longer trips the
 claims check, because there is nothing to check against. The owner weighed that
 against a workflow that could not send at all and chose this.
 
+## 🔴 OPEN FINDINGS — Codex DESIGN review of the send-context refactor (2026-08-15)
+
+Run on the owner's instruction to *"review the DESIGN, not only the patch"*,
+against `164fa1c`. **Recorded here rather than fixed, on the owner's
+instruction not to open another review round in that unit.** These are Codex's
+conclusions; the orchestrator has not independently re-derived them, which is
+the standing rule for a reviewer's report.
+
+| # | Finding | Codex's confidence | State |
+| --- | --- | --- | --- |
+| 1 | `paymentOptionsFor()` accepted no context, so the payment boundary rested on **call-site convention** rather than on the function handing out the methods. No exploit today; a fifth caller would have inherited nothing and looked correct | design weakness, no current exploit | ✅ **FIXED** before the instruction landed — the gate is in the function and fails closed on the `null` an omitted argument supplies. Two source-level guards assert it |
+| 2 | **A real protection was lost.** An authenticated admin who omits or mistypes `case_no` can send Cash App/Venmo to an address already stored as a carrier contact. The old `recipientIsCarrier` blocked that; the new pairing refuses only when the reference actually resolves to a claims row | confirmed | 🔴 **OPEN — owner decision.** This is the deliberate consequence of removing recipient inference. Requires admin auth; not externally exploitable |
+| 3 | **Separation is weaker operationally, equal structurally.** The formal invariant (an insurance sheet can never contain payment) is unchanged. The broader goal — *a carrier never receives consumer payment instructions* — is weaker, because a route-labelled PRIVATE send with an absent or unresolved reference can now reach a known carrier email | confirmed | 🔴 **OPEN — same decision** |
+| 4 | `/intake-link/email` and `/sheets/:id/email` take the product from the request, so an admin chooses it rather than the server deriving it independently | confirmed, not a payment issue | 🟡 **OPEN, judged acceptable** — neither route can reach a payment method by that choice, both are admin-only, and the alternative is the recipient inference the owner removed |
+| 5 | The case-backed intake send bypassed `contextForKind` / `send_context` entirely | confirmed | ✅ **FIXED** — that was the separate stop-gate finding; the route is inside the model and fails closed on an unrecognised kind |
+
+**The honest summary of 2 and 3, for whoever picks this up:** the refactor
+removed four defects and one protection. The four defects were real and
+recurring; the protection was real too. The owner chose this knowingly after
+four rounds, and there is an owner-sanctioned way back to it that does **not**
+reintroduce string matching — their own words: *"If durable recipient
+classification is needed, use an explicit typed field or companion table per
+repo migration rules."* A `recipient_kind` written when a contact is first
+recorded would restore the protection as a typed fact rather than a guess.
+**Not built, not started, and not to be started without the owner.**
+
 ## 📥 QUEUED — OWNER WORKFLOW SIMPLIFICATION (2026-08-15)
 
 Recorded verbatim in **`WORKFLOW-SIMPLIFICATION.md`** next to this file, on
