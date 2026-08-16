@@ -462,6 +462,30 @@ async function agreedRetainer(env, caseNo) {
   return row && row.retainer_amount != null ? Number(row.retainer_amount) : PERSONAL.retainer;
 }
 
+/* THE FIGURE THIS SEND CARRIES, when there may be no case to read it from.
+
+   Pre-case sends (#127) let the office email someone who is not on the desk
+   yet, and the case number is a subject-line reference that may match nothing.
+   `agreedRetainer` cannot serve that: it answers PERSONAL.retainer both when a
+   case agreed the standard figure and when there is no case at all, so a
+   $2,000 quote to a new caller came out as $1,500.
+
+   A case that has AGREED a figure still owns it. An offered amount is honoured
+   ONLY where nothing is stored, and then for this one send — so a caller can
+   never overwrite what the office recorded, which is the rule #123 exists to
+   keep. Both the preview and the email resolve through here, so the screen and
+   the client cannot disagree; that was the actual defect in #123, and it is
+   prevented by a shared source rather than by persisting first. */
+async function retainerForSend(env, caseNo, offered) {
+  const row = caseNo
+    ? await env.DB.prepare('SELECT retainer_amount FROM case_retainer WHERE case_no = ?')
+        .bind(caseNo).first()
+    : null;
+  if (row && row.retainer_amount != null) return Number(row.retainer_amount);
+  const n = Number(offered);
+  return Number.isFinite(n) && n > 0 && n <= 1000000 ? n : PERSONAL.retainer;
+}
+
 function rateSheets(retainer) {
   const money = n => '$' + Number(n).toLocaleString('en-US');
   /* Anything absent, zero or unparseable falls back to the standard figure —
@@ -1054,8 +1078,10 @@ async function emailSheet(request, env, user, id) {
     return json({ error: 'Too many emails in one minute — wait a moment and send again.' }, 429);
   }
 
-  // Now the case is known and checked, so the sheet can carry ITS retainer.
-  const retainer = await agreedRetainer(env, caseNo);
+  // Now the case is known and checked, so the sheet can carry ITS retainer —
+  // or, on a pre-case send where there is no case to read, the figure the
+  // admin agreed on screen. A stored figure always wins; see retainerForSend.
+  const retainer = await retainerForSend(env, caseNo, body.retainer_amount);
   const sheet = sheetById(id, retainer);
 
   // The Options step (UIBUILD P18): include the sheet's own intake, or not.
@@ -1286,7 +1312,7 @@ async function emailPaymentOptions(request, env, user) {
   // The case's OWN agreed retainer, so this email and the sheet quote the same
   // figure. A client told one number by the sheet and another by the payment
   // email has been given a reason to distrust both.
-  const retainer = await agreedRetainer(env, caseNo);
+  const retainer = await retainerForSend(env, caseNo, body.retainer_amount);
   const { text, html } = paymentOnlyEmail(payment, retainer, note, name);
   const subject = caseNo
     ? `Payment options — Always Precise Investigations (case ${caseNo})`
@@ -5106,7 +5132,11 @@ async function route(request, env) {
        sheet's name ("$3,000 Retainer") would work until someone reworded the
        name, and would then quietly preselect the wrong preset — the selector
        must read a number, not a sentence. */
-    const retainer = await agreedRetainer(env, caseNo);
+    /* `?retainer=` is the figure the admin has chosen on a send where there is
+       no case to store it against. Honoured only where nothing is stored, by
+       the same helper the send uses — the preview and the email must resolve
+       identically or the screen lies about what will go out. */
+    const retainer = await retainerForSend(env, caseNo, url.searchParams.get('retainer'));
     return json({ sheets: rateSheets(retainer),
                   retainer,
                   email_configured: Boolean(env.RESEND_API_KEY) });

@@ -963,6 +963,80 @@ section('Rate sheets and the emailed quote');
    payment block and the preview alike, or they contradict each other in front
    of the client. Its own section because it needs its own send budget: the cap
    is three a minute and the sheets section spends all of them. */
+section('A pre-case send is not blocked by a reference that matches nothing');
+{
+  /* The owner reproduced this in production: the send screen labels the case
+     number "optional", but typing one that matched no case returned a bare
+     "not found" and Preview never ran. The page wrote the agreed retainer on
+     the way to Preview, and that write is case-scoped.
+
+     The figure is carried now instead of stored. What must NOT regress is
+     #123: a case that agreed a figure owns it, and an offered amount can never
+     overwrite or override what the office recorded. */
+  const realFetch = globalThis.fetch;
+  let lastBody = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      lastBody = JSON.parse(init.body);
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  // 1. No reference at all.
+  lastBody = null;
+  const blank = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'newcaller@example.test' } });
+  ok('a send with no case reference at all succeeds', blank.status === 200, String(blank.status));
+  ok('and carries the standard figure', lastBody && lastBody.html.includes('$1,500'));
+
+  // 2. An arbitrary reference — the owner's exact reproduction.
+  lastBody = null;
+  const made = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'marinerecon@example.test', case_no: 'Test123', retainer_amount: 2000 } });
+  ok('an arbitrary reference like Test123 no longer 404s', made.status === 200, String(made.status));
+  ok('the agreed $2,000 reaches the email, in both parts',
+     lastBody && lastBody.html.includes('$2,000') && lastBody.text.includes('$2,000'));
+  ok('and the standard figure is NOT what the client is quoted',
+     lastBody && !lastBody.html.includes('$1,500') && !lastBody.text.includes('$1,500'));
+  ok('the reference still rides the subject line', lastBody.subject.includes('Test123'), lastBody.subject);
+
+  // 3. The preview must resolve to the same number as the send.
+  const prev = await jsonOf(await call(env, '/sheets?case=Test123&retainer=2000', { cookie: admin }));
+  ok('and the PREVIEW resolves to that same figure, so the screen cannot lie',
+     prev.retainer === 2000 && prev.sheets.find(s => s.id === 'private_retainer').name.includes('$2,000'));
+
+  // 4. #123 must not regress: a stored figure outranks anything offered.
+  await ingest(env, { case_no: 'API-OWNS', service: 'Surveillance',
+                      client_name: 'Pat Private', subject_name: 'Subject A' });
+  await call(env, '/cases/API-OWNS/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 3000 } });
+  lastBody = null;
+  const owned = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'client@example.test', case_no: 'API-OWNS', retainer_amount: 250 } });
+  ok('a case that agreed a figure still sends THAT figure', owned.status === 200);
+  ok('and an offered amount cannot undercut it',
+     lastBody.html.includes('$3,000') && !lastBody.html.includes('$250'));
+  const still = await jsonOf(await call(env, '/cases/API-OWNS/retainer', { cookie: admin }));
+  ok('nor quietly rewrite what the case holds',
+     Number(still.retainer_amount ?? still.agreed ?? 3000) === 3000, JSON.stringify(still));
+
+  // 5. A junk offer falls back rather than printing $0 or NaN at a client.
+  lastBody = null;
+  await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'x@example.test', case_no: 'Test999', retainer_amount: 'abc' } });
+  ok('an unparseable offered figure falls back to the standard one',
+     lastBody.html.includes('$1,500') && !lastBody.html.includes('$NaN')
+     && !lastBody.html.includes('$0'));
+
+  globalThis.fetch = realFetch;
+}
+
 section('A private sheet carries the retainer that case agreed');
 {
   const realFetch = globalThis.fetch;

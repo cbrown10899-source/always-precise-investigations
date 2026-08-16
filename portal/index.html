@@ -1828,9 +1828,15 @@ function wizRetainerHtml(w){
     ${pick === "custom" ? `<label class="f" style="margin:8px 0 0"><span>Custom retainer</span>
       <input id="wiz_retc" inputmode="decimal" placeholder="e.g. 2500"
         data-act-input="wizRetDirty" value="${esc(w.retainerCustom || "")}"></label>` : ""}
-    <p class="hint">${!w.caseNo
-      ? `Enter the case number above to change this. The agreed figure is recorded against the
-         case, so there is nowhere to keep it without one.`
+    <p class="hint">${w.retainerUnrecorded
+      /* Said plainly, because the difference is invisible otherwise: the client
+         is quoted this figure and the office cannot look it up afterwards. */
+      ? `This figure will be quoted on the sheet and in the email, but there is no case to
+         record it against, so <b>nothing is stored</b>. Add the case number, or set the
+         retainer on the case once it exists.`
+      : !w.caseNo
+      ? `Quoted on this send. With no case number there is nowhere to record it, so it is not
+         stored &mdash; add one to keep the agreed figure against the case.`
       : w.retainer == null
         /* Honest about what is on screen: this is the standard figure, not a
            reading of the case. Saying otherwise would invite an admin to treat
@@ -1870,21 +1876,39 @@ async function wizRetainerSave(){
     return false;
   }
   if(w.retainer != null && want === w.retainer) return true;
-  if(!w.caseNo){
-    /* No case, no record. The standard sheet still sends — it is the default
-       document and preserves nothing — but a CHOSEN figure with nowhere to live
-       would be a number the client is quoted and the office cannot look up. */
-    if(w.retainer == null && want === RETAINER_PRESETS[0]) return true;
-    w.err = "Enter the case number this retainer belongs to — the agreed figure is recorded "
-          + "against the case, and there is nowhere to keep it without one.";
-    return false;
-  }
+  /* A FIGURE WITH NOWHERE TO LIVE IS STILL THE FIGURE BEING QUOTED.
+
+     This used to refuse: no case number meant no record, so the send stopped.
+     Pre-case sends (#127) made that wrong — the case number is an optional
+     subject-line reference, and the whole point is emailing someone who is not
+     on the desk yet. Worse, a reference that was TYPED but matched no case hit
+     the write below and came back a bare "not found", which read as though the
+     send itself had failed.
+
+     So the figure is carried instead. It travels with the preview and with the
+     email, resolved by one helper server-side, so the screen and the client
+     still cannot disagree — that was the real defect in #123, and persisting
+     first was only ever one way to prevent it. What is NOT done is invent a
+     case to store it against. The office is told plainly that it was not
+     recorded. */
+  if(!w.caseNo){ w.retainerOffered = want; w.retainerUnrecorded = true; return true; }
   try{
     await api(`/cases/${encodeURIComponent(w.caseNo)}/retainer`,
       {method:"POST", body:{retainer_amount: want}});
     w.retainer = want;
+    w.retainerOffered = null;
+    w.retainerUnrecorded = false;
     return true;
-  }catch(e){ w.err = e.message; return false; }
+  }catch(e){
+    /* A reference matching no case is not an error on this screen — it is the
+       ordinary pre-case send. Carry the figure and say so. Anything else is a
+       real failure and still stops, because silently swallowing every error
+       here would hide a genuine one. */
+    if(/not found/i.test(e.message || "")){
+      w.retainerOffered = want; w.retainerUnrecorded = true; return true;
+    }
+    w.err = e.message; return false;
+  }
 }
 
 /* THE SHEET THIS CASE WILL BE SENT, not the standard one. `SHEETS` is fetched
@@ -1896,9 +1920,14 @@ async function wizRetainerSave(){
    corrected by the Worker at send time, a blank screen helps nobody. */
 async function wizSheetLoad(){
   const w = SHEET_WIZ;
-  if(!w || !w.caseNo) return;
+  /* A carried figure has to be re-read too, or a pre-case send previews the
+     standard sheet while the email carries the agreed one — the same screen /
+     client split, arriving through the new door. */
+  if(!w || (!w.caseNo && w.retainerOffered == null)) return;
   try{
-    const r = await api(`/sheets?case=${encodeURIComponent(w.caseNo)}`);
+    const q = `case=${encodeURIComponent(w.caseNo || "")}`
+      + (w.retainerOffered != null ? `&retainer=${encodeURIComponent(w.retainerOffered)}` : "");
+    const r = await api(`/sheets?${q}`);
     if(SHEET_WIZ === w){
       w.sheetData = (r.sheets || []).find(s => s.id === w.sheet) || null;
       /* The selector opens on what the case ALREADY agreed — but never on top
@@ -1950,8 +1979,15 @@ function sheetWizardHtml(){
         <dt>Sheet</dt><dd>${esc(sheet.name || w.sheet)}</dd>
         <dt>To</dt><dd>${esc(w.to)}</dd>
         ${w.caseNo ? `<dt>Case</dt><dd>${esc(w.caseNo)}</dd>` : ""}
-        ${w.sheet === "private_retainer" && w.retainer != null
-          ? `<dt>Agreed retainer</dt><dd>$${esc(Number(w.retainer).toLocaleString("en-US"))}</dd>` : ""}
+        ${w.sheet === "private_retainer" && (w.retainerOffered != null || w.retainer != null)
+          /* The figure is named on the last screen before it goes, and said to
+             be unrecorded where it is — this is the admin's final chance to add
+             a case number, and after Send there is nothing to look it up by. */
+          ? `<dt>Agreed retainer</dt><dd>$${esc(Number(
+               w.retainerOffered != null ? w.retainerOffered : w.retainer).toLocaleString("en-US"))}${
+               w.retainerUnrecorded
+                 ? ` <span class="opt">quoted on this send &mdash; nothing is stored, there is no case to record it against</span>`
+                 : ""}</dd>` : ""}
         ${w.note ? `<dt>Added line</dt><dd>${esc(w.note)}</dd>` : ""}
         <dt>Intake form</dt><dd>${w.include ? intakeLabel + " link included" : "Not included"}</dd>
         ${w.sheet === "private_retainer" ? `<dt>Payment options</dt><dd>${
@@ -6462,6 +6498,10 @@ async function wizSend(){
   try{
     const r = await api(`/sheets/${encodeURIComponent(w.sheet)}/email`,
       {method:"POST", body:{to: w.to, note: w.note, case_no: w.caseNo, include_intake: w.include,
+        /* Only ever sent when there was nowhere to store it. The Worker
+           ignores it outright if the case has a figure of its own, so this
+           cannot overwrite what the office agreed. */
+        ...(w.retainerOffered != null ? {retainer_amount: w.retainerOffered} : {}),
         ...(paying ? {include_payment: true, methods: w.payMethods} : {})}});
     /* §13 — say what actually WENT, read back from the Worker's own answer
        rather than from the boxes that were ticked. */
