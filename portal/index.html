@@ -566,13 +566,15 @@
   .notebody{white-space:pre-wrap;font-size:.92rem;margin:6px 0 4px;}
   .tag.nv-admin{background:#fdecea;color:#8a2318;} .tag.nv-team{background:#e6ebf0;color:#42505f;}
   .tag.nv-client{background:#f3e2bd;color:#6b4f12;}
+  /* .ex-note is the amber advisory strip. It no longer marks an example —
+     there are none — but the retainer panel still uses it to flag money owed. */
   .ex-note{background:#fdf7ec;border:1px solid #e8cf9e;color:#6b4f12;border-radius:8px;
     padding:11px 14px;font-size:.88rem;margin-bottom:14px;}
-  .tag.ex-tag{background:#f3e2bd;color:#6b4f12;margin-left:6px;}
   .tag.demo-tag{background:#e3d7f5;color:#4a2f77;margin-left:6px;}
-  tbody tr.ex{background:repeating-linear-gradient(45deg,#fffdf7,#fffdf7 10px,#fdf7ec 10px,#fdf7ec 20px);}
-  tbody tr.ex:hover{background:#fdf3e0;}
-  tbody tr.ex td:first-child{box-shadow:inset 3px 0 0 #d9b45e;}
+  /* An empty list says so in words. It never borrows a fabricated case to
+     look busy, so there is no example row styling to carry. */
+  .empty-title{font-weight:600;color:var(--ink);margin-bottom:4px;}
+  .empty-hint{font-size:.9rem;color:var(--muted);}
 
   .linkbox{background:#f1f7f9;border:1px solid #cfe6ec;border-radius:8px;padding:12px 14px;margin-top:12px;}
   .linkbox code{display:block;word-break:break-all;font-family:ui-monospace,monospace;font-size:.82rem;color:#14495a;margin-bottom:10px;}
@@ -864,8 +866,6 @@ let CASE_VIEW = "all";
 let COMPLETED = null;     // the /completed payload, fetched when the lens turns
 let MY_REPORTS = null, MY_EXPENSES = null, MY_COMP = null, OFFERS = [];   // the investigator's own desk
 let CAL = null;   // {month, days, offers}
-/* Examples show themselves on a first sign-in and can be recalled later. */
-let SHOW_EXAMPLE = false;
 
 function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function when(iso){
@@ -943,105 +943,22 @@ function safeImage(src){
 }
 
 
-/* ------------------------------------------------------------- examples */
-/* Two worked cases so a new sign-in shows the real layout instead of an empty
-   table. They live here and nowhere else: never fetched, never stored, never
-   written to the database. Every case number starts with EXAMPLE- and the
-   router only accepts [A-Za-z0-9-], so one could never collide with a real
-   case even if it somehow reached the API.
+/* ---------------------------------------------------- no worked examples */
+/* Two fabricated cases used to live here -- a carrier assignment and a client
+   intake -- shown unasked on a first sign-in so that an empty portal had
+   something in it. They are gone deliberately.
 
-   The data is realistic on purpose — a layout demonstrated with "Lorem ipsum"
-   teaches nobody where the claim number goes. The names and numbers are
-   invented. */
-const EXAMPLE_SIGNATURE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAABGCAIAAAB9pI6tAAABZ0lEQVR42u3bwRGCQAxA0dRgJdZj/33o1fGksmST8P54Vsi+AUSJpzSoMAIBLQEtAS0BLaAloCWgJaAloAW0BLQEtAS0BLSAloCWgJaAloAW0BLQEtAS0BLQAloCWrog6Nv98cfLshVZEaAPOYb7+0kWXIuc5YumjrH+aaRpC/H+iVsWLorMfdXiAZ1wjKh8JIq9E6/2tnznHLxbXkPn7BLWHX03A52/J1gXobz8OnM/6I2wsK45hEzZMYMy1i12PEF2nLqtrW/Qotxxg2Me5Uuxbn06qgi6xShHsp50ZVUCdLtRjlx+t3TWgJ50jmvkAOVTQHcfaEcTKOeBHnYNalMvDdr3KpTngJ4xgl4/rSF71l2OYRUxhDLQQzyhDPQGW8t5+WM30CVYH9Tm0Rugi7Je+wgZykDXku05X6AvLds8gW6P29yAloAW0BLQEtAS0BLQAloCWgJaAloCWkBLQEtAS0BLn70AC1I/GEqi0NIAAAAASUVORK5CYII=";
+   A staff portal that invents a client is a portal whose screen can be
+   photographed, quoted or acted on as though that client were real, and the
+   person least able to tell the difference is the new member of staff the
+   example was supposedly there to teach. The failure is silent in the
+   direction that matters: nothing warns you that the name you just read is
+   nobody.
 
-const EXAMPLE_CASES = [
-  {
-    case_no: "EXAMPLE-CLAIM-0001", kind: "claims", service: "Insurance Claim Assignment",
-    status: "assigned", client_name: "Karen Whitfield", subject_name: "Marcus Ellery",
-    carrier: "Blue Ridge Mutual", claim_number: "WC-2026-104871",
-    created_at: "2026-08-11T14:20:00.000Z", assigned_name: "You",
-    payload: {
-      carrier: "Blue Ridge Mutual", claim_number: "WC-2026-104871",
-      policy_number: "BRM-88-441209", claim_type: "Workers' compensation",
-      date_of_loss: "04/18/2026",
-      adjuster: "Karen Whitfield", adjuster_email: "kwhitfield@blueridgemutual.example",
-      adjuster_phone: "(540) 555-0173",
-      defense_counsel: "Poe & Marsden — R. Marsden",
-      prior_surveillance: "Yes — by another vendor",
-      client_name: "Karen Whitfield", client_phone: "(540) 555-0173",
-      client_email: "kwhitfield@blueridgemutual.example",
-      subject_name: "Marcus Ellery",
-      subject_address: "2214 Old Forest Rd, Lynchburg, VA 24501",
-      subject_description: "White GMC Sierra, VA plate XKT-2209. 6'1\", heavy build, beard.",
-      subject_relationship: "Lumbar disc herniation. No lifting over 15 lbs, no ladders, no prolonged standing. Off work since 04/22.",
-      objective: "Establish activity level against the stated restrictions. Claimant reportedly helps at a family landscaping business on weekends — verify or rule out.",
-      authorized_hours: "8 hours authorized — call before exceeding",
-      timeline: "Commission hearing 09/12 — report needed by 09/01",
-      notes: "Neighbour on the corner is a retired deputy; avoid parking on that side.",
-      attachments: "claim-file.pdf, ISO-report.pdf, claimant-photo.jpg",
-      billing_reference: "PO-77412", billing_email: "ap@blueridgemutual.example",
-      billing_notes: "Submit through the carrier vendor portal. PO must appear on the invoice.",
-      signed_name: "Karen Whitfield", payment_method: "Invoiced to carrier", fee_due: 0,
-      signature: EXAMPLE_SIGNATURE,
-    },
-  },
-  {
-    case_no: "EXAMPLE-INTAKE-0002", kind: "consumer", service: "Surveillance",
-    status: "new", client_name: "Denise Harlow", subject_name: "R. Harlow",
-    carrier: null, claim_number: null,
-    created_at: "2026-08-11T09:05:00.000Z", assigned_name: null,
-    payload: {
-      client_name: "Denise Harlow", client_phone: "(434) 555-0148",
-      client_email: "d.harlow@example.com",
-      client_address: "88 Peakland Pl, Lynchburg, VA 24503",
-      best_time: "Weekday evenings after 6pm",
-      subject_name: "R. Harlow",
-      subject_address: "Same — believed staying elsewhere Thursdays",
-      subject_description: "Grey Honda Accord, VA plate LMR-8841",
-      subject_relationship: "Spouse",
-      objective: "Document whereabouts on Thursday evenings. Attorney has advised documentation is needed before filing.",
-      timeline: "Before the 09/04 hearing date",
-      notes: "Please do not call the house phone. Mobile only.",
-      attachments: "marriage-cert.pdf",
-      signed_name: "Denise Harlow", payment_method: "venmo", fee_due: 1500,
-      signature: EXAMPLE_SIGNATURE,
-    },
-  },
-];
-
-/* An investigator's copy of a case has the client stripped out of it by the
-   Worker before it is sent — carrier, adjuster, claim and policy numbers,
-   defense counsel, billing and the signature never arrive. The example has to
-   be redacted the same way or it would promise a view that does not exist.
-
-   This list mirrors FIELD_KEEP in case-portal/worker.js. The Worker is what
-   enforces it; this only keeps the example honest. A test compares the two so
-   they cannot drift apart. */
-const FIELD_KEEP = [
-  "subject_name", "subject_address", "subject_description", "subject_relationship",
-  "objective", "authorized_hours", "timeline", "notes", "attachments",
-  "claim_type", "date_of_loss", "prior_surveillance",
-  "start_date", "permitted_days", "permitted_times", "weekend_authorized",
-  "priority", "geographic_limits",
-  "subject_address_status", "subject_description_status", "date_of_loss_status",
-  "start_date_status", "authorized_hours_status",
-];
-
-function redactExample(c) {
-  const kept = {};
-  for (const k of FIELD_KEEP) if (c.payload[k] !== undefined) kept[k] = c.payload[k];
-  return { ...c, carrier: null, claim_number: null, client_name: null, payload: kept };
-}
-
-/* An investigator only ever has cases assigned to them, so they see the claim
-   example and not the unassigned intake — redacted, as a real one would be. */
-function examplesFor(role) {
-  return role === "admin"
-    ? EXAMPLE_CASES
-    : EXAMPLE_CASES.filter(c => c.kind === "claims").map(redactExample);
-}
-function isExample(caseNo) { return String(caseNo || "").startsWith("EXAMPLE-"); }
+   An empty list now says it is empty, in words, and says what will fill it.
+   The way to see the layout with data in it is a TEST- case from Settings:
+   a real row, badged everywhere it appears, created and removed on purpose.
+   isDemo below is what badges it. */
 /* A real database row, but invented — badged everywhere so it can never be
    mistaken for a client's case. The prefix is what the clear route deletes on,
    so nothing without it is ever at risk. */
@@ -1351,7 +1268,6 @@ function dashView(){
 function summaryCards(){
   if(TAB !== "cases" && TAB !== "today" && TAB !== "dashboard") return "";
   const s = SUMMARY || {};
-  const shown = SHOW_EXAMPLE ? examplesFor(ME.role) : [];
   const admin = ME.role === "admin";
 
   const card = (label, n, hint, tone, set) => {
@@ -1367,11 +1283,14 @@ function summaryCards(){
 
   const active = s.active_now || [], due = s.reports_due || [], low = s.auth_low || [];
   const late = s.tasks_overdue || [];
-  const total = (s.total || 0) + shown.length;
+  // Every number here is the Worker's. Nothing is padded to avoid a zero:
+  // a zero IS the answer when there is no work, and a total that quietly
+  // counted a fabricated case was a total nobody could reconcile.
+  const total = s.total || 0;
 
   const cards = admin
-    ? card("Open cases", (s.open || 0) + shown.length, total ? "" : "None yet")
-      + card("Needs assignment", (s.unassigned || 0) + shown.filter(c => !c.assigned_name).length,
+    ? card("Open cases", s.open || 0, total ? "" : "None yet")
+      + card("Needs assignment", s.unassigned || 0,
              "Waiting on you", (s.unassigned || 0) ? "warn" : "")
       + card("Out now", active.length, "A day is running", active.length ? "live" : "", active)
       + card("Reports due", due.length, "Day done, no report", due.length ? "warn" : "", due)
@@ -1395,13 +1314,7 @@ function summaryCards(){
       + card("Authorization low", low.length, "Call before exceeding", low.length ? "warn" : "", low)
       + card("Tasks overdue", late.length, "Past their due date", late.length ? "warn" : "", late);
 
-  // No Hide button here — the banner over the case list already carries one,
-  // and two controls doing the same thing is how a page starts feeling
-  // untrustworthy about which one you actually pressed.
-  return `<div class="stats">${cards}</div>${
-    SHOW_EXAMPLE ? `<div class="ex-note" style="margin-bottom:16px">
-      <b>These totals include the example</b> &mdash; they drop back to your real numbers when you hide it.
-    </div>` : ""}`;
+  return `<div class="stats">${cards}</div>`;
 }
 
 /* The investigator's day, answered directly: am I out now, what is assigned
@@ -2302,11 +2215,11 @@ function sheetsView(){
 function casesView(){
   const q = FILTER.trim().toLowerCase();
   const admin = ME.role === "admin";
-  // A card filter narrows to the exact cases behind that card's number; the
-  // example never stands in among them, because an alert is real work.
+  // The list is exactly what the Worker returned. Nothing is appended to it,
+  // so every row on this screen is a case that exists.
   const base = CARD_FILTER
     ? CASES.filter(c => CARD_FILTER.set.has(c.case_no))
-    : (SHOW_EXAMPLE ? CASES.concat(examplesFor(ME.role)) : CASES);
+    : CASES;
   /* MASTER §31 — the Cases tab's lens. Open hides finished work; Completed is
      the artifact desk. Admin-only: an investigator's list is their
      assignments, and the desk carries invoices and client identity. */
@@ -2321,11 +2234,10 @@ function casesView(){
   // The client/carrier column is admin-only: the Worker does not send those
   // fields to an investigator at all, so there is nothing to put in it.
   const body = rows.map(c => `
-    <tr class="click${isExample(c.case_no) ? " ex" : ""}" data-act="openCase" data-case="${esc(c.case_no)}">
+    <tr class="click" data-act="openCase" data-case="${esc(c.case_no)}">
       <td class="mono">${esc(c.case_no)}</td>
       <td class="hide">${when(c.created_at)}</td>
       <td><span class="tag ${c.kind === "claims" ? "claims" : "consumer"}">${c.kind === "claims" ? "Claim" : "Client"}</span>${
-        isExample(c.case_no) ? '<span class="tag ex-tag">Example</span>' : ""}${
         isDemo(c.case_no) ? '<span class="tag demo-tag">Test</span>' : ""}</td>
       ${admin ? `<td>${esc(c.kind === "claims" ? (c.carrier || "—") : (c.client_name || "—"))}
           ${c.claim_number ? `<div class="mono">${esc(c.claim_number)}</div>` : ""}</td>
@@ -2337,15 +2249,6 @@ function casesView(){
 
   const more = TOTAL > CASES.length
     ? `<div class="note">Showing the ${CASES.length} most recent of ${TOTAL} cases. Search covers what is loaded.</div>` : "";
-
-  const exBanner = SHOW_EXAMPLE ? `<div class="ex-note">
-      <b>The rows marked Example are not real cases.</b> They are here to show the layout &mdash;
-      ${ME.role === "admin"
-        ? "a carrier assignment and a client intake, with every field filled in."
-        : "an assignment exactly as one will look when it is given to you."}
-      Open one to see the full detail. Nothing here is stored, and it disappears the moment you hide it.
-      <button class="btn sm ghost" data-act="hideExample" style="margin-left:8px">Hide the example</button>
-    </div>` : "";
 
   const filterChip = CARD_FILTER
     ? `<span class="chip">${esc(CARD_FILTER.label)}: ${CARD_FILTER.set.size}
@@ -2377,24 +2280,46 @@ function casesView(){
           ? ` · ${s.claims || 0} carrier · ${s.consumer || 0} private` : "")(SUMMARY)}</span>
     </div>
     ${lens}
-    ${exBanner}
     ${more}
     ${rows.length ? `<div style="overflow-x:auto"><table>
       <thead><tr><th>Case</th><th class="hide">Received</th><th>Type</th>
       ${admin ? `<th>Client / carrier</th><th class="hide">Subject</th>` : `<th>Subject</th>`}
       <th>Status</th>${admin ? `<th class="hide">Assigned</th>` : ""}</tr></thead>
       <tbody>${body}</tbody></table></div>`
-      : `<div class="empty">${
-          // Never claim the list is empty when it simply did not load — that
-          // is the sentence that made a real outage look like a quiet week.
-          LOAD_ERR ? "The case list did not load, so nothing can be shown here yet."
-          : shown.length
-            ? "Nothing matches that search."
-            : (ME.role === "admin"
-                ? "No submissions yet. Intake forms appear here as they arrive."
-                : "Nothing assigned to you yet. Cases appear here when an admin assigns one.")
-              + ` <button class="btn sm ghost" data-act="showExample" style="margin-left:8px">Show an example</button>`}</div>`}
+      : casesEmptyHtml(admin, shown.length > 0)}
   </div>`;
+}
+
+/* THE EMPTY STATE. Three states, kept apart on purpose, and none of them is
+   allowed to invent a case to fill the space.
+
+   "Did not load" is first and separate, because an outage that reads as a
+   quiet week is the failure this page has already been bitten by once. Then
+   "your search matched nothing", which is about the filter and not the data.
+   Only the last one says the portal is genuinely empty, and it says what will
+   put something in it — which is what a new admin actually needs to know. */
+function casesEmptyHtml(admin, searching){
+  const wrap = (title, hint) =>
+    `<div class="empty"><div class="empty-title">${esc(title)}</div>
+       <div class="empty-hint">${esc(hint)}</div></div>`;
+
+  if(LOAD_ERR) return wrap("The case list did not load.",
+    "This is a problem reaching the server, not an empty portal. Reload, and if it keeps happening tell the office before assuming there is no work.");
+
+  if(searching) return wrap("Nothing matches that search.",
+    "Clear the search box to see the full list.");
+
+  if(admin && CASE_VIEW === "archived") return wrap("No archived cases.",
+    "Archiving a finished case files it here. It keeps everything, and it can be restored at any time.");
+
+  if(admin && CASE_VIEW === "deleted") return wrap("No deleted cases.",
+    "A deleted case is kept here and can be put back. Nothing in the portal is removed for good.");
+
+  return admin
+    ? wrap("No cases yet.",
+        "Intake forms arrive here as cases the moment someone submits one. You can also add a case from Leads, or create a badged TEST- case from Settings to try the portal out.")
+    : wrap("Nothing assigned to you yet.",
+        "Cases appear here as soon as an admin assigns one to you. There is nothing to do until then.");
 }
 
 /* MASTER §31 — the desk itself. Every finished case with its artifacts one
@@ -2672,16 +2597,16 @@ function settingsView(){
     <h3 style="margin:6px 0 4px;font-size:1rem">Developer &amp; testing</h3>
     <p class="note">Working material for trying the portal out. None of it touches a real case.</p>
     <div class="actions">
-      ${SHOW_EXAMPLE
-        ? `<button class="btn sm ghost" data-act="hideExample">Hide the example cases</button>`
-        : `<button class="btn sm ghost" data-act="showExample">Show the example cases</button>`}
       <button class="btn sm ghost" data-act="addDemo">Add a test case</button>
       ${CASES.some(c => isDemo(c.case_no))
         ? `<button class="btn sm ghost" data-act="clearDemo">Remove test cases</button>` : ""}
     </div>
-    <p class="hint">The example cases are page-held demo data, never stored, and labelled wherever
-      they appear. A test case is a real row prefixed TEST- so it can be removed cleanly — removing
-      test cases never touches anything else.</p>
+    <p class="hint">A test case is a real row prefixed TEST-, badged wherever it appears, so you can
+      work through the portal with something in it. Removing test cases removes every TEST- case and
+      everything recorded against it &mdash; days, activity, reports, invoices, evidence and packages
+      &mdash; and never touches a real case.</p>
+    <p class="hint">There are deliberately no fabricated example cases. An empty list says it is
+      empty rather than showing an invented client.</p>
   </div>`;
 }
 
@@ -2885,8 +2810,7 @@ function paint(){
     // .close class the dialog's X had, so muscle memory and tests both hold.
     app.innerHTML = `<div class="casepage">
       <div class="pagebar"><button class="btn sm ghost close" data-act="backToCases">&larr; Back to Cases</button></div>
-      <div class="card"><div class="dlg" id="dlgBody">${
-        isExample(WS_CASE) ? exampleBodyHtml() : caseBodyHtml()}</div></div>
+      <div class="card"><div class="dlg" id="dlgBody">${caseBodyHtml()}</div></div>
     </div>`;
     // Typing in the sheet's search repaints; hand the cursor straight back.
     const amq = $("am_q");
@@ -2920,7 +2844,12 @@ async function render(){
   if(!ME){ paint(); return; }
   if(!BOOTED){ BOOTED = true; if(ME.role === "admin" && TAB === "cases") TAB = "dashboard"; }
   LOAD_ERR = "";
-  let listed = false;
+  /* An empty list stays empty. A first sign-in used to be met with two
+     fabricated cases so the table had something in it — the screen taught the
+     layout and misrepresented the caseload in the same breath, and the reader
+     had no way to tell which half was true. Nothing is substituted now; the
+     empty state says which of the three situations it is, and LOAD_ERR is what
+     keeps "could not load" from being drawn as "no work". */
   try{
     /* The archived lens is a different set, not a filter: the Worker excludes
        archived cases from every other view, so asking for them is a query. */
@@ -2928,15 +2857,10 @@ async function render(){
       + (CASE_VIEW === "archived" || CASE_VIEW === "deleted" ? "&view=" + CASE_VIEW : ""));
     CASES = Array.isArray(d.submissions) ? d.submissions : [];
     TOTAL = d.total || 0;
-    listed = true;
   }catch(e){
     CASES = []; TOTAL = 0;
     LOAD_ERR = "The case list could not be loaded — " + e.message;
   }
-  // A first sign-in lands on an empty table, which teaches nothing. Show the
-  // worked example unasked — but only when the list genuinely loaded and is
-  // genuinely empty, never as cover for a failed fetch.
-  if(listed && CASES.length === 0) SHOW_EXAMPLE = true;
 
   if(ME.role !== "admin"){
     try{ OFFERS = (await api("/my/offers")).offers; }catch(e){ OFFERS = []; }
@@ -3054,10 +2978,6 @@ async function openCase(caseNo, tab){
      prefilled amount on another client's retainer is the kind of mistake that
      is only found when the money is reconciled. */
   retainerEnter(caseNo);
-  if(isExample(caseNo)){
-    WS = null;   // examples are page-held demo data; they have no live workspace
-    return paintCase();
-  }
   try{
     const [sub, ws] = await Promise.all([
       api("/submissions/" + encodeURIComponent(caseNo)),
@@ -3072,7 +2992,7 @@ async function openCase(caseNo, tab){
 }
 
 async function reloadWorkspace(){
-  if(!WS_CASE || isExample(WS_CASE)) return;
+  if(!WS_CASE) return;
   try{
     const ws = await api("/cases/" + encodeURIComponent(WS_CASE) + "/workspace");
     WS = { ...ws, submission: WS ? WS.submission : null };
@@ -5635,11 +5555,11 @@ function fieldHomeHtml(){
    the two things that used to ride the bottom of the old overview. */
 function billingPanel(s, a){
   return `
-    ${!isExample(WS_CASE) ? `<div class="actions" style="padding-bottom:12px">
+    <div class="actions" style="padding-bottom:12px">
         <button class="btn sm" data-act="createInvoice" data-case="${esc(WS_CASE)}">Create invoice</button>
         ${(s.kind === "claims" && a.authorized_hours != null) || s.kind !== "claims"
           ? `<button class="btn sm ghost" data-act="createInvoiceAuth" data-case="${esc(WS_CASE)}">Create from ${s.kind === "claims" ? "authorization" : "retainer"}</button>` : ""}
-      </div>` : ""}
+      </div>
     ${closurePanel()}
     ${archivePanel()}
     ${deletedPanel()}`;
@@ -5649,69 +5569,6 @@ function billingPanel(s, a){
    happens, and work does not happen through a keyhole. paint() routes here. */
 function paintCase(){ paint(); }
 
-async function openExampleCase(caseNo){ WS_CASE = caseNo; WS = null; VIEW = "case"; retainerEnter(caseNo); paint(); }
-
-function exampleBodyHtml(){
-  const s = examplesFor(ME.role).find(c => c.case_no === WS_CASE);
-  if(!s) return "";
-  const p = s.payload || {};
-  const row = (k, v) => v ? `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>` : "";
-  const claim = s.kind === "claims";
-  const sig = safeImage(p.signature);
-
-  const controls = isExample(s.case_no)
-    ? `<div class="actions"><div style="color:var(--muted);font-size:.88rem">
-         ${ME.role === "admin"
-           ? "On a real case, this is where you assign it to an investigator and set its status."
-           : "On a real case assigned to you, everything above is what you would see. Assignment and status are set by the office."}
-       </div></div>`
-    : ME.role === "admin"
-    ? `<div class="actions">
-        <label class="f"><span>Assigned to</span>
-          <select id="asg">
-            <option value="">— unassigned —</option>
-            ${USERS.filter(u => u.active).map(u => `<option value="${u.id}" ${u.id === s.assigned_to ? "selected" : ""}>${esc(u.display_name || u.username)}</option>`).join("")}
-          </select></label>
-        <label class="f"><span>Status</span>
-          <select id="sts">${STAGE_OPTS(s)}</select></label>
-        <button class="btn" data-act="saveCase" data-case="${esc(s.case_no)}">Save</button>
-        <div class="err" id="derr" style="width:100%"></div>
-      </div>` : "";
-
-  return `
-    ${isExample(s.case_no) ? `<div class="ex-note" style="margin-bottom:14px">
-       <b>Example — not a real case.</b> ${ME.role === "admin"
-         ? `Every field a live ${claim ? "carrier assignment" : "client intake"} can carry is filled in
-            here, including the signature. A real case shows exactly this, with whatever the sender
-            actually provided.`
-         : `This is the whole of what an assignment shows you: the subject, the scope and the
-            deadline. Who the case is for &mdash; the carrier, the adjuster, the claim number,
-            billing &mdash; stays with the office.`}</div>` : ""}
-    <h2>${claim ? "Claim assignment" : "Client intake"} — ${esc(s.service || "")}</h2>
-    <div class="case">${esc(s.case_no)}</div>
-    <dl class="detail">
-      ${claim ? `${row("Carrier / TPA", p.carrier)}${row("Claim number", p.claim_number)}${row("Policy number", p.policy_number)}
-                 ${row("Claim type", p.claim_type)}${row("Date of loss", p.date_of_loss)}${row("Adjuster", p.adjuster)}
-                 ${row("Adjuster email", p.adjuster_email)}${row("Adjuster phone", p.adjuster_phone)}
-                 ${row("Defense counsel", p.defense_counsel)}${row("Prior surveillance", p.prior_surveillance)}` : ""}
-      ${row(claim ? "Assigning contact" : "Client", p.client_name)}${row("Phone", p.client_phone)}${row("Email", p.client_email)}
-      ${claim ? "" : `${row("Address", p.client_address)}${row("Best time", p.best_time)}`}
-      ${row(claim ? "Claimant" : "Subject", p.subject_name)}${row("Address", p.subject_address)}
-      ${row("Description", p.subject_description)}${row(claim ? "Injury & restrictions" : "Relationship", p.subject_relationship)}
-      ${row(claim ? "Scope" : "Objective", p.objective)}${row("Authorized hours", p.authorized_hours)}
-      ${row("Not to exceed", p.not_to_exceed)}${row("Requested start", p.start_date)}
-      ${row("Permitted days", p.permitted_days)}${row("Permitted times", p.permitted_times)}
-      ${row("Weekend", p.weekend_authorized)}${row("Priority", p.priority)}
-      ${row("Geographic limits", p.geographic_limits)}
-      ${row(claim ? "Deadline" : "Timeline", p.timeline)}${row("Notes", p.notes)}${row("Attachments", p.attachments)}
-      ${claim ? `${row("Billing reference", p.billing_reference)}${row("Invoices to", p.billing_email)}${row("Billing notes", p.billing_notes)}`
-              : `${row("Due today", p.fee_due != null ? "$" + p.fee_due : "")}${row("Payment method", p.payment_method)}`}
-      ${row(claim ? "Authorized by" : "Signed by", p.signed_name)}
-      ${row("Received", when(s.created_at))}
-    </dl>
-    ${sig ? `<div><div style="font-size:.8rem;color:var(--muted)">Signature</div><img class="sig" src="${esc(sig)}" alt="signature"></div>` : ""}
-    ${controls}`;
-  }
 
 /* INTAKE-NA: what a marked-unavailable field says on an admin's screen. The
    submitter chose these words' meaning on the form; the review repeats them
@@ -6761,15 +6618,23 @@ async function endOtherAdminsDay(dayId, who){
 
 async function addDemoCase(){
   // Adding one is for using one — land on the list where it now sits.
-  try{ await api("/demo-case", {method:"POST"}); SHOW_EXAMPLE = false; TAB = "cases"; await render(); }
+  try{ await api("/demo-case", {method:"POST"}); TAB = "cases"; await render(); }
   catch(e){ alert(e.message); }
 }
 
 async function clearDemoCases(){
-  if(!confirm("Remove every test case, with its activity log, days and reports?\n\n" +
+  // Says everything that goes, because the old wording named three tables and
+  // the route touched five — and left invoices, evidence and packages behind.
+  if(!confirm("Remove every test case?\n\n" +
+              "This removes each TEST- case and everything recorded against it: days, " +
+              "activity, reports, invoices, evidence, packages and its uploaded files.\n\n" +
               "Only cases numbered TEST-… are touched. Real cases are not affected.")) return;
-  try{ await api("/demo-case/clear", {method:"POST"}); await render(); }
+  try{
+    const r = await api("/demo-case/clear", {method:"POST"});
+    if(r && r.removed === 0) alert("There were no test cases to remove.");
+  }
   catch(e){ alert(e.message); }
+  await render();
 }
 
 async function generateReportDraft(){
@@ -7189,8 +7054,6 @@ document.addEventListener("click", ev => {
   else if(act === "retSave"){ recordRetainerPayment(true); }
   else if(act === "retUndo"){ recordRetainerPayment(false); }
   else if(act === "retVoid"){ voidRetainerPayment(el.dataset.id); }
-  else if(act === "showExample"){ SHOW_EXAMPLE = true; if(TAB === "settings") TAB = "cases"; paint(); }
-  else if(act === "hideExample"){ SHOW_EXAMPLE = false; paint(); }
   else if(act === "logout"){ doLogout(); }
   else if(act === "openCase"){ openCase(el.dataset.case); }
   else if(act === "saveCase"){ saveCase(el.dataset.case); }
