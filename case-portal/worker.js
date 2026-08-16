@@ -1054,6 +1054,23 @@ async function emailSheet(request, env, user, id) {
     .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').slice(0, 500);
   const caseNo = String(body.case_no || '').replace(/[^\x20-\x7e]/g, '').slice(0, 64);
 
+  /* THE TYPED VALUE IS A REFERENCE UNTIL IT RESOLVES TO A CASE.
+
+     `case_no` on this route is optional and free — the office types a job
+     number off a notepad and it reaches the SUBJECT LINE. It was then written
+     into `send_log.case_no` verbatim, which that column does not mean: the
+     schema says "null when a sheet is sent with no case", and every case-scoped
+     read of the log matches on it. So a pre-case send quoting reference
+     `Test123` was counted against a real case `Test123` the day an unrelated
+     client's intake created one — `send_count` on the case list reported a send
+     that was never made to that client.
+
+     `linkedCase` is the value only where it IS a case. The lookup below already
+     had to happen for the sheet/lead guard, so this costs nothing extra, and
+     nothing about what is SENT changes — the subject line still carries
+     whatever was typed. */
+  let linkedCase = null;
+
   /* A sheet sent AGAINST a lead must match that lead (audit, 2026-08-14).
      The intake door has always been paired to the sheet server-side, but
      nothing checked the sheet was the right one for the case — so the private
@@ -1064,6 +1081,7 @@ async function emailSheet(request, env, user, id) {
     const lead = await env.DB.prepare('SELECT kind FROM submissions WHERE case_no = ?')
       .bind(caseNo).first();
     if (lead) {
+      linkedCase = caseNo;
       const wanted = lead.kind === 'claims' ? 'insurance_assignment' : 'private_retainer';
       if (id !== wanted) {
         return json({ error: lead.kind === 'claims'
@@ -1154,7 +1172,7 @@ async function emailSheet(request, env, user, id) {
 
   const mail = await sendMail(env, { to, subject, text, html });
   if (!mail.sent) {
-    await logSend(env, user, { case_no: caseNo, kind: 'rate_sheet', sheet_id: sheet.id,
+    await logSend(env, user, { case_no: linkedCase, kind: 'rate_sheet', sheet_id: sheet.id,
       door: intakeUrl, recipient: to, ok: 0, detail: mail.reason || 'send failed' });
     if (payment.length) {
       await logPaymentSend(env, user, { case_no: caseNo, recipient: to,
@@ -1168,7 +1186,7 @@ async function emailSheet(request, env, user, id) {
       reason: mail.reason,
     }, 502);
   }
-  await logSend(env, user, { case_no: caseNo, kind: 'rate_sheet', sheet_id: sheet.id,
+  await logSend(env, user, { case_no: linkedCase, kind: 'rate_sheet', sheet_id: sheet.id,
     door: intakeUrl, recipient: to, ok: 1 });
   /* §5 — the system stamps what IT did. A sheet sent against a lead's case
      number moves the lead to Rate Sheet Sent (with the intake ticked, the
