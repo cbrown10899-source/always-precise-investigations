@@ -2374,6 +2374,84 @@ section('A closed case can be reopened where it was closed');
   await page.close();
 }
 
+/* ARCHIVE AND RESTORE ON THE SCREEN (owner, WORKFLOW-SIMPLIFICATION §2).
+
+   The case is archived and then restored inside this section: the suite shares
+   one database, and leaving a case out of the active list would silently change
+   what every later section sees. */
+section('A case can be archived and brought back');
+{
+  await post('/ingest', {
+    case_no: 'API-20260812-4011', service: 'Surveillance',
+    client_name: 'Archive Client', subject_name: 'Archive Subject',
+    objective: 'Establish whereabouts',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  ok('the Cases tab offers an Archived lens',
+     await page.locator('.lens', { hasText: 'Archived' }).count() === 1);
+  ok('and the new case starts in the active list',
+     await rowFor(page, 'API-20260812-4011').count() === 1);
+
+  await rowFor(page, 'API-20260812-4011').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Billing & closing');
+  ok('Archive sits beside closing, where the lifecycle lives',
+     await page.locator('[data-act="archiveCase"]').count() === 1);
+  ok('and says plainly that nothing is deleted',
+     has(await text(page, '#dlgBody'), 'Nothing is deleted'));
+
+  await page.locator('[data-act="archiveCase"]').click();
+  await page.waitForTimeout(800);
+  const arch = await text(page, '#dlgBody');
+  ok('archiving is confirmed on the case, with who and when',
+     has(arch, 'Case archived') && has(arch, 'Trever'), arch.slice(0, 300));
+  ok('and the offer becomes Restore, without leaving the panel',
+     await page.locator('[data-act="restoreCase"]').count() === 1
+     && await page.locator('[data-act="archiveCase"]').count() === 0);
+
+  await page.locator('.close').click();
+  await page.waitForTimeout(600);
+  ok('the archived case has left the active list',
+     await rowFor(page, 'API-20260812-4011').count() === 0);
+
+  await page.locator('.lens', { hasText: 'Archived' }).click();
+  await page.waitForTimeout(800);
+  ok('and is found under the Archived lens',
+     await rowFor(page, 'API-20260812-4011').count() === 1);
+  ok('which shows only archived cases',
+     await rowFor(page, 'API-20260812-4002').count() === 0);
+
+  /* PUT IT BACK, and leave the database as this section found it. */
+  await rowFor(page, 'API-20260812-4011').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Billing & closing');
+  await page.locator('[data-act="restoreCase"]').click();
+  await page.waitForTimeout(800);
+  ok('restoring is offered from the archived case itself',
+     await page.locator('[data-act="archiveCase"]').count() === 1);
+  await page.locator('.close').click();
+  await page.waitForTimeout(600);
+  await page.locator('.lens', { hasText: 'All' }).click();
+  await page.waitForTimeout(800);
+  ok('and the case is back in the active list',
+     await rowFor(page, 'API-20260812-4011').count() === 1);
+  await page.close();
+}
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  ok('an investigator gets no Archived lens',
+     await page.locator('.lens', { hasText: 'Archived' }).count() === 0);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  ok('nor any archive control on a case',
+     await page.locator('[data-act="archiveCase"]').count() === 0
+     && await page.locator('[data-act="restoreCase"]').count() === 0);
+  await page.close();
+}
+
 /* The private-retainer balance (RATESHEETS.md admin side): internal only,
    driven from the Authorization tab of a private case. */
 section('The retainer balance on a private case');

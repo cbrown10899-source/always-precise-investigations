@@ -1804,26 +1804,48 @@ async function listSubmissions(request, env, user) {
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10) || 50, LIST_LIMIT_MAX);
   const offset = Math.max(parseInt(url.searchParams.get('offset') || '0', 10) || 0, 0);
 
+  /* ARCHIVED LEAVES THE ACTIVE LIST (owner, WORKFLOW-SIMPLIFICATION §2) and is
+     found under its own lens. `?view=archived` asks for exactly the archived
+     ones; every other view excludes them.
+
+     GUARDED, because schema.sql is applied by a MANUAL portal-setup dispatch
+     while the Worker deploys on push. Between the two, `case_archive` does not
+     exist on the live database — and a join against a missing table would take
+     out the case list itself, which is the single most-used view in the portal.
+     The same failure mode as the `client_token` column that never reached the
+     live database, and the same guard the dashboard already uses. */
+  const haveArchive = !(await missingTables(env)).includes('case_archive');
+  const wantArchived = url.searchParams.get('view') === 'archived';
+  const archJoin = haveArchive ? 'LEFT JOIN case_archive ar ON ar.case_no = s.case_no' : '';
+  const archCol = haveArchive ? 'ar.archived_at' : 'NULL AS archived_at';
+
+  const conds = [];
+  const where = [];
   // An investigator sees only what is assigned to them. This is enforced here,
   // in the query, rather than by the page hiding rows.
-  const scope = user.role === 'admin' ? '' : 'WHERE s.assigned_to = ?';
-  const binds = user.role === 'admin' ? [limit, offset] : [user.id, limit, offset];
+  if (user.role !== 'admin') { conds.push('s.assigned_to = ?'); where.push(user.id); }
+  if (haveArchive) conds.push(wantArchived ? 'ar.case_no IS NOT NULL' : 'ar.case_no IS NULL');
+  const scope = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+  const binds = [...where, limit, offset];
 
   const { results } = await env.DB.prepare(
     `SELECT s.case_no, s.kind, s.service, s.status, s.client_name, s.client_email, s.subject_name,
             (SELECT COUNT(*) FROM send_log sl WHERE sl.case_no = s.case_no AND sl.ok = 1) AS send_count,
             (SELECT MAX(sent_at) FROM send_log sl WHERE sl.case_no = s.case_no AND sl.ok = 1) AS last_sent_at,
             s.carrier, s.claim_number, s.created_at, s.assigned_to, u.display_name AS assigned_name,
-            cs.stage, ls.status AS lead_status
+            cs.stage, ls.status AS lead_status, ${archCol}
        FROM submissions s LEFT JOIN users u ON u.id = s.assigned_to
        LEFT JOIN case_status cs ON cs.case_no = s.case_no
        LEFT JOIN lead_status ls ON ls.case_no = s.case_no
+       ${archJoin}
        ${scope}
       ORDER BY s.created_at DESC LIMIT ? OFFSET ?`).bind(...binds).all();
 
-  const countRow = await (user.role === 'admin'
-    ? env.DB.prepare('SELECT COUNT(*) AS n FROM submissions').first()
-    : env.DB.prepare('SELECT COUNT(*) AS n FROM submissions WHERE assigned_to = ?').bind(user.id).first());
+  /* The total has to count the SAME set the rows came from, or the list says
+     "12 of 40" while showing the 12 that are not archived. */
+  const countRow = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM submissions s ${archJoin} ${scope}`)
+    .bind(...where).first();
 
   const rows = results || [];
   return json({
@@ -1975,6 +1997,20 @@ async function setStatus(request, env, user, caseNo) {
   }
   await setStage(env, user, caseNo, stage);
   return json({ ok: true, case_no: caseNo, status: stage });
+}
+
+/* The archive marker for a case, or null when it is not archived.
+
+   Guarded for the same deploy-order reason as the case list: the Worker ships
+   on push, `case_archive` arrives on a manual portal-setup dispatch, and a
+   workspace that threw in between would take the whole case screen down. */
+async function archiveOf(env, caseNo) {
+  if ((await missingTables(env)).includes('case_archive')) return null;
+  const row = await env.DB.prepare(
+    `SELECT a.archived_at, u.display_name AS archived_by
+       FROM case_archive a LEFT JOIN users u ON u.id = a.archived_by
+      WHERE a.case_no = ?`).bind(caseNo).first();
+  return row ? { archived_at: row.archived_at, archived_by: row.archived_by || '' } : null;
 }
 
 async function saveClosure(request, env, user, caseNo) {
@@ -2634,7 +2670,8 @@ async function caseWorkspace(env, user, caseNo) {
     // The clock the field timer trusts. The page measures its own skew against
     // this once and never counts ticks, so sleeping the phone changes nothing.
     server_now: nowIso(),
-    ...(admin ? { build_status: buildStatus, invoice_status: invoiceStatus,
+    ...(admin ? { archived: await archiveOf(env, caseNo),
+                  build_status: buildStatus, invoice_status: invoiceStatus,
                   sends: (await env.DB.prepare(
                     `SELECT l.kind, l.sheet_id, l.door, l.recipient, l.ok, l.detail, l.sent_at,
                             u.display_name AS sent_by
@@ -5013,7 +5050,7 @@ const EXPECTED_TABLES = [
      workspace load — the check saying "fine" is worse than no check. */
   'activity_removed', 'build_reports', 'build_summary', 'build_custom',
   'case_day_pauses', 'lead_status', 'send_log', 'invoice_retainer',
-  'payment_methods', 'payment_send', 'retainer_receipt',
+  'payment_methods', 'payment_send', 'retainer_receipt', 'case_archive',
   'retainer_payment', 'retainer_payment_void', 'retainer_payment_token',
 ];
 
@@ -5855,6 +5892,43 @@ async function route(request, env) {
   if (m && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return saveClosure(request, env, user, m[1]);
+  }
+
+  /* ARCHIVE AND RESTORE (owner, WORKFLOW-SIMPLIFICATION §2). Admin-only, like
+     every other lifecycle control.
+
+     NOTHING ABOUT THE CASE IS TOUCHED — not the stage, not the status, not a
+     row anywhere else. Archiving writes one marker and restoring removes it,
+     so "preserves everything and is restorable" is true by construction rather
+     than by remembering to put things back. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/archive$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if ((await missingTables(env)).includes('case_archive')) {
+      return json({ error: 'Archiving is not set up on this database yet. Run the portal-setup '
+                         + 'workflow once and try again.' }, 503);
+    }
+    const sub = await env.DB.prepare('SELECT case_no FROM submissions WHERE case_no = ?')
+      .bind(m[1]).first();
+    if (!sub) return json({ error: 'not found' }, 404);
+    await env.DB.prepare(
+      `INSERT INTO case_archive (case_no, archived_by, archived_at) VALUES (?1, ?2, ?3)
+       ON CONFLICT(case_no) DO NOTHING`).bind(m[1], user.id, nowIso()).run();
+    return json({ ok: true, case_no: m[1], archived: await archiveOf(env, m[1]) });
+  }
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/restore$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if ((await missingTables(env)).includes('case_archive')) {
+      return json({ error: 'Archiving is not set up on this database yet. Run the portal-setup '
+                         + 'workflow once and try again.' }, 503);
+    }
+    const sub = await env.DB.prepare('SELECT case_no FROM submissions WHERE case_no = ?')
+      .bind(m[1]).first();
+    if (!sub) return json({ error: 'not found' }, 404);
+    await env.DB.prepare('DELETE FROM case_archive WHERE case_no = ?').bind(m[1]).run();
+    return json({ ok: true, case_no: m[1], archived: null });
   }
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/close$/);

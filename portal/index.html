@@ -852,7 +852,10 @@ function favToggle(line){
 let LOAD_ERR = "";        // why the portal could not load, shown rather than hidden
 let SCHEMA_MISSING = [];  // tables the database does not have yet
 let CARD_FILTER = null;   // {label, set:Set(case numbers)} — a dashboard card's cases
-let CASE_VIEW = "all";    // all | open | completed — the Cases tab's lens (MASTER §31)
+// all | open | completed | archived — the Cases tab's lens (MASTER §31).
+// `archived` is a different QUERY, not a filter over the loaded rows: the
+// Worker keeps archived cases out of every other view.
+let CASE_VIEW = "all";
 let COMPLETED = null;     // the /completed payload, fetched when the lens turns
 let MY_REPORTS = null, MY_EXPENSES = null, MY_COMP = null, OFFERS = [];   // the investigator's own desk
 let CAL = null;   // {month, days, offers}
@@ -2345,7 +2348,7 @@ function casesView(){
     : "";
 
   const lens = admin ? `<div class="lensrow">${
-    [["all", "All"], ["open", "Open"], ["completed", "Completed"]].map(([v, l]) =>
+    [["all", "All"], ["open", "Open"], ["completed", "Completed"], ["archived", "Archived"]].map(([v, l]) =>
       `<button class="lens ${CASE_VIEW === v ? "on" : ""}" data-act="caseView" data-v="${v}">${l}</button>`).join("")
     }</div>` : "";
 
@@ -2764,7 +2767,10 @@ async function render(){
   LOAD_ERR = "";
   let listed = false;
   try{
-    const d = await api("/submissions?limit=200");
+    /* The archived lens is a different set, not a filter: the Worker excludes
+       archived cases from every other view, so asking for them is a query. */
+    const d = await api("/submissions?limit=200"
+      + (CASE_VIEW === "archived" ? "&view=archived" : ""));
     CASES = Array.isArray(d.submissions) ? d.submissions : [];
     TOTAL = d.total || 0;
     listed = true;
@@ -3799,6 +3805,48 @@ async function doCloseCase(){
   if(WS_ERR) return;
   WS_ERR = "";
   try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/close`, {method:"POST", body:{}}); }
+  catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+/* ARCHIVE (owner, WORKFLOW-SIMPLIFICATION §2): "Archive preserves everything and
+   is restorable." It sits beside closing because both are lifecycle, but it is
+   NOT closing — a case can be archived at any stage, and archiving one changes
+   nothing about the case itself. Restoring puts it back in the active lists at
+   the stage it already had, because that stage was never touched. */
+function archivePanel(){
+  if(ME.role !== "admin" || !WS) return "";
+  const a = WS.archived;
+  if(a){
+    return `<div class="feebox" style="margin-top:14px">
+      <div class="row"><span><b>Case archived</b></span>
+        <span>${esc(a.archived_by || "")}${a.archived_by ? " &middot; " : ""}${when(a.archived_at)}</span></div>
+      <div class="row"><span style="color:var(--muted);font-size:.85rem">Everything on the case is
+        kept. Restoring returns it to the active lists at the stage it already had.</span>
+        <button class="btn sm ghost" data-act="restoreCase">Restore case</button></div>
+      ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+    </div>`;
+  }
+  return `<div class="feebox" style="margin-top:14px">
+    <div class="row"><span><b>Archive</b></span>
+      <button class="btn sm ghost" data-act="archiveCase">Archive case</button></div>
+    <div class="row"><span style="color:var(--muted);font-size:.85rem">An archived case leaves the
+      active lists and is found under the Archived lens. Nothing is deleted, and it can be restored
+      at any time.</span><span></span></div>
+    ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+  </div>`;
+}
+
+async function archiveCase(){
+  WS_ERR = "";
+  try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/archive`, {method:"POST", body:{}}); }
+  catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+async function restoreCase(){
+  WS_ERR = "";
+  try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/restore`, {method:"POST", body:{}}); }
   catch(e){ WS_ERR = e.message; }
   await reloadWorkspace();
 }
@@ -5182,7 +5230,8 @@ function billingPanel(s, a){
         ${(s.kind === "claims" && a.authorized_hours != null) || s.kind !== "claims"
           ? `<button class="btn sm ghost" data-act="createInvoiceAuth" data-case="${esc(WS_CASE)}">Create from ${s.kind === "claims" ? "authorization" : "retainer"}</button>` : ""}
       </div>` : ""}
-    ${closurePanel()}`;
+    ${closurePanel()}
+    ${archivePanel()}`;
 }
 
 /* The workspace is a full page, not a popup — a case is where the day's work
@@ -6682,8 +6731,13 @@ document.addEventListener("click", ev => {
   }
   else if(act === "clearCardFilter"){ CARD_FILTER = null; paint(); }
   else if(act === "caseView"){
+    const wasArchived = CASE_VIEW === "archived";
     CASE_VIEW = el.dataset.v;
-    if(CASE_VIEW === "completed"){
+    /* Turning the archived lens on or off changes WHICH CASES ARE FETCHED, so
+       it reloads rather than repaints. Painting alone would show the previous
+       set under the new label. */
+    if(CASE_VIEW === "archived" || wasArchived){ render(); }
+    else if(CASE_VIEW === "completed"){
       // Fetched on every turn of the lens, so the desk is never stale after
       // a case was closed in another tab — and errors show, not vanish.
       COMPLETED = null; paint();
@@ -6740,6 +6794,8 @@ document.addEventListener("click", ev => {
   else if(act === "taskStatus"){ setTaskStat(Number(el.dataset.id), el.dataset.s); }
   else if(act === "closeCase"){ doCloseCase(); }
   else if(act === "reopenCase"){ reopenCase(); }
+  else if(act === "archiveCase"){ archiveCase(); }
+  else if(act === "restoreCase"){ restoreCase(); }
   else if(act === "invOpen"){ openInvoice(Number(el.dataset.id)); }
   else if(act === "invBack"){ INV_OPEN = null; INV_MSG = ""; loadInvoices(); }
   else if(act === "invStatus"){ setInvStatus(el.dataset.s); }

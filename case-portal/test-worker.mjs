@@ -6395,6 +6395,147 @@ section('Two admin accounts see the same data');
   globalThis.fetch = realFetch;
 }
 
+/* ARCHIVE AND RESTORE (owner, WORKFLOW-SIMPLIFICATION §2 — "Archive preserves
+   everything and is restorable").
+
+   A companion table, not a status: `submissions.status` carries a CHECK and
+   `case_status.stage` is validated against STAGES, and widening either is the
+   non-idempotent rebuild schema.sql cannot do. So the assertions below are as
+   much about what archiving does NOT touch as about what it does. */
+section('A case can be archived and restored, and nothing else moves');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  await ingest(env, { case_no: 'API-ARC-1', service: 'Surveillance',
+                      client_name: 'Archie Client', subject_name: 'S' });
+  await ingest(env, { case_no: 'API-ARC-2', service: 'Surveillance',
+                      client_name: 'Stays Put', subject_name: 'S' });
+
+  // A stage that is NOT the default, so "restores to the stage it had" means
+  // something rather than coinciding with the initial value.
+  await call(env, '/submissions/API-ARC-1/status', { method: 'POST', cookie: admin,
+    body: { status: 'awaiting_client' } });
+
+  const listOf = async (view = '') => (await jsonOf(await call(env,
+    `/submissions?limit=200${view}`, { cookie: admin })));
+  const before = await listOf();
+  ok('both cases start in the active list',
+     (before.submissions || []).map(r => r.case_no).sort().join() === 'API-ARC-1,API-ARC-2');
+  ok('and the total counts them', before.total === 2, String(before.total));
+
+  const arch = await call(env, '/cases/API-ARC-1/archive', { method: 'POST', cookie: admin, body: {} });
+  ok('an admin can archive a case', arch.status === 200, String(arch.status));
+
+  const after = await listOf();
+  ok('the archived case leaves the active list',
+     (after.submissions || []).map(r => r.case_no).join() === 'API-ARC-2',
+     (after.submissions || []).map(r => r.case_no).join());
+  ok('and the total follows the rows rather than contradicting them',
+     after.total === 1, String(after.total));
+
+  const only = await listOf('&view=archived');
+  ok('the archived lens shows exactly the archived one',
+     (only.submissions || []).map(r => r.case_no).join() === 'API-ARC-1',
+     (only.submissions || []).map(r => r.case_no).join());
+  ok('stamped with when it was archived',
+     Boolean((only.submissions || [])[0] || {}).valueOf() && (only.submissions[0].archived_at || '') !== '');
+
+  /* NOTHING ELSE MOVED. The stage, the status and the case record are what they
+     were — that is what "preserves everything" has to mean, and it is the whole
+     reason this is a companion table rather than a new status value. */
+  const ws = await jsonOf(await call(env, '/cases/API-ARC-1/workspace', { cookie: admin }));
+  ok('the stage is untouched by archiving', ws.stage === 'awaiting_client', String(ws.stage));
+  ok('and the workspace still opens in full', ws.case_no === 'API-ARC-1');
+  ok('and says it is archived, with who and when',
+     ws.archived && ws.archived.archived_at && ws.archived.archived_by === 'Trever',
+     JSON.stringify(ws.archived));
+  const sub = await jsonOf(await call(env, '/submissions/API-ARC-1', { cookie: admin }));
+  ok('the case record itself is still readable and intact',
+     (sub.submission || {}).client_name === 'Archie Client');
+
+  // Archiving twice is a no-op rather than an error — a double tap on a flaky
+  // connection must not be a failure the office has to interpret.
+  ok('archiving an already-archived case is a no-op',
+     (await call(env, '/cases/API-ARC-1/archive', { method: 'POST', cookie: admin, body: {} })).status === 200);
+  ok('and it is still archived exactly once',
+     ((await listOf('&view=archived')).submissions || []).length === 1);
+
+  const back = await call(env, '/cases/API-ARC-1/restore', { method: 'POST', cookie: admin, body: {} });
+  ok('an admin can restore it', back.status === 200, String(back.status));
+  const restored = await listOf();
+  ok('and it returns to the active list',
+     (restored.submissions || []).map(r => r.case_no).sort().join() === 'API-ARC-1,API-ARC-2');
+  ok('at the stage it already had, because that was never touched',
+     (await jsonOf(await call(env, '/cases/API-ARC-1/workspace', { cookie: admin }))).stage
+       === 'awaiting_client');
+  ok('the archived lens is empty again',
+     ((await listOf('&view=archived')).submissions || []).length === 0);
+  ok('restoring one that is not archived is a no-op, not an error',
+     (await call(env, '/cases/API-ARC-2/restore', { method: 'POST', cookie: admin, body: {} })).status === 200);
+  ok('archiving a case that does not exist is a 404',
+     (await call(env, '/cases/API-NOPE-9/archive', { method: 'POST', cookie: admin, body: {} })).status === 404);
+
+  /* Admin-only, like every other lifecycle control. */
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'arc_inv', display_name: 'Field', role: 'investigator' }))).url;
+  const tk = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tk}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const field = (await login(env, 'arc_inv', 'FieldWork2026x')).cookie;
+  ok('an investigator cannot archive',
+     (await call(env, '/cases/API-ARC-2/archive', { method: 'POST', cookie: field, body: {} })).status === 403);
+  ok('nor restore',
+     (await call(env, '/cases/API-ARC-2/restore', { method: 'POST', cookie: field, body: {} })).status === 403);
+
+  /* An investigator's own list obeys the archive too — the case leaves their
+     view, and the scoping that hides other people's cases still applies. */
+  await call(env, '/submissions/API-ARC-2/assign', { method: 'POST', cookie: admin,
+    body: { user_id: (await jsonOf(await call(env, '/auth/me', { cookie: field }))).user.id } });
+  ok('the investigator sees their assigned case',
+     ((await jsonOf(await call(env, '/submissions', { cookie: field }))).submissions || [])
+       .some(r => r.case_no === 'API-ARC-2'));
+  await call(env, '/cases/API-ARC-2/archive', { method: 'POST', cookie: admin, body: {} });
+  ok('and stops seeing it once the office archives it',
+     ((await jsonOf(await call(env, '/submissions', { cookie: field }))).submissions || [])
+       .every(r => r.case_no !== 'API-ARC-2'));
+}
+
+/* THE DEPLOY ORDER IS A REAL FAILURE MODE HERE. The Worker ships on push;
+   `case_archive` arrives on a MANUAL portal-setup dispatch. Between the two the
+   table does not exist on the live database, and a join against a missing table
+   would take out the case list — the most-used view in the portal, and the same
+   shape as the `client_token` column that never reached production. */
+section('The case list survives a database that has not been set up yet');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-NOARC-1', service: 'Surveillance',
+                      client_name: 'Before Setup', subject_name: 'S' });
+  // Exactly the state a live database is in between the two deploys.
+  env.DB.prepare('DROP TABLE IF EXISTS case_archive').run();
+
+  const res = await call(env, '/submissions?limit=200', { cookie: admin });
+  ok('the case list still answers', res.status === 200, String(res.status));
+  const body = await jsonOf(res);
+  ok('and still lists the case', (body.submissions || []).map(r => r.case_no).join() === 'API-NOARC-1');
+  ok('reporting no archive stamp rather than failing',
+     (body.submissions || [])[0].archived_at === null);
+  ok('the workspace opens too',
+     (await call(env, '/cases/API-NOARC-1/workspace', { cookie: admin })).status === 200);
+  ok('and reports the case as not archived',
+     (await jsonOf(await call(env, '/cases/API-NOARC-1/workspace', { cookie: admin }))).archived === null);
+  /* Archiving is REFUSED with a sentence naming the fix, rather than throwing.
+     "It did not work" and "run the setup workflow" are different messages. */
+  const refused = await call(env, '/cases/API-NOARC-1/archive', { method: 'POST', cookie: admin, body: {} });
+  ok('archiving is refused with the reason and the remedy',
+     refused.status === 503 && /portal-setup/.test((await jsonOf(refused)).error || ''),
+     String(refused.status));
+  ok('health reports the table as missing, which is how the office finds out',
+     ((await jsonOf(await call(env, '/health'))).missing_tables || []).includes('case_archive'));
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

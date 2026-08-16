@@ -478,6 +478,33 @@ CREATE TABLE IF NOT EXISTS case_closure (
   updated_at     TEXT
 );
 
+-- ---------------------------------------------------------------------------
+-- ARCHIVED (owner, WORKFLOW-SIMPLIFICATION §2): "Archive preserves everything
+-- and is restorable." A REAL state, separate from Completed and Cancelled — a
+-- case leaves the active lists and is found under Archived, with nothing about
+-- the case itself altered.
+--
+-- A COMPANION TABLE, NOT A STATUS. `submissions.status` carries a CHECK
+-- constraint and `case_status.stage` is validated against STAGES; widening
+-- either means rebuilding the table, which schema.sql — re-applied on every
+-- portal-setup run — cannot do idempotently. Editing the CHECK in place would
+-- leave a FRESH database able to store the new value while the LIVE one, made
+-- before the edit, still refused it: a divergence that passes every test and
+-- fails only in production. Same reasoning as `activity_removed` and
+-- `build_custom`.
+--
+-- It also means archiving is orthogonal to the stage. A case can be archived
+-- while closed, complete or on hold, and restoring puts back exactly the stage
+-- it had — because the stage was never touched.
+--
+-- Restoring DELETES the row, the way `activity_removed` does. What is preserved
+-- is the CASE; the archive marker is not itself history.
+CREATE TABLE IF NOT EXISTS case_archive (
+  case_no     TEXT PRIMARY KEY,
+  archived_by INTEGER REFERENCES users(id),
+  archived_at TEXT NOT NULL
+);
+
 -- Private retainer tracking (RATESHEETS.md admin side). One row per private
 -- case: the required retainer, and whether it has been received. What the
 -- work has consumed is computed from case_days at the case's rate — never
