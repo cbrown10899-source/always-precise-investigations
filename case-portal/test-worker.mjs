@@ -7491,6 +7491,41 @@ section('Two admins can be out on one case, and neither can stop the other by ac
   ok('and the older one is not the one the Worker would reach by default',
      Boolean(older && newer) && older.id < newer.id);
 
+  /* AND THE CALLER'S OWN SESSION MUST NOT PREEMPT THE NAMED ONE (Codex
+     stop-time review, 2026-08-16).
+
+     `openDayForAction` answers "your own running day" first, and that ran for
+     every caller. On this route it is exactly wrong: two admins out on one case
+     is what the feature is FOR, so the admin pressing "End Bea's session" HAS a
+     day of their own — and the shortcut handed back that day and ended it.
+     Reproduced: Trever pressed the button labelled "Bea Older", carrying Bea's
+     day_id, and Trever's own clock stopped while Bea and Cal stayed out. */
+  await ingest(env, { case_no: 'API-3OWN', service: 'Surveillance',
+                      client_name: 'Caller Too', subject_name: 'S' });
+  await call(env, '/cases/API-3OWN/day/start', { method: 'POST', cookie: b,
+    body: { day_date: '2026-08-17', start_time: '07:00' } });
+  await call(env, '/cases/API-3OWN/day/start', { method: 'POST', cookie: c,
+    body: { day_date: '2026-08-17', start_time: '08:00' } });
+  await call(env, '/cases/API-3OWN/day/start', { method: 'POST', cookie: a,
+    body: { day_date: '2026-08-17', start_time: '09:00' } });   // the CALLER's own
+  const three = ((await jsonOf(await call(env, '/cases/API-3OWN/workspace', { cookie: a })))
+    .days || []).filter(d => !d.end_time);
+  ok('the caller has a session of their own alongside the others', three.length === 3,
+     String(three.length));
+  const theirs = three.find(d => /Second Admin/.test(d.investigator || ''));
+  ok('ending a NAMED session does not end the caller\'s own instead',
+     (await call(env, '/cases/API-3OWN/day/end-other', { method: 'POST', cookie: a,
+       body: { end_time: '12:00', day_id: theirs.id } })).status === 200);
+  const afterOwn = ((await jsonOf(await call(env, '/cases/API-3OWN/workspace', { cookie: a })))
+    .days || []).filter(d => !d.end_time);
+  ok('the named session is the one that ended',
+     afterOwn.every(d => d.id !== theirs.id), afterOwn.map(d => d.investigator).join(','));
+  ok('and the caller is still out, with their own clock running',
+     afterOwn.some(d => /Trever/.test(d.investigator || '')),
+     afterOwn.map(d => d.investigator).join(','));
+  ok('as is the admin nobody named', afterOwn.some(d => /Cal Newer/.test(d.investigator || '')),
+     afterOwn.map(d => d.investigator).join(','));
+
   /* NAMING NOBODY IS NOW REFUSED rather than guessed. */
   const guess = await call(env, '/cases/API-3ADM/day/end-other', { method: 'POST', cookie: a,
     body: { end_time: '12:00' } });

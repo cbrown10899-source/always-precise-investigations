@@ -3164,6 +3164,49 @@ async function openDayFor(env, user, caseNo) {
  * nothing here reveals whether a day is running on a case they cannot see. */
 const DAY_COLS = 'id, day_date, start_time, start_mileage, created_at, investigator_id';
 async function openDayForAction(env, user, caseNo, { allowOthers = false, dayId = null } = {}) {
+  /* THE EXPLICIT ROUTE RESOLVES ENTIRELY HERE, BEFORE the own-day shortcut
+     below (Codex stop-time review, 2026-08-16).
+
+     That shortcut answers "your own running day" and it used to run first for
+     every caller. On `/day/end-other` that is exactly wrong: two admins out on
+     one case is the situation this feature exists for, so the admin pressing
+     "End Bea's session" HAS a day of their own — and the shortcut handed back
+     that day and ended it. Reproduced: Trever pressed the button labelled "Bea
+     Older", carrying Bea's `day_id`, and Trever's own clock stopped while Bea
+     and Cal stayed out. A confirmed target that the resolver then ignores is
+     worse than no target at all, because the screen said whose it was.
+
+     So this branch never falls through to `own`. A named session is the one
+     meant, whoever it belongs to — including the caller's own, if that is what
+     they named. */
+  if (allowOthers) {
+    if (!(await caseFor(env, user, caseNo))) return { status: 404, error: 'not found' };
+    if (user.role !== 'admin') return { status: 403, error: ADMIN_ONLY };
+    if (dayId) {
+      const one = await env.DB.prepare(
+        `SELECT ${DAY_COLS} FROM case_days
+          WHERE id = ? AND case_no = ? AND end_time IS NULL`).bind(dayId, caseNo).first();
+      if (!one) {
+        return { status: 409, error: 'That session is not running on this case any more — '
+                                   + 'it may already have been ended. Reload and look again.' };
+      }
+      return { day: one };
+    }
+    /* No id: honoured only where there is exactly ONE session to mean. The
+       caller's own counts towards that total — with two running, "whichever"
+       is precisely the guess this exists to refuse. */
+    const { results: openDays } = await env.DB.prepare(
+      `SELECT ${DAY_COLS} FROM case_days
+        WHERE case_no = ? AND end_time IS NULL ORDER BY id DESC`).bind(caseNo).all();
+    if ((openDays || []).length > 1) {
+      return { status: 409, ambiguous: true,
+        error: `${openDays.length} sessions are running on this case. Say which one to end — `
+             + 'ending "whichever" would stop the wrong person\'s clock.' };
+    }
+    if (openDays && openDays[0]) return { day: openDays[0] };
+    return { status: 409, error: 'No investigation day is running on this case.' };
+  }
+
   const own = await env.DB.prepare(
     `SELECT ${DAY_COLS} FROM case_days
       WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL
@@ -3176,51 +3219,12 @@ async function openDayForAction(env, user, caseNo, { allowOthers = false, dayId 
   /* TWO ADMINS MAY BE OUT ON THE SAME CASE AT ONCE (owner, WORKFLOW-SIMPLIFICATION
      §5: "never let one Admin silently stop or overwrite the other Admin's work").
 
-     The admin fallback below used to be UNCONDITIONAL, which made an ordinary
-     End or Pause reach whatever day happened to be open. With one admin in the
-     field and another at the desk, the desk's End button silently ended the
-     field's day — the exact failure the owner named, reachable by one press.
-
-     So the recovery path is kept and made DELIBERATE. `allowOthers` is set only
-     by `/day/end-other`, its own route with its own control and confirmation.
-     End, pause and resume never set it, so they can only ever touch the
-     caller's own session. A recovery path that does not exist is how a day ends
-     up hand-edited in D1 (HIGH #2); one reachable by accident is how an
-     investigator loses the clock they are standing in the rain with. */
-  if (allowOthers && user.role === 'admin') {
-    /* THE CONFIRMATION MUST NAME THE SESSION IT ENDS (Codex stop-time review,
-       2026-08-16).
-
-       This used to take `ORDER BY id DESC LIMIT 1` — the NEWEST open day — while
-       the page drew one button per running session, each labelled with a
-       different person. With two admins out, pressing the button that said
-       "Bea Older" ended Cal Newer's day. Reproduced exactly that way before the
-       fix: the button named a person and the request named nobody.
-
-       So the day is addressed by id. Absent, it is honoured only when there is
-       exactly ONE session to mean — the HIGH #2 recovery call, where there is
-       no ambiguity to get wrong — and refused outright when there is more than
-       one, because guessing is how the wrong person's clock stops. */
-    if (dayId) {
-      const one = await env.DB.prepare(
-        `SELECT ${DAY_COLS} FROM case_days
-          WHERE id = ? AND case_no = ? AND end_time IS NULL`).bind(dayId, caseNo).first();
-      if (!one) {
-        return { status: 409, error: 'That session is not running on this case any more — '
-                                   + 'it may already have been ended. Reload and look again.' };
-      }
-      return { day: one };
-    }
-    const { results: openDays } = await env.DB.prepare(
-      `SELECT ${DAY_COLS} FROM case_days
-        WHERE case_no = ? AND end_time IS NULL ORDER BY id DESC`).bind(caseNo).all();
-    if ((openDays || []).length > 1) {
-      return { status: 409, ambiguous: true,
-        error: `${openDays.length} sessions are running on this case. Say which one to end — `
-             + 'ending "whichever" would stop the wrong person\'s clock.' };
-    }
-    if (openDays && openDays[0]) return { day: openDays[0] };
-  }
+     Reaching another admin's day used to be an UNCONDITIONAL fallback here,
+     which made an ordinary End or Pause hit whatever day happened to be open:
+     the desk's End button silently ended the field's day. That path now lives
+     entirely in the `allowOthers` branch at the top — its own route, its own
+     control, its own confirmation — and END, PAUSE AND RESUME NEVER SET IT, so
+     from here down a caller can only ever touch their own session. */
 
   /* An admin pressing the ordinary control on someone else's running day is
      told whose it is and what the separate action is — refusing without saying

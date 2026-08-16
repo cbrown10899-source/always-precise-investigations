@@ -9,6 +9,46 @@ state. Update it when the queue moves; keep it short.
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
 truth** (recorded verbatim 2026-08-13).
 
+## 📝 NON-BLOCKING FINDINGS, 2026-08-16 — from the two-admin surveillance work
+
+Recorded, not fixed. None blocks the merge of the branch that carries them; each
+is a judgement call or a small edge worth someone's decision rather than a
+defect.
+
+- **Ending someone else's session stamps the moment of the press.** An admin
+  ending another's day has no End form in front of them — that form belongs to
+  their own day, which is exactly the day they do not have — so `end-other`
+  sends the current local time and no mileage or summary. That is deliberate:
+  mileage and a day's summary are the field admin's to know, not the desk's to
+  invent. **Open question for the owner:** whether the ended day should be
+  marked somewhere as "ended by the office" rather than reading like an ordinary
+  close. Today only the hours distinguish it.
+
+- **The ordinary End's refusal names only one other session.** When an admin
+  presses End on a case where several others are running, the refusal names the
+  newest (`LIMIT 1`). The *explicit* route is fully bound to a session id and
+  refuses to guess, so nothing acts on the wrong day — this is wording only, and
+  the panel above it lists every running session by name.
+
+- **SMS alert delivery is deferred indefinitely** (owner, 2026-08-16). Email
+  alerts are sufficient. The recipient settings already store numbers with
+  per-event toggles and `alertText(..., 'sms')` already produces wording that
+  carries no case number; `alertDelivery()` reports `blocked_on_provider` and
+  the Settings card says "not sent yet". **That is the intended resting state,
+  not a gap.** Do not build or propose it until the owner asks. If it is ever
+  wanted, the open items are: which provider, who buys the number, a per-day
+  message cap in the Worker before any sender is wired, and US A2P 10DLC
+  registration — and it would be the first deliberate recurring charge in a
+  system whose whole failsafe exists to make a bill impossible.
+
+- **Shell-escaped patches corrupted source twice in one session.** A `node -e`
+  edit produced `/^d{1,12}$/` instead of `/^\d{1,12}$/` — matching the letter d,
+  not digits — which would have made a fix inert while every test still passed,
+  and backticked terms were eaten out of CLAUDE.md prose the same way. Both were
+  caught by reading the generated code, not by the suites. **Prefer a real file
+  edit over shell string surgery on source**, and read back anything patched
+  that way.
+
 ## 🔍 LEDGER AUDIT, 2026-08-15 — this file and `PAYMENTS.md` were both behind the code
 
 A status pass at master `cd37d28` re-derived the queue **from the identifiers in
