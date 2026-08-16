@@ -4669,6 +4669,89 @@ section('Payment instructions can go on their own, and never to a carrier');
        body: { to: 'adjuster@carrier.example', case_no: 'API-POC' } }))).error,
        'never sent to a carrier'));
 
+  /* THE BOUNDARY MUST NOT FAIL OPEN ON A REFERENCE THAT DOES NOT RESOLVE
+     (Codex stop-time review, 2026-08-15). The claims refusal was written as
+     `if (lead && lead.kind === 'claims')`, so a case number nobody could find
+     skipped the check altogether and the send proceeded — and the comment above
+     it claimed, wrongly, that "a typo cannot turn a carrier into a private
+     client". A mistyped carrier reference is exactly how that happens: one
+     wrong character and the guard silently does not apply.
+
+     An unknown reference is now REFUSED. It is not permission, and it is not
+     "no case" either — it is a reference the office believes in and the system
+     cannot confirm, which is the moment to stop rather than to guess. */
+  lastBody = null;
+  const typo = await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+    body: { to: 'adjuster@carrier.example', case_no: 'API-POC-TYPO' } });
+  ok('a case reference that resolves to nothing is refused, not waved through',
+     typo.status === 400, String(typo.status));
+  ok('and nothing was emailed on the strength of an unverifiable reference',
+     lastBody === null);
+  ok('the refusal says what to do about it',
+     has((await jsonOf(await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+       body: { to: 'adjuster@carrier.example', case_no: 'API-POC-TYPO' } }))).error,
+       'Check the reference'));
+  /* One character off a real carrier case is the case that matters, because it
+     is the one an office actually produces. */
+  lastBody = null;
+  ok('one character off a real claim assignment is refused too',
+     (await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+       body: { to: 'adjuster@carrier.example', case_no: 'API-POCC' } })).status === 400);
+  ok('and again nothing went', lastBody === null);
+
+  /* A BLANK reference stays allowed, and that is deliberate rather than an
+     oversight — the owner's §4 lists "Optional Case / Lead Reference", and the
+     firm sends instructions to people who have no case yet. Asserted so a later
+     reader does not "tighten" it and break the flow the owner asked for. The
+     dialog prefills the lead's case number, so blank is a deliberate act. */
+  lastBody = null;
+  ok('a send with no reference at all is still allowed, as the order specifies',
+     (await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+       body: { to: 'newprospect@example.com' } })).status === 200);
+  ok('and it really did send', lastBody !== null);
+
+  /* THE SAME SHAPE ON THE SHEET SEND, found by following the finding rather
+     than only patching where it was reported. `emailSheet` pairs the sheet to
+     the lead with `if (lead) { ... }`, so a reference resolving to nothing
+     skips the pairing check there too — and the private sheet may carry payment
+     options. Mistype a carrier's case number, send them the private sheet with
+     payment ticked, and the adjuster receives Cash App and Venmo.
+
+     THE FIRST FIX HERE WAS WRONG AND A TEST CAUGHT IT. Refusing every
+     unresolvable reference broke the header-injection test, which sends
+     `case_no: 'API-1\r\nBcc: …'` and expects a 200 — and that test is right:
+     on this route the case number is a SUBJECT-LINE reference, and the office
+     legitimately sends a sheet to a prospect who has no case yet.
+
+     So the refusal is scoped to the ring-fenced content instead of the whole
+     send. A plain sheet against an unknown reference still goes; payment
+     options do not. */
+  lastBody = null;
+  const sheetTypo = await call(env, '/sheets/private_retainer/email', { method: 'POST',
+    cookie: admin, body: { to: 'adjuster@carrier.example', case_no: 'API-POCC',
+                           include_payment: true } });
+  ok('a mistyped reference cannot carry payment options', sheetTypo.status === 400,
+     String(sheetTypo.status));
+  ok('and nothing reached the adjuster', lastBody === null);
+  ok('the refusal offers the way through',
+     has((await jsonOf(await call(env, '/sheets/private_retainer/email', { method: 'POST',
+       cookie: admin, body: { to: 'adjuster@carrier.example', case_no: 'API-POCC',
+                              include_payment: true } }))).error,
+       'send the sheet on its own'));
+  // The correctly-spelled claim assignment is still refused by the existing pairing rule.
+  ok('and the correctly-spelled claim assignment is refused by pairing, as before',
+     (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+       body: { to: 'adjuster@carrier.example', case_no: 'API-POC' } })).status === 400);
+  /* THE FLOW THAT MUST SURVIVE THE FIX: a sheet with a typed reference nobody
+     can resolve still sends, because that is the prospect path, and narrowing
+     it would be a regression dressed as a hardening. */
+  lastBody = null;
+  ok('a plain sheet against an unresolvable reference still sends',
+     (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+       body: { to: 'prospect@example.com', case_no: 'NOT-A-CASE-YET' } })).status === 200);
+  ok('and really did send, with the reference in the subject',
+     lastBody !== null && lastBody.subject.includes('NOT-A-CASE-YET'));
+
   // §15.5/15.6/15.10 — each method independently, and OFF means absent.
   lastBody = null;
   await call(env, '/payment-options/email', { method: 'POST', cookie: admin,

@@ -400,6 +400,22 @@ and moving it would write an event that did not happen. The email reuses
 `paymentBlockText/Html` rather than restating them — two renderings of the same
 instructions drift, and the one that drifts is the one nobody is looking at.
 
+**Payment options are never sent against a reference nobody can confirm**, and
+this rule is worth stating because the guards read fine while failing open. Both
+send paths matched the lead with `if (lead) { …check… }`, so a case number that
+resolved to nothing skipped the check entirely: **one mistyped character of a
+carrier's case number put Cash App and Venmo in front of an adjuster**, on the
+standalone route and on the private sheet with payment ticked. Reproduced at
+status 200 with the email delivered, both times.
+
+The scope of the refusal differs between the two, deliberately. `/payment-options/email`
+refuses an unresolvable reference outright — it only ever carries payment. On
+`/sheets/:id/email` the refusal applies **only when `include_payment` is set**,
+because there the case number is a *subject-line reference* and the office
+legitimately sends a sheet to a prospect with no case yet. A first attempt to
+refuse every unresolvable reference there broke the header-injection test, and
+that test was right — a plain sheet still sends, payment options do not.
+
 `GET /sheets` and `POST /sheets/:id/email` are admin-only; an investigator gets
 403 from both, from `/payment-options/email`, and from `/pricing`. Sending goes through `sendMail()`, the same
 Resend path the invitations use, and never throws — a provider outage costs a
@@ -524,7 +540,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1057 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 1070 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 824 checks: the page against the real Worker
 ```
 

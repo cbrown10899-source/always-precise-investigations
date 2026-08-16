@@ -818,6 +818,9 @@ async function emailSheet(request, env, user, id) {
   const note = String(body.note || '')
     .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').slice(0, 500);
   const caseNo = String(body.case_no || '').replace(/[^\x20-\x7e]/g, '').slice(0, 64);
+  /* Set when a reference WAS typed and matched nothing. It does not block a
+     plain sheet — see the payment gate below for why it blocks payment. */
+  let unresolvedCase = false;
 
   /* A sheet sent AGAINST a lead must match that lead (audit, 2026-08-14).
      The intake door has always been paired to the sheet server-side, but
@@ -837,6 +840,7 @@ async function emailSheet(request, env, user, id) {
           expected_sheet: wanted }, 400);
       }
     }
+    unresolvedCase = !lead;
   }
 
   if (!(await withinRateLimit(env, 'mail'))) {
@@ -867,6 +871,31 @@ async function emailSheet(request, env, user, id) {
   if (includePayment && !sheetTakesPayment(sheet.id)) {
     return json({ error: 'Payment options are private-client only and cannot be sent with the '
                        + 'Insurance Assignment Rates.' }, 400);
+  }
+  /* PAYMENT OPTIONS ARE NEVER SENT AGAINST A REFERENCE THE SYSTEM CANNOT
+     CONFIRM (Codex stop-time review, 2026-08-15).
+
+     The pairing check above is skipped when a typed reference matches no lead,
+     which is deliberate — the case number is a subject-line reference and the
+     office legitimately sends a sheet to a prospect who has no case yet, with
+     whatever reference they have written down. A header-injection test has
+     asserted that flow since this route existed.
+
+     But it meant that mistyping ONE character of a carrier's case number
+     skipped the pairing check AND let the private sheet carry payment options
+     to that adjuster. Reproduced before this fix: status 200, email delivered
+     to adjuster@carrier.example with Cash App and Venmo in it.
+
+     So the refusal is scoped to the ring-fenced content rather than to the
+     whole send. A plain sheet against an unknown reference still goes; payment
+     options do not, because "I cannot find this reference" is not evidence that
+     the recipient is not a carrier. The rule is now the same one the standalone
+     payment route enforces, and can be stated in one line: payment options are
+     never sent against a reference nobody can confirm. */
+  if (includePayment && unresolvedCase) {
+    return json({ error: `No case or lead matches ${caseNo}. Payment options are not sent against `
+                       + `a reference nobody can find — check it, or clear it and send the sheet `
+                       + `on its own.` }, 400);
   }
   const wantedMethods = Array.isArray(body.methods)
     ? body.methods.map(x => String(x)).filter(x => PAY_IDS.includes(x)) : null;
@@ -976,13 +1005,34 @@ async function emailPaymentOptions(request, env, user) {
   const name = clean(body.name, 120);
   const caseNo = String(body.case_no || '').replace(/[^\x20-\x7e]/g, '').slice(0, 64);
 
-  /* RULE 1. A lead the office knows about decides this; an unknown case number
-     is treated as no case rather than as permission, so a typo cannot turn a
-     carrier into a private client. */
+  /* RULE 1, AND IT MUST NOT FAIL OPEN (Codex stop-time review, 2026-08-15).
+
+     This was `if (lead && lead.kind === 'claims')`, and the comment above it
+     claimed that "a typo cannot turn a carrier into a private client". It did
+     the opposite: a reference that resolved to nothing skipped the check
+     entirely and the send went. One wrong character in a carrier's case number
+     was enough to put Cash App and Venmo in front of an adjuster, and the
+     reproduction confirmed it — status 200, email delivered.
+
+     There are three states here, not two, and conflating the last two is the
+     whole bug:
+
+       no reference       — allowed. The owner's §4 says "Optional Case / Lead
+                            Reference", and the firm does send instructions to
+                            people who have no case yet.
+       a private lead     — allowed, which is the ordinary path.
+       anything else      — REFUSED. A claims lead obviously; but also a
+                            reference the office believes in and the system
+                            cannot confirm, because "I cannot find this" is not
+                            evidence of "this is safe to send to". */
   if (caseNo) {
     const lead = await env.DB.prepare('SELECT kind FROM submissions WHERE case_no = ?')
       .bind(caseNo).first();
-    if (lead && lead.kind === 'claims') {
+    if (!lead) {
+      return json({ error: `No case or lead matches ${caseNo}. Check the reference, or clear it — `
+                         + `payment instructions are not sent against a reference nobody can find.` }, 400);
+    }
+    if (lead.kind === 'claims') {
       return json({ error: `${caseNo} is a claim assignment. Cash App and Venmo are private-client `
                          + `payment methods and are never sent to a carrier or TPA.` }, 400);
     }
