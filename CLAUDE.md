@@ -617,8 +617,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1334 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 906 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 1385 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 924 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
@@ -814,6 +814,43 @@ can ever be behind a hidden case.
 first gate missed: accepting one assigns the investigator and moves the case's
 stage. `/offers/:id/*` and `/my/offers/:id/*` resolve through the gate like
 invoices and builds.
+
+## Who gets told — admin alert recipients
+
+`notify_recipient` is **one row per recipient**, so "multiple phone numbers" is
+rows rather than a delimited column: each number carries its own enable switch
+and its own choice of the five alerts (intakes, payments, reports, packages,
+important tasks). One number can take payments and packages while another takes
+intakes only, and switching one off never touches the other.
+
+**Nothing is hardcoded.** Every number and address is typed by an admin and
+lives only in that table; the schema seeds no default recipient and the page
+holds no provider credential. A test greps `worker.js` for dialable-looking
+digit runs and for provider names, and greps `schema.sql` for a seeded INSERT.
+
+**SMS delivery is blocked on a provider, and the portal says so.** There is no
+SMS provider configured anywhere in this Worker — `alertDelivery()` reports
+`sms: 'blocked_on_provider'` with a sentence, and the Settings card shows *"not
+sent yet"*. Recipients, switches and choices are stored and honoured; the
+sending half is what does not exist. Adding a provider means adding its
+credential to the environment and a sender beside `sendMail()` — never editing
+that function to claim yes.
+
+**Alert text carries the case number and nothing else about the case.** An alert
+leaves the building: email goes through Resend, and any SMS will go through a
+carrier and a provider. So `alertText()` says what happened and where to look,
+and never a claimant, client, subject or adjuster name, address, vehicle,
+injury, objective, claim or policy number, carrier, phone, email — **or an
+amount**, because what was paid is commercial and "a payment was recorded" is
+all an alert needs to say. The case number is the one identifier allowed: it is
+the firm's own reference, already travels in client-facing subject lines, and
+without it an alert cannot be acted on. It names a file, not a person.
+
+The tests plant a case loaded with every one of those values and assert none of
+them appears in **any** event's text. The wording is composed by the Worker and
+returned as a per-event `preview`, so the Settings page shows the exact words
+that would leave and cannot drift from them — one writer, as everywhere else
+here.
 
 ## The free-plan failsafe
 

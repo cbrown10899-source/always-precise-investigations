@@ -2532,6 +2532,113 @@ section('A case can be deleted as a tombstone and put back');
   await page.close();
 }
 
+/* WHO GETS TOLD, on the screen. Settings and data layer only — there is no SMS
+   provider configured, so the page has to say so rather than imply a text went
+   out. */
+section('Notification recipients in the browser');
+{
+  const page = await newPage();
+  page.on('dialog', d => d.accept());
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Settings' }).first().click();
+  await page.waitForTimeout(700);
+
+  const card = await text(page, '.card');
+  ok('Settings opens on the recipients card', has(card, 'Who gets told'), card.slice(0, 200));
+  ok('and says plainly that texts are not sent yet',
+     has(card, 'not sent yet') && has(card, 'no sms provider is configured'), card.slice(0, 500));
+  ok('with nobody set up to begin with, rather than a default recipient',
+     has(card, 'Nobody is set up to be told yet'));
+
+  /* THE WORDING IS SHOWN, so the office reads what would actually leave. */
+  ok('the five alert choices are previewed by their real wording',
+     ['New intake received', 'Payment recorded', 'Report ready for review',
+      'Client package finalized', 'Important task due'].every(t => has(card, t)), card.slice(0, 900));
+  ok('and every preview says where to look',
+     (card.match(/sign in to the portal/gi) || []).length >= 5);
+  ok('the preview case number is obviously not a real case', has(card, 'API-EXAMPLE-0001'));
+
+  await page.locator('[data-act="ntAdd"]').click();
+  await page.waitForTimeout(300);
+  ok('the add form asks who it is, a phone and an email',
+     await page.locator('#nt_label').count() === 1 && await page.locator('#nt_phone').count() === 1
+     && await page.locator('#nt_email').count() === 1);
+  ok('and offers a switch for each alert',
+     await page.locator('#nt_a_intakes').count() === 1
+     && await page.locator('#nt_a_payments').count() === 1
+     && await page.locator('#nt_a_reports').count() === 1
+     && await page.locator('#nt_a_packages').count() === 1
+     && await page.locator('#nt_a_tasks').count() === 1);
+
+  await page.locator('#nt_label').fill('Owner mobile');
+  await page.locator('#nt_phone').fill('555 0100 111');
+  await page.locator('#nt_a_payments').check();
+  await page.locator('#nt_a_packages').check();
+  await page.locator('[data-act="ntSave"]').click();
+  await page.waitForTimeout(800);
+  const one = await text(page, '.card');
+  ok('the recipient is listed with the alerts it was given',
+     has(one, 'Owner mobile') && has(one, 'Payment recorded') && has(one, 'Client package finalized'),
+     one.slice(0, 400));
+
+  /* A SECOND NUMBER WITH DIFFERENT CHOICES — the whole point of rows. */
+  await page.locator('[data-act="ntAdd"]').click();
+  await page.waitForTimeout(300);
+  await page.locator('#nt_label').fill('Second phone');
+  await page.locator('#nt_phone').fill('555 0100 222');
+  await page.locator('#nt_a_intakes').check();
+  await page.locator('[data-act="ntSave"]').click();
+  await page.waitForTimeout(800);
+  ok('a second number is held alongside the first',
+     has(await text(page, '.card'), 'Second phone'));
+  ok('each with its own choices, not one shared setting',
+     await page.locator('.row', { hasText: 'Second phone' }).first().innerText()
+       .then(t => has(t, 'New intake received') && !has(t, 'Payment recorded')));
+
+  /* THE ENABLE TOGGLE IS PER RECIPIENT. */
+  await page.locator('.row', { hasText: 'Second phone' })
+    .locator('[data-act="ntToggle"]').first().click();
+  await page.waitForTimeout(800);
+  /* Read the toggle's own state, not the row's words: the button for an enabled
+     recipient READS "Switch off", so a substring test for "off" passes whatever
+     the state is and proves nothing. */
+  const stateOf = async label => page.locator('.row', { hasText: label })
+    .locator('[data-act="ntToggle"]').first().getAttribute('data-on');
+  const offRow = await page.locator('.row', { hasText: 'Second phone' }).first().innerText();
+  ok('switching one off is shown on that recipient',
+     (await stateOf('Second phone')) === '0' && has(offRow, 'Switch on'), offRow);
+  ok('and the other is untouched', (await stateOf('Owner mobile')) === '1');
+  ok('and the number it belongs to is still there',
+     has(offRow, '555 0100 222'), offRow);
+
+  const bad = await page.locator('[data-act="ntAdd"]');
+  await bad.click();
+  await page.waitForTimeout(300);
+  await page.locator('#nt_label').fill('Nobody');
+  await page.locator('[data-act="ntSave"]').click();
+  await page.waitForTimeout(700);
+  ok('a recipient with neither a number nor an address is refused, with the reason',
+     has(await text(page, '.card'), 'could never be told anything'),
+     (await text(page, '.card')).slice(0, 400));
+  await page.locator('[data-act="ntCancel"]').click();
+  await page.waitForTimeout(300);
+
+  await page.locator('.row', { hasText: 'Second phone' })
+    .locator('[data-act="ntDelete"]').first().click();
+  await page.waitForTimeout(900);
+  ok('a recipient can be removed',
+     !has(await text(page, '.card'), 'Second phone'));
+  ok('and the other one stays', has(await text(page, '.card'), 'Owner mobile'));
+  await page.close();
+}
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  ok('an investigator has no Settings tab at all',
+     await page.locator('.tabs button', { hasText: 'Settings' }).count() === 0);
+  await page.close();
+}
+
 /* The private-retainer balance (RATESHEETS.md admin side): internal only,
    driven from the Authorization tab of a private case. */
 section('The retainer balance on a private case');

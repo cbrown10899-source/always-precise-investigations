@@ -524,6 +524,41 @@ CREATE TABLE IF NOT EXISTS case_archive (
 --
 -- `reason` is optional and free text, kept because "why is this case gone" is
 -- the question a tombstone exists to answer.
+-- ---------------------------------------------------------------------------
+-- WHO THE OFFICE WANTS TOLD, and about what.
+--
+-- One row per recipient, so "multiple phone numbers" is rows rather than a
+-- delimited column: each number carries its OWN enable switch and its own
+-- choice of alerts. The owner's phone can take payments and packages while a
+-- second number takes intakes only, and switching one off never touches the
+-- other. A comma-separated column could not do that, and would have to be
+-- parsed on every read.
+--
+-- NOTHING HERE IS HARDCODED. Every number and address is entered by an admin
+-- through the portal and lives only in this table. There is no default
+-- recipient in the source, and there is no provider credential anywhere near
+-- it — delivery reads its configuration from the environment, the way
+-- RESEND_API_KEY already does.
+--
+-- `email` and `phone` are both optional individually, and the Worker requires
+-- at least one: a recipient with neither is a row that can never be told
+-- anything.
+CREATE TABLE IF NOT EXISTS notify_recipient (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  label          TEXT    NOT NULL,            -- who this is, in the office's own words
+  email          TEXT,
+  phone          TEXT,                        -- as the admin typed it; never a literal in source
+  enabled        INTEGER NOT NULL DEFAULT 1,  -- the master switch for this recipient
+  alert_intakes  INTEGER NOT NULL DEFAULT 0,
+  alert_payments INTEGER NOT NULL DEFAULT 0,
+  alert_reports  INTEGER NOT NULL DEFAULT 0,
+  alert_packages INTEGER NOT NULL DEFAULT 0,
+  alert_tasks    INTEGER NOT NULL DEFAULT 0,
+  created_by     INTEGER REFERENCES users(id),
+  created_at     TEXT    NOT NULL,
+  updated_at     TEXT    NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS case_deleted (
   case_no    TEXT PRIMARY KEY,
   reason     TEXT,

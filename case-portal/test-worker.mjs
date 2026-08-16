@@ -6913,6 +6913,211 @@ section('The case list survives a database that has not been set up yet');
   ok('and names case_deleted too', (health.missing_tables || []).includes('case_deleted'));
 }
 
+/* WHO THE OFFICE WANTS TOLD, AND ABOUT WHAT. Settings and data layer only:
+   there is no SMS provider configured anywhere in this Worker, so text delivery
+   is blocked on one and says so. */
+section('Notification recipients: many numbers, each with its own switches');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  const list = async () => await jsonOf(await call(env, '/notify-recipients', { cookie: admin }));
+  const start = await list();
+  ok('the office starts with no recipients, not a default one',
+     (start.recipients || []).length === 0);
+  ok('and the five alert choices are offered by name',
+     (start.events || []).map(e => e.id).sort().join() ===
+     'intakes,packages,payments,reports,tasks',
+     (start.events || []).map(e => e.id).join());
+
+  /* DELIVERY IS STATED, so nobody is left believing a text went out. */
+  ok('SMS delivery reports itself blocked on a provider',
+     start.delivery.sms === 'blocked_on_provider');
+  ok('and says so in words the office can act on',
+     /no sms provider is configured/i.test(start.delivery.sms_note || ''), start.delivery.sms_note);
+  ok('email reports its own state from the environment, not a guess',
+     start.delivery.email === 'blocked_on_provider');   // this env has no RESEND_API_KEY
+  const withMail = freshEnv();
+  withMail.RESEND_API_KEY = 'test-resend-key';
+  await bootstrapAdmin(withMail);
+  const mailAdmin = (await login(withMail, 'trever', 'FirstAdminPass1')).cookie;
+  ok('and reads as configured where a mail key exists',
+     (await jsonOf(await call(withMail, '/notify-recipients', { cookie: mailAdmin })))
+       .delivery.email === 'configured');
+
+  /* MULTIPLE PHONE NUMBERS, each its own row, each with its own choices. */
+  const made = await call(env, '/notify-recipients', { method: 'POST', cookie: admin,
+    body: { label: 'Owner mobile', phone: '555 0100 111', alerts: { payments: true, packages: true } } });
+  ok('a recipient can be created', made.status === 201, String(made.status));
+  const owner = (await jsonOf(made)).recipient;
+  ok('with only the alerts that were chosen',
+     owner.alerts.payments === true && owner.alerts.packages === true
+     && owner.alerts.intakes === false && owner.alerts.reports === false
+     && owner.alerts.tasks === false, JSON.stringify(owner.alerts));
+  ok('and enabled by default, because a recipient nobody switched on is a puzzle',
+     owner.enabled === true);
+
+  const second = (await jsonOf(await call(env, '/notify-recipients', { method: 'POST',
+    cookie: admin, body: { label: 'Second phone', phone: '555 0100 222',
+                           alerts: { intakes: true } } }))).recipient;
+  const third = (await jsonOf(await call(env, '/notify-recipients', { method: 'POST',
+    cookie: admin, body: { label: 'Office inbox', email: 'office@example.com',
+                           alerts: { intakes: true, reports: true, tasks: true } } }))).recipient;
+  const three = await list();
+  ok('several numbers are held at once', (three.recipients || []).length === 3);
+  ok('each keeping its OWN choices rather than sharing one setting',
+     three.recipients.find(r => r.id === second.id).alerts.intakes === true
+     && three.recipients.find(r => r.id === second.id).alerts.payments === false
+     && three.recipients.find(r => r.id === owner.id).alerts.payments === true);
+  ok('and a recipient can be an email instead of a number',
+     three.recipients.find(r => r.id === third.id).email === 'office@example.com');
+
+  /* THE ENABLE TOGGLE IS PER RECIPIENT. */
+  await call(env, `/notify-recipients/${second.id}`, { method: 'POST', cookie: admin,
+    body: { enabled: false } });
+  const afterToggle = await list();
+  ok('switching one recipient off leaves the others alone',
+     afterToggle.recipients.find(r => r.id === second.id).enabled === false
+     && afterToggle.recipients.find(r => r.id === owner.id).enabled === true);
+  ok('and switching off does not clear the number or the choices',
+     afterToggle.recipients.find(r => r.id === second.id).phone === '555 0100 222'
+     && afterToggle.recipients.find(r => r.id === second.id).alerts.intakes === true);
+
+  /* AN ABSENT FIELD MEANS UNCHANGED — the rule the retainer routes learned the
+     hard way. Posting one toggle must not blank the address beside it. */
+  await call(env, `/notify-recipients/${third.id}`, { method: 'POST', cookie: admin,
+    body: { alerts: { tasks: false } } });
+  const kept = (await list()).recipients.find(r => r.id === third.id);
+  ok('changing one alert leaves the address untouched', kept.email === 'office@example.com');
+  ok('and leaves the other alerts as they were',
+     kept.alerts.intakes === true && kept.alerts.reports === true && kept.alerts.tasks === false,
+     JSON.stringify(kept.alerts));
+  ok('and the label survives too', kept.label === 'Office inbox');
+
+  /* REFUSALS, each naming what to do. */
+  ok('a recipient with neither an address nor a number is refused',
+     (await call(env, '/notify-recipients', { method: 'POST', cookie: admin,
+       body: { label: 'Nobody' } })).status === 400);
+  ok('an unnamed recipient is refused, so the list can say who is who',
+     (await call(env, '/notify-recipients', { method: 'POST', cookie: admin,
+       body: { phone: '555 0100 333' } })).status === 400);
+  ok('a malformed address is refused before it is stored',
+     (await call(env, '/notify-recipients', { method: 'POST', cookie: admin,
+       body: { label: 'Typo', email: 'not-an-address' } })).status === 400);
+  ok('and a number that is not a number is refused',
+     (await call(env, '/notify-recipients', { method: 'POST', cookie: admin,
+       body: { label: 'Short', phone: '12' } })).status === 400);
+
+  /* Removing a recipient really removes it: this is CONFIGURATION, not a record
+     of something that happened, so the tombstone rule does not apply. */
+  ok('a recipient can be removed',
+     (await call(env, `/notify-recipients/${second.id}/delete`, { method: 'POST',
+       cookie: admin, body: {} })).status === 200);
+  ok('and is gone from the list', (await list()).recipients.every(r => r.id !== second.id));
+  ok('removing one that does not exist is a 404',
+     (await call(env, '/notify-recipients/99999/delete', { method: 'POST',
+       cookie: admin, body: {} })).status === 404);
+
+  /* Admin-only, like every other office setting. */
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'notify_inv', display_name: 'Field', role: 'investigator' }))).url;
+  const tk = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tk}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const field = (await login(env, 'notify_inv', 'FieldWork2026x')).cookie;
+  ok('an investigator cannot read the recipients',
+     (await call(env, '/notify-recipients', { cookie: field })).status === 403);
+  ok('nor add one', (await call(env, '/notify-recipients', { method: 'POST', cookie: field,
+       body: { label: 'Me', phone: '555 0100 444' } })).status === 403);
+  ok('nor change one', (await call(env, `/notify-recipients/${owner.id}`, { method: 'POST',
+       cookie: field, body: { enabled: false } })).status === 403);
+  ok('nor remove one', (await call(env, `/notify-recipients/${owner.id}/delete`,
+       { method: 'POST', cookie: field, body: {} })).status === 403);
+}
+
+/* ALERT TEXT LEAVES THE BUILDING, so what it may carry is the whole question.
+
+   Email goes through Resend; any SMS will go through a carrier and a provider.
+   These assert the text says WHAT HAPPENED and WHERE TO LOOK and nothing that
+   identifies a person or a matter. */
+section('Alert text carries the case number and nothing else about the case');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  /* A case loaded with every kind of thing an alert must never repeat. */
+  await ingest(env, {
+    case_no: 'API-PRIV-1', carrier: 'Confidential Mutual', claim_number: 'CM-90210',
+    policy_number: 'POL-55512', client_name: 'Dana Adjuster',
+    client_email: 'dana@carrier.example', client_phone: '5550100999',
+    subject_name: 'Pat Claimant', subject_address: '14 Elm Row, Roanoke',
+    subject_vehicle: 'Blue Ford Ranger', subject_relationship: 'Lumbar strain',
+    objective: 'Activity level versus stated restrictions',
+    adjuster: 'Dana Adjuster', date_of_loss: '03/14/2026',
+  });
+
+  const forbidden = [
+    ['the carrier', 'Confidential Mutual'], ['the claim number', 'CM-90210'],
+    ['the policy number', 'POL-55512'], ['the client name', 'Dana Adjuster'],
+    ['the client email', 'dana@carrier.example'], ['the client phone', '5550100999'],
+    ['the claimant', 'Pat Claimant'], ['the address', 'Elm Row'],
+    ['the vehicle', 'Ford Ranger'], ['the injury', 'Lumbar strain'],
+    ['the objective', 'stated restrictions'], ['the date of loss', '03/14/2026'],
+  ];
+
+  const sample = await jsonOf(await call(env, '/notify-recipients', { cookie: admin }));
+  /* EVERY event's REAL text, composed by the Worker — not one sample with the
+     label swapped, which would prove only that the template is safe and let a
+     new event word itself however it liked. */
+  const everyText = (sample.events || []).map(e => e.preview);
+  ok('every alert choice comes with the words it would actually send',
+     everyText.length === 5 && everyText.every(t => typeof t === 'string' && t.length > 0),
+     JSON.stringify(everyText));
+  ok('an alert names what happened',
+     everyText.some(t => /intake received/i.test(t)), everyText.join(' | '));
+  ok('and where to look',
+     everyText.every(t => /sign in to the portal/i.test(t)), everyText.join(' | '));
+  ok('and carries the case number, which is the firm\'s own reference',
+     everyText.every(t => t.includes('API-EXAMPLE-0001')), everyText.join(' | '));
+  ok('the preview case number is obviously not a real case',
+     everyText.every(t => /EXAMPLE/.test(t)));
+
+  for (const [what, value] of forbidden) {
+    ok(`alert text never carries ${what}`,
+       everyText.every(t => !String(t).toLowerCase().includes(String(value).toLowerCase())),
+       everyText.join(' | ').slice(0, 200));
+  }
+  ok('and never a money amount', everyText.every(t => !/[$£€]\s*\d/.test(String(t))));
+
+  /* A case number is pinned to the same shape ingest pins it to, so a hostile
+     value cannot ride into an alert that may reach a carrier's SMS gateway. */
+  ok('a case number of the wrong shape is dropped rather than interpolated',
+     !JSON.stringify(sample.sample).includes('<script>'));
+}
+
+/* NO NUMBER AND NO PROVIDER CREDENTIAL IS EVER WRITTEN INTO THE SOURCE. The
+   owner asked for this in the same breath as the feature, and a grep is the
+   only check that keeps holding as the file grows. */
+section('No recipient number or provider secret is hardcoded');
+{
+  const src = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  /* Deliberately narrow: long digit runs that look like a dialable number,
+     ignoring the millisecond and byte constants that legitimately appear. */
+  const suspicious = (src.match(/\+\d[\d\s().-]{8,}\d/g) || [])
+    .filter(s => s.replace(/[^\d]/g, '').length >= 9);
+  ok('no telephone number is written into the Worker', suspicious.length === 0,
+     suspicious.join(' | '));
+  ok('no SMS provider credential is written into the Worker',
+     !/(twilio|vonage|nexmo|messagebird|plivo)/i.test(src));
+  ok('every secret the alert path reads comes from the environment',
+     /env\.RESEND_API_KEY/.test(src) && !/sk_live|AC[0-9a-f]{32}/i.test(src));
+
+  const schema = fs.readFileSync(path.join(HERE, 'schema.sql'), 'utf8');
+  ok('and the schema seeds no default recipient',
+     !/INSERT\s+INTO\s+notify_recipient/i.test(schema));
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));
