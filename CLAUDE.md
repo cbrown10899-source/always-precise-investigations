@@ -422,6 +422,20 @@ exists as well as after. `carryProspectRetainer()` moves the figure into
 retainer already set on the case**. Claims intakes carry nothing: a claim
 assignment is authorized in hour blocks.
 
+**There is exactly ONE writer, and sends are not it.** Persisting is the
+explicit act — `POST /prospects`, or the case retainer route. Every send only
+reads. The send used to record the figure its request carried, which made two
+writers for one value, and the page sends the selector's *current* figure
+whether or not anybody chose it: a later send where nothing was touched cut a
+prospect who had agreed $3,000 back to the standard, and the client received the
+reduced number. `body.retainer` is now ignored on the send routes rather than
+rejected — an older client should not fail, it should just not be believed.
+
+**`retainer_stored` distinguishes "agreed" from "defaulted."** Without it the
+two are the same number, and the page skipped saving when the chosen figure
+matched what it had been shown — so agreeing the *standard* figure persisted
+nothing, and that agreement would move on its own the day the standard changed.
+
 Falling back to the standard figure when a case is absent is the thing to never
 do here. It would put one number on the admin's screen and a different one in
 the client's email, which is exactly what #123 fixed from the other direction.
@@ -623,7 +637,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1192 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 1199 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 863 checks: the page against the real Worker
 ```
 

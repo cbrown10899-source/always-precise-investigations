@@ -5292,6 +5292,58 @@ section('A written reference is subject-line text; only a linked case is looked 
      (await call(env, '/prospects', { method: 'POST', cookie: admin,
        body: { email: 'z@y.co', retainer: 0 } })).status === 400);
 
+  /* A SEND READS THE AGREED FIGURE; IT NEVER WRITES ONE (Codex stop-time
+     review, 2026-08-15 — "retainer persistence can silently diverge or be
+     permanently skipped").
+
+     There were two writers for one value: the explicit prospect save, and the
+     send itself. The send wrote whatever figure the request carried — and the
+     page sends the selector's CURRENT value whether or not the admin ever
+     touched it. So a prospect who had agreed $3,000 was quietly cut back to the
+     standard by a later send where nobody chose anything, and the client
+     received the reduced figure. That is the same clobber the case path already
+     guards with `retainerTouched`, arriving through the other door.
+
+     One writer now. Persisting is the explicit act; sending only reads. */
+  await call(env, '/prospects', { method: 'POST', cookie: admin,
+    body: { email: 'diverge@example.com', retainer: 3000 } });
+  lastBody = null;
+  await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'diverge@example.com', reference: 'D-1', retainer: 1500 } });
+  ok('a send carrying a figure does not overwrite what was agreed',
+     Number((await jsonOf(await call(env, '/prospects?email=diverge@example.com',
+       { cookie: admin }))).prospect.agreed_retainer) === 3000,
+     JSON.stringify((await jsonOf(await call(env, '/prospects?email=diverge@example.com',
+       { cookie: admin }))).prospect.agreed_retainer));
+  ok('and the client is sent the agreed $3,000, not the figure in the request',
+     has(both(lastBody), '$3,000') && !has(both(lastBody), '$1,500'),
+     both(lastBody).slice(0, 200));
+  // The same on the payment route, which had the same second writer.
+  lastBody = null;
+  await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+    body: { to: 'diverge@example.com', retainer: 1500 } });
+  ok('payment options cannot overwrite it either',
+     Number((await jsonOf(await call(env, '/prospects?email=diverge@example.com',
+       { cookie: admin }))).prospect.agreed_retainer) === 3000);
+  ok('and they quote the agreed figure too', has(both(lastBody), '$3,000'));
+
+  /* PERSISTENCE IS NEVER SKIPPED because the figure happens to equal the
+     standard. Nothing stored and "stored $1,500" used to be indistinguishable,
+     so agreeing the standard figure wrote nothing at all — and the agreement
+     would then move on its own the day the standard changed. */
+  await call(env, '/prospects', { method: 'POST', cookie: admin,
+    body: { email: 'standard@example.com', retainer: 1500 } });
+  const std = (await jsonOf(await call(env, '/prospects?email=standard@example.com',
+    { cookie: admin }))).prospect;
+  ok('agreeing the standard figure is still recorded, not skipped',
+     std && Number(std.agreed_retainer) === 1500, JSON.stringify(std));
+  ok('and the read says it is stored rather than defaulted',
+     (await jsonOf(await call(env, '/sheets?email=standard@example.com',
+       { cookie: admin }))).retainer_stored === true);
+  ok('while an address nobody has agreed anything with says otherwise',
+     (await jsonOf(await call(env, '/sheets?email=nobody@example.com',
+       { cookie: admin }))).retainer_stored === false);
+
   /* THE AUDIT THE OWNER ASKED FOR: "No pre-case action may fail only because
      case_id is null." Each of the four named surfaces is driven with no case,
      end to end, and the history is read back to prove the null survived rather

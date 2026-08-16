@@ -1169,18 +1169,21 @@ async function emailSheet(request, env, user, id) {
     return json({ error: 'Too many emails in one minute — wait a moment and send again.' }, 429);
   }
 
-  /* The retainer is DURABLE on both sides of a case existing (owner,
-     2026-08-15). A linked case's stored agreement wins. Otherwise a figure sent
-     with this request is recorded against the PROSPECT first, and then read
-     back from there — so the send uses the stored value rather than the request,
-     and preview, send and the payment options are all reading one place.
+  /* A SEND READS THE AGREED FIGURE AND NEVER WRITES ONE (Codex stop-time
+     review, 2026-08-15).
 
-     Recorded only on the private context: an insurance assignment has no
-     retainer, and writing one against a carrier contact would be inventing a
-     private relationship that does not exist. */
-  if (!caseNo && contextForSheet(id) === SEND_CONTEXT.PRIVATE) {
-    await saveProspect(env, user, { email: to, reference, retainer: body.retainer });
-  }
+     This used to record `body.retainer` against the prospect first. That made
+     two writers for one value, and the page sends the selector's CURRENT figure
+     whether or not anybody chose it — so a later send where nothing was touched
+     cut a prospect who had agreed $3,000 back to the standard, and the client
+     received the reduced number. Reproduced before the fix: the stored 3000
+     read back as 1500.
+
+     Persisting is now the explicit act — `POST /prospects`, or the case
+     retainer route — and every send simply reads. One writer cannot disagree
+     with itself. `body.retainer` is deliberately ignored here rather than
+     rejected: an older client sending it should not fail, it should just not be
+     believed. */
   const retainer = await retainerForSend(env, caseNo, to);
   const sheet = sheetById(id, retainer);
 
@@ -1430,11 +1433,9 @@ async function emailPaymentOptions(request, env, user) {
      payment email has been given a reason to distrust both, and that has to
      hold before a case exists as much as after.
 
-     A figure sent with this request is recorded first, so payment options can
-     also be the moment a retainer is agreed. */
-  if (!caseNo && body.retainer != null) {
-    await saveProspect(env, user, { email: to, name, reference, retainer: body.retainer });
-  }
+     This reads and never writes, for the reason spelled out in `emailSheet`:
+     two writers for one figure let an untouched selector quietly reduce an
+     agreement that had already been made. */
   const retainer = await retainerForSend(env, caseNo, to);
   const { text, html } = paymentOnlyEmail(payment, retainer, note, name);
   const subjectRef = caseNo || reference;
@@ -5270,6 +5271,19 @@ async function route(request, env) {
        too. */
     const forEmail = url.searchParams.get('email') || '';
     const retainer = await retainerForSend(env, caseNo, forEmail);
+    /* WHETHER THE FIGURE IS AGREED OR MERELY THE DEFAULT (Codex stop-time
+       review, 2026-08-15 — "permanently skipped").
+
+       Without this the two are indistinguishable, and the page skipped saving
+       when the chosen figure equalled what it had been shown — so agreeing the
+       STANDARD figure persisted nothing at all, and that agreement would then
+       move on its own the day the standard changed. The page uses this to know
+       when it genuinely has nothing stored. */
+    const storedRow = caseNo
+      ? await env.DB.prepare('SELECT retainer_amount AS a FROM case_retainer WHERE case_no = ?')
+          .bind(caseNo).first()
+      : await prospectFor(env, forEmail).then(p => p ? { a: p.agreed_retainer } : null);
+    const retainerStored = Boolean(storedRow && storedRow.a != null && Number(storedRow.a) > 0);
     /* `case_exists` answers the LINK action, and only the link action asks. It
        is a plain boolean rather than a 404 on purpose: reading the sheets must
        never fail because a reference happens not to be a case, which is how the
@@ -5278,6 +5292,7 @@ async function route(request, env) {
       'SELECT 1 AS x FROM submissions WHERE case_no = ?').bind(caseNo).first()) : false;
     return json({ sheets: rateSheets(retainer),
                   retainer,
+                  retainer_stored: retainerStored,
                   case_exists: exists,
                   email_configured: Boolean(env.RESEND_API_KEY) });
   }
