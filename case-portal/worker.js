@@ -1814,17 +1814,32 @@ async function listSubmissions(request, env, user) {
      out the case list itself, which is the single most-used view in the portal.
      The same failure mode as the `client_token` column that never reached the
      live database, and the same guard the dashboard already uses. */
-  const haveArchive = !(await missingTables(env)).includes('case_archive');
-  const wantArchived = url.searchParams.get('view') === 'archived';
+  const missing = await missingTables(env);
+  const haveArchive = !missing.includes('case_archive');
+  const haveDeleted = !missing.includes('case_deleted');
+  const view = url.searchParams.get('view') || '';
+  const wantArchived = view === 'archived';
+  /* Deleted is admin-only: an investigator asking for it gets their ordinary
+     list, not a view of what the office has taken out of circulation. */
+  const wantDeleted = view === 'deleted' && user.role === 'admin';
   const archJoin = haveArchive ? 'LEFT JOIN case_archive ar ON ar.case_no = s.case_no' : '';
   const archCol = haveArchive ? 'ar.archived_at' : 'NULL AS archived_at';
+  const delJoin = haveDeleted ? 'LEFT JOIN case_deleted del ON del.case_no = s.case_no' : '';
+  const delCol = haveDeleted ? 'del.deleted_at' : 'NULL AS deleted_at';
+  const joins = `${archJoin} ${delJoin}`;
 
   const conds = [];
   const where = [];
   // An investigator sees only what is assigned to them. This is enforced here,
   // in the query, rather than by the page hiding rows.
   if (user.role !== 'admin') { conds.push('s.assigned_to = ?'); where.push(user.id); }
-  if (haveArchive) conds.push(wantArchived ? 'ar.case_no IS NOT NULL' : 'ar.case_no IS NULL');
+  /* A DELETED CASE LEAVES EVERY ORDINARY VIEW, Archived included — that is what
+     makes it a delete rather than a second archive. It comes back only under
+     its own lens, where an admin can restore it. */
+  if (haveDeleted) conds.push(wantDeleted ? 'del.case_no IS NOT NULL' : 'del.case_no IS NULL');
+  if (haveArchive && !wantDeleted) {
+    conds.push(wantArchived ? 'ar.case_no IS NOT NULL' : 'ar.case_no IS NULL');
+  }
   const scope = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
   const binds = [...where, limit, offset];
 
@@ -1833,18 +1848,18 @@ async function listSubmissions(request, env, user) {
             (SELECT COUNT(*) FROM send_log sl WHERE sl.case_no = s.case_no AND sl.ok = 1) AS send_count,
             (SELECT MAX(sent_at) FROM send_log sl WHERE sl.case_no = s.case_no AND sl.ok = 1) AS last_sent_at,
             s.carrier, s.claim_number, s.created_at, s.assigned_to, u.display_name AS assigned_name,
-            cs.stage, ls.status AS lead_status, ${archCol}
+            cs.stage, ls.status AS lead_status, ${archCol}, ${delCol}
        FROM submissions s LEFT JOIN users u ON u.id = s.assigned_to
        LEFT JOIN case_status cs ON cs.case_no = s.case_no
        LEFT JOIN lead_status ls ON ls.case_no = s.case_no
-       ${archJoin}
+       ${joins}
        ${scope}
       ORDER BY s.created_at DESC LIMIT ? OFFSET ?`).bind(...binds).all();
 
   /* The total has to count the SAME set the rows came from, or the list says
      "12 of 40" while showing the 12 that are not archived. */
   const countRow = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM submissions s ${archJoin} ${scope}`)
+    `SELECT COUNT(*) AS n FROM submissions s ${joins} ${scope}`)
     .bind(...where).first();
 
   const rows = results || [];
@@ -2011,6 +2026,19 @@ async function archiveOf(env, caseNo) {
        FROM case_archive a LEFT JOIN users u ON u.id = a.archived_by
       WHERE a.case_no = ?`).bind(caseNo).first();
   return row ? { archived_at: row.archived_at, archived_by: row.archived_by || '' } : null;
+}
+
+/* The delete tombstone, or null. Guarded like `archiveOf`, and for the same
+   deploy-order reason. */
+async function deletedOf(env, caseNo) {
+  if ((await missingTables(env)).includes('case_deleted')) return null;
+  const row = await env.DB.prepare(
+    `SELECT d.deleted_at, d.reason, u.display_name AS deleted_by
+       FROM case_deleted d LEFT JOIN users u ON u.id = d.deleted_by
+      WHERE d.case_no = ?`).bind(caseNo).first();
+  return row
+    ? { deleted_at: row.deleted_at, deleted_by: row.deleted_by || '', reason: row.reason || '' }
+    : null;
 }
 
 async function saveClosure(request, env, user, caseNo) {
@@ -2670,7 +2698,7 @@ async function caseWorkspace(env, user, caseNo) {
     // The clock the field timer trusts. The page measures its own skew against
     // this once and never counts ticks, so sleeping the phone changes nothing.
     server_now: nowIso(),
-    ...(admin ? { archived: await archiveOf(env, caseNo),
+    ...(admin ? { archived: await archiveOf(env, caseNo), deleted: await deletedOf(env, caseNo),
                   build_status: buildStatus, invoice_status: invoiceStatus,
                   sends: (await env.DB.prepare(
                     `SELECT l.kind, l.sheet_id, l.door, l.recipient, l.ok, l.detail, l.sent_at,
@@ -4175,6 +4203,18 @@ async function adminBuild(env, user, buildId) {
    looking for the report. Cancelled is deliberately absent: a cancelled case
    has no deliverables to find. */
 async function completedCases(env) {
+  /* THE COMPLETED DESK IS AN ORDINARY VIEW, so archived and deleted cases leave
+     it too. "Leaves active views" would be a half-truth if a case the office
+     archived kept appearing on the desk it reads to see what is finished.
+
+     Both exclusions are guarded on the table existing, for the same
+     deploy-order reason as the case list — this desk must not go down in the
+     window between the Worker deploying and portal-setup being dispatched. */
+  const missing = await missingTables(env);
+  const notArchived = missing.includes('case_archive') ? ''
+    : 'AND s.case_no NOT IN (SELECT case_no FROM case_archive)';
+  const notDeleted = missing.includes('case_deleted') ? ''
+    : 'AND s.case_no NOT IN (SELECT case_no FROM case_deleted)';
   const { results } = await env.DB.prepare(
     `SELECT s.case_no, s.kind, s.client_name, s.subject_name, s.carrier, s.created_at,
             cs.stage, cs.set_at AS stage_at,
@@ -4187,6 +4227,8 @@ async function completedCases(env) {
            ORDER BY version DESC, id DESC LIMIT 1)
       WHERE (cs.stage IN ('complete', 'closed') OR b.id IS NOT NULL)
         AND (cs.stage IS NULL OR cs.stage != 'cancelled')
+        ${notArchived}
+        ${notDeleted}
       ORDER BY COALESCE(b.finalized_at, cs.set_at, s.created_at) DESC
       LIMIT 200`).all();
 
@@ -5050,7 +5092,7 @@ const EXPECTED_TABLES = [
      workspace load — the check saying "fine" is worse than no check. */
   'activity_removed', 'build_reports', 'build_summary', 'build_custom',
   'case_day_pauses', 'lead_status', 'send_log', 'invoice_retainer',
-  'payment_methods', 'payment_send', 'retainer_receipt', 'case_archive',
+  'payment_methods', 'payment_send', 'retainer_receipt', 'case_archive', 'case_deleted',
   'retainer_payment', 'retainer_payment_void', 'retainer_payment_token',
 ];
 
@@ -5929,6 +5971,50 @@ async function route(request, env) {
     if (!sub) return json({ error: 'not found' }, 404);
     await env.DB.prepare('DELETE FROM case_archive WHERE case_no = ?').bind(m[1]).run();
     return json({ ok: true, case_no: m[1], archived: null });
+  }
+
+  /* DELETE CASE — a tombstone, never a purge (owner, WORKFLOW-SIMPLIFICATION §2
+     answer). Admin-only.
+
+     The ONLY write is the marker. Nothing is removed: not the submission, not
+     evidence, not reports, not invoices, not payment history, not the send or
+     audit logs. A delete that deleted rows would not be a tombstone, and the
+     owner ruled a true purge is not wanted.
+
+     It differs from archive in REACH, not in destructiveness: a deleted case
+     leaves every ordinary view including Archived, and comes back only under
+     the Deleted lens — where an admin can restore it. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/delete$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if ((await missingTables(env)).includes('case_deleted')) {
+      return json({ error: 'Deleting is not set up on this database yet. Run the portal-setup '
+                         + 'workflow once and try again.' }, 503);
+    }
+    const sub = await env.DB.prepare('SELECT case_no FROM submissions WHERE case_no = ?')
+      .bind(m[1]).first();
+    if (!sub) return json({ error: 'not found' }, 404);
+    const body = await readJson(request);
+    const reason = String(body.reason == null ? '' : body.reason)
+      .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 200);
+    await env.DB.prepare(
+      `INSERT INTO case_deleted (case_no, reason, deleted_by, deleted_at) VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT(case_no) DO NOTHING`).bind(m[1], reason || null, user.id, nowIso()).run();
+    return json({ ok: true, case_no: m[1], deleted: await deletedOf(env, m[1]) });
+  }
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/undelete$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if ((await missingTables(env)).includes('case_deleted')) {
+      return json({ error: 'Deleting is not set up on this database yet. Run the portal-setup '
+                         + 'workflow once and try again.' }, 503);
+    }
+    const sub = await env.DB.prepare('SELECT case_no FROM submissions WHERE case_no = ?')
+      .bind(m[1]).first();
+    if (!sub) return json({ error: 'not found' }, 404);
+    await env.DB.prepare('DELETE FROM case_deleted WHERE case_no = ?').bind(m[1]).run();
+    return json({ ok: true, case_no: m[1], deleted: null });
   }
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/close$/);

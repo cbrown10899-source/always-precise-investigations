@@ -617,8 +617,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1258 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 892 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 1292 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 906 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
@@ -743,6 +743,27 @@ workflow to run. **Adding a table means adding that guard too.**
 The Cases lens gained **Archived**, and it is a different *query* rather than a
 filter over loaded rows — the Worker excludes archived cases from every other
 view, so turning the lens reloads.
+
+**Delete Case is a tombstone and never a purge** (`case_deleted`). The owner's
+answer is explicit: *"an Admin-only soft-delete/tombstone that removes it from
+normal views but preserves records"*, and *"a true irreversible data purge is
+NOT needed now."* The only write is the marker. Nothing is removed — not the
+submission, not evidence, reports, invoices, payment history, or the send and
+audit logs — and a test asserts the row counts are unchanged across a delete on
+a case carrying a day, an activity entry, a report and an invoice.
+
+**It differs from archive in REACH, not in destructiveness.** Archived is a
+normal end state, browsable under its own lens. Deleted means the case should
+not be in the working set at all, so it leaves **every** ordinary view including
+Archived and the Completed desk, and returns only under **Deleted** — where an
+admin can put it back. Deleting never touches the archive marker, so a case that
+was archived is archived again when it is put back.
+
+That recoverability is the point, not a convenience: `activity_removed` offers
+"Put it back", a voided payment prints struck-through, deleted evidence still
+reads *"removed — the record stays"*. **Nothing the office does in the portal is
+unrecoverable in the portal.** If a real purge is ever wanted it is a different
+feature with a different name, and the owner has said it is not wanted now.
 
 ## The free-plan failsafe
 

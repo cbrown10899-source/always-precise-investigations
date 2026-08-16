@@ -2348,7 +2348,7 @@ function casesView(){
     : "";
 
   const lens = admin ? `<div class="lensrow">${
-    [["all", "All"], ["open", "Open"], ["completed", "Completed"], ["archived", "Archived"]].map(([v, l]) =>
+    [["all", "All"], ["open", "Open"], ["completed", "Completed"], ["archived", "Archived"], ["deleted", "Deleted"]].map(([v, l]) =>
       `<button class="lens ${CASE_VIEW === v ? "on" : ""}" data-act="caseView" data-v="${v}">${l}</button>`).join("")
     }</div>` : "";
 
@@ -2770,7 +2770,7 @@ async function render(){
     /* The archived lens is a different set, not a filter: the Worker excludes
        archived cases from every other view, so asking for them is a query. */
     const d = await api("/submissions?limit=200"
-      + (CASE_VIEW === "archived" ? "&view=archived" : ""));
+      + (CASE_VIEW === "archived" || CASE_VIEW === "deleted" ? "&view=" + CASE_VIEW : ""));
     CASES = Array.isArray(d.submissions) ? d.submissions : [];
     TOTAL = d.total || 0;
     listed = true;
@@ -3847,6 +3847,58 @@ async function archiveCase(){
 async function restoreCase(){
   WS_ERR = "";
   try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/restore`, {method:"POST", body:{}}); }
+  catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+/* DELETE CASE — a tombstone, never a purge (owner, §2 answer). It reaches
+   further than Archive: the case leaves every ordinary view, Archived included,
+   and is found only under Deleted. Nothing is destroyed, and an admin can put
+   it back — the promise `activity_removed`, the invoice void and evidence
+   `deleted_at` all already make. */
+function deletedPanel(){
+  if(ME.role !== "admin" || !WS) return "";
+  const d = WS.deleted;
+  if(d){
+    return `<div class="feebox" style="margin-top:14px">
+      <div class="row"><span><b>Case deleted</b></span>
+        <span>${esc(d.deleted_by || "")}${d.deleted_by ? " &middot; " : ""}${when(d.deleted_at)}</span></div>
+      ${d.reason ? `<div class="row"><span style="color:var(--muted);font-size:.85rem">${esc(d.reason)}</span><span></span></div>` : ""}
+      <div class="row"><span style="color:var(--muted);font-size:.85rem">Nothing was destroyed &mdash;
+        the case, its activity, reports, evidence, invoices and payment history are all still
+        here.</span>
+        <button class="btn sm ghost" data-act="undeleteCase">Put the case back</button></div>
+      ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+    </div>`;
+  }
+  return `<div class="feebox" style="margin-top:14px">
+    <div class="row"><span><b>Delete case</b></span>
+      <button class="btn sm ghost" data-act="deleteCase">Delete case</button></div>
+    <div class="row"><span style="color:var(--muted);font-size:.85rem">For a case that should not be
+      in the working set at all. It leaves every list, including Archived, and is found under
+      Deleted. Nothing is destroyed and an admin can put it back.</span><span></span></div>
+    ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+  </div>`;
+}
+
+async function deleteCase(){
+  /* Confirmed, the way every other destructive action on this page is. The
+     wording says what actually happens: this is not a purge, and saying so at
+     the moment of pressing is the difference between an admin who knows the
+     work is recoverable and one who believes they have destroyed it. */
+  if(!confirm("Delete this case?\n\n" +
+    "It leaves every list, including Archived, and is found under Deleted.\n\n" +
+    "Nothing is destroyed — the activity log, reports, evidence, invoices and payment " +
+    "history all stay, and an admin can put the case back.")) return;
+  WS_ERR = "";
+  try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/delete`, {method:"POST", body:{}}); }
+  catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+async function undeleteCase(){
+  WS_ERR = "";
+  try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/undelete`, {method:"POST", body:{}}); }
   catch(e){ WS_ERR = e.message; }
   await reloadWorkspace();
 }
@@ -5231,7 +5283,8 @@ function billingPanel(s, a){
           ? `<button class="btn sm ghost" data-act="createInvoiceAuth" data-case="${esc(WS_CASE)}">Create from ${s.kind === "claims" ? "authorization" : "retainer"}</button>` : ""}
       </div>` : ""}
     ${closurePanel()}
-    ${archivePanel()}`;
+    ${archivePanel()}
+    ${deletedPanel()}`;
 }
 
 /* The workspace is a full page, not a popup — a case is where the day's work
@@ -6731,12 +6784,12 @@ document.addEventListener("click", ev => {
   }
   else if(act === "clearCardFilter"){ CARD_FILTER = null; paint(); }
   else if(act === "caseView"){
-    const wasArchived = CASE_VIEW === "archived";
+    const wasQueried = CASE_VIEW === "archived" || CASE_VIEW === "deleted";
     CASE_VIEW = el.dataset.v;
     /* Turning the archived lens on or off changes WHICH CASES ARE FETCHED, so
        it reloads rather than repaints. Painting alone would show the previous
        set under the new label. */
-    if(CASE_VIEW === "archived" || wasArchived){ render(); }
+    if(CASE_VIEW === "archived" || CASE_VIEW === "deleted" || wasQueried){ render(); }
     else if(CASE_VIEW === "completed"){
       // Fetched on every turn of the lens, so the desk is never stale after
       // a case was closed in another tab — and errors show, not vanish.
@@ -6796,6 +6849,8 @@ document.addEventListener("click", ev => {
   else if(act === "reopenCase"){ reopenCase(); }
   else if(act === "archiveCase"){ archiveCase(); }
   else if(act === "restoreCase"){ restoreCase(); }
+  else if(act === "deleteCase"){ deleteCase(); }
+  else if(act === "undeleteCase"){ undeleteCase(); }
   else if(act === "invOpen"){ openInvoice(Number(el.dataset.id)); }
   else if(act === "invBack"){ INV_OPEN = null; INV_MSG = ""; loadInvoices(); }
   else if(act === "invStatus"){ setInvStatus(el.dataset.s); }
