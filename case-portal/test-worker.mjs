@@ -887,10 +887,13 @@ section('Rate sheets and the emailed quote');
      (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin, body: { to: 'not-an-address' } })).status === 400);
   ok('no provider call was made yet', providerCalls === 0);
 
-  // The header-injection attempt: CR/LF smuggled through the case number,
-  // which is the one field that reaches the subject line.
+  /* The header-injection attempt: CR/LF smuggled through the field that reaches
+     the SUBJECT LINE. That field is now `reference` — free text that is never
+     looked up — since `case_no` came to mean an explicitly LINKED case and is
+     validated (owner, 2026-08-15). The injection risk moved with the field, so
+     the test follows it: this is the untrusted one now. */
   const res = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
-    body: { to: 'client@example.test', case_no: 'API-1\r\nBcc: thief@evil.test', note: 'line one\r\nline two' } });
+    body: { to: 'client@example.test', reference: 'API-1\r\nBcc: thief@evil.test', note: 'line one\r\nline two' } });
   ok('a legitimate send succeeds', res.status === 200);
   ok('it goes to the address given', lastBody.to === 'client@example.test');
   ok('no CR or LF ever reaches the subject', !/[\r\n]/.test(lastBody.subject), JSON.stringify(lastBody.subject));
@@ -4756,7 +4759,7 @@ section('Payment instructions can go on their own, and never to a carrier');
      accident, and they sit beside the boundary checks that still hold. */
   lastBody = null;
   const typo = await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
-    body: { to: 'newclient@example.com', name: 'Jane', case_no: 'PAPER-REF-4471' } });
+    body: { to: 'newclient@example.com', name: 'Jane', reference: 'PAPER-REF-4471' } });
   ok('a reference nobody can resolve does NOT block the send', typo.status === 200,
      String(typo.status));
   ok('and the email really went', lastBody !== null);
@@ -4843,7 +4846,7 @@ section('Payment instructions can go on their own, and never to a carrier');
   lastBody = null;
   ok('the private sheet carries payment to a pre-case prospect',
      (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
-       body: { to: 'prospect@example.com', case_no: 'NOT-A-CASE-YET',
+       body: { to: 'prospect@example.com', reference: 'NOT-A-CASE-YET',
                include_payment: true } })).status === 200);
   ok('and really did send, with the reference in the subject',
      lastBody !== null && lastBody.subject.includes('NOT-A-CASE-YET'));
@@ -5171,6 +5174,255 @@ section('Every send works before a case exists, and still works after one does')
        const c = (await login(env, 'dana2', 'FieldWork2026x')).cookie;
        return call(env, '/sends', { cookie: c });
      })()).status === 403);
+
+  globalThis.fetch = realFetch;
+}
+
+/* A REFERENCE IS NOT A CASE LOOKUP (owner live bug, 2026-08-15).
+
+   Production report: the send modal said "Case number — optional — subject
+   line" and Preview then returned "not found" when the value was not an
+   existing case. Optional in the label, required in the code.
+
+   The two ideas are separate now. `reference` is free text that reaches the
+   subject line and is never looked up. `case_no` means the admin explicitly
+   LINKED an existing case, and only that is validated. The owner's four test
+   cases are each driven below, plus the addendum's $2,000 case. */
+section('A written reference is subject-line text; only a linked case is looked up');
+{
+  const realFetch = globalThis.fetch;
+  let lastBody = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      lastBody = JSON.parse(init.body);
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '80';
+  env.INGEST_PER_MINUTE = '500';   // this section opens several cases; the limit has its own tests
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const both = s => `${s.html}\n${s.text}`;
+  const has = (hay, needle) => String(hay).toLowerCase().includes(String(needle).toLowerCase());
+
+  await ingest(env, { case_no: 'API-REF-P', service: 'Surveillance',
+                      client_name: 'P. Client', subject_name: 'S' });
+
+  // 1. Blank reference → preview and send succeed.
+  lastBody = null;
+  ok('a blank reference previews',
+     (await call(env, '/sheets?', { cookie: admin })).status === 200);
+  ok('and sends',
+     (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+       body: { to: 'jane@example.com' } })).status === 200);
+  ok('and really went', lastBody !== null);
+
+  // 2. An arbitrary reference — the owner's own example — previews and sends.
+  lastBody = null;
+  const prev123 = await call(env, '/sheets?retainer=1500', { cookie: admin });
+  ok('reading the sheets with no case never 404s', prev123.status === 200);
+  const send123 = await call(env, '/sheets/private_retainer/email', { method: 'POST',
+    cookie: admin, body: { to: 'jane@example.com', reference: 'Test123' } });
+  ok('an arbitrary reference like Test123 sends', send123.status === 200,
+     String(send123.status));
+  ok('and it reaches the subject line, which is all it is for',
+     lastBody.subject.includes('Test123'), lastBody.subject);
+  ok('and nothing was created for it',
+     !(await env.DB.prepare("SELECT 1 AS x FROM submissions WHERE case_no = 'Test123'").first()));
+
+  // 3. A valid LINKED case succeeds.
+  lastBody = null;
+  ok('an explicitly linked, real case sends',
+     (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+       body: { to: 'jane@example.com', case_no: 'API-REF-P' } })).status === 200);
+  ok('and names it in the subject', lastBody.subject.includes('API-REF-P'));
+
+  // 4. An invalid EXPLICITLY LINKED case — and ONLY that path — errors.
+  lastBody = null;
+  const badLink = await call(env, '/sheets/private_retainer/email', { method: 'POST',
+    cookie: admin, body: { to: 'jane@example.com', case_no: 'NOPE-9999' } });
+  ok('an explicitly linked case that does not exist is refused', badLink.status === 404,
+     String(badLink.status));
+  ok('and nothing was emailed on it', lastBody === null);
+  ok('the refusal points at the reference field as the way through',
+     has((await jsonOf(badLink)).error, 'reference field'));
+  /* THE SAME STRING AS A REFERENCE STILL SENDS. This is the whole bug in one
+     assertion: identical text, blocked when linked, fine when written. */
+  lastBody = null;
+  ok('but the SAME value as a written reference sends perfectly well',
+     (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+       body: { to: 'jane@example.com', reference: 'NOPE-9999' } })).status === 200);
+  ok('and really went', lastBody !== null);
+
+  /* THE ADDENDUM'S CASE. A pre-case send with an agreed retainer of $2,000 must
+     preview AND send showing $2,000, never the standard figure. Silently
+     skipping the write and falling back would reintroduce #123 — the screen
+     saying one number while the client receives another. */
+  /* The figure is STORED on the pre-case record first (owner, 2026-08-15 —
+     "do NOT store it only in memory"), and the preview then READS it back.
+     Reading rather than being handed it is what keeps preview and email the
+     same document once a case exists too. */
+  const saved = await jsonOf(await call(env, '/prospects', { method: 'POST', cookie: admin,
+    body: { email: 'jane@example.com', reference: 'PHONE-QUOTE', retainer: 2000 } }));
+  ok('a prospect can hold an agreed retainer with no case at all',
+     saved.prospect && Number(saved.prospect.agreed_retainer) === 2000,
+     JSON.stringify(saved.prospect));
+  const previewed = await jsonOf(await call(env, '/sheets?email=jane@example.com',
+    { cookie: admin }));
+  const pSheet = (previewed.sheets || []).find(s => s.id === 'private_retainer');
+  ok('the PREVIEW of a pre-case send is built at the agreed $2,000',
+     JSON.stringify(pSheet).includes('$2,000') && !JSON.stringify(pSheet).includes('$1,500'),
+     JSON.stringify(pSheet).slice(0, 160));
+  ok('and the payload echoes the stored figure', previewed.retainer === 2000);
+  /* The key is normalised in one place, so casing and spacing on the way in
+     cannot produce a second prospect that disagrees with the first. */
+  ok('the same address in another casing reads the same record',
+     (await jsonOf(await call(env, '/sheets?email=%20JANE%40Example.com%20',
+       { cookie: admin }))).retainer === 2000);
+  lastBody = null;
+  await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'jane@example.com', reference: 'PHONE-QUOTE' } });
+  ok('and the EMAIL carries $2,000 too, in both parts',
+     has(both(lastBody), '$2,000') && !has(both(lastBody), '$1,500'),
+     both(lastBody).slice(0, 200));
+  ok('with the subject naming the same figure', lastBody.subject.includes('$2,000'));
+  /* A LINKED case's stored agreement always wins over anything asked for in the
+     request — the record is the record. */
+  await call(env, '/cases/API-REF-P/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 3000 } });
+  lastBody = null;
+  await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'jane@example.com', case_no: 'API-REF-P', retainer: 2000 } });
+  ok('a linked case ignores a retainer asked for in the request',
+     has(both(lastBody), '$3,000') && !has(both(lastBody), '$2,000'));
+  ok('and reading its sheets ignores the query parameter too',
+     (await jsonOf(await call(env, '/sheets?case=API-REF-P&retainer=2000',
+       { cookie: admin }))).retainer === 3000);
+
+  /* THE CARRY-FORWARD (owner, 2026-08-15): "When a case is later created, carry
+     that retainer forward. Never replace it with the $1,500 default."
+
+     The prospect above agreed $2,000 with no case. When they return an intake,
+     the case must open holding $2,000 — not the standard figure, which is
+     precisely the silent replacement the owner ruled out. */
+  await ingest(env, { case_no: 'API-CONV-1', service: 'Surveillance',
+                      client_name: 'Jane', client_email: 'jane@example.com',
+                      subject_name: 'S' });
+  const conv = (await jsonOf(await call(env, '/cases/API-CONV-1/workspace', { cookie: admin })))
+    .authorization.retainer;
+  ok('a prospect who becomes a case brings their agreed retainer with them',
+     conv.agreed === 2000, String(conv.agreed));
+  ok('and it is NOT the standard default', conv.agreed !== 1500);
+  ok('the prospect records where it went',
+     (await jsonOf(await call(env, '/prospects?email=jane@example.com', { cookie: admin })))
+       .prospect.converted_case === 'API-CONV-1');
+  /* Casing on the intake side must not defeat it — the same normalisation. */
+  await call(env, '/prospects', { method: 'POST', cookie: admin,
+    body: { email: 'mixed@example.com', retainer: 2500 } });
+  await ingest(env, { case_no: 'API-CONV-2', service: 'Surveillance',
+                      client_name: 'Mixed', client_email: '  Mixed@Example.COM ',
+                      subject_name: 'T' });
+  ok('a differently-cased address still carries the figure forward',
+     (await jsonOf(await call(env, '/cases/API-CONV-2/workspace', { cookie: admin })))
+       .authorization.retainer.agreed === 2500);
+  /* It never overwrites a figure the office has already set ON the case. */
+  await ingest(env, { case_no: 'API-CONV-3', service: 'Surveillance',
+                      client_name: 'Set', client_email: 'set@example.com', subject_name: 'U' });
+  await call(env, '/cases/API-CONV-3/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 4000 } });
+  await call(env, '/prospects', { method: 'POST', cookie: admin,
+    body: { email: 'set@example.com', retainer: 1800 } });
+  await ingest(env, { case_no: 'API-CONV-3', service: 'Surveillance',
+                      client_name: 'Set', client_email: 'set@example.com', subject_name: 'U' });
+  ok('and never overwrites a retainer already set on the case itself',
+     (await jsonOf(await call(env, '/cases/API-CONV-3/workspace', { cookie: admin })))
+       .authorization.retainer.agreed === 4000);
+  /* A CLAIMS intake takes nothing from it — a claim assignment is authorized in
+     hour blocks and has no retainer to carry. */
+  await call(env, '/prospects', { method: 'POST', cookie: admin,
+    body: { email: 'adj@carrier.example', retainer: 2000 } });
+  await ingest(env, { case_no: 'API-CONV-C', carrier: 'Conv Mutual', claim_number: 'CV-1',
+                      client_name: 'Adj', client_email: 'adj@carrier.example',
+                      subject_name: 'V' });
+  ok('a claim assignment carries no retainer forward at all',
+     (await jsonOf(await call(env, '/cases/API-CONV-C/workspace', { cookie: admin })))
+       .authorization.retainer === undefined);
+
+  // The prospect record is admin-only, like every other money control.
+  const link2 = (await jsonOf(await invite(env, admin,
+    { username: 'dana3', display_name: 'Dana', role: 'investigator' }))).url;
+  const tk2 = new URL(link2, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tk2}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv2 = (await login(env, 'dana3', 'FieldWork2026x')).cookie;
+  ok('an investigator cannot write a prospect retainer',
+     (await call(env, '/prospects', { method: 'POST', cookie: inv2,
+       body: { email: 'x@y.co', retainer: 9000 } })).status === 403);
+  ok('nor read one', (await call(env, '/prospects?email=jane@example.com',
+     { cookie: inv2 })).status === 403);
+  ok('a prospect retainer of zero is refused',
+     (await call(env, '/prospects', { method: 'POST', cookie: admin,
+       body: { email: 'z@y.co', retainer: 0 } })).status === 400);
+
+  /* THE AUDIT THE OWNER ASKED FOR: "No pre-case action may fail only because
+     case_id is null." Each of the four named surfaces is driven with no case,
+     end to end, and the history is read back to prove the null survived rather
+     than being papered over with an empty string. */
+  {
+    const noCase = 'audit@example.com';
+    await call(env, '/prospects', { method: 'POST', cookie: admin,
+      body: { email: noCase, name: 'Audit', reference: 'AUD-1', retainer: 2200 } });
+    // retainer read
+    ok('AUDIT retainer read works with no case',
+       (await jsonOf(await call(env, `/sheets?email=${encodeURIComponent(noCase)}`,
+         { cookie: admin }))).retainer === 2200);
+    // sheet send
+    lastBody = null;
+    ok('AUDIT sheet send works with no case',
+       (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+         body: { to: noCase, reference: 'AUD-1', include_intake: true } })).status === 200);
+    ok('AUDIT and it carried the stored figure, not the default',
+       has(both(lastBody), '$2,200') && !has(both(lastBody), '$1,500'));
+    // payment options
+    lastBody = null;
+    ok('AUDIT payment options work with no case',
+       (await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+         body: { to: noCase, reference: 'AUD-1' } })).status === 200);
+    ok('AUDIT and they quote the same stored figure',
+       has(both(lastBody), '$2,200') && !has(both(lastBody), '$1,500'));
+    // intake pairing
+    ok('AUDIT intake pairing works with no case',
+       (await call(env, '/intake-link/email', { method: 'POST', cookie: admin,
+         body: { to: noCase, name: 'Audit', kind: 'private' } })).status === 200);
+    // send log / history
+    const hist = await jsonOf(await call(env, '/sends?limit=50', { cookie: admin }));
+    const mine = (hist.sends || []).filter(s => s.recipient === noCase);
+    ok('AUDIT history logging works with case_id = null',
+       mine.length >= 3 && mine.every(s => s.case_no === null),
+       JSON.stringify(mine.map(s => [s.kind, s.case_no])));
+    ok('AUDIT and the null is a real null, not an empty string standing in',
+       mine.every(s => s.case_no === null && s.case_no !== ''));
+  }
+
+  // The link action answers with a boolean rather than failing.
+  const okLink = await jsonOf(await call(env, '/sheets?case=API-REF-P&link=1', { cookie: admin }));
+  ok('linking a real case reports it exists', okLink.case_exists === true);
+  const noLink = await call(env, '/sheets?case=NOPE-9999&link=1', { cookie: admin });
+  ok('and linking an unreal one answers without an error status', noLink.status === 200);
+  ok('saying plainly that it does not exist',
+     (await jsonOf(noLink)).case_exists === false);
+
+  // The same split on the payment route.
+  lastBody = null;
+  ok('payment options take a written reference too',
+     (await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+       body: { to: 'jane@example.com', reference: 'Test123' } })).status === 200);
+  ok('which reaches its subject line', lastBody.subject.includes('Test123'));
+  ok('and an explicitly linked unreal case is refused there as well',
+     (await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+       body: { to: 'jane@example.com', case_no: 'NOPE-9999' } })).status === 404);
 
   globalThis.fetch = realFetch;
 }
