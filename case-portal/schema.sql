@@ -525,6 +525,38 @@ CREATE TABLE IF NOT EXISTS case_archive (
 -- `reason` is optional and free text, kept because "why is this case gone" is
 -- the question a tombstone exists to answer.
 -- ---------------------------------------------------------------------------
+-- PHONE NUMBERS, PLURAL (owner, 2026-08-16). A client has a mobile and a work
+-- line; a subject has whatever is known. One row per number, so each carries
+-- its own label and can be added or removed without rewriting a delimited
+-- string — the same reasoning that made `notify_recipient` one row per
+-- recipient rather than a comma-separated column.
+--
+-- `owner_kind` says whose number it is. A client number hangs off the case;
+-- a subject number hangs off that subject, because a case can watch more than
+-- one person and their numbers must not pool.
+--
+-- THE EXISTING SINGLE NUMBERS ARE NOT LOST AND ARE NOT MIGRATED BY A SCRIPT.
+-- `submissions.client_phone` and `case_subjects.phone` stay exactly where they
+-- are and keep working for everything that already reads them. The Worker reads
+-- THROUGH: with no rows here, the legacy value IS the list, so a case nobody has
+-- edited reads the same as it always did. When the office saves a list, the
+-- first number is mirrored back into the legacy column so redaction, alerts and
+-- every other existing reader keep seeing a primary number. Nothing has to be
+-- backfilled and nothing can be dropped by a migration that half-ran.
+CREATE TABLE IF NOT EXISTS case_phone (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no    TEXT    NOT NULL,
+  owner_kind TEXT    NOT NULL CHECK (owner_kind IN ('client','subject')),
+  subject_id INTEGER,                     -- set only when owner_kind = 'subject'
+  label      TEXT,                        -- mobile | work | home | other
+  number     TEXT    NOT NULL,            -- as the office typed it
+  position   INTEGER NOT NULL DEFAULT 0,  -- the order they were entered
+  created_at TEXT    NOT NULL,
+  updated_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_case_phone ON case_phone(case_no, owner_kind, position);
+
+-- ---------------------------------------------------------------------------
 -- WHO THE OFFICE WANTS TOLD, and about what.
 --
 -- One row per recipient, so "multiple phone numbers" is rows rather than a

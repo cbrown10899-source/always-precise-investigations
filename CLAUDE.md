@@ -617,8 +617,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1469 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 947 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 1517 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 967 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
@@ -708,6 +708,72 @@ record, and nothing about a case depends on BILL existing.
 owner's own status list agrees. When it is wanted it goes in as a side table —
 `invoices.status` carries a CHECK constraint, and see the `custom` note above
 for why that is not something to edit in place.
+
+## Editing a case
+
+**The case number is read-only and is never read from the edit body.** It is on
+invoices, in the send history and in every email subject line already sent.
+There is no rename.
+
+Until 2026-08-16 nothing could change a case's identity at all: every
+`UPDATE submissions SET` touched only `assigned_to` and `status`, so a name
+typed wrong at intake stayed wrong for the life of the case. `POST /cases/:no/edit`
+is that one writer, and it writes the denormalised columns and the intake
+payload **together** — the case list reads the columns, the case screen and the
+package read the payload, and letting them drift shows one client name on the
+list and another on the screen.
+
+**Nothing else is duplicated into it.** Case type, agreed retainer, status and
+assignment already have routes; the Edit Case screen calls those, the way
+`saveCaseMeta` already does, so each thing keeps one writer. Internal notes are
+a list with their own panel and are linked, not copied.
+
+**And that is why `/cases/:no/meta` treats an absent field as unchanged.** It
+used to be replace-all — `num(undefined)` is null, so a caller that posted only
+a case type wrote NULL over `authorized_hours` and `authorized_budget` and was
+told it succeeded. Nothing noticed while the Authorization form was the only
+caller, because it always posts all three; the moment Edit Case sent just the
+type, correcting a client's **name** would silently erase the hours a carrier
+had authorised. **A blank string still clears** — that is the office saying
+there is no figure, and it is how the Authorization form removes one. Only an
+absent key is left alone. A route that several screens post different subsets
+to cannot be replace-all. And it resolves the untouched fields INSIDE the UPDATE, from
+the row, never from a value read a moment earlier: a read-then-write loses a
+concurrent edit without a sound, because two admins posting different subsets
+interleave as A reads, B reads, A writes, B writes. `?7/?8/?9` say which fields
+the request mentioned; everything else keeps whatever the row holds when the
+statement runs. The retainer route already states this rule in its own words.
+
+**Phone numbers are rows** (`case_phone`), one per number, each with an optional
+label — the same reasoning that made `notify_recipient` one row per recipient.
+Client numbers and subject numbers are separate: a case can watch more than one
+person and their numbers must not pool.
+
+**The single numbers already on cases are not migrated and not lost.**
+`submissions.client_phone` and `case_subjects.phone` stay where they are.
+`phonesFor()` reads THROUGH: with no rows, the legacy value IS the list, so a
+case nobody has edited answers exactly as it always did. Saving a list mirrors
+the first number back into the legacy column, so redaction, alerts and every
+other existing reader keep seeing a primary number without knowing the table
+exists. Nothing had to be backfilled and no half-run migration can drop
+anything.
+
+**A client's numbers are the client's identity.** `phonesFor` takes `forAdmin`
+and returns none of them to an investigator — the same boundary `redactRow`
+draws around `client_phone`. Subject numbers reach both roles, because the
+subject is who is watched, never who is paying. There is a test that fails if
+that inverts.
+
+**The form keeps a draft** (`EDIT_DRAFT`), for the reason `RET_DRAFT` exists.
+Every paint rebuilds the inputs from `WS`; adding a phone row repaints, so
+without it a corrected name silently reverted to the stored value and the save
+sent the old one back **while reporting success**. Anything that repaints must
+call `edCollect()` first.
+
+**Overview names three money figures apart**: Retainer, Received, and Balance
+owed. It used to label `remaining` — the retainer the recorded WORK has not
+consumed — as "Balance", which is the word this file already reserves for what
+the client still owes.
 
 ## Case lifecycle — closed, reopened, archived
 

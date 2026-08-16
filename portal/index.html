@@ -323,6 +323,11 @@
   .ovgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:14px;}
   .ovcard{background:#fff;border:1px solid var(--line);border-radius:12px;padding:13px 15px;}
   .ovcard h3{margin:0 0 8px;font-size:.74rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);}
+  /* EDIT CASE IS A FORM SOMEONE FILLS IN ON A PHONE. Apple's minimum tap
+     target is 44px and the default input height is under it, so every control
+     on this panel is floored — scoped to the panel so no other layout moves. */
+  .editcase input, .editcase select, .editcase .btn{min-height:44px;}
+  .editcase .f{margin-bottom:8px;}
   .ov-row{display:flex;justify-content:space-between;gap:10px;font-size:.88rem;padding:3px 0;}
   .ov-row b{text-align:right;}
   .ov-mods{list-style:none;margin:8px 0 0;padding:0;}
@@ -3091,7 +3096,7 @@ function wsSections(){
       ["overview",  "Overview",          [["overview","Overview"], ["details","Intake details"], ["subject","Subject"]], "Home", "&#8962;"],
       ["fieldwork", "Fieldwork",         [["field","Field work"], ["activity","Activity log"]], "Field", "&#128065;"],
       ["repev",     "Report & Evidence", [["reports","Reports"], ["evidence","Evidence"], ["package","Package"]], "Report", "&#128196;"],
-      ["admin",     "Admin",             [["assign","Assignment"], ["auth","Authorization"], ["expenses","Expenses"],
+      ["admin",     "Admin",             [["edit","Edit case"], ["assign","Assignment"], ["auth","Authorization"], ["expenses","Expenses"],
                                           ["notes","Internal notes"], ["comms","Comm log"], ["tasks","Tasks"],
                                           ["billing","Billing & closing"]], "Admin", "&#9881;"],
     ];
@@ -3882,6 +3887,191 @@ function commsPanel(){
       </div>`).join("")
       : `<div class="empty">${admin ? "No communications logged on this case yet."
           : "Nothing shared with you on this case yet."}</div>`}`;
+}
+
+/* EDIT CASE (owner, 2026-08-16) — one place to correct what the case says.
+
+   THE CASE NUMBER IS READ-ONLY and is shown as text, not an input. It is in the
+   send log, on invoices and in every email subject line that has already gone
+   out; there is no rename here and there should not be.
+
+   NOTHING IS DUPLICATED. Identity and phone numbers are this panel's own —
+   nothing else could edit them. Case type, agreed retainer, status and
+   assignment already have routes and controls, so Save calls THOSE routes, the
+   way `saveCaseMeta` already does. Internal notes are a list with their own
+   panel, so this links there rather than growing a second box that would write
+   somewhere different.
+
+   Tap targets are 44px minimum and the layout is one column on a phone — the
+   `.two` grid already collapses, and nothing here is wider than the card. */
+const PHONE_LABELS_UI = ["mobile", "work", "home", "other"];
+let EDIT_MSG = "", EDIT_ERR = false;
+
+/* WHAT THE ADMIN HAS TYPED, KEPT ACROSS REPAINTS — the same rule `RET_DRAFT`
+   exists for, and the same bug it was written to stop.
+
+   Every paint rebuilds these inputs from `WS`. Adding a phone row repaints, so
+   without this an admin who corrected a name and then pressed "Add another
+   number" watched the name quietly revert to the stored value — and the save
+   then sent the OLD name back with a straight face. Caught by a test that
+   compared what was typed with what was sent.
+
+   Keyed by case so opening another one never inherits a half-typed correction. */
+let EDIT_DRAFT = {};
+
+function edDraft(){
+  if(!EDIT_DRAFT[WS_CASE]) EDIT_DRAFT[WS_CASE] = {};
+  return EDIT_DRAFT[WS_CASE];
+}
+/* Read every field on screen into the draft. Called before anything that
+   repaints and before saving, so the draft is always what the admin can see. */
+function edCollect(){
+  const d = edDraft();
+  const v = id => { const el = $(id); return el ? el.value : null; };
+  for(const [k, id] of [["client","ed_client"], ["email","ed_email"], ["subject","ed_subject"],
+                        ["address","ed_address"], ["claim","ed_claim"], ["type","ed_type"],
+                        ["status","ed_status"], ["retainer","ed_retainer"], ["asg","ed_asg"]]){
+    const got = v(id);
+    if(got !== null) d[k] = got;
+  }
+  if($("edc_num_0") || d.client_phones) d.client_phones = readPhoneRows("edc");
+  for(const sub of (WS && WS.subjects) || []){
+    if($("eds" + sub.id + "_num_0") || (d.subject_phones || {})["s" + sub.id]){
+      d.subject_phones = d.subject_phones || {};
+      d.subject_phones["s" + sub.id] = readPhoneRows("eds" + sub.id);
+    }
+  }
+  return d;
+}
+
+function phoneRowsHtml(prefix, list){
+  const rows = (list && list.length ? list : [{ number: "", label: "" }]);
+  return rows.map((p, i) => `<div class="two" style="align-items:end">
+      <label class="f"><span>${i === 0 ? "Phone" : "Also"} <span class="opt">optional</span></span>
+        <input id="${prefix}_num_${i}" inputmode="tel" value="${esc(p.number || "")}"></label>
+      <label class="f"><span>Label</span>
+        <select id="${prefix}_lab_${i}"><option value="">&mdash;</option>${
+          PHONE_LABELS_UI.map(l => `<option value="${l}"${
+            (p.label || "") === l ? " selected" : ""}>${l}</option>`).join("")}</select></label>
+    </div>`).join("") +
+    `<div class="actions"><button class="btn sm ghost" data-act="edAddPhone" data-p="${prefix}">Add another number</button></div>`;
+}
+
+function editCasePanel(s, a){
+  if(ME.role !== "admin") return "";
+  const p = s.payload || {};
+  const ph = (WS && WS.phones) || { client: [], subject: {} };
+  const claim = s.kind === "claims";
+  /* The draft wins wherever it has something: it is what the admin typed, and
+     the stored value is only the starting point. */
+  const d = EDIT_DRAFT[WS_CASE] || {};
+  const pick = (k, stored) => d[k] !== undefined ? d[k] : (stored || "");
+  const clientList = (d.client_phones || ph.client || []);
+  const subjects = (WS && WS.subjects) || [];
+  return `<div class="card editcase">
+    <div class="bar"><h2 style="margin:0">Edit case</h2></div>
+    <div class="ov-row"><span>Case number</span><b>${esc(WS_CASE)}</b></div>
+    <p class="hint">The case number never changes &mdash; it is on invoices, in the send history and
+      in every email already sent.</p>
+
+    <h3 style="margin:14px 0 4px;font-size:1rem">${claim ? "Carrier contact" : "Client"}</h3>
+    <label class="f"><span>Name</span>
+      <input id="ed_client" value="${esc(pick("client", p.client_name || s.client_name))}"></label>
+    <label class="f"><span>Email <span class="opt">optional</span></span>
+      <input id="ed_email" type="email" value="${esc(pick("email", p.client_email || s.client_email))}"></label>
+    ${phoneRowsHtml("edc", clientList)}
+
+    <h3 style="margin:14px 0 4px;font-size:1rem">${claim ? "Claimant" : "Subject"}</h3>
+    <label class="f"><span>Name</span>
+      <input id="ed_subject" value="${esc(pick("subject", p.subject_name || s.subject_name))}"></label>
+    <label class="f"><span>Address <span class="opt">optional</span></span>
+      <input id="ed_address" value="${esc(pick("address", p.subject_address))}"></label>
+    ${subjects.length ? subjects.map(sub => `
+      <div style="border-top:1px dashed #cfe6ec;margin-top:8px;padding-top:8px">
+        <div class="tl-m"><b>${esc(sub.name || "Subject")}</b> &mdash; their own numbers</div>
+        ${phoneRowsHtml("eds" + sub.id, ((d.subject_phones || {})["s" + sub.id] || ph.subject[String(sub.id)] || []))}
+      </div>`).join("") : ""}
+
+    <h3 style="margin:14px 0 4px;font-size:1rem">Case</h3>
+    <div class="two">
+      <label class="f"><span>Case type</span>
+        <select id="ed_type"><option value="">&mdash;</option>${
+          (WS && WS.case_types || []).map(t => `<option value="${t.id}"${
+            a.case_type_id === t.id ? " selected" : ""}>${esc(t.label)}</option>`).join("")}</select></label>
+      <label class="f"><span>Status</span><select id="ed_status">${STAGE_OPTS(s)}</select></label>
+    </div>
+    <div class="two">
+      <label class="f"><span>${claim ? "Claim number" : "Reference"} <span class="opt">optional</span></span>
+        <input id="ed_claim" value="${esc(pick("claim", p.claim_number || s.claim_number))}"></label>
+      ${a.retainer ? `<label class="f"><span>Agreed retainer</span>
+        <input id="ed_retainer" inputmode="decimal" value="${esc(pick("retainer", String(a.retainer.amount)))}"></label>` : ""}
+    </div>
+    <label class="f"><span>Investigator <span class="opt">optional &mdash; a case may stay unassigned</span></span>
+      <select id="ed_asg"><option value="">&mdash; unassigned &mdash;</option>${
+        USERS.filter(u => u.active).map(u => `<option value="${u.id}"${
+          u.id === s.assigned_to ? " selected" : ""}>${esc(u.display_name || u.username)}</option>`).join("")}</select></label>
+
+    <div class="actions" style="margin-top:12px">
+      <button class="btn" data-act="edSave">Save changes</button>
+      <button class="btn sm ghost" data-act="wsTab" data-tab="notes">Internal notes &rarr;</button>
+    </div>
+    ${EDIT_MSG ? `<div class="${EDIT_ERR ? "err" : "linkbox"}">${esc(EDIT_MSG)}</div>` : ""}
+  </div>`;
+}
+
+function readPhoneRows(prefix){
+  const out = [];
+  for(let i = 0; i < 12; i++){
+    const n = $(prefix + "_num_" + i);
+    if(!n) continue;
+    const number = n.value.trim();
+    if(!number) continue;
+    const l = $(prefix + "_lab_" + i);
+    out.push({ number, label: l ? l.value : "" });
+  }
+  return out;
+}
+
+async function saveCaseEdit(){
+  EDIT_MSG = ""; EDIT_ERR = false;
+  /* THE DRAFT IS WHAT GETS SENT, and it is refreshed from the screen first. A
+     save that re-read the inputs directly would send whatever the last repaint
+     put there — which is how a corrected name went back to the server unchanged
+     and the office was told "Case updated." */
+  const d = edCollect();
+  const t = k => String(d[k] == null ? "" : d[k]).trim();
+  const subjects = (WS && WS.subjects) || [];
+  const subjectPhones = {};
+  for(const sub of subjects){
+    subjectPhones[String(sub.id)] = (d.subject_phones || {})["s" + sub.id] || [];
+  }
+  try{
+    /* This panel's own fields. */
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/edit`, {method:"POST", body:{
+      client_name: t("client"), client_email: t("email"),
+      subject_name: t("subject"), subject_address: t("address"),
+      claim_number: t("claim"),
+      client_phones: d.client_phones || [],
+      ...(subjects.length ? {subject_phones: subjectPhones} : {}),
+    }});
+    /* Everything with a route of its own goes to that route — one writer each. */
+    if(d.type !== undefined) await api(`/cases/${encodeURIComponent(WS_CASE)}/meta`,
+      {method:"POST", body:{case_type_id: t("type")}});
+    if(d.retainer !== undefined) await api(`/cases/${encodeURIComponent(WS_CASE)}/retainer`,
+      {method:"POST", body:{retainer_amount: t("retainer")}});
+    if(d.asg !== undefined) await api(`/submissions/${encodeURIComponent(WS_CASE)}/assign`,
+      {method:"POST", body:{user_id: t("asg") === "" ? null : Number(t("asg"))}});
+    if(d.status !== undefined) await api(`/submissions/${encodeURIComponent(WS_CASE)}/status`,
+      {method:"POST", body:{status: t("status")}});
+    EDIT_DRAFT[WS_CASE] = null;   // saved, so the draft is spent
+    EDIT_MSG = "Case updated.";
+  }catch(e){ EDIT_MSG = e.message; EDIT_ERR = true; }
+  await reloadWorkspace();
+  /* THE LIST HOLDS THE OLD NAME UNTIL IT IS REFETCHED. `CASES` is loaded once by
+     render(), and the case row carries client_name and subject_name — so
+     correcting a name here and not reloading leaves the office looking at the
+     mistake they just fixed, on the screen they go back to. */
+  await render();
 }
 
 /* Priority 20 — the nine operational stages. The select offers every stage
@@ -4742,6 +4932,7 @@ function caseBodyHtml(){
     : WS_TAB === "evidence" ? evidencePanel()
     : WS_TAB === "tasks"    ? tasksPanel()
     : WS_TAB === "auth"     ? authPanel(a, admin) + (admin ? authAdminForm() : "")
+    : WS_TAB === "edit"     ? editCasePanel(s, a)
     : WS_TAB === "assign"   ? assignPanel(s)
     : WS_TAB === "subject"  ? detailList(s, "subject") + caseDetailsPanel() + subjectsPanel(s)
     : WS_TAB === "details"  ? detailList(s, "overview")
@@ -4784,7 +4975,7 @@ function caseHeader(s, a, admin){
       ${admin
         ? `<span class="tag ${esc(stage)}" data-act="wsTab" data-tab="assign" title="Change status on Assignment" style="cursor:pointer">${esc(label(stage))}</span>
            <div class="ch-line">${assignee ? "Assigned: " + esc(assignee.display_name || assignee.username) : "Unassigned"}</div>
-           <button class="btn sm ghost" data-act="wsTab" data-tab="assign">Edit case</button>`
+           <button class="btn sm ghost" data-act="wsTab" data-tab="edit">Edit case</button>`
         : `<span class="tag ${esc(stage)}">${esc(label(stage))}</span>`}
     </div>
   </div>`;
@@ -4838,8 +5029,15 @@ function overviewPanel(s, a){
               : row("Authorization", p.authorized_hours_status === "pending"
                   ? "Pending — confirm before field work" : "Not set"))
           : (a.retainer
+              /* THREE FIGURES, NAMED APART (owner, 2026-08-16; the rule is
+                 already in CLAUDE.md). This row used to call `remaining`
+                 "Balance", and `remaining` is the retainer the recorded WORK
+                 has not consumed — not what the client still owes. Outstanding
+                 is the balance; the two must never share a word, which is why
+                 the Authorization panel has always labelled them apart. */
               ? row("Retainer", "$" + a.retainer.amount.toLocaleString())
-                + row("Balance", "$" + a.retainer.remaining.toLocaleString())
+                + row("Received", "$" + (a.retainer.received_total || 0).toLocaleString())
+                + row("Balance owed", "$" + (a.retainer.outstanding || 0).toLocaleString())
                 + ovRecordPaymentHtml(a.retainer)
               : row("Type", "Private client"))}
         ${row("Requested start", p.start_date)}
@@ -7137,6 +7335,21 @@ document.addEventListener("click", ev => {
   else if(act === "svStartDay"){ svStartDay(); }
   else if(act === "svEndDay"){ svEndDay(); }
   else if(act === "endOtherDay"){ endOtherAdminsDay(el.dataset.id, el.dataset.who); }
+  else if(act === "edSave"){ saveCaseEdit(); }
+  else if(act === "edAddPhone"){
+    /* EVERY field is captured first, not just the phones. Repainting rebuilds
+       the whole panel, so collecting only phone rows is what silently reverted
+       a corrected name to the stored one. */
+    const pre = el.dataset.p;
+    const draft = edCollect();
+    if(pre === "edc") draft.client_phones = (draft.client_phones || []).concat([{number: "", label: ""}]);
+    else {
+      draft.subject_phones = draft.subject_phones || {};
+      const k = "s" + pre.slice(3);
+      draft.subject_phones[k] = (draft.subject_phones[k] || []).concat([{number: "", label: ""}]);
+    }
+    paintCase();
+  }
   else if(act === "svPause"){ svPauseDay(); }
   else if(act === "svResume"){ svResumeDay(); }
   else if(act === "svSaveEntry"){ svSaveEntry(null); }

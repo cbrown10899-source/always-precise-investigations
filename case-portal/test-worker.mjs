@@ -7573,6 +7573,299 @@ section('Two admins can be out on one case, and neither can stop the other by ac
        body: { end_time: '12:00' } })).status === 403);
 }
 
+/* EDIT CASE (owner, 2026-08-16). Until now nothing could change a case's own
+   identity: every UPDATE submissions SET touched only assigned_to and status,
+   so a name typed wrong at intake stayed wrong for the life of the case. */
+section('A case can be corrected, and its number never changes');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-EDIT-1', service: 'Surveillance',
+                      client_name: 'Mistyped Nmae', client_email: 'wrong@example.com',
+                      client_phone: '5550100111', subject_name: 'Subject Wrong',
+                      subject_address: '1 Old Road', objective: 'Establish whereabouts' });
+
+  const ws = async () => await jsonOf(await call(env, '/cases/API-EDIT-1/workspace', { cookie: admin }));
+  const sub = async () => (await jsonOf(await call(env, '/submissions/API-EDIT-1',
+    { cookie: admin }))).submission;
+
+  /* THE SINGLE NUMBER THAT WAS ALREADY THERE READS AS THE LIST, with nothing
+     backfilled — a case nobody has edited answers as it always did. */
+  const before = await ws();
+  ok('the existing single phone reads through as the list',
+     before.phones.client.length === 1 && before.phones.client[0].number === '5550100111',
+     JSON.stringify(before.phones.client));
+  ok('and is marked as the legacy value rather than a saved row',
+     before.phones.client[0].legacy === true && before.phones.client[0].id === null);
+
+  const fix = await call(env, '/cases/API-EDIT-1/edit', { method: 'POST', cookie: admin,
+    body: { client_name: 'Jane Correct', client_email: 'jane@example.com',
+            subject_name: 'Subject Right', subject_address: '2 New Street' } });
+  ok('an admin can correct the case', fix.status === 200, String(fix.status));
+  const s1 = await sub();
+  ok('the client name is corrected', s1.client_name === 'Jane Correct');
+  ok('and the email', s1.client_email === 'jane@example.com');
+  ok('and the subject', s1.subject_name === 'Subject Right');
+  ok('the payload is corrected too, so the screen and the list cannot disagree',
+     (s1.payload || {}).client_name === 'Jane Correct'
+     && (s1.payload || {}).subject_address === '2 New Street',
+     JSON.stringify([(s1.payload || {}).client_name, (s1.payload || {}).subject_address]));
+
+  /* AN ABSENT FIELD MEANS UNCHANGED. */
+  await call(env, '/cases/API-EDIT-1/edit', { method: 'POST', cookie: admin,
+    body: { client_email: 'jane2@example.com' } });
+  const s2 = await sub();
+  ok('changing one field leaves the others alone',
+     s2.client_name === 'Jane Correct' && s2.subject_name === 'Subject Right'
+     && s2.client_email === 'jane2@example.com',
+     JSON.stringify([s2.client_name, s2.subject_name, s2.client_email]));
+  ok('and does not blank the phone that was never posted',
+     s2.client_phone === '5550100111', String(s2.client_phone));
+
+  /* THE CASE NUMBER IS READ-ONLY — posting one changes nothing. */
+  await call(env, '/cases/API-EDIT-1/edit', { method: 'POST', cookie: admin,
+    body: { case_no: 'API-RENAMED', client_name: 'Jane Correct' } });
+  ok('a case number in the body is ignored, not obeyed',
+     (await call(env, '/submissions/API-EDIT-1', { cookie: admin })).status === 200
+     && (await call(env, '/submissions/API-RENAMED', { cookie: admin })).status === 404);
+
+  /* MULTIPLE PHONES, WITH LABELS, FOR THE CLIENT. */
+  const many = await call(env, '/cases/API-EDIT-1/edit', { method: 'POST', cookie: admin,
+    body: { client_phones: [ { number: '555 0100 222', label: 'mobile' },
+                             { number: '555 0100 333', label: 'work' },
+                             { number: '555 0100 444' } ] } });
+  ok('several client numbers can be held at once', many.status === 200, String(many.status));
+  const p1 = (await ws()).phones.client;
+  ok('all three are kept, in the order they were entered',
+     p1.length === 3 && p1[0].number === '555 0100 222' && p1[2].number === '555 0100 444',
+     JSON.stringify(p1.map(x => x.number)));
+  ok('with their labels', p1[0].label === 'mobile' && p1[1].label === 'work');
+  ok('and a number with no label is allowed', p1[2].label === '');
+  ok('they are saved rows now, not the legacy read-through',
+     p1.every(x => x.legacy !== true && x.id != null));
+
+  /* THE LEGACY COLUMN IS MIRRORED, so everything that already reads it keeps
+     working without knowing this table exists. */
+  ok('the first number is mirrored back into the case row',
+     (await sub()).client_phone === '555 0100 222', String((await sub()).client_phone));
+
+  ok('a number that is not a number is refused',
+     (await call(env, '/cases/API-EDIT-1/edit', { method: 'POST', cookie: admin,
+       body: { client_phones: [{ number: '12' }] } })).status === 400);
+  ok('and an invented label is refused',
+     (await call(env, '/cases/API-EDIT-1/edit', { method: 'POST', cookie: admin,
+       body: { client_phones: [{ number: '555 0100 555', label: 'pager' }] } })).status === 400);
+  ok('the refusal left the saved list untouched',
+     (await ws()).phones.client.length === 3);
+  ok('a bad email is refused too',
+     (await call(env, '/cases/API-EDIT-1/edit', { method: 'POST', cookie: admin,
+       body: { client_email: 'not-an-address' } })).status === 400);
+
+  /* SUBJECT NUMBERS HANG OFF THE SUBJECT, because a case can watch more than
+     one person and their numbers must not pool. */
+  const madeSub = await jsonOf(await call(env, '/cases/API-EDIT-1/subjects', { method: 'POST',
+    cookie: admin, body: { name: 'Watched One', phone: '5550100777' } }));
+  const subId = madeSub.id || (madeSub.subject && madeSub.subject.id);
+  ok('a subject can be added', Boolean(subId), JSON.stringify(madeSub).slice(0, 120));
+  const wsSub = await ws();
+  ok('their existing single number reads through as well',
+     (wsSub.phones.subject[String(subId)] || [])[0].number === '5550100777',
+     JSON.stringify(wsSub.phones.subject));
+  await call(env, '/cases/API-EDIT-1/edit', { method: 'POST', cookie: admin,
+    body: { subject_phones: { [String(subId)]: [ { number: '555 0100 888', label: 'home' },
+                                                 { number: '555 0100 999', label: 'other' } ] } } });
+  const wsSub2 = await ws();
+  ok('a subject can hold several numbers of their own',
+     (wsSub2.phones.subject[String(subId)] || []).length === 2,
+     JSON.stringify(wsSub2.phones.subject));
+  ok('and the client list is untouched by a subject edit',
+     wsSub2.phones.client.length === 3);
+  ok('the subject row keeps a mirrored primary number too',
+     Number(env.DB.prepare('SELECT COUNT(*) AS n FROM case_subjects WHERE phone = ?')
+       .bind('555 0100 888').first().n) === 1);
+  ok('a subject id from another case is refused',
+     (await call(env, '/cases/API-EDIT-1/edit', { method: 'POST', cookie: admin,
+       body: { subject_phones: { '99999': [{ number: '555 0100 000' }] } } })).status === 400);
+
+  /* Admin-only, like every other office correction. */
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'edit_inv', display_name: 'Field', role: 'investigator' }))).url;
+  const tk = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tk}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const field = (await login(env, 'edit_inv', 'FieldWork2026x')).cookie;
+  ok('an investigator cannot edit a case',
+     (await call(env, '/cases/API-EDIT-1/edit', { method: 'POST', cookie: field,
+       body: { client_name: 'Hacked' } })).status === 403);
+
+  /* THE CLIENT'S NUMBERS ARE THE CLIENT'S IDENTITY. `redactRow` has always kept
+     `client_phone` from an investigator, and a list of them is the same fact in
+     plural — an investigator who leaves must not leave with the client list.
+     The SUBJECT's numbers are fieldwork and do reach them: the subject is who
+     is watched, never who is paying. */
+  const fieldId = (await jsonOf(await call(env, '/auth/me', { cookie: field }))).user.id;
+  await call(env, '/submissions/API-EDIT-1/assign', { method: 'POST', cookie: admin,
+    body: { user_id: fieldId } });
+  const fieldWs = await jsonOf(await call(env, '/cases/API-EDIT-1/workspace', { cookie: field }));
+  ok('an investigator receives no client numbers at all',
+     (fieldWs.phones.client || []).length === 0, JSON.stringify(fieldWs.phones.client));
+  ok('and none of them appears anywhere in their payload',
+     !JSON.stringify(fieldWs).includes('555 0100 222')
+     && !JSON.stringify(fieldWs).includes('555 0100 333'),
+     JSON.stringify(fieldWs).slice(0, 200));
+  ok('but the subject numbers they need for the fieldwork do reach them',
+     (fieldWs.phones.subject[String(subId)] || []).length === 2,
+     JSON.stringify(fieldWs.phones.subject));
+  ok('editing a case that does not exist is a 404',
+     (await call(env, '/cases/API-NOPE-4/edit', { method: 'POST', cookie: admin,
+       body: { client_name: 'X' } })).status === 404);
+}
+
+/* EDITING A CASE MUST NOT ERASE ITS AUTHORIZATION (Codex stop-time review,
+   2026-08-16).
+
+   `/cases/:no/meta` was replace-all: `num(undefined)` is null, so a caller that
+   posted only a case type wrote NULL over `authorized_hours` and
+   `authorized_budget` and was told it succeeded. The Authorization form always
+   posts all three, so nothing noticed — until Edit Case began sending just the
+   type, at which point correcting a client's NAME would silently erase the
+   hours a carrier had authorised. */
+section('Editing a case leaves the authorization alone');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-AUTH-KEEP', carrier: 'Keeper Mutual',
+                      claim_number: 'KM-1', client_name: 'Adj', subject_name: 'S' });
+
+  const auth = async () => (await jsonOf(await call(env, '/cases/API-AUTH-KEEP/workspace',
+    { cookie: admin }))).authorization;
+  await call(env, '/cases/API-AUTH-KEEP/meta', { method: 'POST', cookie: admin,
+    body: { authorized_hours: 24, authorized_budget: 3300 } });
+  const set = await auth();
+  ok('the carrier authorization is on the case',
+     set.authorized_hours === 24 && set.authorized_budget === 3300,
+     JSON.stringify([set.authorized_hours, set.authorized_budget]));
+
+  /* THE DEFECT, EXACTLY: a save that names only the case type. */
+  const type = (await jsonOf(await call(env, '/case-types', { cookie: admin }))).case_types[0];
+  ok('posting only a case type is accepted',
+     (await call(env, '/cases/API-AUTH-KEEP/meta', { method: 'POST', cookie: admin,
+       body: { case_type_id: type ? type.id : '' } })).status === 200);
+  const after = await auth();
+  ok('and the authorized hours survive it',
+     after.authorized_hours === 24, String(after.authorized_hours));
+  ok('as does the authorized budget',
+     after.authorized_budget === 3300, String(after.authorized_budget));
+
+  /* And the same through the door the office actually uses. */
+  ok('editing the case identity is accepted',
+     (await call(env, '/cases/API-AUTH-KEEP/edit', { method: 'POST', cookie: admin,
+       body: { client_name: 'Renamed Adjuster' } })).status === 200);
+  const afterEdit = await auth();
+  ok('correcting a name does not erase the authorization',
+     afterEdit.authorized_hours === 24 && afterEdit.authorized_budget === 3300,
+     JSON.stringify([afterEdit.authorized_hours, afterEdit.authorized_budget]));
+
+  /* BLANK STILL CLEARS, or the Authorization form could never remove a figure.
+     An explicit empty string is the office saying there is none; an ABSENT key
+     is the office not mentioning it. The two used to be the same thing. */
+  await call(env, '/cases/API-AUTH-KEEP/meta', { method: 'POST', cookie: admin,
+    body: { authorized_hours: '', authorized_budget: '' } });
+  const cleared = await auth();
+  ok('an explicit blank still clears the hours', cleared.authorized_hours == null,
+     String(cleared.authorized_hours));
+  ok('and the budget', cleared.authorized_budget == null, String(cleared.authorized_budget));
+
+  /* The case type is the same rule, both ways. */
+  await call(env, '/cases/API-AUTH-KEEP/meta', { method: 'POST', cookie: admin,
+    body: { case_type_id: type ? type.id : '' } });
+  await call(env, '/cases/API-AUTH-KEEP/meta', { method: 'POST', cookie: admin,
+    body: { authorized_hours: 8 } });
+  const keptType = await auth();
+  ok('a save that never mentions the case type keeps it',
+     Boolean(keptType.case_type) === Boolean(type), String(keptType.case_type));
+  ok('while the figure that WAS named is written', keptType.authorized_hours === 8,
+     String(keptType.authorized_hours));
+
+  /* AND A PARTIAL UPDATE MUST NOT CLOBBER A CONCURRENT ONE (Codex stop-time
+     review, 2026-08-16).
+
+     The first fix for this read the row, then wrote every column back. Two
+     admins posting different subsets interleave as A reads, B reads, A writes,
+     B writes — and B's write puts back the value A had just changed, on a field
+     B never mentioned. Nobody is told.
+
+     Simulated honestly rather than by wishing: another admin's write is dropped
+     in DURING the request, right after any read of case_meta. A statement that
+     resolves the untouched fields from the ROW keeps that change; one that
+     resolves them from an earlier read overwrites it. */
+  await call(env, '/cases/API-AUTH-KEEP/meta', { method: 'POST', cookie: admin,
+    body: { authorized_hours: 24, authorized_budget: 3300 } });
+
+  const realPrepare = env.DB.prepare.bind(env.DB);
+  let injected = false;
+  env.DB.prepare = sql => {
+    const stmt = realPrepare(sql);
+    if (/SELECT[\s\S]*case_meta/i.test(sql)) {
+      const realFirst = stmt.first, realAll = stmt.all;
+      const inject = () => {
+        if (injected) return;
+        injected = true;
+        // The other admin's edit, landing mid-request.
+        realPrepare('UPDATE case_meta SET authorized_budget = 9999 WHERE case_no = ?')
+          .bind('API-AUTH-KEEP').run();
+      };
+      const wrap = fn => function (...a) { const r = fn.apply(this, a); inject(); return r; };
+      stmt.first = wrap(realFirst);
+      stmt.all = wrap(realAll);
+      const realBind = stmt.bind;
+      stmt.bind = function (...p) {
+        const b = realBind.apply(this, p);
+        b.first = wrap(realFirst); b.all = wrap(realAll);
+        return b;
+      };
+    }
+    return stmt;
+  };
+  // This admin changes only the HOURS and never mentions the budget.
+  await call(env, '/cases/API-AUTH-KEEP/meta', { method: 'POST', cookie: admin,
+    body: { authorized_hours: 16 } });
+  env.DB.prepare = realPrepare;
+
+  const raced = await auth();
+  ok('the concurrent edit landed during the request', injected === true);
+  ok('a field this request never mentioned keeps the OTHER admin\'s value',
+     raced.authorized_budget === 9999, String(raced.authorized_budget));
+  ok('and the field it did mention is written',
+     raced.authorized_hours === 16, String(raced.authorized_hours));
+}
+
+/* THE PHONE TABLE ARRIVES ON A MANUAL DISPATCH, so the case screen must keep
+   working — and the numbers already on the case must still be readable. */
+section('Phone lists degrade to the existing single number before setup');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-NOPH-1', service: 'Surveillance',
+                      client_name: 'Before Setup', client_phone: '5550100123',
+                      subject_name: 'S' });
+  env.DB.prepare('DROP TABLE IF EXISTS case_phone').run();
+
+  const res = await call(env, '/cases/API-NOPH-1/workspace', { cookie: admin });
+  ok('the case screen still opens', res.status === 200, String(res.status));
+  const body = await jsonOf(res);
+  ok('and the number that was always there is still shown',
+     body.phones.client.length === 1 && body.phones.client[0].number === '5550100123',
+     JSON.stringify(body.phones));
+  ok('the rest of the edit still works before the dispatch',
+     (await call(env, '/cases/API-NOPH-1/edit', { method: 'POST', cookie: admin,
+       body: { client_name: 'Renamed Anyway' } })).status === 200);
+  ok('health names the missing table, which is how the office finds out',
+     ((await jsonOf(await call(env, '/health'))).missing_tables || []).includes('case_phone'));
+}
+
 /* NO NUMBER AND NO PROVIDER CREDENTIAL IS EVER WRITTEN INTO THE SOURCE. The
    owner asked for this in the same breath as the feature, and a grep is the
    only check that keeps holding as the file grows. */
