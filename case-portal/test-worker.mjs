@@ -5172,6 +5172,78 @@ section('Every send works before a case exists, and still works after one does')
        return call(env, '/sends', { cookie: c });
      })()).status === 403);
 
+  /* A FREE-TEXT REFERENCE IS NOT A CASE NUMBER.
+
+     `case_no` on the sheet send is optional and unvalidated — it is whatever
+     the office wrote down, and it reaches the SUBJECT LINE. It was also being
+     written straight into `send_log.case_no`, which means something else
+     entirely: the schema says "null when a sheet is sent with no case", and
+     every case-scoped read matches on it. So the reference sat in the log
+     waiting for a real case of the same name to appear and adopt it.
+
+     These assert the split. Nothing about what is SENT changes. */
+  const logFor = async recipient => env.DB.prepare(
+    'SELECT case_no, ok FROM send_log WHERE recipient = ? ORDER BY id DESC').bind(recipient).first();
+
+  lastBody = null;
+  const refSend = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'notepad@example.com', case_no: 'PAPER-REF-9', include_intake: true } });
+  ok('a sheet still sends against a reference that matches no case', refSend.status === 200,
+     String(refSend.status));
+  ok('and the reference still reaches the subject line, unchanged',
+     lastBody && lastBody.subject.includes('PAPER-REF-9'), lastBody && lastBody.subject);
+  ok('but the log keeps it OUT of the case column',
+     (await logFor('notepad@example.com')).case_no === null,
+     String((await logFor('notepad@example.com')).case_no));
+
+  /* The other half: an explicitly linked, existing case is still recorded, or
+     this would have fixed the bug by throwing the real history away. */
+  await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'linked@example.com', case_no: 'API-PC-P' } });
+  ok('a sheet sent against a case that DOES exist still records it',
+     (await logFor('linked@example.com')).case_no === 'API-PC-P',
+     String((await logFor('linked@example.com')).case_no));
+
+  /* THE REGRESSION ITSELF. Quote a reference before any case exists, then let
+     an unrelated client's intake create a case of that very name. The case
+     list counts sends by matching `send_log.case_no`, so the earlier send used
+     to appear as this client's — a send they never received. */
+  await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'early.caller@example.com', name: 'Early Caller', case_no: 'RECYCLED-9' } });
+  await ingest(env, { case_no: 'RECYCLED-9', service: 'Surveillance',
+                      client_name: 'Someone Else', subject_name: 'S' });
+  const recycled = ((await jsonOf(await call(env, '/submissions?limit=200', { cookie: admin })))
+    .submissions || []).find(r => r.case_no === 'RECYCLED-9');
+  ok('a later case reusing that reference exists', Boolean(recycled));
+  ok('and is credited with NO send it never received',
+     recycled && Number(recycled.send_count) === 0, recycled && String(recycled.send_count));
+  ok('and carries no last-sent date from it either',
+     recycled && !recycled.last_sent_at, recycled && String(recycled.last_sent_at));
+
+  /* A REFUSED send is logged too, and by the same rule — the failure path had
+     its own copy of the write, which is exactly how one of a pair gets fixed. */
+  const okFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => String(url).includes('api.resend.com')
+    ? new Response('{"message":"refused"}', { status: 422 })
+    : realFetch(url, init);
+  const failed = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'bounced@example.com', case_no: 'PAPER-REF-FAIL' } });
+  globalThis.fetch = okFetch;
+  ok('a send the provider refused is reported as a failure', failed.status === 502,
+     String(failed.status));
+  const failRow = await logFor('bounced@example.com');
+  ok('it is still recorded as an attempt', failRow && Number(failRow.ok) === 0);
+  ok('and it keeps the reference out of the case column as well',
+     failRow && failRow.case_no === null, failRow && String(failRow.case_no));
+
+  /* And the office can still SEE both, which is the point of keeping the row:
+     a caseless send is present in the history, it is simply not a case's. */
+  const refHist = await jsonOf(await call(env, '/sends?limit=200', { cookie: admin }));
+  ok('the reference send is in the history, marked as having no case',
+     (refHist.sends || []).some(s => s.recipient === 'notepad@example.com' && s.case_no === null));
+  ok('and the failed one is there too',
+     (refHist.sends || []).some(s => s.recipient === 'bounced@example.com' && s.ok === false));
+
   globalThis.fetch = realFetch;
 }
 

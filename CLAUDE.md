@@ -462,6 +462,22 @@ zero-width spaces, an address that is a substring of a carrier's and one that a
 carrier's is a substring of, and two same-named contacts on opposite sides — all
 of them previously changed the outcome, and none of them does now.
 
+**`send_log.case_no` is null unless the case actually exists.** The `case_no` on
+a sheet send is optional and unvalidated — free text the office wrote down,
+which reaches the **subject line** and nothing else. It was also being written
+straight into `send_log.case_no`, and that column means something narrower:
+the schema says *"null when a sheet is sent with no case"*, and every
+case-scoped read (`send_count` and `last_sent_at` on the case list, a case's own
+send history) matches on it. So a reference sat in the log until a real case of
+the same name appeared and adopted it — a client credited with a send they never
+received. `emailSheet` now records the case number only where the lookup it
+already performs finds a case, on the success and the failure path alike. The
+reference is unchanged in the subject; nothing about what is sent moved.
+
+Its sibling `payment_send.case_no` still stores the typed value and is **not**
+covered by that fix. Nothing case-scoped reads it today, so it misattributes
+nothing, but it is the same shape and should go the same way when touched.
+
 **A failed history load is never rendered as an empty history.** `loadSends()`
 used to set `SENDS = []` in its catch, and an empty list draws as "Nothing sent
 yet" — so a 500 or a dropped connection told the office that nothing had ever
@@ -594,7 +610,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1147 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 1170 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 850 checks: the page against the real Worker
 ```
 
