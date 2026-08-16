@@ -1652,6 +1652,109 @@ section('A private lead can be sent payment options; an insurance lead cannot');
   await page.close();
 }
 
+/* PRE-CASE SENDS (owner, 2026-08-15 — a blocking workflow defect).
+
+   The sends never required a case in the Worker, but the intake and the payment
+   options could only be REACHED from a lead card, so in practice the office had
+   to put someone on the desk before it could email them anything. The intake is
+   what turns a phone call into a lead, so that ordering was backwards.
+
+   This is the door, and the history that has to work without a case number. */
+section('Sending works before anyone is on the desk, and the history shows it');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Rate sheets' }).click();
+  await page.waitForTimeout(800);
+  const view = await text(page, '#app');
+
+  ok('the Rate sheets screen carries a pre-case send area', has(view, 'Send to someone new'));
+  ok('and says plainly that no case is needed', has(view, 'no case needed'));
+  ok('with all three sends that had no door before',
+     await page.locator('[data-act="preIntake"][data-kind="private"]').count() === 1
+     && await page.locator('[data-act="preIntake"][data-kind="insurance"]').count() === 1
+     && await page.locator('[data-act="prePay"]').count() === 1);
+  /* Requirement 3, said on the screen where someone might assume otherwise. */
+  ok('and states that nothing is created by sending',
+     has(view, 'Nothing here creates a lead or a case'));
+
+  // The private intake door. The KIND is fixed by the button, not pickable —
+  // a picker here would be one more way to send a carrier the consumer form.
+  await page.locator('[data-act="preIntake"][data-kind="private"]').click();
+  await page.waitForTimeout(400);
+  ok('the private intake dialog opens', await page.locator('#pi_to').count() === 1);
+  ok('naming the private form', has(await text(page, '.amhead'), 'Private Client Intake'));
+  ok('with no case field at all — there is nothing to attach it to',
+     await page.locator('#pi_case').count() === 0);
+  ok('and no way to switch it to the carrier form',
+     await page.locator('.amsheet select').count() === 0);
+  ok('an address is required before a send is spent',
+     await (async () => {
+       await page.locator('[data-act="preIntakeGo"]').click();
+       await page.waitForTimeout(300);
+       return has(await text(page, '.amsheet'), 'Enter the address');
+     })());
+
+  /* Mail is unconfigured in this run, so the send is a real failure — which is
+     useful twice over: it proves the door reaches the Worker, and it proves a
+     failed pre-case send is KEPT and shown rather than swallowed. */
+  await page.locator('#pi_to').fill('newcaller@example.test');
+  await page.locator('#pi_name').fill('Jane Caller');
+  await page.locator('[data-act="preIntakeGo"]').click();
+  await page.waitForTimeout(900);
+  ok('a failed pre-case send says so rather than claiming success',
+     has(await text(page, '.amsheet'), 'not configured'), await text(page, '.amsheet'));
+  await page.locator('.amx').click();
+  await page.waitForTimeout(400);
+
+  // The insurance door is the same control with the other form behind it.
+  await page.locator('[data-act="preIntake"][data-kind="insurance"]').click();
+  await page.waitForTimeout(400);
+  ok('the insurance intake dialog names the carrier form',
+     has(await text(page, '.amhead'), 'Insurance Assignment Intake'));
+  /* Checked on the METHODS and the handles, not on the word "payment" — the
+     dialog's own correct copy says no payment information is included, and an
+     assertion that trips on that is testing the wrong thing. */
+  ok('and offers a carrier no payment method or handle',
+     !has(await text(page, '.amsheet'), 'Cash App')
+     && !has(await text(page, '.amsheet'), 'Venmo')
+     && await page.locator('.ps-pm').count() === 0
+     && !has(await text(page, '.amsheet'), 'PAYMENT OPTIONS'));
+  await page.locator('.amx').click();
+  await page.waitForTimeout(300);
+
+  /* Payment options from here open the SAME dialog the lead card opens, with
+     no case behind it — deliberately one code path, because a second payment
+     dialog is a second place for the private-only boundary to go wrong. */
+  await page.locator('[data-act="prePay"]').click();
+  await page.waitForTimeout(900);
+  ok('payment options open with no case number', await page.locator('#ps_case').count() === 1
+     && await page.locator('#ps_case').inputValue() === '');
+  ok('and the methods are still offered', await page.locator('.ps-pm').count() === 2);
+  await page.locator('#ps_to').fill('newcaller@example.test');
+  await page.locator('[data-act="paySendStep"]').click();
+  await page.waitForTimeout(500);
+  ok('it previews without a case reference',
+     has(await text(page, '.amsheet'), 'payment instructions only'));
+  await page.locator('.amx').click();
+  await page.waitForTimeout(500);
+
+  /* Requirement 6 — the history has to work with no case number. The failed
+     intake send above had none, so it can only appear here if the log and this
+     view both handle a null case. */
+  await page.locator('.tabs button', { hasText: 'Cases' }).click();
+  await page.waitForTimeout(300);
+  await page.locator('.tabs button', { hasText: 'Rate sheets' }).click();
+  await page.waitForTimeout(900);
+  const hist = await text(page, '#app');
+  ok('the screen carries a recent sends history', has(hist, 'Recent sends'));
+  ok('the pre-case send is in it, by recipient', has(hist, 'newcaller@example.test'));
+  ok('marked as having had no case rather than shown blank',
+     has(hist, 'sent before one existed'));
+  ok('and marked as failed, because it was', has(hist, 'Failed'));
+  await page.close();
+}
+
 /* The Worker refuses a send when a method is switched on with no payment link,
    and that refusal says "add a link in Settings". This screen is what makes
    that sentence true — it shipped as an error with nowhere to go, which is a

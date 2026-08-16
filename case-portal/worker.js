@@ -738,22 +738,11 @@ async function setPaymentMethod(request, env, user, id) {
    nothing priced. Which door is NEVER the caller's choice: the lead's own
    kind picks it server-side, the same rule SHEET_INTAKE enforces — a carrier
    lead can only ever be sent the carrier door. */
-async function sendLeadIntake(request, env, user, caseNo) {
-  const lead = await env.DB.prepare(
-    'SELECT case_no, kind, client_name FROM submissions WHERE case_no = ?').bind(caseNo).first();
-  if (!lead) return json({ error: 'not found' }, 404);
-
-  const body = await readJson(request);
-  const to = String(body.to || '').trim();
-  if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(to) || to.length > 200) {
-    return json({ error: 'Enter a valid email address.' }, 400);
-  }
-  if (!(await withinRateLimit(env, 'mail'))) {
-    return json({ error: 'Too many emails in one minute — wait a moment and send again.' }, 429);
-  }
-
-  const intake = SHEET_INTAKE[lead.kind === 'claims' ? 'insurance_assignment' : 'private_retainer'];
-  const greet = lead.client_name ? `${String(lead.client_name).slice(0, 80)},` : 'Hello,';
+/* The intake invitation, built once and used by both doors into it — the lead
+   card, and the pre-case send that has no lead at all. Two copies of this email
+   would drift, and the half that drifts is the half nobody is reading. */
+function intakeInviteEmail(intake, who) {
+  const greet = who ? `${String(who).slice(0, 80)},` : 'Hello,';
   const text =
 `${greet}
 
@@ -776,6 +765,25 @@ Always Precise Investigations, LLC — Va DCJS #11-9159`;
   <p style="font-size:.9rem;color:#5c6775">Questions any time: (434) 907-0975.</p>
   <p style="font-size:.85rem;color:#5c6775">Always Precise Investigations, LLC &middot; Va DCJS #11-9159</p>
 </div>`;
+  return { text, html };
+}
+
+async function sendLeadIntake(request, env, user, caseNo) {
+  const lead = await env.DB.prepare(
+    'SELECT case_no, kind, client_name FROM submissions WHERE case_no = ?').bind(caseNo).first();
+  if (!lead) return json({ error: 'not found' }, 404);
+
+  const body = await readJson(request);
+  const to = String(body.to || '').trim();
+  if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(to) || to.length > 200) {
+    return json({ error: 'Enter a valid email address.' }, 400);
+  }
+  if (!(await withinRateLimit(env, 'mail'))) {
+    return json({ error: 'Too many emails in one minute — wait a moment and send again.' }, 429);
+  }
+
+  const intake = SHEET_INTAKE[lead.kind === 'claims' ? 'insurance_assignment' : 'private_retainer'];
+  const { text, html } = intakeInviteEmail(intake, lead.client_name);
 
   const mail = await sendMail(env, {
     to, subject: `${intake.label} — Always Precise Investigations`, text, html });
@@ -795,6 +803,109 @@ Always Precise Investigations, LLC — Va DCJS #11-9159`;
   return json({ ok: true, sent_to: to, intake: intake.label,
                 lead_status: (await env.DB.prepare(
                   'SELECT status FROM lead_status WHERE case_no = ?').bind(caseNo).first() || {}).status });
+}
+
+/* WHAT THE OFFICE HAS SENT, whether or not it had a case to send it against
+   (owner, 2026-08-15 — requirement 6).
+
+   Both logs are read, newest first, and unioned in JavaScript rather than in
+   SQL: they are different shapes and a UNION would force one to pretend to be
+   the other. `case_no` comes back as null for a pre-case send and the caller
+   shows it as such — the absence is information, not a gap to paper over. */
+async function sendHistory(request, env) {
+  const url = new URL(request.url);
+  const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 40, 1), 200);
+  const sheets = await env.DB.prepare(
+    `SELECT s.id, s.case_no, s.kind, s.sheet_id, s.door, s.recipient, s.ok, s.detail,
+            s.sent_at, u.display_name AS sent_by
+       FROM send_log s LEFT JOIN users u ON u.id = s.sent_by
+      ORDER BY s.id DESC LIMIT ?`).bind(limit).all();
+  const pays = await env.DB.prepare(
+    `SELECT p.id, p.case_no, p.recipient, p.methods, p.with_sheet, p.ok, p.detail,
+            p.sent_at, u.display_name AS sent_by
+       FROM payment_send p LEFT JOIN users u ON u.id = p.sent_by
+      ORDER BY p.id DESC LIMIT ?`).bind(limit).all();
+
+  const rows = [
+    ...(sheets.results || []).map(r => ({
+      id: `s${r.id}`, at: r.sent_at, case_no: r.case_no || null,
+      kind: r.kind, sheet_id: r.sheet_id || null, door: r.door || null,
+      recipient: r.recipient, ok: Number(r.ok) === 1, detail: r.detail || null,
+      sent_by: r.sent_by || null, methods: null,
+    })),
+    /* Only the STANDALONE payment sends. One that rode with a sheet is already
+       represented by that sheet's own row, and listing both would report two
+       emails where the client received one. */
+    ...(pays.results || []).filter(r => Number(r.with_sheet) !== 1).map(r => ({
+      id: `p${r.id}`, at: r.sent_at, case_no: r.case_no || null,
+      kind: 'payment_options', sheet_id: null, door: null,
+      recipient: r.recipient, ok: Number(r.ok) === 1, detail: r.detail || null,
+      sent_by: r.sent_by || null, methods: r.methods ? String(r.methods).split(',') : [],
+    })),
+  ].sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, limit);
+
+  return json({ sends: rows });
+}
+
+/* THE INTAKE, SENT BEFORE ANYTHING EXISTS (owner, 2026-08-15 — PRE-CASE SENDS).
+
+   `sendLeadIntake` above is keyed by a case number in its URL, so until now the
+   only way to send an intake form was to already have a lead on the desk. That
+   is backwards for how the work arrives: someone calls, you take a name and an
+   email, and the intake is what turns them into a lead in the first place.
+
+   NAME AND A VALID EMAIL ARE ENOUGH. There is no case number here, optional or
+   otherwise, and NOTHING IS CREATED — the owner was explicit that a case must
+   not be conjured just to have something to send against. The send is recorded
+   in `send_log` with a null `case_no`, which that column has always allowed.
+
+   THE DOOR IS PAIRED FROM AN EXPLICIT KIND, never from a case that does not
+   exist. `private` and `insurance` are the only two answers, and each maps to
+   its own intake through the same `SHEET_INTAKE` table the sheet sends use — so
+   a carrier still cannot land on the consumer picker, and a private client is
+   still never offered the claim assignment path. The separation the owner asked
+   to preserve rests on the caller naming which product this is, which is a
+   stronger thing to rest on than a case lookup that may find nothing. */
+async function sendPreCaseIntake(request, env, user) {
+  const body = await readJson(request);
+  const to = String(body.to || '').trim();
+  if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(to) || to.length > 200) {
+    return json({ error: 'Enter a valid email address.' }, 400);
+  }
+  const kind = body.kind === 'insurance' || body.kind === 'claims' ? 'claims'
+             : body.kind === 'private' || body.kind === 'consumer' ? 'consumer' : null;
+  if (!kind) {
+    return json({ error: 'Say which intake this is — Private Client or Insurance Assignment. '
+                       + 'The two forms are never interchangeable.' }, 400);
+  }
+  const name = String(body.name || '')
+    .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 120);
+
+  if (!(await withinRateLimit(env, 'mail'))) {
+    return json({ error: 'Too many emails in one minute — wait a moment and send again.' }, 429);
+  }
+
+  const intake = SHEET_INTAKE[kind === 'claims' ? 'insurance_assignment' : 'private_retainer'];
+  const { text, html } = intakeInviteEmail(intake, name);
+  const mail = await sendMail(env, {
+    to, subject: `${intake.label} — Always Precise Investigations`, text, html });
+
+  if (!mail.sent) {
+    await logSend(env, user, { case_no: null, kind: 'intake', door: intake.url,
+      recipient: to, ok: 0, detail: mail.reason || 'send failed' });
+    return json({
+      error: mail.reason === 'not_configured'
+        ? 'Email is not configured on the Worker. Add RESEND_API_KEY to send from here.'
+        : 'That did not send. Check the address and try again.',
+      reason: mail.reason,
+    }, 502);
+  }
+  /* Logged with no case, which is the point — the history of what the office
+     sent must not depend on a record that does not exist yet. Nothing is
+     stamped either: there is no lead to move. */
+  await logSend(env, user, { case_no: null, kind: 'intake', door: intake.url,
+    recipient: to, ok: 1 });
+  return json({ ok: true, sent_to: to, intake: intake.label, case_no: null });
 }
 
 async function emailSheet(request, env, user, id) {
@@ -818,9 +929,6 @@ async function emailSheet(request, env, user, id) {
   const note = String(body.note || '')
     .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').slice(0, 500);
   const caseNo = String(body.case_no || '').replace(/[^\x20-\x7e]/g, '').slice(0, 64);
-  /* Set when a reference WAS typed and matched nothing. It does not block a
-     plain sheet — see the payment gate below for why it blocks payment. */
-  let unresolvedCase = false;
 
   /* A sheet sent AGAINST a lead must match that lead (audit, 2026-08-14).
      The intake door has always been paired to the sheet server-side, but
@@ -840,7 +948,6 @@ async function emailSheet(request, env, user, id) {
           expected_sheet: wanted }, 400);
       }
     }
-    unresolvedCase = !lead;
   }
 
   if (!(await withinRateLimit(env, 'mail'))) {
@@ -872,31 +979,21 @@ async function emailSheet(request, env, user, id) {
     return json({ error: 'Payment options are private-client only and cannot be sent with the '
                        + 'Insurance Assignment Rates.' }, 400);
   }
-  /* PAYMENT OPTIONS ARE NEVER SENT AGAINST A REFERENCE THE SYSTEM CANNOT
-     CONFIRM (Codex stop-time review, 2026-08-15).
+  /* A SHEET SENDS BEFORE A CASE EXISTS, payment options included (owner,
+     2026-08-15 — PRE-CASE SENDS).
 
-     The pairing check above is skipped when a typed reference matches no lead,
-     which is deliberate — the case number is a subject-line reference and the
-     office legitimately sends a sheet to a prospect who has no case yet, with
-     whatever reference they have written down. A header-injection test has
-     asserted that flow since this route existed.
+     A refusal stood here for unresolvable references carrying payment. It was
+     added against a real hole — one mistyped character of a carrier's case
+     number skipped the pairing check and put Cash App and Venmo in front of an
+     adjuster — but it also blocked the ordinary pre-case send, which is how
+     most private clients are onboarded: quote, sheet, payment instructions, and
+     only then a case. The owner weighed the two and removed the block.
 
-     But it meant that mistyping ONE character of a carrier's case number
-     skipped the pairing check AND let the private sheet carry payment options
-     to that adjuster. Reproduced before this fix: status 200, email delivered
-     to adjuster@carrier.example with Cash App and Venmo in it.
-
-     So the refusal is scoped to the ring-fenced content rather than to the
-     whole send. A plain sheet against an unknown reference still goes; payment
-     options do not, because "I cannot find this reference" is not evidence that
-     the recipient is not a carrier. The rule is now the same one the standalone
-     payment route enforces, and can be stated in one line: payment options are
-     never sent against a reference nobody can confirm. */
-  if (includePayment && unresolvedCase) {
-    return json({ error: `No case or lead matches ${caseNo}. Payment options are not sent against `
-                       + `a reference nobody can find — check it, or clear it and send the sheet `
-                       + `on its own.` }, 400);
-  }
+     What still holds: the carrier sheet can NEVER carry payment options
+     (`sheetTakesPayment`, checked just above), and a reference that DOES
+     resolve to a claim assignment is still refused by the pairing rule. Only
+     the "matches nothing" case now proceeds, and it proceeds because the office
+     needs it to. */
   const wantedMethods = Array.isArray(body.methods)
     ? body.methods.map(x => String(x)).filter(x => PAY_IDS.includes(x)) : null;
   const brokenMethods = [];
@@ -1028,11 +1125,26 @@ async function emailPaymentOptions(request, env, user) {
   if (caseNo) {
     const lead = await env.DB.prepare('SELECT kind FROM submissions WHERE case_no = ?')
       .bind(caseNo).first();
-    if (!lead) {
-      return json({ error: `No case or lead matches ${caseNo}. Check the reference, or clear it — `
-                         + `payment instructions are not sent against a reference nobody can find.` }, 400);
-    }
-    if (lead.kind === 'claims') {
+    /* A REFERENCE THAT MATCHES NOTHING DOES NOT BLOCK THE SEND (owner,
+       2026-08-15 — PRE-CASE SENDS, a blocking workflow defect).
+
+       This refused an unresolvable reference, and that was wrong for the way
+       the office actually works: a client is quoted, sent instructions and
+       given a paper reference BEFORE any case exists. Name and a valid email
+       are enough to send; the case number, claim number and internal reference
+       are optional whenever they happen to be available.
+
+       The boundary does not depend on this and never did. What protects a
+       carrier is the PRODUCT being sent — this route only ever carries private
+       payment instructions, and it is reached from private surfaces — plus the
+       claims refusal immediately below, which still fires whenever the
+       reference resolves to a real claim assignment.
+
+       The residual risk is stated rather than hidden: a reference mistyped so
+       badly that it matches no row at all no longer trips the claims check,
+       because there is nothing to check against. The owner has weighed that
+       against a workflow that could not send at all, and chosen this. */
+    if (lead && lead.kind === 'claims') {
       return json({ error: `${caseNo} is a claim assignment. Cash App and Venmo are private-client `
                          + `payment methods and are never sent to a carrier or TPA.` }, 400);
     }
@@ -5005,6 +5117,23 @@ async function route(request, env) {
   if (p === '/intakes' && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return createManualIntake(request, env, user);
+  }
+
+  /* PRE-CASE SENDS (owner, 2026-08-15). The intake form sent to a name and an
+     email, with no case and nothing created. */
+  if (p === '/intake-link/email' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return sendPreCaseIntake(request, env, user);
+  }
+
+  /* The send history, INCLUDING sends that have no case (owner requirement 6).
+     Every other view of `send_log` hangs off a case, so a pre-case send was
+     being written correctly and was then invisible — written and never read,
+     which is the same gap this project has hit before. Admin-only: an
+     investigator is never told who the client was emailed. */
+  if (p === '/sends' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return sendHistory(request, env);
   }
 
   // Active Surveillance Mode: resume-anywhere for whoever is asking, and the

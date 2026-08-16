@@ -4669,88 +4669,60 @@ section('Payment instructions can go on their own, and never to a carrier');
        body: { to: 'adjuster@carrier.example', case_no: 'API-POC' } }))).error,
        'never sent to a carrier'));
 
-  /* THE BOUNDARY MUST NOT FAIL OPEN ON A REFERENCE THAT DOES NOT RESOLVE
-     (Codex stop-time review, 2026-08-15). The claims refusal was written as
-     `if (lead && lead.kind === 'claims')`, so a case number nobody could find
-     skipped the check altogether and the send proceeded — and the comment above
-     it claimed, wrongly, that "a typo cannot turn a carrier into a private
-     client". A mistyped carrier reference is exactly how that happens: one
-     wrong character and the guard silently does not apply.
+  /* PRE-CASE SENDS (owner, 2026-08-15 — a blocking workflow defect).
 
-     An unknown reference is now REFUSED. It is not permission, and it is not
-     "no case" either — it is a reference the office believes in and the system
-     cannot confirm, which is the moment to stop rather than to guess. */
+     "Name + valid email are enough to send. Case #, Claim #, and internal
+     reference are OPTIONAL when available."
+
+     A refusal briefly stood here for references that matched nothing, added
+     against a real hole found by the Codex review. It also blocked the way the
+     office actually onboards a private client — quote, sheet, payment
+     instructions, and only then a case — so the owner removed it. These
+     assertions are the reversal, written so the block cannot come back by
+     accident, and they sit beside the boundary checks that still hold. */
   lastBody = null;
   const typo = await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
-    body: { to: 'adjuster@carrier.example', case_no: 'API-POC-TYPO' } });
-  ok('a case reference that resolves to nothing is refused, not waved through',
-     typo.status === 400, String(typo.status));
-  ok('and nothing was emailed on the strength of an unverifiable reference',
-     lastBody === null);
-  ok('the refusal says what to do about it',
-     has((await jsonOf(await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
-       body: { to: 'adjuster@carrier.example', case_no: 'API-POC-TYPO' } }))).error,
-       'Check the reference'));
-  /* One character off a real carrier case is the case that matters, because it
-     is the one an office actually produces. */
+    body: { to: 'newclient@example.com', name: 'Jane', case_no: 'PAPER-REF-4471' } });
+  ok('a reference nobody can resolve does NOT block the send', typo.status === 200,
+     String(typo.status));
+  ok('and the email really went', lastBody !== null);
   lastBody = null;
-  ok('one character off a real claim assignment is refused too',
+  ok('no reference at all sends too — name and email are enough',
      (await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
-       body: { to: 'adjuster@carrier.example', case_no: 'API-POCC' } })).status === 400);
-  ok('and again nothing went', lastBody === null);
+       body: { to: 'newprospect@example.com', name: 'Sam' } })).status === 200);
+  ok('and that one really went as well', lastBody !== null);
 
-  /* A BLANK reference stays allowed, and that is deliberate rather than an
-     oversight — the owner's §4 lists "Optional Case / Lead Reference", and the
-     firm sends instructions to people who have no case yet. Asserted so a later
-     reader does not "tighten" it and break the flow the owner asked for. The
-     dialog prefills the lead's case number, so blank is a deliberate act. */
+  /* WHAT PRE-CASE DID NOT RELAX. A reference that DOES resolve to a claim
+     assignment is still refused — the separation the owner asked to preserve
+     rests on the product being sent and on this check, not on whether a lookup
+     found something. */
   lastBody = null;
-  ok('a send with no reference at all is still allowed, as the order specifies',
+  ok('a resolving claim assignment is still refused',
      (await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
-       body: { to: 'newprospect@example.com' } })).status === 200);
-  ok('and it really did send', lastBody !== null);
-
-  /* THE SAME SHAPE ON THE SHEET SEND, found by following the finding rather
-     than only patching where it was reported. `emailSheet` pairs the sheet to
-     the lead with `if (lead) { ... }`, so a reference resolving to nothing
-     skips the pairing check there too — and the private sheet may carry payment
-     options. Mistype a carrier's case number, send them the private sheet with
-     payment ticked, and the adjuster receives Cash App and Venmo.
-
-     THE FIRST FIX HERE WAS WRONG AND A TEST CAUGHT IT. Refusing every
-     unresolvable reference broke the header-injection test, which sends
-     `case_no: 'API-1\r\nBcc: …'` and expects a 200 — and that test is right:
-     on this route the case number is a SUBJECT-LINE reference, and the office
-     legitimately sends a sheet to a prospect who has no case yet.
-
-     So the refusal is scoped to the ring-fenced content instead of the whole
-     send. A plain sheet against an unknown reference still goes; payment
-     options do not. */
-  lastBody = null;
-  const sheetTypo = await call(env, '/sheets/private_retainer/email', { method: 'POST',
-    cookie: admin, body: { to: 'adjuster@carrier.example', case_no: 'API-POCC',
-                           include_payment: true } });
-  ok('a mistyped reference cannot carry payment options', sheetTypo.status === 400,
-     String(sheetTypo.status));
-  ok('and nothing reached the adjuster', lastBody === null);
-  ok('the refusal offers the way through',
-     has((await jsonOf(await call(env, '/sheets/private_retainer/email', { method: 'POST',
-       cookie: admin, body: { to: 'adjuster@carrier.example', case_no: 'API-POCC',
-                              include_payment: true } }))).error,
-       'send the sheet on its own'));
-  // The correctly-spelled claim assignment is still refused by the existing pairing rule.
-  ok('and the correctly-spelled claim assignment is refused by pairing, as before',
-     (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
        body: { to: 'adjuster@carrier.example', case_no: 'API-POC' } })).status === 400);
-  /* THE FLOW THAT MUST SURVIVE THE FIX: a sheet with a typed reference nobody
-     can resolve still sends, because that is the prospect path, and narrowing
-     it would be a regression dressed as a hardening. */
+  ok('and nothing reached that adjuster', lastBody === null);
+
+  /* THE SHEET SEND, same rule. A private sheet WITH payment options goes to a
+     pre-case prospect, and is still refused against a real claim assignment. */
   lastBody = null;
-  ok('a plain sheet against an unresolvable reference still sends',
+  ok('the private sheet carries payment to a pre-case prospect',
      (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
-       body: { to: 'prospect@example.com', case_no: 'NOT-A-CASE-YET' } })).status === 200);
+       body: { to: 'prospect@example.com', case_no: 'NOT-A-CASE-YET',
+               include_payment: true } })).status === 200);
   ok('and really did send, with the reference in the subject',
      lastBody !== null && lastBody.subject.includes('NOT-A-CASE-YET'));
+  ok('with the payment block on it', has(both(lastBody), 'PAYMENT OPTIONS'));
+  lastBody = null;
+  ok('but a real claim assignment is still refused the consumer sheet',
+     (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+       body: { to: 'adjuster@carrier.example', case_no: 'API-POC',
+               include_payment: true } })).status === 400);
+  ok('and nothing went to the carrier', lastBody === null);
+  /* And the carrier sheet can never carry payment at all, case or no case —
+     the rule that does not depend on any lookup. */
+  ok('the carrier sheet still cannot carry payment even with no case',
+     (await call(env, '/sheets/insurance_assignment/email', { method: 'POST', cookie: admin,
+       body: { to: 'adjuster@carrier.example', include_payment: true } })).status === 400);
 
   // §15.5/15.6/15.10 — each method independently, and OFF means absent.
   lastBody = null;
@@ -4813,6 +4785,152 @@ section('Payment instructions can go on their own, and never to a carrier');
   ok('and a bad address is refused before an email is spent',
      (await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
        body: { to: 'not-an-address' } })).status === 400);
+
+  globalThis.fetch = realFetch;
+}
+
+/* PRE-CASE SENDS — the owner's requirement 7, in full (2026-08-15).
+
+   "These must work with NO case number: Private Intake, Private Rate Sheet,
+   Private Payment Options, Insurance Intake / Assignment form, Insurance Rate
+   Sheet." Each of the five is driven twice, once with no case number and once
+   with an existing valid one, because the defect was that the second worked and
+   the first did not.
+
+   Requirement 3 rides along and is asserted rather than assumed: nothing may be
+   auto-created to have something to send against. */
+section('Every send works before a case exists, and still works after one does');
+{
+  const realFetch = globalThis.fetch;
+  let lastBody = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      lastBody = JSON.parse(init.body);
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '80';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const both = s => `${s.html}\n${s.text}`;
+  const has = (hay, needle) => String(hay).toLowerCase().includes(String(needle).toLowerCase());
+
+  await ingest(env, { case_no: 'API-PC-P', service: 'Surveillance',
+                      client_name: 'P. Client', subject_name: 'S' });
+  await ingest(env, { case_no: 'API-PC-C', carrier: 'Acme Mutual', claim_number: 'AM-7',
+                      client_name: 'A. Adjuster', subject_name: 'C' });
+
+  const countSubs = async () => (await env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM submissions').first()).n;
+  const before = await countSubs();
+
+  /* The five sends, each as {label, no-case body, with-case body}. Driven
+     through the same routes the page uses. */
+  const cases = [
+    ['Private Intake', () => call(env, '/intake-link/email', { method: 'POST', cookie: admin,
+        body: { to: 'jane@example.com', name: 'Jane', kind: 'private' } }),
+      () => call(env, '/leads/API-PC-P/send-intake', { method: 'POST', cookie: admin,
+        body: { to: 'jane@example.com' } })],
+    ['Insurance Intake', () => call(env, '/intake-link/email', { method: 'POST', cookie: admin,
+        body: { to: 'adjuster@carrier.example', name: 'Dana', kind: 'insurance' } }),
+      () => call(env, '/leads/API-PC-C/send-intake', { method: 'POST', cookie: admin,
+        body: { to: 'adjuster@carrier.example' } })],
+    ['Private Rate Sheet', () => call(env, '/sheets/private_retainer/email', { method: 'POST',
+        cookie: admin, body: { to: 'jane@example.com' } }),
+      () => call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+        body: { to: 'jane@example.com', case_no: 'API-PC-P' } })],
+    ['Insurance Rate Sheet', () => call(env, '/sheets/insurance_assignment/email', { method: 'POST',
+        cookie: admin, body: { to: 'adjuster@carrier.example' } }),
+      () => call(env, '/sheets/insurance_assignment/email', { method: 'POST', cookie: admin,
+        body: { to: 'adjuster@carrier.example', case_no: 'API-PC-C' } })],
+    ['Private Payment Options', () => call(env, '/payment-options/email', { method: 'POST',
+        cookie: admin, body: { to: 'jane@example.com', name: 'Jane' } }),
+      () => call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+        body: { to: 'jane@example.com', case_no: 'API-PC-P' } })],
+  ];
+
+  for (const [label, noCase, withCase] of cases) {
+    lastBody = null;
+    const a = await noCase();
+    ok(`${label} sends with NO case number`, a.status === 200, String(a.status));
+    ok(`${label} really went without one`, lastBody !== null);
+    lastBody = null;
+    const b = await withCase();
+    ok(`${label} still sends with an existing case number`, b.status === 200, String(b.status));
+    ok(`${label} really went with one`, lastBody !== null);
+  }
+
+  // Requirement 3 — nothing was conjured to make any of that possible.
+  ok('and NOTHING was auto-created to have something to send against',
+     (await countSubs()) === before, `${before} -> ${await countSubs()}`);
+
+  /* Requirement 8 — the two workflows stay separated with no case in sight,
+     which is where a lookup-based rule would have had nothing to go on. */
+  lastBody = null;
+  await call(env, '/intake-link/email', { method: 'POST', cookie: admin,
+    body: { to: 'jane@example.com', name: 'Jane', kind: 'private' } });
+  ok('a pre-case private intake sends the PRIVATE door',
+     has(both(lastBody), 'assignment=private') && !has(both(lastBody), 'assignment=insurance'));
+  lastBody = null;
+  await call(env, '/intake-link/email', { method: 'POST', cookie: admin,
+    body: { to: 'adjuster@carrier.example', name: 'Dana', kind: 'insurance' } });
+  ok('a pre-case insurance intake sends the CARRIER door',
+     has(both(lastBody), 'assignment=insurance') && !has(both(lastBody), 'assignment=private'));
+  ok('and names no consumer payment method anywhere on it',
+     !has(both(lastBody), 'cash app') && !has(both(lastBody), 'venmo'));
+  ok('a pre-case intake with no kind is refused rather than guessed',
+     (await call(env, '/intake-link/email', { method: 'POST', cookie: admin,
+       body: { to: 'someone@example.com', name: 'Sam' } })).status === 400);
+  ok('and a bad address is refused before an email is spent',
+     (await call(env, '/intake-link/email', { method: 'POST', cookie: admin,
+       body: { to: 'nope', kind: 'private' } })).status === 400);
+  ok('an investigator cannot send an intake link either',
+     (await (async () => {
+       const link = (await jsonOf(await invite(env, admin,
+         { username: 'dana2', display_name: 'Dana', role: 'investigator' }))).url;
+       const tk = new URL(link, 'https://x.test').searchParams.get('invite');
+       await call(env, `/invite/${tk}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+       const c = (await login(env, 'dana2', 'FieldWork2026x')).cookie;
+       return call(env, '/intake-link/email', { method: 'POST', cookie: c,
+         body: { to: 'a@b.co', kind: 'private' } });
+     })()).status === 403);
+
+  /* Requirement 6 — the history works without a case number. This is the half
+     that was silently missing: pre-case rows were being written correctly and
+     every view of them hung off a case, so they could never be seen. */
+  const hist = await jsonOf(await call(env, '/sends', { cookie: admin }));
+  ok('the send history returns rows', (hist.sends || []).length > 0);
+  const caseless = hist.sends.filter(s => s.case_no === null);
+  ok('including sends that have no case number at all', caseless.length > 0,
+     String(caseless.length));
+  ok('each carries who it went to, what it was, and when',
+     caseless.every(s => s.recipient && s.kind && s.at));
+  ok('and whether it actually sent', caseless.every(s => typeof s.ok === 'boolean'));
+  ok('case-linked sends are still in there beside them',
+     hist.sends.some(s => s.case_no === 'API-PC-P'));
+  ok('a standalone payment send is distinguishable from a sheet',
+     hist.sends.some(s => s.kind === 'payment_options'));
+  /* A payment that rode WITH a sheet is not listed twice — the client received
+     ONE email, and a history reporting two would have the office believing it
+     sent something it did not. Counted before and after the same send. */
+  const payRows = h => h.sends.filter(s => s.kind === 'payment_options'
+    && s.recipient === 'jane@example.com').length;
+  const payBefore = payRows(hist);
+  await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'jane@example.com', include_payment: true } });
+  const hist2 = await jsonOf(await call(env, '/sends', { cookie: admin }));
+  ok('a payment that rode with a sheet adds no second payment row',
+     payRows(hist2) === payBefore, `${payBefore} -> ${payRows(hist2)}`);
+  ok('but the sheet it rode with IS on the history',
+     hist2.sends.some(s => s.kind === 'rate_sheet' && s.recipient === 'jane@example.com'));
+  ok('an investigator cannot read the send history',
+     (await (async () => {
+       const c = (await login(env, 'dana2', 'FieldWork2026x')).cookie;
+       return call(env, '/sends', { cookie: c });
+     })()).status === 403);
 
   globalThis.fetch = realFetch;
 }

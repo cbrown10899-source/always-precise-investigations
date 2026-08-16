@@ -889,3 +889,56 @@ was RESOLVED by the owner on 2026-08-15 — see the top of this file.)
 - A CHECK constraint cannot be widened from `schema.sql`, and
   `ALTER TABLE ADD COLUMN` is not idempotent. Use a companion table —
   `activity_removed`, `build_custom` and `build_reports` are the precedents.
+
+---
+
+## 🆕 PRE-CASE SENDS — fixed 2026-08-15 (owner: blocking workflow defect)
+
+**The portal blocked sending until a valid case number existed.** All five sends
+now work with none: Private Intake, Private Rate Sheet, Private Payment Options,
+Insurance Intake, Insurance Rate Sheet. **Name and a valid email are enough**;
+case number, claim number and internal reference are optional when available.
+
+The API mostly did not require a case — **the doors did.** The intake and the
+payment options could only be reached from a lead card, so in practice someone
+had to be on the desk before the office could email them anything, and the
+intake is what turns a phone call into a lead. `POST /intake-link/email` is the
+new pre-case route, `Send to someone new` on Rate sheets is the door, and
+`GET /sends` is the history — which had to be added because every existing view
+of a send hangs off a case, so a pre-case send was written correctly and then
+invisible.
+
+**Nothing is auto-created to have something to send against** (owner requirement
+3), asserted by counting `submissions` across all ten sends.
+
+**What did NOT relax:** the carrier sheet still cannot carry payment options at
+all, and a reference that *does* resolve to a claim assignment is still refused
+the consumer sheet and the payment instructions. The intake door is paired from
+an **explicit kind**, never from a case lookup — which is a stronger thing to
+rest the separation on than a lookup that may find nothing.
+
+**Recorded honestly:** this reversed a refusal added hours earlier from a Codex
+finding. A reference mistyped so badly it matches no row no longer trips the
+claims check, because there is nothing to check against. The owner weighed that
+against a workflow that could not send at all and chose this.
+
+## 📥 QUEUED — OWNER WORKFLOW SIMPLIFICATION (2026-08-15)
+
+Recorded verbatim in **`WORKFLOW-SIMPLIFICATION.md`** next to this file, on
+arrival, before any of it was built. **Queued behind the current unit on the
+owner's own instruction** — *"Queue this after the current unit."*
+
+Five parts: manual payments and an easier Record Payment · archive plus an
+admin-only Delete Permanently · claim reference optional and assignment not
+required · both admin accounts seeing identical data · two admins in Active
+Surveillance on one case at once.
+
+**That transcript arrived truncated** and the reconstructed fragments are
+bracketed in that file. Three things to settle before building, all recorded
+there: **§1 is largely built already** (the five methods, void-with-audit and
+the never-marks-paid rule all exist — the new part may only be reachability);
+**§2's Delete Permanently is the most dangerous item in the order** and needs its
+blast radius decided, since everything else in this system is soft-delete on
+purpose; and **§5 conflicts with a shipped invariant** — `openDayForAction()`
+enforces that you can only stop your own clock, and one open pause per day is a
+partial unique index, so two admins on one case needs a design decision first.

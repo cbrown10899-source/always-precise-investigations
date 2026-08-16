@@ -400,21 +400,32 @@ and moving it would write an event that did not happen. The email reuses
 `paymentBlockText/Html` rather than restating them — two renderings of the same
 instructions drift, and the one that drifts is the one nobody is looking at.
 
-**Payment options are never sent against a reference nobody can confirm**, and
-this rule is worth stating because the guards read fine while failing open. Both
-send paths matched the lead with `if (lead) { …check… }`, so a case number that
-resolved to nothing skipped the check entirely: **one mistyped character of a
-carrier's case number put Cash App and Venmo in front of an adjuster**, on the
-standalone route and on the private sheet with payment ticked. Reproduced at
-status 200 with the email delivered, both times.
+**Every send works before a case exists** (owner, 2026-08-15 — a blocking
+workflow defect). Private Intake, Private Rate Sheet, Private Payment Options,
+Insurance Intake and Insurance Rate Sheet all send on **a name and a valid email
+alone**; case number, claim number and internal reference are optional whenever
+they happen to be available, and **nothing is auto-created** to have something to
+send against.
 
-The scope of the refusal differs between the two, deliberately. `/payment-options/email`
-refuses an unresolvable reference outright — it only ever carries payment. On
-`/sheets/:id/email` the refusal applies **only when `include_payment` is set**,
-because there the case number is a *subject-line reference* and the office
-legitimately sends a sheet to a prospect with no case yet. A first attempt to
-refuse every unresolvable reference there broke the header-injection test, and
-that test was right — a plain sheet still sends, payment options do not.
+The API mostly did not require a case — **the doors did.** The intake and the
+payment options could only be reached from a lead card, so someone had to be on
+the desk before the office could email them anything, and the intake is what
+turns a phone call into a lead. `POST /intake-link/email` is the pre-case route,
+`Send to someone new` on Rate sheets is the door, and `GET /sends` is the
+history: every other view of a send hangs off a case, so a pre-case send was
+being written correctly and was then invisible.
+
+**What the separation rests on, now that a case lookup may find nothing:** the
+carrier sheet can never carry payment options at all (`sheetTakesPayment`); a
+reference that *does* resolve to a claim assignment is still refused both the
+consumer sheet and the payment instructions; and the pre-case intake door is
+paired from an **explicit `kind`**, never from a lookup. Resting it on the
+product being sent is stronger than resting it on a case that may not exist.
+
+Recorded honestly, because it reversed a guard added the same day from a Codex
+finding: a reference mistyped so badly that it matches no row no longer trips the
+claims check, since there is nothing to check against. The owner weighed that
+against a workflow that could not send at all.
 
 `GET /sheets` and `POST /sheets/:id/email` are admin-only; an investigator gets
 403 from both, from `/payment-options/email`, and from `/pricing`. Sending goes through `sendMail()`, the same
@@ -540,8 +551,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1070 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 824 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 1105 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 843 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
