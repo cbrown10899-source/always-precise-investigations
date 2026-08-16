@@ -617,7 +617,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1392 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 1428 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 928 checks: the page against the real Worker
 ```
 
@@ -827,6 +827,26 @@ intakes only, and switching one off never touches the other.
 lives only in that table; the schema seeds no default recipient and the page
 holds no provider credential. A test greps `worker.js` for dialable-looking
 digit runs and for provider names, and greps `schema.sql` for a seeded INSERT.
+
+**Email alerts are wired; SMS is not.** `notifyAdmins(env, event, caseNo)` is
+called at six points — the public ingest and the manual intake (`intakes`), the
+retainer payment route and `recordInvoicePayment` (`payments`), a report moving
+to `submitted` (`reports`), a build being finalized (`packages`), and a task
+created at **high or urgent** priority (`tasks`). "Important" is the priority the
+office already sets: alerting on every normal task is how an alert stops being
+read.
+
+It writes only to recipients that are switched on, subscribed to that event and
+**have an email address** — a phone-only recipient is skipped rather than
+emailed, because quietly substituting a channel they did not choose is worse
+than waiting for the provider.
+
+**It never throws, and every caller awaits it after its own write has
+committed.** An alert is a courtesy about something that already happened; a
+provider outage must not fail an intake, a payment or a report. There is a test
+that throws from the provider and asserts the intake is still accepted and the
+money still on the ledger. (The Worker's `fetch` takes no `ctx`, so there is no
+`waitUntil` — the send is awaited inline, capped by `sendMail`'s 8s timeout.)
 
 **SMS delivery is blocked on a provider, and the portal says so.** There is no
 SMS provider configured anywhere in this Worker — `alertDelivery()` reports

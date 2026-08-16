@@ -304,6 +304,8 @@ async function handleIngest(request, env) {
     if (String(e).includes('UNIQUE')) return json({ ok: true, duplicate: true });
     throw e;
   }
+  // The case is recorded; telling the office is a courtesy that cannot fail it.
+  await notifyAdmins(env, 'intakes', caseNo);
   return json({ ok: true, case_no: caseNo });
 }
 
@@ -1424,6 +1426,7 @@ async function createManualIntake(request, env, user) {
           payload.client_name || null, payload.client_email || null, payload.client_phone || null,
           payload.subject_name || null, payload.carrier || null, payload.claim_number || null,
           JSON.stringify(payload), nowIso()).run();
+      await notifyAdmins(env, 'intakes', caseNo);
       return json({ ok: true, case_no: caseNo }, 201);
     } catch (e) {
       if (!String(e).includes('UNIQUE')) throw e;
@@ -2158,6 +2161,56 @@ function alertText(event, caseNo, channel) {
   }
   const clean = /^[A-Za-z0-9-]{3,64}$/.test(String(caseNo || '')) ? String(caseNo) : '';
   return `${found[1]}${clean ? ` — case ${clean}` : ''}. Sign in to the portal for the detail.`;
+}
+
+/* SEND AN ALERT TO WHOEVER ASKED FOR THAT ONE.
+
+   NEVER THROWS, and every caller awaits it AFTER its own write has committed.
+   An alert is a courtesy about something that already happened; a provider
+   outage must not fail an intake, a payment or a report. The same rule
+   `logSend` follows, for the same reason.
+
+   Only recipients that are (a) switched on, (b) subscribed to THIS event and
+   (c) have an email address are written to. A recipient with only a phone
+   number is deliberately skipped: SMS has no provider, and quietly emailing
+   someone who asked for texts would be inventing a channel they did not choose.
+
+   `event` is checked against ALERT_IDS before it reaches the column name, so
+   the interpolation below cannot be anything but one of five known columns.
+
+   The body is `alertText(..., 'email')` and nothing else — no claimant, client,
+   subject, address, claim number or amount, ever. One writer for the wording,
+   so what is sent is what the Settings page previewed. */
+async function notifyAdmins(env, event, caseNo) {
+  try {
+    if (!ALERT_IDS.includes(event)) return { sent: 0, reason: 'unknown_event' };
+    if (!env.RESEND_API_KEY) return { sent: 0, reason: 'not_configured' };
+    if ((await missingTables(env)).includes('notify_recipient')) {
+      return { sent: 0, reason: 'not_set_up' };
+    }
+    const { results } = await env.DB.prepare(
+      `SELECT email FROM notify_recipient
+        WHERE enabled = 1 AND alert_${event} = 1
+          AND email IS NOT NULL AND TRIM(email) != ''`).all();
+    const to = (results || []).map(r => String(r.email).trim()).filter(Boolean);
+    if (!to.length) return { sent: 0, reason: 'no_recipients' };
+
+    const label = (ALERT_EVENTS.find(([id]) => id === event) || [])[1] || 'Portal alert';
+    const clean = /^[A-Za-z0-9-]{3,64}$/.test(String(caseNo || '')) ? String(caseNo) : '';
+    const text = alertText(event, clean, 'email');
+    const subject = `${label}${clean ? ` — case ${clean}` : ''}`;
+    const html = `<p style="font:15px/1.5 system-ui,sans-serif">${escHtml(text)}</p>`;
+
+    let sent = 0;
+    for (const addr of to) {
+      const r = await sendMail(env, { to: addr, subject, text, html });
+      if (r.sent) sent++;
+    }
+    return { sent, of: to.length };
+  } catch {
+    /* The event is the point; telling someone about it is not worth failing it. */
+    return { sent: 0, reason: 'error' };
+  }
 }
 
 /* WHAT CAN ACTUALLY BE DELIVERED TODAY, said plainly so the office is never
@@ -3541,6 +3594,10 @@ async function addTask(request, env, user, caseNo) {
     `INSERT INTO case_tasks (case_no, task, assigned_to, due_date, priority, created_by, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`)
     .bind(caseNo, task, assigned, due || null, priority, user.id, nowIso()).run();
+  /* "Important" is the priority the office already sets: high or urgent. A
+     normal task is work, not news, and alerting on every one is how an alert
+     stops being read. */
+  if (priority === 'high' || priority === 'urgent') await notifyAdmins(env, 'tasks', caseNo);
   return json({ ok: true, id: res.meta ? res.meta.last_row_id : null }, 201);
 }
 
@@ -4045,8 +4102,11 @@ async function recordInvoicePayment(request, env, user, id) {
   const newStatus = out.balance_due <= 0 ? 'paid' : 'partially_paid';
   await env.DB.prepare('UPDATE invoices SET status = ?, updated_by = ?, updated_at = ? WHERE id = ?')
     .bind(newStatus, user.id, nowIso(), id).run();
-  await invoiceEvent(env, id, user, 'payment_recorded', `$${amount} ${method}` + (newStatus === 'paid' ? ' — PAID IN FULL' : ''));
+  await invoiceEvent(env, id, user, 'payment_recorded', `${amount} ${method}` + (newStatus === 'paid' ? ' — PAID IN FULL' : ''));
   const after = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
+  /* The alert says a payment was recorded and never how much — the amount is
+     commercial, and it is one sign-in away. */
+  await notifyAdmins(env, 'payments', after ? after.case_no : '');
   return json({ ok: true, invoice: await invoiceWithMoney(env, after) });
 }
 
@@ -4993,6 +5053,8 @@ async function setReportStatus(request, env, user, caseNo, id) {
         .bind(id, full ? String(full.body || '') : '', nowIso(), user.id).run();
     } catch { /* a missing table surfaces via /health, not by blocking review */ }
   }
+  // Only the hand-off that needs someone's attention, not every status move.
+  if (next === 'submitted') await notifyAdmins(env, 'reports', caseNo);
   return json({ ok: true, id, status: next });
 }
 
@@ -5935,6 +5997,7 @@ async function route(request, env) {
       'UPDATE case_builds SET status = ?, finalized_by = ?, finalized_at = ?, updated_by = ?, updated_at = ? WHERE id = ?')
       .bind('finalized', user.id, nowIso(), user.id, nowIso(), b.id).run();
     await buildEvent(env, b.id, user, 'finalized', `v${b.version}, ${(items || []).length} item(s)`);
+    await notifyAdmins(env, 'packages', b.case_no);
     return json(await buildState(env, b.case_no));
   }
 
@@ -6245,6 +6308,8 @@ async function route(request, env) {
     const outcome = await recordRetainerPayment(env, m[1], tok,
       { amount: amt, method: meth, paid_on: on, reference: clean(body.reference, 200) }, user.id);
     if (outcome === 'indeterminate') return json(INDETERMINATE_PAYMENT, 409);
+    /* The money is on the ledger; the alert says so and never how much. */
+    await notifyAdmins(env, 'payments', m[1]);
     return json({ ok: true, authorization: await authorizationFor(env, m[1], true) });
   }
 
