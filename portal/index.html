@@ -3537,7 +3537,7 @@ function fieldPanel(){
            <button class="btn danger" type="submit">End investigation day</button>
            ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
          </form>`
-      : `<form class="quick" data-act="startDay">
+      : `${otherAdminDayHtml(open)}<form class="quick" data-act="startDay">
            <div class="two">
              <label class="f"><span>Date</span><input id="d_date" type="date" value="${today}"></label>
              <label class="f"><span>Start time</span><input id="d_start" type="time" value="${now}"></label>
@@ -4844,7 +4844,17 @@ function overviewPanel(s, a){
               : row("Type", "Private client"))}
         ${row("Requested start", p.start_date)}
         ${row("Priority", p.priority)}
-        ${row("Investigator", assignee ? (assignee.display_name || assignee.username) : "Unassigned")}
+        ${/* ASSIGNMENT, REACHABLE BUT SECONDARY (owner, 2026-08-16). The row was
+              read-only, and the only way to act on it was Admin -> Assignment.
+              This is a quiet link on the row it belongs to, not a primary case
+              action: no button styling, no place in the Next step card, and it
+              opens the Assignment panel that already exists rather than
+              duplicating the control. A case with nobody on it is still
+              perfectly valid — assignment is optional and stays optional. */""}
+        <div class="ov-row"><span>Investigator</span>
+          <b>${esc(assignee ? (assignee.display_name || assignee.username) : "Unassigned")}${
+            ME.role === "admin" ? ` <button class="tl-edit" data-act="wsTab" data-tab="assign">${
+              assignee ? "Change" : "Assign"}</button>` : ""}</b></div>
         ${row("Received", when(s.created_at))}
       </div>
       <div class="ovcard">
@@ -6486,13 +6496,61 @@ async function startInvestigationDay(){
   await reloadWorkspace();
 }
 
+/* ENDING SOMEONE ELSE'S SESSION IS A SEPARATE, CONFIRMED ACTION (owner,
+   2026-08-16). The ordinary End reaches only your own day; this is its own
+   control, in its own place, behind its own confirmation — never a retry of the
+   same press, and never something the End button can turn into.
+
+   TWO ADMINS ON ONE CASE IS THE ORDINARY CASE, not the exception: you can start
+   your own day beside theirs, and the form to do that sits directly below this.
+   Ending theirs is the unusual thing, so it reads as the smaller offer. */
+let DAY_OTHER = "";     // the Worker's sentence about whose day is running
+
+function otherAdminDayHtml(ownOpen){
+  if(ME.role !== "admin") return "";
+  const running = ((WS && WS.days) || [])
+    .filter(d => !d.end_time && (!ownOpen || d.id !== ownOpen.id));
+  if(!running.length) return "";
+  return running.map(d => `<div class="dayon" style="display:flex;justify-content:space-between;gap:10px;align-items:center">
+      <span><b>${esc(d.investigator || "Another admin")} has a day running</b> since
+        ${esc(t12(d.start_time))} on ${esc(fmtDay(d.day_date))}. Starting your own below runs
+        alongside theirs.</span>
+      <button class="btn sm ghost" data-act="endOtherDay">End their session</button>
+    </div>`).join("") +
+    (DAY_OTHER ? `<div class="err">${esc(DAY_OTHER)}</div>` : "");
+}
+
 async function endInvestigationDay(){
-  WS_ERR = "";
+  WS_ERR = ""; DAY_OTHER = "";
   try{
     const r = await api(`/cases/${encodeURIComponent(WS_CASE)}/day/end`, {method:"POST", body:{
       end_time: $("d_end").value, end_mileage: $("d_emiles").value, summary: $("d_sum").value,
     }});
     WS_NOTICE = `Day ended — ${r.hours} hours${r.miles != null ? `, ${r.miles} miles` : ""} recorded.`;
+  }catch(e){
+    WS_ERR = e.message;
+    /* Offer the separate action only when the Worker says this is someone
+       else's session. Any other failure is an ordinary failure. */
+    if(e.other_session) DAY_OTHER = e.message;
+  }
+  await reloadWorkspace();
+}
+
+async function endOtherAdminsDay(){
+  if(!confirm("End the other admin's session?\n\n" +
+    "They are out on this case now. Their hours are recorded to them, and this " +
+    "cannot be undone from here — they would have to start a new day.")) return;
+  WS_ERR = ""; DAY_OTHER = "";
+  try{
+    /* NOW, not a field: an admin ending someone else's session has no End form
+       in front of them — that form belongs to their own day, which is exactly
+       the day they do not have. The Worker requires an end time, so the moment
+       of the press is the honest one. Mileage and summary are theirs to know,
+       not this admin's to invent. */
+    const r = await api(`/cases/${encodeURIComponent(WS_CASE)}/day/end-other`, {method:"POST", body:{
+      end_time: new Date().toTimeString().slice(0, 5),
+    }});
+    WS_NOTICE = `Their day was ended — ${r.hours} hours recorded to them.`;
   }catch(e){ WS_ERR = e.message; }
   await reloadWorkspace();
 }
@@ -7072,6 +7130,7 @@ document.addEventListener("click", ev => {
   else if(act === "svAddAnother"){ SV.ok = ""; SV.entry = null; paint(); }
   else if(act === "svStartDay"){ svStartDay(); }
   else if(act === "svEndDay"){ svEndDay(); }
+  else if(act === "endOtherDay"){ endOtherAdminsDay(); }
   else if(act === "svPause"){ svPauseDay(); }
   else if(act === "svResume"){ svResumeDay(); }
   else if(act === "svSaveEntry"){ svSaveEntry(null); }

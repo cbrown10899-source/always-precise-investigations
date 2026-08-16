@@ -1635,11 +1635,28 @@ section('A reassignment cannot strand a running day');
   ok('which empties Out now',
      (await jsonOf(await call(env, '/active', { cookie: admin }))).out_now.length === 0);
 
-  // And an admin can close one nobody else can reach.
+  /* And an admin can close one nobody else can reach — but NOT with the
+     ordinary End button any more (owner, 2026-08-16). That control reaches only
+     the caller's own session; closing someone else's is its own route with its
+     own confirmation, so a desk admin cannot end a field admin's day by press. */
   await strand('API-ST2');
-  const byAdmin = await call(env, '/cases/API-ST2/day/end', { method: 'POST', cookie: admin,
+  const byPlainEnd = await call(env, '/cases/API-ST2/day/end', { method: 'POST', cookie: admin,
     body: { end_time: '12:00' } });
-  ok('an admin can close a day that would otherwise be stranded', byAdmin.status === 200);
+  ok('the ordinary End does NOT reach a day that is not the admin\'s own',
+     byPlainEnd.status === 409, String(byPlainEnd.status));
+  const refusal = await jsonOf(byPlainEnd);
+  ok('and the refusal names whose day it is and the separate action',
+     /dana/i.test(refusal.error || '') && /end their session/i.test(refusal.error || ''),
+     refusal.error);
+  ok('flagged so the page can offer that action rather than parse the sentence',
+     refusal.other_session === true);
+  ok('the day is untouched by the refusal',
+     (await jsonOf(await call(env, '/active', { cookie: admin }))).out_now.length === 1);
+
+  const byAdmin = await call(env, '/cases/API-ST2/day/end-other', { method: 'POST', cookie: admin,
+    body: { end_time: '12:00' } });
+  ok('an admin can close a day that would otherwise be stranded', byAdmin.status === 200,
+     String(byAdmin.status));
   const ws = await jsonOf(await call(env, '/cases/API-ST2/workspace', { cookie: admin }));
   ok('the hours stay credited to whoever actually worked them',
      ws.days[0].investigator_id === danaId && ws.days[0].hours === 4);
@@ -7354,6 +7371,108 @@ section('Alerts are silent when there is nobody to tell or no provider');
                             client_name: 'Quiet', subject_name: 'S' })).status === 200);
   ok('and still sends nothing', tried === 0, String(tried));
   globalThis.fetch = realFetch;
+}
+
+/* TWO ADMINS OUT ON ONE CASE AT ONCE (owner, WORKFLOW-SIMPLIFICATION §5).
+
+   The data layer already allowed this: `startDay` checks for an existing open
+   day scoped to `investigator_id = user.id`, not to the case, and the only
+   unique index in the area is one open PAUSE per DAY — already per session. So
+   nothing about concurrency needed building. What needed fixing is the rule the
+   owner named: "never let one Admin silently stop or overwrite the other
+   Admin's work." */
+section('Two admins can be out on one case, and neither can stop the other by accident');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const a = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, a,
+    { username: 'second_admin', display_name: 'Second Admin', role: 'admin' }))).url;
+  const tk = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tk}/accept`, { method: 'POST', body: { password: 'SecondAdmin2026x' } });
+  const b = (await login(env, 'second_admin', 'SecondAdmin2026x')).cookie;
+
+  await ingest(env, { case_no: 'API-2ADM', service: 'Surveillance',
+                      client_name: 'Shared Case', subject_name: 'S' });
+
+  /* BOTH RUNNING AT ONCE, on the same case. */
+  ok('the first admin can start a day',
+     (await call(env, '/cases/API-2ADM/day/start', { method: 'POST', cookie: a,
+       body: { day_date: '2026-08-16', start_time: '07:00' } })).status === 201);
+  ok('and the second can start their own on the SAME case',
+     (await call(env, '/cases/API-2ADM/day/start', { method: 'POST', cookie: b,
+       body: { day_date: '2026-08-16', start_time: '07:30' } })).status === 201);
+  const out = await jsonOf(await call(env, '/active', { cookie: a }));
+  ok('Out now shows both sessions, not one',
+     out.out_now.filter(d => d.case_no === 'API-2ADM').length === 2,
+     String(out.out_now.length));
+  ok('each is attributed to the admin who started it',
+     new Set(out.out_now.map(d => d.investigator)).size === 2,
+     out.out_now.map(d => d.investigator).join(','));
+
+  /* AND EACH CONTROL REACHES ONLY ITS OWN SESSION. */
+  const dayOf = async ck => (await jsonOf(await call(env, '/my/active', { cookie: ck }))).active;
+  const aDay = await dayOf(a), bDay = await dayOf(b);
+  ok('each admin\'s own view shows their own day', aDay && bDay && aDay.id !== bDay.id,
+     JSON.stringify([aDay && aDay.id, bDay && bDay.id]));
+
+  await call(env, '/cases/API-2ADM/day/pause', { method: 'POST', cookie: a, body: {} });
+  const bAfterAPaused = await dayOf(b);
+  ok('one admin pausing does not pause the other',
+     !bAfterAPaused.paused_at, JSON.stringify(bAfterAPaused.paused_at));
+  await call(env, '/cases/API-2ADM/day/resume', { method: 'POST', cookie: a, body: {} });
+
+  ok('the second admin ending their day leaves the first running',
+     (await call(env, '/cases/API-2ADM/day/end', { method: 'POST', cookie: b,
+       body: { end_time: '11:00' } })).status === 200
+     && Boolean(await dayOf(a)));
+  ok('and Out now is down to the one still going',
+     (await jsonOf(await call(env, '/active', { cookie: a })))
+       .out_now.filter(d => d.case_no === 'API-2ADM').length === 1);
+
+  /* THE DESK ADMIN CANNOT END THE FIELD ADMIN BY PRESS. B has no day of their
+     own now, so the ordinary End is exactly the accident this fixes. */
+  const press = await call(env, '/cases/API-2ADM/day/end', { method: 'POST', cookie: b,
+    body: { end_time: '12:00' } });
+  ok('an admin with no session of their own cannot End someone else\'s',
+     press.status === 409, String(press.status));
+  const why = await jsonOf(press);
+  ok('and is told whose it is', /trever/i.test(why.error || ''), why.error);
+  ok('and that a separate action exists', /end their session/i.test(why.error || ''), why.error);
+  ok('flagged for the page', why.other_session === true);
+  ok('the other admin is still out', Boolean(await dayOf(a)));
+  ok('pausing someone else\'s is refused the same way',
+     (await call(env, '/cases/API-2ADM/day/pause', { method: 'POST', cookie: b, body: {} })).status === 409);
+  ok('and so is resuming it',
+     (await call(env, '/cases/API-2ADM/day/resume', { method: 'POST', cookie: b, body: {} })).status === 409);
+  ok('after all that refusing, the day is still running — refusing is not closing',
+     (await jsonOf(await call(env, '/active', { cookie: a })))
+       .out_now.filter(d => d.case_no === 'API-2ADM').length === 1);
+
+  /* THE SEPARATE, EXPLICIT ACTION STILL WORKS. No reason is asked for. */
+  const takeover = await call(env, '/cases/API-2ADM/day/end-other', { method: 'POST', cookie: b,
+    body: { end_time: '12:00' } });
+  /* No reason is asked for (owner): the body carries only the end time, and the
+     confirmation on the page is the deliberate act. */
+  ok('the separate action ends the other admin\'s session, with no reason asked for',
+     takeover.status === 200, String(takeover.status));
+  ok('Out now is empty afterwards',
+     (await jsonOf(await call(env, '/active', { cookie: a })))
+       .out_now.filter(d => d.case_no === 'API-2ADM').length === 0);
+  const ws = await jsonOf(await call(env, '/cases/API-2ADM/workspace', { cookie: a }));
+  ok('the hours stay credited to the admin who actually worked them',
+     ws.days.every(d => d.hours != null) && ws.days.length === 2,
+     JSON.stringify(ws.days.map(d => [d.investigator_id, d.hours])));
+
+  /* An investigator can never reach the separate action. */
+  const iLink = (await jsonOf(await invite(env, a,
+    { username: 'twoadm_inv', display_name: 'Field', role: 'investigator' }))).url;
+  const iTk = new URL(iLink, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${iTk}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'twoadm_inv', 'FieldWork2026x')).cookie;
+  ok('an investigator cannot end anyone else\'s session',
+     (await call(env, '/cases/API-2ADM/day/end-other', { method: 'POST', cookie: inv,
+       body: { end_time: '12:00' } })).status === 403);
 }
 
 /* NO NUMBER AND NO PROVIDER CREDENTIAL IS EVER WRITTEN INTO THE SOURCE. The

@@ -3163,7 +3163,7 @@ async function openDayFor(env, user, caseNo) {
  * caller with no claim on the case at all gets the same 404 as before — so
  * nothing here reveals whether a day is running on a case they cannot see. */
 const DAY_COLS = 'id, day_date, start_time, start_mileage, created_at, investigator_id';
-async function openDayForAction(env, user, caseNo) {
+async function openDayForAction(env, user, caseNo, { allowOthers = false } = {}) {
   const own = await env.DB.prepare(
     `SELECT ${DAY_COLS} FROM case_days
       WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL
@@ -3173,18 +3173,53 @@ async function openDayForAction(env, user, caseNo) {
   // No day of their own here, so the ordinary case boundary applies.
   if (!(await caseFor(env, user, caseNo))) return { status: 404, error: 'not found' };
 
-  if (user.role === 'admin') {
+  /* TWO ADMINS MAY BE OUT ON THE SAME CASE AT ONCE (owner, WORKFLOW-SIMPLIFICATION
+     §5: "never let one Admin silently stop or overwrite the other Admin's work").
+
+     The admin fallback below used to be UNCONDITIONAL, which made an ordinary
+     End or Pause reach whatever day happened to be open. With one admin in the
+     field and another at the desk, the desk's End button silently ended the
+     field's day — the exact failure the owner named, reachable by one press.
+
+     So the recovery path is kept and made DELIBERATE. `allowOthers` is set only
+     by `/day/end-other`, its own route with its own control and confirmation.
+     End, pause and resume never set it, so they can only ever touch the
+     caller's own session. A recovery path that does not exist is how a day ends
+     up hand-edited in D1 (HIGH #2); one reachable by accident is how an
+     investigator loses the clock they are standing in the rain with. */
+  if (allowOthers && user.role === 'admin') {
     const any = await env.DB.prepare(
       `SELECT ${DAY_COLS} FROM case_days
         WHERE case_no = ? AND end_time IS NULL ORDER BY id DESC LIMIT 1`).bind(caseNo).first();
     if (any) return { day: any };
+  }
+
+  /* An admin pressing the ordinary control on someone else's running day is
+     told whose it is and what the separate action is — refusing without saying
+     why is how people go looking for a workaround. Only an admin is told, and
+     only about a case they already passed `caseFor` for. */
+  if (user.role === 'admin') {
+    const other = await env.DB.prepare(
+      `SELECT d.id, d.day_date, u.display_name AS investigator
+         FROM case_days d LEFT JOIN users u ON u.id = d.investigator_id
+        WHERE d.case_no = ? AND d.end_time IS NULL ORDER BY d.id DESC LIMIT 1`)
+      .bind(caseNo).first();
+    if (other) {
+      return { status: 409, other_session: true,
+        error: `${other.investigator || 'Another admin'} has a day running on this case, `
+             + 'started ' + (other.day_date || 'earlier') + '. You can only end or pause your '
+             + 'own session — use End their session if theirs needs closing.' };
+    }
   }
   return { status: 409, error: 'No investigation day is running on this case.' };
 }
 
 async function pauseDay(request, env, user, caseNo) {
   const found = await openDayForAction(env, user, caseNo);
-  if (!found.day) return json({ error: found.error }, found.status);
+  if (!found.day) {
+    return json({ error: found.error, ...(found.other_session ? { other_session: true } : {}) },
+      found.status);
+  }
   const day = found.day;
   const state = await dayPauseState(env, day.id);
   if (state.paused_at) return json({ error: 'The day is already paused.' }, 409);
@@ -3197,7 +3232,10 @@ async function pauseDay(request, env, user, caseNo) {
 
 async function resumeDay(env, user, caseNo) {
   const found = await openDayForAction(env, user, caseNo);
-  if (!found.day) return json({ error: found.error }, found.status);
+  if (!found.day) {
+    return json({ error: found.error, ...(found.other_session ? { other_session: true } : {}) },
+      found.status);
+  }
   const day = found.day;
   const state = await dayPauseState(env, day.id);
   if (!state.paused_at) return json({ error: 'The day is not paused.' }, 409);
@@ -3207,9 +3245,12 @@ async function resumeDay(env, user, caseNo) {
   return json({ ok: true, day_id: day.id, ...(await dayPauseState(env, day.id)), server_now: nowIso() });
 }
 
-async function endDay(request, env, user, caseNo) {
-  const found = await openDayForAction(env, user, caseNo);
-  if (!found.day) return json({ error: found.error }, found.status);
+async function endDay(request, env, user, caseNo, opts) {
+  const found = await openDayForAction(env, user, caseNo, opts);
+  if (!found.day) {
+    return json({ error: found.error, ...(found.other_session ? { other_session: true } : {}) },
+      found.status);
+  }
   const day = found.day;
 
   const body = await readJson(request);
@@ -5700,6 +5741,24 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/day\/end$/);
   if (m && method === 'POST') return endDay(request, env, user, m[1]);
+
+  /* END SOMEONE ELSE'S SESSION — its own route, deliberately (owner, 2026-08-16:
+     "ending another admin's session requires a separate explicit confirm
+     action").
+
+     A separate path rather than a flag on `/day/end`, so the ordinary control
+     CANNOT reach it however it is called. A flag is one stray `true` away from
+     being back where this started; a route the End button never calls is not.
+
+     Admin-only, and it is also the recovery path from HIGH #2 — a day stranded
+     by a reassignment, where the original investigator can no longer pass
+     `caseFor` and nobody else could reach the clock. No reason is asked for
+     (owner): the confirmation is the deliberate act. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/day\/end-other$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return endDay(request, env, user, m[1], { allowOthers: true });
+  }
 
   // Stopping the clock for a break. Scoped to the caller's own running day,
   // exactly as day/end is — you can only pause a day you are working.
