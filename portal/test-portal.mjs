@@ -1558,6 +1558,238 @@ section('A private retainer is chosen before the sheet goes, and never reset by 
   await page.close();
 }
 
+/* PAYMENTS.md second handoff §1/§4 — SEND PAYMENT OPTIONS from the lead card,
+   and the standalone dialog it opens. "This allows payment instructions to be
+   sent later without resending the rate sheet."
+
+   The boundary is asserted from both ends on the same desk, which is the point:
+   a private card offers it, an insurance card beside it does not. */
+section('A private lead can be sent payment options; an insurance lead cannot');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Leads' }).click();
+  await page.waitForTimeout(600);
+
+  const priv = page.locator('.pcard', { hasText: 'API-20260812-4002' });
+  const ins = page.locator('.pcard', { hasText: 'API-20260812-4001' });
+  ok('both a private and an insurance lead are on the desk',
+     await priv.count() === 1 && await ins.count() === 1);
+
+  // §15.1 / §15.2 — the whole boundary, on two cards side by side.
+  ok('the private card offers Send payment options',
+     await priv.locator('.btn', { hasText: 'Send payment options' }).count() === 1);
+  ok('the insurance card does NOT, anywhere on it',
+     await ins.locator('.btn', { hasText: 'Send payment options' }).count() === 0);
+  ok('and the insurance card still offers its own two sends',
+     await ins.locator('.btn', { hasText: 'Send rate sheet' }).count() === 1
+     && await ins.locator('.btn', { hasText: 'Send intake' }).count() === 1);
+  ok('the private card keeps its existing actions too — nothing was displaced',
+     await priv.locator('.btn', { hasText: 'Review' }).count() === 1
+     && await priv.locator('.btn', { hasText: 'Send rate sheet' }).count() === 1
+     && await priv.locator('.btn', { hasText: 'Send intake' }).count() === 1);
+
+  // The dialog.
+  await priv.locator('.btn', { hasText: 'Send payment options' }).click();
+  await page.waitForTimeout(900);
+  ok('the standalone dialog opens', await page.locator('.amsheet').count() === 1);
+  ok('titled as payment options, not as a rate sheet send',
+     has(await text(page, '.amhead'), 'Send payment options'));
+  ok('with the case number riding along',
+     await page.locator('#ps_case').inputValue() === 'API-20260812-4002');
+  ok('both methods are offered, independently tickable',
+     await page.locator('.ps-pm').count() === 2);
+  ok('and both start ticked, which is the onboarding default',
+     await page.locator('.ps-pm:checked').count() === 2);
+
+  // An address is required before anything can be spent on a send.
+  await page.locator('#ps_to').fill('');
+  await page.locator('[data-act="paySendStep"]').click();
+  await page.waitForTimeout(400);
+  ok('an empty address is refused before moving on',
+     has(await text(page, '.amsheet'), 'Enter the address'));
+
+  /* Choosing NO method is refused rather than sent as an empty PAYMENT OPTIONS
+     heading — the same refusal the Worker makes, answered where it can be
+     fixed. */
+  await page.locator('#ps_to').fill('client@example.test');
+  await page.locator('.ps-pm[data-pm="cash_app"]').uncheck();
+  await page.locator('.ps-pm[data-pm="venmo"]').uncheck();
+  await page.locator('[data-act="paySendStep"]').click();
+  await page.waitForTimeout(400);
+  ok('choosing no payment method at all is refused',
+     has(await text(page, '.amsheet'), 'at least one payment method'));
+
+  // One method, then preview.
+  await page.locator('.ps-pm[data-pm="venmo"]').check();
+  await page.locator('[data-act="paySendStep"]').click();
+  await page.waitForTimeout(600);
+  const prev = await text(page, '.amsheet');
+  ok('the preview names only the method still ticked',
+     has(prev, 'Venmo') && !has(prev, 'Cash App'), prev.slice(0, 300));
+  /* The reason this dialog exists at all, stated on the screen where an admin
+     would otherwise assume the opposite. */
+  ok('and says plainly that the rate sheet is NOT included',
+     has(prev, 'Not included') && has(prev, 'payment instructions only'), prev.slice(0, 400));
+  ok('and that sending does not mark the retainer paid',
+     has(prev, 'does not mark the retainer paid'));
+
+  /* Mail is unconfigured in this run, so a send is a REAL failure — and it has
+     to be reported as one rather than swallowed into a success message. A send
+     that vanished silently is how "I sent that last week" becomes wrong. */
+  await page.locator('[data-act="paySendGo"]').click();
+  await page.waitForTimeout(900);
+  ok('a failed send says so instead of claiming success',
+     has(await text(page, '.amsheet'), 'not configured'), await text(page, '.amsheet'));
+  ok('and the dialog stays open on the failure, rather than closing over it',
+     await page.locator('.amsheet').count() === 1);
+
+  await page.locator('.amx').click();
+  await page.waitForTimeout(300);
+  ok('closing returns to the desk with the cards intact',
+     await page.locator('.amsheet').count() === 0
+     && await page.locator('.pcard').count() >= 2);
+  await page.close();
+}
+
+/* PRE-CASE SENDS (owner, 2026-08-15 — a blocking workflow defect).
+
+   The sends never required a case in the Worker, but the intake and the payment
+   options could only be REACHED from a lead card, so in practice the office had
+   to put someone on the desk before it could email them anything. The intake is
+   what turns a phone call into a lead, so that ordering was backwards.
+
+   This is the door, and the history that has to work without a case number. */
+section('Sending works before anyone is on the desk, and the history shows it');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Rate sheets' }).click();
+  await page.waitForTimeout(800);
+  const view = await text(page, '#app');
+
+  ok('the Rate sheets screen carries a pre-case send area', has(view, 'Send to someone new'));
+  ok('and says plainly that no case is needed', has(view, 'no case needed'));
+  ok('with all three sends that had no door before',
+     await page.locator('[data-act="preIntake"][data-kind="private"]').count() === 1
+     && await page.locator('[data-act="preIntake"][data-kind="insurance"]').count() === 1
+     && await page.locator('[data-act="prePay"]').count() === 1);
+  /* Requirement 3, said on the screen where someone might assume otherwise. */
+  ok('and states that nothing is created by sending',
+     has(view, 'Nothing here creates a lead or a case'));
+
+  // The private intake door. The KIND is fixed by the button, not pickable —
+  // a picker here would be one more way to send a carrier the consumer form.
+  await page.locator('[data-act="preIntake"][data-kind="private"]').click();
+  await page.waitForTimeout(400);
+  ok('the private intake dialog opens', await page.locator('#pi_to').count() === 1);
+  ok('naming the private form', has(await text(page, '.amhead'), 'Private Client Intake'));
+  ok('with no case field at all — there is nothing to attach it to',
+     await page.locator('#pi_case').count() === 0);
+  ok('and no way to switch it to the carrier form',
+     await page.locator('.amsheet select').count() === 0);
+  ok('an address is required before a send is spent',
+     await (async () => {
+       await page.locator('[data-act="preIntakeGo"]').click();
+       await page.waitForTimeout(300);
+       return has(await text(page, '.amsheet'), 'Enter the address');
+     })());
+
+  /* Mail is unconfigured in this run, so the send is a real failure — which is
+     useful twice over: it proves the door reaches the Worker, and it proves a
+     failed pre-case send is KEPT and shown rather than swallowed. */
+  await page.locator('#pi_to').fill('newcaller@example.test');
+  await page.locator('#pi_name').fill('Jane Caller');
+  await page.locator('[data-act="preIntakeGo"]').click();
+  await page.waitForTimeout(900);
+  ok('a failed pre-case send says so rather than claiming success',
+     has(await text(page, '.amsheet'), 'not configured'), await text(page, '.amsheet'));
+  await page.locator('.amx').click();
+  await page.waitForTimeout(400);
+
+  // The insurance door is the same control with the other form behind it.
+  await page.locator('[data-act="preIntake"][data-kind="insurance"]').click();
+  await page.waitForTimeout(400);
+  ok('the insurance intake dialog names the carrier form',
+     has(await text(page, '.amhead'), 'Insurance Assignment Intake'));
+  /* Checked on the METHODS and the handles, not on the word "payment" — the
+     dialog's own correct copy says no payment information is included, and an
+     assertion that trips on that is testing the wrong thing. */
+  ok('and offers a carrier no payment method or handle',
+     !has(await text(page, '.amsheet'), 'Cash App')
+     && !has(await text(page, '.amsheet'), 'Venmo')
+     && await page.locator('.ps-pm').count() === 0
+     && !has(await text(page, '.amsheet'), 'PAYMENT OPTIONS'));
+  await page.locator('.amx').click();
+  await page.waitForTimeout(300);
+
+  /* Payment options from here open the SAME dialog the lead card opens, with
+     no case behind it — deliberately one code path, because a second payment
+     dialog is a second place for the private-only boundary to go wrong. */
+  await page.locator('[data-act="prePay"]').click();
+  await page.waitForTimeout(900);
+  ok('payment options open with no case number', await page.locator('#ps_case').count() === 1
+     && await page.locator('#ps_case').inputValue() === '');
+  ok('and the methods are still offered', await page.locator('.ps-pm').count() === 2);
+  await page.locator('#ps_to').fill('newcaller@example.test');
+  await page.locator('[data-act="paySendStep"]').click();
+  await page.waitForTimeout(500);
+  ok('it previews without a case reference',
+     has(await text(page, '.amsheet'), 'payment instructions only'));
+  await page.locator('.amx').click();
+  await page.waitForTimeout(500);
+
+  /* Requirement 6 — the history has to work with no case number. The failed
+     intake send above had none, so it can only appear here if the log and this
+     view both handle a null case. */
+  await page.locator('.tabs button', { hasText: 'Cases' }).click();
+  await page.waitForTimeout(300);
+  await page.locator('.tabs button', { hasText: 'Rate sheets' }).click();
+  await page.waitForTimeout(900);
+  const hist = await text(page, '#app');
+  ok('the screen carries a recent sends history', has(hist, 'Recent sends'));
+  ok('the pre-case send is in it, by recipient', has(hist, 'newcaller@example.test'));
+  ok('marked as having had no case rather than shown blank',
+     has(hist, 'sent before one existed'));
+  ok('and marked as failed, because it was', has(hist, 'Failed'));
+
+  /* A FAILED LOAD IS NOT AN EMPTY HISTORY (Codex stop-time review, 2026-08-15).
+
+     `loadSends` set SENDS = [] in its catch, and an empty list renders as
+     "Nothing sent yet." So a 500, a dropped connection or a permission problem
+     told the office that nothing had ever been emailed to anyone — the screen
+     asserting a fact it did not have, in the one panel whose entire job is
+     answering "did that go out?", and in the direction that reads as
+     reassuring.
+
+     Driven as a real failed request rather than by poking page state, so it
+     covers the wiring and not just the markup. */
+  await page.route('**/portal-api/sends*', r => r.fulfill({
+    status: 500, contentType: 'application/json', body: '{"error":"the history is unavailable"}' }));
+  await page.locator('.tabs button', { hasText: 'Cases' }).click();
+  await page.waitForTimeout(300);
+  await page.locator('.tabs button', { hasText: 'Rate sheets' }).click();
+  await page.waitForTimeout(900);
+  const broken = await text(page, '#app');
+  ok('a history that failed to load does NOT claim nothing was sent',
+     !has(broken, 'Nothing sent yet'), broken.slice(0, 400));
+  ok('it says it did not load', has(broken, 'Did not load'));
+  ok('and says so in as many words, because the difference is the whole point',
+     has(broken, 'not the same as nothing having been sent'));
+  ok('the failure reason is shown rather than swallowed',
+     has(broken, 'the history is unavailable'));
+  ok('and there is a way to ask again', await page.locator('[data-act="sendsRetry"]').count() === 1);
+
+  // Recovering: with the route released, Try again brings the history back.
+  await page.unroute('**/portal-api/sends*');
+  await page.locator('[data-act="sendsRetry"]').click();
+  await page.waitForTimeout(900);
+  const recovered = await text(page, '#app');
+  ok('retrying loads it properly', !has(recovered, 'Did not load'));
+  ok('and the real history is back', has(recovered, 'newcaller@example.test'));
+  await page.close();
+}
+
 /* The Worker refuses a send when a method is switched on with no payment link,
    and that refusal says "add a link in Settings". This screen is what makes
    that sentence true — it shipped as an error with nowhere to go, which is a

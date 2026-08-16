@@ -387,8 +387,91 @@ Pricing lives in the portal as two rate sheets an admin opens and emails
   separate products (see `case-portal/RATESHEETS.md`): separate config,
   separate copy, never combined, and neither shows internal strategy.
 
+**Payment instructions can also go on their own.** `POST /payment-options/email`
+sends the PAYMENT OPTIONS block with no rate sheet and no intake attached, from
+a **Send payment options** action on a private lead card — so instructions can
+follow later without resending the sheet, which a client would reasonably read
+as the terms having changed. Three rules hold it: a **claims case is refused by
+name** (never quietly emptied); **nothing about it marks the retainer paid**
+(`payment_send` records that the firm asked, `retainer_payment` records arrival,
+and they are separate tables so no later edit can confuse them); and **the lead
+is not stamped**, because none of the nine §5 lead statuses describes a payment
+and moving it would write an event that did not happen. The email reuses
+`paymentBlockText/Html` rather than restating them — two renderings of the same
+instructions drift, and the one that drifts is the one nobody is looking at.
+
+**Every send works before a case exists** (owner, 2026-08-15 — a blocking
+workflow defect). Private Intake, Private Rate Sheet, Private Payment Options,
+Insurance Intake and Insurance Rate Sheet all send on **a name and a valid email
+alone**; case number, claim number and internal reference are optional whenever
+they happen to be available, and **nothing is auto-created** to have something to
+send against.
+
+The API mostly did not require a case — **the doors did.** The intake and the
+payment options could only be reached from a lead card, so someone had to be on
+the desk before the office could email them anything, and the intake is what
+turns a phone call into a lead. `POST /intake-link/email` is the pre-case route,
+`Send to someone new` on Rate sheets is the door, and `GET /sends` is the
+history: every other view of a send hangs off a case, so a pre-case send was
+being written correctly and was then invisible.
+
+**What the separation rests on, now that a case lookup may find nothing:** the
+carrier sheet can never carry payment options at all (`sheetTakesPayment`); a
+reference that *does* resolve to a claim assignment is still refused both the
+consumer sheet and the payment instructions; and the pre-case intake door is
+paired from an **explicit `kind`**, never from a lookup. Resting it on the
+product being sent is stronger than resting it on a case that may not exist.
+
+## The send context — never guess a recipient's type from their email
+
+**Every outgoing send is PRIVATE or INSURANCE, and which one is decided by WHAT
+IS BEING SENT — never by who it is going to.** `SEND_CONTEXT`, `SHEET_CONTEXT`
+and `KIND_CONTEXT` in `case-portal/worker.js` are the whole model, and
+`CONTEXT_TAKES_PAYMENT` is the entire payment boundary: Cash App and Venmo can
+only ever attach to a private context. Each send route returns its
+`send_context` so it is observable and asserted rather than believed.
+
+**This replaced `recipientIsCarrier()`, and the reason is worth keeping.** That
+function tried to classify the *recipient* by comparing their email address
+against stored carrier contacts. It produced **four defects in four review
+rounds**, in both directions:
+
+1. it matched **substrings**, so a private client at `jane@example.com` was
+   refused because an unrelated claims payload held `mary.jane@example.com`;
+2. it matched addresses quoted in **free-text notes**, blocklisting people who
+   were merely mentioned;
+3. it **failed open** on stored addresses carrying whitespace;
+4. and it still failed open on **non-breaking** whitespace after that was fixed —
+   the exact paste-from-Outlook case the fix was written for.
+
+Each fix narrowed the string comparison and the next round found another way for
+a string comparison to be wrong. **Do not reintroduce inference of any kind
+here.** If durable recipient classification is ever genuinely needed, it goes in
+as an explicit typed field or a companion table under the usual migration rules —
+not as matching against an address.
+
+**Reading `submissions.kind` is not inference** and is still done: it is a typed
+column with a CHECK constraint, so the record is stating what it is. A case
+reference that resolves to a claim assignment is still refused the consumer
+sheet and the payment instructions. A reference that is mistyped or absent now
+changes nothing about what may be attached — only what the subject line says.
+
+The tests assert the property that matters: **the recipient's address makes no
+difference at all**. Casing, leading and trailing spaces, non-breaking and
+zero-width spaces, an address that is a substring of a carrier's and one that a
+carrier's is a substring of, and two same-named contacts on opposite sides — all
+of them previously changed the outcome, and none of them does now.
+
+**A failed history load is never rendered as an empty history.** `loadSends()`
+used to set `SENDS = []` in its catch, and an empty list draws as "Nothing sent
+yet" — so a 500 or a dropped connection told the office that nothing had ever
+been emailed to anyone, in the one panel whose whole job is answering "did that
+go out?", and in the direction that reads as reassuring. Three states are kept
+apart now: never loaded, loaded and genuinely empty, and failed. Only the middle
+one may say nothing was sent.
+
 `GET /sheets` and `POST /sheets/:id/email` are admin-only; an investigator gets
-403 from both, and from `/pricing`. Sending goes through `sendMail()`, the same
+403 from both, from `/payment-options/email`, and from `/pricing`. Sending goes through `sendMail()`, the same
 Resend path the invitations use, and never throws — a provider outage costs a
 copy-and-paste, not a lost quote.
 
@@ -511,8 +594,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1033 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 806 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 1147 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 850 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,

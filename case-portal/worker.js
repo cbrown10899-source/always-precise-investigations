@@ -586,9 +586,64 @@ const PAY_METHODS = [
 const usd = n => '$' + Number(n).toLocaleString('en-US');
 const PAY_IDS = PAY_METHODS.map(m => m.id);
 
-/* The only sheet that may ever carry payment instructions. A function rather
-   than a bare comparison so the rule has one name and one place to change. */
-const sheetTakesPayment = sheetId => sheetId === 'private_retainer';
+/* THE SEND CONTEXT — the owner's refactor, 2026-08-15.
+
+   Every outgoing send is either PRIVATE or INSURANCE, and which one is decided
+   by WHAT IS BEING SENT — never by who it is going to.
+
+   This replaces `recipientIsCarrier()`, which tried to classify the RECIPIENT
+   by comparing their email address against stored carrier contacts. That
+   produced four defects in four review rounds, in both directions: it matched
+   substrings so unrelated private clients were refused; it matched addresses
+   quoted in free-text notes; and it failed open on stored addresses carrying
+   whitespace, first ordinary spaces and then non-breaking ones. Each fix
+   narrowed the string comparison and the next round found another way for a
+   string comparison to be wrong. The owner's conclusion, and it is the right
+   one: do not infer a recipient's type from their email at all.
+
+   A context cannot be mistyped, pasted with a non-breaking space, or shared by
+   two different people. It is a property of the flow the admin chose.
+
+   `CONTEXT_TAKES_PAYMENT` is the whole payment boundary now: Cash App and Venmo
+   may only ever be attached to a PRIVATE context. An insurance send has no code
+   path that reaches them, rather than a check that has to keep being right. */
+const SEND_CONTEXT = { PRIVATE: 'private', INSURANCE: 'insurance' };
+
+/* Which context each sheet is. A table rather than a comparison so the mapping
+   has one home, and so a new sheet has to declare itself rather than defaulting
+   into the payment-carrying side. */
+const SHEET_CONTEXT = {
+  private_retainer:     SEND_CONTEXT.PRIVATE,
+  insurance_assignment: SEND_CONTEXT.INSURANCE,
+};
+
+/* The two intake doors, by context. `submissions.kind` is a TYPED COLUMN with a
+   CHECK constraint, so reading it is not inference — it is the record saying
+   what it is. That is the difference the owner drew: a typed field yes, a
+   string comparison no. */
+const KIND_CONTEXT = { consumer: SEND_CONTEXT.PRIVATE, claims: SEND_CONTEXT.INSURANCE };
+
+const contextForSheet = sheetId => SHEET_CONTEXT[sheetId] || null;
+const contextForKind  = kind    => KIND_CONTEXT[kind] || null;
+
+/* The inverse: which product a context sends. Declared rather than derived with
+   a ternary, because a ternary has to pick a side for anything it does not
+   recognise and the wrong side here is the one carrying payment methods. This
+   returns undefined for an unknown context and every caller refuses on it, so
+   an unrecognised value fails CLOSED. */
+const CONTEXT_SHEET = {
+  [SEND_CONTEXT.PRIVATE]:   'private_retainer',
+  [SEND_CONTEXT.INSURANCE]: 'insurance_assignment',
+};
+const intakeForContext = ctx => SHEET_INTAKE[CONTEXT_SHEET[ctx]];
+
+/* The only rule payment options need. Everything that used to be spread across
+   a sheet-id comparison and a recipient lookup is this one line. */
+const CONTEXT_TAKES_PAYMENT = ctx => ctx === SEND_CONTEXT.PRIVATE;
+
+/* Kept as a named alias because it reads well at the call sites and because
+   this is the sheet-shaped question; it is now derived rather than compared. */
+const sheetTakesPayment = sheetId => CONTEXT_TAKES_PAYMENT(contextForSheet(sheetId));
 
 /* A payment URL is admin-entered or ABSENT — it is never built from a handle.
    The order is explicit about this and it is the sharpest line in it: a
@@ -645,7 +700,21 @@ async function paymentConfig(env) {
    `wanted` is the admin's per-send selection. Anything not enabled centrally is
    dropped regardless of what the caller asked for, so the send wizard cannot
    turn on a method the configuration has off. */
-async function paymentOptionsFor(env, wanted, unusableOut = []) {
+async function paymentOptionsFor(env, wanted, unusableOut = [], context = null) {
+  /* THE CONTEXT IS CHECKED HERE, NOT ONLY AT THE CALL SITES (Codex design
+     review, 2026-08-15).
+
+     Every caller already gated on the context before reaching this function, so
+     nothing could get through — but the review's point stands: the safety lived
+     in call-site convention rather than in the function that actually hands out
+     payment methods. A fifth caller added later would inherit no protection at
+     all, and it would look correct.
+
+     So the boundary is here as well. `context` is required to be the private
+     one; anything else — including the `null` a careless new caller would pass
+     by omission — returns nothing. It fails CLOSED, which is the opposite of
+     what a defaulted parameter usually does, and is the point. */
+  if (!CONTEXT_TAKES_PAYMENT(context)) return [];
   const all = await paymentConfig(env);
   /* NO SELECTION and AN EMPTY SELECTION are different answers, and conflating
      them is how unticking every method sent every method. `null` means the
@@ -738,22 +807,11 @@ async function setPaymentMethod(request, env, user, id) {
    nothing priced. Which door is NEVER the caller's choice: the lead's own
    kind picks it server-side, the same rule SHEET_INTAKE enforces — a carrier
    lead can only ever be sent the carrier door. */
-async function sendLeadIntake(request, env, user, caseNo) {
-  const lead = await env.DB.prepare(
-    'SELECT case_no, kind, client_name FROM submissions WHERE case_no = ?').bind(caseNo).first();
-  if (!lead) return json({ error: 'not found' }, 404);
-
-  const body = await readJson(request);
-  const to = String(body.to || '').trim();
-  if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(to) || to.length > 200) {
-    return json({ error: 'Enter a valid email address.' }, 400);
-  }
-  if (!(await withinRateLimit(env, 'mail'))) {
-    return json({ error: 'Too many emails in one minute — wait a moment and send again.' }, 429);
-  }
-
-  const intake = SHEET_INTAKE[lead.kind === 'claims' ? 'insurance_assignment' : 'private_retainer'];
-  const greet = lead.client_name ? `${String(lead.client_name).slice(0, 80)},` : 'Hello,';
+/* The intake invitation, built once and used by both doors into it — the lead
+   card, and the pre-case send that has no lead at all. Two copies of this email
+   would drift, and the half that drifts is the half nobody is reading. */
+function intakeInviteEmail(intake, who) {
+  const greet = who ? `${String(who).slice(0, 80)},` : 'Hello,';
   const text =
 `${greet}
 
@@ -776,6 +834,46 @@ Always Precise Investigations, LLC — Va DCJS #11-9159`;
   <p style="font-size:.9rem;color:#5c6775">Questions any time: (434) 907-0975.</p>
   <p style="font-size:.85rem;color:#5c6775">Always Precise Investigations, LLC &middot; Va DCJS #11-9159</p>
 </div>`;
+  return { text, html };
+}
+
+/* THIS ROUTE IS INSIDE THE CONTEXT MODEL TOO (Codex stop-time review,
+   2026-08-15 — "the context refactor leaves an existing send route outside its
+   claimed invariant").
+
+   It was the one client-facing send that had not been brought in. It paired the
+   intake with a bare ternary — `kind === 'claims' ? insurance : private` — which
+   is worse than merely inconsistent: a ternary must pick a side for anything it
+   does not recognise, and the side it picked was PRIVATE, the one that carries
+   payment methods. `submissions.kind` is CHECK-constrained today so nothing
+   could reach it, but a guard whose safety depends on a constraint somewhere
+   else is a guard waiting for that constraint to be widened.
+
+   `contextForKind` returns null for anything it does not know and this refuses
+   on it, so an unrecognised kind now fails CLOSED rather than defaulting into
+   the payment-carrying side. */
+async function sendLeadIntake(request, env, user, caseNo) {
+  const lead = await env.DB.prepare(
+    'SELECT case_no, kind, client_name FROM submissions WHERE case_no = ?').bind(caseNo).first();
+  if (!lead) return json({ error: 'not found' }, 404);
+
+  const context = contextForKind(lead.kind);
+  const intake = intakeForContext(context);
+  if (!context || !intake) {
+    return json({ error: `${caseNo} does not say whether it is a private client or a claim `
+                       + `assignment, so the right intake form cannot be chosen.` }, 409);
+  }
+
+  const body = await readJson(request);
+  const to = String(body.to || '').trim();
+  if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(to) || to.length > 200) {
+    return json({ error: 'Enter a valid email address.' }, 400);
+  }
+  if (!(await withinRateLimit(env, 'mail'))) {
+    return json({ error: 'Too many emails in one minute — wait a moment and send again.' }, 429);
+  }
+
+  const { text, html } = intakeInviteEmail(intake, lead.client_name);
 
   const mail = await sendMail(env, {
     to, subject: `${intake.label} — Always Precise Investigations`, text, html });
@@ -792,9 +890,122 @@ Always Precise Investigations, LLC — Va DCJS #11-9159`;
   await logSend(env, user, { case_no: caseNo, kind: 'intake', door: intake.url,
     recipient: to, ok: 1 });
   await stampLead(env, user, caseNo, 'intake_sent');
-  return json({ ok: true, sent_to: to, intake: intake.label,
+  return json({ ok: true, sent_to: to, intake: intake.label, send_context: context,
                 lead_status: (await env.DB.prepare(
                   'SELECT status FROM lead_status WHERE case_no = ?').bind(caseNo).first() || {}).status });
+}
+
+/* WHAT THE OFFICE HAS SENT, whether or not it had a case to send it against
+   (owner, 2026-08-15 — requirement 6).
+
+   Both logs are read, newest first, and unioned in JavaScript rather than in
+   SQL: they are different shapes and a UNION would force one to pretend to be
+   the other. `case_no` comes back as null for a pre-case send and the caller
+   shows it as such — the absence is information, not a gap to paper over. */
+async function sendHistory(request, env) {
+  const url = new URL(request.url);
+  const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 40, 1), 200);
+  const sheets = await env.DB.prepare(
+    `SELECT s.id, s.case_no, s.kind, s.sheet_id, s.door, s.recipient, s.ok, s.detail,
+            s.sent_at, u.display_name AS sent_by
+       FROM send_log s LEFT JOIN users u ON u.id = s.sent_by
+      ORDER BY s.id DESC LIMIT ?`).bind(limit).all();
+  const pays = await env.DB.prepare(
+    `SELECT p.id, p.case_no, p.recipient, p.methods, p.with_sheet, p.ok, p.detail,
+            p.sent_at, u.display_name AS sent_by
+       FROM payment_send p LEFT JOIN users u ON u.id = p.sent_by
+      ORDER BY p.id DESC LIMIT ?`).bind(limit).all();
+
+  const rows = [
+    ...(sheets.results || []).map(r => ({
+      id: `s${r.id}`, at: r.sent_at, case_no: r.case_no || null,
+      kind: r.kind, sheet_id: r.sheet_id || null, door: r.door || null,
+      recipient: r.recipient, ok: Number(r.ok) === 1, detail: r.detail || null,
+      sent_by: r.sent_by || null, methods: null,
+    })),
+    /* Only the STANDALONE payment sends. One that rode with a sheet is already
+       represented by that sheet's own row, and listing both would report two
+       emails where the client received one. */
+    ...(pays.results || []).filter(r => Number(r.with_sheet) !== 1).map(r => ({
+      id: `p${r.id}`, at: r.sent_at, case_no: r.case_no || null,
+      kind: 'payment_options', sheet_id: null, door: null,
+      recipient: r.recipient, ok: Number(r.ok) === 1, detail: r.detail || null,
+      sent_by: r.sent_by || null, methods: r.methods ? String(r.methods).split(',') : [],
+    })),
+  ].sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, limit);
+
+  return json({ sends: rows });
+}
+
+/* THE INTAKE, SENT BEFORE ANYTHING EXISTS (owner, 2026-08-15 — PRE-CASE SENDS).
+
+   `sendLeadIntake` above is keyed by a case number in its URL, so until now the
+   only way to send an intake form was to already have a lead on the desk. That
+   is backwards for how the work arrives: someone calls, you take a name and an
+   email, and the intake is what turns them into a lead in the first place.
+
+   NAME AND A VALID EMAIL ARE ENOUGH. There is no case number here, optional or
+   otherwise, and NOTHING IS CREATED — the owner was explicit that a case must
+   not be conjured just to have something to send against. The send is recorded
+   in `send_log` with a null `case_no`, which that column has always allowed.
+
+   THE DOOR IS PAIRED FROM AN EXPLICIT KIND, never from a case that does not
+   exist. `private` and `insurance` are the only two answers, and each maps to
+   its own intake through the same `SHEET_INTAKE` table the sheet sends use — so
+   a carrier still cannot land on the consumer picker, and a private client is
+   still never offered the claim assignment path. The separation the owner asked
+   to preserve rests on the caller naming which product this is, which is a
+   stronger thing to rest on than a case lookup that may find nothing. */
+async function sendPreCaseIntake(request, env, user) {
+  const body = await readJson(request);
+  const to = String(body.to || '').trim();
+  if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(to) || to.length > 200) {
+    return json({ error: 'Enter a valid email address.' }, 400);
+  }
+  /* The caller names a PRODUCT — which of the two intakes — and the server
+     resolves the context from its own table. It is not trusted as a
+     classification of the recipient, and it cannot be: there is nothing an
+     intake link carries that a payment method could ride on. */
+  const kind = body.kind === 'insurance' || body.kind === 'claims' ? 'claims'
+             : body.kind === 'private' || body.kind === 'consumer' ? 'consumer' : null;
+  const context = contextForKind(kind);
+  if (!context) {
+    return json({ error: 'Say which intake this is — Private Client or Insurance Assignment. '
+                       + 'The two forms are never interchangeable.' }, 400);
+  }
+  const name = String(body.name || '')
+    .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 120);
+
+  if (!(await withinRateLimit(env, 'mail'))) {
+    return json({ error: 'Too many emails in one minute — wait a moment and send again.' }, 429);
+  }
+
+  // Derived from the context, not from a ternary that must guess for anything
+  // it does not recognise — see `intakeForContext`.
+  const intake = intakeForContext(context);
+  const { text, html } = intakeInviteEmail(intake, name);
+  const mail = await sendMail(env, {
+    to, subject: `${intake.label} — Always Precise Investigations`, text, html });
+
+  if (!mail.sent) {
+    await logSend(env, user, { case_no: null, kind: 'intake', door: intake.url,
+      recipient: to, ok: 0, detail: mail.reason || 'send failed' });
+    return json({
+      error: mail.reason === 'not_configured'
+        ? 'Email is not configured on the Worker. Add RESEND_API_KEY to send from here.'
+        : 'That did not send. Check the address and try again.',
+      reason: mail.reason,
+    }, 502);
+  }
+  /* Logged with no case, which is the point — the history of what the office
+     sent must not depend on a record that does not exist yet. Nothing is
+     stamped either: there is no lead to move. */
+  await logSend(env, user, { case_no: null, kind: 'intake', door: intake.url,
+    recipient: to, ok: 1 });
+  /* The context is returned so it is observable rather than merely believed —
+     the tests assert on it, and it can never be a payment-carrying one here. */
+  return json({ ok: true, sent_to: to, intake: intake.label, case_no: null,
+                send_context: context });
 }
 
 async function emailSheet(request, env, user, id) {
@@ -868,10 +1079,28 @@ async function emailSheet(request, env, user, id) {
     return json({ error: 'Payment options are private-client only and cannot be sent with the '
                        + 'Insurance Assignment Rates.' }, 400);
   }
+  /* A SHEET SENDS BEFORE A CASE EXISTS, payment options included (owner,
+     2026-08-15 — PRE-CASE SENDS), and the payment boundary does NOT depend on
+     that (owner's refactor, same day).
+
+     The context is the sheet: `insurance_assignment` is INSURANCE and can never
+     reach a payment method, checked immediately above. A recipient lookup used
+     to sit here as well, trying to spot a carrier by their email address; it is
+     gone, along with the four defects it produced. Whether a case reference
+     resolves, is mistyped, or is absent entirely now changes nothing about what
+     may be attached — only about what the subject line says.
+
+     A reference that DOES resolve to a claim assignment is still refused the
+     consumer sheet by the pairing rule above, and that check reads
+     `submissions.kind`, a typed column with a CHECK constraint. Reading a typed
+     field is not inference; comparing email strings was. */
   const wantedMethods = Array.isArray(body.methods)
     ? body.methods.map(x => String(x)).filter(x => PAY_IDS.includes(x)) : null;
   const brokenMethods = [];
-  const payment = includePayment ? await paymentOptionsFor(env, wantedMethods, brokenMethods) : [];
+  // The sheet's own context is passed through, so the refusal is the function's
+  // as well as this route's — two independent gates, not one repeated.
+  const payment = includePayment
+    ? await paymentOptionsFor(env, wantedMethods, brokenMethods, contextForSheet(sheet.id)) : [];
 
   /* A method switched on with no link cannot be offered, and must not be
      dropped in silence — the admin would see a successful send and never learn
@@ -932,11 +1161,159 @@ async function emailSheet(request, env, user, id) {
      of the send rather than echoed from the request, and note that sending
      instructions says nothing whatever about the retainer being paid. */
   return json({ ok: true, sent_to: to, sheet: sheet.id,
+    send_context: contextForSheet(sheet.id),
     included: {
       rate_sheet: sheet.name,
       intake: includeIntake && SHEET_INTAKE[sheet.id] ? SHEET_INTAKE[sheet.id].label : null,
       payment_methods: payment.map(x => ({ id: x.id, label: x.label })),
     } });
+}
+
+/* SEND PAYMENT OPTIONS ON THEIR OWN (PAYMENTS.md second handoff §1/§4).
+
+   The private lead card's third send action. Everything about the boundary is
+   decided HERE, not by the card declining to draw a button — the card is a
+   convenience and the Worker is the enforcement point, the same split the
+   rate-sheet pairing already uses.
+
+   THREE RULES, and each has cost something somewhere in this system before:
+
+   1. A CLAIMS LEAD IS REFUSED BY NAME, not quietly given an empty email. The
+      whole point of the feature is that a carrier never sees a consumer payment
+      handle, and a silent drop hides the fact that something asked for one.
+
+   2. NOTHING HERE MARKS THE RETAINER PAID. Asking for money is not receiving
+      it. `payment_send` records that the firm asked; `retainer_payment` records
+      arrival; they are separate tables so the two cannot be confused by a
+      well-meaning edit later.
+
+   3. THE LEAD IS NOT STAMPED. The nine §5 lead statuses describe the rate
+      sheet and the intake, and there is no payment status among them — so
+      moving the lead to "Rate Sheet Sent" because payment instructions went
+      would put a false event in the history. The send is recorded in
+      `payment_send`, which is where it belongs. */
+async function emailPaymentOptions(request, env, user) {
+  const body = await readJson(request);
+  const to = String(body.to || '').trim();
+  if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(to) || to.length > 200) {
+    return json({ error: 'Enter a valid email address.' }, 400);
+  }
+  /* Same scrubbing as the sheet send: these reach an email body and a subject
+     line, and a CR/LF smuggled into a header is how one email becomes several. */
+  const clean = (v, max) => String(v == null ? '' : v)
+    .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').slice(0, max);
+  const note = clean(body.note, 500);
+  const name = clean(body.name, 120);
+  const caseNo = String(body.case_no || '').replace(/[^\x20-\x7e]/g, '').slice(0, 64);
+
+  /* RULE 1, AND IT MUST NOT FAIL OPEN (Codex stop-time review, 2026-08-15).
+
+     This was `if (lead && lead.kind === 'claims')`, and the comment above it
+     claimed that "a typo cannot turn a carrier into a private client". It did
+     the opposite: a reference that resolved to nothing skipped the check
+     entirely and the send went. One wrong character in a carrier's case number
+     was enough to put Cash App and Venmo in front of an adjuster, and the
+     reproduction confirmed it — status 200, email delivered.
+
+     There are three states here, not two, and conflating the last two is the
+     whole bug:
+
+       no reference       — allowed. The owner's §4 says "Optional Case / Lead
+                            Reference", and the firm does send instructions to
+                            people who have no case yet.
+       a private lead     — allowed, which is the ordinary path.
+       anything else      — REFUSED. A claims lead obviously; but also a
+                            reference the office believes in and the system
+                            cannot confirm, because "I cannot find this" is not
+                            evidence of "this is safe to send to". */
+  if (caseNo) {
+    const lead = await env.DB.prepare('SELECT kind FROM submissions WHERE case_no = ?')
+      .bind(caseNo).first();
+    /* A REFERENCE THAT MATCHES NOTHING DOES NOT BLOCK THE SEND (owner,
+       2026-08-15 — PRE-CASE SENDS, a blocking workflow defect).
+
+       This refused an unresolvable reference, and that was wrong for the way
+       the office actually works: a client is quoted, sent instructions and
+       given a paper reference BEFORE any case exists. Name and a valid email
+       are enough to send; the case number, claim number and internal reference
+       are optional whenever they happen to be available.
+
+       The boundary does not depend on this and never did. THIS ROUTE IS A
+       PRIVATE CONTEXT by construction — it sends exactly one thing, private
+       payment instructions — so there is no classification to get wrong here.
+       The refusal below is a courtesy on top of that: if the reference DOES
+       resolve to a claim assignment, the office has clearly reached for the
+       wrong flow and should be told rather than obeyed.
+
+       That check reads `submissions.kind`, a typed column with a CHECK
+       constraint. Reading a typed field is not inference. An earlier version
+       also tried to recognise the RECIPIENT by comparing their email address
+       against stored carrier contacts; it produced four defects in four review
+       rounds and the owner removed it. A mistyped or absent reference now
+       changes nothing about what may be sent — only what the subject says. */
+    if (lead && contextForKind(lead.kind) === SEND_CONTEXT.INSURANCE) {
+      return json({ error: `${caseNo} is a claim assignment. Cash App and Venmo are private-client `
+                         + `payment methods and are never sent to a carrier or TPA.` }, 400);
+    }
+  }
+
+  if (!(await withinRateLimit(env, 'mail'))) {
+    return json({ error: 'Too many emails in one minute — wait a moment and send again.' }, 429);
+  }
+
+  const wantedMethods = Array.isArray(body.methods)
+    ? body.methods.map(x => String(x)).filter(x => PAY_IDS.includes(x)) : null;
+  const brokenMethods = [];
+  const payment = await paymentOptionsFor(env, wantedMethods, brokenMethods,
+    SEND_CONTEXT.PRIVATE);
+
+  // Same two refusals, in the same words, as the sheet send — one of them is
+  // answered in this dialog and the other in Settings.
+  if (brokenMethods.length) {
+    const names = brokenMethods.map(m => m.display_name || m.label).join(' and ');
+    return json({ error: `${names} is switched on but has no payment link, so it cannot be `
+                       + `offered — every payment option a client sees has to be tappable. `
+                       + `Add a link in Settings, or switch it off.`,
+                  needs_link: brokenMethods.map(m => m.id) }, 400);
+  }
+  if (!payment.length) {
+    return json({ error: wantedMethods && !wantedMethods.length
+      ? 'Choose at least one payment method.'
+      : 'No payment method is enabled and configured. Set one up in Settings '
+        + 'before sending payment instructions.' }, 400);
+  }
+
+  // The case's OWN agreed retainer, so this email and the sheet quote the same
+  // figure. A client told one number by the sheet and another by the payment
+  // email has been given a reason to distrust both.
+  const retainer = await agreedRetainer(env, caseNo);
+  const { text, html } = paymentOnlyEmail(payment, retainer, note, name);
+  const subject = caseNo
+    ? `Payment options — Always Precise Investigations (case ${caseNo})`
+    : 'Payment options — Always Precise Investigations';
+
+  const mail = await sendMail(env, { to, subject, text, html });
+  if (!mail.sent) {
+    await logPaymentSend(env, user, { case_no: caseNo, recipient: to,
+      methods: payment.map(x => x.id), with_sheet: 0, ok: 0,
+      detail: mail.reason || 'send failed' });
+    return json({
+      error: mail.reason === 'not_configured'
+        ? 'Email is not configured on the Worker. Add RESEND_API_KEY to send from here.'
+        : 'That did not send. Check the address and try again.',
+      reason: mail.reason,
+    }, 502);
+  }
+  /* with_sheet: 0 is what makes this send distinguishable from the one that
+     rode along with a rate sheet. The column existed before the route did. */
+  await logPaymentSend(env, user, { case_no: caseNo, recipient: to,
+    methods: payment.map(x => x.id), with_sheet: 0, ok: 1 });
+
+  // RULE 2, said out loud in the answer the page shows. The context is stated
+  // too: this route is PRIVATE by construction and can be nothing else.
+  return json({ ok: true, sent_to: to, retainer_marked_paid: false,
+    send_context: SEND_CONTEXT.PRIVATE,
+    included: { payment_methods: payment.map(x => ({ id: x.id, label: x.label })) } });
 }
 
 /* Manual intake (UIBUILD P17): the office types in what a phone call or an
@@ -1223,6 +1600,55 @@ Always Precise Investigations, LLC`;
     <a href="${escHtml(intake.url)}" style="display:inline-block;background:#12305a;color:#fff;
        padding:11px 18px;border-radius:8px;text-decoration:none;font-weight:700">
       Start the ${escHtml(intake.label)}</a></p>` : ''}
+  <hr style="border:0;border-top:1px solid #dfe3e8">
+  <p style="font-size:.82rem;color:#5c6775">Questions? (434) 907-0975<br>
+     Always Precise Investigations, LLC</p>
+</div>`;
+  return { text, html };
+}
+
+/* THE PAYMENT INSTRUCTIONS ON THEIR OWN (PAYMENTS.md second handoff §4/§6).
+
+   "This allows payment instructions to be sent later without resending the rate
+   sheet." So this is the same PAYMENT OPTIONS block the sheet carries, with a
+   short covering note around it and no rate lines at all — a client who already
+   has the sheet does not need a second copy of it, and sending one invites them
+   to think the terms changed.
+
+   It reuses `paymentBlockText/Html` rather than restating them. Two renderings
+   of the same instructions would drift, and the one that drifts is the one
+   nobody is looking at.
+
+   `retainer` is the case's agreed figure, so a client who agreed more than the
+   standard is told what THEY agreed here too — the same rule the sheet follows. */
+function paymentOnlyEmail(pay, retainer, note, name) {
+  const hi = name ? `${name},` : 'Hello,';
+  const text =
+`Always Precise Investigations, LLC — Va DCJS #11-9159
+
+${hi}
+
+Here are the ways you can send the retainer to begin your investigation.
+${note ? `\n${note}\n` : ''}${paymentBlockText(pay, retainer)}
+If you have already submitted the intake form, nothing further is needed once
+the retainer arrives — we will confirm receipt and schedule the work.
+
+Questions: (434) 907-0975
+Always Precise Investigations, LLC`;
+
+  const html =
+`<div style="font-family:'Segoe UI',Arial,sans-serif;color:#1c2531;line-height:1.55;max-width:560px">
+  <p style="margin:0 0 4px;font-size:.82rem;color:#5c6775;letter-spacing:.04em;text-transform:uppercase">
+    Always Precise Investigations, LLC &middot; Va DCJS #11-9159</p>
+  <h2 style="margin:0 0 14px;color:#12305a">Payment options</h2>
+  <p style="margin:0 0 14px">${escHtml(hi)}</p>
+  <p style="margin:0 0 18px">Here are the ways you can send the retainer to begin your
+    investigation.</p>
+  ${note ? `<p style="margin:0 0 18px;padding:12px 14px;background:#f4f8fa;border-left:3px solid #2f7d90">${escHtml(note)}</p>` : ''}
+  ${paymentBlockHtml(pay, retainer)}
+  <p style="margin:0 0 14px;font-size:.92rem">If you have already submitted the intake form,
+    nothing further is needed once the retainer arrives &mdash; we will confirm receipt and
+    schedule the work.</p>
   <hr style="border:0;border-top:1px solid #dfe3e8">
   <p style="font-size:.82rem;color:#5c6775">Questions? (434) 907-0975<br>
      Always Precise Investigations, LLC</p>
@@ -4692,6 +5118,15 @@ async function route(request, env) {
     return emailSheet(request, env, user, m[1]);
   }
 
+  /* Payment instructions WITHOUT the sheet (PAYMENTS.md second handoff §4).
+     Admin-only like every other money route — an investigator has no business
+     asking a client for the retainer, and knowing where the firm's money
+     arrives is not fieldwork. */
+  if (p === '/payment-options/email' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return emailPaymentOptions(request, env, user);
+  }
+
   /* Private-client payment configuration (PAYMENTS.md). Admin-only on both
      verbs: an investigator has no business knowing where the firm's money
      arrives, and the handle is the firm's, not the case's. Read is gated as
@@ -4792,6 +5227,23 @@ async function route(request, env) {
   if (p === '/intakes' && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return createManualIntake(request, env, user);
+  }
+
+  /* PRE-CASE SENDS (owner, 2026-08-15). The intake form sent to a name and an
+     email, with no case and nothing created. */
+  if (p === '/intake-link/email' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return sendPreCaseIntake(request, env, user);
+  }
+
+  /* The send history, INCLUDING sends that have no case (owner requirement 6).
+     Every other view of `send_log` hangs off a case, so a pre-case send was
+     being written correctly and was then invisible — written and never read,
+     which is the same gap this project has hit before. Admin-only: an
+     investigator is never told who the client was emailed. */
+  if (p === '/sends' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return sendHistory(request, env);
   }
 
   // Active Surveillance Mode: resume-anywhere for whoever is asking, and the

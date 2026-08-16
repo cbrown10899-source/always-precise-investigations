@@ -672,6 +672,15 @@ let PAY_ERR = false;
 let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
 let NL = null;        // manual intake (UIBUILD P17): null | {kind, err}
 let SHEET_WIZ = null; // the 3-step send wizard (UIBUILD P18)
+/* PAYMENTS.md second handoff §4 — Send Payment Options on its own, so
+   instructions can go later without resending the rate sheet. Private leads
+   only; the button is not drawn on an insurance card and the Worker refuses a
+   claims case regardless. */
+let PAY_SEND = null;
+/* PRE-CASE SENDS (owner, 2026-08-15). The intake sent to a name and an email
+   with no case behind it, the message that confirms it, and the send history
+   that has to work without a case number. */
+let INTAKE_SEND = null, SEND_MSG = "", SENDS = null, SENDS_ERR = "";
 let LEAD_SEND = null; // {case_no, to, err, busy} — the inline Send-intake form (MASTER §5)
 /* MASTER §5 — the lead vocabulary, which is NOT the case vocabulary. */
 const LEAD_LABEL = {lead:"Lead", rate_sheet_sent:"Rate sheet sent", intake_sent:"Intake sent",
@@ -1161,7 +1170,8 @@ function shell(inner){
   /* The send wizard is an overlay, mounted here rather than inside the Rate
      sheets view so a lead card can open it too (MASTER §5). */
   return `<div class="tabs">${tabs}</div>${schema}${problem}${summaryCards()}${inner}${
-    SHEET_WIZ ? sheetWizardHtml() : ""}`;
+    SHEET_WIZ ? sheetWizardHtml() : ""}${PAY_SEND ? paySendHtml() : ""}${
+    INTAKE_SEND ? preIntakeHtml() : ""}`;
 }
 
 
@@ -1612,6 +1622,9 @@ function leadsView(){
           <button class="btn sm ghost" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="comms">Message</button>
           <button class="btn sm ghost" data-act="leadSheet" data-case="${esc(c.case_no)}" data-kind="${esc(c.kind)}">Send rate sheet</button>
           <button class="btn sm ghost" data-act="leadIntake" data-case="${esc(c.case_no)}">Send intake</button>
+          ${claim ? "" : `<button class="btn sm ghost" data-act="leadPayOpen"
+            data-case="${esc(c.case_no)}" data-name="${esc(c.client_name || "")}"
+            data-to="${esc(c.client_email || "")}">Send payment options</button>`}
         </div>
         ${sendRow}
         ${open ? `<button class="btn sm" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="assign">Accept &rarr;</button>` : ""}
@@ -1966,6 +1979,243 @@ function sheetWizardHtml(){
   </div>`;
 }
 
+/* SEND PAYMENT OPTIONS, standing alone (PAYMENTS.md second handoff §4).
+
+   Two screens, the same shape as the sheet wizard so it reads as one product:
+   ask, then preview exactly what will go. It deliberately does NOT offer the
+   rate sheet or the intake — this exists precisely so instructions can follow
+   later without resending either.
+
+   Only methods that are actually sendable are offered, which is the same rule
+   the wizard uses: a method with no admin-entered link cannot be ticked here,
+   because the Worker would refuse the send and the client would have been shown
+   an option they could not tap. Nothing on this screen ever derives a URL from
+   a handle. */
+function paySendHtml(){
+  const q = PAY_SEND;
+  const usable = wizPaymentSendable();
+  const body = !PAYCFG
+    ? `<p class="hint">Checking payment options&hellip;</p>`
+    : !usable.length
+      ? `<div class="feebox">
+          <div class="row"><span><b>Payment options</b></span><span class="tag new">None ready</span></div>
+          <p class="hint">No payment method is switched on with a payment link, so there is nothing
+            to send. Settings &rarr; Private client payment methods.</p></div>`
+    : q.step === 1 ? `
+      <label class="f"><span>Send it to</span>
+        <input id="ps_to" type="email" value="${esc(q.to)}" placeholder="name@example.com"></label>
+      <div class="two">
+        <label class="f"><span>Their name <span class="opt">optional — greets the email</span></span>
+          <input id="ps_name" value="${esc(q.name)}"></label>
+        <label class="f"><span>Case reference <span class="opt">optional — subject line</span></span>
+          <input id="ps_case" value="${esc(q.caseNo)}"></label>
+      </div>
+      <label class="f"><span>Add a line <span class="opt">optional</span></span>
+        <input id="ps_note" value="${esc(q.note)}" placeholder="e.g. As discussed this morning."></label>
+      <div class="feebox" style="margin:10px 0">
+        <div class="row"><span><b>Payment methods</b></span></div>
+        ${usable.map(m => `<label class="cap" style="display:flex">
+          <input type="checkbox" class="ps-pm" data-pm="${esc(m.id)}"
+            ${(q.methods || []).includes(m.id) ? "checked" : ""}>
+          <span>${esc(m.display_name || m.label)} <span class="opt">${esc(m.handle)}</span></span></label>`).join("")}
+        <p class="hint">Either or both. Each is a button the client taps.</p>
+      </div>`
+    : `
+      <dl class="detail">
+        <dt>To</dt><dd>${esc(q.to)}${q.name ? ` (${esc(q.name)})` : ""}</dd>
+        ${q.caseNo ? `<dt>Case</dt><dd>${esc(q.caseNo)}</dd>` : ""}
+        ${q.note ? `<dt>Added line</dt><dd>${esc(q.note)}</dd>` : ""}
+        <dt>Payment methods</dt><dd>${(q.methods || []).length
+          ? usable.filter(m => q.methods.includes(m.id))
+              .map(m => esc(m.display_name || m.label)).join(" + ")
+          : "None chosen"}</dd>
+        <dt>Rate sheet</dt><dd>Not included &mdash; this sends the payment instructions only</dd>
+      </dl>
+      <p class="hint">The client receives the payment buttons and nothing else.
+        Sending instructions does not mark the retainer paid; it stays pending until
+        you record the money.</p>`;
+  const ready = PAYCFG && usable.length;
+  return `<div class="amwrap" data-act="paySendClose">
+    <div class="amsheet" data-act="amNoop" role="dialog" aria-modal="true" aria-label="Send payment options">
+      <div class="amhead"><b>Send payment options</b>
+        <button class="amx" data-act="paySendClose" aria-label="Close">&times;</button></div>
+      ${ready ? `<div class="pkg-steps">${["Recipient & methods", "Preview"].map((s2, i) =>
+        `<span class="pkg-step ${q.step > i + 1 ? "done" : q.step === i + 1 ? "on" : ""}">${
+          q.step > i + 1 ? "&#10003;" : i + 1} ${s2}</span>`).join("")}</div>` : ""}
+      ${body}
+      ${ready ? `<div class="actions" style="margin-top:12px">
+        ${q.step > 1 ? `<button class="btn ghost sm" data-act="paySendStep" data-s="1">&larr; Back</button>` : ""}
+        ${q.step < 2
+          ? `<button class="btn sm" data-act="paySendStep" data-s="2">Preview &rarr;</button>`
+          : `<button class="btn sm" data-act="paySendGo"${q.busy ? " disabled" : ""}>${
+              q.busy ? "Sending&hellip;" : "Send it"}</button>`}
+      </div>` : ""}
+      ${q.err ? `<div class="err">${esc(q.err)}</div>` : ""}
+    </div>
+  </div>`;
+}
+
+function paySendCollect(){
+  if(!PAY_SEND) return;
+  if($("ps_to")) PAY_SEND.to = $("ps_to").value.trim();
+  if($("ps_name")) PAY_SEND.name = $("ps_name").value.trim();
+  if($("ps_case")) PAY_SEND.caseNo = $("ps_case").value.trim();
+  if($("ps_note")) PAY_SEND.note = $("ps_note").value.trim();
+  const boxes = [...document.querySelectorAll(".ps-pm")];
+  if(boxes.length) PAY_SEND.methods = boxes.filter(b => b.checked).map(b => b.dataset.pm);
+}
+
+async function paySendGo(){
+  paySendCollect();
+  const q = PAY_SEND;
+  q.busy = true; q.err = ""; paint();
+  try{
+    const r = await api("/payment-options/email", {method:"POST", body:{
+      to: q.to, name: q.name, case_no: q.caseNo, note: q.note, methods: q.methods}});
+    /* §13 — the confirmation says what actually WENT, read back from the
+       Worker's answer rather than from the boxes that were ticked, and states
+       the one thing an admin might otherwise assume. */
+    const names = (r.included.payment_methods || []).map(m => m.label).join(" and ");
+    const msg = `Payment options sent to ${r.sent_to}${names ? ` — ${names}` : ""}. `
+              + `The retainer is still pending until you record it.`;
+    /* The dialog opens from two places — a lead card and the pre-case screen —
+       and the confirmation has to land where the admin is actually standing. */
+    LEAD_MSG = msg; SEND_MSG = msg;
+    PAY_SEND = null;
+    if(TAB === "sheets") loadSends();
+    return render();
+  }catch(e){ q.err = e.message; q.busy = false; }
+  paint();
+}
+
+/* SENDING BEFORE A CASE EXISTS (owner, 2026-08-15 — PRE-CASE SENDS).
+
+   The sends themselves never required a case, but until now the intake and the
+   payment options could only be reached from a LEAD CARD, so in practice you
+   had to put someone on the desk before you could email them anything. That is
+   backwards: the intake is what turns a phone call into a lead.
+
+   This is the door. Name and a valid email are enough; a case number, claim
+   number or paper reference is carried if there is one and omitted if not.
+   Nothing here creates a lead or a case — the owner was explicit that nothing
+   may be conjured just to have something to send against. */
+function preCaseSendsHtml(){
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Send to someone new</h2>
+      <span class="count">no case needed</span></div>
+    <p class="note">For a caller who is not on the desk yet. A name and an email address are
+      enough &mdash; a case or claim number is carried if you have one, and left out if you
+      do not. Nothing here creates a lead or a case.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn sm ghost" data-act="preIntake" data-kind="private">Send private intake</button>
+      <button class="btn sm ghost" data-act="preIntake" data-kind="insurance">Send insurance intake</button>
+      <button class="btn sm ghost" data-act="prePay">Send payment options</button>
+    </div>
+    <p class="hint" style="margin-top:8px">The two intakes are separate forms and are never
+      interchangeable. Payment options are private-client only and are never offered to a carrier.</p>
+    ${SEND_MSG ? `<div class="ok" style="margin-top:8px">${esc(SEND_MSG)}</div>` : ""}
+  </div>`;
+}
+
+/* The pre-case intake dialog: the smallest thing that can carry the owner's
+   rule. The KIND is fixed by the button that opened it and shown as a fact, not
+   as a control — an admin who wanted the other form pressed the other button,
+   and a picker here would be one more way to send a carrier the consumer door. */
+function preIntakeHtml(){
+  const q = INTAKE_SEND;
+  const label = q.kind === "insurance" ? "Insurance Assignment Intake" : "Private Client Intake";
+  return `<div class="amwrap" data-act="preIntakeClose">
+    <div class="amsheet" data-act="amNoop" role="dialog" aria-modal="true" aria-label="Send an intake form">
+      <div class="amhead"><b>Send &mdash; ${esc(label)}</b>
+        <button class="amx" data-act="preIntakeClose" aria-label="Close">&times;</button></div>
+      <label class="f"><span>Send it to</span>
+        <input id="pi_to" type="email" value="${esc(q.to)}" placeholder="name@example.com"></label>
+      <label class="f"><span>Their name <span class="opt">optional &mdash; greets the email</span></span>
+        <input id="pi_name" value="${esc(q.name)}"></label>
+      <p class="hint">They receive the <b>${esc(label)}</b> and nothing else. No case is created,
+        and no rate or payment information is included.</p>
+      <div class="actions" style="margin-top:12px">
+        <button class="btn sm" data-act="preIntakeGo"${q.busy ? " disabled" : ""}>${
+          q.busy ? "Sending&hellip;" : "Send it"}</button>
+      </div>
+      ${q.err ? `<div class="err">${esc(q.err)}</div>` : ""}
+    </div>
+  </div>`;
+}
+
+async function preIntakeGo(){
+  const q = INTAKE_SEND;
+  if($("pi_to")) q.to = $("pi_to").value.trim();
+  if($("pi_name")) q.name = $("pi_name").value.trim();
+  if(!q.to){ q.err = "Enter the address to send it to."; return paint(); }
+  q.busy = true; q.err = ""; paint();
+  try{
+    const r = await api("/intake-link/email", {method:"POST",
+      body:{to: q.to, name: q.name, kind: q.kind}});
+    SEND_MSG = `${r.intake} sent to ${r.sent_to}. No case was created.`;
+    INTAKE_SEND = null;
+    loadSends();
+    return paint();
+  }catch(e){ q.err = e.message; q.busy = false; }
+  paint();
+}
+
+/* Requirement 6 — the history has to work without a case number. Every other
+   view of a send hangs off a case, so a pre-case send was written correctly and
+   then invisible. This is where it can be seen. */
+/* A FAILED LOAD IS NOT AN EMPTY HISTORY (Codex stop-time review, 2026-08-15).
+
+   This set `SENDS = []` in the catch, and the panel renders an empty list as
+   "Nothing sent yet." So a 403, a dropped connection or a Worker hiccup told
+   the office that nothing had ever been emailed to anyone — the screen
+   asserting a fact it did not have. That is the worst possible failure for this
+   particular panel, because its whole job is answering "did that go out?", and
+   the wrong answer here is the one that reads as reassuring.
+
+   Three states, kept apart: never loaded, loaded and genuinely empty, and
+   failed. Only the middle one may say nothing was sent. */
+async function loadSends(){
+  try{ SENDS = (await api("/sends?limit=25")).sends || []; SENDS_ERR = ""; }
+  catch(e){ SENDS = null; SENDS_ERR = e.message || "The send history did not load."; }
+  paint();
+}
+
+const SEND_KIND_LABEL = {rate_sheet: "Rate sheet", intake: "Intake form",
+  payment_options: "Payment options"};
+
+function sendHistoryHtml(){
+  /* The failure is DRAWN, never swallowed into an empty list — see loadSends.
+     A Retry is offered because the question this panel answers matters enough
+     to ask again, rather than leaving the office to reload the whole portal. */
+  if(SENDS_ERR) return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Recent sends</h2>
+      <span class="tag rs-needs_revision">Did not load</span></div>
+    <div class="err">${esc(SENDS_ERR)}</div>
+    <p class="hint">This is <b>not</b> the same as nothing having been sent. The history could not
+      be read, so what went out is unknown from here.</p>
+    <div class="actions"><button class="btn sm ghost" data-act="sendsRetry">Try again</button></div>
+  </div>`;
+  if(SENDS === null) return "";
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Recent sends</h2>
+      <span class="count">${SENDS.length}</span></div>
+    ${!SENDS.length ? `<div class="empty">Nothing sent yet.</div>` : `<div class="rows">
+      ${SENDS.map(s => `<div class="row">
+        <span>
+          <b>${esc(SEND_KIND_LABEL[s.kind] || s.kind)}</b>
+          ${s.ok ? "" : `<span class="tag rs-needs_revision">Failed</span>`}
+          <div style="font-size:.85rem;color:var(--muted)">${esc(s.recipient)}</div>
+          <div style="font-size:.76rem;color:var(--muted)">
+            ${s.case_no ? esc(s.case_no) : "No case &mdash; sent before one existed"}
+            ${s.sent_by ? ` &middot; ${esc(s.sent_by)}` : ""}</div>
+          ${s.ok ? "" : `<div class="hint">${esc(s.detail || "did not send")}</div>`}
+        </span>
+        <span style="font-size:.8rem;color:var(--muted);white-space:nowrap">${when(s.at)}</span>
+      </div>`).join("")}
+    </div>`}
+  </div>`;
+}
+
 function sheetsView(){
   if(!SHEETS.length) return `<div class="card"><div class="empty">Loading rate sheets…</div></div>`;
   const open = SHEETS.find(s => s.id === OPEN_SHEET);
@@ -2000,7 +2250,9 @@ function sheetsView(){
         open.id === "insurance_assignment" ? "Insurance Assignment Intake" : "Private Client Intake"} link.</span>
     </div>
     ${SHEET_MSG ? `<div class="note" style="margin-top:4px">${esc(SHEET_MSG)}</div>` : ""}
-  </div>` : ""}`;
+  </div>` : ""}
+  ${preCaseSendsHtml()}
+  ${sendHistoryHtml()}`;
 }
 
 function casesView(){
@@ -2570,7 +2822,8 @@ function sessionForget(){
   LAST_LINK = ""; LAST_EMAILED = false; RESET_BOX = null;
   PAYCFG = null; PAY_DRAFT = {}; PAY_MSG = ""; PAY_ERR = false;
   SUMMARY = null; SHEETS = []; SHEET_MAIL = ""; OPEN_SHEET = null; SHEET_MSG = ""; SHEET_WIZ = null;
-  NL = null; LEAD_SEND = null; LEAD_MSG = "";
+  NL = null; LEAD_SEND = null; LEAD_MSG = ""; PAY_SEND = null;
+  INTAKE_SEND = null; SEND_MSG = ""; SENDS = null; SENDS_ERR = "";
   INVOICES = null; INV_OPEN = null; INV_MSG = ""; INV_WARN = []; INV_EVENTS = [];
   INV_SETTINGS = null; INV_FILTER = {status: "", type: "", q: ""};
   retainerReset(); RET_CASE = null;
@@ -6289,6 +6542,9 @@ document.addEventListener("click", ev => {
     TAB = el.dataset.tab; paint();
     if(TAB === "calendar") loadCalendar(CAL ? CAL.month : "");
     if(TAB === "invoices"){ INV_OPEN = null; INV_MSG = ""; loadInvoices(); }
+    /* The send history is admin-only and lives beside the pre-case sends, so it
+       is fetched when that screen is opened rather than held from sign-in. */
+    if(TAB === "sheets" && ME.role === "admin"){ SEND_MSG = ""; loadSends(); }
     if(TAB === "dashboard"){ PKGS = null; loadPackages(); }
     // Arriving at Settings is a fresh start: drafts are for recovering from a
     // refusal in front of you, not for surviving a trip around the portal.
@@ -6543,6 +6799,69 @@ document.addEventListener("click", ev => {
     paint();
     const inp = $("ls_to"); if(inp) inp.focus();
   }
+  /* PAYMENTS.md second handoff §1/§4 — the private lead card's third send.
+     Only ever reached from a private card; the Worker refuses a claims case
+     independently, so the boundary does not depend on this button's absence. */
+  else if(act === "leadPayOpen"){
+    PAY_SEND = {caseNo: el.dataset.case || "", to: el.dataset.to || "",
+                name: el.dataset.name || "", note: "", methods: [], step: 1,
+                err: "", busy: false};
+    LEAD_MSG = "";
+    /* Everything sendable starts ticked, the same default the send wizard uses:
+       an admin unticks what they do not want rather than hunting for what they
+       do. The configuration is fetched on demand because the leads desk has not
+       been near Settings. */
+    (async () => {
+      if(!PAYCFG) await loadPaymentMethods();
+      if(PAY_SEND && !PAY_SEND.methods.length){
+        PAY_SEND.methods = wizPaymentSendable().map(m => m.id);
+      }
+      paint();
+    })();
+    paint();
+  }
+  /* PRE-CASE SENDS (owner, 2026-08-15) — the door that did not exist. Opened
+     from the Rate sheets view, which has no case context by nature, so nothing
+     here is prefilled from a lead and nothing needs to be. */
+  else if(act === "preIntake"){
+    INTAKE_SEND = {kind: el.dataset.kind === "insurance" ? "insurance" : "private",
+                   to: "", name: "", err: "", busy: false};
+    SEND_MSG = ""; paint();
+    const inp = $("pi_to"); if(inp) inp.focus();
+  }
+  else if(act === "sendsRetry"){ SENDS_ERR = ""; loadSends(); }
+  else if(act === "preIntakeClose"){ INTAKE_SEND = null; paint(); }
+  else if(act === "preIntakeGo"){ preIntakeGo(); }
+  else if(act === "prePay"){
+    /* The same dialog the lead card opens, with no case behind it. Deliberately
+       the same code path: a second payment dialog would be a second place for
+       the private-only boundary to be got wrong. */
+    PAY_SEND = {caseNo: "", to: "", name: "", note: "", methods: [], step: 1,
+                err: "", busy: false};
+    SEND_MSG = "";
+    (async () => {
+      if(!PAYCFG) await loadPaymentMethods();
+      if(PAY_SEND && !PAY_SEND.methods.length){
+        PAY_SEND.methods = wizPaymentSendable().map(m => m.id);
+      }
+      paint();
+    })();
+    paint();
+  }
+  else if(act === "paySendClose"){ PAY_SEND = null; paint(); }
+  else if(act === "paySendStep"){
+    paySendCollect();
+    const s2 = Number(el.dataset.s);
+    if(s2 > 1 && !PAY_SEND.to){ PAY_SEND.err = "Enter the address to send it to."; }
+    else if(s2 > 1 && !(PAY_SEND.methods || []).length){
+      /* Refused here rather than sent as an empty PAYMENT OPTIONS heading. The
+         Worker refuses it too; this just answers it where it can be fixed. */
+      PAY_SEND.err = "Choose at least one payment method.";
+    }
+    else { PAY_SEND.err = ""; PAY_SEND.step = s2; }
+    paint();
+  }
+  else if(act === "paySendGo"){ paySendGo(); }
   else if(act === "leadIntakeCancel"){ LEAD_SEND = null; paint(); }
   else if(act === "leadIntakeSend"){ sendLeadIntakeMail(el.dataset.case); }
   else if(act === "wizPayToggle"){ wizCollect(); paint(); }

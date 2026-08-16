@@ -889,3 +889,97 @@ was RESOLVED by the owner on 2026-08-15 — see the top of this file.)
 - A CHECK constraint cannot be widened from `schema.sql`, and
   `ALTER TABLE ADD COLUMN` is not idempotent. Use a companion table —
   `activity_removed`, `build_custom` and `build_reports` are the precedents.
+
+---
+
+## 🆕 PRE-CASE SENDS — fixed 2026-08-15 (owner: blocking workflow defect)
+
+**The portal blocked sending until a valid case number existed.** All five sends
+now work with none: Private Intake, Private Rate Sheet, Private Payment Options,
+Insurance Intake, Insurance Rate Sheet. **Name and a valid email are enough**;
+case number, claim number and internal reference are optional when available.
+
+The API mostly did not require a case — **the doors did.** The intake and the
+payment options could only be reached from a lead card, so in practice someone
+had to be on the desk before the office could email them anything, and the
+intake is what turns a phone call into a lead. `POST /intake-link/email` is the
+new pre-case route, `Send to someone new` on Rate sheets is the door, and
+`GET /sends` is the history — which had to be added because every existing view
+of a send hangs off a case, so a pre-case send was written correctly and then
+invisible.
+
+**Nothing is auto-created to have something to send against** (owner requirement
+3), asserted by counting `submissions` across all ten sends.
+
+**What did NOT relax:** the carrier sheet still cannot carry payment options at
+all, and a reference that *does* resolve to a claim assignment is still refused
+the consumer sheet and the payment instructions. The intake door is paired from
+an **explicit kind**, never from a case lookup — which is a stronger thing to
+rest the separation on than a lookup that may find nothing.
+
+**Recorded honestly:** this reversed a refusal added hours earlier from a Codex
+finding. A reference mistyped so badly it matches no row no longer trips the
+claims check, because there is nothing to check against. The owner weighed that
+against a workflow that could not send at all and chose this.
+
+## 🔴 OPEN FINDINGS — Codex DESIGN review of the send-context refactor (2026-08-15)
+
+Run on the owner's instruction to *"review the DESIGN, not only the patch"*,
+against `164fa1c`. **Recorded here rather than fixed, on the owner's
+instruction not to open another review round in that unit.** These are Codex's
+conclusions; the orchestrator has not independently re-derived them, which is
+the standing rule for a reviewer's report.
+
+| # | Finding | Codex's confidence | State |
+| --- | --- | --- | --- |
+| 1 | `paymentOptionsFor()` accepted no context, so the payment boundary rested on **call-site convention** rather than on the function handing out the methods. No exploit today; a fifth caller would have inherited nothing and looked correct | design weakness, no current exploit | ✅ **FIXED** before the instruction landed — the gate is in the function and fails closed on the `null` an omitted argument supplies. Two source-level guards assert it |
+| 2 | **A real protection was lost.** An authenticated admin who omits or mistypes `case_no` can send Cash App/Venmo to an address already stored as a carrier contact. The old `recipientIsCarrier` blocked that; the new pairing refuses only when the reference actually resolves to a claims row | confirmed | 🔴 **OPEN — owner decision.** This is the deliberate consequence of removing recipient inference. Requires admin auth; not externally exploitable |
+| 3 | **Separation is weaker operationally, equal structurally.** The formal invariant (an insurance sheet can never contain payment) is unchanged. The broader goal — *a carrier never receives consumer payment instructions* — is weaker, because a route-labelled PRIVATE send with an absent or unresolved reference can now reach a known carrier email | confirmed | 🔴 **OPEN — same decision** |
+| 4 | `/intake-link/email` and `/sheets/:id/email` take the product from the request, so an admin chooses it rather than the server deriving it independently | confirmed, not a payment issue | 🟡 **OPEN, judged acceptable** — neither route can reach a payment method by that choice, both are admin-only, and the alternative is the recipient inference the owner removed |
+| 5 | The case-backed intake send bypassed `contextForKind` / `send_context` entirely | confirmed | ✅ **FIXED** — that was the separate stop-gate finding; the route is inside the model and fails closed on an unrecognised kind |
+
+**The honest summary of 2 and 3, for whoever picks this up:** the refactor
+removed four defects and one protection. The four defects were real and
+recurring; the protection was real too. The owner chose this knowingly after
+four rounds, and there is an owner-sanctioned way back to it that does **not**
+reintroduce string matching — their own words: *"If durable recipient
+classification is needed, use an explicit typed field or companion table per
+repo migration rules."* A `recipient_kind` written when a contact is first
+recorded would restore the protection as a typed fact rather than a guess.
+**Not built, not started, and not to be started without the owner.**
+
+## 📥 QUEUED — OWNER WORKFLOW SIMPLIFICATION (2026-08-15)
+
+Recorded verbatim in **`WORKFLOW-SIMPLIFICATION.md`** next to this file, on
+arrival, before any of it was built. **Queued behind the current unit on the
+owner's own instruction** — *"Queue this after the current unit."*
+
+Five parts: manual payments and an easier Record Payment · archive plus an
+admin-only Delete Permanently · claim reference optional and assignment not
+required · both admin accounts seeing identical data · two admins in Active
+Surveillance on one case at once.
+
+**That transcript arrived truncated** and the reconstructed fragments are
+bracketed in that file.
+
+**All four open questions are now ANSWERED by the owner (2026-08-15)**, recorded
+in the same file and governing:
+
+- **Record Payment** reachable from the case header/summary, the Retainer/Payment
+  card **and** the More menu — not another screen.
+- **Delete is a tombstone, not a purge.** Evidence, reports, invoices, payment
+  history and send/audit logs are never physically destroyed, and *"a true
+  irreversible data purge is NOT needed now"*. The most dangerous item in the
+  order is off the table.
+- **ARCHIVED is a real new state**, separate from Completed and Cancelled:
+  leaves active views, reachable under Archived, preserves everything,
+  restorable.
+- **Two-admin surveillance: one independent session per admin**, both running at
+  once, both appending to the **same** case activity log. The safety rule stays —
+  you can only stop or edit your own — and uniqueness constraints change *only as
+  needed* so the lock is per admin/session rather than one global timer per case.
+
+**§1 is largely built already** (the five methods, void-with-audit and the
+never-marks-paid rule all exist), so the new part there is reachability.
+**§3 and §4 both touch CHECK constraints or unique indexes** — a companion table
+is the precedent, not an `ALTER TABLE`.
