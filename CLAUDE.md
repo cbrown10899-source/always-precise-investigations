@@ -617,7 +617,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1320 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 1329 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 906 checks: the page against the real Worker
 ```
 
@@ -786,10 +786,28 @@ well as a filter:
 - **Reads stay open on purpose.** An admin has to be able to read a deleted case
   to decide whether to put it back, and the workspace is where that button is.
 
-**Archived leaves the working views too but does NOT gate writes** — archived
-means finished, not removed. `caseSummary`, `outNow` and the calendar filter
-both sets through `hiddenCases()`, once, rather than repeating a `NOT IN` in
-each query.
+**Archived gates writes as well, and that is what makes hiding it safe.** The
+first version let an archived case stay workable while removing it from the
+working views — the two halves of a silent failure. An investigator out in the
+field on an archived case would not appear on Out now; reports falling due on it
+would not reach the alerts. Out of the views and out of the work go together,
+and the way back is one button. Archived means *finished*, and finishing
+something you are still doing is the contradiction, not the refusal.
+
+**Archiving or deleting a case with a day still running is refused**, naming the
+day. Otherwise the day is stranded: the case leaves the views so nobody sees the
+clock, and the gate then refuses the very request that would end it — an
+investigator with a clock they cannot stop and an office that cannot see them.
+Refusing at the door is also what makes the filtering safe, because nothing live
+can ever be behind a hidden case.
+
+`caseSummary`, `outNow` and the calendar filter both sets through
+`hiddenCases()`, once, rather than repeating a `NOT IN` in each query.
+
+**Offers are addressed by their own id**, and that was the actionable route the
+first gate missed: accepting one assigns the investigator and moves the case's
+stage. `/offers/:id/*` and `/my/offers/:id/*` resolve through the gate like
+invoices and builds.
 
 ## The free-plan failsafe
 

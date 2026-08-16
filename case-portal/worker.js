@@ -2087,6 +2087,37 @@ const DELETED_CASE = caseNo =>
   `${caseNo} has been deleted, so nothing can be recorded or sent against it. `
   + 'Put the case back first — nothing was destroyed.';
 
+/* ARCHIVED GATES WRITES TOO, and the reason is the hole it closes rather than
+   tidiness (Codex stop-time review, 2026-08-16 — "hidden rows can suppress live
+   work").
+
+   Archiving takes a case out of the working views. If work could still be
+   recorded against it, that work would be invisible: an investigator out in the
+   field on an archived case would not appear on Out now, and reports falling due
+   on it would not reach the alerts. Hiding a case and letting it stay workable
+   are the two halves of a silent failure.
+
+   So the two go together — out of the views, out of the work — and the way back
+   is one button. "Archived" means finished, and finishing something you are
+   still doing is the contradiction, not the refusal. */
+const ARCHIVED_CASE = caseNo =>
+  `${caseNo} is archived, so nothing can be recorded against it. `
+  + 'Restore the case first — it comes back exactly as it was.';
+
+/* A DAY THAT IS STILL RUNNING CANNOT BE FILED AWAY. Archiving or deleting a
+   case whose clock is open would strand that day: the case leaves the views, so
+   nobody sees it running, and the gate then refuses the very request that would
+   end it. The investigator is left with a clock they cannot stop and an office
+   that cannot see them. Refused here instead, naming the day. */
+async function openDayBlocking(env, caseNo) {
+  if ((await missingTables(env)).includes('case_days')) return null;
+  return env.DB.prepare(
+    `SELECT d.id, d.day_date, u.display_name AS investigator
+       FROM case_days d LEFT JOIN users u ON u.id = d.investigator_id
+      WHERE d.case_no = ? AND d.end_time IS NULL ORDER BY d.id DESC LIMIT 1`)
+    .bind(caseNo).first();
+}
+
 /* The delete tombstone, or null. Guarded like `archiveOf`, and for the same
    deploy-order reason. */
 async function deletedOf(env, caseNo) {
@@ -5282,24 +5313,37 @@ async function route(request, env) {
        their routes to remember. */
     const im = p.match(/^\/invoices\/(\d{1,12})(?:\/|$)/);
     const bm = p.match(/^\/build\/(\d{1,12})(?:\/|$)/);
+    /* OFFERS ARE ADDRESSED BY ID TOO, and they were the way in that the first
+       version of this gate missed: an investigator could accept an offer on a
+       deleted case, which assigns them to it and moves its stage. */
+    const om = p.match(/^\/(?:my\/)?offers\/(\d{1,12})(?:\/|$)/);
     let subject = cm ? cm[1] : null;
-    if (!subject && (im || bm)) {
-      const row = im
-        ? await env.DB.prepare('SELECT case_no FROM invoices WHERE id = ?').bind(im[1]).first()
-        : await env.DB.prepare('SELECT case_no FROM case_builds WHERE id = ?').bind(bm[1]).first();
+    if (!subject && (im || bm || om)) {
+      const [table, id] = im ? ['invoices', im[1]]
+        : bm ? ['case_builds', bm[1]] : ['case_offers', om[1]];
+      const row = await env.DB.prepare(`SELECT case_no FROM ${table} WHERE id = ?`)
+        .bind(id).first();
       subject = row && row.case_no ? row.case_no : null;
     }
-    /* The two writes that must still work on a deleted case: putting it back,
-       and deleting it again (which stays a no-op, so a double tap on a flaky
-       connection is not an error the office has to interpret).
+    /* The writes that must still work, matched on the WHOLE path rather than a
+       suffix — `/cases/:no/activity/:id/delete` also ends in "delete", and
+       letting that through would leave a deleted case's timeline editable.
 
-       Matched on the WHOLE path, not a suffix — `/cases/:no/activity/:id/delete`
-       also ends in "delete", and letting that through would leave the timeline
-       of a deleted case editable. */
-    const wayOut = /^\/cases\/[A-Za-z0-9-]{3,64}\/(?:un)?delete$/.test(p);
-    if (subject && !wayOut) {
+       Delete and undelete always pass: they are the way out of deleted, and
+       deleting twice stays a no-op so a double tap on a flaky connection is not
+       an error the office has to interpret. Archive and restore pass only when
+       the case is NOT deleted — a deleted case is not archivable. */
+    const isDeleteRoute  = /^\/cases\/[A-Za-z0-9-]{3,64}\/(?:un)?delete$/.test(p);
+    const isArchiveRoute = /^\/cases\/[A-Za-z0-9-]{3,64}\/(?:archive|restore)$/.test(p);
+    if (subject) {
       const gone = await deletedOf(env, subject);
-      if (gone) return json({ error: DELETED_CASE(subject), case_deleted: true }, 409);
+      if (gone && !isDeleteRoute) {
+        return json({ error: DELETED_CASE(subject), case_deleted: true }, 409);
+      }
+      if (!gone && !isDeleteRoute && !isArchiveRoute) {
+        const filed = await archiveOf(env, subject);
+        if (filed) return json({ error: ARCHIVED_CASE(subject), case_archived: true }, 409);
+      }
     }
   }
 
@@ -6063,6 +6107,13 @@ async function route(request, env) {
     const sub = await env.DB.prepare('SELECT case_no FROM submissions WHERE case_no = ?')
       .bind(m[1]).first();
     if (!sub) return json({ error: 'not found' }, 404);
+    const running = await openDayBlocking(env, m[1]);
+    if (running) {
+      return json({ error: `${m[1]} has a day still running${
+        running.investigator ? ` — ${running.investigator}'s, from ${running.day_date}` : ''
+      }. End it before archiving, or the clock keeps going where nobody can see it.`,
+        open_day: true }, 409);
+    }
     await env.DB.prepare(
       `INSERT INTO case_archive (case_no, archived_by, archived_at) VALUES (?1, ?2, ?3)
        ON CONFLICT(case_no) DO NOTHING`).bind(m[1], user.id, nowIso()).run();
@@ -6104,6 +6155,13 @@ async function route(request, env) {
     const sub = await env.DB.prepare('SELECT case_no FROM submissions WHERE case_no = ?')
       .bind(m[1]).first();
     if (!sub) return json({ error: 'not found' }, 404);
+    const running = await openDayBlocking(env, m[1]);
+    if (running) {
+      return json({ error: `${m[1]} has a day still running${
+        running.investigator ? ` — ${running.investigator}'s, from ${running.day_date}` : ''
+      }. End it before deleting, or the clock keeps going where nobody can see it `
+        + 'and nobody can stop it.', open_day: true }, 409);
+    }
     const body = await readJson(request);
     const reason = String(body.reason == null ? '' : body.reason)
       .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 200);

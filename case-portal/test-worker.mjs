@@ -6675,27 +6675,66 @@ section('A deleted case cannot be worked on, and stops appearing in working view
   await call(env, '/payment-methods/venmo', { method: 'POST', cookie: admin,
     body: { enabled: true, display_name: 'Venmo', handle: '@AlwaysPrecise',
             url: 'https://venmo.com/u/AlwaysPrecise' } });
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'gone_inv', display_name: 'Field', role: 'investigator' }))).url;
+  const tk = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tk}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const field = (await login(env, 'gone_inv', 'FieldWork2026x')).cookie;
+  const fieldId = (await jsonOf(await call(env, '/auth/me', { cookie: field }))).user.id;
 
   await ingest(env, { case_no: 'API-GONE-1', service: 'Surveillance',
                       client_name: 'Gone Client', client_email: 'gone@example.com',
                       subject_name: 'S' });
-  // A day left RUNNING before the delete, so the dashboard and Out now have
-  // something to keep announcing if the filter is not there.
+
+  /* A RUNNING CLOCK CANNOT BE FILED AWAY (Codex stop-time review, 2026-08-16 —
+     "hidden rows can suppress live work").
+
+     Archiving or deleting a case whose day is still open would strand it: the
+     case leaves the working views, so nobody sees the clock running, and the
+     write gate then refuses the very request that would end it. The
+     investigator is left with a clock they cannot stop and an office that
+     cannot see them. Both are refused while a day is open, which is also what
+     makes hiding the case safe afterwards — nothing live can be behind it. */
   await call(env, '/cases/API-GONE-1/day/start', { method: 'POST', cookie: admin,
     body: { day_date: '2026-08-16', start_time: '07:00' } });
+  ok('a case with a running day IS on Out now',
+     JSON.stringify(await jsonOf(await call(env, '/active', { cookie: admin })))
+       .includes('API-GONE-1'));
+  const delRunning = await call(env, '/cases/API-GONE-1/delete', { method: 'POST',
+    cookie: admin, body: {} });
+  ok('deleting a case with a day still running is refused', delRunning.status === 409,
+     String(delRunning.status));
+  ok('and the refusal names the day rather than only saying no',
+     /still running/i.test((await jsonOf(delRunning)).error || ''),
+     (await jsonOf(delRunning)).error);
+  const arcRunning = await call(env, '/cases/API-GONE-1/archive', { method: 'POST',
+    cookie: admin, body: {} });
+  ok('archiving one is refused for the same reason', arcRunning.status === 409,
+     String(arcRunning.status));
+  ok('so live work can never be hidden behind either state',
+     JSON.stringify(await jsonOf(await call(env, '/active', { cookie: admin })))
+       .includes('API-GONE-1'));
+
+  await call(env, '/cases/API-GONE-1/day/end', { method: 'POST', cookie: admin,
+    body: { end_time: '12:00' } });
+  await call(env, '/cases/API-GONE-1/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-08-16', at_time: '07:30', description: 'Observed the subject.' } });
   const invBefore = (await jsonOf(await call(env, '/cases/API-GONE-1/invoices',
     { method: 'POST', cookie: admin, body: {} }))).invoice;
+  // An offer made BEFORE the delete, so accepting it afterwards is a real
+  // attempt rather than a route that could not be reached anyway.
+  await call(env, '/cases/API-GONE-1/offer', { method: 'POST', cookie: admin,
+    body: { investigator_id: fieldId, investigation_date: '2026-08-20', expected_hours: 8 } });
+  const offer = ((await jsonOf(await call(env, '/my/offers', { cookie: field }))).offers || [])[0];
 
-  await call(env, '/cases/API-GONE-1/delete', { method: 'POST', cookie: admin,
-    body: { reason: 'opened in error' } });
+  ok('with the day ended, the case can be deleted',
+     (await call(env, '/cases/API-GONE-1/delete', { method: 'POST', cookie: admin,
+       body: { reason: 'opened in error' } })).status === 200);
 
   const gone = r => r.status === 409;
   ok('a day cannot be started on a deleted case',
      gone(await call(env, '/cases/API-GONE-1/day/start', { method: 'POST', cookie: admin,
        body: { day_date: '2026-08-17', start_time: '08:00' } })));
-  ok('and the running day cannot be ended on it either',
-     gone(await call(env, '/cases/API-GONE-1/day/end', { method: 'POST', cookie: admin,
-       body: { end_time: '12:00' } })));
   ok('activity cannot be logged',
      gone(await call(env, '/cases/API-GONE-1/activity', { method: 'POST', cookie: admin,
        body: { at_date: '2026-08-16', at_time: '07:10', description: 'still logging' } })));
@@ -6712,6 +6751,20 @@ section('A deleted case cannot be worked on, and stops appearing in working view
        body: { status: 'complete' } })));
   ok('and it cannot be archived while deleted',
      gone(await call(env, '/cases/API-GONE-1/archive', { method: 'POST', cookie: admin, body: {} })));
+
+  /* OFFERS ARE ADDRESSED BY THEIR OWN ID, and this was the way in the first
+     version of the gate missed: accepting assigns the investigator and moves
+     the case's stage, on a case the office had deleted. */
+  if (offer) {
+    ok('an investigator cannot accept an offer on a deleted case',
+       gone(await call(env, `/my/offers/${offer.id}/accept`, { method: 'POST', cookie: field, body: {} })));
+    ok('nor decline it into a record against that case',
+       gone(await call(env, `/my/offers/${offer.id}/decline`, { method: 'POST', cookie: field, body: {} })));
+  } else {
+    ok('an investigator cannot accept an offer on a deleted case (no offer made)', false,
+       'the fixture failed to create an offer');
+    ok('nor decline it into a record against that case (no offer made)', false, '');
+  }
 
   /* THE WORST OF WHAT THE FIRST VERSION ALLOWED: a client email from a case the
      office had deleted. The case is named in the BODY here, so the router's
@@ -6739,19 +6792,12 @@ section('A deleted case cannot be worked on, and stops appearing in working view
      through the gate would leave a deleted case's timeline editable. */
   const entry = ((await jsonOf(await call(env, '/cases/API-GONE-1/workspace',
     { cookie: admin }))).activity || [])[0];
-  if (entry) {
-    ok('removing an activity entry on a deleted case is refused too',
-       gone(await call(env, `/cases/API-GONE-1/activity/${entry.id}/delete`,
-         { method: 'POST', cookie: admin, body: {} })));
-  } else {
-    ok('removing an activity entry on a deleted case is refused too (no entry to try)', true);
-  }
+  ok('removing an activity entry on a deleted case is refused too',
+     Boolean(entry) && gone(await call(env, `/cases/API-GONE-1/activity/${entry.id}/delete`,
+       { method: 'POST', cookie: admin, body: {} })));
 
-  /* IT LEAVES THE WORKING VIEWS, including with a day still running on it. */
-  ok('it is not on Out now, despite the running day',
-     !JSON.stringify(await jsonOf(await call(env, '/active', { cookie: admin })))
-       .includes('API-GONE-1'));
-  ok('nor in the dashboard alerts',
+  /* IT LEAVES THE WORKING VIEWS. */
+  ok('it is not in the dashboard alerts',
      !JSON.stringify(await jsonOf(await call(env, '/summary', { cookie: admin })))
        .includes('API-GONE-1'));
   ok('nor on the calendar',
@@ -6774,23 +6820,31 @@ section('A deleted case cannot be worked on, and stops appearing in working view
   ok('after which work resumes',
      (await call(env, '/cases/API-GONE-1/activity', { method: 'POST', cookie: admin,
        body: { at_date: '2026-08-16', at_time: '09:30', description: 'back at it' } })).status === 201);
-  ok('and it is on Out now again, with the day that never stopped running',
-     JSON.stringify(await jsonOf(await call(env, '/active', { cookie: admin })))
-       .includes('API-GONE-1'));
 
-  /* ARCHIVED IS THE SAME KIND OF NOT-WORKING-ON-IT for the dashboard, which was
-     the other half of the same defect. Archiving does NOT gate writes — an
-     archived case is finished, not removed — so only the views are asserted. */
-  await call(env, '/cases/API-GONE-1/archive', { method: 'POST', cookie: admin, body: {} });
+  /* ARCHIVED GATES WRITES TOO, and that is what closes the suppression hole:
+     a case out of the working views cannot also be accumulating work. */
+  ok('a case with no day running can be archived',
+     (await call(env, '/cases/API-GONE-1/archive', { method: 'POST', cookie: admin, body: {} })).status === 200);
+  const arcRefusal = await call(env, '/cases/API-GONE-1/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-08-16', at_time: '10:00', description: 'archived, so refused' } });
+  ok('and then nothing can be recorded against it', arcRefusal.status === 409,
+     String(arcRefusal.status));
+  // Read ONCE: a Response body can only be consumed once, and the second read
+  // comes back empty — which reads as a failed assertion rather than a bug here.
+  const arcBody = await jsonOf(arcRefusal);
+  ok('with a refusal naming restore as the way back',
+     /restore the case/i.test(arcBody.error || ''), arcBody.error);
+  ok('and flagged as archived rather than deleted', arcBody.case_archived === true);
   ok('an archived case leaves the dashboard alerts too',
      !JSON.stringify(await jsonOf(await call(env, '/summary', { cookie: admin })))
        .includes('API-GONE-1'));
-  ok('and Out now',
-     !JSON.stringify(await jsonOf(await call(env, '/active', { cookie: admin })))
-       .includes('API-GONE-1'));
-  ok('but it can still be worked on, because archived is not deleted',
-     (await call(env, '/cases/API-GONE-1/activity', { method: 'POST', cookie: admin,
-       body: { at_date: '2026-08-16', at_time: '10:00', description: 'archived, not gone' } })).status === 201);
+  ok('restoring it lets work resume',
+     (await call(env, '/cases/API-GONE-1/restore', { method: 'POST', cookie: admin, body: {} })).status === 200
+     && (await call(env, '/cases/API-GONE-1/activity', { method: 'POST', cookie: admin,
+       body: { at_date: '2026-08-16', at_time: '10:30', description: 'restored' } })).status === 201);
+  ok('and an archived case can still be deleted — delete reaches further',
+     (await call(env, '/cases/API-GONE-1/archive', { method: 'POST', cookie: admin, body: {} })).status === 200
+     && (await call(env, '/cases/API-GONE-1/delete', { method: 'POST', cookie: admin, body: {} })).status === 200);
 
   globalThis.fetch = realFetch;
 }
