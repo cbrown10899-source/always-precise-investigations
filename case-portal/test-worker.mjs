@@ -6083,6 +6083,203 @@ section('Origin guard and headers');
   ok('the /portal-api prefix is stripped', res.status === 200 && (await jsonOf(res)).ok === true);
 }
 
+/* TWO ADMIN ACCOUNTS SEE THE SAME DATA (owner, WORKFLOW-SIMPLIFICATION §4).
+
+   The owner raised this, which usually means something looked wrong on screen.
+   Reading the code says it should already hold — every scoped query is
+   `admin ? '' : <narrowed to assigned_to>`, and `caseFor` lets an admin past
+   unconditionally — but nothing proved it: every other test in this file signs
+   in as one admin. A property believed and never asserted is the kind that
+   quietly stops being true.
+
+   So: one admin builds a case's whole record, a SECOND admin reads it, and the
+   two answers are compared byte for byte.
+
+   WHAT IS DELIBERATELY NOT COMPARED, and must not be "fixed" into parity:
+
+     `server_now`  — the Worker's clock, different on every request by design.
+     `my_offer`    — an offer made to THIS user. It is identity-scoped on
+                     purpose; asserting it equal would assert a wrong property.
+
+   The same goes for `/my/reports`, `/my/expenses`, `/my/active` and `/calendar`,
+   which scope by WHO CREATED the record (the KEEP decision, 2026-08-14). They
+   are not part of this parity and are not asserted here. "Do not scope admin
+   data by assigned_to" is not "make every view global". */
+section('Two admin accounts see the same data');
+{
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const adminA = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  /* The second admin arrives the only way an account can: by invitation. */
+  const invRes = await jsonOf(await invite(env, adminA,
+    { username: 'second_admin', display_name: 'Second Admin', role: 'admin' }));
+  const tok = new URL(invRes.url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'SecondAdmin2026x' } });
+  const adminB = (await login(env, 'second_admin', 'SecondAdmin2026x')).cookie;
+  ok('a second admin account exists and can sign in', Boolean(adminB));
+  ok('and it really is an admin',
+     (await jsonOf(await call(env, '/auth/me', { cookie: adminB }))).user.role === 'admin');
+
+  /* ---- ADMIN A BUILDS THE RECORD ------------------------------------- */
+
+  await ingest(env, { case_no: 'API-PAR-P', service: 'Surveillance',
+                      client_name: 'Parity Client', client_email: 'parity@example.com',
+                      client_phone: '555-0100', subject_name: 'Subject One',
+                      subject_address: '1 Test Road', objective: 'Document activity.' });
+  await ingest(env, { case_no: 'API-PAR-C', carrier: 'Parity Mutual', claim_number: 'PM-42',
+                      client_name: 'Parity Adjuster', client_email: 'adj@carrier.example',
+                      subject_name: 'Claimant Two' });
+
+  // A worked day, so there is something to report on.
+  await call(env, '/cases/API-PAR-P/day/start', { method: 'POST', cookie: adminA,
+    body: { day_date: '2026-08-14', start_time: '07:00', start_mileage: 10000 } });
+  for (const [t, d] of [['07:15', 'Arrived at the residence.'],
+                        ['09:40', 'Subject departed in the grey sedan.']]) {
+    await call(env, '/cases/API-PAR-P/activity', { method: 'POST', cookie: adminA,
+      body: { at_date: '2026-08-14', at_time: t, description: d } });
+  }
+  await call(env, '/cases/API-PAR-P/day/end', { method: 'POST', cookie: adminA,
+    body: { end_time: '12:00', end_mileage: 10055 } });
+  const parDay = (await jsonOf(await call(env, '/cases/API-PAR-P/workspace', { cookie: adminA }))).days[0];
+  await call(env, '/cases/API-PAR-P/reports/generate', { method: 'POST', cookie: adminA,
+    body: { day_id: parDay.id } });
+
+  // A manual retainer payment, and one voided so the audit path is covered too.
+  await call(env, '/cases/API-PAR-P/retainer', { method: 'POST', cookie: adminA,
+    body: { retainer_amount: 2000 } });
+  await call(env, '/cases/API-PAR-P/retainer/payment', { method: 'POST', cookie: adminA,
+    body: { amount: 800, method: 'check', paid_on: '2026-08-12', reference: 'cheque 4471' } });
+  const toVoid = await jsonOf(await call(env, '/cases/API-PAR-P/retainer/payment',
+    { method: 'POST', cookie: adminA,
+      body: { amount: 50, method: 'cash', paid_on: '2026-08-13', reference: 'miskey' } }));
+  const voidId = (toVoid.authorization.retainer.payments || []).slice(-1)[0].id;
+  await call(env, `/cases/API-PAR-P/retainer/payment/${voidId}/void`, { method: 'POST',
+    cookie: adminA, body: { reason: 'recorded twice' } });
+
+  // An invoice carried far enough to hold a payment of its own.
+  const madeInv = await jsonOf(await call(env, '/cases/API-PAR-P/invoices', { method: 'POST',
+    cookie: adminA, body: {} }));
+  const invId = madeInv.invoice.id;
+  await call(env, `/invoices/${invId}/lines`, { method: 'POST', cookie: adminA,
+    body: { lines: [{ description: 'Surveillance', qty: 8, rate: 100 }] } });
+  await call(env, `/invoices/${invId}/status`, { method: 'POST', cookie: adminA,
+    body: { status: 'ready' } });
+  await call(env, `/invoices/${invId}/payments`, { method: 'POST', cookie: adminA,
+    body: { amount: 300, paid_date: '2026-08-15', method: 'check', reference: 'part' } });
+
+  // Send history: one against a case, one pre-case with no case at all.
+  await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: adminA,
+    body: { to: 'parity@example.com', case_no: 'API-PAR-P', include_intake: true } });
+  await call(env, '/intake-link/email', { method: 'POST', cookie: adminA,
+    body: { to: 'brand.new@example.com', name: 'Brand New', kind: 'private' } });
+
+  /* ---- AND THE SECOND ADMIN READS IT --------------------------------- */
+
+  /* Strip only what is per-request or per-identity BY DESIGN. Anything else
+     differing is the leak this test exists to catch. */
+  const VOLATILE = new Set(['server_now', 'my_offer']);
+  const strip = v => {
+    if (Array.isArray(v)) return v.map(strip);
+    if (v && typeof v === 'object') {
+      const out = {};
+      for (const k of Object.keys(v).sort()) if (!VOLATILE.has(k)) out[k] = strip(v[k]);
+      return out;
+    }
+    return v;
+  };
+  const bothSee = async path => {
+    const a = strip(await jsonOf(await call(env, path, { cookie: adminA })));
+    const b = strip(await jsonOf(await call(env, path, { cookie: adminB })));
+    return [JSON.stringify(a), JSON.stringify(b)];
+  };
+  /* Compared as JSON, and the failure message names the FIRST differing field
+     rather than dumping two documents — a diff nobody can read is a diff nobody
+     acts on. */
+  const same = async (label, path) => {
+    const [a, b] = await bothSee(path);
+    if (a === b) { ok(label, true); return; }
+    let i = 0;
+    while (i < a.length && i < b.length && a[i] === b[i]) i++;
+    ok(label, false, `${path} diverges at char ${i}: `
+      + `A…${a.slice(Math.max(0, i - 60), i + 60)} | B…${b.slice(Math.max(0, i - 60), i + 60)}`);
+  };
+
+  // 1. CASES — the list both admins work from.
+  await same('both admins see the same case list', '/submissions?limit=200');
+  const listA = await jsonOf(await call(env, '/submissions?limit=200', { cookie: adminA }));
+  const listB = await jsonOf(await call(env, '/submissions?limit=200', { cookie: adminB }));
+  ok('and it is not empty, so the comparison means something',
+     (listA.submissions || []).length >= 2, String((listA.submissions || []).length));
+  ok('neither admin is missing a case the other has',
+     (listA.submissions || []).map(r => r.case_no).sort().join() ===
+     (listB.submissions || []).map(r => r.case_no).sort().join());
+
+  // 2. INTAKES — what the client actually submitted, on both kinds of case.
+  await same('both see the same private intake', '/submissions/API-PAR-P');
+  await same('both see the same claims intake', '/submissions/API-PAR-C');
+  const wsA = await jsonOf(await call(env, '/cases/API-PAR-P/workspace', { cookie: adminA }));
+  /* Client identity lives on the SUBMISSION record, not the workspace — that is
+     where `redactRow` withholds it from an investigator, so it is the surface
+     where an admin-parity leak would actually show. Asserted so the comparison
+     above is known to be comparing something that matters. */
+  const subA = await jsonOf(await call(env, '/submissions/API-PAR-P', { cookie: adminA }));
+  const subB = await jsonOf(await call(env, '/submissions/API-PAR-P', { cookie: adminB }));
+  ok('the intake detail really carries client identity, so a leak would show',
+     JSON.stringify(subA).includes('Parity Client'));
+  ok('and the second admin is shown that identity too, not a redacted copy',
+     JSON.stringify(subB).includes('Parity Client'));
+
+  // 3+4+5. PAYMENTS, REPORTS and ACTIVITY all hang off the workspace.
+  await same('both see the same private case workspace', '/cases/API-PAR-P/workspace');
+  await same('both see the same claims case workspace', '/cases/API-PAR-C/workspace');
+  ok('the workspace really carries the retainer payments being compared',
+     (wsA.authorization.retainer.payments || []).length === 2,
+     String((wsA.authorization.retainer.payments || []).length));
+  ok('and a report', (wsA.reports || []).length === 1, String((wsA.reports || []).length));
+  ok('and the activity entries', (wsA.activity || []).length === 2,
+     String((wsA.activity || []).length));
+
+  // 4b. INVOICE PAYMENTS, which live on their own routes.
+  await same('both see the same invoice list for the case', '/cases/API-PAR-P/invoices');
+  await same('both see the same invoice list overall', '/invoices');
+  await same('both see the same invoice, lines and payments', `/invoices/${invId}`);
+  const ivA = (await jsonOf(await call(env, `/invoices/${invId}`, { cookie: adminA }))).invoice;
+  ok('the invoice really carries the payment being compared',
+     (ivA.payments || []).length === 1 && ivA.balance_due === 500,
+     JSON.stringify([(ivA.payments || []).length, ivA.balance_due]));
+
+  // 6. SEND HISTORY — including the pre-case send, which hangs off no case.
+  await same('both see the same send history', '/sends?limit=200');
+  const sendsA = (await jsonOf(await call(env, '/sends?limit=200', { cookie: adminA }))).sends || [];
+  ok('the history really carries both a case send and a pre-case one',
+     sendsA.some(s => s.case_no === 'API-PAR-P') && sendsA.some(s => s.case_no === null));
+
+  /* The other direction, so this cannot pass by both admins seeing NOTHING:
+     an investigator on the same portal still sees only what is theirs. */
+  const invLink = (await jsonOf(await invite(env, adminA,
+    { username: 'parity_inv', display_name: 'Field', role: 'investigator' }))).url;
+  const invTok = new URL(invLink, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${invTok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const fieldCookie = (await login(env, 'parity_inv', 'FieldWork2026x')).cookie;
+  const fieldList = await jsonOf(await call(env, '/submissions?limit=200', { cookie: fieldCookie }));
+  ok('an investigator assigned nothing still sees no cases',
+     (fieldList.submissions || []).length === 0, String((fieldList.submissions || []).length));
+  ok('and cannot read a case workspace either',
+     (await call(env, '/cases/API-PAR-P/workspace', { cookie: fieldCookie })).status === 404);
+
+  globalThis.fetch = realFetch;
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));
