@@ -1739,12 +1739,12 @@ section('A private lead can be sent payment options; an insurance lead cannot');
    what turns a phone call into a lead, so that ordering was backwards.
 
    This is the door, and the history that has to work without a case number. */
-/* THE OWNER'S PRODUCTION REPRODUCTION. The send screen labels the case number
-   "optional", and typing one that matched no case returned a bare "not found"
-   under the Preview button and never advanced. The cause was on THIS side: the
-   page wrote the agreed retainer on the way to Preview, and that write is
-   case-scoped. A worker test cannot see it — the Worker never 404'd. */
-section('An unmatched case reference does not block Preview');
+/* THE OWNER'S PRODUCTION REPRODUCTION, walked on the page. The send screen
+   labels the field optional, and a value matching no case put a bare "not
+   found" under Preview. #128 splits it: what is typed is a REFERENCE and is
+   never looked up; "Link existing case" is the separate act that validates.
+   A worker test cannot see this — the block was on this side. */
+section('An unmatched reference does not block Preview');
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
@@ -1757,22 +1757,16 @@ section('An unmatched case reference does not block Preview');
 
   await page.locator('#wiz_to').fill('marinerecon016@example.test');
   await page.locator('#wiz_case').fill('Test123');
-  await page.locator('#wiz_ret').selectOption('2000');
-  await page.waitForTimeout(400);
-  /* The "not stored" notice can only appear AFTER the attempt — until Preview
-     tries the write, nothing knows the reference resolves to nothing. */
   await page.locator('.btn', { hasText: 'Preview' }).click();
   await page.waitForTimeout(900);
   const body = await text(page, '.amsheet');
   ok('Preview is not blocked by a reference that matches no case',
      !has(body, 'not found'), body.slice(0, 200));
   ok('and it really did advance to the preview step',
-     await page.locator('.btn', { hasText: 'Send it' }).count() === 1
-     || has(body, 'Send it'), body.slice(0, 200));
-  ok('the preview quotes the $2,000 that was agreed, not the standard figure',
-     has(body, '$2,000') && !has(body, '$1,500'), body.slice(0, 300));
-  ok('and the office is told plainly that nothing was stored against a case',
-     has(body, 'nothing is stored') || has(body, 'not stored'), body.slice(0, 400));
+     has(body, 'Send it') || await page.locator('.btn', { hasText: 'Send it' }).count() === 1,
+     body.slice(0, 200));
+  ok('the typed value is carried as a reference, not a linked case',
+     has(body, 'Test123'), body.slice(0, 300));
   await page.close();
 }
 
