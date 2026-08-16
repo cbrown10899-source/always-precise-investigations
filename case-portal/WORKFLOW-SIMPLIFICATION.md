@@ -70,10 +70,92 @@ No silent overwrites or one Admin ending the other's session.
 
 ---
 
+## ✅ OWNER ANSWERS, 2026-08-15 — recorded on arrival
+
+**These answer the four questions raised in the reader's notes below, and they
+GOVERN where they differ from anything reconstructed above.** Same truncation in
+transmission; `[brackets]` are reconstruction, everything else verbatim.
+
+```
+OWNER ANSWERS
+
+1. RECORD PAYMENT
+
+Make Record Payment easy to reach from:
+- the case header/summary
+- the Retainer/Payment card
+- the More menu
+
+[Do not] make Admin hunt through another screen.
+
+2. DELETE
+
+[Do not phys]ically destroy evidence, reports, invoices, payment history or send/audit logs.
+"Delete Case" should be an Admin-only soft-delete/tombstone that removes it from
+normal views but preserves records.
+A true irreversible data purge is NOT needed now.
+
+3. ARCHIVE
+
+[Add a] real ARCHIVED state separate from Completed/Cancelled.
+
+Archived cases:
+- leave active views
+- [rea]chable under Archived
+- preserve everything
+- can be restored
+
+4. TWO-ADMIN SURVEILLANCE
+
+[Eac]h Admin gets an independent surveillance session/timer on the same case.
+Keep the safety rule that an Admin can only stop/edit THEIR OWN active timer/session.
+Both sessions may run simultaneously and append to the SAME case activity log.
+Change uniqueness constraints only as needed so the lock is per Admin/session,
+not one global timer for the whole case.
+Never let one Admin silently stop or overwrite the other Admin's work.
+```
+
+### What these settle
+
+| Question raised below | Answer |
+| --- | --- |
+| Where should Record Payment be reachable from? | **Three places**: case header/summary, the Retainer/Payment card, and the More menu. Not another screen |
+| Does Delete Permanently destroy records? | **No.** Soft-delete/tombstone only. Evidence, reports, invoices, payment history and send/audit logs all survive. **A true purge is explicitly not wanted now** — so the most dangerous item in the order is off the table |
+| Is Archive the existing lens or a new state? | **A new state**, separate from Completed and Cancelled: leaves active views, reachable under Archived, preserves everything, restorable |
+| How do two admins share Active Surveillance? | **An independent session per admin**, both running at once, both appending to the **same** case activity log. The safety rule is KEPT — you can only stop or edit your own. Uniqueness constraints change **only as needed** so the lock is per admin/session rather than one global timer per case |
+
+### Notes on the answers — reader's, not owner instruction
+
+- **§2 is now much smaller and much safer than it read.** "Delete Permanently"
+  in the original order is answered as a tombstone, which is the pattern this
+  system already uses everywhere (`activity_removed`, evidence `deleted_at`,
+  invoice void, retainer payment void). The blast-radius question is closed:
+  nothing is destroyed.
+- **§4 is the one that still needs design before code, and the answer says so
+  precisely.** "Change uniqueness constraints only as needed so the lock is per
+  Admin/session" is exactly the partial unique index on `case_day_pauses`
+  (one open pause per day) and the `investigator_id` scoping in
+  `openDayForAction()`. The safety rule the owner insists on keeping is the one
+  that rule already implements — so the change is to the *granularity* of the
+  lock, not to the rule. `case_days` currently has no notion of two concurrent
+  days on one case; that is the real work.
+- **§3's ARCHIVED state touches a CHECK constraint.** `submissions.status` and
+  the `STAGES` list both constrain what a case may be, and a CHECK cannot be
+  widened from `schema.sql` idempotently — see CLAUDE.md. A companion table is
+  the precedent (`activity_removed`, `build_custom`, `build_reports`), and the
+  same applies to the Delete tombstone in §2.
+
+---
+
 ## Reader's notes — NOT owner instructions
 
 Flagged as such so a later session does not mistake them for the handoff. **Each
 is a claim to verify against the code, not a fact.**
+
+> **All four questions below were ANSWERED by the owner on 2026-08-15** — see
+> the answers section above, which governs. The notes are kept because they are
+> the audit that produced the questions, and because the "already built" findings
+> still stand and still mean *do not rebuild it*.
 
 ### §1 Manual payments — largely built already
 

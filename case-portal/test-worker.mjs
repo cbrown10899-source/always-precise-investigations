@@ -4692,6 +4692,54 @@ section('Payment instructions can go on their own, and never to a carrier');
        body: { to: 'newprospect@example.com', name: 'Sam' } })).status === 200);
   ok('and that one really went as well', lastBody !== null);
 
+  /* THE CHECK THAT STILL WORKS WHEN THE REFERENCE DOES NOT (Codex stop-time
+     review, 2026-08-15 — "unknown references bypass carrier protections").
+
+     Pre-case sends mean a reference matching nothing cannot block a send, so
+     the claims check had nothing to check against: mistype a carrier's case
+     number badly enough and the consumer handles went. The boundary therefore
+     moves to the thing that actually decides who receives the email — the
+     RECIPIENT. An address already known to belong to a claim assignment is a
+     carrier contact whatever was typed in the reference box.
+
+     Crucially this does NOT reintroduce the block the owner removed: a genuinely
+     new prospect matches nothing and sends normally, which is asserted below. */
+  await ingest(env, { case_no: 'API-POC2', carrier: 'Beta Mutual', claim_number: 'BM-1',
+                      client_name: 'B. Adjuster', client_email: 'known.adjuster@carrier.example',
+                      subject_name: 'D' });
+  lastBody = null;
+  const byRecipient = await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+    body: { to: 'known.adjuster@carrier.example', case_no: 'TOTALLY-MISTYPED-REF' } });
+  ok('an address known to be a carrier contact is refused whatever the reference says',
+     byRecipient.status === 400, String(byRecipient.status));
+  ok('and nothing reached them', lastBody === null);
+  ok('the refusal names the claim assignment the address belongs to',
+     has((await jsonOf(await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+       body: { to: 'known.adjuster@carrier.example' } }))).error, 'API-POC2'));
+  // The same protection on the sheet path, where payment can ride along.
+  lastBody = null;
+  ok('the private sheet cannot carry payment to a known carrier contact either',
+     (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+       body: { to: 'known.adjuster@carrier.example', include_payment: true } })).status === 400);
+  ok('and that send did not go', lastBody === null);
+  /* The sheet WITHOUT payment still goes to that address — the refusal is
+     scoped to the ring-fenced content, and a carrier contact may legitimately
+     be sent a sheet. The refusal message says so. */
+  lastBody = null;
+  ok('but a sheet with no payment still reaches them',
+     (await call(env, '/sheets/insurance_assignment/email', { method: 'POST', cookie: admin,
+       body: { to: 'known.adjuster@carrier.example' } })).status === 200);
+  ok('and really went', lastBody !== null);
+  /* THE PRE-CASE FLOW IS UNTOUCHED — the guard fires on known carrier
+     addresses, never on an address the system has not seen. Without this
+     assertion the fix above could quietly have become the block the owner
+     removed. */
+  lastBody = null;
+  ok('a brand-new prospect is NOT caught by the recipient check',
+     (await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+       body: { to: 'stranger@example.com', name: 'New Caller' } })).status === 200);
+  ok('and their payment options really went', lastBody !== null);
+
   /* WHAT PRE-CASE DID NOT RELAX. A reference that DOES resolve to a claim
      assignment is still refused — the separation the owner asked to preserve
      rests on the product being sent and on this check, not on whether a lookup

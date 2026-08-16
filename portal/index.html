@@ -680,7 +680,7 @@ let PAY_SEND = null;
 /* PRE-CASE SENDS (owner, 2026-08-15). The intake sent to a name and an email
    with no case behind it, the message that confirms it, and the send history
    that has to work without a case number. */
-let INTAKE_SEND = null, SEND_MSG = "", SENDS = null;
+let INTAKE_SEND = null, SEND_MSG = "", SENDS = null, SENDS_ERR = "";
 let LEAD_SEND = null; // {case_no, to, err, busy} — the inline Send-intake form (MASTER §5)
 /* MASTER §5 — the lead vocabulary, which is NOT the case vocabulary. */
 const LEAD_LABEL = {lead:"Lead", rate_sheet_sent:"Rate sheet sent", intake_sent:"Intake sent",
@@ -2163,9 +2163,20 @@ async function preIntakeGo(){
 /* Requirement 6 — the history has to work without a case number. Every other
    view of a send hangs off a case, so a pre-case send was written correctly and
    then invisible. This is where it can be seen. */
+/* A FAILED LOAD IS NOT AN EMPTY HISTORY (Codex stop-time review, 2026-08-15).
+
+   This set `SENDS = []` in the catch, and the panel renders an empty list as
+   "Nothing sent yet." So a 403, a dropped connection or a Worker hiccup told
+   the office that nothing had ever been emailed to anyone — the screen
+   asserting a fact it did not have. That is the worst possible failure for this
+   particular panel, because its whole job is answering "did that go out?", and
+   the wrong answer here is the one that reads as reassuring.
+
+   Three states, kept apart: never loaded, loaded and genuinely empty, and
+   failed. Only the middle one may say nothing was sent. */
 async function loadSends(){
-  try{ SENDS = (await api("/sends?limit=25")).sends || []; }
-  catch(e){ SENDS = []; }
+  try{ SENDS = (await api("/sends?limit=25")).sends || []; SENDS_ERR = ""; }
+  catch(e){ SENDS = null; SENDS_ERR = e.message || "The send history did not load."; }
   paint();
 }
 
@@ -2173,6 +2184,17 @@ const SEND_KIND_LABEL = {rate_sheet: "Rate sheet", intake: "Intake form",
   payment_options: "Payment options"};
 
 function sendHistoryHtml(){
+  /* The failure is DRAWN, never swallowed into an empty list — see loadSends.
+     A Retry is offered because the question this panel answers matters enough
+     to ask again, rather than leaving the office to reload the whole portal. */
+  if(SENDS_ERR) return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Recent sends</h2>
+      <span class="tag rs-needs_revision">Did not load</span></div>
+    <div class="err">${esc(SENDS_ERR)}</div>
+    <p class="hint">This is <b>not</b> the same as nothing having been sent. The history could not
+      be read, so what went out is unknown from here.</p>
+    <div class="actions"><button class="btn sm ghost" data-act="sendsRetry">Try again</button></div>
+  </div>`;
   if(SENDS === null) return "";
   return `<div class="card">
     <div class="bar"><h2 style="margin:0">Recent sends</h2>
@@ -2801,7 +2823,7 @@ function sessionForget(){
   PAYCFG = null; PAY_DRAFT = {}; PAY_MSG = ""; PAY_ERR = false;
   SUMMARY = null; SHEETS = []; SHEET_MAIL = ""; OPEN_SHEET = null; SHEET_MSG = ""; SHEET_WIZ = null;
   NL = null; LEAD_SEND = null; LEAD_MSG = ""; PAY_SEND = null;
-  INTAKE_SEND = null; SEND_MSG = ""; SENDS = null;
+  INTAKE_SEND = null; SEND_MSG = ""; SENDS = null; SENDS_ERR = "";
   INVOICES = null; INV_OPEN = null; INV_MSG = ""; INV_WARN = []; INV_EVENTS = [];
   INV_SETTINGS = null; INV_FILTER = {status: "", type: "", q: ""};
   retainerReset(); RET_CASE = null;
@@ -6807,6 +6829,7 @@ document.addEventListener("click", ev => {
     SEND_MSG = ""; paint();
     const inp = $("pi_to"); if(inp) inp.focus();
   }
+  else if(act === "sendsRetry"){ SENDS_ERR = ""; loadSends(); }
   else if(act === "preIntakeClose"){ INTAKE_SEND = null; paint(); }
   else if(act === "preIntakeGo"){ preIntakeGo(); }
   else if(act === "prePay"){

@@ -1752,6 +1752,41 @@ section('Sending works before anyone is on the desk, and the history shows it');
   ok('marked as having had no case rather than shown blank',
      has(hist, 'sent before one existed'));
   ok('and marked as failed, because it was', has(hist, 'Failed'));
+
+  /* A FAILED LOAD IS NOT AN EMPTY HISTORY (Codex stop-time review, 2026-08-15).
+
+     `loadSends` set SENDS = [] in its catch, and an empty list renders as
+     "Nothing sent yet." So a 500, a dropped connection or a permission problem
+     told the office that nothing had ever been emailed to anyone — the screen
+     asserting a fact it did not have, in the one panel whose entire job is
+     answering "did that go out?", and in the direction that reads as
+     reassuring.
+
+     Driven as a real failed request rather than by poking page state, so it
+     covers the wiring and not just the markup. */
+  await page.route('**/portal-api/sends*', r => r.fulfill({
+    status: 500, contentType: 'application/json', body: '{"error":"the history is unavailable"}' }));
+  await page.locator('.tabs button', { hasText: 'Cases' }).click();
+  await page.waitForTimeout(300);
+  await page.locator('.tabs button', { hasText: 'Rate sheets' }).click();
+  await page.waitForTimeout(900);
+  const broken = await text(page, '#app');
+  ok('a history that failed to load does NOT claim nothing was sent',
+     !has(broken, 'Nothing sent yet'), broken.slice(0, 400));
+  ok('it says it did not load', has(broken, 'Did not load'));
+  ok('and says so in as many words, because the difference is the whole point',
+     has(broken, 'not the same as nothing having been sent'));
+  ok('the failure reason is shown rather than swallowed',
+     has(broken, 'the history is unavailable'));
+  ok('and there is a way to ask again', await page.locator('[data-act="sendsRetry"]').count() === 1);
+
+  // Recovering: with the route released, Try again brings the history back.
+  await page.unroute('**/portal-api/sends*');
+  await page.locator('[data-act="sendsRetry"]').click();
+  await page.waitForTimeout(900);
+  const recovered = await text(page, '#app');
+  ok('retrying loads it properly', !has(recovered, 'Did not load'));
+  ok('and the real history is back', has(recovered, 'newcaller@example.test'));
   await page.close();
 }
 

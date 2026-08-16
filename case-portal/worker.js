@@ -590,6 +590,47 @@ const PAY_IDS = PAY_METHODS.map(m => m.id);
    than a bare comparison so the rule has one name and one place to change. */
 const sheetTakesPayment = sheetId => sheetId === 'private_retainer';
 
+/* CARRIER PROTECTION THAT DOES NOT DEPEND ON THE CASE REFERENCE (Codex
+   stop-time review, 2026-08-15).
+
+   Pre-case sends are the owner's explicit requirement: name and a valid email
+   are enough, and a reference that matches nothing must not block the send. The
+   cost was that the claims check had nothing to check against — mistype a
+   carrier's case number badly enough and the consumer payment handles went.
+
+   So the boundary moves to the thing that actually determines who receives the
+   email: THE RECIPIENT. If this address is already known to belong to a claim
+   assignment, it is a carrier contact whatever was typed in the reference box,
+   and consumer payment options are refused.
+
+   This does not reintroduce the block that was removed. A genuinely new
+   prospect matches nothing here and sends normally, which is the whole
+   pre-case flow. It only fires on an address the system already holds against
+   a claims submission.
+
+   `client_email` is the denormalised column the schema keeps so queries do not
+   parse JSON, and it is checked first. The payload is also scanned, because on
+   a claims intake the adjuster's address can be in `adjuster_email` or
+   `billing_email` rather than `client_email` — `instr` is used rather than
+   `json_extract` to avoid depending on the JSON extension in a boundary check.
+   Volume here is a few hundred rows, so a scan is not a concern.
+
+   KNOWN LIMIT, stated rather than papered over: this recognises addresses the
+   system has SEEN. An adjuster who has never appeared on a claims intake is not
+   known to be one, and nothing here can tell. It closes the realistic case —
+   emailing someone already on a claim — not every conceivable one. */
+async function recipientIsCarrier(env, to) {
+  const addr = String(to || '').trim().toLowerCase();
+  if (!addr) return null;
+  const row = await env.DB.prepare(
+    `SELECT case_no FROM submissions
+      WHERE kind = 'claims'
+        AND (lower(COALESCE(client_email, '')) = ?1
+             OR instr(lower(COALESCE(payload, '')), ?1) > 0)
+      LIMIT 1`).bind(addr).first();
+  return row ? row.case_no : null;
+}
+
 /* A payment URL is admin-entered or ABSENT — it is never built from a handle.
    The order is explicit about this and it is the sharpest line in it: a
    fabricated `cash.app/$handle` that happens to resolve to a real stranger
@@ -993,7 +1034,19 @@ async function emailSheet(request, env, user, id) {
      (`sheetTakesPayment`, checked just above), and a reference that DOES
      resolve to a claim assignment is still refused by the pairing rule. Only
      the "matches nothing" case now proceeds, and it proceeds because the office
-     needs it to. */
+     needs it to.
+
+     And the recipient check below is what covers the gap that leaves: it does
+     not care what was typed in the reference box, only whether this ADDRESS is
+     already known to belong to a claim assignment. */
+  if (includePayment) {
+    const carrierCase = await recipientIsCarrier(env, to);
+    if (carrierCase) {
+      return json({ error: `${to} is the contact on ${carrierCase}, a claim assignment. Cash App `
+                         + `and Venmo are private-client payment methods and are never sent to a `
+                         + `carrier or TPA. The sheet can still be sent without them.` }, 400);
+    }
+  }
   const wantedMethods = Array.isArray(body.methods)
     ? body.methods.map(x => String(x)).filter(x => PAY_IDS.includes(x)) : null;
   const brokenMethods = [];
@@ -1148,6 +1201,16 @@ async function emailPaymentOptions(request, env, user) {
       return json({ error: `${caseNo} is a claim assignment. Cash App and Venmo are private-client `
                          + `payment methods and are never sent to a carrier or TPA.` }, 400);
     }
+  }
+
+  /* The check that still works when the reference does not. See
+     `recipientIsCarrier` — this is what stops a mistyped carrier reference
+     putting consumer payment handles in front of an adjuster. */
+  const carrierCase = await recipientIsCarrier(env, to);
+  if (carrierCase) {
+    return json({ error: `${to} is the contact on ${carrierCase}, a claim assignment. Cash App and `
+                       + `Venmo are private-client payment methods and are never sent to a carrier `
+                       + `or TPA.` }, 400);
   }
 
   if (!(await withinRateLimit(env, 'mail'))) {

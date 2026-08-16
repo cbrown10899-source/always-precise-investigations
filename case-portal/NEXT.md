@@ -934,11 +934,26 @@ required · both admin accounts seeing identical data · two admins in Active
 Surveillance on one case at once.
 
 **That transcript arrived truncated** and the reconstructed fragments are
-bracketed in that file. Three things to settle before building, all recorded
-there: **§1 is largely built already** (the five methods, void-with-audit and
-the never-marks-paid rule all exist — the new part may only be reachability);
-**§2's Delete Permanently is the most dangerous item in the order** and needs its
-blast radius decided, since everything else in this system is soft-delete on
-purpose; and **§5 conflicts with a shipped invariant** — `openDayForAction()`
-enforces that you can only stop your own clock, and one open pause per day is a
-partial unique index, so two admins on one case needs a design decision first.
+bracketed in that file.
+
+**All four open questions are now ANSWERED by the owner (2026-08-15)**, recorded
+in the same file and governing:
+
+- **Record Payment** reachable from the case header/summary, the Retainer/Payment
+  card **and** the More menu — not another screen.
+- **Delete is a tombstone, not a purge.** Evidence, reports, invoices, payment
+  history and send/audit logs are never physically destroyed, and *"a true
+  irreversible data purge is NOT needed now"*. The most dangerous item in the
+  order is off the table.
+- **ARCHIVED is a real new state**, separate from Completed and Cancelled:
+  leaves active views, reachable under Archived, preserves everything,
+  restorable.
+- **Two-admin surveillance: one independent session per admin**, both running at
+  once, both appending to the **same** case activity log. The safety rule stays —
+  you can only stop or edit your own — and uniqueness constraints change *only as
+  needed* so the lock is per admin/session rather than one global timer per case.
+
+**§1 is largely built already** (the five methods, void-with-audit and the
+never-marks-paid rule all exist), so the new part there is reachability.
+**§3 and §4 both touch CHECK constraints or unique indexes** — a companion table
+is the precedent, not an `ALTER TABLE`.

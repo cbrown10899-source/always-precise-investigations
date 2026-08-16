@@ -422,10 +422,29 @@ consumer sheet and the payment instructions; and the pre-case intake door is
 paired from an **explicit `kind`**, never from a lookup. Resting it on the
 product being sent is stronger than resting it on a case that may not exist.
 
-Recorded honestly, because it reversed a guard added the same day from a Codex
-finding: a reference mistyped so badly that it matches no row no longer trips the
-claims check, since there is nothing to check against. The owner weighed that
-against a workflow that could not send at all.
+**The carrier check that does not depend on the reference at all** is
+`recipientIsCarrier()`, and it is what makes the above safe. Because a reference
+matching nothing can no longer block a send, the claims check had nothing to
+check against — so the boundary moved to the thing that actually decides who
+receives the email. An address already held against a claims submission (its
+`client_email`, or anywhere in that submission's payload) is a carrier contact
+whatever was typed in the reference box, and consumer payment options are
+refused by name. A genuinely new prospect matches nothing and sends normally,
+which is asserted — without that assertion this guard could quietly become the
+block the owner removed.
+
+Its limit is stated rather than papered over: it recognises addresses the system
+has **seen**. An adjuster who has never appeared on a claims intake is not known
+to be one. It closes the realistic case — emailing someone already on a claim —
+not every conceivable one.
+
+**A failed history load is never rendered as an empty history.** `loadSends()`
+used to set `SENDS = []` in its catch, and an empty list draws as "Nothing sent
+yet" — so a 500 or a dropped connection told the office that nothing had ever
+been emailed to anyone, in the one panel whose whole job is answering "did that
+go out?", and in the direction that reads as reassuring. Three states are kept
+apart now: never loaded, loaded and genuinely empty, and failed. Only the middle
+one may say nothing was sent.
 
 `GET /sheets` and `POST /sheets/:id/email` are admin-only; an investigator gets
 403 from both, from `/payment-options/email`, and from `/pricing`. Sending goes through `sendMail()`, the same
