@@ -617,8 +617,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1428 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 928 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 1469 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 947 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
@@ -931,6 +931,39 @@ connection cannot open two. **Breaks come off the billable total**: `hours` is
 what authorization and invoices draw against, so it is the WORKED figure, and
 the day-end message names the break that was subtracted rather than quietly
 returning a shorter day.
+
+**Two admins may be out on one case at once, and neither can stop the other by
+accident.** The data layer already allowed it: `startDay` checks for an existing
+open day scoped to `investigator_id = user.id`, not to the case, and the only
+unique index here is one open *pause* per *day* — already per session. So
+concurrency needed no schema change and none was made.
+
+What did change is `openDayForAction`. Its admin fallback used to be
+**unconditional**, so an ordinary End or Pause reached whatever day happened to
+be open: one admin at the desk could silently end the day of one standing in the
+rain. It now takes `allowOthers`, set **only** by `/cases/:no/day/end-other` —
+its own route, its own control, its own confirmation. End, pause and resume never
+set it, so they can only ever touch the caller's own session.
+
+**The confirmation is bound to the session it ends.** The page draws one
+button per running session, each labelled with a different person, and the
+request carries that session's `day_id`. It used to carry nothing while the
+Worker took the newest open day — so with two admins out, the button saying one
+name ended the other's clock. An absent id is honoured only when exactly ONE
+session is running (the recovery case, where there is nothing to get wrong) and
+refused with `ambiguous` when there is more than one.
+
+**A separate route rather than a flag on `/day/end`**, so the ordinary control
+cannot reach it however it is called. A flag is one stray `true` away from being
+back where this started. That route is also the HIGH #2 recovery path for a day
+stranded by reassignment, and it asks for **no reason** (owner): the confirmation
+is the deliberate act.
+
+When an admin presses the ordinary control on someone else's day the refusal
+names whose it is and sets `other_session`, so the page can offer the separate
+action rather than parse a sentence. The field panel shows "X has a day running…
+starting your own below runs alongside theirs" — because two admins on one case
+is the ordinary situation, and ending someone else's is the unusual one.
 
 **The phone's bottom bars must clear the screen edge.** Both the case section
 bar and the field bar are `position:fixed; bottom:0`, and both used to sit

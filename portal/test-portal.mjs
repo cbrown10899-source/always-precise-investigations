@@ -2532,6 +2532,131 @@ section('A case can be deleted as a tombstone and put back');
   await page.close();
 }
 
+/* TWO ADMINS ON ONE CASE, and ASSIGNMENT REACHABLE BUT SECONDARY — both on the
+   screen (owner, 2026-08-16). */
+section('A second admin sees whose day is running, and cannot end it by press');
+{
+  /* A second ADMIN, made server-side: the browser invite flow is exercised
+     elsewhere and is slow, and this section is about the field panel. */
+  const lr = await post('/auth/login', { username: 'trever', password: 'AdminPassword1x' });
+  const sc = lr.headers.getSetCookie ? lr.headers.getSetCookie()[0] : lr.headers.get('Set-Cookie');
+  const adminCookie = sc.split(';')[0];
+  const iv = await (await post('/invites',
+    { username: 'second_admin', display_name: 'Second Admin', role: 'admin' },
+    { Cookie: adminCookie })).json();
+  const tok = new URL(iv.url, 'https://x.test').searchParams.get('invite');
+  await post(`/invite/${tok}/accept`, { password: 'SecondAdmin2026x' });
+  await post('/ingest', {
+    case_no: 'API-20260812-4013', service: 'Surveillance',
+    client_name: 'Shared Case', subject_name: 'Shared Subject',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  const page = await newPage();
+  page.on('dialog', d => d.accept());
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* Trever starts a day, then the SECOND admin looks at the same case. */
+  await rowFor(page, 'API-20260812-4013').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Field work');
+  await page.locator('#d_date').fill('2026-08-17');
+  await page.locator('#d_start').fill('07:00');
+  await page.locator('[data-act="startDay"] button[type="submit"]').first().click();
+  await page.waitForTimeout(800);
+  ok('the first admin has a day running',
+     await page.locator('[data-act="endDay"]').count() === 1);
+  await page.close();
+
+  const second = await newPage();
+  second.on('dialog', d => d.accept());
+  await signIn(second, 'second_admin', 'SecondAdmin2026x');
+  await rowFor(second, 'API-20260812-4013').click();
+  await second.waitForTimeout(450);
+  await wsTab(second, 'Field work');
+  const panel = await text(second, '#dlgBody');
+  ok('the second admin is told whose day is running',
+     has(panel, 'has a day running') && has(panel, 'Trever'), panel.slice(0, 400));
+  ok('and is told they can run their own alongside it',
+     has(panel, 'runs alongside'), panel.slice(0, 400));
+  ok('the ordinary End form is not offered for someone else\'s day',
+     await second.locator('[data-act="endDay"]').count() === 0);
+  ok('but a separate End their session action is',
+     await second.locator('[data-act="endOtherDay"]').count() === 1);
+  /* THE BUTTON CARRIES THE SESSION IT IS LABELLED FOR. It used to carry
+     nothing, and the Worker ended whichever day was newest — so with two admins
+     out, the button saying one name ended the other's clock. */
+  const btn = second.locator('[data-act="endOtherDay"]').first();
+  ok('the action names the session it would end',
+     /^\d+$/.test((await btn.getAttribute('data-id')) || ''),
+     await btn.getAttribute('data-id'));
+  ok('and the person it belongs to, so the confirm can say their name',
+     ((await btn.getAttribute('data-who')) || '').includes('Trever'),
+     await btn.getAttribute('data-who'));
+  ok('and the form to start their OWN day is still right there',
+     await second.locator('[data-act="startDay"]').count() === 1);
+
+  await second.locator('[data-act="endOtherDay"]').click();
+  await second.waitForTimeout(900);
+  ok('the separate action ends it, behind a confirm',
+     await second.locator('[data-act="endOtherDay"]').count() === 0,
+     (await text(second, '#dlgBody')).slice(0, 300));
+  await second.close();
+}
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  ok('an investigator is never offered the end-someone-else action',
+     await page.locator('[data-act="endOtherDay"]').count() === 0);
+  await page.close();
+}
+section('Assignment is reachable from the overview, and stays secondary');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4013').click();
+  await page.waitForTimeout(500);
+
+  /* No wsTab() call: the point is that it is reachable from where a case opens. */
+  const card = await text(page, '.ovcard');
+  ok('the overview still names the investigator', has(card, 'Investigator'), card.slice(0, 300));
+  const link = page.locator('.ovcard [data-act="wsTab"][data-tab="assign"]');
+  ok('and offers a way to act on it without hunting', await link.count() === 1);
+  ok('worded for the case as it stands',
+     ['Assign', 'Change'].includes((await link.first().innerText()).trim()),
+     await link.first().innerText());
+
+  /* SECONDARY, NOT A PRIMARY ACTION: it is a quiet inline link, not one of the
+     card's buttons, and it does not take over the Next step card. */
+  ok('it is not styled as a primary button',
+     (await link.first().getAttribute('class') || '').includes('tl-edit'),
+     await link.first().getAttribute('class'));
+  ok('and the Next step card is still about the package, not assignment',
+     !has(await page.locator('.ov-next').first().innerText(), 'assign'),
+     await page.locator('.ov-next').first().innerText());
+
+  await link.first().click();
+  await page.waitForTimeout(700);
+  ok('it opens the Assignment panel that already existed',
+     await page.locator('#asg').count() === 1);
+  ok('reusing the existing assign control rather than a second one',
+     await page.locator('[data-act="saveCase"]').count() === 1);
+  ok('which still offers unassigned, because assignment is optional',
+     has(await page.locator('#asg').first().innerText(), 'unassigned'),
+     await page.locator('#asg').first().innerText());
+  await page.close();
+}
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  ok('an investigator gets no assign link',
+     await page.locator('[data-act="wsTab"][data-tab="assign"]').count() === 0);
+  await page.close();
+}
+
 /* WHO GETS TOLD, on the screen. Settings and data layer only — there is no SMS
    provider configured, so the page has to say so rather than imply a text went
    out. */
