@@ -3746,11 +3746,25 @@ function closurePanel(){
   if(ME.role !== "admin" || !WS || !WS.closure) return "";
   const c = WS.closure;
   if(c.closed_at){
+    /* REOPEN IS A BUTTON, NOT AN INSTRUCTION (owner, WORKFLOW-SIMPLIFICATION §2).
+
+       This used to read "Reopen by setting a status above and saving." Nothing
+       was above it: the closing panel renders in Admin → Billing & closing and
+       the status selector lives in Admin → Assignment, a different tab. The one
+       sentence telling an admin how to undo a closure pointed off the screen and
+       did not name where to go.
+
+       It is the SAME route the status selector posts to — `/submissions/:no/status`
+       with a stage of `open` — so `setStatus` clears `closed_by`/`closed_at` and
+       keeps the checklist ticks as history, exactly as before. No new status, and
+       closing still goes only through the checklist. */
     return `<div class="feebox" style="margin-top:14px">
       <div class="row"><span><b>Case closed</b></span>
         <span>${esc(c.closed_by || "")} &middot; ${when(c.closed_at)}</span></div>
-      <div class="row"><span style="color:var(--muted);font-size:.85rem">Reopen by setting a status
-        above and saving.</span><span></span></div>
+      <div class="row"><span style="color:var(--muted);font-size:.85rem">Reopening keeps every tick
+        below as history &mdash; nothing is lost by opening it again.</span>
+        <button class="btn sm ghost" data-act="reopenCase">Reopen case</button></div>
+      ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
     </div>`;
   }
   const done = c.items.filter(([k]) => c.checklist[k]).length;
@@ -3785,6 +3799,21 @@ async function doCloseCase(){
   if(WS_ERR) return;
   WS_ERR = "";
   try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/close`, {method:"POST", body:{}}); }
+  catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
+}
+
+/* The other direction, through the route the status selector already uses.
+   `open` is an existing stage — nothing new is introduced, and the Worker is
+   what clears the closing stamp while leaving the ticks alone.
+
+   It stays ON the case rather than returning to the list: an admin reopening a
+   case is about to do something with it, and `saveCase` only drops back to the
+   list because it is editing from the assignment form. */
+async function reopenCase(){
+  WS_ERR = "";
+  try{ await api(`/submissions/${encodeURIComponent(WS_CASE)}/status`,
+    {method:"POST", body:{status: "open"}}); }
   catch(e){ WS_ERR = e.message; }
   await reloadWorkspace();
 }
@@ -6710,6 +6739,7 @@ document.addEventListener("click", ev => {
   else if(act === "subjCancel"){ SUBJ_FORM = null; WS_ERR = ""; paintCase(); }
   else if(act === "taskStatus"){ setTaskStat(Number(el.dataset.id), el.dataset.s); }
   else if(act === "closeCase"){ doCloseCase(); }
+  else if(act === "reopenCase"){ reopenCase(); }
   else if(act === "invOpen"){ openInvoice(Number(el.dataset.id)); }
   else if(act === "invBack"){ INV_OPEN = null; INV_MSG = ""; loadInvoices(); }
   else if(act === "invStatus"){ setInvStatus(el.dataset.s); }
