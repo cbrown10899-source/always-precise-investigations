@@ -2105,6 +2105,166 @@ const ARCHIVED_CASE = caseNo =>
   `${caseNo} is archived, so nothing can be recorded against it. `
   + 'Restore the case first — it comes back exactly as it was.';
 
+/* ------------------------------------------------------- admin alerts */
+
+/* The five things the office asked to be told about. The ids are the column
+   suffixes in `notify_recipient`, so the list and the table cannot drift. */
+const ALERT_EVENTS = [
+  ['intakes',  'New intake received'],
+  ['payments', 'Payment recorded'],
+  ['reports',  'Report ready for review'],
+  ['packages', 'Client package finalized'],
+  ['tasks',    'Important task due'],
+];
+const ALERT_IDS = ALERT_EVENTS.map(([id]) => id);
+/* An obviously fictional case number for the on-screen previews. Not a real
+   case, so a preview can never disclose one. */
+const ALERT_PREVIEW_CASE = 'API-EXAMPLE-0001';
+
+/* PRIVACY-SAFE ALERT TEXT, and this is the whole point of writing it here
+   rather than at each call site.
+
+   An alert leaves the building. Email goes through Resend; any SMS will go
+   through a carrier and a provider. So an alert says WHAT HAPPENED and WHERE TO
+   LOOK, and carries nothing that identifies a person or a matter:
+
+     no claimant, client, subject or adjuster name
+     no address, vehicle, injury or objective
+     no claim number, policy number or carrier
+     no phone number or email address
+     no amount — what was paid is commercial, and "a payment was recorded" is
+       all an alert needs to say to make someone open the portal
+
+   SMS CARRIES NO CASE NUMBER AT ALL (owner, 2026-08-16). Email keeps it: it
+   goes to the firm's own inbox through one provider the firm chose. A text
+   crosses a carrier network, sits unlocked on a lock screen, and is backed up
+   by whatever the handset does — so it says only what happened and to open the
+   portal. Not "less detail on SMS" as a matter of taste: the case number is the
+   thread that ties a notification to a file, and it is not going over that
+   channel.
+
+   The `sms` branch does not read `caseNo` at all, which is stronger than
+   filtering it: there is no path by which case data can reach a text, and the
+   tests assert the wording is identical whatever case number is passed.
+
+   The detail lives behind the sign-in, which is exactly where it already lives. */
+const ALERT_CHANNELS = ['sms', 'email'];
+function alertText(event, caseNo, channel) {
+  const found = ALERT_EVENTS.find(([id]) => id === event);
+  if (!found) return null;
+  if (channel === 'sms') {
+    // Deliberately ignores caseNo. Nothing about the case reaches this string.
+    return `${found[1]}. Open the portal.`;
+  }
+  const clean = /^[A-Za-z0-9-]{3,64}$/.test(String(caseNo || '')) ? String(caseNo) : '';
+  return `${found[1]}${clean ? ` — case ${clean}` : ''}. Sign in to the portal for the detail.`;
+}
+
+/* WHAT CAN ACTUALLY BE DELIVERED TODAY, said plainly so the office is never
+   left believing an alert went out.
+
+   Email has a provider: the same Resend key the invitations use. SMS has none —
+   there is no provider configured anywhere in this Worker and no credential for
+   one, so text delivery is BLOCKED ON A PROVIDER. Recipients, switches and
+   choices are all stored and honoured; the sending half of SMS is the piece
+   that does not exist yet.
+
+   Read from `env`, never from a literal. Adding a provider is adding its
+   credential to the environment and a sender beside `sendMail` — not editing
+   this to say yes. */
+/* Create or update one recipient. Shared by both routes so the validation
+   cannot be right on one and wrong on the other.
+
+   AN ABSENT FIELD MEANS UNCHANGED on an update — the same rule the retainer
+   routes learned the hard way. Posting only a toggle must not blank the phone
+   number beside it. */
+async function saveRecipient(request, env, user, id) {
+  const body = await readJson(request);
+  const clean = (v, max) => String(v == null ? '' : v)
+    .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, max);
+
+  const existing = id
+    ? await env.DB.prepare('SELECT * FROM notify_recipient WHERE id = ?').bind(id).first()
+    : null;
+  if (id && !existing) return json({ error: 'not found' }, 404);
+
+  const has = k => Object.prototype.hasOwnProperty.call(body, k);
+  const label = has('label') || !existing ? clean(body.label, 80) : existing.label;
+  if (!label) return json({ error: 'Give this recipient a name, so the list says who it is.' }, 400);
+
+  const email = has('email') || !existing ? clean(body.email, 200) : (existing.email || '');
+  if (email && (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email) || email.length > 200)) {
+    return json({ error: 'Enter a valid email address, or leave it blank.' }, 400);
+  }
+
+  /* Kept as the admin typed it, minus separators, and only checked for SHAPE.
+     Numbering plans differ by country and a Worker is the wrong place to be
+     opinionated about them — the office knows its own numbers. No literal
+     number appears anywhere in this file. */
+  const phoneRaw = has('phone') || !existing ? clean(body.phone, 32) : (existing.phone || '');
+  const digits = phoneRaw.replace(/[^\d]/g, '');
+  if (phoneRaw && (digits.length < 7 || digits.length > 15)) {
+    return json({ error: 'Enter a phone number with 7 to 15 digits, or leave it blank.' }, 400);
+  }
+  if (!email && !phoneRaw) {
+    return json({ error: 'A recipient needs an email address or a phone number — '
+                       + 'one with neither could never be told anything.' }, 400);
+  }
+
+  const bool = (k, dflt) => has(k) ? (body[k] ? 1 : 0) : dflt;
+  const enabled = bool('enabled', existing ? Number(existing.enabled) : 1);
+  const alerts = Object.fromEntries(ALERT_IDS.map(k => {
+    const given = body.alerts && Object.prototype.hasOwnProperty.call(body.alerts, k);
+    return [k, given ? (body.alerts[k] ? 1 : 0) : (existing ? Number(existing['alert_' + k]) : 0)];
+  }));
+
+  const now = nowIso();
+  if (existing) {
+    await env.DB.prepare(
+      `UPDATE notify_recipient SET label = ?, email = ?, phone = ?, enabled = ?,
+              alert_intakes = ?, alert_payments = ?, alert_reports = ?,
+              alert_packages = ?, alert_tasks = ?, updated_at = ?
+        WHERE id = ?`)
+      .bind(label, email || null, phoneRaw || null, enabled, alerts.intakes, alerts.payments,
+            alerts.reports, alerts.packages, alerts.tasks, now, id).run();
+  } else {
+    await env.DB.prepare(
+      `INSERT INTO notify_recipient (label, email, phone, enabled, alert_intakes,
+         alert_payments, alert_reports, alert_packages, alert_tasks,
+         created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(label, email || null, phoneRaw || null, enabled, alerts.intakes, alerts.payments,
+            alerts.reports, alerts.packages, alerts.tasks, user.id, now, now).run();
+  }
+
+  const row = await env.DB.prepare(
+    `SELECT id, label, email, phone, enabled, alert_intakes, alert_payments,
+            alert_reports, alert_packages, alert_tasks, created_at, updated_at
+       FROM notify_recipient ORDER BY id DESC LIMIT 1`).first();
+  const saved = existing
+    ? await env.DB.prepare(
+        `SELECT id, label, email, phone, enabled, alert_intakes, alert_payments,
+                alert_reports, alert_packages, alert_tasks, created_at, updated_at
+           FROM notify_recipient WHERE id = ?`).bind(id).first()
+    : row;
+  return json({ ok: true, delivery: alertDelivery(env), recipient: {
+    id: saved.id, label: saved.label, email: saved.email || '', phone: saved.phone || '',
+    enabled: Number(saved.enabled) === 1,
+    alerts: Object.fromEntries(ALERT_IDS.map(k => [k, Number(saved['alert_' + k]) === 1])),
+    created_at: saved.created_at, updated_at: saved.updated_at,
+  } }, existing ? 200 : 201);
+}
+
+function alertDelivery(env) {
+  return {
+    email: env.RESEND_API_KEY ? 'configured' : 'blocked_on_provider',
+    sms: 'blocked_on_provider',
+    sms_note: 'No SMS provider is configured for this Worker, so text alerts are '
+            + 'saved but not sent. Numbers and choices are kept and will be used '
+            + 'once a provider is added.',
+  };
+}
+
 /* THE SEND ROUTES NAME THEIR CASE IN THE BODY, where the router's gate cannot
    see it, so they have to ask for themselves.
 
@@ -5207,7 +5367,7 @@ const EXPECTED_TABLES = [
      workspace load — the check saying "fine" is worse than no check. */
   'activity_removed', 'build_reports', 'build_summary', 'build_custom',
   'case_day_pauses', 'lead_status', 'send_log', 'invoice_retainer',
-  'payment_methods', 'payment_send', 'retainer_receipt', 'case_archive', 'case_deleted',
+  'payment_methods', 'payment_send', 'retainer_receipt', 'case_archive', 'case_deleted', 'notify_recipient',
   'retainer_payment', 'retainer_payment_void', 'retainer_payment_token',
 ];
 
@@ -6153,6 +6313,86 @@ async function route(request, env) {
     if (!sub) return json({ error: 'not found' }, 404);
     await env.DB.prepare('DELETE FROM case_archive WHERE case_no = ?').bind(m[1]).run();
     return json({ ok: true, case_no: m[1], archived: null });
+  }
+
+  /* WHO GETS TOLD WHAT. Admin-only, like every other office setting.
+
+     Guarded on the table existing for the standing deploy-order reason: the
+     Worker ships on push and schema.sql arrives on a manual portal-setup
+     dispatch, so between the two this table is not there. Settings that 500
+     would be a worse first impression than settings that explain themselves. */
+  if (p === '/notify-recipients' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if ((await missingTables(env)).includes('notify_recipient')) {
+      return json({ recipients: [], events: ALERT_EVENTS.map(([id, label]) => ({ id, label })),
+                    delivery: alertDelivery(env), needs_setup: true });
+    }
+    const { results } = await env.DB.prepare(
+      `SELECT id, label, email, phone, enabled, alert_intakes, alert_payments,
+              alert_reports, alert_packages, alert_tasks, created_at, updated_at
+         FROM notify_recipient ORDER BY id`).all();
+    return json({
+      recipients: (results || []).map(r => ({
+        id: r.id, label: r.label, email: r.email || '', phone: r.phone || '',
+        enabled: Number(r.enabled) === 1,
+        alerts: Object.fromEntries(ALERT_IDS.map(k => [k, Number(r['alert_' + k]) === 1])),
+        created_at: r.created_at, updated_at: r.updated_at,
+      })),
+      /* THE EXACT WORDS EACH ALERT WOULD CARRY, composed by the Worker and
+         returned for display. The office can SEE what leaves rather than take
+         it on trust, the page never composes alert text of its own — one
+         writer, so the preview cannot disagree with the alert — and the tests
+         can hold every event to the privacy rule rather than just one. */
+      events: ALERT_EVENTS.map(([id, label]) => ({
+        id, label,
+        /* BOTH channels, shown side by side, because the difference is the
+           point: a text carries no case number and an email does. The office
+           reads exactly what each one would send. */
+        preview: alertText(id, ALERT_PREVIEW_CASE, 'email'),
+        preview_sms: alertText(id, ALERT_PREVIEW_CASE, 'sms'),
+      })),
+      channels: ALERT_CHANNELS,
+      delivery: alertDelivery(env),
+      sample: alertText('intakes', ALERT_PREVIEW_CASE, 'email'),
+    });
+  }
+
+  if (p === '/notify-recipients' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if ((await missingTables(env)).includes('notify_recipient')) {
+      return json({ error: 'Notification settings are not set up on this database yet. '
+                         + 'Run the portal-setup workflow once and try again.' }, 503);
+    }
+    return saveRecipient(request, env, user, null);
+  }
+
+  m = p.match(/^\/notify-recipients\/(\d{1,12})$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if ((await missingTables(env)).includes('notify_recipient')) {
+      return json({ error: 'Notification settings are not set up on this database yet. '
+                         + 'Run the portal-setup workflow once and try again.' }, 503);
+    }
+    return saveRecipient(request, env, user, parseInt(m[1], 10));
+  }
+
+  m = p.match(/^\/notify-recipients\/(\d{1,12})\/delete$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if ((await missingTables(env)).includes('notify_recipient')) {
+      return json({ error: 'Notification settings are not set up on this database yet. '
+                         + 'Run the portal-setup workflow once and try again.' }, 503);
+    }
+    const row = await env.DB.prepare('SELECT id FROM notify_recipient WHERE id = ?')
+      .bind(m[1]).first();
+    if (!row) return json({ error: 'not found' }, 404);
+    /* A recipient is CONFIGURATION, not a record of anything that happened, so
+       removing one really removes it. The tombstone rule is about case records
+       — evidence, reports, money, audit — and a phone number that should no
+       longer be told things is not one of those. Switching `enabled` off is the
+       softer option and is one tap away. */
+    await env.DB.prepare('DELETE FROM notify_recipient WHERE id = ?').bind(m[1]).run();
+    return json({ ok: true, id: Number(m[1]) });
   }
 
   /* DELETE CASE — a tombstone, never a purge (owner, WORKFLOW-SIMPLIFICATION §2

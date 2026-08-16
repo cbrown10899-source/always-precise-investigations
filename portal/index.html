@@ -2511,8 +2511,153 @@ function paymentSettingsHtml(){
   </div>`;
 }
 
+/* WHO GETS TOLD, AND ABOUT WHAT (owner request, 2026-08-16).
+
+   Every number and address here is typed by an admin and lives in the database.
+   Nothing is seeded, nothing is hardcoded, and the page holds no provider
+   credential — it does not know how anything is delivered and does not need to.
+
+   The alert wording is composed by the WORKER and shown here as a preview, so
+   the office reads the exact words that would leave rather than a description of
+   them, and so the preview cannot drift from the alert. */
+let NOTIFY = null;        // {recipients, events, delivery} — null until loaded
+let NOTIFY_ERR = "";      // a failed load is NOT an empty list; see loadSends
+let NOTIFY_MSG = "";
+let NOTIFY_NEW = false;   // is the add form open
+
+async function loadNotify(){
+  NOTIFY_ERR = "";
+  try{ NOTIFY = await api("/notify-recipients"); }
+  catch(e){ NOTIFY = null; NOTIFY_ERR = e.message; }
+  paint();
+}
+
+function notifySettingsHtml(){
+  if(ME.role !== "admin") return "";
+  const evs = (NOTIFY && NOTIFY.events) || [];
+  const rows = (NOTIFY && NOTIFY.recipients) || [];
+  const del = (NOTIFY && NOTIFY.delivery) || {};
+  /* Three states kept apart, the same rule the send history follows: never
+     loaded, loaded and genuinely empty, and failed. Only the middle one may say
+     nobody is set up. */
+  const body = NOTIFY_ERR
+    ? `<div class="err">The notification settings could not be loaded &mdash; ${esc(NOTIFY_ERR)}</div>`
+    : !NOTIFY
+      ? `<div class="empty">Loading notification settings&hellip;</div>`
+      : `${rows.length ? rows.map(r => notifyRowHtml(r, evs)).join("") : `
+          <p class="hint">Nobody is set up to be told yet. Add a phone number or an email address
+            and choose which alerts it should get.</p>`}
+        ${NOTIFY_NEW ? notifyFormHtml(null, evs) : `<div class="actions">
+          <button class="btn sm" data-act="ntAdd">Add a recipient</button></div>`}`;
+
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Who gets told</h2></div>
+    <p class="note">Each phone number and address is its own recipient with its own switches, so
+      one can take payments and packages while another takes intakes only.</p>
+
+    ${/* SAID PLAINLY, because the worst outcome here is an office that believes
+          a text went out. */""}
+    <div class="feebox" style="margin:8px 0 12px">
+      <div class="row"><span><b>Text messages</b></span>
+        <span class="tag rs-needs_revision">not sent yet</span></div>
+      <div class="row"><span style="color:var(--muted);font-size:.85rem">${
+        esc(del.sms_note || "No SMS provider is configured, so text alerts are saved but not sent.")
+      }</span><span></span></div>
+      <div class="row"><span><b>Email</b></span>
+        <span class="tag ${del.email === "configured" ? "closed" : "rs-needs_revision"}">${
+          del.email === "configured" ? "provider ready" : "no provider"}</span></div>
+    </div>
+
+    ${body}
+
+    ${evs.length ? `<h3 style="margin:16px 0 4px;font-size:1rem">What an alert says</h3>
+      <p class="hint">No claimant, client, subject, address, claim number or amount ever leaves in
+        an alert &mdash; the detail stays behind the sign-in. <b>A text message carries no case
+        number either</b>: it crosses a carrier network and sits on a lock screen, so it says only
+        what happened. The case number reaches email, which goes to the firm's own inbox.</p>
+      <div class="two">
+        <div>
+          <div style="font-size:.82rem;color:var(--muted);margin-bottom:2px"><b>Text message</b></div>
+          ${evs.map(e => `<div class="tl-m">${esc(e.preview_sms)}</div>`).join("")}
+        </div>
+        <div>
+          <div style="font-size:.82rem;color:var(--muted);margin-bottom:2px"><b>Email</b></div>
+          ${evs.map(e => `<div class="tl-m">${esc(e.preview)}</div>`).join("")}
+        </div>
+      </div>` : ""}
+    ${NOTIFY_MSG ? `<div class="linkbox">${esc(NOTIFY_MSG)}</div>` : ""}
+  </div>`;
+}
+
+function notifyRowHtml(r, evs){
+  if(NOTIFY_NEW === r.id) return notifyFormHtml(r, evs);
+  const chosen = evs.filter(e => r.alerts[e.id]).map(e => e.label);
+  return `<div class="row" style="border-top:1px dashed #cfe6ec;padding-top:8px;margin-top:6px">
+      <span>
+        <b>${esc(r.label)}</b>${r.enabled ? "" : ` <span class="tag rs-draft">off</span>`}
+        <div style="color:var(--muted);font-size:.82rem">${
+          [r.phone, r.email].filter(Boolean).map(esc).join(" &middot; ") || "no contact"}</div>
+        <div style="color:var(--muted);font-size:.8rem">${
+          chosen.length ? esc(chosen.join(", ")) : "no alerts chosen"}</div>
+      </span>
+      <span style="display:flex;gap:6px;align-items:flex-start">
+        <button class="btn sm ghost" data-act="ntToggle" data-id="${r.id}" data-on="${r.enabled ? 1 : 0}">${
+          r.enabled ? "Switch off" : "Switch on"}</button>
+        <button class="btn sm ghost" data-act="ntEdit" data-id="${r.id}">Edit</button>
+        <button class="btn sm ghost" data-act="ntDelete" data-id="${r.id}">Remove</button>
+      </span>
+    </div>`;
+}
+
+function notifyFormHtml(r, evs){
+  const v = r || { label: "", phone: "", email: "", alerts: {} };
+  return `<div style="border-top:1px dashed #cfe6ec;margin-top:8px;padding-top:8px">
+    <label class="f"><span>Who is this</span>
+      <input id="nt_label" value="${esc(v.label)}" placeholder="e.g. Owner mobile"></label>
+    <div class="two">
+      <label class="f"><span>Phone <span class="opt">optional</span></span>
+        <input id="nt_phone" inputmode="tel" value="${esc(v.phone)}"></label>
+      <label class="f"><span>Email <span class="opt">optional</span></span>
+        <input id="nt_email" type="email" value="${esc(v.email)}"></label>
+    </div>
+    <p class="hint">One of the two is enough. Both is fine.</p>
+    <div style="margin:6px 0">${evs.map(e => `
+      <label class="cap"><input type="checkbox" id="nt_a_${e.id}" ${v.alerts[e.id] ? "checked" : ""}>
+        <span>${esc(e.label)}</span></label>`).join("")}</div>
+    <div class="actions">
+      <button class="btn sm" data-act="ntSave" data-id="${r ? r.id : ""}">Save</button>
+      <button class="btn sm ghost" data-act="ntCancel">Cancel</button>
+    </div>
+    ${NOTIFY_MSG ? `<div class="err">${esc(NOTIFY_MSG)}</div>` : ""}
+  </div>`;
+}
+
+async function saveNotifyRecipient(id){
+  NOTIFY_MSG = "";
+  const val = k => { const el = $(k); return el ? el.value.trim() : ""; };
+  const alerts = {};
+  for(const e of (NOTIFY && NOTIFY.events) || []){
+    const el = $("nt_a_" + e.id);
+    if(el) alerts[e.id] = el.checked;
+  }
+  try{
+    await api(id ? `/notify-recipients/${encodeURIComponent(id)}` : "/notify-recipients",
+      {method:"POST", body:{label: val("nt_label"), phone: val("nt_phone"),
+                            email: val("nt_email"), alerts}});
+    NOTIFY_NEW = false;
+    await loadNotify();
+  }catch(e){ NOTIFY_MSG = e.message; paint(); }
+}
+
+async function notifyAction(path, body){
+  NOTIFY_MSG = "";
+  try{ await api(path, {method:"POST", body: body || {}}); }
+  catch(e){ NOTIFY_MSG = e.message; }
+  await loadNotify();
+}
+
 function settingsView(){
-  return `${paymentSettingsHtml()}<div class="card">
+  return `${notifySettingsHtml()}${paymentSettingsHtml()}<div class="card">
     <div class="bar"><h2 style="margin:0">Settings</h2></div>
     <h3 style="margin:6px 0 4px;font-size:1rem">Developer &amp; testing</h3>
     <p class="note">Working material for trying the portal out. None of it touches a real case.</p>
@@ -6748,6 +6893,7 @@ document.addEventListener("click", ev => {
     // refusal in front of you, not for surviving a trip around the portal.
     if(TAB === "settings" && ME.role === "admin"){
       PAY_MSG = ""; PAY_ERR = false; PAY_DRAFT = {}; loadPaymentMethods();
+      NOTIFY = null; NOTIFY_MSG = ""; NOTIFY_NEW = false; loadNotify();
     }
     document.body.classList.remove("navopen");
     if(TAB === "myreports") api("/my/reports").then(d => { MY_REPORTS = d; paint(); }).catch(()=>{});
@@ -6758,6 +6904,15 @@ document.addEventListener("click", ev => {
   }
   else if(act === "openCaseTab"){ openCase(el.dataset.case, el.dataset.tab); }
   else if(act === "paySave"){ savePaymentMethod(el.dataset.id, el.dataset.on === "1"); }
+  else if(act === "ntAdd"){ NOTIFY_NEW = true; NOTIFY_MSG = ""; paint(); }
+  else if(act === "ntEdit"){ NOTIFY_NEW = Number(el.dataset.id); NOTIFY_MSG = ""; paint(); }
+  else if(act === "ntCancel"){ NOTIFY_NEW = false; NOTIFY_MSG = ""; paint(); }
+  else if(act === "ntSave"){ saveNotifyRecipient(el.dataset.id ? Number(el.dataset.id) : null); }
+  else if(act === "ntToggle"){ notifyAction(`/notify-recipients/${el.dataset.id}`, {enabled: el.dataset.on !== "1"}); }
+  else if(act === "ntDelete"){
+    if(confirm("Remove this recipient?\n\nThey stop being told anything. Switching them off "
+      + "instead keeps the number and its choices.")) notifyAction(`/notify-recipients/${el.dataset.id}/delete`);
+  }
   else if(act === "retOpen"){ retainerReset(); RET_FORM = true; paintCase(); }
   else if(act === "retCancel"){ retainerReset(); paintCase(); }
   /* A NEW attempt, chosen by the admin after reading the payment list. The
