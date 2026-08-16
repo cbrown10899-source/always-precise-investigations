@@ -2611,6 +2611,120 @@ section('A second admin sees whose day is running, and cannot end it by press');
      await page.locator('[data-act="endOtherDay"]').count() === 0);
   await page.close();
 }
+/* EDIT CASE (owner, 2026-08-16) — one place to correct what the case says. */
+section('A case can be corrected from one Edit case screen');
+{
+  await post('/ingest', {
+    case_no: 'API-20260812-4014', service: 'Surveillance',
+    client_name: 'Mistyped Nmae', client_email: 'wrong@example.com',
+    client_phone: '5550100111', subject_name: 'Subject Wrong',
+    subject_address: '1 Old Road', objective: 'Establish whereabouts',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4014').click();
+  await page.waitForTimeout(500);
+
+  /* The header button says Edit case; it used to open Assignment, which could
+     only change the assignee and the status. */
+  await page.locator('.caseheader button', { hasText: 'Edit case' }).first().click();
+  await page.waitForTimeout(600);
+  const panel = await text(page, '#dlgBody');
+  ok('the header button opens a real Edit case screen', has(panel, 'Edit case'), panel.slice(0, 200));
+  ok('the case number is shown but not editable',
+     has(panel, 'API-20260812-4014') && await page.locator('#dlgBody input[value*="4014"]').count() === 0);
+  ok('and says plainly why it cannot change', has(panel, 'never changes'), panel.slice(0, 400));
+
+  ok('the identity fields are all there',
+     await page.locator('#ed_client').count() === 1 && await page.locator('#ed_email').count() === 1
+     && await page.locator('#ed_subject').count() === 1 && await page.locator('#ed_address').count() === 1);
+  ok('with the existing single phone read through into the list',
+     (await page.locator('#edc_num_0').inputValue()) === '5550100111',
+     await page.locator('#edc_num_0').inputValue());
+  ok('case type, status, reference, retainer and assignment are on the same screen',
+     await page.locator('#ed_type').count() === 1 && await page.locator('#ed_status').count() === 1
+     && await page.locator('#ed_claim').count() === 1 && await page.locator('#ed_asg').count() === 1);
+  ok('assignment offers unassigned and says a case may stay that way',
+     has(await page.locator('#ed_asg').first().innerText(), 'unassigned')
+     && has(panel, 'may stay unassigned'), panel.slice(0, 900));
+  ok('internal notes are linked, not duplicated into a second box',
+     await page.locator('[data-act="wsTab"][data-tab="notes"]').count() >= 1
+     && await page.locator('#dlgBody textarea').count() === 0);
+
+  await page.locator('#ed_client').fill('Jane Correct');
+  await page.locator('#ed_email').fill('jane@example.com');
+  await page.locator('#ed_subject').fill('Subject Right');
+  await page.locator('#ed_address').fill('2 New Street');
+  await page.locator('#edc_num_0').fill('555 0100 222');
+  await page.locator('#edc_lab_0').selectOption('mobile');
+  await page.locator('[data-act="edAddPhone"]').first().click();
+  await page.waitForTimeout(400);
+  ok('another number can be added without losing the first',
+     (await page.locator('#edc_num_0').inputValue()) === '555 0100 222'
+     && await page.locator('#edc_num_1').count() === 1,
+     await page.locator('#edc_num_0').inputValue());
+  /* ADDING A ROW REPAINTS THE PANEL, and a repaint rebuilds every input from
+     the stored case. Without a draft the corrected NAME reverted to the stored
+     one and the save then sent it back unchanged while reporting success —
+     which is exactly what happened, and what these four assertions pin. */
+  ok('and the corrected name survives the repaint',
+     (await page.locator('#ed_client').inputValue()) === 'Jane Correct',
+     await page.locator('#ed_client').inputValue());
+  ok('as does the email', (await page.locator('#ed_email').inputValue()) === 'jane@example.com');
+  ok('and the subject', (await page.locator('#ed_subject').inputValue()) === 'Subject Right');
+  ok('and the address', (await page.locator('#ed_address').inputValue()) === '2 New Street');
+  await page.locator('#edc_num_1').fill('555 0100 333');
+  await page.locator('#edc_lab_1').selectOption('work');
+  await page.locator('[data-act="edSave"]').click();
+  await page.waitForTimeout(900);
+  ok('saving is confirmed', has(await text(page, '#dlgBody'), 'Case updated'),
+     (await text(page, '#dlgBody')).slice(0, 300));
+  ok('and the correction really reached the database',
+     db.prepare('SELECT client_name FROM submissions WHERE case_no = ?')
+       .get('API-20260812-4014').client_name === 'Jane Correct',
+     String(db.prepare('SELECT client_name FROM submissions WHERE case_no = ?')
+       .get('API-20260812-4014').client_name));
+
+  await page.locator('.close').click();
+  await page.waitForTimeout(600);
+  ok('the corrected name shows on the case list',
+     has(await rowFor(page, 'API-20260812-4014').innerText(), 'Jane Correct'),
+     await rowFor(page, 'API-20260812-4014').innerText());
+
+  await rowFor(page, 'API-20260812-4014').click();
+  await page.waitForTimeout(500);
+  await wsTab(page, 'Edit case');
+  ok('both numbers survived the save',
+     (await page.locator('#edc_num_0').inputValue()) === '555 0100 222'
+     && (await page.locator('#edc_num_1').inputValue()) === '555 0100 333',
+     await page.locator('#edc_num_1').inputValue());
+  ok('with their labels', (await page.locator('#edc_lab_1').inputValue()) === 'work');
+
+  /* MOBILE-SAFE: 44px targets and no sideways scroll on a phone. Measured by
+     resizing the page already sitting on the panel, rather than signing in
+     again — the panel is what is being measured, not the route to it. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  const phone = page;
+  const small = await phone.evaluate(() => {
+    const out = [];
+    /* The PANEL's own controls. The "Edit case" button in the case header is
+       what opens this and belongs to the header, not to the form — measuring it
+       here would be asserting something this section does not name. */
+    for (const el of document.querySelectorAll('.editcase input, .editcase select, .editcase .btn')) {
+      const r = el.getBoundingClientRect();
+      if (r.height > 0 && r.height < 44) out.push((el.id || el.textContent || '').slice(0, 24));
+    }
+    return out;
+  });
+  ok('every control on Edit case is at least 44px tall', small.length === 0, small.join(' | '));
+  const overflow = await phone.evaluate(() =>
+    document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  ok('and the page does not scroll sideways on a phone', overflow <= 0, String(overflow));
+  await phone.close();
+}
+
 section('Assignment is reachable from the overview, and stays secondary');
 {
   const page = await newPage();

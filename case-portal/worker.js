@@ -2108,6 +2108,217 @@ const ARCHIVED_CASE = caseNo =>
   `${caseNo} is archived, so nothing can be recorded against it. `
   + 'Restore the case first — it comes back exactly as it was.';
 
+/* ------------------------------------------------------ case phone numbers */
+
+const PHONE_LABELS = ['mobile', 'work', 'home', 'other'];
+
+/* A number as the office typed it, minus anything that could smuggle a line
+   break into an email header. Shape-checked only: numbering plans differ by
+   country and the office knows its own numbers. */
+function cleanPhone(v) {
+  return String(v == null ? '' : v)
+    .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 32);
+}
+function phoneShapeOk(v) {
+  const digits = v.replace(/[^\d]/g, '');
+  return digits.length >= 7 && digits.length <= 15;
+}
+
+/* THE LIST, READ THROUGH THE LEGACY COLUMN.
+
+   With no rows in `case_phone`, the single number that has always been on the
+   case IS the list — so a case nobody has edited reads exactly as it did before
+   this table existed, and nothing had to be backfilled. Once the office saves a
+   list, these rows are the answer and the legacy column is kept as a mirror of
+   the first one (see saveCasePhones).
+
+   Guarded on the table existing for the standing deploy-order reason: the
+   Worker ships on push, schema.sql arrives on a manual portal-setup dispatch,
+   and the case screen must not go down in between. */
+async function phonesFor(env, caseNo, { forAdmin = true } = {}) {
+  const out = { client: [], subject: {} };
+
+  /* THE CLIENT'S NUMBERS ARE THE CLIENT'S IDENTITY, so an investigator never
+     receives them — the same boundary `redactRow` draws around `client_phone`.
+     The SUBJECT's numbers are fieldwork and reach both roles, because the
+     subject is who is watched, never who is paying. */
+  const legacy = forAdmin
+    ? await env.DB.prepare('SELECT client_phone FROM submissions WHERE case_no = ?')
+        .bind(caseNo).first()
+    : null;
+  const legacyClient = (legacy && legacy.client_phone) || '';
+  const { results: subjects } = await env.DB.prepare(
+    'SELECT id, phone FROM case_subjects WHERE case_no = ?').bind(caseNo).all();
+
+  const have = !(await missingTables(env)).includes('case_phone');
+  let rows = [];
+  if (have) {
+    const r = await env.DB.prepare(
+      `SELECT id, owner_kind, subject_id, label, number FROM case_phone
+        WHERE case_no = ? ORDER BY owner_kind, position, id`).bind(caseNo).all();
+    rows = r.results || [];
+  }
+  for (const p of rows) {
+    const entry = { id: p.id, label: p.label || '', number: p.number };
+    if (p.owner_kind === 'client') { if (forAdmin) out.client.push(entry); }
+    else {
+      const k = String(p.subject_id);
+      (out.subject[k] = out.subject[k] || []).push(entry);
+    }
+  }
+  // Read-through: only where the office has not saved a list of its own.
+  if (!out.client.length && legacyClient) {
+    out.client = [{ id: null, label: '', number: legacyClient, legacy: true }];
+  }
+  for (const s of subjects) {
+    const k = String(s.id);
+    if (!(out.subject[k] || []).length && s.phone) {
+      out.subject[k] = [{ id: null, label: '', number: s.phone, legacy: true }];
+    }
+  }
+  return out;
+}
+
+/* Replace one owner's list. Rows are rewritten wholesale because the office
+   edits the list as a list — there is no per-number identity worth preserving
+   across a save, and a diff would only be a way to get it wrong.
+
+   THE LEGACY COLUMN IS MIRRORED, NOT ABANDONED: the first number goes back into
+   `submissions.client_phone` (or `case_subjects.phone`), so redaction, the
+   alert path, the package and every other existing reader keep seeing a primary
+   number without knowing this table exists. Saving an empty list clears the
+   mirror too — that is the office saying there is no number, not a bug. */
+async function saveCasePhones(env, caseNo, ownerKind, subjectId, list) {
+  if ((await missingTables(env)).includes('case_phone')) return { skipped: 'not_set_up' };
+  const now = nowIso();
+  const del = ownerKind === 'client'
+    ? env.DB.prepare(`DELETE FROM case_phone WHERE case_no = ? AND owner_kind = 'client'`).bind(caseNo)
+    : env.DB.prepare(`DELETE FROM case_phone WHERE case_no = ? AND owner_kind = 'subject' AND subject_id = ?`)
+        .bind(caseNo, subjectId);
+  await del.run();
+  let i = 0;
+  for (const p of list) {
+    await env.DB.prepare(
+      `INSERT INTO case_phone (case_no, owner_kind, subject_id, label, number, position, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(caseNo, ownerKind, ownerKind === 'subject' ? subjectId : null,
+            p.label || null, p.number, i++, now, now).run();
+  }
+  const primary = list.length ? list[0].number : null;
+  if (ownerKind === 'client') {
+    await env.DB.prepare('UPDATE submissions SET client_phone = ? WHERE case_no = ?')
+      .bind(primary, caseNo).run();
+  } else {
+    await env.DB.prepare('UPDATE case_subjects SET phone = ? WHERE id = ? AND case_no = ?')
+      .bind(primary, subjectId, caseNo).run();
+  }
+  return { saved: list.length };
+}
+
+/* Correct the case's own identity. Admin-only; the route checks that.
+
+   AN ABSENT FIELD MEANS UNCHANGED — the rule the retainer routes learned the
+   hard way. Posting a phone list must not blank the email beside it, and
+   posting an email must not wipe the phones.
+
+   The denormalised columns and the intake payload are written TOGETHER, because
+   both are read: `redactRow` and the case list read the columns, the case screen
+   and the package read the payload. Letting them drift is how a case shows one
+   client name on the list and another on the screen. */
+async function editCase(request, env, user, caseNo) {
+  const row = await env.DB.prepare(
+    'SELECT case_no, kind, client_name, client_email, client_phone, subject_name, carrier, claim_number, payload '
+    + 'FROM submissions WHERE case_no = ?').bind(caseNo).first();
+  if (!row) return json({ error: 'not found' }, 404);
+
+  const body = await readJson(request);
+  const has = k => Object.prototype.hasOwnProperty.call(body, k);
+  const clean = (v, max) => String(v == null ? '' : v)
+    .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, max);
+
+  let payload = {};
+  try { payload = JSON.parse(row.payload || '{}'); } catch { payload = {}; }
+
+  const next = {
+    client_name:  has('client_name')  ? clean(body.client_name, 120)  : row.client_name,
+    client_email: has('client_email') ? clean(body.client_email, 200) : row.client_email,
+    subject_name: has('subject_name') ? clean(body.subject_name, 120) : row.subject_name,
+    claim_number: has('claim_number') ? clean(body.claim_number, 64)  : row.claim_number,
+  };
+  if (next.client_email && !/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(next.client_email)) {
+    return json({ error: 'Enter a valid email address, or leave it blank.' }, 400);
+  }
+
+  /* The address lives in the intake payload, which is where the case screen and
+     the package already read it from. */
+  const address = has('subject_address') ? clean(body.subject_address, 200) : null;
+
+  /* PHONE LISTS, validated before anything is written so a bad number cannot
+     leave the case half-saved. */
+  const lists = [];
+  if (has('client_phones')) {
+    const given = Array.isArray(body.client_phones) ? body.client_phones : [];
+    const out = [];
+    for (const p of given.slice(0, 10)) {
+      const number = cleanPhone(p && p.number);
+      if (!number) continue;
+      if (!phoneShapeOk(number)) {
+        return json({ error: `"${number}" does not look like a phone number — 7 to 15 digits.` }, 400);
+      }
+      const label = clean(p && p.label, 16).toLowerCase();
+      if (label && !PHONE_LABELS.includes(label)) {
+        return json({ error: `"${label}" is not a phone label. Use ${PHONE_LABELS.join(', ')}.` }, 400);
+      }
+      out.push({ number, label });
+    }
+    lists.push({ ownerKind: 'client', subjectId: null, list: out });
+  }
+  if (has('subject_phones') && body.subject_phones && typeof body.subject_phones === 'object') {
+    for (const [sid, given] of Object.entries(body.subject_phones).slice(0, 20)) {
+      if (!/^\d{1,12}$/.test(String(sid))) continue;
+      const owns = await env.DB.prepare(
+        'SELECT id FROM case_subjects WHERE id = ? AND case_no = ?').bind(sid, caseNo).first();
+      if (!owns) return json({ error: 'That subject is not on this case.' }, 400);
+      const out = [];
+      for (const p of (Array.isArray(given) ? given : []).slice(0, 10)) {
+        const number = cleanPhone(p && p.number);
+        if (!number) continue;
+        if (!phoneShapeOk(number)) {
+          return json({ error: `"${number}" does not look like a phone number — 7 to 15 digits.` }, 400);
+        }
+        const label = clean(p && p.label, 16).toLowerCase();
+        if (label && !PHONE_LABELS.includes(label)) {
+          return json({ error: `"${label}" is not a phone label. Use ${PHONE_LABELS.join(', ')}.` }, 400);
+        }
+        out.push({ number, label });
+      }
+      lists.push({ ownerKind: 'subject', subjectId: parseInt(sid, 10), list: out });
+    }
+  }
+
+  if (has('client_name'))  payload.client_name  = next.client_name;
+  if (has('client_email')) payload.client_email = next.client_email;
+  if (has('subject_name')) payload.subject_name = next.subject_name;
+  if (has('claim_number')) payload.claim_number = next.claim_number;
+  if (address !== null)    payload.subject_address = address;
+
+  await env.DB.prepare(
+    `UPDATE submissions SET client_name = ?, client_email = ?, subject_name = ?,
+            claim_number = ?, payload = ? WHERE case_no = ?`)
+    .bind(next.client_name || null, next.client_email || null, next.subject_name || null,
+          next.claim_number || null, JSON.stringify(payload), caseNo).run();
+
+  // Phones last, because saving one mirrors its first number back into the row
+  // just written — the mirror must not be overwritten by the update above.
+  for (const l of lists) await saveCasePhones(env, caseNo, l.ownerKind, l.subjectId, l.list);
+
+  const after = await env.DB.prepare(
+    'SELECT client_name, client_email, client_phone, subject_name, claim_number FROM submissions WHERE case_no = ?')
+    .bind(caseNo).first();
+  return json({ ok: true, case_no: caseNo, submission: after,
+                phones: await phonesFor(env, caseNo) });
+}
+
 /* ------------------------------------------------------- admin alerts */
 
 /* The five things the office asked to be told about. The ids are the column
@@ -3022,6 +3233,7 @@ async function caseWorkspace(env, user, caseNo) {
     // The clock the field timer trusts. The page measures its own skew against
     // this once and never counts ticks, so sleeping the phone changes nothing.
     server_now: nowIso(),
+    phones: await phonesFor(env, caseNo, { forAdmin: admin }),
     ...(admin ? { archived: await archiveOf(env, caseNo), deleted: await deletedOf(env, caseNo),
                   build_status: buildStatus, invoice_status: invoiceStatus,
                   sends: (await env.DB.prepare(
@@ -5516,7 +5728,7 @@ const EXPECTED_TABLES = [
      workspace load — the check saying "fine" is worse than no check. */
   'activity_removed', 'build_reports', 'build_summary', 'build_custom',
   'case_day_pauses', 'lead_status', 'send_log', 'invoice_retainer',
-  'payment_methods', 'payment_send', 'retainer_receipt', 'case_archive', 'case_deleted', 'notify_recipient',
+  'payment_methods', 'payment_send', 'retainer_receipt', 'case_archive', 'case_deleted', 'notify_recipient', 'case_phone',
   'retainer_payment', 'retainer_payment_void', 'retainer_payment_token',
 ];
 
@@ -6483,6 +6695,26 @@ async function route(request, env) {
     if (!sub) return json({ error: 'not found' }, 404);
     await env.DB.prepare('DELETE FROM case_archive WHERE case_no = ?').bind(m[1]).run();
     return json({ ok: true, case_no: m[1], archived: null });
+  }
+
+  /* EDIT CASE — correcting the case's own identity (owner, 2026-08-16).
+
+     Until now nothing could change these at all: every `UPDATE submissions SET`
+     in this Worker touched only `assigned_to` and `status`, so a name typed
+     wrong at intake stayed wrong for the life of the case.
+
+     THE CASE NUMBER IS READ-ONLY and is never read from the body — it is the
+     case's identity, and it is already in the send log, on invoices and in
+     every email subject line that has gone out. There is no rename here.
+
+     Fields that have a route of their own — case type, agreed retainer, status,
+     assignment, internal notes — are NOT duplicated here. The page calls those
+     existing routes alongside this one, the way `saveCaseMeta` already does, so
+     each thing keeps one writer. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/edit$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return editCase(request, env, user, m[1]);
   }
 
   /* WHO GETS TOLD WHAT. Admin-only, like every other office setting.

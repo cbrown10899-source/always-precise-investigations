@@ -9,6 +9,19 @@ state. Update it when the queue moves; keep it short.
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
 truth** (recorded verbatim 2026-08-13).
 
+## 📝 NON-BLOCKING FINDINGS, 2026-08-16 — from Edit Case
+
+- **The case header's own "Edit case" button is under 44px on a phone.** The
+  Edit Case panel's controls are floored at 44px and asserted; the header button
+  that opens it is a header control and was left alone rather than widened as a
+  side effect. Worth a pass over the case header's tap targets as its own unit.
+
+- **Phase 1 items still not built, deliberately:** the More menu (item 4) was
+  not started — with Record Payment already on Overview and Edit Case reachable
+  from the header, a menu risks a second path to the same things rather than
+  reachability, and Export does not exist to put in it. Item 3's "last activity"
+  is served by the existing Recent activity card rather than a new single line.
+
 ## 📝 NON-BLOCKING FINDINGS, 2026-08-16 — from the two-admin surveillance work
 
 Recorded, not fixed. None blocks the merge of the branch that carries them; each
