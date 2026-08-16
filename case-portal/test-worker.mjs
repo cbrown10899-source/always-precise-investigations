@@ -7721,6 +7721,74 @@ section('A case can be corrected, and its number never changes');
        body: { client_name: 'X' } })).status === 404);
 }
 
+/* EDITING A CASE MUST NOT ERASE ITS AUTHORIZATION (Codex stop-time review,
+   2026-08-16).
+
+   `/cases/:no/meta` was replace-all: `num(undefined)` is null, so a caller that
+   posted only a case type wrote NULL over `authorized_hours` and
+   `authorized_budget` and was told it succeeded. The Authorization form always
+   posts all three, so nothing noticed — until Edit Case began sending just the
+   type, at which point correcting a client's NAME would silently erase the
+   hours a carrier had authorised. */
+section('Editing a case leaves the authorization alone');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-AUTH-KEEP', carrier: 'Keeper Mutual',
+                      claim_number: 'KM-1', client_name: 'Adj', subject_name: 'S' });
+
+  const auth = async () => (await jsonOf(await call(env, '/cases/API-AUTH-KEEP/workspace',
+    { cookie: admin }))).authorization;
+  await call(env, '/cases/API-AUTH-KEEP/meta', { method: 'POST', cookie: admin,
+    body: { authorized_hours: 24, authorized_budget: 3300 } });
+  const set = await auth();
+  ok('the carrier authorization is on the case',
+     set.authorized_hours === 24 && set.authorized_budget === 3300,
+     JSON.stringify([set.authorized_hours, set.authorized_budget]));
+
+  /* THE DEFECT, EXACTLY: a save that names only the case type. */
+  const type = (await jsonOf(await call(env, '/case-types', { cookie: admin }))).case_types[0];
+  ok('posting only a case type is accepted',
+     (await call(env, '/cases/API-AUTH-KEEP/meta', { method: 'POST', cookie: admin,
+       body: { case_type_id: type ? type.id : '' } })).status === 200);
+  const after = await auth();
+  ok('and the authorized hours survive it',
+     after.authorized_hours === 24, String(after.authorized_hours));
+  ok('as does the authorized budget',
+     after.authorized_budget === 3300, String(after.authorized_budget));
+
+  /* And the same through the door the office actually uses. */
+  ok('editing the case identity is accepted',
+     (await call(env, '/cases/API-AUTH-KEEP/edit', { method: 'POST', cookie: admin,
+       body: { client_name: 'Renamed Adjuster' } })).status === 200);
+  const afterEdit = await auth();
+  ok('correcting a name does not erase the authorization',
+     afterEdit.authorized_hours === 24 && afterEdit.authorized_budget === 3300,
+     JSON.stringify([afterEdit.authorized_hours, afterEdit.authorized_budget]));
+
+  /* BLANK STILL CLEARS, or the Authorization form could never remove a figure.
+     An explicit empty string is the office saying there is none; an ABSENT key
+     is the office not mentioning it. The two used to be the same thing. */
+  await call(env, '/cases/API-AUTH-KEEP/meta', { method: 'POST', cookie: admin,
+    body: { authorized_hours: '', authorized_budget: '' } });
+  const cleared = await auth();
+  ok('an explicit blank still clears the hours', cleared.authorized_hours == null,
+     String(cleared.authorized_hours));
+  ok('and the budget', cleared.authorized_budget == null, String(cleared.authorized_budget));
+
+  /* The case type is the same rule, both ways. */
+  await call(env, '/cases/API-AUTH-KEEP/meta', { method: 'POST', cookie: admin,
+    body: { case_type_id: type ? type.id : '' } });
+  await call(env, '/cases/API-AUTH-KEEP/meta', { method: 'POST', cookie: admin,
+    body: { authorized_hours: 8 } });
+  const keptType = await auth();
+  ok('a save that never mentions the case type keeps it',
+     Boolean(keptType.case_type) === Boolean(type), String(keptType.case_type));
+  ok('while the figure that WAS named is written', keptType.authorized_hours === 8,
+     String(keptType.authorized_hours));
+}
+
 /* THE PHONE TABLE ARRIVES ON A MANUAL DISPATCH, so the case screen must keep
    working — and the numbers already on the case must still be readable. */
 section('Phone lists degrade to the existing single number before setup');

@@ -3272,13 +3272,34 @@ async function setCaseMeta(request, env, caseNo) {
     const n = Number(v);
     return Number.isFinite(n) && n >= 0 ? n : undefined;   // undefined = reject
   };
-  const hours = num(body.authorized_hours);
-  const budget = num(body.authorized_budget);
+  /* AN ABSENT FIELD MEANS UNCHANGED (Codex stop-time review, 2026-08-16).
+
+     This route used to be replace-all: `num(undefined)` is null, so a caller
+     that posted only a case type wrote NULL over `authorized_hours` and
+     `authorized_budget` — and was told it succeeded. The Authorization form
+     always posts all three, so nothing noticed until Edit Case began sending
+     just the type, at which point saving a correction to a client's name would
+     silently erase the hours a carrier had authorised.
+
+     BLANK STILL CLEARS. An explicit empty string is the office saying "there is
+     no figure", which is how the Authorization form clears one; only an ABSENT
+     key is left alone. The two were the same thing before and are not now. */
+  const has = k => Object.prototype.hasOwnProperty.call(body, k);
+  const prior = await env.DB.prepare(
+    'SELECT case_type_id, authorized_hours, authorized_budget FROM case_meta WHERE case_no = ?')
+    .bind(caseNo).first();
+
+  const hours = has('authorized_hours')
+    ? num(body.authorized_hours) : (prior ? prior.authorized_hours : null);
+  const budget = has('authorized_budget')
+    ? num(body.authorized_budget) : (prior ? prior.authorized_budget : null);
   if (hours === undefined || budget === undefined) {
     return json({ error: 'Hours and budget must be numbers, or left blank.' }, 400);
   }
-  let typeId = null;
-  if (body.case_type_id !== null && body.case_type_id !== undefined && String(body.case_type_id) !== '') {
+  let typeId = has('case_type_id') ? null : (prior ? prior.case_type_id : null);
+  if (has('case_type_id')
+      && body.case_type_id !== null && body.case_type_id !== undefined
+      && String(body.case_type_id) !== '') {
     typeId = parseInt(body.case_type_id, 10);
     if (!Number.isFinite(typeId)) return json({ error: 'invalid case type' }, 400);
     const t = await env.DB.prepare('SELECT 1 AS x FROM case_types WHERE id = ? AND active = 1').bind(typeId).first();

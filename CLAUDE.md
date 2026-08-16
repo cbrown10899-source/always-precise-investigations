@@ -617,7 +617,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1504 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 1514 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 967 checks: the page against the real Worker
 ```
 
@@ -727,6 +727,17 @@ list and another on the screen.
 assignment already have routes; the Edit Case screen calls those, the way
 `saveCaseMeta` already does, so each thing keeps one writer. Internal notes are
 a list with their own panel and are linked, not copied.
+
+**And that is why `/cases/:no/meta` treats an absent field as unchanged.** It
+used to be replace-all — `num(undefined)` is null, so a caller that posted only
+a case type wrote NULL over `authorized_hours` and `authorized_budget` and was
+told it succeeded. Nothing noticed while the Authorization form was the only
+caller, because it always posts all three; the moment Edit Case sent just the
+type, correcting a client's **name** would silently erase the hours a carrier
+had authorised. **A blank string still clears** — that is the office saying
+there is no figure, and it is how the Authorization form removes one. Only an
+absent key is left alone. A route that several screens post different subsets
+to cannot be replace-all.
 
 **Phone numbers are rows** (`case_phone`), one per number, each with an optional
 label — the same reasoning that made `notify_recipient` one row per recipient.
