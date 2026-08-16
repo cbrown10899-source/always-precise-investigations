@@ -2135,16 +2135,27 @@ const ALERT_PREVIEW_CASE = 'API-EXAMPLE-0001';
      no amount — what was paid is commercial, and "a payment was recorded" is
        all an alert needs to say to make someone open the portal
 
-   THE CASE NUMBER IS THE ONE IDENTIFIER ALLOWED, deliberately: it is the firm's
-   own reference, it already travels in client-facing subject lines, and without
-   it an alert cannot be acted on. It names a file, not a person.
+   SMS CARRIES NO CASE NUMBER AT ALL (owner, 2026-08-16). Email keeps it: it
+   goes to the firm's own inbox through one provider the firm chose. A text
+   crosses a carrier network, sits unlocked on a lock screen, and is backed up
+   by whatever the handset does — so it says only what happened and to open the
+   portal. Not "less detail on SMS" as a matter of taste: the case number is the
+   thread that ties a notification to a file, and it is not going over that
+   channel.
 
-   The detail lives behind the sign-in, which is exactly where it already lives.
-   `caseNo` is validated by the caller; anything unexpected is dropped rather
-   than interpolated. */
-function alertText(event, caseNo) {
+   The `sms` branch does not read `caseNo` at all, which is stronger than
+   filtering it: there is no path by which case data can reach a text, and the
+   tests assert the wording is identical whatever case number is passed.
+
+   The detail lives behind the sign-in, which is exactly where it already lives. */
+const ALERT_CHANNELS = ['sms', 'email'];
+function alertText(event, caseNo, channel) {
   const found = ALERT_EVENTS.find(([id]) => id === event);
   if (!found) return null;
+  if (channel === 'sms') {
+    // Deliberately ignores caseNo. Nothing about the case reaches this string.
+    return `${found[1]}. Open the portal.`;
+  }
   const clean = /^[A-Za-z0-9-]{3,64}$/.test(String(caseNo || '')) ? String(caseNo) : '';
   return `${found[1]}${clean ? ` — case ${clean}` : ''}. Sign in to the portal for the detail.`;
 }
@@ -6333,10 +6344,16 @@ async function route(request, env) {
          writer, so the preview cannot disagree with the alert — and the tests
          can hold every event to the privacy rule rather than just one. */
       events: ALERT_EVENTS.map(([id, label]) => ({
-        id, label, preview: alertText(id, ALERT_PREVIEW_CASE),
+        id, label,
+        /* BOTH channels, shown side by side, because the difference is the
+           point: a text carries no case number and an email does. The office
+           reads exactly what each one would send. */
+        preview: alertText(id, ALERT_PREVIEW_CASE, 'email'),
+        preview_sms: alertText(id, ALERT_PREVIEW_CASE, 'sms'),
       })),
+      channels: ALERT_CHANNELS,
       delivery: alertDelivery(env),
-      sample: alertText('intakes', ALERT_PREVIEW_CASE),
+      sample: alertText('intakes', ALERT_PREVIEW_CASE, 'email'),
     });
   }
 

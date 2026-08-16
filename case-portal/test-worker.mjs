@@ -7040,7 +7040,8 @@ section('Notification recipients: many numbers, each with its own switches');
    Email goes through Resend; any SMS will go through a carrier and a provider.
    These assert the text says WHAT HAPPENED and WHERE TO LOOK and nothing that
    identifies a person or a matter. */
-section('Alert text carries the case number and nothing else about the case');
+const ALERT_PREVIEW_CASE_TEXT = 'API-EXAMPLE-0001';
+section('Alert text: the case number reaches email and never a text message');
 {
   const env = freshEnv();
   await bootstrapAdmin(env);
@@ -7069,8 +7070,9 @@ section('Alert text carries the case number and nothing else about the case');
   const sample = await jsonOf(await call(env, '/notify-recipients', { cookie: admin }));
   /* EVERY event's REAL text, composed by the Worker — not one sample with the
      label swapped, which would prove only that the template is safe and let a
-     new event word itself however it liked. */
+     new event word itself however it liked. Both channels. */
   const everyText = (sample.events || []).map(e => e.preview);
+  const everySms = (sample.events || []).map(e => e.preview_sms);
   ok('every alert choice comes with the words it would actually send',
      everyText.length === 5 && everyText.every(t => typeof t === 'string' && t.length > 0),
      JSON.stringify(everyText));
@@ -7085,10 +7087,48 @@ section('Alert text carries the case number and nothing else about the case');
 
   for (const [what, value] of forbidden) {
     ok(`alert text never carries ${what}`,
-       everyText.every(t => !String(t).toLowerCase().includes(String(value).toLowerCase())),
-       everyText.join(' | ').slice(0, 200));
+       everyText.concat(everySms)
+         .every(t => !String(t).toLowerCase().includes(String(value).toLowerCase())),
+       everyText.concat(everySms).join(' | ').slice(0, 200));
   }
-  ok('and never a money amount', everyText.every(t => !/[$£€]\s*\d/.test(String(t))));
+  ok('and never a money amount',
+     everyText.concat(everySms).every(t => !/[$£€]\s*\d/.test(String(t))));
+
+  /* SMS CARRIES NO CASE NUMBER AT ALL (owner, 2026-08-16). Email keeps it — it
+     goes to the firm's own inbox through one provider the firm chose. A text
+     crosses a carrier network and sits on a lock screen, so it says only what
+     happened and to open the portal. */
+  ok('every SMS alert says what happened',
+     everySms.length === 5 && everySms.every(t => typeof t === 'string' && t.length > 0),
+     JSON.stringify(everySms));
+  ok('and tells the admin to open the portal',
+     everySms.every(t => /open the portal/i.test(t)), everySms.join(' | '));
+  ok('and carries NO case number',
+     everySms.every(t => !t.includes(ALERT_PREVIEW_CASE_TEXT) && !/\bcase\b/i.test(t)),
+     everySms.join(' | '));
+  ok('nor anything that looks like a reference at all',
+     everySms.every(t => !/[A-Z]{2,}-[A-Z0-9-]{2,}/.test(t) && !/\d{3,}/.test(t)),
+     everySms.join(' | '));
+  ok('while the email alert still carries the case number, which is where it belongs',
+     everyText.every(t => t.includes(ALERT_PREVIEW_CASE_TEXT)), everyText.join(' | '));
+
+  /* THE STRONGEST FORM OF THE RULE: the SMS wording cannot vary with the case,
+     because the sms branch never reads it. Filtering a value out can be got
+     wrong; having no path for it to arrive cannot. Asserted by asking the
+     Worker for previews on two different databases whose example case numbers
+     differ only in that the second has a real, loaded case behind it. */
+  const other = freshEnv();
+  await bootstrapAdmin(other);
+  const otherAdmin = (await login(other, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(other, { case_no: 'API-OTHER-9', service: 'Surveillance',
+                        client_name: 'Someone Else', subject_name: 'X' });
+  const otherSms = ((await jsonOf(await call(other, '/notify-recipients',
+    { cookie: otherAdmin }))).events || []).map(e => e.preview_sms);
+  ok('the SMS wording is identical whatever case data exists',
+     JSON.stringify(otherSms) === JSON.stringify(everySms),
+     `${otherSms.join('|')} vs ${everySms.join('|')}`);
+  ok('and never mentions a case that does exist',
+     otherSms.every(t => !t.includes('API-OTHER-9')), otherSms.join(' | '));
 
   /* A case number is pinned to the same shape ingest pins it to, so a hostile
      value cannot ride into an alert that may reach a carrier's SMS gateway. */

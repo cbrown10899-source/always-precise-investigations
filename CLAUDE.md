@@ -617,8 +617,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1385 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 924 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 1392 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 928 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
@@ -836,21 +836,36 @@ sending half is what does not exist. Adding a provider means adding its
 credential to the environment and a sender beside `sendMail()` — never editing
 that function to claim yes.
 
-**Alert text carries the case number and nothing else about the case.** An alert
-leaves the building: email goes through Resend, and any SMS will go through a
-carrier and a provider. So `alertText()` says what happened and where to look,
-and never a claimant, client, subject or adjuster name, address, vehicle,
-injury, objective, claim or policy number, carrier, phone, email — **or an
-amount**, because what was paid is commercial and "a payment was recorded" is
-all an alert needs to say. The case number is the one identifier allowed: it is
-the firm's own reference, already travels in client-facing subject lines, and
-without it an alert cannot be acted on. It names a file, not a person.
+**Alert text carries nothing about the case, and a text message carries no case
+number either.** An alert leaves the building: email goes through Resend, and
+any SMS will go through a carrier and a provider. So `alertText()` says what
+happened and where to look, and never a claimant, client, subject or adjuster
+name, address, vehicle, injury, objective, claim or policy number, carrier,
+phone, email — **or an amount**, because what was paid is commercial and "a
+payment was recorded" is all an alert needs to say.
 
-The tests plant a case loaded with every one of those values and assert none of
-them appears in **any** event's text. The wording is composed by the Worker and
-returned as a per-event `preview`, so the Settings page shows the exact words
-that would leave and cannot drift from them — one writer, as everywhere else
-here.
+**The two channels differ on exactly one thing** (owner, 2026-08-16):
+
+| Channel | Text |
+| --- | --- |
+| SMS | `New intake received. Open the portal.` |
+| Email | `New intake received — case API-EXAMPLE-0001. Sign in to the portal for the detail.` |
+
+A text crosses a carrier network, sits unlocked on a lock screen and is backed
+up by whatever the handset does, so **no case number goes over it**. Email
+reaches the firm's own inbox through one provider the firm chose, and keeps the
+reference that makes an alert actionable.
+
+**The `sms` branch does not read `caseNo` at all**, which is stronger than
+filtering it out: there is no path by which case data can reach a text. The test
+that matters asserts the SMS wording is **identical on two different databases**,
+one of which has a real loaded case — a filter can be got wrong, an absent path
+cannot.
+
+The tests plant a case carrying every forbidden value and assert none appears in
+**either** channel of **any** event. The wording is composed by the Worker and
+returned as `preview` and `preview_sms`, so the Settings page shows both side by
+side and cannot drift from what is sent — one writer, as everywhere else here.
 
 ## The free-plan failsafe
 

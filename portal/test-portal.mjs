@@ -2554,9 +2554,23 @@ section('Notification recipients in the browser');
   ok('the five alert choices are previewed by their real wording',
      ['New intake received', 'Payment recorded', 'Report ready for review',
       'Client package finalized', 'Important task due'].every(t => has(card, t)), card.slice(0, 900));
-  ok('and every preview says where to look',
+  ok('and every email preview says where to look',
      (card.match(/sign in to the portal/gi) || []).length >= 5);
   ok('the preview case number is obviously not a real case', has(card, 'API-EXAMPLE-0001'));
+
+  /* A TEXT CARRIES NO CASE NUMBER (owner, 2026-08-16). Both channels are shown
+     side by side so the office reads the difference rather than being told it. */
+  ok('both channels are previewed, labelled',
+     has(card, 'Text message') && has(card, 'Email'), card.slice(0, 600));
+  ok('the SMS wording tells the admin to open the portal',
+     (card.match(/open the portal\./gi) || []).length >= 5, card.slice(0, 900));
+  ok('and the page says plainly that a text carries no case number',
+     has(card, 'carries no case number'), card.slice(0, 900));
+  /* The example case number appears for email only. Counting it is the check:
+     five events, so five occurrences and not ten. */
+  ok('the case number appears once per event, on the email side only',
+     (card.match(/API-EXAMPLE-0001/g) || []).length === 5,
+     String((card.match(/API-EXAMPLE-0001/g) || []).length));
 
   await page.locator('[data-act="ntAdd"]').click();
   await page.waitForTimeout(300);
