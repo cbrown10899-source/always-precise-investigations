@@ -4765,6 +4765,37 @@ section('Payment instructions can go on their own, and never to a carrier');
      (await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
        body: { to: 'mary.jane@example.com' } })).status === 400);
   ok('and nothing went to them', lastBody === null);
+  /* THE GUARD MUST NOT FAIL OPEN ON AN UNTRIMMED STORED ADDRESS (Codex
+     stop-time review, third pass). The input was trimmed and the stored value
+     was not, so a carrier address saved with a trailing space or a newline —
+     a paste off a signature block — did not match, and the guard silently did
+     not fire. Under-matching is the dangerous direction here: an over-matching
+     guard gets complained about, an under-matching one lets consumer payment
+     handles reach an adjuster and nobody ever learns.
+
+     Planted directly, because the ingest path may well trim on the way in; the
+     rows that matter are the ones already stored. Each whitespace form is
+     driven separately, since `trim(X, Y)` only removes the characters named
+     in Y and a set that misses one is the same bug again. */
+  for (const [nick, stored] of [['trailing space', 'ws.space@carrier.example  '],
+                                ['leading space', '  ws.lead@carrier.example'],
+                                ['trailing newline', 'ws.nl@carrier.example\n'],
+                                ['leading tab', '\tws.tab@carrier.example'],
+                                ['carriage return', 'ws.cr@carrier.example\r']]) {
+    const cn = `API-WS-${stored.replace(/[^a-z]/gi, '').slice(0, 8)}`;
+    await env.DB.prepare(
+      `INSERT INTO submissions (case_no, kind, service, client_name, client_email,
+                                payload, created_at)
+       VALUES (?, 'claims', 'Insurance Claim Assignment', 'W. Adjuster', ?, '{}', ?)`)
+      .bind(cn, stored, '2026-08-15T00:00:00Z').run();
+    lastBody = null;
+    const r = await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+      body: { to: stored.trim() } });
+    ok(`a carrier address stored with a ${nick} is still recognised`,
+       r.status === 400, `${nick}: ${r.status}`);
+    ok(`and nothing went to them (${nick})`, lastBody === null);
+  }
+
   /* An address sitting in free text rather than an email field is not a
      carrier contact either — `json_extract` reads named fields, so a note
      mentioning someone cannot blocklist them. */

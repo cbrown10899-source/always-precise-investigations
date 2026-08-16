@@ -638,14 +638,34 @@ const sheetTakesPayment = sheetId => sheetId === 'private_retainer';
 async function recipientIsCarrier(env, to) {
   const addr = String(to || '').trim().toLowerCase();
   if (!addr) return null;
+  /* BOTH SIDES ARE TRIMMED (Codex stop-time review, third pass — "exact
+     matching fails open on untrimmed stored carrier emails").
+
+     The input was trimmed and the STORED value was not, so a carrier address
+     saved as " adjuster@carrier.example " — a paste with a trailing space, a
+     newline off a copied signature block — did not equal the trimmed address
+     being sent to, and the guard silently did not fire. Confirmed against the
+     harness rather than assumed: the comparison returns 0.
+
+     That is the worst direction for this particular check to be wrong in. An
+     over-matching guard blocks a send and someone complains; an under-matching
+     one lets consumer payment handles reach an adjuster and nobody ever knows.
+
+     `trim(X, Y)` removes any character in Y from both ends, so the set is
+     spelled out: space, tab, newline, carriage return. Named precisely because
+     it is NOT every Unicode space — a non-breaking space in a stored address
+     would still slip past, and claiming otherwise would be the same kind of
+     comment that has already been wrong twice in this function. */
+  const WS = "' ' || char(9) || char(10) || char(13)";
+  const clean = col => `lower(trim(COALESCE(${col}, ''), ${WS}))`;
   const row = await env.DB.prepare(
     `SELECT case_no FROM submissions
       WHERE kind = 'claims'
-        AND (lower(COALESCE(client_email, '')) = ?1
+        AND (${clean('client_email')} = ?1
              OR CASE WHEN json_valid(payload)
                      THEN ?1 IN (
-                       lower(COALESCE(json_extract(payload, '$.adjuster_email'), '')),
-                       lower(COALESCE(json_extract(payload, '$.billing_email'), '')))
+                       ${clean("json_extract(payload, '$.adjuster_email')")},
+                       ${clean("json_extract(payload, '$.billing_email')")})
                      ELSE 0 END)
       LIMIT 1`).bind(addr).first();
   return row ? row.case_no : null;

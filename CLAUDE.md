@@ -444,6 +444,16 @@ equality test on `client_email` is what it does now, wrapped in `json_valid`
 inside a CASE because `json_extract` *raises* on malformed JSON and a boundary
 check must never turn one bad row into a failed send.
 
+**Both sides are trimmed, and the direction of the failure is why it matters.**
+The input was trimmed and the stored value was not, so an address saved as
+`" adjuster@carrier.example "` — a paste off a signature block — did not match
+and the guard silently did not fire. An over-matching guard blocks a send and
+someone complains; an **under**-matching one puts consumer payment handles in
+front of an adjuster and nobody ever knows. `trim(X, Y)` names its character set
+explicitly (space, tab, newline, carriage return) because it is *not* every
+Unicode space, and each form is driven separately in the tests — a set that
+misses one is the same bug again.
+
 Its limit is stated rather than papered over: it recognises addresses the system
 has **seen**. An adjuster who has never appeared on a claims intake is not known
 to be one. It closes the realistic case — emailing someone already on a claim —
@@ -581,7 +591,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1120 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 1130 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 850 checks: the page against the real Worker
 ```
 
