@@ -2565,7 +2565,12 @@ function notifySettingsHtml(){
       }</span><span></span></div>
       <div class="row"><span><b>Email</b></span>
         <span class="tag ${del.email === "configured" ? "closed" : "rs-needs_revision"}">${
-          del.email === "configured" ? "provider ready" : "no provider"}</span></div>
+          del.email === "configured" ? "sending" : "no provider"}</span></div>
+      <div class="row"><span style="color:var(--muted);font-size:.85rem">${del.email === "configured"
+        ? `Email alerts go out as they happen, to every switched-on recipient with an address who
+           has ticked that alert. A recipient with only a phone number is not emailed instead.`
+        : `No email provider is configured either, so nothing is sent on either channel yet.`
+      }</span><span></span></div>
     </div>
 
     ${body}

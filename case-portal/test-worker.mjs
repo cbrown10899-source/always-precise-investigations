@@ -7136,6 +7136,226 @@ section('Alert text: the case number reaches email and never a text message');
      !JSON.stringify(sample.sample).includes('<script>'));
 }
 
+/* EMAIL ALERTS ACTUALLY GO OUT, to whoever asked for that event and nobody
+   else. One recipient per event, so a misrouted alert lands somewhere visible
+   instead of being absorbed by a catch-all.
+
+   SMS is still not wired and is not asserted here — there is no provider. */
+section('Email alerts reach the recipients who asked for each event');
+{
+  const realFetch = globalThis.fetch;
+  let mails = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mails.push(JSON.parse(init.body));
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '200';
+  env.INGEST_PER_MINUTE = '200';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  const addr = {};
+  for (const ev of ['intakes', 'payments', 'reports', 'packages', 'tasks']) {
+    addr[ev] = `${ev}@example.com`;
+    await call(env, '/notify-recipients', { method: 'POST', cookie: admin,
+      body: { label: ev, email: addr[ev], alerts: { [ev]: true } } });
+  }
+  // A phone-only recipient subscribed to everything: SMS has no provider, and
+  // emailing someone who asked for texts would be inventing a channel.
+  await call(env, '/notify-recipients', { method: 'POST', cookie: admin,
+    body: { label: 'Phone only', phone: '555 0100 777',
+            alerts: { intakes: true, payments: true, reports: true,
+                      packages: true, tasks: true } } });
+  await call(env, '/notify-recipients', { method: 'POST', cookie: admin,
+    body: { label: 'Switched off', email: 'off@example.com', enabled: false,
+            alerts: { intakes: true, payments: true, reports: true,
+                      packages: true, tasks: true } } });
+
+  const went = () => mails.map(m => String(m.to));
+  const bodies = () => mails.map(m => `${m.subject}\n${m.text}\n${m.html}`).join('\n---\n');
+  const only = ev => went().length === 1 && went()[0].includes(addr[ev]);
+
+  /* 1. INTAKES — the public form. */
+  mails = [];
+  await ingest(env, { case_no: 'API-ALERT-1', service: 'Surveillance',
+                      client_name: 'Alert Client', client_email: 'client@example.com',
+                      client_phone: '5550100888', subject_name: 'Pat Claimant',
+                      subject_address: '14 Elm Row', subject_relationship: 'Lumbar strain',
+                      carrier: 'Confidential Mutual', claim_number: 'CM-90210' });
+  ok('an intake alerts the recipient who asked for intakes', only('intakes'), went().join(' | '));
+  ok('a phone-only recipient is not emailed instead',
+     went().every(t => !t.includes('off@example.com')) && !bodies().includes('555 0100 777'));
+
+  /* THE PRIVACY RULE HOLDS ON A REAL SEND, not only in the preview. */
+  for (const v of ['Alert Client', 'client@example.com', '5550100888', 'Pat Claimant',
+                   'Elm Row', 'Lumbar strain', 'Confidential Mutual', 'CM-90210']) {
+    ok(`the intake alert never carries ${v}`,
+       !bodies().toLowerCase().includes(v.toLowerCase()), bodies().slice(0, 200));
+  }
+  ok('it says what happened and carries the case number',
+     /new intake received/i.test(bodies()) && bodies().includes('API-ALERT-1'),
+     bodies().slice(0, 200));
+
+  /* 2. PAYMENTS — a retainer is the PRIVATE model, and the route refuses a
+     claim assignment by name, so this needs its own case. API-ALERT-1 above
+     carries a carrier and a claim number precisely to test the privacy rule. */
+  mails = [];
+  await ingest(env, { case_no: 'API-ALERT-P', service: 'Surveillance',
+                      client_name: 'Private Client', subject_name: 'S' });
+  mails = [];
+  await call(env, '/cases/API-ALERT-P/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 1500, method: 'check', paid_on: '2026-08-16', reference: 'cheque 9' } });
+  ok('a recorded payment alerts the payments recipient', only('payments'), went().join(' | '));
+  ok('and never says how much — the amount is commercial',
+     !/1,?500/.test(bodies()) && !/[$£€]\s*\d/.test(bodies()), bodies().slice(0, 200));
+  ok('nor the cheque reference', !bodies().includes('cheque 9'));
+
+  /* 3. REPORTS — the hand-off for review, not every status move. */
+  await call(env, '/cases/API-ALERT-1/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-16', start_time: '07:00' } });
+  await call(env, '/cases/API-ALERT-1/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-08-16', at_time: '07:20', description: 'Observed the subject.' } });
+  await call(env, '/cases/API-ALERT-1/day/end', { method: 'POST', cookie: admin,
+    body: { end_time: '11:00' } });
+  const day = (await jsonOf(await call(env, '/cases/API-ALERT-1/workspace',
+    { cookie: admin }))).days[0];
+  mails = [];
+  const rep = await jsonOf(await call(env, '/cases/API-ALERT-1/reports/generate',
+    { method: 'POST', cookie: admin, body: { day_id: day.id } }));
+  ok('generating a report alerts nobody — it is not the hand-off',
+     went().length === 0, went().join(' | '));
+  mails = [];
+  await call(env, `/cases/API-ALERT-1/reports/${rep.id}/status`, { method: 'POST',
+    cookie: admin, body: { status: 'submitted' } });
+  ok('submitting it for review alerts the reports recipient', only('reports'), went().join(' | '));
+  ok('and the alert carries no line of the report itself',
+     !bodies().includes('Observed the subject'), bodies().slice(0, 200));
+  mails = [];
+  await call(env, `/cases/API-ALERT-1/reports/${rep.id}/status`, { method: 'POST',
+    cookie: admin, body: { status: 'approved' } });
+  ok('approving it does not alert again', went().length === 0, went().join(' | '));
+
+  /* 4. PACKAGES — finalized, not opened. */
+  mails = [];
+  await call(env, '/cases/API-ALERT-1/build', { method: 'POST', cookie: admin,
+    body: { package_type: 'report_only' } });
+  ok('opening a build alerts nobody', went().length === 0, went().join(' | '));
+  const build = (await jsonOf(await call(env, '/cases/API-ALERT-1/build',
+    { cookie: admin }))).build;
+  mails = [];
+  const fin = await call(env, `/build/${build.id}/finalize`, { method: 'POST',
+    cookie: admin, body: {} });
+  ok('the package finalizes', fin.status === 200,
+     `${fin.status}: ${JSON.stringify(await jsonOf(fin)).slice(0, 200)}`);
+  ok('and finalizing alerts the packages recipient', only('packages'), went().join(' | '));
+
+  /* 5. TASKS — important ones only. */
+  mails = [];
+  await call(env, '/cases/API-ALERT-1/tasks', { method: 'POST', cookie: admin,
+    body: { task: 'Ordinary follow-up', priority: 'normal' } });
+  ok('a normal task alerts nobody — that is how an alert stays worth reading',
+     went().length === 0, went().join(' | '));
+  mails = [];
+  await call(env, '/cases/API-ALERT-1/tasks', { method: 'POST', cookie: admin,
+    body: { task: 'Call the adjuster before Friday', priority: 'high' } });
+  ok('a high-priority task alerts the tasks recipient', only('tasks'), went().join(' | '));
+  ok('and never repeats what the task says',
+     !bodies().includes('Call the adjuster'), bodies().slice(0, 200));
+  mails = [];
+  await call(env, '/cases/API-ALERT-1/tasks', { method: 'POST', cookie: admin,
+    body: { task: 'Urgent thing', priority: 'urgent' } });
+  ok('an urgent one does too', only('tasks'), went().join(' | '));
+
+  /* THE SWITCHES ARE OBEYED, which is the whole point of storing them. */
+  const rec = (await jsonOf(await call(env, '/notify-recipients', { cookie: admin })))
+    .recipients.find(r => r.label === 'intakes');
+  await call(env, `/notify-recipients/${rec.id}`, { method: 'POST', cookie: admin,
+    body: { enabled: false } });
+  mails = [];
+  await ingest(env, { case_no: 'API-ALERT-2', service: 'Surveillance',
+                      client_name: 'Second', subject_name: 'S' });
+  ok('switching a recipient off stops their alerts', went().length === 0, went().join(' | '));
+
+  await call(env, `/notify-recipients/${rec.id}`, { method: 'POST', cookie: admin,
+    body: { enabled: true, alerts: { intakes: false, payments: true } } });
+  mails = [];
+  await ingest(env, { case_no: 'API-ALERT-3', service: 'Surveillance',
+                      client_name: 'Third', subject_name: 'S' });
+  ok('unticking one event stops that event without stopping the recipient',
+     went().length === 0, went().join(' | '));
+  mails = [];
+  await call(env, '/cases/API-ALERT-3/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 100, method: 'cash' } });
+  ok('while the event they DID tick still reaches them',
+     went().some(t => t.includes(addr.intakes)), went().join(' | '));
+
+  globalThis.fetch = realFetch;
+}
+
+/* AN ALERT IS A COURTESY AND MUST NEVER FAIL THE THING IT REPORTS — the same
+   rule logSend follows, for the same reason. */
+section('A failing mail provider cannot break an intake or a payment');
+{
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) throw new Error('provider down');
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await call(env, '/notify-recipients', { method: 'POST', cookie: admin,
+    body: { label: 'Everyone', email: 'all@example.com',
+            alerts: { intakes: true, payments: true } } });
+
+  ok('the intake is still accepted while the provider is down',
+     (await ingest(env, { case_no: 'API-ALERT-DOWN', service: 'Surveillance',
+                          client_name: 'Still Recorded', subject_name: 'S' })).status === 200);
+  ok('and the case really is on file',
+     (await call(env, '/submissions/API-ALERT-DOWN', { cookie: admin })).status === 200);
+  ok('a payment is still recorded too',
+     (await call(env, '/cases/API-ALERT-DOWN/retainer/payment', { method: 'POST',
+       cookie: admin, body: { amount: 250, method: 'cash' } })).status === 200);
+  ok('and the money really is on the ledger',
+     ((await jsonOf(await call(env, '/cases/API-ALERT-DOWN/workspace', { cookie: admin })))
+       .authorization.retainer.payments || []).length === 1);
+
+  globalThis.fetch = realFetch;
+}
+
+/* NOTHING TO TELL, OR NOTHING TO TELL IT WITH: silent, and still working. */
+section('Alerts are silent when there is nobody to tell or no provider');
+{
+  const realFetch = globalThis.fetch;
+  let tried = 0;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) { tried++; return new Response('{}', { status: 200 }); }
+    return realFetch(url, init);
+  };
+  const noKey = freshEnv();                       // no RESEND_API_KEY at all
+  await bootstrapAdmin(noKey);
+  ok('an intake with no mail provider still records',
+     (await ingest(noKey, { case_no: 'API-QUIET-1', service: 'Surveillance',
+                            client_name: 'Quiet', subject_name: 'S' })).status === 200);
+  ok('and nothing was attempted', tried === 0, String(tried));
+
+  const noOne = freshEnv();
+  noOne.RESEND_API_KEY = 'test-resend-key';
+  await bootstrapAdmin(noOne);
+  tried = 0;
+  ok('an intake with a provider but no recipients still records',
+     (await ingest(noOne, { case_no: 'API-QUIET-2', service: 'Surveillance',
+                            client_name: 'Quiet', subject_name: 'S' })).status === 200);
+  ok('and still sends nothing', tried === 0, String(tried));
+  globalThis.fetch = realFetch;
+}
+
 /* NO NUMBER AND NO PROVIDER CREDENTIAL IS EVER WRITTEN INTO THE SOURCE. The
    owner asked for this in the same breath as the feature, and a grep is the
    only check that keeps holding as the file grows. */
