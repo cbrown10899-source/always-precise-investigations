@@ -3285,19 +3285,27 @@ async function setCaseMeta(request, env, caseNo) {
      no figure", which is how the Authorization form clears one; only an ABSENT
      key is left alone. The two were the same thing before and are not now. */
   const has = k => Object.prototype.hasOwnProperty.call(body, k);
-  const prior = await env.DB.prepare(
-    'SELECT case_type_id, authorized_hours, authorized_budget FROM case_meta WHERE case_no = ?')
-    .bind(caseNo).first();
 
-  const hours = has('authorized_hours')
-    ? num(body.authorized_hours) : (prior ? prior.authorized_hours : null);
-  const budget = has('authorized_budget')
-    ? num(body.authorized_budget) : (prior ? prior.authorized_budget : null);
+  /* WHICH FIELDS THIS REQUEST IS ABOUT. Everything else is resolved from the row
+     INSIDE the UPDATE below — never from a value read a moment earlier.
+
+     A read-then-write here loses a concurrent edit without a sound: two admins
+     posting different subsets interleave as A reads, B reads, A writes, B
+     writes, and B's write puts back the value A had just changed on a field B
+     never mentioned. The retainer route already says this in its own words —
+     "resolved inside the UPDATE so no other write can slip between a read and
+     this statement" — and this is the same statement. */
+  const givenHours = has('authorized_hours') ? 1 : 0;
+  const givenBudget = has('authorized_budget') ? 1 : 0;
+  const givenType = has('case_type_id') ? 1 : 0;
+
+  const hours = givenHours ? num(body.authorized_hours) : null;
+  const budget = givenBudget ? num(body.authorized_budget) : null;
   if (hours === undefined || budget === undefined) {
     return json({ error: 'Hours and budget must be numbers, or left blank.' }, 400);
   }
-  let typeId = has('case_type_id') ? null : (prior ? prior.case_type_id : null);
-  if (has('case_type_id')
+  let typeId = null;
+  if (givenType
       && body.case_type_id !== null && body.case_type_id !== undefined
       && String(body.case_type_id) !== '') {
     typeId = parseInt(body.case_type_id, 10);
@@ -3306,13 +3314,21 @@ async function setCaseMeta(request, env, caseNo) {
     if (!t) return json({ error: 'no such case type' }, 400);
   }
 
+  /* ?7/?8/?9 say whether this request mentioned each field at all. A field it
+     did not mention keeps whatever the ROW holds when this statement runs, so a
+     concurrent edit to it survives; a field it did mention is written even when
+     the value is NULL, because a blank is the office clearing it. That is the
+     whole difference between "absent" and "empty", resolved atomically. */
   await env.DB.prepare(
     `INSERT INTO case_meta (case_no, case_type_id, authorized_hours, authorized_budget, updated_by, updated_at)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6)
      ON CONFLICT(case_no) DO UPDATE SET
-       case_type_id = ?2, authorized_hours = ?3, authorized_budget = ?4,
+       case_type_id      = CASE WHEN ?7 = 1 THEN ?2 ELSE case_meta.case_type_id END,
+       authorized_hours  = CASE WHEN ?8 = 1 THEN ?3 ELSE case_meta.authorized_hours END,
+       authorized_budget = CASE WHEN ?9 = 1 THEN ?4 ELSE case_meta.authorized_budget END,
        updated_by = ?5, updated_at = ?6`)
-    .bind(caseNo, typeId, hours, budget, null, nowIso()).run();
+    .bind(caseNo, typeId, hours, budget, null, nowIso(),
+          givenType, givenHours, givenBudget).run();
 
   return json({ ok: true, authorization: await authorizationFor(env, caseNo, true) });
 }

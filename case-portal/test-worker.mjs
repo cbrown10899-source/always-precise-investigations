@@ -7787,6 +7787,58 @@ section('Editing a case leaves the authorization alone');
      Boolean(keptType.case_type) === Boolean(type), String(keptType.case_type));
   ok('while the figure that WAS named is written', keptType.authorized_hours === 8,
      String(keptType.authorized_hours));
+
+  /* AND A PARTIAL UPDATE MUST NOT CLOBBER A CONCURRENT ONE (Codex stop-time
+     review, 2026-08-16).
+
+     The first fix for this read the row, then wrote every column back. Two
+     admins posting different subsets interleave as A reads, B reads, A writes,
+     B writes — and B's write puts back the value A had just changed, on a field
+     B never mentioned. Nobody is told.
+
+     Simulated honestly rather than by wishing: another admin's write is dropped
+     in DURING the request, right after any read of case_meta. A statement that
+     resolves the untouched fields from the ROW keeps that change; one that
+     resolves them from an earlier read overwrites it. */
+  await call(env, '/cases/API-AUTH-KEEP/meta', { method: 'POST', cookie: admin,
+    body: { authorized_hours: 24, authorized_budget: 3300 } });
+
+  const realPrepare = env.DB.prepare.bind(env.DB);
+  let injected = false;
+  env.DB.prepare = sql => {
+    const stmt = realPrepare(sql);
+    if (/SELECT[\s\S]*case_meta/i.test(sql)) {
+      const realFirst = stmt.first, realAll = stmt.all;
+      const inject = () => {
+        if (injected) return;
+        injected = true;
+        // The other admin's edit, landing mid-request.
+        realPrepare('UPDATE case_meta SET authorized_budget = 9999 WHERE case_no = ?')
+          .bind('API-AUTH-KEEP').run();
+      };
+      const wrap = fn => function (...a) { const r = fn.apply(this, a); inject(); return r; };
+      stmt.first = wrap(realFirst);
+      stmt.all = wrap(realAll);
+      const realBind = stmt.bind;
+      stmt.bind = function (...p) {
+        const b = realBind.apply(this, p);
+        b.first = wrap(realFirst); b.all = wrap(realAll);
+        return b;
+      };
+    }
+    return stmt;
+  };
+  // This admin changes only the HOURS and never mentions the budget.
+  await call(env, '/cases/API-AUTH-KEEP/meta', { method: 'POST', cookie: admin,
+    body: { authorized_hours: 16 } });
+  env.DB.prepare = realPrepare;
+
+  const raced = await auth();
+  ok('the concurrent edit landed during the request', injected === true);
+  ok('a field this request never mentioned keeps the OTHER admin\'s value',
+     raced.authorized_budget === 9999, String(raced.authorized_budget));
+  ok('and the field it did mention is written',
+     raced.authorized_hours === 16, String(raced.authorized_hours));
 }
 
 /* THE PHONE TABLE ARRIVES ON A MANUAL DISPATCH, so the case screen must keep

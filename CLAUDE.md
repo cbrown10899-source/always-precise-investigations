@@ -617,7 +617,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1514 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 1517 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 967 checks: the page against the real Worker
 ```
 
@@ -737,7 +737,12 @@ type, correcting a client's **name** would silently erase the hours a carrier
 had authorised. **A blank string still clears** — that is the office saying
 there is no figure, and it is how the Authorization form removes one. Only an
 absent key is left alone. A route that several screens post different subsets
-to cannot be replace-all.
+to cannot be replace-all. And it resolves the untouched fields INSIDE the UPDATE, from
+the row, never from a value read a moment earlier: a read-then-write loses a
+concurrent edit without a sound, because two admins posting different subsets
+interleave as A reads, B reads, A writes, B writes. `?7/?8/?9` say which fields
+the request mentioned; everything else keeps whatever the row holds when the
+statement runs. The retainer route already states this rule in its own words.
 
 **Phone numbers are rows** (`case_phone`), one per number, each with an optional
 label — the same reasoning that made `notify_recipient` one row per recipient.
