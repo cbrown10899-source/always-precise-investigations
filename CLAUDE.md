@@ -422,42 +422,45 @@ consumer sheet and the payment instructions; and the pre-case intake door is
 paired from an **explicit `kind`**, never from a lookup. Resting it on the
 product being sent is stronger than resting it on a case that may not exist.
 
-**The carrier check that does not depend on the reference at all** is
-`recipientIsCarrier()`, and it is what makes the above safe. Because a reference
-matching nothing can no longer block a send, the claims check had nothing to
-check against — so the boundary moved to the thing that actually decides who
-receives the email. An address already held against a claims submission (its
-`client_email`, or anywhere in that submission's payload) is a carrier contact
-whatever was typed in the reference box, and consumer payment options are
-refused by name. A genuinely new prospect matches nothing and sends normally,
-which is asserted — without that assertion this guard could quietly become the
-block the owner removed.
+## The send context — never guess a recipient's type from their email
 
-**It matches exactly, on named fields only, and that is not a detail.** The
-first version scanned the whole payload with `instr` — a *substring* search — so
-a private client at `jane@example.com` was refused because an unrelated claims
-payload contained `mary.jane@example.com`. A guard that blocks real private
-clients is the same class of workflow defect this whole area exists to fix, and
-worse for being dressed as a security refusal naming a claim the client has
-nothing to do with. `json_extract` on `adjuster_email` / `billing_email` plus an
-equality test on `client_email` is what it does now, wrapped in `json_valid`
-inside a CASE because `json_extract` *raises* on malformed JSON and a boundary
-check must never turn one bad row into a failed send.
+**Every outgoing send is PRIVATE or INSURANCE, and which one is decided by WHAT
+IS BEING SENT — never by who it is going to.** `SEND_CONTEXT`, `SHEET_CONTEXT`
+and `KIND_CONTEXT` in `case-portal/worker.js` are the whole model, and
+`CONTEXT_TAKES_PAYMENT` is the entire payment boundary: Cash App and Venmo can
+only ever attach to a private context. Each send route returns its
+`send_context` so it is observable and asserted rather than believed.
 
-**Both sides are trimmed, and the direction of the failure is why it matters.**
-The input was trimmed and the stored value was not, so an address saved as
-`" adjuster@carrier.example "` — a paste off a signature block — did not match
-and the guard silently did not fire. An over-matching guard blocks a send and
-someone complains; an **under**-matching one puts consumer payment handles in
-front of an adjuster and nobody ever knows. `trim(X, Y)` names its character set
-explicitly (space, tab, newline, carriage return) because it is *not* every
-Unicode space, and each form is driven separately in the tests — a set that
-misses one is the same bug again.
+**This replaced `recipientIsCarrier()`, and the reason is worth keeping.** That
+function tried to classify the *recipient* by comparing their email address
+against stored carrier contacts. It produced **four defects in four review
+rounds**, in both directions:
 
-Its limit is stated rather than papered over: it recognises addresses the system
-has **seen**. An adjuster who has never appeared on a claims intake is not known
-to be one. It closes the realistic case — emailing someone already on a claim —
-not every conceivable one.
+1. it matched **substrings**, so a private client at `jane@example.com` was
+   refused because an unrelated claims payload held `mary.jane@example.com`;
+2. it matched addresses quoted in **free-text notes**, blocklisting people who
+   were merely mentioned;
+3. it **failed open** on stored addresses carrying whitespace;
+4. and it still failed open on **non-breaking** whitespace after that was fixed —
+   the exact paste-from-Outlook case the fix was written for.
+
+Each fix narrowed the string comparison and the next round found another way for
+a string comparison to be wrong. **Do not reintroduce inference of any kind
+here.** If durable recipient classification is ever genuinely needed, it goes in
+as an explicit typed field or a companion table under the usual migration rules —
+not as matching against an address.
+
+**Reading `submissions.kind` is not inference** and is still done: it is a typed
+column with a CHECK constraint, so the record is stating what it is. A case
+reference that resolves to a claim assignment is still refused the consumer
+sheet and the payment instructions. A reference that is mistyped or absent now
+changes nothing about what may be attached — only what the subject line says.
+
+The tests assert the property that matters: **the recipient's address makes no
+difference at all**. Casing, leading and trailing spaces, non-breaking and
+zero-width spaces, an address that is a substring of a carrier's and one that a
+carrier's is a substring of, and two same-named contacts on opposite sides — all
+of them previously changed the outcome, and none of them does now.
 
 **A failed history load is never rendered as an empty history.** `loadSends()`
 used to set `SENDS = []` in its catch, and an empty list draws as "Nothing sent
@@ -591,7 +594,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1130 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 1140 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 850 checks: the page against the real Worker
 ```
 

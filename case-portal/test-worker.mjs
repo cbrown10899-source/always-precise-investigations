@@ -4692,121 +4692,67 @@ section('Payment instructions can go on their own, and never to a carrier');
        body: { to: 'newprospect@example.com', name: 'Sam' } })).status === 200);
   ok('and that one really went as well', lastBody !== null);
 
-  /* THE CHECK THAT STILL WORKS WHEN THE REFERENCE DOES NOT (Codex stop-time
-     review, 2026-08-15 — "unknown references bypass carrier protections").
+  /* THE RECIPIENT IS NOT CLASSIFIED BY THEIR EMAIL ADDRESS (owner refactor,
+     2026-08-15). `recipientIsCarrier()` used to compare the recipient against
+     stored carrier contacts. It produced four defects in four review rounds —
+     substring matches refusing unrelated private clients, addresses quoted in
+     free-text notes blocklisting people, and fail-open on stored whitespace,
+     first ordinary spaces and then non-breaking ones — and the owner removed
+     the whole approach rather than take a fifth patch.
 
-     Pre-case sends mean a reference matching nothing cannot block a send, so
-     the claims check had nothing to check against: mistype a carrier's case
-     number badly enough and the consumer handles went. The boundary therefore
-     moves to the thing that actually decides who receives the email — the
-     RECIPIENT. An address already known to belong to a claim assignment is a
-     carrier contact whatever was typed in the reference box.
-
-     Crucially this does NOT reintroduce the block the owner removed: a genuinely
-     new prospect matches nothing and sends normally, which is asserted below. */
-  await ingest(env, { case_no: 'API-POC2', carrier: 'Beta Mutual', claim_number: 'BM-1',
-                      client_name: 'B. Adjuster', client_email: 'known.adjuster@carrier.example',
-                      subject_name: 'D' });
-  lastBody = null;
-  const byRecipient = await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
-    body: { to: 'known.adjuster@carrier.example', case_no: 'TOTALLY-MISTYPED-REF' } });
-  ok('an address known to be a carrier contact is refused whatever the reference says',
-     byRecipient.status === 400, String(byRecipient.status));
-  ok('and nothing reached them', lastBody === null);
-  ok('the refusal names the claim assignment the address belongs to',
-     has((await jsonOf(await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
-       body: { to: 'known.adjuster@carrier.example' } }))).error, 'API-POC2'));
-  // The same protection on the sheet path, where payment can ride along.
-  lastBody = null;
-  ok('the private sheet cannot carry payment to a known carrier contact either',
-     (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
-       body: { to: 'known.adjuster@carrier.example', include_payment: true } })).status === 400);
-  ok('and that send did not go', lastBody === null);
-  /* The sheet WITHOUT payment still goes to that address — the refusal is
-     scoped to the ring-fenced content, and a carrier contact may legitimately
-     be sent a sheet. The refusal message says so. */
-  lastBody = null;
-  ok('but a sheet with no payment still reaches them',
-     (await call(env, '/sheets/insurance_assignment/email', { method: 'POST', cookie: admin,
-       body: { to: 'known.adjuster@carrier.example' } })).status === 200);
-  ok('and really went', lastBody !== null);
-  /* THE PRE-CASE FLOW IS UNTOUCHED — the guard fires on known carrier
-     addresses, never on an address the system has not seen. Without this
-     assertion the fix above could quietly have become the block the owner
-     removed. */
-  lastBody = null;
-  ok('a brand-new prospect is NOT caught by the recipient check',
-     (await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
-       body: { to: 'stranger@example.com', name: 'New Caller' } })).status === 200);
-  ok('and their payment options really went', lastBody !== null);
-
-  /* THE GUARD MUST NOT REJECT UNRELATED PRIVATE CLIENTS (Codex stop-time
-     review, second pass). The first version searched the whole payload with
-     `instr`, a SUBSTRING search — so a private client at `jane@example.com` was
-     refused because an unrelated claims payload contained
-     `mary.jane@example.com`. That is a real workflow block wearing a security
-     refusal, and it names a claim assignment the client has nothing to do with.
-
-     Planted as the exact shape that broke: one address a strict suffix of the
-     other, in a claims payload, in the field the guard reads. */
-  await ingest(env, { case_no: 'API-POC3', carrier: 'Gamma Mutual', claim_number: 'GM-1',
-                      client_name: 'G. Adjuster', client_email: 'mary.jane@example.com',
-                      adjuster_email: 'mary.jane@example.com', subject_name: 'E' });
-  lastBody = null;
-  const suffix = await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
-    body: { to: 'jane@example.com', name: 'Jane' } });
-  ok('a private client whose address is a SUFFIX of a carrier\'s is not refused',
-     suffix.status === 200, String(suffix.status));
-  ok('and their payment options really went', lastBody !== null);
-  /* The positive control beside it — without this, the assertion above would
-     pass just as happily on a guard that had stopped working altogether. */
-  lastBody = null;
-  ok('while the carrier whose address it really is IS still refused',
-     (await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
-       body: { to: 'mary.jane@example.com' } })).status === 400);
-  ok('and nothing went to them', lastBody === null);
-  /* THE GUARD MUST NOT FAIL OPEN ON AN UNTRIMMED STORED ADDRESS (Codex
-     stop-time review, third pass). The input was trimmed and the stored value
-     was not, so a carrier address saved with a trailing space or a newline —
-     a paste off a signature block — did not match, and the guard silently did
-     not fire. Under-matching is the dangerous direction here: an over-matching
-     guard gets complained about, an under-matching one lets consumer payment
-     handles reach an adjuster and nobody ever learns.
-
-     Planted directly, because the ingest path may well trim on the way in; the
-     rows that matter are the ones already stored. Each whitespace form is
-     driven separately, since `trim(X, Y)` only removes the characters named
-     in Y and a set that misses one is the same bug again. */
-  for (const [nick, stored] of [['trailing space', 'ws.space@carrier.example  '],
-                                ['leading space', '  ws.lead@carrier.example'],
-                                ['trailing newline', 'ws.nl@carrier.example\n'],
-                                ['leading tab', '\tws.tab@carrier.example'],
-                                ['carriage return', 'ws.cr@carrier.example\r']]) {
-    const cn = `API-WS-${stored.replace(/[^a-z]/gi, '').slice(0, 8)}`;
-    await env.DB.prepare(
-      `INSERT INTO submissions (case_no, kind, service, client_name, client_email,
-                                payload, created_at)
-       VALUES (?, 'claims', 'Insurance Claim Assignment', 'W. Adjuster', ?, '{}', ?)`)
-      .bind(cn, stored, '2026-08-15T00:00:00Z').run();
+     These assert the NEW property, which is the strong one: the address makes
+     no difference at all. Every one of these previously changed the outcome. */
+  for (const [nick, addr] of [
+    ['different casing', 'ADJUSTER@Carrier.Example'],
+    ['leading/trailing spaces', '  spaced@carrier.example  '],
+    ['a non-breaking space', 'nbsp@carrier.example '],
+    ['a zero-width space', 'zwsp@carrier.example​'],
+    ['an address that is a substring of a carrier\'s', 'jane@example.com'],
+    ['an address a carrier\'s is a substring of', 'mary.jane.smith@example.com'],
+  ]) {
     lastBody = null;
     const r = await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
-      body: { to: stored.trim() } });
-    ok(`a carrier address stored with a ${nick} is still recognised`,
-       r.status === 400, `${nick}: ${r.status}`);
-    ok(`and nothing went to them (${nick})`, lastBody === null);
+      body: { to: addr.trim(), name: 'Anyone' } });
+    ok(`a private send is unaffected by ${nick}`, r.status === 200, `${nick}: ${r.status}`);
+    ok(`and it really went (${nick})`, lastBody !== null);
   }
 
-  /* An address sitting in free text rather than an email field is not a
-     carrier contact either — `json_extract` reads named fields, so a note
-     mentioning someone cannot blocklist them. */
-  await ingest(env, { case_no: 'API-POC4', carrier: 'Delta Mutual', claim_number: 'DM-1',
-                      client_name: 'D. Adjuster', client_email: 'd.adjuster@carrier.example',
-                      objective: 'Forward anything to referrals@example.com', subject_name: 'F' });
+  /* SAME-NAME CONTACTS. Two people called the same thing, one a private client
+     and one an adjuster, are not confusable — nothing here looks at names
+     either. */
+  await ingest(env, { case_no: 'API-SN-C', carrier: 'Same Name Mutual', claim_number: 'SN-1',
+                      client_name: 'Chris Morgan', client_email: 'chris.morgan@carrier.example',
+                      subject_name: 'X' });
+  await ingest(env, { case_no: 'API-SN-P', service: 'Surveillance',
+                      client_name: 'Chris Morgan', client_email: 'chris.morgan@gmail.example',
+                      subject_name: 'Y' });
   lastBody = null;
-  ok('an address merely mentioned in a note does not become a carrier contact',
+  ok('a private client sharing a name with an adjuster is sent payment options',
      (await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
-       body: { to: 'referrals@example.com' } })).status === 200);
-  ok('and that send really went', lastBody !== null);
+       body: { to: 'chris.morgan@gmail.example', case_no: 'API-SN-P' } })).status === 200);
+  ok('and it really went', lastBody !== null);
+  /* And the typed field still decides where a typed field exists: the CLAIMS
+     case is refused, by `submissions.kind`, not by anything about the address. */
+  lastBody = null;
+  ok('while the claim assignment of the same name is refused by its KIND',
+     (await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+       body: { to: 'chris.morgan@carrier.example', case_no: 'API-SN-C' } })).status === 400);
+  ok('and nothing went to them', lastBody === null);
+  /* THE PROOF THAT IT IS THE KIND AND NOT THE ADDRESS: the SAME carrier address
+     sends fine when no claims reference is given, because this route is a
+     private context and there is nothing to classify. That is the owner's rule
+     stated as a test — the flow decides, not the recipient. */
+  lastBody = null;
+  ok('the same carrier address sends when the flow is the only thing speaking',
+     (await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+       body: { to: 'chris.morgan@carrier.example' } })).status === 200);
+  ok('which is the refactor working as designed', lastBody !== null);
+
+  /* THE CONTEXT IS SERVER-DERIVED AND OBSERVABLE. */
+  const pctx = await jsonOf(await call(env, '/payment-options/email', { method: 'POST',
+    cookie: admin, body: { to: 'anyone@example.com' } }));
+  ok('a payment send reports its context, and it is private',
+     pctx.send_context === 'private', JSON.stringify(pctx.send_context));
 
   /* WHAT PRE-CASE DID NOT RELAX. A reference that DOES resolve to a claim
      assignment is still refused — the separation the owner asked to preserve
@@ -4982,6 +4928,53 @@ section('Every send works before a case exists, and still works after one does')
   // Requirement 3 — nothing was conjured to make any of that possible.
   ok('and NOTHING was auto-created to have something to send against',
      (await countSubs()) === before, `${before} -> ${await countSubs()}`);
+
+  /* THE SEND CONTEXT IS THE BOUNDARY (owner refactor, 2026-08-15). Each send
+     reports the context the SERVER derived from what was being sent, and an
+     INSURANCE context can never carry a payment method — whoever the recipient
+     is, whatever reference was typed, case or no case. */
+  const ctxOf = async (path, body) =>
+    (await jsonOf(await call(env, path, { method: 'POST', cookie: admin, body }))).send_context;
+  ok('the private sheet reports a private context',
+     await ctxOf('/sheets/private_retainer/email', { to: 'a@b.co' }) === 'private');
+  ok('the insurance sheet reports an insurance context',
+     await ctxOf('/sheets/insurance_assignment/email', { to: 'a@b.co' }) === 'insurance');
+  ok('the private intake link reports a private context',
+     await ctxOf('/intake-link/email', { to: 'a@b.co', kind: 'private' }) === 'private');
+  ok('the insurance intake link reports an insurance context',
+     await ctxOf('/intake-link/email', { to: 'a@b.co', kind: 'insurance' }) === 'insurance');
+  ok('and the payment route is private by construction',
+     await ctxOf('/payment-options/email', { to: 'a@b.co' }) === 'private');
+
+  /* Payment never leaks into an insurance context, tried five ways: to a
+     private client's address, to a carrier's, with no case, with a private
+     case, and with a claims case. The recipient is varied deliberately, because
+     under the old design the recipient was what decided this. */
+  for (const [nick, body] of [
+    ['no case', { to: 'jane@example.com', include_payment: true }],
+    ['a private recipient', { to: 'jane@example.com', include_payment: true, case_no: 'API-PC-P' }],
+    ['a carrier recipient', { to: 'adjuster@carrier.example', include_payment: true }],
+    ['a claims case', { to: 'adjuster@carrier.example', include_payment: true, case_no: 'API-PC-C' }],
+    ['every method named', { to: 'jane@example.com', include_payment: true,
+                             methods: ['cash_app', 'venmo'] }],
+  ]) {
+    lastBody = null;
+    const r = await call(env, '/sheets/insurance_assignment/email',
+      { method: 'POST', cookie: admin, body });
+    ok(`the insurance sheet refuses payment options — ${nick}`, r.status === 400,
+       `${nick}: ${r.status}`);
+    ok(`and nothing was emailed at all — ${nick}`, lastBody === null);
+  }
+  /* The insurance sheet sent normally carries no trace of either method, which
+     is the positive control: the refusals above could pass on a route that had
+     stopped sending entirely. */
+  lastBody = null;
+  await call(env, '/sheets/insurance_assignment/email', { method: 'POST', cookie: admin,
+    body: { to: 'adjuster@carrier.example', case_no: 'API-PC-C', include_intake: true } });
+  const carrierMail = both(lastBody).toLowerCase();
+  ok('an insurance send still goes, and names no payment method',
+     lastBody !== null && !carrierMail.includes('cash app') && !carrierMail.includes('venmo')
+     && !carrierMail.includes('payment options'));
 
   /* Requirement 8 — the two workflows stay separated with no case in sight,
      which is where a lookup-based rule would have had nothing to go on. */

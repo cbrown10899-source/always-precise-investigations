@@ -586,90 +586,53 @@ const PAY_METHODS = [
 const usd = n => '$' + Number(n).toLocaleString('en-US');
 const PAY_IDS = PAY_METHODS.map(m => m.id);
 
-/* The only sheet that may ever carry payment instructions. A function rather
-   than a bare comparison so the rule has one name and one place to change. */
-const sheetTakesPayment = sheetId => sheetId === 'private_retainer';
+/* THE SEND CONTEXT — the owner's refactor, 2026-08-15.
 
-/* CARRIER PROTECTION THAT DOES NOT DEPEND ON THE CASE REFERENCE (Codex
-   stop-time review, 2026-08-15).
+   Every outgoing send is either PRIVATE or INSURANCE, and which one is decided
+   by WHAT IS BEING SENT — never by who it is going to.
 
-   Pre-case sends are the owner's explicit requirement: name and a valid email
-   are enough, and a reference that matches nothing must not block the send. The
-   cost was that the claims check had nothing to check against — mistype a
-   carrier's case number badly enough and the consumer payment handles went.
+   This replaces `recipientIsCarrier()`, which tried to classify the RECIPIENT
+   by comparing their email address against stored carrier contacts. That
+   produced four defects in four review rounds, in both directions: it matched
+   substrings so unrelated private clients were refused; it matched addresses
+   quoted in free-text notes; and it failed open on stored addresses carrying
+   whitespace, first ordinary spaces and then non-breaking ones. Each fix
+   narrowed the string comparison and the next round found another way for a
+   string comparison to be wrong. The owner's conclusion, and it is the right
+   one: do not infer a recipient's type from their email at all.
 
-   So the boundary moves to the thing that actually determines who receives the
-   email: THE RECIPIENT. If this address is already known to belong to a claim
-   assignment, it is a carrier contact whatever was typed in the reference box,
-   and consumer payment options are refused.
+   A context cannot be mistyped, pasted with a non-breaking space, or shared by
+   two different people. It is a property of the flow the admin chose.
 
-   This does not reintroduce the block that was removed. A genuinely new
-   prospect matches nothing here and sends normally, which is the whole
-   pre-case flow. It only fires on an address the system already holds against
-   a claims submission.
+   `CONTEXT_TAKES_PAYMENT` is the whole payment boundary now: Cash App and Venmo
+   may only ever be attached to a PRIVATE context. An insurance send has no code
+   path that reaches them, rather than a check that has to keep being right. */
+const SEND_CONTEXT = { PRIVATE: 'private', INSURANCE: 'insurance' };
 
-   MATCHING IS EXACT, ON NAMED FIELDS ONLY (Codex stop-time review, second
-   pass — "the carrier guard can reject unrelated private clients").
+/* Which context each sheet is. A table rather than a comparison so the mapping
+   has one home, and so a new sheet has to declare itself rather than defaulting
+   into the payment-carrying side. */
+const SHEET_CONTEXT = {
+  private_retainer:     SEND_CONTEXT.PRIVATE,
+  insurance_assignment: SEND_CONTEXT.INSURANCE,
+};
 
-   The first version scanned the whole payload with `instr`, which is a
-   SUBSTRING search, so a private client at `jane@example.com` was refused
-   because some unrelated claims payload happened to contain
-   `mary.jane@example.com`. Confirmed rather than reasoned about: `instr` finds
-   the shorter address at position 7 of the longer one. A guard that stops real
-   private clients being sent payment instructions is a workflow defect of
-   exactly the kind this unit exists to fix — and a confusing one, since the
-   refusal names a claim assignment the client has nothing to do with.
+/* The two intake doors, by context. `submissions.kind` is a TYPED COLUMN with a
+   CHECK constraint, so reading it is not inference — it is the record saying
+   what it is. That is the difference the owner drew: a typed field yes, a
+   string comparison no. */
+const KIND_CONTEXT = { consumer: SEND_CONTEXT.PRIVATE, claims: SEND_CONTEXT.INSURANCE };
 
-   So the payload is read with `json_extract` on the two fields that actually
-   hold a carrier's address, and compared for EQUALITY. `client_email` — the
-   denormalised column the schema keeps so queries need not parse JSON — is
-   compared the same way. A substring can no longer match anything, and neither
-   can an address quoted inside a free-text note.
+const contextForSheet = sheetId => SHEET_CONTEXT[sheetId] || null;
+const contextForKind  = kind    => KIND_CONTEXT[kind] || null;
 
-   `json_valid` guards the extract inside a CASE, because `json_extract` RAISES
-   on malformed JSON rather than returning null, and a boundary check must never
-   be able to turn one bad row into a failed send. CASE is used rather than AND
-   because it is the form whose evaluation order SQLite guarantees.
+/* The only rule payment options need. Everything that used to be spread across
+   a sheet-id comparison and a recipient lookup is this one line. */
+const CONTEXT_TAKES_PAYMENT = ctx => ctx === SEND_CONTEXT.PRIVATE;
 
-   KNOWN LIMIT, stated rather than papered over: this recognises addresses the
-   system has SEEN. An adjuster who has never appeared on a claims intake is not
-   known to be one, and nothing here can tell. It closes the realistic case —
-   emailing someone already on a claim — not every conceivable one. */
-async function recipientIsCarrier(env, to) {
-  const addr = String(to || '').trim().toLowerCase();
-  if (!addr) return null;
-  /* BOTH SIDES ARE TRIMMED (Codex stop-time review, third pass — "exact
-     matching fails open on untrimmed stored carrier emails").
-
-     The input was trimmed and the STORED value was not, so a carrier address
-     saved as " adjuster@carrier.example " — a paste with a trailing space, a
-     newline off a copied signature block — did not equal the trimmed address
-     being sent to, and the guard silently did not fire. Confirmed against the
-     harness rather than assumed: the comparison returns 0.
-
-     That is the worst direction for this particular check to be wrong in. An
-     over-matching guard blocks a send and someone complains; an under-matching
-     one lets consumer payment handles reach an adjuster and nobody ever knows.
-
-     `trim(X, Y)` removes any character in Y from both ends, so the set is
-     spelled out: space, tab, newline, carriage return. Named precisely because
-     it is NOT every Unicode space — a non-breaking space in a stored address
-     would still slip past, and claiming otherwise would be the same kind of
-     comment that has already been wrong twice in this function. */
-  const WS = "' ' || char(9) || char(10) || char(13)";
-  const clean = col => `lower(trim(COALESCE(${col}, ''), ${WS}))`;
-  const row = await env.DB.prepare(
-    `SELECT case_no FROM submissions
-      WHERE kind = 'claims'
-        AND (${clean('client_email')} = ?1
-             OR CASE WHEN json_valid(payload)
-                     THEN ?1 IN (
-                       ${clean("json_extract(payload, '$.adjuster_email')")},
-                       ${clean("json_extract(payload, '$.billing_email')")})
-                     ELSE 0 END)
-      LIMIT 1`).bind(addr).first();
-  return row ? row.case_no : null;
-}
+/* Kept as a named alias because it reads well at the call sites and because
+   this is the sheet-shaped question; it is now derived rather than compared. */
+const sheetTakesPayment = sheetId => CONTEXT_TAKES_PAYMENT(contextForSheet(sheetId));
 
 /* A payment URL is admin-entered or ABSENT — it is never built from a handle.
    The order is explicit about this and it is the sharpest line in it: a
@@ -953,9 +916,14 @@ async function sendPreCaseIntake(request, env, user) {
   if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(to) || to.length > 200) {
     return json({ error: 'Enter a valid email address.' }, 400);
   }
+  /* The caller names a PRODUCT — which of the two intakes — and the server
+     resolves the context from its own table. It is not trusted as a
+     classification of the recipient, and it cannot be: there is nothing an
+     intake link carries that a payment method could ride on. */
   const kind = body.kind === 'insurance' || body.kind === 'claims' ? 'claims'
              : body.kind === 'private' || body.kind === 'consumer' ? 'consumer' : null;
-  if (!kind) {
+  const context = contextForKind(kind);
+  if (!context) {
     return json({ error: 'Say which intake this is — Private Client or Insurance Assignment. '
                        + 'The two forms are never interchangeable.' }, 400);
   }
@@ -986,7 +954,10 @@ async function sendPreCaseIntake(request, env, user) {
      stamped either: there is no lead to move. */
   await logSend(env, user, { case_no: null, kind: 'intake', door: intake.url,
     recipient: to, ok: 1 });
-  return json({ ok: true, sent_to: to, intake: intake.label, case_no: null });
+  /* The context is returned so it is observable rather than merely believed —
+     the tests assert on it, and it can never be a payment-carrying one here. */
+  return json({ ok: true, sent_to: to, intake: intake.label, case_no: null,
+                send_context: context });
 }
 
 async function emailSheet(request, env, user, id) {
@@ -1061,32 +1032,20 @@ async function emailSheet(request, env, user, id) {
                        + 'Insurance Assignment Rates.' }, 400);
   }
   /* A SHEET SENDS BEFORE A CASE EXISTS, payment options included (owner,
-     2026-08-15 — PRE-CASE SENDS).
+     2026-08-15 — PRE-CASE SENDS), and the payment boundary does NOT depend on
+     that (owner's refactor, same day).
 
-     A refusal stood here for unresolvable references carrying payment. It was
-     added against a real hole — one mistyped character of a carrier's case
-     number skipped the pairing check and put Cash App and Venmo in front of an
-     adjuster — but it also blocked the ordinary pre-case send, which is how
-     most private clients are onboarded: quote, sheet, payment instructions, and
-     only then a case. The owner weighed the two and removed the block.
+     The context is the sheet: `insurance_assignment` is INSURANCE and can never
+     reach a payment method, checked immediately above. A recipient lookup used
+     to sit here as well, trying to spot a carrier by their email address; it is
+     gone, along with the four defects it produced. Whether a case reference
+     resolves, is mistyped, or is absent entirely now changes nothing about what
+     may be attached — only about what the subject line says.
 
-     What still holds: the carrier sheet can NEVER carry payment options
-     (`sheetTakesPayment`, checked just above), and a reference that DOES
-     resolve to a claim assignment is still refused by the pairing rule. Only
-     the "matches nothing" case now proceeds, and it proceeds because the office
-     needs it to.
-
-     And the recipient check below is what covers the gap that leaves: it does
-     not care what was typed in the reference box, only whether this ADDRESS is
-     already known to belong to a claim assignment. */
-  if (includePayment) {
-    const carrierCase = await recipientIsCarrier(env, to);
-    if (carrierCase) {
-      return json({ error: `${to} is the contact on ${carrierCase}, a claim assignment. Cash App `
-                         + `and Venmo are private-client payment methods and are never sent to a `
-                         + `carrier or TPA. The sheet can still be sent without them.` }, 400);
-    }
-  }
+     A reference that DOES resolve to a claim assignment is still refused the
+     consumer sheet by the pairing rule above, and that check reads
+     `submissions.kind`, a typed column with a CHECK constraint. Reading a typed
+     field is not inference; comparing email strings was. */
   const wantedMethods = Array.isArray(body.methods)
     ? body.methods.map(x => String(x)).filter(x => PAY_IDS.includes(x)) : null;
   const brokenMethods = [];
@@ -1151,6 +1110,7 @@ async function emailSheet(request, env, user, id) {
      of the send rather than echoed from the request, and note that sending
      instructions says nothing whatever about the retainer being paid. */
   return json({ ok: true, sent_to: to, sheet: sheet.id,
+    send_context: contextForSheet(sheet.id),
     included: {
       rate_sheet: sheet.name,
       intake: includeIntake && SHEET_INTAKE[sheet.id] ? SHEET_INTAKE[sheet.id].label : null,
@@ -1227,30 +1187,23 @@ async function emailPaymentOptions(request, env, user) {
        are enough to send; the case number, claim number and internal reference
        are optional whenever they happen to be available.
 
-       The boundary does not depend on this and never did. What protects a
-       carrier is the PRODUCT being sent — this route only ever carries private
-       payment instructions, and it is reached from private surfaces — plus the
-       claims refusal immediately below, which still fires whenever the
-       reference resolves to a real claim assignment.
+       The boundary does not depend on this and never did. THIS ROUTE IS A
+       PRIVATE CONTEXT by construction — it sends exactly one thing, private
+       payment instructions — so there is no classification to get wrong here.
+       The refusal below is a courtesy on top of that: if the reference DOES
+       resolve to a claim assignment, the office has clearly reached for the
+       wrong flow and should be told rather than obeyed.
 
-       The residual risk is stated rather than hidden: a reference mistyped so
-       badly that it matches no row at all no longer trips the claims check,
-       because there is nothing to check against. The owner has weighed that
-       against a workflow that could not send at all, and chosen this. */
-    if (lead && lead.kind === 'claims') {
+       That check reads `submissions.kind`, a typed column with a CHECK
+       constraint. Reading a typed field is not inference. An earlier version
+       also tried to recognise the RECIPIENT by comparing their email address
+       against stored carrier contacts; it produced four defects in four review
+       rounds and the owner removed it. A mistyped or absent reference now
+       changes nothing about what may be sent — only what the subject says. */
+    if (lead && contextForKind(lead.kind) === SEND_CONTEXT.INSURANCE) {
       return json({ error: `${caseNo} is a claim assignment. Cash App and Venmo are private-client `
                          + `payment methods and are never sent to a carrier or TPA.` }, 400);
     }
-  }
-
-  /* The check that still works when the reference does not. See
-     `recipientIsCarrier` — this is what stops a mistyped carrier reference
-     putting consumer payment handles in front of an adjuster. */
-  const carrierCase = await recipientIsCarrier(env, to);
-  if (carrierCase) {
-    return json({ error: `${to} is the contact on ${carrierCase}, a claim assignment. Cash App and `
-                       + `Venmo are private-client payment methods and are never sent to a carrier `
-                       + `or TPA.` }, 400);
   }
 
   if (!(await withinRateLimit(env, 'mail'))) {
@@ -1304,8 +1257,10 @@ async function emailPaymentOptions(request, env, user) {
   await logPaymentSend(env, user, { case_no: caseNo, recipient: to,
     methods: payment.map(x => x.id), with_sheet: 0, ok: 1 });
 
-  // RULE 2, said out loud in the answer the page shows.
+  // RULE 2, said out loud in the answer the page shows. The context is stated
+  // too: this route is PRIVATE by construction and can be nothing else.
   return json({ ok: true, sent_to: to, retainer_marked_paid: false,
+    send_context: SEND_CONTEXT.PRIVATE,
     included: { payment_methods: payment.map(x => ({ id: x.id, label: x.label })) } });
 }
 
