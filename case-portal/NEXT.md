@@ -50,19 +50,20 @@ did not. Every suite passed the whole time.
 
 | Component | Master SHA | Deployed SHA | Status | Verified at | How |
 | --- | --- | --- | --- | --- | --- |
-| Public site | `cd37d28` | **`cd37d28`** | **LIVE VERIFIED** | 2026-08-15, re-checked at session start after #124 | `/.well-known/build.txt` reports `commit: cd37d28`, `built: 2026-08-15T22:24:30Z` — **exactly master**. This repo can answer "what is live" without inference |
-| `/portal/` page | `cd37d28` | `cd37d28` | **LIVE VERIFIED** | 2026-08-15, re-checked after #124 | served page fetched cache-busted: 200, 376 KB, headers `no-store`, `noindex, nofollow, noarchive`. Positive identifier check on the served bytes: `sessionForget` ✓, `wizSheetLoad` ✓, `retainerEnter` ✓, `m_ret` ✓. (`agreedRetainer` correctly absent — it is Worker-side.) The earlier negative check for `Cash App` / `Venmo` is **now stale and was removed**: the payment UI IS built, so their absence would be a defect, not a pass |
-| Worker / API (`api-case-portal`) | `cd37d28` | `4e053c2` source | **DEPLOYED**, provenance-verified | 2026-08-15 | last commit touching `case-portal/worker.js` is `4e053c2`; `cd37d28` touched **only two `.md` files**, so nothing has changed the Worker since its last green deploy. The running source IS master's, established by provenance rather than by probing the instance |
-| D1 schema (incl. `retainer_payment`, `retainer_payment_token`) | `cd37d28` | applied | **LIVE VERIFIED** | 2026-08-15 | last commit touching `schema.sql` is `35607d5`, well behind the last green portal deploy; `/portal-api/health` → `{"ok":true,"configured":true,"email":true,"missing_tables":[],"storage_pct":0}` |
+| Public site | `f5a4155` | **`f5a4155`** | **LIVE VERIFIED** | 2026-08-15, after #125 | `/.well-known/build.txt` reports `commit: f5a4155`, `built: 2026-08-15T23:20:20Z` — **exactly master**. `Deploy site to Cloudflare Pages` green at that SHA |
+| `/portal/` page | `f5a4155` | `f5a4155` | **LIVE VERIFIED** | 2026-08-15, after #125 | served page fetched cache-busted: 200, **384 KB** (up from 376 KB, consistent with the selector), `no-store`, `noindex, nofollow, noarchive`. Positive identifier check on the served bytes — all twelve of item 1's: `wizRetainerHtml` `wizRetainerSave` `wizRetainerInit` `wizRetainerWanted` `RETAINER_PRESETS` `wiz_ret` `wiz_retc` `wizRetPick` `wizRetDirty` `retainerTouched` `Agreed retainer` `Custom amount`. Negative guard re-run on the LIVE bytes: **zero dollar figures** in the served portal HTML |
+| Worker / API (`api-case-portal`) | `f5a4155` | `f5a4155` | **DEPLOYED**, provenance-verified | 2026-08-15 | `Deploy case-portal Worker` **succeeded at `f5a4155` itself**, and `f5a4155` IS the last commit touching `worker.js` and IS `origin/master`. Stronger than the previous rows, which established the same thing by diffing back to an older green SHA — but still provenance, not behaviour |
+| D1 schema (incl. `retainer_payment`, `retainer_payment_token`) | `f5a4155` | applied | **LIVE VERIFIED** | 2026-08-15 | `schema.sql` unchanged by #125 (last touched `35607d5`); `/portal-api/health` → `{"ok":true,"configured":true,"email":true,"missing_tables":[],"storage_pct":0}` |
 
-**All four suites re-run at `cd37d28` this session, not inherited from the ledger:**
+**All five suites run at `f5a4155`, not inherited from the ledger:**
 
 | Suite | Result |
 | --- | --- |
-| `case-portal/test-worker.mjs` | **997 passed, 0 failed** |
-| `portal/test-portal.mjs` | **789 passed, 0 failed** |
+| `case-portal/test-worker.mjs` | **1033 passed, 0 failed** (997 before #125) |
+| `portal/test-portal.mjs` | **806 passed, 0 failed** (789 before #125) |
 | `intake/test-intake.mjs` | **205 passed, 0 failed** |
 | `visitor-alerts/test-worker.mjs` | **47 passed, 0 failed** |
+| `.github/test-deploy.mjs` | **68 passed, 0 failed** |
 
 **Why the Worker is DEPLOYED and not LIVE VERIFIED.** Its build is not
 externally observable: authentication runs before routing, so a route that
@@ -117,7 +118,7 @@ elsewhere in this file. **Do not rebuild anything already LIVE VERIFIED.**
 
 | # | Item | State |
 | --- | --- | --- |
-| 1 | Custom Private Retainer Selector | **CODED + TESTED**, awaiting merge — see below |
+| 1 | Custom Private Retainer Selector | **LIVE VERIFIED** (page) · **DEPLOYED** (Worker) — #125 at `f5a4155` |
 | 2 | Lead-card Send Payment Options | 🔴 NOT CODED — `PAYMENTS.md` step 9 |
 | 3 | Standalone Payment Options dialog | 🔴 NOT CODED — step 12; `payment_send.with_sheet` is the seam |
 | 4 | NEXT STEP helper block | 🔴 NOT CODED — steps 10 and 17 |
@@ -126,7 +127,28 @@ elsewhere in this file. **Do not rebuild anything already LIVE VERIFIED.**
 | 7 | Portal Ops Phase 1 onward | 🔴 NOT CODED — `PORTAL-OPS.md`, phased |
 | 8 | Active Surveillance voice-command mode | 🔴 NOT CODED — **after core Portal Ops is stable**, owner's condition |
 
-### Item 1 — Custom Private Retainer Selector: CODED + TESTED
+### Item 1 — Custom Private Retainer Selector: **LIVE VERIFIED** (page half)
+
+**Merged as #125, squashed to `f5a4155`, 2026-08-15.** Full state walk:
+
+| State | Evidence |
+| --- | --- |
+| CODED | selector on the private send wizard; three Worker fixes it needed |
+| TESTED | worker 997 → **1033**, portal 789 → **806**; five suites green; **four control runs**, each printing its bug |
+| PUSHED | `59bc9f5` on `claude/ledger-reconcile-payments` |
+| MERGED | PR #125 → `f5a4155` |
+| DEPLOYED | `Deploy site to Cloudflare Pages` **and** `Deploy case-portal Worker` both green **at `f5a4155`** |
+| LIVE VERIFIED | **page half only.** All twelve identifiers confirmed in the served bytes; the no-dollar-figure guard re-run against the LIVE page returns **zero**. See the matrix above |
+
+**The Worker half is DEPLOYED, not LIVE VERIFIED, and that is not a formality.**
+`/sheets` returning `retainer`, the zero refusal and the absent-`received`
+preservation all sit behind authentication, which runs before routing — so an
+unauthenticated probe cannot tell a route that exists from one that does not.
+The provenance here is as strong as it gets (the portal deploy succeeded at
+`f5a4155` itself, which is both master and the last commit to touch
+`worker.js`), and it is still not the same as exercising the code. **Proving it
+needs an authenticated admin session**, alongside the two items already carried
+forward for the same reason.
 
 `$1,500 Standard / $2,000 / $3,000 / Custom` on the **private** send wizard,
 writing `case_retainer.retainer_amount` through the route that already existed.
