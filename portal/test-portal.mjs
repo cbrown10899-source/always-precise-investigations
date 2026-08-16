@@ -425,64 +425,42 @@ section('The client is not shown to an investigator');
   await page.close();
 }
 
-section('Example view');
+/* The portal used to ship two invented cases — a carrier assignment for
+   "Blue Ridge Mutual" and a client intake — and showed them unasked on a first
+   sign-in so an empty list had something in it. A staff screen that invents a
+   client can be photographed, quoted or acted on as though that client were
+   real, and the person least able to tell is the new member of staff the
+   example existed to teach. These sections assert they are gone, and that what
+   replaced them says something true. */
+section('No fabricated case appears anywhere in the portal');
 {
   const page = await newPage();
-  const calls = [];
-  page.on('request', r => { if (r.url().includes('/portal-api/')) calls.push(r.url()); });
   await signIn(page, 'trever', 'AdminPassword1x');
-  ok('an admin with real cases is not shown the example unasked',
-     !(await text(page, '.card')).includes('EXAMPLE-CLAIM-0001'));
-  // P20: the working material lives under Settings now, not on the case list.
+  const body = await text(page, '.card');
+  ok('the case list carries no EXAMPLE- row', !body.includes('EXAMPLE-'), body.slice(0, 200));
+  ok('and none of the invented people reach the screen',
+     !/Blue Ridge Mutual|Karen Whitfield|Marcus Ellery/.test(body), body.slice(0, 200));
   ok('the case list bar carries no test controls',
      !has(await text(page, '.bar'), 'test case') && !has(await text(page, '.bar'), 'example'));
+
   await page.locator('.tabs button', { hasText: 'Settings' }).click();
   await page.waitForTimeout(300);
-  // Across the whole view, not the first card — Settings holds more than one
-  // now, and this check is about the area existing, not about its position.
-  ok('Settings holds the developer area',
-     has(await page.locator('#app').innerText(), 'Developer & testing'));
-  await page.locator('.btn', { hasText: 'Show the example cases' }).click();
-  await page.waitForTimeout(300);
-  ok('showing the example lands where the example is',
-     has(await text(page, '.tabs button.on'), 'Cases'));
-  const listed = await text(page, '.card');
-  ok('an admin can call up the carrier example', listed.includes('EXAMPLE-CLAIM-0001'));
-  ok('an admin also gets the client example', listed.includes('EXAMPLE-INTAKE-0002'));
-  ok('the example rows are labelled as examples', has(listed, 'Example'));
-  ok('the banner says they are not real cases', has(listed, 'not real cases'));
-  ok('the real cases are still listed alongside', listed.includes('API-20260812-4001'));
-
-  calls.length = 0;
-  await rowFor(page, 'EXAMPLE-CLAIM-0001').click();
-  await page.waitForTimeout(350);
-  const dlg = await text(page, '#dlgBody');
-  ok('opening an example makes no API call', calls.length === 0, calls.join(' '));
-  ok('the dialog says it is not a real case', has(dlg, 'not a real case'));
-  for (const [what, value] of Object.entries({
-    carrier: 'Blue Ridge Mutual', 'claim number': 'WC-2026-104871',
-    'policy number': 'BRM-88-441209', adjuster: 'Karen Whitfield',
-    'defense counsel': 'Poe & Marsden', claimant: 'Marcus Ellery',
-    injury: 'Lumbar disc herniation', 'authorized hours': '8 hours authorized',
-    'billing reference': 'PO-77412',
-  })) ok(`the admin example fills in the ${what}`, dlg.includes(value), value);
-  ok('the admin example carries a signature', await page.locator('#dlgBody img.sig').count() === 1);
-  ok('the example offers no assignment controls', await page.locator('#asg').count() === 0);
-
-  await page.locator('.close').click();
-  await page.waitForTimeout(200);
-  await page.locator('.btn', { hasText: 'Hide the example' }).click();
-  await page.waitForTimeout(250);
-  const hidden = await text(page, '.card');
-  ok('hiding the example removes it', !hidden.includes('EXAMPLE-CLAIM-0001'));
-  ok('hiding the example leaves the real cases', hidden.includes('API-20260812-4001'));
+  const settings = await page.locator('#app').innerText();
+  ok('Settings still holds the developer area', has(settings, 'Developer & testing'));
+  ok('but offers no control that summons an example',
+     await page.locator('.btn', { hasText: 'example' }).count() === 0);
+  ok('and says plainly that there are none', has(settings, 'no fabricated example cases'));
+  ok('the TEST- case control is still offered',
+     await page.locator('.btn', { hasText: 'Add a test case' }).count() === 1);
+  ok('and it now says what removing one takes with it',
+     has(settings, 'days, activity, reports, invoices, evidence and packages'));
   await page.close();
 
   const planted = db.prepare("SELECT COUNT(*) AS n FROM submissions WHERE case_no LIKE 'EXAMPLE-%'").get().n;
-  ok('no example was ever written to the database', planted === 0);
+  ok('and no example was ever written to the database', planted === 0);
 }
 
-section('Example view — a new investigator');
+section('A new investigator gets an honest empty state, not an invented case');
 {
   // Someone who has just accepted an invitation and has nothing assigned yet.
   const admin = await newPage();
@@ -505,43 +483,38 @@ section('Example view — a new investigator');
   await page.waitForTimeout(800);
 
   const body = await text(page, '.card');
-  ok('a new investigator lands on the example without asking for it',
-     body.includes('EXAMPLE-CLAIM-0001'));
-  ok('an investigator is not shown the consumer intake example',
-     !body.includes('EXAMPLE-INTAKE-0002'));
-  ok('the example is labelled', has(body, 'Example'));
-  ok('the carrier is not on the example row', !body.includes('Blue Ridge Mutual'));
-
-  await rowFor(page, 'EXAMPLE-CLAIM-0001').click();
-  await page.waitForTimeout(350);
-  const dlg = await text(page, '#dlgBody');
-  ok('the example shows the claimant', dlg.includes('Marcus Ellery'));
-  ok('the example shows the injury and restrictions', dlg.includes('Lumbar disc herniation'));
-  ok('the example shows the scope', has(dlg, 'Establish activity level'));
-  ok('the example shows the field notes', has(dlg, 'retired deputy'));
-  for (const [what, value] of Object.entries({
-    carrier: 'Blue Ridge Mutual', 'claim number': 'WC-2026-104871',
-    'policy number': 'BRM-88-441209', adjuster: 'Karen Whitfield',
-    'defense counsel': 'Poe & Marsden', 'billing reference': 'PO-77412',
-  })) ok(`the investigator example hides the ${what}`, !dlg.includes(value), value);
-  ok('the investigator example carries no signature',
-     await page.locator('#dlgBody img.sig').count() === 0);
-  ok('the example explains that the client stays with the office', has(dlg, 'stays with the office'));
+  ok('no example case is waiting for them', !body.includes('EXAMPLE-'), body.slice(0, 200));
+  ok('no invented carrier or claimant is on screen',
+     !/Blue Ridge Mutual|Marcus Ellery|Karen Whitfield/.test(body), body.slice(0, 200));
+  ok('the empty state says nothing is assigned yet', has(body, 'Nothing assigned to you yet'));
+  ok('and says what will change that', has(body, 'admin assigns one'));
+  ok('there is no control offering to show them an example',
+     await page.locator('.btn', { hasText: 'example' }).count() === 0);
   await page.close();
 }
 
-/* The page redacts the example so a new investigator is shown the truth. The
-   Worker is what actually enforces it. If the two lists drift, the example
-   starts promising a view that does not match the one they get. */
-section('The page example matches what the Worker sends');
+/* The page carried a second copy of the Worker's redaction allow-list, purely
+   so the page-held example could be redacted the way the Worker redacts a real
+   case. With the example gone that copy has no consumer, and a stale duplicate
+   of a security boundary is worse than no duplicate at all — so FIELD_KEEP has
+   exactly one writer again, in the Worker, which is the thing that enforces it. */
+section('The page holds no example data and no second copy of the allow-list');
 {
-  const list = src => (src.match(/FIELD_KEEP = \[([\s\S]*?)\]/) || [, ''])[1]
-    .match(/['"]([a-z_]+)['"]/g)?.map(s => s.slice(1, -1)) || [];
-  const fromWorker = list(fs.readFileSync(path.join(ROOT, 'case-portal/worker.js'), 'utf8'));
-  const fromPage = list(fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8'));
-  ok('the Worker declares a field allow-list', fromWorker.length > 0);
-  ok('the page mirrors it exactly', JSON.stringify(fromWorker) === JSON.stringify(fromPage),
-     `worker=${fromWorker} page=${fromPage}`);
+  const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+  for (const marker of ['EXAMPLE_CASES', 'EXAMPLE_SIGNATURE', 'examplesFor', 'redactExample',
+                        'exampleBodyHtml', 'openExampleCase', 'SHOW_EXAMPLE', 'isExample'])
+    ok(`the page source no longer defines ${marker}`, !src.includes(marker), marker);
+
+  ok('no EXAMPLE- case number survives in the source', !src.includes('EXAMPLE-'));
+  ok('and none of the invented identities remain',
+     !/Blue Ridge Mutual|Karen Whitfield|Marcus Ellery|blueridgemutual/.test(src));
+  ok('no data: image signature is left embedded in the page',
+     !src.includes('data:image/png;base64,iVBOR'));
+
+  ok('the page carries no copy of the redaction allow-list', !src.includes('FIELD_KEEP'));
+  const worker = fs.readFileSync(path.join(ROOT, 'case-portal/worker.js'), 'utf8');
+  ok('the Worker still declares it, and is now the only place that does',
+     /const FIELD_KEEP = \[/.test(worker));
 }
 
 section('Session');
@@ -612,19 +585,27 @@ section('The dashboard with nothing in it');
   const page = await newPage();
   await signIn(page, 'fresh', 'FreshStart1x');
   ok('the dashboard still draws with no cases', await page.locator('.stats').count() === 1);
-  const body = await text(page, '.card');
-  ok('and the example comes up unasked', body.includes('EXAMPLE-CLAIM-0001'));
-  ok('an admin sees both examples', body.includes('EXAMPLE-INTAKE-0002'));
-  const stats = await text(page, '.stats');
-  ok('the totals count the example so the cards are not all zero', /[1-9]/.test(stats), stats);
-  ok('and it says the totals include it', has(await text(page, '.ex-note'), 'include the example'));
+  ok('and the cards are shown rather than hidden', await page.locator('.stat').count() > 0);
 
-  await page.locator('.btn', { hasText: 'Hide the example' }).click();
-  await page.waitForTimeout(250);
-  ok('hiding it leaves the real empty state', !(await text(page, '.card')).includes('EXAMPLE-CLAIM-0001'));
-  ok('the dashboard is still drawn when empty', await page.locator('.stats').count() === 1);
-  ok('and there is a button to bring the example back',
-     await page.locator('.btn', { hasText: 'Show an example' }).count() > 0);
+  const shell = await page.locator('#app').innerText();
+  ok('no example is invented to fill the dashboard', !shell.includes('EXAMPLE-'), shell.slice(0, 200));
+  ok('and no invented client is named anywhere on it',
+     !/Blue Ridge Mutual|Karen Whitfield|Marcus Ellery/.test(shell));
+  ok('nothing claims the totals include an example', !has(shell, 'include the example'));
+
+  /* A zero IS the answer on an empty portal. The cards used to be padded with
+     the example so they would not all read zero, which made the one number a
+     new admin most needs to trust the first number they could not. */
+  await page.locator('.tabs button', { hasText: 'Cases' }).click();
+  await page.waitForTimeout(350);
+  const body = await text(page, '.card');
+  ok('the case list is empty and says so', has(body, 'No cases yet'), body.slice(0, 200));
+  ok('and says what will fill it', has(body, 'Intake forms arrive here'));
+  ok('it points at the TEST- case as the way to try the portal', has(body, 'TEST-'));
+  ok('there is no button offering to show an example',
+     await page.locator('.btn', { hasText: 'Show an example' }).count() === 0);
+  ok('the dashboard is still drawn when empty',
+     await page.locator('.tabs button', { hasText: 'Dashboard' }).count() === 1);
   await page.close();
   env.DB = saved;
 }
@@ -649,11 +630,13 @@ section('A failed load says so instead of looking empty');
   ok('there is a way to retry', await page.locator('.btn', { hasText: 'Try again' }).count() === 1);
   ok('it warns that what is shown may be incomplete', has(shell, 'necessarily the whole picture'));
 
-  // The important part: the example must NOT stand in for real data here.
-  ok('a broken load does not quietly show the example instead',
-     !body.includes('EXAMPLE-CLAIM-0001'), body.slice(0, 200));
-  ok('and does not claim there are simply no submissions',
-     !body.includes('No submissions yet'), body.slice(0, 200));
+  /* The important part: a failed load must not read as an empty portal. There
+     is no example left to stand in for the data, so what matters now is that
+     the empty state does not claim the portal is simply quiet. */
+  ok('a broken load shows no fabricated case', !body.includes('EXAMPLE-'), body.slice(0, 200));
+  ok('and does not claim there are simply no cases',
+     !body.includes('No cases yet') && !body.includes('No submissions yet'), body.slice(0, 200));
+  ok('it says the list did not load instead', has(body, 'did not load'), body.slice(0, 200));
 
   // Recovering works without a reload.
   await page.unroute('**/portal-api/submissions?**');

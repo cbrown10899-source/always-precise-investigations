@@ -3311,6 +3311,196 @@ section('Test cases');
      (await call(env, `/cases/${caseNo}/workspace`, { cookie: admin })).status === 404);
 }
 
+/* The sweep used to name five tables while a demo case could put rows in
+   twenty-six, so clearing deleted the submission and left invoices, evidence,
+   packages and send history behind — orphans that every view hides precisely
+   because every view joins through submissions.
+
+   The first test is the one that matters long term: it derives the list of
+   case-scoped tables FROM THE SCHEMA, so adding a case-scoped table without
+   adding it to the sweep fails here rather than silently leaking rows the next
+   time someone presses the button. */
+section('Removing test cases: the sweep is complete by construction');
+{
+  const src = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+
+  const sweepBlock = (src.match(/const DEMO_SWEEP = \[([\s\S]*?)\n\];/) || [, ''])[1];
+  ok('the sweep list is declared', sweepBlock.length > 0);
+  const swept = new Set([...sweepBlock.matchAll(/\['([a-z_]+)'\s*,/g)].map(m => m[1]));
+  ok('the sweep names many tables, not a handful', swept.size >= 25, String(swept.size));
+
+  // Every table the schema gives a case_no column to.
+  const scoped = [];
+  for (const m of SCHEMA.matchAll(/CREATE TABLE (?:IF NOT EXISTS )?(\w+)\s*\(([\s\S]*?)\n\);/g)) {
+    if (/^\s*case_no\s/m.test(m[2])) scoped.push(m[1]);
+  }
+  ok('the schema really does have case-scoped tables', scoped.length >= 25, String(scoped.length));
+
+  const uncovered = scoped.filter(t => !swept.has(t));
+  ok('EVERY case-scoped table is swept', uncovered.length === 0,
+     `not swept: ${uncovered.join(', ')}`);
+
+  // A swept table the health check does not know about would be deleted from
+  // without ever being checked for existence — the half-applied-schema crash.
+  const expectedBlock = (src.match(/const EXPECTED_TABLES = \[([\s\S]*?)\n\];/) || [, ''])[1];
+  const expected = new Set([...expectedBlock.matchAll(/'([a-z_]+)'/g)].map(m => m[1]));
+  const unchecked = [...swept].filter(t => !expected.has(t));
+  ok('every swept table is one the schema check knows about', unchecked.length === 0,
+     `unknown to /health: ${unchecked.join(', ')}`);
+
+  /* ORDER IS LOAD-BEARING and not self-evident: three tables carry
+     day_id REFERENCES case_days(id), so case_days must be swept after all
+     three or D1 rejects the whole batch on a foreign key. */
+  const order = [...sweepBlock.matchAll(/\['([a-z_]+)'\s*,/g)].map(m => m[1]);
+  for (const t of ['activity_log', 'case_reports', 'case_expenses']) {
+    ok(`${t} is swept before case_days`,
+       order.indexOf(t) !== -1 && order.indexOf(t) < order.indexOf('case_days'),
+       `${t}=${order.indexOf(t)} case_days=${order.indexOf('case_days')}`);
+  }
+  ok('submissions is swept last of all', order[order.length - 1] === 'submissions', order[order.length - 1]);
+}
+
+/* And the behaviour, proven rather than reasoned about: put a row for a test
+   case in EVERY case-scoped table, press clear, and assert every one of them
+   is empty afterwards while an identically-shaped real case is untouched. */
+section('Removing test cases: nothing is left behind, in any table');
+{
+  const { DatabaseSync } = await import('node:sqlite');
+  const bare = new DatabaseSync(':memory:');
+  bare.exec(SCHEMA);
+  const env = { ...freshEnv(), DB: d1(bare) };
+  const nowish = () => new Date().toISOString();
+
+  const store = new Map();
+  env.EVIDENCE = {
+    async put(k, b) { store.set(k, b); },
+    async get(k) { return store.has(k) ? { body: store.get(k) } : null; },
+    async delete(k) { store.delete(k); },
+    _store: store,
+  };
+
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  const DDL = new Map();
+  for (const m of SCHEMA.matchAll(/CREATE TABLE (?:IF NOT EXISTS )?(\w+)\s*\(([\s\S]*?)\n\);/g)) {
+    DDL.set(m[1], m[2]);
+  }
+  const scoped = [...DDL].filter(([, ddl]) => /^\s*case_no\s/m.test(ddl)).map(([t]) => t);
+
+  /* Fills only the columns SQLite would otherwise reject: NOT NULL, no
+     default, not the autoincrement key. A CHECK list supplies its own first
+     legal value and a NOT NULL foreign key is pointed at a row that exists,
+     so a valid row lands without this test restating the schema anywhere.
+     Fillers are unique per column, because several of these tables carry a
+     UNIQUE constraint and the two planted cases must not collide. */
+  let seq = 0;
+  const plantRow = (table, given = {}) => {
+    const ddl = DDL.get(table) || '';
+    const cols = bare.prepare(`PRAGMA table_info(${table})`).all();
+    const names = Object.keys(given), vals = Object.values(given);
+    for (const c of cols) {
+      if (names.includes(c.name)) continue;
+      if (c.pk && /INTEGER/i.test(c.type)) continue;
+      if (!c.notnull || c.dflt_value !== null) continue;
+      const check = ddl.match(new RegExp(`${c.name}[^,]*?CHECK\\s*\\(\\s*${c.name}\\s+IN\\s*\\(\\s*'([^']+)'`, 'i'));
+      const fk = ddl.match(new RegExp(`^\\s*${c.name}\\s[^,]*?REFERENCES\\s+(\\w+)\\s*\\((\\w+)\\)`, 'im'));
+      let ref = null;
+      if (fk) {
+        const row = bare.prepare(`SELECT ${fk[2]} AS v FROM ${fk[1]} LIMIT 1`).get();
+        if (row) ref = row.v;
+      }
+      names.push(c.name);
+      vals.push(check ? check[1]
+        : ref !== null ? ref
+        : /INT|REAL|NUM/i.test(c.type) ? ++seq
+        : `${table}-${c.name}-${++seq}`);
+    }
+    bare.prepare(`INSERT INTO ${table} (${names.join(',')}) VALUES (${names.map(() => '?').join(',')})`)
+      .run(...vals);
+  };
+  for (const t of scoped) {
+    plantRow(t, { case_no: 'TEST-SWEEP-0001' });
+    plantRow(t, { case_no: 'API-REAL-KEEP' });
+  }
+  ok('a row for a test case was planted in every case-scoped table', scoped.length >= 25, String(scoped.length));
+
+  // Evidence needs a real key so the bucket half can be checked.
+  bare.prepare(`UPDATE case_evidence SET r2_key = 'cases/TEST-SWEEP-0001/demo.jpg', size_bytes = 4096
+                 WHERE case_no = 'TEST-SWEEP-0001'`).run();
+  bare.prepare(`UPDATE case_evidence SET r2_key = 'cases/API-REAL-KEEP/real.jpg', size_bytes = 2048
+                 WHERE case_no = 'API-REAL-KEEP'`).run();
+  await env.EVIDENCE.put('cases/TEST-SWEEP-0001/demo.jpg', 'demo bytes');
+  await env.EVIDENCE.put('cases/API-REAL-KEEP/real.jpg', 'real bytes');
+
+  // Children, addressed by their parent's id rather than by a case number.
+  const dayId = bare.prepare("SELECT id FROM case_days WHERE case_no = 'TEST-SWEEP-0001'").get().id;
+  const actId = bare.prepare("SELECT id FROM activity_log WHERE case_no = 'TEST-SWEEP-0001'").get().id;
+  const bldId = bare.prepare("SELECT id FROM case_builds WHERE case_no = 'TEST-SWEEP-0001'").get().id;
+  const invId = bare.prepare("SELECT id FROM invoices WHERE case_no = 'TEST-SWEEP-0001'").get().id;
+  const repId = bare.prepare("SELECT id FROM case_reports WHERE case_no = 'TEST-SWEEP-0001'").get().id;
+  const evId  = bare.prepare("SELECT id FROM case_evidence WHERE case_no = 'TEST-SWEEP-0001'").get().id;
+  const subId = bare.prepare("SELECT id FROM case_subjects WHERE case_no = 'TEST-SWEEP-0001'").get().id;
+
+  const CHILDREN = [
+    ['activity_media', { entry_id: actId }],
+    ['activity_removed', { entry_id: actId }],
+    ['case_day_pauses', { day_id: dayId }],
+    ['build_items', { build_id: bldId, evidence_id: evId }],
+    ['build_events', { build_id: bldId }],
+    ['build_reports', { build_id: bldId, report_id: repId }],
+    ['build_summary', { build_id: bldId }],
+    ['build_custom', { build_id: bldId }],
+    ['invoice_lines', { invoice_id: invId }],
+    ['invoice_payments', { invoice_id: invId }],
+    ['invoice_events', { invoice_id: invId }],
+    ['invoice_retainer', { invoice_id: invId }],
+    ['report_versions', { report_id: repId }],
+    ['external_files', { evidence_id: evId }],
+    ['subject_vehicles', { subject_id: subId }],
+  ];
+  for (const [t, keys] of CHILDREN) plantRow(t, keys);
+
+  const childCount = () => CHILDREN.reduce(
+    (n, [t]) => n + bare.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get().n, 0);
+  ok('and a child row under each of those parents', childCount() === CHILDREN.length,
+     String(childCount()));
+
+  const cleared = await call(env, '/demo-case/clear', { method: 'POST', cookie: admin });
+  ok('clearing succeeds', cleared.status === 200, String(cleared.status));
+  const body = await jsonOf(cleared);
+  ok('it reports the one case it removed', body.removed === 1, JSON.stringify(body.removed));
+  ok('and reports the full row count it swept', body.rows > 30, String(body.rows));
+
+  const leftovers = [];
+  for (const t of scoped) {
+    const n = bare.prepare(`SELECT COUNT(*) AS n FROM ${t} WHERE case_no LIKE 'TEST-%'`).get().n;
+    if (n) leftovers.push(`${t}=${n}`);
+  }
+  ok('NO test-case row survives in ANY case-scoped table', leftovers.length === 0, leftovers.join(', '));
+
+  ok('and no orphaned child row survives either', childCount() === 0, String(childCount()));
+
+  const kept = [];
+  for (const t of scoped) {
+    const n = bare.prepare(`SELECT COUNT(*) AS n FROM ${t} WHERE case_no = 'API-REAL-KEEP'`).get().n;
+    if (n !== 1) kept.push(`${t}=${n}`);
+  }
+  ok('THE REAL CASE KEEPS ITS ROW IN EVERY TABLE', kept.length === 0, kept.join(', '));
+
+  // The bucket, not just the row that pointed at it.
+  ok('the demo object is gone from the bucket', !store.has('cases/TEST-SWEEP-0001/demo.jpg'));
+  ok('the real case object is untouched', store.has('cases/API-REAL-KEEP/real.jpg'));
+  ok('and the removal is reported', body.objects_removed === 1, String(body.objects_removed));
+
+  /* The storage meter is SUM(size_bytes) over case_evidence with no join to a
+     case, so a surviving evidence row would keep consuming the free-tier
+     allowance with nothing on screen to explain it. */
+  const metered = bare.prepare(
+    'SELECT COALESCE(SUM(size_bytes), 0) AS b FROM case_evidence WHERE deleted_at IS NULL').get().b;
+  ok('the storage meter no longer counts the demo bytes', metered === 2048, String(metered));
+}
+
 section('Expenses: three separate decisions, made by the office');
 {
   const env = freshEnv();

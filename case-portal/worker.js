@@ -5200,29 +5200,141 @@ async function createDemoCase(env, user) {
   return json({ ok: true, case_no: caseNo }, 201);
 }
 
-/* Only ever TEST- rows. The prefix is the whole safety mechanism, so it is
-   written into every statement rather than computed once and trusted.
+/* Every table a TEST- case can leave a row in, children before parents.
+   THE LIST IS THE FEATURE, and it is written out rather than derived.
 
-   Skips tables the database does not have. Cleaning up has to work on a
-   half-applied schema — that is precisely the state that leaves stray test
-   rows behind, and being unable to remove them until an unrelated workflow is
-   run would be the wrong way round. */
+   The first version named five tables — activity_log, case_reports, case_days,
+   case_meta, submissions — and a demo case can put rows in twenty-six. So
+   pressing "Remove test cases" on a case anyone had actually WORKED deleted
+   the submission and left its invoices, evidence, packages, builds, subjects,
+   phone numbers, tasks and send history behind: rows whose case_no no longer
+   matched anything, invisible in every view precisely because every view joins
+   through submissions, and impossible to find again from the UI. The button
+   whose entire promise is "removed cleanly" was the one manufacturing orphans.
+
+   Worse, the evidence rows survived, and the storage meter is
+   SUM(size_bytes) WHERE deleted_at IS NULL over case_evidence with no join to
+   a case — so a cleared demo case went on consuming the free-tier allowance
+   the cap exists to protect, with nothing on screen to explain why.
+
+   Rules this obeys:
+
+   - TEST- is written into EVERY statement. The prefix is the whole safety
+     mechanism; a scope computed once and passed around is a scope one edit
+     away from being wrong, and this runs next to live work.
+   - Children resolve through a subquery on their parent, so a child row is
+     matched by whose case it belongs to and never by a prefix of its own.
+   - ORDER IS LOAD-BEARING. activity_log, case_reports and case_expenses all
+     carry day_id REFERENCES case_days(id), so case_days goes after all three
+     or D1 rejects the batch on a foreign key.
+   - Tables the database does not have are skipped. Cleanup has to work on a
+     half-applied schema — that is exactly the state that strands test rows,
+     and "run an unrelated workflow first" would be the wrong way round.
+   - The R2 objects go too. Deleting only the D1 row would clear the meter
+     while the bytes stayed on the account, which is the failsafe reporting
+     the opposite of the truth. */
+const DEMO_LIKE = 'TEST-%';
+
+const DEMO_SWEEP = [
+  /* --- children, addressed through their parent's id --- */
+  ['activity_media',        'DELETE FROM activity_media WHERE entry_id IN (SELECT id FROM activity_log WHERE case_no LIKE ?)'],
+  ['activity_removed',      'DELETE FROM activity_removed WHERE entry_id IN (SELECT id FROM activity_log WHERE case_no LIKE ?)'],
+  ['case_day_pauses',       'DELETE FROM case_day_pauses WHERE day_id IN (SELECT id FROM case_days WHERE case_no LIKE ?)'],
+  ['build_items',           'DELETE FROM build_items WHERE build_id IN (SELECT id FROM case_builds WHERE case_no LIKE ?)'],
+  ['build_events',          'DELETE FROM build_events WHERE build_id IN (SELECT id FROM case_builds WHERE case_no LIKE ?)'],
+  ['build_reports',         'DELETE FROM build_reports WHERE build_id IN (SELECT id FROM case_builds WHERE case_no LIKE ?)'],
+  ['build_summary',         'DELETE FROM build_summary WHERE build_id IN (SELECT id FROM case_builds WHERE case_no LIKE ?)'],
+  ['build_custom',          'DELETE FROM build_custom WHERE build_id IN (SELECT id FROM case_builds WHERE case_no LIKE ?)'],
+  ['external_files',        'DELETE FROM external_files WHERE evidence_id IN (SELECT id FROM case_evidence WHERE case_no LIKE ?)'],
+  ['invoice_lines',         'DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE case_no LIKE ?)'],
+  ['invoice_payments',      'DELETE FROM invoice_payments WHERE invoice_id IN (SELECT id FROM invoices WHERE case_no LIKE ?)'],
+  ['invoice_events',        'DELETE FROM invoice_events WHERE invoice_id IN (SELECT id FROM invoices WHERE case_no LIKE ?)'],
+  ['invoice_retainer',      'DELETE FROM invoice_retainer WHERE invoice_id IN (SELECT id FROM invoices WHERE case_no LIKE ?)'],
+  ['report_versions',       'DELETE FROM report_versions WHERE report_id IN (SELECT id FROM case_reports WHERE case_no LIKE ?)'],
+  ['subject_vehicles',      'DELETE FROM subject_vehicles WHERE subject_id IN (SELECT id FROM case_subjects WHERE case_no LIKE ?)'],
+  ['retainer_payment_void', 'DELETE FROM retainer_payment_void WHERE payment_id IN (SELECT id FROM retainer_payment WHERE case_no LIKE ?)'],
+
+  /* --- the three that reference case_days, before case_days itself --- */
+  ['activity_log',          'DELETE FROM activity_log WHERE case_no LIKE ?'],
+  ['case_reports',          'DELETE FROM case_reports WHERE case_no LIKE ?'],
+  ['case_expenses',         'DELETE FROM case_expenses WHERE case_no LIKE ?'],
+  ['case_days',             'DELETE FROM case_days WHERE case_no LIKE ?'],
+
+  /* --- everything else keyed by case_no --- */
+  ['case_evidence',         'DELETE FROM case_evidence WHERE case_no LIKE ?'],
+  ['case_builds',           'DELETE FROM case_builds WHERE case_no LIKE ?'],
+  ['invoices',              'DELETE FROM invoices WHERE case_no LIKE ?'],
+  ['case_subjects',         'DELETE FROM case_subjects WHERE case_no LIKE ?'],
+  ['case_meta',             'DELETE FROM case_meta WHERE case_no LIKE ?'],
+  ['case_status',           'DELETE FROM case_status WHERE case_no LIKE ?'],
+  ['case_closure',          'DELETE FROM case_closure WHERE case_no LIKE ?'],
+  ['case_archive',          'DELETE FROM case_archive WHERE case_no LIKE ?'],
+  ['case_deleted',          'DELETE FROM case_deleted WHERE case_no LIKE ?'],
+  ['lead_status',           'DELETE FROM lead_status WHERE case_no LIKE ?'],
+  ['case_phone',            'DELETE FROM case_phone WHERE case_no LIKE ?'],
+  ['case_retainer',         'DELETE FROM case_retainer WHERE case_no LIKE ?'],
+  ['case_tasks',            'DELETE FROM case_tasks WHERE case_no LIKE ?'],
+  ['case_notes',            'DELETE FROM case_notes WHERE case_no LIKE ?'],
+  ['case_details',          'DELETE FROM case_details WHERE case_no LIKE ?'],
+  ['case_comms',            'DELETE FROM case_comms WHERE case_no LIKE ?'],
+  ['case_offers',           'DELETE FROM case_offers WHERE case_no LIKE ?'],
+  ['case_settings',         'DELETE FROM case_settings WHERE case_no LIKE ?'],
+  ['retainer_payment',      'DELETE FROM retainer_payment WHERE case_no LIKE ?'],
+  ['retainer_receipt',      'DELETE FROM retainer_receipt WHERE case_no LIKE ?'],
+  ['retainer_payment_token','DELETE FROM retainer_payment_token WHERE case_no LIKE ?'],
+  ['send_log',              'DELETE FROM send_log WHERE case_no LIKE ?'],
+  ['payment_send',          'DELETE FROM payment_send WHERE case_no LIKE ?'],
+
+  /* --- the spine, last --- */
+  ['submissions',           'DELETE FROM submissions WHERE case_no LIKE ?'],
+];
+
+/* Tables holding a case_no that DEMO_SWEEP must account for. The regression
+   test reads this and fails when the schema gains a case-scoped table nobody
+   added to the sweep — which is the only way this drifts back out of date. */
+const DEMO_CASE_SCOPED = DEMO_SWEEP
+  .filter(([, sql]) => /WHERE case_no LIKE \?$/.test(sql))
+  .map(([t]) => t);
+
 async function clearDemoCases(env) {
-  const like = 'TEST-%';
   const missing = await missingTables(env);
-  let removed = 0;
-  for (const [table, sql] of [
-    ['activity_log', 'DELETE FROM activity_log WHERE case_no LIKE ?'],
-    ['case_reports', 'DELETE FROM case_reports WHERE case_no LIKE ?'],
-    ['case_days',    'DELETE FROM case_days   WHERE case_no LIKE ?'],
-    ['case_meta',    'DELETE FROM case_meta   WHERE case_no LIKE ?'],
-    ['submissions',  'DELETE FROM submissions WHERE case_no LIKE ?'],
-  ]) {
-    if (missing.includes(table)) continue;
-    const r = await env.DB.prepare(sql).bind(like).run();
-    if (table === 'submissions') removed = (r.meta && r.meta.changes) || 0;
+
+  /* The bucket first, and read the keys before anything is deleted — once the
+     case_evidence rows are gone there is no way left to find the objects, and
+     an unreferenced object in R2 is billable weight nobody can see. */
+  let objects = 0;
+  if (env.EVIDENCE && !missing.includes('case_evidence')) {
+    try {
+      const { results } = await env.DB.prepare(
+        'SELECT r2_key FROM case_evidence WHERE case_no LIKE ?').bind(DEMO_LIKE).all();
+      for (const row of results || []) {
+        /* One failed object must not strand the other twenty. The database
+           sweep below runs either way: a row pointing at an object that is
+           already gone is the harmless direction of this pair. */
+        try { await env.EVIDENCE.delete(row.r2_key); objects++; } catch { /* keep going */ }
+      }
+    } catch { /* no evidence table, or unreadable — the sweep still runs */ }
   }
-  return json({ ok: true, removed });
+
+  const detail = {};
+  let removed = 0;
+  for (const [table, sql] of DEMO_SWEEP) {
+    if (missing.includes(table)) continue;
+    const r = await env.DB.prepare(sql).bind(DEMO_LIKE).run();
+    const n = (r.meta && r.meta.changes) || 0;
+    if (n) detail[table] = n;
+    if (table === 'submissions') removed = n;
+  }
+
+  /* `removed` stays the number of CASES, which is what the page reports and
+     what the older callers read. `rows` and `detail` are additions. */
+  return json({
+    ok: true,
+    removed,
+    rows: Object.values(detail).reduce((a, b) => a + b, 0),
+    objects_removed: objects,
+    detail,
+  });
 }
 
 /* ------------------------------------------------------- daily reports */

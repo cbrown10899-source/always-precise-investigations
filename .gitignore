@@ -4,3 +4,8 @@
 
 # Deploy artifact — built by .github/stage-site.mjs, never committed
 _site/
+
+# Wrangler's local cache - holds the Cloudflare account id after a login.
+# Created by any wrangler command run from the repo root, never part of the
+# site or the Worker, and nothing should be able to commit it by accident.
+.wrangler/

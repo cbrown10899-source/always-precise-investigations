@@ -515,10 +515,71 @@ data does not exist yet (client responses, expenses, closure) are deliberately
 absent until their features land — no fake zeros. Scoped per role as always:
 an investigator's alerts are their own cases and days.
 
-**It draws even when there are no cases**, and on an empty portal the worked
-example is shown unasked so the cards are not all zero and a new admin can see
-the shape of the thing. The banner says the totals include the example. There is
-one Hide button, over the case list — not two.
+**It draws even when there are no cases**, because a page that shows nothing at
+all looks broken — but every number on it is the Worker's, and a zero IS the
+answer when there is no work.
+
+**There are no fabricated example cases, anywhere** (2026-08-16). The portal
+used to hold two invented cases in `portal/index.html` — a Blue Ridge Mutual
+carrier assignment and a client intake — shown unasked on a first sign-in and
+counted into the dashboard totals so the cards would not read zero. They are
+gone, along with `SHOW_EXAMPLE`, `examplesFor`, `redactExample`,
+`exampleBodyHtml` and the Show/Hide controls.
+
+The reason is the one this file applies everywhere else: **a staff screen must
+not assert something untrue.** An invented client can be photographed, quoted
+or acted on as though they were real, and the person least able to tell is the
+new member of staff the example existed to teach — while the padded totals made
+the first number a new admin reads the one number they could not trust.
+
+`casesEmptyHtml()` replaced it, and it keeps three states apart: **did not
+load** (checked first — an outage that reads as a quiet week is the failure this
+page has already been bitten by), **nothing matched that search**, and
+**genuinely empty**, which says what will fill it. The way to see the layout
+with data in it is a **TEST- case from Settings** — a real row, badged wherever
+it appears, created and removed deliberately. Do not reintroduce page-held
+example data; a test fails on `EXAMPLE-` appearing in the page at all.
+
+## Test cases, and removing them completely
+
+`POST /demo-case` writes a **real** row prefixed `TEST-`, so the portal can be
+worked through with something in it. `POST /demo-case/clear` is the way back,
+and `DEMO_SWEEP` in `case-portal/worker.js` is the list it sweeps.
+
+**The list is the feature.** The first version named five tables — `activity_log`,
+`case_reports`, `case_days`, `case_meta`, `submissions` — while a demo case can
+put rows in **twenty-six**. So clearing a case anyone had actually worked
+deleted the submission and left its invoices, evidence, packages, builds,
+subjects, phone numbers, tasks and send history behind: rows whose `case_no`
+matched nothing, invisible in every view *precisely because every view joins
+through `submissions`*, and unreachable from the UI. The button whose entire
+promise is "removed cleanly" was the one manufacturing orphans.
+
+The evidence rows were the worst of it. The storage meter is
+`SUM(size_bytes) WHERE deleted_at IS NULL` over `case_evidence` with **no join
+to a case**, so a cleared demo case went on consuming the free-tier allowance
+the cap exists to protect, with nothing on screen to explain why.
+
+Four rules hold it together:
+
+- **`TEST-` is written into every statement**, not computed once and passed
+  around. This runs next to live work; the prefix is the whole safety mechanism.
+- **Children resolve through a subquery on their parent**, so a child row is
+  matched by whose case it belongs to and never by a prefix of its own.
+- **Order is load-bearing.** `activity_log`, `case_reports` and `case_expenses`
+  all carry `day_id REFERENCES case_days(id)`, so `case_days` goes after all
+  three or D1 rejects the batch on a foreign key — and D1 runs a `--file` batch
+  in one transaction, so getting it wrong fails everything rather than half-
+  applying it. `submissions` is last.
+- **The R2 objects go too**, read before the rows that point at them. Deleting
+  only the D1 row would clear the meter while the bytes stayed on the account,
+  which is the failsafe reporting the opposite of the truth.
+
+**Adding a case-scoped table means adding it to `DEMO_SWEEP`.** A test derives
+the case-scoped table list from `schema.sql` and fails if one is missing, so
+this cannot quietly drift out of date again; a second test plants a row in
+every one of those tables plus fifteen child tables, clears, and asserts
+nothing survives while an identically-shaped real case is untouched.
 
 ## The rate card
 
@@ -573,9 +634,12 @@ field by default. `redactRow` also drops the denormalised `carrier`,
 claim number is the carrier's own reference and names them just as plainly.
 
 This is enforced in the Worker, not the page. A field the page merely declines
-to draw is still sitting in the browser's network tab. `portal/index.html`
-carries a copy of `FIELD_KEEP` solely so the built-in example shows an
-investigator the truth; a test compares the two lists and fails if they drift.
+to draw is still sitting in the browser's network tab. `worker.js` is now the
+**only** place `FIELD_KEEP` is written: `portal/index.html` used to carry a
+second copy so the page-held example could be redacted the same way, and when
+the example went (2026-08-16) the copy lost its only consumer. A stale
+duplicate of a security boundary is worse than no duplicate, so a test fails if
+`FIELD_KEEP` reappears in the page.
 
 **Accounts exist only by invitation.** There is no public sign-up and no route
 that creates an account directly — an admin issues a one-time link and the
@@ -617,8 +681,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1517 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 967 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 1538 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 954 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
