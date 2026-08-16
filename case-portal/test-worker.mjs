@@ -6100,6 +6100,11 @@ section('Origin guard and headers');
      `server_now`  — the Worker's clock, different on every request by design.
      `my_offer`    — an offer made to THIS user. It is identity-scoped on
                      purpose; asserting it equal would assert a wrong property.
+     `open_day`    — YOUR OWN running clock. The query binds `user.id`, and
+                     "you can only stop your own clock" is a shipped invariant
+                     of Active Surveillance. Exercised below on a case with a
+                     day actually running, rather than dodged by ending every
+                     day in the fixture.
 
    The same goes for `/my/reports`, `/my/expenses`, `/my/active` and `/calendar`,
    which scope by WHO CREATED the record (the KEEP decision, 2026-08-14). They
@@ -6187,7 +6192,7 @@ section('Two admin accounts see the same data');
 
   /* Strip only what is per-request or per-identity BY DESIGN. Anything else
      differing is the leak this test exists to catch. */
-  const VOLATILE = new Set(['server_now', 'my_offer']);
+  const VOLATILE = new Set(['server_now', 'my_offer', 'open_day']);
   const strip = v => {
     if (Array.isArray(v)) return v.map(strip);
     if (v && typeof v === 'object') {
@@ -6214,20 +6219,36 @@ section('Two admin accounts see the same data');
       + `A…${a.slice(Math.max(0, i - 60), i + 60)} | B…${b.slice(Math.max(0, i - 60), i + 60)}`);
   };
 
-  // 1. CASES — the list both admins work from.
-  await same('both admins see the same case list', '/submissions?limit=200');
+  /* The six surfaces, checked as a set so the whole thing can be re-run once
+     the SECOND admin has authored records of their own. */
+  const surfaces = extra => [
+    ['the case list',                '/submissions?limit=200'],
+    ['the private intake',           '/submissions/API-PAR-P'],
+    ['the claims intake',            '/submissions/API-PAR-C'],
+    ['the private case workspace',   '/cases/API-PAR-P/workspace'],
+    ['the claims case workspace',    '/cases/API-PAR-C/workspace'],
+    ['that case\'s invoice list',    '/cases/API-PAR-P/invoices'],
+    ['the invoice list overall',     '/invoices'],
+    ['the invoice, lines and payments', `/invoices/${invId}`],
+    ['the send history',             '/sends?limit=200'],
+    ...(extra || []),
+  ];
+  const runParity = async (phase, extra) => {
+    for (const [label, path] of surfaces(extra)) await same(`${phase}: both admins see ${label}`, path);
+  };
+
+  /* ---- DIRECTION ONE: what admin A authored, admin B must see ---------- */
+
+  await runParity('A authored');
+
   const listA = await jsonOf(await call(env, '/submissions?limit=200', { cookie: adminA }));
   const listB = await jsonOf(await call(env, '/submissions?limit=200', { cookie: adminB }));
-  ok('and it is not empty, so the comparison means something',
+  ok('the case list is not empty, so the comparison means something',
      (listA.submissions || []).length >= 2, String((listA.submissions || []).length));
   ok('neither admin is missing a case the other has',
      (listA.submissions || []).map(r => r.case_no).sort().join() ===
      (listB.submissions || []).map(r => r.case_no).sort().join());
 
-  // 2. INTAKES — what the client actually submitted, on both kinds of case.
-  await same('both see the same private intake', '/submissions/API-PAR-P');
-  await same('both see the same claims intake', '/submissions/API-PAR-C');
-  const wsA = await jsonOf(await call(env, '/cases/API-PAR-P/workspace', { cookie: adminA }));
   /* Client identity lives on the SUBMISSION record, not the workspace — that is
      where `redactRow` withholds it from an investigator, so it is the surface
      where an admin-parity leak would actually show. Asserted so the comparison
@@ -6239,30 +6260,124 @@ section('Two admin accounts see the same data');
   ok('and the second admin is shown that identity too, not a redacted copy',
      JSON.stringify(subB).includes('Parity Client'));
 
-  // 3+4+5. PAYMENTS, REPORTS and ACTIVITY all hang off the workspace.
-  await same('both see the same private case workspace', '/cases/API-PAR-P/workspace');
-  await same('both see the same claims case workspace', '/cases/API-PAR-C/workspace');
+  const wsA = await jsonOf(await call(env, '/cases/API-PAR-P/workspace', { cookie: adminA }));
   ok('the workspace really carries the retainer payments being compared',
      (wsA.authorization.retainer.payments || []).length === 2,
      String((wsA.authorization.retainer.payments || []).length));
   ok('and a report', (wsA.reports || []).length === 1, String((wsA.reports || []).length));
   ok('and the activity entries', (wsA.activity || []).length === 2,
      String((wsA.activity || []).length));
-
-  // 4b. INVOICE PAYMENTS, which live on their own routes.
-  await same('both see the same invoice list for the case', '/cases/API-PAR-P/invoices');
-  await same('both see the same invoice list overall', '/invoices');
-  await same('both see the same invoice, lines and payments', `/invoices/${invId}`);
   const ivA = (await jsonOf(await call(env, `/invoices/${invId}`, { cookie: adminA }))).invoice;
   ok('the invoice really carries the payment being compared',
      (ivA.payments || []).length === 1 && ivA.balance_due === 500,
      JSON.stringify([(ivA.payments || []).length, ivA.balance_due]));
-
-  // 6. SEND HISTORY — including the pre-case send, which hangs off no case.
-  await same('both see the same send history', '/sends?limit=200');
   const sendsA = (await jsonOf(await call(env, '/sends?limit=200', { cookie: adminA }))).sends || [];
   ok('the history really carries both a case send and a pre-case one',
      sendsA.some(s => s.case_no === 'API-PAR-P') && sendsA.some(s => s.case_no === null));
+
+  /* ---- DIRECTION TWO: what admin B authored, admin A must see ----------
+
+     Without this the test proves only that the SECOND admin can see the
+     FIRST's work. That is not the invariant. Admin A here is the bootstrap
+     account — user id 1, created by `/setup` rather than by invitation — so
+     "B sees A's records" passing says nothing about whether a record authored
+     by an invited admin is visible to the first one. The asymmetry is in the
+     accounts themselves, not just in the direction of the assertion.
+
+     So admin B now authors a full record of their own, through the same routes,
+     and every surface is compared again. */
+
+  const madeByB = await jsonOf(await call(env, '/intakes', { method: 'POST', cookie: adminB,
+    body: { kind: 'consumer', client_name: 'B-Authored Client', client_email: 'b.client@example.com',
+            subject_name: 'B Subject', objective: 'Recorded by the second admin.' } }));
+  const caseB = madeByB.case_no;
+  ok('the second admin can create a case at all', /^API-\d{8}-\d{4}$/.test(caseB || ''), String(caseB));
+
+  await call(env, `/cases/${caseB}/day/start`, { method: 'POST', cookie: adminB,
+    body: { day_date: '2026-08-15', start_time: '08:00', start_mileage: 20000 } });
+  await call(env, `/cases/${caseB}/activity`, { method: 'POST', cookie: adminB,
+    body: { at_date: '2026-08-15', at_time: '08:20', description: 'Logged by the second admin.' } });
+  await call(env, `/cases/${caseB}/day/end`, { method: 'POST', cookie: adminB,
+    body: { end_time: '11:00', end_mileage: 20030 } });
+  const dayB = (await jsonOf(await call(env, `/cases/${caseB}/workspace`, { cookie: adminB }))).days[0];
+  await call(env, `/cases/${caseB}/reports/generate`, { method: 'POST', cookie: adminB,
+    body: { day_id: dayB.id } });
+  await call(env, `/cases/${caseB}/retainer`, { method: 'POST', cookie: adminB,
+    body: { retainer_amount: 1500 } });
+  await call(env, `/cases/${caseB}/retainer/payment`, { method: 'POST', cookie: adminB,
+    body: { amount: 400, method: 'cash', paid_on: '2026-08-15', reference: 'by second admin' } });
+  const invB = (await jsonOf(await call(env, `/cases/${caseB}/invoices`, { method: 'POST',
+    cookie: adminB, body: {} }))).invoice;
+  await call(env, `/invoices/${invB.id}/lines`, { method: 'POST', cookie: adminB,
+    body: { lines: [{ description: 'Surveillance', qty: 4, rate: 100 }] } });
+  await call(env, `/invoices/${invB.id}/status`, { method: 'POST', cookie: adminB,
+    body: { status: 'ready' } });
+  await call(env, `/invoices/${invB.id}/payments`, { method: 'POST', cookie: adminB,
+    body: { amount: 100, paid_date: '2026-08-15', method: 'cash', reference: 'part, by B' } });
+  await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: adminB,
+    body: { to: 'b.client@example.com', case_no: caseB, include_intake: true } });
+
+  /* Every surface again — now including the case only the SECOND admin has
+     ever touched, and its invoice. */
+  await runParity('B authored', [
+    ['the case the second admin created',  `/submissions/${caseB}`],
+    ['its workspace',                      `/cases/${caseB}/workspace`],
+    ['its invoice list',                   `/cases/${caseB}/invoices`],
+    ['its invoice, lines and payments',    `/invoices/${invB.id}`],
+  ]);
+
+  /* And said as a property rather than only as a diff: each admin's view
+     contains the OTHER's work. A comparison can pass because both sides are
+     equally wrong; these cannot. */
+  const listA2 = await jsonOf(await call(env, '/submissions?limit=200', { cookie: adminA }));
+  const listB2 = await jsonOf(await call(env, '/submissions?limit=200', { cookie: adminB }));
+  const nos = l => (l.submissions || []).map(r => r.case_no);
+  ok('the first admin sees the case the second one created',
+     nos(listA2).includes(caseB), nos(listA2).join());
+  ok('and the second admin still sees the cases the first one created',
+     nos(listB2).includes('API-PAR-P') && nos(listB2).includes('API-PAR-C'), nos(listB2).join());
+
+  const wsBbyA = await jsonOf(await call(env, `/cases/${caseB}/workspace`, { cookie: adminA }));
+  ok('the first admin sees the second admin\'s activity entry',
+     (wsBbyA.activity || []).some(a => /second admin/i.test(a.description || '')));
+  ok('and their report', (wsBbyA.reports || []).length === 1,
+     String((wsBbyA.reports || []).length));
+  ok('and their retainer payment',
+     (wsBbyA.authorization.retainer.payments || []).length === 1,
+     String((wsBbyA.authorization.retainer.payments || []).length));
+  const ivBbyA = (await jsonOf(await call(env, `/invoices/${invB.id}`, { cookie: adminA }))).invoice;
+  ok('and their invoice payment',
+     (ivBbyA.payments || []).length === 1 && ivBbyA.balance_due === 300,
+     JSON.stringify([(ivBbyA.payments || []).length, ivBbyA.balance_due]));
+  const sendsByA = (await jsonOf(await call(env, '/sends?limit=200', { cookie: adminA }))).sends || [];
+  const sendsByB = (await jsonOf(await call(env, '/sends?limit=200', { cookie: adminB }))).sends || [];
+  ok('each admin\'s send history carries BOTH admins\' sends',
+     sendsByA.some(s => s.case_no === caseB) && sendsByA.some(s => s.case_no === 'API-PAR-P')
+     && sendsByB.some(s => s.case_no === caseB) && sendsByB.some(s => s.case_no === 'API-PAR-P'));
+
+  /* A RUNNING DAY is the one thing here that is per-admin by design, so it is
+     exercised rather than dodged. Every other day in this fixture is ended;
+     this case deliberately leaves one open, and the asymmetry is asserted to be
+     confined to `open_day` alone — the clock is admin A's, everything else
+     about the case is both admins'. Without this the exclusion above would be
+     an assumption nobody had tested. */
+  await ingest(env, { case_no: 'API-PAR-R', service: 'Surveillance',
+                      client_name: 'Running Day', subject_name: 'Still Out' });
+  await call(env, '/cases/API-PAR-R/day/start', { method: 'POST', cookie: adminA,
+    body: { day_date: '2026-08-16', start_time: '06:00', start_mileage: 30000 } });
+  await call(env, '/cases/API-PAR-R/activity', { method: 'POST', cookie: adminA,
+    body: { at_date: '2026-08-16', at_time: '06:30', description: 'Still in the field.' } });
+  await same('a case with a day STILL RUNNING matches too', '/cases/API-PAR-R/workspace');
+  const runA = await jsonOf(await call(env, '/cases/API-PAR-R/workspace', { cookie: adminA }));
+  const runB = await jsonOf(await call(env, '/cases/API-PAR-R/workspace', { cookie: adminB }));
+  ok('the running clock belongs to the admin who started it, and only them',
+     Boolean(runA.open_day) && !runB.open_day,
+     JSON.stringify([Boolean(runA.open_day), Boolean(runB.open_day)]));
+  ok('but the day itself is on the record for both',
+     JSON.stringify(runA.days) === JSON.stringify(runB.days) && (runA.days || []).length === 1);
+  ok('and so is the activity logged during it',
+     JSON.stringify(runA.activity) === JSON.stringify(runB.activity)
+     && (runA.activity || []).length === 1);
 
   /* The other direction, so this cannot pass by both admins seeing NOTHING:
      an investigator on the same portal still sees only what is theirs. */
