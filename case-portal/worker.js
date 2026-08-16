@@ -1175,7 +1175,7 @@ async function emailSheet(request, env, user, id) {
     await logSend(env, user, { case_no: linkedCase, kind: 'rate_sheet', sheet_id: sheet.id,
       door: intakeUrl, recipient: to, ok: 0, detail: mail.reason || 'send failed' });
     if (payment.length) {
-      await logPaymentSend(env, user, { case_no: caseNo, recipient: to,
+      await logPaymentSend(env, user, { case_no: linkedCase, recipient: to,
         methods: payment.map(x => x.id), with_sheet: 1, ok: 0,
         detail: mail.reason || 'send failed' });
     }
@@ -1198,7 +1198,7 @@ async function emailSheet(request, env, user, id) {
     if (lead) await stampLead(env, user, caseNo, includeIntake ? 'intake_sent' : 'rate_sheet_sent');
   }
   if (payment.length) {
-    await logPaymentSend(env, user, { case_no: caseNo, recipient: to,
+    await logPaymentSend(env, user, { case_no: linkedCase, recipient: to,
       methods: payment.map(x => x.id), with_sheet: 1, ok: 1 });
   }
   /* §13 — the confirmation lists exactly what WENT. Read back from the record
@@ -1250,6 +1250,16 @@ async function emailPaymentOptions(request, env, user) {
   const name = clean(body.name, 120);
   const caseNo = String(body.case_no || '').replace(/[^\x20-\x7e]/g, '').slice(0, 64);
 
+  /* THE TYPED VALUE IS A REFERENCE UNTIL IT RESOLVES TO A CASE — the same split
+     `emailSheet` makes for `send_log`, and for the same reason.
+
+     `payment_send.case_no` says "null when sent with no case or lead", so the
+     free text the office wrote down does not belong in it. The lookup below
+     already has to happen for RULE 1, so this costs nothing extra, and nothing
+     about what is SENT changes — the subject line still carries whatever was
+     typed. */
+  let linkedCase = null;
+
   /* RULE 1, AND IT MUST NOT FAIL OPEN (Codex stop-time review, 2026-08-15).
 
      This was `if (lead && lead.kind === 'claims')`, and the comment above it
@@ -1299,6 +1309,8 @@ async function emailPaymentOptions(request, env, user) {
       return json({ error: `${caseNo} is a claim assignment. Cash App and Venmo are private-client `
                          + `payment methods and are never sent to a carrier or TPA.` }, 400);
     }
+    // Past the refusal, so anything found here is a private lead: a real case.
+    if (lead) linkedCase = caseNo;
   }
 
   if (!(await withinRateLimit(env, 'mail'))) {
@@ -1338,7 +1350,7 @@ async function emailPaymentOptions(request, env, user) {
 
   const mail = await sendMail(env, { to, subject, text, html });
   if (!mail.sent) {
-    await logPaymentSend(env, user, { case_no: caseNo, recipient: to,
+    await logPaymentSend(env, user, { case_no: linkedCase, recipient: to,
       methods: payment.map(x => x.id), with_sheet: 0, ok: 0,
       detail: mail.reason || 'send failed' });
     return json({
@@ -1350,7 +1362,7 @@ async function emailPaymentOptions(request, env, user) {
   }
   /* with_sheet: 0 is what makes this send distinguishable from the one that
      rode along with a rate sheet. The column existed before the route did. */
-  await logPaymentSend(env, user, { case_no: caseNo, recipient: to,
+  await logPaymentSend(env, user, { case_no: linkedCase, recipient: to,
     methods: payment.map(x => x.id), with_sheet: 0, ok: 1 });
 
   // RULE 2, said out loud in the answer the page shows. The context is stated

@@ -5244,6 +5244,72 @@ section('Every send works before a case exists, and still works after one does')
   ok('and the failed one is there too',
      (refHist.sends || []).some(s => s.recipient === 'bounced@example.com' && s.ok === false));
 
+  /* THE SAME SPLIT FOR `payment_send`. Its column carries the same contract —
+     "null when sent with no case or lead" — and the table has an index on
+     (case_no, id DESC), which exists for a case-scoped read. Nothing reads it
+     that way today, so unlike `send_log` this was misattributing nothing yet.
+     It is the same shape that would, the moment such a read is added.
+
+     Four writes, not one: the standalone route and the copy that rides with a
+     rate sheet, each with a success and a failure path. */
+  const payFor = async recipient => env.DB.prepare(
+    'SELECT case_no, with_sheet, ok FROM payment_send WHERE recipient = ? ORDER BY id DESC')
+    .bind(recipient).first();
+
+  lastBody = null;
+  const payRef = await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+    body: { to: 'pay.notepad@example.com', name: 'Notepad', case_no: 'PAPER-REF-P1' } });
+  ok('payment instructions still send against a reference that matches no case',
+     payRef.status === 200, String(payRef.status));
+  ok('and the reference still reaches that subject line, unchanged',
+     lastBody && lastBody.subject.includes('PAPER-REF-P1'), lastBody && lastBody.subject);
+  ok('but payment_send keeps it OUT of the case column',
+     (await payFor('pay.notepad@example.com')).case_no === null,
+     String((await payFor('pay.notepad@example.com')).case_no));
+
+  await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+    body: { to: 'pay.linked@example.com', case_no: 'API-PC-P' } });
+  ok('payment instructions against a case that DOES exist still record it',
+     (await payFor('pay.linked@example.com')).case_no === 'API-PC-P',
+     String((await payFor('pay.linked@example.com')).case_no));
+
+  /* The copy that rides WITH a rate sheet is a separate write with its own
+     `with_sheet` flag — the pair that has to move together, and the kind where
+     one gets fixed and the other is forgotten. */
+  await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'rode.ref@example.com', case_no: 'PAPER-REF-P2', include_payment: true } });
+  const rode = await payFor('rode.ref@example.com');
+  ok('a payment riding with a sheet is still recorded as such',
+     rode && Number(rode.with_sheet) === 1, rode && String(rode.with_sheet));
+  ok('and it keeps the reference out of the case column too',
+     rode && rode.case_no === null, rode && String(rode.case_no));
+
+  await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'rode.linked@example.com', case_no: 'API-PC-P', include_payment: true } });
+  ok('one riding with a sheet on a real case still records that case',
+     (await payFor('rode.linked@example.com')).case_no === 'API-PC-P',
+     String((await payFor('rode.linked@example.com')).case_no));
+
+  const okPayFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => String(url).includes('api.resend.com')
+    ? new Response('{"message":"refused"}', { status: 422 })
+    : realFetch(url, init);
+  const payFail = await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+    body: { to: 'pay.bounced@example.com', case_no: 'PAPER-REF-P3' } });
+  globalThis.fetch = okPayFetch;
+  ok('a refused payment send is reported as a failure', payFail.status === 502,
+     String(payFail.status));
+  const payFailRow = await payFor('pay.bounced@example.com');
+  ok('it is still recorded as an attempt', payFailRow && Number(payFailRow.ok) === 0);
+  ok('and it too keeps the reference out of the case column',
+     payFailRow && payFailRow.case_no === null, payFailRow && String(payFailRow.case_no));
+
+  /* And still visible to the office — simply not as a case's. */
+  const payHist = await jsonOf(await call(env, '/sends?limit=200', { cookie: admin }));
+  ok('the caseless payment send is in the history, marked as having no case',
+     (payHist.sends || []).some(s => s.kind === 'payment_options'
+       && s.recipient === 'pay.notepad@example.com' && s.case_no === null));
+
   globalThis.fetch = realFetch;
 }
 

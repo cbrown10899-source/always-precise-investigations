@@ -474,9 +474,16 @@ received. `emailSheet` now records the case number only where the lookup it
 already performs finds a case, on the success and the failure path alike. The
 reference is unchanged in the subject; nothing about what is sent moved.
 
-Its sibling `payment_send.case_no` still stores the typed value and is **not**
-covered by that fix. Nothing case-scoped reads it today, so it misattributes
-nothing, but it is the same shape and should go the same way when touched.
+**Its sibling `payment_send.case_no` follows the same rule**, from both writers:
+the standalone `/payment-options/email` and the copy that rides with a rate
+sheet, each on its success and its failure path — four writes, and the kind of
+set where one gets fixed and the rest are forgotten. That column says "null when
+sent with no case or lead" and the table is indexed on `(case_no, id DESC)`,
+which exists for a case-scoped read. Nothing reads it that way yet, so unlike
+`send_log` it was misattributing nothing — it was the same shape that would, the
+moment such a read was added. `emailPaymentOptions` reuses the lookup RULE 1
+already performs, so nothing extra is queried and a claims case is still refused
+before it can be recorded at all.
 
 **A failed history load is never rendered as an empty history.** `loadSends()`
 used to set `SENDS = []` in its catch, and an empty list draws as "Nothing sent
@@ -610,7 +617,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1170 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 1181 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 850 checks: the page against the real Worker
 ```
 
