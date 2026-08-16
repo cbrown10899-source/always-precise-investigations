@@ -304,6 +304,10 @@ async function handleIngest(request, env) {
     if (String(e).includes('UNIQUE')) return json({ ok: true, duplicate: true });
     throw e;
   }
+  /* THE CARRY-FORWARD (owner, 2026-08-15): a prospect who was quoted a figure
+     and then returns an intake keeps that figure. Never replaced by the
+     standard default. */
+  await carryProspectRetainer(env, caseNo, kind, pick(p, 'client_email'));
   return json({ ok: true, case_no: caseNo });
 }
 
@@ -460,6 +464,90 @@ async function agreedRetainer(env, caseNo) {
   const row = await env.DB.prepare(
     'SELECT retainer_amount FROM case_retainer WHERE case_no = ?').bind(caseNo).first();
   return row && row.retainer_amount != null ? Number(row.retainer_amount) : PERSONAL.retainer;
+}
+
+/* THE PRE-CASE RECORD (owner, 2026-08-15): "Store agreed retainer durably on
+   the pre-case record… When a case is later created, carry that retainer
+   forward. Never replace it with the $1,500 default."
+
+   Keyed by the recipient's email, because before a case exists that is what
+   identifies the prospect — a name and a valid email are the whole of what a
+   send requires. Normalised in ONE place so the key cannot drift between the
+   write and the read. */
+const prospectKey = email => String(email || '').trim().toLowerCase().slice(0, 200);
+
+async function prospectFor(env, email) {
+  const key = prospectKey(email);
+  if (!key) return null;
+  return env.DB.prepare(
+    `SELECT email, name, reference, agreed_retainer, converted_case
+       FROM prospect WHERE email = ?`).bind(key).first();
+}
+
+/* The agreed retainer for a send, wherever it legitimately lives. A LINKED case
+   always wins — its stored agreement is the record. Otherwise the prospect's
+   own figure, and only then the standard.
+
+   One function so preview, send and the payment options cannot disagree, which
+   is the whole lesson of #123. */
+async function retainerForSend(env, caseNo, email) {
+  if (caseNo) return agreedRetainer(env, caseNo);
+  const p = await prospectFor(env, email);
+  if (p && p.agreed_retainer != null && Number(p.agreed_retainer) > 0) {
+    return Number(p.agreed_retainer);
+  }
+  return PERSONAL.retainer;
+}
+
+/* Upsert, touching only what was actually supplied. An absent name or reference
+   means "unchanged", the same rule the retainer route learned the hard way —
+   a later send that carries no name must not erase the one already recorded. */
+async function saveProspect(env, user, { email, name, reference, retainer }) {
+  const key = prospectKey(email);
+  if (!key) return null;
+  const clean = (v, max) => v == null ? null : String(v)
+    .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, max) || null;
+  const amount = Number.isFinite(Number(retainer)) && Number(retainer) > 0 ? Number(retainer) : null;
+  const now = nowIso();
+  await env.DB.prepare(
+    `INSERT INTO prospect (email, name, reference, agreed_retainer, created_by, created_at, updated_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+     ON CONFLICT(email) DO UPDATE SET
+       name            = COALESCE(?2, prospect.name),
+       reference       = COALESCE(?3, prospect.reference),
+       agreed_retainer = COALESCE(?4, prospect.agreed_retainer),
+       updated_at      = ?6`)
+    .bind(key, clean(name, 120), clean(reference, 64), amount, user ? user.id : null, now).run();
+  return prospectFor(env, key);
+}
+
+/* THE CARRY-FORWARD. When a prospect becomes a case, the figure agreed on the
+   phone goes with them — "never replace it with the $1,500 default".
+
+   Runs on every path that creates a submission. It writes `case_retainer` only
+   when the case has no retainer row yet, so it can never overwrite a figure an
+   admin has since set on the case itself. Claims cases are skipped: a retainer
+   is the private model and a claim assignment is authorized in hour blocks.
+
+   Never throws. A prospect record is a convenience; failing an intake because
+   one could not be read would turn a nicety into an outage. */
+async function carryProspectRetainer(env, caseNo, kind, email) {
+  try {
+    if (!caseNo || kind === 'claims') return;
+    const p = await prospectFor(env, email);
+    if (!p || p.agreed_retainer == null || !(Number(p.agreed_retainer) > 0)) return;
+    const existing = await env.DB.prepare(
+      'SELECT case_no FROM case_retainer WHERE case_no = ?').bind(caseNo).first();
+    if (!existing) {
+      await env.DB.prepare(
+        `INSERT INTO case_retainer (case_no, retainer_amount, received, received_at, updated_by, updated_at)
+         VALUES (?, ?, 0, NULL, NULL, ?)`)
+        .bind(caseNo, Number(p.agreed_retainer), nowIso()).run();
+    }
+    await env.DB.prepare(
+      'UPDATE prospect SET converted_case = ?, updated_at = ? WHERE email = ?')
+      .bind(caseNo, nowIso(), p.email).run();
+  } catch { /* the case is the point; the carry-forward is a convenience */ }
 }
 
 function rateSheets(retainer) {
@@ -1028,7 +1116,34 @@ async function emailSheet(request, env, user, id) {
   // merely unlikely.
   const note = String(body.note || '')
     .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').slice(0, 500);
+  /* A LINKED CASE AND A WRITTEN REFERENCE ARE DIFFERENT THINGS (owner,
+     2026-08-15 — live bug: "Preview returns not found when the value is not an
+     existing case").
+
+     They used to be one field. The modal said "Case number — optional — subject
+     line" and then looked the value up, so typing anything that was not already
+     a case blocked Preview. Optional in the label and required in the code.
+
+     `reference` is free text that reaches the SUBJECT LINE and nothing else. It
+     is never looked up, never validated against cases, and can be a job number
+     off a notepad. `case_no` means the admin explicitly LINKED an existing case,
+     and only that is validated and paired. When it is absent the send simply has
+     no case — `case_id = null`, in the owner's words. */
   const caseNo = String(body.case_no || '').replace(/[^\x20-\x7e]/g, '').slice(0, 64);
+  const reference = String(body.reference || '')
+    .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 64);
+
+  /* Only an EXPLICITLY LINKED case is validated. An unlinked reference reaches
+     nothing that could 404. */
+  if (caseNo) {
+    const linked = await env.DB.prepare('SELECT case_no FROM submissions WHERE case_no = ?')
+      .bind(caseNo).first();
+    if (!linked) {
+      return json({ error: `No case matches ${caseNo}. Send it without linking a case, or use `
+                         + `the reference field — that is free text and goes in the subject line.`,
+                    unknown_case: true }, 404);
+    }
+  }
 
   /* A sheet sent AGAINST a lead must match that lead (audit, 2026-08-14).
      The intake door has always been paired to the sheet server-side, but
@@ -1054,8 +1169,19 @@ async function emailSheet(request, env, user, id) {
     return json({ error: 'Too many emails in one minute — wait a moment and send again.' }, 429);
   }
 
-  // Now the case is known and checked, so the sheet can carry ITS retainer.
-  const retainer = await agreedRetainer(env, caseNo);
+  /* The retainer is DURABLE on both sides of a case existing (owner,
+     2026-08-15). A linked case's stored agreement wins. Otherwise a figure sent
+     with this request is recorded against the PROSPECT first, and then read
+     back from there — so the send uses the stored value rather than the request,
+     and preview, send and the payment options are all reading one place.
+
+     Recorded only on the private context: an insurance assignment has no
+     retainer, and writing one against a carrier contact would be inventing a
+     private relationship that does not exist. */
+  if (!caseNo && contextForSheet(id) === SEND_CONTEXT.PRIVATE) {
+    await saveProspect(env, user, { email: to, reference, retainer: body.retainer });
+  }
+  const retainer = await retainerForSend(env, caseNo, to);
   const sheet = sheetById(id, retainer);
 
   // The Options step (UIBUILD P18): include the sheet's own intake, or not.
@@ -1122,8 +1248,10 @@ async function emailSheet(request, env, user, id) {
   }
 
   const { text, html } = sheetEmail(sheet, note, includeIntake, payment, retainer);
-  const subject = caseNo
-    ? `${sheet.name} — Always Precise Investigations (case ${caseNo})`
+  // The linked case if there is one, otherwise whatever the office wrote down.
+  const subjectRef = caseNo || reference;
+  const subject = subjectRef
+    ? `${sheet.name} — Always Precise Investigations (case ${subjectRef})`
     : `${sheet.name} — Always Precise Investigations`;
 
   const mail = await sendMail(env, { to, subject, text, html });
@@ -1204,7 +1332,20 @@ async function emailPaymentOptions(request, env, user) {
     .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').slice(0, max);
   const note = clean(body.note, 500);
   const name = clean(body.name, 120);
+  /* A LINKED case versus a WRITTEN reference — see the same split in
+     `emailSheet`. Only a linked case is looked up; the reference is subject-line
+     text and is never validated against anything. */
   const caseNo = String(body.case_no || '').replace(/[^\x20-\x7e]/g, '').slice(0, 64);
+  const reference = clean(body.reference, 64).trim();
+  if (caseNo) {
+    const linked = await env.DB.prepare('SELECT case_no FROM submissions WHERE case_no = ?')
+      .bind(caseNo).first();
+    if (!linked) {
+      return json({ error: `No case matches ${caseNo}. Send it without linking a case, or use `
+                         + `the reference field — that is free text and goes in the subject line.`,
+                    unknown_case: true }, 404);
+    }
+  }
 
   /* RULE 1, AND IT MUST NOT FAIL OPEN (Codex stop-time review, 2026-08-15).
 
@@ -1283,13 +1424,22 @@ async function emailPaymentOptions(request, env, user) {
         + 'before sending payment instructions.' }, 400);
   }
 
-  // The case's OWN agreed retainer, so this email and the sheet quote the same
-  // figure. A client told one number by the sheet and another by the payment
-  // email has been given a reason to distrust both.
-  const retainer = await agreedRetainer(env, caseNo);
+  /* "Payment options use that same value" (owner, 2026-08-15). The same read as
+     the sheet and the preview — a linked case's agreement, or the prospect's
+     own stored figure. A client told one number by the sheet and another by the
+     payment email has been given a reason to distrust both, and that has to
+     hold before a case exists as much as after.
+
+     A figure sent with this request is recorded first, so payment options can
+     also be the moment a retainer is agreed. */
+  if (!caseNo && body.retainer != null) {
+    await saveProspect(env, user, { email: to, name, reference, retainer: body.retainer });
+  }
+  const retainer = await retainerForSend(env, caseNo, to);
   const { text, html } = paymentOnlyEmail(payment, retainer, note, name);
-  const subject = caseNo
-    ? `Payment options — Always Precise Investigations (case ${caseNo})`
+  const subjectRef = caseNo || reference;
+  const subject = subjectRef
+    ? `Payment options — Always Precise Investigations (case ${subjectRef})`
     : 'Payment options — Always Precise Investigations';
 
   const mail = await sendMail(env, { to, subject, text, html });
@@ -1355,6 +1505,9 @@ async function createManualIntake(request, env, user) {
           payload.client_name || null, payload.client_email || null, payload.client_phone || null,
           payload.subject_name || null, payload.carrier || null, payload.claim_number || null,
           JSON.stringify(payload), nowIso()).run();
+      // Same carry-forward as the public ingest: the office typing up a phone
+      // call must not lose the figure it already quoted that person.
+      await carryProspectRetainer(env, caseNo, kind, payload.client_email);
       return json({ ok: true, case_no: caseNo }, 201);
     } catch (e) {
       if (!String(e).includes('UNIQUE')) throw e;
@@ -4959,6 +5112,7 @@ const EXPECTED_TABLES = [
   'case_day_pauses', 'lead_status', 'send_log', 'invoice_retainer',
   'payment_methods', 'payment_send', 'retainer_receipt',
   'retainer_payment', 'retainer_payment_void', 'retainer_payment_token',
+  'prospect',
 ];
 
 async function missingTables(env) {
@@ -5106,9 +5260,25 @@ async function route(request, env) {
        sheet's name ("$3,000 Retainer") would work until someone reworded the
        name, and would then quietly preselect the wrong preset — the selector
        must read a number, not a sentence. */
-    const retainer = await agreedRetainer(env, caseNo);
+    /* THE PREVIEW READS THE STORED VALUE (owner, 2026-08-15): "Preview, Send,
+       payment options, and history use that value with case_id = null."
+
+       So this reads the same place the send does — a linked case's agreement,
+       or the PROSPECT's own stored figure — rather than being handed a number
+       by the caller. That is what keeps the preview and the email the same
+       document, which is the #123 rule, and it now holds before a case exists
+       too. */
+    const forEmail = url.searchParams.get('email') || '';
+    const retainer = await retainerForSend(env, caseNo, forEmail);
+    /* `case_exists` answers the LINK action, and only the link action asks. It
+       is a plain boolean rather than a 404 on purpose: reading the sheets must
+       never fail because a reference happens not to be a case, which is how the
+       "not found" on Preview happened in the first place. */
+    const exists = caseNo ? Boolean(await env.DB.prepare(
+      'SELECT 1 AS x FROM submissions WHERE case_no = ?').bind(caseNo).first()) : false;
     return json({ sheets: rateSheets(retainer),
                   retainer,
+                  case_exists: exists,
                   email_configured: Boolean(env.RESEND_API_KEY) });
   }
 
@@ -5227,6 +5397,32 @@ async function route(request, env) {
   if (p === '/intakes' && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return createManualIntake(request, env, user);
+  }
+
+  /* The pre-case record: where an agreed retainer lives before a case exists
+     (owner, 2026-08-15). Admin-only like every other money control. Creates
+     nothing but a prospect row — no case, no lead, no case number. */
+  if (p === '/prospects' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    const body = await readJson(request);
+    const email = prospectKey(body.email);
+    if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email)) {
+      return json({ error: 'Enter a valid email address.' }, 400);
+    }
+    const raw = body.retainer;
+    if (raw != null && String(raw).trim() !== ''
+        && !(Number.isFinite(Number(raw)) && Number(raw) > 0)) {
+      return json({ error: 'The retainer has to be a dollar amount above zero.' }, 400);
+    }
+    const saved = await saveProspect(env, user, {
+      email, name: body.name, reference: body.reference, retainer: raw });
+    return json({ ok: true, prospect: saved });
+  }
+
+  if (p === '/prospects' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    const email = new URL(request.url).searchParams.get('email') || '';
+    return json({ prospect: await prospectFor(env, email) });
   }
 
   /* PRE-CASE SENDS (owner, 2026-08-15). The intake form sent to a name and an

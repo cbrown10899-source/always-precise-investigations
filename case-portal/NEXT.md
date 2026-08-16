@@ -970,6 +970,42 @@ repo migration rules."* A `recipient_kind` written when a contact is first
 recorded would restore the protection as a typed fact rather than a guess.
 **Not built, not started, and not to be started without the owner.**
 
+## 🐛 LIVE BUG FIXED — pre-case send required a case lookup (2026-08-15)
+
+**Reported from production.** The Rate Sheet + Intake send modal said *"Case
+number — optional — subject line"* and Preview then returned **"not found"** when
+the value was not an existing case. Optional in the label, required in the code.
+
+**The block was the AGREED RETAINER, not the send path** — the owner diagnosed
+it exactly. Preview calls `wizRetainerSave()` first and aborts on failure; that
+POSTed `/cases/<no>/retainer`, which does `SELECT kind FROM submissions` and
+404s. It is written before Preview *on purpose*, because the preview must show a
+stored figure — that was the #123 fix.
+
+**What changed:**
+
+- **`reference` and `case_no` are different things.** A reference is free text
+  that reaches the subject line and is never looked up. `case_no` means an
+  explicit **Link existing case**, and only that validates.
+- **A `prospect` table holds the agreed retainer before a case exists** — the
+  owner's ruling, against both storing it only in memory and forcing case
+  creation. Keyed by email, normalised in one place.
+- **`retainerForSend()` is the single read** — linked case, then prospect, then
+  standard — so preview, send and payment options cannot disagree.
+- **`carryProspectRetainer()`** moves the figure into `case_retainer` when the
+  prospect returns an intake, and never overwrites one already set on the case.
+
+**⚠️ `schema.sql` CHANGED — `portal-setup.yml` must be dispatched after this
+merges.** `prospect` is a new table and `/portal-api/health` will report it in
+`missing_tables` until the setup run applies it.
+
+**The audit the owner asked for** — retainer save/read, payment options, send
+log/history, intake pairing — is a test block of its own, driven end to end with
+no case, asserting the history rows carry a **real null** rather than an empty
+string standing in.
+
+**Suites:** worker 1147 → **1192**, portal 850 → **863**.
+
 ## 📥 QUEUED — OWNER WORKFLOW SIMPLIFICATION (2026-08-15)
 
 Recorded verbatim in **`WORKFLOW-SIMPLIFICATION.md`** next to this file, on

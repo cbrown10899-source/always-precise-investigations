@@ -400,6 +400,35 @@ and moving it would write an event that did not happen. The email reuses
 `paymentBlockText/Html` rather than restating them — two renderings of the same
 instructions drift, and the one that drifts is the one nobody is looking at.
 
+## A reference is not a case, and a prospect is not a case either
+
+**`reference` is free text; `case_no` means a case was explicitly LINKED.** They
+were one field, and the send modal said *"Case number — optional — subject
+line"* while the code looked the value up — optional in the label, required in
+the code. Typing anything that was not already a case returned **"not found"**
+on Preview. The block was `wizRetainerSave()`, which Preview calls first: it
+POSTed `/cases/<no>/retainer`, and that route 404s on a case that does not
+exist. Only an explicit **Link existing case** action validates now, and its
+error is scoped to that control instead of blocking the flow.
+
+**The `prospect` table is where an agreed retainer lives before a case exists**
+(owner: *"do NOT store it only in memory and do NOT force case creation"*).
+Keyed by the recipient's email, normalised in one place by `prospectKey()`.
+`retainerForSend()` is the single read — a linked case's stored agreement wins,
+then the prospect's own figure, then the standard — so **preview, send and the
+payment options cannot disagree**, which is the #123 rule holding before a case
+exists as well as after. `carryProspectRetainer()` moves the figure into
+`case_retainer` when that prospect returns an intake, and **never overwrites a
+retainer already set on the case**. Claims intakes carry nothing: a claim
+assignment is authorized in hour blocks.
+
+Falling back to the standard figure when a case is absent is the thing to never
+do here. It would put one number on the admin's screen and a different one in
+the client's email, which is exactly what #123 fixed from the other direction.
+
+`prospect` is a **new table**, so a merge touching `schema.sql` needs a
+`portal-setup.yml` dispatch — the standing rule.
+
 **Every send works before a case exists** (owner, 2026-08-15 — a blocking
 workflow defect). Private Intake, Private Rate Sheet, Private Payment Options,
 Insurance Intake and Insurance Rate Sheet all send on **a name and a valid email
@@ -594,8 +623,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1147 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 850 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 1192 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 863 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,

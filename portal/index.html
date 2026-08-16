@@ -1829,8 +1829,9 @@ function wizRetainerHtml(w){
       <input id="wiz_retc" inputmode="decimal" placeholder="e.g. 2500"
         data-act-input="wizRetDirty" value="${esc(w.retainerCustom || "")}"></label>` : ""}
     <p class="hint">${!w.caseNo
-      ? `Enter the case number above to change this. The agreed figure is recorded against the
-         case, so there is nowhere to keep it without one.`
+      ? `This is what the client will be quoted on the sheet. Link an existing case above to
+         record it against that case as well &mdash; without one there is nowhere to store an
+         agreement, so it travels with this email only.`
       : w.retainer == null
         /* Honest about what is on screen: this is the standard figure, not a
            reading of the case. Saying otherwise would invite an admin to treat
@@ -1851,9 +1852,43 @@ function wizRetainerHtml(w){
    It sends ONLY the amount. An absent `received` now means "unchanged" in the
    Worker, so changing what was agreed can never un-receive a retainer that was
    genuinely paid. */
+/* Linking is DELIBERATE and is the only thing that validates a case number
+   (owner, 2026-08-15). It is also the only place "not found" can now come from,
+   and it is scoped to this control rather than blocking Preview. */
+async function wizLinkCase(){
+  const w = SHEET_WIZ;
+  wizCollect();
+  const want = (w.reference || "").trim();
+  if(!want){ w.linkErr = "Type the case number first, then link it."; return paint(); }
+  w.linkErr = ""; paint();
+  try{
+    const r = await api(`/sheets?case=${encodeURIComponent(want)}&link=1`);
+    if(!r.case_exists){
+      w.linkErr = `No case matches ${want}. Leave it unlinked to use it as a reference.`;
+      return paint();
+    }
+    w.caseNo = want; w.reference = "";
+    if(r.retainer != null){
+      w.retainer = Number(r.retainer);
+      if(!w.retainerTouched) wizRetainerInit(w);
+    }
+    w.sheetData = (r.sheets || []).find(s => s.id === w.sheet) || w.sheetData;
+  }catch(e){ w.linkErr = e.message; }
+  paint();
+}
+
 async function wizRetainerSave(){
   const w = SHEET_WIZ;
   if(!w || w.sheet !== "private_retainer") return true;
+  /* WHERE THE AGREED FIGURE IS STORED DEPENDS ON WHETHER A CASE IS LINKED, and
+     neither path is allowed to block (owner, 2026-08-15).
+
+     This used to POST to /cases/<no>/retainer on the way to Preview, which
+     404'd when the typed value was not a real case — the "not found" the office
+     saw in production. A linked case still writes there. Without one the figure
+     is recorded against the PROSPECT, keyed by the recipient's email, which is
+     durable and is what Preview then reads back. Nothing is invented and no
+     case is created. */
   /* NOTHING IS WRITTEN UNLESS SOMEONE CHOSE SOMETHING, and this guard is the
      whole safety of the feature.
 
@@ -1870,18 +1905,17 @@ async function wizRetainerSave(){
     return false;
   }
   if(w.retainer != null && want === w.retainer) return true;
-  if(!w.caseNo){
-    /* No case, no record. The standard sheet still sends — it is the default
-       document and preserves nothing — but a CHOSEN figure with nowhere to live
-       would be a number the client is quoted and the office cannot look up. */
-    if(w.retainer == null && want === RETAINER_PRESETS[0]) return true;
-    w.err = "Enter the case number this retainer belongs to — the agreed figure is recorded "
-          + "against the case, and there is nowhere to keep it without one.";
-    return false;
-  }
   try{
-    await api(`/cases/${encodeURIComponent(w.caseNo)}/retainer`,
-      {method:"POST", body:{retainer_amount: want}});
+    if(w.caseNo){
+      await api(`/cases/${encodeURIComponent(w.caseNo)}/retainer`,
+        {method:"POST", body:{retainer_amount: want}});
+    }else{
+      /* Needs an address to key the prospect on, which Preview already
+         requires — so this can never be the thing that blocks. */
+      if(!w.to) return true;
+      await api("/prospects", {method:"POST",
+        body:{email: w.to, reference: w.reference, retainer: want}});
+    }
     w.retainer = want;
     return true;
   }catch(e){ w.err = e.message; return false; }
@@ -1896,9 +1930,18 @@ async function wizRetainerSave(){
    corrected by the Worker at send time, a blank screen helps nobody. */
 async function wizSheetLoad(){
   const w = SHEET_WIZ;
-  if(!w || !w.caseNo) return;
+  if(!w) return;
+  /* THE PREVIEW IS THE DOCUMENT THAT WILL BE SENT, with or without a case
+     (owner addendum, 2026-08-15). A linked case is read from its stored
+     agreement. With no case there is nothing stored, so the sheet is built at
+     the figure the admin chose — otherwise the preview falls back to the
+     standard sheet and shows one number while the client receives another,
+     which is exactly the defect #123 fixed. */
+  const q = w.caseNo ? `case=${encodeURIComponent(w.caseNo)}`
+          : (w.to ? `email=${encodeURIComponent(w.to)}` : "");
+  if(!q) return;
   try{
-    const r = await api(`/sheets?case=${encodeURIComponent(w.caseNo)}`);
+    const r = await api(`/sheets?${q}`);
     if(SHEET_WIZ === w){
       w.sheetData = (r.sheets || []).find(s => s.id === w.sheet) || null;
       /* The selector opens on what the case ALREADY agreed — but never on top
@@ -1933,11 +1976,25 @@ function sheetWizardHtml(){
       <label class="f"><span>Send it to</span>
         <input id="wiz_to" type="email" value="${esc(w.to)}" placeholder="name@example.com"></label>
       <div class="two">
-        <label class="f"><span>Case number <span class="opt">optional — subject line</span></span>
-          <input id="wiz_case" value="${esc(w.caseNo)}"></label>
+        <label class="f"><span>Case / reference <span class="opt">optional — subject line only</span></span>
+          <input id="wiz_case" value="${esc(w.caseNo || w.reference)}"
+            placeholder="e.g. Test123"${w.caseNo ? " disabled" : ""}></label>
         <label class="f"><span>Add a line <span class="opt">optional</span></span>
           <input id="wiz_note" value="${esc(w.note)}" placeholder="e.g. As discussed this morning."></label>
       </div>
+      ${/* THE FIELD ABOVE IS NOT A LOOKUP (owner, 2026-08-15 — live bug).
+            It said "optional — subject line" and was then looked up, so typing
+            anything that was not already a case blocked Preview with "not
+            found": optional in the label and required in the code. It is free
+            text now. Linking a real case is a SEPARATE, deliberate action, and
+            only that one validates. */ ""}
+      ${w.caseNo ? `<p class="hint" style="margin:2px 0 8px">
+          Linked to case <b>${esc(w.caseNo)}</b> — its agreed retainer is what will be sent.
+          <button class="btn sm ghost" data-act="wizUnlink" style="margin-left:6px">Unlink</button></p>`
+        : `<p class="hint" style="margin:2px 0 8px">
+          Free text: it goes in the subject line and is not checked against anything.
+          <button class="btn sm ghost" data-act="wizLink" style="margin-left:6px">Link existing case</button>
+          ${w.linkErr ? `<span class="err" style="display:block;margin-top:4px">${esc(w.linkErr)}</span>` : ""}</p>`}
       <label class="cap" style="display:flex"><input type="checkbox" id="wiz_inc" ${w.include ? "checked" : ""}>
         <span>Include the <b>${intakeLabel}</b> form link</span></label>
       <p class="hint">The matching intake is paired automatically. ${w.sheet === "insurance_assignment"
@@ -1949,7 +2006,9 @@ function sheetWizardHtml(){
       <dl class="detail">
         <dt>Sheet</dt><dd>${esc(sheet.name || w.sheet)}</dd>
         <dt>To</dt><dd>${esc(w.to)}</dd>
-        ${w.caseNo ? `<dt>Case</dt><dd>${esc(w.caseNo)}</dd>` : ""}
+        ${w.caseNo ? `<dt>Case</dt><dd>${esc(w.caseNo)} <span class="opt">linked</span></dd>`
+          : w.reference ? `<dt>Reference</dt><dd>${esc(w.reference)}
+              <span class="opt">subject line only &mdash; no case linked</span></dd>` : ""}
         ${w.sheet === "private_retainer" && w.retainer != null
           ? `<dt>Agreed retainer</dt><dd>$${esc(Number(w.retainer).toLocaleString("en-US"))}</dd>` : ""}
         ${w.note ? `<dt>Added line</dt><dd>${esc(w.note)}</dd>` : ""}
@@ -6440,7 +6499,9 @@ async function revokeInvite(id){
 function wizCollect(){
   if(!SHEET_WIZ) return;
   if($("wiz_to")) SHEET_WIZ.to = $("wiz_to").value.trim();
-  if($("wiz_case")) SHEET_WIZ.caseNo = $("wiz_case").value.trim();
+  /* The box holds a REFERENCE unless a case has been explicitly linked, in
+     which case it is disabled and the linked value is authoritative. */
+  if($("wiz_case") && !SHEET_WIZ.caseNo) SHEET_WIZ.reference = $("wiz_case").value.trim();
   if($("wiz_note")) SHEET_WIZ.note = $("wiz_note").value.trim();
   if($("wiz_inc")) SHEET_WIZ.include = $("wiz_inc").checked;
   if($("wiz_ret")) SHEET_WIZ.retainerPick = $("wiz_ret").value;
@@ -6460,8 +6521,14 @@ async function wizSend(){
      carrier sheet would be refused rather than obeyed. */
   const paying = w.sheet === "private_retainer" && w.pay && (w.payMethods || []).length;
   try{
+    /* `case_no` only when a case was explicitly LINKED; otherwise the typed
+       value travels as `reference`, which is subject-line text and is never
+       looked up. With no case there is nothing to read a retainer from, so the
+       chosen figure rides along for this email. */
     const r = await api(`/sheets/${encodeURIComponent(w.sheet)}/email`,
-      {method:"POST", body:{to: w.to, note: w.note, case_no: w.caseNo, include_intake: w.include,
+      {method:"POST", body:{to: w.to, note: w.note, include_intake: w.include,
+        ...(w.caseNo ? {case_no: w.caseNo}
+                     : {reference: w.reference, retainer: wizRetainerWanted(w)}),
         ...(paying ? {include_payment: true, methods: w.payMethods} : {})}});
     /* §13 — say what actually WENT, read back from the Worker's own answer
        rather than from the boxes that were ticked. */
@@ -6773,7 +6840,8 @@ document.addEventListener("click", ev => {
     SHEET_MSG = ""; SHEET_WIZ = null; paint();
   }
   else if(act === "shWiz"){
-    SHEET_WIZ = {sheet: el.dataset.sheet, step: 1, to: "", caseNo: "", note: "", include: true,
+    SHEET_WIZ = {sheet: el.dataset.sheet, step: 1, to: "", caseNo: "", reference: "",
+                 linkErr: "", note: "", include: true,
                  pay: true, payMethods: [], err: "",
                  retainer: null, retainerPick: String(RETAINER_PRESETS[0]),
                  retainerCustom: "", retainerTouched: false};
@@ -6785,7 +6853,9 @@ document.addEventListener("click", ev => {
   else if(act === "leadSheet"){
     const c = CASES.find(x => x.case_no === el.dataset.case) || {};
     SHEET_WIZ = {sheet: el.dataset.kind === "claims" ? "insurance_assignment" : "private_retainer",
-                 step: 1, to: c.client_email || "", caseNo: el.dataset.case, note: "",
+                 // From a lead the case is REAL, so it opens already linked.
+                 step: 1, to: c.client_email || "", caseNo: el.dataset.case, reference: "",
+                 linkErr: "", note: "",
                  include: true, pay: true, payMethods: [], err: "", fromLead: true,
                  retainer: null, retainerPick: String(RETAINER_PRESETS[0]),
                  retainerCustom: "", retainerTouched: false};
@@ -6887,6 +6957,16 @@ document.addEventListener("click", ev => {
     else { SHEET_WIZ.err = ""; SHEET_WIZ.step = s2; paint(); }
   }
   else if(act === "wizSend"){ wizSend(); }
+  else if(act === "wizLink"){ wizLinkCase(); }
+  else if(act === "wizUnlink"){
+    /* Unlinking returns the value to being free text. The retainer read from
+       that case is dropped with it — it was that case's agreement, not this
+       email's. */
+    SHEET_WIZ.reference = SHEET_WIZ.caseNo; SHEET_WIZ.caseNo = "";
+    SHEET_WIZ.linkErr = ""; SHEET_WIZ.err = "";
+    SHEET_WIZ.retainer = null; SHEET_WIZ.sheetData = null;
+    paint();
+  }
   else if(act === "nlKind"){ NL = {kind: el.dataset.k, err: ""}; paint(); }
   else if(act === "nlBack"){ NL = {kind: null, err: ""}; paint(); }
   else if(act === "nlSave"){ submitManualIntake(el.dataset.open === "1"); }

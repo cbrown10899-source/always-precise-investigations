@@ -970,6 +970,44 @@ CREATE TABLE IF NOT EXISTS retainer_payment_void (
 );
 
 -- ---------------------------------------------------------------------------
+-- THE PRE-CASE RECORD (owner, 2026-08-15).
+--
+-- "Private sends must work with no case. Store agreed retainer durably on the
+-- pre-case record. Preview, Send, payment options, and history use that value
+-- with case_id = null. When a case is later created, carry that retainer
+-- forward. Never replace it with the $1,500 default."
+--
+-- A prospect is someone the office has quoted but not yet opened a case for.
+-- That is the ordinary start of private work: a phone call, a figure agreed, a
+-- sheet and payment instructions sent, and only then a case. Until this table
+-- there was nowhere to keep the agreed figure, so the retainer selector had to
+-- either block (which it did, with "not found") or forget.
+--
+-- KEYED BY EMAIL because that is what identifies a prospect before anything
+-- else exists — the owner's rule is that a name and a valid email are enough to
+-- send. Stored lower-cased and trimmed by the Worker so the key is stable.
+--
+-- NOT a case, and deliberately not in `submissions`: nothing here has been
+-- accepted as work, and a row in `submissions` is a case number, a workspace
+-- and a place in the leads desk. Conjuring one to hold a number would be the
+-- "do not force case creation" the owner ruled out.
+--
+-- `converted_case` records where a prospect went once it became real, so the
+-- carry-forward can be seen after the fact rather than only inferred.
+CREATE TABLE IF NOT EXISTS prospect (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  email           TEXT    NOT NULL UNIQUE,  -- lower-cased, trimmed by the Worker
+  name            TEXT,
+  reference       TEXT,                     -- what the office wrote down, if anything
+  agreed_retainer REAL,                     -- null until a figure is actually agreed
+  converted_case  TEXT,                     -- the case_no it became, once it does
+  created_by      INTEGER REFERENCES users(id),
+  created_at      TEXT    NOT NULL,
+  updated_at      TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_prospect_case ON prospect(converted_case);
+
+-- ---------------------------------------------------------------------------
 -- SUPERSEDED by retainer_payment above. Kept because schema.sql cannot drop a
 -- table idempotently, and because a row written here before the log existed is
 -- still real money that must keep counting.

@@ -1558,6 +1558,85 @@ section('A private retainer is chosen before the sheet goes, and never reset by 
   await page.close();
 }
 
+/* THE LIVE BUG, DRIVEN AS THE OFFICE HIT IT (owner, 2026-08-15).
+
+   Production report: the Rate Sheet + Intake send modal says "Case number —
+   optional — subject line", and Preview then returned "not found" when the
+   value was not an existing case. The block was `wizRetainerSave()`, which
+   Preview calls first and aborts on: it POSTed /cases/<no>/retainer, and that
+   route 404s on a case that does not exist.
+
+   The whole workflow is walked here in a real browser, because the owner asked
+   that this not be marked fixed from unit tests alone. */
+section('A typed reference previews and sends; only an explicit link is validated');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Rate sheets' }).click();
+  await page.waitForTimeout(700);
+  await page.locator('.sheet-card', { hasText: 'Retainer' }).first().click();
+  await page.waitForTimeout(400);
+  await page.locator('.btn', { hasText: 'Send this sheet' }).click();
+  await page.waitForTimeout(900);
+
+  ok('the field is labelled as a reference, not as a lookup',
+     has(await text(page, '.amsheet'), 'subject line only'));
+  ok('and says it is not checked against anything',
+     has(await text(page, '.amsheet'), 'not checked against anything'));
+  ok('linking a case is a separate, deliberate action',
+     await page.locator('[data-act="wizLink"]').count() === 1);
+
+  /* THE EXACT REPRODUCTION: an arbitrary reference, the intake ticked, and a
+     retainer chosen — which is what makes Preview call wizRetainerSave. */
+  await page.locator('#wiz_to').fill('newclient@example.test');
+  await page.locator('#wiz_case').fill('Test123');
+  await page.locator('#wiz_ret').selectOption('2000');
+  await page.waitForTimeout(400);
+  await page.locator('[data-act="wizStep"]', { hasText: 'Preview' }).click();
+  await page.waitForTimeout(1100);
+  const prev = await text(page, '.amsheet');
+  ok('Preview does NOT say "not found"', !has(prev, 'not found'), prev.slice(0, 300));
+  ok('Preview is reached at all', has(prev, 'Payment options') || has(prev, 'Intake form'),
+     prev.slice(0, 300));
+  ok('and the reference is carried as the case line', has(prev, 'Test123'));
+
+  /* THE ADDENDUM: the preview must show the AGREED figure, never the standard
+     one. Falling back would be #123 again — screen says one number, client
+     receives another. */
+  ok('the preview shows the agreed $2,000', has(prev, '$2,000'), prev.slice(0, 400));
+  ok('and never the standard figure beside it', !has(prev, '$1,500'), prev.slice(0, 400));
+  ok('the heading over it agrees too',
+     (await text(page, '.amhead')).includes('$2,000'), await text(page, '.amhead'));
+
+  /* Mail is unconfigured in this run, so Send is a real failure — but it must
+     be a MAIL failure, never "not found". */
+  await page.locator('[data-act="wizSend"]').click();
+  await page.waitForTimeout(900);
+  const sent = await text(page, '.amsheet');
+  ok('Send fails on mail configuration, not on the reference',
+     has(sent, 'not configured') && !has(sent, 'not found'), sent.slice(0, 300));
+
+  // The intake ticks alongside it, with no case anywhere.
+  await page.locator('[data-act="wizStep"]', { hasText: 'Back' }).click();
+  await page.waitForTimeout(500);
+  ok('the intake checkbox is still available with no case',
+     await page.locator('#wiz_inc').isVisible() && await page.locator('#wiz_inc').isChecked());
+
+  /* Only the explicit link validates, and its error is scoped to that control
+     rather than blocking the flow. */
+  await page.locator('[data-act="wizLink"]').click();
+  await page.waitForTimeout(900);
+  ok('linking an unreal case says so, on the link control',
+     has(await text(page, '.amsheet'), 'No case matches'), await text(page, '.amsheet'));
+  ok('and Preview still works afterwards — the flow is not blocked',
+     await (async () => {
+       await page.locator('[data-act="wizStep"]', { hasText: 'Preview' }).click();
+       await page.waitForTimeout(900);
+       return !has(await text(page, '.amsheet'), 'not found');
+     })());
+  await page.close();
+}
+
 /* PAYMENTS.md second handoff §1/§4 — SEND PAYMENT OPTIONS from the lead card,
    and the standalone dialog it opens. "This allows payment instructions to be
    sent later without resending the rate sheet."
