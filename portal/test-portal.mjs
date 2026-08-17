@@ -5764,6 +5764,120 @@ section('A date and its time come from one reading of the clock');
   ok('single-value readings are left alone', /const today = ymdLocal\(\);/.test(src));
 }
 
+/* PAYMENTS.md §10 — RETURNED PRIVATE INTAKE, NEXT ACTION. "When the Private
+   Intake has been returned and the retainer is not yet marked received, the
+   Leads & Intakes card should make the next action obvious."
+
+   Seeded last so these four cards cannot move any earlier count. The condition
+   is `intake_received`, which is one of the nine lead statuses the office
+   already sets — no new field decides this. */
+section('A returned private intake shows the retainer pending and the way to act on it');
+{
+  const mk = (no, kind, name) => db.prepare(
+    `INSERT INTO submissions (case_no, kind, status, client_name, subject_name, payload, created_at)
+     VALUES (?, ?, 'new', ?, 'Subject R', ?, ?)`)
+    .run(no, kind, name, JSON.stringify({ client_name: name, objective: 'Retainer state' }),
+         new Date().toISOString());
+  const lead = (no, st) => db.prepare(
+    `INSERT INTO lead_status (case_no, status, set_at) VALUES (?, ?, ?)`)
+    .run(no, st, new Date().toISOString());
+
+  mk('API-RP-1', 'consumer', 'Pending Payer');       lead('API-RP-1', 'intake_received');
+  mk('API-RP-2', 'consumer', 'Settled Payer');       lead('API-RP-2', 'intake_received');
+  mk('API-RP-3', 'claims', 'Carrier Adjuster');      lead('API-RP-3', 'intake_received');
+  mk('API-RP-4', 'consumer', 'Already Asked');       lead('API-RP-4', 'intake_received');
+  // RP-2's retainer is IN; RP-4 has been sent instructions but has not paid.
+  db.prepare(`INSERT INTO case_retainer (case_no, retainer_amount, received, received_at)
+              VALUES (?, 1500, 1, ?)`).run('API-RP-2', new Date().toISOString());
+  db.prepare(`INSERT INTO payment_send (case_no, recipient, methods, with_sheet, ok, sent_at)
+              VALUES (?, 'asked@example.test', 'cash_app,venmo', 0, 1, ?)`)
+    .run('API-RP-4', new Date().toISOString());
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.waitForTimeout(700);
+
+  const c1 = page.locator('.pcard', { hasText: 'API-RP-1' });
+  const c2 = page.locator('.pcard', { hasText: 'API-RP-2' });
+  const c3 = page.locator('.pcard', { hasText: 'API-RP-3' });
+  const c4 = page.locator('.pcard', { hasText: 'API-RP-4' });
+  ok('all four cards are on the desk',
+     await c1.count() === 1 && await c2.count() === 1
+     && await c3.count() === 1 && await c4.count() === 1);
+
+  const t1 = await c1.innerText();
+  ok('the returned intake is named as received', has(t1, 'Private intake received'));
+  ok('and the retainer is named as pending', has(t1, 'Retainer pending'));
+  ok('§10: Record payment is offered right there',
+     await c1.locator('.btn', { hasText: 'Record payment' }).count() === 1);
+  ok('§10: so is Send payment options',
+     await c1.locator('.btn', { hasText: 'Send payment options' }).count() === 1);
+  ok('§10: and Review, which is the third named action',
+     await c1.locator('.btn', { hasText: 'Review' }).count() === 1);
+
+  /* The condition is BOTH halves. A retainer that has arrived is not pending,
+     and saying so anyway would send the office chasing money it already has. */
+  const t2 = await c2.innerText();
+  ok('a retainer already received is NOT reported pending', !has(t2, 'Retainer pending'), t2);
+  ok('and that card offers no Record payment, having nothing to record',
+     await c2.locator('.btn', { hasText: 'Record payment' }).count() === 0);
+
+  /* The private/insurance boundary, on the same desk as always. A claim
+     assignment has no retainer and must never be shown one. */
+  const t3 = await c3.innerText();
+  ok('an insurance card never says Retainer pending', !has(t3, 'Retainer pending'), t3);
+  ok('nor Private intake received', !has(t3, 'Private intake received'));
+  ok('nor offers Record payment or payment options',
+     await c3.locator('.btn', { hasText: 'Record payment' }).count() === 0
+     && await c3.locator('.btn', { hasText: 'payment options' }).count() === 0);
+
+  /* Instructions already sent — §10's second half. */
+  const t4 = await c4.innerText();
+  ok('a card whose client was already emailed says so',
+     has(t4, 'Payment instructions sent'), t4);
+  ok('naming the methods that went, read back from the send',
+     has(t4, 'Cash App') && has(t4, 'Venmo'), t4);
+  ok('and its button reads Resend, so nobody sends a first-time email twice',
+     await c4.locator('.btn', { hasText: 'Resend payment options' }).count() === 1);
+  ok('the card that was never asked does not claim instructions went',
+     !has(t1, 'Payment instructions sent'), t1);
+
+  /* Mobile, measured BEFORE navigating away — at 390px the nav rail is behind
+     the burger, so the desk has to be reached at desktop width and then
+     resized, which is the idiom the Edit Case section already uses. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(500);
+  const phone = await page.evaluate(() => {
+    const card = [...document.querySelectorAll('.pcard')]
+      .find(el => el.textContent.includes('API-RP-1'));
+    if (!card) return { found: false };
+    const small = [...card.querySelectorAll('.btn')]
+      .filter(b => b.getBoundingClientRect().height < 44)
+      .map(b => b.textContent.trim().slice(0, 20));
+    return { found: true, right: Math.round(card.getBoundingClientRect().right), small };
+  });
+  ok('the card still fits a 390px screen with the block on it',
+     phone.found && phone.right <= 391, JSON.stringify(phone));
+  ok('and every action on it is still a 44px target',
+     phone.found && phone.small.length === 0, JSON.stringify(phone));
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.waitForTimeout(400);
+
+  /* Record payment must reach the ONE writer, not a second one: the case's own
+     retainer form, with its idempotency token and its route. */
+  await c1.locator('.btn', { hasText: 'Record payment' }).click();
+  await page.waitForTimeout(900);
+  ok('Record payment lands on the case it was pressed for',
+     has(await text(page, 'body'), 'API-RP-1'));
+  ok('with the existing retainer form already open — the same one Overview uses',
+     await page.locator('#ret_amt').count() === 1);
+  ok('and its method list is the five the owner approved, plus the blank',
+     (await page.locator('#ret_method option').allInnerTexts()).length === 6,
+     (await page.locator('#ret_method option').allInnerTexts()).join('|'));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();

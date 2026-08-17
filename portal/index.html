@@ -375,6 +375,12 @@
   .pc-next{display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1px solid var(--line);
     padding-top:10px;margin-top:4px;}
   .pc-next small{display:block;color:var(--muted);font-size:.72rem;}
+  /* The same 44px floor `.bandhead .btn` already takes, and for the same reason:
+     `.btn.sm` is 7px of padding on a .82rem line, about 35px. This row is where
+     the office acts on a lead from a phone, and §10 has just added a sixth
+     button to it — flooring the new one and leaving its five neighbours short
+     is not a thing a row of buttons can do. */
+  .pc-next .btn{min-height:44px;}
   /* UIBUILD Phase 2 — the case page: P5 header, P6 sections, P7 overview. */
   .caseheader{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;align-items:flex-start;
     margin-bottom:14px;}
@@ -630,6 +636,15 @@
   .nextstep ul{list-style:none;margin:5px 0 0;padding:0;}
   .nextstep li{font-weight:600;}
   .nextstep li::before{content:"\2713";color:var(--good);font-weight:800;margin-right:7px;}
+  /* PAYMENTS.md §10 — the returned-intake state on the lead card. Amber, not
+     red: a retainer that has not arrived yet is the ordinary next step, not a
+     fault. */
+  .retpend{background:#fdf7ec;border:1px solid #f0dcb6;border-radius:8px;
+    padding:9px 12px;margin:8px 0 2px;font-size:.88rem;line-height:1.5;}
+  .rp-ok{color:#1c8a4d;font-weight:700;}
+  .rp-due{font-weight:800;letter-spacing:.05em;text-transform:uppercase;
+    font-size:.8rem;color:#7a5a12;}
+  .rp-sent{color:var(--muted);font-size:.82rem;margin-top:3px;}
   .dayon{background:#eaf5f7;border:1px solid #b7dbe3;border-radius:8px;padding:10px 12px;
     font-size:.88rem;margin-bottom:12px;}
   .meter{height:8px;border-radius:999px;background:#dbe6ea;overflow:hidden;margin:8px 0 2px;}
@@ -2033,6 +2048,17 @@ function leadsView(){
     /* MASTER §5 — the lead's own status, beside (never instead of) the intake
        state. The select is the office's hand; the two sends stamp themselves. */
     const ls = c.lead_status || "lead";
+    /* PAYMENTS.md §10 — a returned private intake whose retainer has not
+       arrived is the one lead state with an obvious next action, and the card
+       is where the office is looking. The condition needs no new field: the
+       office marking the lead `intake_received` IS "the private intake has been
+       returned", and it is one of the nine statuses already in LEAD_STATUSES.
+
+       The status pair is scoped exactly as §10 scopes it. The sent line is NOT:
+       a private lead that was emailed instructions should say so whatever its
+       lead status, or the office resends blind. */
+    const retPending = !claim && ls === "intake_received" && !c.retainer_received;
+    const paySent = !claim && c.pay_sent_at;
     const sendRow = LEAD_SEND && LEAD_SEND.case_no === c.case_no ? `
       <div class="lead-send">
         <input id="ls_to" type="email" placeholder="name@example.com" value="${esc(LEAD_SEND.to)}">
@@ -2059,6 +2085,13 @@ function leadsView(){
             `<option value="${v}" ${ls === v ? "selected" : ""}>${l}</option>`).join("")}
         </select></label>
       </div>
+      ${retPending || paySent ? `<div class="retpend">
+        ${retPending ? `<div class="rp-ok">&#10003; Private intake received</div>
+          <div class="rp-due">Retainer pending</div>` : ""}
+        ${paySent ? `<div class="rp-sent">Payment instructions sent${
+          payMethodLabels(c.pay_methods) ? ` &middot; ${esc(payMethodLabels(c.pay_methods))}` : ""
+          } &middot; ${when(c.pay_sent_at)}</div>` : ""}
+      </div>` : ""}
       <div class="pc-next">
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn sm ghost" data-act="openCase" data-case="${esc(c.case_no)}">Review</button>
@@ -2067,7 +2100,10 @@ function leadsView(){
           <button class="btn sm ghost" data-act="leadIntake" data-case="${esc(c.case_no)}">Send intake</button>
           ${claim ? "" : `<button class="btn sm ghost" data-act="leadPayOpen"
             data-case="${esc(c.case_no)}" data-name="${esc(c.client_name || "")}"
-            data-to="${esc(c.client_email || "")}">Send payment options</button>`}
+            data-to="${esc(c.client_email || "")}">${
+            paySent ? "Resend payment options" : "Send payment options"}</button>`}
+          ${retPending ? `<button class="btn sm ghost" data-act="leadRecordPay"
+            data-case="${esc(c.case_no)}">Record payment</button>` : ""}
         </div>
         ${sendRow}
         ${open ? `<button class="btn sm" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="assign">Accept &rarr;</button>` : ""}
@@ -3720,6 +3756,17 @@ const RETAINER_METHOD_OPTIONS = [
   ["cash_app", "Cash App"], ["venmo", "Venmo"], ["check", "Check"],
   ["cash", "Cash"], ["ach_bill", "ACH / BILL"],
 ];
+
+/* `payment_send.methods` is the comma-separated ids that actually went out, and
+   §10 wants them read back as "Cash App + Venmo". The two ids a payment send can
+   carry are already named above, so this reads the labels from there rather than
+   keeping a second copy that could disagree about what Venmo is called. An id
+   nobody has a label for is dropped rather than printed raw — the office reading
+   "cash_app" learns nothing the line did not already say. */
+function payMethodLabels(csv){
+  const by = Object.fromEntries(RETAINER_METHOD_OPTIONS);
+  return String(csv || "").split(",").map(s => by[s.trim()]).filter(Boolean).join(" + ");
+}
 
 function retainerReceiptHtml(r){
   /* AGREED / RECEIVED / OUTSTANDING are the owner's three figures, and
@@ -7663,6 +7710,19 @@ document.addEventListener("click", ev => {
   else if(act === "ntDelete"){
     if(confirm("Remove this recipient?\n\nThey stop being told anything. Switching them off "
       + "instead keeps the number and its choices.")) notifyAction(`/notify-recipients/${el.dataset.id}/delete`);
+  }
+  /* PAYMENTS.md §10's RECORD PAYMENT, from the lead card. THE SAME WRITER, not
+     a second one: it opens the case and puts the existing retainer form up, the
+     way `ovRecordPaymentHtml` reaches it from Overview. Same `RET_*` state, same
+     idempotency token, same route.
+
+     `openCase` resets retainer state for the case it lands on and returns early
+     if the workspace fails to load, so the form is only raised once that landing
+     is confirmed — otherwise a failed open leaves a payment form floating over
+     whichever case was on screen before. */
+  else if(act === "leadRecordPay"){
+    const no = el.dataset.case;
+    openCase(no).then(() => { if(WS && WS_CASE === no){ RET_FORM = true; paintCase(); } });
   }
   else if(act === "retOpen"){ retainerReset(); RET_FORM = true; paintCase(); }
   else if(act === "retCancel"){ retainerReset(); paintCase(); }

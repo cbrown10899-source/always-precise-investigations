@@ -1159,6 +1159,35 @@ section('Lead statuses, and sends that stamp themselves');
   ok('an investigator\'s list never carries the sales desk',
      invRows.length === 1 && !('lead_status' in invRows[0]) && !('client_email' in invRows[0]));
 
+  /* PAYMENTS.md §10 — the retainer state and whether payment instructions have
+     gone, carried on the case-list ROW because the Leads & Intakes card is what
+     draws them. Same shape as send_count/last_sent_at, and the same boundary:
+     whether a client has paid is the client's commercial position, so an
+     investigator is shown none of it. */
+  ok('the list carries retainer state for the office',
+     'retainer_received' in list.find(c => c.case_no === 'API-LD1'));
+  ok('a case with no retainer row reads as nothing owed-and-received, not a fake 0',
+     list.find(c => c.case_no === 'API-LD2').retainer_received === null);
+  ok('and it carries whether payment instructions have been sent',
+     'pay_sent_at' in list.find(c => c.case_no === 'API-LD1')
+     && 'pay_methods' in list.find(c => c.case_no === 'API-LD1'));
+  ok('nothing sent yet reads as null, so the card can tell "never" from "empty"',
+     list.find(c => c.case_no === 'API-LD1').pay_sent_at === null);
+  ok('an investigator is shown none of the money on the row',
+     !('retainer_received' in invRows[0]) && !('pay_sent_at' in invRows[0])
+     && !('pay_methods' in invRows[0]), JSON.stringify(Object.keys(invRows[0])));
+
+  /* And once instructions really go, the row says so — read back from what the
+     send wrote, not from what the request asked for. */
+  await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+    body: { to: 'ld2@example.test', name: 'Lead Two', case_no: 'API-LD2',
+            methods: ['cash_app', 'venmo'] } });
+  const afterPay = (await jsonOf(await call(env, '/submissions', { cookie: admin })))
+    .submissions.find(c => c.case_no === 'API-LD2');
+  ok('a real payment send lands on the row', !!afterPay.pay_sent_at, JSON.stringify(afterPay));
+  ok('naming the methods that actually went', (afterPay.pay_methods || '').includes('cash_app')
+     && (afterPay.pay_methods || '').includes('venmo'), String(afterPay.pay_methods));
+
   /* The system stamps what IT did. A sheet emailed against the lead's case
      number moves it — and the door pairing stays server-side. */
   await call(env, '/sheets/insurance_assignment/email', { method: 'POST', cookie: admin,
