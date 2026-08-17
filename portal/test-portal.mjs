@@ -835,8 +835,38 @@ section('Rate sheets');
   ok('on a phone it stacks below instead', stacked.below, JSON.stringify(stacked));
   ok('and the send area itself stays inside a 390px screen',
      stacked.fits, JSON.stringify(stacked));
+  /* THE FEE BOX ON A PHONE (owner, Unit 2). `.rs-v` was `white-space:nowrap`
+     for the money figures, but two private-sheet lines carry sentences, and an
+     unbreakable sentence made the view 413px wide on a 390px screen. Asserted
+     as no overflow AND as nothing hidden to achieve it — clipping the text
+     would satisfy a width check and lose the client's terms. */
+  const feeBox = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.rs-row')];
+    const wide = [];
+    for (const el of document.querySelectorAll('body *')) {
+      const r = el.getBoundingClientRect();
+      if (r.right > 391 && r.width > 0) wide.push(`${el.tagName}.${el.className}`.slice(0, 40));
+    }
+    return { sw: document.documentElement.scrollWidth, wide: wide.slice(0, 5),
+             rows: rows.length, text: document.querySelector('.feebox').innerText };
+  });
+  ok('the rate sheet does not scroll sideways on a 390px screen',
+     feeBox.sw <= 390, JSON.stringify({ sw: feeBox.sw, wide: feeBox.wide }));
+  ok('and every fee line is still there', feeBox.rows === 5, String(feeBox.rows));
+  ok('the sentence value that caused it is shown in full, not clipped',
+     has(feeBox.text, 'No routine add-on fees'), feeBox.text.slice(0, 200));
+  ok('and so is the other one', has(feeBox.text, 'Quoted in advance'));
+  ok('the retainer figure is still readable', has(feeBox.text, '$1,500'));
+
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.waitForTimeout(250);
+  const feeDesk = await page.evaluate(() => ({
+    sw: document.documentElement.scrollWidth,
+    text: document.querySelector('.feebox').innerText,
+  }));
+  ok('and the desktop layout is unharmed', feeDesk.sw <= 1200
+     && has(feeDesk.text, 'No routine add-on fees') && has(feeDesk.text, '$1,500'),
+     String(feeDesk.sw));
 
   await page.locator('.sheet-card', { hasText: 'Insurance Assignment Rates' }).click();
   await page.waitForTimeout(300);
@@ -866,6 +896,20 @@ section('Rate sheets');
   ok('§14: no payment options on the carrier sheet', !has(ins, 'Payment Options'), ins);
   ok('§14: no Cash App', !has(ins, 'Cash App'), ins);
   ok('§14: no Venmo', !has(ins, 'Venmo'), ins);
+
+  // The carrier sheet shares the fee box, so it gets the same phone check.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(300);
+  const insPhone = await page.evaluate(() => ({
+    sw: document.documentElement.scrollWidth,
+    text: document.querySelector('.feebox').innerText,
+  }));
+  ok('the carrier sheet does not scroll sideways on a phone either',
+     insPhone.sw <= 390, String(insPhone.sw));
+  ok('with its blocks still legible', has(insPhone.text, '$1,200')
+     && has(insPhone.text, '$3,300'), insPhone.text.slice(0, 200));
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.waitForTimeout(300);
 
   // UIBUILD P18: the 3-step wizard — Recipient, Options (the paired intake),
   // Preview. On the carrier sheet the paired intake is the carrier door.
