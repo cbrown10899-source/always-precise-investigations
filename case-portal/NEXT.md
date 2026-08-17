@@ -366,7 +366,125 @@ recedes but is **never removed**, and nothing is hidden with `display:none` to
 make a section look smaller. Shrinking a section by deleting its words is not
 shrinking it, and an absent zero is a different claim from a zero.
 
-## 🔎 ACTIVE SURVEILLANCE MOBILE AUDIT — 2026-08-17, NOT started
+## 📹 QUEUED BY THE OWNER — SURVEILLANCE VIDEO TIMESTAMP / BURN-IN
+
+**Recorded on arrival, 2026-08-17, before any of it was built.** Queued behind
+Active Surveillance Mobile PR 1, on the owner's instruction. **The full brief is
+in `VIDEO-TIMESTAMP.md` next to this file** — read that, not this summary.
+
+The shape, so nothing is lost if only this file is read:
+
+- **The original uploaded video is NEVER modified.** A separate *timestamped
+  derivative* is generated for viewing and package delivery; the original stays
+  untouched as evidence, and the two must be told apart on screen.
+- The burn-in is a **running clock**, not a static label: it starts at the
+  operator's chosen second and advances with the footage.
+- **`America/New_York`, resolving EST/EDT by date.** Hard-coding EST would make
+  every summer timestamp an hour wrong.
+- Bottom-right, encoded into the derivative — **a CSS overlay is explicitly not
+  sufficient**, because the stamp has to survive download and packaging.
+- Existing evidence permissions, storage and audit trail are reused, not
+  duplicated; the derivative inherits the original's access boundary.
+
+**⚠️ AUDIT FIRST, AND THE OWNER HAS PRE-AUTHORISED STOPPING.** The instruction is
+explicit: if real transcoding needs infrastructure or dependencies this project
+does not have, or would materially change deployment cost, **stop after the
+audit and report** — what exists, the exact missing capability, the recommended
+rendering approach, the storage/compute implications and the smallest path.
+**Do not silently introduce a paid external video service, and do not fake the
+burn-in with CSS.** That is a likely outcome here: the portal's compute is a
+Cloudflare Worker, which is not a transcoding environment.
+
+Also from the owner, for whenever the package work next moves: the **timestamped
+derivative should become the client-facing delivery video**, with the untouched
+original retained as evidence.
+
+## ✅ MOBILE PR 1 — SHIPPED (#162, `24582c7`)
+
+**DEPLOYED 2026-08-17**, site and Save point green at `24582c7d`. Suites: portal
+**1245/0** (1227 before), worker **1567/0**, deploy **68/0**.
+
+**Measured before coding**, at 390×844 with a day running — the numbers are the
+finding:
+
+| | y (before) | |
+| --- | --- | --- |
+| header ends | 83 | |
+| status block | 123 | Day line, a 2rem clock, the date — four stacked lines |
+| **End day** | **215** | pressed **once a shift**, gold, the loudest thing |
+| Pause | 283 | |
+| Activity / Photo / Video / Note | 358 | pressed **all day** |
+| Tap to speak | 602 | off the first screen |
+
+**275px of an 844px screen before the first field control**, in the exact
+reverse of the order of use. **After: 187px**, with the four field actions and
+the microphone all above Pause and End day.
+
+**Nothing functional moved** — `svElapsed`, `svClock`, `svPaused`, the `#svTimer`
+id the tick updater writes into, and every control's `data-act` are untouched.
+The subject line comes from a field already in the payload and already
+authorised for the role.
+
+**Two existing assertions were updated rather than worked around**, and the
+pattern is the one worth keeping: *"ending the day is the gold action"* encoded
+a design the owner has since reversed by name, and two functional end-the-day
+clicks were addressing the button by its **styling class** — a test that ends a
+day should find that control by what it IS, not by how it is painted.
+
+**An earlier draft shortened "Exit active mode" and a test caught it.** That was
+out of scope and was reverted; the guard did its job.
+
+## 🔎 MOBILE PR 2 AUDIT — 2026-08-17, NOT started
+
+Measured on the shipped screen at 390×844 with a day running.
+
+**1. Exit active mode is in the worst reachable place on the phone.** It sits in
+the sticky header at roughly **y 30–70** of an 844px screen — the top-right
+corner, the furthest point from a right thumb, and the one control you reach for
+when you are done or need the full portal. Everything else in the mode is
+already thumb-reachable. It also still **wraps to two lines** at 390px.
+*(An earlier draft of Mobile PR 1 shortened its label and a test caught it — the
+label is not the fix, the position is, and that is this PR.)*
+
+**2. The bottom navigation is right and should be left alone structurally.**
+Fixed to the bottom, five items, `min-height:50px` with
+`padding-bottom:max(12px, env(safe-area-inset-bottom))` — already correct on a
+notched phone, already in the thumb zone. **The natural home for Exit is here**,
+most likely behind the existing `⋮ Case` overflow item rather than as a sixth
+top-level item, because six items at 390px narrows every target.
+
+**3. Evidence and case access are one tap and fine.** `Evidence` and `Case` are
+both in the bottom bar; the evidence viewer shipped in #156 keeps a tap inside
+the app. No change needed — record it as checked rather than as work.
+
+**4. Remaining reducible chrome, in order of what it costs:**
+
+| | Roughly | Note |
+| --- | --- | --- |
+| sticky header | 83px | tag + case number + Exit |
+| subject line | ~40px | **earns its place** — the owner asked for it and it is the only thing naming who is watched |
+| date / mileage line | ~30px | a whole line for "Mon, Aug 17, 2026"; folds into the status row |
+| transient banner | ~90px when present | "Day started." — already transient, not worth touching |
+
+So there is **roughly one line of honest saving left** (the date), plus whatever
+moving Exit out of the header returns. The big win was PR 1's 275px → 187px;
+this is diminishing returns, and the audit should say so rather than manufacture
+a reason to keep cutting.
+
+### ▶ RECOMMENDED MOBILE PR 2 — NOT started
+
+**Move Exit active mode into the thumb zone, and fold the date into the status
+row.** Specifically: Exit moves out of the sticky header into the bottom bar's
+existing overflow, the header keeps the tag and the case number only, and the
+date/mileage line merges into the compact status row.
+
+Presentation and placement only. **The exit FLOW is unchanged** — `svExit` stays
+exactly what it is, including whatever it does about a running day; this PR moves
+where the control lives, not what it does. There is a test asserting the header
+contains "Exit active mode" today; it should be **updated to assert the control
+exists and is reachable**, not deleted.
+
+## 🔎 ACTIVE SURVEILLANCE MOBILE AUDIT — 2026-08-17, the original finding
 
 Audited on the real field view at **390×844 with a day running**. Ordered by how
 much it costs the investigator, not by how easy it is to fix.
