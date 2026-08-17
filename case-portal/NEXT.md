@@ -236,19 +236,65 @@ the dashboard's *package* read was never already filtered — the dashboard's
 route, and that is why #148's dashboard assertions were scoped to Today / next
 actions and Needs attention rather than to the whole page.
 
+### ✅ DONE — the case header's status chip is a 44px target (#154, `a8dd297`)
+
+**DEPLOYED 2026-08-17**, site and Save point green at `a8dd297b` first attempt.
+Suites: portal **1168/0** (1158 before), worker **1567/0**, deploy **68/0**.
+
+Measured on master: **56×24** — the width was already fine and only the height
+was short, by 20px. The judgement this unit was held back for went this way:
+**the target and the pill are separated.** `.ch-status` is a transparent box
+that owns the 44px and carries the `data-act`; the `.tag` inside is pixel-
+identical to before. Padding the chip out would have painted a pill nearly twice
+its proper depth in the corner of the screen meant to be scanned rather than
+pressed.
+
+**An overlay was considered and rejected on inspection.** `.ch-right` is a
+column with a 6px gap, so a `::after` stretched 10px each way would have reached
+into the Edit case button's own target and stolen its taps — a fix that quietly
+breaks the control directly below it. Worth remembering the next time a small
+control needs a bigger target in a tight column: check the neighbours first.
+
+Also moved `cursor:pointer` from `.ch-right .tag` to `.ch-status`. An
+investigator's header renders the same chip with **no `data-act`**, and the old
+rule gave that one a pointer too — an affordance on something that is not a
+control.
+
+The test asserts both halves and would catch either regression: the target is
+≥44 in both directions at 390px and 1200px, **and** the painted pill is still
+24px inside it, with type size and radius compared against a live `.tag` rather
+than a hard-coded number.
+
 ### ▶ NEXT SMALLEST UNIT, audited and NOT started
 
-**The case header's clickable status tag is a tap target under 44px.** It sits
-in `.ch-right` beside the Edit case button #150 just floored, carries
-`data-act="wsTab" data-tab="assign"` and `cursor:pointer` at
-`portal/index.html:5611`, and is a `.tag` — so `.ch-right .btn{min-height:44px}`
-does not reach it.
+**The evidence photo viewer has no way back** — the owner reported this
+personally on 2026-08-16 and it is still open. Verified on master `a8dd297`:
+the evidence gallery renders an image as
+`<a href="${fileUrl(e)}" target="_blank" rel="noopener">` at
+`portal/index.html:4952`, and `manifest.webmanifest` is `display: standalone`
+with `scope: "/portal/"` — so the file route is **outside the scope** and the
+tap leaves the installed app entirely: no browser chrome, no back button, no
+bottom bar. The owner's words were *"when you view some photos in evidence
+theres no back button — each viewed page should have a back button or display
+the bottom bar."*
 
-Fully specified by the rule already in force (≥44px touch targets, the floor
-`.bandhead .btn`, `.pc-next .btn` and `.ch-right .btn` all take) and needs no
-owner decision. Not folded into #150 because that unit named one control, and a
-status chip is not a peer button — it wants a deliberate look at whether a chip
-should grow or gain padding, which is a judgement rather than a repeat.
+**It is more than one link, which is what sizes the unit.** The same pattern is
+at `:6182` (the field view's gallery) and `:6529` (the package document's
+images), with filename links at `:3989`, `:4308` and `:4955`. The gallery
+thumbnails are the ones the owner actually hit; the filename links are the same
+escape by a different route. A viewer built once and used by all of them is the
+fix — six separate patches would be six chances to miss one.
+
+Fully specified by that report and needs no new decision. It is the older half
+of a two-part piece of feedback whose first half — the burger tap target —
+shipped in #123, so the remaining half has been outstanding the longest of
+anything recorded here.
+
+The shape: keep the evidence bytes where they are and stop the navigation
+leaving the app — an in-page viewer that draws the image with a back control, or
+at minimum a route that stays inside the PWA scope. **Do not** copy the original
+into a second store; original evidence must never be duplicated or overwritten
+(the package rules already say so).
 
 ## ⚖️ OWNER DECISIONS, 2026-08-17 — the three blocked alert/archive questions
 
