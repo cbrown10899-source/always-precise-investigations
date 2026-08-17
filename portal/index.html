@@ -718,6 +718,15 @@
      longer the gold one while a day is running. */
   .sv-shift{margin-top:22px;padding-top:16px;border-top:1px solid #1e3149;}
   .sv-shift .sv-btn.end{border-color:#4a3a1e;color:#e6c98a;}
+  /* MOBILE PR 2 — the date rides in the status row instead of owning a line of
+     its own. It wraps to a second line of that row on a narrow phone, which is
+     the row growing rather than the page. */
+  .sv-st-when{font-size:.78rem;color:#7fa3c6;flex-basis:100%;text-align:center;}
+  /* Leaving the mode, at the end of the Case drawer and in the thumb zone. Not
+     gold: this leaves a screen, while End investigation day stops the billable
+     clock, and the two must not look like the same weight of decision. */
+  .sv-exitblock{margin-top:20px;padding-top:16px;border-top:1px solid #1e3149;}
+  .sv-exitnote{margin:8px 2px 0;color:#8fb4d9;font-size:.8rem;line-height:1.5;}
   .sv-btn{display:block;width:100%;font:inherit;font-size:1rem;font-weight:800;padding:16px;
     border-radius:12px;border:0;cursor:pointer;background:#1f3a58;color:#fff;margin-bottom:10px;}
   .sv-btn.gold{background:var(--gold,#c99a3b);color:#13273f;}
@@ -6182,7 +6191,6 @@ function svView(){
     <div class="sv-head">
       <span class="tag ${claim ? "claims" : "consumer"}">${claim ? "Claim" : "Private"}</span>
       <span class="case">${esc(WS_CASE)}</span>
-      <button class="sv-x" data-act="svExit">&larr; Exit active mode</button>
     </div>
     ${subject ? `<div class="sv-ident">${claim ? "Claimant" : "Subject"}:
       <b>${esc(subject)}</b></div>` : ""}
@@ -6303,11 +6311,11 @@ function svHomeScreen(){
       <span class="sv-st-state">${svPaused()
         ? "on a break &mdash; not billed"
         : `running since ${esc(t12(open.start_time))}`}</span>
+      <span class="sv-st-when">${esc(fmtDay(open.day_date))}${
+        open.start_mileage != null ? ` &middot; ${esc(open.start_mileage)} mi at start` : ""}</span>
     </div>
-    <div class="sv-since">${svPaused()
-      ? "The clock is stopped and this time is not billed."
-      : `${esc(fmtDay(open.day_date))}${
-          open.start_mileage != null ? ` &middot; started at ${esc(open.start_mileage)} miles` : ""}`}</div>
+    ${svPaused() ? `<div class="sv-since">The clock is stopped and this time is
+      not billed.</div>` : ""}
 
     <div class="sv-quad">
       <button class="sv-q" data-act="svTab" data-t="activity"><b>&#9998;</b>Activity</button>
@@ -6408,6 +6416,30 @@ function svCaseDrawer(){
     <div style="color:#8fb4d9;font-size:.8rem;padding:0 2px 8px">
       This is the fieldwork view. Billing, the client's identity and the office's
       notes stay with the office &mdash; the server never sends them here.</div>
+    ${svExitBlock()}
+  </div>`;
+}
+
+/* MOBILE PR 2 — LEAVING THE MODE IS A THUMB ACTION NOW.
+
+   It lived in the sticky header at roughly y30-70 of an 844px screen: the
+   top-right corner, the furthest point on the phone from a right thumb, and
+   still wrapping to two lines at 390px. It is the control you reach for when
+   you are done, so it was in the worst place it could be.
+
+   It moves into the Case drawer — the `⋮` item the bottom bar already has —
+   rather than becoming a sixth top-level item, because six targets across
+   390px narrows every one of them. That also puts it behind one deliberate
+   tap, which is the right amount of friction: findable, not fumbled into.
+
+   `svExit` itself is untouched. This is where the control lives, not what it
+   does. It is deliberately NOT gold and reads as leaving a screen, so it stays
+   distinct from End investigation day, which ends the billable clock. */
+function svExitBlock(){
+  return `<div class="sv-exitblock">
+    <button class="sv-btn line" data-act="svExit">&larr; Exit active mode</button>
+    <p class="sv-exitnote">Leaves the field view and returns to the full portal.
+      It does not end your investigation day.</p>
   </div>`;
 }
 

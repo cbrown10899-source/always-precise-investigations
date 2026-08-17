@@ -4120,7 +4120,12 @@ section('Active Surveillance Mode: a field view of the same case');
      (await page.evaluate(() => getComputedStyle(document.querySelector('.sv')).backgroundColor))
        === 'rgb(13, 24, 38)');
   ok('the case number is in the header', has(await text(page, '.sv-head'), 'API-20260812-4001'));
-  ok('there is an obvious way out', has(await text(page, '.sv-head'), 'Exit active mode'));
+  /* MOBILE PR 2 — the way out moved out of the top-right corner and into the
+     Case drawer, which the bottom bar already reaches. The assertion is that it
+     is REACHABLE, which is what "an obvious way out" always meant; pinning it
+     to the header was pinning it to the worst place on the phone to put it. */
+  ok('the header no longer carries the way out',
+     !has(await text(page, '.sv-head'), 'Exit active mode'));
   ok('and a bottom navigation for one hand', await page.locator('.sv-nav button').count() === 5);
 
   // Day 4001 was ended by an earlier section, so this starts a fresh one.
@@ -4249,8 +4254,13 @@ section('Active Surveillance Mode: a field view of the same case');
   await page.waitForTimeout(1000);
   ok('the day ends with its hours recorded', has(await text(page, '.sv-body'), 'Day ended'));
 
-  // THE POINT: leave the mode and the work is simply there in the portal.
-  await page.locator('[data-act="svExit"]').click();
+  /* THE POINT: leave the mode and the work is simply there in the portal.
+     The way out moved into the Case drawer in Mobile PR 2 — it is reached
+     through the bottom bar's own item now, so this navigates the way a person
+     would rather than clicking a control that is no longer on this screen. */
+  await page.locator('.sv-nav button').last().click();
+  await page.waitForTimeout(600);
+  await page.locator('.sv-exitblock [data-act="svExit"]').click();
   await page.waitForTimeout(700);
   ok('exiting returns to the ordinary case page', await page.locator('.casepage').count() === 1);
   await wsTab(page, 'Activity log');
@@ -5098,8 +5108,13 @@ section('Back, edit and delete, from the field');
   await page.waitForTimeout(500);
   ok('tapping it lands on the field home, still in the mode',
      await page.locator('.sv-nav').count() === 1 && await page.locator('.sv-backbar').count() === 0);
-  ok('and Exit active mode is still the separate thing',
-     has(await text(page, '.sv-head'), 'Exit active mode'));
+  /* The distinction this asserts is the real one and still holds: the
+     contextual back does NOT leave the mode, and Exit active mode is a
+     different control somewhere else. It moved to the Case drawer in Mobile
+     PR 2, so this checks the SEPARATION rather than the old address. */
+  ok('and Exit active mode is still a separate control, not this one',
+     !has(await text(page, '.sv-body'), 'Exit active mode')
+     && await page.locator('.sv-back').count() === 0);
 
   // Log a line, then correct it, then remove it — all from the phone.
   await page.locator('.sv-nav button', { hasText: 'Activity' }).click();
@@ -6672,6 +6687,126 @@ section('The field screen is ranked by what an investigator actually uses');
   }));
   ok('the tablet layout still draws the whole field screen',
      tab.quad && tab.timer && tab.sw <= 820, JSON.stringify(tab));
+  await page.close();
+}
+
+/* ACTIVE SURVEILLANCE MOBILE PR 2 — the way out is a thumb action.
+
+   Measured before: Exit active mode sat in the sticky header at roughly y30-70
+   of an 844px screen — the top-right corner, the furthest point from a right
+   thumb — and wrapped to two lines. It is the control you reach for when you
+   are done, so it was in the worst place on the phone. */
+section('Leaving Active Surveillance is reachable with a thumb');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(SITE + '/portal/?surveillance=1');
+  await page.waitForTimeout(900);
+  if (await page.locator('[data-act="svEnter"]').count()) {
+    await page.locator('[data-act="svEnter"]').first().click();
+    await page.waitForTimeout(900);
+  }
+  ok('the field view is open', await page.locator('.sv-nav').count() === 1);
+
+  /* GONE FROM THE CORNER. */
+  ok('the header no longer holds the exit',
+     !has(await text(page, '.sv-head'), 'Exit active mode'));
+  ok('and the header still names the case',
+     has(await text(page, '.sv-head'), 'API-'));
+
+  /* THE BOTTOM BAR IS UNCHANGED — no sixth item was added. */
+  ok('the bottom navigation is still five items',
+     await page.locator('.sv-nav button').count() === 5);
+
+  /* REACHABLE: one deliberate tap on the Case item the bar already has. */
+  await page.locator('.sv-nav button').last().click();
+  await page.waitForTimeout(700);
+  const exit = page.locator('.sv-exitblock [data-act="svExit"]');
+  ok('the Case drawer carries the way out', await exit.count() === 1);
+  ok('and says what it does and does not do',
+     has(await text(page, '.sv-exitnote'), 'does not end your investigation day'));
+
+  const geo = await page.evaluate(() => {
+    const b = document.querySelector('.sv-exitblock [data-act="svExit"]');
+    const r = b.getBoundingClientRect();
+    const gold = b.classList.contains('gold');
+    return { h: Math.round(r.height), w: Math.round(r.width), gold,
+             sw: document.documentElement.scrollWidth };
+  });
+  ok(`the exit is a 44px target (${geo.h}px)`, geo.h >= 44, JSON.stringify(geo));
+  ok('it is not styled as the loud action — End day is the weighty one',
+     !geo.gold, JSON.stringify(geo));
+  ok('and the drawer does not scroll sideways at 390px', geo.sw <= 390,
+     JSON.stringify(geo));
+
+  /* IT IS BEHIND A DELIBERATE TAP, so it is not fumbled into: it is not on the
+     field home screen where the all-day actions live. */
+  await page.locator('.sv-nav button').first().click();
+  await page.waitForTimeout(600);
+  ok('the field home screen does not carry the exit at all',
+     await page.locator('.sv-body [data-act="svExit"]').count() === 0);
+
+  /* EVIDENCE AND CASE ACCESS ARE UNCHANGED — both still one tap from the bar. */
+  await page.locator('.sv-nav button').nth(2).click();
+  await page.waitForTimeout(700);
+  ok('Evidence is still one tap from the bar',
+     (await text(page, '.sv-body')).length > 0);
+  await page.close();
+}
+
+section('The field status row carries the date, not a line of its own');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(SITE + '/portal/?surveillance=1');
+  await page.waitForTimeout(900);
+  if (await page.locator('[data-act="svEnter"]').count()) {
+    await page.locator('[data-act="svEnter"]').first().click();
+    await page.waitForTimeout(900);
+  }
+  if (await page.locator('[data-act="svStartDay"]').count()) {
+    await page.locator('#sv_start').fill('08:00');
+    await page.locator('[data-act="svStartDay"]').click();
+    await page.waitForTimeout(1000);
+  }
+  ok('a day is running', await page.locator('#svTimer').count() === 1);
+
+  /* THE DATE IS STILL THERE — folded in, not deleted. */
+  const st = await text(page, '.sv-status');
+  ok('the status row carries the date', /\d{4}/.test(st), st);
+  ok('and still the day number and the clock',
+     /day\s*\d/i.test(st) && /\d\d:\d\d:\d\d/.test(st), st);
+  ok('the separate date line is gone while the day runs',
+     await page.locator('.sv-since').count() === 0);
+
+  /* THE TIMER IS UNTOUCHED — same id, same server-derived shape. */
+  ok('the timer is still the same element the tick updater writes into',
+     await page.locator('#svTimer').count() === 1);
+  ok('and still reads as a clock',
+     /\d\d:\d\d:\d\d/.test(await page.locator('#svTimer').innerText()));
+
+  /* And the field actions are still where PR 1 put them. */
+  const order = await page.evaluate(() => {
+    const q = document.querySelector('.sv-quad');
+    const end = [...document.querySelectorAll('.sv-btn')]
+      .find(b => /end investigation day/i.test(b.textContent));
+    return { quad: Math.round(q.getBoundingClientRect().top),
+             end: Math.round(end.getBoundingClientRect().top),
+             sw: document.documentElement.scrollWidth };
+  });
+  ok('the field actions still come before End day', order.quad < order.end,
+     JSON.stringify(order));
+  ok('and nothing scrolls sideways', order.sw <= 390, JSON.stringify(order));
+
+  // Tablet must not regress.
+  await page.setViewportSize({ width: 820, height: 1100 });
+  await page.waitForTimeout(400);
+  ok('the tablet still draws the status row and the field actions',
+     await page.locator('.sv-status').count() === 1
+     && await page.locator('.sv-quad').count() === 1
+     && await page.evaluate(() => document.documentElement.scrollWidth) <= 820);
   await page.close();
 }
 
