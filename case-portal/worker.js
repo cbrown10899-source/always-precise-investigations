@@ -2421,6 +2421,24 @@ function alertText(event, caseNo, channel) {
 async function notifyAdmins(env, event, caseNo) {
   try {
     if (!ALERT_IDS.includes(event)) return { sent: 0, reason: 'unknown_event' };
+    /* NEVER FOR A TEST CASE (INTAKE-OPS.md §1, which puts it in terms: "a test
+       intake producing a real email or SMS is the failure this feature is most
+       likely to have, so it is what the tests must prove cannot happen").
+
+       ONE GUARD AT THE ONE CHOKEPOINT, not a check at each of the six callers —
+       a per-caller list is one somebody adds to and forgets, and the seventh
+       alert would arrive silently wrong. `POST /demo-case` happening not to
+       call this was never the protection: the moment someone WORKS a test case
+       — logs a high task, submits a report, finalizes a package, records a
+       payment — every one of those alerts fires for real.
+
+       Matched case-INSENSITIVELY, which is deliberate and is the same reach
+       SQLite's LIKE gives `DEMO_LIKE`. That makes the two halves agree: nothing
+       `/demo-case/clear` would sweep away can have emailed the office first.
+       The prefix is written here rather than shared from DEMO_LIKE for the
+       reason the sweep writes it into every statement — it is the whole safety
+       mechanism, and it runs beside live work. */
+    if (/^TEST-/i.test(String(caseNo || ''))) return { sent: 0, reason: 'test_case' };
     if (!env.RESEND_API_KEY) return { sent: 0, reason: 'not_configured' };
     if ((await missingTables(env)).includes('notify_recipient')) {
       return { sent: 0, reason: 'not_set_up' };

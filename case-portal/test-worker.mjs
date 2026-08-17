@@ -7592,6 +7592,96 @@ section('Alerts are silent when there is nobody to tell or no provider');
   globalThis.fetch = realFetch;
 }
 
+/* A TEST CASE NEVER REACHES ANYBODY'S PHONE OR INBOX (INTAKE-OPS.md §1).
+
+   The spec puts it in terms: "a test intake producing a real email or SMS is
+   the failure this feature is most likely to have, so it is what the tests must
+   prove cannot happen." Before this guard it DID happen — a TEST- case number
+   posted to public /ingest returned 200 and sent.
+
+   Everything here runs with a real provider key and a real subscribed
+   recipient, so a silent result means the guard, never a missing key. */
+section('A TEST- case can never alert, however it is worked');
+{
+  const realFetch = globalThis.fetch;
+  let mails = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mails.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ id: 'm1' }), { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await call(env, '/notify-recipients', { method: 'POST', cookie: admin,
+    body: { label: 'Everything', email: 'desk@example.com',
+            alerts: { intakes: true, payments: true, reports: true,
+                      packages: true, tasks: true } } });
+
+  /* The control FIRST, so a silent run cannot be mistaken for a working one.
+     If this does not send, nothing below proves anything. */
+  mails = [];
+  await ingest(env, { case_no: 'API-REAL-1', service: 'Surveillance',
+                      client_name: 'Real Client', subject_name: 'S' });
+  ok('CONTROL: a real intake does reach the office', mails.length === 1,
+     JSON.stringify(mails.map(m => m.subject)));
+
+  mails = [];
+  ok('a TEST- intake is still accepted and recorded',
+     (await ingest(env, { case_no: 'TEST-20260817-1', service: 'Surveillance',
+                          client_name: 'Demo Client', subject_name: 'S' })).status === 200);
+  ok('and it alerted nobody', mails.length === 0,
+     JSON.stringify(mails.map(m => m.subject)));
+
+  /* The prefix is matched case-insensitively so its reach matches SQLite's
+     LIKE in DEMO_LIKE: nothing /demo-case/clear would sweep away can have
+     emailed the office first. */
+  mails = [];
+  await ingest(env, { case_no: 'test-20260817-2', service: 'Surveillance',
+                      client_name: 'Demo Client', subject_name: 'S' });
+  ok('a lower-case test- prefix is silent too, matching what the sweep deletes',
+     mails.length === 0, JSON.stringify(mails.map(m => m.subject)));
+
+  /* THE REAL EXPOSURE WAS NEVER INGEST — it was a test case being WORKED.
+     createDemoCase happens not to call notifyAdmins; every one of these does. */
+  mails = [];
+  const tkTest = await call(env, '/cases/TEST-20260817-1/tasks', { method: 'POST',
+    cookie: admin, body: { task: 'Urgent thing', priority: 'urgent' } });
+  ok('the urgent task really was created — a refused write proves nothing',
+     tkTest.status === 200 || tkTest.status === 201, String(tkTest.status));
+  ok('and it alerted nobody', mails.length === 0,
+     JSON.stringify(mails.map(m => m.subject)));
+
+  mails = [];
+  const payTest = await call(env, '/cases/TEST-20260817-1/retainer/payment', {
+    method: 'POST', cookie: admin, body: { amount: 500, method: 'cash' } });
+  ok('the payment really was recorded', payTest.status === 200, String(payTest.status));
+  ok('and it alerted nobody either', mails.length === 0,
+     JSON.stringify(mails.map(m => m.subject)));
+
+  /* And the work still really happened — the guard silences the courtesy, it
+     does not refuse the write. */
+  ok('the test case is on file all the same',
+     (await call(env, '/submissions/TEST-20260817-1', { cookie: admin })).status === 200);
+  ok('and its payment is really on the ledger',
+     ((await jsonOf(await call(env, '/cases/TEST-20260817-1/workspace', { cookie: admin })))
+       .authorization.retainer.payments || []).length === 1);
+
+  /* CONTROL AGAIN, at the end: the office is still reachable, so every silence
+     above was the prefix and not a harness that had stopped working. */
+  mails = [];
+  await call(env, '/cases/API-REAL-1/tasks', { method: 'POST', cookie: admin,
+    body: { task: 'Urgent thing', priority: 'urgent' } });
+  ok('CONTROL: the same action on a real case does alert', mails.length === 1,
+     JSON.stringify(mails.map(m => m.subject)));
+
+  globalThis.fetch = realFetch;
+}
+
 /* TWO ADMINS OUT ON ONE CASE AT ONCE (owner, WORKFLOW-SIMPLIFICATION §5).
 
    The data layer already allowed this: `startDay` checks for an existing open
