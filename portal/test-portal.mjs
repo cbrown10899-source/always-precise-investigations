@@ -6080,6 +6080,92 @@ section('The case header\'s Edit case control is a 44px target');
   await page.close();
 }
 
+/* THE CASE HEADER'S STATUS CHIP IS ACTIONABLE, SO IT IS A TARGET (owner).
+
+   It carries `data-act="wsTab" data-tab="assign"` — tapping it is how an admin
+   reaches the status control — but it is a `.tag`, not a `.btn`, so the
+   `.ch-right .btn` floor #150 added never reached it.
+
+   The constraint that shapes the fix: the chip must NOT end up looking like a
+   button. So the assertions are deliberately in two halves — the TARGET is at
+   least 44 in both directions, and the PAINTED chip is still chip-sized. A fix
+   that simply inflated the pill would pass the first half and fail the second,
+   which is the outcome the owner ruled out by name. */
+section('The case header status chip is a 44px target without becoming a button');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Cases' }).first().click();
+  await page.waitForTimeout(600);
+  await rowFor(page, 'API-LENS-LIVE').click();
+  await page.waitForTimeout(900);
+
+  const chip = page.locator('.ch-right [data-act="wsTab"][data-tab="assign"]').first();
+  ok('the header carries a clickable status chip', await chip.count() === 1);
+  ok('and it still says the status in WORDS, not by colour alone',
+     (await chip.innerText()).trim().length >= 3, await chip.innerText());
+
+  /* Measured on the ACTIONABLE box — the element that carries data-act, which
+     is what a thumb has to land on — at both widths, because a chip is small in
+     both directions and a target 44 tall and 30 wide is still a miss. The
+     PAINTED pill is measured separately, and the two are allowed to differ:
+     that separation is the whole design. */
+  const measure = () => page.evaluate(() => {
+    const el = document.querySelector('.ch-right [data-act="wsTab"][data-tab="assign"]');
+    const pill = el.querySelector('.tag') || el;
+    const r = el.getBoundingClientRect();
+    const pr = pill.getBoundingClientRect();
+    const cs = getComputedStyle(pill);
+    return { w: Math.round(r.width), h: Math.round(r.height),
+             pillW: Math.round(pr.width), pillH: Math.round(pr.height),
+             font: parseFloat(cs.fontSize), radius: cs.borderRadius,
+             right: Math.round(r.right) };
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  const phone = await measure();
+  ok(`the chip is a 44px target on a phone (${phone.w}x${phone.h})`,
+     phone.w >= 44 && phone.h >= 44, JSON.stringify(phone));
+  ok('and it does not push the header off a 390px screen', phone.right <= 391,
+     JSON.stringify(phone));
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.waitForTimeout(400);
+  const desk = await measure();
+  ok(`and on the desktop too (${desk.w}x${desk.h})`, desk.w >= 44 && desk.h >= 44,
+     JSON.stringify(desk));
+
+  /* THE OTHER HALF. It must still read as a status chip: small uppercase type
+     and a pill radius, not button-sized lettering. Asserted against the shared
+     `.tag` scale rather than a hard-coded number, so restyling tags later
+     cannot make this quietly wrong. */
+  const ref = await page.evaluate(() => {
+    const el = document.createElement('span');
+    el.className = 'tag'; el.textContent = 'x';
+    document.body.appendChild(el);
+    const cs = getComputedStyle(el);
+    const out = { font: parseFloat(cs.fontSize), radius: cs.borderRadius };
+    el.remove(); return out;
+  });
+  ok('the chip keeps the shared tag type size — it was not inflated into a button',
+     desk.font === ref.font, JSON.stringify({ chip: desk.font, tag: ref.font }));
+  ok('and it keeps the pill radius', desk.radius === ref.radius,
+     JSON.stringify({ chip: desk.radius, tag: ref.radius }));
+  /* The measured proof that the target grew and the CHIP DID NOT: the painted
+     pill is still the 24px it was before this unit, inside a 44px target. */
+  ok(`the painted pill is still chip-height (${desk.pillH}px inside ${desk.h}px)`,
+     desk.pillH <= 30 && desk.h >= 44, JSON.stringify(desk));
+  ok('on the phone too', phone.pillH <= 30 && phone.h >= 44, JSON.stringify(phone));
+
+  /* Semantics untouched: it is still the door to the status control. */
+  await page.locator('.ch-right .tag').first().click();
+  await page.waitForTimeout(700);
+  ok('tapping it still opens the Assignment panel, unchanged',
+     has(await text(page, 'body'), 'Assignment'));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
