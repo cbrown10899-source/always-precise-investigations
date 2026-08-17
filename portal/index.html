@@ -663,7 +663,12 @@
     padding:0 0 96px;-webkit-overflow-scrolling:touch;z-index:70;}
   .sv-head{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid #1e3149;
     position:sticky;top:0;background:#0d1826;z-index:2;}
-  .sv-head .case{color:#8fb4d9;background:none;padding:0;font-size:.9rem;}
+  /* The case number is an identifier and reads as one — it must not break in
+     the middle. It was wrapping as "API-20260815-" / "5002" on a phone, which
+     is the kind of thing that gets read back wrong over a radio. The Exit
+     control is left exactly as it is; its reachability is Mobile PR 2. */
+  .sv-head .case{color:#8fb4d9;background:none;padding:0;font-size:.84rem;
+    white-space:nowrap;font-variant-numeric:tabular-nums;}
   .sv-x{margin-left:auto;background:none;border:0;color:#8fb4d9;font:inherit;font-size:.82rem;
     font-weight:700;cursor:pointer;padding:6px 4px;}
   .sv-body{padding:18px 16px;max-width:640px;margin:0 auto;}
@@ -682,6 +687,37 @@
     cursor:pointer;padding:8px 2px 12px;display:inline-block;}
   .sv-backbar{padding:6px 16px 0;max-width:640px;margin:0 auto;}
   .sv-since{text-align:center;color:#8fb4d9;font-size:.82rem;margin-bottom:18px;}
+
+  /* ===== MOBILE PR 1 — the field screen ranked by what gets pressed =====
+     The clock was four stacked lines and a 2rem number; with the header that
+     was 275px of an 844px screen before the first field control. It is one row
+     now. The time is still the emphatic thing IN that row — an investigator
+     reads it at a glance from a driver's seat — it simply no longer owns the
+     screen. Nothing about how it is derived changed. */
+  .sv-status{display:flex;align-items:baseline;justify-content:center;flex-wrap:wrap;
+    gap:4px 10px;padding:10px 12px;margin-bottom:6px;border-radius:12px;
+    background:#101f31;border:1px solid #1e3149;}
+  .sv-status .sv-timer{font-size:1.5rem;margin:0;}
+  .sv-st-day{font-size:.74rem;letter-spacing:.13em;text-transform:uppercase;
+    color:#8fb4d9;font-weight:800;}
+  .sv-st-state{font-size:.8rem;color:#8fb4d9;}
+  /* A stopped clock still has to LOOK stopped: the gold edge is visible before
+     the word is read, which is the point in a car at dusk. */
+  .sv-status.paused{border-color:var(--gold,#c99a3b);background:#161d26;}
+
+  /* WHO IS BEING WATCHED, under the case number. Full width so a long name does
+     not fight the Exit control for the same row. */
+  .sv-ident{padding:8px 16px;color:#cfe0f0;font-size:.88rem;background:#0d1826;
+    border-bottom:1px solid #1e3149;max-width:640px;margin:0 auto;}
+  .sv-ident b{color:#fff;}
+
+  /* END OF SHIFT, AT THE END OF THE SCREEN. Pressed once a day, and one of them
+     stops the billable clock — so it sits past everything used DURING the day
+     rather than under the thumb. Same controls, same actions, same confirmation
+     screen; only the position and the emphasis changed, and End day is no
+     longer the gold one while a day is running. */
+  .sv-shift{margin-top:22px;padding-top:16px;border-top:1px solid #1e3149;}
+  .sv-shift .sv-btn.end{border-color:#4a3a1e;color:#e6c98a;}
   .sv-btn{display:block;width:100%;font:inherit;font-size:1rem;font-weight:800;padding:16px;
     border-radius:12px;border:0;cursor:pointer;background:#1f3a58;color:#fff;margin-bottom:10px;}
   .sv-btn.gold{background:var(--gold,#c99a3b);color:#13273f;}
@@ -6130,12 +6166,26 @@ function svView(){
     : SV.tab === "endday"    ? svEndDayScreen()
     :                          svHomeScreen();
 
+  /* MOBILE PR 1 — THE SCREEN SAYS WHO IS BEING WATCHED. The case number alone
+     is an identifier, not an identity, and on a phone it was wrapping across two
+     lines while nothing on screen named the subject.
+
+     `subject_name` is ALREADY in this payload and already authorised for this
+     role — the subject is who is watched, never who is paying, so the Worker's
+     allow-list sends it and the redaction drops the client's identity rather
+     than the subject's. No new field is read, no route changes and no boundary
+     moves. (The allow-list's own name is deliberately not written in this file;
+     a test fails if it reappears here.) If there is no subject the line is
+     simply absent rather than inventing a label for one. */
+  const subject = p.subject_name || s.subject_name || "";
   return `<div class="sv">
     <div class="sv-head">
       <span class="tag ${claim ? "claims" : "consumer"}">${claim ? "Claim" : "Private"}</span>
       <span class="case">${esc(WS_CASE)}</span>
       <button class="sv-x" data-act="svExit">&larr; Exit active mode</button>
     </div>
+    ${subject ? `<div class="sv-ident">${claim ? "Claimant" : "Subject"}:
+      <b>${esc(subject)}</b></div>` : ""}
     ${back}
     ${body}
     <div class="sv-nav">
@@ -6228,20 +6278,36 @@ function svHomeScreen(){
   }
 
   const ms = svElapsed();
+  /* MOBILE PR 1 — THE SCREEN IS ORDERED BY HOW OFTEN A THING IS PRESSED.
+
+     Measured on the previous layout at 390x844 with a day running: 275px of an
+     844px screen before the first field control, and the order down the page was
+     End investigation day (215px) -> Pause (283) -> Activity/Photo/Video/Note
+     (358) -> Tap to speak (602). The control pressed ONCE A SHIFT was the
+     loudest, highest and easiest to hit by accident; the four pressed all day
+     were below it, and the microphone was off the first screen.
+
+     The clock still informs — it is the first thing on the page and still
+     readable at a glance from a driver's seat — but it is one line rather than
+     four, and it no longer owns the screen.
+
+     NOTHING FUNCTIONAL MOVED. `svElapsed`, `svClock`, `svPaused` and the
+     `#svTimer` id the tick updater writes into are all untouched, as are every
+     control's `data-act`. This is ordering and type size. */
   return `<div class="sv-body">
     ${note}
-    <div class="sv-day">Day ${days.length} &middot; ${svPaused()
-      ? "paused" : `running since ${esc(t12(open.start_time))}`}</div>
-    <div class="sv-timer${svPaused() ? " paused" : ""}" id="svTimer">${ms == null ? "--:--:--" : svClock(ms)}</div>
+    <div class="sv-status${svPaused() ? " paused" : ""}">
+      <span class="sv-st-day">Day ${days.length}</span>
+      <span class="sv-timer${svPaused() ? " paused" : ""}" id="svTimer">${
+        ms == null ? "--:--:--" : svClock(ms)}</span>
+      <span class="sv-st-state">${svPaused()
+        ? "on a break &mdash; not billed"
+        : `running since ${esc(t12(open.start_time))}`}</span>
+    </div>
     <div class="sv-since">${svPaused()
-      ? "On a break &mdash; the clock is stopped and this time is not billed"
+      ? "The clock is stopped and this time is not billed."
       : `${esc(fmtDay(open.day_date))}${
           open.start_mileage != null ? ` &middot; started at ${esc(open.start_mileage)} miles` : ""}`}</div>
-    ${svPaused()
-      ? `<button class="sv-btn gold" data-act="svResume">Resume the day</button>
-         <button class="sv-btn line" data-act="svTab" data-t="endday">End investigation day</button>`
-      : `<button class="sv-btn gold" data-act="svTab" data-t="endday">End investigation day</button>
-         <button class="sv-btn line" data-act="svPause">Pause &mdash; taking a break</button>`}
 
     <div class="sv-quad">
       <button class="sv-q" data-act="svTab" data-t="activity"><b>&#9998;</b>Activity</button>
@@ -6267,6 +6333,14 @@ function svHomeScreen(){
         ? "<b>Authorization is used up.</b> Contact the office before further work."
         : `<b>${esc(a.percent_used)}% used.</b> Past the ${esc(a.warn_level)}% mark.`}</div>` : ""}
     </div>` : ""}
+
+    <div class="sv-shift">
+      ${svPaused()
+        ? `<button class="sv-btn gold" data-act="svResume">Resume the day</button>
+           <button class="sv-btn line" data-act="svTab" data-t="endday">End investigation day</button>`
+        : `<button class="sv-btn line" data-act="svPause">Pause &mdash; taking a break</button>
+           <button class="sv-btn line end" data-act="svTab" data-t="endday">End investigation day</button>`}
+    </div>
   </div>`;
 }
 

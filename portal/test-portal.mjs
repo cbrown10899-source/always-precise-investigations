@@ -4135,7 +4135,15 @@ section('Active Surveillance Mode: a field view of the same case');
   ok('the day starts and the timer appears', await page.locator('#svTimer').count() === 1);
   ok('the timer reads as a clock', /\d\d:\d\d:\d\d/.test(await page.locator('#svTimer').innerText()));
   ok('it says when the day started', has(home, '6:30 AM'));
-  ok('ending the day is the gold action', await page.locator('.sv-btn.gold').count() >= 1);
+  /* REVERSED BY THE OWNER, 2026-08-17: "End investigation day should not be the
+     loudest or easiest accidental tap on the page." It was the gold action when
+     it was the screen's primary; it is pressed once a shift, so the emphasis
+     now belongs to the actions used all day. Asserted as the new rule rather
+     than deleted, so nothing drifts back. */
+  ok('ending the day is NOT the gold action while a day is running',
+     await page.locator('.sv-btn.gold', { hasText: 'End investigation day' }).count() === 0);
+  ok('and it is still plainly there, below the field actions',
+     await page.locator('.sv-shift .sv-btn', { hasText: 'End investigation day' }).count() === 1);
   ok('the four quick actions are there',
      has(home, 'Activity') && has(home, 'Photo') && has(home, 'Video') && has(home, 'Note'));
 
@@ -4229,7 +4237,7 @@ section('Active Surveillance Mode: a field view of the same case');
   // Ending the day is a confirmation with totals, never one tap.
   await page.locator('.sv-nav button', { hasText: 'Home' }).click();
   await page.waitForTimeout(400);
-  await page.locator('.sv-btn.gold', { hasText: 'End investigation day' }).click();
+  await page.locator('.sv-btn', { hasText: 'End investigation day' }).first().click();
   await page.waitForTimeout(400);
   const end = await text(page, '.sv-body');
   ok('ending shows the totals first', has(end, 'Activity entries') && has(end, 'Photos'));
@@ -5149,7 +5157,7 @@ section('Back, edit and delete, from the field');
   // Leave the world as we found it — the next section expects no day running.
   await page.locator('.sv-nav button', { hasText: 'Home' }).click();
   await page.waitForTimeout(400);
-  await page.locator('.sv-btn.gold', { hasText: 'End investigation day' }).click();
+  await page.locator('.sv-btn', { hasText: 'End investigation day' }).first().click();
   await page.waitForTimeout(500);
   await page.locator('[data-act="svEndDay"]').click();
   await page.waitForTimeout(900);
@@ -6544,6 +6552,126 @@ section('The dashboard has a hierarchy: real numbers lead, zeros stay but recede
      stacked.every(w => w >= 140), JSON.stringify(stacked));
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.waitForTimeout(300);
+  await page.close();
+}
+
+/* ACTIVE SURVEILLANCE MOBILE PR 1 — the field screen ranked by use.
+
+   Measured on master at 390x844 with a day running: the status block (Day line,
+   a ~64px clock, the date line) plus the header took roughly a third of the
+   screen before the first control, and the loudest, highest button was "End
+   investigation day" — pressed once a shift — with Activity, Photo, Video and
+   Note below it and Tap to speak below those.
+
+   These assertions are about ORDER and SPACE, not about looks, because those
+   are the two things that made the screen wrong and the two a later change
+   could silently undo. */
+section('The field screen is ranked by what an investigator actually uses');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(SITE + '/portal/?surveillance=1');
+  await page.waitForTimeout(900);
+  const entered = await page.locator('[data-act="svEnter"]').count();
+  if (entered) { await page.locator('[data-act="svEnter"]').first().click();
+                 await page.waitForTimeout(900); }
+  if (await page.locator('[data-act="svStartDay"]').count()) {
+    await page.locator('#sv_start').fill('08:00');
+    await page.locator('[data-act="svStartDay"]').click();
+    await page.waitForTimeout(1000);
+  }
+  ok('a day is running, so this is the screen the field actually sees',
+     await page.locator('#svTimer').count() === 1);
+
+  const geo = await page.evaluate(() => {
+    const y = sel => { const el = document.querySelector(sel);
+      return el ? Math.round(el.getBoundingClientRect().top) : null; };
+    const box = sel => { const el = document.querySelector(sel);
+      return el ? el.getBoundingClientRect() : null; };
+    const head = box('.sv-head'), st = box('.sv-status') || box('.sv-timer');
+    const quad = box('.sv-quad');
+    const endBtn = [...document.querySelectorAll('.sv-btn')]
+      .find(b => /end investigation day/i.test(b.textContent));
+    const pauseBtn = [...document.querySelectorAll('.sv-btn')]
+      .find(b => /pause/i.test(b.textContent));
+    const mic = box('.sv-mic');
+    const small = [...document.querySelectorAll('.sv-btn, .sv-q, .sv-mic, .sv-x, .sv-nav button')]
+      .filter(el => { const r = el.getBoundingClientRect();
+                      return r.height > 0 && r.height < 44; })
+      .map(el => el.textContent.trim().slice(0, 18));
+    return {
+      headBottom: head ? Math.round(head.bottom) : null,
+      statusTop: st ? Math.round(st.top) : null,
+      quadTop: quad ? Math.round(quad.top) : null,
+      micTop: mic ? Math.round(mic.top) : null,
+      endTop: endBtn ? Math.round(endBtn.getBoundingClientRect().top) : null,
+      pauseTop: pauseBtn ? Math.round(pauseBtn.getBoundingClientRect().top) : null,
+      chrome: quad && head ? Math.round(quad.top - head.bottom) : null,
+      sw: document.documentElement.scrollWidth,
+      small,
+    };
+  });
+
+  /* 1. THE CLOCK INFORMS, IT NO LONGER DOMINATES. Measured as the space between
+     the end of the header and the first field control — everything the
+     investigator scrolls past to reach the thing they came to press. On master
+     that gap was over 300px of an 844px screen. */
+  ok(`the status area leaves the field actions near the top (${geo.chrome}px before them)`,
+     geo.chrome !== null && geo.chrome <= 190, JSON.stringify(geo));
+  ok('and the four field actions are on the first screenful',
+     geo.quadTop !== null && geo.quadTop <= 420, JSON.stringify(geo));
+
+  /* 2 + 3. THE ORDER IS THE POINT. Used-all-day above pressed-once-a-shift. */
+  ok('Activity / Photo / Video / Note come BEFORE End investigation day',
+     geo.quadTop < geo.endTop, JSON.stringify(geo));
+  ok('and before Pause', geo.quadTop < geo.pauseTop, JSON.stringify(geo));
+  ok('Tap to speak is not buried below the low-frequency controls',
+     geo.micTop < geo.endTop && geo.micTop < geo.pauseTop, JSON.stringify(geo));
+  ok('End investigation day is no longer the highest control on the screen',
+     geo.endTop > geo.quadTop && geo.endTop > geo.micTop, JSON.stringify(geo));
+
+  /* 4. THE SCREEN SAYS WHO IS BEING WATCHED — from the payload the field view
+     already receives. No new data and no new permission. */
+  const head = await text(page, '.sv-head');
+  ok('the header still names the case', has(head, 'API-'), head);
+  const ident = await page.locator('.sv-ident').count();
+  ok('and a compact identity line names the subject', ident === 1);
+  const identText = ident ? (await text(page, '.sv-ident')).trim() : '';
+  ok('which is really the subject, not an invented label',
+     /subject|claimant/i.test(identText) && identText.length > 9, identText);
+
+  /* 5. FIELD USE: thumb targets, no sideways scroll, nothing clipped. */
+  ok('every field control is a 44px target', geo.small.length === 0,
+     JSON.stringify(geo.small));
+  ok('and the field screen does not scroll sideways at 390px', geo.sw <= 390,
+     JSON.stringify(geo));
+
+  /* 6. BEHAVIOUR IS UNCHANGED — the controls are still the same controls, still
+     wired to the same actions. This PR moved them; it did not rewire them. */
+  ok('End day still opens the end-of-day screen, unchanged',
+     await page.locator('[data-act="svTab"][data-t="endday"]').count() >= 1);
+  ok('Pause is still the pause action, unchanged',
+     await page.locator('[data-act="svPause"]').count() === 1);
+  ok('the four field actions still carry their own actions',
+     await page.locator('.sv-quad [data-act="svTab"][data-t="activity"]').count() === 1
+     && await page.locator('.sv-quad [data-act="svPhoto"]').count() === 1
+     && await page.locator('.sv-quad [data-act="svVideo"]').count() === 1
+     && await page.locator('.sv-quad [data-act="svNote"]').count() === 1);
+  ok('and the timer is still the server-derived one, still on screen',
+     (await text(page, '#svTimer')).match(/\d\d:\d\d:\d\d/) !== null,
+     await text(page, '#svTimer'));
+
+  /* The tablet is not a regression target of this PR, but it must not break. */
+  await page.setViewportSize({ width: 820, height: 1100 });
+  await page.waitForTimeout(400);
+  const tab = await page.evaluate(() => ({
+    sw: document.documentElement.scrollWidth,
+    quad: !!document.querySelector('.sv-quad'),
+    timer: !!document.querySelector('#svTimer'),
+  }));
+  ok('the tablet layout still draws the whole field screen',
+     tab.quad && tab.timer && tab.sw <= 820, JSON.stringify(tab));
   await page.close();
 }
 
