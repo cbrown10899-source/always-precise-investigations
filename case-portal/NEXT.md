@@ -434,7 +434,34 @@ day should find that control by what it IS, not by how it is painted.
 **An earlier draft shortened "Exit active mode" and a test caught it.** That was
 out of scope and was reverted; the guard did its job.
 
-## 🔎 MOBILE PR 2 AUDIT — 2026-08-17, NOT started
+## ✅ MOBILE PR 2 — SHIPPED (#164, `182f9b8`)
+
+**DEPLOYED 2026-08-17**, site and Save point green at `182f9b84`. Suites: portal
+**1265/0** (1245 before), worker **1567/0**, deploy **68/0**.
+
+Exit active mode moved out of the sticky header — where it sat at roughly y30–70
+of an 844px screen, the furthest point from a right thumb — into the **Case
+drawer**, the `⋮` item the bottom bar already has. **Not** a sixth top-level
+item: six targets across 390px narrows every one of them, and the bar is still
+five (asserted). Behind one deliberate tap, and absent from the field home
+screen where the all-day actions live.
+
+`svExit` is untouched. It is not gold, and it says what it does and does not do —
+*"It does not end your investigation day"* — because End investigation day stops
+the billable clock and leaving a screen does not.
+
+The date folded into the status row: one less line, same words. The paused
+sentence keeps its own line, and only appears while paused.
+
+**Three existing assertions were updated to their INTENT** rather than worked
+around: two pinned the exit to `.sv-head` (and "obvious" always meant
+*reachable* — the header was the worst place on the phone to be pinned to), and
+one clicked `svExit` directly instead of navigating the way a person would. This
+is now the third time this session that an assertion encoded a *placement* or a
+*style* rather than the rule it was named for. **When that happens, sharpen the
+assertion to its stated intent — never weaken it and never route around it.**
+
+## 🔎 MOBILE PR 2 AUDIT — the finding, as it was recorded
 
 Measured on the shipped screen at 390×844 with a day running.
 
