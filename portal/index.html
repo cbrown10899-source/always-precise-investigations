@@ -396,7 +396,24 @@
   .ch-client{font-size:.92rem;margin-top:4px;}
   .ch-sub{font-size:.85rem;color:var(--muted);margin-top:2px;}
   .ch-right{text-align:right;display:flex;flex-direction:column;gap:6px;align-items:flex-end;}
-  .ch-right .tag{cursor:pointer;}
+  /* THE STATUS CHIP IS ACTIONABLE, SO ITS TARGET IS 44px — BUT A CHIP INFLATED
+     TO BUTTON SIZE STOPS READING AS A STATUS. Measured before: 56x24, so only
+     the height was short, and padding it out to 44 would have painted a pill
+     nearly twice its proper depth in the one corner of the screen that is meant
+     to be scanned rather than pressed.
+
+     So the target and the pill are separated: `.ch-status` is a transparent box
+     that owns the 44px and carries the `data-act`, and the `.tag` inside keeps
+     the shared scale untouched. Layout rather than an overlay, deliberately —
+     `.ch-right` is a 6px-gap column, and a pseudo-element stretched 10px each
+     way would have reached into the Edit case button's own target and started
+     stealing its taps.
+
+     `cursor` moved here from `.ch-right .tag` on purpose: an investigator's
+     header renders the same chip with no `data-act` on it, and the old rule
+     gave that one a pointer too — a control that is not one. */
+  .ch-status{display:inline-flex;align-items:center;justify-content:flex-end;
+    min-height:44px;min-width:44px;cursor:pointer;}
   /* The same 44px floor `.bandhead .btn` and `.pc-next .btn` already take.
      Edit case is the header's one action and was about 35px — `.btn.sm` is 7px
      of padding on a .82rem line. The LABEL is untouched: this raises the target
@@ -5614,7 +5631,7 @@ function caseHeader(s, a, admin){
     </div>
     <div class="ch-right">
       ${admin
-        ? `<span class="tag ${esc(stage)}" data-act="wsTab" data-tab="assign" title="Change status on Assignment" style="cursor:pointer">${esc(label(stage))}</span>
+        ? `<span class="ch-status" data-act="wsTab" data-tab="assign" title="Change status on Assignment"><span class="tag ${esc(stage)}">${esc(label(stage))}</span></span>
            <div class="ch-line">${assignee ? "Assigned: " + esc(assignee.display_name || assignee.username) : "Unassigned"}</div>
            <button class="btn sm ghost" data-act="wsTab" data-tab="edit">Edit case</button>`
         : `<span class="tag ${esc(stage)}">${esc(label(stage))}</span>`}
