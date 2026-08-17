@@ -681,7 +681,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1538 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 1609 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 954 checks: the page against the real Worker
 ```
 
@@ -1031,6 +1031,85 @@ env-overridable (`STORAGE_HARD_CAP` etc.) so the tests exercise the
 refusals with real uploads. Do not raise the caps without the owner.
 A Cloudflare-side Budget Alert ($10 → owner's email) exists as the
 independent second net; it alerts, it cannot block.
+
+## Video is device-first, and the timestamp is burned into the pixels
+
+**No new video byte becomes Cloudflare storage** (owner, 2026-08-17). A clip
+stays on the device that shot it; the timestamped copy is rendered in that
+device's own browser and saved back to it; the portal keeps the **record** and
+nothing else. `uploadEvidence` refuses `video/*` with `code: 'video_device_first'`
+**in the Worker** — a property enforced by a page is enforced by nothing — and
+it refuses **before** the size and cap tests, so a video is never first told to
+split itself into parts on a path that no longer exists.
+
+**Legacy video already in R2 is untouched, deliberately.** The refusal blocks
+new writes and deletes nothing: existing rows still read, still serve, still
+count on the storage meter, still pass the package video gate, and are badged
+*"stored earlier"* in the gallery. Whether they should eventually be exported
+and removed is an **open decision nobody has made** — do not sweep them as a
+side effect of anything. Both suites now plant such a row directly, because that
+is the only way one can exist.
+
+**`video_stamp` is metadata and audit only. There is no blob column and there
+must never be one** — a test reads `schema.sql` rather than a comment about it.
+A correction does not edit a row: it inserts a new one and stamps the earlier
+one `superseded_at`, matched on the original's own filename so a caller cannot
+supersede another original by naming its id. This is the project's existing
+audit shape (`send_log`, `build_events`, `invoice_events`), not a new one.
+
+**`saved_at` is the operator's word, never an assumption.** A browser cannot see
+where a download went, so `showSaveFilePicker` resolving is the only path that
+claims "saved" by itself; everything else says the download has *started* and
+the operator confirms it arrived. It is written once — a second tap does not
+move the moment the file reached the device. Safari cannot silently put a file
+in Photos and nothing here pretends it can.
+
+**The renderer is canvas + `MediaRecorder` (VP9/WebM), and mp4 is refused by
+construction.** A capability proof run before any feature code found WebCodecs
+**absent** in this browser, so the architecture audit's first recommendation
+could not be used or proven; the same proof took a clip through decode → canvas
+→ burn → encode → **re-decode** and found the burned marker present in the
+output with a control pixel elsewhere clean. It also found `video/mp4` reporting
+supported while its only real codec `avc1` reports **not** — recording to it
+produces a file nothing can play. `vstMime()` never offers it.
+
+**The clock runs on the footage's timeline, never on this machine's.** The label
+for a frame is the operator's chosen start plus that frame's own presentation
+time. `Intl.DateTimeFormat` resolves **EST or EDT from the date itself**, so a
+summer stamp is not an hour wrong — do not hard-code an offset. The face is
+monospace on purpose: a proportional one shifts the seconds digits sideways as
+they change, and the stamp must not move.
+
+Known limits, stated rather than papered over: the copy is **picture only** (no
+dependable cross-browser audio capture, and the original with its audio is
+untouched on the device), the output is **WebM**, rendering is **real time**
+because the clip is played through once, and the original's SHA-256 is taken
+only up to 128 MB and recorded as **absent** above that — never as a placeholder.
+
+`VST` and the `#vstamp` sibling root follow the evidence viewer's pattern for
+one more reason: a render runs as long as the clip does, and nothing underneath
+may be rebuilt while it goes.
+
+**Adding this table means a manual `portal-setup.yml` dispatch after merge.**
+Every read is guarded through `missingTables()` — the list degrades, the
+workspace carries an empty array, the write returns 503 naming the workflow.
+
+**Timestamp Video is a top-level door, not a case feature.** It is in the
+navigation foot for both roles on every screen and as one compact `.qtools` row
+on the Dashboard; an investigator has no Dashboard, which is why the nav door is
+the real answer. Its `data-case` is empty **on purpose** so it cannot adopt
+whichever case is open behind it — opened from outside a case it asks, against
+the caller's own `/submissions` list, and the record still goes through
+`caseFor`. A copy may also be made with no case at all, and the screen then says
+plainly that the portal holds no record of it until it is attached.
+
+**Media wording:** *Upload video / picture* names the entry point for ADDING,
+*Case media* names what is already there. **Keys, routes, tables and variables
+are unchanged** — `evidence` is still the tab key, the route and the table. The
+button under the section reads *Upload picture or document*, because a control
+saying "upload video" would promise what the Worker refuses; the section carries
+the owner's word and no individual control states an untruth. The four field
+actions stay **Activity / Photo / Video / Note**, asserted by name and count.
 
 ## Active Surveillance Mode
 

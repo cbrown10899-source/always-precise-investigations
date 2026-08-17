@@ -127,6 +127,23 @@ async function ingest(env, payload) {
   });
 }
 
+/* A STORED VIDEO EVIDENCE ROW, planted straight into the database.
+
+   Since 2026-08-17 video is device-first and `uploadEvidence` refuses a new
+   `video/*` upload outright — but legacy video already in R2 was deliberately
+   left untouched, so rows shaped exactly like this still exist and every rule
+   downstream of them must still be right: the package type's video gate, the
+   build item's role, the gallery. Planting it is not a way round the refusal;
+   it IS the legacy case, and it is the only way that case can be reached now. */
+async function plantLegacyVideo(env, caseNo, filename, cls = 'client_deliverable', bytes = 900) {
+  const r = await env.DB.prepare(
+    `INSERT INTO case_evidence (case_no, r2_key, filename, content_type, size_bytes,
+       classification, uploaded_at) VALUES (?, ?, ?, 'video/mp4', ?, ?, ?)`)
+    .bind(caseNo, `cases/${caseNo}/legacy-${filename}`, filename, bytes, cls,
+          new Date().toISOString()).run();
+  return r.meta.last_row_id;
+}
+
 /* ------------------------------------------------------------------- setup */
 
 section('Setup and first admin');
@@ -2471,9 +2488,9 @@ section('Evidence: stored privately, metered, and capped inside the free plan');
 
   ok('an unassigned investigator cannot upload', (await up(reed, mk('x.jpg', 100, 'image/jpeg'))).status === 404);
   ok('a file over the per-file limit is refused before it is stored',
-     (await up(admin, mk('big.mp4', 2500, 'video/mp4'))).status === 413);
+     (await up(admin, mk('big.jpg', 2500, 'image/jpeg'))).status === 413);
 
-  const first = await jsonOf(await up(dana, mk('clip1.mp4', 1800, 'video/mp4'),
+  const first = await jsonOf(await up(dana, mk('clip1.jpg', 1800, 'image/jpeg'),
     { classification: 'client_deliverable', note: 'Subject at the gym.' }));
   ok('the assigned investigator uploads field product', typeof first.id === 'number');
   ok('and the meter answers immediately', first.usage.bytes_used === 1800
@@ -2486,21 +2503,21 @@ section('Evidence: stored privately, metered, and capped inside the free plan');
   ok('a field upload is client-deliverable straight away',
      ws.evidence[0].classification === 'client_deliverable' && ws.evidence[0].note === 'Subject at the gym.');
 
-  await up(admin, mk('clip2.mp4', 1800, 'video/mp4'), { classification: 'internal_only' });
+  await up(admin, mk('clip2.jpg', 1800, 'image/jpeg'), { classification: 'internal_only' });
   ok('an admin classifies at upload',
      (await jsonOf(await call(env, '/cases/API-EV1/workspace', { cookie: admin })))
-       .evidence.find(e => e.filename === 'clip2.mp4').classification === 'internal_only');
+       .evidence.find(e => e.filename === 'clip2.jpg').classification === 'internal_only');
 
   /* THE FAILSAFE. 3,600 of the 5,000-byte cap is used; another 1,800 would
      cross it, so nothing uploads — and nothing can ever bill. */
-  const blocked = await up(admin, mk('clip3.mp4', 1800, 'video/mp4'));
+  const blocked = await up(admin, mk('clip3.jpg', 1800, 'image/jpeg'));
   ok('the free-plan failsafe refuses the upload that would cross the cap', blocked.status === 507);
   ok('and says so in plain words', (await jsonOf(blocked)).code === 'storage_cap');
 
   // Serving: the bytes come back through the Worker's own session checks.
   const got = await call(env, `/cases/API-EV1/evidence/${first.id}/file`, { cookie: dana });
   ok('the assigned investigator streams their footage back', got.status === 200
-     && got.headers.get('content-type') === 'video/mp4'
+     && got.headers.get('content-type') === 'image/jpeg'
      && (await got.arrayBuffer()).byteLength === 1800);
   ok('an unassigned investigator gets nothing',
      (await call(env, `/cases/API-EV1/evidence/${first.id}/file`, { cookie: reed })).status === 404);
@@ -2528,7 +2545,7 @@ section('Evidence: stored privately, metered, and capped inside the free plan');
   ok('the office also sees the removal record',
      (await jsonOf(await call(env, '/cases/API-EV1/workspace', { cookie: admin }))).evidence.length === 2);
 
-  ok('freed space uploads again', (await up(admin, mk('clip3.mp4', 1800, 'video/mp4'))).status === 201);
+  ok('freed space uploads again', (await up(admin, mk('clip3.jpg', 1800, 'image/jpeg'))).status === 201);
 
   /* Links ride only within the case: a photo joins this case's subject, a
      clip joins this case's moment, and another case's ids are refused. */
@@ -2540,12 +2557,12 @@ section('Evidence: stored privately, metered, and capped inside the free plan');
   const entry = (await jsonOf(await call(env, '/cases/API-EV1/workspace', { cookie: admin }))).activity[0];
   const linked = await jsonOf(await up(admin, mk('subj.jpg', 400, 'image/jpeg'), { subject_id: String(subj.id) }));
   ok('a photo attaches to the subject', typeof linked.id === 'number');
-  const clip = await jsonOf(await up(admin, mk('moment.mp4', 400, 'video/mp4'), { entry_id: String(entry.id) }));
+  const clip = await jsonOf(await up(admin, mk('moment.jpg', 400, 'image/jpeg'), { entry_id: String(entry.id) }));
   ok('a clip attaches to the moment', typeof clip.id === 'number');
   const evList = (await jsonOf(await call(env, '/cases/API-EV1/workspace', { cookie: dana }))).evidence;
   ok('the links come back with the workspace',
      evList.find(e => e.filename === 'subj.jpg').subject_id === subj.id
-     && evList.find(e => e.filename === 'moment.mp4').entry_id === entry.id);
+     && evList.find(e => e.filename === 'moment.jpg').entry_id === entry.id);
   ok("another case's subject is refused, not silently dropped",
      (await up(admin, mk('x.jpg', 100, 'image/jpeg'), { subject_id: '999999' })).status === 400);
 
@@ -2641,7 +2658,8 @@ section('Case Build: the package behind hard gates');
   // is what the gate exists to catch.
   const photo2 = (await jsonOf(await up(mk('photo2.jpg', 300, 'image/jpeg'),
     { classification: 'needs_redaction' }))).id;
-  const clip = (await jsonOf(await up(mk('clip.mp4', 900, 'video/mp4'), { classification: 'client_deliverable' }))).id;
+  // Legacy stored video — the only way a video evidence row exists now.
+  const clip = await plantLegacyVideo(env, 'API-CB1', 'clip.mp4');
   const doc = (await jsonOf(await up(mk('summary.pdf', 200, 'application/pdf'), { classification: 'client_deliverable' }))).id;
 
   // No approved report yet: the build opens, and the gate says exactly that.
@@ -2881,7 +2899,7 @@ section('Case Build: the Custom package');
     return worker.fetch(new Request(API + '/cases/API-CP1/evidence', {
       method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
   };
-  const clip = (await jsonOf(await up('clip.mp4', 'video/mp4', 'client_deliverable'))).id;
+  const clip = await plantLegacyVideo(env, 'API-CP1', 'clip.mp4', 'client_deliverable', 300);
   const held = (await jsonOf(await up('held.jpg', 'image/jpeg', 'internal_only'))).id;
 
   let st = await jsonOf(await call(env, '/cases/API-CP1/build', { method: 'POST', cookie: admin }));
@@ -3021,7 +3039,7 @@ section('Completed cases: finished work is findable');
   const loose = await jsonOf(await worker.fetch(new Request(API + '/cases/API-DN2/evidence', {
     method: 'POST', headers: { Origin: ORIGIN, Cookie: admin },
     body: (() => { const f = new FormData();
-      f.append('file', new File([new Uint8Array(120).fill(66)], 'loose.mp4', { type: 'video/mp4' }));
+      f.append('file', new File([new Uint8Array(120).fill(66)], 'loose.jpg', { type: 'image/jpeg' }));
       return f; })() }), env));
   await env.DB.prepare(
     `INSERT INTO external_files (evidence_id, storage_provider, external_share_url,
@@ -6047,7 +6065,7 @@ section('End to end: a carrier assignment, sheet to completed');
       method: 'POST', headers: { Origin: ORIGIN, Cookie: inv }, body: fd }), env));
   };
   const ph = await upl('subject-0810.jpg', 'image/jpeg');
-  const vd = await upl('subject-0812.mp4', 'video/mp4');
+  const vd = await upl('subject-0812.jpg', 'image/jpeg');
   const evList = (await jsonOf(await call(env, '/cases/API-E38/workspace', { cookie: inv }))).evidence;
   ok('E2E-38: field uploads are client-deliverable straight away',
      evList.find(e => e.id === ph.id).classification === 'client_deliverable'
@@ -8264,6 +8282,212 @@ section('No recipient number or provider secret is hardcoded');
   const schema = fs.readFileSync(path.join(HERE, 'schema.sql'), 'utf8');
   ok('and the schema seeds no default recipient',
      !/INSERT\s+INTO\s+notify_recipient/i.test(schema));
+}
+
+/* ---------------------------------------------- video timestamp, device-first
+
+   Owner, 2026-08-17: video is DEVICE-FIRST. A clip stays on the device that
+   shot it, the timestamped copy is rendered in that device's browser and saved
+   back to it, and the portal keeps the RECORD and nothing else. Legacy video
+   already in R2 was deliberately left untouched. */
+section('Video is device-first');
+{
+  const env = freshEnv();
+  // A bucket, so the photo that IS still stored genuinely goes somewhere.
+  const store = new Map();
+  env.EVIDENCE = {
+    async put(key, body) { store.set(key, { body }); },
+    async get(key) { const o = store.get(key); return o ? { body: o.body } : null; },
+    async delete(key) { store.delete(key); },
+    _store: store,
+  };
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  for (const [uname, display] of [['dana', 'Dana'], ['reed', 'Reed']]) {
+    const l = (await jsonOf(await invite(env, admin,
+      { username: uname, display_name: display, role: 'investigator' }))).url;
+    const t = new URL(l, 'https://x.test').searchParams.get('invite');
+    await call(env, `/invite/${t}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  }
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const reed = (await login(env, 'reed', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find(u => u.username === 'dana').id;
+
+  await ingest(env, { case_no: 'API-VS1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  await call(env, '/submissions/API-VS1/assign', { method: 'POST', cookie: admin,
+    body: { user_id: danaId } });
+
+  const upload = (cookie, name, type, bytes = 400) => {
+    const fd = new FormData();
+    fd.append('file', new File([new Uint8Array(bytes).fill(65)], name, { type }));
+    return worker.fetch(new Request(API + '/cases/API-VS1/evidence', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: cookie }, body: fd }), env);
+  };
+
+  /* NO NEW VIDEO BYTE BECOMES CLOUDFLARE STORAGE. Refused in the Worker, not by
+     a page hiding a button — a property enforced by a page is enforced by
+     nothing. */
+  const vres = await upload(dana, 'clip.mp4', 'video/mp4');
+  const vbody = await jsonOf(vres);
+  ok('a video upload is refused', vres.status === 400);
+  ok('and says why, by a code the page can act on', vbody.code === 'video_device_first');
+  ok('and points at the timestamp screen rather than a dead end',
+     /Video timestamp/i.test(vbody.error) && /device/i.test(vbody.error));
+  ok('every video container is refused, not just mp4',
+     (await upload(dana, 'c.mov', 'video/quicktime')).status === 400
+     && (await upload(dana, 'c.webm', 'video/webm')).status === 400
+     && (await upload(dana, 'c.mkv', 'video/x-matroska')).status === 400);
+  ok('nothing was written for any of them',
+     (await env.DB.prepare('SELECT COUNT(*) AS n FROM case_evidence WHERE case_no = ?')
+       .bind('API-VS1').first()).n === 0);
+
+  /* THE REFUSAL IS BY TYPE AND ONLY BY TYPE. A big video is refused as a video,
+     not sent away with advice about splitting it up that no longer applies. */
+  const big = await upload(dana, 'huge.mp4', 'video/mp4', 3000);
+  ok('an over-size video is refused as a video, before the size rule',
+     big.status === 400 && (await jsonOf(big)).code === 'video_device_first');
+
+  ok('a photograph is unaffected', (await upload(dana, 'still.jpg', 'image/jpeg')).status === 201);
+  ok('and so is a document', (await upload(dana, 'notes.pdf', 'application/pdf')).status === 201);
+
+  /* LEGACY VIDEO IN R2 IS UNTOUCHED. This PR refuses new writes and deletes
+     nothing — a row that was already there still reads, still serves and still
+     counts against the storage meter. */
+  const legacy = await plantLegacyVideo(env, 'API-VS1', 'old-clip.mp4', 'client_deliverable', 900);
+  const ws0 = await jsonOf(await call(env, '/cases/API-VS1/workspace', { cookie: dana }));
+  ok('a video stored before the change is still on the case',
+     ws0.evidence.some(e => e.id === legacy && e.content_type === 'video/mp4'));
+  ok('and still counts against the storage meter',
+     (await jsonOf(await call(env, '/storage', { cookie: admin }))).storage.bytes_used >= 900);
+
+  // ---- the record of a generated copy ----
+  const post = (cookie, body, caseNo = 'API-VS1') =>
+    call(env, `/cases/${caseNo}/video-stamp`, { method: 'POST', cookie, body });
+
+  const start = '2026-08-17T21:14:32.000Z';   // 05:14:32 PM EDT
+  const made = await post(dana, { original_name: 'DSC_0001.MOV', original_size: 51200000,
+    original_hash: 'a'.repeat(64), start_utc: start, tz: 'America/New_York',
+    derivative_name: 'DSC_0001-timestamped.webm' });
+  const madeBody = await jsonOf(made);
+  ok('the investigator records the copy they made', made.status === 201 && madeBody.id > 0);
+  const rec = madeBody.stamps[0];
+  ok('the chosen instant is stored as an instant, not as typed text',
+     rec.start_utc === start);
+  ok('and the zone it was entered in is stored beside it', rec.tz === 'America/New_York');
+  ok('with who made it and when', rec.generated_by_name === 'Dana' && !!rec.generated_at);
+  ok('the copy is not recorded as saved until it has been',
+     rec.saved_at === null && rec.superseded_at === null);
+  ok('and the fingerprint of the original rode along', rec.original_hash === 'a'.repeat(64));
+
+  ok('a start time that cannot be read is refused',
+     (await post(dana, { original_name: 'x.mov', start_utc: 'sometime tuesday' })).status === 400);
+  ok('a made-up time zone is refused',
+     (await post(dana, { original_name: 'x.mov', start_utc: start, tz: 'Mars/Olympus' })).status === 400);
+  ok('a record with no original named is refused',
+     (await post(dana, { start_utc: start })).status === 400);
+  ok('a junk fingerprint is dropped rather than stored as one',
+     (await jsonOf(await post(dana, { original_name: 'nohash.mov', start_utc: start,
+       original_hash: 'not a hash' }))).stamps[0].original_hash === null);
+
+  /* THE ACCESS BOUNDARY IS THE EVIDENCE BOUNDARY. An investigator may timestamp
+     only video on a case they already reach, and the record is never a way in. */
+  ok('an unassigned investigator cannot record against the case',
+     (await post(reed, { original_name: 'x.mov', start_utc: start })).status === 404);
+  ok('nor read its records',
+     (await call(env, '/cases/API-VS1/video-stamps', { cookie: reed })).status === 404);
+  ok('the assigned investigator can read them',
+     (await jsonOf(await call(env, '/cases/API-VS1/video-stamps', { cookie: dana }))).stamps.length >= 1);
+
+  // ---- correcting the time: a new row, the old one superseded ----
+  const corrected = '2026-08-17T22:14:32.000Z';
+  const again = await jsonOf(await post(dana, { original_name: 'DSC_0001.MOV',
+    start_utc: corrected, tz: 'America/New_York', derivative_name: 'DSC_0001-timestamped.webm' }));
+  const mine = again.stamps.filter(r => r.original_name === 'DSC_0001.MOV');
+  ok('a correction inserts a record rather than editing one', mine.length === 2);
+  ok('the newest is the active one', mine[0].superseded_at === null && mine[0].start_utc === corrected);
+  ok('and the one it replaced is kept, stamped', !!mine[1].superseded_at && mine[1].start_utc === start);
+  ok('a different original is left alone by it',
+     again.stamps.filter(r => r.original_name === 'nohash.mov')
+       .every(r => r.superseded_at === null));
+
+  // ---- saved is the operator's word, written once ----
+  const active = mine[0].id;
+  const saved1 = await jsonOf(await call(env, `/cases/API-VS1/video-stamp/${active}/saved`,
+    { method: 'POST', cookie: dana }));
+  const at = saved1.stamps.find(r => r.id === active).saved_at;
+  ok('marking it saved records when the file reached a device', !!at);
+  const saved2 = await jsonOf(await call(env, `/cases/API-VS1/video-stamp/${active}/saved`,
+    { method: 'POST', cookie: dana }));
+  ok('a second tap does not move the moment it was saved',
+     saved2.stamps.find(r => r.id === active).saved_at === at);
+  ok('a record on another case cannot be marked saved from this one',
+     (await call(env, `/cases/API-VS1/video-stamp/999999/saved`,
+       { method: 'POST', cookie: dana })).status === 404);
+
+  // ---- the workspace carries them, so the Evidence tab needs no second call ----
+  const ws = await jsonOf(await call(env, '/cases/API-VS1/workspace', { cookie: dana }));
+  ok('the workspace carries the records', Array.isArray(ws.video_stamps) && ws.video_stamps.length === 3);
+  ok('and still no video byte is in the portal for them',
+     ws.evidence.filter(e => String(e.content_type || '').startsWith('video/')).length === 1);
+
+  /* THE TABLE HOLDS METADATA AND AUDIT ONLY. There is no blob column and there
+     must never be one — checked against the schema itself, not against a
+     comment about it. */
+  const schema = fs.readFileSync(path.join(HERE, 'schema.sql'), 'utf8');
+  const tbl = schema.slice(schema.indexOf('CREATE TABLE IF NOT EXISTS video_stamp'));
+  const decl = tbl.slice(0, tbl.indexOf(');'));
+  ok('the video_stamp table has no blob column', !/\bBLOB\b/i.test(decl), decl.slice(0, 200));
+  ok('and nothing in the Worker writes video bytes to it',
+     !/INSERT INTO video_stamp[\s\S]{0,400}?(blob|bytes|data)\b/i.test(
+       fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8')));
+}
+
+/* A deleted or archived case does not participate in work, and that has to hold
+   for a route added after the gate was written — which is the whole point of
+   its being ONE chokepoint rather than a check in each route. */
+section('Video timestamp obeys the deleted and archived gate');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-VS-DEL', service: 'Surveillance', client_name: 'C' });
+  await ingest(env, { case_no: 'API-VS-ARC', service: 'Surveillance', client_name: 'C' });
+  const body = { original_name: 'x.mov', start_utc: '2026-08-17T21:14:32.000Z' };
+
+  await call(env, '/cases/API-VS-DEL/delete', { method: 'POST', cookie: admin });
+  const d = await call(env, '/cases/API-VS-DEL/video-stamp', { method: 'POST', cookie: admin, body });
+  ok('a deleted case records nothing', d.status === 409 && (await jsonOf(d)).case_deleted === true);
+
+  await call(env, '/cases/API-VS-ARC/archive', { method: 'POST', cookie: admin });
+  const a = await call(env, '/cases/API-VS-ARC/video-stamp', { method: 'POST', cookie: admin, body });
+  ok('an archived case records nothing either', a.status === 409 && (await jsonOf(a)).case_archived === true);
+  ok('but a deleted case can still be READ, which is how it gets put back',
+     (await call(env, '/cases/API-VS-DEL/video-stamps', { cookie: admin })).status === 200);
+}
+
+/* The schema arrives by a MANUAL portal-setup dispatch while the Worker deploys
+   on push, so between the two this table does not exist on the live database.
+   The read degrades; the write names the workflow; the case list survives. */
+section('Video timestamp on a database that has not been set up');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-VS-NS', service: 'Surveillance', client_name: 'C' });
+  await env.DB.prepare('DROP TABLE video_stamp').run();
+
+  ok('health names the missing table',
+     (await jsonOf(await call(env, '/health'))).missing_tables.includes('video_stamp'));
+  const list = await jsonOf(await call(env, '/cases/API-VS-NS/video-stamps', { cookie: admin }));
+  ok('the list degrades rather than failing', Array.isArray(list.stamps) && list.not_set_up === true);
+  const w = await call(env, '/cases/API-VS-NS/video-stamp', { method: 'POST', cookie: admin,
+    body: { original_name: 'x.mov', start_utc: '2026-08-17T21:14:32.000Z' } });
+  ok('the write says which workflow to run', w.status === 503 && /portal-setup/.test((await jsonOf(w)).error));
+  const ws = await call(env, '/cases/API-VS-NS/workspace', { cookie: admin });
+  ok('and the workspace still loads', ws.status === 200
+     && Array.isArray((await jsonOf(ws)).video_stamps));
+  ok('as does the case list', (await call(env, '/submissions', { cookie: admin })).status === 200);
 }
 
 /* ------------------------------------------------------------------ report */

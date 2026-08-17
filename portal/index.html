@@ -213,6 +213,18 @@
   .alsoline button.alsoitem{cursor:pointer;text-decoration:underline;text-underline-offset:3px;
     text-decoration-color:#c3ccd6;}
   .alsoline button.alsoitem:hover{color:var(--navy);text-decoration-color:var(--teal);}
+  /* Quick tools: one compact row of case-independent utilities, in the same
+     visual language as .alsoline so the dashboard gains a shortcut and not a
+     fifth equal-weight box. 44px minimum, wraps rather than overflowing. */
+  .qtools{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;
+    margin:0 0 14px;padding:0 2px;}
+  .qtools-l{font-size:.76rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--muted);}
+  .qtool{display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:0 14px;
+    border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--navy);
+    font:inherit;font-size:.88rem;font-weight:700;cursor:pointer;}
+  .qtool b{font-weight:400;font-size:1.05rem;line-height:1;}
+  .qtool:hover{border-color:var(--teal);background:#f3fafb;}
   .chip{display:inline-flex;align-items:center;gap:6px;background:#eaf5f7;border:1px solid #b7dbe3;
     color:var(--navy);border-radius:999px;padding:3px 6px 3px 11px;font-size:.8rem;font-weight:700;}
   .chip button{border:0;background:none;font:inherit;font-size:1rem;cursor:pointer;color:var(--teal-ink,#1d5c6c);line-height:1;}
@@ -401,6 +413,13 @@
       background:#0d1826;color:#e8eef5;border:1px solid #23405f;border-radius:9px;
       padding:10px 12px;font:inherit;font-weight:700;cursor:pointer;width:100%;}
     body.withnav .tabs .side-surv:hover{background:#16283d;color:#fff;}
+    /* Timestamp Video reads as the same KIND of thing as the field door and is
+       deliberately quieter than it: both are doors that do something, and
+       Active Surveillance is the one somebody reaches for mid-shift. */
+    body.withnav .tabs .side-vst{display:block;text-align:left;
+      background:transparent;color:#c9d6e4;border:1px solid #1d3450;border-radius:9px;
+      padding:10px 12px;font:inherit;font-weight:700;cursor:pointer;width:100%;}
+    body.withnav .tabs .side-vst:hover{background:#16283d;color:#fff;}
     body.withnav #app{margin-left:198px;}
   }
   @media(max-width:899px){
@@ -421,6 +440,9 @@
       font:inherit;font-weight:800;border:0;cursor:pointer;width:100%;}
     body.withnav.navopen .tabs .side-surv{display:block;text-align:left;
       background:#0d1826;color:#e8eef5;border:1px solid #23405f;border-radius:9px;
+      padding:11px 12px;font:inherit;font-weight:700;cursor:pointer;width:100%;}
+    body.withnav.navopen .tabs .side-vst{display:block;text-align:left;
+      background:transparent;color:#c9d6e4;border:1px solid #1d3450;border-radius:9px;
       padding:11px 12px;font:inherit;font-weight:700;cursor:pointer;width:100%;}
     /* The base rule below is deliberately ABOVE this media query. It used to
        sit after it, and with equal specificity the later rule won: the burger
@@ -602,7 +624,73 @@
     max-width:34ch;}
   .evview-other a{color:#8fc6dc;}
   /* The page behind must not scroll while the viewer is up. */
-  body.evopen{overflow:hidden;}
+  body.evopen, body.vstopen{overflow:hidden;}
+
+  /* ------------------------------------------- video timestamp generator
+
+     A sibling root like the evidence viewer, for the same reason and one more:
+     rendering a clip takes as long as the clip runs, and the screen underneath
+     must not be torn down and rebuilt while it does. Reached from Active
+     Surveillance and from the case's Evidence tab — one generator, two doors.
+
+     Dark like the field view, because that is where it is mostly used, and
+     every control is at least 44px so it works one-handed at 390px. */
+  .vst{position:fixed;inset:0;z-index:125;background:#0b1622;display:flex;
+    flex-direction:column;color:#dce9f5;}
+  .vst-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;
+    padding-top:max(8px, env(safe-area-inset-top));background:#0e1a2c;
+    border-bottom:1px solid #23405f;}
+  .vst-bar b{font-size:.95rem;flex:1;min-width:0;}
+  .vst-x{display:inline-flex;align-items:center;justify-content:center;gap:7px;
+    min-height:44px;min-width:44px;padding:0 14px;border:1px solid #3a5b80;
+    border-radius:9px;background:#13273f;color:#fff;font:inherit;font-size:.9rem;
+    font-weight:700;cursor:pointer;}
+  .vst-body{flex:1;min-height:0;overflow:auto;padding:14px 12px;
+    padding-bottom:max(18px, env(safe-area-inset-bottom));}
+  .vst-body>*{max-width:640px;margin-left:auto;margin-right:auto;}
+  .vst-card{background:#0f1d31;border:1px solid #23405f;border-radius:12px;
+    padding:12px;margin-bottom:12px;}
+  .vst-card h4{margin:0 0 8px;font-size:.95rem;color:#fff;}
+  .vst-k{display:flex;gap:10px;justify-content:space-between;font-size:.85rem;
+    padding:3px 0;border-bottom:1px solid #17293f;}
+  .vst-k:last-child{border-bottom:0;}
+  .vst-k span:first-child{color:#8fa9c2;}
+  .vst-k span:last-child{text-align:right;word-break:break-word;min-width:0;}
+  /* The date and time parts. `minmax(0,1fr)` so a narrow phone shrinks the
+     boxes instead of pushing the row off the side — no horizontal overflow at
+     390px is a requirement, not a preference. */
+  .vst-when{display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:8px;}
+  .vst-f{display:flex;flex-direction:column;gap:4px;min-width:0;}
+  .vst-f span{font-size:.72rem;color:#8fa9c2;text-transform:uppercase;
+    letter-spacing:.04em;}
+  .vst-f input, .vst-f select{min-height:46px;width:100%;box-sizing:border-box;
+    border:1px solid #33526f;border-radius:9px;background:#0b1626;color:#fff;
+    font:inherit;font-size:1rem;padding:0 8px;text-align:center;}
+  .vst-res{margin-top:10px;text-align:center;font-size:1.05rem;font-weight:700;
+    color:#ffd9a0;letter-spacing:.01em;line-height:1.5;}
+  .vst-res small{display:block;font-weight:400;font-size:.76rem;color:#8fa9c2;
+    letter-spacing:0;}
+  .vst-btn{display:block;width:100%;box-sizing:border-box;min-height:52px;
+    border-radius:10px;border:1px solid #3a5b80;background:#16293f;color:#fff;
+    font:inherit;font-size:1rem;font-weight:700;cursor:pointer;margin-top:10px;
+    padding:0 12px;}
+  .vst-btn.go{background:linear-gradient(180deg,#d7a44e,#b8863a);border-color:#e0b671;
+    color:#20160a;}
+  .vst-btn[disabled]{opacity:.5;cursor:default;}
+  .vst-prev{width:100%;border-radius:10px;background:#000;display:block;}
+  .vst-bar2{height:10px;border-radius:6px;background:#12243a;overflow:hidden;
+    border:1px solid #23405f;margin-top:10px;}
+  .vst-bar2 i{display:block;height:100%;background:#d7a44e;transition:width .2s;}
+  .vst-note{font-size:.8rem;color:#8fa9c2;line-height:1.55;margin:8px 0 0;}
+  .vst-err{font-size:.85rem;color:#ffb3b3;line-height:1.5;margin:8px 0 0;}
+  .vst-ok{font-size:.85rem;color:#9fe0b0;line-height:1.5;margin:8px 0 0;}
+  /* The record list, shown in the case's Evidence tab. */
+  .vsrow{border:1px solid var(--line);border-radius:10px;padding:8px 10px;
+    margin-bottom:8px;}
+  .vsrow.old{opacity:.6;}
+  @media(max-width:420px){
+    .vst-when{grid-template-columns:repeat(2, minmax(0,1fr));}
+  }
   /* The six call sites wrap their thumbnail in this instead of an anchor, so a
      tap opens the viewer and nothing navigates. */
   .evlink{display:block;padding:0;border:0;background:transparent;cursor:pointer;
@@ -938,6 +1026,10 @@
      structural fact rather than something the close handler has to rebuild:
      the screen underneath is never re-rendered or navigated away from. -->
 <div id="evview"></div>
+<!-- The video timestamp generator, a sibling root for the same reason: a render
+     runs as long as the clip does, and nothing underneath may be rebuilt while
+     it is going. -->
+<div id="vstamp"></div>
 
 
 <script>
@@ -1043,6 +1135,15 @@ let EV_TAB = "all";        // which evidence gallery tab is showing (UIBUILD P12
    src IS the original evidence route, so the Worker's permission check is the
    same one it always was. */
 let EV_VIEW = null;
+/* THE VIDEO TIMESTAMP GENERATOR (owner, 2026-08-17). Everything about a render
+   lives here and nowhere else: the chosen file, the operator's start instant as
+   separately editable parts, the progress, and the finished blob.
+
+   VIDEO IS DEVICE-FIRST. The original is a File the operator picked from their
+   own device and is never uploaded; the derivative is a Blob made in this tab
+   and saved back to that device. No video byte reaches the portal, so nothing
+   in here is ever POSTed except the RECORD that a copy was made. */
+let VST = null;
 let VIEW = "list";   // "list" | "case" — the workspace is a full page, not a popup
 let QKIND = "activity";  // which composer the sheet's Custom tab shows
 let WS_NOTICE = "";      // one-shot "day ended" notice carrying the next step
@@ -1472,7 +1573,14 @@ function shell(inner){
      Active Surveillance — the field view's only top-level entrance — is not
      buried mid-list where it sat for the investigator. */
   const foot = `<div class="navfoot">
-    <button class="side-surv" data-act="surveillance">&#128373; Active Surveillance</button>${
+    <button class="side-surv" data-act="surveillance">&#128373; Active Surveillance</button>
+    <!-- Timestamp Video is a door that does something, so it belongs in this
+         block rather than in a list of places. It is here for BOTH roles and
+         on every screen: an investigator has no Dashboard, and the owner's
+         rule is that nobody should have to open a case to reach the utility.
+         The case it belongs to is chosen inside it, against the caller's own
+         case list — so the authorization boundary is the one it always was. -->
+    <button class="side-vst" data-act="vstOpen" data-case="">&#127909; Timestamp Video</button>${
     ME.role === "admin"
       ? `<button class="side-intake" data-act="tab" data-tab="newlead">+ Intake a Client</button>` : ""}
   </div>`;
@@ -2061,10 +2169,25 @@ function recentlyCompletedHtml(){
     Reports &amp; Packages desk.</div>` : ""}`);
 }
 
+/* DASHBOARD QUICK TOOLS (owner, 2026-08-17). ONE COMPACT ROW, not another card:
+   these are utilities that belong to no particular case, and the owner's rule is
+   that nobody should have to open a case to reach one. Deliberately in the
+   `.alsoline` visual language — small, one line, no heading of its own — because
+   the dashboard's problem was already too many equal-weight boxes.
+
+   The same door is in the navigation foot for both roles and every screen; this
+   is the dashboard's copy of it, not a second implementation. */
+function quickToolsHtml(){
+  return `<div class="qtools">
+    <span class="qtools-l">Quick tools</span>
+    <button class="qtool" data-act="vstOpen" data-case=""><b>&#127909;</b> Timestamp video</button>
+  </div>`;
+}
+
 function dashView(){
-  if(!PKGS) return `<div class="card"><div class="empty">Loading the dashboard&hellip;</div></div>`;
+  if(!PKGS) return `${quickToolsHtml()}<div class="card"><div class="empty">Loading the dashboard&hellip;</div></div>`;
   const active = (PKGS.packages || []);
-  return `${dashBands()}${nextActionsHtml()}${outNowHtml()}
+  return `${quickToolsHtml()}${dashBands()}${nextActionsHtml()}${outNowHtml()}
     <div class="card">
       <div class="bar"><h2 style="margin:0">Case packages</h2>
         <span class="count">At-a-glance progress for active cases</span>
@@ -3259,7 +3382,7 @@ function completedDesk(q){
     <div class="dc-acts">
       <button class="btn sm" data-act="openCase" data-case="${esc(c.case_no)}">Open case</button>
       ${c.approved_reports ? go(c, "reports", `Final report${c.approved_reports > 1 ? ` &middot; ${c.approved_reports} days` : ""}`) : ""}
-      ${c.evidence_count ? go(c, "evidence", `Evidence &middot; ${c.evidence_count}`) : ""}
+      ${c.evidence_count ? go(c, "evidence", `Case media &middot; ${c.evidence_count}`) : ""}
       ${c.build_id ? go(c, "package", "Client package") : ""}
       ${c.invoice ? go(c, "billing", `Invoice ${esc(c.invoice.invoice_no)}`) : ""}
       ${c.share_url ? `<button class="btn sm" data-act="pkgCopyLink" data-url="${esc(c.share_url)}">Copy video link</button>` : ""}
@@ -3787,8 +3910,537 @@ function evViewerHtml(){
   </div>`;
 }
 
+/* ------------------------------------------- the video timestamp generator
+
+   Owner brief, 2026-08-17: a surveillance clip carries a date and time burned
+   into the bottom-right corner, and the clock ADVANCES with the footage —
+   5:14:32, 5:14:33, 5:14:34 — from a start time the operator sets.
+
+   VIDEO IS DEVICE-FIRST. The original is a file on the investigator's own
+   device and is opened here, never uploaded; the timestamped copy is rendered
+   in this tab and saved back to that device. Nothing is staged on a server,
+   nothing is sent to an outside service, and the portal is told only that a
+   copy was made. The original file is opened read-only and is never rewritten.
+
+   THE BURN-IN IS REAL PIXELS. Frames are drawn to a canvas with the stamp on
+   top and re-encoded into a new video file, so the timestamp survives download,
+   sharing and anything the clip is later put into. A CSS overlay would not, and
+   the brief rules it out by name. */
+
+const VST_TZ = "America/New_York";
+/* SHA-256 needs the whole file in memory at once, so it is computed only when
+   the file is small enough for that to be safe on a phone. An absent
+   fingerprint is recorded as absent — never as a placeholder, which would read
+   as an integrity check that had been done. */
+const VST_HASH_MAX = 128 * 1024 * 1024;
+
+/* THE ZONE IS RESOLVED FROM THE DATE and never hard-coded (owner: "Do not
+   hard-code fixed EST year-round"). Virginia keeps daylight time for part of
+   the year, so a fixed EST makes every summer timestamp an hour wrong.
+   `Intl.DateTimeFormat` yields EST or EDT from the instant itself — no offset
+   table to maintain and nothing that goes stale. */
+function vstOffsetMs(ms, tz){
+  const p = {};
+  for(const x of new Intl.DateTimeFormat("en-US", {timeZone: tz, hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit"}).formatToParts(new Date(ms))){
+    p[x.type] = x.value;
+  }
+  const h = p.hour === "24" ? 0 : +p.hour;   // some engines render midnight as 24
+  return Date.UTC(+p.year, +p.month - 1, +p.day, h, +p.minute, +p.second) - ms;
+}
+
+/* A wall-clock reading in a zone to the UTC instant it names. Two passes,
+   because the correction the first pass applies can itself land on the far
+   side of a daylight-saving change. */
+function vstToUtc(y, mo, d, h, mi, s, tz){
+  const wall = Date.UTC(y, mo - 1, d, h, mi, s);
+  let ms = wall;
+  for(let i = 0; i < 2; i++) ms = wall - vstOffsetMs(ms, tz);
+  return ms;
+}
+
+/* The wording that gets burned in, exactly: 08/17/2026 05:14:32 PM EDT.
+   Assembled from parts rather than from a format string, so the zone
+   abbreviation is the one the browser resolved for that date. */
+function vstLabel(ms, tz){
+  const p = {};
+  for(const x of new Intl.DateTimeFormat("en-US", {timeZone: tz || VST_TZ, hour12: true,
+      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit",
+      minute: "2-digit", second: "2-digit", timeZoneName: "short"}).formatToParts(new Date(ms))){
+    p[x.type] = x.value;
+  }
+  const pad = x => String(x == null ? "" : x).padStart(2, "0");
+  return `${pad(p.month)}/${pad(p.day)}/${p.year} ${pad(p.hour)}:${pad(p.minute)}:${pad(p.second)} `
+    + `${p.dayPeriod} ${p.timeZoneName}`
+    // Some engines separate the day period with a narrow no-break space.
+    .replace(/[  ]/g, " ");
+}
+
+/* The operator's entry, validated. Returns the instant or why it cannot be
+   read — a half-typed field must not silently become a different time. */
+function vstStart(){
+  const v = VST;
+  if(!v) return {ok: false, why: ""};
+  const n = k => /^\d{1,4}$/.test(String(v[k]).trim()) ? parseInt(v[k], 10) : NaN;
+  const mo = n("mo"), da = n("da"), yr = n("yr"), hr = n("hr"), mi = n("mi"), se = n("se");
+  if([mo, da, yr, hr, mi, se].some(x => !Number.isFinite(x))) return {ok: false, why: "Fill in every part of the date and time."};
+  if(mo < 1 || mo > 12) return {ok: false, why: "The month is 1 to 12."};
+  if(da < 1 || da > 31) return {ok: false, why: "The day is 1 to 31."};
+  if(yr < 2000 || yr > 2100) return {ok: false, why: "That year does not look right."};
+  if(hr < 1 || hr > 12) return {ok: false, why: "The hour is 1 to 12 — AM or PM is beside it."};
+  if(mi > 59 || se > 59) return {ok: false, why: "Minutes and seconds are 0 to 59."};
+  const h24 = (hr % 12) + (v.ap === "PM" ? 12 : 0);
+  const ms = vstToUtc(yr, mo, da, h24, mi, se, v.tz);
+  if(!Number.isFinite(ms)) return {ok: false, why: "That date and time cannot be read."};
+  return {ok: true, ms};
+}
+
+/* THE STAMP IS DRAWN INTO THE PICTURE. Scaled to the video's own resolution so
+   it reads the same on a phone as on a monitor, white on a dark outline so it
+   survives bright daylight and an unlit car park alike, a modest safe margin,
+   and a MONOSPACE face — a proportional one makes the seconds digits shift
+   sideways as they change, and the brief says it must not move. */
+function vstDraw(cx, W, H, text){
+  const pad = Math.round(Math.min(W, H) * 0.035);
+  const size = Math.max(14, Math.round(H * 0.05));
+  cx.font = `600 ${size}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`;
+  cx.textAlign = "right";
+  cx.textBaseline = "alphabetic";
+  cx.save();
+  cx.shadowColor = "rgba(0,0,0,.85)";
+  cx.shadowBlur = Math.max(2, Math.round(size * 0.3));
+  cx.lineWidth = Math.max(2, Math.round(size * 0.16));
+  cx.lineJoin = "round";
+  cx.strokeStyle = "rgba(0,0,0,.92)";
+  cx.strokeText(text, W - pad, H - pad);
+  cx.shadowBlur = 0;
+  cx.fillStyle = "#ffffff";
+  cx.fillText(text, W - pad, H - pad);
+  cx.restore();
+}
+
+/* WebM only, and deliberately. The capability proof found `video/mp4` reporting
+   supported on this platform while its only real codec, `avc1`, reports NOT
+   supported — recording to it produces a file nothing can play. VP9 first,
+   VP8 behind it. */
+function vstMime(){
+  if(typeof MediaRecorder === "undefined") return "";
+  for(const t of ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"]){
+    try{ if(MediaRecorder.isTypeSupported(t)) return t; }catch{}
+  }
+  return "";
+}
+
+function vstCan(){ return !!vstMime() && typeof HTMLCanvasElement.prototype.captureStream === "function"; }
+
+async function vstHash(file){
+  if(!file || file.size > VST_HASH_MAX) return null;
+  if(!(window.crypto && crypto.subtle && crypto.subtle.digest)) return null;
+  try{
+    const d = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+    return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, "0")).join("");
+  }catch{ return null; }
+}
+
+/* Opening the generator. The file never leaves the device: it is read straight
+   from the picker, and the object URL it is read through is revoked on close. */
+function vstOpen(caseNo){
+  const inp = document.createElement("input");
+  inp.type = "file";
+  inp.accept = "video/*";
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0];
+    if(!f) return;
+    /* The file's own last-modified date is a SUGGESTED default only, and the
+       operator corrects it before anything is generated — the brief is explicit
+       that unreliable metadata must not be trusted silently. */
+    const p = {};
+    for(const x of new Intl.DateTimeFormat("en-US", {timeZone: VST_TZ, hour12: true,
+        year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit",
+        minute: "2-digit", second: "2-digit"}).formatToParts(new Date(f.lastModified || Date.now()))){
+      p[x.type] = x.value;
+    }
+    VST = {
+      /* WITH NO CASE CHOSEN THE PICKER COMES FIRST (owner, 2026-08-17: the
+         utility must not require navigating into a case). Opened from a case,
+         that step is skipped — the case is already known and is not asked for
+         twice. */
+      step: caseNo ? "when" : "case",
+      caseNo: caseNo || "", file: f, name: f.name, size: f.size,
+      url: URL.createObjectURL(f), tz: VST_TZ, q: "",
+      mo: p.month, da: p.day, yr: p.year, hr: p.hour, mi: p.minute, se: p.second,
+      ap: p.dayPeriod === "AM" ? "AM" : "PM",
+      guessed: true, hash: null, pct: 0, err: "", saveMsg: "",
+      out: null, recId: null, savedHere: false, started: false,
+    };
+    paintVStamp();
+    if(!caseNo) vstLoadCases();
+    VST.hash = await vstHash(f);
+    if(VST) paintVStamp();
+  };
+  inp.click();
+}
+
+/* The cases this caller may choose from — THEIR OWN LIST, from the route that
+   already scopes it. An investigator is offered only cases assigned to them
+   because that is what `/submissions` returns them, and choosing one still has
+   to pass `caseFor` in the Worker when the record is written. Nothing about
+   reaching the utility from outside a case widens what it can touch. */
+async function vstLoadCases(){
+  if(Array.isArray(CASES) && CASES.length){ VST.cases = CASES; return paintVStamp(); }
+  try{
+    const d = await api("/submissions?limit=200");
+    if(VST) VST.cases = d.submissions || [];
+  }catch(e){ if(VST) VST.caseErr = e.message; }
+  paintVStamp();
+}
+
+function vstClose(){
+  const v = VST;
+  if(v){
+    try{ if(v._src){ v._src.pause(); v._src.removeAttribute("src"); v._src.load(); } }catch{}
+    // The tab holds no video once this is closed: both object URLs go.
+    try{ if(v.url) URL.revokeObjectURL(v.url); }catch{}
+    try{ if(v.out && v.out.url) URL.revokeObjectURL(v.out.url); }catch{}
+  }
+  VST = null;
+  paintVStamp();
+}
+
+/* Collect the fields before any repaint, for the reason EDIT_DRAFT exists: the
+   inputs are rebuilt from VST on every paint, so a correction that has not been
+   read back would silently revert to what was there before. */
+function vstCollect(){
+  if(!VST) return;
+  for(const k of ["mo", "da", "yr", "hr", "mi", "se"]){
+    const el = $("vst_" + k);
+    if(el) VST[k] = el.value;
+  }
+  const ap = $("vst_ap");
+  if(ap) VST.ap = ap.value;
+  VST.guessed = false;
+}
+
+async function vstGenerate(){
+  const v = VST;
+  if(!v) return;
+  const s = vstStart();
+  if(!s.ok){ v.err = s.why; v.step = "when"; return paintVStamp(); }
+  if(!vstCan()){
+    v.err = "This browser cannot make the timestamped copy — it has no video recorder. "
+      + "Chrome or Edge on a laptop will do it, and the original on your device is untouched either way.";
+    return paintVStamp();
+  }
+  v.startMs = s.ms; v.err = ""; v.saveMsg = ""; v.pct = 0; v.step = "working";
+  v.savedHere = false; v.started = false; v.recId = null;
+  if(v.out && v.out.url){ try{ URL.revokeObjectURL(v.out.url); }catch{} }
+  v.out = null;
+  paintVStamp();
+
+  const src = document.createElement("video");
+  v._src = src;
+  src.src = v.url; src.muted = true; src.playsInline = true; src.preload = "auto";
+  let stopped = false;
+  try{
+    await new Promise((res, rej) => {
+      src.onloadedmetadata = () => res();
+      src.onerror = () => rej(new Error("This browser could not read that video file."));
+      setTimeout(() => rej(new Error("Reading that video file timed out.")), 30000);
+    });
+    const W = src.videoWidth, H = src.videoHeight;
+    if(!W || !H) throw new Error("That file reports no picture size, so there is nothing to draw on.");
+    const dur = isFinite(src.duration) && src.duration > 0 ? src.duration : 0;
+
+    const cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    const cx = cv.getContext("2d");
+    const stream = cv.captureStream(0);
+    const track = stream.getVideoTracks()[0];
+    const mime = vstMime();
+    const chunks = [];
+    const rec = new MediaRecorder(stream, {mimeType: mime,
+      videoBitsPerSecond: Math.min(16000000, Math.max(2500000, Math.round(W * H * 30 * 0.1)))});
+    v._rec = rec;
+    rec.ondataavailable = e => { if(e.data && e.data.size) chunks.push(e.data); };
+    const finished = new Promise(res => { rec.onstop = () => res(); });
+    rec.start();
+
+    const frame = t => {
+      cx.drawImage(src, 0, 0, W, H);
+      /* THE CLOCK RUNS ON THE VIDEO'S OWN TIMELINE. `t` is this frame's
+         presentation time inside the source, so the label is the operator's
+         chosen start plus how far into the footage this frame sits — never
+         this machine's current clock, which would stamp today's date and the
+         render's time onto footage shot last week. */
+      vstDraw(cx, W, H, vstLabel(v.startMs + Math.floor(t) * 1000, v.tz));
+      track.requestFrame();
+      if(dur){ VST.pct = Math.max(VST.pct, Math.min(99, Math.round(t / dur * 100))); vstProgress(); }
+    };
+    const pump = () => {
+      if(stopped || !VST || VST._abort) return;
+      if(typeof src.requestVideoFrameCallback === "function"){
+        src.requestVideoFrameCallback((now, meta) => { frame(meta && isFinite(meta.mediaTime) ? meta.mediaTime : src.currentTime); pump(); });
+      } else {
+        requestAnimationFrame(() => { frame(src.currentTime); pump(); });
+      }
+    };
+
+    await new Promise((res, rej) => {
+      // A watchdog, so a file that never signals the end cannot hang the screen.
+      const cap = setTimeout(() => rej(new Error("The copy ran past the time the clip should have taken and was stopped. "
+        + "Nothing was saved and the original is untouched.")), Math.round((dur || 60) * 1000) + 60000);
+      const finish = () => { clearTimeout(cap); res(); };
+      src.onended = finish;
+      src.onerror = () => { clearTimeout(cap); rej(new Error("Playing the video for the copy failed part-way.")); };
+      src.play().then(() => { frame(0); pump(); })
+        .catch(() => { clearTimeout(cap); rej(new Error("This browser would not play that file for copying.")); });
+    });
+    stopped = true;
+    rec.stop();
+    await finished;
+    if(VST && VST._abort) return;
+
+    const blob = new Blob(chunks, {type: mime});
+    if(!blob.size) throw new Error("The copy came out empty. Nothing was saved and the original is untouched.");
+    const base = String(v.name || "video").replace(/\.[A-Za-z0-9]+$/, "").replace(/[^A-Za-z0-9._ -]/g, "_").slice(0, 90) || "video";
+    v.out = {blob, url: URL.createObjectURL(blob), name: base + "-timestamped.webm", size: blob.size, mime};
+    v.pct = 100; v.step = "done";
+    paintVStamp();
+    await vstRecord();
+  }catch(e){
+    stopped = true;
+    try{ if(v._rec && v._rec.state !== "inactive") v._rec.stop(); }catch{}
+    if(VST){ VST.err = (e && e.message) || String(e); VST.step = "preview"; }
+  }
+  try{ src.pause(); }catch{}
+  paintVStamp();
+}
+
+/* The record of the generation — the only thing about this that reaches the
+   portal. A correction supersedes the earlier record server-side; nothing is
+   edited and no history is dropped. */
+async function vstRecord(){
+  const v = VST;
+  if(!v || !v.out) return;
+  /* NO CASE, NO RECORD. A copy made before a case was chosen is a real file on
+     the operator's device and nothing in the portal — which is the honest state,
+     and is what the done screen says. Attaching it later is what writes it. */
+  if(!v.caseNo) return;
+  try{
+    const res = await fetch(`/portal-api/cases/${encodeURIComponent(v.caseNo)}/video-stamp`, {
+      method: "POST", credentials: "same-origin",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        original_name: v.name, original_size: v.size, original_hash: v.hash,
+        start_utc: new Date(v.startMs).toISOString(), tz: v.tz,
+        derivative_name: v.out.name,
+      }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if(!res.ok) throw new Error(d.error || ("The copy was made, but the portal did not record it (" + res.status + ")."));
+    v.recId = d.id || null;
+    if(WS && d.stamps) WS.video_stamps = d.stamps;
+  }catch(e){ if(VST) VST.err = (e && e.message) || String(e); }
+}
+
+/* SAVING IS THE PLATFORM'S ACT AND ONLY WHAT WE CAN SEE IS CLAIMED.
+   `showSaveFilePicker` resolves after the operator has chosen a location AND
+   the write has finished — that is an honest "saved", and it is the only path
+   here that says so by itself. Every other path starts a download this page
+   cannot observe, so it says the download has STARTED and leaves the operator
+   to confirm it arrived. Safari cannot silently put a file into Photos and
+   nothing here pretends it can. */
+async function vstSave(){
+  const v = VST;
+  if(!v || !v.out) return;
+  v.err = ""; v.saveMsg = "";
+  if(typeof window.showSaveFilePicker === "function"){
+    try{
+      const h = await window.showSaveFilePicker({suggestedName: v.out.name,
+        types: [{description: "Timestamped video", accept: {"video/webm": [".webm"]}}]});
+      const w = await h.createWritable();
+      await w.write(v.out.blob);
+      await w.close();
+      v.savedHere = true;
+      v.saveMsg = "Saved to your device.";
+      paintVStamp();
+      return vstMarkSaved();
+    }catch(e){
+      if(e && e.name === "AbortError"){ v.saveMsg = "Save cancelled — the copy is still here."; return paintVStamp(); }
+      // Anything else: fall through and let the browser's own download try.
+    }
+  }
+  const a = document.createElement("a");
+  a.href = v.out.url; a.download = v.out.name;
+  document.body.appendChild(a); a.click(); a.remove();
+  v.started = true;
+  paintVStamp();
+}
+
+async function vstConfirmSaved(){
+  const v = VST;
+  if(!v) return;
+  v.savedHere = true; v.saveMsg = "Recorded as saved to your device.";
+  paintVStamp();
+  await vstMarkSaved();
+  paintVStamp();
+}
+
+async function vstMarkSaved(){
+  const v = VST;
+  if(!v || !v.recId) return;
+  try{
+    const res = await fetch(
+      `/portal-api/cases/${encodeURIComponent(v.caseNo)}/video-stamp/${v.recId}/saved`,
+      {method: "POST", credentials: "same-origin"});
+    const d = await res.json().catch(() => ({}));
+    if(!res.ok) throw new Error(d.error || ("Could not record the save (" + res.status + ")."));
+    if(WS && d.stamps) WS.video_stamps = d.stamps;
+  }catch(e){ if(VST) VST.err = (e && e.message) || String(e); }
+}
+
+/* Only the progress bar, not the screen. A render draws a frame at a time and
+   rebuilding the whole panel on each one would fight the encoder for the main
+   thread — and reset the operator's scroll position while it did. */
+function vstProgress(){
+  const bar = $("vst_bar"), pc = $("vst_pc");
+  if(!bar || !pc){ return paintVStamp(); }
+  bar.style.width = (VST ? VST.pct : 0) + "%";
+  pc.textContent = (VST ? VST.pct : 0) + "%";
+}
+
+function paintVStamp(){
+  const el = $("vstamp");
+  if(el) el.innerHTML = VST ? vstHtml() : "";
+  document.body.classList.toggle("vstopen", !!VST);
+}
+
+function vstHtml(){
+  const v = VST, mb = b => b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB";
+  const s = vstStart();
+  const preview = s.ok ? vstLabel(s.ms, v.tz) : "";
+  const caseName = c => c.kind === "claims"
+    ? (c.carrier || c.client_name || "Claim assignment") : (c.client_name || "Private client");
+  const q = String(v.q || "").trim().toLowerCase();
+  const pickable = (v.cases || []).filter(c => !q
+    || String(c.case_no).toLowerCase().includes(q) || caseName(c).toLowerCase().includes(q));
+
+  const body =
+      v.step === "case" ? `
+        <div class="vst-card">
+          <h4>Which case is this footage for?</h4>
+          <div class="vst-k"><span>File</span><span>${esc(v.name)}</span></div>
+          <p class="vst-note">Only cases you can already open are listed. Choosing one here
+            gives you no more access than you had.</p>
+          <label class="vst-f" style="margin-top:10px"><span>Find a case</span>
+            <input id="vst_q" data-act-input="vstSearch" style="text-align:left"
+              placeholder="case number or name" value="${esc(v.q || "")}"></label>
+          ${v.caseErr ? `<p class="vst-err">${esc(v.caseErr)} &mdash; the case list could not be
+            read, so this is not "you have no cases".</p>` : ""}
+          ${!v.cases ? `<p class="vst-note">Loading your cases&hellip;</p>`
+            : pickable.length ? `<div style="margin-top:8px">${pickable.slice(0, 40).map(c =>
+                `<button class="vst-btn" style="text-align:left;margin-top:6px"
+                   data-act="vstPickCase" data-case="${esc(c.case_no)}">${esc(c.case_no)}
+                   &mdash; ${esc(caseName(c))}</button>`).join("")}</div>`
+            : `<p class="vst-note">${v.cases.length ? "No case matches that."
+                : "You have no cases to attach this to yet."}</p>`}
+          <p class="vst-note" style="margin-top:12px">You do not have to decide now. The copy can be
+            made here on this device and attached to a case afterwards &mdash; until it is, the
+            portal keeps no record of it.</p>
+          <button class="vst-btn" data-act="vstSkipCase">Make the copy without a case for now</button>
+          <button class="vst-btn" data-act="vstClose">Cancel</button>
+        </div>`
+    : v.step === "when" ? `
+        <div class="vst-card">
+          <h4>When does this footage start?</h4>
+          <div class="vst-k"><span>File</span><span>${esc(v.name)}</span></div>
+          <div class="vst-k"><span>Size</span><span>${mb(v.size)}</span></div>
+          ${v.guessed ? `<p class="vst-note">Filled in from the file's own date, which is often wrong.
+            Correct it to the moment the recording actually began.</p>` : ""}
+        </div>
+        <div class="vst-card">
+          <h4>Start date</h4>
+          <div class="vst-when">
+            <label class="vst-f"><span>Month</span><input id="vst_mo" inputmode="numeric" maxlength="2" value="${esc(v.mo)}"></label>
+            <label class="vst-f"><span>Day</span><input id="vst_da" inputmode="numeric" maxlength="2" value="${esc(v.da)}"></label>
+            <label class="vst-f"><span>Year</span><input id="vst_yr" inputmode="numeric" maxlength="4" value="${esc(v.yr)}"></label>
+          </div>
+          <h4 style="margin-top:12px">Start time</h4>
+          <div class="vst-when">
+            <label class="vst-f"><span>Hour</span><input id="vst_hr" inputmode="numeric" maxlength="2" value="${esc(v.hr)}"></label>
+            <label class="vst-f"><span>Minute</span><input id="vst_mi" inputmode="numeric" maxlength="2" value="${esc(v.mi)}"></label>
+            <label class="vst-f"><span>Second</span><input id="vst_se" inputmode="numeric" maxlength="2" value="${esc(v.se)}"></label>
+            <label class="vst-f"><span>AM / PM</span><select id="vst_ap">
+              <option value="AM" ${v.ap === "AM" ? "selected" : ""}>AM</option>
+              <option value="PM" ${v.ap === "PM" ? "selected" : ""}>PM</option></select></label>
+          </div>
+          <div class="vst-res" id="vst_res">${esc(preview || "—")}
+            <small>Eastern Time, resolved from the date you chose</small></div>
+          ${v.err ? `<p class="vst-err">${esc(v.err)}</p>` : ""}
+          <button class="vst-btn go" data-act="vstUseTime">Use this time</button>
+        </div>`
+    : v.step === "preview" ? `
+        <div class="vst-card">
+          <h4>Ready to make the timestamped copy</h4>
+          <div class="vst-k"><span>Original</span><span>${esc(v.name)}</span></div>
+          <div class="vst-k"><span>Starts at</span><span>${esc(preview)}</span></div>
+          <div class="vst-k"><span>Stamp position</span><span>Bottom right</span></div>
+          <div class="vst-k"><span>Fingerprint</span><span>${v.hash
+            ? esc(v.hash.slice(0, 16)) + "…"
+            : "not taken &mdash; the file is too large to fingerprint in a browser"}</span></div>
+          ${v.err ? `<p class="vst-err">${esc(v.err)}</p>` : ""}
+          <p class="vst-note">The original is opened, read and left exactly as it is.
+            The copy is made here on this device and nothing is uploaded.</p>
+          <button class="vst-btn go" data-act="vstGo">Generate timestamped video</button>
+          <button class="vst-btn" data-act="vstEditTime">Edit timestamp</button>
+          <button class="vst-btn" data-act="vstClose">Cancel</button>
+        </div>`
+    : v.step === "working" ? `
+        <div class="vst-card">
+          <h4>Making the timestamped copy</h4>
+          <div class="vst-bar2"><i id="vst_bar" style="width:${v.pct}%"></i></div>
+          <p class="vst-note"><b id="vst_pc">${v.pct}%</b> &mdash; the clip is being played through once,
+            so this takes about as long as the footage runs. Keep this screen open.</p>
+          <button class="vst-btn" data-act="vstAbort">Stop</button>
+        </div>`
+    : `
+        <div class="vst-card">
+          <h4>Timestamped copy is ready</h4>
+          <video class="vst-prev" src="${esc(v.out ? v.out.url : "")}" controls playsinline></video>
+          <div class="vst-k" style="margin-top:8px"><span>File</span><span>${esc(v.out ? v.out.name : "")}</span></div>
+          <div class="vst-k"><span>Size</span><span>${v.out ? mb(v.out.size) : ""}</span></div>
+          <div class="vst-k"><span>Starts at</span><span>${esc(vstLabel(v.startMs, v.tz))}</span></div>
+          <div class="vst-k"><span>On this device</span><span>${v.savedHere ? "Saved" : "Not saved yet"}</span></div>
+          <div class="vst-k"><span>Case</span><span>${v.caseNo ? esc(v.caseNo) : "Not attached to a case"}</span></div>
+          ${v.err ? `<p class="vst-err">${esc(v.err)}</p>` : ""}
+          ${v.saveMsg ? `<p class="vst-ok">${esc(v.saveMsg)}</p>` : ""}
+          ${v.caseNo ? "" : `<p class="vst-note">Nothing about this copy is recorded in the portal
+            while it belongs to no case. Attach it and the record is written then.</p>
+            <button class="vst-btn" data-act="vstAttach">Attach it to a case</button>`}
+          ${v.savedHere ? "" : `<button class="vst-btn go" data-act="vstSave">Save to this device</button>`}
+          ${v.started && !v.savedHere ? `<p class="vst-note">The download has started. This page cannot see
+            where your browser put it, so it will not claim the file is saved &mdash; check it landed, then
+            confirm below.</p>
+            <button class="vst-btn" data-act="vstSaved">I have got the file &mdash; mark it saved</button>` : ""}
+          <p class="vst-note">Play it back above and check the clock in the bottom-right corner before you
+            close this. The copy exists only on this device until you save it; the portal keeps the record of
+            it, never the video.</p>
+          <button class="vst-btn" data-act="vstEditTime">Correct the time and make it again</button>
+          <button class="vst-btn" data-act="vstClose">Close</button>
+        </div>`;
+  return `<div class="vst" role="dialog" aria-modal="true" aria-label="Video timestamp">
+    <div class="vst-bar">
+      <b>Video timestamp${v.caseNo ? " &middot; " + esc(v.caseNo) : ""}</b>
+      ${v.step === "working" ? "" : `<button class="vst-x" data-act="vstClose">Close</button>`}
+    </div>
+    <div class="vst-body">${body}</div>
+  </div>`;
+}
+
 function paint(){
   paintEvView();
+  paintVStamp();
   if(!ME){ app.innerHTML = loginView(); $("who").hidden = true;
     document.body.classList.remove("withnav", "navopen");
     if($("burger")) $("burger").hidden = true;
@@ -4058,7 +4710,7 @@ function wsSections(){
     return [
       ["overview",  "Overview",          [["overview","Overview"], ["details","Intake details"], ["subject","Subject"]], "Home", "&#8962;"],
       ["fieldwork", "Fieldwork",         [["field","Field work"], ["activity","Activity log"]], "Field", "&#128065;"],
-      ["repev",     "Report & Evidence", [["reports","Reports"], ["evidence","Evidence"], ["package","Package"]], "Report", "&#128196;"],
+      ["repev",     "Report & Media",    [["reports","Reports"], ["evidence","Case media"], ["package","Package"]], "Report", "&#128196;"],
       ["admin",     "Admin",             [["edit","Edit case"], ["assign","Assignment"], ["auth","Authorization"], ["expenses","Expenses"],
                                           ["notes","Internal notes"], ["comms","Comm log"], ["tasks","Tasks"],
                                           ["billing","Billing & closing"]], "Admin", "&#9881;"],
@@ -4072,7 +4724,7 @@ function wsSections(){
   return [
     ["assignment", "Assignment", assignment, "Home", "&#8962;"],
     ["activity",   "Activity",   [["field","Field work"], ["activity","Activity log"], ["expenses","Expenses"]], "Activity", "&#9998;"],
-    ["evidence",   "Evidence",   [["evidence","Evidence"]], "Evidence", "&#128247;"],
+    ["evidence",   "Case media", [["evidence","Case media"]], "Media", "&#128247;"],
     ["report",     "Report",     [["reports","Reports"]], "Report", "&#128196;"],
   ];
 }
@@ -5240,6 +5892,40 @@ async function reopenCase(){
    private R2 bucket through the Worker, which refuses anything that could
    push the account past the free tier. Both roles upload and read on their
    cases; classification and deletion are the office's. */
+/* THE OFFICE DOOR into the same generator Active Surveillance opens, and the
+   record of every timestamped copy made for this case.
+
+   There is no video in the portal to list. Video is device-first (owner,
+   2026-08-17): the original stays on the device that shot it and the copy is
+   made and saved there, so what the portal holds is the record — which
+   original, starting at what instant, in what zone, by whom, whether a later
+   correction replaced it, and whether it reached a device. `vstLabel` re-derives
+   the wording from the stored instant and zone, so the line here is the same
+   text that was burned into the picture rather than a second rendering of it. */
+function vstPanelHtml(){
+  const rows = (WS && WS.video_stamps) || [];
+  return `<div class="card" style="margin-bottom:14px">
+    <div class="rc-h"><b>Video timestamp</b>${rows.length ? `<span class="tag">${rows.length}</span>` : ""}</div>
+    <p class="hint" style="margin:4px 0 8px">Pick the clip on this device, set the moment it
+      starts, and the copy is made here with the date and time burned into the bottom-right
+      corner, advancing with the footage. The original is never changed and no video is uploaded.</p>
+    <button class="btn sm" data-act="vstOpen" data-case="${esc(WS_CASE)}">Video timestamp</button>
+    ${rows.length ? `<div style="margin-top:10px">${rows.map(r => `
+      <div class="vsrow ${r.superseded_at ? "old" : ""}">
+        <div class="rc-h"><b>${esc(r.original_name)}</b>
+          ${r.superseded_at ? `<span class="tag rs-draft">replaced</span>`
+            : `<span class="tag rs-approved">current</span>`}
+          ${r.saved_at ? `<span class="tag">saved to a device</span>`
+            : `<span class="tag rs-submitted">not saved yet</span>`}</div>
+        <div class="tl-m">Starts ${esc(vstLabel(Date.parse(r.start_utc), r.tz))}</div>
+        <div class="tl-m">${esc(r.derivative_name || "copy")} &middot; ${esc(r.generated_by_name || "")}
+          &middot; ${when(r.generated_at || r.created_at)}</div>
+        ${r.original_hash ? `<div class="tl-m">SHA-256 ${esc(r.original_hash.slice(0, 16))}&hellip;</div>` : ""}
+      </div>`).join("")}</div>`
+      : `<div class="empty" style="margin-top:8px">No timestamped copy has been made on this case yet.</div>`}
+  </div>`;
+}
+
 function evidencePanel(){
   const admin = ME.role === "admin";
   const rows = (WS && WS.evidence) || [];
@@ -5274,7 +5960,7 @@ function evidencePanel(){
              data-src="${fileUrl(e)}" data-name="${esc(e.filename)}"
              data-type="${esc(e.content_type || "")}"><u>${esc(e.filename)}</u></button></b>
           <span class="tag ${clsTone(e.classification)}">${esc(clsLabel(e.classification))}</span>
-          ${kindOf(e) === "video" ? `<span class="tag">Portal</span>` : ""}</div>
+          ${kindOf(e) === "video" ? `<span class="tag">stored earlier</span>` : ""}</div>
         <div class="tl-m">${mb(e.size_bytes)} &middot; ${esc(e.uploaded_by || "")} &middot; ${when(e.uploaded_at)}</div>
         ${e.note ? `<div class="tl-n">${esc(e.note)}</div>` : ""}
         ${momentOf(e)}
@@ -5286,9 +5972,17 @@ function evidencePanel(){
       </div>`;
 
   return `
+    ${vstPanelHtml()}
+    <!-- UPLOAD VIDEO / PICTURE is the entry point for ADDING media (owner,
+         2026-08-17) and it holds both halves of that: the picture or document
+         goes to the portal, and the video is timestamped on the device it is
+         already on. The heading is the entry point's name; each control below
+         it says exactly what it does, because a button labelled "upload video"
+         when the Worker refuses video would be the screen telling a lie. -->
+    <div class="rc-h" style="margin:2px 0 6px"><b>Upload video / picture</b></div>
     <form class="quick" data-act="evUpload">
-      <label class="f"><span>File <span class="opt">photos, video, documents &mdash; originals are never overwritten</span></span>
-        <input id="ev_file" type="file"></label>
+      <label class="f"><span>Picture or document <span class="opt">the original is never overwritten</span></span>
+        <input id="ev_file" type="file" accept="image/*,application/pdf,.doc,.docx,.txt,.rtf,.csv,.xlsx"></label>
       <div class="two">
         ${admin ? `<label class="f"><span>Classification</span>
           <select id="ev_class">${["needs_review","client_deliverable","internal_only","needs_redaction","do_not_use"]
@@ -5304,12 +5998,17 @@ function evidencePanel(){
           ${((WS && WS.activity) || []).length ? `<optgroup label="Recent activity">
             ${WS.activity.slice(0, 8).map(a => `<option value="e:${a.id}">${esc(t12(a.at_time))} — ${esc(String(a.description || "").slice(0, 48))}</option>`).join("")}</optgroup>` : ""}
         </select></label>
-      <button class="btn" type="submit">Upload evidence</button>
+      <button class="btn" type="submit">Upload picture or document</button>
       <p class="hint">The free-plan failsafe is on: uploads stop before storage could ever bill.
-        Large video should be split into parts.</p>
+        Video is not uploaded &mdash; it stays on the device that shot it, and
+        <b>Video timestamp</b> above makes the timestamped copy there.</p>
       ${WS_NOTICE ? `<div class="note">${esc(WS_NOTICE)}</div>` : ""}
       ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
     </form>
+    <!-- CASE MEDIA is what is already here, kept apart from the entry point
+         above it: adding and looking at are two different jobs and were reading
+         as one panel. -->
+    <div class="rc-h" style="margin:14px 0 6px"><b>Case media</b></div>
     <div class="evtabs">${[["all","All"], ["photos","Photos"], ["video","Video"], ["docs","Documents"]]
       .map(([k, lbl]) => {
         const n = k === "all" ? rows.length : rows.filter(e => !e.deleted_at && kindOf(e) === k).length;
@@ -6198,7 +6897,7 @@ function svView(){
     ${body}
     <div class="sv-nav">
       ${[["home","&#8962;","Home"], ["activity","&#9998;","Activity"],
-         ["evidence","&#128247;","Evidence"], ["report","&#128196;","Report"],
+         ["evidence","&#128247;","Media"], ["report","&#128196;","Report"],
          ["case","&#8942;","Case"]].map(([k, ic, lbl]) =>
         `<button class="${SV.tab === k || (k === "activity" && SV.tab === "timeline") ? "on" : ""}"
            data-act="svTab" data-t="${k}"><b>${ic}</b>${lbl}</button>`).join("")}
@@ -6555,11 +7254,12 @@ function svEvidenceScreen(){
     ${SV.err ? `<div class="sv-err">${esc(SV.err)}</div>` : ""}
     ${SV.ok ? `<div class="sv-ok">${esc(SV.ok)}</div>` : ""}
     <div class="sv-quad">
-      <button class="sv-q" data-act="svPhoto"><b>&#128247;</b>Add photo</button>
-      <button class="sv-q" data-act="svVideo"><b>&#127909;</b>Add video</button>
+      <button class="sv-q" data-act="svPhoto"><b>&#128247;</b>Add picture</button>
+      <button class="sv-q" data-act="svVideo"><b>&#127909;</b>Timestamp video</button>
     </div>
+    ${svVideoStampsHtml()}
     <div class="sv-card">
-      <h3>On this case &middot; ${rows.length}</h3>
+      <h3>Case media &middot; ${rows.length}</h3>
       ${rows.length ? `<div class="evgrid">${rows.slice(0, 24).map(e => `<div class="evcard" style="background:#0d1826;border-color:#23405f">
         ${isImg(e) ? `<button class="evlink" data-act="evOpen" data-src="${url(e)}" data-name="${esc(e.filename || "")}" data-type="${esc(e.content_type || "")}"><img class="evthumb" src="${url(e)}" alt="" loading="lazy"></button>`
           : `<div class="evtile" style="background:#132538">${String(e.content_type || "").startsWith("video/") ? "&#127909;" : "&#128196;"}</div>`}
@@ -6570,10 +7270,31 @@ function svEvidenceScreen(){
         </div>
       </div>`).join("")}</div>` : `<div style="color:#8fb4d9">Nothing uploaded yet.</div>`}
     </div>
-    <div style="color:#8fb4d9;font-size:.8rem">Photos and video are ready for the
+    <div style="color:#8fb4d9;font-size:.8rem">Photos are ready for the
       report as soon as they are here &mdash; nothing waits on a review. Mark a file
       <b>Needs redaction</b>, <b>Internal only</b> or <b>Do not use</b> in the office
-      view to hold it back from a client package.</div>
+      view to hold it back from a client package. Video stays on this device:
+      <b>Video timestamp</b> makes the timestamped copy here and saves it back to
+      you.</div>
+  </div>`;
+}
+
+/* The record of every timestamped copy made for this case. The field view and
+   the office Evidence tab draw the same list from the same data — the portal
+   holds the record, never the video, so this IS what it knows. */
+function svVideoStampsHtml(){
+  const rows = (WS && WS.video_stamps) || [];
+  if(!rows.length) return "";
+  return `<div class="sv-card">
+    <h3>Timestamped video &middot; ${rows.length}</h3>
+    ${rows.slice(0, 10).map(r => `<div class="sv-row" style="${r.superseded_at ? "opacity:.6" : ""}">
+      <span>${esc(r.original_name)}</span>
+      <b>${esc(vstLabel(Date.parse(r.start_utc), r.tz))}</b></div>
+      <div style="font-size:.76rem;color:#8fb4d9;margin:-2px 0 8px">${
+        r.superseded_at ? "replaced by a later copy &middot; " : ""}${
+        r.saved_at ? "saved to a device" : "not recorded as saved"}</div>`).join("")}
+    <div style="font-size:.78rem;color:#8fb4d9">No video is stored in the portal.
+      These are the records of copies made on a device.</div>
   </div>`;
 }
 
@@ -7618,12 +8339,17 @@ async function svSaveEntry(oneTap){
 /* Photo and video (P10/P11): the phone's own picker, straight to the same
    evidence route. Classification is not offered — field uploads land as
    needs_review and the office decides delivery, which is the existing rule. */
+/* PHOTOGRAPHS ONLY. Video was the other caller here until 2026-08-17, when the
+   owner made video device-first: a clip is no longer uploaded at all, so the
+   Video button opens the timestamp generator instead and this has one job. The
+   Worker refuses a video upload anyway — that is where the rule lives — but a
+   picker that still offered video would be inviting a refusal. */
 function svPickFile(kind){
   SV.err = ""; SV.ok = "";
   const inp = document.createElement("input");
   inp.type = "file";
-  inp.accept = kind === "photo" ? "image/*" : "video/*";
-  if(kind === "photo") inp.capture = "environment";
+  inp.accept = "image/*";
+  inp.capture = "environment";
   inp.onchange = async () => {
     const f = inp.files && inp.files[0];
     if(!f) return;
@@ -7638,7 +8364,7 @@ function svPickFile(kind){
         {method:"POST", credentials:"same-origin", body: fd});
       const d = await res.json().catch(() => ({}));
       if(!res.ok) throw new Error(d.error || ("Upload failed (" + res.status + ")"));
-      SV.ok = `${kind === "photo" ? "Photo" : "Video"} stored${last ? " with the last entry" : ""}.`;
+      SV.ok = `Photo stored${last ? " with the last entry" : ""}.`;
     }catch(e){ SV.err = e.message; SV.ok = ""; }
     await svReload();
   };
@@ -8121,6 +8847,9 @@ async function submitManualIntake(openAfter){
    to the viewer alone so it cannot start closing other things by surprise. */
 document.addEventListener("keydown", ev => {
   if(ev.key === "Escape" && EV_VIEW){ EV_VIEW = null; paintEvView(); }
+  /* Escape does NOT abandon a render in progress — a stray key must not throw
+     away a copy that has been running for minutes. Stop is a deliberate button. */
+  else if(ev.key === "Escape" && VST && VST.step !== "working"){ vstClose(); }
 });
 
 document.addEventListener("click", ev => {
@@ -8201,6 +8930,43 @@ document.addEventListener("click", ev => {
     paintEvView();
   }
   else if(act === "evClose"){ EV_VIEW = null; paintEvView(); }
+  /* The video timestamp generator. `vstCollect()` before every repaint, for the
+     reason EDIT_DRAFT exists: the inputs are rebuilt from VST each paint, so a
+     correction not read back first would revert without a sound. */
+  else if(act === "vstOpen"){
+    /* An explicit empty data-case means "ask" — the dashboard and navigation
+       doors set it that way deliberately, and must not silently inherit
+       whichever case happens to be open behind them. */
+    const attr = el.getAttribute("data-case");
+    vstOpen(attr === null ? (WS_CASE || "") : attr);
+  }
+  else if(act === "vstPickCase"){
+    VST.caseNo = el.getAttribute("data-case") || "";
+    VST.err = "";
+    // Attaching a copy that already exists writes its record now; otherwise
+    // the flow simply carries on to the time.
+    if(VST.out){ VST.step = "done"; paintVStamp(); vstRecord().then(paintVStamp); }
+    else { VST.step = "when"; paintVStamp(); }
+  }
+  else if(act === "vstSkipCase"){ VST.caseNo = ""; VST.step = "when"; paintVStamp(); }
+  else if(act === "vstAttach"){ VST.step = "case"; paintVStamp(); vstLoadCases(); }
+  else if(act === "vstUseTime"){
+    vstCollect();
+    const s = vstStart();
+    if(!s.ok){ VST.err = s.why; } else { VST.err = ""; VST.startMs = s.ms; VST.step = "preview"; }
+    paintVStamp();
+  }
+  else if(act === "vstEditTime"){ VST.step = "when"; VST.err = ""; paintVStamp(); }
+  else if(act === "vstGo"){ vstGenerate(); }
+  else if(act === "vstSave"){ vstSave(); }
+  else if(act === "vstSaved"){ vstConfirmSaved(); }
+  else if(act === "vstAbort"){
+    /* Stopping mid-render keeps nothing: no partial file is offered and the
+       original is untouched, so there is nothing half-done to explain. */
+    if(VST){ VST._abort = true; try{ if(VST._src) VST._src.pause(); }catch{} }
+    vstClose();
+  }
+  else if(act === "vstClose"){ vstClose(); }
   else if(act === "retOpen"){ retainerReset(); RET_FORM = true; paintCase(); }
   else if(act === "retCancel"){ retainerReset(); paintCase(); }
   /* A NEW attempt, chosen by the admin after reading the payment list. The
@@ -8386,7 +9152,10 @@ document.addEventListener("click", ev => {
   else if(act === "svResume"){ svResumeDay(); }
   else if(act === "svSaveEntry"){ svSaveEntry(null); }
   else if(act === "svPhoto"){ svPickFile("photo"); }
-  else if(act === "svVideo"){ svPickFile("video"); }
+  /* Video from the field is device-first (owner, 2026-08-17): the clip stays on
+     the phone and this makes the timestamped copy on it. The same generator the
+     case's Evidence tab opens — one screen, two doors. */
+  else if(act === "svVideo"){ vstOpen(WS_CASE); }
   else if(act === "svNote"){
     // A note is an activity entry the office reads and the client never does.
     SV.tab = "activity";
@@ -8617,6 +9386,11 @@ document.addEventListener("input", ev => {
   if(din === "svSearch" && SV){ SV.search = ev.target.value; paint();
     const q = $("sv_q"); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } return; }
   if(din === "svDirty" && SV){ SV.dirty = true; return; }
+  /* Filtering the case list repaints the panel, which rebuilds the box the
+     cursor is in — so the cursor goes straight back, the way the activity
+     sheet's own search already does it. */
+  if(din === "vstSearch" && VST){ VST.q = ev.target.value; paintVStamp();
+    const q = $("vst_q"); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } return; }
   /* Typing a custom retainer counts as choosing one. No repaint — the box the
      cursor is sitting in must not be rebuilt underneath it mid-number. */
   if(din === "wizRetDirty" && SHEET_WIZ){ SHEET_WIZ.retainerTouched = true; return; }

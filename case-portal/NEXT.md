@@ -366,6 +366,128 @@ recedes but is **never removed**, and nothing is hidden with `display:none` to
 make a section look smaller. Shrinking a section by deleting its words is not
 shrinking it, and an absent zero is a different claim from a zero.
 
+## ✅ VIDEO TIMESTAMP — BUILT 2026-08-17, device-first (branch `video-timestamp`)
+
+**Owner decision, in two parts, that changed the architecture before a line was
+written: VIDEO IS DEVICE-FIRST.** New video bytes do not become Cloudflare
+storage at all. The original stays on the device that shot it, the timestamped
+copy is rendered in that device's own browser, and it is saved back to that
+device. The portal keeps the **record** and no video.
+
+That is why the audit's original "derivative is another `case_evidence` row"
+plan is **not** what shipped: it would have doubled every clip against a 10 GB
+free tier the whole failsafe exists to protect.
+
+### The capability proof came first, and it corrected the audit
+
+Run in the real browser this project tests with, before any feature code
+(`scratchpad/probe.mjs`, not in the repo):
+
+| Capability | Result |
+| --- | --- |
+| `VideoEncoder` / `VideoDecoder` (WebCodecs) | **absent** — the audit's first recommendation cannot be used or proven here |
+| `MediaRecorder` `video/webm;codecs=vp9` | supported |
+| `MediaRecorder` `video/mp4` | **reports supported while `avc1.42E01E` reports NOT** — a trap; recording to it makes a file nothing plays |
+| decode → canvas → burn → encode → **re-decode** | full round trip succeeded |
+| burned marker present in the re-decoded output | **yes**, and a control pixel elsewhere was not |
+
+**So the renderer is canvas + `MediaRecorder` (VP9/WebM)**, dependency-free, no
+service, no credential, no cost. `vstMime()` refuses mp4 by construction and
+says why in a comment.
+
+### What shipped
+
+- **`uploadEvidence` refuses `video/*`** with `code: 'video_device_first'`,
+  **before** the size and cap tests — a refused video must not first be told to
+  split itself into parts. In the Worker, not by a page hiding a button.
+- **`video_stamp`** — metadata and audit only. **No blob column, and there must
+  never be one** (a test reads the schema, not a comment about it). Routes:
+  `POST /cases/:no/video-stamp`, `POST /cases/:no/video-stamp/:id/saved`,
+  `GET /cases/:no/video-stamps`. All under `/cases/:no/`, so the deleted and
+  archived chokepoint already covers the writes.
+- **A correction inserts a row and stamps the earlier one `superseded_at`** —
+  matched on the original's own name, so a caller cannot supersede another
+  original by naming its id.
+- **`saved_at` is the operator's word.** `showSaveFilePicker` resolving is the
+  only path that claims "saved" by itself; everything else says the download has
+  *started* and the operator confirms. Written once — a second tap does not move
+  the moment the file arrived.
+- **The page:** `VST` + `#vstamp`, a sibling root like the evidence viewer,
+  because a render runs as long as the clip does and nothing underneath may be
+  rebuilt while it goes. `vstToUtc`/`vstLabel` resolve EST/EDT **from the date**
+  via `Intl`; the label for a frame is the chosen start plus that frame's
+  presentation time and **never this machine's clock**.
+
+### The legacy R2 video question — SETTLED FOR NOW, AND OPEN FOR LATER
+
+**The owner's instruction was explicit: do not delete, migrate, move or modify
+existing stored video in this PR.** Nothing did. The refusal blocks new writes
+only; every existing row still reads, still serves, still counts on the storage
+meter, and still passes through the package video gate. The gallery badges such
+a row **"stored earlier"** so the office is not left guessing why one clip is in
+the portal and the rest are not.
+
+**What is deliberately left for a later, separate decision:** whether legacy
+video should be exported to the device and removed, kept until its case closes,
+or kept indefinitely. It is real free-tier weight and nobody has decided. **Do
+not sweep it as a side effect of anything.** The tests now plant a legacy video
+row directly (`plantLegacyVideo` in the worker suite, and one `db.prepare`
+insert in the portal suite) because that is the ONLY way such a row can exist
+now — which also means the legacy path stays exercised rather than rotting.
+
+### Known limits, stated rather than papered over
+
+- **The copy is picture only — no audio.** `HTMLMediaElement.captureStream` is
+  not dependable across the browsers this has to run on, and half-working audio
+  on an evidence file is worse than none. The original, with its audio, is on
+  the device and untouched. If audio is wanted it is its own unit.
+- **The output is WebM.** Not mp4, for the codec reason in the proof table.
+- **Rendering is real time** — a four-minute clip takes about four minutes,
+  because the clip is played through once. Desktop is the comfortable place for
+  a long one; the phone works and says to keep the screen open.
+- **`crypto.subtle.digest` needs the whole file in memory**, so the SHA-256 of
+  the original is taken only up to 128 MB and is recorded as **absent** above
+  that — never as a placeholder that would read as a check that was done.
+
+### Schema change — a portal-setup dispatch is OWED after merge
+
+`video_stamp` is new. `schema.sql` arrives by a **manual `portal-setup.yml`
+dispatch** while the Worker deploys on push, so between the two the table does
+not exist on the live database. Every read is guarded through `missingTables()`:
+the list degrades to `{stamps: [], not_set_up: true}`, the workspace carries an
+empty array, and the write returns 503 naming the workflow. Tested by dropping
+the table.
+
+## 🖥️ OWNER UI ADDENDUM, 2026-08-17 — Timestamp Video is a first-class door
+
+Arrived mid-build and was folded in.
+
+- **Timestamp Video is in the navigation foot for BOTH roles, on every screen**,
+  and as one compact `.qtools` row on the Dashboard — not another card. An
+  investigator has no Dashboard at all, which is why the nav door is the real
+  answer and the dashboard row is the shortcut.
+- **Opened from outside a case it ASKS**, against the caller's own
+  `/submissions` list, and the record still goes through `caseFor`. Its
+  `data-case` is empty **on purpose** so it cannot silently adopt whichever case
+  is open behind it. Local processing may also go first: the copy can be made
+  with no case, and the screen then says plainly that **the portal holds no
+  record of it** until it is attached.
+- **Wording:** *Upload video / picture* names the entry point for ADDING;
+  *Case media* names what is already there (the tab, the field bar's `Media`
+  item, the case card's jump link). **Keys, routes, tables and variables are
+  untouched** — `evidence` is still the tab key, the route and the table.
+- **One conflict, resolved and flagged:** a control labelled "upload video" would
+  promise something the Worker refuses. So *Upload video / picture* is the
+  **section** heading and the button under it reads **Upload picture or
+  document**, with the video half being Timestamp video. The section carries the
+  owner's word; no individual control states an untruth.
+- **The four field actions are untouched** — Activity / Photo / Video / Note,
+  asserted by name and count. The Video one opens the timestamp screen, which is
+  the only thing video does now.
+- The package builder's step rail still reads **Evidence**. Deliberately not
+  renamed: it is package-composition vocabulary, not the media entry point or the
+  existing-media view.
+
 ## 📹 QUEUED BY THE OWNER — SURVEILLANCE VIDEO TIMESTAMP / BURN-IN
 
 **Recorded on arrival, 2026-08-17, before any of it was built.** Queued behind

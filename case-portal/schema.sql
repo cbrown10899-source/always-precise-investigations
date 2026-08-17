@@ -1102,3 +1102,37 @@ CREATE TABLE IF NOT EXISTS retainer_receipt (
   recorded_by INTEGER REFERENCES users(id),
   recorded_at TEXT
 );
+
+-- ------------------------------------------------------- video timestamping
+-- VIDEO IS DEVICE-FIRST (owner, 2026-08-17). The original stays on the
+-- investigator's phone or computer, the timestamped derivative is generated in
+-- their browser and saved back to their device, and NEITHER SET OF BYTES IS
+-- STORED HERE OR IN R2. This table is metadata and audit only — there is no
+-- blob column and there must never be one.
+--
+-- `start_utc` is the instant the footage begins, stored as UTC so it cannot be
+-- ambiguous; `tz` is the zone it was ENTERED in, kept so the burned-in wording
+-- (EST or EDT) can be re-derived exactly rather than remembered.
+--
+-- A correction does not edit a row: it inserts a new one and stamps the old
+-- one `superseded_at`, so the audit history of what was generated and when
+-- survives. `saved_at` is only written once the operator's device save has
+-- actually completed — a generated derivative that was never saved must be
+-- visibly not-saved rather than assumed.
+CREATE TABLE IF NOT EXISTS video_stamp (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no         TEXT    NOT NULL,
+  original_name   TEXT    NOT NULL,
+  original_size   INTEGER,
+  original_hash   TEXT,               -- when the browser could compute one
+  start_utc       TEXT    NOT NULL,   -- the selected first-frame instant, UTC
+  tz              TEXT    NOT NULL DEFAULT 'America/New_York',
+  derivative_name TEXT,
+  generated_by    INTEGER REFERENCES users(id),
+  generated_at    TEXT,
+  saved_at        TEXT,               -- null until the device save completed
+  superseded_at   TEXT,               -- null = this is the active derivative
+  dropbox_path    TEXT,               -- reserved; nothing writes it yet
+  created_at      TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_vstamp_case ON video_stamp(case_no, id DESC);

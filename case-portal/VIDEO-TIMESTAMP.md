@@ -337,3 +337,66 @@ original/derivative model, the audit records and the EST/EDT resolution are all
 ordinary work with no blocker — **and decide the four questions in §8 before the
 render is written.** Nothing here should be started until the owner has answered
 them.
+
+---
+
+# WHAT WAS ACTUALLY BUILT — 2026-08-17, after the owner's decision
+
+**The owner answered §8 with an architecture the audit had not proposed: VIDEO
+IS DEVICE-FIRST.** No new video byte becomes Cloudflare storage. The original
+stays on the device that shot it, the timestamped copy is rendered in that
+device's own browser and saved back to it, and the portal keeps the **record**
+and no video at all.
+
+That supersedes §1's "derivative is another `case_evidence` row" and §7's
+"the evidence area distinguishes ORIGINAL from TIMESTAMPED" — with no stored
+derivative there is nothing to distinguish, and the storage cost the audit
+flagged in §8 disappears entirely rather than being weighed.
+
+**The legacy rule the owner attached to it:** *do not delete, migrate, move or
+modify existing videos already stored in R2 during this PR.* Nothing did.
+
+## The capability proof, run before any feature code
+
+| Capability | Result |
+| --- | --- |
+| `VideoEncoder` / `VideoDecoder` (WebCodecs) | **absent** — §3's primary recommendation could not be used or proven |
+| `MediaRecorder` `video/webm;codecs=vp9` | supported |
+| `MediaRecorder` `video/mp4` | **reports supported while `avc1.42E01E` reports NOT** |
+| decode → canvas → burn → encode → re-decode | full round trip succeeded |
+| burned marker present in the re-decoded output | **yes**; a control pixel elsewhere was clean |
+
+**The proof corrected this document's own audit.** §3 recommended WebCodecs and
+it is not there. Canvas + `MediaRecorder` does the whole round trip, with no
+dependency, no service, no credential and no cost — and the mp4 line is a trap
+worth remembering: recording to a container the platform "supports" without the
+codec produces a file nothing can play. `vstMime()` never offers it.
+
+## The brief, item by item
+
+| § | Asked for | Built |
+| --- | --- | --- |
+| 1 | Original never modified; separate derivative | The original is a `File` opened read-only and never written; the copy is a new Blob on the device |
+| 2 | Start date · time · zone, default `America/New_York`, EST/EDT by date | `vstToUtc`/`vstLabel` via `Intl`, resolved from the instant |
+| 3 | An obvious Edit timestamp before generating | Its own step, reachable from the preview and from the finished screen |
+| 4 | A running clock on the video's timeline | The label is the chosen start plus the frame's presentation time |
+| 5 | Bottom right, readable, outlined, scaled, does not move | `vstDraw` — 5% of height, monospace so the seconds do not shift, dark stroke plus shadow under white |
+| 6 | Preview before generation | Original, resolved instant, position, fingerprint, with Edit / Generate / Cancel |
+| 7 | Tell ORIGINAL from TIMESTAMPED | **Superseded by device-first.** Nothing stored to confuse; legacy rows are badged *stored earlier* |
+| 8 | Enough audit to establish identity, zone, who, when, regeneration | `video_stamp`, append-only, `superseded_at` on correction |
+| 9 | Correct and regenerate without losing history | A new row; the earlier one stamped, never edited |
+| 10 | Works at 390px, ≥44px, no overflow | Asserted by measurement, not by looking |
+| 11 | Existing evidence permissions preserved | Every route goes through `caseFor`; the case picker offers only the caller's own cases |
+| 12 | Audit first, stop rather than invent | The stop was reached, the owner decided, and the proof ran before the feature |
+| 13 | The listed tests | Written; the burn-in one decodes the output and reads its pixels |
+
+## What is deliberately NOT here
+
+- **Audio.** `HTMLMediaElement.captureStream` is not dependable across the
+  browsers this must run on, and half-working audio on an evidence file is worse
+  than none. The original keeps its audio, untouched, on the device.
+- **Dropbox.** §9 above is still a plan and nothing was started.
+- **A change to what a package ships.** Still not authorised, and now moot in its
+  original form: there is no stored derivative for a package to prefer.
+- **Any decision about legacy stored video.** Recorded in `NEXT.md` as an open
+  question. Do not sweep it as a side effect of anything.
