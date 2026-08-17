@@ -1840,8 +1840,14 @@ const FIELD_KEEP = [
    claim number is the carrier's own reference, so it names them just as
    plainly. Dropped from list rows and detail rows alike. */
 function redactRow(row) {
+  /* `retainer_received`, `pay_sent_at` and `pay_methods` join the list for the
+     same reason `send_count` and `last_sent_at` are already on it: whether the
+     client has paid, and whether the office has asked them to, is the client's
+     commercial position. An investigator is never shown who is paying — see
+     FIELD_KEEP and the client_* columns above. */
   const { carrier, claim_number, client_name, client_email, client_phone, lead_status,
-          send_count, last_sent_at, ...rest } = row;
+          send_count, last_sent_at, retainer_received, pay_sent_at, pay_methods,
+          ...rest } = row;
   return rest;
 }
 
@@ -1878,6 +1884,26 @@ async function listSubmissions(request, env, user) {
   /* Deleted is admin-only: an investigator asking for it gets their ordinary
      list, not a view of what the office has taken out of circulation. */
   const wantDeleted = view === 'deleted' && user.role === 'admin';
+  /* PAYMENTS.md §10 — the Leads & Intakes card has to say "retainer pending"
+     and whether payment instructions already went, so the row carries both.
+     Correlated subqueries in the shape `send_count`/`last_sent_at` already use,
+     and `idx_paysend_case (case_no, id DESC)` is what the ordered pick reads.
+
+     GUARDED for the same reason the archive join is: a subquery against a table
+     the live database has not been given yet takes out the case list, the
+     most-used view in the portal. Both tables are old enough to be present in
+     practice; the guard costs two lines and `missing` is already computed. */
+  const haveRet = !missing.includes('case_retainer');
+  const havePay = !missing.includes('payment_send');
+  const retCol = haveRet
+    ? '(SELECT cr.received FROM case_retainer cr WHERE cr.case_no = s.case_no) AS retainer_received'
+    : 'NULL AS retainer_received';
+  const payCols = havePay
+    ? `(SELECT ps.sent_at FROM payment_send ps WHERE ps.case_no = s.case_no AND ps.ok = 1
+          ORDER BY ps.id DESC LIMIT 1) AS pay_sent_at,
+       (SELECT ps.methods FROM payment_send ps WHERE ps.case_no = s.case_no AND ps.ok = 1
+          ORDER BY ps.id DESC LIMIT 1) AS pay_methods`
+    : 'NULL AS pay_sent_at, NULL AS pay_methods';
   const archJoin = haveArchive ? 'LEFT JOIN case_archive ar ON ar.case_no = s.case_no' : '';
   const archCol = haveArchive ? 'ar.archived_at' : 'NULL AS archived_at';
   const delJoin = haveDeleted ? 'LEFT JOIN case_deleted del ON del.case_no = s.case_no' : '';
@@ -1904,7 +1930,7 @@ async function listSubmissions(request, env, user) {
             (SELECT COUNT(*) FROM send_log sl WHERE sl.case_no = s.case_no AND sl.ok = 1) AS send_count,
             (SELECT MAX(sent_at) FROM send_log sl WHERE sl.case_no = s.case_no AND sl.ok = 1) AS last_sent_at,
             s.carrier, s.claim_number, s.created_at, s.assigned_to, u.display_name AS assigned_name,
-            cs.stage, ls.status AS lead_status, ${archCol}, ${delCol}
+            cs.stage, ls.status AS lead_status, ${retCol}, ${payCols}, ${archCol}, ${delCol}
        FROM submissions s LEFT JOIN users u ON u.id = s.assigned_to
        LEFT JOIN case_status cs ON cs.case_no = s.case_no
        LEFT JOIN lead_status ls ON ls.case_no = s.case_no
