@@ -299,7 +299,81 @@ normally and covers that commit too. Nothing was lost. Worth remembering: a
 failed save point is not an emergency while master is pushed — GitHub IS the
 off-site copy, and the tag is a convenience on top of it.
 
+### ✅ DONE — PORTAL-OPS Phase 8, recently viewed + pinned (#158, `f8b510e`)
+
+**DEPLOYED 2026-08-17**, site and Save point green at `f8b510ea`. Suites: portal
+**1213/0** (1190 before), worker **1567/0**, deploy **68/0**.
+
+**⚠️ THE NAME COLLISION, because it will catch the next reader too.** `favLines`
+and `favToggle` in the page are commented **"(P8)"** but are NOT this feature:
+they star the canned **activity phrases** in the field entry sheet, hold no case
+data, and are keyed per username in localStorage. They were left exactly as they
+are. The case lists are `apiRecentCases` / `apiFavCases` and are separate; a test
+asserts both stores still exist independently, so nobody "unifies" them.
+
+**Owner decision, 2026-08-17, and it governs:** recently viewed AND pinned both
+clear on sign-out. *"This is a shared-office portal… do not leave the previous
+user's favorited cases visible to the next signed-in person."* If per-user
+server-side preferences are built later, favourites may persist **for that
+user** — that is a different feature and was explicitly not to be built now.
+
+**The access model is the part worth keeping.** The strip renders only from
+`CASES`, the authorized list the Worker already returned, so **a stored
+identifier is not a key**: a case the signed-in user cannot see, one that does
+not exist, an archived one and a deleted one all draw nothing. There is no
+lookup to refuse because there is no lookup — the stored list can only ever
+narrow what is already on screen, never widen it. All four are tested by
+planting identifiers straight into storage.
+
+`sessionStorage` with **no username in the key**, deliberately: a username-keyed
+localStorage entry is a promise to restore that person's list later, which is
+the thing the decision rules out.
+
+Recently viewed is written in `openCase` **after both reads return**, so it means
+a case the user was actually allowed to open; a refusal leaves no trace. Pinning
+is explicit and the star is its only writer.
+
+**One existing assertion was tightened rather than worked around.** An
+investigator's header was asserted to hold *no buttons at all*, as a proxy for
+"no Edit case" written when Edit case was the only one. The pin belongs to both
+roles, so the assertion now tests Edit case **by name** and adds a second check
+that no route to the edit panel exists either — stronger than the count it
+replaced. Worth remembering as a pattern: when a proxy assertion blocks a
+legitimate change, sharpen the assertion to its stated intent rather than
+weakening it or routing around it.
+
 ### ▶ NEXT SMALLEST FULLY-SPECIFIED UNIT, audited and NOT started
+
+**`PORTAL-OPS.md` PHASE 11 — the CASE HEALTH half only.** Phase 11 is **PARTIAL**,
+and the missing half is the smaller one.
+
+**Already built:** the recommended NEXT STEP. `pkgNextStep()` computes it and
+`.ov-next` draws it on the admin case Overview *and* the investigator's case
+home — both roles already get "one obvious next thing".
+
+**Genuinely missing:** the three-state health flag. Verified on master
+`f8b510e` — **"ON TRACK" and "ACTION NEEDED" appear nowhere in the page**, so
+this is not a rename of something that exists.
+
+Fully specified: *"Health state per case: **ON TRACK · WAITING · ACTION
+NEEDED**"*, against the lifecycle the same section enumerates (INTAKE →
+ASSIGNMENT → FIELDWORK → REPORT → EVIDENCE → PACKAGE → BILLING → COMPLETE). No
+`[inferred]` marker on the states themselves — the only one in the section is
+`[Add] Activity`, on the next-step list that is already built.
+
+**Why it is small:** it is a **derivation, not a record.** Everything it needs —
+stage, assignment, open day, report status, build status, authorization, retainer
+— is already on the payloads the case screen and `/summary` load. Computed on
+read like totals, `overdue` and the field timer already are, so nothing can go
+stale and there is no schema, no route and no migration.
+
+**Two things to decide before building, neither invented here:** which of the
+three states each lifecycle position maps to, and whether the flag appears on the
+case list as well as the case screen. The spec names the states and the lifecycle
+but does not draw the mapping between them, so that is a short owner
+conversation — not a default to guess.
+
+### The audit, as it was recorded
 
 **`PORTAL-OPS.md` PHASE 8 — Recently viewed + favourites.** Audited against the
 whole of PORTAL-OPS, and it is the smallest phase that is **completely
