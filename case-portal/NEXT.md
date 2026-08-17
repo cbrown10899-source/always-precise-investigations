@@ -265,7 +265,76 @@ The test asserts both halves and would catch either regression: the target is
 24px inside it, with type size and radius compared against a live `.tag` rather
 than a hard-coded number.
 
-### ▶ NEXT SMALLEST UNIT, audited and NOT started
+### ✅ DONE — one evidence viewer (#156, `e42fec0`)
+
+**DEPLOYED 2026-08-17**, site and Save point green at `e42fec0f`. Suites: portal
+**1190/0** (1168 before), worker **1567/0**, deploy **68/0**.
+
+Six surfaces, one root cause, one viewer. `evViewerHtml()` draws into `#evview`,
+a **sibling of the app root** — which is what makes "close and you are back
+exactly where you were" structural rather than something the close handler
+rebuilds: the screen underneath is never re-rendered. `paintEvView()` runs at the
+top of `paint()`, **before its early returns**, so the office screens, the case
+workspace and the field view all reach it.
+
+**Nothing is copied.** The `<img src>` IS the original evidence route, so the
+Worker's permission check is the one it always was — asserted from both ends.
+
+Three decisions worth keeping, because each is a trap the next person can walk
+into:
+
+- **`object-fit:contain` with max width AND height.** `cover` crops; a bare
+  `max-width` lets a tall photo run off the bottom.
+- **NOT a click-to-dismiss backdrop.** The delegated listener matches the nearest
+  ancestor carrying `data-act`, so tapping the photo would have closed the viewer
+  the user had just opened.
+- **The structural assertions read the SOURCE and search for the route**, rather
+  than listing six line numbers — that is the only shape that catches a seventh
+  call site written later.
+
+**The `3ca5d13` save-point failure resolved itself.** GitHub's Releases API was
+returning 503; three attempts failed and were recorded rather than looped on, and
+the next merge's save point (`save/2026-08-17-1807-e42fec0`) went through
+normally and covers that commit too. Nothing was lost. Worth remembering: a
+failed save point is not an emergency while master is pushed — GitHub IS the
+off-site copy, and the tag is a convenience on top of it.
+
+### ▶ NEXT SMALLEST FULLY-SPECIFIED UNIT, audited and NOT started
+
+**`PORTAL-OPS.md` PHASE 8 — Recently viewed + favourites.** Audited against the
+whole of PORTAL-OPS, and it is the smallest phase that is **completely
+specified**: *"Recently viewed, and allow pinning/favouriting frequently used
+cases. Store only safe identifiers client-side; load real records through
+authorized server routes."* No `[inferred]` markers, no corrupted region, and
+the one rule that matters — identifiers only, records through the authorized
+route — is stated outright.
+
+**Why the others are not the recommendation**, so this audit does not have to be
+repeated:
+
+| Phase | Why not |
+| --- | --- |
+| 2, 4, 5, 9 | listed by name in *"WHAT WAS CORRUPTED AND NEEDS RE-SENDING"* — **not fully specified** |
+| 6 Quick actions | three of its items are `[inferred]` reconstructions |
+| 7 Clients & contacts | a new contact model, and the owner's own DO-NOT list says no enterprise CRM |
+| 15 Mobile / PWA polish | already true — the manifest and `?surveillance=1` ship today |
+| §10 permissions, and everything after it | corrupted; the owner has been asked and it has not arrived |
+
+**Shape, if it is taken:** a client-side list of case numbers only, rendered as a
+strip that loads through `/submissions` exactly as every other view does — no
+schema, no new route, no cached record. Two rules should carry over from what is
+already here rather than being invented: it must be **cleared on sign-out**, the
+same rule that already clears `CASES`, `CASES_Q` and the read-success flags so
+one person's session cannot vouch for another's; and a case number that no longer
+resolves must simply **drop off the strip** rather than draw a dead row.
+
+**One thing to settle before building, and it is small:** whether a favourite
+survives sign-out. Recently-viewed clearly should not. A *favourite* is a
+deliberate pin and arguably should persist — but on a shared office desktop it
+would tell the next person which cases someone cares about. The spec does not
+say. **Ask rather than choose.**
+
+### The finding, as it was recorded
 
 **The evidence photo viewer has no way back** — the owner reported this
 personally on 2026-08-16 and it is still open. Verified on master `a8dd297`:
