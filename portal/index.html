@@ -213,6 +213,21 @@
   .cal-ev.cal-run{background:#1a6b3c;}
   .cal-ev.cal-offer{background:#fff;color:var(--teal);border:1px dashed var(--teal);}
   /* Rate sheets: the numbers dominate (RATESHEETS.md mobile hierarchy). */
+  /* PORTAL-OPS Phase 8 — the pinned / recent strip. Deliberately a row of quiet
+     chips rather than a card: this is a shortcut bar above the list, and the
+     phase says not to over-engineer it. Wraps instead of scrolling sideways, so
+     a long row costs height on a phone and never a horizontal scroll. */
+  .rvstrip{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0 2px;}
+  .rvlab{font-size:.7rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--muted);margin-right:2px;}
+  .rvlab + .rvlab, .rvchip + .rvlab{margin-left:8px;}
+  .rvchip{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;
+    border:1px solid var(--line);border-radius:999px;background:#fff;cursor:pointer;
+    font:inherit;font-size:.78rem;font-weight:700;color:var(--ink);
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+  .rvchip:hover{border-color:var(--teal);color:var(--teal);}
+  .rvchip.pin{background:#fdf7ec;border-color:#f0dcb6;color:#7a5a12;}
+  .favstar.on{background:#fdf7ec;border-color:#f0dcb6;color:#7a5a12;}
   .rs-row{display:flex;justify-content:space-between;gap:14px;padding:13px 0;border-bottom:1px solid var(--line);align-items:flex-start;}
   .rs-row:last-child{border-bottom:0;}
   /* `min-width:0` because a flex item's default `min-width:auto` refuses to
@@ -1064,6 +1079,58 @@ function favToggle(line){
   const f = favLines(), i = f.indexOf(line);
   if(i >= 0) f.splice(i, 1); else f.unshift(line);
   try{ localStorage.setItem("apiFavs:" + (ME && ME.username), JSON.stringify(f)); }catch{}
+}
+/* PORTAL-OPS PHASE 8 — RECENTLY VIEWED + FAVOURITES, cases this time.
+
+   NOT the same thing as `favLines`/`favToggle` above, which star the canned
+   ACTIVITY PHRASES in the field entry sheet. Those hold no case data, are keyed
+   per username and are deliberately left alone here; the two only share the
+   word "favourites" and the "(P8)" note in that comment is a label collision,
+   not the same feature.
+
+   ONLY CASE NUMBERS ARE STORED, and nothing else — no client name, subject,
+   claim number, address or note ever reaches the browser's storage. The strip
+   renders from `CASES`, the authorized list the Worker returned, so a stored
+   identifier is not a key to anything: if the signed-in user cannot see that
+   case, or it has been archived, deleted or removed, it is simply not in
+   `CASES` and no chip is drawn. That is the whole access model — the stored
+   list can never widen what someone sees.
+
+   sessionStorage, NOT localStorage, and no username in the key. The owner's
+   rule is that both lists clear on sign-out because this is a shared office
+   desktop; a username-keyed localStorage entry would be a promise to restore
+   them for that person later, which is the thing being ruled out. sessionStorage
+   also dies with the tab, which is one more thing that cannot outlive a shift.
+   If per-user server-side preferences are built later, they replace this and
+   the UI does not have to change. */
+const RECENT_KEY = "apiRecentCases", FAVS_KEY = "apiFavCases", RECENT_MAX = 8;
+function caseIds(key){
+  try{ const v = JSON.parse(sessionStorage.getItem(key) || "[]");
+       return Array.isArray(v) ? v.filter(x => typeof x === "string") : []; }
+  catch{ return []; }
+}
+function setCaseIds(key, list){
+  try{ sessionStorage.setItem(key, JSON.stringify(list)); }catch{ /* private mode */ }
+}
+const recentCases = () => caseIds(RECENT_KEY);
+const favCases = () => caseIds(FAVS_KEY);
+/* Called only after a case has actually LOADED for this user — an attempted
+   open that the Worker refused must not leave a trace of the case number. */
+function recentPush(no){
+  if(!no) return;
+  const list = recentCases().filter(x => x !== no);
+  list.unshift(no);
+  setCaseIds(RECENT_KEY, list.slice(0, RECENT_MAX));
+}
+// Explicit, never inferred: only the star writes here.
+function favToggleCase(no){
+  const f = favCases(), i = f.indexOf(no);
+  if(i >= 0) f.splice(i, 1); else f.unshift(no);
+  setCaseIds(FAVS_KEY, f);
+}
+function clearCaseMemory(){
+  try{ sessionStorage.removeItem(RECENT_KEY); sessionStorage.removeItem(FAVS_KEY); }
+  catch{ /* nothing to clear */ }
 }
 let LOAD_ERR = "";        // why the portal could not load, shown rather than hidden
 let SCHEMA_MISSING = [];  // tables the database does not have yet
@@ -2825,6 +2892,38 @@ function sendHistoryHtml(){
   </div>`;
 }
 
+/* PHASE 8 — the star. Both roles get it: an investigator has their own handful
+   of cases and the same reason to pin one. `.ch-right .btn` already floors it at
+   44px, so the target comes for free rather than being restated here. */
+function favStarHtml(no){
+  if(!no) return "";
+  const on = favCases().includes(no);
+  return `<button class="btn sm ghost favstar${on ? " on" : ""}" data-act="favCase"
+    data-case="${esc(no)}" aria-pressed="${on ? "true" : "false"}"
+    title="${on ? "Remove from pinned" : "Pin this case"}">${
+    on ? "&#9733; Pinned" : "&#9734; Pin"}</button>`;
+}
+
+/* The strip. Pinned first, then recently viewed, and EVERY chip is filtered
+   through `CASES` — the authorized list the Worker returned. A stored case
+   number the signed-in user cannot see, or one that has been archived, deleted
+   or removed, simply does not appear: it is not in `CASES`, so there is nothing
+   to draw and nothing stale to draw it from. The chip shows the case NUMBER and
+   nothing else, which is also the only thing that was ever stored. */
+function recentStripHtml(){
+  const known = new Set((CASES || []).map(c => c.case_no));
+  const pins = favCases().filter(n => known.has(n));
+  const seen = new Set(pins);
+  const recent = recentCases().filter(n => known.has(n) && !seen.has(n));
+  if(!pins.length && !recent.length) return "";
+  const chip = (n, pinned) => `<button class="rvchip${pinned ? " pin" : ""}"
+    data-act="openCase" data-case="${esc(n)}">${pinned ? "&#9733; " : ""}${esc(n)}</button>`;
+  return `<div class="rvstrip">
+    ${pins.length ? `<span class="rvlab">Pinned</span>${pins.map(n => chip(n, true)).join("")}` : ""}
+    ${recent.length ? `<span class="rvlab">Recent</span>${recent.map(n => chip(n, false)).join("")}` : ""}
+  </div>`;
+}
+
 /* WHAT THE SEND SCREEN CAN PUT IN THE EMAIL, named on the sheet before it is
    opened (PAYMENTS.md §2 and §14). The carrier sheet lists its own intake and
    nothing else — §14 forbids the words Payment Options, Cash App and Venmo on
@@ -2958,6 +3057,7 @@ function casesView(){
           ? ` · ${s.claims || 0} carrier · ${s.consumer || 0} private` : "")(SUMMARY)}</span>
     </div>
     ${lens}
+    ${recentStripHtml()}
     ${more}
     ${rows.length ? `<div style="overflow-x:auto"><table>
       <thead><tr><th>Case</th><th class="hide">Received</th><th>Type</th>
@@ -3744,6 +3844,12 @@ function sessionForget(){
   // The archived/deleted set is case data too, and its lens is a view choice
   // that should not follow one person's session into the next one.
   CASES_Q = null; TOTAL_Q = 0; CASES_Q_OK = false; CASE_VIEW = "all";
+  /* PHASE 8, owner 2026-08-17: recently viewed AND pinned both clear here.
+     This is a shared-office desktop, and leaving the last person's pinned cases
+     on screen for whoever signs in next is exactly what the decision ruled out.
+     If per-user server-side preferences are built later, favourites may persist
+     for that user — that is a different feature and is not this one. */
+  clearCaseMemory();
   // The two "did this read succeed" flags go with the data they describe: a
   // stale true would let the next person's dashboard vouch for a read that
   // happened in someone else's session.
@@ -3793,6 +3899,10 @@ async function openCase(caseNo, tab){
     ]);
     WS = { ...ws, submission: sub.submission };
   }catch(e){ alert(e.message); return; }
+  /* PHASE 8 — recorded HERE, after both reads came back, so "recently viewed"
+     means a case this user was actually allowed to open. A refusal returns
+     above this line and leaves no trace of the case number. */
+  recentPush(caseNo);
   // Landing straight on the Package panel (the dashboard's Build jump) needs
   // the build fetched, exactly as the tab click would have done.
   if(WS_TAB === "package"){ PKG = null; return loadPackage(); }
@@ -5720,6 +5830,7 @@ function caseHeader(s, a, admin){
            <div class="ch-line">${assignee ? "Assigned: " + esc(assignee.display_name || assignee.username) : "Unassigned"}</div>
            <button class="btn sm ghost" data-act="wsTab" data-tab="edit">Edit case</button>`
         : `<span class="tag ${esc(stage)}">${esc(label(stage))}</span>`}
+      ${favStarHtml(WS_CASE)}
     </div>
   </div>`;
 }
@@ -7896,6 +8007,9 @@ document.addEventListener("click", ev => {
      own root, so the screen behind is not re-rendered — which is what makes
      closing return the user to exactly the scroll position, tab and panel they
      came from, rather than to a rebuilt approximation of it. */
+  /* PHASE 8 — pinning is an EXPLICIT act and this is its only writer. Nothing
+     infers a favourite from opening, sending or working a case. */
+  else if(act === "favCase"){ favToggleCase(el.dataset.case); paint(); }
   else if(act === "evOpen"){
     EV_VIEW = { src: el.dataset.src, name: el.dataset.name || "", type: el.dataset.type || "" };
     paintEvView();
