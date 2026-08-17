@@ -3878,7 +3878,13 @@ section('The case page: four sections, one obvious next step');
   ok('an investigator header shows the claimant', head.includes('Pat Coleman'));
   ok('and never the carrier', !has(head, 'Example Mutual'));
   ok('and never the claim number', !head.includes('WC-2026-88421'));
-  ok('and offers no Edit case', await page.locator('.caseheader .btn').count() === 0);
+  /* Tightened when Phase 8 added a pin control to the header: this assertion is
+     named for Edit case and that is what it should test. Counting every button
+     was an accurate proxy only while Edit case was the only one. */
+  ok('and offers no Edit case',
+     await page.locator('.caseheader .btn', { hasText: 'Edit case' }).count() === 0);
+  ok('and no route to the edit panel at all',
+     await page.locator('.caseheader [data-tab="edit"]').count() === 0);
 
   // Walk every section an investigator has; no sub-tab anywhere is money.
   const seen = [];
@@ -6311,6 +6317,141 @@ section('Evidence opens in one in-portal viewer, and never leaves the app');
   ok('and a signed-out browser is refused outright', signedOut === 401,
      String(signedOut));
   await nobody.close();
+}
+
+/* PORTAL-OPS PHASE 8 — RECENTLY VIEWED + FAVOURITES.
+
+   "Store only safe identifiers client-side; load real records through
+   authorized server routes." The security half is the interesting half: the
+   stored list must never be able to WIDEN what someone sees, and the owner's
+   2026-08-17 decision is that both lists clear on sign-out because this is a
+   shared-office desktop. */
+section('Recently viewed and pinned cases: identifiers only, and gone at sign-out');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Cases' }).first().click();
+  await page.waitForTimeout(600);
+
+  const stored = () => page.evaluate(() => ({
+    recent: JSON.parse(sessionStorage.getItem('apiRecentCases') || '[]'),
+    favs: JSON.parse(sessionStorage.getItem('apiFavCases') || '[]'),
+    all: Object.keys(sessionStorage).concat(Object.keys(localStorage)),
+    blob: JSON.stringify(sessionStorage) + JSON.stringify(localStorage),
+  }));
+
+  ok('nothing is remembered before a case has been opened',
+     (await stored()).recent.length === 0);
+
+  await rowFor(page, 'API-LENS-LIVE').click();
+  await page.waitForTimeout(900);
+  let st = await stored();
+  ok('opening a case records it as recently viewed',
+     st.recent.includes('API-LENS-LIVE'), JSON.stringify(st.recent));
+
+  /* ONLY IDENTIFIERS. The case just opened carries a client name and a subject
+     name; neither may be anywhere in client-side storage. */
+  ok('and stores the case NUMBER and nothing else about the case',
+     !st.blob.includes('Live Client') && !st.blob.includes('Subject L'),
+     st.blob.slice(0, 300));
+  ok('the stored value really is just a list of identifiers',
+     st.recent.every(v => typeof v === 'string' && /^[A-Za-z0-9-]{3,64}$/.test(v)),
+     JSON.stringify(st.recent));
+
+  // Pin it — an explicit act, from the case header.
+  const star = page.locator('[data-act="favCase"]').first();
+  ok('the case header offers a pin control', await star.count() === 1);
+  await star.click();
+  await page.waitForTimeout(500);
+  st = await stored();
+  ok('pinning records the identifier', st.favs.includes('API-LENS-LIVE'),
+     JSON.stringify(st.favs));
+  ok('and the control reads as pressed',
+     await page.locator('[data-act="favCase"][aria-pressed="true"]').count() === 1);
+
+  await page.locator('[data-act="backToCases"]').click();
+  await page.waitForTimeout(700);
+  ok('the strip shows the pinned case on the Cases view',
+     await page.locator('.rvchip.pin', { hasText: 'API-LENS-LIVE' }).count() === 1);
+  ok('and a chip carries only the case number',
+     (await text(page, '.rvchip')).trim().replace(/^★\s*/, '').match(/^[A-Za-z0-9-]+$/) !== null,
+     await text(page, '.rvchip'));
+
+  // Unpin — the same explicit control, both ways.
+  await page.locator('.rvchip.pin').first().click();
+  await page.waitForTimeout(900);
+  ok('and a chip opens that case', has(await text(page, 'body'), 'API-LENS-LIVE'));
+  await page.locator('[data-act="favCase"]').first().click();
+  await page.waitForTimeout(500);
+  st = await stored();
+  ok('unpinning removes it again', !st.favs.includes('API-LENS-LIVE'),
+     JSON.stringify(st.favs));
+  await page.locator('[data-act="backToCases"]').click();
+  await page.waitForTimeout(700);
+
+  /* A STORED IDENTIFIER IS NOT A KEY. Plant a case number this admin cannot
+     see — one that does not exist at all — and a deleted one. Neither may draw
+     a chip, because the strip renders only from the authorized list. */
+  await page.evaluate(() => {
+    sessionStorage.setItem('apiFavCases', JSON.stringify(['API-NOT-A-CASE', 'API-PKG-DEL']));
+    sessionStorage.setItem('apiRecentCases', JSON.stringify(['API-NOT-A-CASE', 'API-LENS-ARCH']));
+  });
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(400);
+  await page.locator('.tabs button', { hasText: 'Cases' }).first().click();
+  await page.waitForTimeout(700);
+  const body = await text(page, 'body');
+  ok('an identifier for a case that does not exist draws nothing',
+     !has(body, 'API-NOT-A-CASE'), body.slice(0, 300));
+  ok('and an ARCHIVED case is not resurrected by having been viewed',
+     await page.locator('.rvchip', { hasText: 'API-LENS-ARCH' }).count() === 0);
+  ok('nor a deleted one by having been pinned',
+     await page.locator('.rvchip', { hasText: 'API-PKG-DEL' }).count() === 0);
+
+  /* Mobile: chips wrap rather than scrolling sideways, and stay tappable. */
+  await page.evaluate(() => sessionStorage.setItem('apiFavCases',
+    JSON.stringify(['API-LENS-LIVE'])));
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(300);
+  await page.locator('.tabs button', { hasText: 'Cases' }).first().click();
+  await page.waitForTimeout(600);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  const m = await page.evaluate(() => {
+    const c = document.querySelector('.rvchip');
+    const r = c ? c.getBoundingClientRect() : null;
+    return { h: r ? Math.round(r.height) : null, right: r ? Math.round(r.right) : null,
+             sw: document.documentElement.scrollWidth };
+  });
+  ok(`a chip is a 44px target on a phone (${m.h}px)`, m.h >= 44, JSON.stringify(m));
+  ok('and the strip adds no sideways scroll at 390px',
+     m.sw <= 390 && m.right <= 391, JSON.stringify(m));
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.waitForTimeout(300);
+
+  /* THE OWNER'S DECISION: both lists go at sign-out, favourites included. */
+  st = await stored();
+  ok('there is something to clear before signing out',
+     st.recent.length > 0 || st.favs.length > 0, JSON.stringify(st));
+  await page.locator('[data-act="logout"]').click();
+  await page.waitForTimeout(900);
+  const after = await stored();
+  ok('signing out clears recently viewed', after.recent.length === 0,
+     JSON.stringify(after.recent));
+  ok('and clears pinned cases too — a shared desk keeps nobody\'s list',
+     after.favs.length === 0, JSON.stringify(after.favs));
+  ok('and leaves no case identifier anywhere in client-side storage',
+     !after.blob.includes('API-LENS-LIVE'), after.blob.slice(0, 300));
+  await page.close();
+
+  /* The activity-line favourites are a DIFFERENT feature that happens to share
+     the word. They hold canned phrases, not cases, and this unit left them
+     alone — asserted so a later reader does not "unify" the two. */
+  const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+  ok('the field entry sheet keeps its own line favourites, untouched',
+     src.includes('function favLines(') && src.includes('apiFavs:'));
+  ok('and the case lists are a separate store, not merged into that key',
+     src.includes('apiFavCases') && src.includes('apiRecentCases'));
 }
 
 /* ------------------------------------------------------------------ report */
