@@ -5878,6 +5878,110 @@ section('A returned private intake shows the retainer pending and the way to act
   await page.close();
 }
 
+/* THE CASES LENS IS THE CASES TABLE'S, AND NOTHING ELSE'S (owner, 2026-08-17).
+
+   Repro as reported: leave the Cases lens on Archived, switch to Intakes, and
+   archived cases repaint as live intake cards with Accept and Send on them —
+   and into Today / next actions — while the New intakes count beside them stays
+   correct, because that number is the Worker's and correctly excludes them.
+
+   The cause was that ONE fetch fed everything: `CASES` is the page's general
+   working set and the lens was scoping it. The fix gives the queried lenses
+   their own list, so these assertions are about which VIEW can see what, not
+   about any single row being filtered out. */
+section('An archived case never leaks out of the Cases table');
+{
+  const mk = (no, name) => db.prepare(
+    `INSERT INTO submissions (case_no, kind, status, client_name, subject_name, payload, created_at)
+     VALUES (?, 'consumer', 'new', ?, 'Subject L', ?, ?)`)
+    .run(no, name, JSON.stringify({ client_name: name, objective: 'Lens' }),
+         new Date().toISOString());
+  mk('API-LENS-LIVE', 'Live Client');
+  mk('API-LENS-ARCH', 'Archived Client');
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Cases' }).first().click();
+  await page.waitForTimeout(600);
+
+  // Archive one THROUGH THE WORKER, so the row really is archived.
+  const arch = await page.evaluate(async () => {
+    const r = await fetch('/portal-api/cases/API-LENS-ARCH/archive',
+      { method: 'POST', credentials: 'include' });
+    return r.status;
+  });
+  ok('the case really was archived', arch === 200, String(arch));
+  await page.reload();
+  await page.waitForTimeout(900);
+  await page.locator('.tabs button', { hasText: 'Cases' }).first().click();
+  await page.waitForTimeout(600);
+
+  ok('CONTROL: the live case is on the ordinary Cases table',
+     has(await text(page, '.card'), 'API-LENS-LIVE'));
+  ok('and the archived one is not', !has(await text(page, '.card'), 'API-LENS-ARCH'));
+
+  await page.locator('.lens', { hasText: 'Archived' }).click();
+  await page.waitForTimeout(900);
+  const arched = await text(page, 'body');
+  ok('the Archived lens does show it — the lens itself still works',
+     has(arched, 'API-LENS-ARCH'), arched.slice(0, 300));
+
+  /* THE REPRO. The lens is still on Archived; switch to Intakes. */
+  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.waitForTimeout(700);
+  const desk = await text(page, 'body');
+  ok('switching to Intakes does NOT carry the archived case across',
+     !has(desk, 'API-LENS-ARCH'), desk.slice(0, 400));
+  ok('and the archived case has no Accept or Send on that desk',
+     await page.locator('.pcard', { hasText: 'API-LENS-ARCH' }).count() === 0);
+  ok('CONTROL: the live intake is still on the desk, so the desk really loaded',
+     has(desk, 'API-LENS-LIVE'), desk.slice(0, 400));
+
+  /* And the dashboard, which reads the same working set for Today / next
+     actions. The owner's report named this one explicitly. */
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(700);
+  /* Scoped to Today / next actions and the Needs attention band, which are what
+     read the shared working set. NOT the whole page: the Case packages band
+     lists the archived case from `/packages`, which is a Worker route that does
+     not filter archived cases and shows it whatever the lens has ever been —
+     a separate defect, recorded in NEXT.md as its own unit rather than smuggled
+     into this one. */
+  const bands = await page.evaluate(() => {
+    const named = h => [...document.querySelectorAll('.card, .band')]
+      .filter(el => ((el.querySelector('h2') || {}).innerText || '').toLowerCase().includes(h));
+    const inAny = els => els.some(el => el.textContent.includes('API-LENS-ARCH'));
+    return {
+      queue: inAny(named('next action')),
+      attention: inAny(named('needs attention')),
+      queueFound: named('next action').length,
+    };
+  });
+  ok('the next-actions queue really is on screen, so the check means something',
+     bands.queueFound >= 1, JSON.stringify(bands));
+  ok('Today / next actions does not list the archived case',
+     !bands.queue, JSON.stringify(bands));
+  ok('nor does the Needs attention band', !bands.attention, JSON.stringify(bands));
+
+  /* Back to Cases: the lens is still where it was left, and still works. This
+     is what makes the fix a boundary and not an amnesia. */
+  await page.locator('.tabs button', { hasText: 'Cases' }).first().click();
+  await page.waitForTimeout(700);
+  ok('returning to Cases still shows the archived set under its own lens',
+     has(await text(page, 'body'), 'API-LENS-ARCH'));
+  ok('and the Archived lens is still the selected one',
+     await page.locator('.lens.on', { hasText: 'Archived' }).count() === 1);
+
+  // Turning the lens off puts the ordinary list back, not a stale archived one.
+  await page.locator('.lens', { hasText: 'All' }).click();
+  await page.waitForTimeout(900);
+  const back = await text(page, 'body');
+  ok('turning the lens off restores the working list', has(back, 'API-LENS-LIVE'));
+  ok('and drops the archived set rather than leaving it on screen',
+     !has(back, 'API-LENS-ARCH'), back.slice(0, 300));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
