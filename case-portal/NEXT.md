@@ -87,9 +87,43 @@ not become a second writer** — `openCase()` + `RET_FORM` reaches the one that
 exists (`retOpen` / `retainerFormHtml` / `RET_*`), the way `ovRecordPaymentHtml`
 already did for Overview.
 
-## 🔴 TWO DEFECTS FOUND BY THE AUDIT, NEITHER FIXED YET
+## ✅ OVERNIGHT RUN, 2026-08-17 — queue items A, B, C and part of D
 
-### 1. A `TEST-` intake sends a REAL email — the failure INTAKE-OPS names
+| PR | Merge SHA | Item | State |
+| --- | --- | --- | --- |
+| #143 | `dff3f82` | **A.** NEXT STEP helper block (PAYMENTS.md §2, §14) | **DEPLOYED** |
+| #144 | `610783a` | Ledger reconciliation + the five-item audit | **DEPLOYED** |
+| #145 | `2e73511` | **C.** Retainer pending on the lead card (§10) | **DEPLOYED** |
+| #146 | see below | **D (part).** A `TEST-` case can never alert | **DEPLOYED** |
+
+**B — LEAD/INTAKE PAYMENT OPTIONS SURFACES: audited, already SHIPPED, no code
+written.** Both surfaces exist and were verified against every approved rule the
+owner restated: private-client only (`leadPayOpen` is gated on the card and
+`CONTEXT_TAKES_PAYMENT` is the server-side boundary); the Cash App and Venmo
+handles and URLs in `PAY_METHODS` (`worker.js:602-609`) match what the owner
+listed **exactly**, are stored as separate display/URL values with no derivation
+anywhere, and are overridable from Settings by a `payment_methods` row; sending
+instructions never marks the retainer received (`payment_send` and
+`retainer_payment` are separate tables); insurance is refused payment by name at
+`worker.js:1131`; and `RETAINER_METHOD_OPTIONS` is already **exactly** the five
+approved methods — Cash App, Venmo, Check, Cash, ACH / BILL — with no Credit
+Card and no Other, so "remain" was accurate and nothing needed changing.
+
+**D is only PARTLY done and the rest is genuinely blocked** — see the audit
+findings below, which are unchanged except for the `TEST-` defect now fixed.
+
+## 🔴 DEFECTS FOUND BY THE AUDIT
+
+### 1. A `TEST-` intake sends a REAL email — ✅ **FIXED, PR #146**
+
+**Fixed 2026-08-17.** One guard at the single chokepoint in `notifyAdmins`,
+matched case-insensitively so its reach equals SQLite's LIKE in `DEMO_LIKE` —
+nothing `/demo-case/clear` would sweep can have emailed the office first. Eleven
+assertions, run with a real provider key and a real subscribed recipient, with
+**a control at each end** so a silent run cannot be mistaken for a working one.
+The description of the defect is kept below because the reasoning still governs.
+
+### The defect as it was found
 
 `INTAKE-OPS.md:26-27` says in terms: *"A test intake producing a real email or
 SMS is the failure this feature is most likely to have, so it is what the tests
@@ -105,10 +139,10 @@ route, and `portal/test-portal.mjs` sets no `RESEND_API_KEY` so `worker.js:2398`
 short-circuits. **No test asserts a test intake produces no send**, and the
 `/demo-case` tests never stub Resend.
 
-**This is the smallest genuinely-missing unblocked sub-unit in item 5**: one
+**This was the smallest genuinely-missing unblocked sub-unit in item 5**: one
 guard at the single chokepoint, using `TEST-` — the prefix this codebase already
-treats as its safety mechanism (`DEMO_LIKE` `worker.js:5236`). No schema, no
-CHECK, no provider, no owner decision, no missing spec.
+treats as its safety mechanism (`DEMO_LIKE`). No schema, no CHECK, no provider,
+no owner decision, no missing spec. **Done in #146.**
 
 ### 2. The Rate sheets view overflows a 390px screen by 23px
 
@@ -119,6 +153,34 @@ the send area for exactly that reason. `.rs-row` is a flex row with
 `.rs-l{flex:1}` (so `min-width:auto`) beside `.rs-v{white-space:nowrap}`; a
 `@media(max-width:640px)` hook for this component already exists at
 `portal/index.html:228`. Its own small unit.
+
+## ⛔ WHY THE REST OF ITEM D IS BLOCKED — owner decisions and a missing spec
+
+Recorded so the next session does not reopen settled ground or invent anything.
+Each of these is buildable *only* once the owner answers, so none was started.
+
+1. **Private vs Insurance in the alert.** `INTAKE-OPS.md:46` requires it and the
+   **email** half is unambiguous — `kind` is already in scope at both call sites
+   (`worker.js:291`, `:1397`) and simply not passed. The **SMS** half is not:
+   `INTAKE-OPS.md` predates the owner's 2026-08-16 SMS ruling, which is about the
+   *case number*, and adding a word to the SMS branch would break the deliberate
+   "SMS wording is identical on two databases" property at
+   `test-worker.mjs:7322-7338`. **Owner question: does the word Private /
+   Insurance go over SMS as well as email?** Email-only is a safe unit the moment
+   that is answered either way.
+2. **Delivery exactly once.** Specified (`INTAKE-OPS.md:52-57`) with the
+   `retainer_payment_token` precedent named. Buildable — but it needs a table,
+   and a table means a `portal-setup` dispatch, so it is not a same-night unit.
+3. **The queued/sent/failed/retried status log.** Half-specified: the four states
+   are named but **"retried" is not defined anywhere** — nothing in the repo
+   retries, and the doc gives no attempt count, backoff or queue. Building it
+   means inventing a retry policy. **STOPPED per the rule.**
+4. **The archive UI.** `INTAKE-OPS.md §2` is explicitly *"part 1 of 2"* and
+   **part 2 has still not arrived.** Part 1's named surfaces (a `•••` menu — none
+   exists anywhere in the page — an ARCHIVED badge, Restore Intake outside the
+   workspace, an Active/Archived/All triad) all collide with the shipped case
+   lifecycle the owner's preserve list protects, and "All" currently *excludes*
+   archived, which §2 does not settle. **STOPPED per the rule.**
 
 ### Also found, recorded not fixed — the rest of item 5
 
