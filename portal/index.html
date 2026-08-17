@@ -87,8 +87,9 @@
   .empty{color:var(--muted);padding:26px 4px;font-size:.92rem;}
 
   /* dashboard strip */
-  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:16px;}
-  .stat{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 16px;}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(140px,100%),1fr));gap:12px;margin-bottom:16px;}
+  .stat{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 16px;
+    min-width:0;overflow-wrap:anywhere;}
   .stat.warn{border-color:#e8cf9e;background:#fdf9f1;}
   .stat-n{font-size:1.7rem;font-weight:800;line-height:1.1;color:var(--navy);font-variant-numeric:tabular-nums;}
   .stat.warn .stat-n{color:#8a6410;}
@@ -99,6 +100,36 @@
   .stat.click{cursor:pointer;}
   .stat.click:hover{border-color:var(--teal);}
   .stat.on{border-color:var(--teal);box-shadow:0 0 0 1px var(--teal) inset;background:#f2f9fa;}
+  /* THE DASHBOARD BANDS (owner, 2026-08-16). Navy chrome on the light
+     workspace: the band rule and its label are the firm's colours, the cards
+     underneath stay paper. No second surface, no dark rewrite — the owner's
+     first visual pass is chrome only.
+
+     The gold is one 16px rule per band and nothing else. It is the accent that
+     says "this is the firm"; the moment it is also on borders, numbers and
+     hovers it stops meaning anything. */
+  .band{margin:0 0 22px;}
+  .bandhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    padding-bottom:9px;margin-bottom:13px;border-bottom:1px solid var(--line);}
+  .bandhead h2{margin:0;font-size:.78rem;font-weight:800;letter-spacing:.11em;
+    text-transform:uppercase;color:var(--navy);display:flex;align-items:center;gap:9px;}
+  .bandhead h2::before{content:"";width:16px;height:3px;border-radius:2px;background:var(--gold);}
+  .bandhead .bandsub{font-size:.79rem;color:var(--muted);}
+  .bandhead .bandgo{margin-left:auto;}
+  /* .btn.sm is 7px of padding on a .82rem line — about 35px, under Apple's 44.
+     A band's one primary action is exactly the control a thumb goes for. */
+  .bandhead .btn{min-height:44px;}
+  /* The counts that are real work but not today's headline. A line of text
+     rather than five more cards: the owner asked for fewer busy cards, and
+     dropping them outright would lose alerts somebody depends on. */
+  .alsoline{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:baseline;
+    font-size:.83rem;color:var(--muted);margin:-4px 0 22px;padding:0 2px;}
+  .alsoline b{color:var(--navy);font-variant-numeric:tabular-nums;}
+  .alsoline .alsoitem{background:none;border:0;font:inherit;color:inherit;padding:0;
+    display:inline-flex;align-items:center;gap:5px;min-height:44px;}
+  .alsoline button.alsoitem{cursor:pointer;text-decoration:underline;text-underline-offset:3px;
+    text-decoration-color:#c3ccd6;}
+  .alsoline button.alsoitem:hover{color:var(--navy);text-decoration-color:var(--teal);}
   .chip{display:inline-flex;align-items:center;gap:6px;background:#eaf5f7;border:1px solid #b7dbe3;
     color:var(--navy);border-radius:999px;padding:3px 6px 3px 11px;font-size:.8rem;font-weight:700;}
   .chip button{border:0;background:none;font:inherit;font-size:1rem;cursor:pointer;color:var(--teal-ink,#1d5c6c);line-height:1;}
@@ -114,8 +145,11 @@
   .lens{font:inherit;font-size:.8rem;font-weight:700;padding:6px 14px;border-radius:999px;
     border:1px solid var(--line);background:#fff;color:var(--muted);cursor:pointer;}
   .lens.on{background:#13273f;border-color:#13273f;color:#fff;}
-  .donegrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px;}
-  .donecard{border:1px solid var(--line);border-radius:12px;padding:13px 15px;background:#fff;}
+  /* Same three parts as .pkgcards above, and for the same reason: these cards
+     carry case numbers too, and the completed desk now has two doors. */
+  .donegrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(310px,100%),1fr));gap:12px;}
+  .donecard{border:1px solid var(--line);border-radius:12px;padding:13px 15px;background:#fff;
+    min-width:0;overflow-wrap:anywhere;}
   .dc-top{display:flex;justify-content:space-between;gap:10px;margin-bottom:10px;}
   .dc-acts{display:flex;flex-wrap:wrap;gap:6px;border-top:1px solid var(--line);padding-top:10px;}
   /* rate sheets */
@@ -294,8 +328,24 @@
      container so no panel carries a margin that depends on its position. */
   .deliverystack{display:grid;gap:14px;}
   /* Case Package cards (UIBUILD P3) */
-  .pkgcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px;margin-top:10px;}
-  .pcard{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;}
+  /* A CARD MAY NOT WIDEN THE PAGE (2026-08-16). At 390px the dashboard scrolled
+     sideways by about 20px, and the cause was not the dashboard: a grid item
+     defaults to `min-width:auto`, so its track is floored at its own min-content
+     width, and a case number is one unbreakable token. Any long case number —
+     this suite plants a deliberately hostile one — therefore pushed its own
+     column past the phone and took the page with it.
+
+     Three parts, all of them needed:
+       min(290px,100%)      the track floor may not exceed the container
+       min-width:0          the item may shrink below its min-content width
+       overflow-wrap:anywhere  the token itself may break; unlike break-word
+                            this one also reduces the intrinsic min-content
+                            size, which is what actually sizes the track
+     A case number is data from a public form. It is never going to be short
+     because we would like it to be. */
+  .pkgcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(290px,100%),1fr));gap:14px;margin-top:10px;}
+  .pcard{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;
+    min-width:0;overflow-wrap:anywhere;}
   .pc-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;}
   .pc-ring{flex:0 0 auto;}
   .pc-mods{display:flex;gap:4px;flex-wrap:wrap;margin:10px 0 8px;}
@@ -1310,18 +1360,156 @@ function outNowHtml(){
   </div>`;
 }
 
+/* ONE WRITER FOR THE CARD, TWO BEHAVIOURS (2026-08-16).
+
+   On Cases the strip sits directly above the list it filters, so a card
+   narrows in place. On the Dashboard there is no list underneath, so a card
+   that only set a filter would appear to do nothing — it carries `go`, the tab
+   that actually shows what it counted. The markup is shared so the two can
+   never drift apart visually while behaving differently. */
+function statCard(label, n, hint, tone, opts){
+  const o = opts || {};
+  const set = Array.isArray(o.set) ? o.set : null;
+  // Clickable only when there is something behind it. A card offering to show
+  // you nothing is a dead control.
+  const act = (set && set.length) || (o.go && n) ? true : false;
+  const on = set && set.length && CARD_FILTER && CARD_FILTER.label === label;
+  const attrs = !act ? ""
+    : set && set.length
+      ? ` data-act="cardFilter" data-label="${esc(label)}" data-set="${esc(set.join(","))}"${
+          o.go ? ` data-go="${esc(o.go)}"` : ""}`
+      : ` data-act="tab" data-tab="${esc(o.go)}"`;
+  return `<div class="stat ${tone || ""}${act ? " click" : ""}${on ? " on" : ""}"${attrs}>
+    <div class="stat-n">${n}</div>
+    <div class="stat-l">${esc(label)}</div>
+    ${hint ? `<div class="stat-h">${esc(hint)}</div>` : ""}
+  </div>`;
+}
+
+/* THE TWO BANDS (owner, 2026-08-16). Needs attention, then Current work.
+
+   EVERY NUMBER HERE ALREADY EXISTED. `/summary` and `/packages` are the only
+   two reads; no route, query or column was added for this screen, and nothing
+   is invented to fill a slot. Where the Worker does not provide a figure there
+   is simply no card — a dashboard that closes a gap with a plausible zero is
+   the failure this file keeps returning to.
+
+   That is also why there is no Retainer figure standing on its own and no
+   Today / Next Actions queue: the first is only knowable for the cases
+   `/packages` returns, and the second has no read behind it at all. */
+function dashBands(){
+  if(ME.role !== "admin") return "";
+  const s = SUMMARY;
+
+  const band = (title, sub, go, body) => `<div class="band">
+    <div class="bandhead"><h2>${title}</h2>
+      ${sub ? `<span class="bandsub">${esc(sub)}</span>` : ""}
+      ${go ? `<span class="bandgo">${go}</span>` : ""}</div>
+    ${body}</div>`;
+
+  /* DID NOT LOAD IS NOT EMPTY. The totals are their own read and can fail on
+     their own; drawing this band full of zeros would report a quiet day. */
+  if(!s) return band("Needs attention", "", "",
+    `<div class="empty">The dashboard totals could not be read. That is a problem reaching the
+      server, not an empty portal — do not take the screens below as the whole picture until
+      it loads.</div>`);
+
+  const pk = (PKGS && Array.isArray(PKGS.packages)) ? PKGS.packages : [];
+  const A = k => Array.isArray(s[k]) ? s[k] : [];
+  const due = A("reports_due"), low = A("auth_low"), active = A("active_now");
+  const late = A("tasks_overdue"), waiting = A("awaiting_client");
+  const closing = A("ready_to_close"), exp = A("expenses_pending");
+
+  /* Retainer pending rides on the packages payload, which already carries
+     `retainer.received` for every private case it returns. It is folded in with
+     the authorization warning because they are one question to the office —
+     "is this case cleared to keep working?" — and the hint says both halves so
+     the number is never a mystery. */
+  const retPend = pk.filter(p => p.kind === "consumer" && p.retainer && !p.retainer.received)
+    .map(p => p.case_no);
+  const money = [...new Set([...low, ...retPend])];
+
+  const st = s.storage;
+  const stPct = st ? st.percent_of_free : null;
+  // The free-plan failsafe keeps its promotion: quiet in the line below until
+  // it is close to the cap, a card in front of you once it is.
+  const stLoud = stPct != null && stPct >= 75;
+
+  const attention =
+      statCard("New intakes", s.new || 0, "Waiting to be read",
+               (s.new || 0) ? "warn" : "", {go: "leads"})
+    + statCard("Reports due", due.length, "Day done, no report",
+               due.length ? "warn" : "", {set: due, go: "cases"})
+    + statCard("Retainer / authorization", money.length,
+               s.auth_warn_at ? `Past ${s.auth_warn_at}% of hours, or retainer not received`
+                              : "Hours running out, or retainer not received",
+               money.length ? "warn" : "", {set: money, go: "cases"})
+    /* NEVER A WARNING. The owner is explicit that assignment stays optional, so
+       this card reports and does not scold: a case can run unassigned. */
+    + statCard("Needs assignment", s.unassigned || 0, "No investigator yet — optional",
+               "", {go: "cases"})
+    + (stLoud ? statCard("Storage",
+               (st.bytes_used / 1073741824).toFixed(st.bytes_used > 107374182 ? 1 : 2) + " GB",
+               stPct + "% of the free plan" + (stPct >= 90 ? " — uploads pause at the cap" : ""),
+               stPct >= 90 ? "over" : "warn", {}) : "");
+
+  const ready = pk.filter(p => ["approved", "delivered"].includes(p.report_status)
+    && p.build_status !== "finalized");
+  const built = pk.filter(p => p.build_status === "finalized");
+  const out = (PKGS && PKGS.outstanding) || 0;
+
+  const work =
+      statCard("Active today", active.length, "A day is running now",
+               active.length ? "live" : "", {set: active, go: "cases"})
+    + statCard("Ready to build", ready.length, "Report approved, no package",
+               "", {go: "delivery"})
+    + statCard("Packages ready", built.length, "Finalized and deliverable",
+               built.length ? "live" : "", {go: "delivery"})
+    + statCard("Outstanding", "$" + out.toLocaleString(), out ? "Billed and unpaid" : "Nothing unpaid",
+               out ? "warn" : "", {go: "invoices"});
+
+  /* NO SILENT CAP. `/packages` returns the 24 most recent active cases, so the
+     three cards derived from it describe that set and say so rather than
+     implying they counted the whole book. */
+  const capped = pk.length >= 24;
+
+  const also = (label, n, set, go) => {
+    if(n == null) return "";
+    const clickable = (set && set.length) || go;
+    return clickable
+      ? `<button class="alsoitem" ${set && set.length
+          ? `data-act="cardFilter" data-label="${esc(label)}" data-set="${esc(set.join(","))}" data-go="cases"`
+          : `data-act="tab" data-tab="${esc(go)}"`}><b>${n}</b> ${esc(label)}</button>`
+      : `<span class="alsoitem"><b>${n}</b> ${esc(label)}</span>`;
+  };
+
+  /* Real work, but not today's headline. A line of text rather than five more
+     cards — the owner asked for fewer busy cards, and deleting these outright
+     would quietly remove alerts somebody depends on. */
+  const alsoLine = `<div class="alsoline">
+    ${also("open cases", s.open || 0, null, "cases")}
+    ${also("tasks overdue", late.length, late)}
+    ${also("awaiting client", waiting.length, waiting)}
+    ${also("ready to close", closing.length, closing)}
+    ${also("expenses to review", exp.length, exp)}
+    ${!stLoud && stPct != null ? `<span class="alsoitem"><b>${stPct}%</b> storage used</span>` : ""}
+  </div>`;
+
+  return band("Needs attention",
+      s.total ? "" : "Nothing has arrived yet — this fills itself as work comes in",
+      `<button class="btn sm" data-act="tab" data-tab="leads">Review intakes &rarr;</button>`,
+      `<div class="stats">${attention}</div>`)
+    + band("Current work",
+      capped ? "Across the 24 most recent active cases" : "",
+      `<button class="btn sm" data-act="tab" data-tab="delivery">Reports &amp; Packages &rarr;</button>`,
+      `<div class="stats">${work}</div>`)
+    + alsoLine;
+}
+
 function dashView(){
   if(!PKGS) return `<div class="card"><div class="empty">Loading the dashboard&hellip;</div></div>`;
-  const out = PKGS.outstanding || 0;
   const active = (PKGS.packages || []);
-  return `${outNowHtml()}
-    <div class="stats" style="margin-top:0">
-      <div class="stat ${out ? "click warn" : ""}" ${out ? `data-act="tab" data-tab="invoices"` : ""}>
-        <div class="stat-n">$${esc(out.toLocaleString())}</div>
-        <div class="stat-l">Outstanding</div>
-        ${out ? `<div class="stat-h">View invoices</div>` : ""}
-      </div>
-    </div>
+  return `${dashBands()}${outNowHtml()}
     <div class="card">
       <div class="bar"><h2 style="margin:0">Case packages</h2>
         <span class="count">At-a-glance progress for active cases</span>
@@ -1338,21 +1526,19 @@ function dashView(){
    expenses, closure — arrive with their features rather than sitting at a
    fake zero. Drawn even when the portal is empty, because a page that shows
    nothing at all looks broken. */
+/* THE STRIP ABOVE A LIST, WHICH IS NOT THE DASHBOARD (2026-08-16).
+
+   The Dashboard draws `dashBands()` instead: two named bands with one primary
+   action each. Here on Cases and Today the same cards keep their original flat
+   shape, because in this position they are a FILTER CONTROL over the list
+   immediately beneath them, not a summary of the day. Banding them here would
+   put a heading between a control and the thing it controls. */
 function summaryCards(){
-  if(TAB !== "cases" && TAB !== "today" && TAB !== "dashboard") return "";
+  if(TAB !== "cases" && TAB !== "today") return "";
   const s = SUMMARY || {};
   const admin = ME.role === "admin";
 
-  const card = (label, n, hint, tone, set) => {
-    const act = set && n > 0;
-    const on = act && CARD_FILTER && CARD_FILTER.label === label;
-    return `<div class="stat ${tone||""}${act ? " click" : ""}${on ? " on" : ""}"${
-        act ? ` data-act="cardFilter" data-label="${esc(label)}" data-set="${esc(set.join(","))}"` : ""}>
-      <div class="stat-n">${n}</div>
-      <div class="stat-l">${esc(label)}</div>
-      ${hint ? `<div class="stat-h">${esc(hint)}</div>` : ""}
-    </div>`;
-  };
+  const card = (label, n, hint, tone, set) => statCard(label, n, hint, tone, {set: n > 0 ? set : null});
 
   const active = s.active_now || [], due = s.reports_due || [], low = s.auth_low || [];
   const late = s.tasks_overdue || [];
@@ -1562,7 +1748,7 @@ function myExpensesView(){
 /* Two documents the office sends: the retainer sheet for a private client, the
    block ladder for a carrier. Neither is on the public site — a price is quoted
    to someone who asked, not published to everyone who visits. */
-/* UIBUILD P16 — Leads & intakes: every early-stage submission as a card the
+/* UIBUILD P16 — Intakes: every early-stage submission as a card the
    office can act on. Leads ARE submissions — same table, same workspace, so
    accepting one is just walking it forward, and nothing can drift. */
 function leadsView(){
@@ -2390,7 +2576,7 @@ function casesEmptyHtml(admin, searching){
 
   return admin
     ? wrap("No cases yet.",
-        "Intake forms arrive here as cases the moment someone submits one. You can also add a case from Leads, or create a badged TEST- case from Settings to try the portal out.")
+        "Intake forms arrive here as cases the moment someone submits one. You can also add a case from Intakes, or create a badged TEST- case from Settings to try the portal out.")
     : wrap("Nothing assigned to you yet.",
         "Cases appear here as soon as an admin assigns one to you. There is nothing to do until then.");
 }
@@ -7189,9 +7375,15 @@ document.addEventListener("click", ev => {
   else if(act === "reload"){ render(); }
   else if(act === "cardFilter"){
     const label = el.dataset.label;
-    CARD_FILTER = CARD_FILTER && CARD_FILTER.label === label
+    const clearing = CARD_FILTER && CARD_FILTER.label === label;
+    CARD_FILTER = clearing
       ? null   // clicking the active card clears it
       : { label, set: new Set(el.dataset.set.split(",").filter(Boolean)) };
+    /* A card on the Dashboard has no list under it, so filtering alone would
+       look like nothing happened. `data-go` names the tab that shows what was
+       counted — and only when a filter is being SET, because arriving at a
+       list you just unfiltered is not what "clear" means. */
+    if(!clearing && el.dataset.go && TAB !== el.dataset.go) TAB = el.dataset.go;
     paint();
   }
   else if(act === "clearCardFilter"){ CARD_FILTER = null; paint(); }
