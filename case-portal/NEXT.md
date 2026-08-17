@@ -154,33 +154,30 @@ the send area for exactly that reason. `.rs-row` is a flex row with
 `@media(max-width:640px)` hook for this component already exists at
 `portal/index.html:228`. Its own small unit.
 
-## ⛔ WHY THE REST OF ITEM D IS BLOCKED — owner decisions and a missing spec
+## ⚖️ OWNER DECISIONS, 2026-08-17 — the three blocked alert/archive questions
 
-Recorded so the next session does not reopen settled ground or invent anything.
-Each of these is buildable *only* once the owner answers, so none was started.
+**Answered by the owner, verbatim in substance, in reply to the overnight
+report. These govern; do not reopen them or infer around them.**
 
-1. **Private vs Insurance in the alert.** `INTAKE-OPS.md:46` requires it and the
-   **email** half is unambiguous — `kind` is already in scope at both call sites
-   (`worker.js:291`, `:1397`) and simply not passed. The **SMS** half is not:
-   `INTAKE-OPS.md` predates the owner's 2026-08-16 SMS ruling, which is about the
-   *case number*, and adding a word to the SMS branch would break the deliberate
-   "SMS wording is identical on two databases" property at
-   `test-worker.mjs:7322-7338`. **Owner question: does the word Private /
-   Insurance go over SMS as well as email?** Email-only is a safe unit the moment
-   that is answered either way.
-2. **Delivery exactly once.** Specified (`INTAKE-OPS.md:52-57`) with the
-   `retainer_payment_token` precedent named. Buildable — but it needs a table,
-   and a table means a `portal-setup` dispatch, so it is not a same-night unit.
-3. **The queued/sent/failed/retried status log.** Half-specified: the four states
-   are named but **"retried" is not defined anywhere** — nothing in the repo
-   retries, and the doc gives no attempt count, backoff or queue. Building it
-   means inventing a retry policy. **STOPPED per the rule.**
-4. **The archive UI.** `INTAKE-OPS.md §2` is explicitly *"part 1 of 2"* and
-   **part 2 has still not arrived.** Part 1's named surfaces (a `•••` menu — none
-   exists anywhere in the page — an ARCHIVED badge, Restore Intake outside the
-   workspace, an Active/Archived/All triad) all collide with the shipped case
-   lifecycle the owner's preserve list protects, and "All" currently *excludes*
-   archived, which §2 does not settle. **STOPPED per the rule.**
+1. **Private / Insurance goes in the EMAIL alert wording ONLY, for now.** SMS
+   wording stays **generic**, and the existing validated SMS behaviour is
+   preserved — which means the `sms` branch of `alertText` still does not read
+   `caseNo` at all, and the property test asserting the SMS wording is identical
+   on two different databases (`test-worker.mjs`, the two-database check) must
+   keep passing untouched. The email half is a safe unit: `kind` is already in
+   scope at both call sites (`worker.js:291`, `:1397`) and simply not passed.
+2. **Do NOT invent a retry system or retry policy.** "Retried" is not to be
+   implemented **until a real retry workflow, attempt model and policy exist**.
+   The queued/sent/failed/retried status log therefore stays unbuilt — building
+   it today would mean inventing three of its four states.
+3. **Do NOT build the intake archive UI yet.** `INTAKE-OPS.md §2` is still
+   *"part 1 of 2"* and part 2 has not arrived. **Do not guess archive / restore /
+   Active / Archived / All semantics.**
+
+**Still open and untouched, for the record:** delivery-exactly-once is specified
+(`INTAKE-OPS.md:52-57`, with the `retainer_payment_token` precedent named) and is
+buildable, but it needs a table and therefore a `portal-setup` dispatch, so it is
+not a drop-in unit. The owner has not asked for it yet.
 
 ### Also found, recorded not fixed — the rest of item 5
 
