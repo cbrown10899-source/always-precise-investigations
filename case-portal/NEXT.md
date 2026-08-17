@@ -154,6 +154,31 @@ the send area for exactly that reason. `.rs-row` is a flex row with
 `@media(max-width:640px)` hook for this component already exists at
 `portal/index.html:228`. Its own small unit.
 
+## 🔴 FOUND WHILE FIXING THE LENS LEAK — `/packages` does not hide archived cases
+
+**Not fixed, and deliberately not folded into the lens unit — it is a different
+root cause on a different route.** Uncovered by the Unit 1 test: on the
+dashboard, the **Case packages** band lists an archived case, with its retainer
+and balance on it.
+
+It is **not** the Cases lens. That band reads `/packages` from the Worker, which
+does not filter through `hiddenCases()` the way `caseSummary`, `outNow` and the
+calendar do — so an archived case shows there whatever the lens has ever been.
+`nextActionRows` also reads `PKGS` for its `retainer` and `build` sets, so the
+same route can push an archived case into Today / next actions by a second path
+that has nothing to do with which tab anyone was on.
+
+The Unit 1 assertions are scoped to Today / next actions and Needs attention for
+exactly this reason, with the scope written into the test as a comment rather
+than left as a silent gap.
+
+**The fix is almost certainly one `hiddenCases()` filter in the `/packages`
+query**, matching what three other reads already do — but it needs its own audit:
+Reports & Packages reads the same route, and whether an archived case should
+vanish from the artifact desk is a question the archive rules answer and this
+note should not pre-empt. **Recommended as the unit immediately after the
+owner's Units 1–3.**
+
 ## ⚖️ OWNER DECISIONS, 2026-08-17 — the three blocked alert/archive questions
 
 **Answered by the owner, verbatim in substance, in reply to the overnight

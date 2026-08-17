@@ -994,6 +994,22 @@ let CARD_FILTER = null;   // {label, set:Set(case numbers)} — a dashboard card
 // `archived` is a different QUERY, not a filter over the loaded rows: the
 // Worker keeps archived cases out of every other view.
 let CASE_VIEW = "all";
+/* THE QUERIED LENSES GET THEIR OWN LIST, AND THAT IS THE WHOLE FIX (owner,
+   2026-08-17). `CASES` is the page's general working set — the Intakes desk,
+   Today / next actions, the Settings demo check and every case-by-number lookup
+   read it. Scoping THAT fetch by a Cases-tab lens put archived cases into all of
+   them: an archived case drew as a live intake card with Accept and Send on it,
+   and into next actions, while the New intakes count beside it stayed correct
+   because that number is the Worker's.
+
+   Resetting the lens when the tab changes was the other option and it is the
+   weaker one: TAB is written from six places (boot, sign-out, the tab handler,
+   the card-filter jump, the invoices jump, the demo-case button), so it would be
+   a list somebody adds a seventh to and forgets. Giving the lens its own
+   variable means there is no path by which an archived row can reach a view that
+   is not the Cases table — the same reason the SMS branch does not read caseNo
+   rather than filtering it. */
+let CASES_Q = null, TOTAL_Q = 0, CASES_Q_OK = false;
 let COMPLETED = null;     // the /completed payload, fetched when the lens turns
 let MY_REPORTS = null, MY_EXPENSES = null, MY_COMP = null, OFFERS = [];   // the investigator's own desk
 let CAL = null;   // {month, days, offers}
@@ -2795,9 +2811,15 @@ function casesView(){
   const admin = ME.role === "admin";
   // The list is exactly what the Worker returned. Nothing is appended to it,
   // so every row on this screen is a case that exists.
+  /* THIS TABLE IS THE ONLY READER OF THE QUERIED SET. Archived and deleted come
+     from their own fetch (CASES_Q); every other lens reads the working list that
+     the rest of the page shares. */
+  const queried = admin && (CASE_VIEW === "archived" || CASE_VIEW === "deleted");
+  const src = queried ? (CASES_Q || []) : CASES;
+  const srcTotal = queried ? TOTAL_Q : TOTAL;
   const base = CARD_FILTER
-    ? CASES.filter(c => CARD_FILTER.set.has(c.case_no))
-    : CASES;
+    ? src.filter(c => CARD_FILTER.set.has(c.case_no))
+    : src;
   /* MASTER §31 — the Cases tab's lens. Open hides finished work; Completed is
      the artifact desk. Admin-only: an investigator's list is their
      assignments, and the desk carries invoices and client identity. */
@@ -2825,8 +2847,8 @@ function casesView(){
       ${admin ? `<td class="hide">${esc(c.assigned_name || "—")}</td>` : ""}
     </tr>`).join("");
 
-  const more = TOTAL > CASES.length
-    ? `<div class="note">Showing the ${CASES.length} most recent of ${TOTAL} cases. Search covers what is loaded.</div>` : "";
+  const more = srcTotal > src.length
+    ? `<div class="note">Showing the ${src.length} most recent of ${srcTotal} cases. Search covers what is loaded.</div>` : "";
 
   const filterChip = CARD_FILTER
     ? `<span class="chip">${esc(CARD_FILTER.label)}: ${CARD_FILTER.set.size}
@@ -3488,17 +3510,36 @@ async function render(){
      had no way to tell which half was true. Nothing is substituted now; the
      empty state says which of the three situations it is, and LOAD_ERR is what
      keeps "could not load" from being drawn as "no work". */
+  /* THE ORDINARY WORKING SET, ALWAYS, whatever lens the Cases tab is on. Every
+     other view on the page reads this, so it must never be the archived query. */
   try{
-    /* The archived lens is a different set, not a filter: the Worker excludes
-       archived cases from every other view, so asking for them is a query. */
-    const d = await api("/submissions?limit=200"
-      + (CASE_VIEW === "archived" || CASE_VIEW === "deleted" ? "&view=" + CASE_VIEW : ""));
+    const d = await api("/submissions?limit=200");
     CASES = Array.isArray(d.submissions) ? d.submissions : [];
     TOTAL = d.total || 0;
     CASES_OK = true;
   }catch(e){
     CASES = []; TOTAL = 0; CASES_OK = false;
     LOAD_ERR = "The case list could not be loaded — " + e.message;
+  }
+
+  /* The archived and deleted lenses are a different SET, not a filter over the
+     rows above: the Worker excludes those cases from every other view, so asking
+     for them is a second query — and it lands in its own variable, which only
+     the Cases table reads. Cleared whenever the lens is not one of them, so a
+     stale archived list cannot outlive the lens that fetched it. */
+  if(CASE_VIEW === "archived" || CASE_VIEW === "deleted"){
+    try{
+      const dq = await api("/submissions?limit=200&view=" + encodeURIComponent(CASE_VIEW));
+      CASES_Q = Array.isArray(dq.submissions) ? dq.submissions : [];
+      TOTAL_Q = dq.total || 0;
+      CASES_Q_OK = true;
+    }catch(e){
+      CASES_Q = []; TOTAL_Q = 0; CASES_Q_OK = false;
+      // Same rule as above: a failed load is never drawn as an empty archive.
+      LOAD_ERR = "The " + CASE_VIEW + " cases could not be loaded — " + e.message;
+    }
+  }else{
+    CASES_Q = null; TOTAL_Q = 0; CASES_Q_OK = false;
   }
 
   if(ME.role !== "admin"){
@@ -3587,6 +3628,9 @@ function sessionForget(){
      client names and carriers; USERS and INVITES are admin-only; LAST_LINK and
      RESET_BOX are a live invitation and a live password-reset URL. */
   CASES = []; USERS = []; INVITES = []; PKGS = null; OUT_NOW = null;
+  // The archived/deleted set is case data too, and its lens is a view choice
+  // that should not follow one person's session into the next one.
+  CASES_Q = null; TOTAL_Q = 0; CASES_Q_OK = false; CASE_VIEW = "all";
   // The two "did this read succeed" flags go with the data they describe: a
   // stale true would let the next person's dashboard vouch for a read that
   // happened in someone else's session.
