@@ -1716,7 +1716,8 @@ function recentlyCompletedHtml(){
 
   if(!COMPLETED) return head(`<div class="empty">Loading completed cases&hellip;</div>`);
   if(COMPLETED.error) return head(`<div class="err">The completed list did not load &mdash;
-    ${esc(COMPLETED.error)}. This is not an empty desk.</div>`);
+    ${esc(COMPLETED.error)}. This is not an empty desk.
+    <button class="btn sm ghost" data-act="reload" style="margin-left:8px">Try again</button></div>`);
 
   const list = COMPLETED.completed || [];
   if(!list.length) return head(`<div class="empty">
@@ -1755,7 +1756,15 @@ function dashView(){
       <div class="bar"><h2 style="margin:0">Case packages</h2>
         <span class="count">At-a-glance progress for active cases</span>
         <button class="btn sm ghost" data-act="tab" data-tab="cases" style="margin-left:auto">View all cases &rarr;</button></div>
-      ${active.length ? `<div class="pkgcards">${active.map(pkgCard).join("")}</div>`
+      ${!PKGS_OK
+        /* A failed read fails to an EMPTY list so the page can keep drawing —
+           which draws identically to a desk with no cases on it. "No active
+           cases" here would be a claim nobody checked, on the card whose whole
+           job is answering "what is in flight". Same rule as deliveryView. */
+        ? `<div class="err">The active-case read did not load, so this list is unknown &mdash;
+            not empty. <button class="btn sm ghost" data-act="reload"
+            style="margin-left:8px">Try again</button></div>`
+        : active.length ? `<div class="pkgcards">${active.map(pkgCard).join("")}</div>`
         : `<div class="empty">No active cases. New intakes appear here as cases the moment they arrive.</div>`}
     </div>
     ${recentlyCompletedHtml()}`;
@@ -3444,11 +3453,15 @@ async function render(){
     // The dashboard is the admin's landing, so render() is a second door to
     // it — the tab click is not the only way in. Without this, the first
     // sign-in paints "Loading…" forever, because nothing ever fetches.
-    if(TAB === "dashboard" && !PKGS) await loadPackages();
+    // Delivery is included so the reload action can clear a failed read and
+    // land back here — with dashboard-only guards, Try again on the delivery
+    // tab would null PKGS and then nothing would ever fetch it: a spinner
+    // that never resolves, which is the false-empty bug wearing a new face.
+    if((TAB === "dashboard" || TAB === "delivery") && !PKGS) await loadPackages();
     // Recently completed reads the same route the Cases lens and Reports &
     // Packages already use. Landed on, not only clicked into, for the reason
     // directly above.
-    if(TAB === "dashboard" && !COMPLETED) loadCompleted();
+    if((TAB === "dashboard" || TAB === "delivery") && !COMPLETED) loadCompleted();
     // Same rule for who-is-out: landed on, not only clicked into.
     try{ OUT_NOW = await api("/active"); }catch(e){ OUT_NOW = null; }
   }
@@ -7633,7 +7646,19 @@ document.addEventListener("click", ev => {
   else if(act === "saveCase"){ saveCase(el.dataset.case); }
   else if(act === "toggleActive"){ toggleActive(Number(el.dataset.id), Number(el.dataset.active)); }
   else if(act === "revokeInvite"){ revokeInvite(Number(el.dataset.id)); }
-  else if(act === "reload"){ render(); }
+  else if(act === "reload"){
+    /* RETRY MUST RETRY. A failed load leaves PKGS and COMPLETED holding truthy
+       error-shaped objects so the page can keep drawing — and render()'s
+       load-once guards (!PKGS, !COMPLETED) read truthy as loaded. So this
+       button repainted the same error forever, which is worse than no button:
+       it teaches the office that trying again does nothing. Clear exactly what
+       FAILED so the guards see it as unloaded; a read that succeeded is left
+       alone rather than refetched. */
+    if(!PKGS_OK) PKGS = null;
+    if(COMPLETED && COMPLETED.error) COMPLETED = null;
+    LOAD_ERR = "";
+    render();
+  }
   else if(act === "cardFilter"){
     const label = el.dataset.label;
     const clearing = CARD_FILTER && CARD_FILTER.label === label;

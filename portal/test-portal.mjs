@@ -4496,6 +4496,74 @@ section('A queue that could not be built refuses to look empty');
   await page.close();
 }
 
+/* FAILURE IS NOT EMPTY, AND RETRY MUST RETRY (terminal handoff, 2026-08-17).
+   Three defects, one shape: a failed read left a truthy error-shaped object in
+   PKGS/COMPLETED, so (1) the Case packages card drew "No active cases" off a
+   list nobody fetched, and (2) Try again went through render(), whose !PKGS /
+   !COMPLETED guards read truthy as loaded — the button repainted the same
+   error forever. The proof of the fix is end-to-end: break the route, see the
+   honest failure, HEAL the route, click Try again, and watch real data arrive.
+   A retry that works is the only acceptable evidence — a button that exists is
+   not. */
+section('A failed packages read is not an empty case list, and Retry really retries');
+{
+  const page = await newPage();
+  await page.route('**/portal-api/packages*', r => r.abort());
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1300);
+  let body = await text(page, '#app');
+  ok('the Case packages card refuses to claim "No active cases"',
+     !has(body, 'No active cases'), body.slice(0, 400));
+  ok('it says the read did not load, and that unknown is not empty',
+     has(body, 'did not load') && has(body, 'not empty'), body.slice(0, 400));
+  ok('and the flag agrees the read failed',
+     (await page.evaluate(() => PKGS_OK)) === false);
+
+  // Heal the route. The click must cause a FRESH request — nothing else will.
+  await page.unroute('**/portal-api/packages*');
+  await page.locator('[data-act="reload"]').first().click();
+  await page.waitForTimeout(1300);
+  body = await text(page, '#app');
+  ok('Try again actually retried: the load is now vouched for',
+     (await page.evaluate(() => PKGS_OK)) === true);
+  ok('and the error is gone from the card',
+     !has(body, 'The active-case read did not load'), body.slice(0, 400));
+  ok('with the real list in its place',
+     (await page.locator('.pkgcards .pkgcard, .pkgcards > *').count()) > 0
+     || has(body, 'No active cases'), body.slice(0, 300));
+  await page.close();
+}
+
+section('A failed completed read says so, and its Retry really retries');
+{
+  const page = await newPage();
+  await page.route('**/portal-api/completed*', r => r.abort());
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1300);
+  let card = await text(page, '#app');
+  ok('the completed card names the failure rather than looking empty',
+     has(card, 'completed list did not load') && has(card, 'not an empty desk'),
+     card.slice(0, 400));
+  ok('it never claims nothing was completed', !has(card, 'Nothing completed yet'),
+     card.slice(0, 300));
+
+  await page.unroute('**/portal-api/completed*');
+  /* More than one Try again can be on screen (the banner and a card). All go
+     through one handler that clears only what failed, so any of them heals
+     the completed read too. */
+  await page.locator('[data-act="reload"]').first().click();
+  await page.waitForTimeout(1300);
+  card = await text(page, '#app');
+  ok('Try again really reloaded the completed list',
+     !has(card, 'completed list did not load'), card.slice(0, 400));
+  ok('and it now shows a real state — records or a true empty',
+     has(card, 'Nothing completed yet') || has(card, 'finalized') || has(card, 'Complete'),
+     card.slice(0, 300));
+  await page.close();
+}
+
 /* RECENTLY COMPLETED — the same /completed route the Cases lens and Reports &
    Packages already read, as one line per case rather than the full card. */
 section('Recently completed is a compact list of real records');
