@@ -342,6 +342,81 @@ replaced. Worth remembering as a pattern: when a proxy assertion blocks a
 legitimate change, sharpen the assertion to its stated intent rather than
 weakening it or routing around it.
 
+## 🎨 VISUAL PHASE 1 — SHIPPED (#160, `605d6de`)
+
+**DEPLOYED 2026-08-17**, site and Save point green at `605d6dee`. Suites: portal
+**1227/0** (1213 before), worker **1567/0**, intake **205/0**, deploy **68/0**.
+
+**Audited by screenshotting the real page** against the real Worker at 1280 and
+390 before editing — that is the method this phase should keep using, because
+none of what it found is visible from the source.
+
+What it found and what changed:
+
+| Found | Changed |
+| --- | --- |
+| Eight identical bordered boxes, **six of them zero**, all the same weight | a zero is drawn grey against navy — still shown, just no longer competing |
+| Needs attention and Current work visually indistinguishable | Current work is one hairline-divided read-out with smaller figures |
+| **Two filled teal buttons** competing down the page | the read-out band's action is an outline; the alert strip keeps the filled one |
+| The work queue was the quietest thing on the page | `queuecard` gives it the one emphatic surface; `quietcard` makes Recently completed reference |
+| Phone header taking **~290px of 844** across three rows | **64px**, one row, Sign out still a 44px target |
+
+**The rule this phase must not break, and there is a test for it:** a zero
+recedes but is **never removed**, and nothing is hidden with `display:none` to
+make a section look smaller. Shrinking a section by deleting its words is not
+shrinking it, and an absent zero is a different claim from a zero.
+
+## 🔎 ACTIVE SURVEILLANCE MOBILE AUDIT — 2026-08-17, NOT started
+
+Audited on the real field view at **390×844 with a day running**. Ordered by how
+much it costs the investigator, not by how easy it is to fix.
+
+1. **The timer block is the biggest thing on the screen and the least acted
+   on.** "Day started." banner, then `DAY 1 · RUNNING SINCE 8:08 PM`, then the
+   clock at roughly 64px, then the full date — four stacked lines. With the
+   header above it, **about a third of the screen is gone before the first
+   control**. The investigator does not act on the clock; they act on Activity
+   and Photo. This was raised once before ("smaller timer") and is still the
+   dominant element.
+
+2. **Field-action priority is inverted, and this is the real finding.** The
+   loudest, highest control is **End investigation day** — gold, full width,
+   pressed **once a shift** — with Pause under it. The four controls actually
+   used all day (Activity · Photo · Video · Note) sit **below both**, and
+   *Tap to speak* is below those, at the fold. The order on screen is the
+   reverse of the order of use.
+
+3. **Nothing on screen says who is being watched.** The case number is top-left
+   in small type and **wraps across two lines**. There is no subject, address or
+   scope reminder anywhere in the field view — the things an investigator
+   actually re-reads in a car. Evidence is only reachable through the bottom bar.
+
+4. **Two navigation systems, one out of thumb reach.** The bottom bar
+   (Home · Activity · Evidence · Report · Case) is right and reachable. But
+   **← Exit active mode** sits in the top-right — the hardest corner to reach
+   one-handed — and wraps to two lines.
+
+5. **One-handed usability follows from 1, 2 and 4:** the top third is a clock,
+   the most-used actions are pushed toward the middle, and one navigation
+   control is in the far corner.
+
+### ▶ RECOMMENDED FIRST MOBILE PR — NOT started
+
+**Re-rank the field screen by frequency of use, and shrink the clock to fit.**
+
+- the clock becomes a compact single line (time + "Day 1", still server-derived —
+  **do not touch how it is computed**, that is the tick-free design)
+- **Activity · Photo · Video · Note rise to the top**, directly under it
+- **End investigation day and Pause move down** to the end of the screen, out of
+  the accidental-tap zone, keeping their 44px targets
+- one line naming **the subject** under the case number, so the screen says who
+  is being watched
+
+Presentation and ordering only. **No change to `day/start`, `day/end`, pause
+spans, evidence upload, the timer's derivation or any route** — all five are
+existing behaviour the owner has ruled out redesigning for now, and this PR must
+not touch them.
+
 ## ⚖️ OWNER DECISION, 2026-08-17 — Phase 11 DEFERRED, and a feature-creep freeze
 
 **PHASE 11's health flag is DEFERRED pending a future owner decision.** The two
