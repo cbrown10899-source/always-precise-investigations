@@ -790,6 +790,54 @@ section('Rate sheets');
   ok('its confirmation line is its own', has(sheet, 'Your case. Your authorization.'));
   ok('the send wizard is the one door out', await page.locator('.btn', { hasText: 'Send this sheet' }).count() === 1);
 
+  /* PAYMENTS.md §2 — the send area used to explain itself in a 0.78rem muted
+     `.opt` footnote, which is the one presentation that section forbids by
+     name. The wording is asserted here; the SIZE is asserted too, because
+     "don't make this look like a tiny gray footnote" is the requirement and
+     the only way it regresses is silently. */
+  const cta = await text(page, '.nextstep');
+  ok('the send area carries a NEXT STEP block', await page.locator('.nextstep').count() === 1);
+  ok('it says what the click will offer', has(cta, 'Choose what to include with this email'));
+  ok('it names the private intake form', has(cta, 'Private Client Intake Form'));
+  ok('and payment options', has(cta, 'Payment Options'));
+  ok('the vague footnote it replaced is gone', !has(sheet, 'The send screen offers to include'));
+  const ctaPx = await page.evaluate(() =>
+    parseFloat(getComputedStyle(document.querySelector('.nextstep')).fontSize));
+  ok(`it is body-size type, not the 12.5px footnote (${ctaPx}px)`, ctaPx >= 14, String(ctaPx));
+
+  /* §2: "Desktop: button + helper panel. Mobile: stack vertically." One flex
+     row with wrap does both, so the guard is that it genuinely lays out both
+     ways — side by side at 1200, stacked at 390 — rather than that a CSS
+     property has a particular value. */
+  const sideBySide = await page.evaluate(() => {
+    const b = document.querySelector('.sendcta .btn').getBoundingClientRect();
+    const p = document.querySelector('.nextstep').getBoundingClientRect();
+    return { apart: p.left >= b.right, sameRow: Math.abs(p.top - b.top) < 40 };
+  });
+  ok('on a desktop the panel sits beside the button', sideBySide.apart && sideBySide.sameRow,
+     JSON.stringify(sideBySide));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(250);
+  /* Measured on the SEND AREA, not on the document. The Rate sheets view
+     already overflows 390px by 23px at `SPAN.rs-v` inside the fee box — proven
+     on unmodified master at c60542b, so it predates this block and is recorded
+     in NEXT.md as its own unit. A document-wide assertion here would fail for
+     a reason this section does not own, and "fix" it by tempting someone to
+     widen the tolerance. */
+  const stacked = await page.evaluate(() => {
+    const b = document.querySelector('.sendcta .btn').getBoundingClientRect();
+    const p = document.querySelector('.nextstep').getBoundingClientRect();
+    const c = document.querySelector('.sendcta').getBoundingClientRect();
+    return { below: p.top >= b.bottom,
+             fits: p.right <= 391 && c.right <= 391 && p.left >= -1,
+             edges: [Math.round(p.right), Math.round(c.right)] };
+  });
+  ok('on a phone it stacks below instead', stacked.below, JSON.stringify(stacked));
+  ok('and the send area itself stays inside a 390px screen',
+     stacked.fits, JSON.stringify(stacked));
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.waitForTimeout(250);
+
   await page.locator('.sheet-card', { hasText: 'Insurance Assignment Rates' }).click();
   await page.waitForTimeout(300);
   const ins = await page.locator('.card').nth(1).innerText();
@@ -802,6 +850,22 @@ section('Rate sheets');
   ok('"Additional fees — None" is gone here too', !has(ins, 'Additional fees'));
   ok('its own confirmation line', has(ins, 'Clear pricing. No surprise billing.'));
   ok('the retainer figure is NOT on the carrier sheet', !ins.includes('$1,500'), ins);
+
+  /* PAYMENTS.md §14 — the carrier sheet gets the SAME clearer send area and the
+     strict pairing: its own intake named, and the words Payment Options, Cash
+     App and Venmo absent. Asserted against the whole card rather than the block
+     alone, so the guard cannot be satisfied by moving the words somewhere else
+     on the same screen. */
+  const insCta = await text(page, '.nextstep');
+  ok('the carrier sheet has the same NEXT STEP block', await page.locator('.nextstep').count() === 1);
+  ok('it says what the click will offer here too',
+     has(insCta, 'Choose what to include with this email'));
+  ok('naming the insurance assignment intake form',
+     has(insCta, 'Insurance Assignment Intake Form'));
+  ok('and never the private one', !has(ins, 'Private Client Intake'));
+  ok('§14: no payment options on the carrier sheet', !has(ins, 'Payment Options'), ins);
+  ok('§14: no Cash App', !has(ins, 'Cash App'), ins);
+  ok('§14: no Venmo', !has(ins, 'Venmo'), ins);
 
   // UIBUILD P18: the 3-step wizard — Recipient, Options (the paired intake),
   // Preview. On the carrier sheet the paired intake is the carrier door.

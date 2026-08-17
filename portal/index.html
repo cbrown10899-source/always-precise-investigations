@@ -618,6 +618,18 @@
   .tag.cap-sd{background:#dff2e5;color:#1a6b3c;} .tag.cap-va{background:#dcecf2;color:#1d5c6c;}
   .tag.cap-pa{background:#e3d7f5;color:#4a2f77;}
   .opt{font-weight:400;color:var(--muted);font-size:.78rem;}
+  /* PAYMENTS.md §2/§14 — the send area explains the next step in body-size type,
+     not the 0.78rem muted footnote it used to be. Desktop puts the button and
+     the panel side by side; the wrap does the mobile stack with no breakpoint. */
+  .sendcta{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;
+    border-top:1px solid var(--line);padding-top:16px;margin-top:6px;}
+  .nextstep{flex:1 1 260px;background:#eaf5f7;border:1px solid #b7dbe3;border-radius:8px;
+    padding:11px 14px;color:var(--ink);font-size:.95rem;line-height:1.55;}
+  .nextstep b{display:block;font-size:.78rem;letter-spacing:.09em;text-transform:uppercase;
+    color:#1d5c6c;margin-bottom:3px;}
+  .nextstep ul{list-style:none;margin:5px 0 0;padding:0;}
+  .nextstep li{font-weight:600;}
+  .nextstep li::before{content:"\2713";color:var(--good);font-weight:800;margin-right:7px;}
   .dayon{background:#eaf5f7;border:1px solid #b7dbe3;border-radius:8px;padding:10px 12px;
     font-size:.88rem;margin-bottom:12px;}
   .meter{height:8px;border-radius:999px;background:#dbe6ea;overflow:hidden;margin:8px 0 2px;}
@@ -2683,6 +2695,23 @@ function sendHistoryHtml(){
   </div>`;
 }
 
+/* WHAT THE SEND SCREEN CAN PUT IN THE EMAIL, named on the sheet before it is
+   opened (PAYMENTS.md §2 and §14). The carrier sheet lists its own intake and
+   nothing else — §14 forbids the words Payment Options, Cash App and Venmo on
+   that side, and the Worker refuses the send outright if one ever rode along
+   (`sheetTakesPayment`, worker.js:1131). This is the copy, not the boundary.
+
+   Each sheet is named POSITIVELY, which is the idiom the wizard already uses
+   everywhere it gates payment. A sheet id nobody has taught this function about
+   gets the wizard's own neutral wording and no payment line, so a future third
+   sheet costs a missing detail rather than either naming the wrong intake or
+   offering payment instructions to a carrier. */
+function sheetIncludables(sheetId){
+  if(sheetId === "private_retainer") return ["Private Client Intake Form", "Payment Options"];
+  if(sheetId === "insurance_assignment") return ["Insurance Assignment Intake Form"];
+  return ["The matching intake form"];
+}
+
 function sheetsView(){
   if(!SHEETS.length) return `<div class="card"><div class="empty">Loading rate sheets…</div></div>`;
   const open = SHEETS.find(s => s.id === OPEN_SHEET);
@@ -2711,10 +2740,13 @@ function sheetsView(){
         <span class="rs-v">${esc(l.value)}</span></div>`).join("")}
     </div>
     <div class="rs-close"><b>${esc(open.closing_title)}</b><p>${esc(open.closing)}</p></div>
-    <div class="actions" style="border-top:1px solid var(--line);padding-top:16px;margin-top:6px">
+    <div class="sendcta">
       <button class="btn" data-act="shWiz" data-sheet="${esc(open.id)}">Send this sheet &rarr;</button>
-      <span class="opt" style="align-self:center">The send screen offers to include the ${
-        open.id === "insurance_assignment" ? "Insurance Assignment Intake" : "Private Client Intake"} link.</span>
+      <div class="nextstep">
+        <b>Next step</b>
+        Choose what to include with this email:
+        <ul>${sheetIncludables(open.id).map(x => `<li>${esc(x)}</li>`).join("")}</ul>
+      </div>
     </div>
     ${SHEET_MSG ? `<div class="note" style="margin-top:4px">${esc(SHEET_MSG)}</div>` : ""}
   </div>` : ""}
