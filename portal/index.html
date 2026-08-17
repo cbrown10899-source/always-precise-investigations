@@ -36,6 +36,29 @@
   .top .who b{display:block;color:#fff;}
   .top button{font:inherit;font-size:.82rem;background:transparent;border:1px solid #3c5878;color:#cfe0f0;border-radius:6px;padding:6px 12px;cursor:pointer;margin-left:12px;}
   .top button:hover{background:#1c3552;}
+  /* VISUAL PHASE 1, MOBILE — the header was taking ~290px of an 844px screen:
+     the logo block, then the identity wrapping onto a second row, then Sign
+     out onto a third. A third of the first screenful spent before any work
+     appeared, on the viewport this phase treats as first class. The identity
+     goes to one quiet line beside the burger; nothing is removed, and Sign out
+     keeps a 44px target. */
+  @media(max-width:760px){
+    .top{padding:10px 14px;}
+    .top .wrap{flex-wrap:nowrap;gap:10px;}
+    /* One line each. Left to wrap, the wordmark broke across two rows and the
+       Sign out button broke mid-word, which is what a shrunk desktop looks
+       like — the thing this phase is meant to stop doing. */
+    .top .name{font-size:.82rem;min-width:0;white-space:nowrap;}
+    .top .name span{font-size:.6rem;white-space:nowrap;overflow:hidden;
+      text-overflow:ellipsis;display:block;max-width:150px;}
+    .top .who{font-size:.72rem;line-height:1.25;display:flex;align-items:center;gap:8px;}
+    .top .who b{display:inline;}
+    /* The role word stays — it is text somebody may be checking, and hiding it
+       to save 40px would be trading a fact for a layout. Smaller type and one
+       row is enough. */
+    .top button{margin-left:0;min-height:44px;padding:6px 10px;white-space:nowrap;}
+    .top .who b{white-space:nowrap;}
+  }
 
   main{max-width:1180px;margin:0 auto;padding:22px 16px 70px;}
   .tabs{display:flex;gap:6px;margin-bottom:18px;flex-wrap:wrap;}
@@ -100,6 +123,48 @@
   .stat.click{cursor:pointer;}
   .stat.click:hover{border-color:var(--teal);}
   .stat.on{border-color:var(--teal);box-shadow:0 0 0 1px var(--teal) inset;background:#f2f9fa;}
+
+  /* ============ VISUAL PHASE 1 — hierarchy, not new surfaces ============
+     The audit that produced this: eight identical bordered boxes, six of them
+     zero, all shouting equally, with the actual work queue pushed below them —
+     on a phone, below two whole screenfuls. Nothing here hides a number or
+     invents one. Only weight, density and order-on-screen change. */
+
+  /* A ZERO IS STILL THE TRUTH AND STAYS ON SCREEN. It just stops competing with
+     the figure that needs somebody. This is the single change that makes the
+     strip scannable, and it is presentation only — `0` is still `0`, and a
+     failed read still says it could not be read rather than showing zero. */
+  .stat.zero{background:#fbfcfd;}
+  .stat.zero .stat-n{color:#93a1b0;font-weight:700;}
+  .stat.zero .stat-l{font-weight:600;color:#5c6775;}
+
+  /* CURRENT WORK IS A READ-OUT, NOT FOUR HEADLINES. One surface with hairline
+     divisions rather than four separate cards, and smaller figures — it reports
+     the state of the desk, while Needs attention is the thing that interrupts
+     you. Every label and hint is still present and still read by innerText;
+     nothing is display:none. */
+  .band-work .stats{grid-template-columns:repeat(auto-fit,minmax(min(160px,100%),1fr));
+    gap:1px;background:var(--line);border:1px solid var(--line);border-radius:11px;
+    overflow:hidden;margin-bottom:12px;}
+  .band-work .stat{border:0;border-radius:0;padding:12px 14px;}
+  .band-work .stat-n{font-size:1.22rem;}
+  .band-work .stat-l{font-size:.79rem;}
+  .band-work .stat-h{font-size:.72rem;}
+  .band-work .stat.click:hover{background:#f4f9fb;}
+  .band-work .stat.on{box-shadow:0 0 0 2px var(--teal) inset;}
+
+  /* THE QUEUE IS THE PRIMARY THING ON THIS PAGE. It gets the one emphatic
+     surface: a navy top rule and a little more room, so the eye lands on it
+     rather than on the statistics above it. */
+  .card.queuecard{border-color:#cdd6df;box-shadow:0 1px 2px rgba(14,26,44,.05);}
+  .card.queuecard > .bar{border-bottom:2px solid var(--navy);padding-bottom:10px;}
+  .card.queuecard > .bar h2{font-size:1.06rem;}
+
+  /* THE QUIET END OF THE PAGE. Recently completed and the pinned/recent strip
+     report what is already dealt with; they should read as reference, not as
+     work. */
+  .card.quietcard{background:#fbfcfd;border-color:#e6ebf0;}
+  .card.quietcard > .bar h2{font-size:.95rem;color:#44505c;}
   /* THE DASHBOARD BANDS (owner, 2026-08-16). Navy chrome on the light
      workspace: the band rule and its label are the firm's colours, the cards
      underneath stay paper. No second surface, no dark rewrite — the owner's
@@ -1592,7 +1657,16 @@ function statCard(label, n, hint, tone, opts){
       ? ` data-act="cardFilter" data-label="${esc(label)}" data-set="${esc(set.join(","))}"${
           o.go ? ` data-go="${esc(o.go)}"` : ""}`
       : ` data-act="tab" data-tab="${esc(o.go)}"`;
-  return `<div class="stat ${tone || ""}${act ? " click" : ""}${on ? " on" : ""}"${attrs}>
+  /* VISUAL PHASE 1 — a zero is still the truth and is still shown, but it must
+     not shout as loudly as a real number. The office scans this strip for what
+     needs them; eight equally loud figures, six of them zero, is the thing that
+     made it unscannable. Nothing is hidden and nothing is invented — only the
+     weight changes. A currency-prefixed nought and "0 GB" both count as zero
+     here, which is why the test allows a leading non-digit. (No amount is
+     written in this file, deliberately — a guard test fails on one.) */
+  const isZero = /^[^0-9]*0([^0-9].*)?$/.test(String(n));
+  return `<div class="stat ${tone || ""}${act ? " click" : ""}${on ? " on" : ""}${
+    isZero ? " zero" : ""}"${attrs}>
     <div class="stat-n">${n}</div>
     <div class="stat-l">${esc(label)}</div>
     ${hint ? `<div class="stat-h">${esc(hint)}</div>` : ""}
@@ -1614,7 +1688,12 @@ function dashBands(){
   if(ME.role !== "admin") return "";
   const s = SUMMARY;
 
-  const band = (title, sub, go, body) => `<div class="band">
+  /* VISUAL PHASE 1 — the two bands are no longer the same weight. Needs
+     attention is the alert strip and keeps its cards; Current work is an
+     operational read-out and is drawn compactly, because eight identical boxes
+     made neither of them scannable and pushed the actual work queue off the
+     first screen. The band's own class is what the stylesheet keys on. */
+  const band = (title, sub, go, body, kind) => `<div class="band${kind ? " band-" + kind : ""}">
     <div class="bandhead"><h2>${title}</h2>
       ${sub ? `<span class="bandsub">${esc(sub)}</span>` : ""}
       ${go ? `<span class="bandgo">${go}</span>` : ""}</div>
@@ -1729,11 +1808,12 @@ function dashBands(){
     + band("Current work",
       !pkOk ? "The active-case read did not load"
         : capped ? "Across the 24 most recent active cases" : "",
-      `<button class="btn sm" data-act="tab" data-tab="delivery">Reports &amp; Packages &rarr;</button>`,
+      `<button class="btn sm ghost" data-act="tab" data-tab="delivery">Reports &amp; Packages &rarr;</button>`,
       `<div class="stats">${work}</div>`
       + (!pkOk ? `<div class="qfoot" style="border:0;padding-top:2px">Ready to build,
           Packages ready and Outstanding are not shown because the active-case read failed.
-          They are unknown, not zero.</div>` : ""))
+          They are unknown, not zero.</div>` : ""),
+      "work")
     + alsoLine;
 }
 
@@ -1843,7 +1923,7 @@ function nextActionsHtml(){
   const count = !rows ? "the office's queue"
     : gaps.length ? `${rows.length} waiting, and part of it unread`
     : rows.length ? `${rows.length} waiting` : "the office's queue";
-  const head = body => `<div class="card">
+  const head = body => `<div class="card queuecard">
     <div class="bar"><h2 style="margin:0">Today / next actions</h2>
       <span class="count">${esc(count)}</span></div>
     ${body}</div>`;
@@ -1896,7 +1976,7 @@ function nextActionsHtml(){
 const DONE_MAX = 5;
 
 function recentlyCompletedHtml(){
-  const head = body => `<div class="card">
+  const head = body => `<div class="card quietcard">
     <div class="bar"><h2 style="margin:0">Recently completed</h2>
       <button class="btn sm ghost" data-act="tab" data-tab="delivery"
         style="margin-left:auto">Reports &amp; Packages &rarr;</button></div>

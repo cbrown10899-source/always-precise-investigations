@@ -6454,6 +6454,99 @@ section('Recently viewed and pinned cases: identifiers only, and gone at sign-ou
      src.includes('apiFavCases') && src.includes('apiRecentCases'));
 }
 
+/* VISUAL PHASE 1 — hierarchy, asserted structurally rather than by eye.
+
+   These do not test "it looks good". They test the specific things the visual
+   brief asks for and that a later change could silently undo: that a zero stops
+   competing with a real number WITHOUT being hidden, that the two bands are no
+   longer the same weight, that the queue is the emphatic surface, and that the
+   mobile header stops eating the first screenful. */
+section('The dashboard has a hierarchy: real numbers lead, zeros stay but recede');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(800);
+
+  /* NOTHING IS HIDDEN. The zero is still on screen and still readable — this is
+     the assertion that stops a future "tidy-up" deleting zero cards, which
+     would turn an honest zero into an absent one. */
+  const zero = page.locator('.stat.zero').first();
+  ok('a zero card is still drawn, not removed', await zero.count() >= 1);
+  ok('and its number is still visible text',
+     (await zero.locator('.stat-n').innerText()).trim().length > 0);
+  const tone = await page.evaluate(() => {
+    const z = document.querySelector('.stat.zero .stat-n');
+    const r = [...document.querySelectorAll('.stat:not(.zero) .stat-n')]
+      .find(el => el.textContent.trim() !== '');
+    return { zero: getComputedStyle(z).color, real: r ? getComputedStyle(r).color : null };
+  });
+  ok('but it is drawn quieter than a real number', tone.real && tone.zero !== tone.real,
+     JSON.stringify(tone));
+
+  /* THE TWO BANDS ARE NO LONGER THE SAME WEIGHT — the brief's "Current work
+     should feel operational rather than like equal-weight statistic boxes". */
+  const weight = await page.evaluate(() => {
+    const a = document.querySelector('.band:not(.band-work) .stat-n');
+    const w = document.querySelector('.band-work .stat-n');
+    return { attention: a ? parseFloat(getComputedStyle(a).fontSize) : null,
+             work: w ? parseFloat(getComputedStyle(w).fontSize) : null };
+  });
+  ok('Current work reads smaller than Needs attention',
+     weight.work !== null && weight.attention !== null && weight.work < weight.attention,
+     JSON.stringify(weight));
+  ok('and every Current work label is still present — nothing was hidden to shrink it',
+     await page.locator('.band-work .stat-h:visible').count()
+       === await page.locator('.band-work .stat-h').count());
+
+  /* THE QUEUE IS THE PRIMARY THING ON THE PAGE. */
+  ok('Today / next actions is the emphasised card',
+     await page.locator('.card.queuecard', { hasText: 'Today / next actions' }).count() === 1);
+  ok('and Recently completed is deliberately quieter',
+     await page.locator('.card.quietcard', { hasText: 'Recently completed' }).count() === 1);
+
+  /* ONE PRIMARY ACTION PER AREA: the alert strip keeps a filled button; the
+     read-out band's action is a quiet one, so two filled buttons no longer
+     compete down the page. */
+  const btns = await page.evaluate(() => ({
+    attention: !!document.querySelector('.band:not(.band-work) .bandgo .btn:not(.ghost)'),
+    work: !!document.querySelector('.band-work .bandgo .btn:not(.ghost)'),
+  }));
+  ok('Needs attention keeps one filled action', btns.attention, JSON.stringify(btns));
+  ok('and Current work no longer competes with a second one', !btns.work,
+     JSON.stringify(btns));
+
+  /* MOBILE IS A FIRST-CLASS VIEWPORT, not a shrunk desktop. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(500);
+  const m = await page.evaluate(() => {
+    const top = document.querySelector('.top').getBoundingClientRect();
+    const out = document.querySelector('.top button');
+    const ob = out ? out.getBoundingClientRect() : null;
+    const small = [...document.querySelectorAll('.stat-l, .stat-h, .qwhat')]
+      .filter(el => parseFloat(getComputedStyle(el).fontSize) < 11).length;
+    return { header: Math.round(top.height), signout: ob ? Math.round(ob.height) : null,
+             sw: document.documentElement.scrollWidth, tiny: small };
+  });
+  ok(`the header no longer eats the first screenful (${m.header}px of 844)`,
+     m.header <= 130, JSON.stringify(m));
+  ok('Sign out is still a 44px target on a phone', m.signout >= 44, JSON.stringify(m));
+  ok('the dashboard does not scroll sideways at 390px', m.sw <= 390, JSON.stringify(m));
+  ok('and no helper text is smaller than 11px', m.tiny === 0, JSON.stringify(m));
+
+  /* The work band stacks rather than being squeezed into unreadable columns. */
+  const stacked = await page.evaluate(() => {
+    const c = [...document.querySelectorAll('.band-work .stat')].slice(0, 2)
+      .map(el => Math.round(el.getBoundingClientRect().width));
+    return c;
+  });
+  ok('its cards keep a usable width when stacked',
+     stacked.every(w => w >= 140), JSON.stringify(stacked));
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.waitForTimeout(300);
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();

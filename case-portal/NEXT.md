@@ -342,10 +342,24 @@ replaced. Worth remembering as a pattern: when a proxy assertion blocks a
 legitimate change, sharpen the assertion to its stated intent rather than
 weakening it or routing around it.
 
-### ▶ NEXT SMALLEST FULLY-SPECIFIED UNIT, audited and NOT started
+## ⚖️ OWNER DECISION, 2026-08-17 — Phase 11 DEFERRED, and a feature-creep freeze
 
-**`PORTAL-OPS.md` PHASE 11 — the CASE HEALTH half only.** Phase 11 is **PARTIAL**,
-and the missing half is the smaller one.
+**PHASE 11's health flag is DEFERRED pending a future owner decision.** The two
+open questions below — the mapping from lifecycle position to ON TRACK /
+WAITING / ACTION NEEDED, and where the flag appears — are **not to be invented**.
+Do not build it, and do not answer them by guessing a sensible default.
+
+**Non-critical correctness feature creep is FROZEN.** The work moved to a
+dedicated **visual / mobile phase**. Phase 8 is complete. Global Search, voice
+mode, an Active Surveillance behaviour redesign and any CRM/contact model all
+stay unbuilt, and the schema, backend business rules, permissions, payment
+rules, lifecycle rules and case-visibility boundaries are all unchanged by that
+phase — it is presentation only.
+
+### ⏸ DEFERRED — `PORTAL-OPS.md` PHASE 11, the CASE HEALTH half
+
+Kept because the audit is still accurate and saves repeating it. Phase 11 is
+**PARTIAL**, and the missing half is the smaller one.
 
 **Already built:** the recommended NEXT STEP. `pkgNextStep()` computes it and
 `.ov-next` draws it on the admin case Overview *and* the investigator's case
@@ -367,11 +381,10 @@ stage, assignment, open day, report status, build status, authorization, retaine
 read like totals, `overdue` and the field timer already are, so nothing can go
 stale and there is no schema, no route and no migration.
 
-**Two things to decide before building, neither invented here:** which of the
+**The two open questions, now formally deferred by the owner:** which of the
 three states each lifecycle position maps to, and whether the flag appears on the
 case list as well as the case screen. The spec names the states and the lifecycle
-but does not draw the mapping between them, so that is a short owner
-conversation — not a default to guess.
+but does not draw the mapping between them. **Do not invent either one.**
 
 ### The audit, as it was recorded
 
