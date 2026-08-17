@@ -4257,6 +4257,193 @@ section('The navigation rail is grouped, renamed, and reachable');
 /* MEASURED, NOT EYEBALLED. Apple's minimum is 44px and this file holds every
    other phone control to 50-52px; the rail's own padding left an item under
    the line, which is exactly how the burger shipped at 30px. */
+/* THE DASHBOARD BANDS (owner, 2026-08-16). Needs attention, then Current work.
+
+   The point of this section is not that the cards render — it is that every
+   number on them comes from a read that already existed, that a card which
+   counts something takes you to where that something is, and that a card whose
+   figure the Worker does not provide is ABSENT rather than zero. */
+section('The dashboard leads with two named bands');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1100);
+  const body = await text(page, '#app');
+
+  ok('there are exactly two bands', await page.locator('.band').count() === 2);
+  const heads = (await page.locator('.bandhead h2').allInnerTexts()).map(s => s.trim().toLowerCase());
+  ok('named Needs attention then Current work', heads.join('|') === 'needs attention|current work', heads.join('|'));
+
+  for (const c of ['New intakes', 'Reports due', 'Retainer / authorization', 'Needs assignment']) {
+    ok(`Needs attention carries ${c}`, has(body, c), body.slice(0, 400));
+  }
+  for (const c of ['Active today', 'Ready to build', 'Packages ready', 'Outstanding']) {
+    ok(`Current work carries ${c}`, has(body, c), body.slice(0, 400));
+  }
+
+  /* ONE OBVIOUS PRIMARY ACTION PER AREA. */
+  ok('each band has exactly one primary action', await page.locator('.bandgo .btn').count() === 2);
+  ok('Needs attention leads to the intakes desk',
+     await page.locator('.bandgo .btn[data-tab="leads"]').count() === 1);
+  ok('Current work leads to Reports & Packages',
+     await page.locator('.bandgo .btn[data-tab="delivery"]').count() === 1);
+
+  /* NOTHING IS INVENTED. Every card is one of the eight above; a ninth would
+     mean a figure arrived from somewhere other than /summary and /packages. */
+  ok('no card was invented to fill a slot', await page.locator('.band .stat').count() <= 9,
+     String(await page.locator('.band .stat').count()));
+  ok('and no fabricated case reached the dashboard', !body.includes('EXAMPLE-'), body.slice(0, 300));
+
+  /* THE SECONDARY LINE. Real alerts, kept as text so they do not become five
+     more cards — but not dropped, because somebody depends on them. */
+  const also = await text(page, '.alsoline');
+  for (const a of ['open cases', 'tasks overdue', 'awaiting client', 'ready to close', 'expenses to review']) {
+    ok(`the also-line still carries ${a}`, has(also, a), also);
+  }
+  ok('storage is accounted for somewhere on the dashboard', has(body, 'storage'), also);
+
+  // Assignment stays optional: the card reports, it never scolds.
+  const assign = await page.locator('.stat', { hasText: 'Needs assignment' }).first();
+  ok('Needs assignment is never dressed as a warning',
+     !(await assign.getAttribute('class')).includes('warn'), await assign.getAttribute('class'));
+  ok('and says so in words', has(await assign.innerText(), 'optional'), await assign.innerText());
+
+  await page.close();
+}
+
+/* A CARD THAT COUNTS SOMETHING MUST GO WHERE THAT SOMETHING IS. On Cases the
+   strip filters the list beneath it; on the Dashboard there is no list, so a
+   card that only set a filter would look broken. */
+section('Dashboard cards are doors, and they know which door');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1100);
+
+  /* NO DEAD CONTROLS. A card is a door only while there is something behind
+     it, so which assertion applies depends on the fixture — both are the rule,
+     not a fallback for a flaky one. */
+  const rtb = page.locator('.band .stat', { hasText: 'Ready to build' }).first();
+  if (parseInt((await rtb.innerText()).match(/\d+/)[0], 10) > 0) {
+    await rtb.click();
+    await page.waitForTimeout(800);
+    ok('Ready to build opens Reports & Packages',
+       has(await text(page, '.tabs button.on'), 'Reports & Packages'));
+  } else {
+    ok('Ready to build offers no click while there is nothing behind it',
+       !(await rtb.getAttribute('class')).includes('click'), await rtb.getAttribute('class'));
+  }
+
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1100);
+  await page.locator('.band .stat', { hasText: 'Outstanding' }).click();
+  await page.waitForTimeout(800);
+  ok('Outstanding opens Billing', has(await text(page, '.tabs button.on'), 'Billing'));
+
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1100);
+  await page.locator('.band .stat', { hasText: 'New intakes' }).click();
+  await page.waitForTimeout(800);
+  ok('New intakes opens the intakes desk', has(await text(page, '.tabs button.on'), 'Intakes'));
+
+  /* A SET-BACKED CARD BOTH FILTERS AND TRAVELS. Reports due carries case
+     numbers, so it lands on Cases already narrowed to exactly those. */
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1100);
+  const due = page.locator('.band .stat', { hasText: 'Reports due' }).first();
+  const dueN = parseInt((await due.innerText()).match(/\d+/)[0], 10);
+  if (dueN > 0) {
+    await due.click();
+    await page.waitForTimeout(800);
+    ok('Reports due lands on Cases', has(await text(page, '.tabs button.on'), 'Cases'));
+    ok('already narrowed, with a chip naming the filter',
+       has(await text(page, '.bar'), 'Reports due'));
+  } else {
+    ok('Reports due is not clickable while there is nothing behind it',
+       !(await due.getAttribute('class')).includes('click'));
+  }
+  await page.close();
+}
+
+/* THE STRIP ON CASES IS NOT THE DASHBOARD. It is a filter control sitting
+   directly above the list it filters, so it keeps its flat shape — a heading
+   between a control and the thing it controls helps nobody. */
+section('Cases keeps the flat strip, not the bands');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Cases' }).click();
+  await page.waitForTimeout(700);
+  ok('Cases draws no bands', await page.locator('.band').count() === 0);
+  ok('but keeps its cards', await page.locator('.stat').count() > 0);
+  const strip = await text(page, '.stats');
+  ok('including the ones the bands do not show', has(strip, 'Out now') && has(strip, 'Open cases'), strip);
+  await page.close();
+}
+
+/* DID NOT LOAD IS NOT EMPTY. The totals are their own read; when they fail the
+   dashboard must say so rather than draw a quiet day in zeros. This is the
+   failure mode this portal has already been bitten by twice. */
+section('A dashboard whose totals failed says so');
+{
+  const page = await newPage();
+  await page.route('**/portal-api/summary*', r => r.abort());
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1100);
+  const body = await text(page, '#app');
+  ok('it names the failure', has(body, 'could not be read'), body.slice(0, 300));
+  ok('and does not report a quiet day in zeros',
+     !/\b0\s*\n?\s*New intakes/i.test(body) && !has(body, 'Active today'), body.slice(0, 300));
+  ok('the page still works around it', await page.locator('.tabs').count() === 1);
+  await page.close();
+}
+
+/* THE 390px DEFECT, FIXED AT THE ELEMENT. A grid item defaults to
+   min-width:auto, so an unbreakable case number floored its own track above the
+   viewport and took the page sideways with it. This suite plants a
+   deliberately long hostile case number, which is exactly the input that
+   triggered it. */
+section('The dashboard does not scroll sideways on a phone');
+for (const [label, w, h] of [['phone 390', 390, 844], ['desktop 1200', 1200, 900]]) {
+  const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(1400);
+
+  const over = await page.evaluate(() => {
+    const vw = window.innerWidth, out = [];
+    for (const el of document.querySelectorAll('#app *')) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.right > vw + 1) out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
+    }
+    return { doc: Math.round(document.documentElement.scrollWidth - vw), els: out.slice(0, 4) };
+  });
+  ok(`${label}: the dashboard fits its viewport`, over.doc <= 1, JSON.stringify(over));
+  ok(`${label}: and no element hangs past the right edge`, over.els.length === 0, JSON.stringify(over));
+
+  // The same hostile case number that caused it must still be readable, not clipped away.
+  ok(`${label}: the long case number is still on screen, wrapped rather than cut`,
+     (await text(page, '#app')).includes('window.__pwned'));
+
+  if (w === 390) {
+    let smallest = 999, which = '';
+    for (const b of await page.locator('.alsoline button, .bandgo .btn').all()) {
+      const box = await b.boundingBox();
+      if (box && box.height < smallest) { smallest = box.height; which = (await b.innerText()).trim(); }
+    }
+    ok('every band and also-line control clears 44px', smallest >= 44, `smallest ${smallest}px on "${which}"`);
+  }
+  await page.close();
+}
+
+
 section('The rail on a phone: 44px targets and nothing sideways');
 {
   const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
