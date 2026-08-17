@@ -154,6 +154,35 @@ the send area for exactly that reason. `.rs-row` is a flex row with
 `@media(max-width:640px)` hook for this component already exists at
 `portal/index.html:228`. Its own small unit.
 
+## ✅ PORTAL CORRECTNESS QUEUE, 2026-08-17 — Units 1–3, all merged and deployed
+
+| PR | Merge SHA | Unit | State |
+| --- | --- | --- | --- |
+| #147 | `f9841ed` | The owner's three alert/archive decisions | **DEPLOYED** |
+| #148 | `117bd59` | **1.** The Cases lens belongs to the Cases table | **DEPLOYED** |
+| #149 | `175a92c` | **2.** The fee box fits a 390px phone | **DEPLOYED** |
+| #150 | `99121a2` | **3.** Edit case is a 44px target | **DEPLOYED** (attempt 2) |
+
+**Every one of the three carries a test proven against the old code** — stashed
+the fix, re-ran, watched the new assertions fail with the reported symptom, then
+restored. Unit 1 failed 4, Unit 2 failed reporting `{"sw":413,"wide":["SPAN.rs-v"]}`
+verbatim, Unit 3 failed reporting 37px. A test that passes both ways proves
+nothing, and this file has been burned by one before.
+
+**Suites at `99121a2`:** portal **1158/0** (1130 at the start of the cycle),
+worker **1556/0**, deploy **68/0**. No schema changed, so **no `portal-setup`
+dispatch is owed**.
+
+**#150's first deploy attempt failed and it was not the code.** GitHub returned
+**429 Too Many Requests** downloading `cloudflare/wrangler-action` from codeload,
+three times, before the job ever reached the repository. Re-running the failed
+job succeeded at the same SHA. Worth knowing: a red `deploy.yml` is not always a
+red tree — read the log before assuming a revert, and `rerun_failed_jobs` is the
+first thing to try when the error is in the action-download step.
+
+**LIVE VERIFIED is still open on all three**, for the reason recorded above: this
+container's egress proxy blocks the live domain outright.
+
 ## 🔴 FOUND WHILE FIXING THE LENS LEAK — `/packages` does not hide archived cases
 
 **Not fixed, and deliberately not folded into the lens unit — it is a different
@@ -172,12 +201,23 @@ The Unit 1 assertions are scoped to Today / next actions and Needs attention for
 exactly this reason, with the scope written into the test as a comment rather
 than left as a silent gap.
 
-**The fix is almost certainly one `hiddenCases()` filter in the `/packages`
-query**, matching what three other reads already do — but it needs its own audit:
-Reports & Packages reads the same route, and whether an archived case should
-vanish from the artifact desk is a question the archive rules answer and this
-note should not pre-empt. **Recommended as the unit immediately after the
-owner's Units 1–3.**
+**Audited 2026-08-17 and it is fully specified by rules already in force** — no
+owner decision is needed. `GET /packages` → `casePackages(env)` (`worker.js:6242`)
+is the only case-scoped read in that family that does **not** filter through
+`hiddenCases()`; `caseSummary` (`:1576`), the completed desk (`:5116`) and the
+calendar (`:7315`) all do. The rule those three implement is this file's own —
+*"Out of the views and out of the work go together"* — so making the fourth
+match is consistency, not a new decision.
+
+Reports & Packages reads the same route, and that is the point rather than a
+complication: an archived case should leave that desk too, exactly as it leaves
+Out now, the alerts and the calendar. It comes back under the Archived lens,
+which is where an archived case is supposed to be found.
+
+**RECOMMENDED AS THE NEXT UNIT.** One filter, the helper already exists, and the
+test writes itself: archive a case carrying a package, assert it leaves both the
+dashboard band and Reports & Packages, assert a live case beside it is untouched,
+and assert it returns when restored.
 
 ## ⚖️ OWNER DECISIONS, 2026-08-17 — the three blocked alert/archive questions
 
