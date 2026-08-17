@@ -5006,8 +5006,23 @@ async function casePackages(env) {
       WHERE s.status != 'closed'
       ORDER BY s.created_at DESC LIMIT 24`).all();
 
+  /* PACKAGES IS A WORKING VIEW TOO, and it was the last case-scoped read that
+     did not say so. `caseSummary`, `outNow` and the calendar all filter through
+     `hiddenCases()`, and `/completed` excludes both sets in its own SQL — this
+     one excluded neither, so an archived case kept its place on the dashboard's
+     Case packages band with its retainer and balance on it, and could reach
+     Today / next actions through the `retainer` and `build` sets that read this
+     payload. Out of the views and out of the work go together.
+
+     Filtered HERE, above the per-case loop, so a hidden case also stops costing
+     the seven queries below it. The same helper the other three call — the rule
+     lives in one place, and a `NOT IN` written into this query would be the
+     second copy that gets forgotten the day a third hidden state exists. */
+  const hidden = await hiddenCases(env);
+  const visible = (rows || []).filter(c => !hidden.has(c.case_no));
+
   const packages = [];
-  for (const c of rows || []) {
+  for (const c of visible) {
     const acts = await env.DB.prepare(
       'SELECT COUNT(*) AS n FROM activity_log WHERE case_no = ?').bind(c.case_no).first();
     const daysRow = await env.DB.prepare(
