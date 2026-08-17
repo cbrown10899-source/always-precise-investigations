@@ -215,11 +215,20 @@
   /* Rate sheets: the numbers dominate (RATESHEETS.md mobile hierarchy). */
   .rs-row{display:flex;justify-content:space-between;gap:14px;padding:13px 0;border-bottom:1px solid var(--line);align-items:flex-start;}
   .rs-row:last-child{border-bottom:0;}
-  .rs-l{flex:1;}
+  /* `min-width:0` because a flex item's default `min-width:auto` refuses to
+     shrink below its content, which is what let this row push past a phone. */
+  .rs-l{flex:1;min-width:0;}
   .rs-sub{margin-left:8px;font-size:.78rem;color:var(--muted);font-weight:600;}
   .rs-note{font-size:.84rem;color:var(--muted);margin-top:3px;max-width:56ch;}
-  .rs-v{white-space:nowrap;font-weight:700;padding-left:8px;}
-  .rs-big .rs-v{font-size:1.55rem;font-weight:800;color:var(--navy,#12305a);line-height:1.1;}
+  /* NOWRAP BELONGS TO THE MONEY, NOT TO EVERY VALUE. This column was written for
+     the retainer and hourly figures, and `white-space:nowrap` on all of it was
+     right for those — but two lines on the private sheet carry SENTENCES ("No
+     routine add-on fees", "Quoted in advance"), and an unbreakable sentence made
+     the row wider than a 390px screen: 413px, a 23px sideways scroll on the
+     whole view. Text values wrap now; the figures keep the nowrap they need.
+     (No amount is written in this file, deliberately — a test fails on one.) */
+  .rs-v{font-weight:700;padding-left:8px;text-align:right;}
+  .rs-big .rs-v{white-space:nowrap;font-size:1.55rem;font-weight:800;color:var(--navy,#12305a);line-height:1.1;}
   .rs-badge{display:inline-block;margin-left:8px;padding:2px 9px;border:1px solid #b7924c;color:#8a6d33;
     border-radius:10px;font-size:.66rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;vertical-align:2px;}
   .rs-close{margin:14px 0 4px;padding:13px 15px;background:#fbf7ee;border-left:3px solid #b7924c;border-radius:0 8px 8px 0;}
