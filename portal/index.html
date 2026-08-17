@@ -119,6 +119,24 @@
   /* .btn.sm is 7px of padding on a .82rem line — about 35px, under Apple's 44.
      A band's one primary action is exactly the control a thumb goes for. */
   .bandhead .btn{min-height:44px;}
+  /* TODAY / NEXT ACTIONS and RECENTLY COMPLETED are ROWS, not cards. Slice one
+     went from ten cards to eight for a reason; answering "what do I do next"
+     with more tiles would put the busyness straight back. Navy chrome, light
+     workspace, no new surface. */
+  .queue{display:flex;flex-direction:column;}
+  .qrow{display:flex;align-items:center;gap:6px 14px;flex-wrap:wrap;min-width:0;
+    padding:11px 2px;border-top:1px solid var(--line);}
+  .qrow:first-child{border-top:0;}
+  .qmain{min-width:0;flex:1 1 240px;}
+  .qwhat{font-weight:700;font-size:.89rem;overflow-wrap:anywhere;}
+  .qwho{font-size:.81rem;color:var(--muted);overflow-wrap:anywhere;margin-top:1px;}
+  .qno{font-size:.72rem;color:var(--muted);overflow-wrap:anywhere;}
+  .qmore{font-size:.72rem;color:var(--muted);font-weight:600;}
+  /* Never colour alone: the row's own words are the status, and the button
+     says what it does. The rule below is spacing, not meaning. */
+  .qgo{margin-left:auto;flex:0 0 auto;}
+  .qgo .btn{min-height:44px;}
+  .qfoot{font-size:.79rem;color:var(--muted);padding:10px 2px 0;border-top:1px solid var(--line);}
   /* The counts that are real work but not today's headline. A line of text
      rather than five more cards: the owner asked for fewer busy cards, and
      dropping them outright would lose alerts somebody depends on. */
@@ -1506,17 +1524,174 @@ function dashBands(){
     + alsoLine;
 }
 
+/* Who a case number belongs to, for a queue row that would otherwise be a bare
+   reference. CASES is the list the page already loaded; a case it does not
+   hold simply shows its number, which is still actionable. Nothing is guessed
+   and nothing is fetched for this. */
+function caseBrief(no){
+  const c = (CASES || []).find(x => x.case_no === no);
+  if(!c) return null;
+  return c.kind === "claims" ? (c.carrier || c.client_name || "") : (c.client_name || "");
+}
+
+/* TODAY / NEXT ACTIONS (owner, 2026-08-16). A compact work queue: one row per
+   case, one direct action on it, ordered the way the office's day actually
+   runs.
+
+   IT IS BUILT FROM THE ALERTS THAT ALREADY EXIST — `/summary`'s sets and
+   `/packages`' fields. No metric is invented, no route was added, and no case
+   appears whose reason was not already computed by the Worker.
+
+   TWO ALERTS ARE DELIBERATELY NOT HERE. A day running (`active_now`) needs no
+   decision from the office, and a case awaiting the client has its ball in
+   their court. Both stay on the also-line above, so nothing is lost — but a
+   queue that lists things you cannot act on stops being read, and then the
+   things you can act on go with it.
+
+   ASSIGNMENT IS NOT IN IT EITHER. Assigning is optional, so an unassigned case
+   is never queued as an outstanding task. */
+const QUEUE_MAX = 8;
+const QUEUE_RULES = [
+  ["new",       "New intake to read",                  "Review intake",     "overview"],
+  ["reports",   "Report waiting on you",               "Review report",     "reports"],
+  ["tasks",     "Task past its due date",              "Open tasks",        "tasks"],
+  ["retainer",  "Retainer not received",               "Open billing",      "billing"],
+  ["auth",      "Authorization running low",           "Open authorization","auth"],
+  ["build",     "Report approved — package to build",  "Build package",     "package"],
+  ["expenses",  "Expense waiting on your call",        "Review expense",    "expenses"],
+  ["closing",   "Complete — run the closing checklist","Open closing",      "billing"],
+];
+
+function nextActionRows(){
+  const s = SUMMARY;
+  if(!s) return null;
+  const pk = (PKGS && Array.isArray(PKGS.packages)) ? PKGS.packages : [];
+  const A = k => Array.isArray(s[k]) ? s[k] : [];
+
+  const sets = {
+    // A new intake has no case-number set on /summary, so it comes from the
+    // case list the page already holds — the same read the Intakes desk uses.
+    new: (CASES || []).filter(c => (c.stage || c.status) === "new").map(c => c.case_no),
+    reports: A("reports_due"),
+    tasks: A("tasks_overdue"),
+    retainer: pk.filter(p => p.kind === "consumer" && p.retainer && !p.retainer.received).map(p => p.case_no),
+    auth: A("auth_low"),
+    build: pk.filter(p => ["approved", "delivered"].includes(p.report_status)
+      && p.build_status !== "finalized").map(p => p.case_no),
+    expenses: A("expenses_pending"),
+    closing: A("ready_to_close"),
+  };
+
+  /* ONE ROW PER CASE, HIGHEST REASON FIRST. A case can be in four of these
+     sets at once, and four rows for one file is a queue nobody finishes. The
+     row says how many other things that case is waiting on, so the count is
+     never hidden — only the repetition is. */
+  const seen = new Map();
+  for(const [key, what, action, tab] of QUEUE_RULES){
+    for(const no of sets[key] || []){
+      if(seen.has(no)){ seen.get(no).more++; continue; }
+      seen.set(no, {no, what, action, tab, more: 0});
+    }
+  }
+  return [...seen.values()];
+}
+
+function nextActionsHtml(){
+  const rows = nextActionRows();
+  const head = body => `<div class="card">
+    <div class="bar"><h2 style="margin:0">Today / next actions</h2>
+      <span class="count">${rows && rows.length ? `${rows.length} waiting` : "the office's queue"}</span></div>
+    ${body}</div>`;
+
+  /* DID NOT LOAD IS NOT AN EMPTY QUEUE — the same rule the bands follow. An
+     empty work queue is the most reassuring thing this page can say, so it may
+     never be what a failed read looks like. */
+  if(!rows) return head(`<div class="empty">The queue could not be built, because the dashboard
+    totals did not load. Do not read this as a clear desk.</div>`);
+
+  if(!rows.length) return head(`<div class="empty">
+    <div class="empty-title">Nothing needs you right now.</div>
+    <div class="empty-hint">This fills itself as work arrives — a new intake, a finished day with
+      no report, a task falling due, a retainer still unpaid, or a report approved and waiting on
+      its package. Nothing here is a to-do list somebody has to keep up to date.</div></div>`);
+
+  const shown = rows.slice(0, QUEUE_MAX);
+  return head(`<div class="queue">${shown.map(r => {
+    const who = caseBrief(r.no);
+    return `<div class="qrow">
+      <div class="qmain">
+        <div class="qwhat">${esc(r.what)}${r.more
+          ? ` <span class="qmore">&middot; ${r.more} more on this case</span>` : ""}</div>
+        ${who ? `<div class="qwho">${esc(who)}</div>` : ""}
+        <div class="qno mono">${esc(r.no)}</div>
+      </div>
+      <div class="qgo"><button class="btn sm ghost" data-act="pkgJump"
+        data-case="${esc(r.no)}" data-tab="${esc(r.tab)}">${esc(r.action)} &rarr;</button></div>
+    </div>`;
+  }).join("")}</div>
+  ${rows.length > QUEUE_MAX ? `<div class="qfoot">Showing the first ${QUEUE_MAX} of
+    ${rows.length}. The rest are behind the cards above.</div>` : ""}`);
+}
+
+/* RECENTLY COMPLETED — a compact list off `/completed`, the same route the
+   Cases lens and Reports & Packages read. The desk itself keeps the full cards
+   with every artifact on them; here it answers one question, "what did we
+   finish", in one line each. Nothing invented and no example records: an empty
+   list says it is empty. */
+const DONE_MAX = 5;
+
+function recentlyCompletedHtml(){
+  const head = body => `<div class="card">
+    <div class="bar"><h2 style="margin:0">Recently completed</h2>
+      <button class="btn sm ghost" data-act="tab" data-tab="delivery"
+        style="margin-left:auto">Reports &amp; Packages &rarr;</button></div>
+    ${body}</div>`;
+
+  if(!COMPLETED) return head(`<div class="empty">Loading completed cases&hellip;</div>`);
+  if(COMPLETED.error) return head(`<div class="err">The completed list did not load &mdash;
+    ${esc(COMPLETED.error)}. This is not an empty desk.</div>`);
+
+  const list = COMPLETED.completed || [];
+  if(!list.length) return head(`<div class="empty">
+    <div class="empty-title">Nothing completed yet.</div>
+    <div class="empty-hint">A case arrives here when its stage is set to Complete, it passes the
+      closing checklist, or its client package is finalized.</div></div>`);
+
+  const shown = list.slice(0, DONE_MAX);
+  return head(`<div class="queue">${shown.map(c => {
+    const who = c.kind === "claims" ? (c.carrier || c.client_name || "") : (c.client_name || "");
+    /* What actually finished, in the order the desk itself decides it: a
+       finalized package is the strongest statement, then the stage. */
+    const what = c.finalized_at
+      ? `Package v${esc(String(c.build_version))} finalized`
+      : c.stage ? esc(label(c.stage)) : "Completed";
+    const at = c.finalized_at || c.stage_at || c.created_at;
+    return `<div class="qrow">
+      <div class="qmain">
+        <div class="qwhat">${what}${c.delivered_at ? " &middot; delivered" : ""}</div>
+        ${who ? `<div class="qwho">${esc(who)}${c.subject_name ? " &middot; " + esc(c.subject_name) : ""}</div>` : ""}
+        <div class="qno mono">${esc(c.case_no)}${at ? " &middot; " + when(at) : ""}</div>
+      </div>
+      <div class="qgo"><button class="btn sm ghost" data-act="openCase"
+        data-case="${esc(c.case_no)}">Open case &rarr;</button></div>
+    </div>`;
+  }).join("")}</div>
+  ${list.length > DONE_MAX ? `<div class="qfoot">${list.length - DONE_MAX} more on the
+    Reports &amp; Packages desk.</div>` : ""}`);
+}
+
 function dashView(){
   if(!PKGS) return `<div class="card"><div class="empty">Loading the dashboard&hellip;</div></div>`;
   const active = (PKGS.packages || []);
-  return `${dashBands()}${outNowHtml()}
+  return `${dashBands()}${nextActionsHtml()}${outNowHtml()}
     <div class="card">
       <div class="bar"><h2 style="margin:0">Case packages</h2>
         <span class="count">At-a-glance progress for active cases</span>
         <button class="btn sm ghost" data-act="tab" data-tab="cases" style="margin-left:auto">View all cases &rarr;</button></div>
       ${active.length ? `<div class="pkgcards">${active.map(pkgCard).join("")}</div>`
         : `<div class="empty">No active cases. New intakes appear here as cases the moment they arrive.</div>`}
-    </div>`;
+    </div>
+    ${recentlyCompletedHtml()}`;
 }
 
 /* The dashboard strip answers one question: what needs my attention today?
@@ -3192,6 +3367,10 @@ async function render(){
     // it — the tab click is not the only way in. Without this, the first
     // sign-in paints "Loading…" forever, because nothing ever fetches.
     if(TAB === "dashboard" && !PKGS) await loadPackages();
+    // Recently completed reads the same route the Cases lens and Reports &
+    // Packages already use. Landed on, not only clicked into, for the reason
+    // directly above.
+    if(TAB === "dashboard" && !COMPLETED) loadCompleted();
     // Same rule for who-is-out: landed on, not only clicked into.
     try{ OUT_NOW = await api("/active"); }catch(e){ OUT_NOW = null; }
   }
@@ -7329,7 +7508,7 @@ document.addEventListener("click", ev => {
     /* The send history is admin-only and lives beside the pre-case sends, so it
        is fetched when that screen is opened rather than held from sign-in. */
     if(TAB === "sheets" && ME.role === "admin"){ SEND_MSG = ""; loadSends(); }
-    if(TAB === "dashboard"){ PKGS = null; loadPackages(); }
+    if(TAB === "dashboard"){ PKGS = null; loadPackages(); loadCompleted(); }
     /* Reports & Packages reads the two routes it is assembled from, both
        admin-only in the Worker. Fetched on arrival for the same reason the
        dashboard refetches: a stale package stage is a wrong next step. */
