@@ -6026,6 +6026,60 @@ section('An archived case never leaks out of the Cases table');
   await page.close();
 }
 
+/* THE CASE HEADER'S OWN CONTROL IS A THUMB TARGET TOO (owner, Unit 3).
+
+   Recorded as a non-blocking finding when Edit Case shipped: the panel's
+   controls were floored at 44px and asserted, and the header button that OPENS
+   it was left alone rather than widened as a side effect of that unit. This is
+   that unit.
+
+   The owner's constraint is the interesting half — "do not make the visual
+   glyph unnecessarily large" — so the LABEL must not grow. A min-height raises
+   the box a thumb has to hit and leaves the type where it was, and the test
+   asserts both: at least 44 tall, and the same font size as any other .btn.sm. */
+section('The case header\'s Edit case control is a 44px target');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Cases' }).first().click();
+  await page.waitForTimeout(600);
+  await rowFor(page, 'API-LENS-LIVE').click();
+  await page.waitForTimeout(900);
+
+  const edit = page.locator('.ch-right .btn', { hasText: 'Edit case' });
+  ok('the header offers Edit case', await edit.count() === 1);
+
+  const desk = await edit.boundingBox();
+  ok(`it is a 44px target on the desktop too (${Math.round(desk.height)}px)`,
+     desk.height >= 44, JSON.stringify(desk));
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  const phone = await edit.boundingBox();
+  ok(`and on a phone (${Math.round(phone.height)}px)`, phone.height >= 44,
+     JSON.stringify(phone));
+  ok('and it is still inside the screen', phone.x >= -1 && phone.x + phone.width <= 391,
+     JSON.stringify(phone));
+
+  /* The owner's constraint: bigger target, not bigger lettering. Measured
+     against .btn.sm's own size rather than a hard-coded number, so restyling
+     the buttons later cannot make this assertion quietly wrong. */
+  const type = await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.ch-right .btn')]
+      .find(el => el.textContent.includes('Edit case'));
+    const other = document.querySelector('.btn.sm:not(.ch-right .btn)');
+    return { px: parseFloat(getComputedStyle(b).fontSize),
+             ref: other ? parseFloat(getComputedStyle(other).fontSize) : null };
+  });
+  ok('the label was not enlarged to get there', type.ref === null || type.px <= type.ref,
+     JSON.stringify(type));
+  ok('and it is still small-button type, not body type', type.px < 15, JSON.stringify(type));
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.waitForTimeout(300);
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();

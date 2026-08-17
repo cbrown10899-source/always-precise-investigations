@@ -397,6 +397,12 @@
   .ch-sub{font-size:.85rem;color:var(--muted);margin-top:2px;}
   .ch-right{text-align:right;display:flex;flex-direction:column;gap:6px;align-items:flex-end;}
   .ch-right .tag{cursor:pointer;}
+  /* The same 44px floor `.bandhead .btn` and `.pc-next .btn` already take.
+     Edit case is the header's one action and was about 35px — `.btn.sm` is 7px
+     of padding on a .82rem line. The LABEL is untouched: this raises the target
+     a thumb has to hit, not the size of the text, which is why it is a
+     min-height and not a font or padding change. */
+  .ch-right .btn{min-height:44px;}
   .ch-line{font-size:.8rem;color:var(--muted);}
   .wsecs{display:flex;gap:6px;overflow-x:auto;margin:0 0 10px;-webkit-overflow-scrolling:touch;}
   .wsecs button{flex:none;font:inherit;font-size:.76rem;font-weight:800;letter-spacing:.05em;
