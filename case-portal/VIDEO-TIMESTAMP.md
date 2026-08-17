@@ -165,3 +165,175 @@ The owner's note, for whenever packages are next touched:
 
 That is a change to what a package ships, and it is **not** authorised as part of
 this feature — record it against the package rules when the time comes.
+
+---
+
+# ARCHITECTURE AUDIT — 2026-08-17, no code written
+
+Carried out against master `182f9b8`. **The authorised stop in §12 is reached:**
+true burn-in cannot be done by this project's current compute, and every path
+that can do it needs an owner decision. Nothing was built, enabled or signed up
+for.
+
+## 1. What the current architecture can already do
+
+More than half of the feature, and none of it is the hard half:
+
+| Piece | Status today |
+| --- | --- |
+| Video ingestion | `POST …/evidence` accepts any `content_type`; `video/*` is already recognised and counted (`worker.js:5038`, `:6468`) |
+| Evidence storage | R2 bucket `case-evidence`, private, one object per row, `r2_key` on `case_evidence` |
+| Access control | one authenticated route serves the bytes; investigators are scoped to their own cases; the viewer shipped in #156 keeps it in-app |
+| Audit trail | `activity_log`, `case_evidence.uploaded_by/uploaded_at`, classification, and the never-erase rule already exist |
+| Storage failsafe | 9 GB hard cap, 75 MB per file, 50k uploads/month, meter computed from `SUM(size_bytes)` |
+| An original + derivative MODEL | **fits the existing schema** — a derivative is another `case_evidence` row with its own `r2_key`, plus a column or side table linking it to its original |
+
+So the *data* design needs no new storage system, and §1's "use existing
+evidence/storage architecture" is satisfiable. Timestamp entry, the edit screen,
+the preview, the EST/EDT resolution and the audit records are all ordinary work
+this project can do today.
+
+## 2. The exact blocker
+
+**Rendering pixels into a video file. Nothing in this project can do it.**
+
+- **The only compute is a Cloudflare Worker.** A V8 isolate: no filesystem, no
+  native binaries, no ffmpeg, ~128 MB memory, and on the **free plan 10 ms CPU
+  per request** (30 s on paid). Transcoding even a one-minute clip is orders of
+  magnitude beyond that.
+- **`ffmpeg.wasm` is not a way round it.** ~30 MB of WASM, wants
+  `SharedArrayBuffer` and threads, and needs seconds-to-minutes of CPU and
+  hundreds of MB of memory. It does not fit a Worker on any plan.
+- **The upload path already sits near a limit**: `addEvidence` does
+  `await file.arrayBuffer()` (`worker.js:4600`), so a 75 MB upload is 75 MB
+  resident in a 128 MB isolate. There is no headroom to also hold a decoded
+  frame buffer.
+- **No video service is connected.** `wrangler.toml` binds exactly two things —
+  D1 and R2. No Stream, Images, Containers, Queues or Browser Rendering.
+
+## 3. Best recommended architecture — browser-side render, on the desktop
+
+**Render the derivative in the browser with WebCodecs, on a desktop/laptop, and
+upload it as a new evidence object.**
+
+Decode the original with `VideoDecoder`, draw each frame to a canvas, draw the
+timestamp for that frame's own presentation time, re-encode with `VideoEncoder`,
+mux, and `POST` the result as a derivative. **This is genuine burn-in** — pixels
+in an encoded file that survive download and packaging — and it is not the CSS
+overlay §5 forbids.
+
+Why it is the recommendation:
+
+- **no new infrastructure, no new service, no credential, no cost** — the thing
+  the owner's brief is most concerned about
+- the original is never touched: it is read, and a *second* object is written
+- it reuses the existing upload route, permissions and audit trail exactly
+- the running clock is computed from **frame presentation time**, which is what
+  §4 asks for ("according to the actual video timeline", not the browser clock)
+- `America/New_York` resolves correctly with `Intl.DateTimeFormat` and
+  `timeZoneName: 'short'`, which yields EST or EDT **from the date itself** —
+  no table to maintain and no hard-coded offset
+
+Its honest costs, which the owner should weigh:
+
+- **desktop only in practice.** WebCodecs exists on iOS 17+, but re-encoding a
+  long clip on a phone is slow, hot and battery-hungry, and an interrupted
+  encode wastes the trip. §10 asks the *entry* to work in the field; the
+  recommendation is that the field **records the start time** and the office
+  **generates** the derivative.
+- it is a **re-encode**, so the derivative is generationally lossy. That is
+  acceptable precisely because it is a viewing/delivery copy and the untouched
+  original remains the evidence.
+- the 75 MB per-file cap applies to the derivative too.
+
+## 4. Second best — a self-hosted ffmpeg step the office runs
+
+A small local service (or a scripted step) on a machine the firm already owns,
+running real `ffmpeg` with a `drawtext` filter, pulling the original through the
+existing authenticated route and posting the derivative back.
+
+Better output than a browser re-encode and no per-clip browser cost — but it
+adds a machine that has to be running, reachable and maintained, and it is the
+first piece of this system that would not be serverless. Recommended only if
+browser rendering proves inadequate in practice.
+
+## 5. Storage and compute implications
+
+- **Every timestamped video roughly doubles that video's storage.** Against a
+  9 GB cap that is the single most consequential fact here. A one-line policy
+  decision is needed: do derivatives count toward the cap (they must — the meter
+  is `SUM(size_bytes)` over all live rows), and is an original ever retired once
+  a derivative exists? **It must not be**, per §1, so the answer is that video
+  capacity is effectively halved.
+- Regeneration (§9) adds a third object unless the superseded derivative is
+  deleted. Recommend: keep one *active* derivative, soft-delete the superseded
+  one the way evidence deletion already works, so history survives and the meter
+  does not grow without bound.
+- Compute: zero server cost under the recommendation — the work happens on the
+  operator's machine.
+
+## 6. Is a new Cloudflare service appropriate?
+
+**Not without owner approval, and probably not at all.**
+
+- **Cloudflare Stream** is the obvious candidate and is **paid** (storage per
+  minute plus delivery per minute). It is also a *delivery* product: it
+  transcodes and streams, but it does not burn a running timestamp into frames,
+  so it would not actually deliver this feature.
+- **Containers / a container-based job** could run ffmpeg properly, but it is a
+  paid product and a materially different deployment model.
+- **Browser Rendering** is for headless Chrome, not video encoding.
+
+None is connected today, and §12 forbids introducing a paid video service
+silently. **No action taken.**
+
+## 7. Is local/server processing practical?
+
+Yes, technically — see §4 — and the firm already has a Windows desktop. It is
+practical for a small volume and impractical as a silent dependency: it must be
+running when someone presses Generate. It is the fallback, not the first choice.
+
+## 8. What owner setup or credentials would be required
+
+**For the recommendation: none.** No account, no key, no binding, no spend. That
+is why it is the recommendation.
+
+What is needed is **decisions**, not credentials:
+
+1. Accept that the derivative is a **re-encode** and that the untouched original
+   remains the evidence of record.
+2. Accept that **video storage is effectively halved** against the 9 GB cap, or
+   raise the cap deliberately.
+3. Confirm the split: **field records the start time, office generates the
+   derivative.**
+4. Confirm that a superseded derivative is soft-deleted on regeneration.
+
+Only if the answer to (1) is "no — the delivery copy must not be re-encoded"
+does this become an infrastructure question, and then §4 or a paid service is
+the conversation.
+
+## 9. How this ties into "Save to my Dropbox"
+
+Cleanly, and the ordering matters: **the derivative is what gets exported, and
+the export is never the source of truth.**
+
+The existing evidence route stays the only reader of R2. A Dropbox export
+enumerates a case's *deliverable* material — which, once this exists, means the
+**timestamped derivative** for any video that has one, and the original only for
+video that does not. Dropbox receives a copy; it never becomes the store, is
+never read back as evidence, and its absence or failure changes nothing about
+the case. The same rule the package work already follows: the portal is the
+operational record.
+
+The owner's related note — that the derivative should become the client-facing
+delivery video in case packages, with the original retained as evidence — is a
+change to what a package ships and is **not authorised by this brief**. It
+belongs with the package rules when that work is next opened.
+
+## Recommendation in one line
+
+**Build everything except the render** — timestamp entry, edit, preview, the
+original/derivative model, the audit records and the EST/EDT resolution are all
+ordinary work with no blocker — **and decide the four questions in §8 before the
+render is written.** Nothing here should be started until the owner has answered
+them.
