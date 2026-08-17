@@ -7105,6 +7105,75 @@ section('A deleted case cannot be worked on, and stops appearing in working view
   globalThis.fetch = realFetch;
 }
 
+/* PACKAGES IS A WORKING VIEW TOO (owner, 2026-08-17).
+
+   `/packages` was the last case-scoped read with no archived/deleted boundary
+   at all: `caseSummary`, `outNow` and the calendar filter through
+   `hiddenCases()`, and `/completed` excludes both sets in its own SQL. So an
+   archived case kept its place on the dashboard's Case packages band with its
+   retainer and balance on it — and could reach Today / next actions through the
+   `retainer` and `build` sets the page derives from this payload.
+
+   Every assertion carries a live case beside the hidden one, because a filter
+   that removed everything would satisfy the negative half on its own. */
+section('An archived or deleted case leaves the packages view, and comes back');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  for (const no of ['API-PKG-LIVE', 'API-PKG-ARC', 'API-PKG-DEL']) {
+    await ingest(env, { case_no: no, service: 'Surveillance',
+                        client_name: 'Pkg Client', subject_name: 'Pkg Subject' });
+    await call(env, `/cases/${no}/build`, { method: 'POST', cookie: admin });
+  }
+  const pkgNos = async () => (await jsonOf(await call(env, '/packages', { cookie: admin })))
+    .packages.map(p => p.case_no);
+
+  const before = await pkgNos();
+  ok('CONTROL: all three cases with packages are on the view to begin with',
+     ['API-PKG-LIVE', 'API-PKG-ARC', 'API-PKG-DEL'].every(n => before.includes(n)),
+     JSON.stringify(before));
+
+  ok('the case really was archived',
+     (await call(env, '/cases/API-PKG-ARC/archive', { method: 'POST', cookie: admin, body: {} }))
+       .status === 200);
+  ok('the case really was deleted',
+     (await call(env, '/cases/API-PKG-DEL/delete', { method: 'POST', cookie: admin, body: {} }))
+       .status === 200);
+
+  const after = await pkgNos();
+  ok('an archived case leaves the packages view', !after.includes('API-PKG-ARC'),
+     JSON.stringify(after));
+  ok('and so does a deleted one', !after.includes('API-PKG-DEL'), JSON.stringify(after));
+  ok('CONTROL: the live case beside them is untouched', after.includes('API-PKG-LIVE'),
+     JSON.stringify(after));
+
+  /* The dashboard derives Today / next actions from this payload, so the same
+     read is what keeps an archived case out of the office's queue. */
+  ok('so nothing about them can reach a package-derived next action',
+     !JSON.stringify(await jsonOf(await call(env, '/packages', { cookie: admin })))
+       .includes('API-PKG-ARC'));
+
+  ok('restoring the archived case puts it back',
+     (await call(env, '/cases/API-PKG-ARC/restore', { method: 'POST', cookie: admin, body: {} }))
+       .status === 200 && (await pkgNos()).includes('API-PKG-ARC'));
+  ok('and undeleting the deleted one puts it back too',
+     (await call(env, '/cases/API-PKG-DEL/undelete', { method: 'POST', cookie: admin, body: {} }))
+       .status === 200 && (await pkgNos()).includes('API-PKG-DEL'));
+
+  const restored = await pkgNos();
+  ok('all three are on the view again, exactly as they started',
+     ['API-PKG-LIVE', 'API-PKG-ARC', 'API-PKG-DEL'].every(n => restored.includes(n)),
+     JSON.stringify(restored));
+
+  /* The archive semantics themselves are unchanged — this unit filtered a read
+     and touched nothing about what archiving means. */
+  ok('and the restored case is workable again, so nothing about archiving moved',
+     (await call(env, '/cases/API-PKG-ARC/activity', { method: 'POST', cookie: admin,
+       body: { at_date: '2026-08-17', at_time: '10:30', description: 'back' } })).status === 201);
+}
+
 /* THE DEPLOY ORDER IS A REAL FAILURE MODE HERE. The Worker ships on push;
    `case_archive` arrives on a MANUAL portal-setup dispatch. Between the two the
    table does not exist on the live database, and a join against a missing table
