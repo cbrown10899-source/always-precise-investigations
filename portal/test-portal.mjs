@@ -3483,13 +3483,21 @@ section('Evidence in the browser');
   ok('the upload lands with its note', has(body, 'clip1.mp4') && has(body, 'loading lumber'));
   ok('and reports the meter', has(body, '% of the free plan'));
 
+  /* The card's opener is a viewer button now, not an anchor, but it carries the
+     SAME authenticated route it always did — which is the point: the viewer
+     reuses the existing file endpoint and its permission check rather than
+     introducing a second way to reach evidence. */
   const served = await page.evaluate(async () => {
-    const link = document.querySelector('.evcard a');
-    const r = await fetch(link.getAttribute('href'), { credentials: 'same-origin' });
-    return { status: r.status, type: r.headers.get('content-type'), len: (await r.arrayBuffer()).byteLength };
+    const opener = document.querySelector('.evcard [data-act="evOpen"]');
+    const src = opener.dataset.src;
+    const r = await fetch(src, { credentials: 'same-origin' });
+    return { src, status: r.status, type: r.headers.get('content-type'),
+             len: (await r.arrayBuffer()).byteLength };
   });
   ok('the file streams back through the Worker', served.status === 200
      && served.type === 'video/mp4' && served.len === 4096);
+  ok('and the viewer points at the case-scoped evidence route, not a copy',
+     /^\/portal-api\/cases\/[^/]+\/evidence\/\d+\/file$/.test(served.src), served.src);
 
   await page.locator('[data-act="evClass"]').selectOption('client_deliverable');
   await page.waitForTimeout(600);
@@ -6164,6 +6172,145 @@ section('The case header status chip is a 44px target without becoming a button'
   ok('tapping it still opens the Assignment panel, unchanged',
      has(await text(page, 'body'), 'Assignment'));
   await page.close();
+}
+
+/* ONE EVIDENCE VIEWER, AND NOBODY LEAVES THE APP (owner, 2026-08-16).
+
+   The installed portal is `display:standalone` scoped to `/portal/`, and the
+   evidence file route lives under `/portal-api/`. So `<a target="_blank">` did
+   not open a tab the user could come back from — it left the app, with no
+   chrome, no back button and no bottom bar. Six surfaces did it.
+
+   The structural half is asserted on the SOURCE, because that is the only way
+   to prove the seventh call site nobody has written yet cannot reintroduce it. */
+section('Evidence opens in one in-portal viewer, and never leaves the app');
+{
+  const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+
+  /* Every place that renders the evidence file route: none may carry a blank
+     target. Written as a search for the route rather than a list of six line
+     numbers, so a new surface is covered the day it is added. */
+  const routeLinks = src.split('\n')
+    .filter(l => /evidence\/\$\{[^}]*\}\/file|fileUrl\(e\)|url\(e\)|href="\$\{href\}"/.test(l));
+  ok('the evidence route is still rendered in several places',
+     routeLinks.length >= 6, String(routeLinks.length));
+  ok('and not one of them opens a new tab any more',
+     !routeLinks.some(l => l.includes('target="_blank"')),
+     routeLinks.filter(l => l.includes('target="_blank"')).join('\n'));
+  ok('every one of them opens the shared viewer instead',
+     (src.match(/data-act="evOpen"/g) || []).length >= 6,
+     String((src.match(/data-act="evOpen"/g) || []).length));
+  ok('there is exactly ONE viewer, not six',
+     (src.match(/function evViewerHtml\(/g) || []).length === 1);
+  /* VIEWING ONLY. Scoped to the viewer's own function body, not the whole page:
+     the gallery's existing Delete and Classify controls are a different feature
+     and predate this one — the assertion is that the VIEWER grew none of them,
+     not that the portal has none. */
+  const viewerFn = src.slice(src.indexOf('function evViewerHtml('),
+                             src.indexOf('function paint()'));
+  ok('the viewer function was found, so the check has something to read',
+     viewerFn.length > 200 && viewerFn.includes('evClose'), String(viewerFn.length));
+  ok('and it offers no download, delete, classify or edit control',
+     !/data-act="(evDelete|evClass|evUpload|download)"/i.test(viewerFn)
+     && !/\bdownload\b/i.test(viewerFn), viewerFn.slice(0, 200));
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(500);
+  await wsTab(page, 'Evidence');
+  await page.waitForTimeout(400);
+
+  // Land on a known screen, and remember it, so "back" can be checked properly.
+  const beforeTab = await page.evaluate(() => ({
+    body: document.querySelector('#dlgBody') ? document.querySelector('#dlgBody').innerText.slice(0, 400) : '',
+    scroll: window.scrollY,
+  }));
+
+  const opener = page.locator('.evcard [data-act="evOpen"]').first();
+  ok('the gallery card opens the viewer rather than a link',
+     await opener.count() === 1 && await page.locator('.evcard a[target="_blank"]').count() === 0);
+
+  await opener.click();
+  await page.waitForTimeout(500);
+  ok('the viewer is up', await page.locator('.evview').count() === 1);
+  ok('with an obvious way back', await page.locator('.evview [data-act="evClose"]').count() >= 1);
+  ok('and it names the file it is showing',
+     (await text(page, '.evview-name')).trim().length > 0);
+  ok('the page behind is locked from scrolling while it is open',
+     await page.evaluate(() => document.body.classList.contains('evopen')));
+  /* THE APP IS STILL THE APP: nothing navigated, so the URL is unchanged and
+     the portal shell is still in the document behind the viewer. */
+  ok('nothing navigated away — the portal is still underneath',
+     await page.evaluate(() => !!document.querySelector('#app .wstabs, #app .tabs')),
+     await page.evaluate(() => location.pathname));
+
+  /* Mobile: the controls are thumb-sized and nothing runs off the screen. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  const m = await page.evaluate(() => {
+    const back = document.querySelector('.evview [data-act="evClose"]').getBoundingClientRect();
+    const media = document.querySelector('.evview-body img, .evview-body video');
+    const mr = media ? media.getBoundingClientRect() : null;
+    return { backW: Math.round(back.width), backH: Math.round(back.height),
+             sw: document.documentElement.scrollWidth,
+             mediaW: mr ? Math.round(mr.width) : null,
+             mediaH: mr ? Math.round(mr.height) : null };
+  });
+  ok(`the back control is a 44px target (${m.backW}x${m.backH})`,
+     m.backW >= 44 && m.backH >= 44, JSON.stringify(m));
+  ok('and the viewer adds no sideways scroll at 390px', m.sw <= 390, JSON.stringify(m));
+  ok('the media fits inside the screen rather than being cropped to it',
+     m.mediaW === null || (m.mediaW <= 390 && m.mediaH <= 844), JSON.stringify(m));
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.waitForTimeout(300);
+
+  /* CLOSE, AND THE SCREEN IS THE ONE THEY LEFT. Asserted by comparing the panel
+     content before and after rather than by "a panel exists" — a rebuilt
+     approximation would pass the weaker check. */
+  await page.locator('.evview [data-act="evClose"]').first().click();
+  await page.waitForTimeout(400);
+  ok('the viewer closes', await page.locator('.evview').count() === 0);
+  ok('the scroll lock is released', await page.evaluate(() =>
+     !document.body.classList.contains('evopen')));
+  const afterTab = await page.evaluate(() => ({
+    body: document.querySelector('#dlgBody') ? document.querySelector('#dlgBody').innerText.slice(0, 400) : '',
+  }));
+  ok('and the exact panel they came from is still there, unchanged',
+     afterTab.body === beforeTab.body, afterTab.body.slice(0, 120));
+
+  // Escape is the second way out, for a desktop keyboard.
+  await page.locator('.evcard [data-act="evOpen"]').first().click();
+  await page.waitForTimeout(400);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  ok('Escape closes it too', await page.locator('.evview').count() === 0);
+  await page.close();
+
+  /* PERMISSIONS ARE UNCHANGED, which is the half a viewer could quietly break.
+     The viewer reuses the same authenticated route, so an investigator assigned
+     the case still gets the bytes and a stranger still does not. */
+  const inv = await newPage();
+  await signIn(inv, 'dana', 'FieldWork2026x');
+  const invSees = await inv.evaluate(async () => {
+    const r = await fetch('/portal-api/cases/API-20260812-4002/evidence/1/file',
+      { credentials: 'same-origin' });
+    return r.status;
+  });
+  ok('an investigator NOT assigned that case is still refused the bytes',
+     invSees === 403 || invSees === 404, String(invSees));
+  await inv.close();
+
+  const nobody = await newPage();          // loaded, never signed in
+  const signedOut = await nobody.evaluate(async () => {
+    const r = await fetch('/portal-api/cases/API-20260812-4002/evidence/1/file',
+      { credentials: 'same-origin' });
+    return r.status;
+  });
+  ok('and a signed-out browser is refused outright', signedOut === 401,
+     String(signedOut));
+  await nobody.close();
 }
 
 /* ------------------------------------------------------------------ report */

@@ -493,6 +493,40 @@
     justify-content:center;align-items:flex-start;padding:6vh 16px;}
   .amsheet{background:#fff;border-radius:14px;max-width:560px;width:100%;max-height:86vh;
     overflow-y:auto;padding:16px 18px;}
+  /* THE EVIDENCE VIEWER. Every evidence image and file in the portal opens here
+     instead of in a new tab. The installed app is `display:standalone` scoped to
+     `/portal/`, and the file route lives under `/portal-api/` — so a `_blank`
+     link left the app with no chrome, no back button and no bottom bar, which is
+     exactly what the owner reported. One viewer, six call sites.
+
+     `object-fit:contain` with max width AND height is what "scales down but is
+     never cropped to fit" means in CSS — `cover` would crop, and a bare
+     max-width would let a tall photo run off the bottom. */
+  .evview{position:fixed;inset:0;z-index:120;background:#0b1622;display:flex;
+    flex-direction:column;}
+  .evview-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;
+    padding-top:max(8px, env(safe-area-inset-top));background:#0e1a2c;
+    border-bottom:1px solid #23405f;}
+  .evview-bar .evback{display:inline-flex;align-items:center;justify-content:center;
+    gap:7px;min-height:44px;min-width:44px;padding:0 14px;border:1px solid #3a5b80;
+    border-radius:9px;background:#13273f;color:#fff;font:inherit;font-size:.9rem;
+    font-weight:700;cursor:pointer;}
+  .evview-name{color:#cfe0f0;font-size:.85rem;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;min-width:0;flex:1;}
+  .evview-body{flex:1;min-height:0;display:flex;align-items:center;
+    justify-content:center;padding:12px;
+    padding-bottom:max(12px, env(safe-area-inset-bottom));overflow:auto;}
+  .evview-body img, .evview-body video{max-width:100%;max-height:100%;
+    object-fit:contain;border-radius:8px;}
+  .evview-other{color:#cfe0f0;text-align:center;font-size:.9rem;line-height:1.6;
+    max-width:34ch;}
+  .evview-other a{color:#8fc6dc;}
+  /* The page behind must not scroll while the viewer is up. */
+  body.evopen{overflow:hidden;}
+  /* The six call sites wrap their thumbnail in this instead of an anchor, so a
+     tap opens the viewer and nothing navigates. */
+  .evlink{display:block;padding:0;border:0;background:transparent;cursor:pointer;
+    font:inherit;color:inherit;text-align:left;}
   @media(max-width:640px){
     .amwrap{align-items:flex-end;padding:0;}
     .amsheet{border-radius:14px 14px 0 0;max-height:88vh;max-width:none;}
@@ -774,6 +808,11 @@
 </div>
 
 <main id="app"></main>
+<!-- The evidence viewer is a SIBLING of the app root, not a panel inside it.
+     That is what makes "close and you are back exactly where you were" a
+     structural fact rather than something the close handler has to rebuild:
+     the screen underneath is never re-rendered or navigated away from. -->
+<div id="evview"></div>
 
 
 <script>
@@ -872,6 +911,13 @@ let SV_TICK = null;        // the one interval that repaints the timer
 let REP_VIEW = "preview";  // the open report's sub-view (UIBUILD P11)
 let REP_VERS = {};         // fetched submitted-version history, per report id
 let EV_TAB = "all";        // which evidence gallery tab is showing (UIBUILD P12)
+/* THE ONE EVIDENCE VIEWER (owner, 2026-08-16 — "when you view some photos in
+   evidence theres no back button"). Holds only what it needs to draw: the
+   authenticated file route the six call sites already used, the filename, and
+   the content type. Nothing is copied and no second store exists — the <img>
+   src IS the original evidence route, so the Worker's permission check is the
+   same one it always was. */
+let EV_VIEW = null;
 let VIEW = "list";   // "list" | "case" — the workspace is a full page, not a popup
 let QKIND = "activity";  // which composer the sheet's Custom tab shows
 let WS_NOTICE = "";      // one-shot "day ended" notice carrying the next step
@@ -3482,7 +3528,42 @@ function staffView(){
 
 /* ------------------------------------------------------------- rendering */
 
+/* Drawn into its own root, so it survives whichever branch of paint() runs —
+   the office screens, the case workspace and the field view all reach it. */
+function paintEvView(){
+  const el = $("evview");
+  if(el) el.innerHTML = EV_VIEW ? evViewerHtml() : "";
+  document.body.classList.toggle("evopen", !!EV_VIEW);
+}
+
+/* VIEWING ONLY. No download, delete or edit control — this unit is the way back
+   into the portal and nothing else. Images and video render in place; anything
+   a browser cannot draw says what it is and offers ONE clearly-labelled exit,
+   which is a deliberate step out rather than the silent strand it replaced. */
+function evViewerHtml(){
+  const v = EV_VIEW, t = String(v.type || "");
+  const body = t.startsWith("image/")
+    ? `<img src="${esc(v.src)}" alt="${esc(v.name || "Evidence")}">`
+    : t.startsWith("video/")
+      ? `<video src="${esc(v.src)}" controls playsinline></video>`
+      : `<div class="evview-other"><p><b>${esc(v.name || "This file")}</b></p>
+         <p>This kind of file cannot be shown in the portal.
+         <a href="${esc(v.src)}" target="_blank" rel="noopener">Open it in a new tab</a>
+         — the portal stays open behind it.</p></div>`;
+  return `<div class="evview" role="dialog" aria-modal="true" aria-label="Evidence viewer">
+    <div class="evview-bar">
+      <button class="evback" data-act="evClose">&larr; Back</button>
+      <span class="evview-name">${esc(v.name || "")}</span>
+    </div>
+    <!-- Deliberately NOT a click-to-dismiss backdrop: the delegated listener
+         matches the nearest ancestor carrying data-act, so tapping the photo
+         itself would have closed the viewer the user just opened. -->
+    <div class="evview-body">${body}</div>
+  </div>`;
+}
+
 function paint(){
+  paintEvView();
   if(!ME){ app.innerHTML = loginView(); $("who").hidden = true;
     document.body.classList.remove("withnav", "navopen");
     if($("burger")) $("burger").hidden = true;
@@ -3984,9 +4065,10 @@ function activityPanel(){
             ${e.subject_documented || e.video_acquired || e.photo_acquired || counts(e) ? `<div>
               ${counts(e)}
               ${evLive.filter(ev2 => ev2.entry_id === e.id)
-                .map(ev2 => `<a class="tag rs-submitted" style="text-decoration:none"
-                  href="/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${ev2.id}/file"
-                  target="_blank" rel="noopener">&#128206; ${esc(ev2.filename)}</a>`).join("")}
+                .map(ev2 => `<button class="tag rs-submitted evlink" style="text-decoration:none" data-act="evOpen"
+                  data-src="/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${ev2.id}/file"
+                  data-name="${esc(ev2.filename)}" data-type="${esc(ev2.content_type || "")}"
+                  >&#128206; ${esc(ev2.filename)}</button>`).join("")}
               ${e.subject_documented ? '<span class="tag cap-sd">Subject documented</span>' : ""}
               ${e.video_acquired ? '<span class="tag cap-va">Video</span>' : ""}
               ${e.photo_acquired ? '<span class="tag cap-pa">Photo</span>' : ""}</div>` : ""}
@@ -4304,8 +4386,10 @@ function reportOpenHtml(open, admin, badge){
         : `<div class="empty">This report is not tied to a recorded day.</div>`)
     : REP_VIEW === "attachments" ? (attached.length
         ? `<div class="rlist">${attached.map(e => `<div class="rcard" style="cursor:default">
-             <div class="rc-h"><b><a href="/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${e.id}/file"
-               target="_blank" rel="noopener">${esc(e.filename)}</a></b></div>
+             <div class="rc-h"><b><button class="evlink" data-act="evOpen"
+               data-src="/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${e.id}/file"
+               data-name="${esc(e.filename)}" data-type="${esc(e.content_type || "")}"
+               ><u>${esc(e.filename)}</u></button></b></div>
              ${e.note ? `<div class="tl-n">${esc(e.note)}</div>` : ""}
            </div>`).join("")}</div>`
         : `<div class="empty">Nothing is linked to this day's moments yet. Files attach from the
@@ -4949,10 +5033,11 @@ function evidencePanel(){
       </div>`
     : `<div class="evcard">
         ${kindOf(e) === "photos"
-          ? `<a href="${fileUrl(e)}" target="_blank" rel="noopener"><img class="evthumb" src="${fileUrl(e)}" alt="${esc(e.filename)}" loading="lazy"></a>`
+          ? `<button class="evlink" data-act="evOpen" data-src="${fileUrl(e)}" data-name="${esc(e.filename)}" data-type="${esc(e.content_type || "")}"><img class="evthumb" src="${fileUrl(e)}" alt="${esc(e.filename)}" loading="lazy"></button>`
           : `<div class="evtile">${kindOf(e) === "video" ? "&#127909;" : "&#128196;"}</div>`}
-        <div class="rc-h" style="margin-top:6px"><b><a href="${fileUrl(e)}"
-             target="_blank" rel="noopener">${esc(e.filename)}</a></b>
+        <div class="rc-h" style="margin-top:6px"><b><button class="evlink" data-act="evOpen"
+             data-src="${fileUrl(e)}" data-name="${esc(e.filename)}"
+             data-type="${esc(e.content_type || "")}"><u>${esc(e.filename)}</u></button></b>
           <span class="tag ${clsTone(e.classification)}">${esc(clsLabel(e.classification))}</span>
           ${kindOf(e) === "video" ? `<span class="tag">Portal</span>` : ""}</div>
         <div class="tl-m">${mb(e.size_bytes)} &middot; ${esc(e.uploaded_by || "")} &middot; ${when(e.uploaded_at)}</div>
@@ -6179,7 +6264,7 @@ function svEvidenceScreen(){
     <div class="sv-card">
       <h3>On this case &middot; ${rows.length}</h3>
       ${rows.length ? `<div class="evgrid">${rows.slice(0, 24).map(e => `<div class="evcard" style="background:#0d1826;border-color:#23405f">
-        ${isImg(e) ? `<a href="${url(e)}" target="_blank" rel="noopener"><img class="evthumb" src="${url(e)}" alt="" loading="lazy"></a>`
+        ${isImg(e) ? `<button class="evlink" data-act="evOpen" data-src="${url(e)}" data-name="${esc(e.filename || "")}" data-type="${esc(e.content_type || "")}"><img class="evthumb" src="${url(e)}" alt="" loading="lazy"></button>`
           : `<div class="evtile" style="background:#132538">${String(e.content_type || "").startsWith("video/") ? "&#127909;" : "&#128196;"}</div>`}
         <div style="font-size:.78rem;margin-top:5px;word-break:break-all">${esc(e.filename)}</div>
         <div style="display:flex;gap:12px;margin-top:4px">
@@ -6526,9 +6611,10 @@ function subjectsPanel(s){
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">${media.map(e => {
             const href = `/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${e.id}/file`;
             return String(e.content_type || "").startsWith("image/")
-              ? `<a href="${href}" target="_blank" rel="noopener"><img src="${href}" alt="${esc(e.filename)}"
-                   style="max-height:72px;border-radius:6px;border:1px solid var(--line)"></a>`
-              : `<a class="tag rs-draft" style="text-decoration:none" href="${href}" target="_blank" rel="noopener">${esc(e.filename)}</a>`;
+              ? `<button class="evlink" data-act="evOpen" data-src="${href}" data-name="${esc(e.filename)}"
+                   data-type="${esc(e.content_type || "")}"><img src="${href}" alt="${esc(e.filename)}"
+                   style="max-height:72px;border-radius:6px;border:1px solid var(--line)"></button>`
+              : `<button class="tag rs-draft evlink" style="text-decoration:none" data-act="evOpen" data-src="${href}" data-name="${esc(e.filename)}" data-type="${esc(e.content_type || "")}">${esc(e.filename)}</button>`;
           }).join("")}</div></div>` : "";
       })()}
       ${SUBJ_FORM && SUBJ_FORM.mode === "veh" && SUBJ_FORM.sid === sub.id ? vehForm(sub) : ""}
@@ -7734,6 +7820,12 @@ async function submitManualIntake(openAfter){
 /* One delegated listener. Nothing user-supplied is ever written into an
    inline handler, where the browser would decode it back into script. */
 
+/* Escape is the desktop way out of the viewer, beside the Back control. Scoped
+   to the viewer alone so it cannot start closing other things by surprise. */
+document.addEventListener("keydown", ev => {
+  if(ev.key === "Escape" && EV_VIEW){ EV_VIEW = null; paintEvView(); }
+});
+
 document.addEventListener("click", ev => {
   const el = ev.target.closest("[data-act]");
   if(!el) return;
@@ -7800,6 +7892,15 @@ document.addEventListener("click", ev => {
     const no = el.dataset.case;
     openCase(no).then(() => { if(WS && WS_CASE === no){ RET_FORM = true; paintCase(); } });
   }
+  /* THE ONE VIEWER, opened from all six evidence surfaces. It repaints only its
+     own root, so the screen behind is not re-rendered — which is what makes
+     closing return the user to exactly the scroll position, tab and panel they
+     came from, rather than to a rebuilt approximation of it. */
+  else if(act === "evOpen"){
+    EV_VIEW = { src: el.dataset.src, name: el.dataset.name || "", type: el.dataset.type || "" };
+    paintEvView();
+  }
+  else if(act === "evClose"){ EV_VIEW = null; paintEvView(); }
   else if(act === "retOpen"){ retainerReset(); RET_FORM = true; paintCase(); }
   else if(act === "retCancel"){ retainerReset(); paintCase(); }
   /* A NEW attempt, chosen by the admin after reading the payment list. The
