@@ -183,12 +183,28 @@ first thing to try when the error is in the action-download step.
 **LIVE VERIFIED is still open on all three**, for the reason recorded above: this
 container's egress proxy blocks the live domain outright.
 
-## 🔴 FOUND WHILE FIXING THE LENS LEAK — `/packages` does not hide archived cases
+## ✅ FIXED — `/packages` now hides archived and deleted cases (#152, `9d92133`)
 
-**Not fixed, and deliberately not folded into the lens unit — it is a different
-root cause on a different route.** Uncovered by the Unit 1 test: on the
-dashboard, the **Case packages** band lists an archived case, with its retainer
-and balance on it.
+**DEPLOYED 2026-08-17.** Site, Worker and Save point all green at `9d92133d` on
+the first attempt. Suites: worker **1567/0** (1556 before), portal **1158/0**,
+deploy **68/0**. No schema change, so no `portal-setup` dispatch was owed.
+
+One `hiddenCases()` call and one filter in `casePackages`, placed **above** the
+per-case loop so a hidden case also stops costing the seven queries below it. No
+`NOT IN` written into the query — that would be the second copy of the rule.
+Archive semantics, package business logic and the reads that already had the
+boundary are all untouched.
+
+**Proven against the old code:** three assertions fail with the change stashed,
+reporting all three cases still present. The test carries a live case beside the
+hidden ones at every step, so a filter that removed everything could not satisfy
+the negative half, and it ends by writing an activity entry on the restored case
+to show that what archiving MEANS did not move.
+
+### The finding, as it was recorded
+
+Uncovered by the Unit 1 test: on the dashboard, the **Case packages** band listed
+an archived case, with its retainer and balance on it.
 
 It is **not** the Cases lens. That band reads `/packages` from the Worker, which
 does not filter through `hiddenCases()` the way `caseSummary`, `outNow` and the
@@ -214,10 +230,25 @@ complication: an archived case should leave that desk too, exactly as it leaves
 Out now, the alerts and the calendar. It comes back under the Archived lens,
 which is where an archived case is supposed to be found.
 
-**RECOMMENDED AS THE NEXT UNIT.** One filter, the helper already exists, and the
-test writes itself: archive a case carrying a package, assert it leaves both the
-dashboard band and Reports & Packages, assert a live case beside it is untouched,
-and assert it returns when restored.
+**Done in #152.** One correction the audit produced and the ledger should keep:
+the dashboard's *package* read was never already filtered — the dashboard's
+**alerts** were. The band reads `/packages`, which was exactly the unfiltered
+route, and that is why #148's dashboard assertions were scoped to Today / next
+actions and Needs attention rather than to the whole page.
+
+### ▶ NEXT SMALLEST UNIT, audited and NOT started
+
+**The case header's clickable status tag is a tap target under 44px.** It sits
+in `.ch-right` beside the Edit case button #150 just floored, carries
+`data-act="wsTab" data-tab="assign"` and `cursor:pointer` at
+`portal/index.html:5611`, and is a `.tag` — so `.ch-right .btn{min-height:44px}`
+does not reach it.
+
+Fully specified by the rule already in force (≥44px touch targets, the floor
+`.bandhead .btn`, `.pc-next .btn` and `.ch-right .btn` all take) and needs no
+owner decision. Not folded into #150 because that unit named one control, and a
+status chip is not a peer button — it wants a deliberate look at whether a chip
+should grow or gain padding, which is a judgement rather than a repeat.
 
 ## ⚖️ OWNER DECISIONS, 2026-08-17 — the three blocked alert/archive questions
 
