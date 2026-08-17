@@ -4545,6 +4545,110 @@ section('A completed list that failed says so')
 }
 
 /* Both new panels, at both widths the owner named. */
+/* "NOTHING NEEDS YOU RIGHT NOW" HAS TO BE EARNED (Codex stop-time review,
+   2026-08-16).
+
+   The queue has four inputs and the first version guarded exactly one of them.
+   `/packages` failing leaves PKGS.packages an EMPTY ARRAY; the case list
+   failing leaves CASES empty; a half-applied schema makes the Worker omit whole
+   alert sets from /summary without comment. Every one of those deletes a
+   category of work and leaves the queue free to announce a clear desk — the
+   reassuring direction, which is the dangerous one.
+
+   Each case below kills ONE input and asserts the queue says what it cannot
+   see instead of saying there is nothing to do. */
+section('A queue missing an input never claims a clear desk');
+for (const [what, route, named] of [
+  ['the packages read', '**/portal-api/packages*', 'retainers and packages to build'],
+  ['the case list',     '**/portal-api/submissions*', 'new intakes'],
+]) {
+  const page = await newPage();
+  await page.route(route, r => r.abort());
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1400);
+  /* SCOPED TO THE QUEUE CARD, not the whole page. "New intakes" is also a card
+     label in the band above, so asking the page whether it contains those words
+     is a question that answers yes whatever happens — a test that passes with
+     the bug in place is worse than no test. */
+  const q = await queueCard(page).innerText();
+
+  ok(`${what} down: the queue never says nothing needs you`,
+     !has(q, 'Nothing needs you'), q.slice(0, 300));
+  ok(`${what} down: it says its view is partial`,
+     has(q, 'queue is missing') || has(q, 'queue is incomplete'), q.slice(0, 300));
+  ok(`${what} down: and names what it could not read`, has(q, named), q.slice(0, 300));
+  await page.close();
+}
+
+/* The same rule as CARDS. Three of the Current work cards are derived from the
+   packages payload, so with that read down they would each report a confident
+   zero for something nobody managed to look at. This file's standing rule is
+   that such a card is ABSENT, not zero. */
+section('No card reports a zero nobody checked');
+{
+  const page = await newPage();
+  await page.route('**/portal-api/packages*', r => r.abort());
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1400);
+  const body = await text(page, '#app');
+
+  /* Asserted as ELEMENTS, not as strings: the note that explains their absence
+     names all three, so a text search finds exactly the words it should. */
+  for (const card of ['Ready to build', 'Packages ready', 'Outstanding']) {
+    ok(`${card} is absent rather than zero`,
+       await page.locator('.stat', { hasText: card }).count() === 0,
+       String(await page.locator('.stat', { hasText: card }).count()));
+  }
+  ok('and the band says why they are gone',
+     has(body, 'unknown, not zero'), body.slice(0, 400));
+  /* Active today comes from /summary, not /packages, so it must SURVIVE — the
+     fix has to remove what it cannot vouch for and nothing else. */
+  ok('the card that does not depend on it still draws', has(body, 'Active today'), body.slice(0, 400));
+
+  /* The retainer half of that card is also unknowable now, so the card must
+     stop claiming it checked both. */
+  ok('the money card stops claiming a retainer check it could not make',
+     !has(body, 'Retainer / authorization'), body.slice(0, 400));
+  ok('and says so in words', has(body, 'retainers could not be read'), body.slice(0, 400));
+  await page.close();
+}
+
+/* Reports & Packages is assembled from the same payload and had the same
+   shape: an empty desk and a failed read drew identically. */
+section('Reports & Packages does not draw a failed read as an empty desk');
+{
+  const page = await newPage();
+  await page.route('**/portal-api/packages*', r => r.abort());
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Reports & Packages' }).click();
+  await page.waitForTimeout(1200);
+  const body = await text(page, '#app');
+  ok('it refuses to say nothing is waiting', !has(body, 'Nothing is waiting on a package'), body.slice(0, 300));
+  ok('it says the read failed instead', has(body, 'did not load'), body.slice(0, 300));
+  ok('and offers a way to retry', await page.locator('[data-act="reload"]').count() >= 1);
+  await page.close();
+}
+
+/* The flags describe a READ, so they must not outlive the session that made
+   it — otherwise the next person's dashboard vouches for someone else's fetch. */
+section('The did-it-load flags do not survive a sign-out');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1200);
+  const loaded = await page.evaluate(() => `${PKGS_OK}/${CASES_OK}`);
+  ok('a successful load vouches for itself', loaded === 'true/true', loaded);
+  await page.locator('[data-act="logout"]').click();
+  await page.waitForTimeout(800);
+  const cleared = await page.evaluate(() => `${PKGS_OK}/${CASES_OK}`);
+  ok('and both flags are cleared with the data they describe', cleared === 'false/false', cleared);
+  await page.close();
+}
+
+
 section('Slice two fits the phone and the desktop');
 for (const [label, w, h] of [['phone 390', 390, 844], ['desktop 1200', 1200, 900]]) {
   const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();

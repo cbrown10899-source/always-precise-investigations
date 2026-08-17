@@ -1237,10 +1237,17 @@ function shell(inner){
    its module states and ONE computed next step. Centralized logic (P24):
    pkgProgress and pkgNextStep are the only places that decide. */
 let PKGS = null;
+/* WHETHER A READ SUCCEEDED, NOT JUST WHAT IT RETURNED (Codex stop-time review,
+   2026-08-16). Both of these substitute an EMPTY value when they fail —
+   `PKGS = {packages: []}` and `CASES = []` — which is byte-identical to a
+   portal that genuinely has no work in it. Anything that answers "is there
+   anything to do?" has to be able to tell those apart, or it eventually
+   answers "no" on behalf of a read that never happened. */
+let PKGS_OK = false, CASES_OK = false;
 
 async function loadPackages(){
-  try{ PKGS = await api("/packages"); }
-  catch(e){ PKGS = {packages: [], outstanding: 0}; LOAD_ERR = e.message; }
+  try{ PKGS = await api("/packages"); PKGS_OK = true; }
+  catch(e){ PKGS = {packages: [], outstanding: 0}; PKGS_OK = false; LOAD_ERR = e.message; }
   paint();
 }
 
@@ -1432,7 +1439,13 @@ function dashBands(){
       server, not an empty portal — do not take the screens below as the whole picture until
       it loads.</div>`);
 
-  const pk = (PKGS && Array.isArray(PKGS.packages)) ? PKGS.packages : [];
+  /* THE PACKAGES READ FAILS TO AN EMPTY LIST, so three of these cards would
+     otherwise report a confident zero for something nobody managed to look at
+     (Codex stop-time review, 2026-08-16). This file's standing rule is that a
+     card whose data does not exist is ABSENT rather than zero — the same
+     reason there is no client-response card. */
+  const pkOk = PKGS_OK;
+  const pk = (pkOk && PKGS && Array.isArray(PKGS.packages)) ? PKGS.packages : [];
   const A = k => Array.isArray(s[k]) ? s[k] : [];
   const due = A("reports_due"), low = A("auth_low"), active = A("active_now");
   const late = A("tasks_overdue"), waiting = A("awaiting_client");
@@ -1458,9 +1471,12 @@ function dashBands(){
                (s.new || 0) ? "warn" : "", {go: "leads"})
     + statCard("Reports due", due.length, "Day done, no report",
                due.length ? "warn" : "", {set: due, go: "cases"})
-    + statCard("Retainer / authorization", money.length,
-               s.auth_warn_at ? `Past ${s.auth_warn_at}% of hours, or retainer not received`
-                              : "Hours running out, or retainer not received",
+    /* With the packages read down this card can only speak for the
+       authorization half, so it says only that rather than implying it
+       checked both. */
+    + statCard(pkOk ? "Retainer / authorization" : "Authorization", money.length,
+               (s.auth_warn_at ? `Past ${s.auth_warn_at}% of hours` : "Hours running out")
+                 + (pkOk ? ", or retainer not received" : " — retainers could not be read"),
                money.length ? "warn" : "", {set: money, go: "cases"})
     /* NEVER A WARNING. The owner is explicit that assignment stays optional, so
        this card reports and does not scold: a case can run unassigned. */
@@ -1476,15 +1492,20 @@ function dashBands(){
   const built = pk.filter(p => p.build_status === "finalized");
   const out = (PKGS && PKGS.outstanding) || 0;
 
+  /* Active today is the Worker's own set and stands on its own. The other three
+     are derived from the packages payload, so they are drawn only when it
+     actually arrived. */
   const work =
       statCard("Active today", active.length, "A day is running now",
                active.length ? "live" : "", {set: active, go: "cases"})
-    + statCard("Ready to build", ready.length, "Report approved, no package",
-               "", {go: "delivery"})
-    + statCard("Packages ready", built.length, "Finalized and deliverable",
-               built.length ? "live" : "", {go: "delivery"})
-    + statCard("Outstanding", "$" + out.toLocaleString(), out ? "Billed and unpaid" : "Nothing unpaid",
-               out ? "warn" : "", {go: "invoices"});
+    + (pkOk
+      ? statCard("Ready to build", ready.length, "Report approved, no package",
+                 "", {go: "delivery"})
+        + statCard("Packages ready", built.length, "Finalized and deliverable",
+                 built.length ? "live" : "", {go: "delivery"})
+        + statCard("Outstanding", "$" + out.toLocaleString(), out ? "Billed and unpaid" : "Nothing unpaid",
+                 out ? "warn" : "", {go: "invoices"})
+      : "");
 
   /* NO SILENT CAP. `/packages` returns the 24 most recent active cases, so the
      three cards derived from it describe that set and say so rather than
@@ -1518,9 +1539,13 @@ function dashBands(){
       `<button class="btn sm" data-act="tab" data-tab="leads">Review intakes &rarr;</button>`,
       `<div class="stats">${attention}</div>`)
     + band("Current work",
-      capped ? "Across the 24 most recent active cases" : "",
+      !pkOk ? "The active-case read did not load"
+        : capped ? "Across the 24 most recent active cases" : "",
       `<button class="btn sm" data-act="tab" data-tab="delivery">Reports &amp; Packages &rarr;</button>`,
-      `<div class="stats">${work}</div>`)
+      `<div class="stats">${work}</div>`
+      + (!pkOk ? `<div class="qfoot" style="border:0;padding-top:2px">Ready to build,
+          Packages ready and Outstanding are not shown because the active-case read failed.
+          They are unknown, not zero.</div>` : ""))
     + alsoLine;
 }
 
@@ -1562,16 +1587,44 @@ const QUEUE_RULES = [
   ["closing",   "Complete — run the closing checklist","Open closing",      "billing"],
 ];
 
+/* WHAT THE QUEUE COULD NOT SEE (Codex stop-time review, 2026-08-16).
+
+   The first version guarded only `SUMMARY === null`, and that is one of four
+   ways an input can go missing. `/packages` failing leaves `PKGS.packages` an
+   EMPTY ARRAY, the case list failing leaves `CASES` empty, and a half-applied
+   schema makes the Worker omit whole alert sets from `/summary` without
+   comment — each of which quietly deleted a category of work and left the
+   queue free to announce a clear desk.
+
+   "Nothing needs you right now" is the single most reassuring sentence on this
+   page. It has to be earned by every source answering, not by the survivors
+   happening to be empty. */
+function queueUnknowns(){
+  const out = [];
+  if(!CASES_OK) out.push("new intakes");
+  if(!PKGS_OK) out.push("retainers and packages to build");
+  if(SCHEMA_MISSING.length) out.push("whatever lives in the database tables that are missing");
+  return out;
+}
+
+function andList(a){
+  return a.length < 2 ? (a[0] || "")
+    : a.slice(0, -1).join(", ") + " and " + a[a.length - 1];
+}
+
 function nextActionRows(){
   const s = SUMMARY;
   if(!s) return null;
-  const pk = (PKGS && Array.isArray(PKGS.packages)) ? PKGS.packages : [];
+  // Only trust the packages payload when the read actually succeeded — its
+  // failure value is an empty list, which is what a quiet week also looks like.
+  const pk = (PKGS_OK && PKGS && Array.isArray(PKGS.packages)) ? PKGS.packages : [];
   const A = k => Array.isArray(s[k]) ? s[k] : [];
 
   const sets = {
     // A new intake has no case-number set on /summary, so it comes from the
-    // case list the page already holds — the same read the Intakes desk uses.
-    new: (CASES || []).filter(c => (c.stage || c.status) === "new").map(c => c.case_no),
+    // case list the page already holds — the same read the Intakes desk uses,
+    // and only when that read succeeded.
+    new: CASES_OK ? (CASES || []).filter(c => (c.stage || c.status) === "new").map(c => c.case_no) : [],
     reports: A("reports_due"),
     tasks: A("tasks_overdue"),
     retainer: pk.filter(p => p.kind === "consumer" && p.retainer && !p.retainer.received).map(p => p.case_no),
@@ -1598,16 +1651,28 @@ function nextActionRows(){
 
 function nextActionsHtml(){
   const rows = nextActionRows();
+  const gaps = queueUnknowns();
+  const count = !rows ? "the office's queue"
+    : gaps.length ? `${rows.length} waiting, and part of it unread`
+    : rows.length ? `${rows.length} waiting` : "the office's queue";
   const head = body => `<div class="card">
     <div class="bar"><h2 style="margin:0">Today / next actions</h2>
-      <span class="count">${rows && rows.length ? `${rows.length} waiting` : "the office's queue"}</span></div>
+      <span class="count">${esc(count)}</span></div>
     ${body}</div>`;
 
-  /* DID NOT LOAD IS NOT AN EMPTY QUEUE — the same rule the bands follow. An
-     empty work queue is the most reassuring thing this page can say, so it may
-     never be what a failed read looks like. */
+  /* DID NOT LOAD IS NOT AN EMPTY QUEUE — the same rule the bands follow. */
   if(!rows) return head(`<div class="empty">The queue could not be built, because the dashboard
     totals did not load. Do not read this as a clear desk.</div>`);
+
+  /* AN INCOMPLETE QUEUE MAY NOT REPORT A CLEAR DESK. Some sources answered and
+     some did not; with nothing from the ones that did, the honest statement is
+     that we do not know, and it names which part we cannot see. */
+  if(!rows.length && gaps.length) return head(`<div class="empty">
+    <div class="empty-title">The queue is incomplete.</div>
+    <div class="empty-hint">Nothing came back from the alerts that did load, but
+      ${esc(andList(gaps))} could not be read &mdash; so this is not a clear desk, it is a
+      partial view. Reload, and if it keeps happening say so before assuming there is no
+      work.</div></div>`);
 
   if(!rows.length) return head(`<div class="empty">
     <div class="empty-title">Nothing needs you right now.</div>
@@ -1630,7 +1695,9 @@ function nextActionsHtml(){
     </div>`;
   }).join("")}</div>
   ${rows.length > QUEUE_MAX ? `<div class="qfoot">Showing the first ${QUEUE_MAX} of
-    ${rows.length}. The rest are behind the cards above.</div>` : ""}`);
+    ${rows.length}. The rest are behind the cards above.</div>` : ""}
+  ${gaps.length ? `<div class="qfoot">This queue is missing ${esc(andList(gaps))} &mdash; those
+    could not be read, so there may be more waiting than is listed here.</div>` : ""}`);
 }
 
 /* RECENTLY COMPLETED — a compact list off `/completed`, the same route the
@@ -2820,6 +2887,16 @@ function deliveryView(){
      completedDesk — failed. An empty screen must never stand in for a screen
      that could not be read. */
   if(!PKGS) return `<div class="card"><div class="empty">Loading reports and packages&hellip;</div></div>`;
+  /* The packages read fails to an EMPTY LIST, which draws identically to a desk
+     with nothing on it — so "Nothing is waiting on a package" would be a claim
+     nobody checked (Codex stop-time review, 2026-08-16). */
+  if(!PKGS_OK) return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Reports &amp; Packages</h2></div>
+    <div class="err">The active-case read did not load, so what is ready to build and what is
+      already finalized are unknown &mdash; not nothing. Reload, and if it keeps happening say so
+      before assuming there is no work waiting.</div>
+    <button class="btn sm ghost" data-act="reload" style="margin-top:10px">Try again</button>
+  </div>`;
   const all = PKGS.packages || [];
   const ready = all.filter(p => ["approved", "delivered"].includes(p.report_status)
     && p.build_status !== "finalized");
@@ -3341,8 +3418,9 @@ async function render(){
       + (CASE_VIEW === "archived" || CASE_VIEW === "deleted" ? "&view=" + CASE_VIEW : ""));
     CASES = Array.isArray(d.submissions) ? d.submissions : [];
     TOTAL = d.total || 0;
+    CASES_OK = true;
   }catch(e){
-    CASES = []; TOTAL = 0;
+    CASES = []; TOTAL = 0; CASES_OK = false;
     LOAD_ERR = "The case list could not be loaded — " + e.message;
   }
 
@@ -3428,6 +3506,10 @@ function sessionForget(){
      client names and carriers; USERS and INVITES are admin-only; LAST_LINK and
      RESET_BOX are a live invitation and a live password-reset URL. */
   CASES = []; USERS = []; INVITES = []; PKGS = null; OUT_NOW = null;
+  // The two "did this read succeed" flags go with the data they describe: a
+  // stale true would let the next person's dashboard vouch for a read that
+  // happened in someone else's session.
+  PKGS_OK = false; CASES_OK = false;
   LAST_LINK = ""; LAST_EMAILED = false; RESET_BOX = null;
   PAYCFG = null; PAY_DRAFT = {}; PAY_MSG = ""; PAY_ERR = false;
   SUMMARY = null; SHEETS = []; SHEET_MAIL = ""; OPEN_SHEET = null; SHEET_MSG = ""; SHEET_WIZ = null;
