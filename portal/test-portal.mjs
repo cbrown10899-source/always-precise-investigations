@@ -4406,6 +4406,353 @@ section('A dashboard whose totals failed says so');
    viewport and took the page sideways with it. This suite plants a
    deliberately long hostile case number, which is exactly the input that
    triggered it. */
+/* TODAY / NEXT ACTIONS (owner, 2026-08-16). A compact queue with one direct
+   action per row, built entirely from alerts the Worker already computed.
+
+   What this section is really guarding is the rules AROUND the queue: that a
+   case appears once rather than four times, that things the office cannot act
+   on stay out of it, that assignment is never queued as an outstanding task,
+   and that a queue which failed to build never looks like a clear desk. */
+const queueCard = page => page.locator('.card', { hasText: 'Today / next actions' }).first();
+const doneCard  = page => page.locator('.card', { hasText: 'Recently completed' }).first();
+
+section('Today / next actions is a queue, not another pile of cards');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1300);
+
+  ok('the dashboard carries the queue', await queueCard(page).count() === 1);
+  const rows = queueCard(page).locator('.qrow');
+  const n = await rows.count();
+  ok('it is rows rather than cards', n > 0 && await queueCard(page).locator('.stat').count() === 0,
+     `${n} rows`);
+
+  /* ONE DIRECT ACTION PER ROW. Not two, not a menu — the owner asked for one,
+     and a row offering three choices is a decision, not an action. */
+  let worst = 0;
+  for (const r of await rows.all()) worst = Math.max(worst, await r.locator('.btn').count());
+  ok('every row offers exactly one action', worst === 1, `most buttons on a row: ${worst}`);
+
+  /* ONE ROW PER CASE. A case can sit in four alert sets at once and four rows
+     for one file is a queue nobody finishes. */
+  const nos = (await queueCard(page).locator('.qno').allInnerTexts()).map(s => s.trim().split(' ')[0]);
+  ok('no case is queued twice', new Set(nos).size === nos.length, nos.join(','));
+
+  /* THINGS THE OFFICE CANNOT ACT ON STAY OUT. A running day needs no decision
+     and a case awaiting the client has its ball in their court; both are still
+     on the also-line, so nothing was lost — only the noise. */
+  const qtext = await queueCard(page).innerText();
+  ok('a running day is not queued as a task', !has(qtext, 'day is running'), qtext.slice(0, 200));
+  ok('nor is a case awaiting the client', !has(qtext, 'awaiting client'), qtext.slice(0, 200));
+  /* ASSIGNMENT IS OPTIONAL, so an unassigned case is never an outstanding task. */
+  ok('and assignment is never queued', !has(qtext, 'assign'), qtext.slice(0, 200));
+
+  ok('no fabricated case reached the queue', !qtext.includes('EXAMPLE-'), qtext.slice(0, 200));
+
+  // The cap is stated, never silent.
+  const foot = await queueCard(page).locator('.qfoot').count();
+  ok('a truncated queue says so, or there was nothing to truncate',
+     n < 8 ? foot === 0 : foot === 1, `${n} rows, ${foot} footers`);
+
+  await page.close();
+}
+
+/* A ROW'S ACTION MUST LAND WHERE THE WORK IS. The whole point of one direct
+   action is that it is the right one. */
+section('A queue row opens the case at the panel that does the work');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1300);
+
+  const first = queueCard(page).locator('.qrow').first();
+  const caseNo = (await first.locator('.qno').innerText()).trim().split(' ')[0];
+  const btn = first.locator('.btn');
+  const wantTab = await btn.getAttribute('data-tab');
+  ok('the row names the panel it will open', !!wantTab, String(wantTab));
+  await btn.click();
+  await page.waitForTimeout(900);
+  ok('it opens the case workspace', await page.locator('.casepage').count() === 1);
+  ok('and it is the right case', has(await text(page, '#dlgBody'), caseNo), caseNo);
+  await page.close();
+}
+
+/* DID NOT BUILD IS NOT A CLEAR DESK. An empty queue is the most reassuring
+   thing this page can say, so it may never be what a failed read looks like. */
+section('A queue that could not be built refuses to look empty');
+{
+  const page = await newPage();
+  await page.route('**/portal-api/summary*', r => r.abort());
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1300);
+  const body = await text(page, '#app');
+  ok('it says the queue could not be built', has(body, 'could not be built'), body.slice(0, 300));
+  ok('and says not to read it as a clear desk', has(body, 'clear desk'), body.slice(0, 300));
+  ok('it never claims nothing needs you', !has(body, 'Nothing needs you'), body.slice(0, 300));
+  await page.close();
+}
+
+/* FAILURE IS NOT EMPTY, AND RETRY MUST RETRY (terminal handoff, 2026-08-17).
+   Three defects, one shape: a failed read left a truthy error-shaped object in
+   PKGS/COMPLETED, so (1) the Case packages card drew "No active cases" off a
+   list nobody fetched, and (2) Try again went through render(), whose !PKGS /
+   !COMPLETED guards read truthy as loaded — the button repainted the same
+   error forever. The proof of the fix is end-to-end: break the route, see the
+   honest failure, HEAL the route, click Try again, and watch real data arrive.
+   A retry that works is the only acceptable evidence — a button that exists is
+   not. */
+section('A failed packages read is not an empty case list, and Retry really retries');
+{
+  const page = await newPage();
+  await page.route('**/portal-api/packages*', r => r.abort());
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1300);
+  let body = await text(page, '#app');
+  ok('the Case packages card refuses to claim "No active cases"',
+     !has(body, 'No active cases'), body.slice(0, 400));
+  ok('it says the read did not load, and that unknown is not empty',
+     has(body, 'did not load') && has(body, 'not empty'), body.slice(0, 400));
+  ok('and the flag agrees the read failed',
+     (await page.evaluate(() => PKGS_OK)) === false);
+
+  // Heal the route. The click must cause a FRESH request — nothing else will.
+  await page.unroute('**/portal-api/packages*');
+  await page.locator('[data-act="reload"]').first().click();
+  await page.waitForTimeout(1300);
+  body = await text(page, '#app');
+  ok('Try again actually retried: the load is now vouched for',
+     (await page.evaluate(() => PKGS_OK)) === true);
+  ok('and the error is gone from the card',
+     !has(body, 'The active-case read did not load'), body.slice(0, 400));
+  ok('with the real list in its place',
+     (await page.locator('.pkgcards .pkgcard, .pkgcards > *').count()) > 0
+     || has(body, 'No active cases'), body.slice(0, 300));
+  await page.close();
+}
+
+section('A failed completed read says so, and its Retry really retries');
+{
+  const page = await newPage();
+  await page.route('**/portal-api/completed*', r => r.abort());
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1300);
+  let card = await text(page, '#app');
+  ok('the completed card names the failure rather than looking empty',
+     has(card, 'completed list did not load') && has(card, 'not an empty desk'),
+     card.slice(0, 400));
+  ok('it never claims nothing was completed', !has(card, 'Nothing completed yet'),
+     card.slice(0, 300));
+
+  await page.unroute('**/portal-api/completed*');
+  /* More than one Try again can be on screen (the banner and a card). All go
+     through one handler that clears only what failed, so any of them heals
+     the completed read too. */
+  await page.locator('[data-act="reload"]').first().click();
+  await page.waitForTimeout(1300);
+  card = await text(page, '#app');
+  ok('Try again really reloaded the completed list',
+     !has(card, 'completed list did not load'), card.slice(0, 400));
+  ok('and it now shows a real state — records or a true empty',
+     has(card, 'Nothing completed yet') || has(card, 'finalized') || has(card, 'Complete'),
+     card.slice(0, 300));
+  await page.close();
+}
+
+/* RECENTLY COMPLETED — the same /completed route the Cases lens and Reports &
+   Packages already read, as one line per case rather than the full card. */
+section('Recently completed is a compact list of real records');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1300);
+
+  ok('the dashboard carries it', await doneCard(page).count() === 1);
+  const body = await doneCard(page).innerText();
+  ok('no fabricated record is on it', !body.includes('EXAMPLE-'), body.slice(0, 240));
+  ok('it offers the full desk rather than repeating it',
+     await doneCard(page).locator('.btn[data-tab="delivery"]').count() === 1);
+
+  const rows = doneCard(page).locator('.qrow');
+  const n = await rows.count();
+  ok('it is compact — at most five', n <= 5, `${n} rows`);
+  if (n > 0) {
+    ok('each row says what finished', has(await rows.first().innerText(), 'finalized')
+       || has(await rows.first().innerText(), 'complete')
+       || has(await rows.first().innerText(), 'closed'), await rows.first().innerText());
+    const caseNo = (await rows.first().locator('.qno').innerText()).trim().split(' ')[0];
+    await rows.first().locator('.btn').click();
+    await page.waitForTimeout(900);
+    ok('and opens its case', has(await text(page, '#dlgBody'), caseNo), caseNo);
+  } else {
+    ok('an empty list says what will fill it',
+       has(body, 'closing checklist') || has(body, 'package is finalized'), body);
+  }
+  await page.close();
+}
+
+/* The completed read is its own read and fails on its own. */
+section('A completed list that failed says so')
+{
+  const page = await newPage();
+  await page.route('**/portal-api/completed*', r => r.abort());
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1300);
+  const body = await doneCard(page).innerText();
+  ok('it names the failure', has(body, 'did not load'), body.slice(0, 240));
+  ok('and refuses to read as an empty desk', has(body, 'not an empty desk'), body.slice(0, 240));
+  ok('it never says nothing is completed', !has(body, 'Nothing completed yet'), body.slice(0, 240));
+  await page.close();
+}
+
+/* Both new panels, at both widths the owner named. */
+/* "NOTHING NEEDS YOU RIGHT NOW" HAS TO BE EARNED (Codex stop-time review,
+   2026-08-16).
+
+   The queue has four inputs and the first version guarded exactly one of them.
+   `/packages` failing leaves PKGS.packages an EMPTY ARRAY; the case list
+   failing leaves CASES empty; a half-applied schema makes the Worker omit whole
+   alert sets from /summary without comment. Every one of those deletes a
+   category of work and leaves the queue free to announce a clear desk — the
+   reassuring direction, which is the dangerous one.
+
+   Each case below kills ONE input and asserts the queue says what it cannot
+   see instead of saying there is nothing to do. */
+section('A queue missing an input never claims a clear desk');
+for (const [what, route, named] of [
+  ['the packages read', '**/portal-api/packages*', 'retainers and packages to build'],
+  ['the case list',     '**/portal-api/submissions*', 'new intakes'],
+]) {
+  const page = await newPage();
+  await page.route(route, r => r.abort());
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1400);
+  /* SCOPED TO THE QUEUE CARD, not the whole page. "New intakes" is also a card
+     label in the band above, so asking the page whether it contains those words
+     is a question that answers yes whatever happens — a test that passes with
+     the bug in place is worse than no test. */
+  const q = await queueCard(page).innerText();
+
+  ok(`${what} down: the queue never says nothing needs you`,
+     !has(q, 'Nothing needs you'), q.slice(0, 300));
+  ok(`${what} down: it says its view is partial`,
+     has(q, 'queue is missing') || has(q, 'queue is incomplete'), q.slice(0, 300));
+  ok(`${what} down: and names what it could not read`, has(q, named), q.slice(0, 300));
+  await page.close();
+}
+
+/* The same rule as CARDS. Three of the Current work cards are derived from the
+   packages payload, so with that read down they would each report a confident
+   zero for something nobody managed to look at. This file's standing rule is
+   that such a card is ABSENT, not zero. */
+section('No card reports a zero nobody checked');
+{
+  const page = await newPage();
+  await page.route('**/portal-api/packages*', r => r.abort());
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1400);
+  const body = await text(page, '#app');
+
+  /* Asserted as ELEMENTS, not as strings: the note that explains their absence
+     names all three, so a text search finds exactly the words it should. */
+  for (const card of ['Ready to build', 'Packages ready', 'Outstanding']) {
+    ok(`${card} is absent rather than zero`,
+       await page.locator('.stat', { hasText: card }).count() === 0,
+       String(await page.locator('.stat', { hasText: card }).count()));
+  }
+  ok('and the band says why they are gone',
+     has(body, 'unknown, not zero'), body.slice(0, 400));
+  /* Active today comes from /summary, not /packages, so it must SURVIVE — the
+     fix has to remove what it cannot vouch for and nothing else. */
+  ok('the card that does not depend on it still draws', has(body, 'Active today'), body.slice(0, 400));
+
+  /* The retainer half of that card is also unknowable now, so the card must
+     stop claiming it checked both. */
+  ok('the money card stops claiming a retainer check it could not make',
+     !has(body, 'Retainer / authorization'), body.slice(0, 400));
+  ok('and says so in words', has(body, 'retainers could not be read'), body.slice(0, 400));
+  await page.close();
+}
+
+/* Reports & Packages is assembled from the same payload and had the same
+   shape: an empty desk and a failed read drew identically. */
+section('Reports & Packages does not draw a failed read as an empty desk');
+{
+  const page = await newPage();
+  await page.route('**/portal-api/packages*', r => r.abort());
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Reports & Packages' }).click();
+  await page.waitForTimeout(1200);
+  const body = await text(page, '#app');
+  ok('it refuses to say nothing is waiting', !has(body, 'Nothing is waiting on a package'), body.slice(0, 300));
+  ok('it says the read failed instead', has(body, 'did not load'), body.slice(0, 300));
+  ok('and offers a way to retry', await page.locator('[data-act="reload"]').count() >= 1);
+  await page.close();
+}
+
+/* The flags describe a READ, so they must not outlive the session that made
+   it — otherwise the next person's dashboard vouches for someone else's fetch. */
+section('The did-it-load flags do not survive a sign-out');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1200);
+  const loaded = await page.evaluate(() => `${PKGS_OK}/${CASES_OK}`);
+  ok('a successful load vouches for itself', loaded === 'true/true', loaded);
+  await page.locator('[data-act="logout"]').click();
+  await page.waitForTimeout(800);
+  const cleared = await page.evaluate(() => `${PKGS_OK}/${CASES_OK}`);
+  ok('and both flags are cleared with the data they describe', cleared === 'false/false', cleared);
+  await page.close();
+}
+
+
+section('Slice two fits the phone and the desktop');
+for (const [label, w, h] of [['phone 390', 390, 844], ['desktop 1200', 1200, 900]]) {
+  const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(1600);
+
+  ok(`${label}: the queue is on screen`, await queueCard(page).count() === 1);
+  ok(`${label}: recently completed is on screen`, await doneCard(page).count() === 1);
+
+  const over = await page.evaluate(() => {
+    const vw = window.innerWidth, out = [];
+    for (const el of document.querySelectorAll('#app *')) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.right > vw + 1) out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
+    }
+    return { doc: Math.round(document.documentElement.scrollWidth - vw), els: out.slice(0, 4) };
+  });
+  ok(`${label}: the dashboard still fits its viewport`, over.doc <= 1, JSON.stringify(over));
+  ok(`${label}: and nothing hangs past the right edge`, over.els.length === 0, JSON.stringify(over));
+
+  let smallest = 999, which = '';
+  for (const b of await page.locator('.qrow .btn').all()) {
+    const box = await b.boundingBox();
+    if (box && box.height < smallest) { smallest = box.height; which = (await b.innerText()).trim(); }
+  }
+  ok(`${label}: every row action clears 44px`, smallest === 999 || smallest >= 44,
+     `smallest ${smallest}px on "${which}"`);
+  await page.close();
+}
+
+
 section('The dashboard does not scroll sideways on a phone');
 for (const [label, w, h] of [['phone 390', 390, 844], ['desktop 1200', 1200, 900]]) {
   const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
