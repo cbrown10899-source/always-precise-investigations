@@ -9,6 +9,152 @@ state. Update it when the queue moves; keep it short.
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
 truth** (recorded verbatim 2026-08-13).
 
+## 🚦 RECONCILED 2026-08-17 — master `dff3f82`, and what the ledger had missed
+
+**This file recorded none of #139–#143 and its matrix was stale at `f5a4155`
+while master had moved eight merges past it.** That is the failure this file
+exists to prevent, in the direction that reads as "nothing has happened".
+Corrected below, measured rather than inherited.
+
+### Shipped since the matrix was last written
+
+| PR | Merge SHA | What |
+| --- | --- | --- |
+| #139 | `719097a` | No fabricated cases in the portal; the `TEST-` sweep leaves nothing behind |
+| #140 | `37ba300` | The navigation rail is grouped, and Reports & Packages has a door |
+| #141 | `419a6ff` | The dashboard leads with two named bands; a card can no longer widen the page |
+| #142 | `c60542b` | Today / next actions, and Recently completed, both off reads that already existed |
+| #143 | `dff3f82` | The rate-sheet send area names what the email can carry (PAYMENTS.md §2, §14) |
+
+### Deployment matrix — 2026-08-17
+
+| Component | Master SHA | Deployed SHA | Status | How |
+| --- | --- | --- | --- | --- |
+| Public site + `/portal/` page | `dff3f82` | `dff3f82` | **DEPLOYED** | `Deploy site to Cloudflare Pages` **success at `dff3f826`** (run 31998260840, 2026-08-17T05:32:38Z) — the merge commit itself, not an ancestor |
+| Worker / API | `dff3f82` | unchanged | **DEPLOYED** | `worker.js` untouched since `c8c2e9e`; #143 is page-only |
+| D1 schema | `dff3f82` | applied | unchanged | `schema.sql` untouched by #139–#143. **No portal-setup dispatch is owed** |
+
+**⚠️ LIVE VERIFIED IS NOT REACHABLE FROM THIS CONTAINER, and that is new.**
+The remote execution environment's egress proxy **blocks
+`alwayspreciseinvestigations.net`** — `curl` gets `CONNECT tunnel failed,
+response 403` and WebFetch gets `EGRESS_BLOCKED`. Earlier sessions in this
+ledger reached `/.well-known/build.txt` directly; this one cannot. So the last
+state honestly claimable from here is **DEPLOYED** (workflow green at the exact
+SHA), and every LIVE VERIFIED row above this line was written when the network
+allowed it. **Do not upgrade a row to LIVE VERIFIED from a green workflow** —
+that is provenance, and the four-day site freeze happened with every workflow
+green. Live verification needs a browser on the owner's side, or an
+environment whose policy permits the domain.
+
+### Suites at `dff3f82` — run here, not inherited
+
+| Suite | Result | Ledger previously said |
+| --- | --- | --- |
+| `portal/test-portal.mjs` | **1110 passed, 0 failed** | 806 |
+| `case-portal/test-worker.mjs` | **1538 passed, 0 failed** | 1033 |
+| `.github/test-deploy.mjs` | **68 passed, 0 failed** | 68 |
+| `intake/test-intake.mjs` | 205 (unchanged; not re-run — no file it covers moved) | 205 |
+| `visitor-alerts/test-worker.mjs` | 47 (unchanged; not re-run — same reason) | 47 |
+
+## 🔍 FIVE-ITEM AUDIT, 2026-08-17 — the owner's queue against master `c60542b`
+
+Audited **before** building, because the ledger has been wrong in both
+directions. Two of the five were already shipped and would have been rebuilt.
+
+| # | Item | Verdict | Evidence |
+| --- | --- | --- | --- |
+| 1 | Lead-card **Send Payment Options** | **SHIPPED** | `data-act="leadPayOpen"` `portal/index.html:2056-2058`, gated `${claim ? "" : …}` so an insurance card never shows it. Route `POST /payment-options/email`. E2E `test-portal.mjs:1550-1566` asserts a private and an insurance card **side by side on one desk**: one offers it, the other does not |
+| 2 | **Standalone Payment Options dialog** | **SHIPPED** | `PAY_SEND` `:790`, rendered `:1228`, `paySendHtml()` `:2461`. Two screens, ask then preview. `test-portal.mjs:1751` proves it opens with no case number |
+| 3 | **NEXT STEP helper block** | **was MISSING → SHIPPED #143** | see above |
+| 4 | **Retainer Pending intake/card actions** | **PARTIAL** — the ledger was right | §10 wants it on the **Leads & Intakes card**; `Retainer pending` and `Record payment` exist only on the case Overview panel (`:3724`, `:3779`) |
+| 5 | **Real intake alerts / archive** | **PARTIAL, and one half is worse than the ledger said** | see the two findings below |
+
+### Item 4 — what it needs, and what it does NOT need
+
+The condition §10 names is already expressible: **`intake_received` is one of
+the nine `LEAD_STATUSES`** (`worker.js:1978`), so "the private intake has been
+returned" needs no new column and no schema change.
+
+What is missing is data on the **case-list row**, which is what the card draws
+from. `listSubmissions` (`worker.js:1902-1913`) already carries `send_count`
+and `last_sent_at` as subqueries; the same shape gives it `case_retainer.received`
+and the latest `payment_send`. **`redactRow` (`:1842-1846`) already destructures
+`send_count`/`last_sent_at` out for investigators — any new field must join
+them there**, because retainer state is the client's commercial position.
+
+`[Resend]` needs no new route: it is `leadPayOpen` again. **Record payment must
+not become a second writer** — `openCase()` + `RET_FORM` reaches the one that
+exists (`retOpen` / `retainerFormHtml` / `RET_*`), the way `ovRecordPaymentHtml`
+already did for Overview.
+
+## 🔴 TWO DEFECTS FOUND BY THE AUDIT, NEITHER FIXED YET
+
+### 1. A `TEST-` intake sends a REAL email — the failure INTAKE-OPS names
+
+`INTAKE-OPS.md:26-27` says in terms: *"A test intake producing a real email or
+SMS is the failure this feature is most likely to have, so it is what the tests
+must prove cannot happen."* It happens. Proven by probe against the real Worker
+and real SQLite: `POST /ingest` with `case_no: TEST-20260817-9999` returned 200
+**and sent**; a high-priority task on a `/demo-case` row sent too.
+
+`notifyAdmins` (`worker.js:2395-2425`) has **no prefix or origin check at all**.
+`createDemoCase` happens not to call it — that is an omission, not a guard, and
+it does not survive the demo case being *worked*. The browser suites are safe
+only by harness accident: `intake/test-intake.mjs:105` intercepts the ingest
+route, and `portal/test-portal.mjs` sets no `RESEND_API_KEY` so `worker.js:2398`
+short-circuits. **No test asserts a test intake produces no send**, and the
+`/demo-case` tests never stub Resend.
+
+**This is the smallest genuinely-missing unblocked sub-unit in item 5**: one
+guard at the single chokepoint, using `TEST-` — the prefix this codebase already
+treats as its safety mechanism (`DEMO_LIKE` `worker.js:5236`). No schema, no
+CHECK, no provider, no owner decision, no missing spec.
+
+### 2. The Rate sheets view overflows a 390px screen by 23px
+
+`SPAN.rs-v` in the fee box, `scrollWidth: 413`. **Proven pre-existing** on
+unmodified master at `c60542b` by stashing #143's page change and re-measuring,
+so #143 neither caused it nor hid it — #143's own 390px assertion is scoped to
+the send area for exactly that reason. `.rs-row` is a flex row with
+`.rs-l{flex:1}` (so `min-width:auto`) beside `.rs-v{white-space:nowrap}`; a
+`@media(max-width:640px)` hook for this component already exists at
+`portal/index.html:228`. Its own small unit.
+
+### Also found, recorded not fixed — the rest of item 5
+
+- **Alerts do not say Private vs Insurance**, which `INTAKE-OPS.md:46` requires.
+  A consumer and a claims intake produce byte-identical text. `kind` is already
+  in scope at both call sites (`worker.js:291`, `:1397`) and simply not passed.
+  **Email only** — whether the category word also goes over SMS is an owner call
+  and would break the deliberate "SMS wording is identical on two databases"
+  property at `test-worker.mjs:7322-7338`.
+- **No delivery-once guarantee.** `INTAKE-OPS.md:52-57` asks for claim-and-act in
+  one transaction, the `retainer_payment_token` precedent. The alert does not ride
+  it: `worker.js:6776-6778` notifies unconditionally, including on `'duplicate'`.
+  Probed: same `client_token` twice → **1 ledger row, 2 alert emails**.
+- **No status log** (queued/sent/failed/retried). No such table among the 52 in
+  `schema.sql`; `notifyAdmins` returns `{sent, of}` and **all six callers discard
+  it**. **"Retried" is not specified** — nothing in the repo retries and the doc
+  names no attempt count, backoff or queue. Do not invent it.
+- **An admin cannot see that a send failed.** `sendMail` failures go to
+  `console.error` and nowhere the office can read.
+- **The archive half is the right table at the wrong altitude.** `case_archive`,
+  the write gate and the count suppression are all done properly and tested, and
+  both "where these two meet" rules hold. But §2 describes an **intake record**
+  feature: a `•••` menu (**there is no `•••` menu anywhere in the page**), an
+  ARCHIVED badge on the card (`archived_at` is shipped to the page and never
+  read), and Restore outside the workspace. The filter triad is
+  `All/Open/Completed/Archived/Deleted`, not `Active/Archived/All`, and **"All"
+  excludes archived** — which may be a labelling mismatch or a real one; §2 lists
+  the three filters without defining them. **§2 is "part 1 of 2" and part 2 has
+  still not arrived.** Do not extrapolate it.
+- **One live defect in the existing behaviour:** the Cases lens is module state
+  and `act === "tab"` repaints without refetching, so leaving the lens on
+  **Archived** and clicking **Intakes** draws archived intakes as live cards with
+  Accept and Send buttons — and into Today / Next actions, where they then
+  disagree with the "New intakes" count beside them, which is the Worker's and
+  correctly excludes them.
+
 ## 📝 NON-BLOCKING FINDINGS, 2026-08-16 — from Edit Case
 
 - **The case header's own "Edit case" button is under 44px on a phone.** The
@@ -90,7 +236,14 @@ Record Payment one having been verified live across eight PRs.
 **Method, for whoever repeats it:** grep the identifier, find the route, find
 the control, find the test. A row in this file is not evidence of anything.
 
-## 🚦 DEPLOYMENT MATRIX — 2026-08-15
+## 🚦 DEPLOYMENT MATRIX — 2026-08-15 · **SUPERSEDED, see 2026-08-17 above**
+
+**Kept for its reasoning, not its numbers.** Every SHA and suite count below is
+eight merges stale — it says `f5a4155` while master is `dff3f82`, and 1033/806
+where the suites now stand at 1538/1110. The 2026-08-17 matrix at the top of
+this file is the current one. The paragraphs on *why* the Worker is DEPLOYED
+and not LIVE VERIFIED, and on the cached `/.gitignore`, are still true and are
+why this section was not simply deleted.
 
 **Nothing is complete until it is LIVE VERIFIED.** The states are CODED →
 TESTED → PUSHED → MERGED → DEPLOYED → LIVE VERIFIED, and the words DONE,
