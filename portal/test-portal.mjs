@@ -375,7 +375,7 @@ section('Investigator scope');
   ok('the investigator gets the injury and restrictions', isubj.includes('Lumbar strain'));
   const isecs = await text(page, '.wsecs');
   ok('the investigator navigates their own four sections',
-     has(isecs, 'Assignment') && has(isecs, 'Activity') && has(isecs, 'Evidence') && has(isecs, 'Report'));
+     has(isecs, 'Assignment') && has(isecs, 'Activity') && has(isecs, 'Case media') && has(isecs, 'Report'));
   ok('nothing administrative is offered as a section', !has(isecs, 'Admin'));
   await wsTab(page, 'Activity log');
   ok('the investigator has an Activity log tab', await page.locator('.wstabs button', { hasText: 'Activity log' }).count() === 1);
@@ -1035,7 +1035,7 @@ section('The case workspace in the browser');
   await page.waitForTimeout(450);
 
   const secbar = await text(page, '.wsecs');
-  for (const t of ['Overview', 'Fieldwork', 'Report & Evidence', 'Admin']) {
+  for (const t of ['Overview', 'Fieldwork', 'Report & Media', 'Admin']) {
     ok(`the workspace navigates by section: ${t}`, has(secbar, t), secbar);
   }
   // Every panel is still reachable behind its section.
@@ -1243,7 +1243,7 @@ section('An investigator gets the same field tools, without the money');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(450);
   const fsecs = await text(page, '.wsecs');
-  ok('they get their own sections', has(fsecs, 'Activity') && has(fsecs, 'Evidence') && has(fsecs, 'Report'));
+  ok('they get their own sections', has(fsecs, 'Activity') && has(fsecs, 'Case media') && has(fsecs, 'Report'));
   ok('they do not get the Admin section', !has(fsecs, 'Admin'));
 
   await wsTab(page, 'Field work');
@@ -3467,20 +3467,35 @@ section('An invoice from case to PAID');
    and the storage meter on the dashboard. */
 section('Evidence in the browser');
 {
+  /* A LEGACY STORED VIDEO, planted straight into the database before the page
+     loads. Since 2026-08-17 video is device-first and the Worker refuses a
+     `video/*` upload outright — but video already in R2 was deliberately left
+     untouched, so rows like this still exist and everything downstream of them
+     must still be right: the gallery's Video tab, the quick-entry fold, the
+     package type's video gate. Planted first so the photo uploaded below is the
+     newest row and therefore the first card, which is the one the serving check
+     reads. */
+  db.prepare(`INSERT INTO case_evidence (case_no, r2_key, filename, content_type,
+      size_bytes, classification, uploaded_at)
+    VALUES ('API-20260812-4002', 'cases/API-20260812-4002/legacy-clip1.mp4', 'clip1.mp4',
+            'video/mp4', 4096, 'client_deliverable', '2026-08-12T14:00:00.000Z')`).run();
+
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Evidence');
+  await wsTab(page, 'Case media');
   ok('the tab says the failsafe is on', has(await text(page, '#dlgBody'), 'free-plan failsafe'));
 
+  /* A PHOTOGRAPH — what this tab uploads now. The storage, classification,
+     serving and meter rules under test are unchanged by which type it is. */
   await page.locator('#ev_file').setInputFiles({
-    name: 'clip1.mp4', mimeType: 'video/mp4', buffer: Buffer.alloc(4096, 65) });
-  await page.locator('#ev_note').fill('Subject loading lumber, clip 1.');
-  await page.locator('.btn', { hasText: 'Upload evidence' }).click();
+    name: 'frame1.jpg', mimeType: 'image/jpeg', buffer: Buffer.alloc(4096, 65) });
+  await page.locator('#ev_note').fill('Subject loading lumber, frame 1.');
+  await page.locator('.btn', { hasText: 'Upload picture or document' }).click();
   await page.waitForTimeout(700);
   let body = await text(page, '#dlgBody');
-  ok('the upload lands with its note', has(body, 'clip1.mp4') && has(body, 'loading lumber'));
+  ok('the upload lands with its note', has(body, 'frame1.jpg') && has(body, 'loading lumber'));
   ok('and reports the meter', has(body, '% of the free plan'));
 
   /* The card's opener is a viewer button now, not an anchor, but it carries the
@@ -3495,25 +3510,32 @@ section('Evidence in the browser');
              len: (await r.arrayBuffer()).byteLength };
   });
   ok('the file streams back through the Worker', served.status === 200
-     && served.type === 'video/mp4' && served.len === 4096);
+     && served.type === 'image/jpeg' && served.len === 4096);
   ok('and the viewer points at the case-scoped evidence route, not a copy',
      /^\/portal-api\/cases\/[^/]+\/evidence\/\d+\/file$/.test(served.src), served.src);
 
-  await page.locator('[data-act="evClass"]').selectOption('client_deliverable');
+  /* Scoped to the FIRST card — the photo just uploaded, the newest row — and
+     moved to a classification the default is not, so the assertion cannot pass
+     on a card that was already deliverable when it arrived. Then put back,
+     because the sections below build a package from this case. */
+  await page.locator('[data-act="evClass"]').first().selectOption('needs_redaction');
   await page.waitForTimeout(600);
-  ok('the office classifies it', has(await text(page, '#dlgBody'), 'Client deliverable'));
+  ok('the office classifies it', has(await text(page, '#dlgBody'), 'Needs redaction'));
+  await page.locator('[data-act="evClass"]').first().selectOption('client_deliverable');
+  await page.waitForTimeout(600);
+  ok('and puts it back', has(await text(page, '#dlgBody'), 'Client deliverable'));
 
   // Attach a photo to the subject built earlier: it appears on the card.
   await page.locator('#ev_file').setInputFiles({
     name: 'subject.jpg', mimeType: 'image/jpeg', buffer: Buffer.alloc(600, 66) });
   await page.locator('#ev_link').selectOption({ label: 'John Subject' });
-  await page.locator('.btn', { hasText: 'Upload evidence' }).click();
+  await page.locator('.btn', { hasText: 'Upload picture or document' }).click();
   await page.waitForTimeout(700);
   await wsTab(page, 'Subject');
   const subjCard = await text(page, '#dlgBody');
   ok('the photo rides with the subject card', has(subjCard, 'Photos & files'));
   ok('as an image thumbnail', await page.locator('.rcard img').count() >= 1);
-  await wsTab(page, 'Evidence');
+  await wsTab(page, 'Case media');
 
   // The gallery (UIBUILD P12): tabs cut by type, cards carry the picture.
   ok('the gallery tabs stand ready', has(await text(page, '.evtabs'), 'Photos'));
@@ -3521,7 +3543,7 @@ section('Evidence in the browser');
   await page.waitForTimeout(250);
   let gal = await text(page, '.evgrid');
   ok('the Video tab holds the clip', has(gal, 'clip1.mp4') && !has(gal, 'subject.jpg'), gal.slice(0, 150));
-  ok('a video card says where it lives', has(gal, 'Portal'));
+  ok('a stored video says it predates the move to the device', has(gal, 'stored earlier'));
   await page.locator('.evtab', { hasText: 'Photos' }).click();
   await page.waitForTimeout(250);
   gal = await text(page, '.evgrid');
@@ -3534,13 +3556,13 @@ section('Evidence in the browser');
   await page.locator('#ev_file').setInputFiles({
     name: 'moment.jpg', mimeType: 'image/jpeg', buffer: Buffer.alloc(500, 67) });
   await page.locator('#ev_link').selectOption({ label: '8:17 AM — Subject arrived at ABC Fitness.' });
-  await page.locator('.btn', { hasText: 'Upload evidence' }).click();
+  await page.locator('.btn', { hasText: 'Upload picture or document' }).click();
   await page.waitForTimeout(700);
   await wsTab(page, 'Activity log');
   ok('a linked photo puts a count on the moment',
      await page.locator('.tl-i', { hasText: 'Subject arrived at ABC Fitness.' })
        .locator('.tl-counts').count() >= 1);
-  await wsTab(page, 'Evidence');
+  await wsTab(page, 'Case media');
   ok('and the card names its moment', has(await text(page, '.evgrid'), '8:17 AM'));
 
   // The quick-entry fold links an already-uploaded file to the new moment (P9).
@@ -3558,7 +3580,7 @@ section('Evidence in the browser');
   ok('the ticked file rode to the new moment',
      await page.locator('.tl-i', { hasText: 'Established stationary surveillance position.' })
        .locator('.tl-counts').count() >= 1);
-  await wsTab(page, 'Evidence');
+  await wsTab(page, 'Case media');
 
   await page.locator('[data-act="evDelete"]').first().click();
   await page.waitForTimeout(600);
@@ -4088,9 +4110,9 @@ section('The field case home, on a desk and in a hand');
   const box = await page.locator('.wsecs').boundingBox();
   ok('and it sits at the bottom of the hand', box && box.y > 600, JSON.stringify(box));
   ok('with thumb-size words', has(await text(page, '.wsecs'), 'Home'));
-  await page.locator('.wsecs button', { hasText: 'Evidence' }).click();
+  await page.locator('.wsecs button', { hasText: 'Case media' }).click();
   await page.waitForTimeout(350);
-  ok('the bottom bar navigates', has(await text(page, '.wstabs button.on'), 'Evidence'));
+  ok('the bottom bar navigates', has(await text(page, '.wstabs button.on'), 'Case media'));
   await page.close();
 }
 
@@ -4327,8 +4349,15 @@ section('The navigation rail is grouped, renamed, and reachable');
   ok('Active Surveillance is inside it',
      await page.locator('.navfoot .side-surv').count() === 1);
   ok('so is the intake door', await page.locator('.navfoot .side-intake').count() === 1);
+  /* THE RULE IS "no DESTINATION leaked in", not "there are exactly two
+     buttons". Counting re-encoded the number of doors, so adding a third one
+     (Timestamp Video) failed a check whose stated intent it does not touch.
+     Asserted as the property instead: everything in the block is a door. */
   ok('and no destination is in there with them',
-     await page.locator('.navfoot button').count() === 2);
+     await page.evaluate(() => [...document.querySelectorAll('.navfoot button')]
+       .every(b => /\bside-(surv|vst|intake)\b/.test(b.className))),
+     await page.evaluate(() => [...document.querySelectorAll('.navfoot button')]
+       .map(b => b.className).join(' | ')));
   const lastGroup = await page.locator('.tabs .navgrp').last().boundingBox();
   const footBox = await page.locator('.navfoot').boundingBox();
   ok('the block genuinely sits below every group',
@@ -5099,7 +5128,7 @@ section('Back, edit and delete, from the field');
     await page.waitForTimeout(1000);
   }
   ok('the home screen needs no back button', await page.locator('.sv-backbar').count() === 0);
-  await page.locator('.sv-nav button', { hasText: 'Evidence' }).click();
+  await page.locator('.sv-nav button', { hasText: 'Media' }).click();
   await page.waitForTimeout(500);
   ok('every other screen has one', await page.locator('.sv-backbar').count() === 1);
   ok('and it goes back WITHOUT leaving the mode',
@@ -5160,7 +5189,7 @@ section('Back, edit and delete, from the field');
      !has(await text(page, '.sv-tl'), 'Removed'));
 
   // Evidence gets the same two controls.
-  await page.locator('.sv-nav button', { hasText: 'Evidence' }).click();
+  await page.locator('.sv-nav button', { hasText: 'Media' }).click();
   await page.waitForTimeout(600);
   if (await page.locator('.evcard').count()) {
     ok('an evidence card offers a caption', await page.locator('[data-act="svEvNote"]').count() >= 1);
@@ -5596,7 +5625,7 @@ section('Completed cases are one obvious click away');
   ok('a card offers the case, the report, the evidence and the package',
      await card4002.locator('.btn', { hasText: 'Open case' }).count() === 1
      && await card4002.locator('.btn', { hasText: 'Final report' }).count() === 1
-     && await card4002.locator('.btn', { hasText: 'Evidence' }).count() === 1
+     && await card4002.locator('.btn', { hasText: 'Case media' }).count() === 1
      && await card4002.locator('.btn', { hasText: 'Client package' }).count() === 1);
   ok('no invoice button where no invoice exists — no dead controls',
      await card4002.locator('.btn', { hasText: 'Invoice' }).count() === 0);
@@ -6235,8 +6264,18 @@ section('Evidence opens in one in-portal viewer, and never leaves the app');
      the gallery's existing Delete and Classify controls are a different feature
      and predate this one — the assertion is that the VIEWER grew none of them,
      not that the portal has none. */
-  const viewerFn = src.slice(src.indexOf('function evViewerHtml('),
-                             src.indexOf('function paint()'));
+  /* Bounded at the NEXT top-level function, not at `paint()`. Naming a
+     particular neighbour made this assertion depend on what happens to sit
+     after the viewer rather than on the viewer itself — and the day something
+     was inserted between them (the video timestamp generator, which does offer
+     a download, of a file it just made on the device) this failed while the
+     rule it is named for was untouched. */
+  const viewerAt = src.indexOf('function evViewerHtml(');
+  /* THE FUNCTION'S OWN BODY, ending at its closing brace at column 0. Bounding
+     it at "the next function" was still too loose: the comment block above the
+     next one came with it, and that comment legitimately uses the word
+     download. The body is what this assertion is about. */
+  const viewerFn = src.slice(viewerAt, src.indexOf('\n}\n', viewerAt) + 3);
   ok('the viewer function was found, so the check has something to read',
      viewerFn.length > 200 && viewerFn.includes('evClose'), String(viewerFn.length));
   ok('and it offers no download, delete, classify or edit control',
@@ -6247,7 +6286,7 @@ section('Evidence opens in one in-portal viewer, and never leaves the app');
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(500);
-  await wsTab(page, 'Evidence');
+  await wsTab(page, 'Case media');
   await page.waitForTimeout(400);
 
   // Land on a known screen, and remember it, so "back" can be checked properly.
@@ -6807,6 +6846,524 @@ section('The field status row carries the date, not a line of its own');
      await page.locator('.sv-status').count() === 1
      && await page.locator('.sv-quad').count() === 1
      && await page.evaluate(() => document.documentElement.scrollWidth) <= 820);
+  await page.close();
+}
+
+
+/* ------------------------------------------------------- VIDEO TIMESTAMP
+
+   Owner brief, 2026-08-17: a surveillance clip carries the date and time burned
+   into the bottom-right corner and the clock ADVANCES with the footage. Owner
+   decision the same day: video is DEVICE-FIRST — the original stays on the
+   device that shot it, the copy is rendered in that device's browser and saved
+   back to it, and the portal keeps the record and no video byte at all. */
+section('The timestamp is computed from the footage, never from this machine');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* EST/EDT IS RESOLVED FROM THE DATE. Virginia keeps daylight time for part of
+     the year, so a hard-coded EST makes every summer stamp an hour wrong — the
+     owner said so explicitly. These are the two sides of the 2026 changeover. */
+  const zones = await page.evaluate(() => {
+    const jul = vstToUtc(2026, 7, 15, 17, 14, 32, 'America/New_York');
+    const jan = vstToUtc(2026, 1, 15, 17, 14, 32, 'America/New_York');
+    return { jul: vstLabel(jul, 'America/New_York'), jan: vstLabel(jan, 'America/New_York'),
+             julMs: jul, janMs: jan };
+  });
+  ok('a July evening resolves to EDT', zones.jul === '07/15/2026 05:14:32 PM EDT', zones.jul);
+  ok('a January evening resolves to EST', zones.jan === '01/15/2026 05:14:32 PM EST', zones.jan);
+  ok('and the two are stored as genuinely different offsets from UTC',
+     (zones.julMs % 86400000) !== (zones.janMs % 86400000));
+
+  /* THE WORDING IS EXACTLY WHAT THE BRIEF ASKED FOR: 08/17/2026 05:14:32 PM EDT */
+  const shape = await page.evaluate(() =>
+    vstLabel(vstToUtc(2026, 8, 17, 17, 14, 32, 'America/New_York'), 'America/New_York'));
+  ok('the burned wording is MM/DD/YYYY hh:mm:ss AM/PM ZZZ',
+     /^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}:\d{2} (AM|PM) E[SD]T$/.test(shape), shape);
+  ok('and it is the owner’s own example', shape === '08/17/2026 05:14:32 PM EDT', shape);
+
+  /* THE CLOCK ADVANCES WITH THE FOOTAGE — 5:14:32, :33, :34, :35 — from the
+     chosen start plus the frame's own presentation time. */
+  const ticks = await page.evaluate(() => {
+    const s = vstToUtc(2026, 8, 17, 17, 14, 32, 'America/New_York');
+    return [0, 1.0, 2.4, 3.99].map(t => vstLabel(s + Math.floor(t) * 1000, 'America/New_York'));
+  });
+  ok('it begins at the chosen second', ticks[0] === '08/17/2026 05:14:32 PM EDT', ticks[0]);
+  ok('and advances a second at a time with the video timeline',
+     ticks[1].endsWith('05:14:33 PM EDT') && ticks[2].endsWith('05:14:34 PM EDT')
+     && ticks[3].endsWith('05:14:35 PM EDT'), ticks.join(' | '));
+
+  /* Midnight and noon are where a 12-hour clock goes wrong. */
+  const edges = await page.evaluate(() => ({
+    midnight: vstLabel(vstToUtc(2026, 8, 17, 0, 0, 0, 'America/New_York'), 'America/New_York'),
+    noon: vstLabel(vstToUtc(2026, 8, 17, 12, 0, 0, 'America/New_York'), 'America/New_York'),
+  }));
+  ok('midnight reads 12:00:00 AM, not 00 or 24', edges.midnight === '08/17/2026 12:00:00 AM EDT', edges.midnight);
+  ok('and noon reads 12:00:00 PM', edges.noon === '08/17/2026 12:00:00 PM EDT', edges.noon);
+
+  /* NOT THE MACHINE'S CLOCK. The label for a frame is a function of the chosen
+     start and the frame's time, and of nothing else — so the same footage
+     stamps identically whenever it is rendered. */
+  const independent = await page.evaluate(() => {
+    const s = vstToUtc(2026, 8, 17, 17, 14, 32, 'America/New_York');
+    const a = vstLabel(s + 3000, 'America/New_York');
+    const now = Date.now();
+    return { a, sameLater: a === vstLabel(s + 3000, 'America/New_York'),
+             mentionsToday: a.includes(String(new Date(now).getFullYear())) && s > now };
+  });
+  ok('the stamp does not read this machine’s clock', independent.sameLater
+     && independent.a === '08/17/2026 05:14:35 PM EDT', independent.a);
+
+  await page.close();
+}
+
+/* THE BURN-IN IS REAL PIXELS IN A REAL FILE — the brief rules out a CSS overlay
+   by name. This makes a source clip in the browser, runs it through the SAME
+   render path the feature uses, decodes the result back and looks at what came
+   out. Nothing here is evidence: the source is coloured rectangles drawn in the
+   tab. */
+section('The stamp is encoded into the video, not laid over it');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const trip = await page.evaluate(async () => {
+    const mime = vstMime();
+    if (!mime) return { skipped: 'this browser records no video at all' };
+
+    // ---- a source clip, drawn here, deliberately dark all over ----
+    const W = 320, H = 240;
+    const src = document.createElement('canvas'); src.width = W; src.height = H;
+    const sx = src.getContext('2d');
+    const stream = src.captureStream(0);
+    const track = stream.getVideoTracks()[0];
+    const chunks = [];
+    const rec = new MediaRecorder(stream, { mimeType: mime });
+    rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    rec.start();
+    for (let i = 0; i < 24; i++) {
+      sx.fillStyle = '#101820'; sx.fillRect(0, 0, W, H);
+      track.requestFrame();
+      await new Promise(r => setTimeout(r, 33));
+    }
+    await new Promise(r => { rec.onstop = r; rec.stop(); });
+    const srcBlob = new Blob(chunks, { type: mime });
+    if (!srcBlob.size) return { skipped: 'the source clip came out empty' };
+
+    // ---- through the real generator ----
+    const file = new File([srcBlob], 'field-clip.webm', { type: mime });
+    VST = { step: 'preview', caseNo: 'API-20260812-4002', file, name: file.name,
+            size: file.size, url: URL.createObjectURL(file), tz: 'America/New_York',
+            mo: '08', da: '17', yr: '2026', hr: '05', mi: '14', se: '32', ap: 'PM',
+            guessed: false, hash: null, pct: 0, err: '', saveMsg: '',
+            out: null, recId: null, savedHere: false, started: false };
+    await vstGenerate();
+    if (!VST || !VST.out) return { skipped: 'render failed', err: VST && VST.err };
+    const out = { size: VST.out.size, name: VST.out.name, mime: VST.out.mime,
+                  step: VST.step, recId: VST.recId, savedHere: VST.savedHere };
+
+    // ---- decode the OUTPUT back and look at its pixels ----
+    const v = document.createElement('video');
+    v.muted = true; v.playsInline = true; v.src = VST.out.url;
+    await new Promise((res, rej) => {
+      v.onloadedmetadata = res; v.onerror = () => rej(new Error('output not decodable'));
+      setTimeout(() => rej(new Error('output decode timed out')), 10000);
+    });
+    out.w = v.videoWidth; out.h = v.videoHeight;
+    await new Promise(res => { v.onseeked = res; v.currentTime = 0.05; setTimeout(res, 1200); });
+    const chk = document.createElement('canvas');
+    chk.width = v.videoWidth; chk.height = v.videoHeight;
+    const cx = chk.getContext('2d');
+    cx.drawImage(v, 0, 0);
+    // Brightest pixel in a band, not one sample: text is thin strokes, and a
+    // single point can land between two of them.
+    const brightest = (x, y, w, h) => {
+      const d = cx.getImageData(x, y, w, h).data;
+      let best = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        if (lum > best) best = lum;
+      }
+      return Math.round(best);
+    };
+    out.stampBand = brightest(Math.round(chk.width * 0.3), Math.round(chk.height * 0.86),
+                              Math.round(chk.width * 0.68), Math.round(chk.height * 0.12));
+    out.controlBand = brightest(4, 4, Math.round(chk.width * 0.5), Math.round(chk.height * 0.4));
+    // And the source, at the same place, for comparison: it had nothing there.
+    const sv = document.createElement('video');
+    sv.muted = true; sv.src = URL.createObjectURL(srcBlob);
+    await new Promise((res, rej) => { sv.onloadedmetadata = res; sv.onerror = rej;
+      setTimeout(res, 6000); });
+    await new Promise(res => { sv.onseeked = res; sv.currentTime = 0.05; setTimeout(res, 1200); });
+    cx.drawImage(sv, 0, 0);
+    out.sourceBand = brightest(Math.round(chk.width * 0.3), Math.round(chk.height * 0.86),
+                               Math.round(chk.width * 0.68), Math.round(chk.height * 0.12));
+    return out;
+  });
+
+  ok('the render produced a video file', !trip.skipped && trip.size > 0,
+     JSON.stringify(trip).slice(0, 300));
+  if (!trip.skipped) {
+    ok('the output decodes as a video of the original size',
+       trip.w === 320 && trip.h === 240, `${trip.w}x${trip.h}`);
+    ok('and it is WebM — never mp4, which reports supported while its codec is not',
+       /webm/.test(String(trip.mime)), String(trip.mime));
+    ok('the derivative is named as a copy, beside the original’s name',
+       trip.name === 'field-clip-timestamped.webm', trip.name);
+    /* THE PROOF. The source is uniformly dark; the output has bright pixels in
+       the bottom-right band and nowhere else. That is the stamp, in the encoded
+       file, surviving a full decode — which a CSS overlay could not do. */
+    ok('the source had nothing in the bottom-right corner', trip.sourceBand < 90, String(trip.sourceBand));
+    ok('the output carries bright pixels there', trip.stampBand > 170, String(trip.stampBand));
+    ok('and the rest of the picture was left alone', trip.controlBand < 90, String(trip.controlBand));
+    ok('the stamp is genuinely in the pixels, not over them',
+       trip.stampBand - trip.sourceBand > 80, `${trip.sourceBand} -> ${trip.stampBand}`);
+    /* NOTHING CLAIMS TO BE SAVED. The render finished; the file has not reached
+       the device until the operator's own save completes. */
+    ok('the copy is not reported as saved merely because it exists', trip.savedHere === false);
+    ok('and the portal recorded the generation', typeof trip.recId === 'number' && trip.recId > 0,
+       String(trip.recId));
+  }
+  await page.close();
+}
+
+section('The video timestamp screen');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Case media');
+
+  const tab = await text(page, '#dlgBody');
+  ok('the Evidence tab carries the door into it', has(tab, 'Video timestamp'));
+  ok('and says the original is never changed', has(tab, 'original is never changed'));
+  ok('the upload form no longer offers to store video', !has(tab, 'photos, video, documents'));
+  ok('and says where video goes instead', has(tab, 'Video is not uploaded'));
+  ok('the record of the earlier render is on the case', has(tab, 'field-clip.webm'));
+  ok('with the instant it starts at, re-derived rather than remembered',
+     has(tab, '08/17/2026 05:14:32 PM EDT'));
+  ok('and it reads as not saved, because nobody saved it',
+     has(tab, 'not saved yet'));
+
+  /* THE PORTAL HOLDS NO VIDEO. Asked directly, from the browser, with a real
+     session — the refusal is the Worker's, not a hidden button. */
+  const refused = await page.evaluate(async () => {
+    const fd = new FormData();
+    fd.append('file', new File([new Uint8Array(600).fill(65)], 'sneaky.mp4', { type: 'video/mp4' }));
+    const r = await fetch('/portal-api/cases/API-20260812-4002/evidence',
+      { method: 'POST', credentials: 'same-origin', body: fd });
+    return { status: r.status, body: await r.json().catch(() => ({})) };
+  });
+  ok('a video posted straight at the evidence route is refused',
+     refused.status === 400 && refused.body.code === 'video_device_first',
+     JSON.stringify(refused).slice(0, 200));
+
+  await page.locator('[data-act="vstOpen"]').click();
+  await page.waitForTimeout(300);
+  ok('with no file chosen the generator stays shut', await page.locator('.vst').count() === 0);
+
+  // Open it directly on a known state — the file picker cannot be driven here.
+  await page.evaluate(() => {
+    VST = { step: 'when', caseNo: 'API-20260812-4002', file: null, name: 'DSC_0001.MOV',
+            size: 51200000, url: '', tz: 'America/New_York',
+            mo: '08', da: '17', yr: '2026', hr: '05', mi: '14', se: '32', ap: 'PM',
+            guessed: true, hash: null, pct: 0, err: '', saveMsg: '',
+            out: null, recId: null, savedHere: false, started: false };
+    paintVStamp();
+  });
+  await page.waitForTimeout(200);
+  ok('the editor opens on the file it was given', has(await text(page, '.vst'), 'DSC_0001.MOV'));
+  ok('and warns that the file’s own date is often wrong',
+     has(await text(page, '.vst'), 'often wrong'));
+  ok('the resolved Eastern wording is shown while editing',
+     has(await text(page, '#vst_res'), '08/17/2026 05:14:32 PM EDT'));
+
+  /* A CORRECTION IS READ BACK BEFORE THE REPAINT, for the reason EDIT_DRAFT
+     exists: the inputs are rebuilt from state on every paint. */
+  await page.locator('#vst_hr').fill('11');
+  await page.locator('#vst_mi').fill('05');
+  await page.locator('#vst_se').fill('09');
+  await page.locator('#vst_ap').selectOption('AM');
+  await page.locator('[data-act="vstUseTime"]').click();
+  await page.waitForTimeout(250);
+  const prev = await text(page, '.vst');
+  ok('the correction survived the repaint', has(prev, '08/17/2026 11:05:09 AM EDT'), prev.slice(0, 200));
+  ok('the preview names the original', has(prev, 'DSC_0001.MOV'));
+  ok('and where the stamp goes', has(prev, 'Bottom right'));
+  ok('and offers Edit timestamp, Generate and Cancel',
+     await page.locator('[data-act="vstEditTime"]').count() === 1
+     && await page.locator('[data-act="vstGo"]').count() === 1
+     && await page.locator('.vst [data-act="vstClose"]').count() >= 1);
+  ok('it says the original is left as it is', has(prev, 'left exactly as it is'));
+  ok('and that nothing is uploaded', has(prev, 'nothing is uploaded'));
+
+  // A half-typed time cannot quietly become a different one.
+  await page.locator('[data-act="vstEditTime"]').click();
+  await page.waitForTimeout(200);
+  await page.locator('#vst_mi').fill('');
+  await page.locator('[data-act="vstUseTime"]').click();
+  await page.waitForTimeout(200);
+  ok('an incomplete time is refused rather than guessed',
+     has(await text(page, '.vst'), 'Fill in every part'));
+  await page.locator('#vst_mi').fill('99');
+  await page.locator('[data-act="vstUseTime"]').click();
+  await page.waitForTimeout(200);
+  ok('and an impossible one is named', has(await text(page, '.vst'), '0 to 59'));
+
+  await page.locator('.vst-bar [data-act="vstClose"]').click();
+  await page.waitForTimeout(200);
+  ok('closing it puts the case screen back untouched',
+     await page.locator('.vst').count() === 0
+     && has(await text(page, '#dlgBody'), 'Video timestamp'));
+
+  await page.close();
+}
+
+section('The video timestamp screen on a phone');
+{
+  const page = await newPage();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await page.waitForTimeout(400);
+
+  await page.evaluate(() => {
+    VST = { step: 'when', caseNo: 'API-20260812-4002', file: null, name: 'DSC_0001.MOV',
+            size: 51200000, url: '', tz: 'America/New_York',
+            mo: '08', da: '17', yr: '2026', hr: '05', mi: '14', se: '32', ap: 'PM',
+            guessed: false, hash: null, pct: 0, err: '', saveMsg: '',
+            out: null, recId: null, savedHere: false, started: false };
+    paintVStamp();
+  });
+  await page.waitForTimeout(250);
+
+  const m = await page.evaluate(() => {
+    const small = [...document.querySelectorAll('.vst input, .vst select, .vst button')]
+      .map(el => ({ tag: el.id || el.dataset.act || el.tagName,
+                    h: Math.round(el.getBoundingClientRect().height) }))
+      .filter(x => x.h > 0 && x.h < 44);
+    return { small, sw: document.documentElement.scrollWidth,
+             cw: document.documentElement.clientWidth,
+             fields: document.querySelectorAll('.vst input').length };
+  });
+  ok('every date and time field is on screen', m.fields === 6, String(m.fields));
+  ok('nothing on it is under 44px', m.small.length === 0, JSON.stringify(m.small));
+  ok('and it does not scroll sideways at 390px', m.sw <= m.cw + 1, `${m.sw} vs ${m.cw}`);
+
+  // The finished state must never claim a save the platform has not made.
+  await page.evaluate(() => {
+    VST.step = 'done'; VST.startMs = vstToUtc(2026, 8, 17, 17, 14, 32, 'America/New_York');
+    VST.out = { blob: new Blob(['x']), url: '', name: 'DSC_0001-timestamped.webm', size: 1200,
+                mime: 'video/webm' };
+    paintVStamp();
+  });
+  await page.waitForTimeout(200);
+  const done = await text(page, '.vst');
+  ok('a generated copy reads as not yet on the device', has(done, 'Not saved yet'));
+  ok('and offers the save rather than announcing one',
+     await page.locator('[data-act="vstSave"]').count() === 1
+     && await page.locator('[data-act="vstSaved"]').count() === 0);
+  ok('it tells the operator to check the clock before closing', has(done, 'bottom-right corner'));
+  ok('and says the portal keeps the record, not the video', has(done, 'never the video'));
+
+  // Once a download has merely STARTED, it still does not claim to be saved.
+  await page.evaluate(() => { VST.started = true; paintVStamp(); });
+  await page.waitForTimeout(150);
+  const started = await text(page, '.vst');
+  ok('a started download is not called a save', has(started, 'download has started')
+     && has(started, 'cannot see') && has(started, 'Not saved yet'));
+  ok('and the operator is the one who confirms it arrived',
+     await page.locator('[data-act="vstSaved"]').count() === 1);
+
+  await page.close();
+}
+
+
+/* OWNER UI ADDENDUM, 2026-08-17. Timestamp Video is a first-class operational
+   shortcut — nobody should have to open a case to reach it — and the media
+   wording separates ADDING (Upload video / picture) from LOOKING (Case media). */
+section('Timestamp video is reachable without opening a case');
+{
+  for (const [who, pass, role] of [['trever', 'AdminPassword1x', 'admin'],
+                                   ['dana', 'FieldWork2026x', 'investigator']]) {
+    const page = await newPage();
+    await signIn(page, who, pass);
+    await page.waitForTimeout(300);
+    ok(`the ${role} has the door in the navigation, on every screen`,
+       await page.locator('.navfoot [data-act="vstOpen"]').count() === 1);
+    ok(`and it says what it is (${role})`,
+       has(await text(page, '.navfoot [data-act="vstOpen"]'), 'Timestamp Video'));
+    /* THE DOOR ASKS. Opened from outside a case it must not silently adopt
+       whichever case was last open — its data-case is empty on purpose. */
+    ok(`the ${role}'s door carries no case of its own`,
+       await page.locator('.navfoot [data-act="vstOpen"]').getAttribute('data-case') === '');
+    const h = await page.evaluate(() => {
+      const b = document.querySelector('.navfoot [data-act="vstOpen"]');
+      return Math.round(b.getBoundingClientRect().height);
+    });
+    ok(`it is a 44px target for the ${role} (${h}px)`, h >= 44);
+    await page.close();
+  }
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).first().click();
+  await page.waitForTimeout(600);
+  ok('the dashboard carries the quick tool', await page.locator('.qtools .qtool').count() === 1);
+  ok('labelled as a tool, not a card', has(await text(page, '.qtools'), 'Quick tools')
+     && has(await text(page, '.qtools'), 'Timestamp video'));
+  /* COMPACT, not a fifth equal-weight box: it must be shorter than a stat card
+     and must not have become one. */
+  const size = await page.evaluate(() => {
+    const q = document.querySelector('.qtools');
+    const card = document.querySelector('.stat');
+    return { q: Math.round(q.getBoundingClientRect().height),
+             card: card ? Math.round(card.getBoundingClientRect().height) : 0,
+             cards: q.querySelectorAll('.card, .stat').length };
+  });
+  ok('it is a row rather than another dashboard card',
+     size.cards === 0 && (!size.card || size.q <= size.card), JSON.stringify(size));
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  const m = await page.evaluate(() => ({
+    h: Math.round(document.querySelector('.qtool').getBoundingClientRect().height),
+    sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth,
+  }));
+  ok('and on a phone it is still a 44px target', m.h >= 44, `${m.h}px`);
+  ok('with nothing scrolling sideways', m.sw <= m.cw + 1, `${m.sw} vs ${m.cw}`);
+  await page.close();
+}
+
+section('Choosing the case, from outside a case');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await page.waitForTimeout(300);
+
+  // The file picker cannot be driven from here; open on the state it produces.
+  await page.evaluate(() => {
+    VST = { step: 'case', caseNo: '', file: null, name: 'DSC_0009.MOV', size: 8000000,
+            url: '', tz: 'America/New_York', q: '',
+            mo: '08', da: '17', yr: '2026', hr: '05', mi: '14', se: '32', ap: 'PM',
+            guessed: true, hash: null, pct: 0, err: '', saveMsg: '',
+            out: null, recId: null, savedHere: false, started: false };
+    paintVStamp();
+    return vstLoadCases();
+  });
+  await page.waitForTimeout(600);
+  const pick = await text(page, '.vst');
+  ok('it asks which case the footage is for', has(pick, 'Which case is this footage for'));
+  ok('and says choosing one grants nothing extra', has(pick, 'no more access than you had'));
+
+  /* AUTHORIZATION IS NOT WEAKENED. The list is the caller's own — an
+     investigator is offered their assigned cases and nobody else's, because the
+     route that fills it is the one that already scopes them. */
+  const offered = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-act="vstPickCase"]')].map(b => b.dataset.case));
+  const allowed = await page.evaluate(async () =>
+    (await (await fetch('/portal-api/submissions?limit=200',
+      { credentials: 'same-origin' })).json()).submissions.map(s => s.case_no));
+  ok('the offered cases are exactly the ones this account may open',
+     offered.length > 0 && offered.every(c => allowed.includes(c)),
+     `${offered.length} offered, ${allowed.length} allowed`);
+  /* A case that EXISTS and is not theirs — a made-up number would 404 for the
+     wrong reason and prove nothing about the boundary. */
+  ok('and the Worker refuses a record on a case not among them',
+     !allowed.includes('API-20260812-4002')
+     && (await page.evaluate(async () => (await fetch(
+       '/portal-api/cases/API-20260812-4002/video-stamp',
+       { method: 'POST', credentials: 'same-origin',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ original_name: 'x.mov', start_utc: '2026-08-17T21:14:32.000Z' }) })
+     ).status)) === 404);
+
+  await page.locator('#vst_q').fill('zzz-no-such-case');
+  await page.waitForTimeout(250);
+  ok('a search that matches nothing says so rather than showing everything',
+     has(await text(page, '.vst'), 'No case matches')
+     && await page.locator('[data-act="vstPickCase"]').count() === 0);
+  await page.locator('#vst_q').fill('');
+  await page.waitForTimeout(250);
+
+  /* AND IT CAN BE PUT OFF. Local processing first, the case afterwards — with
+     the portal saying plainly that it holds no record until then. */
+  await page.locator('[data-act="vstSkipCase"]').click();
+  await page.waitForTimeout(250);
+  ok('the work can start with no case chosen', has(await text(page, '.vst'), 'Start date'));
+  await page.evaluate(() => {
+    VST.step = 'done'; VST.startMs = vstToUtc(2026, 8, 17, 17, 14, 32, 'America/New_York');
+    VST.out = { blob: new Blob(['x']), url: '', name: 'DSC_0009-timestamped.webm',
+                size: 900, mime: 'video/webm' };
+    paintVStamp();
+  });
+  await page.waitForTimeout(200);
+  const done = await text(page, '.vst');
+  ok('an unattached copy says it belongs to no case', has(done, 'Not attached to a case'));
+  ok('and that the portal therefore holds no record of it',
+     has(done, 'nothing about this copy is recorded'));
+  ok('with a way to attach it afterwards',
+     await page.locator('[data-act="vstAttach"]').count() === 1);
+  await page.close();
+}
+
+section('Adding media and looking at media are named apart');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Case media');
+  const body = await text(page, '#dlgBody');
+  ok('the entry point for adding is named for what it adds',
+     has(body, 'Upload video / picture'));
+  ok('the existing files are named Case media', has(body, 'Case media'));
+  /* THE CONTROL SAYS WHAT IT DOES. The section is called Upload video /
+     picture; the button under it uploads a picture or a document, because
+     video is not uploaded at all and a button may not say otherwise. */
+  ok('and the upload control does not promise to store video',
+     await page.locator('.btn', { hasText: 'Upload picture or document' }).count() === 1
+     && await page.locator('.btn', { hasText: 'Upload video' }).count() === 0);
+  ok('the tab itself reads Case media',
+     has(await text(page, '.wstabs button.on'), 'Case media'));
+  await page.close();
+}
+
+section('The four field actions are untouched');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('dana');
+  await page.locator('#p').fill('FieldWork2026x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(600);
+  await page.locator('[data-act="svEnter"]').click();
+  await page.waitForTimeout(800);
+  // The four field actions live on the home screen while a day is running.
+  if (await page.locator('[data-act="svStartDay"]').count()) {
+    await page.locator('#sv_start').fill('05:45');
+    await page.locator('[data-act="svStartDay"]').click();
+    await page.waitForTimeout(1000);
+  }
+  const quad = await page.evaluate(() => {
+    const q = document.querySelector('.sv-quad');
+    return q ? [...q.querySelectorAll('button')].map(b => b.textContent.trim()) : null;
+  });
+  ok('the field home still offers four actions', quad && quad.length === 4, JSON.stringify(quad));
+  /* Each label ends with its own word — the leading character is the button's
+     glyph. `Video$` and not `Video` so "Video timestamp" would fail: the field
+     button is the short one, and the longer wording belongs on the media
+     screen. */
+  ok('and they are still Activity, Photo, Video and Note',
+     quad && /Activity$/.test(quad[0]) && /Photo$/.test(quad[1])
+     && /Video$/.test(quad[2]) && /Note$/.test(quad[3]), JSON.stringify(quad));
+  ok('one generic upload button did not replace them',
+     !(quad || []).some(t => /upload/i.test(t)), JSON.stringify(quad));
   await page.close();
 }
 

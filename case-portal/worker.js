@@ -3186,6 +3186,17 @@ async function caseWorkspace(env, user, caseNo) {
       WHERE e.case_no = ? ${admin ? '' : 'AND e.deleted_at IS NULL'}
       ORDER BY e.id DESC LIMIT 200`).bind(caseNo).all();
 
+  /* The record of every timestamped video copy made for this case. There are no
+     video bytes here or in R2 — see `recordVideoStamp` — so this is the whole
+     of what the portal knows about them, and it rides with the workspace so the
+     Evidence tab needs no second round trip.
+
+     GUARDED: `schema.sql` arrives by a manual portal-setup dispatch while the
+     Worker deploys on push, so between the two this table does not exist on the
+     live database and a query against it would take out the whole workspace. */
+  const videoStamps = (await missingTables(env)).includes('video_stamp')
+    ? [] : await videoStampsFor(env, caseNo);
+
   // Follow-up tasks (priority 19): the office sees them all; an investigator
   // only the ones assigned to them.
   const { results: tasks } = await env.DB.prepare(
@@ -3300,6 +3311,7 @@ async function caseWorkspace(env, user, caseNo) {
     notes: notes || [],
     comms: comms || [],
     evidence: evidence || [],
+    video_stamps: videoStamps,
     tasks: tasks || [],
     offers: offers || [],
     my_offer: myOffer || null,
@@ -4550,10 +4562,29 @@ async function uploadEvidence(request, env, user, caseNo) {
   const file = form.get('file');
   if (!file || typeof file === 'string' || !file.size) return json({ error: 'Attach a file.' }, 400);
 
+  /* VIDEO IS DEVICE-FIRST FROM HERE ON (owner, 2026-08-17). New video bytes do
+     not become permanent Cloudflare storage: the original stays on the
+     investigator's device and the timestamped derivative is generated there and
+     saved back there. Refused IN THE WORKER rather than by the page hiding a
+     button, because "no persistent R2 video object is created" is a property,
+     and a property enforced by a page is enforced by nothing.
+
+     Checked BEFORE the size and cap tests on purpose — a refused video must
+     not first be told to split itself into smaller parts, which is advice for
+     a path that no longer exists.
+
+     LEGACY VIDEO ALREADY IN R2 IS UNTOUCHED — this refuses new writes and
+     deletes nothing. Photographs are unaffected and keep the existing model. */
+  if (String(file.type || '').startsWith('video/')) {
+    return json({ error: 'Video is not stored in the portal any more. Keep the original '
+      + 'on your device and use Video timestamp to generate the timestamped copy — it '
+      + 'is made on your own machine and saved back to it.', code: 'video_device_first' }, 400);
+  }
+
   const lim = storageLimits(env);
   if (file.size > lim.maxFileBytes) {
     return json({ error: `That file is ${(file.size / 1048576).toFixed(1)} MB and the per-file limit is `
-      + `${Math.floor(lim.maxFileBytes / 1048576)} MB. Split long video into parts before uploading.` }, 413);
+      + `${Math.floor(lim.maxFileBytes / 1048576)} MB.` }, 413);
   }
   const usage = await evidenceUsage(env);
   if (usage.uploads_this_month >= lim.maxUploadsPerMonth) {
@@ -4660,6 +4691,130 @@ async function deleteEvidence(env, user, caseNo, eid) {
   await env.DB.prepare('UPDATE case_evidence SET deleted_by = ?, deleted_at = ? WHERE id = ?')
     .bind(user.id, nowIso(), eid).run();
   return json({ ok: true, usage: await evidenceUsage(env) });
+}
+
+/* ------------------------------------------------- video timestamp records
+
+   VIDEO IS DEVICE-FIRST (owner, 2026-08-17). Neither the original nor the
+   timestamped derivative is stored here or in R2 — the original never leaves
+   the investigator's device, the derivative is rendered in their own browser
+   and saved back to their own device, and what the portal keeps is the RECORD
+   that it happened. There is no blob column on `video_stamp` and there must
+   never be one; nothing in this file reads or writes video bytes.
+
+   This is the project's existing audit shape, not a new one: `send_log`,
+   `build_events` and `invoice_events` are all append-only per-feature tables,
+   and a correction inserts a row rather than editing one — the same reasoning
+   that produced `activity_removed`.
+
+   THE ACCESS BOUNDARY IS THE EVIDENCE BOUNDARY. Every route here goes through
+   `caseFor`, so an investigator reaches only cases assigned to them and a
+   record is never broadened by existing. */
+
+const VSTAMP_NOT_SET_UP = 'Video timestamping is not set up on this database yet. '
+  + 'Run the portal-setup workflow once and try again.';
+
+/* An entered wall-clock time is meaningless without the zone it was entered in,
+   so the zone is stored beside the instant and validated on the way in — a junk
+   value would make the burned-in EST/EDT wording impossible to re-derive. */
+function validZone(tz) {
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return true; } catch { return false; }
+}
+
+async function videoStampsFor(env, caseNo) {
+  const { results } = await env.DB.prepare(
+    `SELECT v.id, v.case_no, v.original_name, v.original_size, v.original_hash,
+            v.start_utc, v.tz, v.derivative_name, v.generated_at, v.saved_at,
+            v.superseded_at, v.created_at, u.display_name AS generated_by_name
+       FROM video_stamp v LEFT JOIN users u ON u.id = v.generated_by
+      WHERE v.case_no = ? ORDER BY v.id DESC`).bind(caseNo).all();
+  return results || [];
+}
+
+async function listVideoStamps(env, user, caseNo) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  /* Degrades rather than 503s: this read feeds a panel inside the Evidence tab,
+     and a missing table must not take the tab out — the same rule the archive
+     read follows. The write route below is where the workflow is named. */
+  if ((await missingTables(env)).includes('video_stamp')) {
+    return json({ stamps: [], not_set_up: true });
+  }
+  return json({ stamps: await videoStampsFor(env, caseNo) });
+}
+
+async function recordVideoStamp(request, env, user, caseNo) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  if ((await missingTables(env)).includes('video_stamp')) {
+    return json({ error: VSTAMP_NOT_SET_UP, code: 'not_set_up' }, 503);
+  }
+  const body = await readJson(request);
+
+  const originalName = String(body.original_name || '').trim().slice(0, 240);
+  if (!originalName) return json({ error: 'Name the video the copy was made from.' }, 400);
+
+  const startRaw = String(body.start_utc || '');
+  const startMs = Date.parse(startRaw);
+  if (!Number.isFinite(startMs)) {
+    return json({ error: 'Send the chosen start time as an instant the portal can read.' }, 400);
+  }
+  const tz = String(body.tz || 'America/New_York');
+  if (!validZone(tz)) return json({ error: 'That is not a time zone this portal knows.' }, 400);
+
+  const size = Number.isFinite(Number(body.original_size)) && Number(body.original_size) > 0
+    ? Math.round(Number(body.original_size)) : null;
+  /* A hash is recorded only when the browser could actually compute one. An
+     absent hash is stored as absent — never as a placeholder, which would read
+     as a fingerprint that had been checked. */
+  const hash = /^[0-9a-f]{64}$/.test(String(body.original_hash || '')) ? String(body.original_hash) : null;
+  const derivative = String(body.derivative_name || '').trim().slice(0, 240) || null;
+
+  const now = nowIso();
+  /* REGENERATION (brief §9). A corrected start time does not edit the row it
+     corrects: the earlier records for this same original are stamped superseded
+     and a new one is inserted, so "what was generated, when, and by whom"
+     survives the correction and the ACTIVE derivative is the one row on this
+     original with no `superseded_at`.
+
+     Matched on the original's own name rather than a caller-supplied id: the
+     operator picks a file from their device, so the file is what identifies the
+     work, and a caller cannot supersede a record belonging to another original
+     by naming its id. */
+  await env.DB.prepare(
+    'UPDATE video_stamp SET superseded_at = ? WHERE case_no = ? AND original_name = ? AND superseded_at IS NULL')
+    .bind(now, caseNo, originalName).run();
+
+  const res = await env.DB.prepare(
+    `INSERT INTO video_stamp (case_no, original_name, original_size, original_hash, start_utc, tz,
+       derivative_name, generated_by, generated_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(caseNo, originalName, size, hash, new Date(startMs).toISOString(), tz,
+          derivative, user.id, now, now).run();
+
+  return json({ ok: true, id: res.meta ? res.meta.last_row_id : null,
+                stamps: await videoStampsFor(env, caseNo) }, 201);
+}
+
+/* SAVED IS THE OPERATOR'S WORD, NOT AN ASSUMPTION. A browser cannot see where a
+   download went, so nothing here is written when the file is generated — only
+   when the save the operator started has actually completed, or when they
+   confirm it did. A generated copy that was never saved therefore reads as not
+   saved rather than as done.
+
+   Written once. A second call is a no-op that succeeds: the moment the file
+   reached the device is the FIRST one, and a repeat tap on a flaky connection
+   must not move it. */
+async function markVideoStampSaved(env, user, caseNo, id) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  if ((await missingTables(env)).includes('video_stamp')) {
+    return json({ error: VSTAMP_NOT_SET_UP, code: 'not_set_up' }, 503);
+  }
+  const row = await env.DB.prepare('SELECT id, saved_at FROM video_stamp WHERE id = ? AND case_no = ?')
+    .bind(id, caseNo).first();
+  if (!row) return json({ error: 'not found' }, 404);
+  if (!row.saved_at) {
+    await env.DB.prepare('UPDATE video_stamp SET saved_at = ? WHERE id = ?').bind(nowIso(), id).run();
+  }
+  return json({ ok: true, stamps: await videoStampsFor(env, caseNo) });
 }
 
 
@@ -5343,6 +5498,7 @@ const DEMO_SWEEP = [
   ['retainer_payment_token','DELETE FROM retainer_payment_token WHERE case_no LIKE ?'],
   ['send_log',              'DELETE FROM send_log WHERE case_no LIKE ?'],
   ['payment_send',          'DELETE FROM payment_send WHERE case_no LIKE ?'],
+  ['video_stamp',           'DELETE FROM video_stamp WHERE case_no LIKE ?'],
 
   /* --- the spine, last --- */
   ['submissions',           'DELETE FROM submissions WHERE case_no LIKE ?'],
@@ -5938,6 +6094,7 @@ const EXPECTED_TABLES = [
   'case_day_pauses', 'lead_status', 'send_log', 'invoice_retainer',
   'payment_methods', 'payment_send', 'retainer_receipt', 'case_archive', 'case_deleted', 'notify_recipient', 'case_phone',
   'retainer_payment', 'retainer_payment_void', 'retainer_payment_token',
+  'video_stamp',
 ];
 
 async function missingTables(env) {
@@ -6574,6 +6731,18 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/evidence\/(\d{1,12})\/delete$/);
   if (m && method === 'POST') return deleteEvidence(env, user, m[1], parseInt(m[2], 10));
+
+  /* Video timestamping. Addressed under /cases/:no/ on purpose, so the deleted
+     and archived chokepoint above already covers the two writes and neither has
+     to remember the rule for itself. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/video-stamps$/);
+  if (m && method === 'GET') return listVideoStamps(env, user, m[1]);
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/video-stamp$/);
+  if (m && method === 'POST') return recordVideoStamp(request, env, user, m[1]);
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/video-stamp\/(\d{1,12})\/saved$/);
+  if (m && method === 'POST') return markVideoStampSaved(env, user, m[1], parseInt(m[2], 10));
 
   if (p === '/storage' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
