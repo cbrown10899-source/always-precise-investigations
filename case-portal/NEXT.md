@@ -386,6 +386,40 @@ Nothing further should be built until the device says whether
 declines, that is the owner's own STOP condition and no muxer would have helped.
 If it accepts, the CSP questions above are decided before anything is installed.
 
+## 🐞 THE GATE ASKED THE WRONG QUESTION — fixed 2026-08-18
+
+**Also: the preview is optional, never a gate** (owner: *"Do not require
+preview. Generate MP4, then offer Share or Save."*). The copy is finished before
+the player element exists, so a device that will not play it back inside the page
+gets a sentence instead — *"The copy is made… which says nothing about the
+file"* — and the Save and Share actions are untouched. Where the copy does play,
+checking the clock is offered and stated as **not required**. The action names
+what the platform will do: *Share or save to this device* where the share sheet
+exists.
+
+The `onerror` is wired in `paintVStamp()` rather than as an inline attribute,
+the way everything else on this page is wired.
+
+
+**Owner:** *"WebCodecs pipeline says YES but old media-element compatibility gate
+still blocks generation."*
+
+**One condition.** The screen gated on `readable` — whether a `<video>` element
+could decode the file — a check that predates the pipeline. On the owner's iPhone
+the media element says NO and WebCodecs says YES, so **the one device the
+pipeline was built for was the one it refused.**
+
+`vstPath()` is the single decider now — `pipeline` / `legacy` / `checking` /
+`none` — and the Generate button, `vstGenerate` and the Compatibility line all
+read it. **Three consumers, one answer**, which is what stops the screen and the
+generator disagreeing again. An outstanding check disables the action rather than
+removing it; only "no route at all" blocks.
+
+**The media element's verdict is informational now**, exactly as the owner asked:
+it still appears, saying the ordinary player could not open the file but the
+codec can, so generation is unaffected. A genuine refusal names WHICH route
+failed — no WebCodecs, or a decoder that declined this file's configuration.
+
 ## 🎬 THE WEBCODECS PIPELINE — SHIPPED 2026-08-18 (#170, `463b6c5`)
 
 **The device passed the gate on the real file:** H.264 `avc1.640028`,
