@@ -55,6 +55,10 @@ const API_PREFIX = '/portal-api';
 // Case numbers come from a public form, so they are treated as untrusted input
 // and pinned to the shape the intake actually generates: API-YYYYMMDD-NNNN.
 const CASE_NO_RE = /^[A-Za-z0-9][A-Za-z0-9-]{2,63}$/;
+/* SURVEILLANCE-VOICE.md §3. A closed list, matching the CHECK on the column:
+   an unknown value is dropped rather than stored, so this can never become a
+   free-text field somebody puts a sentence in. */
+const ACTIVITY_SOURCES = ['voice'];
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -3329,6 +3333,14 @@ async function caseWorkspace(env, user, caseNo) {
   if (!row) return json({ error: 'not found' }, 404);
   const admin = user.role === 'admin';
 
+  /* THE JOIN IS GUARDED, like every table added after the live database
+     existed. `schema.sql` arrives by a MANUAL portal-setup dispatch while the
+     Worker deploys on push, so between the two `activity_source` does not
+     exist — and a join against a missing table would take out the workspace,
+     which is the most-used screen there is. Absent, an entry simply has no
+     recorded source, which is what every entry made before this shipped is. */
+  const hasSource = !(await missingTables(env)).includes('activity_source');
+
   /* Removed entries still come back, stamped — the page greys them out with a
      way to put one back, and the report skips them. Erasing the row outright
      is what this deliberately does not do. */
@@ -3339,10 +3351,12 @@ async function caseWorkspace(env, user, caseNo) {
             COALESCE(m.video_acquired, 0) AS video_acquired,
             COALESCE(m.photo_acquired, 0) AS photo_acquired,
             r.removed_at, ru.display_name AS removed_by
+            ${hasSource ? ', s.source, s.command_id' : ''}
        FROM activity_log a LEFT JOIN users u ON u.id = a.investigator_id
        LEFT JOIN activity_media m ON m.entry_id = a.id
        LEFT JOIN activity_removed r ON r.entry_id = a.id
        LEFT JOIN users ru ON ru.id = r.removed_by
+       ${hasSource ? 'LEFT JOIN activity_source s ON s.entry_id = a.id' : ''}
       WHERE a.case_no = ?
       ORDER BY a.at_date DESC, a.at_time DESC, a.id DESC
       LIMIT 500`).bind(caseNo).all();
@@ -3949,6 +3963,28 @@ async function addActivity(request, env, user, caseNo) {
           nowIso(), user.id).run();
 
   const id = res.meta ? res.meta.last_row_id : null;
+
+  /* HOW IT WAS CAPTURED (SURVEILLANCE-VOICE.md §3). A companion row, never a
+     column on activity_log — the owner's instruction and the only idempotent
+     option, since schema.sql is re-applied on every portal-setup run.
+
+     THE ENTRY IS ALREADY WRITTEN by this point, and that ordering is the whole
+     safety of it: the marker is a note about an activity that exists, so a
+     database that has not had portal-setup run yet, or any failure recording
+     it, costs the marker and never the investigator's entry. */
+  if (id && ACTIVITY_SOURCES.includes(String(body.source || ''))) {
+    if (!(await missingTables(env)).includes('activity_source')) {
+      try {
+        await env.DB.prepare(
+          `INSERT INTO activity_source (entry_id, source, command_id, heard, at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(entry_id) DO NOTHING`)
+          .bind(id, String(body.source), String(body.command_id || '').slice(0, 64) || null,
+                String(body.heard || '').slice(0, 2000) || null, nowIso()).run();
+      } catch { /* an entry that exists beats a note about how it was made */ }
+    }
+  }
+
   // What was captured at this moment. Recorded beside the entry so the report
   // can state it per line; the media files themselves attach with priority 6.
   const f = v => (v === true || v === 1 || v === '1') ? 1 : 0;
@@ -6096,6 +6132,7 @@ const DEMO_SWEEP = [
   /* --- children, addressed through their parent's id --- */
   ['activity_media',        'DELETE FROM activity_media WHERE entry_id IN (SELECT id FROM activity_log WHERE case_no LIKE ?)'],
   ['activity_removed',      'DELETE FROM activity_removed WHERE entry_id IN (SELECT id FROM activity_log WHERE case_no LIKE ?)'],
+  ['activity_source',       'DELETE FROM activity_source WHERE entry_id IN (SELECT id FROM activity_log WHERE case_no LIKE ?)'],
   ['case_day_pauses',       'DELETE FROM case_day_pauses WHERE day_id IN (SELECT id FROM case_days WHERE case_no LIKE ?)'],
   ['build_items',           'DELETE FROM build_items WHERE build_id IN (SELECT id FROM case_builds WHERE case_no LIKE ?)'],
   ['build_events',          'DELETE FROM build_events WHERE build_id IN (SELECT id FROM case_builds WHERE case_no LIKE ?)'],
@@ -6746,7 +6783,7 @@ const EXPECTED_TABLES = [
   'case_day_pauses', 'lead_status', 'send_log', 'invoice_retainer',
   'payment_methods', 'payment_send', 'retainer_receipt', 'case_archive', 'case_deleted', 'notify_recipient', 'case_phone',
   'retainer_payment', 'retainer_payment_void', 'retainer_payment_token',
-  'video_stamp', 'dropbox_auth',
+  'video_stamp', 'dropbox_auth', 'activity_source',
 ];
 
 async function missingTables(env) {

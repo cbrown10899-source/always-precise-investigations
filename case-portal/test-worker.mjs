@@ -8697,6 +8697,122 @@ section('Video timestamp on a database that has not been set up');
    Video; do not migrate or delete old R2 files; keep D1 for structured case
    data; and if Dropbox is unavailable, refuse the upload rather than falling
    back to R2 or double-writing. */
+/* ------------------------------- how an activity was captured (VOICE §3)
+
+   Owner, 2026-08-18: "Track voice-created activity entries with an idempotent
+   companion metadata table instead of altering the existing activity_log
+   table."
+
+   §3 calls this the most important requirement: a voice command must create a
+   REAL activity record through the existing API, carrying `source = voice`.
+   §11 and §12 are the other half of it — a voice entry is not privileged, and
+   must edit and remove exactly like any other. */
+section('Voice §3: a voice entry is a real entry, marked but not privileged');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const l = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const t = new URL(l, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${t}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find((u) => u.username === 'dana').id;
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  await ingest(env, { case_no: 'API-VOX1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  await call(env, '/submissions/API-VOX1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+
+  const add = (body, cookie) => call(env, '/cases/API-VOX1/activity',
+    { method: 'POST', cookie: cookie || dana,
+      body: { at_date: '2026-08-18', at_time: '09:15', kind: 'activity', ...body } });
+
+  const spoken = await jsonOf(await add({
+    description: 'No change observed at the residence.',
+    source: 'voice', command_id: 'NO_CHANGE_RESIDENCE',
+    heard: 'Mobile, no change at residence.' }));
+  ok('a voice command creates a real activity entry', typeof spoken.id === 'number');
+
+  const typed = await jsonOf(await add({ description: 'Typed by hand at the desk.' }));
+  ok('and so does an ordinary one', typeof typed.id === 'number');
+
+  /* THE SAME TABLE, THE SAME API. §3: "This uses the SAME existing Activity API
+     and data model as manual activity." */
+  ok('both are rows in the one activity table',
+     (await env.DB.prepare('SELECT COUNT(*) AS n FROM activity_log WHERE case_no = ?')
+       .bind('API-VOX1').first()).n === 2);
+
+  const src = await env.DB.prepare(
+    'SELECT source, command_id, heard FROM activity_source WHERE entry_id = ?').bind(spoken.id).first();
+  ok('the voice one is marked as captured by voice', src && src.source === 'voice');
+  ok('with the canonical command that produced it', src.command_id === 'NO_CHANGE_RESIDENCE');
+  /* §5 — the transcript is diagnostic metadata and must never REPLACE the
+     standardized text. Both are kept, and the entry itself reads as the
+     standard sentence. */
+  ok('the raw transcript is kept beside it, not instead of it',
+     src.heard === 'Mobile, no change at residence.'
+     && (await env.DB.prepare('SELECT description FROM activity_log WHERE id = ?')
+          .bind(spoken.id).first()).description === 'No change observed at the residence.');
+  ok('a typed entry has no source row at all',
+     (await env.DB.prepare('SELECT COUNT(*) AS n FROM activity_source WHERE entry_id = ?')
+       .bind(typed.id).first()).n === 0);
+
+  /* A CLOSED LIST, matching the CHECK on the column. An unknown value is
+     dropped rather than stored, so this cannot become a free-text field. */
+  const odd = await jsonOf(await add({ description: 'Odd source.', source: 'telepathy' }));
+  ok('an unknown source is dropped, and the entry is still made',
+     typeof odd.id === 'number'
+     && (await env.DB.prepare('SELECT COUNT(*) AS n FROM activity_source WHERE entry_id = ?')
+          .bind(odd.id).first()).n === 0);
+
+  /* THE WORKSPACE CARRIES IT, for both roles — an investigator can see that
+     their own entry came from voice. */
+  let ws = await jsonOf(await call(env, '/cases/API-VOX1/workspace', { cookie: dana }));
+  let row = ws.activity.find((a) => a.id === spoken.id);
+  ok('the workspace says how the entry was captured',
+     row.source === 'voice' && row.command_id === 'NO_CHANGE_RESIDENCE');
+  ok('and says nothing about a typed one',
+     !ws.activity.find((a) => a.id === typed.id).source);
+  /* THE TRANSCRIPT DOES NOT RIDE ALONG. It is stored for the office to consult
+     when an entry and what was said disagree; nothing surfaces it yet, and a
+     payload is not the place to start. */
+  ok('the raw transcript is not in the workspace payload',
+     !JSON.stringify(ws).includes('Mobile, no change at residence.'));
+
+  /* §11 — NOT PRIVILEGED. The same edit and the same removal, by the same
+     rules, as an entry typed by hand. */
+  ok('a voice entry edits exactly like any other',
+     (await call(env, `/cases/API-VOX1/activity/${spoken.id}`, { method: 'POST', cookie: dana,
+       body: { description: 'No change observed at the residence. Corrected.' } })).status === 200);
+  ok('and its source survives the edit, because that is how it was captured',
+     (await env.DB.prepare('SELECT source FROM activity_source WHERE entry_id = ?')
+       .bind(spoken.id).first()).source === 'voice');
+  ok('a voice entry removes exactly like any other',
+     (await call(env, `/cases/API-VOX1/activity/${spoken.id}/delete`,
+       { method: 'POST', cookie: dana })).status === 200);
+  ws = await jsonOf(await call(env, '/cases/API-VOX1/workspace', { cookie: dana }));
+  ok('and comes back stamped removed, the same as any other',
+     !!ws.activity.find((a) => a.id === spoken.id).removed_at);
+
+  /* THE TABLE ARRIVES BY A MANUAL DISPATCH, so the Worker must work without it
+     — and the thing that must never be lost is the investigator's entry. */
+  const bare = freshEnv();
+  await bootstrapAdmin(bare);
+  const a2 = (await login(bare, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(bare, { case_no: 'API-VOX2', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  await bare.DB.prepare('DROP TABLE activity_source').run();
+  const made = await jsonOf(await call(bare, '/cases/API-VOX2/activity', { method: 'POST', cookie: a2,
+    body: { at_date: '2026-08-18', at_time: '10:00', kind: 'activity',
+            description: 'Said before the schema caught up.', source: 'voice' } }));
+  ok('without the table the entry is still made, and keeps its words',
+     typeof made.id === 'number');
+  ok('health names the missing table rather than hiding it',
+     (await jsonOf(await call(bare, '/health'))).missing_tables.includes('activity_source'));
+  const ws2 = await jsonOf(await call(bare, '/cases/API-VOX2/workspace', { cookie: a2 }));
+  ok('and the workspace still loads, with no source on the entry',
+     ws2.activity.length === 1 && !ws2.activity[0].source);
+}
+
 section('Dropbox storage — where a new case file goes');
 {
   const fakeR2 = () => {

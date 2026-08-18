@@ -5163,17 +5163,23 @@ section('Voice commands: one registry, standard wording, and no guessing');
   ok('an unplanned phrase is unrecognized, not approximated',
      r.status === 'unrecognized' && r.id === null, r.status + ' ' + r.id);
 
-  /* §4 — the aliases that arrived truncated were NOT inferred. VEHICLE_OBSERVED
-     exists as a canonical command and deliberately matches nothing, because its
-     only fragment is the bare word "observed" and registering that would file
-     "subject observed" as a vehicle sighting. */
+  /* §4 — the aliases that arrived truncated were NOT inferred. The owner
+     supplied VEHICLE_OBSERVED's two phrases directly on 2026-08-18, with the
+     instruction not to map the bare word "observed" — which is the reason it
+     had no alias until they did: it would file "subject observed" as a vehicle
+     sighting. Both halves of that are asserted here. */
   const reg = await page.evaluate(() => VOICE_COMMANDS.map(
     (c) => ({ id: c.id, n: c.say.length })));
   ok('every canonical command in §4 is in the registry', reg.length >= 21, String(reg.length));
-  ok('VEHICLE_OBSERVED is present but deliberately unaliased',
-     (reg.find((c) => c.id === 'VEHICLE_OBSERVED') || {}).n === 0);
+  r = await m('Mobile, vehicle observed');
+  ok('"vehicle observed" is the vehicle command', r.id === 'VEHICLE_OBSERVED', r.id);
+  r = await m('Mobile, vehicle sighting');
+  ok('and so is "vehicle sighting"', r.id === 'VEHICLE_OBSERVED', r.id);
+  r = await m('Mobile, observed');
+  ok('bare "observed" is deliberately mapped to nothing',
+     r.status === 'unrecognized' && r.id === null, r.status + ' ' + r.id);
   r = await m('Mobile, subject observed');
-  ok('so "subject observed" is the subject, never the vehicle',
+  ok('so "subject observed" is still the subject, never the vehicle',
      r.id === 'SUBJECT_OBSERVED', r.id);
 
   /* §7's hard case: two DIFFERENT commands that fit equally well. Proven by
