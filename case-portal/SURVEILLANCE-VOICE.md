@@ -546,3 +546,51 @@ when off" is asserted as a fact about calls rather than as wording on a screen.
 
 **The microphone itself stays LIVE VERIFIED OPEN** and can only be closed on a
 real phone.
+
+## The iPhone bug, 2026-08-18 — ON, microphone lit, nothing happens
+
+Owner, on the device: *"Voice Mode shows ON and iOS mic indicator is active, but
+saying Mobile produces no result and Tap to speak does nothing."*
+
+**Two symptoms, and one of them needed no Safari knowledge to find.** The page
+had **two** recognisers — the loop's and "Tap to speak"'s — and a browser gives
+a page **one** speech session. With the loop holding it, the manual button
+started a second engine on top of the first and the browser ignored it. That is
+exactly what a button that does nothing looks like. "Tap to speak" now takes the
+session properly: the loop stands down, and the handover is on the record.
+
+**The other symptom is `continuous`.** iOS Safari does not honour continuous
+recognition — the session starts, the indicator lights, and no result is ever
+delivered, which is the report word for word. The loop is now **one-shot,
+restarted on `end`**, which is the portable shape and behaves the same on
+desktop. One code path, no device sniffing.
+
+**And a start that throws no longer leaves the panel claiming ON**, which is the
+shape of the whole complaint: a control saying it is listening while nothing is.
+
+### The device now says what it did
+
+Every `SpeechRecognition` event is logged with a timestamp — `start`,
+`audiostart`, `soundstart`, `speechstart`, `result`, `nomatch`, `error`,
+`speechend`, `soundend`, `audioend`, `end` — **alongside the calls this page
+makes itself** (`start() called`, `restarting`, `start() threw`). That
+distinction is the diagnostic: *"we called start() and the engine never said
+start"* is a different fault from *"start, audiostart, speechstart, then end
+with no result"*, and they have different fixes.
+
+It is shown **on the phone**, under Speech events on the field home. A log in a
+console nobody can open on an iPhone in a car is not a diagnostic. It appears
+once there is something in it and can be cleared.
+
+**Errors are logged even when they stop nothing.** `no-speech` and `aborted` are
+ordinary and the loop carries on through them — but silence about them is what
+made this bug invisible in the first place.
+
+### What is still unproven
+
+This container has **no speech engine at all**, so the fix for the results
+symptom is reasoned from the reported behaviour and iOS Safari's known
+treatment of `continuous`, not observed. The event log exists precisely so the
+next device test reports a fact rather than a symptom: if it shows `start()
+called` and nothing after it, that is a different finding from a full
+`start → audiostart → speechstart → end` with no `result`.
