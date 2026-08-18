@@ -448,7 +448,8 @@ confirmation. This slice did not reverse it and did not add a path around it.
 | | Section | Note |
 | --- | --- | --- |
 | ✅ | §3 `source = voice` on the activity record | **Shipped 2026-08-18.** `activity_source` is a companion table keyed on `entry_id`, on the owner's instruction — "an idempotent companion metadata table instead of altering the existing activity_log table" — which is also the only thing `schema.sql` can do, being re-applied on every portal-setup run. `source` is a closed list matching the column's CHECK, so an unknown value is dropped rather than stored. The entry is written FIRST and the marker second, so a database that has not had the dispatch run costs the marker and never the investigator's words. §11/§12 hold: the same edit, the same removal, no privilege |
-| 🔴 | §2 wake-word listening loop, VOICE MODE ON/OFF | The hands-free half. Explicit control, never auto-activating |
+| ✅ | §2 wake-word loop + VOICE MODE ON/OFF, §9 confirmation, §14 states, §16 foreground limit | **Shipped 2026-08-18.** Explicit toggle on the field home; opening Active Surveillance constructs no recogniser at all. Say "Mobile" and the command in one breath, or "Mobile" alone to arm it. A confidently matched command files a real entry and returns to listening without a tap. §16 is enforced, not merely written: the loop stops when the page is hidden and says why |
+| 🟡 | §8 duplicate protection | **Half built, with the loop, because the loop is what creates the failure.** Repeated finals from the engine are guarded by an in-flight lock plus a six-second same-command window. **The offline/retry half is NOT built** and needs a server-side event key |
 | 🔴 | §1 compact status header | Reclaims the space the big timer takes on mobile |
 | 🔴 | §6B dictation mode as a loop | The SAVE / EDIT / DISCARD wording and the return to listening. The behaviour it depends on already exists |
 | ✅ | §10 LAST ACTIVITY | **Shipped 2026-08-18.** Edit and Remove on the field home, correcting the newest entry *in place* — the editor opens inside the card and the home screen never leaves the screen. A removed one is struck through with Put it back. Two defects fell out of building it, both fixed and both tested: `editActivity` was **replace-all**, so a wording-only correction would have written NULL over the location and vehicle the investigator recorded; and `svDeleteEntry` forced a jump to the timeline, which was harmless while Delete only existed ON the timeline and navigated you away from the field home the moment it did not |
@@ -505,3 +506,43 @@ The first version of the removal test passed while standing on the timeline,
 because the timeline shows the same "not in the report" wording — which is
 exactly how the unwanted jump hid. The assertions now pin a home-screen marker
 alongside the text.
+
+### What the loop will and will not do on its own
+
+**Only a confidently matched structured command files itself.** That is §6/§7's
+rule made concrete: ambiguous phrases, dictated prose and phrases that matched
+nothing all **stop the loop** and hand over to the review that already existed.
+The loop stops deliberately — the operator is now looking at a question, and a
+microphone still listening would file something over the top of it.
+
+**Speech without the wake word is ignored entirely.** While voice mode is on the
+microphone hears the radio, the passenger and the road. Only an utterance
+carrying "Mobile", or the one immediately after "Mobile" said alone, is treated
+as addressed to the portal. Without this the screen fills with review prompts
+from a conversation nobody was having with the portal.
+
+**§16 is enforced.** The loop stops on `visibilitychange` and says *"Voice mode
+stopped because this page went into the background."* An investigator who
+believes the phone is listening in their pocket stops narrating, and the hole in
+the log is found when the report is written.
+
+**§8's covered half.** Speech engines re-emit a final result, and an auto-filing
+loop turns that into a duplicate entry in the evidence log. Two guards, because
+§8 says not to rely on matching text alone: nothing files while a file is in
+flight, and the same canonical command inside six seconds is the engine hearing
+it twice rather than the investigator saying it twice. A failed POST clears the
+guard, so a genuine retry is not mistaken for a duplicate.
+
+**§8's uncovered half, stated plainly:** retries after an offline period. That
+needs an event key the server enforces, and it is not built.
+
+### How it is tested without a microphone
+
+Headless Chromium has no speech recognition, so the **engine** is stubbed and
+everything around it is real — the real registry, the real activity API, the
+real database. The stub supplies only what a machine in a data centre cannot:
+what was heard. It counts `start()` and `stop()`, so "the microphone is inactive
+when off" is asserted as a fact about calls rather than as wording on a screen.
+
+**The microphone itself stays LIVE VERIFIED OPEN** and can only be closed on a
+real phone.

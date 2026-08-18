@@ -876,6 +876,18 @@
   .sv-mic{width:100%;font:inherit;font-size:1rem;font-weight:800;padding:16px;border-radius:12px;
     border:1.5px dashed #2a456a;background:#132538;color:#e8eef5;cursor:pointer;margin-bottom:10px;}
   .sv-mic.live{border-style:solid;border-color:var(--gold,#c99a3b);color:var(--gold,#c99a3b);}
+  /* §16.1 MOBILE PRIORITY. Full width, one thumb, and a target well above the
+     44px minimum — this is pressed in a car, at night, without looking. */
+  .sv-voice{margin-bottom:12px;}
+  .sv-voicebtn{width:100%;font:inherit;font-size:1.02rem;font-weight:800;min-height:56px;
+    padding:16px;border-radius:12px;border:1.5px solid #2a456a;background:#132538;
+    color:#e8eef5;cursor:pointer;}
+  .sv-voicebtn.on{background:#1d3a24;border-color:#3f8a52;color:#d6ffe2;}
+  .sv-voicebtn[disabled]{opacity:.55;cursor:default;}
+  .sv-voicestate{text-align:center;font-weight:800;font-size:.95rem;color:#9fc4e8;
+    padding:8px 2px 2px;}
+  .sv-voicestate.live{color:#8ee0a4;}
+  .sv-voicenote{color:#8fb4d9;font-size:.8rem;line-height:1.45;padding:6px 2px 0;}
   .sv-heard{background:#f4f7fa;color:#1c2531;border-radius:12px;padding:14px;margin-bottom:12px;}
   .sv-heard textarea{width:100%;font:inherit;font-size:.95rem;border:1px solid #cfd8e0;
     border-radius:8px;padding:10px;background:#fff;color:#1c2531;}
@@ -8814,6 +8826,7 @@ function svHomeScreen(){
       <button class="sv-q" data-act="svNote"><b>&#128221;</b>Note</button>
     </div>
 
+    ${svVoicePanelHtml()}
     ${svMicHtml()}
 
     ${""/* §10 — LAST ACTIVITY, correctable HERE. The spec is explicit: the
@@ -8958,6 +8971,17 @@ const VOICE_COMMANDS = [
     say: ["note"] },
 ];
 
+/* The wake word lives with the registry, because §4 wants ONE place that
+   decides what a spoken phrase means and "was this even addressed to us" is
+   the first half of that decision. */
+function voiceHasWake(spoken){
+  const n = voiceNormalize(spoken);
+  return n === VOICE_WAKE || n.startsWith(VOICE_WAKE + " ");
+}
+function voiceIsWakeOnly(spoken){
+  return voiceNormalize(spoken) === VOICE_WAKE;
+}
+
 function voiceNormalize(str){
   return String(str == null ? "" : str).toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
@@ -9002,6 +9026,240 @@ function voiceMatch(spoken){
    field here already accepts. Level 2 is this: the browser's speech API where
    it exists, ALWAYS reviewed before it becomes a log entry — nothing spoken is
    ever submitted straight into the record. */
+/* ------------------------------------ VOICE COMMAND MODE (§2, §9, §14, §16)
+
+   §14: explicit activation, and the microphone is inactive when off. This
+   never starts itself — opening Active Surveillance does not arm anything, and
+   there is no path here that turns it on as a side effect of something else.
+
+   §2's loop: listening for "Mobile" -> a command -> file it -> back to
+   listening, without the investigator touching the button between commands.
+   A single utterance carrying both ("Mobile, no change at residence") is
+   handled in one step, because that is how people actually speak; saying just
+   "Mobile" arms it and waits, which is the two-step form the spec describes.
+
+   §16 is a truth-in-labelling rule and it is enforced, not just written: this
+   is FOREGROUND functionality, so the loop stops when the page is hidden and
+   says so. An investigator who believes the phone is listening in their pocket
+   stops narrating, and the hole in the day's log is found when the report is
+   written. The honest failure costs one restart; the dishonest one costs the
+   evidence. */
+
+const VOICE_STATE_LABEL = {
+  off:        "Voice mode off",
+  wake:       "Listening for “Mobile…”",
+  command:    "Listening for the command…",
+  processing: "Processing…",
+  permission: "Microphone permission needed",
+  stopped:    "Voice mode stopped",
+};
+
+function svVoiceSupported(){
+  return typeof window !== "undefined"
+    && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+}
+
+function svVoice(){
+  if(!SV.voice){
+    SV.voice = {on: false, state: "off", msg: "", err: "", armed: false,
+                rec: null, filing: false, last: null};
+  }
+  return SV.voice;
+}
+
+function svVoiceToggle(){
+  const v = svVoice();
+  if(v.on) return svVoiceStop("off");
+  /* §14 — all of: an investigator, an authorised case, an ACTIVE surveillance
+     session, and this explicit act. The first two are the Worker's to enforce
+     (§15, and it does); the running day is the one this screen knows about. */
+  if(!(WS && WS.open_day)){
+    v.err = "Start the investigation day first — voice mode files activity onto a running day.";
+    return paint();
+  }
+  if(!svVoiceSupported()){
+    v.err = "This browser has no speech recognition. Your keyboard's own dictation still works in every field.";
+    return paint();
+  }
+  v.on = true; v.err = ""; v.msg = ""; v.armed = false; v.last = null;
+  svVoiceListen();
+  paint();
+}
+
+function svVoiceStop(reason){
+  const v = svVoice();
+  v.on = false;
+  v.armed = false;
+  v.filing = false;
+  v.state = reason === "off" ? "off" : "stopped";
+  if(reason === "hidden"){
+    v.err = "Voice mode stopped because this page went into the background. "
+          + "It only listens while it is on screen.";
+  }
+  if(v.rec){
+    /* Clear onend FIRST, or the restart it exists for fires on the way out and
+       turns the microphone straight back on. */
+    try{ v.rec.onend = null; v.rec.onresult = null; v.rec.onerror = null; v.rec.stop(); }catch{}
+    v.rec = null;
+  }
+  paint();
+}
+
+function svVoiceListen(){
+  const v = svVoice();
+  if(!v.on) return;
+  const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec;
+  try{ rec = new Ctor(); }catch{ v.on = false; v.state = "off";
+    v.err = "The microphone could not be opened."; return paint(); }
+  v.rec = rec;
+  rec.lang = "en-US";
+  rec.continuous = true;
+  rec.interimResults = false;
+  rec.maxAlternatives = 1;
+
+  rec.onresult = (e) => {
+    for(let i = e.resultIndex; i < e.results.length; i++){
+      const r = e.results[i];
+      if(r && r.isFinal) svVoiceHeard(r[0] ? r[0].transcript : "");
+    }
+  };
+  rec.onerror = (e) => {
+    const err = (e && e.error) || "";
+    if(err === "not-allowed" || err === "service-not-allowed"){
+      v.on = false; v.state = "permission"; v.rec = null;
+      v.err = "The microphone was not allowed, so voice mode is off.";
+      return paint();
+    }
+    /* no-speech and aborted are ordinary: the engine gives up after a pause and
+       onend puts it back. Nothing to report and nothing to stop. */
+  };
+  rec.onend = () => {
+    if(!v.on || (typeof document !== "undefined" && document.hidden)) return;
+    try{ rec.start(); }
+    catch{ setTimeout(() => { if(v.on) svVoiceListen(); }, 350); }
+  };
+
+  try{ rec.start(); }catch{ /* already started is harmless */ }
+  v.state = v.armed ? "command" : "wake";
+}
+
+/* §9 — brief. "NO CHANGE · 10:42 AM", never a spoken paragraph. */
+function svVoiceConfirm(command, when){
+  return String(command.id).replace(/_/g, " ") + " · " + t12(hmLocal(when));
+}
+
+async function svVoiceHeard(raw){
+  const v = svVoice();
+  if(!v.on) return;
+  const said = String(raw || "").trim();
+  if(!said) return;
+
+  /* NOT EVERYTHING IN THE CAR IS FOR US. While voice mode is on the microphone
+     hears the radio, the passenger and the road; only an utterance carrying the
+     wake word — or the one immediately after "Mobile" on its own — is treated
+     as addressed to the portal. Without this, a conversation fills the screen
+     with review prompts. */
+  if(!voiceHasWake(said) && !v.armed) return;
+
+  if(voiceIsWakeOnly(said)){
+    v.armed = true; v.state = "command"; v.err = ""; return paint();
+  }
+
+  const m = voiceMatch(said);
+
+  if(m.status === "ok"){
+    /* §8 — one spoken command, ONE record. Speech engines re-emit a final
+       result, and an auto-filing loop turns that into a duplicate entry in the
+       evidence log. Two guards, because the spec says not to rely on matching
+       text alone: nothing files while a file is in flight, and the same
+       canonical command inside six seconds is the same command being heard
+       twice, not the investigator saying it twice.
+
+       NOT COVERED HERE: retries after an offline period, which §8 also names.
+       That half needs a server-side event key and is not built. */
+    const now = Date.now();
+    if(v.filing) return;
+    if(v.last && v.last.id === m.command.id && now - v.last.at < 6000){
+      v.armed = false; v.state = "wake"; return paint();
+    }
+    v.filing = true;
+    v.last = {id: m.command.id, at: now};
+    v.state = "processing"; v.err = ""; paint();
+
+    const when = new Date();
+    const stamp = stampNow();
+    try{
+      await api(`/cases/${encodeURIComponent(WS_CASE)}/activity`, {method: "POST", body: {
+        at_date: stamp.date, at_time: stamp.time, kind: "activity",
+        description: m.text, source: "voice", command_id: m.command.id, heard: said,
+      }});
+      v.msg = svVoiceConfirm(m.command, when);
+    }catch(e){
+      v.err = e.message;
+      v.last = null;            // it did not land, so it is not a duplicate to guard
+    }
+    v.filing = false;
+    v.armed = false;
+    v.state = v.on ? "wake" : "off";
+    await svReload();           // §9 — and LAST ACTIVITY shows it immediately
+    return;
+  }
+
+  /* §7 and §6B — NOTHING ELSE FILES ITSELF. An ambiguous phrase, dictated
+     prose, and a phrase that matched nothing all stop the loop and hand over to
+     the review that already exists. The loop stops on purpose: the operator is
+     now looking at a question, and a microphone still listening would file
+     something over the top of it. */
+  svVoiceStop("handoff");
+  SV.heard = said;
+  SV.voiceText = null;
+  SV.voiceCmd = null;
+  v.msg = "";
+  v.err = m.status === "ambiguous"
+    ? "More than one command fits that — voice mode paused so you can choose."
+    : m.status === "dictation"
+      ? "Dictation — voice mode paused so you can read it before it goes in."
+      : "That did not match a command — voice mode paused so you can check it.";
+  paint();
+}
+
+/* §16 — foreground only, and enforced rather than merely stated. */
+if(typeof document !== "undefined"){
+  document.addEventListener("visibilitychange", () => {
+    if(document.hidden && SV && SV.voice && SV.voice.on) svVoiceStop("hidden");
+  });
+}
+
+/* §14's states, in the one place they are drawn. The panel is ABOVE the
+   review, so when the loop hands over to a question the operator can see that
+   voice mode paused and why — a control that goes quiet without saying so is
+   how someone ends up talking to a microphone that stopped listening. */
+function svVoicePanelHtml(){
+  const v = svVoice();
+  const supported = svVoiceSupported();
+  const day = !!(WS && WS.open_day);
+  const label = VOICE_STATE_LABEL[v.state] || VOICE_STATE_LABEL.off;
+  return `<div class="sv-voice">
+    <button class="sv-voicebtn${v.on ? " on" : ""}" data-act="svVoiceToggle"
+      ${supported && day ? "" : "disabled"}>${v.on
+        ? "&#127908; Voice mode ON &mdash; tap to stop"
+        : "&#127908; Voice mode OFF &mdash; tap to start"}</button>
+    <div class="sv-voicestate${v.on ? " live" : ""}">${esc(label)}</div>
+    ${v.msg ? `<div class="sv-ok">&#10003; ${esc(v.msg)}</div>` : ""}
+    ${v.err ? `<div class="sv-err">${esc(v.err)}</div>` : ""}
+    ${v.on ? `<div class="sv-voicenote">Say &ldquo;Mobile&rdquo; and the command &mdash; it
+      keeps listening between them, so you do not tap between entries.
+      <b>It only listens while this page is on screen</b>, not when the phone is locked
+      or this is in the background.</div>` : ""}
+    ${!supported ? `<div class="sv-voicenote">This browser has no speech recognition, so
+      voice mode cannot start here. Your keyboard&rsquo;s own dictation still works in
+      every field.</div>`
+      : !day ? `<div class="sv-voicenote">Voice mode files activity onto a running day,
+        so start the investigation day first.</div>` : ""}
+  </div>`;
+}
+
 function svMicHtml(){
   const supported = typeof window !== "undefined"
     && (window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -11205,6 +11463,7 @@ document.addEventListener("click", ev => {
     SV.err = "This browser has no in-app speech recognition. Your keyboard's own dictation works in every field here.";
     paint();
   }
+  else if(act === "svVoiceToggle"){ svVoiceToggle(); }
   else if(act === "svUseText"){
     const t = $("sv_heard") ? $("sv_heard").value : "";
     /* §3 — HOW IT WAS CAPTURED travels with the entry. `source` is voice for
