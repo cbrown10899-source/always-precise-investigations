@@ -21,8 +21,25 @@ item is finished.
 | 2 | Build Timestamp Photo | **DONE — DEPLOYED** at `ad77b2e` (#183). Two device-only checks OPEN, below. |
 | 3 | Visible Dropbox portal UI for Admin | **NEXT** — not started. Added by the owner 2026-08-18 |
 | 4 | Admin report workflow and mobile report fix | not started — **queued, do not begin** |
-| 5 | Full portal aesthetic cleanup | not started — **queued, do not begin** |
+| 5 | Full portal aesthetic cleanup | not started — **queued, do not begin**. Carries a specific brief, below |
 | 6 | Remaining Portal Ops productivity features | not started |
+
+**Item 5 carries a specific brief, in the owner's own words** (2026-08-18):
+
+> For the portal aesthetic/mobile cleanup, fix the mobile header navigation. The
+> hamburger is too small, oddly positioned, and does not look clickable. Use a
+> clear 44-48px tap target, stronger menu icon, conventional header placement,
+> clean alignment with the logo, and obvious open/pressed state. Remove the
+> awkward oversized box around the tiny icon.
+
+Recorded verbatim, **not started**, and not designed here. Two things to carry
+into it when it comes up: this project already has a measured tap-target rule
+(the field bars use `max(14px, env(safe-area-inset-bottom))` and 50/52px
+minimums, asserted rather than eyeballed), and it already has an assertion that
+a control's surface must differ from the page behind it by at least 8 luminance
+points — written after a "fix" that differed by 3. *"Does not look clickable"*
+is exactly what that assertion exists to catch, so the fix should be measured
+the same way rather than judged by eye.
 
 **Item 3, in the owner's own words** (2026-08-18): *"add visible Dropbox portal
 UI for Admin: connection status, account, Open Dropbox Folder, and case links
