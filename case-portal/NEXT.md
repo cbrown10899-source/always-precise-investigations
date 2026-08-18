@@ -366,6 +366,31 @@ recedes but is **never removed**, and nothing is hidden with `display:none` to
 make a section look smaller. Shrinking a section by deleting its words is not
 shrinking it, and an absent zero is a different claim from a zero.
 
+## 🚦 DEPLOYMENT — 2026-08-18, master `3b95e7f` (#168)
+
+| Component | Master SHA | Deployed SHA | Status |
+| --- | --- | --- | --- |
+| Public site + `/portal/` page | `3b95e7f` | `3b95e7f` | **DEPLOYED** — `Deploy site to Cloudflare Pages` success at `3b95e7f7` |
+| Worker / API | `3b95e7f` | `8a48d7d` | **DEPLOYED** — `worker.js` untouched by #167 and #168 |
+| D1 schema | `3b95e7f` | applied | unchanged — **no dispatch owed** |
+
+**LIVE VERIFIED remains OPEN** (egress proxy blocks the domain from this
+container). **And for this unit the live check is specifically the owner's iPhone:
+open Timestamp Video, choose `IMG_0440.mov`, and press "What can this device
+do?" — that read-out is the measurement that decides the iOS architecture.**
+
+## ⏸️ AWAITING OWNER DECISION — the WebCodecs route
+
+**Nothing installed. The audit stopped here on purpose.** Making iOS HEVC
+first-class needs demux → `VideoDecoder` → burn → `VideoEncoder` → mux, and that
+needs an MP4 demuxer and an MP4 muxer — two small permissive pure-JS libraries,
+~230 KB together, nothing like ffmpeg.wasm's 64.7 MB. It is the only route that
+is streaming rather than whole-file, hardware rather than software, and free of
+GPL — **and it would also fix the desktop, which today cannot emit H.264 and
+writes WebM.**
+
+Do not start it without the owner saying yes.
+
 ## 📱 iOS VIDEO IS PRIMARY INPUT — audit + safe fixes, 2026-08-18
 
 **Owner requirement, and it overturns the previous unit's advice:** iPhone and
