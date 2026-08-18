@@ -76,6 +76,23 @@ async function sha256Hex(str) {
   return hex(await crypto.subtle.digest('SHA-256', enc.encode(str)));
 }
 
+/** HMAC-SHA256, hex. For signing short-lived state that leaves the Worker and
+    comes back through a third party. */
+async function hmacHex(key, message) {
+  const k = await crypto.subtle.importKey(
+    'raw', enc.encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return hex(await crypto.subtle.sign('HMAC', k, enc.encode(message)));
+}
+
+/** Compare two hex strings without leaking where they first differ. */
+function sameHex(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 /** Compare two secrets without leaking length or position through timing. */
 async function secretEqual(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
@@ -4890,19 +4907,69 @@ function dbxStateCookie(value, seconds) {
   return `${DBX_STATE_COOKIE}=${value}; HttpOnly; Secure; SameSite=Lax; `
     + `Path=${API_PREFIX}/dropbox; Max-Age=${seconds}`;
 }
+/* THE CALLBACK CANNOT SEE THE SESSION, AND THAT IS NOT SOMETHING TO ROUTE
+   AROUND BY WEAKENING THE SESSION.
+
+   `sessionCookie` is SameSite=Strict on purpose. A browser does not attach a
+   Strict cookie to a request that ANOTHER site navigated to, and dropbox.com
+   sending the operator back here is exactly that — so `currentUser` saw no
+   cookie and the callback answered "Not signed in" to an admin who was signed
+   in in that very tab. Reported live, 2026-08-18.
+
+   The tempting fix is Lax on the session cookie. That is the portal's CSRF
+   defence (see `originAllowed`, which calls itself defence in depth BEHIND
+   it), and every route in the Worker would pay for one OAuth return. So the
+   callback carries its own credential instead: this cookie, which only
+   /dropbox/connect mints and only for an admin. It holds the random state
+   Dropbox echoes back, WHICH admin started the connect, when it expires, and
+   an HMAC over all three.
+
+   The signature is what makes the admin id worth trusting. HttpOnly stops a
+   page writing this cookie, but that is a weaker claim than it sounds: a
+   sibling subdomain can set a Domain= cookie that this Worker cannot tell
+   apart from its own. Signed, a forged cookie cannot name an admin it did not
+   come from. The key is DROPBOX_APP_SECRET — HMAC never exposes its key, the
+   flow cannot run without that secret anyway, and reusing it means no new
+   secret for the owner to set and no "key is missing" branch to get wrong. */
+async function dbxSignState(env, state, uid, exp) {
+  return hmacHex(String(env.DROPBOX_APP_SECRET || ''), `${state}.${uid}.${exp}`);
+}
+
+async function dbxStateValue(env, state, uid, exp) {
+  return `${state}.${uid}.${exp}.${await dbxSignState(env, state, uid, exp)}`;
+}
+
 /* Split rather than matched. A regex built by string concatenation carried one
    backslash too many and compiled to a literal `\s`, so the cookie was never
    found and every callback failed the state check — a bug that reads as a
    security refusal and is really a typo. Splitting has nothing to escape. */
-function dbxStateFrom(request) {
+function dbxCookieRaw(request) {
   for (const part of String(request.headers.get('Cookie') || '').split(';')) {
     const at = part.indexOf('=');
     if (at < 0) continue;
     if (part.slice(0, at).trim() !== DBX_STATE_COOKIE) continue;
-    const v = part.slice(at + 1).trim();
-    return /^[A-Za-z0-9_-]{16,128}$/.test(v) ? v : null;
+    return part.slice(at + 1).trim();
   }
-  return null;
+  return '';
+}
+
+/** The state cookie, checked all the way through: shape, expiry, signature,
+    and that Dropbox echoed back the same random half. Returns the id of the
+    admin who started the connect, or null. Never throws, and never reports
+    WHICH check failed — the caller says only "state". */
+async function dbxVerifyState(env, request, echoed) {
+  const raw = dbxCookieRaw(request);
+  if (!raw) return null;
+  const parts = raw.split('.');
+  if (parts.length !== 4) return null;
+  const [state, uid, exp, sig] = parts;
+  if (!/^[A-Za-z0-9_-]{16,128}$/.test(state)) return null;
+  if (!/^[0-9]{1,15}$/.test(uid)) return null;
+  if (!/^[0-9]{1,15}$/.test(exp)) return null;
+  if (!/^[0-9a-f]{64}$/.test(sig)) return null;
+  if (Number(exp) * 1000 < Date.now()) return null;
+  if (typeof echoed !== 'string' || echoed !== state) return null;
+  return sameHex(sig, await dbxSignState(env, state, uid, exp)) ? Number(uid) : null;
 }
 
 function redirectTo(url, extra = {}) {
@@ -6323,6 +6390,86 @@ async function route(request, env) {
     return json({ ok: true, user: u }, 200, { 'Set-Cookie': sessionCookie(session, SESSION_HOURS * 3600) });
   }
 
+  /* THE ONE ROUTE THAT AUTHENTICATES ITSELF, and it sits here because it
+     cannot pass the gate below — see dbxSignState for why a Strict session
+     cookie is never sent on Dropbox's return trip. The state cookie IS the
+     credential: minted only by /dropbox/connect, only for an admin, signed,
+     and good for ten minutes.
+
+     The admin it names is re-read from `users` on the way through, so an
+     account demoted or deactivated between pressing Connect and coming back
+     does not finish the connection. Being above the gate buys this route
+     nothing else: it is a GET, it changes nothing until the state verifies,
+     and every failure leaves by the same door. */
+  if (p === '/dropbox/callback' && method === 'GET') {
+    /* Cleared on EVERY exit from here, success or failure, so a state is
+       single-use whatever happened to it. */
+    const clear = { 'Set-Cookie': dbxStateCookie('x', 0) };
+    const back = (status) => redirectTo(`${env.SITE_ORIGIN}/portal/?dropbox=${status}`, clear);
+
+    const url = new URL(request.url);
+    const err = url.searchParams.get('error');
+    // The operator pressing Cancel on Dropbox's own screen is not a failure.
+    if (err) return back(err === 'access_denied' ? 'cancelled' : 'error');
+
+    /* Before the state check, not after: without the app secret there is no
+       key to verify a signature with, and reporting that as a bad state would
+       send someone hunting a cookie problem that is really an unset secret. */
+    if (!EXTERNAL_PROVIDERS.dropbox.configured(env)
+        || (await missingTables(env)).includes('dropbox_auth')) return back('error');
+
+    const code = url.searchParams.get('code');
+    if (!code) return back('state');
+    const uid = await dbxVerifyState(env, request, url.searchParams.get('state'));
+    if (!uid) return back('state');
+    const starter = await env.DB.prepare(
+      'SELECT id, role, active FROM users WHERE id = ?').bind(uid).first();
+    if (!starter || !starter.active || starter.role !== 'admin') return back('unauthorised');
+
+    let tok;
+    try {
+      const res = await fetch('https://api.dropboxapi.com/oauth2/token', {
+        method: 'POST',
+        headers: { Authorization: dropboxBasic(env),
+                   'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code', code,
+          // Dropbox requires this to match the authorize call exactly.
+          redirect_uri: dropboxRedirectUri(env),
+        }),
+      });
+      if (!res.ok) return back('exchange');
+      tok = await res.json();
+    } catch { return back('exchange'); }
+    if (!tok || !tok.refresh_token) return back('exchange');
+
+    /* THE CONNECTION IS PROVEN BEFORE IT IS CLAIMED. The account read is what
+       makes "connected" a fact rather than an assumption, and it is also where
+       the email in the status panel comes from — a connection nobody can
+       identify is a connection nobody can audit. A token that will not answer
+       is not stored at all. */
+    let acct = null;
+    try {
+      const who = await fetch('https://api.dropboxapi.com/2/users/get_current_account', {
+        method: 'POST', headers: { Authorization: `Bearer ${tok.access_token}` },
+      });
+      if (who.ok) acct = await who.json();
+    } catch { acct = null; }
+    if (!acct) return back('unverified');
+
+    const now = nowIso();
+    await env.DB.prepare(
+      `INSERT INTO dropbox_auth (id, refresh_token, account_id, account_email, account_name,
+         scopes, connected_by, connected_at, last_checked_at)
+       VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+       ON CONFLICT(id) DO UPDATE SET refresh_token = ?1, account_id = ?2, account_email = ?3,
+         account_name = ?4, scopes = ?5, connected_by = ?6, connected_at = ?7, last_checked_at = ?7`)
+      .bind(tok.refresh_token, acct.account_id || null, (acct.email || null),
+            (acct.name && acct.name.display_name) || null, tok.scope || DBX_SCOPES,
+            starter.id, now).run();
+    return back('connected');
+  }
+
   // Everything below needs a signed-in caller.
   const user = await currentUser(request, env);
   if (!user) return json({ error: 'Not signed in.' }, 401);
@@ -6900,72 +7047,14 @@ async function route(request, env) {
         four-hour access token and the connection quietly dies overnight. */
     url.searchParams.set('token_access_type', 'offline');
     url.searchParams.set('scope', DBX_SCOPES);
-    return redirectTo(url.toString(), { 'Set-Cookie': dbxStateCookie(state, DBX_STATE_TTL) });
+    /* Dropbox is given the RANDOM half only. The admin id rides home in the
+       cookie, not in a URL that lands in Dropbox's logs and the browser's
+       history. */
+    const exp = Math.floor(Date.now() / 1000) + DBX_STATE_TTL;
+    const carried = await dbxStateValue(env, state, user.id, exp);
+    return redirectTo(url.toString(), { 'Set-Cookie': dbxStateCookie(carried, DBX_STATE_TTL) });
   }
 
-  if (p === '/dropbox/callback' && method === 'GET') {
-    /* Cleared on EVERY exit from here, success or failure, so a state is
-       single-use whatever happened to it. */
-    const clear = { 'Set-Cookie': dbxStateCookie('x', 0) };
-    const back = (status) => redirectTo(`${env.SITE_ORIGIN}/portal/?dropbox=${status}`, clear);
-    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403, clear);
-
-    const url = new URL(request.url);
-    const err = url.searchParams.get('error');
-    // The operator pressing Cancel on Dropbox's own screen is not a failure.
-    if (err) return back(err === 'access_denied' ? 'cancelled' : 'error');
-
-    const code = url.searchParams.get('code');
-    const state = url.searchParams.get('state');
-    const cookie = dbxStateFrom(request);
-    if (!code || !state || !cookie || state !== cookie) return back('state');
-
-    if (!EXTERNAL_PROVIDERS.dropbox.configured(env)
-        || (await missingTables(env)).includes('dropbox_auth')) return back('error');
-
-    let tok;
-    try {
-      const res = await fetch('https://api.dropboxapi.com/oauth2/token', {
-        method: 'POST',
-        headers: { Authorization: dropboxBasic(env),
-                   'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'authorization_code', code,
-          // Dropbox requires this to match the authorize call exactly.
-          redirect_uri: dropboxRedirectUri(env),
-        }),
-      });
-      if (!res.ok) return back('exchange');
-      tok = await res.json();
-    } catch { return back('exchange'); }
-    if (!tok || !tok.refresh_token) return back('exchange');
-
-    /* THE CONNECTION IS PROVEN BEFORE IT IS CLAIMED. The account read is what
-       makes "connected" a fact rather than an assumption, and it is also where
-       the email in the status panel comes from — a connection nobody can
-       identify is a connection nobody can audit. A token that will not answer
-       is not stored at all. */
-    let acct = null;
-    try {
-      const who = await fetch('https://api.dropboxapi.com/2/users/get_current_account', {
-        method: 'POST', headers: { Authorization: `Bearer ${tok.access_token}` },
-      });
-      if (who.ok) acct = await who.json();
-    } catch { acct = null; }
-    if (!acct) return back('unverified');
-
-    const now = nowIso();
-    await env.DB.prepare(
-      `INSERT INTO dropbox_auth (id, refresh_token, account_id, account_email, account_name,
-         scopes, connected_by, connected_at, last_checked_at)
-       VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
-       ON CONFLICT(id) DO UPDATE SET refresh_token = ?1, account_id = ?2, account_email = ?3,
-         account_name = ?4, scopes = ?5, connected_by = ?6, connected_at = ?7, last_checked_at = ?7`)
-      .bind(tok.refresh_token, acct.account_id || null, (acct.email || null),
-            (acct.name && acct.name.display_name) || null, tok.scope || DBX_SCOPES,
-            user.id, now).run();
-    return back('connected');
-  }
 
   if (p === '/dropbox/disconnect' && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);

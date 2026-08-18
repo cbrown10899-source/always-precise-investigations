@@ -8559,6 +8559,24 @@ section('Dropbox OAuth — connect');
      /Path=\/portal-api\/dropbox/.test(cookie) && /Max-Age=600/.test(cookie), cookie);
   ok('and two connects mint different states',
      (await call(env, '/dropbox/connect', { cookie: admin })).headers.get('Set-Cookie') !== cookie);
+
+  /* THE COOKIE CARRIES WHO STARTED THIS, SIGNED. The callback cannot read the
+     session — Dropbox's return is cross-site and the session cookie is
+     SameSite=Strict — so this cookie is the credential it authenticates on. */
+  const carried = cookie.split(';')[0].split('=')[1];
+  const bits = carried.split('.');
+  ok('the state cookie carries state, admin id, expiry and a signature',
+     bits.length === 4, carried);
+  ok('naming the admin who pressed Connect', bits[1] === '1', carried);
+  ok('expiring inside the ten minutes it advertises',
+     Number(bits[2]) * 1000 > Date.now() && Number(bits[2]) * 1000 <= Date.now() + 600_000);
+  ok('and signed, so a forged cookie cannot name an admin it did not come from',
+     /^[0-9a-f]{64}$/.test(bits[3]), bits[3]);
+  /* Dropbox is handed the RANDOM half only. A URL that lands in Dropbox's logs
+     and the browser's history should not name our staff. */
+  ok('the admin id is not in the state sent to Dropbox',
+     to.searchParams.get('state') === bits[0] && !to.searchParams.get('state').includes('.'),
+     to.searchParams.get('state'));
 }
 
 section('Dropbox OAuth — callback');
@@ -8592,41 +8610,47 @@ section('Dropbox OAuth — callback');
       return new Response('{}', { status: 200 });
     };
   };
-  const startFlow = async () => {
-    const r = await call(env, '/dropbox/connect', { cookie: admin });
-    const sc = r.headers.get('Set-Cookie') || '';
-    return sc.match(/dbx_oauth=([A-Za-z0-9_-]+)/)[1];
+  /* The cookie value is `state.uid.expiry.signature`, and `state` alone is what
+     Dropbox echoes back — so both halves are returned and each test sends the
+     right one to the right place. */
+  const startFlow = async (e = env, who = admin) => {
+    const r = await call(e, '/dropbox/connect', { cookie: who });
+    const carried = (r.headers.get('Set-Cookie') || '').split(';')[0].split('=')[1];
+    return { carried, state: carried.split('.')[0] };
   };
-  const callback = (qs, extraCookie) => call(env, '/dropbox/callback' + qs,
-    { cookie: admin + (extraCookie ? '; ' + extraCookie : '') });
+  /* NO SESSION COOKIE. That is the whole point of this route: a browser sends
+     none on Dropbox's cross-site return, so every test here drives it exactly
+     as a real return trip does. */
+  const callback = (qs, carried, e = env) => call(e, '/dropbox/callback' + qs,
+    { cookie: carried ? `dbx_oauth=${carried}` : '' });
 
   try {
     stub();
-    const state = await startFlow();
+    const flow = await startFlow();
 
     /* THE STATE IS WHAT PROVES THE RESPONSE BELONGS TO A REQUEST THIS PORTAL
        MADE. Every way of getting it wrong is refused, and none of them stores
        anything. */
-    let r = await callback(`?code=C&state=${state}`);           // no cookie
+    let r = await callback(`?code=C&state=${flow.state}`);      // no state cookie
     ok('a callback with no state cookie is refused',
        r.status === 302 && /dropbox=state/.test(r.headers.get('Location')), r.headers.get('Location'));
-    r = await callback('?code=C', `dbx_oauth=${state}`);
+    r = await callback('?code=C', flow.carried);
     ok('a callback with no state parameter is refused',
        /dropbox=state/.test(r.headers.get('Location')));
-    r = await callback(`?code=C&state=${'z'.repeat(64)}`, `dbx_oauth=${state}`);
+    r = await callback(`?code=C&state=${'z'.repeat(64)}`, flow.carried);
     ok('a mismatched state is refused',
        /dropbox=state/.test(r.headers.get('Location')));
     ok('and none of those stored anything',
        (await env.DB.prepare('SELECT COUNT(*) AS n FROM dropbox_auth').first()).n === 0);
 
     /* The operator pressing Cancel on Dropbox's own screen is not a failure. */
-    r = await callback('?error=access_denied&state=x', `dbx_oauth=${state}`);
+    r = await callback('?error=access_denied&state=x', flow.carried);
     ok('cancelling at Dropbox comes back as cancelled, not an error',
        /dropbox=cancelled/.test(r.headers.get('Location')), r.headers.get('Location'));
 
     // ---- the happy path ----
     calls = [];
-    r = await callback(`?code=CODE-1&state=${state}`, `dbx_oauth=${state}`);
+    r = await callback(`?code=CODE-1&state=${flow.state}`, flow.carried);
     ok('a valid callback lands back in the portal, connected',
        r.status === 302 && /dropbox=connected/.test(r.headers.get('Location')), r.headers.get('Location'));
     /* THE STATE IS SINGLE-USE: the cookie is cleared on the way out, whatever
@@ -8674,22 +8698,18 @@ section('Dropbox OAuth — callback');
     await bootstrapAdmin(env2);
     const a2 = (await login(env2, 'trever', 'FirstAdminPass1')).cookie;
     env2.DROPBOX_APP_KEY = 'k'; env2.DROPBOX_APP_SECRET = 's';
-    const r2 = await call(env2, '/dropbox/connect', { cookie: a2 });
-    const s2 = (r2.headers.get('Set-Cookie') || '').match(/dbx_oauth=([A-Za-z0-9_-]+)/)[1];
+    const f2 = await startFlow(env2, a2);
     stub({ accountFails: true });
-    const bad = await call(env2, `/dropbox/callback?code=C&state=${s2}`,
-      { cookie: a2 + `; dbx_oauth=${s2}` });
+    const bad = await callback(`?code=C&state=${f2.state}`, f2.carried, env2);
     ok('a token Dropbox will not answer for is reported unverified',
        /dropbox=unverified/.test(bad.headers.get('Location')), bad.headers.get('Location'));
     ok('and is not stored at all',
        (await env2.DB.prepare('SELECT COUNT(*) AS n FROM dropbox_auth').first()).n === 0);
 
     // ---- a failed exchange stores nothing either ----
-    const r3 = await call(env2, '/dropbox/connect', { cookie: a2 });
-    const s3 = (r3.headers.get('Set-Cookie') || '').match(/dbx_oauth=([A-Za-z0-9_-]+)/)[1];
+    const f3 = await startFlow(env2, a2);
     stub({ tokenFails: true });
-    const bad2 = await call(env2, `/dropbox/callback?code=C&state=${s3}`,
-      { cookie: a2 + `; dbx_oauth=${s3}` });
+    const bad2 = await callback(`?code=C&state=${f3.state}`, f3.carried, env2);
     ok('a refused exchange says so', /dropbox=exchange/.test(bad2.headers.get('Location')));
     ok('and stores nothing',
        (await env2.DB.prepare('SELECT COUNT(*) AS n FROM dropbox_auth').first()).n === 0);
@@ -8715,6 +8735,126 @@ section('Dropbox OAuth — callback');
     ok('and the row is gone regardless',
        (await env.DB.prepare('SELECT COUNT(*) AS n FROM dropbox_auth').first()).n === 0);
   } finally { globalThis.fetch = realFetch; }
+}
+
+/* ------------------------------------------ the reported live defect, fixed
+
+   Owner, 2026-08-18: "Live Dropbox callback reaches the site but returns
+   'Not signed in' while admin is signed into Case Portal in the same browser."
+
+   `sessionCookie` is SameSite=Strict, and a browser does not attach a Strict
+   cookie to a request that ANOTHER site navigated to. Dropbox sending the
+   operator back is exactly that, so `currentUser` saw nothing and the callback
+   refused an admin who was signed in in that very tab.
+
+   The fix is NOT Lax on the session cookie — that is the portal's CSRF defence
+   and every route would pay for one OAuth return. The callback carries its own
+   signed credential instead. These are the properties that has to hold. */
+section('Dropbox OAuth — the callback authenticates itself');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  env.DROPBOX_APP_KEY = 'test-app-key';
+  env.DROPBOX_APP_SECRET = 'test-app-secret';
+
+  // A real investigator, so the forged-cookie test names an id that exists.
+  const l = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const t = new URL(l, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${t}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url && url.url ? url.url : url);
+    if (u.includes('/oauth2/token')) {
+      return new Response(JSON.stringify({ access_token: 'sl.A', refresh_token: 'RT-live' }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (u.includes('get_current_account')) {
+      return new Response(JSON.stringify({ account_id: 'dbid:9', email: 'office@example.com',
+        name: { display_name: 'Always Precise' } }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Response('{}', { status: 200 });
+  };
+
+  const start = async () => {
+    const r = await call(env, '/dropbox/connect', { cookie: admin });
+    const carried = (r.headers.get('Set-Cookie') || '').split(';')[0].split('=')[1];
+    return { carried, state: carried.split('.')[0] };
+  };
+  const land = (f, alsoSend) => call(env, `/dropbox/callback?code=C&state=${f.state}`,
+    { cookie: `dbx_oauth=${f.carried}` + (alsoSend ? '; ' + alsoSend : '') });
+  const where = (r) => new URL(r.headers.get('Location'), 'https://x.test').search;
+  const rows = async () =>
+    (await env.DB.prepare('SELECT COUNT(*) AS n FROM dropbox_auth').first()).n;
+
+  try {
+    /* THE DEFECT ITSELF. No session cookie, because a real browser sends none
+       on this request — and it must still connect. */
+    let f = await start();
+    let r = await land(f);
+    ok('the callback completes with NO session cookie at all',
+       /dropbox=connected/.test(where(r)), where(r));
+    ok('and the connection is attributed to the admin who started it',
+       (await env.DB.prepare('SELECT connected_by FROM dropbox_auth WHERE id = 1').first())
+         .connected_by === 1);
+
+    /* THE SESSION COOKIE MAKES NO DIFFERENCE EITHER WAY — not required, and
+       not consulted when it happens to arrive. */
+    await env.DB.prepare('DELETE FROM dropbox_auth').run();
+    f = await start();
+    r = await land(f, admin);
+    ok('sending the session cookie as well changes nothing',
+       /dropbox=connected/.test(where(r)), where(r));
+
+    /* A FORGED COOKIE CANNOT NAME AN ADMIN. Dana is an investigator and cannot
+       mint a state at all, so the only way in is to write one — which is what
+       the signature refuses. */
+    await env.DB.prepare('DELETE FROM dropbox_auth').run();
+    f = await start();
+    const b = f.carried.split('.');
+    r = await land({ state: f.state, carried: [b[0], '2', b[2], b[3]].join('.') });
+    ok('a cookie whose admin id was swapped is refused', /dropbox=state/.test(where(r)), where(r));
+    r = await land({ state: f.state, carried: [b[0], b[1], b[2], 'f'.repeat(64)].join('.') });
+    ok('and one whose signature was replaced', /dropbox=state/.test(where(r)));
+    r = await land({ state: f.state, carried: b[0] });
+    ok('and a bare unsigned state, which is what the cookie used to be',
+       /dropbox=state/.test(where(r)));
+    r = await land({ state: f.state, carried: [b[0], b[1], '1', b[3]].join('.') });
+    ok('and one whose expiry was moved into the past', /dropbox=state/.test(where(r)));
+    ok('none of those connected anything', (await rows()) === 0);
+
+    /* THE ADMIN IS RE-READ ON THE WAY THROUGH. A genuine, correctly signed
+       state stops working the moment the account behind it should not be
+       connecting the firm's Dropbox. */
+    f = await start();
+    await env.DB.prepare("UPDATE users SET role = 'investigator' WHERE id = 1").run();
+    r = await land(f);
+    ok('an admin demoted after pressing Connect cannot finish it',
+       /dropbox=unauthorised/.test(where(r)), where(r));
+    await env.DB.prepare("UPDATE users SET role = 'admin' WHERE id = 1").run();
+
+    f = await start();
+    await env.DB.prepare('UPDATE users SET active = 0 WHERE id = 1').run();
+    r = await land(f);
+    ok('nor can one deactivated in the meantime', /dropbox=unauthorised/.test(where(r)));
+    await env.DB.prepare('UPDATE users SET active = 1 WHERE id = 1').run();
+    ok('and neither of those connected anything', (await rows()) === 0);
+
+    /* THE SESSION COOKIE IS UNTOUCHED BY THIS FIX, and that is the point. It is
+       the portal's CSRF defence and the reason the callback needed a credential
+       of its own; relaxing it later would make this whole route pointless. */
+    const again = await login(env, 'trever', 'FirstAdminPass1');
+    ok('the portal session cookie is still SameSite=Strict',
+       /SameSite=Strict/.test(again.res.headers.get('Set-Cookie') || ''),
+       again.res.headers.get('Set-Cookie'));
+    ok('and it is still the only thing every other route authenticates on',
+       (await call(env, '/dropbox/status', { cookie: '' })).status === 401);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 }
 
 section('Dropbox — secrets only, and no file migration yet');
