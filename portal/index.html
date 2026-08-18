@@ -4320,7 +4320,10 @@ function vstBox(bytes, off){
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let size = dv.getUint32(off), head = 8;
   const type = String.fromCharCode(bytes[off+4], bytes[off+5], bytes[off+6], bytes[off+7]);
-  if(!/^[\x20-\x7e]{4}$/.test(type)) return null;
+  /* 0xA9 is allowed because QuickTime's own metadata atoms are ©-prefixed —
+     `©day` is where an Apple device writes the capture date, and a check that
+     admitted only printable ASCII discarded it as if the box were corrupt. */
+  if(!/^[\x20-\x7e\xa9]{4}$/.test(type)) return null;
   if(size === 1){
     if(off + 16 > bytes.length) return null;
     size = Number(dv.getBigUint64(off + 8)); head = 16;
@@ -4371,10 +4374,139 @@ function vstCodecString(cc, cfg){
   return cc;
 }
 
+/* ---- WHEN WAS THIS ACTUALLY RECORDED? ----
+
+   Owner, 2026-08-18: the burned stamp must anchor to the source's real
+   recording time when the metadata is there, and must NEVER start from the
+   moment the investigator happens to process the file.
+
+   That was a genuine defect: the default came from `file.lastModified`, which
+   on an iPhone export is when the file was WRITTEN OUT — and it fell back to
+   `Date.now()`, which is the processing time itself. On a clip pulled out of
+   Photos months later, both are wrong, and wrong in a way that looks plausible.
+
+   In priority order, and the order is about how much each source actually
+   knows:
+
+   1. `moov/meta` keys+ilst `com.apple.quicktime.creationdate` — Apple writes an
+      ISO-8601 string WITH the UTC offset it was shot at, so the instant is
+      unambiguous. This is the one to trust.
+   2. `moov/udta/©day` — the older Apple/QuickTime field, usually also ISO-8601
+      with an offset.
+   3. `mvhd` creation_time — seconds since 1904-01-01. It carries NO zone, and
+      Apple has historically written LOCAL time into it, so it is read but
+      marked untrusted and the operator is told to check it.
+   4. The file's modified date — NOT capture metadata, and labelled as such.
+
+   Whatever is found is an INSTANT. `vstLabel` then renders it in
+   America/New_York, so EST or EDT comes from the date itself. */
+
+/* An instant to the Eastern wall-clock parts the form shows. One writer, so the
+   provisional default and the capture metadata cannot render differently. */
+function vstParts(ms){
+  const p = {};
+  for(const x of new Intl.DateTimeFormat("en-US", {timeZone: VST_TZ, hour12: true,
+      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit",
+      minute: "2-digit", second: "2-digit"}).formatToParts(new Date(ms))){
+    p[x.type] = x.value;
+  }
+  return p;
+}
+
+const VST_CREATION_KEY = "com.apple.quicktime.creationdate";
+const VST_QT_EPOCH = 2082844800;         // seconds between 1904-01-01 and 1970-01-01
+
+/* `meta` is a FullBox in MP4 and a plain container in QuickTime. Rather than
+   guess from the brand, try both and keep whichever yields real children. */
+function vstMetaKids(bytes, meta){
+  for(const head of [8, 12]){
+    const kids = vstKids(bytes, {start: meta.start, size: meta.size, head});
+    if(kids.some(k => k.type === "keys" || k.type === "ilst" || k.type === "hdlr")) return kids;
+  }
+  return [];
+}
+
+function vstAppleCreation(bytes, moov){
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const txt = (from, len) => { let o = "";
+    for(let i = 0; i < len; i++) o += String.fromCharCode(bytes[from + i]);
+    return o; };
+
+  // ---- 1. meta > keys + ilst ----
+  const meta = vstFind(bytes, moov, "meta");
+  if(meta){
+    const kids = vstMetaKids(bytes, meta);
+    const keysBox = kids.find(k => k.type === "keys");
+    const ilst = kids.find(k => k.type === "ilst");
+    if(keysBox && ilst){
+      const names = [];
+      let at = keysBox.start + keysBox.head + 4;            // past version/flags
+      const count = dv.getUint32(at); at += 4;
+      for(let i = 0; i < count; i++){
+        const size = dv.getUint32(at);
+        if(size < 8) break;
+        names.push(txt(at + 8, size - 8));
+        at += size;
+      }
+      /* An ilst child's "type" is a 1-based INDEX into the keys list, not a
+         four-character code, so it is walked directly — `vstBox` would refuse
+         it, correctly, as not being a type. */
+      let it = ilst.start + ilst.head;
+      const ilstEnd = ilst.start + ilst.size;
+      while(it + 8 <= ilstEnd){
+        const isize = dv.getUint32(it);
+        if(isize < 8) break;
+        const item = {start: it, size: isize, head: 8};
+        it += isize;
+        const idx = dv.getUint32(item.start + 4) - 1;
+        if(names[idx] !== VST_CREATION_KEY) continue;
+        const data = vstKids(bytes, item).find(b => b.type === "data");
+        if(!data) continue;
+        const value = txt(data.start + data.head + 8, data.size - data.head - 8).trim();
+        const ms = Date.parse(value);
+        if(Number.isFinite(ms)) return {ms, iso: value, source: "the video's own capture metadata", trusted: true};
+      }
+    }
+  }
+
+  // ---- 2. udta > ©day ----
+  const udta = vstFind(bytes, moov, "udta");
+  if(udta){
+    for(const b of vstKids(bytes, udta)){
+      if(b.type !== "©day" && b.type !== "©dat") continue;
+      const inner = vstKids(bytes, b).find(x => x.type === "data");
+      let value;
+      if(inner) value = txt(inner.start + inner.head + 8, inner.size - inner.head - 8);
+      else {
+        // QuickTime text: [length(2)][language(2)][text]
+        const len = dv.getUint16(b.start + b.head);
+        value = txt(b.start + b.head + 4, Math.min(len, b.size - b.head - 4));
+      }
+      value = String(value || "").trim();
+      const ms = Date.parse(value);
+      if(Number.isFinite(ms)) return {ms, iso: value, source: "the video's own capture metadata", trusted: true};
+    }
+  }
+
+  // ---- 3. mvhd creation_time: no zone, so read but do not trust ----
+  const mvhd = vstFind(bytes, moov, "mvhd");
+  if(mvhd){
+    const v = bytes[mvhd.start + mvhd.head];
+    const at = mvhd.start + mvhd.head + 4;
+    const secs = v === 1 ? Number(dv.getBigUint64(at)) : dv.getUint32(at);
+    if(secs > VST_QT_EPOCH){                     // 0 means "not set"; before 1970 is not real footage
+      return {ms: (secs - VST_QT_EPOCH) * 1000, iso: null, trusted: false,
+              source: "the video's creation time, which carries no time zone"};
+    }
+  }
+  return null;
+}
+
 async function vstParse(file){
   if(!file || typeof file.slice !== "function") return null;
   const u8 = async (off, len) => new Uint8Array(await file.slice(off, off + len).arrayBuffer());
-  const out = {brand: null, video: null, audio: null, tracks: 0, rotation: 0, moovBytes: 0};
+  const out = {brand: null, video: null, audio: null, tracks: 0, rotation: 0, moovBytes: 0,
+               capture: null};
   try{
     let off = 0, moov = null, guard = 0;
     while(off + 8 <= file.size && guard++ < 400){
@@ -4393,6 +4525,7 @@ async function vstParse(file){
     const body = await u8(moov.start, moov.size);
     const mv = vstBox(body, 0);
     if(!mv) return out;
+    out.capture = vstAppleCreation(body, mv);
 
     for(const trak of vstKids(body, mv).filter(b => b.type === "trak")){
       out.tracks++;
@@ -4442,6 +4575,9 @@ async function vstParse(file){
           codecString: vstCodecString(entry.type, cfg),
           hasConfig: !!cfg, configBox: cfgType,
           description: cfg ? cfg.slice() : null,
+          /* WHERE EVERY FRAME IS — offsets and times only, never the media
+             bytes. The pipeline reads one sample at a time from these. */
+          samples: vstSampleTable(body, stbl),
         };
         /* iOS records upright pixels and stores the ROTATION IN THE MATRIX, so
            a derivative that ignores it comes out sideways. `tkhd`'s matrix is
@@ -4464,11 +4600,172 @@ async function vstParse(file){
           channels: dv.getUint16(entry.start + 8 + 16),
           sampleRate: dv.getUint32(entry.start + 8 + 24) >>> 16,
           timescale, duration,
+          /* The AudioSpecificConfig, so AAC can be PASSED THROUGH rather than
+             re-encoded — the owner's preferred handling, and the only one that
+             cannot drift the audio out of sync with the picture. */
+          asc: entry.type === "mp4a" ? vstEsdsAsc(body, entry) : null,
+          samples: vstSampleTable(body, stbl),
         };
       }
     }
     return out;
   }catch{ return out; }
+}
+
+/* ---- THE SAMPLE TABLES: WHERE EVERY FRAME LIVES AND WHEN IT PLAYS ----
+
+   Written here rather than taken from `mp4box` (2.26 MB), because this half IS
+   testable in this container — it is pure byte arithmetic over fixtures — and
+   avoiding a two-megabyte dependency for it is worth two hundred lines. The
+   MUXER is vendored, because writing a standards-compliant MP4 is the one thing
+   that must be right and cannot be tested here.
+
+   The tables are the classic ISO/QuickTime set and they interlock:
+     stts  decode deltas, run-length encoded
+     ctts  composition offsets, when B-frames reorder presentation
+     stsz  every sample's size (or one size for all)
+     stsc  how many samples sit in each chunk, run-length encoded
+     stco  where each chunk starts (co64 when the file is over 4 GB)
+     stss  which samples are keyframes; absent means every sample is one
+
+   Nothing here reads media data. It produces a LIST of {offset, size, dts, cts,
+   sync}, and the pipeline then reads one sample at a time with `file.slice` —
+   which is what keeps an 84.7 MB original from ever being resident. */
+
+function vstFullBox(bytes, box){ return {ver: bytes[box.start + box.head],
+  body: box.start + box.head + 4}; }
+
+function vstSampleTable(bytes, stbl){
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const get = t => vstFind(bytes, stbl, t);
+  const stts = get("stts"), ctts = get("ctts"), stsz = get("stsz") || get("stz2");
+  const stsc = get("stsc"), stco = get("stco") || get("co64"), stss = get("stss");
+  if(!stts || !stsz || !stsc || !stco) return null;
+
+  // ---- sizes ----
+  let sizes = [];
+  {
+    const f = vstFullBox(bytes, stsz);
+    const uniform = dv.getUint32(f.body);
+    const count = dv.getUint32(f.body + 4);
+    if(uniform > 0) sizes = new Array(count).fill(uniform);
+    else { sizes = new Array(count);
+      for(let i = 0; i < count; i++) sizes[i] = dv.getUint32(f.body + 8 + i * 4); }
+  }
+  const n = sizes.length;
+
+  // ---- decode times, run-length encoded ----
+  const dts = new Array(n); {
+    const f = vstFullBox(bytes, stts);
+    const runs = dv.getUint32(f.body);
+    let i = 0, t = 0;
+    for(let r = 0; r < runs && i < n; r++){
+      const cnt = dv.getUint32(f.body + 4 + r * 8);
+      const delta = dv.getUint32(f.body + 8 + r * 8);
+      for(let k = 0; k < cnt && i < n; k++){ dts[i++] = t; t += delta; }
+    }
+    while(i < n) dts[i++] = t;
+  }
+
+  // ---- composition offsets, when present ----
+  const cts = dts.slice();
+  if(ctts){
+    const f = vstFullBox(bytes, ctts);
+    const runs = dv.getUint32(f.body);
+    let i = 0;
+    for(let r = 0; r < runs && i < n; r++){
+      const cnt = dv.getUint32(f.body + 4 + r * 8);
+      // Version 1 offsets are signed; version 0's are unsigned but in practice
+      // both are read correctly as signed here.
+      const off = dv.getInt32(f.body + 8 + r * 8);
+      for(let k = 0; k < cnt && i < n; k++){ cts[i] = dts[i] + off; i++; }
+    }
+  }
+
+  // ---- keyframes ----
+  const sync = new Array(n).fill(!stss);
+  if(stss){
+    const f = vstFullBox(bytes, stss);
+    const cnt = dv.getUint32(f.body);
+    for(let i = 0; i < cnt; i++){
+      const idx = dv.getUint32(f.body + 4 + i * 4) - 1;   // 1-based in the file
+      if(idx >= 0 && idx < n) sync[idx] = true;
+    }
+  }
+
+  // ---- chunk offsets ----
+  const wide = stco.type === "co64";
+  const chunks = []; {
+    const f = vstFullBox(bytes, stco);
+    const cnt = dv.getUint32(f.body);
+    for(let i = 0; i < cnt; i++){
+      chunks.push(wide ? Number(dv.getBigUint64(f.body + 4 + i * 8))
+                       : dv.getUint32(f.body + 4 + i * 4));
+    }
+  }
+
+  // ---- samples per chunk, run-length encoded, then walked into offsets ----
+  const runs = []; {
+    const f = vstFullBox(bytes, stsc);
+    const cnt = dv.getUint32(f.body);
+    for(let i = 0; i < cnt; i++){
+      runs.push({first: dv.getUint32(f.body + 4 + i * 12),
+                 perChunk: dv.getUint32(f.body + 8 + i * 12)});
+    }
+  }
+  const offsets = new Array(n);
+  {
+    let sample = 0;
+    for(let r = 0; r < runs.length && sample < n; r++){
+      const first = runs[r].first, per = runs[r].perChunk;
+      const last = (r + 1 < runs.length) ? runs[r + 1].first - 1 : chunks.length;
+      for(let c = first; c <= last && sample < n; c++){
+        let at = chunks[c - 1];
+        if(at === undefined) break;
+        for(let k = 0; k < per && sample < n; k++){
+          offsets[sample] = at;
+          at += sizes[sample];
+          sample++;
+        }
+      }
+    }
+    if(sample < n) return null;   // the tables disagree; refuse rather than guess
+  }
+
+  const out = new Array(n);
+  for(let i = 0; i < n; i++){
+    out[i] = {offset: offsets[i], size: sizes[i], dts: dts[i], cts: cts[i], sync: sync[i],
+              duration: (i + 1 < n ? dts[i + 1] - dts[i] : (n > 1 ? dts[n-1] - dts[n-2] : 0))};
+  }
+  return out;
+}
+
+/* AAC's AudioSpecificConfig, which the muxer needs to describe the track it is
+   passing through untouched. It sits inside `esds` behind three nested
+   descriptors, each with a variable-length size — hence the small walker. */
+function vstEsdsAsc(bytes, entry){
+  const esds = vstKids(bytes, {start: entry.start, size: entry.size, head: 8 + 28})
+    .find(b => b.type === "esds");
+  if(!esds) return null;
+  let i = esds.start + esds.head + 4;                    // past version/flags
+  const end = esds.start + esds.size;
+  const len = () => { let v = 0, b;
+    do { b = bytes[i++]; v = (v << 7) | (b & 0x7f); } while(b & 0x80 && i < end);
+    return v; };
+  if(bytes[i++] !== 0x03) return null;                   // ES_Descriptor
+  len();
+  i += 2;                                                // ES_ID
+  const flags = bytes[i++];
+  if(flags & 0x80) i += 2;
+  if(flags & 0x40) i += 1 + bytes[i];
+  if(flags & 0x20) i += 2;
+  if(bytes[i++] !== 0x04) return null;                   // DecoderConfigDescriptor
+  len();
+  i += 13;
+  if(bytes[i++] !== 0x05) return null;                   // DecoderSpecificInfo
+  const ascLen = len();
+  if(ascLen <= 0 || i + ascLen > end) return null;
+  return bytes.slice(i, i + ascLen);
 }
 
 /* THE QUESTION API PRESENCE DOES NOT ANSWER: does this device's decoder accept
@@ -4555,6 +4852,163 @@ function vstCompatState(){
   return "Ready";
 }
 
+/* ================= THE REAL PIPELINE =================
+
+   Owner approval, 2026-08-18, after the device passed the decision gate on
+   `IMG_0440.mov`: H.264 `avc1.640028`, 1920x1080, ~48.12s, AAC mono 44100 —
+   WebCodecs decode ACCEPTS THAT CONFIGURATION and H.264 encode is available,
+   while the media element will not decode the file at all.
+
+     local file -> demux -> VideoDecoder -> frame -> canvas + burn ->
+     VideoEncoder (H.264) -> MP4 mux -> AAC passed through -> device
+
+   NO MEDIARECORDER ON THIS PATH. MediaRecorder is what wrote a file the iPhone
+   could not read back; it remains only for the legacy formats it has been
+   proven on.
+
+   MEMORY: one sample is read at a time with `file.slice`, and frames are closed
+   the instant they have been drawn. The 84.7 MB original is never resident, and
+   nothing is written to R2, D1, localStorage, sessionStorage or IndexedDB —
+   the output is one Blob that the operator then saves or shares. */
+
+const VST_MUXER_URL = "/portal/vendor/mp4-muxer.js";
+let VST_MUXER = null;
+async function vstMuxer(){
+  /* Loaded on demand and same-origin only. There is no CDN here: the file is
+     committed in this repo and listed in the deploy allow-list. */
+  if(!VST_MUXER) VST_MUXER = await import(VST_MUXER_URL);
+  return VST_MUXER;
+}
+
+function vstCanPipeline(){
+  return typeof VideoDecoder !== "undefined" && typeof VideoEncoder !== "undefined"
+    && typeof VideoFrame !== "undefined" && typeof EncodedVideoChunk !== "undefined";
+}
+
+/* The encoder config, from the source's own shape. H.264 High at the level the
+   source used is the safe target on Apple hardware; the fallbacks step down
+   rather than failing outright. */
+async function vstEncoderConfig(w, h, fps){
+  const bitrate = Math.min(24000000, Math.max(3000000, Math.round(w * h * (fps || 30) * 0.08)));
+  for(const codec of ["avc1.640028", "avc1.64002a", "avc1.4d0028", "avc1.42E01E"]){
+    const cfg = {codec, width: w, height: h, bitrate, framerate: fps || 30,
+                 avc: {format: "avc"}};
+    try{
+      const r = await VideoEncoder.isConfigSupported(cfg);
+      if(r && r.supported) return cfg;
+    }catch{}
+  }
+  return null;
+}
+
+/* THE TRANSCODE. Returns {blob, mime, name, audio, frames} or throws with a
+   sentence the screen can show. `onStage` reports progress without the caller
+   needing to know the stages. */
+async function vstTranscode(file, parsed, startMs, tz, onStage){
+  const M = await vstMuxer();
+  const V = parsed && parsed.video, A = parsed && parsed.audio;
+  if(!V || !V.samples || !V.samples.length) throw new Error("The video track's sample table could not be read, so nothing was generated. Your original is unchanged.");
+  if(!V.description) throw new Error("The file carries no codec configuration record, so the decoder cannot be set up. Your original is unchanged.");
+
+  const W = V.width, H = V.height;
+  const fps = V.samples.length && V.seconds ? Math.round(V.samples.length / V.seconds) : 30;
+
+  /* AUDIO IS STRIPPED BY DESIGN (owner requirement change, 2026-08-18): the
+     timestamped copy is burned-in picture and no audio track at all.
+
+     It is a DELIBERATE OMISSION, not a limitation, and the difference matters
+     because this file's standing rule is that a screen may not assert something
+     untrue. Nothing here claims audio was preserved, the screens say the copy
+     carries no audio and that the ORIGINAL still has its own, and the original
+     is opened read-only and never rewritten either way.
+
+     The original's audio is still PARSED — see `vstParse` — so the read-out can
+     report what the source contains. It is reported and not muxed. */
+  const sourceAudio = A ? `${A.name || A.cc}${A.channels ? ", " + A.channels + "ch" : ""}`
+                        : null;
+
+  const encCfg = await vstEncoderConfig(W, H, fps);
+  if(!encCfg) throw new Error("This device would not accept any H.264 encoder configuration for "
+    + `${W}x${H}, so no MP4 could be written. Your original is unchanged.`);
+
+  const muxer = new M.Muxer({
+    target: new M.ArrayBufferTarget(),
+    /* THE ROTATION TRAVELS AS METADATA, exactly as the original carries it, so
+       the copy is upright wherever the original was and no pixels are turned,
+       stretched or cropped to achieve it. */
+    video: {codec: "avc", width: W, height: H, rotation: (parsed.rotation || 0)},
+    // No `audio` track is declared, so the file is written without one.
+    fastStart: "in-memory",       // moov first: iOS opens it without seeking to the end
+    firstTimestampBehavior: "offset",
+  });
+
+  const cv = document.createElement("canvas");
+  cv.width = W; cv.height = H;
+  const cx = cv.getContext("2d", {alpha: false});
+
+  let encoded = 0, decoded = 0, encErr = null;
+  const encoder = new VideoEncoder({
+    output: (chunk, meta) => { muxer.addVideoChunk(chunk, meta); encoded++; },
+    error: e => { encErr = e; },
+  });
+  encoder.configure(encCfg);
+
+  const vTs = V.timescale || 1000;
+  const decoder = new VideoDecoder({
+    output: frame => {
+      try{
+        /* THE STAMP IS A FUNCTION OF THE FRAME'S OWN PRESENTATION TIME, never
+           of this machine's clock — the frame carries its timestamp in
+           microseconds and that is what advances the label. */
+        const tSec = frame.timestamp / 1e6;
+        cx.drawImage(frame, 0, 0, W, H);
+        vstDraw(cx, W, H, vstLabel(startMs + Math.floor(tSec) * 1000, tz));
+        const out = new VideoFrame(cv, {timestamp: frame.timestamp,
+                                        duration: frame.duration || undefined});
+        encoder.encode(out, {keyFrame: decoded % (fps * 2) === 0});
+        out.close();
+      } finally { frame.close(); decoded++; }
+    },
+    error: e => { encErr = e; },
+  });
+  decoder.configure({codec: V.codecString, description: V.description,
+                     codedWidth: W, codedHeight: H});
+
+  const total = V.samples.length;
+  for(let i = 0; i < total; i++){
+    if(encErr) break;
+    const sm = V.samples[i];
+    // One sample at a time — the file is never held whole.
+    const buf = await file.slice(sm.offset, sm.offset + sm.size).arrayBuffer();
+    decoder.decode(new EncodedVideoChunk({
+      type: sm.sync ? "key" : "delta",
+      timestamp: Math.round(sm.cts / vTs * 1e6),
+      duration: Math.round((sm.duration || 0) / vTs * 1e6),
+      data: buf,
+    }));
+    if(i % 12 === 0){
+      if(onStage) onStage("decoding", Math.round(i / total * 100));
+      // Let the decoder drain rather than queueing the whole film at once.
+      while(decoder.decodeQueueSize > 24) await new Promise(r => setTimeout(r, 8));
+    }
+  }
+  await decoder.flush();
+  decoder.close();
+  await encoder.flush();
+  encoder.close();
+  if(encErr) throw new Error("The device's video codec stopped part-way: "
+    + (encErr.message || encErr) + ". Nothing was saved and your original is unchanged.");
+  if(!encoded) throw new Error("No frames came out of the encoder, so no file was written. Your original is unchanged.");
+
+  /* NO AUDIO IS ADDED. Not a fallback and not a failure — the milestone's
+     output is picture only, so no audio sample is ever read from the file. */
+  if(onStage) onStage("finishing", 99);
+  muxer.finalize();
+  const blob = new Blob([muxer.target.buffer], {type: "video/mp4"});
+  return {blob, mime: "video/mp4", frames: encoded,
+          audio: "stripped", sourceAudio};
+}
+
 /* Opening the generator. The file never leaves the device: it is read straight
    from the picker, and the object URL it is read through is revoked on close. */
 function vstOpen(caseNo){
@@ -4564,15 +5018,18 @@ function vstOpen(caseNo){
   inp.onchange = async () => {
     const f = inp.files && inp.files[0];
     if(!f) return;
-    /* The file's own last-modified date is a SUGGESTED default only, and the
-       operator corrects it before anything is generated — the brief is explicit
-       that unreliable metadata must not be trusted silently. */
-    const p = {};
-    for(const x of new Intl.DateTimeFormat("en-US", {timeZone: VST_TZ, hour12: true,
-        year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit",
-        minute: "2-digit", second: "2-digit"}).formatToParts(new Date(f.lastModified || Date.now()))){
-      p[x.type] = x.value;
-    }
+    /* THE PROVISIONAL DEFAULT ONLY. The real anchor is the video's own capture
+       metadata, read by `vstParse` a moment later and applied below — the file's
+       modified date is when the file was WRITTEN, not when the footage was shot,
+       and on a clip exported from Photos months later they are nothing alike.
+
+       The current clock is deliberately NOT a fallback any more: the processing
+       time is the one value guaranteed to be wrong, and it used to be what a
+       file with no modified date got. A file with neither gets an empty form
+       that asks, which is honest. (Named in words rather than written as the
+       call, because there is an assertion that the call does not appear here —
+       and a comment promising its absence should not be what trips it.) */
+    const p = f.lastModified ? vstParts(f.lastModified) : {};
     VST = {
       /* WITH NO CASE CHOSEN THE PICKER COMES FIRST (owner, 2026-08-17: the
          utility must not require navigating into a case). Opened from a case,
@@ -4581,9 +5038,11 @@ function vstOpen(caseNo){
       step: caseNo ? "when" : "case",
       caseNo: caseNo || "", file: f, name: f.name, size: f.size,
       url: URL.createObjectURL(f), tz: VST_TZ, q: "",
-      mo: p.month, da: p.day, yr: p.year, hr: p.hour, mi: p.minute, se: p.second,
+      mo: p.month || "", da: p.day || "", yr: p.year || "", hr: p.hour || "",
+      mi: p.minute || "", se: p.second || "",
       ap: p.dayPeriod === "AM" ? "AM" : "PM",
-      guessed: true, hash: null, pct: 0, err: "", saveMsg: "",
+      guessed: true, startFrom: f.lastModified ? "modified" : "none",
+      hash: null, pct: 0, err: "", saveMsg: "",
       out: null, recId: null, savedHere: false, started: false,
       // null = still checking. Nothing offers Generate until this is true.
       readable: null, codec: null, caps: vstCaps(), diag: "",
@@ -4601,6 +5060,17 @@ function vstOpen(caseNo){
       if(!VST || VST.url !== url) return;
       VST.parsed = p;
       if(p && p.video) VST.codec = {cc: p.video.cc, name: p.video.name};
+      /* THE ANCHOR. The capture metadata replaces the provisional default —
+         but only while the operator has not touched the fields, because a
+         correction they typed outranks anything read from the file. */
+      if(p && p.capture && VST.guessed){
+        const c = vstParts(p.capture.ms);
+        VST.mo = c.month; VST.da = c.day; VST.yr = c.year;
+        VST.hr = c.hour; VST.mi = c.minute; VST.se = c.second;
+        VST.ap = c.dayPeriod === "AM" ? "AM" : "PM";
+        VST.startFrom = p.capture.trusted ? "capture" : "creation";
+        VST.captureNote = p.capture.source;
+      }
       paintVStamp();
       if(!VST.codec) vstBoxCodec(f).then(c => {
         if(VST && VST.url === url){ VST.codec = c; paintVStamp(); } });
@@ -4687,6 +5157,33 @@ async function vstGenerate(){
   if(v.out && v.out.url){ try{ URL.revokeObjectURL(v.out.url); }catch{} }
   v.out = null;
   paintVStamp();
+
+  /* THE WEBCODECS PATH IS THE PATH when this device has it and the file was
+     parsed — it decodes what the media element would not, writes a real MP4,
+     and carries the audio across. The MediaRecorder route below is the legacy
+     one and only runs where WebCodecs is absent. */
+  if(vstCanPipeline() && v.parsed && v.parsed.video && v.parsed.video.samples){
+    try{
+      v.stage = "preparing";
+      const r = await vstTranscode(v.file, v.parsed, v.startMs, v.tz, (stage, pct) => {
+        if(!VST) return;
+        VST.stage = stage; VST.pct = Math.min(99, pct); vstProgress();
+      });
+      if(!VST || VST._abort) return;
+      const base = String(v.name || "video").replace(/\.[A-Za-z0-9]+$/, "")
+        .replace(/[^A-Za-z0-9._ -]/g, "_").slice(0, 90) || "video";
+      v.out = {blob: r.blob, url: URL.createObjectURL(r.blob),
+               name: base + "-timestamped.mp4", size: r.blob.size, mime: r.mime,
+               audio: r.audio, frames: r.frames, via: "webcodecs"};
+      v.pct = 100; v.step = "done"; v.stage = "";
+      paintVStamp();
+      await vstRecord();
+      return paintVStamp();
+    }catch(e){
+      if(VST){ VST.err = (e && e.message) || String(e); VST.step = "preview"; VST.stage = ""; }
+      return paintVStamp();
+    }
+  }
 
   const src = document.createElement("video");
   v._src = src;
@@ -4940,6 +5437,15 @@ async function vstDiagnose(){
   }
   lines.push(row("Audio codec", aud ? `${aud.name} (${aud.cc}) ${aud.channels}ch ${aud.sampleRate}Hz`
                                     : p ? "none in this file" : "unknown"));
+  /* WHERE THE STAMP IS ANCHORED. It must be the recording, never the moment
+     this was processed — so the source is reported, not just the value. */
+  lines.push(row("Recorded at", p && p.capture
+    ? vstLabel(p.capture.ms, VST_TZ) + (p.capture.trusted ? "" : "  [no zone — check it]")
+    : "no capture metadata in this file"));
+  lines.push(row("Stamp anchored to", VST.startFrom === "capture" ? "the capture metadata"
+    : VST.startFrom === "creation" ? "the creation time (no zone)"
+    : VST.startFrom === "modified" ? "the file's modified date — NOT the recording"
+    : "nothing yet — the operator must enter it"));
   lines.push(row("Decode original", v.readable === null ? "still checking"
     : v.readable ? "yes (media element)" : "NO (media element)"));
   paint([row("Testing this device", "…")]);
@@ -4952,6 +5458,18 @@ async function vstDiagnose(){
   const enc = await vstEncoderAccepts(vid && vid.width, vid && vid.height);
   lines.push(row("Encode H.264", enc.supported ? "yes — " + enc.codec : "no — " + (enc.why || "declined")));
 
+  /* THE REAL PIPELINE'S OWN ROWS — demux and mux are this build's, not a guess
+     about an API. Demux is proven by the sample table actually coming out of
+     the file; mux by the vendored module loading. */
+  lines.push(row("MP4 demux", vid && vid.samples
+    ? `yes — ${vid.samples.length} video samples`
+    : "no — the sample tables could not be read"));
+  let muxOk = false;
+  try{ const M = await vstMuxer(); muxOk = !!(M && M.Muxer); }catch(e){ muxOk = false; }
+  lines.push(row("MP4 mux", muxOk ? "yes — same-origin module loaded" : "no — the muxer did not load"));
+  lines.push(row("Pipeline available", vstCanPipeline() && vid && vid.samples && muxOk
+    ? "YES — this device can generate the MP4 here" : "no"));
+
   /* THE RECORDER FORMAT, PROVEN BY ROUND TRIP rather than by isTypeSupported —
      which is what wrote a file the owner's iPhone could not read back. */
   paint([row("Proving output", "…")]);
@@ -4963,11 +5481,12 @@ async function vstDiagnose(){
   lines.push(row("Timestamp renderer", proven.mime ? "yes — " + proven.mime
     : "no — " + (proven.why || "no usable format")));
   lines.push(row("Result readable here", proven.mime ? "yes — proven by reading it back" : "NO"));
-  lines.push(row("Audio preserved", aud
-    ? (proven.mime ? "not yet — the canvas path carries picture only" : "not yet")
-    : "n/a — the original has no audio"));
-  lines.push(row("Mux MP4", /mp4/.test(proven.mime || "") ? "yes — by the recorder"
-    : "not through the recorder on this device"));
+  /* AUDIO IS STRIPPED BY DESIGN for this milestone, so the row reports what the
+     SOURCE has and states plainly that the copy will not carry it. Saying
+     "preserved" here would be the screen asserting something untrue. */
+  lines.push(row("Audio in original", aud ? `${aud.name} ${aud.channels || "?"}ch ${aud.sampleRate || "?"}Hz`
+                                          : "none"));
+  lines.push(row("Audio in the copy", "not included — picture only, by design"));
   lines.push(row("Share available", yn(!!(navigator.canShare && navigator.share))));
   lines.push(row("Save-file picker", yn(typeof window.showSaveFilePicker === "function")));
   paint();
@@ -5030,8 +5549,18 @@ function vstHtml(){
           <h4>When does this footage start?</h4>
           <div class="vst-k"><span>File</span><span>${esc(v.name)}</span></div>
           <div class="vst-k"><span>Size</span><span>${mb(v.size)}</span></div>
-          ${v.guessed ? `<p class="vst-note">Filled in from the file's own date, which is often wrong.
-            Correct it to the moment the recording actually began.</p>` : ""}
+          ${v.guessed ? `<p class="vst-note">${
+            v.startFrom === "capture"
+              ? "Taken from <b>the video's own capture metadata</b> &mdash; when it was recorded, "
+                + "shown in Eastern Time. Correct it if you know better."
+              : v.startFrom === "creation"
+              ? "Taken from the video's creation time, which <b>carries no time zone</b> &mdash; "
+                + "please check it against when the recording actually began."
+              : v.startFrom === "modified"
+              ? "This file carries <b>no capture metadata</b>, so this is the file's modified date "
+                + "&mdash; when it was written, <b>not</b> when it was recorded. Correct it."
+              : "This file carries no date at all. Enter when the recording began."
+          }</p>` : ""}
         </div>
         <div class="vst-card">
           <h4>Start date</h4>
@@ -5112,8 +5641,10 @@ function vstHtml(){
         <div class="vst-card">
           <h4>Making the timestamped copy</h4>
           <div class="vst-bar2"><i id="vst_bar" style="width:${v.pct}%"></i></div>
-          <p class="vst-note"><b id="vst_pc">${v.pct}%</b> &mdash; the clip is being played through once,
-            so this takes about as long as the footage runs. Keep this screen open.</p>
+          <p class="vst-note"><b id="vst_pc">${v.pct}%</b>${v.stage ? " &mdash; " + esc(v.stage) : ""}
+            &mdash; ${v.parsed && vstCanPipeline()
+              ? "frames are being decoded, stamped and re-encoded on this device. Keep this screen open."
+              : "the clip is being played through once, so this takes about as long as the footage runs. Keep this screen open."}</p>
           <button class="vst-btn" data-act="vstAbort">Stop</button>
         </div>`
     : `
@@ -5123,7 +5654,14 @@ function vstHtml(){
           <div class="vst-k" style="margin-top:8px"><span>File</span><span>${esc(v.out ? v.out.name : "")}</span></div>
           <div class="vst-k"><span>Size</span><span>${v.out ? mb(v.out.size) : ""}</span></div>
           <div class="vst-k"><span>Starts at</span><span>${esc(vstLabel(v.startMs, v.tz))}</span></div>
-          <div class="vst-k"><span>On this device</span><span>${v.savedHere ? "Saved" : "Not saved yet"}</span></div>
+          <div class="vst-k"><span>Audio</span><span>${
+            v.out && v.out.audio === "stripped"
+              ? "Not included &mdash; the copy is picture only"
+              : "picture only"}</span></div>
+          ${v.out && v.out.sourceAudio ? `<div class="vst-k"><span>Original's audio</span>
+            <span>${esc(v.out.sourceAudio)} &mdash; still on your original, untouched</span></div>` : ""}
+          <div class="vst-k"><span>On this device</span><span>${
+            v.savedHere ? "Saved" : "Generated &mdash; not yet saved"}</span></div>
           <div class="vst-k"><span>Case</span><span>${v.caseNo ? esc(v.caseNo) : "Not attached to a case"}</span></div>
           ${v.err ? `<p class="vst-err">${esc(v.err)}</p>` : ""}
           ${v.saveMsg ? `<p class="vst-ok">${esc(v.saveMsg)}</p>` : ""}

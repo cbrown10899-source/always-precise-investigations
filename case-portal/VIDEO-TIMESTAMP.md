@@ -804,3 +804,173 @@ Pages 25 MiB per-file cap — **but see the CSP constraints above**, which decid
    pipeline, with the CSP decision made first.
 3. **If it declines** — that is the STOP the owner asked for, and no muxer would
    have helped.
+
+---
+
+# THE PIPELINE, BUILT — 2026-08-18
+
+**The owner's device passed the decision gate on the real file:**
+
+| | |
+| --- | --- |
+| Container | MOV / QuickTime |
+| Video | **H.264 / AVC, `avc1.640028`, 1920x1080, ~48.12 s** |
+| Audio | AAC / mp4a, mono, 44100 Hz |
+| Media-element decode | **NO** |
+| **WebCodecs decode** | **YES — accepts this file's actual configuration** |
+| **WebCodecs H.264 encode** | **YES** |
+| Share to device | YES |
+
+So the route is confirmed, and it is **H.264, not HEVC** — which makes the
+encode a same-codec re-encode rather than a format conversion.
+
+## What was built
+
+```
+local file -> demux (this repo) -> VideoDecoder -> frame
+           -> canvas draw + burn -> VideoEncoder (H.264)
+           -> MP4 mux (vendored) -> Blob -> share / save
+```
+
+**No MediaRecorder on this path.** MediaRecorder is what wrote a file the iPhone
+could not read back; it remains only for the legacy formats it has been proven
+on, and `vstProveMime` still governs those.
+
+## The dependency decision — one library, not two
+
+The owner approved `mp4box` (2.26 MB) **and** `mp4-muxer` (156 KB). **Only the
+muxer was taken**, and the reasoning is worth keeping:
+
+- **The demuxer is written in this repo** (`vstSampleTable`, `vstEsdsAsc`). It is
+  pure byte arithmetic over `stts` / `ctts` / `stsz` / `stsc` / `stco` / `co64` /
+  `stss`, which means **it is testable in this container** against fixtures built
+  to the shapes an iPhone writes — `moov` last, chunked samples, run-length
+  tables, keyframes at intervals, composition offsets. Two hundred lines against
+  2.26 MB.
+- **The muxer is vendored**, because writing a standards-compliant MP4 is the one
+  thing that **must** be right — the hard gate is the iPhone playing the file it
+  made — and it **cannot be tested here**, since this container has no WebCodecs.
+  A purpose-built, audited library is the low-risk choice for exactly that.
+
+`portal/vendor/mp4-muxer.js` — **MIT**, 69 KB, no runtime dependencies, and
+audited before committing: **no `fetch`, `XMLHttpRequest`, `WebAssembly`, `eval`
+or `importScripts`**. There is a test asserting all of that, so an update cannot
+quietly introduce any of it.
+
+**It is `.js`, not `.mjs`, deliberately.** Every test suite in this repo is
+`.mjs` and the deploy guard's rule is that no `.mjs` is ever published. That
+invariant is worth more than the extension, and `import()` does not care.
+
+## The CSP change — one directive, and why
+
+`/portal/*` gained **`script-src 'self'`** and nothing else. It is needed for
+exactly one same-origin module import. No third-party origin, no CDN.
+
+**`worker-src` was NOT added.** The pipeline runs on the main thread, so nothing
+needs a worker yet — and the owner's instruction was the minimum change the
+implementation actually uses. If a worker is added later for UI smoothness, that
+is its own decision and its own directive.
+
+`media-src 'self' blob:` was added alongside, because the finished derivative is
+previewed from a blob URL before it is saved.
+
+## Audio: STRIPPED BY DESIGN
+
+**Owner requirement change, mid-build:** the timestamped copy is **picture only**
+— no audio track — and AAC passthrough is not a requirement for this milestone.
+The AAC passthrough that had been written was removed rather than left dormant:
+dead code that once muxed audio is exactly the thing someone re-enables by
+accident later.
+
+This is a deliberate omission, not a limitation, and the distinction is enforced
+where this project always enforces it — in what the screen says:
+
+- The muxer is **never given an audio track**, so the output has none. Asserted
+  against the pipeline's own source, not a comment.
+- **Nothing claims audio was preserved.** The finished screen says *"Not included
+  — the copy is picture only"* and names the original's own audio as *"still on
+  your original, untouched"*.
+- The read-out reports **Audio in original** and **Audio in the copy** as two
+  separate rows, so the two facts cannot be confused.
+- The original's audio is still **parsed** (`esds` → AudioSpecificConfig), because
+  reporting what the source contains is useful. It is reported and not muxed.
+
+## Memory, on the real 84.7 MB baseline
+
+**One sample at a time.** The demuxer produces a list of `{offset, size, dts,
+cts, sync}` and never reads media bytes; the pipeline then pulls each sample with
+`file.slice`. Frames are `close()`d the instant they are drawn, and the decode
+queue is held under 24 so the whole film is never queued at once. The file is
+never resident, and there is a test that a 6 MB fixture parses from under a tenth
+of itself.
+
+Nothing is written to R2, D1, `localStorage`, `sessionStorage` or IndexedDB —
+already asserted structurally — and the output is one Blob the operator saves or
+shares.
+
+## Orientation
+
+`tkhd`'s matrix is read and handed to the muxer as `rotation`, so the copy
+carries the same orientation metadata the original did. **No pixels are turned,
+stretched or cropped** to achieve it, which is what keeps the aspect ratio and
+framing identical.
+
+## What is NOT proven, and cannot be from here
+
+**This container has no WebCodecs**, so the pipeline has never been executed —
+only its demuxer, its refusals and its wiring are tested here. **iOS LIVE
+VERIFIED remains OPEN** until the owner's device selects `IMG_0440.mov`,
+generates, and plays the result back.
+
+
+---
+
+# THE STAMP IS ANCHORED TO THE RECORDING — 2026-08-18
+
+**Owner, before push:** the burned timestamp must anchor to the source's actual
+capture date and time when the metadata is there, and must **never** start from
+the moment the investigator processes the file.
+
+**It did not, and that was a real defect.** The default came from
+`file.lastModified` — when the file was *written*, which on a Photos export is
+long after the shot — and it fell back to **`Date.now()`**, the processing time
+itself. Both look plausible on screen, which is what made it dangerous.
+
+## What it reads now, in priority order
+
+| Source | Carries a zone? | Trusted |
+| --- | --- | --- |
+| `moov/meta` keys+ilst **`com.apple.quicktime.creationdate`** | **yes, its own UTC offset** | **yes** |
+| `moov/udta/©day` (or `©dat`) | usually | yes |
+| `mvhd` `creation_time` (1904 epoch) | **no** — Apple has written local time here | **no** — read, but the operator is asked to check |
+| the file's modified date | n/a | **no** — labelled *not* the recording |
+| nothing | | the form asks; nothing is invented |
+
+Whatever is found is an **instant**, and `vstLabel` renders it in
+`America/New_York`, so EST or EDT comes from the date itself. The
+`com.apple.quicktime.creationdate` fixture resolves to exactly the owner's own
+example: **`05/03/2025 11:27:58 AM EDT`**.
+
+`Date.now()` is gone from the opener entirely. A file with no date at all now
+gets an empty form that asks, which is honest — the processing time is the one
+value guaranteed to be wrong.
+
+**The form says which source it used**, in four distinct wordings, because a
+stamp taken from a modified date must not read like one taken from the capture
+metadata. The device read-out carries **Recorded at** and **Stamp anchored to**
+for the same reason.
+
+**An operator's correction always outranks the file** — the metadata is applied
+only while the fields are still untouched.
+
+## Two parser bugs this found, both caught before the suite ran
+
+- **The box-type check admitted only printable ASCII**, so QuickTime's
+  ©-prefixed metadata atoms — `©day`, exactly where an Apple device writes the
+  capture date — were discarded as if the box were corrupt. 0xA9 is allowed now.
+- **`ilst` children are indexed by a BINARY number**, not a four-character code,
+  so `vstBox` refused them, correctly, as not being types. They are walked
+  directly instead.
+
+Both were found by a thirty-second targeted probe rather than a twelve-minute
+suite run, which is the reason to keep that probe habit.
