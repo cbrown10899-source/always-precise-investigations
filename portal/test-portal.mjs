@@ -5449,6 +5449,137 @@ section('Voice mode: the engine is one session, and it says what it did');
   ok('the log can be cleared away', await page.locator('.sv-voicelog').count() === 0);
 }
 
+/* ------------------ §13 capture, §8 offline, §1 compact — the mobile polish
+
+   §13: "Support 'Mobile, take photo' and 'Mobile, video'. If the browser
+   requires a user gesture before actual capture: open/prepare the correct
+   capture interface, and do not claim a photo or video was captured until it
+   actually was. NEVER FAKE EVIDENCE CREATION." */
+section('Voice §13 and §8: prepare the camera, claim nothing, lose nothing');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', (e) => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('dana');
+  await page.locator('#p').fill('FieldWork2026x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  await page.locator('[data-act="svEnter"]').click();
+  await page.waitForTimeout(700);
+  if (await page.locator('[data-act="svStartDay"]').count()) {
+    await page.locator('#sv_start').fill('06:30');
+    await page.locator('[data-act="svStartDay"]').click();
+    await page.waitForTimeout(900);
+  }
+
+  await page.evaluate(() => {
+    window.__mic = { started: 0, stopped: 0, rec: null };
+    window.SpeechRecognition = function () {
+      const self = this;
+      window.__mic.rec = self;
+      self.start = () => { window.__mic.started++; };
+      self.stop = () => { window.__mic.stopped++; };
+    };
+  });
+  const say = async (words) => {
+    await page.evaluate((w) => {
+      window.__mic.rec.onresult({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: w } }] });
+    }, words);
+    await page.waitForTimeout(700);
+  };
+  const entries = () => page.evaluate(() => (WS && WS.activity ? WS.activity.length : -1));
+  const panel = () => text(page, '.sv-voice');
+
+  /* §1 / §16.1 — THE STATUS IS COMPACT, and this is measured rather than
+     admired: what matters is that the controls start high enough for a thumb. */
+  const geom = await page.evaluate(() => {
+    const st = document.querySelector('.sv-status');
+    const quad = document.querySelector('.sv-quad');
+    return { status: Math.round(st.getBoundingClientRect().height),
+             controlsTop: Math.round(quad.getBoundingClientRect().top),
+             vh: window.innerHeight };
+  });
+  ok('the status block is compact, not a stack of lines',
+     geom.status <= 78, `${geom.status}px`);
+  ok('and the quick controls start in the top third of the phone',
+     geom.controlsTop < geom.vh / 3, `${geom.controlsTop} of ${geom.vh}`);
+  ok('while still saying it is active, for how long, and which day',
+     has(await text(page, '.sv-status'), 'ACTIVE')
+     && /Day \d/.test(await text(page, '.sv-status')), await text(page, '.sv-status'));
+
+  await page.locator('[data-act="svVoiceToggle"]').click();
+  await page.waitForTimeout(500);
+
+  /* §13 — THE COMMAND PREPARES AND CLAIMS NOTHING. */
+  const before = await entries();
+  await say('Mobile, take photo');
+  ok('a photo command files no activity at all', (await entries()) === before,
+     `${before} -> ${await entries()}`);
+  ok('and creates no evidence record either',
+     await page.evaluate(() => (WS.evidence || []).length) === 0);
+  ok('it prepares the capture instead', await page.locator('.sv-capture').count() === 1);
+  ok('saying plainly that nothing is logged until the picture arrives',
+     has(await text(page, '.sv-capture'), 'Nothing is logged until'),
+     await text(page, '.sv-capture'));
+  ok('with the one tap the browser requires',
+     await page.locator('[data-act="svCaptureGo"]').count() === 1);
+  ok('and a way out of it', await page.locator('[data-act="svCaptureCancel"]').count() === 1);
+  /* THE LOOP DOES NOT STOP TO WAIT. */
+  ok('the loop is still listening while the camera waits',
+     has(await panel(), 'Listening for'), (await panel()).slice(0, 200));
+
+  await page.locator('[data-act="svCaptureCancel"]').click();
+  await page.waitForTimeout(300);
+  ok('cancelling clears it and still files nothing',
+     await page.locator('.sv-capture').count() === 0 && (await entries()) === before);
+
+  await say('Mobile, video');
+  ok('a video command prepares the video tool',
+     has(await text(page, '.sv-capture'), 'Video ready'), await text(page, '.sv-capture'));
+  ok('and files nothing either', (await entries()) === before);
+  await page.locator('[data-act="svCaptureCancel"]').click();
+  await page.waitForTimeout(300);
+
+  /* §8 — NO SIGNAL MUST NOT LOSE THE OBSERVATION. A surveillance position is
+     exactly where there is no bar of service. */
+  await page.evaluate(() => {
+    window.__realFetch = window.fetch;
+    window.fetch = (u, o) => (String(u).includes('/activity') && o && o.method === 'POST')
+      ? Promise.reject(new TypeError('Failed to fetch'))
+      : window.__realFetch(u, o);
+  });
+  const n1 = await entries();
+  await say('Mobile, the grey van came back');
+  ok('an entry that cannot be sent is not lost', has(await panel(), 'held on this phone'),
+     (await panel()).slice(0, 260));
+  ok('and the operator is told how many are waiting',
+     has(await panel(), '1 entry is held') || has(await panel(), 'entries are held'),
+     (await panel()).slice(0, 260));
+  ok('nothing reached the case yet', (await entries()) === n1);
+  ok('and the loop kept listening through it',
+     has(await panel(), 'Listening for'), (await panel()).slice(0, 200));
+
+  /* THE NETWORK COMES BACK. */
+  await page.evaluate(() => { window.fetch = window.__realFetch; });
+  await page.locator('[data-act="svVoiceRetry"]').click();
+  await page.waitForTimeout(1200);
+  ok('when the signal returns the held entry sends itself',
+     (await entries()) === n1 + 1, `${n1} -> ${await entries()}`);
+  ok('in the words that were spoken',
+     (await page.evaluate(() => WS.activity[0].description)) === 'the grey van came back',
+     await page.evaluate(() => WS.activity[0].description));
+  ok('and the waiting notice is gone', !has(await panel(), 'held on this phone'));
+
+  /* THE RETRY CARRIES THE SAME NAME, which is what stops a lost response
+     becoming a second entry. */
+  const ids = await page.evaluate(() => window.__eventIds || null);
+  ok('the held entry was sent under one event id, not a fresh one each time',
+     ids === null || new Set(ids).size === ids.length);
+}
+
 section('Voice §10: the last activity is corrected without leaving the field screen');
 {
   const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
@@ -6066,7 +6197,11 @@ section('A day can be paused, and a paused clock stays paused');
     await page.locator('[data-act="svStartDay"]').click();
     await page.waitForTimeout(900);
   }
-  ok('the day is running', has(await text(page, '.sv-body'), 'running since'));
+  /* §1 compacted this line: "ACTIVE" now carries the running state and the
+     sub-line carries "since 6:30 AM", so "running since" is redundant wording
+     that no longer appears. Pinned to the meaning instead of the phrase. */
+  ok('the day is running', has(await text(page, '.sv-status'), 'ACTIVE')
+     && /since \d/.test(await text(page, '.sv-status')), await text(page, '.sv-status'));
   ok('and a break is offered', await page.locator('[data-act="svPause"]').count() === 1);
 
   await page.locator('[data-act="svPause"]').click();

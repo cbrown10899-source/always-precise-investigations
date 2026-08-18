@@ -9,6 +9,24 @@ state. Update it when the queue moves; keep it short.
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
 truth** (recorded verbatim 2026-08-13).
 
+## 🔒 LOCKED ORDER — owner, 2026-08-18
+
+The queue, in the owner's own words. **Nothing below jumps ahead of anything
+above it**, and items 3–5 are explicitly not to be started until 1 is finished.
+
+| # | Work | State |
+| --- | --- | --- |
+| 1 | Finish current Active Surveillance mobile and voice polish | **IN PROGRESS** — §13 photo/video commands, §8 retry/offline and server-side duplicate protection, §1/§16.1 compact status |
+| 2 | Build Timestamp Photo | not started |
+| 3 | Admin report workflow and mobile report fix | not started — **queued, do not begin** |
+| 4 | Full portal aesthetic cleanup | not started — **queued, do not begin** |
+| 5 | Remaining Portal Ops productivity features | not started |
+
+Recorded mid-unit on the owner's instruction: *"Do not interrupt the current
+coding unit. Record this queue only, then continue the work already in
+progress."* It therefore travels with the Active Surveillance branch rather than
+as a separate merge.
+
 ## 🚦 DEPLOYMENT — 2026-08-18, master `bae2c26` (#181) — unmatched speech is kept
 
 | Component | Master | Deployed | Status |

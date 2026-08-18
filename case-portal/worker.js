@@ -3936,6 +3936,26 @@ const ACTIVITY_KINDS = ['activity', 'photo', 'video', 'location', 'vehicle', 'no
 async function addActivity(request, env, user, caseNo) {
   if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
   const body = await readJson(request);
+
+  /* §8's OTHER HALF — the one the browser cannot do for itself. The loop
+     already refuses a speech engine's repeated final result, but a POST that
+     landed and whose response was lost looks exactly like one that never
+     arrived, and only this side can tell them apart. The client names each
+     utterance and keeps that name across every retry, so a second arrival
+     returns the entry that already exists instead of writing another.
+
+     CHECKED BEFORE ANYTHING IS WRITTEN, and it returns the ORIGINAL id, so a
+     retrying client ends up pointing at the same row rather than believing it
+     failed. */
+  const eventId = /^[A-Za-z0-9_-]{8,64}$/.test(String(body.event_id || ''))
+    ? String(body.event_id) : null;
+  const hasEvents = eventId && !(await missingTables(env)).includes('activity_voice_event');
+  if (hasEvents) {
+    const seen = await env.DB.prepare(
+      'SELECT entry_id FROM activity_voice_event WHERE event_id = ? AND case_no = ?')
+      .bind(eventId, caseNo).first();
+    if (seen) return json({ ok: true, id: seen.entry_id, duplicate: true }, 200);
+  }
   const date = String(body.at_date || '');
   const time = String(body.at_time || '');
   if (!DATE_RE.test(date) || !TIME_RE.test(time)) {
@@ -3972,6 +3992,18 @@ async function addActivity(request, env, user, caseNo) {
      safety of it: the marker is a note about an activity that exists, so a
      database that has not had portal-setup run yet, or any failure recording
      it, costs the marker and never the investigator's entry. */
+  /* Recorded AFTER the entry exists, and never allowed to fail it: the worst
+     case is a retry writing a second entry, which is the situation before this
+     table existed. The best case, and the ordinary one, is that it does not. */
+  if (id && hasEvents) {
+    try {
+      await env.DB.prepare(
+        `INSERT INTO activity_voice_event (event_id, entry_id, case_no, at)
+         VALUES (?, ?, ?, ?) ON CONFLICT(event_id) DO NOTHING`)
+        .bind(eventId, id, caseNo, nowIso()).run();
+    } catch { /* an entry that exists beats a note about how it got here */ }
+  }
+
   if (id && ACTIVITY_SOURCES.includes(String(body.source || ''))) {
     if (!(await missingTables(env)).includes('activity_source')) {
       try {
@@ -6154,6 +6186,11 @@ const DEMO_SWEEP = [
   ['activity_media',        'DELETE FROM activity_media WHERE entry_id IN (SELECT id FROM activity_log WHERE case_no LIKE ?)'],
   ['activity_removed',      'DELETE FROM activity_removed WHERE entry_id IN (SELECT id FROM activity_log WHERE case_no LIKE ?)'],
   ['activity_source',       'DELETE FROM activity_source WHERE entry_id IN (SELECT id FROM activity_log WHERE case_no LIKE ?)'],
+  /* BOTH WAYS ROUND, because this one carries a case_no of its own AND hangs
+     off an activity_log row. The parent subquery is the rule for children; the
+     direct match catches a row whose parent has already gone. ?1 twice, one
+     bind, because the sweep binds a single value. */
+  ['activity_voice_event',  'DELETE FROM activity_voice_event WHERE case_no LIKE ?1 OR entry_id IN (SELECT id FROM activity_log WHERE case_no LIKE ?1)'],
   ['case_day_pauses',       'DELETE FROM case_day_pauses WHERE day_id IN (SELECT id FROM case_days WHERE case_no LIKE ?)'],
   ['build_items',           'DELETE FROM build_items WHERE build_id IN (SELECT id FROM case_builds WHERE case_no LIKE ?)'],
   ['build_events',          'DELETE FROM build_events WHERE build_id IN (SELECT id FROM case_builds WHERE case_no LIKE ?)'],
@@ -6804,7 +6841,7 @@ const EXPECTED_TABLES = [
   'case_day_pauses', 'lead_status', 'send_log', 'invoice_retainer',
   'payment_methods', 'payment_send', 'retainer_receipt', 'case_archive', 'case_deleted', 'notify_recipient', 'case_phone',
   'retainer_payment', 'retainer_payment_void', 'retainer_payment_token',
-  'video_stamp', 'dropbox_auth', 'activity_source',
+  'video_stamp', 'dropbox_auth', 'activity_source', 'activity_voice_event',
 ];
 
 async function missingTables(env) {
