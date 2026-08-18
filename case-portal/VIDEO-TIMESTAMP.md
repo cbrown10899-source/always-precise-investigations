@@ -1020,3 +1020,29 @@ owner has to know which one to chase.
 
 The read-out gained **Route for this file**, so the answer is visible rather
 than inferred from the button.
+
+## A non-video file is refused where it is chosen
+
+Owner, 2026-08-18: on a desktop the picker's `video/*` filter can be switched to
+**All Files**, and the wizard would then carry a spreadsheet all the way to a
+decode failure that reads like a codec problem. It now says **"Video files
+only"** the moment the file is chosen — before an object URL is made, so there
+is nothing to revoke and nothing to unwind.
+
+**The restraint is the design, and it is the same measurement this file already
+records.** Identical decodable `.mov` bytes arrive as `video/quicktime`, as
+`application/octet-stream`, or **with no type at all**. A rule that refused an
+empty or octet-stream type would reject the exact iPhone file the whole feature
+exists for.
+
+So `vstNotVideo` refuses only what it can positively identify as something else:
+
+| The file | What happens |
+| --- | --- |
+| type is `video/*` | allowed — it says it is video |
+| extension is a known video one | allowed — it is named as one |
+| no type, or `application/octet-stream` | allowed — this is the iPhone case, and the **decode probe** is the real arbiter |
+| type says image, audio, text or document | **refused**, "Video files only" |
+
+The picker still asks for `video/*` first. The refusal is the backstop for a
+filter being switched, not a replacement for asking — there is a test for both.

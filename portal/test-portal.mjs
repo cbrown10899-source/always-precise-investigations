@@ -8023,6 +8023,71 @@ section('The final report is a real PDF, written by the page');
   ok('the package is re-read before the PDF is built', reread >= 1, String(reread));
 }
 
+/* ------------------------------ a non-video file is refused where it is chosen
+
+   Owner, 2026-08-18: on a desktop the picker's `video/*` filter can be switched
+   to All Files, and the wizard would then carry a spreadsheet all the way to a
+   decode failure that reads like a codec problem. It must say "Video files
+   only", immediately.
+
+   THE RESTRAINT IS THE DESIGN. VIDEO-TIMESTAMP.md records the measurement: the
+   same decodable `.mov` bytes arrive as `video/quicktime`, as
+   `application/octet-stream`, or WITH NO TYPE AT ALL. A rule that refused an
+   empty or octet-stream type would reject the exact iPhone file this feature
+   exists for. So only a file whose type positively says something ELSE is
+   turned away here; everything undecided goes to the decode probe, which is the
+   real arbiter. */
+section('Video timestamp: a non-video file is refused, but a bare .mov is not');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const judge = (f) => page.evaluate((x) => vstNotVideo(x), f);
+
+  /* THE THREE FORMS A REAL CLIP ARRIVES IN. All must pass. */
+  ok('a .mov declaring itself video is allowed',
+     (await judge({ name: 'IMG_0440.MOV', type: 'video/quicktime' })) === false);
+  ok('a .mov with NO type at all is allowed — the iPhone case',
+     (await judge({ name: 'IMG_0440.MOV', type: '' })) === false);
+  ok('a .mov arriving as application/octet-stream is allowed',
+     (await judge({ name: 'IMG_0440.MOV', type: 'application/octet-stream' })) === false);
+  ok('and a plain mp4 is allowed',
+     (await judge({ name: 'clip.mp4', type: 'video/mp4' })) === false);
+  /* Nothing says video and nothing says otherwise: the decode probe decides,
+     not a guess made here. */
+  ok('a file with no extension and no type still reaches the decode probe',
+     (await judge({ name: 'recording', type: '' })) === false);
+
+  /* WHAT IS POSITIVELY SOMETHING ELSE. */
+  ok('a PDF is refused', (await judge({ name: 'report.pdf', type: 'application/pdf' })) === true);
+  ok('a photograph is refused', (await judge({ name: 'photo.jpg', type: 'image/jpeg' })) === true);
+  ok('a text file is refused', (await judge({ name: 'notes.txt', type: 'text/plain' })) === true);
+  ok('an audio file is refused, which a video timestamper cannot help with',
+     (await judge({ name: 'song.m4a', type: 'audio/mp4' })) === true);
+
+  /* THE WORDS THE OWNER ASKED FOR, and the way back — a refusal that leaves you
+     with nothing to press is a dead end. */
+  const panel = await page.evaluate(() => {
+    VST = { step: 'reject', caseNo: '', name: 'report.pdf', why: 'Video files only' };
+    paintVStamp();
+    const root = document.querySelector('#vstamp');
+    return {
+      text: root ? root.textContent : '',
+      again: !!document.querySelector('[data-act="vstOpen"]'),
+      close: !!document.querySelector('[data-act="vstClose"]'),
+    };
+  });
+  ok('the refusal says Video files only', panel.text.includes('Video files only'), panel.text.slice(0, 200));
+  ok('names the file that was picked', panel.text.includes('report.pdf'));
+  ok('and offers a way on rather than a dead end', panel.again && panel.close);
+  await page.evaluate(() => { VST = null; paintVStamp(); });
+
+  /* The picker still ASKS for video first — the refusal is the backstop for a
+     desktop filter being switched, not a replacement for asking. */
+  const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+  ok('the file picker still asks for video up front', /inp\.accept\s*=\s*"video\/\*"/.test(src));
+}
+
 section('The device answers for itself');
 {
   const page = await newPage();
@@ -8825,8 +8890,15 @@ section('The preview is optional, never a gate');
   }, failed);
 
   const ok1 = await done(false);
-  ok('a playable copy still offers the preview',
-     await page.locator('.vst-prev').count() === 1);
+  const prevCount = await page.locator('.vst-prev').count();
+  const prevDiag = await page.evaluate(() => ({
+    n: document.querySelectorAll('.vst-prev').length,
+    roots: document.querySelectorAll('#vstamp').length,
+    step: JSON.stringify(VST && VST.step),
+    failed: JSON.stringify(VST && VST.previewFailed),
+  }));
+  ok('a playable copy still offers the preview', prevCount === 1,
+     `locator=${prevCount} dom=${prevDiag.n} roots=${prevDiag.roots} step=${prevDiag.step} previewFailed=${prevDiag.failed}`);
   ok('and says playing it back is optional', has(ok1, 'not required'), ok1.slice(0, 500));
 
   /* THE CASE THAT MATTERS: the page cannot play it, and that must not read as a
