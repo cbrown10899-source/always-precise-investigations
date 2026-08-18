@@ -9,6 +9,59 @@ state. Update it when the queue moves; keep it short.
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
 truth** (recorded verbatim 2026-08-13).
 
+## 🚦 DEPLOYMENT — 2026-08-18, master `b73e02d` (#179) — voice §2 wake-word loop
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` | `b73e02d` | `b73e02d` | **DEPLOYED** — `deploy.yml` success |
+| Worker / API | `b73e02d` | `1ca9a97` | **DEPLOYED** — `worker.js` untouched, so `deploy-portal.yml` correctly did not run |
+| D1 schema | `b73e02d` | applied | unchanged — **no dispatch owed** |
+
+Save point `save/2026-08-18-1912-b73e02d`. Suites: portal **1598/0**, worker **1779/0**, guard **68/0**.
+
+**LIVE VERIFIED — OPEN, and only a real phone can close it.** Speech recognition
+does not exist in headless Chromium. What closes it: the permission prompt on
+first ON; *"Mobile, no change at residence"* filing ONE entry and returning to
+listening; two commands in a row without touching the screen; and locking the
+phone to confirm it SAYS it stopped rather than pretending to listen.
+
+## 🎙 VOICE COMMAND MODE — THE LOOP (#179)
+
+§2, §9, §14, §16, and the half of §8 the loop itself creates.
+
+**§14 is asserted as calls, not wording.** Opening Active Surveillance
+constructs **no recogniser at all** — a test asserts zero. "The microphone is
+inactive when off" is the kind of claim that is easy to write on a screen and
+easy to get wrong underneath.
+
+**§2's loop, in the shape people actually speak.** "Mobile" and the command in
+one breath works; "Mobile" alone arms it and waits, which is the two-step form
+the spec describes. A confidently matched command files a real entry through
+the existing activity API and returns to listening with no tap between
+commands.
+
+**Only a confidently matched command files itself.** Ambiguous phrases,
+dictated prose and unmatched phrases all STOP the loop and hand to the review
+that already existed — the operator is then looking at a question, and a
+microphone still listening would file over the top of it. **Speech without the
+wake word is ignored entirely**, or a car radio fills the screen with prompts.
+
+**§16 is enforced, not merely written.** The loop stops on `visibilitychange`
+and says why. An investigator who believes the phone is listening in their
+pocket stops narrating, and the hole in the log is found when the report is
+written.
+
+**§8 is HALF done, and it is the half this work created.** Engines re-emit
+final results, and an auto-filing loop turns that into duplicates in the
+evidence log: an in-flight lock plus a six-second same-command window, with a
+failed POST clearing the guard so a genuine retry is not mistaken for a
+duplicate. **The offline/retry half is NOT built** and needs a server-side
+event key.
+
+**How it is tested without a microphone:** the ENGINE is stubbed and everything
+else is real — the real registry, the real activity API, the real database. The
+stub supplies only what a machine in a data centre cannot: what was heard.
+
 ## 🚦 DEPLOYMENT — 2026-08-18, master `8461897` (#177, #178)
 
 | Component | Master | Deployed | Status |
