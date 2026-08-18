@@ -682,7 +682,7 @@ Tests:
 
 ```bash
 node case-portal/test-worker.mjs   # 1609 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 1345 checks: the page against the real Worker
+node portal/test-portal.mjs        # 1382 checks: the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
@@ -1102,6 +1102,34 @@ whichever case is open behind it — opened from outside a case it asks, against
 the caller's own `/submissions` list, and the record still goes through
 `caseFor`. A copy may also be made with no case at all, and the screen then says
 plainly that the portal holds no record of it until it is attached.
+
+**A control that renders is not a control that can be seen.** The Timestamp Video
+quick tool was drawn on the first screenful at every width and the owner still
+could not find it: white on a near-white page, and drawn only by `dashView()` —
+which an investigator never sees, while under 900px the navigation rail holding
+the other copy is behind the burger. `quickToolsHtml()` is called from `shell()`
+for that reason: one row, one writer, every top-level screen, both roles, one
+wording. There is an assertion that the control's surface differs from the page
+behind it by at least 8 luminance points, and it caught a "fix" that differed
+by 3.
+
+**A `.mov` that fails is a codec failure, not a container-label failure.** The
+browser sniffs a blob's bytes and ignores its declared type — measured: identical
+decodable bytes load as `video/quicktime`, `application/octet-stream` or with no
+type at all. So re-wrapping fixes nothing. `vstBoxCodec()` names the codec from
+the file's own `stsd` box with no decoder, walking to the END because iPhone
+QuickTime writes `moov` last (182 bytes read of a 5 MB fixture), and returns
+**null** rather than guessing when it cannot read it. The decode probe runs when
+the file is CHOSEN, so an undecodable file never gets a Generate button under a
+fatal error — it gets the reason where the action was, with Edit timestamp and
+Cancel still offered.
+
+**Browser-side FFmpeg/WASM is ruled out and the measurements are in
+`VIDEO-TIMESTAMP.md`:** no `SharedArrayBuffer` (no threads), `@ffmpeg/core` is
+64.7 MB against Cloudflare Pages' 25 MiB per-file cap, and `file.arrayBuffer()`
+throws above 1 GB. It would work on demo clips and fail on surveillance files.
+The recommendation for HEVC is the iPhone's *Most Compatible* camera setting,
+which writes H.264 that the existing renderer already handles.
 
 **Media wording:** *Upload video / picture* names the entry point for ADDING,
 *Case media* names what is already there. **Keys, routes, tables and variables

@@ -366,6 +366,25 @@ recedes but is **never removed**, and nothing is hidden with `display:none` to
 make a section look smaller. Shrinking a section by deleting its words is not
 shrinking it, and an absent zero is a different claim from a zero.
 
+## 🚦 DEPLOYMENT — 2026-08-18, master `32dbb98` (#167)
+
+| Component | Master SHA | Deployed SHA | Status | How |
+| --- | --- | --- | --- | --- |
+| Public site + `/portal/` page | `32dbb98` | `32dbb98` | **DEPLOYED** | `Deploy site to Cloudflare Pages` **success at `32dbb983`** — the merge commit itself |
+| Worker / API | `32dbb98` | `8a48d7d` | **DEPLOYED** | `worker.js` untouched by #167; still the build from `8a48d7d0` |
+| D1 schema | `32dbb98` | applied | unchanged | **no schema change in #167 — no portal-setup dispatch is owed** |
+
+**LIVE VERIFIED remains OPEN.** The egress proxy still blocks
+`alwayspreciseinvestigations.net` from this container (`CONNECT tunnel failed,
+response 403`). Every row is a green workflow at the exact SHA, which is
+provenance, not live confirmation.
+
+**The owner is the live check for this one specifically** — the whole unit exists
+because a green workflow and a passing suite both said a control was there while
+the person looking at the screen could not see it. Suites now assert the
+control's surface stands off the page behind it, but only a person can confirm
+they can see it.
+
 ## 🔧 TWO OWNER-REPORTED FAULTS, 2026-08-18 — both real, both fixed
 
 ### 1. "The live dashboard does not visibly show the Timestamp Video quick tool"
