@@ -9,13 +9,75 @@ state. Update it when the queue moves; keep it short.
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
 truth** (recorded verbatim 2026-08-13).
 
+## 🚦 DEPLOYMENT — 2026-08-18, master `c00be24` (#173) — Dropbox callback fix
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` | `c00be24` | `c00be24` | **DEPLOYED** — `deploy.yml` success |
+| Worker / API `api-case-portal` | `c00be24` | `c00be24` | **DEPLOYED** — `deploy-portal.yml` success, tests ran in CI first |
+| D1 schema | `c00be24` | applied | unchanged — **no dispatch owed** |
+
+Save point `save/2026-08-18-0600-c00be24`. Suites: worker **1681/0**, deploy
+guard **68/0**.
+
+**LIVE VERIFIED — OPEN**, on the owner's own instruction: *"Stop for my live
+connect test."* It closes when a real browser completes the round trip.
+
+## 🐞 "NOT SIGNED IN" ON THE DROPBOX RETURN — fixed 2026-08-18 (#173)
+
+Owner, live: *"Live Dropbox callback reaches the site but returns 'Not signed
+in' while admin is signed into Case Portal in the same browser."*
+
+**`sessionCookie` is `SameSite=Strict`, and a browser does not attach a Strict
+cookie to a request that ANOTHER site navigated to.** Dropbox sending the
+operator back is exactly that, so `currentUser` saw no cookie and the signed-in
+gate refused the request before the route ran. `/dropbox/connect` worked
+throughout because an address-bar navigation has no initiating site — the
+outbound leg was fine and only the return leg could not carry the session.
+
+The other two suspects were clean and are worth recording as ruled out: the
+state cookie was already `SameSite=Lax`, `Secure`, `HttpOnly`, scoped to
+`/portal-api/dropbox`, and `originAllowed` passes because a cross-site GET
+navigation sends no `Origin` header at all.
+
+**The fix is NOT Lax on the session cookie.** That cookie is the portal's CSRF
+defence for every route in the Worker — `originAllowed` calls itself defence in
+depth *behind* it — and trading it site-wide for one OAuth return is a bad deal.
+A test now asserts it is still Strict, so a later "simplification" fails.
+
+**The callback carries its own credential instead.** The state cookie holds
+`randomState . adminUserId . expiry . HMAC-SHA256` keyed on
+`DROPBOX_APP_SECRET`; `/dropbox/connect` is the only minter and is still
+admin-only, so the id in there is an admin's by construction. Dropbox is handed
+the **random field alone**, so no staff id reaches its logs or the browser
+history. The admin is **re-read from `users`** on the way through — demoted or
+deactivated in between gets `unauthorised`, never a connection.
+
+**The signature is what makes the id trustworthy.** HttpOnly stops a page
+writing the cookie, but a sibling subdomain can set a `Domain=` cookie this
+Worker cannot distinguish from its own. `DROPBOX_APP_SECRET` is the key because
+HMAC never exposes its key, the flow cannot run without that secret anyway, and
+it means no new secret to set and no "key is missing" branch to get wrong.
+
+**The wrong reasoning is corrected in `DROPBOX.md`, not deleted.** It claimed a
+state cookie without a session *"would let anyone holding the URL complete a
+connection"*. That is false — the cookie is the half you cannot obtain — and it
+is what put the gate there.
+
+**Still not built, deliberately** (owner: *"Do not add Dropbox UI yet"*): there
+is no Dropbox control anywhere in `portal/index.html`. A successful return lands
+on `/portal/?dropbox=connected` and the page says nothing; the state is read
+from `GET /portal-api/dropbox/status`. **If the Lax state cookie does not arrive
+in a real browser the symptom is now `?dropbox=state`**, which is diagnostic
+rather than the old wall.
+
 ## 🚦 DEPLOYMENT — 2026-08-18, master `8301f8c` (#172) — Dropbox OAuth
 
 | Component | Master | Deployed | Status |
 | --- | --- | --- | --- |
 | Site + `/portal/` | `8301f8c` | `8301f8c` | **DEPLOYED** — `deploy.yml` success |
 | Worker / API `api-case-portal` | `8301f8c` | `8301f8c` | **DEPLOYED** — `deploy-portal.yml` success |
-| D1 schema | `8301f8c` | **NOT applied** | 🔴 **`portal-setup.yml` dispatch OWED** — `dropbox_auth` is new |
+| D1 schema | `8301f8c` | applied | ✅ **DONE** — `portal-setup.yml` run 32103267542, live `/health` returned `missing_tables: []` |
 
 Save point `save/2026-08-18-0513-8301f8c`. Suites at merge: worker **1663/0**,
 deploy guard **68/0**.
