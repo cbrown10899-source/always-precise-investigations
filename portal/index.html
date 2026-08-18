@@ -4072,12 +4072,101 @@ function vstDraw(cx, W, H, text){
    supported on this platform while its only real codec, `avc1`, reports NOT
    supported — recording to it produces a file nothing can play. VP9 first,
    VP8 behind it. */
+/* THE RECORDING FORMAT, IN PREFERENCE ORDER — MP4/H.264 FIRST.
+
+   This order is the owner's iPhone test, 2026-08-18: the device reported
+   `MediaRecorder` supporting BOTH mp4/avc1 and webm/vp9, this function handed
+   back WebM because it was first in the list, and the end-to-end test then
+   "wrote a file the iOS device could not read back". iOS records WebM and does
+   not play it. H.264 in MP4 is what an iPhone plays, and it is what the owner
+   asked the finished derivative to be.
+
+   The earlier desktop measurement that made WebM first still holds THERE —
+   `video/mp4` reports supported while `avc1` reports not, so a desktop that
+   claims mp4 cannot really write one. Which is exactly why the order below is
+   not the decision: `vstProveMime` is. */
+const VST_MIMES = [
+  "video/mp4;codecs=avc1.42E01E", "video/mp4;codecs=avc1.4d002a",
+  "video/mp4;codecs=avc1", "video/mp4",
+  "video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm",
+];
+
 function vstMime(){
   if(typeof MediaRecorder === "undefined") return "";
-  for(const t of ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"]){
+  /* A format already PROVEN to round-trip on this device beats the declared
+     list every time — see `vstProveMime`. */
+  if(VST_PROVEN && VST_PROVEN.mime) return VST_PROVEN.mime;
+  for(const t of VST_MIMES){
     try{ if(MediaRecorder.isTypeSupported(t)) return t; }catch{}
   }
   return "";
+}
+
+/* `isTypeSupported` IS NOT EVIDENCE, and this project has now been bitten by
+   that twice in opposite directions: a desktop that reports `video/mp4` while
+   its only codec reports not, and an iPhone that records WebM it cannot then
+   open. The owner's rule is explicit — verify the generated file's CONTENT.
+
+   So the format is chosen by actually writing a two-frame clip in each
+   candidate and READING IT BACK on this same device. The first that survives
+   the round trip wins; a format that cannot be read back is never selected,
+   whatever it claims. Proven once per session and remembered. */
+let VST_PROVEN = null;
+
+async function vstRoundTrip(mime){
+  try{
+    if(!MediaRecorder.isTypeSupported(mime)) return {mime, ok: false, why: "not offered"};
+  }catch{ return {mime, ok: false, why: "not offered"}; }
+  try{
+    const cv = document.createElement("canvas"); cv.width = 64; cv.height = 48;
+    const cx = cv.getContext("2d");
+    const st = cv.captureStream(0), tr = st.getVideoTracks()[0];
+    const parts = [];
+    const rec = new MediaRecorder(st, {mimeType: mime});
+    rec.ondataavailable = e => { if(e.data && e.data.size) parts.push(e.data); };
+    const stopped = new Promise(r => { rec.onstop = () => r(); setTimeout(r, 8000); });
+    rec.start();
+    for(let i = 0; i < 4; i++){
+      cx.fillStyle = i % 2 ? "#fff" : "#123"; cx.fillRect(0, 0, 64, 48);
+      tr.requestFrame();
+      await new Promise(r => setTimeout(r, 60));
+    }
+    try{ rec.stop(); }catch{}
+    await stopped;
+    const blob = new Blob(parts, {type: mime});
+    if(!blob.size) return {mime, ok: false, why: "recorder produced nothing"};
+    const v = document.createElement("video");
+    v.muted = true; v.playsInline = true;
+    const url = URL.createObjectURL(blob);
+    const readable = await new Promise(r => {
+      v.onloadeddata = () => r(true);
+      v.onerror = () => r(false);
+      setTimeout(() => r(false), 8000);
+      v.src = url;
+    });
+    try{ v.removeAttribute("src"); v.load(); }catch{}
+    try{ URL.revokeObjectURL(url); }catch{}
+    return readable
+      ? {mime, ok: true, bytes: blob.size, type: blob.type}
+      : {mime, ok: false, why: "written, but this device could not read it back", bytes: blob.size};
+  }catch(e){ return {mime, ok: false, why: (e && e.message) || String(e)}; }
+}
+
+async function vstProveMime(){
+  if(VST_PROVEN) return VST_PROVEN;
+  const tried = [];
+  if(typeof MediaRecorder === "undefined"
+     || typeof HTMLCanvasElement.prototype.captureStream !== "function"){
+    VST_PROVEN = {mime: "", tried, why: "this device has no canvas recorder"};
+    return VST_PROVEN;
+  }
+  for(const t of VST_MIMES){
+    const r = await vstRoundTrip(t);
+    tried.push(r);
+    if(r.ok){ VST_PROVEN = {mime: t, tried}; return VST_PROVEN; }
+  }
+  VST_PROVEN = {mime: "", tried, why: "no format this device writes could be read back"};
+  return VST_PROVEN;
 }
 
 function vstCan(){ return !!vstMime() && typeof HTMLCanvasElement.prototype.captureStream === "function"; }
@@ -4205,6 +4294,210 @@ async function vstBoxCodec(file){
   }catch{ return null; }
 }
 
+/* ---- THE FILE'S ACTUAL STRUCTURE ----
+
+   Owner, 2026-08-18: "DO NOT CONFUSE API PRESENCE WITH CODEC SUPPORT." A
+   `VideoDecoder` that exists proves nothing about whether it accepts THIS
+   file's stream, and the answer is in the file rather than in the extension.
+
+   This reads the boxes properly rather than scanning for a four-character code:
+   every track's `tkhd` (dimensions, and the rotation matrix iOS uses instead of
+   turning the pixels), `mdhd` (timescale and duration), and `stsd` (the sample
+   entry, and the `avcC`/`hvcC` configuration record that WebCodecs needs as its
+   `description`). Audio tracks are reported because the owner has made audio a
+   hard requirement — a derivative may not silently lose it.
+
+   Bounded by construction: it walks the top-level list reading 16 bytes a box,
+   then reads `moov` alone. An 84.7 MB original costs a few hundred kilobytes. */
+
+const VST_AUDIO_CODECS = {
+  "mp4a": "AAC", "alac": "Apple Lossless", "Opus": "Opus", "opus": "Opus",
+  "ec-3": "Enhanced AC-3", "ac-3": "AC-3", "twos": "PCM", "sowt": "PCM", "lpcm": "PCM",
+};
+
+function vstBox(bytes, off){
+  if(off + 8 > bytes.length) return null;
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let size = dv.getUint32(off), head = 8;
+  const type = String.fromCharCode(bytes[off+4], bytes[off+5], bytes[off+6], bytes[off+7]);
+  if(!/^[\x20-\x7e]{4}$/.test(type)) return null;
+  if(size === 1){
+    if(off + 16 > bytes.length) return null;
+    size = Number(dv.getBigUint64(off + 8)); head = 16;
+  } else if(size === 0) size = bytes.length - off;
+  if(size < head) return null;
+  return {type, start: off, size, head};
+}
+
+// Children of a container box, as [{type,start,size,head}].
+function vstKids(bytes, box){
+  const out = [];
+  let off = box.start + box.head;
+  const end = Math.min(box.start + box.size, bytes.length);
+  while(off < end){
+    const b = vstBox(bytes, off);
+    if(!b) break;
+    out.push(b);
+    off += b.size;
+  }
+  return out;
+}
+function vstFind(bytes, box, type){ return vstKids(bytes, box).find(b => b.type === type) || null; }
+
+const vstHex = u8 => [...u8].map(b => b.toString(16).padStart(2, "0")).join("");
+
+/* The WebCodecs codec string. For H.264 it is built from the three profile
+   bytes in `avcC`; for HEVC the full form needs the whole general profile and
+   `hvc1.1.6.L93.B0` is the common shape — so when it cannot be derived exactly
+   the bare four-character code is returned and the caller says so. */
+function vstCodecString(cc, cfg){
+  if((cc === "avc1" || cc === "avc3") && cfg && cfg.length >= 4){
+    return cc + "." + vstHex(cfg.subarray(1, 4));
+  }
+  if(cc === "hvc1" || cc === "hev1"){
+    if(cfg && cfg.length >= 13){
+      const gp = cfg[1] & 0x1f, tier = (cfg[1] & 0x20) ? "H" : "L";
+      const gpc = new DataView(cfg.buffer, cfg.byteOffset, cfg.byteLength).getUint32(2);
+      const lvl = cfg[12];
+      // Constraint bytes 6..11, trailing zero bytes omitted, as the spec asks.
+      const con = [];
+      for(let i = 6; i <= 11; i++) con.push(cfg[i]);
+      while(con.length && con[con.length - 1] === 0) con.pop();
+      const conStr = con.map(b => b.toString(16).toUpperCase()).join(".");
+      return `${cc}.${gp}.${gpc.toString(16).toUpperCase()}.${tier}${lvl}` + (conStr ? "." + conStr : "");
+    }
+    return cc;
+  }
+  return cc;
+}
+
+async function vstParse(file){
+  if(!file || typeof file.slice !== "function") return null;
+  const u8 = async (off, len) => new Uint8Array(await file.slice(off, off + len).arrayBuffer());
+  const out = {brand: null, video: null, audio: null, tracks: 0, rotation: 0, moovBytes: 0};
+  try{
+    let off = 0, moov = null, guard = 0;
+    while(off + 8 <= file.size && guard++ < 400){
+      const head = await u8(off, 16);
+      const b = vstBox(head, 0);
+      if(!b) break;
+      if(b.type === "ftyp"){
+        const f = await u8(off, Math.min(b.size, 64));
+        out.brand = String.fromCharCode(f[8], f[9], f[10], f[11]).trim();
+      }
+      if(b.type === "moov"){ moov = {start: off, size: b.size}; break; }
+      off += b.size;
+    }
+    if(!moov || moov.size > 24 * 1048576) return out;
+    out.moovBytes = moov.size;
+    const body = await u8(moov.start, moov.size);
+    const mv = vstBox(body, 0);
+    if(!mv) return out;
+
+    for(const trak of vstKids(body, mv).filter(b => b.type === "trak")){
+      out.tracks++;
+      const tkhd = vstFind(body, trak, "tkhd");
+      const mdia = vstFind(body, trak, "mdia");
+      if(!mdia) continue;
+      const mdhd = vstFind(body, mdia, "mdhd");
+      const hdlr = vstFind(body, mdia, "hdlr");
+      const minf = vstFind(body, mdia, "minf");
+      const stbl = minf ? vstFind(body, minf, "stbl") : null;
+      const stsd = stbl ? vstFind(body, stbl, "stsd") : null;
+      if(!stsd || !hdlr) continue;
+
+      const dv = new DataView(body.buffer, body.byteOffset, body.byteLength);
+      const kind = String.fromCharCode(body[hdlr.start + hdlr.head + 8],
+        body[hdlr.start + hdlr.head + 9], body[hdlr.start + hdlr.head + 10],
+        body[hdlr.start + hdlr.head + 11]);
+
+      // The sample entry sits 8 bytes past stsd's version/flags + entry count.
+      const entry = vstBox(body, stsd.start + stsd.head + 8);
+      if(!entry) continue;
+
+      let timescale = null, duration = null;
+      if(mdhd){
+        const v = body[mdhd.start + mdhd.head];
+        const base = mdhd.start + mdhd.head + (v === 1 ? 20 : 12);
+        timescale = dv.getUint32(base);
+        duration = v === 1 ? Number(dv.getBigUint64(base + 4)) : dv.getUint32(base + 4);
+      }
+
+      if(kind === "vide"){
+        // Inside a visual sample entry: 78 bytes then the codec config box.
+        let cfg = null, cfgType = null;
+        for(const c of vstKids(body, {start: entry.start, size: entry.size, head: 8 + 78})){
+          if(c.type === "avcC" || c.type === "hvcC"){
+            cfg = body.subarray(c.start + c.head, c.start + c.size);
+            cfgType = c.type; break;
+          }
+        }
+        out.video = {
+          cc: entry.type,
+          name: VST_CODECS[entry.type] || entry.type,
+          width: dv.getUint16(entry.start + 8 + 24),
+          height: dv.getUint16(entry.start + 8 + 26),
+          timescale, duration,
+          seconds: (timescale && duration) ? +(duration / timescale).toFixed(2) : null,
+          codecString: vstCodecString(entry.type, cfg),
+          hasConfig: !!cfg, configBox: cfgType,
+          description: cfg ? cfg.slice() : null,
+        };
+        /* iOS records upright pixels and stores the ROTATION IN THE MATRIX, so
+           a derivative that ignores it comes out sideways. `tkhd`'s matrix is
+           16.16 fixed point at offset 40 (v0) / 52 (v1). */
+        if(tkhd){
+          const v = body[tkhd.start + tkhd.head];
+          const m = tkhd.start + tkhd.head + (v === 1 ? 52 : 40);
+          const a = dv.getInt32(m) / 65536, b2 = dv.getInt32(m + 4) / 65536;
+          const c2 = dv.getInt32(m + 12) / 65536, d2 = dv.getInt32(m + 16) / 65536;
+          let deg = 0;
+          if(a === 0 && d2 === 0){ deg = (b2 === 1 && c2 === -1) ? 90 : 270; }
+          else if(a === -1 && d2 === -1) deg = 180;
+          out.rotation = deg;
+          out.video.rotation = deg;
+        }
+      } else if(kind === "soun" && !out.audio){
+        out.audio = {
+          cc: entry.type,
+          name: VST_AUDIO_CODECS[entry.type] || entry.type,
+          channels: dv.getUint16(entry.start + 8 + 16),
+          sampleRate: dv.getUint32(entry.start + 8 + 24) >>> 16,
+          timescale, duration,
+        };
+      }
+    }
+    return out;
+  }catch{ return out; }
+}
+
+/* THE QUESTION API PRESENCE DOES NOT ANSWER: does this device's decoder accept
+   THIS file's actual configuration? Asked with the real `avcC`/`hvcC` record
+   from the file, which is what WebCodecs wants as `description`. */
+async function vstDecoderAccepts(v){
+  if(typeof VideoDecoder === "undefined") return {supported: false, why: "no WebCodecs decoder on this device"};
+  if(!v || !v.codecString) return {supported: false, why: "the file's codec could not be read"};
+  const cfg = {codec: v.codecString, codedWidth: v.width || undefined, codedHeight: v.height || undefined};
+  if(v.description) cfg.description = v.description;
+  try{
+    const r = await VideoDecoder.isConfigSupported(cfg);
+    return {supported: !!(r && r.supported), codec: v.codecString,
+            why: r && r.supported ? "" : "the decoder declined this configuration"};
+  }catch(e){ return {supported: false, codec: v.codecString, why: (e && e.name) + ": " + (e && e.message) }; }
+}
+
+async function vstEncoderAccepts(w, h){
+  if(typeof VideoEncoder === "undefined") return {supported: false, why: "no WebCodecs encoder on this device"};
+  for(const codec of ["avc1.42002A", "avc1.42E01E", "avc1.4d002a"]){
+    try{
+      const r = await VideoEncoder.isConfigSupported({codec, width: w || 1920, height: h || 1080,
+        bitrate: 8000000, framerate: 30});
+      if(r && r.supported) return {supported: true, codec};
+    }catch{}
+  }
+  return {supported: false, why: "no H.264 encoder configuration was accepted"};
+}
+
 /* Does this browser decode it? Asked when the file is CHOSEN, not when Generate
    is pressed, so the screen never offers an action it cannot perform. */
 function vstProbe(url){
@@ -4300,7 +4593,18 @@ function vstOpen(caseNo){
     const url = VST.url;
     /* Both run on the file as chosen. The codec scan is a few hundred bytes and
        is only ever used to WORD the refusal — the decode probe is what decides. */
-    vstBoxCodec(f).then(c => { if(VST && VST.url === url){ VST.codec = c; paintVStamp(); } });
+    /* The real structural parse supersedes the four-character-code scan: it
+       reads dimensions, timescale, audio and rotation as well, and it is what
+       the decoder configuration test needs. The scan stays as the fallback for
+       a file whose boxes the parser could not walk. */
+    vstParse(f).then(p => {
+      if(!VST || VST.url !== url) return;
+      VST.parsed = p;
+      if(p && p.video) VST.codec = {cc: p.video.cc, name: p.video.name};
+      paintVStamp();
+      if(!VST.codec) vstBoxCodec(f).then(c => {
+        if(VST && VST.url === url){ VST.codec = c; paintVStamp(); } });
+    });
     vstProbe(url).then(r => {
       if(!VST || VST.url !== url) return;
       VST.readable = r.ok;
@@ -4406,7 +4710,17 @@ async function vstGenerate(){
     const cx = cv.getContext("2d");
     const stream = cv.captureStream(0);
     const track = stream.getVideoTracks()[0];
-    const mime = vstMime();
+    /* PROVE THE FORMAT BEFORE WRITING IN IT. Reading the declared list first is
+       what wrote the owner's iPhone a WebM it could not open — the recorder
+       offered it, and offering is not playing. This costs one four-frame clip,
+       once per session, and it is the difference between a derivative that
+       opens on the device that made it and one that does not. */
+    const proven = await vstProveMime();
+    const mime = proven.mime;
+    if(!mime) throw new Error("No video format this device can write could be read back "
+      + "on it, so no copy was made. Your original is unchanged."
+      + (proven.tried && proven.tried.length
+         ? " Tried: " + proven.tried.map(t => t.mime.replace("video/", "")).join(", ") + "." : ""));
     const chunks = [];
     const rec = new MediaRecorder(stream, {mimeType: mime,
       videoBitsPerSecond: Math.min(16000000, Math.max(2500000, Math.round(W * H * 30 * 0.1)))});
@@ -4461,7 +4775,11 @@ async function vstGenerate(){
     const blob = new Blob(chunks, {type: mime});
     if(!blob.size) throw new Error("The copy came out empty. Nothing was saved and the original is untouched.");
     const base = String(v.name || "video").replace(/\.[A-Za-z0-9]+$/, "").replace(/[^A-Za-z0-9._ -]/g, "_").slice(0, 90) || "video";
-    v.out = {blob, url: URL.createObjectURL(blob), name: base + "-timestamped.webm", size: blob.size, mime};
+    /* The name follows the container that was actually written, so a file
+       does not arrive on the device claiming to be something it is not. */
+    const ext = /mp4/.test(mime) ? ".mp4" : ".webm";
+    v.out = {blob, url: URL.createObjectURL(blob), name: base + "-timestamped" + ext,
+             size: blob.size, mime};
     v.pct = 100; v.step = "done";
     paintVStamp();
     await vstRecord();
@@ -4515,7 +4833,9 @@ async function vstSave(){
   if(typeof window.showSaveFilePicker === "function"){
     try{
       const h = await window.showSaveFilePicker({suggestedName: v.out.name,
-        types: [{description: "Timestamped video", accept: {"video/webm": [".webm"]}}]});
+        types: [{description: "Timestamped video",
+          accept: /mp4/.test(v.out.mime || "") ? {"video/mp4": [".mp4"]}
+                                               : {"video/webm": [".webm"]}}]});
       const w = await h.createWritable();
       await w.write(v.out.blob);
       await w.close();
@@ -4537,7 +4857,8 @@ async function vstSave(){
      reported as a cancel, never as a save. */
   if(v.file !== undefined && navigator.canShare && navigator.share){
     try{
-      const f = new File([v.out.blob], v.out.name, {type: v.out.mime || "video/webm"});
+      const f = new File([v.out.blob], v.out.name,
+          {type: (v.out.mime || "video/webm").split(";")[0]});
       if(navigator.canShare({files: [f]})){
         await navigator.share({files: [f], title: v.out.name});
         v.savedHere = true;
@@ -4598,63 +4919,58 @@ async function vstMarkSaved(){
 async function vstDiagnose(){
   const v = VST;
   if(!v) return;
-  const c = vstCaps();
-  const lines = [];
+  const row = (k, val) => k.padEnd(22) + val;
   const yn = x => x ? "yes" : "no";
-  lines.push("Device            " + (vstIsIOS() ? "iPhone / iPad (Apple engine)" : "not iOS"));
-  lines.push("Decodes this file " + (v.readable === null ? "still checking" : yn(v.readable)));
-  lines.push("Container         " + (vstContainer() || "unknown"));
-  lines.push("Video codec       " + (v.codec ? v.codec.name : "not determined from the file"));
-  lines.push("Canvas capture    " + yn(c.canvasCapture));
-  lines.push("MediaRecorder     " + yn(c.mediaRecorder));
-  lines.push("  records MP4     " + (c.recordMp4 || "no"));
-  lines.push("  records WebM    " + (c.recordWebm || "no"));
-  lines.push("WebCodecs decode  " + yn(c.webcodecsDecode));
-  lines.push("WebCodecs encode  " + yn(c.webcodecsEncode));
-  lines.push("Share to device   " + yn(c.shareFiles));
-  lines.push("Save-file picker  " + yn(c.savePicker));
-  v.diag = lines.join("\n") + "\nEnd-to-end test   running…";
-  paintVStamp();
+  const lines = [];
+  const paint = extra => { if(VST){ VST.diag = lines.concat(extra || []).join("\n"); paintVStamp(); } };
 
-  /* The real attempt: two frames through canvas → recorder → a decodable file.
-     A capability string that lies is caught here and nowhere else. */
-  let verdict = "not attempted (no canvas recorder on this device)";
-  if(c.canRender){
-    try{
-      const cv = document.createElement("canvas"); cv.width = 64; cv.height = 48;
-      const cx = cv.getContext("2d");
-      const st = cv.captureStream(0), tr = st.getVideoTracks()[0];
-      const parts = [];
-      const rec = new MediaRecorder(st, {mimeType: c.recordMime});
-      rec.ondataavailable = e => { if(e.data && e.data.size) parts.push(e.data); };
-      const stopped = new Promise(r => { rec.onstop = () => r(); setTimeout(r, 8000); });
-      rec.start();
-      for(let i = 0; i < 4; i++){
-        cx.fillStyle = i % 2 ? "#fff" : "#123"; cx.fillRect(0, 0, 64, 48);
-        tr.requestFrame();
-        await new Promise(r => setTimeout(r, 60));
-      }
-      rec.stop();
-      await stopped;
-      const blob = new Blob(parts, {type: c.recordMime});
-      if(!blob.size) verdict = "FAILED — the recorder produced an empty file";
-      else {
-        const t = document.createElement("video");
-        t.muted = true; t.playsInline = true;
-        const url = URL.createObjectURL(blob);
-        const ok = await new Promise(r => {
-          t.onloadeddata = () => r(true); t.onerror = () => r(false);
-          setTimeout(() => r(false), 8000); t.src = url;
-        });
-        try{ URL.revokeObjectURL(url); }catch{}
-        verdict = ok ? `works — wrote and re-read ${blob.size} bytes of ${blob.type}`
-                     : "FAILED — wrote a file this device cannot read back";
-      }
-    }catch(e){ verdict = "FAILED — " + ((e && e.message) || e); }
+  lines.push(row("Device", vstIsIOS() ? "iPhone / iPad (Apple engine)" : "not iOS"));
+  lines.push(row("Container", vstContainer() || "unknown"));
+  paint([row("Reading the file", "…")]);
+
+  /* THE FILE ITSELF, not its extension. */
+  const p = v.file ? await vstParse(v.file) : null;
+  if(VST) VST.parsed = p;
+  const vid = p && p.video, aud = p && p.audio;
+  lines.push(row("Video codec", vid ? `${vid.name} (${vid.cc})` : "could not be read from the file"));
+  if(vid){
+    lines.push(row("  codec string", vid.codecString + (vid.hasConfig ? "" : "  [no config record]")));
+    lines.push(row("  dimensions", `${vid.width}x${vid.height}` + (p.rotation ? `  rotated ${p.rotation}°` : "")));
+    lines.push(row("  timescale", String(vid.timescale) + (vid.seconds ? `  (${vid.seconds}s)` : "")));
   }
-  if(!VST) return;
-  VST.diag = lines.join("\n") + "\nEnd-to-end test   " + verdict;
-  paintVStamp();
+  lines.push(row("Audio codec", aud ? `${aud.name} (${aud.cc}) ${aud.channels}ch ${aud.sampleRate}Hz`
+                                    : p ? "none in this file" : "unknown"));
+  lines.push(row("Decode original", v.readable === null ? "still checking"
+    : v.readable ? "yes (media element)" : "NO (media element)"));
+  paint([row("Testing this device", "…")]);
+
+  /* WHAT THE DEVICE CAN ACTUALLY DO WITH IT — asked of the real configuration
+     read out of the file, never of the API's mere existence. */
+  const dec = vid ? await vstDecoderAccepts(vid) : {supported: false, why: "no video track was read"};
+  lines.push(row("WebCodecs decode", dec.supported ? "yes — accepts THIS file's configuration"
+    : "no — " + (dec.why || "declined")));
+  const enc = await vstEncoderAccepts(vid && vid.width, vid && vid.height);
+  lines.push(row("Encode H.264", enc.supported ? "yes — " + enc.codec : "no — " + (enc.why || "declined")));
+
+  /* THE RECORDER FORMAT, PROVEN BY ROUND TRIP rather than by isTypeSupported —
+     which is what wrote a file the owner's iPhone could not read back. */
+  paint([row("Proving output", "…")]);
+  const proven = await vstProveMime();
+  for(const t of proven.tried){
+    lines.push(row("  " + t.mime.replace("video/", ""),
+      t.ok ? `WRITES AND READS BACK (${t.bytes} bytes)` : "no — " + (t.why || "declined")));
+  }
+  lines.push(row("Timestamp renderer", proven.mime ? "yes — " + proven.mime
+    : "no — " + (proven.why || "no usable format")));
+  lines.push(row("Result readable here", proven.mime ? "yes — proven by reading it back" : "NO"));
+  lines.push(row("Audio preserved", aud
+    ? (proven.mime ? "not yet — the canvas path carries picture only" : "not yet")
+    : "n/a — the original has no audio"));
+  lines.push(row("Mux MP4", /mp4/.test(proven.mime || "") ? "yes — by the recorder"
+    : "not through the recorder on this device"));
+  lines.push(row("Share available", yn(!!(navigator.canShare && navigator.share))));
+  lines.push(row("Save-file picker", yn(typeof window.showSaveFilePicker === "function")));
+  paint();
 }
 
 /* Only the progress bar, not the screen. A render draws a frame at a time and
