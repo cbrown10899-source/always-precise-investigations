@@ -8755,6 +8755,113 @@ section('Dropbox storage — where a new case file goes');
   ok('and the file is gone from the folder', DBX.inFolder('Photos').length === 0);
 }
 
+/* ------------------------------- the final report as a real file, filed
+
+   Owner, 2026-08-18: "Final Reports need a real PDF file, not Print only. Add
+   Download PDF and Save PDF to Dropbox Reports. Keep Print optional. No R2 PDF
+   copy."
+
+   The PDF is BUILT in the operator's browser from the document already on
+   their screen — that half is exercised by the portal suite. This is the half
+   that files it. */
+section('Final report PDF — filed to Dropbox Reports, never to R2');
+{
+  const fakeR2 = () => {
+    const store = new Map();
+    return {
+      async put(key, body) { store.set(key, { body }); },
+      async get(key) { const o = store.get(key); return o ? { body: o.body } : null; },
+      async delete(key) { store.delete(key); },
+      _store: store,
+    };
+  };
+  DBX.reset();
+  const env = freshEnv();
+  env.EVIDENCE = fakeR2();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const l = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const t = new URL(l, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${t}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  await ingest(env, { case_no: 'API-PDF1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  const build = (await jsonOf(await call(env, '/cases/API-PDF1/build',
+    { method: 'POST', cookie: admin }))).build;
+
+  const pdfBytes = (n) => {
+    const a = new Uint8Array(n);
+    // A real PDF starts %PDF-; the route does not sniff, but the fixture should
+    // not be pretending to be something no reader would open.
+    for (const [i, c] of [...'%PDF-1.4'].entries()) a[i] = c.charCodeAt(0);
+    return a;
+  };
+  const send = (cookie, bytes, type, id) => {
+    const fd = new FormData();
+    fd.append('file', new File([bytes], 'report.pdf', { type }));
+    return worker.fetch(new Request(API + `/build/${id === undefined ? build.id : id}/report-pdf`, {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: cookie }, body: fd }), env);
+  };
+
+  ok('an investigator cannot file the report',
+     (await send(dana, pdfBytes(400), 'application/pdf')).status === 403);
+  ok('and something that is not a PDF is refused by name',
+     (await jsonOf(await send(admin, pdfBytes(400), 'image/jpeg'))).code === 'not_a_pdf');
+  ok('nothing was filed by either', DBX.files.size === 0);
+
+  const saved = await jsonOf(await send(admin, pdfBytes(900), 'application/pdf'));
+  ok('an admin files the report', saved.ok === true && saved.bytes === 900);
+  ok('into the case Reports folder, under the case and version',
+     saved.path.startsWith('/API-PDF1/Reports/API-PDF1 report v1-'), saved.path);
+  ok('and the file is really there', DBX.files.size === 1);
+
+  /* NO R2 COPY — the owner said so twice, and it is the whole reason this is a
+     separate route rather than the evidence upload. */
+  ok('no copy of the PDF went to R2', env.EVIDENCE._store.size === 0);
+  /* NOT EVIDENCE EITHER. A report of the case is not material in it: filing it
+     as evidence would list it in the gallery and put it under the
+     client-deliverable gate that governs exhibits. */
+  ok('and it is not filed as case evidence',
+     (await env.DB.prepare('SELECT COUNT(*) AS n FROM case_evidence').first()).n === 0);
+  /* THE BUILD'S OWN AUDIT TRAIL is where it is recorded — an existing table
+     whose action column is free text, so nothing had to be widened or added. */
+  const ev = await env.DB.prepare(
+    "SELECT action, detail, user_id FROM build_events WHERE action = 'report_pdf_saved'").first();
+  ok('the build audit trail records that it was filed, and where',
+     ev && ev.detail === saved.path && ev.user_id === 1);
+
+  /* A SECOND SAVE DOES NOT OVERWRITE THE FIRST. A corrected report filed over
+     the top of the one already sent to the client would leave no trace that
+     they differ. */
+  const again = await jsonOf(await send(admin, pdfBytes(950), 'application/pdf'));
+  ok('filing it again keeps both files', DBX.files.size === 2 && again.path !== saved.path);
+  ok('and both are in the audit trail',
+     (await env.DB.prepare(
+       "SELECT COUNT(*) AS n FROM build_events WHERE action = 'report_pdf_saved'").first()).n === 2);
+
+  /* DROPBOX UNAVAILABLE: refused with the reason, nothing written, and no
+     fallback anywhere. The operator still has the file — it was made on their
+     machine — so this costs a retry, not the document. */
+  DBX.down = true;
+  let bad = await send(admin, pdfBytes(400), 'application/pdf');
+  DBX.down = false;
+  ok('an unreachable Dropbox refuses the filing', bad.status === 503
+     && (await jsonOf(bad)).code === 'dropbox_unreachable');
+  delete env.DROPBOX_REFRESH_TOKEN;
+  bad = await send(admin, pdfBytes(400), 'application/pdf');
+  ok('and with nothing connected it says that instead', bad.status === 503
+     && (await jsonOf(bad)).code === 'dropbox_not_connected');
+  env.DROPBOX_REFRESH_TOKEN = 'RT-test';
+  ok('neither wrote anything anywhere',
+     DBX.files.size === 2 && env.EVIDENCE._store.size === 0
+     && (await env.DB.prepare(
+          "SELECT COUNT(*) AS n FROM build_events WHERE action = 'report_pdf_saved'").first()).n === 2);
+
+  ok('a build that does not exist is a 404, not a stray file',
+     (await send(admin, pdfBytes(400), 'application/pdf', 999999)).status === 404);
+}
+
 section('Dropbox storage — a demo case is swept from both stores');
 {
   const fakeR2 = () => {

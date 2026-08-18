@@ -4838,6 +4838,75 @@ async function uploadEvidence(request, env, user, caseNo) {
    it stays behind `caseFor`, the role check and the case's own gates. A shared
    Dropbox link would be a URL that works for anyone who has it, for as long as
    it exists, with none of that in front of it: do not add one. */
+/* THE FINAL REPORT AS A REAL FILE (owner, 2026-08-18: "Final Reports need a
+   real PDF file, not Print only").
+
+   THE PDF IS MADE ON THE OPERATOR'S MACHINE, not here. The package document is
+   already rendered in their browser, so it is rendered ONCE and turned into a
+   PDF there — the same device-first shape as the video timestamping, and for
+   the same two reasons: this Worker's CPU budget is small enough that signing
+   in already strains it, and a second server-side rendering of a document that
+   exists on screen is a second thing to drift.
+
+   NO R2 COPY (owner, explicit). The bytes go to the case's Dropbox Reports
+   folder and nowhere else. Nothing is written to `case_evidence` either: a
+   report of the case is not evidence in it, and putting it there would list it
+   in the gallery and put it under the deliverable-classification gate that
+   governs material, not paperwork. The record is a `build_events` row — the
+   audit trail this build already keeps, whose `action` is free text, so
+   recording a new kind of act needs no CHECK widened and no table added. */
+async function saveBuildPdf(request, env, user, buildId) {
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  const b = await env.DB.prepare(
+    'SELECT id, case_no, version FROM case_builds WHERE id = ?').bind(buildId).first();
+  if (!b) return json({ error: 'not found' }, 404);
+  if (!(await caseFor(env, user, b.case_no))) return json({ error: 'not found' }, 404);
+
+  const problem = await dropboxStorageProblem(env);
+  if (problem === 'provider_not_configured') {
+    return json({ error: 'Dropbox is not set up on this Worker yet, so there is nowhere to file '
+      + 'the report. ' + EXTERNAL_PROVIDERS.dropbox.note, code: problem }, 503);
+  }
+  if (problem) {
+    return json({ error: 'No Dropbox account is connected, so there is nowhere to file the report. '
+      + 'An admin can connect one from the portal.', code: problem }, 503);
+  }
+
+  let form;
+  try { form = await request.formData(); } catch { return json({ error: 'Send the PDF as multipart form data.' }, 400); }
+  const file = form.get('file');
+  if (!file || typeof file === 'string' || !file.size) return json({ error: 'Attach the PDF.' }, 400);
+  /* Named rather than sniffed, but a PDF is what this route is for and a
+     mislabelled upload would file something else under the report's name. */
+  if (String(file.type || '') !== 'application/pdf') {
+    return json({ error: 'That is not a PDF.', code: 'not_a_pdf' }, 400);
+  }
+  const lim = storageLimits(env);
+  if (file.size > lim.maxFileBytes) {
+    return json({ error: `That PDF is ${(file.size / 1048576).toFixed(1)} MB and the per-file limit is `
+      + `${Math.floor(lim.maxFileBytes / 1048576)} MB.` }, 413);
+  }
+
+  const token = await dropboxAccessToken(env);
+  if (!token) {
+    return json({ error: 'Dropbox could not be reached just now, so the report was not filed. '
+      + 'Nothing was lost — download it or try again in a moment.', code: 'dropbox_unreachable' }, 503);
+  }
+  await dropboxEnsureCaseFolders(env, token, b.case_no);
+  const name = `${b.case_no} report v${b.version || 1}.pdf`;
+  const meta = await dropboxUpload(env, token,
+    `/${b.case_no}/Reports/${dropboxStoredName(name)}`, await file.arrayBuffer());
+  if (!meta) {
+    return json({ error: 'Dropbox refused the file, so the report was not filed. '
+      + 'Nothing was lost — download it or try again in a moment.', code: 'dropbox_unreachable' }, 503);
+  }
+
+  await env.DB.prepare(
+    'INSERT INTO build_events (build_id, action, detail, user_id, at) VALUES (?, ?, ?, ?, ?)')
+    .bind(buildId, 'report_pdf_saved', meta.path_display, user.id, nowIso()).run();
+  return json({ ok: true, path: meta.path_display, bytes: file.size });
+}
+
 async function serveEvidence(env, user, caseNo, eid) {
   if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
   const row = await env.DB.prepare(
@@ -7206,6 +7275,9 @@ async function route(request, env) {
 
   /* The provider actions. Honest about their state: until the owner connects
      Dropbox, these name the missing configuration and block nothing else. */
+  m = p.match(/^\/build\/(\d{1,12})\/report-pdf$/);
+  if (m && method === 'POST') return saveBuildPdf(request, env, user, parseInt(m[1], 10));
+
   m = p.match(/^\/build\/(\d{1,12})\/(upload-videos|share)$/);
   if (m && method === 'POST') {
     const b = await adminBuild(env, user, parseInt(m[1], 10));

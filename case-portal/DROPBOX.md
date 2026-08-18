@@ -153,3 +153,93 @@ a four-hour access token and the connection dies overnight.
 **A manual `portal-setup.yml` dispatch** — `dropbox_auth` is a new table. Every
 read is guarded through `missingTables()`: `/status` degrades to "not set up",
 and `/connect` returns 503 naming the workflow.
+
+## Case file storage — where a new file goes
+
+Since 2026-08-18 (owner) **new case photos and generated reports go to the
+Dropbox App Folder**, in per-case folders:
+
+```
+/<case number>/Photos      images
+/<case number>/Reports      documents, and the Final Report PDF
+/<case number>/Video        for timestamped copies saved by hand
+```
+
+The folder is chosen by the file's **content type**, so a report does not land
+among the photographs because of how it happened to be sent. All three folders
+are created on a case's first upload, including `Video` — a folder that appears
+only once something is in it is a folder nobody trusts.
+
+### The rules this rests on
+
+**New bytes go to Dropbox or nowhere.** There is no R2 fallback and no
+double-write. An upload that cannot reach Dropbox is refused and names which of
+three conditions it is: `provider_not_configured`, `dropbox_not_connected`, or
+`dropbox_unreachable`. A fallback would split one case across two stores, and
+nobody would find out until they went looking for the half that moved.
+
+**Nothing was migrated and nothing was deleted.** Every file uploaded before
+this change still lives in R2, still serves, and is still what the storage
+meter counts. `serveEvidence` — the only place evidence bytes leave the Worker —
+reads from whichever store the row names.
+
+**Files are proxied, never linked.** The Worker streams the bytes so the case's
+own permission checks stay in front of them. A Dropbox share link would work for
+anyone holding it, for as long as it existed, with none of that in front. Do not
+add one.
+
+**D1 keeps the structured record; Dropbox keeps the bytes.** There is no
+companion table: `case_evidence.r2_key` already means "where the bytes are", so
+a Dropbox row records `dropbox:<path>` and that prefix is the whole
+discriminator. A second table would be a second place to fall out of step, and —
+because `schema.sql` only arrives on a manual `portal-setup` dispatch — a reason
+no upload could work until someone ran a workflow.
+
+**The stored filename carries a short random token.** Delete a photo and upload
+another of the same name and Dropbox sees no conflict to autorename around, so
+the path would repeat and `r2_key`'s UNIQUE constraint would reject the row. The
+operator still downloads under the real name; `filename` is untouched.
+
+**The R2 free-tier failsafe now counts only what is in Cloudflare.** Its job is
+to stop the R2 free tier ever billing. Counting Dropbox bytes would drive the
+storage card toward a cap those files can never reach and eventually refuse
+uploads for space nothing was using. The per-file size limit is kept for both —
+it is also comfortably inside Dropbox's single-request upload limit.
+
+**Video is still refused by the ordinary upload.** The device-first decision of
+2026-08-17 is untouched by this.
+
+## The Final Report PDF
+
+The report is a **real file**, not print-only (owner, 2026-08-18). The completed
+package offers **Download PDF** and **Save PDF to Dropbox**, with **Print** kept
+as a secondary action.
+
+**The PDF is built on the operator's machine**, from the package document
+already rendered on their screen — the same device-first shape as the video
+timestamping, and for the same two reasons: this Worker's CPU budget is small
+enough that signing in already strains it, and a second server-side rendering of
+a document that exists in front of the operator is a second thing to drift.
+
+It is built from **the rendered document**, not from the data behind it, because
+`#pkgdoc` is already the one place that decides what a client may see. A PDF
+assembled independently would be a second renderer of the same rules, and the
+day they disagreed the wrong one would be the one that got posted. The package
+is **re-read before the PDF is made**, the same rule printing already follows —
+if the re-read fails, no PDF is produced at all.
+
+**No library.** Text in the base-14 fonts plus JPEG images needs no font
+embedding and no compression, so the file is written directly rather than
+pulling a megabyte of dependency into a page that is deliberately
+dependency-free. Line breaking is measured with the browser's own Helvetica
+metrics and wrapped to 97% of the column, so a small font substitution shortens
+a line rather than running it into the margin.
+
+`POST /portal-api/build/:id/report-pdf` files it in the case's `Reports` folder.
+**No R2 copy** (owner, explicit), and **it is not filed as case evidence** — a
+report of the case is not material in it, and filing it there would list it in
+the gallery and put it under the client-deliverable gate that governs exhibits.
+The record is a `build_events` row (`report_pdf_saved`), an existing audit trail
+whose `action` column is free text, so nothing had to be widened or added.
+Filing twice keeps both files; a corrected report written over the one already
+sent to a client would leave no trace that they differ.

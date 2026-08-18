@@ -7622,9 +7622,15 @@ function packagePanel(){
       <div class="row"><span>${pkgMark(inv ? (inv.status === "paid" ? "done" : "part") : "none")} Invoice${inv ? " — " + esc(label(inv.status)) : ""}</span>
         <button class="btn sm ghost" data-act="tab" data-tab="invoices">View</button></div>
       <div class="row"><span>${pkgMark("done")} Client package</span>
-        <button class="btn sm" data-act="pkgPrint">Download</button></div>
+        <button class="btn sm" data-act="pkgPdf">Download PDF</button></div>
     </div>
     <div class="actions">
+      ${""/* A REAL FILE IS THE PRIMARY ACTION (owner, 2026-08-18). Print stays,
+             because printing to paper is still a thing an office does, but it
+             is no longer the only way to get the report out of the screen. */}
+      <button class="btn" data-act="pkgPdf">Download PDF</button>
+      <button class="btn ghost" data-act="pkgPdfDropbox">Save PDF to Dropbox</button>
+      <button class="btn ghost" data-act="pkgPrint">Print</button>
       ${!b.delivered_at ? `<button class="btn ghost" data-act="pkgDelivered">Mark delivered</button>` : ""}
       <button class="btn ghost" data-act="pkgReopen">Reopen and rebuild</button>
     </div>`;
@@ -7826,6 +7832,325 @@ function pkgDocHtml(){
    that matters, and it is the moment the file leaves the building. If the
    reload fails the print is abandoned rather than falling back on stale data —
    printing nothing is recoverable, printing held-back material is not. */
+/* ------------------------------------------------ the report as a real file
+
+   Owner, 2026-08-18: "Final Reports need a real PDF file, not Print only."
+
+   MADE HERE, ON THIS MACHINE. The package document is already rendered on this
+   screen, so the PDF is built from THAT — the same device-first shape as the
+   video timestamping, and for the same two reasons. The Worker's CPU budget is
+   small enough that signing in already strains it, and a second server-side
+   rendering of a document that exists in front of the operator is a second
+   thing to drift from the first.
+
+   BUILT FROM THE RENDERED DOCUMENT, not from the data behind it. #pkgdoc is
+   already the one place that decides what a client may see — it renders only
+   currently-deliverable evidence and it is re-read before anything leaves. A
+   PDF assembled from PKG instead would be a second renderer of the same rules,
+   and the day they disagreed the wrong one would be the one that was posted.
+
+   NO LIBRARY. A PDF that is text in the base-14 fonts plus JPEG images needs no
+   font embedding and no compression, so this writes the file directly rather
+   than pulling in a megabyte of dependency for a page that is deliberately
+   dependency-free. */
+
+const PDF_PAGE = { w: 612, h: 792, m: 54 };   // US Letter, 3/4 inch margins
+
+function pdfChunk(str){
+  const a = new Uint8Array(str.length);
+  for(let i = 0; i < str.length; i++) a[i] = str.charCodeAt(i) & 255;
+  return a;
+}
+
+/* WinAnsi, with the typographer's characters this document actually uses
+   folded to something the base-14 fonts can draw. A stray em dash must not
+   become a missing glyph in the middle of a client's report. */
+function pdfLatin(str){
+  let out = "";
+  for(const ch of String(str)){
+    const c = ch.charCodeAt(0);
+    if(ch === "\\" || ch === "(" || ch === ")") out += "\\" + ch;
+    else if(c === 0x2014 || c === 0x2013) out += "-";
+    else if(c === 0x2018 || c === 0x2019) out += "'";
+    else if(c === 0x201c || c === 0x201d) out += '"';
+    else if(c === 0x2026) out += "...";
+    else if(c < 32) out += " ";
+    else if(c < 127) out += ch;
+    else if(c < 256) out += "\\" + c.toString(8).padStart(3, "0");
+    else out += "?";
+  }
+  return out;
+}
+
+/* Measured with the browser's own Helvetica rather than a table of AFM widths
+   typed in from memory. Arial and Helvetica agree on almost every glyph, and
+   the wrap is to 97% of the column so a small disagreement shortens a line
+   instead of running it into the margin. */
+let PDF_MEAS = null;
+function pdfWidth(text, size, bold){
+  if(!PDF_MEAS) PDF_MEAS = document.createElement("canvas").getContext("2d");
+  PDF_MEAS.font = (bold ? "bold " : "") + size + "px Helvetica, Arial, sans-serif";
+  return PDF_MEAS.measureText(text).width;
+}
+
+function pdfWrapLines(text, size, bold, maxW){
+  const words = String(text).split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = "";
+  for(const w of words){
+    const next = line ? line + " " + w : w;
+    if(pdfWidth(next, size, bold) <= maxW){ line = next; continue; }
+    if(line) lines.push(line);
+    /* A single word too long for the column is broken rather than allowed to
+       overrun — a case number or a filename can do this. */
+    if(pdfWidth(w, size, bold) > maxW){
+      let part = "";
+      for(const ch of w){
+        if(pdfWidth(part + ch, size, bold) > maxW){ lines.push(part); part = ch; }
+        else part += ch;
+      }
+      line = part;
+    } else line = w;
+  }
+  if(line) lines.push(line);
+  return lines.length ? lines : [""];
+}
+
+/* The images are already loaded on screen, so they are drawn from the DOM
+   element rather than fetched a second time. Everything goes through a canvas
+   and comes out as JPEG, which normalises PNG and anything else the camera
+   produced into the one format a PDF can carry with no re-encoding. */
+async function pdfImageBytes(el){
+  if(!el.complete || !el.naturalWidth){
+    await new Promise((res) => {
+      el.addEventListener("load", res, {once:true});
+      el.addEventListener("error", res, {once:true});
+      setTimeout(res, 5000);
+    });
+  }
+  if(!el.naturalWidth) return null;
+  const cap = 1500;
+  const k = Math.min(1, cap / Math.max(el.naturalWidth, el.naturalHeight));
+  const w = Math.max(1, Math.round(el.naturalWidth * k));
+  const h = Math.max(1, Math.round(el.naturalHeight * k));
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const g = c.getContext("2d");
+  g.fillStyle = "#ffffff"; g.fillRect(0, 0, w, h);
+  g.drawImage(el, 0, 0, w, h);
+  let url;
+  try{ url = c.toDataURL("image/jpeg", 0.82); }catch{ return null; }
+  const bin = atob(url.slice(url.indexOf(",") + 1));
+  const bytes = new Uint8Array(bin.length);
+  for(let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return { bytes, w, h };
+}
+
+const PDF_BLOCKS = new Set(["DIV","P","LI","UL","OL","TABLE","THEAD","TBODY","TR",
+                            "SECTION","H1","H2","H3","H4","H5","H6","FIGURE","HEADER"]);
+
+function pdfCollectOps(el, ops){
+  for(const node of el.children){
+    const tag = node.tagName;
+    if(tag === "IMG"){ ops.push({t:"img", el:node}); continue; }
+    if(tag === "TR"){
+      const cells = [...node.children].map((c) => c.textContent.replace(/\s+/g, " ").trim());
+      const line = cells.filter(Boolean).join("   ");
+      if(line) ops.push({t:"text", s:line, size:9.5, bold:false, after:2});
+      continue;
+    }
+    if(/^H[1-6]$/.test(tag)){
+      const s = node.textContent.replace(/\s+/g, " ").trim();
+      if(s) ops.push({t:"text", s, size: tag === "H2" ? 15 : 11.5, bold:true, before:12, after:6});
+      continue;
+    }
+    const kids = [...node.children];
+    if(kids.some((k) => PDF_BLOCKS.has(k.tagName) || k.tagName === "IMG")){
+      pdfCollectOps(node, ops);
+      continue;
+    }
+    /* The narrative bodies are white-space:pre-line, so their newlines ARE the
+       paragraphing. Collapsing them would run a day's report into one block. */
+    let pre = false;
+    try{ pre = /pre/.test(getComputedStyle(node).whiteSpace || ""); }catch{}
+    if(pre){
+      for(const raw of node.textContent.split("\n")){
+        const t = raw.replace(/[ \t]+/g, " ").trim();
+        ops.push(t ? {t:"text", s:t, size:10, bold:false, after:3} : {t:"gap", h:6});
+      }
+      continue;
+    }
+    const s = node.textContent.replace(/\s+/g, " ").trim();
+    if(s) ops.push({t:"text", s, size:10, bold:false, after:5});
+  }
+}
+
+async function pdfFromDoc(root){
+  const M = PDF_PAGE.m, PW = PDF_PAGE.w, PH = PDF_PAGE.h, CW = PW - M * 2;
+  const ops = [];
+  pdfCollectOps(root, ops);
+
+  const loaded = new Map();
+  for(const op of ops){
+    if(op.t !== "img" || loaded.has(op.el)) continue;
+    let got = null;
+    try{ got = await pdfImageBytes(op.el); }catch{ got = null; }
+    loaded.set(op.el, got);
+  }
+  const order = [...loaded.keys()].filter((k) => loaded.get(k));
+  const imgNum = (el) => order.indexOf(el) + 1;
+
+  const pages = [];
+  let stream = "", used = new Set(), y = PH - M;
+  const flush = () => { pages.push({ stream, used: [...used] }); stream = ""; used = new Set(); y = PH - M; };
+
+  for(const op of ops){
+    if(op.t === "gap"){ y -= op.h; continue; }
+    if(op.t === "text"){
+      const lead = op.size * 1.32;
+      y -= (op.before || 0);
+      for(const ln of pdfWrapLines(op.s, op.size, op.bold, CW * 0.97)){
+        if(y - lead < M) flush();
+        y -= lead;
+        stream += "BT /" + (op.bold ? "F2" : "F1") + " " + op.size + " Tf "
+          + M + " " + y.toFixed(2) + " Td (" + pdfLatin(ln) + ") Tj ET\n";
+      }
+      y -= (op.after || 0);
+      continue;
+    }
+    if(op.t === "img"){
+      const im = loaded.get(op.el);
+      if(!im) continue;
+      let w = CW, h = im.h * (CW / im.w);
+      const maxH = (PH - M * 2) * 0.78;
+      if(h > maxH){ h = maxH; w = im.w * (h / im.h); }
+      if(y - h - 8 < M) flush();
+      y -= h;
+      used.add(op.el);
+      stream += "q " + w.toFixed(2) + " 0 0 " + h.toFixed(2) + " " + M + " "
+        + y.toFixed(2) + " cm /Im" + imgNum(op.el) + " Do Q\n";
+      y -= 8;
+      continue;
+    }
+  }
+  flush();
+
+  /* Object numbering has to be settled before anything is written, because
+     /Pages names its children and each page names its content stream. */
+  const nImg = order.length;
+  const firstImg = 5;
+  const firstPage = firstImg + nImg;          // content, page, content, page...
+  const pageNum = (i) => firstPage + i * 2 + 1;
+  const objects = [];
+
+  objects.push({ num: 1, parts: ["<< /Type /Catalog /Pages 2 0 R >>"] });
+  objects.push({ num: 2, parts: ["<< /Type /Pages /Kids ["
+    + pages.map((_, i) => pageNum(i) + " 0 R").join(" ")
+    + "] /Count " + pages.length + " >>"] });
+  objects.push({ num: 3, parts: ["<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"] });
+  objects.push({ num: 4, parts: ["<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>"] });
+
+  order.forEach((el, i) => {
+    const im = loaded.get(el);
+    objects.push({ num: firstImg + i, parts: [
+      "<< /Type /XObject /Subtype /Image /Width " + im.w + " /Height " + im.h
+      + " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length "
+      + im.bytes.length + " >>\nstream\n",
+      im.bytes,
+      "\nendstream",
+    ] });
+  });
+
+  pages.forEach((pg, i) => {
+    const body = pdfChunk(pg.stream);
+    objects.push({ num: firstPage + i * 2, parts: [
+      "<< /Length " + body.length + " >>\nstream\n", body, "\nendstream" ] });
+    const xo = pg.used.length
+      ? " /XObject << " + pg.used.map((el) => "/Im" + imgNum(el) + " " + (firstImg + order.indexOf(el)) + " 0 R").join(" ") + " >>"
+      : "";
+    objects.push({ num: pageNum(i), parts: [
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 " + PW + " " + PH + "]"
+      + " /Resources << /Font << /F1 3 0 R /F2 4 0 R >>" + xo + " >>"
+      + " /Contents " + (firstPage + i * 2) + " 0 R >>" ] });
+  });
+
+  const out = [];
+  let len = 0;
+  const push = (x) => { const b = typeof x === "string" ? pdfChunk(x) : x; out.push(b); len += b.length; };
+  const offsets = [];
+  push("%PDF-1.4\n");
+  push(new Uint8Array([37, 226, 227, 207, 211, 10]));   // marks the file binary
+  for(const o of objects){
+    offsets[o.num] = len;
+    push(o.num + " 0 obj\n");
+    for(const part of o.parts) push(part);
+    push("\nendobj\n");
+  }
+  const xref = len;
+  const total = objects.length + 1;
+  let table = "xref\n0 " + total + "\n0000000000 65535 f \n";
+  for(let i = 1; i < total; i++) table += String(offsets[i] || 0).padStart(10, "0") + " 00000 n \n";
+  push(table);
+  push("trailer\n<< /Size " + total + " /Root 1 0 R >>\nstartxref\n" + xref + "\n%%EOF\n");
+  return new Blob(out, { type: "application/pdf" });
+}
+
+/* THE PACKAGE IS RE-READ FIRST, for the reason pkgPrint already re-reads: this
+   is the moment the file leaves the building, and a tab that has been open
+   since before someone reclassified an exhibit would otherwise put the copy it
+   drew earlier into a PDF that is then emailed. If the re-read fails, no PDF is
+   made at all — producing nothing is recoverable, producing withheld material
+   is not. */
+async function pkgPdfBuild(){
+  WS_ERR = "";
+  await loadPackage();
+  if(!PKG){ WS_ERR = "Could not re-check the package before making the PDF."; paintCase(); return null; }
+  paintCase();
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const root = document.getElementById("pkgdoc");
+  if(!root){ WS_ERR = "The package document is not on screen."; paintCase(); return null; }
+  try{ return await pdfFromDoc(root); }
+  catch(e){ WS_ERR = "The PDF could not be built: " + e.message; paintCase(); return null; }
+}
+
+function pkgPdfName(){
+  const v = PKG && PKG.build && PKG.build.version;
+  return (WS_CASE || "case") + " report" + (v ? " v" + v : "") + ".pdf";
+}
+
+async function pkgDownloadPdf(){
+  const blob = await pkgPdfBuild();
+  if(!blob) return;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = pkgPdfName();
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  WS_NOTICE = "PDF downloaded.";
+  paintCase();
+}
+
+/* SAVED TO THE CASE'S OWN Reports FOLDER, and nowhere else — no R2 copy. A
+   failure here is reported and the PDF is still downloadable, so a Dropbox
+   outage costs a click rather than the document. */
+async function pkgSavePdfToDropbox(){
+  const b = PKG && PKG.build;
+  if(!b) return;
+  const blob = await pkgPdfBuild();
+  if(!blob) return;
+  const fd = new FormData();
+  fd.append("file", new File([blob], pkgPdfName(), { type: "application/pdf" }));
+  try{
+    const res = await fetch(API + "/build/" + b.id + "/report-pdf",
+      { method: "POST", credentials: "same-origin", body: fd });
+    const d = await res.json().catch(() => ({}));
+    if(!res.ok) throw new Error(d.error || ("Could not save the PDF (" + res.status + ")"));
+    WS_NOTICE = "Saved to Dropbox — " + (d.path || "Reports");
+  }catch(e){ WS_ERR = e.message; }
+  await loadPackage();
+  paintCase();
+}
+
 async function pkgPrint(){
   await loadPackage();
   if(!PKG){ WS_ERR = WS_ERR || "Could not re-check the package before printing."; paintCase(); return; }
@@ -10443,6 +10768,8 @@ document.addEventListener("click", ev => {
   else if(act === "pkgReopen"){ pkgApi(`/build/${PKG.build.id}/reopen`); }
   else if(act === "pkgDelivered"){ pkgApi(`/build/${PKG.build.id}/delivered`); }
   else if(act === "pkgPrint"){ pkgPrint(); }
+  else if(act === "pkgPdf"){ pkgDownloadPdf(); }
+  else if(act === "pkgPdfDropbox"){ pkgSavePdfToDropbox(); }
   else if(act === "createInvoice"){ createInvoiceFor(el.dataset.case, false); }
   else if(act === "createInvoiceAuth"){ createInvoiceFor(el.dataset.case, true); }
   else if(act === "openReport"){

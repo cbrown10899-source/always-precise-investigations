@@ -7694,6 +7694,83 @@ section('Compatibility is reported per device, and recommends no browser');
   await page.close();
 }
 
+/* ------------------------- the final report as a real file, made on this machine
+
+   Owner, 2026-08-18: "Final Reports need a real PDF file, not Print only. Add
+   Download PDF and Save PDF to Dropbox Reports. Keep Print optional."
+
+   The PDF is written by the page, from the package document already rendered on
+   screen, with no library. So it is tested where it is made: the generator is
+   run against the real document and the bytes it produces are read back. */
+section('The final report is a real PDF, written by the page');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Package');
+  await page.waitForTimeout(800);
+
+  const acts = await page.evaluate(() => [...document.querySelectorAll('[data-act]')]
+    .map((b) => b.dataset.act + '|' + b.textContent.trim()));
+  ok('Download PDF is offered on the finished package',
+     acts.some((a) => a.startsWith('pkgPdf|')), acts.join(' , ').slice(0, 300));
+  ok('and Save PDF to Dropbox beside it',
+     acts.some((a) => a.startsWith('pkgPdfDropbox|')), acts.join(' , ').slice(0, 300));
+  /* PRINT IS KEPT, and kept SECONDARY — the owner asked for it to stay
+     available, not to stay the only way out of the screen. */
+  ok('Print is still there, and no longer the only way to get the report out',
+     acts.some((a) => a === 'pkgPrint|Print'), acts.join(' , ').slice(0, 300));
+
+  /* THE GENERATOR ITSELF, run against the document that is on screen. */
+  const pdf = await page.evaluate(async () => {
+    const blob = await pdfFromDoc(document.getElementById('pkgdoc'));
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    let all = '';
+    for (let i = 0; i < buf.length; i++) all += String.fromCharCode(buf[i]);
+    return {
+      type: blob.type,
+      size: buf.length,
+      head: all.slice(0, 8),
+      tail: all.slice(-8),
+      pages: (all.match(/\/Type \/Page[^s]/g) || []).length,
+      fonts: all.includes('/BaseFont /Helvetica') && all.includes('/BaseFont /Helvetica-Bold'),
+      xref: all.includes('\nxref\n') && all.includes('startxref'),
+      jpeg: (all.match(/\/Filter \/DCTDecode/g) || []).length,
+      caseNo: all.includes('API-20260812-4002'),
+      startxref: Number((all.match(/startxref\s+(\d+)/) || [])[1] || -1),
+    };
+  });
+
+  ok('what comes back is a PDF, not a print dialog',
+     pdf.type === 'application/pdf' && pdf.head === '%PDF-1.4', pdf.head);
+  ok('with a real body rather than a stub', pdf.size > 1500, String(pdf.size));
+  ok('carrying at least one page', pdf.pages >= 1, String(pdf.pages));
+  /* NO LIBRARY AND NO EMBEDDED FONT — the base-14 fonts are declared by name,
+     which is the whole reason this needs no dependency. */
+  ok('both base-14 fonts are declared rather than embedded', pdf.fonts);
+  ok('a cross-reference table is written and pointed at',
+     pdf.xref && pdf.startxref > 0 && pdf.startxref < pdf.size,
+     pdf.startxref + ' of ' + pdf.size);
+  ok('and it ends where a PDF ends', pdf.tail.includes('%%EOF'), pdf.tail);
+  /* IT IS THE DOCUMENT ON SCREEN, not a second rendering of the same data —
+     the case number is in the bytes because it was read off #pkgdoc. */
+  ok('the content comes from the rendered document', pdf.caseNo);
+  ok('and the photographs are carried as JPEG image objects', pdf.jpeg >= 1, String(pdf.jpeg));
+
+  /* THE PACKAGE IS RE-READ BEFORE THE FILE IS MADE, the same rule printing
+     already follows: this is the moment the document leaves the building. */
+  const reread = await page.evaluate(async () => {
+    let n = 0;
+    const real = window.fetch;
+    window.fetch = (...a) => { if (String(a[0]).includes('/package')) n++; return real(...a); };
+    await pkgPdfBuild();
+    window.fetch = real;
+    return n;
+  });
+  ok('the package is re-read before the PDF is built', reread >= 1, String(reread));
+}
+
 section('The device answers for itself');
 {
   const page = await newPage();

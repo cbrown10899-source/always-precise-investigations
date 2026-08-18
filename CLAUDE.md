@@ -1017,12 +1017,41 @@ The tests plant a case carrying every forbidden value and assert none appears in
 returned as `preview` and `preview_sms`, so the Settings page shows both side by
 side and cannot drift from what is sent — one writer, as everywhere else here.
 
+## New case files live in Dropbox, not R2
+
+Since 2026-08-18 (owner) **new case photos and generated reports go to the
+firm's own Dropbox App Folder**, in per-case `Photos` / `Reports` / `Video`
+folders chosen by content type. `case-portal/DROPBOX.md` carries the detail.
+Four things are load-bearing:
+
+- **New bytes go to Dropbox or nowhere.** No R2 fallback, no double-write. An
+  upload that cannot reach Dropbox is refused and names which of three
+  conditions it is. A fallback splits one case across two stores and nobody
+  finds out until they go looking for the half that moved.
+- **Nothing was migrated and nothing was deleted.** Every existing R2 object
+  still serves and is still what the storage meter counts. Do not sweep them.
+- **Files are proxied through the Worker, never handed out as Dropbox links.**
+  `serveEvidence` is the only place bytes leave, so the case's permission checks
+  stay in front of them.
+- **No new table.** `case_evidence.r2_key` already means "where the bytes are",
+  so a Dropbox row records `dropbox:<path>` and the prefix is the whole
+  discriminator — no companion table to fall out of step, and no portal-setup
+  dispatch standing between a merge and a working upload.
+
+Video is still refused by the ordinary upload; the device-first decision below
+is untouched.
+
 ## The free-plan failsafe
 
 The owner runs Cloudflare on free tiers and wants zero possibility of a
 charge. Cloudflare has no spend cap, so **the Worker is the cap**: evidence
-uploads are refused at 9 GB of the 10 GB R2 free tier (507, `storage_cap`),
-at 75 MB per file, and at 50k uploads/month. The meter is
+uploads are refused at 75 MB per file. **The 9 GB and 50k/month refusals no
+longer govern an upload**, because since the Dropbox move no upload writes to
+R2 at all — applying them would refuse a photograph over what LEGACY files
+weigh, a failsafe firing about storage it is not protecting. They still
+describe the meter, and the meter now counts **only what is actually in
+Cloudflare**: Dropbox-backed rows are excluded from both the byte total and the
+monthly count. The meter is
 `SUM(size_bytes) WHERE deleted_at IS NULL` in `case_evidence` — computed,
 never stored. The admin dashboard's Storage card warns at 75%, and
 `site-health.yml` opens a single GitHub issue when `/portal-api/health`'s
