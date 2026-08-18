@@ -594,3 +594,53 @@ treatment of `continuous`, not observed. The event log exists precisely so the
 next device test reports a fact rather than a symptom: if it shows `start()
 called` and nothing after it, that is a different finding from a full
 `start → audiostart → speechstart → end` with no `result`.
+
+## §7 OVERRIDDEN BY THE OWNER, 2026-08-18 — after "Mobile", nothing is thrown away
+
+Owner, after using it: *"Voice commands are too strict. After Mobile, use a
+known command if confident; otherwise save the spoken words as an editable
+VOICE activity entry. Do not reject unmatched useful speech or pause the loop.
+Keep the raw transcript for audit and return to listening after save."*
+
+**This reverses what §7 asked for, and the reversal is right.** §7 was written
+to stop a misheard phrase filing itself as an official record, and the first
+build honoured it by PAUSING the loop and asking. At the wheel that is the
+worse failure: the investigator carries on narrating to a microphone that
+stopped listening, and the hole in the day's log is found when the report is
+written. A surveillance log with gaps is the evidence problem. An unpolished
+but accurate sentence is not.
+
+**The part of §7 that still holds, and it is the part that mattered.** An
+uncertain phrase **never gets a canonical command id**. "Mobile change" fits
+both `NO_CHANGE` and `CHANGE_POSITION`, which are opposite facts about the same
+minute, and guessing between them puts a claim in the evidence log that nobody
+made. Saving the words actually spoken asserts nothing false: it records what
+was said, marked `source = voice`, with `command_id` **null**, editable and
+removable like any other entry, and the raw transcript kept beside it.
+
+So the loop now has exactly two outcomes after the wake word:
+
+| What was heard | What is filed |
+| --- | --- |
+| a confidently matched command | the standardized sentence, with its canonical `command_id` |
+| anything else — ambiguous, dictated, unmatched | **the spoken words**, `command_id` null |
+
+Both confirm briefly and **return to listening**. Neither pauses.
+
+**The wake word stays strict, and that is the one thing that must not relax.**
+Only an utterance carrying "Mobile" — or the one immediately after "Mobile"
+said alone — is treated as addressed to the portal. Without it the day's log
+fills with the passenger's half of a phone call and the radio.
+
+**The words are the operator's.** The wake word is stripped off the front, and
+a leading "note" with it, because that word asked for free text rather than
+describing anything. Nothing else is rewritten — tidying someone's words is how
+a log stops matching what happened.
+
+**§8 still applies to free speech**, which has no command id to key on: the
+duplicate guard keys on the normalized words instead, so an engine re-emitting
+a final result still produces one entry.
+
+**The review screens are not dead code.** "Tap to speak" still goes through
+transcript review, and an ambiguous transcript there still gets §7's chooser.
+What changed is the LOOP, which is where pausing was costing the log.
