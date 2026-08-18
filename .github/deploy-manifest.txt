@@ -75,6 +75,14 @@ intake/index.html
 # --- the staff case portal: a PAGE, never the Worker (noindex) ---------------
 portal/index.html
 portal/manifest.webmanifest
+# The MP4 muxer the video timestamp pipeline imports same-origin. Vendored
+# in this repo on purpose — no CDN, no build step — and named here as a
+# FILE, not a directory, so portal/vendor/ cannot become a way to publish
+# anything else by dropping it in.
+# It is `.js` and not `.mjs` deliberately: every test suite in this repo is
+# `.mjs` and the deploy guard's rule is that no `.mjs` is ever published. That
+# invariant is worth more than the extension, and `import()` does not care.
+portal/vendor/mp4-muxer.js
 portal/icon-180.png
 portal/icon-192.png
 portal/icon-512.png

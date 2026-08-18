@@ -7169,7 +7169,8 @@ section('The video timestamp screen on a phone');
   });
   await page.waitForTimeout(200);
   const done = await text(page, '.vst');
-  ok('a generated copy reads as not yet on the device', has(done, 'Not saved yet'));
+  ok('a generated copy reads as not yet on the device',
+     has(done, 'not yet saved') && !has(done, '>Saved<'), done.slice(0, 400));
   ok('and offers the save rather than announcing one',
      await page.locator('[data-act="vstSave"]').count() === 1
      && await page.locator('[data-act="vstSaved"]').count() === 0);
@@ -7181,7 +7182,7 @@ section('The video timestamp screen on a phone');
   await page.waitForTimeout(150);
   const started = await text(page, '.vst');
   ok('a started download is not called a save', has(started, 'download has started')
-     && has(started, 'cannot see') && has(started, 'Not saved yet'));
+     && has(started, 'cannot see') && has(started, 'not yet saved'), started.slice(0, 400));
   ok('and the operator is the one who confirms it arrived',
      await page.locator('[data-act="vstSaved"]').count() === 1);
 
@@ -7944,7 +7945,8 @@ section('The device read-out validates the pipeline, not the API list');
   /* EVERY ROW THE OWNER LISTED IN §11. */
   for (const r of ['Container', 'Video codec', 'Audio codec', 'Decode original',
                    'WebCodecs decode', 'Encode H.264', 'Timestamp renderer',
-                   'Result readable here', 'Audio preserved', 'Mux MP4', 'Share available']) {
+                   'Result readable here', 'Audio in original', 'Audio in the copy',
+                   'MP4 demux', 'MP4 mux', 'Share available']) {
     ok(`the read-out reports ${r}`, has(d, r), d.slice(0, 300));
   }
   /* IT ASKS THE DECODER ABOUT THE FILE, not about itself. */
@@ -7953,6 +7955,246 @@ section('The device read-out validates the pipeline, not the API list');
   /* AND IT SHOWS WHAT EACH OUTPUT FORMAT ACTUALLY DID. */
   ok('each candidate output format is reported by what it did',
      /READS BACK|no —/.test(d), d.slice(-500));
+  await page.close();
+}
+
+
+/* THE PIPELINE'S DEMUXER. Owner approval, 2026-08-18, after the real device
+   passed the gate on IMG_0440.mov: H.264 avc1.640028, 1920x1080, ~48.12s, AAC
+   mono 44100, WebCodecs decode ACCEPTS that configuration.
+
+   This half is written in this repo rather than taken from mp4box (2.26 MB)
+   precisely because it can be tested here — it is byte arithmetic over the
+   sample tables, and these fixtures are built to the same shapes an iPhone
+   writes: moov last, chunked samples, run-length tables, keyframes every N. */
+section('The sample tables are demuxed, so every frame can be found');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const r = await page.evaluate(async () => {
+    const enc = new TextEncoder();
+    const box = (type, ...parts) => {
+      const payload = parts.length === 1 && parts[0] instanceof Uint8Array ? parts[0]
+        : (() => { const n = parts.reduce((s, x) => s + x.length, 0);
+                   const o = new Uint8Array(n); let k = 0;
+                   for (const x of parts) { o.set(x, k); k += x.length; } return o; })();
+      const b = new Uint8Array(8 + payload.length);
+      new DataView(b.buffer).setUint32(0, 8 + payload.length);
+      b.set(enc.encode(type), 4); b.set(payload, 8); return b;
+    };
+    const cat = (...a) => { const n = a.reduce((s, x) => s + x.length, 0);
+      const o = new Uint8Array(n); let k = 0; for (const x of a) { o.set(x, k); k += x.length; } return o; };
+    const u32 = n => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n >>> 0); return b; };
+    const u16 = n => { const b = new Uint8Array(2); new DataView(b.buffer).setUint16(0, n); return b; };
+    const i32 = n => { const b = new Uint8Array(4); new DataView(b.buffer).setInt32(0, n); return b; };
+    const full = () => new Uint8Array(4);
+
+    /* 10 samples, 2 per chunk, 5 chunks; 600 ticks each at timescale 600 so a
+       sample is one second; keyframes at 0 and 5. */
+    const N = 10, PER = 2, DELTA = 600, SZ = 100;
+    const stts = box('stts', full(), u32(1), u32(N), u32(DELTA));
+    const stsz = box('stsz', full(), u32(0), u32(N),
+      ...Array.from({ length: N }, (_, i) => u32(SZ + i)));      // varying sizes
+    const stsc = box('stsc', full(), u32(1), u32(1), u32(PER), u32(1));
+    const stss = box('stss', full(), u32(2), u32(1), u32(6));    // 1-based
+    // ctts: every sample shifted by one frame, so cts != dts and the reorder shows.
+    const ctts = box('ctts', full(), u32(1), u32(N), i32(DELTA));
+
+    const MDAT_AT = 40;                                    // where our mdat body starts
+    const chunkOffsets = [];
+    { let at = MDAT_AT, s = 0;
+      for (let c = 0; c < N / PER; c++) { chunkOffsets.push(at);
+        for (let k = 0; k < PER; k++) { at += SZ + s; s++; } } }
+    const stco = box('stco', full(), u32(chunkOffsets.length), ...chunkOffsets.map(u32));
+
+    const avcC = new Uint8Array([1, 0x64, 0x00, 0x28, 0xff]);
+    const visual = (() => { const body = new Uint8Array(78);
+      new DataView(body.buffer).setUint16(24, 1920);
+      new DataView(body.buffer).setUint16(26, 1080);
+      return box('avc1', body, box('avcC', avcC)); })();
+    const stsd = box('stsd', full(), u32(1), visual);
+    const stbl = box('stbl', stsd, stts, ctts, stsz, stsc, stco, stss);
+    const mdhd = box('mdhd', full(), new Uint8Array(8), u32(600), u32(N * DELTA), new Uint8Array(4));
+    const hdlr = box('hdlr', full(), new Uint8Array(4), enc.encode('vide'), new Uint8Array(12));
+    const matrix = cat(i32(0), i32(65536), u32(0), i32(-65536), i32(0), u32(0),
+                       u32(0), u32(0), u32(0x40000000));           // 90 degrees
+    const tkhd = box('tkhd', full(), new Uint8Array(20), new Uint8Array(16), matrix, u32(0), u32(0));
+    const vtrak = box('trak', tkhd, box('mdia', mdhd, hdlr, box('minf', stbl)));
+
+    /* An AAC track whose esds carries a real AudioSpecificConfig, so the
+       passthrough plan has something to pass. */
+    const asc = new Uint8Array([0x12, 0x08]);                     // AAC-LC 44100 mono
+    /* A DecoderConfigDescriptor is 13 bytes before the DecoderSpecificInfo —
+       objectType(1) streamType(1) bufferSizeDB(3) maxBitrate(4) avgBitrate(4).
+       An earlier fixture carried twelve and the parser read past the tag. */
+    const esds = box('esds', full(),
+      new Uint8Array([0x03, 0x1a, 0x00, 0x01, 0x00,
+                      0x04, 0x12, 0x40, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                      0x05, asc.length]), asc);
+    const soundBody = new Uint8Array(28);
+    new DataView(soundBody.buffer).setUint16(16, 1);              // mono
+    new DataView(soundBody.buffer).setUint32(24, 44100 << 16);
+    const astsd = box('stsd', full(), u32(1), box('mp4a', soundBody, esds));
+    const astbl = box('stbl', astsd,
+      box('stts', full(), u32(1), u32(4), u32(1024)),
+      box('stsz', full(), u32(200), u32(4)),
+      box('stsc', full(), u32(1), u32(1), u32(4), u32(1)),
+      box('stco', full(), u32(1), u32(9000)));
+    const atrak = box('trak',
+      box('tkhd', full(), new Uint8Array(20), new Uint8Array(16),
+        cat(i32(65536), i32(0), u32(0), i32(0), i32(65536), u32(0), u32(0), u32(0), u32(0x40000000)),
+        u32(0), u32(0)),
+      box('mdia', box('mdhd', full(), new Uint8Array(8), u32(44100), u32(4 * 1024), new Uint8Array(4)),
+        box('hdlr', full(), new Uint8Array(4), enc.encode('soun'), new Uint8Array(12)),
+        box('minf', astbl)));
+
+    const moov = box('moov', vtrak, atrak);
+    const mdat = box('mdat', new Uint8Array(3 * 1048576));
+    const ftyp = box('ftyp', new Uint8Array([113, 116, 32, 32, 0, 0, 2, 0]));
+    const f = new File([cat(ftyp, mdat, moov)], 'IMG_0440.mov', { type: 'video/quicktime' });
+    const parsed = await vstParse(f);
+    return { parsed, chunkOffsets, N, DELTA, SZ };
+  });
+
+  const V = r.parsed.video, A = r.parsed.audio;
+  ok('the video sample table is produced', !!V.samples && V.samples.length === r.N,
+     String(V.samples && V.samples.length));
+  /* OFFSETS ARE WALKED THROUGH stsc/stco, not assumed contiguous — this is the
+     part that silently reads the wrong bytes if it is wrong. */
+  ok('sample offsets follow the chunk table', V.samples[0].offset === r.chunkOffsets[0]
+     && V.samples[2].offset === r.chunkOffsets[1] && V.samples[4].offset === r.chunkOffsets[2],
+     JSON.stringify(V.samples.slice(0, 5).map(s => s.offset)));
+  ok('and sizes advance within a chunk',
+     V.samples[1].offset === V.samples[0].offset + V.samples[0].size,
+     JSON.stringify([V.samples[0], V.samples[1]]));
+  ok('every sample has its own size', V.samples[0].size === r.SZ && V.samples[9].size === r.SZ + 9,
+     JSON.stringify([V.samples[0].size, V.samples[9].size]));
+  ok('decode times come from the run-length table',
+     V.samples[0].dts === 0 && V.samples[3].dts === 3 * r.DELTA, JSON.stringify(V.samples[3]));
+  /* PRESENTATION TIME IS WHAT THE STAMP ADVANCES ON, so a composition offset
+     must not be dropped — that would stamp the wrong second on reordered frames. */
+  ok('composition offsets are applied, so cts is not just dts',
+     V.samples[2].cts === V.samples[2].dts + r.DELTA, JSON.stringify(V.samples[2]));
+  ok('keyframes are read from stss, 1-based',
+     V.samples[0].sync === true && V.samples[5].sync === true
+     && V.samples[1].sync === false, JSON.stringify(V.samples.map(s => s.sync)));
+
+  /* AUDIO: the owner made it a hard requirement, so its config must survive. */
+  ok('the AAC track is found with its channel count and rate',
+     A && A.cc === 'mp4a' && A.channels === 1 && A.sampleRate === 44100, JSON.stringify(A));
+  /* Read so the read-out can REPORT what the original contains. Since the
+     owner's change the copy carries no audio, so this is reported, not muxed. */
+  ok('and its AudioSpecificConfig is read from esds',
+     A.asc && A.asc.length === 2 && A.asc[0] === 0x12, JSON.stringify(A.asc && [...A.asc]));
+  ok('with its own sample table', A.samples && A.samples.length === 4,
+     String(A.samples && A.samples.length));
+
+  ok('the rotation the original carries is read', r.parsed.rotation === 90,
+     String(r.parsed.rotation));
+  ok('and the codec string comes from avcC, matching the real device report',
+     V.codecString === 'avc1.640028', V.codecString);
+}
+
+section('The muxer is local, audited and same-origin');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const m = await page.evaluate(async () => {
+    try { const M = await vstMuxer();
+      return { ok: true, keys: Object.keys(M).sort(), url: VST_MUXER_URL }; }
+    catch (e) { return { ok: false, why: String(e), url: VST_MUXER_URL }; }
+  });
+  ok('the muxer loads from this origin', m.ok, JSON.stringify(m));
+  ok('and it is served from the portal, not a CDN',
+     m.url.startsWith('/portal/') && !/https?:/.test(m.url), m.url);
+  ok('it exposes the muxer and an in-memory target',
+     m.ok && m.keys.includes('Muxer') && m.keys.includes('ArrayBufferTarget'),
+     JSON.stringify(m.keys));
+
+  const src = fs.readFileSync(new URL('../portal/vendor/mp4-muxer.js', import.meta.url), 'utf8');
+  ok('the vendored file carries its MIT licence', /MIT License/.test(src));
+  ok('and says why it is vendored rather than fetched', /VENDORED, NOT FETCHED/.test(src));
+  /* NO WASM, NO NETWORK, NO EVAL — audited before it was committed, and the
+     assertion keeps it that way if it is ever updated.
+
+     Scanned from the END OF THE PROVENANCE HEADER, because that header NAMES
+     the very APIs it promises are absent — the note about the audit was
+     failing the audit. */
+  const marker = '--- END OF VENDOR NOTE ---';
+  ok('the vendored file marks where its own note ends', src.includes(marker));
+  const lib = src.slice(src.indexOf(marker) + marker.length);
+  ok('it reaches no network and runs no wasm or eval',
+     !/\bfetch\s*\(|XMLHttpRequest|WebAssembly|importScripts|\beval\s*\(/.test(lib),
+     (lib.match(/\bfetch\s*\(|XMLHttpRequest|WebAssembly|importScripts|\beval\s*\(/) || [''])[0]);
+  await page.close();
+}
+
+/* OWNER REQUIREMENT CHANGE, 2026-08-18: the timestamped copy is picture only —
+   audio is stripped by design for this milestone, not carried and not blocked
+   on. The rule that survives from the previous wording is the one that always
+   mattered: the screen may not assert something untrue, and the ORIGINAL is
+   never touched. */
+section('The copy is picture only, and says so');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* NO AUDIO TRACK IS EVER DECLARED TO THE MUXER, whatever the source has —
+     asserted against the pipeline's own source rather than a comment, because
+     "there is no audio track in the output" is a property of the muxer options. */
+  const src = fs.readFileSync(new URL('../portal/index.html', import.meta.url), 'utf8');
+  const fn = src.slice(src.indexOf('async function vstTranscode('),
+                       src.indexOf('\n/* Opening the generator'));
+  ok('the transcode never adds an audio chunk', !/addAudioChunk/.test(fn));
+  ok('nor declares an audio track to the muxer',
+     !/audio:\s*\{\s*codec:/.test(fn), fn.slice(0, 200));
+  ok('and it says the omission is deliberate', /STRIPPED BY DESIGN/.test(fn));
+
+  /* A SOURCE WITH AUDIO STILL GENERATES — it is no longer a blocker — and the
+     result reports the omission rather than implying preservation. */
+  const withAudio = await page.evaluate(async () => {
+    const parsed = {
+      rotation: 0,
+      video: { width: 320, height: 240, timescale: 600, seconds: 1,
+               codecString: 'avc1.640028', description: new Uint8Array([1, 2, 3]),
+               samples: [{ offset: 0, size: 4, dts: 0, cts: 0, sync: true, duration: 600 }] },
+      audio: { cc: 'mp4a', name: 'AAC', channels: 1, sampleRate: 44100,
+               asc: new Uint8Array([0x12, 0x08]),
+               samples: [{ offset: 0, size: 4, dts: 0, cts: 0, duration: 1024 }] },
+    };
+    const f = new File([new Uint8Array(64)], 'x.mov', { type: 'video/quicktime' });
+    try { await vstTranscode(f, parsed, Date.now(), 'America/New_York', () => {});
+          return { threw: false }; }
+    catch (e) { return { threw: true, msg: e.message }; }
+  });
+  /* This container has no WebCodecs, so the pipeline cannot run here — what is
+     asserted is that it is NOT refused FOR HAVING AUDIO. */
+  ok('a source with audio is no longer refused for having it',
+     !withAudio.threw || !/audio/i.test(withAudio.msg || ''), JSON.stringify(withAudio));
+
+  // The finished screen states it plainly, both halves.
+  await page.evaluate(() => {
+    VST = { step: 'done', caseNo: '', file: null, name: 'IMG_0440.mov', size: 1024,
+            url: '', tz: 'America/New_York', readable: true, codec: null, caps: vstCaps(),
+            diag: '', startMs: vstToUtc(2025, 5, 3, 11, 27, 58, 'America/New_York'),
+            out: { blob: new Blob(['x']), url: '', name: 'IMG_0440-timestamped.mp4',
+                   size: 4096, mime: 'video/mp4', audio: 'stripped',
+                   sourceAudio: 'AAC, 1ch', frames: 1443, via: 'webcodecs' },
+            savedHere: false, started: false, err: '', saveMsg: '' };
+    paintVStamp();
+  });
+  await page.waitForTimeout(250);
+  const done = await text(page, '.vst');
+  ok('the copy is described as picture only', has(done, 'picture only'));
+  ok('and it never claims the audio was preserved', !has(done, 'Preserved'), done.slice(0, 500));
+  /* THE ORIGINAL IS UNTOUCHED and the screen says where its audio still is —
+     the honest half of stripping it. */
+  ok('the original’s own audio is named as still on the original',
+     has(done, 'AAC, 1ch') && has(done, 'still on your original'), done.slice(0, 600));
+  ok('and the output is an MP4', has(done, 'IMG_0440-timestamped.mp4'));
+  ok('not reported as saved merely because it exists',
+     has(done, 'Generated') && has(done, 'not yet saved'), done.slice(0, 600));
   await page.close();
 }
 
