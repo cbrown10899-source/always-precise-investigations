@@ -5126,6 +5126,180 @@ section('A phone can actually reach the navigation');
 
    That the rest of the entry survives a wording-only correction is proved in
    the Worker suite, against the route — this is the screen. */
+/* -------------------------- VOICE COMMAND MODE: the wake-word loop (§2, §8, §9, §14, §16)
+
+   Speech recognition does not exist in headless Chromium, so the ENGINE is
+   stubbed and everything around it is real: the real registry, the real
+   activity API, the real database. The stub only decides what was "heard" —
+   which is the one thing a machine in a data centre cannot supply. */
+section('Voice mode: explicit, looping, and never filing what it is unsure of');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', (e) => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('dana');
+  await page.locator('#p').fill('FieldWork2026x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  await page.locator('[data-act="svEnter"]').click();
+  await page.waitForTimeout(700);
+  if (await page.locator('[data-act="svStartDay"]').count()) {
+    await page.locator('#sv_start').fill('06:30');
+    await page.locator('[data-act="svStartDay"]').click();
+    await page.waitForTimeout(900);
+  }
+
+  /* The stubbed engine. It records start/stop so "the microphone is inactive
+     when off" is a fact about calls, not about wording. */
+  await page.evaluate(() => {
+    window.__mic = { made: 0, started: 0, stopped: 0, rec: null };
+    window.SpeechRecognition = function () {
+      const self = this;
+      window.__mic.made++;
+      window.__mic.rec = self;
+      self.start = () => { window.__mic.started++; };
+      self.stop = () => { window.__mic.stopped++; };
+    };
+  });
+  const say = async (words) => {
+    await page.evaluate((w) => {
+      const r = window.__mic.rec;
+      r.onresult({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: w } }] });
+    }, words);
+    await page.waitForTimeout(700);
+  };
+  const stateText = () => text(page, '.sv-voice');
+  const entries = () => page.evaluate(() => (WS && WS.activity ? WS.activity.length : -1));
+  const mic = () => page.evaluate(() => window.__mic);
+
+  /* §14 — EXPLICIT ACTIVATION. Opening Active Surveillance arms nothing. */
+  ok('voice mode is off when the field view opens',
+     has(await stateText(), 'Voice mode off'), (await stateText()).slice(0, 160));
+  ok('and no recogniser has been constructed at all',
+     (await mic()).made === 0, JSON.stringify(await mic()));
+  ok('the control says what it will do rather than what it is',
+     has(await stateText(), 'tap to start'));
+
+  /* ON. §2's state, in §14's words. */
+  await page.locator('[data-act="svVoiceToggle"]').click();
+  await page.waitForTimeout(500);
+  ok('turning it on starts listening for the wake word',
+     has(await stateText(), 'Listening for'), (await stateText()).slice(0, 160));
+  ok('and the engine was actually started', (await mic()).started === 1);
+  /* §16 — the limitation is on the screen, not only in a document. */
+  ok('it says plainly that it only listens while on screen',
+     has(await stateText(), 'only listens while this page is on screen'));
+
+  /* NOT EVERYTHING IN THE CAR IS FOR US. */
+  const before = await entries();
+  await say('so then he pulled out and drove off down the road');
+  ok('speech without the wake word files nothing', (await entries()) === before);
+  ok('and does not interrupt with a review prompt',
+     await page.locator('#sv_heard').count() === 0);
+  ok('it is still listening', has(await stateText(), 'Listening for'));
+
+  /* THE TWO-STEP FORM: "Mobile" alone arms it. */
+  await say('Mobile');
+  ok('saying just the wake word arms it for a command',
+     has(await stateText(), 'Listening for the command'), (await stateText()).slice(0, 160));
+
+  /* §3 + §9 — a recognized command becomes a REAL entry, and confirms briefly. */
+  await say('no change at residence');
+  ok('the command files a real activity entry', (await entries()) === before + 1);
+  const filed = await page.evaluate(() => (WS.activity[0] || {}));
+  ok('with the standardized wording, not the transcript',
+     filed.description === 'No change observed at the residence.', filed.description);
+  ok('marked as captured by voice, with the command that made it',
+     filed.source === 'voice' && filed.command_id === 'NO_CHANGE_RESIDENCE',
+     JSON.stringify({ s: filed.source, c: filed.command_id }));
+  ok('a brief confirmation names the command and the time',
+     has(await stateText(), 'NO CHANGE RESIDENCE'), (await stateText()).slice(0, 200));
+  /* §9 — and back to listening WITHOUT the investigator touching anything. */
+  ok('and it returns to listening on its own',
+     has(await stateText(), 'Listening for “Mobile'), (await stateText()).slice(0, 200));
+
+  /* §8 — ONE spoken command, ONE record, however many finals the engine emits. */
+  const after = await entries();
+  await say('Mobile, subject observed');
+  await say('Mobile, subject observed');
+  ok('the same command heard twice makes one entry, not two',
+     (await entries()) === after + 1, `${after} -> ${await entries()}`);
+
+  /* §7 — AMBIGUOUS NEVER FILES. Proven with a real collision added to the
+     registry, because the shipped one deliberately has no such pair. */
+  const n2 = await entries();
+  await page.evaluate(() => {
+    VOICE_COMMANDS.push({ id: 'TEST_TIE', text: 'A test tie.', say: ['lost visual'] });
+  });
+  await say('Mobile, lost visual');
+  ok('an ambiguous phrase files nothing', (await entries()) === n2);
+  ok('it stops the loop rather than guessing',
+     !has(await stateText(), 'Listening for'), (await stateText()).slice(0, 200));
+  ok('and says why it paused',
+     has(await stateText(), 'More than one command fits'), (await stateText()).slice(0, 200));
+  /* §7's own screen: the CHOOSER, not a text box. An ambiguous phrase is not
+     a draft to edit — it is a question about which of two opposite facts was
+     meant, and the answer is a choice. */
+  const picks = await page.locator('[data-act="svPickCmd"]').count();
+  ok('handing it to §7’s chooser, with both candidates offered', picks === 2, String(picks));
+  ok('and nothing prefilled for the operator to accept by accident',
+     await page.locator('#sv_heard').count() === 0);
+  ok('the engine was stopped, not left listening under a question',
+     (await mic()).stopped >= 1);
+  await page.evaluate(() => { VOICE_COMMANDS.pop(); });
+  await page.locator('[data-act="svDiscard"]').click();
+  await page.waitForTimeout(400);
+
+  /* §6B — dictated prose does not file itself either. */
+  await page.locator('[data-act="svVoiceToggle"]').click();
+  await page.waitForTimeout(400);
+  const n3 = await entries();
+  await say('Mobile, note the subject left in a grey van');
+  ok('dictation files nothing on its own', (await entries()) === n3);
+  ok('and pauses for it to be read first',
+     has(await stateText(), 'Dictation'), (await stateText()).slice(0, 200));
+  ok('with the words waiting in the review',
+     await page.locator('#sv_heard').count() === 1);
+  await page.locator('[data-act="svDiscard"]').click();
+  await page.waitForTimeout(400);
+
+  /* OFF means the microphone is inactive — asserted as a call, not a label. */
+  await page.locator('[data-act="svVoiceToggle"]').click();
+  await page.waitForTimeout(400);
+  const onCount = (await mic()).stopped;
+  await page.locator('[data-act="svVoiceToggle"]').click();
+  await page.waitForTimeout(400);
+  ok('turning it off stops the engine', (await mic()).stopped === onCount + 1);
+  ok('and says so', has(await stateText(), 'Voice mode off'), (await stateText()).slice(0, 160));
+
+  /* §16 — FOREGROUND ONLY, enforced. */
+  await page.locator('[data-act="svVoiceToggle"]').click();
+  await page.waitForTimeout(400);
+  const hiddenBefore = (await mic()).stopped;
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.waitForTimeout(400);
+  ok('the page going into the background stops the microphone',
+     (await mic()).stopped === hiddenBefore + 1);
+  ok('and says that is what happened, rather than going quiet',
+     has(await stateText(), 'went into the background'), (await stateText()).slice(0, 220));
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+  });
+
+  /* ONE REGISTRY still, and the loop did not grow a second one. */
+  const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+  ok('the loop matches phrases through the registry and nowhere else',
+     (src.match(/function voiceMatch\(/g) || []).length === 1
+     && (src.match(/voiceMatch\(/g) || []).length >= 2);
+}
+
 section('Voice §10: the last activity is corrected without leaving the field screen');
 {
   const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
