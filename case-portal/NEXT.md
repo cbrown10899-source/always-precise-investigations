@@ -12,20 +12,29 @@ truth** (recorded verbatim 2026-08-13).
 ## 🔒 LOCKED ORDER — owner, 2026-08-18
 
 The queue, in the owner's own words. **Nothing below jumps ahead of anything
-above it**, and items 3–5 are explicitly not to be started until 1 is finished.
+above it**, and nothing after the item in progress is to be started until that
+item is finished.
 
 | # | Work | State |
 | --- | --- | --- |
 | 1 | Finish current Active Surveillance mobile and voice polish | **DONE — DEPLOYED** at `c333d3f` (#182). §13 photo/video commands, §8 retry/offline and server-side duplicate protection, §1/§16.1 compact status. Two device-only checks OPEN, below. |
-| 2 | Build Timestamp Photo | **NEXT** — not started |
-| 3 | Admin report workflow and mobile report fix | not started — **queued, do not begin** |
-| 4 | Full portal aesthetic cleanup | not started — **queued, do not begin** |
-| 5 | Remaining Portal Ops productivity features | not started |
+| 2 | Build Timestamp Photo | **IN PROGRESS** — branch `photo-timestamp` |
+| 3 | Visible Dropbox portal UI for Admin | not started — **queued, do not begin**. Added by the owner 2026-08-18 |
+| 4 | Admin report workflow and mobile report fix | not started — **queued, do not begin** |
+| 5 | Full portal aesthetic cleanup | not started — **queued, do not begin** |
+| 6 | Remaining Portal Ops productivity features | not started |
 
-Recorded mid-unit on the owner's instruction: *"Do not interrupt the current
-coding unit. Record this queue only, then continue the work already in
-progress."* It therefore travels with the Active Surveillance branch rather than
-as a separate merge.
+**Item 3, in the owner's own words** (2026-08-18): *"add visible Dropbox portal
+UI for Admin: connection status, account, Open Dropbox Folder, and case links
+for Photos Reports Video."* Recorded verbatim and NOT designed here — the
+Dropbox connect flow and its OAuth already exist (`DROPBOX.md`), so the first
+job when this comes up is to establish what is genuinely missing versus merely
+not surfaced, rather than assuming either.
+
+Both queue updates were recorded **mid-unit on the owner's instruction** —
+*"Do not interrupt the current coding unit. Record this queue only"*, and
+*"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
+with whatever branch is in flight rather than as a separate merge.
 
 ## 🚦 DEPLOYMENT — 2026-08-18, master `c333d3f` (#182) — the mobile/voice unit closes
 

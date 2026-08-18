@@ -9387,6 +9387,396 @@ section('Timestamped video — the optional save to Dropbox');
        { method: 'POST', headers: { Origin: ORIGIN, Cookie: admin } }), env)).status === 404);
 }
 
+/* ------------------------------ Timestamp Photo — the original and the copy
+
+   The owner's brief is four words ("Build Timestamp Photo"); what was derived
+   from their own video brief and what was not is written down in
+   PHOTO-TIMESTAMP.md. These are the properties that file claims. */
+section('Timestamped photograph — the pair, and the original untouched');
+{
+  DBX.reset();
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-PST1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+
+  const mk = (name, bytes, type) => new File([new Uint8Array(bytes).fill(67)], name, { type });
+  const up = (caseNo, file) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return worker.fetch(new Request(API + `/cases/${caseNo}/evidence`, {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  };
+  const stamp = (caseNo, fields, cookie = admin) => {
+    const fd = new FormData();
+    fd.append('file', mk('burned.jpg', 400, 'image/jpeg'));
+    for (const [k, v] of Object.entries(fields)) fd.append(k, String(v));
+    return worker.fetch(new Request(API + `/cases/${caseNo}/photo-stamp`, {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: cookie }, body: fd }), env);
+  };
+  const evidence = async (caseNo = 'API-PST1') =>
+    (await jsonOf(await call(env, `/cases/${caseNo}/workspace`, { cookie: admin }))).evidence;
+
+  const original = await jsonOf(await up('API-PST1', mk('IMG_4407.jpg', 300, 'image/jpeg')));
+  const originalPath = DBX.paths()[0];
+  const originalBytes = DBX.files.get(originalPath);
+
+  const made = await jsonOf(await stamp('API-PST1', {
+    original_id: original.id, taken_utc: '2026-08-17T21:14:32.000Z',
+    tz: 'America/New_York', source: 'exif' }));
+  ok('the copy is created', typeof made.id === 'number' && made.id !== original.id, JSON.stringify(made.id));
+
+  /* THE ORIGINAL IS NEVER MODIFIED — the whole brief, in one assertion, and
+     checked at the bytes rather than at the row. */
+  ok('the original file is byte-for-byte what it was',
+     DBX.files.get(originalPath) === originalBytes);
+  ok('and it is still there under its own name', DBX.files.has(originalPath));
+  ok('the copy is a SECOND file, not a rewrite', DBX.files.size === 2);
+  ok('and it went to the case Photos folder',
+     DBX.inFolder('Photos').length === 2, DBX.paths().join(' '));
+  ok('named so nobody has to guess which is which',
+     DBX.paths().some((f) => f.includes('IMG_4407-timestamped')), DBX.paths().join(' '));
+
+  const ev = await evidence();
+  ok('the case now holds two photographs', ev.length === 2, String(ev.length));
+  const originalRow = ev.find((e) => e.id === original.id);
+  ok('the original row is intact and not marked removed',
+     originalRow && !originalRow.deleted_at && originalRow.filename === 'IMG_4407.jpg');
+
+  /* THE PAIR IS NAMED, which is what "distinguish ORIGINAL EVIDENCE from
+     TIMESTAMPED COPY" needs to rest on — not a filename convention. */
+  const ws = await jsonOf(await call(env, '/cases/API-PST1/workspace', { cookie: admin }));
+  ok('the workspace carries the pairing', Array.isArray(ws.photo_stamps) && ws.photo_stamps.length === 1,
+     JSON.stringify(ws.photo_stamps));
+  const pair = ws.photo_stamps[0];
+  ok('it names the original and the copy',
+     pair.original_id === original.id && pair.stamped_id === made.id, JSON.stringify(pair));
+  ok('it keeps the instant that was burned in', pair.taken_utc === '2026-08-17T21:14:32.000Z', pair.taken_utc);
+  ok('and the zone it was read in, so EST/EDT can be re-derived',
+     pair.tz === 'America/New_York', pair.tz);
+  ok('and WHERE THE TIME CAME FROM, which is the provenance', pair.source === 'exif', pair.source);
+  ok('and who made it', pair.generated_by_name === 'Trever', pair.generated_by_name);
+  ok('this one is the active copy', pair.superseded_at === null, String(pair.superseded_at));
+
+  /* A CORRECTION SUPERSEDES. Nothing is overwritten and nothing is deleted. */
+  const fixed = await jsonOf(await stamp('API-PST1', {
+    original_id: original.id, taken_utc: '2026-08-17T22:14:32.000Z',
+    tz: 'America/New_York', source: 'operator' }));
+  const after = (await jsonOf(await call(env, '/cases/API-PST1/workspace', { cookie: admin }))).photo_stamps;
+  ok('a correction adds a record rather than editing one', after.length === 2, String(after.length));
+  const live = after.filter((x) => x.superseded_at === null);
+  ok('exactly one is active', live.length === 1 && live[0].stamped_id === fixed.id, JSON.stringify(live));
+  ok('and the earlier one is marked superseded, not removed',
+     after.some((x) => x.stamped_id === made.id && x.superseded_at), JSON.stringify(after));
+  const ev2 = await evidence();
+  ok('the superseded copy KEEPS its evidence row — nothing here purges',
+     ev2.some((e) => e.id === made.id && !e.deleted_at), String(ev2.length));
+  ok('and its file is still in Dropbox', DBX.files.size === 3, String(DBX.files.size));
+
+  /* A COPY OF A COPY IS REFUSED BY NAME. */
+  const twice = await stamp('API-PST1', {
+    original_id: fixed.id, taken_utc: '2026-08-17T22:14:32.000Z',
+    tz: 'America/New_York', source: 'operator' });
+  ok('a timestamped copy cannot itself be timestamped', twice.status === 400, String(twice.status));
+  ok('and the refusal says which mistake it was',
+     (await jsonOf(twice)).code === 'already_a_copy');
+}
+
+/* THE REFUSAL THAT MATTERS MOST: stamping must not be a way around the package
+   gate. Material held back as internal only stays held back. */
+section('Timestamping cannot promote held-back material');
+{
+  DBX.reset();
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-PST2', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+
+  const mk = (name, bytes, type) => new File([new Uint8Array(bytes).fill(67)], name, { type });
+  const upWith = (cls, name = 'held.jpg', type = 'image/jpeg') => {
+    const fd = new FormData();
+    fd.append('file', mk(name, 300, type));
+    fd.append('classification', cls);
+    return worker.fetch(new Request(API + '/cases/API-PST2/evidence', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  };
+  const stamp = (id, extra = {}) => {
+    const fd = new FormData();
+    fd.append('file', mk('burned.jpg', 400, 'image/jpeg'));
+    fd.append('original_id', String(id));
+    fd.append('taken_utc', '2026-08-17T21:14:32.000Z');
+    fd.append('tz', 'America/New_York');
+    fd.append('source', 'operator');
+    for (const [k, v] of Object.entries(extra)) fd.set(k, String(v));
+    return worker.fetch(new Request(API + '/cases/API-PST2/photo-stamp', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  };
+  const classOf = async (id) =>
+    ((await jsonOf(await call(env, '/cases/API-PST2/workspace', { cookie: admin }))).evidence
+      .find((e) => e.id === id) || {}).classification;
+
+  for (const cls of ['internal_only', 'needs_redaction', 'do_not_use', 'needs_review']) {
+    const held = await jsonOf(await upWith(cls, `${cls}.jpg`));
+    const copy = await jsonOf(await stamp(held.id));
+    ok(`a ${cls} original produces a ${cls} copy`, (await classOf(copy.id)) === cls,
+       await classOf(copy.id));
+  }
+  const open = await jsonOf(await upWith('client_deliverable', 'open.jpg'));
+  const openCopy = await jsonOf(await stamp(open.id));
+  ok('and a deliverable original still produces a deliverable copy',
+     (await classOf(openCopy.id)) === 'client_deliverable');
+
+  /* The caller cannot ask for something else, because it is never read. */
+  const heldAgain = await jsonOf(await upWith('internal_only', 'again.jpg'));
+  const sneaky = await jsonOf(await stamp(heldAgain.id, { classification: 'client_deliverable' }));
+  ok('and asking for a wider classification changes nothing',
+     (await classOf(sneaky.id)) === 'internal_only', await classOf(sneaky.id));
+
+  /* WHAT MAY BE STAMPED. A document is not a photograph, and video never
+     reaches this store at all. */
+  const pdf = await jsonOf(await upWith('client_deliverable', 'Report.pdf', 'application/pdf'));
+  const notPhoto = await stamp(pdf.id);
+  ok('a document cannot be timestamped this way', notPhoto.status === 400
+     && (await jsonOf(notPhoto)).code === 'not_a_photo', String(notPhoto.status));
+
+  /* ANOTHER CASE'S PHOTOGRAPH IS REFUSED, not silently ignored. */
+  await ingest(env, { case_no: 'API-PST3', service: 'Surveillance', client_name: 'D', subject_name: 'T' });
+  const other = await jsonOf(await (() => {
+    const fd = new FormData();
+    fd.append('file', mk('theirs.jpg', 300, 'image/jpeg'));
+    return worker.fetch(new Request(API + '/cases/API-PST3/evidence', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  })());
+  const wrongCase = await stamp(other.id);
+  ok("another case's photograph is refused", wrongCase.status === 400, String(wrongCase.status));
+
+  /* PROVENANCE IS REQUIRED. An evidence timestamp with no recorded origin is
+     one nobody can defend, so there is no default. */
+  const anyPhoto = await jsonOf(await upWith('client_deliverable', 'prov.jpg'));
+  for (const [k, v] of [['source', ''], ['source', 'guessed'], ['taken_utc', 'sometime'],
+                        ['tz', 'Mars/Olympus']]) {
+    const bad = await stamp(anyPhoto.id, { [k]: v });
+    ok(`${k}="${v}" is refused`, bad.status === 400, String(bad.status));
+  }
+}
+
+/* THE PACKAGE RULE, owner 2026-08-18: "do not automatically include both
+   original and timestamped copy in the client package. Add 'Include timestamped
+   copy in client package' default ON. Original keeps its existing
+   classification unless Admin explicitly selects it." */
+section('Timestamped photograph — which half of the pair goes to the client');
+{
+  DBX.reset();
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-PSTP', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+
+  const mk = (n) => new File([new Uint8Array(300).fill(67)], n, { type: 'image/jpeg' });
+  const upWith = (cls, name) => {
+    const fd = new FormData();
+    fd.append('file', mk(name));
+    fd.append('classification', cls);
+    return worker.fetch(new Request(API + '/cases/API-PSTP/evidence', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  };
+  const stamp = (id, include) => {
+    const fd = new FormData();
+    fd.append('file', new File([new Uint8Array(400).fill(67)], 'burned.jpg', { type: 'image/jpeg' }));
+    fd.append('original_id', String(id));
+    fd.append('taken_utc', '2026-08-17T21:14:32.000Z');
+    fd.append('tz', 'America/New_York');
+    fd.append('source', 'operator');
+    if (include !== undefined) fd.append('include_copy', String(include));
+    return worker.fetch(new Request(API + '/cases/API-PSTP/photo-stamp', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  };
+  const classOf = async (id) => (await env.DB.prepare(
+    'SELECT classification AS c FROM case_evidence WHERE id = ?').bind(id).first()).c;
+
+  /* DEFAULT ON — the copy is the one that ships, so an ordinary deliverable
+     photograph produces a deliverable copy and nothing has to be said. */
+  const a = await jsonOf(await upWith('client_deliverable', 'a.jpg'));
+  const aCopy = await jsonOf(await stamp(a.id));
+  ok('the switch defaults to ON when nothing is said', aCopy.include_copy === true,
+     JSON.stringify(aCopy.include_copy));
+  ok('so the copy is client-deliverable', (await classOf(aCopy.id)) === 'client_deliverable');
+  ok('and it says so in the answer, rather than leaving it to be believed',
+     aCopy.classification === 'client_deliverable', aCopy.classification);
+  ok('the ORIGINAL is not reclassified by any of it',
+     (await classOf(a.id)) === 'client_deliverable');
+
+  /* OFF — the copy is held back. `internal_only` is how this portal already
+     says "in the case, not for the client"; there is no second flag. */
+  const b = await jsonOf(await upWith('client_deliverable', 'b.jpg'));
+  const bCopy = await jsonOf(await stamp(b.id, false));
+  ok('turning it off is honoured', bCopy.include_copy === false, JSON.stringify(bCopy.include_copy));
+  ok('the copy is held back as internal only', (await classOf(bCopy.id)) === 'internal_only');
+  ok('and the original is STILL exactly as the admin left it',
+     (await classOf(b.id)) === 'client_deliverable');
+  /* Which is the whole point: the package gate is the classification, so a
+     held-back copy is not eligible and nothing else had to learn a new rule. */
+  const build = await jsonOf(await call(env, '/cases/API-PSTP/build', { method: 'POST', cookie: admin }));
+  const refused = await call(env, `/build/${build.build.id}/items`,
+    { method: 'POST', cookie: admin, body: { evidence_id: bCopy.id } });
+  ok('a held-back copy cannot enter a package', refused.status === 400, String(refused.status));
+
+  /* "unless Admin explicitly selects it" — the original is never refused. */
+  const chosen = await call(env, `/build/${build.build.id}/items`,
+    { method: 'POST', cookie: admin, body: { evidence_id: b.id } });
+  ok('and an admin may still explicitly put the ORIGINAL in the package',
+     chosen.status === 201, String(chosen.status));
+
+  /* ON CANNOT WIDEN. The inheritance ceiling is the package gate. */
+  const c = await jsonOf(await upWith('internal_only', 'c.jpg'));
+  const cCopy = await jsonOf(await stamp(c.id, true));
+  ok('asking to include a copy of held-back material does not promote it',
+     (await classOf(cCopy.id)) === 'internal_only', await classOf(cCopy.id));
+
+  /* OFF DOES NOT REWRITE A STRONGER CLASSIFICATION into a milder one. */
+  const d = await jsonOf(await upWith('do_not_use', 'd.jpg'));
+  const dCopy = await jsonOf(await stamp(d.id, false));
+  ok('turning it off on do-not-use material keeps do-not-use, not internal only',
+     (await classOf(dCopy.id)) === 'do_not_use', await classOf(dCopy.id));
+
+  /* There is NO second source of truth for this: no column, anywhere. */
+  const cols = await env.DB.prepare('PRAGMA table_info(photo_stamp)').all();
+  ok('no include_in_package column exists to disagree with the classification',
+     !(cols.results || []).some((c2) => /include/i.test(c2.name)),
+     (cols.results || []).map((c2) => c2.name).join(','));
+}
+
+section('Timestamped photograph — the boundaries it inherits');
+{
+  DBX.reset();
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  const accepted = await call(env, `/invite/${token}/accept`,
+    { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const invCookie = cookieFrom(accepted);
+  const invId = (await jsonOf(await call(env, '/users', { cookie: admin })))
+    .users.find((u) => u.username === 'dana').id;
+  await ingest(env, { case_no: 'API-PST4', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  await ingest(env, { case_no: 'API-PST5', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  await call(env, '/submissions/API-PST4/assign', { method: 'POST', cookie: admin,
+    body: { user_id: invId } });
+
+  const mk = (n) => new File([new Uint8Array(300).fill(67)], n, { type: 'image/jpeg' });
+  const upAs = (caseNo, cookie) => {
+    const fd = new FormData();
+    fd.append('file', mk('field.jpg'));
+    return worker.fetch(new Request(API + `/cases/${caseNo}/evidence`, {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: cookie }, body: fd }), env);
+  };
+  const stampAs = (caseNo, id, cookie) => {
+    const fd = new FormData();
+    fd.append('file', mk('burned.jpg'));
+    fd.append('original_id', String(id));
+    fd.append('taken_utc', '2026-08-17T21:14:32.000Z');
+    fd.append('tz', 'America/New_York');
+    fd.append('source', 'operator');
+    return worker.fetch(new Request(API + `/cases/${caseNo}/photo-stamp`, {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: cookie }, body: fd }), env);
+  };
+
+  /* NOT ADMIN-ONLY. The investigator who took the picture is the one standing
+     in the field with it; `caseFor` is the boundary, as it is for the upload. */
+  const mine = await jsonOf(await upAs('API-PST4', invCookie));
+  const ok1 = await stampAs('API-PST4', mine.id, invCookie);
+  ok('an investigator can timestamp a photograph on their own case', ok1.status === 201, String(ok1.status));
+
+  const theirs = await jsonOf(await upAs('API-PST5', admin));
+  const denied = await stampAs('API-PST5', theirs.id, invCookie);
+  ok('and reaches nothing on a case that is not theirs', denied.status === 404, String(denied.status));
+
+  /* THE DELETED AND ARCHIVED GATE. The case number is in the path, so the
+     chokepoint in route() answers before this handler is ever entered. */
+  await call(env, '/cases/API-PST5/delete', { method: 'POST', cookie: admin });
+  const gone = await stampAs('API-PST5', theirs.id, admin);
+  ok('a deleted case is refused', gone.status === 409, String(gone.status));
+  ok('and by name', (await jsonOf(gone)).case_deleted === true);
+
+  await call(env, '/cases/API-PST5/undelete', { method: 'POST', cookie: admin });
+  await call(env, '/cases/API-PST5/archive', { method: 'POST', cookie: admin });
+  const filed = await stampAs('API-PST5', theirs.id, admin);
+  ok('an archived case is refused too', filed.status === 409
+     && (await jsonOf(filed)).case_archived === true, String(filed.status));
+}
+
+section('Timestamped photograph — before the schema catches up, and when Dropbox is down');
+{
+  /* THE TABLE ARRIVES BY A MANUAL DISPATCH while the Worker deploys on push,
+     so between the two it does not exist. The read degrades; the write names
+     the workflow. */
+  DBX.reset();
+  const bare = freshEnv();
+  await bootstrapAdmin(bare);
+  const admin = (await login(bare, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(bare, { case_no: 'API-PST6', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  const fd0 = new FormData();
+  fd0.append('file', new File([new Uint8Array(300).fill(67)], 'a.jpg', { type: 'image/jpeg' }));
+  const orig = await jsonOf(await worker.fetch(new Request(API + '/cases/API-PST6/evidence', {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd0 }), bare));
+
+  await bare.DB.prepare('DROP TABLE photo_stamp').run();
+  const ws = await call(bare, '/cases/API-PST6/workspace', { cookie: admin });
+  ok('the workspace still loads without the table', ws.status === 200, String(ws.status));
+  ok('and reports no pairings rather than failing',
+     JSON.stringify((await jsonOf(ws)).photo_stamps) === '[]');
+  ok('health names the missing table',
+     (await jsonOf(await call(bare, '/health'))).missing_tables.includes('photo_stamp'));
+
+  const mkStamp = (env, cookie) => {
+    const fd = new FormData();
+    fd.append('file', new File([new Uint8Array(400).fill(67)], 'b.jpg', { type: 'image/jpeg' }));
+    fd.append('original_id', String(orig.id));
+    fd.append('taken_utc', '2026-08-17T21:14:32.000Z');
+    fd.append('tz', 'America/New_York');
+    fd.append('source', 'operator');
+    return worker.fetch(new Request(API + '/cases/API-PST6/photo-stamp', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: cookie }, body: fd }), env);
+  };
+  const blocked = await mkStamp(bare, admin);
+  ok('the write returns 503 naming the workflow', blocked.status === 503, String(blocked.status));
+  const why = await jsonOf(blocked);
+  ok('and says which one', /portal-setup/.test(why.error) && why.code === 'not_set_up', why.error);
+  ok('and nothing was written to Dropbox on the way', DBX.files.size === 1, String(DBX.files.size));
+
+  /* DROPBOX DOWN: refused, and NO ROW. A record of a copy that does not exist
+     is worse than no copy at all. */
+  DBX.reset();
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const a2 = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-PST7', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  const fd1 = new FormData();
+  fd1.append('file', new File([new Uint8Array(300).fill(67)], 'a.jpg', { type: 'image/jpeg' }));
+  const o2 = await jsonOf(await worker.fetch(new Request(API + '/cases/API-PST7/evidence', {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: a2 }, body: fd1 }), env));
+
+  DBX.uploadFails = true;
+  const refused = await worker.fetch(new Request(API + '/cases/API-PST7/photo-stamp', {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: a2 },
+    body: (() => { const fd = new FormData();
+      fd.append('file', new File([new Uint8Array(400).fill(67)], 'b.jpg', { type: 'image/jpeg' }));
+      fd.append('original_id', String(o2.id));
+      fd.append('taken_utc', '2026-08-17T21:14:32.000Z');
+      fd.append('tz', 'America/New_York');
+      fd.append('source', 'operator');
+      return fd; })() }), env);
+  ok('a refused upload is a refused stamp', refused.status === 503, String(refused.status));
+  const rows = await env.DB.prepare('SELECT COUNT(*) AS n FROM photo_stamp').first();
+  ok('and NO pairing row was written', rows.n === 0, String(rows.n));
+  const evs = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM case_evidence WHERE case_no = 'API-PST7'").first();
+  ok('and no evidence row either — the copy does not exist', evs.n === 1, String(evs.n));
+  DBX.uploadFails = false;
+}
+
 section('Dropbox OAuth — connect');
 {
   const env = freshEnv();

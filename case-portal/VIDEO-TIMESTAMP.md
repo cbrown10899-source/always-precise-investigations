@@ -26,6 +26,14 @@ And, on why it is a running clock rather than a label:
 > 5:14:33, 5:14:34, 5:14:35… with the footage. That makes it much more useful for
 > surveillance reporting than a static upload-time stamp.
 
+> **The photograph's answer to this brief is `PHOTO-TIMESTAMP.md`** (2026-08-18).
+> It reuses this file's rules verbatim — original never modified, separate
+> derivative, distinguishable, burned into the pixels, zone from the date — and
+> shares the burn itself (`vstDraw`) and the wording (`vstLabel`) rather than
+> copying them. It diverges in exactly one place: a stamped photograph is
+> **stored in the case**, because photographs go to Dropbox and the
+> device-first rule below is about video bytes reaching Cloudflare.
+
 ## 1. Original + derivative model
 
 Preserve the original uploaded video **exactly as received**. Never overwrite it,
