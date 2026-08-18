@@ -46,10 +46,11 @@ authorize call and the token exchange.
 | --- | --- | --- |
 | `GET /dropbox/status` | admin | connected, which account, when, and the redirect URI to copy. **Never the token.** |
 | `GET /dropbox/connect` | admin | mints a CSRF state, 302s to Dropbox |
-| `GET /dropbox/callback` | admin | verifies state, exchanges the code, **proves the token**, stores it |
+| `GET /dropbox/callback` | signed state | verifies state, exchanges the code, **proves the token**, stores it |
 | `POST /dropbox/disconnect` | admin | revokes at Dropbox, then forgets it here |
 
 **All four are admin-only**, `/status` included — it names the connected account.
+The callback reaches that conclusion differently from the other three: see below.
 
 ## What is stored, and what is not
 
@@ -80,11 +81,48 @@ it is single-use. Lax is correct and deliberate: Dropbox returns the browser by 
 **top-level GET navigation**, which Lax permits and which a cross-site POST could
 not forge.
 
-**The callback also requires an admin session of its own.** The state proves the
-response belongs to a request this portal made; the session proves who is making
-it. Neither alone is enough — a state cookie without a session would let anyone
-holding the URL complete a connection, and a session without a state would accept
-an authorization code the portal never asked for.
+### The callback cannot see the session, and that is browser behaviour
+
+**This shipped wrong and the owner found it live on 2026-08-18:** the callback
+returned *"Not signed in"* to an admin who was signed in in the same tab.
+
+`sessionCookie` is **SameSite=Strict**, and a browser does not attach a Strict
+cookie to a request that a *different* site navigated to. Dropbox sending the
+operator back here is precisely that, so `currentUser` saw no cookie and the
+signed-in gate refused the request before the route ever ran.
+
+The reasoning that put the gate there was: *"a state cookie without a session
+would let anyone holding the URL complete a connection."* That is wrong. The
+state cookie is HttpOnly, Secure and unguessable — holding the callback **URL**
+gets you nothing, because the cookie is the half you cannot obtain.
+
+**The fix is not `SameSite=Lax` on the session cookie.** That cookie is the
+portal's CSRF defence for every route in the Worker (`originAllowed` describes
+itself as defence in depth *behind* it), and relaxing it site-wide to serve one
+OAuth return trip is a bad trade. Instead the callback carries its own
+credential: the state cookie now holds
+
+```
+<random state> . <admin user id> . <expiry> . <HMAC-SHA256 over the three>
+```
+
+signed with `DROPBOX_APP_SECRET`. `/dropbox/connect` is the only thing that
+mints it and it is still admin-only, so the id in there is an admin's by
+construction. Dropbox is handed the **random half only**, so no staff id
+reaches Dropbox's logs or the browser's history.
+
+The signature is what makes that id worth trusting. HttpOnly stops a *page*
+writing the cookie, but that is weaker than it sounds — a sibling subdomain can
+set a `Domain=` cookie this Worker cannot distinguish from its own. Signed, a
+forged cookie cannot name an admin it did not come from.
+
+**The admin is re-read from `users` on the way through.** An account demoted or
+deactivated between pressing Connect and coming back does not finish the
+connection; it gets `unauthorised`.
+
+Using `DROPBOX_APP_SECRET` as the HMAC key is deliberate: HMAC never exposes its
+key, the flow cannot run without that secret anyway, and it means no new secret
+for the owner to set and no "the key is missing" branch to get wrong.
 
 ## The connection is proven before it is claimed
 
