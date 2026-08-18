@@ -1171,3 +1171,30 @@ CREATE TABLE IF NOT EXISTS dropbox_auth (
   connected_at   TEXT NOT NULL,
   last_checked_at TEXT
 );
+
+/* HOW AN ACTIVITY ENTRY WAS CAPTURED (SURVEILLANCE-VOICE.md §3).
+
+   A COMPANION TABLE, on the owner's instruction (2026-08-18): "track
+   voice-created activity entries with an idempotent companion metadata table
+   instead of altering the existing activity_log table". That is also what this
+   file can actually do — it is re-applied on every portal-setup run and
+   `ALTER TABLE ADD COLUMN` is not idempotent, so a column added here would
+   bind a fresh database and not the live one. Same shape as activity_removed,
+   activity_media and build_custom.
+
+   `source` is a MARKER, never a privilege. §11 is explicit that voice entries
+   use the same Edit / Remove system as any other, and §12 that voice and the
+   quick buttons converge on the same canonical types. Nothing may read this
+   column and decide an entry is more, or less, editable for it.
+
+   `heard` is the raw transcript, which §5 permits to be kept as internal
+   diagnostic metadata — it exists to answer "the entry says X, what did they
+   actually say?" and must never replace the standardized text. Nothing
+   surfaces it yet, deliberately. */
+CREATE TABLE IF NOT EXISTS activity_source (
+  entry_id   INTEGER PRIMARY KEY REFERENCES activity_log(id),
+  source     TEXT NOT NULL CHECK (source IN ('voice')),
+  command_id TEXT,                    -- the canonical command, when one matched
+  heard      TEXT,                    -- raw transcript, diagnostic only
+  at         TEXT NOT NULL
+);

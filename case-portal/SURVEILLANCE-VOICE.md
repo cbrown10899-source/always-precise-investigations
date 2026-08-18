@@ -447,7 +447,7 @@ confirmation. This slice did not reverse it and did not add a path around it.
 
 | | Section | Note |
 | --- | --- | --- |
-| 🔴 | §3 `source = voice` on the activity record | **Decide the storage deliberately.** `activity_log` has no `source` column and `ALTER TABLE ADD COLUMN` is not idempotent — `schema.sql` is re-applied on every portal-setup run, so adding one there binds a fresh database and not the live one. The standing precedent is a companion table (`activity_removed`, `build_custom`). Needs a portal-setup dispatch whichever way it goes |
+| ✅ | §3 `source = voice` on the activity record | **Shipped 2026-08-18.** `activity_source` is a companion table keyed on `entry_id`, on the owner's instruction — "an idempotent companion metadata table instead of altering the existing activity_log table" — which is also the only thing `schema.sql` can do, being re-applied on every portal-setup run. `source` is a closed list matching the column's CHECK, so an unknown value is dropped rather than stored. The entry is written FIRST and the marker second, so a database that has not had the dispatch run costs the marker and never the investigator's words. §11/§12 hold: the same edit, the same removal, no privilege |
 | 🔴 | §2 wake-word listening loop, VOICE MODE ON/OFF | The hands-free half. Explicit control, never auto-activating |
 | 🔴 | §1 compact status header | Reclaims the space the big timer takes on mobile |
 | 🔴 | §6B dictation mode as a loop | The SAVE / EDIT / DISCARD wording and the return to listening. The behaviour it depends on already exists |
@@ -455,13 +455,36 @@ confirmation. This slice did not reverse it and did not add a path around it.
 
 ### Two things the owner still has to supply
 
-- **The truncated spoken aliases in §4.** `VEHICLE_OBSERVED` is registered as a
-  canonical command with **no alias at all**, because its only fragment is the
-  bare word "observed" and registering that would file "subject observed" as a
-  vehicle sighting. A command that never matches is honest; one that matches the
-  wrong thing is not. `SUBJECT_DEPARTED`, `SUBJECT_VEHICLE_ABSENT`, `NO_ACTIVITY`
-  and `MOBILE_SURVEILLANCE` are registered on their visible fragments only.
+- **The truncated spoken aliases in §4.** `VEHICLE_OBSERVED` was **answered by
+  the owner on 2026-08-18**: *"vehicle observed"* and *"vehicle sighting"*, and
+  explicitly **not** the bare word *"observed"* — which is exactly why it had
+  been left unaliased, since mapping it would file "subject observed" as a
+  vehicle sighting. Both halves are asserted. `SUBJECT_DEPARTED`,
+  `SUBJECT_VEHICLE_ABSENT`, `NO_ACTIVITY` and `MOBILE_SURVEILLANCE` are still
+  registered on their visible fragments only and could use the same treatment.
 - **The standardized sentences.** §5 gives two verbatim and they are used
   exactly. The other nineteen are this implementation's wording, written in the
   same register, and every one of them is in the single `VOICE_COMMANDS` table —
   reword any of them in one edit.
+
+### The §3 record, in one place
+
+`activity_source(entry_id, source, command_id, heard, at)`.
+
+- **`source` is a marker, never a privilege.** §11 and §12 are explicit, and
+  there are tests: a voice entry edits and removes exactly like a typed one, and
+  its source survives an edit because it records how the entry was CAPTURED, not
+  what it now says.
+- **`heard` is the raw transcript**, which §5 permits as internal diagnostic
+  metadata — it answers "the entry says X, what did they actually say?". It must
+  never replace the standardized text, and **nothing surfaces it yet**: it is
+  stored, it is deliberately kept out of the workspace payload, and a test
+  fails if it appears there.
+- **The join is guarded** through `missingTables()`, like every table added
+  after the live database existed. Between a merge and the manual portal-setup
+  dispatch the table does not exist, and the workspace is the most-used screen
+  in the portal.
+- **`source = voice` is set for anything captured through the microphone**,
+  whether or not a command matched and whether or not the operator edited the
+  wording afterwards. The canonical command rides along only when there was one:
+  "use my own words instead" claims none.

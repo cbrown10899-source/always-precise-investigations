@@ -8836,9 +8836,13 @@ const VOICE_COMMANDS = [
     say: ["subject arrived"] },
   { id: "SUBJECT_RETURNED", text: "Subject returned to the location.",
     say: ["subject returned"] },
-  /* The owner's fragment for this one is the bare word "observed". Registering
-     that would swallow "subject observed". Awaiting their phrasing. */
-  { id: "VEHICLE_OBSERVED", text: "Subject vehicle observed.", say: [] },
+  /* The owner supplied these two explicitly (2026-08-18) after the §4 fragment
+     arrived as the bare word "observed". BARE "observed" IS DELIBERATELY NOT
+     MAPPED, on their instruction and for the reason it was left unaliased in
+     the first place: it would swallow "subject observed" and file a person as
+     a vehicle. */
+  { id: "VEHICLE_OBSERVED", text: "Subject vehicle observed.",
+    say: ["vehicle observed", "vehicle sighting"] },
   { id: "SUBJECT_VEHICLE_PRESENT", text: "Subject vehicle present at the location.",
     say: ["subject vehicle present"] },
   { id: "SUBJECT_VEHICLE_ABSENT", text: "Subject vehicle absent from the location.",
@@ -10217,6 +10221,8 @@ async function svSaveEntry(oneTap){
     subject_documented: $("sv_sd") ? $("sv_sd").checked : false,
     photo_acquired: $("sv_pa") ? $("sv_pa").checked : false,
     video_acquired: $("sv_va") ? $("sv_va").checked : false,
+    ...(SV.entry.source ? {source: SV.entry.source, command_id: SV.entry.command_id,
+                          heard: SV.entry.heard} : {}),
   };
   try{
     await api(`/cases/${encodeURIComponent(WS_CASE)}/activity`, {method:"POST", body});
@@ -11082,21 +11088,30 @@ document.addEventListener("click", ev => {
   }
   else if(act === "svUseText"){
     const t = $("sv_heard") ? $("sv_heard").value : "";
-    SV.heard = null; SV.voiceText = null; SV.tab = "activity";
-    SV.entry = {text: t, ...stampNow()};
+    /* §3 — HOW IT WAS CAPTURED travels with the entry. `source` is voice for
+       anything that came through the microphone, whether or not a command
+       matched and whether or not the operator edited the wording afterwards:
+       it records the capture, not the outcome. The canonical command rides
+       along when there was one. */
+    const vm = voiceMatch(SV.heard);
+    const cmdId = SV.voiceCmd || (vm.command ? vm.command.id : null);
+    SV.entry = {text: t, source: "voice", command_id: cmdId, heard: SV.heard, ...stampNow()};
+    SV.heard = null; SV.voiceText = null; SV.voiceCmd = null; SV.tab = "activity";
     paint();
   }
-  else if(act === "svDiscard"){ SV.heard = null; SV.voiceText = null; paint(); }
+  else if(act === "svDiscard"){ SV.heard = null; SV.voiceText = null; SV.voiceCmd = null; paint(); }
   /* §7's other half: the operator resolves the ambiguity, the portal never
      does. Picking writes the chosen standard sentence into the review box; it
      still is not logged until Use. */
   else if(act === "svPickCmd"){
     const m = voiceMatch(SV.heard);
     const c = m.candidates && m.candidates[parseInt(el.dataset.i, 10)];
-    if(c) SV.voiceText = c.text;
+    if(c){ SV.voiceText = c.text; SV.voiceCmd = c.id; }
     paint();
   }
-  else if(act === "svKeepWords"){ SV.voiceText = SV.heard; paint(); }
+  /* Their own words, so no canonical command is claimed — but it was still
+     spoken, so it is still source = voice. */
+  else if(act === "svKeepWords"){ SV.voiceText = SV.heard; SV.voiceCmd = null; paint(); }
   else if(act === "svFullReport"){ exitSurveillance(); WS_TAB = "reports"; paintCase(); }
   else if(act === "evTab"){ EV_TAB = el.dataset.t; paintCase(); }
   else if(act === "evJump"){ EV_TAB = el.dataset.t || "all"; WS_TAB = "evidence"; WS_ERR = ""; paintCase(); }
