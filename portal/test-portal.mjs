@@ -7084,8 +7084,13 @@ section('The video timestamp screen');
   });
   await page.waitForTimeout(200);
   ok('the editor opens on the file it was given', has(await text(page, '.vst'), 'DSC_0001.MOV'));
-  ok('and warns that the file’s own date is often wrong',
-     has(await text(page, '.vst'), 'often wrong'));
+  /* The wording moved on 2026-08-18: the default is the video's own capture
+     metadata now, and the form names WHICH source it used. The rule this always
+     stood for is that the operator is told the figure may not be the recording
+     and can correct it. */
+  ok('and says where the start time came from',
+     /capture metadata|no capture metadata|carries no time zone|no date at all/i
+       .test(await text(page, '.vst')), (await text(page, '.vst')).slice(0, 300));
   ok('the resolved Eastern wording is shown while editing',
      has(await text(page, '#vst_res'), '08/17/2026 05:14:32 PM EDT'));
 
@@ -8195,6 +8200,169 @@ section('The copy is picture only, and says so');
   ok('and the output is an MP4', has(done, 'IMG_0440-timestamped.mp4'));
   ok('not reported as saved merely because it exists',
      has(done, 'Generated') && has(done, 'not yet saved'), done.slice(0, 600));
+  await page.close();
+}
+
+
+/* OWNER, 2026-08-18: "the burned timestamp must be anchored to the source
+   video's actual recording/capture date and time when that metadata is
+   available... It must NOT use the time the investigator processes the video."
+
+   It did not. The default came from `file.lastModified` — when the file was
+   WRITTEN, which on a Photos export is months after the shot — and fell back to
+   `Date.now()`, the processing time itself. */
+section('The stamp is anchored to when it was recorded');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const built = await page.evaluate(async () => {
+    const enc = new TextEncoder();
+    const box = (type, ...parts) => {
+      const payload = (() => { const n = parts.reduce((s, x) => s + x.length, 0);
+        const o = new Uint8Array(n); let k = 0;
+        for (const x of parts) { o.set(x, k); k += x.length; } return o; })();
+      const b = new Uint8Array(8 + payload.length);
+      new DataView(b.buffer).setUint32(0, 8 + payload.length);
+      b.set(enc.encode(type), 4); b.set(payload, 8); return b;
+    };
+    const cat = (...a) => { const n = a.reduce((s, x) => s + x.length, 0);
+      const o = new Uint8Array(n); let k = 0; for (const x of a) { o.set(x, k); k += x.length; } return o; };
+    const u32 = n => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n >>> 0); return b; };
+
+    // mvhd v0 with a creation_time in the QuickTime epoch (1904).
+    const boxRaw = (typeBytes, ...parts) => {
+    const payload = (() => { const n = parts.reduce((s,x)=>s+x.length,0);
+    const o = new Uint8Array(n); let k=0; for(const x of parts){o.set(x,k);k+=x.length;} return o; })();
+    const b = new Uint8Array(8 + payload.length);
+    new DataView(b.buffer).setUint32(0, 8 + payload.length);
+    b.set(new Uint8Array(typeBytes), 4); b.set(payload, 8); return b;
+    };
+    const mvhdAt = iso => {
+      const secs = Math.floor(Date.parse(iso) / 1000) + 2082844800;
+      return box('mvhd', new Uint8Array(4), u32(secs), u32(secs), u32(600), u32(6000),
+                 new Uint8Array(80));
+    };
+    // meta > keys + ilst carrying com.apple.quicktime.creationdate
+    const appleMeta = value => {
+      const key = enc.encode('com.apple.quicktime.creationdate');
+      const keys = box('keys', new Uint8Array(4), u32(1),
+        cat(u32(8 + key.length), enc.encode('mdta'), key));
+      const data = box('data', u32(1), u32(0), enc.encode(value));
+      const item = cat(u32(8 + data.length), u32(1), data);   // "type" is the key index
+      return box('meta', new Uint8Array(4), keys, box('ilst', item));
+    };
+    const udtaDay = value => {
+      const t = enc.encode(value);
+      const len = new Uint8Array(4);
+      new DataView(len.buffer).setUint16(0, t.length);
+      return box('udta', boxRaw([0xa9, 0x64, 0x61, 0x79], len, t));
+    };
+
+    const mk = (...moovKids) => {
+      const moov = box('moov', ...moovKids);
+      const mdat = box('mdat', new Uint8Array(1048576));
+      const ftyp = box('ftyp', new Uint8Array([113, 116, 32, 32, 0, 0, 2, 0]));
+      const f = new File([cat(ftyp, mdat, moov)], 'IMG_0440.mov', { type: 'video/quicktime' });
+      // A modified date far from the capture date, as a Photos export has.
+      Object.defineProperty(f, 'lastModified', { value: Date.parse('2026-08-18T02:00:00Z') });
+      return f;
+    };
+
+    const SHOT = '2025-05-03T11:27:58-0400';       // 11:27:58 AM EDT, with its offset
+    return {
+      apple: await vstParse(mk(mvhdAt('2001-01-01T00:00:00Z'), appleMeta(SHOT))),
+      day: await vstParse(mk(udtaDay(SHOT))),
+      mvhdOnly: await vstParse(mk(mvhdAt('2025-05-03T15:27:58Z'))),
+      none: await vstParse(mk(box('udta', box('nam0', new Uint8Array(4))))),
+      label: (ms) => null,
+    };
+  });
+
+  /* 1. THE APPLE KEY WINS, and it carries its own UTC offset, so the instant is
+     unambiguous and Eastern renders it as the wall clock it was shot at. */
+  ok('the Apple capture key is read', !!built.apple.capture, JSON.stringify(built.apple.capture));
+  ok('and it is trusted, because it carries its own offset',
+     built.apple.capture && built.apple.capture.trusted === true);
+  const shown = await page.evaluate(ms => vstLabel(ms, 'America/New_York'),
+                                    built.apple.capture.ms);
+  ok('which renders as the owner’s own example', shown === '05/03/2025 11:27:58 AM EDT', shown);
+  /* AND IT BEATS mvhd — that fixture's mvhd says 2001, so a wrong precedence
+     would be loud rather than subtle. */
+  ok('the capture key outranks the creation time', /2025/.test(shown), shown);
+
+  /* 2. The older ©day field is read the same way. */
+  ok('the udta ©day field is read too', !!built.day.capture, JSON.stringify(built.day.capture));
+  const shown2 = await page.evaluate(ms => vstLabel(ms, 'America/New_York'), built.day.capture.ms);
+  ok('and resolves to the same instant', shown2 === '05/03/2025 11:27:58 AM EDT', shown2);
+
+  /* 3. mvhd alone is read but NOT trusted — it carries no zone and Apple has
+     written local time into it, so the operator is told to check. */
+  ok('a file with only a creation time still yields one', !!built.mvhdOnly.capture);
+  ok('but it is marked untrusted, because it has no time zone',
+     built.mvhdOnly.capture.trusted === false, JSON.stringify(built.mvhdOnly.capture));
+
+  /* 4. NOTHING IS INVENTED when the file carries no date. */
+  ok('a file with no capture metadata reports none', built.none.capture === null,
+     JSON.stringify(built.none.capture));
+
+  await page.close();
+}
+
+section('Processing time is never the anchor');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* THE DEFECT, AS A RULE. `Date.now()` was the fallback when a file had no
+     modified date — the one value guaranteed to be wrong. It is gone from the
+     opener, and a file with no date at all now gets an empty form that ASKS. */
+  const src = fs.readFileSync(new URL('../portal/index.html', import.meta.url), 'utf8');
+  const opener = src.slice(src.indexOf('function vstOpen('),
+                           src.indexOf('async function vstLoadCases('));
+  ok('the opener no longer falls back to the current clock',
+     !/Date\.now\(\)/.test(opener), opener.slice(0, 400));
+  ok('and says why the modified date is not the recording',
+     /not when the footage was shot|when the file was WRITTEN/i.test(opener));
+
+  /* THE FORM SAYS WHERE THE FIGURE CAME FROM, and the three sources read
+     differently — a stamp anchored to a file's modified date must not look the
+     same as one anchored to the capture metadata. */
+  const notes = await page.evaluate(async () => {
+    const out = {};
+    for (const from of ['capture', 'creation', 'modified', 'none']) {
+      VST = { step: 'when', caseNo: '', file: null, name: 'IMG_0440.mov', size: 1024,
+              url: '', tz: 'America/New_York', q: '',
+              mo: '05', da: '03', yr: '2025', hr: '11', mi: '27', se: '58', ap: 'AM',
+              guessed: true, startFrom: from, readable: true, codec: null,
+              caps: vstCaps(), diag: '', hash: null, pct: 0, err: '', saveMsg: '',
+              out: null, recId: null, savedHere: false, started: false };
+      paintVStamp();
+      out[from] = document.querySelector('.vst').innerText;
+    }
+    return out;
+  });
+  ok('capture metadata is named as the recording',
+     /capture metadata/i.test(notes.capture) && /when it was recorded/i.test(notes.capture),
+     notes.capture.slice(0, 300));
+  ok('a zone-less creation time asks to be checked',
+     /carries no time zone/i.test(notes.creation), notes.creation.slice(0, 300));
+  /* THE IMPORTANT ONE: the modified date must be called out as NOT the
+     recording, because that is the value that silently looks right. */
+  ok('the modified date is called out as not the recording',
+     /no capture metadata/i.test(notes.modified) && /not.*when it was recorded/i.test(notes.modified),
+     notes.modified.slice(0, 300));
+  ok('and a file with no date at all simply asks',
+     /no date at all/i.test(notes.none), notes.none.slice(0, 300));
+
+  /* THE BURN ITSELF IS UNCHANGED: the label advances on the frame's own
+     presentation time, from whatever start was anchored — never the clock. */
+  const fn = src.slice(src.indexOf('async function vstTranscode('),
+                       src.indexOf('\n/* Opening the generator'));
+  ok('the pipeline stamps from the frame’s presentation time',
+     /frame\.timestamp/.test(fn) && /startMs \+ Math\.floor\(tSec\)/.test(fn));
+  ok('and never reads a live clock while rendering',
+     !/Date\.now\(\)|new Date\(\)/.test(fn), fn.slice(0, 200));
   await page.close();
 }
 

@@ -921,3 +921,56 @@ framing identical.
 only its demuxer, its refusals and its wiring are tested here. **iOS LIVE
 VERIFIED remains OPEN** until the owner's device selects `IMG_0440.mov`,
 generates, and plays the result back.
+
+
+---
+
+# THE STAMP IS ANCHORED TO THE RECORDING — 2026-08-18
+
+**Owner, before push:** the burned timestamp must anchor to the source's actual
+capture date and time when the metadata is there, and must **never** start from
+the moment the investigator processes the file.
+
+**It did not, and that was a real defect.** The default came from
+`file.lastModified` — when the file was *written*, which on a Photos export is
+long after the shot — and it fell back to **`Date.now()`**, the processing time
+itself. Both look plausible on screen, which is what made it dangerous.
+
+## What it reads now, in priority order
+
+| Source | Carries a zone? | Trusted |
+| --- | --- | --- |
+| `moov/meta` keys+ilst **`com.apple.quicktime.creationdate`** | **yes, its own UTC offset** | **yes** |
+| `moov/udta/©day` (or `©dat`) | usually | yes |
+| `mvhd` `creation_time` (1904 epoch) | **no** — Apple has written local time here | **no** — read, but the operator is asked to check |
+| the file's modified date | n/a | **no** — labelled *not* the recording |
+| nothing | | the form asks; nothing is invented |
+
+Whatever is found is an **instant**, and `vstLabel` renders it in
+`America/New_York`, so EST or EDT comes from the date itself. The
+`com.apple.quicktime.creationdate` fixture resolves to exactly the owner's own
+example: **`05/03/2025 11:27:58 AM EDT`**.
+
+`Date.now()` is gone from the opener entirely. A file with no date at all now
+gets an empty form that asks, which is honest — the processing time is the one
+value guaranteed to be wrong.
+
+**The form says which source it used**, in four distinct wordings, because a
+stamp taken from a modified date must not read like one taken from the capture
+metadata. The device read-out carries **Recorded at** and **Stamp anchored to**
+for the same reason.
+
+**An operator's correction always outranks the file** — the metadata is applied
+only while the fields are still untouched.
+
+## Two parser bugs this found, both caught before the suite ran
+
+- **The box-type check admitted only printable ASCII**, so QuickTime's
+  ©-prefixed metadata atoms — `©day`, exactly where an Apple device writes the
+  capture date — were discarded as if the box were corrupt. 0xA9 is allowed now.
+- **`ilst` children are indexed by a BINARY number**, not a four-character code,
+  so `vstBox` refused them, correctly, as not being types. They are walked
+  directly instead.
+
+Both were found by a thirty-second targeted probe rather than a twelve-minute
+suite run, which is the reason to keep that probe habit.

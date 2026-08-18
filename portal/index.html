@@ -4320,7 +4320,10 @@ function vstBox(bytes, off){
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let size = dv.getUint32(off), head = 8;
   const type = String.fromCharCode(bytes[off+4], bytes[off+5], bytes[off+6], bytes[off+7]);
-  if(!/^[\x20-\x7e]{4}$/.test(type)) return null;
+  /* 0xA9 is allowed because QuickTime's own metadata atoms are ©-prefixed —
+     `©day` is where an Apple device writes the capture date, and a check that
+     admitted only printable ASCII discarded it as if the box were corrupt. */
+  if(!/^[\x20-\x7e\xa9]{4}$/.test(type)) return null;
   if(size === 1){
     if(off + 16 > bytes.length) return null;
     size = Number(dv.getBigUint64(off + 8)); head = 16;
@@ -4371,10 +4374,139 @@ function vstCodecString(cc, cfg){
   return cc;
 }
 
+/* ---- WHEN WAS THIS ACTUALLY RECORDED? ----
+
+   Owner, 2026-08-18: the burned stamp must anchor to the source's real
+   recording time when the metadata is there, and must NEVER start from the
+   moment the investigator happens to process the file.
+
+   That was a genuine defect: the default came from `file.lastModified`, which
+   on an iPhone export is when the file was WRITTEN OUT — and it fell back to
+   `Date.now()`, which is the processing time itself. On a clip pulled out of
+   Photos months later, both are wrong, and wrong in a way that looks plausible.
+
+   In priority order, and the order is about how much each source actually
+   knows:
+
+   1. `moov/meta` keys+ilst `com.apple.quicktime.creationdate` — Apple writes an
+      ISO-8601 string WITH the UTC offset it was shot at, so the instant is
+      unambiguous. This is the one to trust.
+   2. `moov/udta/©day` — the older Apple/QuickTime field, usually also ISO-8601
+      with an offset.
+   3. `mvhd` creation_time — seconds since 1904-01-01. It carries NO zone, and
+      Apple has historically written LOCAL time into it, so it is read but
+      marked untrusted and the operator is told to check it.
+   4. The file's modified date — NOT capture metadata, and labelled as such.
+
+   Whatever is found is an INSTANT. `vstLabel` then renders it in
+   America/New_York, so EST or EDT comes from the date itself. */
+
+/* An instant to the Eastern wall-clock parts the form shows. One writer, so the
+   provisional default and the capture metadata cannot render differently. */
+function vstParts(ms){
+  const p = {};
+  for(const x of new Intl.DateTimeFormat("en-US", {timeZone: VST_TZ, hour12: true,
+      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit",
+      minute: "2-digit", second: "2-digit"}).formatToParts(new Date(ms))){
+    p[x.type] = x.value;
+  }
+  return p;
+}
+
+const VST_CREATION_KEY = "com.apple.quicktime.creationdate";
+const VST_QT_EPOCH = 2082844800;         // seconds between 1904-01-01 and 1970-01-01
+
+/* `meta` is a FullBox in MP4 and a plain container in QuickTime. Rather than
+   guess from the brand, try both and keep whichever yields real children. */
+function vstMetaKids(bytes, meta){
+  for(const head of [8, 12]){
+    const kids = vstKids(bytes, {start: meta.start, size: meta.size, head});
+    if(kids.some(k => k.type === "keys" || k.type === "ilst" || k.type === "hdlr")) return kids;
+  }
+  return [];
+}
+
+function vstAppleCreation(bytes, moov){
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const txt = (from, len) => { let o = "";
+    for(let i = 0; i < len; i++) o += String.fromCharCode(bytes[from + i]);
+    return o; };
+
+  // ---- 1. meta > keys + ilst ----
+  const meta = vstFind(bytes, moov, "meta");
+  if(meta){
+    const kids = vstMetaKids(bytes, meta);
+    const keysBox = kids.find(k => k.type === "keys");
+    const ilst = kids.find(k => k.type === "ilst");
+    if(keysBox && ilst){
+      const names = [];
+      let at = keysBox.start + keysBox.head + 4;            // past version/flags
+      const count = dv.getUint32(at); at += 4;
+      for(let i = 0; i < count; i++){
+        const size = dv.getUint32(at);
+        if(size < 8) break;
+        names.push(txt(at + 8, size - 8));
+        at += size;
+      }
+      /* An ilst child's "type" is a 1-based INDEX into the keys list, not a
+         four-character code, so it is walked directly — `vstBox` would refuse
+         it, correctly, as not being a type. */
+      let it = ilst.start + ilst.head;
+      const ilstEnd = ilst.start + ilst.size;
+      while(it + 8 <= ilstEnd){
+        const isize = dv.getUint32(it);
+        if(isize < 8) break;
+        const item = {start: it, size: isize, head: 8};
+        it += isize;
+        const idx = dv.getUint32(item.start + 4) - 1;
+        if(names[idx] !== VST_CREATION_KEY) continue;
+        const data = vstKids(bytes, item).find(b => b.type === "data");
+        if(!data) continue;
+        const value = txt(data.start + data.head + 8, data.size - data.head - 8).trim();
+        const ms = Date.parse(value);
+        if(Number.isFinite(ms)) return {ms, iso: value, source: "the video's own capture metadata", trusted: true};
+      }
+    }
+  }
+
+  // ---- 2. udta > ©day ----
+  const udta = vstFind(bytes, moov, "udta");
+  if(udta){
+    for(const b of vstKids(bytes, udta)){
+      if(b.type !== "©day" && b.type !== "©dat") continue;
+      const inner = vstKids(bytes, b).find(x => x.type === "data");
+      let value;
+      if(inner) value = txt(inner.start + inner.head + 8, inner.size - inner.head - 8);
+      else {
+        // QuickTime text: [length(2)][language(2)][text]
+        const len = dv.getUint16(b.start + b.head);
+        value = txt(b.start + b.head + 4, Math.min(len, b.size - b.head - 4));
+      }
+      value = String(value || "").trim();
+      const ms = Date.parse(value);
+      if(Number.isFinite(ms)) return {ms, iso: value, source: "the video's own capture metadata", trusted: true};
+    }
+  }
+
+  // ---- 3. mvhd creation_time: no zone, so read but do not trust ----
+  const mvhd = vstFind(bytes, moov, "mvhd");
+  if(mvhd){
+    const v = bytes[mvhd.start + mvhd.head];
+    const at = mvhd.start + mvhd.head + 4;
+    const secs = v === 1 ? Number(dv.getBigUint64(at)) : dv.getUint32(at);
+    if(secs > VST_QT_EPOCH){                     // 0 means "not set"; before 1970 is not real footage
+      return {ms: (secs - VST_QT_EPOCH) * 1000, iso: null, trusted: false,
+              source: "the video's creation time, which carries no time zone"};
+    }
+  }
+  return null;
+}
+
 async function vstParse(file){
   if(!file || typeof file.slice !== "function") return null;
   const u8 = async (off, len) => new Uint8Array(await file.slice(off, off + len).arrayBuffer());
-  const out = {brand: null, video: null, audio: null, tracks: 0, rotation: 0, moovBytes: 0};
+  const out = {brand: null, video: null, audio: null, tracks: 0, rotation: 0, moovBytes: 0,
+               capture: null};
   try{
     let off = 0, moov = null, guard = 0;
     while(off + 8 <= file.size && guard++ < 400){
@@ -4393,6 +4525,7 @@ async function vstParse(file){
     const body = await u8(moov.start, moov.size);
     const mv = vstBox(body, 0);
     if(!mv) return out;
+    out.capture = vstAppleCreation(body, mv);
 
     for(const trak of vstKids(body, mv).filter(b => b.type === "trak")){
       out.tracks++;
@@ -4885,15 +5018,18 @@ function vstOpen(caseNo){
   inp.onchange = async () => {
     const f = inp.files && inp.files[0];
     if(!f) return;
-    /* The file's own last-modified date is a SUGGESTED default only, and the
-       operator corrects it before anything is generated — the brief is explicit
-       that unreliable metadata must not be trusted silently. */
-    const p = {};
-    for(const x of new Intl.DateTimeFormat("en-US", {timeZone: VST_TZ, hour12: true,
-        year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit",
-        minute: "2-digit", second: "2-digit"}).formatToParts(new Date(f.lastModified || Date.now()))){
-      p[x.type] = x.value;
-    }
+    /* THE PROVISIONAL DEFAULT ONLY. The real anchor is the video's own capture
+       metadata, read by `vstParse` a moment later and applied below — the file's
+       modified date is when the file was WRITTEN, not when the footage was shot,
+       and on a clip exported from Photos months later they are nothing alike.
+
+       The current clock is deliberately NOT a fallback any more: the processing
+       time is the one value guaranteed to be wrong, and it used to be what a
+       file with no modified date got. A file with neither gets an empty form
+       that asks, which is honest. (Named in words rather than written as the
+       call, because there is an assertion that the call does not appear here —
+       and a comment promising its absence should not be what trips it.) */
+    const p = f.lastModified ? vstParts(f.lastModified) : {};
     VST = {
       /* WITH NO CASE CHOSEN THE PICKER COMES FIRST (owner, 2026-08-17: the
          utility must not require navigating into a case). Opened from a case,
@@ -4902,9 +5038,11 @@ function vstOpen(caseNo){
       step: caseNo ? "when" : "case",
       caseNo: caseNo || "", file: f, name: f.name, size: f.size,
       url: URL.createObjectURL(f), tz: VST_TZ, q: "",
-      mo: p.month, da: p.day, yr: p.year, hr: p.hour, mi: p.minute, se: p.second,
+      mo: p.month || "", da: p.day || "", yr: p.year || "", hr: p.hour || "",
+      mi: p.minute || "", se: p.second || "",
       ap: p.dayPeriod === "AM" ? "AM" : "PM",
-      guessed: true, hash: null, pct: 0, err: "", saveMsg: "",
+      guessed: true, startFrom: f.lastModified ? "modified" : "none",
+      hash: null, pct: 0, err: "", saveMsg: "",
       out: null, recId: null, savedHere: false, started: false,
       // null = still checking. Nothing offers Generate until this is true.
       readable: null, codec: null, caps: vstCaps(), diag: "",
@@ -4922,6 +5060,17 @@ function vstOpen(caseNo){
       if(!VST || VST.url !== url) return;
       VST.parsed = p;
       if(p && p.video) VST.codec = {cc: p.video.cc, name: p.video.name};
+      /* THE ANCHOR. The capture metadata replaces the provisional default —
+         but only while the operator has not touched the fields, because a
+         correction they typed outranks anything read from the file. */
+      if(p && p.capture && VST.guessed){
+        const c = vstParts(p.capture.ms);
+        VST.mo = c.month; VST.da = c.day; VST.yr = c.year;
+        VST.hr = c.hour; VST.mi = c.minute; VST.se = c.second;
+        VST.ap = c.dayPeriod === "AM" ? "AM" : "PM";
+        VST.startFrom = p.capture.trusted ? "capture" : "creation";
+        VST.captureNote = p.capture.source;
+      }
       paintVStamp();
       if(!VST.codec) vstBoxCodec(f).then(c => {
         if(VST && VST.url === url){ VST.codec = c; paintVStamp(); } });
@@ -5288,6 +5437,15 @@ async function vstDiagnose(){
   }
   lines.push(row("Audio codec", aud ? `${aud.name} (${aud.cc}) ${aud.channels}ch ${aud.sampleRate}Hz`
                                     : p ? "none in this file" : "unknown"));
+  /* WHERE THE STAMP IS ANCHORED. It must be the recording, never the moment
+     this was processed — so the source is reported, not just the value. */
+  lines.push(row("Recorded at", p && p.capture
+    ? vstLabel(p.capture.ms, VST_TZ) + (p.capture.trusted ? "" : "  [no zone — check it]")
+    : "no capture metadata in this file"));
+  lines.push(row("Stamp anchored to", VST.startFrom === "capture" ? "the capture metadata"
+    : VST.startFrom === "creation" ? "the creation time (no zone)"
+    : VST.startFrom === "modified" ? "the file's modified date — NOT the recording"
+    : "nothing yet — the operator must enter it"));
   lines.push(row("Decode original", v.readable === null ? "still checking"
     : v.readable ? "yes (media element)" : "NO (media element)"));
   paint([row("Testing this device", "…")]);
@@ -5391,8 +5549,18 @@ function vstHtml(){
           <h4>When does this footage start?</h4>
           <div class="vst-k"><span>File</span><span>${esc(v.name)}</span></div>
           <div class="vst-k"><span>Size</span><span>${mb(v.size)}</span></div>
-          ${v.guessed ? `<p class="vst-note">Filled in from the file's own date, which is often wrong.
-            Correct it to the moment the recording actually began.</p>` : ""}
+          ${v.guessed ? `<p class="vst-note">${
+            v.startFrom === "capture"
+              ? "Taken from <b>the video's own capture metadata</b> &mdash; when it was recorded, "
+                + "shown in Eastern Time. Correct it if you know better."
+              : v.startFrom === "creation"
+              ? "Taken from the video's creation time, which <b>carries no time zone</b> &mdash; "
+                + "please check it against when the recording actually began."
+              : v.startFrom === "modified"
+              ? "This file carries <b>no capture metadata</b>, so this is the file's modified date "
+                + "&mdash; when it was written, <b>not</b> when it was recorded. Correct it."
+              : "This file carries no date at all. Enter when the recording began."
+          }</p>` : ""}
         </div>
         <div class="vst-card">
           <h4>Start date</h4>
