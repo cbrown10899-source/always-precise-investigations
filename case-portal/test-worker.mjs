@@ -8813,6 +8813,78 @@ section('Voice §3: a voice entry is a real entry, marked but not privileged');
      ws2.activity.length === 1 && !ws2.activity[0].source);
 }
 
+/* ------------------------- correcting an entry without losing the rest
+
+   Found while building SURVEILLANCE-VOICE §10, which corrects the most recent
+   activity from the field screen without navigating away. `editActivity` was
+   REPLACE-ALL, and nothing had noticed because the timeline's Edit form was
+   the only caller and it always posts all four fields. A screen that corrects
+   only the wording would have written NULL over the location and the vehicle
+   the investigator recorded — and been told it succeeded.
+
+   Same rule, same words, as `/cases/:no/meta`: an ABSENT field means
+   unchanged, a BLANK STRING still clears. */
+section('Correcting the wording of an entry leaves the rest of it alone');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-ED1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+
+  const made = await jsonOf(await call(env, '/cases/API-ED1/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-08-18', at_time: '10:42', kind: 'activity',
+            description: 'No chnage observed at the residence.',
+            location: '14 Mill Lane', vehicle: 'Grey van, VA ABC-1234',
+            internal_note: 'Parked two doors down.' } }));
+  const read = async () => env.DB.prepare(
+    'SELECT description, location, vehicle, internal_note FROM activity_log WHERE id = ?')
+    .bind(made.id).first();
+
+  let row = await read();
+  ok('the entry is stored with everything the field recorded',
+     row.location === '14 Mill Lane' && row.vehicle === 'Grey van, VA ABC-1234'
+     && row.internal_note === 'Parked two doors down.');
+
+  /* THE DEFECT. Only the wording is corrected — which is exactly what §10's
+     screen sends — and everything else must survive it. */
+  ok('a wording-only correction is accepted',
+     (await call(env, `/cases/API-ED1/activity/${made.id}`, { method: 'POST', cookie: admin,
+       body: { description: 'No change observed at the residence.' } })).status === 200);
+  row = await read();
+  ok('the wording is corrected', row.description === 'No change observed at the residence.');
+  ok('and the location, vehicle and note are all still there',
+     row.location === '14 Mill Lane' && row.vehicle === 'Grey van, VA ABC-1234'
+     && row.internal_note === 'Parked two doors down.',
+     JSON.stringify(row));
+
+  /* A BLANK STRING STILL CLEARS — the operator saying there is no location,
+     which is how the full form removes one. Only an ABSENT key is left alone. */
+  await call(env, `/cases/API-ED1/activity/${made.id}`, { method: 'POST', cookie: admin,
+    body: { description: 'No change observed at the residence.', location: '' } });
+  row = await read();
+  ok('a blank location clears it, because that is the operator saying so',
+     row.location === null);
+  ok('and the fields the request did not mention are still untouched',
+     row.vehicle === 'Grey van, VA ABC-1234' && row.internal_note === 'Parked two doors down.');
+
+  /* The full form still replaces everything it sends, as it always did. */
+  await call(env, `/cases/API-ED1/activity/${made.id}`, { method: 'POST', cookie: admin,
+    body: { description: 'Corrected again.', location: 'Corner of Mill and High',
+            vehicle: '', internal_note: '' } });
+  row = await read();
+  ok('the full form still sets and clears exactly what it sends',
+     row.location === 'Corner of Mill and High' && row.vehicle === null
+     && row.internal_note === null);
+
+  /* An entry still cannot lose its description — the one field that has to be
+     there is still required, however little else is sent. */
+  ok('a correction cannot empty the entry',
+     (await call(env, `/cases/API-ED1/activity/${made.id}`, { method: 'POST', cookie: admin,
+       body: { description: '   ' } })).status === 400);
+  ok('and nothing about the entry moved when it was refused',
+     (await read()).description === 'Corrected again.');
+}
+
 section('Dropbox storage — where a new case file goes');
 {
   const fakeR2 = () => {
