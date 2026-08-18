@@ -3977,6 +3977,16 @@ function vstLabel(ms, tz){
     .replace(/[  ]/g, " ");
 }
 
+/* A stored record's own wording, re-derived rather than remembered. The Worker
+   validates the instant on the way in, so this cannot normally fail — but an
+   unreadable one would make `Intl` throw and take out the whole panel it is
+   drawn in, and a staff screen must not go blank over one bad row. */
+function vstLabelOf(row){
+  const ms = Date.parse(row && row.start_utc);
+  if(!Number.isFinite(ms)) return "start time unreadable";
+  try{ return vstLabel(ms, row.tz || VST_TZ); }catch{ return "start time unreadable"; }
+}
+
 /* The operator's entry, validated. Returns the instant or why it cannot be
    read — a half-typed field must not silently become a different time. */
 function vstStart(){
@@ -4088,11 +4098,20 @@ function vstOpen(caseNo){
    to pass `caseFor` in the Worker when the record is written. Nothing about
    reaching the utility from outside a case widens what it can touch. */
 async function vstLoadCases(){
-  if(Array.isArray(CASES) && CASES.length){ VST.cases = CASES; return paintVStamp(); }
+  /* An archived or deleted case refuses every write, so offering one would be
+     offering a refusal. Filtered here rather than relying on which lens the
+     Cases tab happens to be showing. */
+  const live = c => !c.archived_at && !c.deleted_at;
+  VST.caseErr = "";
+  if(Array.isArray(CASES) && CASES.length){ VST.cases = CASES.filter(live); return paintVStamp(); }
   try{
     const d = await api("/submissions?limit=200");
-    if(VST) VST.cases = d.submissions || [];
-  }catch(e){ if(VST) VST.caseErr = e.message; }
+    if(VST) VST.cases = (d.submissions || []).filter(live);
+  }catch(e){
+    /* A failed read is NOT an empty case list — `cases` is deliberately left
+       unset so nothing can draw "you have no cases" over a server problem. */
+    if(VST) VST.caseErr = e.message;
+  }
   paintVStamp();
 }
 
@@ -4143,8 +4162,10 @@ async function vstGenerate(){
   src.src = v.url; src.muted = true; src.playsInline = true; src.preload = "auto";
   let stopped = false;
   try{
+    /* `loadeddata`, not `loadedmetadata`: metadata gives the dimensions but not
+       a decoded frame, and the first `drawImage` would then paint nothing. */
     await new Promise((res, rej) => {
-      src.onloadedmetadata = () => res();
+      src.onloadeddata = () => res();
       src.onerror = () => rej(new Error("This browser could not read that video file."));
       setTimeout(() => rej(new Error("Reading that video file timed out.")), 30000);
     });
@@ -4193,10 +4214,18 @@ async function vstGenerate(){
       const finish = () => { clearTimeout(cap); res(); };
       src.onended = finish;
       src.onerror = () => { clearTimeout(cap); rej(new Error("Playing the video for the copy failed part-way.")); };
-      src.play().then(() => { frame(0); pump(); })
+      /* The first frame is drawn BEFORE play, so a clip short enough to end
+         before `play()` resolves still produces a file rather than an empty
+         one. A frame drawn twice is harmless; none at all is not. */
+      frame(0);
+      src.play().then(pump)
         .catch(() => { clearTimeout(cap); rej(new Error("This browser would not play that file for copying.")); });
     });
     stopped = true;
+    /* The last frame's own duration runs until the next one or until the
+       recorder stops, so stopping in the same tick can clip the final second
+       off the copy. A short settle costs nothing and keeps the tail. */
+    await new Promise(r => setTimeout(r, 150));
     rec.stop();
     await finished;
     if(VST && VST._abort) return;
@@ -4337,8 +4366,9 @@ function vstHtml(){
             <input id="vst_q" data-act-input="vstSearch" style="text-align:left"
               placeholder="case number or name" value="${esc(v.q || "")}"></label>
           ${v.caseErr ? `<p class="vst-err">${esc(v.caseErr)} &mdash; the case list could not be
-            read, so this is not "you have no cases".</p>` : ""}
-          ${!v.cases ? `<p class="vst-note">Loading your cases&hellip;</p>`
+            read, so this is not "you have no cases". Try again, or make the copy now and
+            attach it afterwards.</p>` : ""}
+          ${v.caseErr ? "" : !v.cases ? `<p class="vst-note">Loading your cases&hellip;</p>`
             : pickable.length ? `<div style="margin-top:8px">${pickable.slice(0, 40).map(c =>
                 `<button class="vst-btn" style="text-align:left;margin-top:6px"
                    data-act="vstPickCase" data-case="${esc(c.case_no)}">${esc(c.case_no)}
@@ -4392,6 +4422,13 @@ function vstHtml(){
           ${v.err ? `<p class="vst-err">${esc(v.err)}</p>` : ""}
           <p class="vst-note">The original is opened, read and left exactly as it is.
             The copy is made here on this device and nothing is uploaded.</p>
+          <!-- SAID BEFORE IT STARTS, not after. The clip is played through once,
+               so a long one on a phone is a long wait on a hot battery, and the
+               operator should be able to choose the laptop instead. The figure
+               is the file's own length, not a guess. -->
+          ${v.size > 400 * 1048576 ? `<p class="vst-note"><b>This is a large file.</b>
+            The copy takes about as long as the footage runs and the screen has to stay open,
+            so a laptop is the easier place for this one. It will work here.</p>` : ""}
           <button class="vst-btn go" data-act="vstGo">Generate timestamped video</button>
           <button class="vst-btn" data-act="vstEditTime">Edit timestamp</button>
           <button class="vst-btn" data-act="vstClose">Cancel</button>
@@ -5917,7 +5954,7 @@ function vstPanelHtml(){
             : `<span class="tag rs-approved">current</span>`}
           ${r.saved_at ? `<span class="tag">saved to a device</span>`
             : `<span class="tag rs-submitted">not saved yet</span>`}</div>
-        <div class="tl-m">Starts ${esc(vstLabel(Date.parse(r.start_utc), r.tz))}</div>
+        <div class="tl-m">Starts ${esc(vstLabelOf(r))}</div>
         <div class="tl-m">${esc(r.derivative_name || "copy")} &middot; ${esc(r.generated_by_name || "")}
           &middot; ${when(r.generated_at || r.created_at)}</div>
         ${r.original_hash ? `<div class="tl-m">SHA-256 ${esc(r.original_hash.slice(0, 16))}&hellip;</div>` : ""}
@@ -7289,7 +7326,7 @@ function svVideoStampsHtml(){
     <h3>Timestamped video &middot; ${rows.length}</h3>
     ${rows.slice(0, 10).map(r => `<div class="sv-row" style="${r.superseded_at ? "opacity:.6" : ""}">
       <span>${esc(r.original_name)}</span>
-      <b>${esc(vstLabel(Date.parse(r.start_utc), r.tz))}</b></div>
+      <b>${esc(vstLabelOf(r))}</b></div>
       <div style="font-size:.76rem;color:#8fb4d9;margin:-2px 0 8px">${
         r.superseded_at ? "replaced by a later copy &middot; " : ""}${
         r.saved_at ? "saved to a device" : "not recorded as saved"}</div>`).join("")}

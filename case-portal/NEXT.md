@@ -449,6 +449,36 @@ now — which also means the legacy path stays exercised rather than rotting.
   the original is taken only up to 128 MB and is recorded as **absent** above
   that — never as a placeholder that would read as a check that was done.
 
+### Suites, run here
+
+| Suite | Before | After |
+| --- | --- | --- |
+| `portal/test-portal.mjs` | 1265 | **1345 passed, 0 failed** |
+| `case-portal/test-worker.mjs` | 1567 | **1609 passed, 0 failed** |
+| `.github/test-deploy.mjs` | 68 | 68 passed, 0 failed |
+| `intake/test-intake.mjs` | 205 | 205 passed, 0 failed |
+| `visitor-alerts/test-worker.mjs` | 47 | 47 passed, 0 failed |
+
+**The burn-in assertion was mutation-tested**, because it is the claim this whole
+unit rests on. With `vstDraw` neutered and everything else identical, the
+bottom-right band of the re-decoded output reads **22** — the same as the dark
+control band — against **255** as written. It discriminates.
+
+Four Worker rules were mutation-tested the same way and each failed the
+assertion named for it: the video refusal (7 checks), the supersede write, the
+write-once `saved_at`, and the two `missingTables` guards.
+
+**Four existing assertions were sharpened to their stated intent** rather than
+weakened or routed around — the fourth, fifth, sixth and seventh time this has
+been needed in this session:
+
+| Assertion | Encoded | Now |
+| --- | --- | --- |
+| *"no destination is in there with them"* | `.navfoot button` count === 2 | every button in the block carries a door class — the rule, not the number |
+| *"the viewer offers no download…"* | a slice from the viewer to `paint()`, then to the next function | the viewer's own body, ending at its closing brace |
+| *"the office classifies it"* | selected the classification the row already had | moves it to one the default is not, then puts it back |
+| the section bar's names | `Report & Evidence` | `Report & Media` |
+
 ### Schema change — a portal-setup dispatch is OWED after merge
 
 `video_stamp` is new. `schema.sql` arrives by a **manual `portal-setup.yml`

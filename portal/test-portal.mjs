@@ -1035,7 +1035,7 @@ section('The case workspace in the browser');
   await page.waitForTimeout(450);
 
   const secbar = await text(page, '.wsecs');
-  for (const t of ['Overview', 'Fieldwork', 'Report & Evidence', 'Admin']) {
+  for (const t of ['Overview', 'Fieldwork', 'Report & Media', 'Admin']) {
     ok(`the workspace navigates by section: ${t}`, has(secbar, t), secbar);
   }
   // Every panel is still reachable behind its section.
@@ -4349,8 +4349,15 @@ section('The navigation rail is grouped, renamed, and reachable');
   ok('Active Surveillance is inside it',
      await page.locator('.navfoot .side-surv').count() === 1);
   ok('so is the intake door', await page.locator('.navfoot .side-intake').count() === 1);
+  /* THE RULE IS "no DESTINATION leaked in", not "there are exactly two
+     buttons". Counting re-encoded the number of doors, so adding a third one
+     (Timestamp Video) failed a check whose stated intent it does not touch.
+     Asserted as the property instead: everything in the block is a door. */
   ok('and no destination is in there with them',
-     await page.locator('.navfoot button').count() === 2);
+     await page.evaluate(() => [...document.querySelectorAll('.navfoot button')]
+       .every(b => /\bside-(surv|vst|intake)\b/.test(b.className))),
+     await page.evaluate(() => [...document.querySelectorAll('.navfoot button')]
+       .map(b => b.className).join(' | ')));
   const lastGroup = await page.locator('.tabs .navgrp').last().boundingBox();
   const footBox = await page.locator('.navfoot').boundingBox();
   ok('the block genuinely sits below every group',
@@ -6264,7 +6271,11 @@ section('Evidence opens in one in-portal viewer, and never leaves the app');
      a download, of a file it just made on the device) this failed while the
      rule it is named for was untouched. */
   const viewerAt = src.indexOf('function evViewerHtml(');
-  const viewerFn = src.slice(viewerAt, src.indexOf('\nfunction ', viewerAt + 10));
+  /* THE FUNCTION'S OWN BODY, ending at its closing brace at column 0. Bounding
+     it at "the next function" was still too loose: the comment block above the
+     next one came with it, and that comment legitimately uses the word
+     download. The body is what this assertion is about. */
+  const viewerFn = src.slice(viewerAt, src.indexOf('\n}\n', viewerAt) + 3);
   ok('the viewer function was found, so the check has something to read',
      viewerFn.length > 200 && viewerFn.includes('evClose'), String(viewerFn.length));
   ok('and it offers no download, delete, classify or edit control',
@@ -7257,9 +7268,12 @@ section('Choosing the case, from outside a case');
   ok('the offered cases are exactly the ones this account may open',
      offered.length > 0 && offered.every(c => allowed.includes(c)),
      `${offered.length} offered, ${allowed.length} allowed`);
+  /* A case that EXISTS and is not theirs — a made-up number would 404 for the
+     wrong reason and prove nothing about the boundary. */
   ok('and the Worker refuses a record on a case not among them',
-     (await page.evaluate(async () => (await fetch(
-       '/portal-api/cases/API-20260812-4003/video-stamp',
+     !allowed.includes('API-20260812-4002')
+     && (await page.evaluate(async () => (await fetch(
+       '/portal-api/cases/API-20260812-4002/video-stamp',
        { method: 'POST', credentials: 'same-origin',
          headers: { 'Content-Type': 'application/json' },
          body: JSON.stringify({ original_name: 'x.mov', start_utc: '2026-08-17T21:14:32.000Z' }) })
@@ -7318,21 +7332,36 @@ section('Adding media and looking at media are named apart');
 
 section('The four field actions are untouched');
 {
-  const page = await newPage();
-  await page.setViewportSize({ width: 390, height: 844 });
-  await signIn(page, 'dana', 'FieldWork2026x');
-  await page.locator('.navfoot [data-act="surveillance"]').click();
-  await page.waitForTimeout(500);
-  const launch = page.locator('[data-act="svEnter"]').first();
-  if (await launch.count()) { await launch.click(); await page.waitForTimeout(700); }
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('dana');
+  await page.locator('#p').fill('FieldWork2026x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(600);
+  await page.locator('[data-act="svEnter"]').click();
+  await page.waitForTimeout(800);
+  // The four field actions live on the home screen while a day is running.
+  if (await page.locator('[data-act="svStartDay"]').count()) {
+    await page.locator('#sv_start').fill('05:45');
+    await page.locator('[data-act="svStartDay"]').click();
+    await page.waitForTimeout(1000);
+  }
   const quad = await page.evaluate(() => {
     const q = document.querySelector('.sv-quad');
     return q ? [...q.querySelectorAll('button')].map(b => b.textContent.trim()) : null;
   });
   ok('the field home still offers four actions', quad && quad.length === 4, JSON.stringify(quad));
+  /* Each label ends with its own word — the leading character is the button's
+     glyph. `Video$` and not `Video` so "Video timestamp" would fail: the field
+     button is the short one, and the longer wording belongs on the media
+     screen. */
   ok('and they are still Activity, Photo, Video and Note',
-     quad && /Activity/.test(quad[0]) && /Photo/.test(quad[1])
-     && /^Video$/.test(quad[2]) && /Note/.test(quad[3]), JSON.stringify(quad));
+     quad && /Activity$/.test(quad[0]) && /Photo$/.test(quad[1])
+     && /Video$/.test(quad[2]) && /Note$/.test(quad[3]), JSON.stringify(quad));
   ok('one generic upload button did not replace them',
      !(quad || []).some(t => /upload/i.test(t)), JSON.stringify(quad));
   await page.close();
