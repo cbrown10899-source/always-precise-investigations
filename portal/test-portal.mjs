@@ -8780,8 +8780,10 @@ section('Timestamp Photo: nothing is guessed, and a correction is the operatorâ€
      && await page.locator('#pst_yr').inputValue() === '',
      await page.locator('#pst_yr').inputValue());
   ok('and says so rather than inventing one', has(blank, 'nothing has been filled in'), blank.slice(0, 400));
+  /* The refusal `pstWhen` actually produces â€” matched on its own words rather
+     than on the defensive default beneath it, which nothing reaches. */
   ok('the burn is not offered a time it does not have',
-     has(blank, 'Fill in the date and time'), blank.slice(0, 500));
+     has(blank, 'Fill in every part of the date and time'), blank.slice(0, 500));
 
   /* THE FILE'S MODIFIED DATE IS NOT A SECOND OPINION about when the picture
      was taken, and neither is today. Neither may appear as a seed. */
