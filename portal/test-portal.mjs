@@ -5300,6 +5300,142 @@ section('Voice mode: explicit, looping, and never filing what it is unsure of');
      && (src.match(/voiceMatch\(/g) || []).length >= 2);
 }
 
+/* ------------------------- the iPhone bug: ON, microphone lit, nothing happens
+
+   Owner, live on the device, 2026-08-18: "Voice Mode shows ON and iOS mic
+   indicator is active, but saying Mobile produces no result and Tap to speak
+   does nothing."
+
+   TWO SYMPTOMS, and one of them is a defect that needs no Safari knowledge to
+   see: the page had TWO recognisers — the loop's and "Tap to speak"'s — and a
+   browser gives a page ONE speech session. Starting a second on top of the
+   first is ignored, which is exactly what a button that does nothing looks
+   like. That half is fixed and asserted here.
+
+   The other half cannot be reproduced in this container, because there is no
+   speech engine in it at all. So the fix is (a) stop asking for `continuous`,
+   which iOS Safari does not honour and which produces precisely the reported
+   "microphone on, no results", and (b) make the device show its own events, so
+   the next device test reports a fact instead of a symptom. */
+section('Voice mode: the engine is one session, and it says what it did');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', (e) => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('dana');
+  await page.locator('#p').fill('FieldWork2026x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  await page.locator('[data-act="svEnter"]').click();
+  await page.waitForTimeout(700);
+  if (await page.locator('[data-act="svStartDay"]').count()) {
+    await page.locator('#sv_start').fill('06:30');
+    await page.locator('[data-act="svStartDay"]').click();
+    await page.waitForTimeout(900);
+  }
+
+  await page.evaluate(() => {
+    window.__mic = { made: 0, started: 0, stopped: 0, rec: null, throwOnStart: false };
+    window.SpeechRecognition = function () {
+      const self = this;
+      window.__mic.made++;
+      window.__mic.rec = self;
+      self.start = () => {
+        if (window.__mic.throwOnStart) throw new Error('InvalidStateError: already started');
+        window.__mic.started++;
+      };
+      self.stop = () => { window.__mic.stopped++; };
+    };
+  });
+  const mic = () => page.evaluate(() => window.__mic);
+  const panel = () => text(page, '.sv-voice');
+  const fire = async (name, payload) => {
+    await page.evaluate(([n, p]) => { window.__mic.rec['on' + n](p || {}); }, [name, payload || null]);
+    await page.waitForTimeout(250);
+  };
+
+  await page.locator('[data-act="svVoiceToggle"]').click();
+  await page.waitForTimeout(500);
+
+  /* NOT CONTINUOUS. iOS Safari does not honour it, and the session then starts,
+     lights the indicator, and delivers nothing — the reported symptom. */
+  const cfg = await page.evaluate(() => ({
+    continuous: window.__mic.rec.continuous,
+    interim: window.__mic.rec.interimResults,
+    lang: window.__mic.rec.lang,
+  }));
+  ok('the loop asks for one-shot recognition, not continuous',
+     cfg.continuous === false, JSON.stringify(cfg));
+
+  /* EVERY engine event is wired, because what is MISSING from the log is as
+     diagnostic as what is in it. */
+  const wired = await page.evaluate(() => VOICE_ENGINE_EVENTS
+    .filter((n) => typeof window.__mic.rec['on' + n] === 'function').length);
+  ok('every speech event the engine can raise is listened for', wired === 11, String(wired));
+
+  /* THE LOG IS ON THE DEVICE, not in a console no one can open on a phone. */
+  ok('the log is visible once there is something in it',
+     await page.locator('.sv-voicelog').count() === 1);
+  ok('and already shows this page calling start()',
+     has(await panel(), 'start() called'), (await panel()).slice(-300));
+
+  await fire('audiostart');
+  await fire('speechstart');
+  ok('an engine event reaches the log', has(await panel(), 'audiostart'), (await panel()).slice(-300));
+  ok('and so does the next one', has(await panel(), 'speechstart'));
+  const stamped = await page.evaluate(() =>
+    /\d\d:\d\d:\d\d\.\d\d\d/.test(document.querySelector('.sv-voicelogrows').textContent));
+  ok('each line carries the time it happened', stamped);
+
+  /* ONE-SHOT MEANS `end` IS NORMAL. It must restart rather than sit there
+     claiming to listen. */
+  const beforeEnd = (await mic()).started;
+  await fire('end');
+  ok('the engine ending restarts it, because one-shot ends on its own',
+     (await mic()).started === beforeEnd + 1, `${beforeEnd} -> ${(await mic()).started}`);
+  ok('and the restart is in the log', has(await panel(), 'restarting'));
+
+  /* AN ERROR IS LOGGED, NOT SWALLOWED — even the ordinary ones that stop
+     nothing. Silence was what made this bug invisible. */
+  await fire('error', { error: 'no-speech' });
+  ok('an ordinary no-speech is logged rather than hidden',
+     has(await panel(), 'no-speech'), (await panel()).slice(-300));
+  ok('and it does not turn voice mode off', has(await panel(), 'tap to stop'));
+
+  /* THE DEFECT THE OWNER FELT AS "Tap to speak does nothing". */
+  const stopsBefore = (await mic()).stopped;
+  await page.locator('[data-act="svMic"]').click();
+  await page.waitForTimeout(500);
+  ok('Tap to speak takes the session instead of starting a second engine',
+     (await mic()).stopped === stopsBefore + 1, `${stopsBefore} -> ${(await mic()).stopped}`);
+  ok('voice mode stands down when it does',
+     has(await panel(), 'tap to start'), (await panel()).slice(0, 200));
+  ok('and the handover is on the record',
+     has(await panel(), 'Tap to speak took the microphone'));
+  await page.evaluate(() => { if (SV._rec) { SV.listening = false; SV._rec = null; } });
+
+  /* A START THAT THROWS MUST NOT LEAVE THE PANEL CLAIMING ON. That is the
+     shape of the whole bug report: a control that says it is listening while
+     nothing is. */
+  await page.evaluate(() => { window.__mic.throwOnStart = true; });
+  await page.locator('[data-act="svVoiceToggle"]').click();
+  await page.waitForTimeout(500);
+  ok('a refused start turns voice mode off rather than claiming to listen',
+     has(await panel(), 'tap to start'), (await panel()).slice(0, 200));
+  ok('and says the microphone would not start',
+     has(await panel(), 'would not start'), (await panel()).slice(0, 300));
+  ok('with the throw itself in the log', has(await panel(), 'start() threw'));
+  await page.evaluate(() => { window.__mic.throwOnStart = false; });
+
+  /* The log can be cleared, so it costs nothing when it is not wanted. */
+  await page.locator('[data-act="svVoiceLogClear"]').click();
+  await page.waitForTimeout(300);
+  ok('the log can be cleared away', await page.locator('.sv-voicelog').count() === 0);
+}
+
 section('Voice §10: the last activity is corrected without leaving the field screen');
 {
   const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();

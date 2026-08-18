@@ -888,6 +888,16 @@
     padding:8px 2px 2px;}
   .sv-voicestate.live{color:#8ee0a4;}
   .sv-voicenote{color:#8fb4d9;font-size:.8rem;line-height:1.45;padding:6px 2px 0;}
+  .sv-voicelog{margin-top:10px;background:#0f1e2e;border:1px solid #223c58;border-radius:10px;
+    padding:8px 10px;}
+  .sv-voiceloghead{display:flex;gap:10px;align-items:center;justify-content:space-between;
+    color:#9fc4e8;font-size:.82rem;font-weight:700;padding:2px 0 4px;}
+  .sv-voicelogrows{max-height:240px;overflow:auto;margin-top:6px;}
+  .sv-voicelogrows div{display:flex;gap:8px;align-items:baseline;font-size:.78rem;
+    padding:3px 0;border-top:1px solid #1a2e45;}
+  .sv-voicelogrows span{color:#7d9cbb;font-variant-numeric:tabular-nums;white-space:nowrap;}
+  .sv-voicelogrows b{color:#e8eef5;}
+  .sv-voicelogrows i{color:#c9a86a;font-style:normal;}
   .sv-heard{background:#f4f7fa;color:#1c2531;border-radius:12px;padding:14px;margin-bottom:12px;}
   .sv-heard textarea{width:100%;font:inherit;font-size:.95rem;border:1px solid #cfd8e0;
     border-radius:8px;padding:10px;background:#fff;color:#1c2531;}
@@ -9054,6 +9064,49 @@ const VOICE_STATE_LABEL = {
   stopped:    "Voice mode stopped",
 };
 
+/* ---------------------------------- WHAT SAFARI ACTUALLY DID (device bug, 2026-08-18)
+
+   Reported live on iPhone: voice mode says ON, iOS shows the microphone
+   indicator, and saying "Mobile" produces nothing — while "Tap to speak" also
+   does nothing. Two different symptoms, and neither is visible from here: this
+   container has no speech engine at all, so the only honest instrument is one
+   that shows what the DEVICE did.
+
+   Every SpeechRecognition event is recorded with a timestamp, alongside the
+   calls this page makes itself. That distinction is the whole diagnostic value:
+   "we called start() and the engine never said start" is a different fault from
+   "start, audiostart, speechstart, then end with no result", and they have
+   different fixes. Newest first, because on a phone the top of the list is what
+   you can see. */
+const VOICE_ENGINE_EVENTS = ['start', 'audiostart', 'soundstart', 'speechstart',
+  'result', 'nomatch', 'error', 'speechend', 'soundend', 'audioend', 'end'];
+const VOICE_LOG_MAX = 28;
+
+function svVoiceLog(what, detail){
+  const v = svVoice();
+  if(!v.log) v.log = [];
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  const ms = String(d.getMilliseconds()).padStart(3, "0");
+  v.log.unshift({t: `${hh}:${mm}:${ss}.${ms}`, e: String(what),
+                 d: detail == null ? "" : String(detail).slice(0, 120)});
+  if(v.log.length > VOICE_LOG_MAX) v.log.length = VOICE_LOG_MAX;
+}
+
+/* ONE ENGINE AT A TIME, and this is a real defect rather than a Safari quirk.
+   The page had TWO recognisers — the loop's and "Tap to speak"'s — and a
+   browser gives the page ONE speech session. Starting a second while the first
+   is live throws InvalidStateError on some engines and is silently ignored on
+   others, and "silently ignored" is exactly what a button that does nothing
+   looks like. */
+function svSpeechOwner(){
+  if(SV.voice && SV.voice.rec) return "voice";
+  if(SV.listening && SV._rec) return "mic";
+  return null;
+}
+
 function svVoiceSupported(){
   return typeof window !== "undefined"
     && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -9081,13 +9134,23 @@ function svVoiceToggle(){
     v.err = "This browser has no speech recognition. Your keyboard's own dictation still works in every field.";
     return paint();
   }
+  /* Take the one speech session cleanly. "Tap to speak" may be holding it, and
+     starting a second engine on top of it is the defect this bug report is
+     half made of. */
+  if(SV.listening && SV._rec){
+    svVoiceLog("stopping Tap to speak first");
+    try{ SV._rec.stop(); }catch{}
+    SV.listening = false; SV._rec = null;
+  }
   v.on = true; v.err = ""; v.msg = ""; v.armed = false; v.last = null;
+  svVoiceLog("voice mode ON");
   svVoiceListen();
   paint();
 }
 
 function svVoiceStop(reason){
   const v = svVoice();
+  if(v.on || v.rec) svVoiceLog("voice mode stopping", reason);
   v.on = false;
   v.armed = false;
   v.filing = false;
@@ -9114,34 +9177,99 @@ function svVoiceListen(){
     v.err = "The microphone could not be opened."; return paint(); }
   v.rec = rec;
   rec.lang = "en-US";
-  rec.continuous = true;
+  /* NOT CONTINUOUS. iOS Safari does not honour it — the session starts, the
+     microphone indicator comes on, and no result is ever delivered, which is
+     the reported symptom exactly. One-shot recognition restarted on `end` is
+     the portable shape and behaves the same on desktop, so there is one code
+     path rather than a device sniff. */
+  rec.continuous = false;
   rec.interimResults = false;
   rec.maxAlternatives = 1;
 
-  rec.onresult = (e) => {
+  /* EVERY engine event, whether or not this page acts on it. What is missing
+     from the log is as diagnostic as what is in it. */
+  for(const name of VOICE_ENGINE_EVENTS){
+    rec["on" + name] = (e) => {
+      if(name === "error") svVoiceLog("error", (e && e.error) || "unknown");
+      else if(name === "result") svVoiceLog("result", svVoiceTranscript(e));
+      else svVoiceLog(name);
+      svVoiceEngineEvent(name, e);
+      if(v.on || name === "error" || name === "end") paint();
+    };
+  }
+
+  svVoiceLog("start() called");
+  try{ rec.start(); }
+  catch(err){
+    /* An engine that refuses to start while another session is live, or
+       without a fresh user gesture, must not leave the panel claiming ON. */
+    svVoiceLog("start() threw", err && err.message);
+    v.on = false; v.state = "off"; v.rec = null;
+    v.err = "The microphone would not start: " + ((err && err.message) || "unknown")
+          + ". Tap voice mode on again.";
+    return paint();
+  }
+  v.state = v.armed ? "command" : "wake";
+}
+
+function svVoiceTranscript(e){
+  try{
+    for(let i = e.resultIndex; i < e.results.length; i++){
+      const r = e.results[i];
+      if(r && r.isFinal && r[0]) return r[0].transcript;
+    }
+    const r0 = e.results && e.results[0];
+    return r0 && r0[0] ? r0[0].transcript : "";
+  }catch{ return ""; }
+}
+
+/* The engine's events, in one place, so the log above and the behaviour below
+   can never disagree about what happened. */
+function svVoiceEngineEvent(name, e){
+  const v = svVoice();
+  if(name === "result"){
     for(let i = e.resultIndex; i < e.results.length; i++){
       const r = e.results[i];
       if(r && r.isFinal) svVoiceHeard(r[0] ? r[0].transcript : "");
     }
-  };
-  rec.onerror = (e) => {
+    return;
+  }
+  if(name === "error"){
     const err = (e && e.error) || "";
     if(err === "not-allowed" || err === "service-not-allowed"){
       v.on = false; v.state = "permission"; v.rec = null;
       v.err = "The microphone was not allowed, so voice mode is off.";
-      return paint();
+      return;
     }
-    /* no-speech and aborted are ordinary: the engine gives up after a pause and
-       onend puts it back. Nothing to report and nothing to stop. */
-  };
-  rec.onend = () => {
-    if(!v.on || (typeof document !== "undefined" && document.hidden)) return;
-    try{ rec.start(); }
-    catch{ setTimeout(() => { if(v.on) svVoiceListen(); }, 350); }
-  };
-
-  try{ rec.start(); }catch{ /* already started is harmless */ }
-  v.state = v.armed ? "command" : "wake";
+    /* no-speech and aborted are ordinary — the engine gives up after a pause
+       and `end` puts it back. They are logged, never hidden, but they do not
+       stop anything. */
+    return;
+  }
+  if(name === "end"){
+    /* ONE-SHOT, SO `end` IS THE NORMAL CASE, not a failure. Restart unless the
+       operator turned it off or the page went to the background (§16). */
+    if(!v.on) return;
+    if(typeof document !== "undefined" && document.hidden) return;
+    svVoiceLog("restarting");
+    try{ if(v.rec) v.rec.start(); }
+    catch(err){
+      /* iOS can refuse a restart that did not come from a user gesture. Say so
+         rather than sitting there claiming to listen. */
+      svVoiceLog("restart threw", err && err.message);
+      setTimeout(() => {
+        if(!v.on) return;
+        try{ if(v.rec) v.rec.start(); svVoiceLog("restart retried"); }
+        catch(err2){
+          svVoiceLog("restart failed", err2 && err2.message);
+          v.on = false; v.state = "off"; v.rec = null;
+          v.err = "The microphone stopped and this browser would not restart it on its own. "
+                + "Tap voice mode on again.";
+          paint();
+        }
+      }, 400);
+    }
+  }
 }
 
 /* §9 — brief. "NO CHANGE · 10:42 AM", never a spoken paragraph. */
@@ -9257,6 +9385,33 @@ function svVoicePanelHtml(){
       every field.</div>`
       : !day ? `<div class="sv-voicenote">Voice mode files activity onto a running day,
         so start the investigation day first.</div>` : ""}
+    ${svVoiceLogHtml()}
+  </div>`;
+}
+
+/* THE DEVICE SPEAKS FOR ITSELF. Shown on the phone, because that is the only
+   place the engine exists — a log in a console nobody can open on an iPhone in
+   a car is not a diagnostic. It appears once there is something to show and can
+   be cleared, so it costs nothing when it is not wanted. */
+function svVoiceLogHtml(){
+  const v = svVoice();
+  const log = v.log || [];
+  if(!log.length) return "";
+  /* OPEN BY DEFAULT. This exists to be read during a device test, and a
+     diagnostic behind a tap is one the operator will not think to open when
+     the thing they are debugging is why nothing happened. Collapsed content
+     also is not text on the page, which is its own kind of invisible. */
+  const hidden = v.logHidden === true;
+  return `<div class="sv-voicelog">
+    <div class="sv-voiceloghead">
+      <b>Speech events (${log.length}) &mdash; what this device actually did</b>
+      <button class="sv-tap" data-act="svVoiceLogToggle">${hidden ? "Show" : "Hide"}</button>
+    </div>
+    ${hidden ? "" : `<div class="sv-voicelogrows">
+      ${log.map((r) => `<div><span>${esc(r.t)}</span><b>${esc(r.e)}</b>${
+        r.d ? `<i>${esc(r.d)}</i>` : ""}</div>`).join("")}
+    </div>
+    <button class="sv-tap" data-act="svVoiceLogClear">Clear the log</button>`}
   </div>`;
 }
 
@@ -10644,6 +10799,15 @@ function svMic(){
   const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
   if(!Rec){ SV.err = "This browser has no speech recognition — the keyboard's dictation works in every field."; return paint(); }
   if(SV.listening && SV._rec){ try{ SV._rec.stop(); }catch{} return; }
+  /* THE BUG THE OWNER FELT AS "Tap to speak does nothing". The loop was holding
+     the page's one speech session, so this started a second engine on top of it
+     and the browser ignored it. Take the session properly instead: the operator
+     tapped this, so this is what they want listening. */
+  if(SV.voice && SV.voice.on){
+    svVoiceLog("Tap to speak took the microphone");
+    svVoiceStop("handoff");
+    SV.err = "";
+  }
   const r = new Rec();
   r.lang = "en-US"; r.interimResults = false; r.maxAlternatives = 1;
   r.onresult = ev => {
@@ -11464,6 +11628,8 @@ document.addEventListener("click", ev => {
     paint();
   }
   else if(act === "svVoiceToggle"){ svVoiceToggle(); }
+  else if(act === "svVoiceLogToggle"){ const v = svVoice(); v.logHidden = !v.logHidden; paint(); }
+  else if(act === "svVoiceLogClear"){ const v = svVoice(); v.log = []; paint(); }
   else if(act === "svUseText"){
     const t = $("sv_heard") ? $("sv_heard").value : "";
     /* §3 — HOW IT WAS CAPTURED travels with the entry. `source` is voice for
