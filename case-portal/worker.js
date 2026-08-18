@@ -1856,6 +1856,147 @@ const FIELD_KEEP = [
 /* The denormalised columns carry the same identities as the payload does — a
    claim number is the carrier's own reference, so it names them just as
    plainly. Dropped from list rows and detail rows alike. */
+/* ------------------------------------------- Dropbox as case file storage
+
+   Owner, 2026-08-18: new case photos and generated reports go to the firm's
+   own Dropbox App Folder, in per-case folders — Photos, Reports, Video. D1
+   stays the structured case record; Dropbox holds bytes and nothing else.
+
+   NOTHING WAS MIGRATED AND NOTHING WAS DELETED (owner, explicitly). Every file
+   already in R2 still lives there, still serves, and still counts on the
+   storage meter. This decides where the NEXT file goes.
+
+   NEW BYTES GO TO DROPBOX OR NOWHERE (owner, asked directly). There is no R2
+   fallback and no double-write: an upload that cannot reach Dropbox is refused
+   and says why. The alternative was a silent divergence where half the case is
+   in one place and half in the other, discoverable only later.
+
+   THERE IS NO COMPANION TABLE, and that is deliberate. `case_evidence.r2_key`
+   already means "where the bytes are", so a Dropbox row records
+   `dropbox:<path>` there and the prefix is the entire discriminator. A second
+   table would be a second place to look, a second place to fall out of step,
+   and — because schema.sql only arrives on a manual portal-setup dispatch — a
+   reason no upload could work until someone ran a workflow. One field, no
+   schema change, correct the moment it deploys.
+
+   The path is unique because the stored filename carries a short random token.
+   That matters more than it looks: delete a photo and upload another of the
+   same name and Dropbox sees no conflict to autorename around, so the path
+   would repeat and `r2_key`'s UNIQUE constraint would reject the second one.
+   The R2 scheme already guards this with a UUID in its key. The operator still
+   downloads under the real name — `filename` is untouched and is what
+   Content-Disposition sends. */
+
+const DBX_FOLDERS = ['Photos', 'Reports', 'Video'];
+const DBX_KEY_PREFIX = 'dropbox:';
+const DBX_CONTENT = 'https://content.dropboxapi.com';
+
+function isDropboxKey(key) { return String(key || '').startsWith(DBX_KEY_PREFIX); }
+function dropboxPathFromKey(key) { return String(key || '').slice(DBX_KEY_PREFIX.length); }
+
+/* `Dropbox-API-Arg` is an HTTP header, so it has to be ASCII. Filenames are
+   sanitised long before they reach here, but escaping is a few lines and a
+   header that throws is an upload nobody can explain. */
+function dbxArg(obj) {
+  let out = '';
+  for (const ch of JSON.stringify(obj)) {
+    const c = ch.charCodeAt(0);
+    out += c < 127 ? ch : '\\u' + c.toString(16).padStart(4, '0');
+  }
+  return out;
+}
+
+/** Which case folder a file belongs in. Video is refused before it can reach
+    here; that folder exists because the operator saves timestamped copies into
+    it by hand. */
+function dropboxFolderFor(contentType) {
+  const t = String(contentType || '').toLowerCase();
+  if (t.startsWith('image/')) return 'Photos';
+  if (t.startsWith('video/')) return 'Video';
+  return 'Reports';
+}
+
+/** A stored name that cannot collide with one already used on this case —
+    including one that was deleted. The real name stays on the row. */
+function dropboxStoredName(filename) {
+  const token = randomHex(3);
+  const dot = filename.lastIndexOf('.');
+  if (dot > 0 && dot > filename.length - 9) {
+    return filename.slice(0, dot) + '-' + token + filename.slice(dot);
+  }
+  return filename + '-' + token;
+}
+
+/** Why new evidence cannot be stored, or null when it can. One reader, so the
+    upload, the status panel and the tests cannot disagree about the reason. */
+async function dropboxStorageProblem(env) {
+  if (!EXTERNAL_PROVIDERS.dropbox.configured(env)) return 'provider_not_configured';
+  if (!(await dropboxRefreshToken(env))) return 'dropbox_not_connected';
+  return null;
+}
+
+/* The three folders, made once per case. Dropbox creates parents on upload
+   anyway, so this exists so Reports and Video are THERE — browsable, obvious,
+   and in the same shape on every case — before anything is put in them. A
+   folder that already exists comes back as a conflict inside a 200, which is
+   the success case here. */
+async function dropboxEnsureCaseFolders(env, token, caseNo) {
+  try {
+    await fetch('https://api.dropboxapi.com/2/files/create_folder_batch', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: DBX_FOLDERS.map((f) => '/' + caseNo + '/' + f),
+                             autorename: false, force_async: false }),
+    });
+  } catch { /* the upload creates what it needs; this is shape, not safety */ }
+}
+
+/** Upload bytes. Returns Dropbox's own metadata, or null — never throws, so
+    the caller decides what a failure means rather than inheriting a 500. */
+async function dropboxUpload(env, token, path, body) {
+  try {
+    const res = await fetch(DBX_CONTENT + '/2/files/upload', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + token,
+        'Content-Type': 'application/octet-stream',
+        /* `add`, never `overwrite`: an original is no more replaceable here
+           than it is in R2. autorename is the backstop if the random token
+           ever does collide. */
+        'Dropbox-API-Arg': dbxArg({ path, mode: 'add', autorename: true, mute: true }),
+      },
+      body,
+    });
+    if (!res.ok) return null;
+    const meta = await res.json();
+    return meta && meta.path_display ? meta : null;
+  } catch { return null; }
+}
+
+/** The file itself, as a Response whose body can be streamed onward. Null when
+    Dropbox will not give it up. */
+async function dropboxDownload(env, token, path) {
+  try {
+    const res = await fetch(DBX_CONTENT + '/2/files/download', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, 'Dropbox-API-Arg': dbxArg({ path }) },
+    });
+    return res.ok ? res : null;
+  } catch { return null; }
+}
+
+async function dropboxDelete(env, token, path) {
+  try {
+    const res = await fetch('https://api.dropboxapi.com/2/files/delete_v2', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    });
+    /* Already gone is the harmless direction when the caller is removing it. */
+    return res.ok || res.status === 409;
+  } catch { return false; }
+}
+
 function redactRow(row) {
   /* `retainer_received`, `pay_sent_at` and `pay_methods` join the list for the
      same reason `send_count` and `last_sent_at` are already on it: whether the
@@ -4550,10 +4691,18 @@ function storageLimits(env) {
 
 async function evidenceUsage(env) {
   const lim = storageLimits(env);
+  /* THIS METER IS ABOUT CLOUDFLARE, so it counts only what is in Cloudflare.
+     Dropbox-backed rows are excluded from both halves: their bytes are not on
+     the R2 free tier the cap defends, and their uploads are not R2 write
+     operations. Left in, a folder full of photographs that never touched
+     Cloudflare would drive the storage card toward a limit it cannot reach and
+     eventually refuse uploads for space that was never being used. */
   const row = await env.DB.prepare(
-    'SELECT COALESCE(SUM(size_bytes), 0) AS b FROM case_evidence WHERE deleted_at IS NULL').first();
+    `SELECT COALESCE(SUM(size_bytes), 0) AS b FROM case_evidence
+      WHERE deleted_at IS NULL AND r2_key NOT LIKE '${DBX_KEY_PREFIX}%'`).first();
   const up = await env.DB.prepare(
-    'SELECT COUNT(*) AS n FROM case_evidence WHERE uploaded_at LIKE ?')
+    `SELECT COUNT(*) AS n FROM case_evidence
+      WHERE uploaded_at LIKE ? AND r2_key NOT LIKE '${DBX_KEY_PREFIX}%'`)
     .bind(nowIso().slice(0, 7) + '%').first();
   const bytes = Number(row && row.b) || 0;
   return {
@@ -4571,9 +4720,6 @@ const EVIDENCE_CLASSES = ['client_deliverable', 'internal_only', 'do_not_use', '
 
 async function uploadEvidence(request, env, user, caseNo) {
   if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
-  if (!env.EVIDENCE) {
-    return json({ error: 'Evidence storage is not attached yet — run the R2 setup workflow, then redeploy the Worker.' }, 503);
-  }
   let form;
   try { form = await request.formData(); } catch { return json({ error: 'Send the file as multipart form data.' }, 400); }
   const file = form.get('file');
@@ -4598,20 +4744,37 @@ async function uploadEvidence(request, env, user, caseNo) {
       + 'is made on your own machine and saved back to it.', code: 'video_device_first' }, 400);
   }
 
+  /* THE PER-FILE LIMIT STAYS, and the two Cloudflare failsafes do not apply
+     here any more. `hardCapBytes` and `maxUploadsPerMonth` exist to keep the
+     R2 free tier from ever billing; these bytes never reach Cloudflare, so
+     enforcing them would refuse a Dropbox upload because of what LEGACY R2
+     files weigh — a failsafe firing about storage it is not protecting. The
+     size limit is kept because it is also comfortably under Dropbox's
+     single-request upload limit, and because loosening a bound the owner set
+     is not something to do as a side effect. */
   const lim = storageLimits(env);
   if (file.size > lim.maxFileBytes) {
     return json({ error: `That file is ${(file.size / 1048576).toFixed(1)} MB and the per-file limit is `
       + `${Math.floor(lim.maxFileBytes / 1048576)} MB.` }, 413);
   }
-  const usage = await evidenceUsage(env);
-  if (usage.uploads_this_month >= lim.maxUploadsPerMonth) {
-    return json({ error: 'The monthly upload failsafe is reached — nothing else uploads this month.' }, 429);
+
+  /* NEW BYTES GO TO DROPBOX OR NOWHERE (owner). Refused with the reason rather
+     than quietly written to R2: a fallback would split a case across two
+     stores and nobody would find out until they went looking for the half that
+     was not where they expected. */
+  const problem = await dropboxStorageProblem(env);
+  if (problem === 'provider_not_configured') {
+    return json({ error: 'Dropbox is not set up on this Worker yet, and new case files are stored there. '
+      + EXTERNAL_PROVIDERS.dropbox.note, code: problem }, 503);
   }
-  if (usage.bytes_used + file.size > lim.hardCapBytes) {
-    return json({ error: 'The free-plan failsafe: this upload would push evidence storage past the line that '
-      + 'keeps the account inside the free tier, so it was refused — nothing can bill. An admin can clear '
-      + 'delivered footage (deletes are audited) to make room.', code: 'storage_cap',
-      usage }, 507);
+  if (problem) {
+    return json({ error: 'No Dropbox account is connected, and new case files are stored there. '
+      + 'An admin can connect one from the portal, then try this upload again.', code: problem }, 503);
+  }
+  const dbxToken = await dropboxAccessToken(env);
+  if (!dbxToken) {
+    return json({ error: 'Dropbox could not be reached just now, so this file was not stored. '
+      + 'Nothing was lost — try again in a moment.', code: 'dropbox_unreachable' }, 503);
   }
 
   const filename = String(file.name || 'file').replace(/[^A-Za-z0-9._ -]/g, '_').slice(0, 120) || 'file';
@@ -4643,11 +4806,22 @@ async function uploadEvidence(request, env, user, caseNo) {
     if (!sj) return json({ error: 'That subject is not on this case.' }, 400);
   } else subjectId = null;
 
-  // A unique key per upload: an original can never be overwritten.
-  const key = `cases/${caseNo}/${crypto.randomUUID()}-${filename}`;
-  await env.EVIDENCE.put(key, await file.arrayBuffer(), {
-    httpMetadata: { contentType: file.type || 'application/octet-stream' },
-  });
+  /* Photos to Photos, documents and reports to Reports. The folders are made
+     first so a case has the same three either way, even before anything has
+     been put in two of them. */
+  const folder = dropboxFolderFor(file.type);
+  await dropboxEnsureCaseFolders(env, dbxToken, caseNo);
+  const meta = await dropboxUpload(env, dbxToken,
+    `/${caseNo}/${folder}/${dropboxStoredName(filename)}`, await file.arrayBuffer());
+  /* NOTHING IS RECORDED UNTIL THE BYTES ARE SAFE. A row written before the
+     upload succeeded is a case file the portal lists and cannot produce. */
+  if (!meta) {
+    return json({ error: 'Dropbox refused the upload, so this file was not stored. '
+      + 'Nothing was lost — try again in a moment.', code: 'dropbox_unreachable' }, 503);
+  }
+  /* The path Dropbox ACTUALLY used, not the one that was asked for: if
+     autorename moved it, the record has to name where the file really is. */
+  const key = DBX_KEY_PREFIX + meta.path_display;
   const now = nowIso();
   const res = await env.DB.prepare(
     `INSERT INTO case_evidence (case_no, r2_key, filename, content_type, size_bytes, classification,
@@ -4659,20 +4833,40 @@ async function uploadEvidence(request, env, user, caseNo) {
                 usage: await evidenceUsage(env) }, 201);
 }
 
+/* THE ONLY PLACE EVIDENCE BYTES LEAVE, whichever store they are in — which is
+   what makes the Dropbox move safe. The file is PROXIED through the Worker so
+   it stays behind `caseFor`, the role check and the case's own gates. A shared
+   Dropbox link would be a URL that works for anyone who has it, for as long as
+   it exists, with none of that in front of it: do not add one. */
 async function serveEvidence(env, user, caseNo, eid) {
   if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
-  if (!env.EVIDENCE) return json({ error: 'Evidence storage is not attached.' }, 503);
   const row = await env.DB.prepare(
     'SELECT r2_key, filename, content_type, deleted_at FROM case_evidence WHERE id = ? AND case_no = ?')
     .bind(eid, caseNo).first();
   if (!row || row.deleted_at) return json({ error: 'not found' }, 404);
-  const obj = await env.EVIDENCE.get(row.r2_key);
-  if (!obj) return json({ error: 'The stored object is missing from the bucket.' }, 404);
-  return new Response(obj.body, { status: 200, headers: {
+  const headers = {
     'Content-Type': row.content_type || 'application/octet-stream',
     'Content-Disposition': `inline; filename="${row.filename.replace(/"/g, '')}"`,
     'Cache-Control': 'private, no-store',
-  } });
+  };
+
+  if (isDropboxKey(row.r2_key)) {
+    const token = await dropboxAccessToken(env);
+    if (!token) {
+      return json({ error: 'Dropbox could not be reached, so this file cannot be shown right now. '
+        + 'It is still there.', code: 'dropbox_unreachable' }, 503);
+    }
+    const got = await dropboxDownload(env, token, dropboxPathFromKey(row.r2_key));
+    if (!got) return json({ error: 'The stored file is missing from Dropbox.' }, 404);
+    return new Response(got.body, { status: 200, headers });
+  }
+
+  /* EVERY FILE UPLOADED BEFORE THIS CHANGE IS STILL HERE and still reads from
+     the bucket. Nothing was migrated and nothing was deleted (owner). */
+  if (!env.EVIDENCE) return json({ error: 'Evidence storage is not attached.' }, 503);
+  const obj = await env.EVIDENCE.get(row.r2_key);
+  if (!obj) return json({ error: 'The stored object is missing from the bucket.' }, 404);
+  return new Response(obj.body, { status: 200, headers });
 }
 
 async function editEvidence(request, env, user, caseNo, eid) {
@@ -4703,11 +4897,24 @@ async function deleteEvidence(env, user, caseNo, eid) {
     'SELECT r2_key, deleted_at FROM case_evidence WHERE id = ? AND case_no = ?').bind(eid, caseNo).first();
   if (!row) return json({ error: 'not found' }, 404);
   if (row.deleted_at) return json({ ok: true });
-  if (env.EVIDENCE) await env.EVIDENCE.delete(row.r2_key);
+
+  /* The file goes from whichever store holds it. A Dropbox delete that fails
+     is REPORTED rather than swallowed: the tombstone still goes down, because
+     an admin must be able to remove something from the case, but they are told
+     the file may still be sitting in the folder — the one thing they would
+     have assumed was handled. */
+  let remains = false;
+  if (isDropboxKey(row.r2_key)) {
+    const token = await dropboxAccessToken(env);
+    remains = !(token && await dropboxDelete(env, token, dropboxPathFromKey(row.r2_key)));
+  } else if (env.EVIDENCE) {
+    await env.EVIDENCE.delete(row.r2_key);
+  }
   // The object goes; the record of it stays, with who removed it and when.
   await env.DB.prepare('UPDATE case_evidence SET deleted_by = ?, deleted_at = ? WHERE id = ?')
     .bind(user.id, nowIso(), eid).run();
-  return json({ ok: true, usage: await evidenceUsage(env) });
+  return json({ ok: true, usage: await evidenceUsage(env),
+                ...(remains ? { dropbox_file_remains: true } : {}) });
 }
 
 /* ------------------------------------------------- video timestamp records
@@ -5723,11 +5930,20 @@ async function clearDemoCases(env) {
     try {
       const { results } = await env.DB.prepare(
         'SELECT r2_key FROM case_evidence WHERE case_no LIKE ?').bind(DEMO_LIKE).all();
+      const dbxToken = (results || []).some((r) => isDropboxKey(r.r2_key))
+        ? await dropboxAccessToken(env) : null;
       for (const row of results || []) {
         /* One failed object must not strand the other twenty. The database
            sweep below runs either way: a row pointing at an object that is
            already gone is the harmless direction of this pair. */
-        try { await env.EVIDENCE.delete(row.r2_key); objects++; } catch { /* keep going */ }
+        try {
+          /* A demo case's files go from whichever store holds them. Sweeping
+             only R2 would leave TEST- photographs sitting in the firm's real
+             Dropbox after the button that promises a clean removal. */
+          if (isDropboxKey(row.r2_key)) {
+            if (dbxToken && await dropboxDelete(env, dbxToken, dropboxPathFromKey(row.r2_key))) objects++;
+          } else { await env.EVIDENCE.delete(row.r2_key); objects++; }
+        } catch { /* keep going */ }
       }
     } catch { /* no evidence table, or unreadable — the sweep still runs */ }
   }

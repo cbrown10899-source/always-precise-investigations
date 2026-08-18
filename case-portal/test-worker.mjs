@@ -87,8 +87,86 @@ function freshEnv() {
     BOOTSTRAP_TOKEN: 'bootstrap-test-token',
     PBKDF2_ITER: '10000',   // keep the suite quick; production uses the default
     INGEST_PER_MINUTE: '5', // ditto — production defaults far higher
+    /* NEW CASE FILES GO TO DROPBOX (owner, 2026-08-18), so a connected Dropbox
+       is the default state of a test environment the same way it is the
+       default state of production. The three Dropbox OAuth sections delete
+       these again, because their whole subject is how the connection is made. */
+    DROPBOX_APP_KEY: 'test-app-key',
+    DROPBOX_APP_SECRET: 'test-app-secret',
+    DROPBOX_REFRESH_TOKEN: 'RT-test',
   };
 }
+
+/* ------------------------------------------------------------ fake Dropbox
+
+   Installed ONCE for the whole suite rather than stubbed per section, because
+   new photos and reports go to Dropbox now and almost every evidence test
+   needs one that works. It answers the five calls the Worker makes and keeps
+   the files in memory, so a test can assert `DBX.files` directly — "the photo
+   landed in Photos/" as a fact rather than something inferred from a 201.
+
+   Sections that stub `globalThis.fetch` and fall through to the fetch they
+   captured reach this automatically, because it is installed before any of
+   them runs. */
+const DBX = {
+  files: new Map(),      // path -> bytes
+  folders: new Set(),
+  calls: [],
+  down: false,           // Dropbox unreachable
+  uploadFails: false,    // reachable, refuses the write
+  deleteFails: false,
+  reset() {
+    this.files.clear(); this.folders.clear(); this.calls = [];
+    this.down = false; this.uploadFails = false; this.deleteFails = false;
+  },
+  paths() { return [...this.files.keys()]; },
+  inFolder(folder) { return this.paths().filter((f) => f.includes('/' + folder + '/')); },
+};
+
+async function fakeDropbox(url, init) {
+  const u = String(url && url.url ? url.url : url);
+  if (!u.includes('dropboxapi.com')) return null;
+  DBX.calls.push(u);
+  if (DBX.down) return new Response('service unavailable', { status: 503 });
+  const arg = () => JSON.parse((init.headers || {})['Dropbox-API-Arg'] || '{}');
+
+  if (u.includes('/oauth2/token')) {
+    return new Response(JSON.stringify({ access_token: 'sl.FAKE', expires_in: 14400 }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  if (u.includes('/2/files/create_folder_batch')) {
+    for (const f of JSON.parse(init.body).paths) DBX.folders.add(f);
+    return new Response('{"entries":[]}', { status: 200 });
+  }
+  if (u.includes('/2/files/upload')) {
+    if (DBX.uploadFails) return new Response('conflict', { status: 409 });
+    const a = arg();
+    let path = a.path;
+    if (DBX.files.has(path) && a.autorename) path = path + '-1';
+    const body = init.body;
+    const bytes = body instanceof ArrayBuffer ? new Uint8Array(body)
+      : ArrayBuffer.isView(body) ? new Uint8Array(body.buffer) : new Uint8Array(0);
+    DBX.files.set(path, bytes);
+    return new Response(JSON.stringify({ path_display: path, path_lower: path.toLowerCase(),
+      rev: 'r' + DBX.files.size, size: bytes.length }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  if (u.includes('/2/files/download')) {
+    const f = DBX.files.get(arg().path);
+    if (!f) return new Response('not_found', { status: 409 });
+    return new Response(f, { status: 200 });
+  }
+  if (u.includes('/2/files/delete_v2')) {
+    if (DBX.deleteFails) return new Response('error', { status: 500 });
+    /* 409 is Dropbox's "already gone", which the Worker treats as success when
+       it is the one doing the removing. */
+    return new Response('{}', { status: DBX.files.delete(JSON.parse(init.body).path) ? 200 : 409 });
+  }
+  return new Response('{}', { status: 200 });
+}
+
+const REAL_FETCH = globalThis.fetch;
+globalThis.fetch = async (url, init) => (await fakeDropbox(url, init)) || REAL_FETCH(url, init);
 
 /* --------------------------------------------------------------- request kit */
 
@@ -2493,8 +2571,19 @@ section('Evidence: stored privately, metered, and capped inside the free plan');
   const first = await jsonOf(await up(dana, mk('clip1.jpg', 1800, 'image/jpeg'),
     { classification: 'client_deliverable', note: 'Subject at the gym.' }));
   ok('the assigned investigator uploads field product', typeof first.id === 'number');
-  ok('and the meter answers immediately', first.usage.bytes_used === 1800
-     && first.usage.percent_of_free === 18);
+  /* IT WENT TO DROPBOX, into this case's Photos folder — asserted against the
+     store rather than inferred from a 201. */
+  ok('the photograph landed in the case Photos folder',
+     DBX.inFolder('Photos').some((f) => f.startsWith('/API-EV1/Photos/clip1-')), DBX.paths().join(' '));
+  ok('and all three case folders were made',
+     ['Photos', 'Reports', 'Video'].every((f) => DBX.folders.has('/API-EV1/' + f)),
+     [...DBX.folders].join(' '));
+  /* AND THE CLOUDFLARE METER DID NOT MOVE. These bytes are not on the R2 free
+     tier, so counting them would drive the storage card toward a limit this
+     file can never reach. */
+  ok('the R2 meter does not move for a file that never touched Cloudflare',
+     first.usage.bytes_used === 0 && first.usage.percent_of_free === 0,
+     JSON.stringify(first.usage));
 
   let ws = await jsonOf(await call(env, '/cases/API-EV1/workspace', { cookie: dana }));
   /* Owner's decision, 2026-08-14: an upload is ready for the report the moment
@@ -2508,11 +2597,15 @@ section('Evidence: stored privately, metered, and capped inside the free plan');
      (await jsonOf(await call(env, '/cases/API-EV1/workspace', { cookie: admin })))
        .evidence.find(e => e.filename === 'clip2.jpg').classification === 'internal_only');
 
-  /* THE FAILSAFE. 3,600 of the 5,000-byte cap is used; another 1,800 would
-     cross it, so nothing uploads — and nothing can ever bill. */
-  const blocked = await up(admin, mk('clip3.jpg', 1800, 'image/jpeg'));
-  ok('the free-plan failsafe refuses the upload that would cross the cap', blocked.status === 507);
-  ok('and says so in plain words', (await jsonOf(blocked)).code === 'storage_cap');
+  /* THE FREE-PLAN FAILSAFE NO LONGER GOVERNS AN UPLOAD, and that is correct
+     rather than a hole. Its whole job is to keep the R2 free tier from ever
+     billing; these bytes go to Dropbox, so applying it would refuse a photo
+     because of what LEGACY files weigh — a failsafe firing about storage it is
+     not protecting. The cap here is 5,000 bytes and 3,600 are already "used"
+     by the two uploads above under the old accounting. */
+  const third = await up(admin, mk('clip3.jpg', 1800, 'image/jpeg'));
+  ok('the R2 cap cannot refuse a file that is not going to R2', third.status === 201);
+  ok('and nothing was written to the bucket', env.EVIDENCE._store.size === 0);
 
   // Serving: the bytes come back through the Worker's own session checks.
   const got = await call(env, `/cases/API-EV1/evidence/${first.id}/file`, { cookie: dana });
@@ -2533,19 +2626,25 @@ section('Evidence: stored privately, metered, and capped inside the free plan');
      (await call(env, `/cases/API-EV1/evidence/${first.id}/delete`, { method: 'POST', cookie: dana })).status === 403);
   const del = await jsonOf(await call(env, `/cases/API-EV1/evidence/${first.id}/delete`,
     { method: 'POST', cookie: admin }));
-  ok('an admin delete frees the space', del.usage.bytes_used === 1800);
-  ok('the object is truly gone from the bucket', env.EVIDENCE._store.size === 1);
+  ok('an admin delete leaves the R2 meter where it was', del.usage.bytes_used === 0);
+  ok('and the file is truly gone from Dropbox',
+     !DBX.paths().some((f) => f.startsWith('/API-EV1/Photos/clip1-')), DBX.paths().join(' '));
   ok('but the record of it stays, stamped',
      (await env.DB.prepare('SELECT deleted_at, deleted_by FROM case_evidence WHERE id = ?')
        .bind(first.id).first()).deleted_at != null);
   ok('a deleted object no longer serves',
      (await call(env, `/cases/API-EV1/evidence/${first.id}/file`, { cookie: admin })).status === 404);
   ws = await jsonOf(await call(env, '/cases/API-EV1/workspace', { cookie: dana }));
-  ok('the field sees only what exists', ws.evidence.length === 1);
+  ok('the field sees only what exists', ws.evidence.length === 2, String(ws.evidence.length));
   ok('the office also sees the removal record',
-     (await jsonOf(await call(env, '/cases/API-EV1/workspace', { cookie: admin }))).evidence.length === 2);
+     (await jsonOf(await call(env, '/cases/API-EV1/workspace', { cookie: admin }))).evidence.length === 3);
 
-  ok('freed space uploads again', (await up(admin, mk('clip3.jpg', 1800, 'image/jpeg'))).status === 201);
+  /* Same name again, after the first was deleted. Dropbox has no conflict to
+     autorename around at this point, so this is exactly the case the random
+     token in the stored name exists for: without it the path would repeat and
+     r2_key's UNIQUE constraint would reject the row. */
+  ok('a file of the same name uploads again after a deletion',
+     (await up(admin, mk('clip1.jpg', 1800, 'image/jpeg'))).status === 201);
 
   /* Links ride only within the case: a photo joins this case's subject, a
      clip joins this case's moment, and another case's ids are refused. */
@@ -2566,12 +2665,30 @@ section('Evidence: stored privately, metered, and capped inside the free plan');
   ok("another case's subject is refused, not silently dropped",
      (await up(admin, mk('x.jpg', 100, 'image/jpeg'), { subject_id: '999999' })).status === 400);
 
+  /* A FILE FROM BEFORE THIS CHANGE. Planted directly, because there is no
+     longer any route that writes to R2 — which is the point. Nothing was
+     migrated and nothing was deleted (owner), so it still serves and it is
+     still what the meter is about. */
+  await env.DB.prepare(
+    `INSERT INTO case_evidence (case_no, r2_key, filename, content_type, size_bytes,
+       classification, uploaded_by, uploaded_at)
+     VALUES ('API-EV1', 'cases/API-EV1/legacy.jpg', 'legacy.jpg', 'image/jpeg', 2200,
+       'client_deliverable', 1, ?)`).bind(new Date().toISOString()).run();
+  await env.EVIDENCE.put('cases/API-EV1/legacy.jpg', new Uint8Array(2200).fill(66));
+  const legacyId = (await env.DB.prepare(
+    "SELECT id FROM case_evidence WHERE r2_key = 'cases/API-EV1/legacy.jpg'").first()).id;
+  const gotOld = await call(env, `/cases/API-EV1/evidence/${legacyId}/file`, { cookie: admin });
+  ok('a file uploaded before the move still serves, straight from the bucket',
+     gotOld.status === 200 && (await gotOld.arrayBuffer()).byteLength === 2200);
+
   const st = await jsonOf(await call(env, '/storage', { cookie: admin }));
+  /* THE METER COUNTS THE LEGACY FILE AND NOTHING ELSE, with six Dropbox files
+     on the same case. That is the whole property in one number. */
   ok('the storage meter is admin-only',
      (await call(env, '/storage', { cookie: dana })).status === 403
-     && st.storage.bytes_used === 4400);
+     && st.storage.bytes_used === 2200, JSON.stringify(st.storage));
   ok('the public health check carries only the bare percentage',
-     (await jsonOf(await call(env, '/health'))).storage_pct === 44);
+     (await jsonOf(await call(env, '/health'))).storage_pct === 22);
 
   /* Linking after upload (UIBUILD P9's fold): the uploader ties their file to
      the moment it documents; nobody re-files someone else's work. */
@@ -2594,15 +2711,36 @@ section('Evidence: stored privately, metered, and capped inside the free plan');
      && (await jsonOf(await call(env, '/cases/API-EV1/workspace', { cookie: dana })))
        .evidence.find(e => e.id === late.id).entry_id === null);
 
-  // Without the binding, uploads say exactly what is missing.
+  /* NO DROPBOX, NO UPLOAD — and it says which of the two reasons it is. There
+     is deliberately no R2 fallback: a photo quietly written somewhere else is
+     half a case in the wrong place, found weeks later by whoever goes looking
+     for it. */
   const bare = freshEnv();
+  delete bare.DROPBOX_REFRESH_TOKEN;
   await bootstrapAdmin(bare);
   const a2 = (await login(bare, 'trever', 'FirstAdminPass1')).cookie;
   await ingest(bare, { case_no: 'API-EV2', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
-  const fd2 = new FormData(); fd2.append('file', mk('x.jpg', 10, 'image/jpeg'));
-  ok('a missing binding is a named condition, not a mystery',
-     (await worker.fetch(new Request(API + '/cases/API-EV2/evidence', {
-       method: 'POST', headers: { Origin: ORIGIN, Cookie: a2 }, body: fd2 }), bare)).status === 503);
+  const upBare = async () => {
+    const fd2 = new FormData(); fd2.append('file', mk('x.jpg', 10, 'image/jpeg'));
+    return worker.fetch(new Request(API + '/cases/API-EV2/evidence', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: a2 }, body: fd2 }), bare);
+  };
+  let refused = await upBare();
+  ok('with no Dropbox connected the upload is refused, by name',
+     refused.status === 503 && (await jsonOf(refused)).code === 'dropbox_not_connected');
+  delete bare.DROPBOX_APP_KEY; delete bare.DROPBOX_APP_SECRET;
+  refused = await upBare();
+  ok('and an unconfigured app is a different, equally named condition',
+     refused.status === 503 && (await jsonOf(refused)).code === 'provider_not_configured');
+  bare.DROPBOX_APP_KEY = 'test-app-key'; bare.DROPBOX_APP_SECRET = 'test-app-secret';
+  bare.DROPBOX_REFRESH_TOKEN = 'RT-test';
+  DBX.down = true;
+  refused = await upBare();
+  DBX.down = false;
+  ok('and Dropbox being unreachable never falls back to R2',
+     refused.status === 503 && (await jsonOf(refused)).code === 'dropbox_unreachable');
+  ok('nothing was stored anywhere by any of those three',
+     (await bare.DB.prepare('SELECT COUNT(*) AS n FROM case_evidence').first()).n === 0);
 }
 
 section('Case Build: the package behind hard gates');
@@ -2725,6 +2863,10 @@ section('Case Build: the package behind hard gates');
   ok('the audit trail names the acts',
      ['created'].every(a => trail.includes(a)));
 
+  /* The provider panel with Dropbox deliberately absent. Taken away at the END
+     of this section rather than never granted, because the uploads above now
+     require it — a case cannot get a photograph without one. */
+  delete env.DROPBOX_APP_KEY; delete env.DROPBOX_APP_SECRET; delete env.DROPBOX_REFRESH_TOKEN;
   ok('dropbox reports not configured, in words',
      (await jsonOf(await call(env, '/external-storage', { cookie: admin }))).providers.dropbox.configured === false);
   ok('provider actions say what is missing instead of failing quietly',
@@ -6086,8 +6228,9 @@ section('End to end: a carrier assignment, sheet to completed');
   await call(env, `/cases/API-E38/reports/${rep.id}/status`, { method: 'POST', cookie: admin,
     body: { status: 'approved' } });
 
-  // 7. Case Build: report + selected photos + the video, finalized. Dropbox
-  // stays honestly unconfigured and blocks nothing.
+  // 7. Case Build: report + selected photos + the video, finalized. Dropbox is
+  // connected, because since 2026-08-18 a new photo cannot be uploaded without
+  // it — the panel reporting that truthfully is the assertion.
   let st = await jsonOf(await call(env, '/cases/API-E38/build', { method: 'POST', cookie: admin }));
   await call(env, `/build/${st.build.id}/items`, { method: 'POST', cookie: admin,
     body: { evidence_id: ph.id } });
@@ -6095,9 +6238,9 @@ section('End to end: a carrier assignment, sheet to completed');
     body: { evidence_id: vd.id } });
   await call(env, `/build/${st.build.id}/package`, { method: 'POST', cookie: admin,
     body: { package_type: 'report_photos_video' } });
-  ok('E2E-38: Dropbox reports not configured rather than pretending',
+  ok('E2E-38: the storage panel reports Dropbox exactly as it is',
      (await jsonOf(await call(env, '/external-storage', { cookie: admin })))
-       .providers.dropbox.configured === false);
+       .providers.dropbox.configured === true);
   st = await jsonOf(await call(env, `/build/${st.build.id}/finalize`, { method: 'POST', cookie: admin }));
   ok('E2E-38: the package finalizes with the report and both exhibits',
      st.build.status === 'finalized' && st.items.length === 2 && st.reports.length === 1);
@@ -8498,9 +8641,178 @@ section('Video timestamp on a database that has not been set up');
 
    Every outbound call is intercepted, so nothing in this suite reaches Dropbox
    and no real credential exists anywhere in it. */
+/* --------------------------------- Dropbox as storage for NEW case files
+
+   Owner, 2026-08-18: "Use connected Dropbox App Folder as storage for NEW case
+   photos and generated reports/PDFs", with case folders Photos, Reports and
+   Video; do not migrate or delete old R2 files; keep D1 for structured case
+   data; and if Dropbox is unavailable, refuse the upload rather than falling
+   back to R2 or double-writing. */
+section('Dropbox storage — where a new case file goes');
+{
+  const fakeR2 = () => {
+    const store = new Map();
+    return {
+      async put(key, body) { store.set(key, { body }); },
+      async get(key) { const o = store.get(key); return o ? { body: o.body } : null; },
+      async delete(key) { store.delete(key); },
+      _store: store,
+    };
+  };
+  DBX.reset();
+  const env = freshEnv();
+  env.EVIDENCE = fakeR2();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-DBX1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+
+  const mk = (name, bytes, type) => new File([new Uint8Array(bytes).fill(67)], name, { type });
+  const up = (file) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return worker.fetch(new Request(API + '/cases/API-DBX1/evidence', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  };
+
+  /* THE THREE FOLDERS, on every case, in the same shape. Video is made even
+     though nothing here writes to it — the operator saves timestamped copies
+     into it by hand, and a folder that appears only once something is in it is
+     a folder nobody trusts. */
+  const photo = await jsonOf(await up(mk('IMG_1.jpg', 300, 'image/jpeg')));
+  ok('all three case folders exist after the first upload',
+     ['Photos', 'Reports', 'Video'].every((f) => DBX.folders.has('/API-DBX1/' + f)),
+     [...DBX.folders].join(' '));
+  ok('a photograph goes to Photos', DBX.inFolder('Photos').length === 1, DBX.paths().join(' '));
+
+  /* GENERATED REPORTS AND PDFs GO TO Reports — routed by what the file IS, so
+     a report does not land in the photo folder because of how it was sent. */
+  const doc = await jsonOf(await up(mk('Final Report.pdf', 500, 'application/pdf')));
+  ok('a PDF goes to Reports', DBX.inFolder('Reports').length === 1
+     && DBX.inFolder('Reports')[0].startsWith('/API-DBX1/Reports/Final Report-'), DBX.paths().join(' '));
+  ok('and it is a different file, not a moved one', DBX.files.size === 2);
+  ok('nothing at all went to R2', env.EVIDENCE._store.size === 0);
+  ok('nothing went to the Video folder', DBX.inFolder('Video').length === 0);
+
+  /* D1 KEEPS THE STRUCTURED RECORD AND DROPBOX KEEPS THE BYTES. The row says
+     where the file is; it does not hold the file. */
+  const row = await env.DB.prepare('SELECT r2_key, filename, size_bytes FROM case_evidence WHERE id = ?')
+    .bind(photo.id).first();
+  ok('the record names Dropbox as the place, not R2', row.r2_key.startsWith('dropbox:/API-DBX1/Photos/'), row.r2_key);
+  ok('and the real filename is kept for the person, not the storage name',
+     row.filename === 'IMG_1.jpg' && row.size_bytes === 300);
+
+  /* SERVED BACK THROUGH THE WORKER, never as a Dropbox link — so the case's
+     own permission checks stay in front of the bytes. */
+  const got = await call(env, `/cases/API-DBX1/evidence/${photo.id}/file`, { cookie: admin });
+  ok('the file streams back through the portal', got.status === 200
+     && got.headers.get('content-type') === 'image/jpeg');
+  ok('under its real name', /IMG_1\.jpg/.test(got.headers.get('content-disposition') || ''),
+     got.headers.get('content-disposition'));
+  ok('and no Dropbox URL is handed out anywhere in the response',
+     !JSON.stringify([...got.headers]).includes('dropbox.com'));
+
+  /* VIDEO IS STILL REFUSED BY THE ORDINARY UPLOAD. The device-first decision
+     of 2026-08-17 is untouched by this change. */
+  const vid = await up(mk('clip.mp4', 100, 'video/mp4'));
+  ok('the ordinary upload still refuses video', vid.status === 400
+     && (await jsonOf(vid)).code === 'video_device_first');
+  ok('and refusing it stored nothing in either place',
+     DBX.files.size === 2 && env.EVIDENCE._store.size === 0);
+
+  /* DROPBOX UNAVAILABLE: refused, named, and nothing written. Checked for the
+     provider being down AND for it refusing the write, because they fail at
+     different points and only one of them was ever going to be exercised by
+     accident. */
+  DBX.down = true;
+  let bad = await up(mk('IMG_2.jpg', 300, 'image/jpeg'));
+  DBX.down = false;
+  ok('an unreachable Dropbox refuses the upload', bad.status === 503
+     && (await jsonOf(bad)).code === 'dropbox_unreachable');
+  DBX.uploadFails = true;
+  bad = await up(mk('IMG_3.jpg', 300, 'image/jpeg'));
+  DBX.uploadFails = false;
+  ok('and so does one that answers but will not take the file', bad.status === 503
+     && (await jsonOf(bad)).code === 'dropbox_unreachable');
+  ok('neither wrote a row the portal could not produce a file for',
+     (await env.DB.prepare('SELECT COUNT(*) AS n FROM case_evidence').first()).n === 2);
+  ok('and neither fell back to R2', env.EVIDENCE._store.size === 0);
+
+  /* A DELETE THAT DID NOT REACH DROPBOX SAYS SO. The tombstone still goes
+     down — an admin has to be able to remove something — but they are told the
+     file may still be sitting in the folder, which is the one thing they would
+     otherwise assume was handled. */
+  DBX.deleteFails = true;
+  const half = await jsonOf(await call(env, `/cases/API-DBX1/evidence/${doc.id}/delete`,
+    { method: 'POST', cookie: admin }));
+  DBX.deleteFails = false;
+  ok('a delete Dropbox refused is reported, not swallowed', half.dropbox_file_remains === true);
+  ok('and the record is still stamped removed',
+     (await env.DB.prepare('SELECT deleted_at FROM case_evidence WHERE id = ?')
+       .bind(doc.id).first()).deleted_at != null);
+  const clean = await jsonOf(await call(env, `/cases/API-DBX1/evidence/${photo.id}/delete`,
+    { method: 'POST', cookie: admin }));
+  ok('a delete that did reach Dropbox says nothing extra', clean.dropbox_file_remains === undefined);
+  ok('and the file is gone from the folder', DBX.inFolder('Photos').length === 0);
+}
+
+section('Dropbox storage — a demo case is swept from both stores');
+{
+  const fakeR2 = () => {
+    const store = new Map();
+    return {
+      async put(key, body) { store.set(key, { body }); },
+      async get(key) { const o = store.get(key); return o ? { body: o.body } : null; },
+      async delete(key) { store.delete(key); },
+      _store: store,
+    };
+  };
+  DBX.reset();
+  const env = freshEnv();
+  env.EVIDENCE = fakeR2();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  const demo = await jsonOf(await call(env, '/demo-case', { method: 'POST', cookie: admin }));
+  const demoNo = demo.case_no || demo.case || (demo.submission && demo.submission.case_no);
+  ok('a test case is created with a TEST- number', /^TEST-/.test(String(demoNo)), JSON.stringify(demo).slice(0, 200));
+
+  const fd = new FormData();
+  fd.append('file', new File([new Uint8Array(120).fill(68)], 'demo.jpg', { type: 'image/jpeg' }));
+  await worker.fetch(new Request(API + `/cases/${demoNo}/evidence`, {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  ok('its photograph is in Dropbox', DBX.inFolder('Photos').length === 1, DBX.paths().join(' '));
+
+  /* A REAL CASE ALONGSIDE IT, to prove the sweep is bounded by the prefix and
+     not by "everything that happens to be in Dropbox". */
+  await ingest(env, { case_no: 'API-REAL1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  const fd2 = new FormData();
+  fd2.append('file', new File([new Uint8Array(90).fill(69)], 'real.jpg', { type: 'image/jpeg' }));
+  await worker.fetch(new Request(API + '/cases/API-REAL1/evidence', {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd2 }), env);
+  /* And a legacy R2 object on the demo case, so both halves of the sweep run. */
+  await env.DB.prepare(
+    `INSERT INTO case_evidence (case_no, r2_key, filename, content_type, size_bytes,
+       classification, uploaded_by, uploaded_at)
+     VALUES (?, ?, 'old.jpg', 'image/jpeg', 70, 'client_deliverable', 1, ?)`)
+    .bind(demoNo, 'cases/' + demoNo + '/old.jpg', new Date().toISOString()).run();
+  await env.EVIDENCE.put('cases/' + demoNo + '/old.jpg', new Uint8Array(70));
+
+  await call(env, '/demo-case/clear', { method: 'POST', cookie: admin });
+  ok('clearing the test case removes its Dropbox file too',
+     DBX.paths().every((f) => !f.startsWith('/TEST-')), DBX.paths().join(' '));
+  ok('and its legacy R2 object', env.EVIDENCE._store.size === 0);
+  ok('while the real case keeps both its row and its file',
+     DBX.inFolder('Photos').length === 1
+     && (await env.DB.prepare("SELECT COUNT(*) AS n FROM case_evidence WHERE case_no = 'API-REAL1'")
+          .first()).n === 1);
+}
+
 section('Dropbox OAuth — connect');
 {
   const env = freshEnv();
+  /* This section's subject is how a connection is MADE, so it starts without
+     one — unlike every other environment in the suite. */
+  delete env.DROPBOX_APP_KEY; delete env.DROPBOX_APP_SECRET; delete env.DROPBOX_REFRESH_TOKEN;
   await bootstrapAdmin(env);
   const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
   const l = (await jsonOf(await invite(env, admin,
@@ -8586,6 +8898,8 @@ section('Dropbox OAuth — callback');
   const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
   env.DROPBOX_APP_KEY = 'test-app-key';
   env.DROPBOX_APP_SECRET = 'test-app-secret';
+  // The row is what this section is about, so the env shortcut is out of the way.
+  delete env.DROPBOX_REFRESH_TOKEN;
 
   // Every outbound call is intercepted; nothing reaches Dropbox.
   const realFetch = globalThis.fetch;
@@ -8757,6 +9071,7 @@ section('Dropbox OAuth — the callback authenticates itself');
   const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
   env.DROPBOX_APP_KEY = 'test-app-key';
   env.DROPBOX_APP_SECRET = 'test-app-secret';
+  delete env.DROPBOX_REFRESH_TOKEN;
 
   // A real investigator, so the forged-cookie test names an id that exists.
   const l = (await jsonOf(await invite(env, admin,
@@ -8871,17 +9186,25 @@ section('Dropbox — secrets only, and no file migration yet');
   ok('and the token column is never selected into a response body',
      !/refresh_token[^\n]*json\(/.test(src));
 
-  /* NO FILE MIGRATION YET — the owner was explicit, so there is no upload,
-     download, list or move route in this build at all. */
+  /* NO MIGRATION — the owner has been explicit and repeated: do not migrate or
+     delete old R2 files. The Worker DOES call Dropbox content endpoints now
+     (new photos and reports go there), so the old "it never touches them"
+     guard has done its job and would today be asserting the opposite of the
+     design. What has to stay true is narrower and more important. */
   ok('there is no Dropbox file route in this build',
-     !/\/dropbox\/(upload|files|list|move|migrate|download)/.test(src));
-  ok('and nothing calls the Dropbox content endpoints',
-     !/content\.dropboxapi\.com/.test(src));
+     !/\/dropbox\/(files|list|move|migrate)/.test(src));
+  ok('nothing reads an R2 object in order to write it to Dropbox',
+     !/EVIDENCE\.get\([\s\S]{0,800}dropboxUpload\(/.test(src));
+  ok('and R2 objects are deleted only where they always were — one file, or a TEST- sweep',
+     (src.match(/EVIDENCE\.delete\(/g) || []).length === 2,
+     String((src.match(/EVIDENCE\.delete\(/g) || []).length));
 
   const env = freshEnv();
   await bootstrapAdmin(env);
   const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
-  /* THE SCHEMA GUARD, like every table added after the live database existed. */
+  /* THE SCHEMA GUARD, like every table added after the live database existed.
+     The env shortcut is removed so the table is genuinely what is consulted. */
+  delete env.DROPBOX_REFRESH_TOKEN;
   await env.DB.prepare('DROP TABLE dropbox_auth').run();
   ok('health names the missing table',
      (await jsonOf(await call(env, '/health'))).missing_tables.includes('dropbox_auth'));
