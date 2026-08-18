@@ -8985,6 +8985,129 @@ section('Timestamp Photo: the copy is what the client gets, and the original is 
      await page.evaluate((id) => (PKG.items || []).some(i => i.evidence_id === id), shipped));
 }
 
+/* THE DEFECT THIS SECTION EXISTS FOR (owner, live): "Timestamp Photo is
+   deployed but not visible anywhere in the live portal."
+
+   PHOTO-TIMESTAMP.md D1 put the door on the photograph itself, reasoning that
+   unlike a clip the picture is already in the case. True, and not enough: with
+   nothing uploaded there was no entry point ANYWHERE, so the tool could not be
+   found by someone looking for it beside Timestamp Video. These assertions are
+   about REACHABILITY, and they are written so the same class of defect cannot
+   come back for either tool. */
+section('Timestamp Photo has a top-level door, beside Timestamp Video');
+{
+  await post('/ingest', {
+    case_no: 'API-20260812-4021', service: 'Surveillance',
+    client_name: 'No Pictures Yet', client_phone: '4345550143',
+    subject_name: 'Sam Watched', objective: 'A case with nothing uploaded.',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* BOTH UTILITIES, IN BOTH PLACES. Asserted as a pair rather than by name
+     alone: the rule is that these two are siblings, and a door that exists for
+     one and not the other is exactly what happened. */
+  const doors = await page.evaluate(() => ({
+    tools: [...document.querySelectorAll('.qtool')].map(b => b.dataset.act),
+    nav: [...document.querySelectorAll('.navfoot button')].map(b => b.dataset.act),
+    toolText: [...document.querySelectorAll('.qtool')].map(b => b.textContent.trim()),
+  }));
+  ok('the dashboard quick tools offer the video utility', doors.tools.includes('vstOpen'),
+     JSON.stringify(doors.tools));
+  ok('AND the photo utility, beside it', doors.tools.includes('pstLaunch'),
+     JSON.stringify(doors.tools));
+  ok('the navigation foot carries both as well',
+     doors.nav.includes('vstOpen') && doors.nav.includes('pstLaunch'), JSON.stringify(doors.nav));
+  ok('and the photo one says what it is', doors.toolText.some(t => /timestamp photo/i.test(t)),
+     JSON.stringify(doors.toolText));
+
+  /* IT ASKS, IT DOES NOT ADOPT. The nav copy carries an empty data-case on
+     purpose so the utility cannot pick up whichever case is open behind it. */
+  ok('the top-level door carries no case', await page.evaluate(() =>
+     document.querySelector('.qtool[data-act="pstLaunch"]').getAttribute('data-case') === ''));
+  await page.locator('.qtool[data-act="pstLaunch"]').click();
+  await page.waitForTimeout(800);
+  ok('opening it asks which case', has(await text(page, '#pstamp'), 'Which case is the photograph on'),
+     (await text(page, '#pstamp')).slice(0, 200));
+
+  /* A CASE WITH NOTHING IN IT SAYS SO, and says where to put one — an empty
+     grid with no words is the same dead end in a different costume. */
+  await page.locator('[data-act="pstPickCase"][data-case="API-20260812-4021"]').click();
+  await page.waitForTimeout(900);
+  const empty = await text(page, '#pstamp');
+  ok('a case with no photographs says so plainly',
+     has(empty, 'no photographs in it yet'), empty.slice(0, 300));
+  ok('and points at where one comes from', has(empty, 'Case media') && has(empty, 'Add picture'),
+     empty.slice(0, 400));
+  ok('offering no photograph to pick', await page.locator('.pst-pick').count() === 0);
+
+  /* THE REAL PATH. 4020 carries an original and its timestamped copy from the
+     package-rule section above. */
+  await page.locator('[data-act="pstBackToCase"]').click();
+  await page.waitForTimeout(700);
+  await page.locator('[data-act="pstPickCase"][data-case="API-20260812-4020"]').click();
+  await page.waitForTimeout(1100);
+  ok('a case with photographs lists them', await page.locator('.pst-pick').count() >= 1,
+     String(await page.locator('.pst-pick').count()));
+
+  /* A COPY IS NOT OFFERED — the Worker refuses a copy of a copy by name, and
+     the picker must not lead anyone to that refusal. */
+  const offered = await page.evaluate(() => ({
+    ids: [...document.querySelectorAll('.pst-pick')].map(b => Number(b.dataset.id)),
+    copies: (PST.copyIds || []),
+  }));
+  ok('and no timestamped copy is among them', offered.copies.length > 0
+     && !offered.ids.some(i => offered.copies.includes(i)), JSON.stringify(offered));
+
+  await page.locator('.pst-pick').first().click();
+  await page.waitForTimeout(1400);
+  ok('choosing one opens the timestamp screen',
+     has(await text(page, '#pstamp'), 'When was it taken'), (await text(page, '#pstamp')).slice(0, 200));
+  await page.locator('#pstamp [data-act="pstClose"]').first().click();
+  await page.waitForTimeout(400);
+
+  /* THE TAP TARGET, because this one is used one-handed in a car. */
+  const size = await page.evaluate(() => {
+    const b = document.querySelector('.qtool[data-act="pstLaunch"]');
+    const r = b.getBoundingClientRect();
+    return { h: Math.round(r.height), w: Math.round(r.width) };
+  });
+  ok('the door is a real tap target', size.h >= 40 && size.w >= 100, JSON.stringify(size));
+  await page.close();
+}
+
+/* AND THE FIELD VIEW, where the navigation rail is not on screen at all — so
+   the nav door does not help and the tool needs one of its own. */
+section('Timestamp Photo is reachable in the field, beside Timestamp video');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', (e) => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('dana');
+  await page.locator('#p').fill('FieldWork2026x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  await page.locator('[data-act="svEnter"]').click();
+  await page.waitForTimeout(800);
+  await page.locator('[data-act="svTab"][data-t="evidence"]').click();
+  await page.waitForTimeout(700);
+
+  const field = await page.evaluate(() =>
+    [...document.querySelectorAll('.sv-quad .sv-q')].map(b => b.dataset.act));
+  ok('the field media screen offers the video utility', field.includes('svVideo'),
+     JSON.stringify(field));
+  ok('AND the photo one, beside it', field.includes('pstLaunch'), JSON.stringify(field));
+  /* Here it DOES carry the case: the investigator is standing in it, and the
+     field view is a view OF that case rather than a utility that floats free. */
+  ok('and in the field it knows which case it is on', await page.evaluate(() =>
+     document.querySelector('.sv-quad [data-act="pstLaunch"]').getAttribute('data-case')) === 'API-20260812-4001');
+  await page.close();
+}
+
 section('The device answers for itself');
 {
   const page = await newPage();
