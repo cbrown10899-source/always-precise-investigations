@@ -386,6 +386,18 @@ Nothing further should be built until the device says whether
 declines, that is the owner's own STOP condition and no muxer would have helped.
 If it accepts, the CSP questions above are decided before anything is installed.
 
+## 🚦 DEPLOYMENT — 2026-08-18, master `ccd3ba5` (#171)
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` + `/portal/vendor/` | `ccd3ba5` | `ccd3ba5` | **DEPLOYED** — success at `ccd3ba50` |
+| Worker / API | `ccd3ba5` | `8a48d7d` | **DEPLOYED** — `worker.js` untouched since #166 |
+| D1 schema | `ccd3ba5` | applied | unchanged — no dispatch owed |
+
+**iOS LIVE VERIFIED — OPEN.** This container has no WebCodecs, so the pipeline
+has still never executed here. It closes when the owner's device selects
+`IMG_0440.mov`, generates, and **plays the result back**.
+
 ## 🐞 THE GATE ASKED THE WRONG QUESTION — fixed 2026-08-18
 
 **Also: the preview is optional, never a gate** (owner: *"Do not require
