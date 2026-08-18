@@ -3438,8 +3438,17 @@ async function caseWorkspace(env, user, caseNo) {
      GUARDED: `schema.sql` arrives by a manual portal-setup dispatch while the
      Worker deploys on push, so between the two this table does not exist on the
      live database and a query against it would take out the whole workspace. */
-  const videoStamps = (await missingTables(env)).includes('video_stamp')
+  const missingForStamps = await missingTables(env);
+  const videoStamps = missingForStamps.includes('video_stamp')
     ? [] : await videoStampsFor(env, caseNo);
+
+  /* Which photographs are originals and which are timestamped copies of them.
+     The pairing lives here rather than on `case_evidence`, which cannot gain a
+     column, and it rides with the workspace so the gallery can badge both
+     halves without a second round trip. Guarded for the same reason as the
+     line above: this table arrives by a manual portal-setup dispatch. */
+  const photoStamps = missingForStamps.includes('photo_stamp')
+    ? [] : await photoStampsFor(env, caseNo);
 
   // Follow-up tasks (priority 19): the office sees them all; an investigator
   // only the ones assigned to them.
@@ -3556,6 +3565,7 @@ async function caseWorkspace(env, user, caseNo) {
     comms: comms || [],
     evidence: evidence || [],
     video_stamps: videoStamps,
+    photo_stamps: photoStamps,
     tasks: tasks || [],
     offers: offers || [],
     my_offer: myOffer || null,
@@ -5366,6 +5376,162 @@ async function markVideoStampSaved(env, user, caseNo, id) {
 }
 
 
+/* ------------------------------------------------- photo timestamp records
+
+   THE PHOTOGRAPH'S ANSWER TO THE SAME BRIEF, and it differs from video's in
+   exactly one way, for exactly one reason. The owner's rules are unchanged —
+   the original is never modified, the derivative is separate, the two are
+   distinguishable, the burn is into the pixels — but video is device-first
+   because video bytes must never become Cloudflare storage, and photographs
+   have gone to the firm's own Dropbox since 2026-08-18. So the stamped
+   photograph is STORED, in the case's own Photos folder, as an ordinary
+   second `case_evidence` row.
+
+   Which means this route creates no new storage architecture at all: it is the
+   existing Dropbox upload plus a row saying which original the copy belongs to.
+   The reasoning, and what is DERIVED rather than asked for, is in
+   PHOTO-TIMESTAMP.md.
+
+   TWO REFUSALS ARE LOAD-BEARING:
+
+   1. The copy INHERITS the original's classification. Something held back as
+      internal only, needs redaction or do not use must not become deliverable
+      by the act of being timestamped — that would make this route a way around
+      the package gate, which is the one thing the gate exists to stop.
+   2. A timestamped copy cannot itself be stamped. Two burned faces on one
+      picture is a document that asserts two different things about the same
+      moment. */
+
+const PSTAMP_NOT_SET_UP = 'Photo timestamping is not set up on this database yet. '
+  + 'Run the portal-setup workflow once and try again.';
+
+/* Where the burned instant came from, and it is provenance rather than
+   decoration: 'exif' is the camera's own DateTimeOriginal, 'operator' is a
+   person who typed it. An evidence timestamp whose origin is unrecorded is one
+   nobody can defend later. */
+const PHOTO_STAMP_SOURCES = ['exif', 'operator'];
+
+async function photoStampsFor(env, caseNo) {
+  const { results } = await env.DB.prepare(
+    `SELECT p.id, p.case_no, p.original_id, p.stamped_id, p.taken_utc, p.tz, p.source,
+            p.generated_at, p.superseded_at, u.display_name AS generated_by_name
+       FROM photo_stamp p LEFT JOIN users u ON u.id = p.generated_by
+      WHERE p.case_no = ? ORDER BY p.id DESC`).bind(caseNo).all();
+  return results || [];
+}
+
+async function recordPhotoStamp(request, env, user, caseNo) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  if ((await missingTables(env)).includes('photo_stamp')) {
+    return json({ error: PSTAMP_NOT_SET_UP, code: 'not_set_up' }, 503);
+  }
+
+  let form;
+  try { form = await request.formData(); } catch { return json({ error: 'Send the file as multipart form data.' }, 400); }
+  const file = form.get('file');
+  if (!file || typeof file === 'string' || !file.size) return json({ error: 'Attach the timestamped copy.' }, 400);
+
+  /* THE ORIGINAL IS LOOKED UP, NEVER TRUSTED FROM THE BODY. It has to be this
+     case's, still present, and a picture — the pairing is meaningless
+     otherwise, and a mistyped id must fail loudly rather than attach a copy to
+     someone else's photograph. */
+  const originalId = parseInt(form.get('original_id'), 10);
+  if (!Number.isInteger(originalId)) return json({ error: 'Which photograph is this a copy of?' }, 400);
+  const original = await env.DB.prepare(
+    `SELECT id, filename, content_type, classification, entry_id, subject_id, deleted_at
+       FROM case_evidence WHERE id = ? AND case_no = ?`).bind(originalId, caseNo).first();
+  if (!original) return json({ error: 'That photograph is not on this case.' }, 400);
+  if (original.deleted_at) return json({ error: 'That photograph has been removed from the case.' }, 400);
+  if (!String(original.content_type || '').toLowerCase().startsWith('image/')) {
+    return json({ error: 'Only a photograph can be timestamped this way. Video stays on the device — '
+      + 'use Video timestamp for a clip.', code: 'not_a_photo' }, 400);
+  }
+
+  /* A COPY OF A COPY IS REFUSED BY NAME. Burning a second face onto an already
+     stamped picture produces a document making two claims about one moment. */
+  const isCopy = await env.DB.prepare(
+    'SELECT id FROM photo_stamp WHERE stamped_id = ?').bind(originalId).first();
+  if (isCopy) {
+    return json({ error: 'That is already a timestamped copy. Timestamp the original instead, '
+      + 'and this copy will be replaced.', code: 'already_a_copy' }, 400);
+  }
+
+  const takenMs = Date.parse(String(form.get('taken_utc') || ''));
+  if (!Number.isFinite(takenMs)) return json({ error: 'That date and time cannot be read.' }, 400);
+  const tz = String(form.get('tz') || 'America/New_York');
+  if (!validZone(tz)) return json({ error: 'That time zone is not one this browser knows.' }, 400);
+  const source = String(form.get('source') || '');
+  if (!PHOTO_STAMP_SOURCES.includes(source)) {
+    return json({ error: 'Say where the date and time came from — the camera or the operator.' }, 400);
+  }
+
+  const lim = storageLimits(env);
+  if (file.size > lim.maxFileBytes) {
+    return json({ error: `That copy is ${(file.size / 1048576).toFixed(1)} MB and the per-file limit is `
+      + `${Math.floor(lim.maxFileBytes / 1048576)} MB.` }, 413);
+  }
+
+  /* The same three Dropbox conditions the ordinary upload names, in the same
+     words, because it is the same store and a caller must not have to learn a
+     second vocabulary for the same outage. */
+  const problem = await dropboxStorageProblem(env);
+  if (problem === 'provider_not_configured') {
+    return json({ error: 'Dropbox is not set up on this Worker yet, and new case files are stored there. '
+      + EXTERNAL_PROVIDERS.dropbox.note, code: problem }, 503);
+  }
+  if (problem) {
+    return json({ error: 'No Dropbox account is connected, and new case files are stored there. '
+      + 'An admin can connect one from the portal, then try this again.', code: problem }, 503);
+  }
+  const dbxToken = await dropboxAccessToken(env);
+  if (!dbxToken) {
+    return json({ error: 'Dropbox could not be reached just now, so the copy was not stored. '
+      + 'Nothing was lost — try again in a moment.', code: 'dropbox_unreachable' }, 503);
+  }
+
+  const base = String(original.filename || 'photo').replace(/\.[A-Za-z0-9]{1,8}$/, '');
+  const filename = (base + '-timestamped.jpg').replace(/[^A-Za-z0-9._ -]/g, '_').slice(0, 120);
+  await dropboxEnsureCaseFolders(env, dbxToken, caseNo);
+  const meta = await dropboxUpload(env, dbxToken,
+    `/${caseNo}/Photos/${dropboxStoredName(filename)}`, await file.arrayBuffer());
+  /* NOTHING IS RECORDED UNTIL THE BYTES ARE SAFE — and nothing about the
+     original has been touched at any point above or below this line. */
+  if (!meta) {
+    return json({ error: 'Dropbox refused the upload, so the copy was not stored. '
+      + 'Nothing was lost — try again in a moment.', code: 'dropbox_unreachable' }, 503);
+  }
+
+  const now = nowIso();
+  const res = await env.DB.prepare(
+    `INSERT INTO case_evidence (case_no, r2_key, filename, content_type, size_bytes, classification,
+       entry_id, subject_id, note, uploaded_by, uploaded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(caseNo, DBX_KEY_PREFIX + meta.path_display, filename, 'image/jpeg', file.size,
+          /* inherited, never widened — see the second refusal above */
+          original.classification,
+          /* the copy sits where the original sits, so the timeline and the
+             subject card show the pair together rather than in two places */
+          original.entry_id, original.subject_id, null, user.id, now).run();
+  const stampedId = res.meta ? res.meta.last_row_id : null;
+
+  /* A CORRECTION SUPERSEDES. Matched on the original's id, so no caller can
+     supersede another photograph's stamp by naming it, and the earlier
+     derivative's own evidence row is left exactly where it is — removing it
+     would be a purge, and nothing here purges. */
+  await env.DB.prepare(
+    'UPDATE photo_stamp SET superseded_at = ? WHERE original_id = ? AND superseded_at IS NULL')
+    .bind(now, originalId).run();
+  await env.DB.prepare(
+    `INSERT INTO photo_stamp (case_no, original_id, stamped_id, taken_utc, tz, source,
+       generated_by, generated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(caseNo, originalId, stampedId, new Date(takenMs).toISOString(), tz, source, user.id, now).run();
+
+  return json({ ok: true, id: stampedId, photo_stamps: await photoStampsFor(env, caseNo),
+                usage: await evidenceUsage(env) }, 201);
+}
+
+
 /* ------------------------------------------------------------ case build */
 
 /* The client package (CASEBUILD.md priority 0): an approved report plus
@@ -6212,6 +6378,9 @@ const DEMO_SWEEP = [
   ['case_expenses',         'DELETE FROM case_expenses WHERE case_no LIKE ?'],
   ['case_days',             'DELETE FROM case_days WHERE case_no LIKE ?'],
 
+  /* --- photo_stamp points at case_evidence TWICE, so it goes first --- */
+  ['photo_stamp',           'DELETE FROM photo_stamp WHERE case_no LIKE ?'],
+
   /* --- everything else keyed by case_no --- */
   ['case_evidence',         'DELETE FROM case_evidence WHERE case_no LIKE ?'],
   ['case_builds',           'DELETE FROM case_builds WHERE case_no LIKE ?'],
@@ -6842,6 +7011,7 @@ const EXPECTED_TABLES = [
   'payment_methods', 'payment_send', 'retainer_receipt', 'case_archive', 'case_deleted', 'notify_recipient', 'case_phone',
   'retainer_payment', 'retainer_payment_void', 'retainer_payment_token',
   'video_stamp', 'dropbox_auth', 'activity_source', 'activity_voice_event',
+  'photo_stamp',
 ];
 
 async function missingTables(env) {
@@ -7645,6 +7815,11 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/video-stamp\/(\d{1,12})\/saved$/);
   if (m && method === 'POST') return markVideoStampSaved(env, user, m[1], parseInt(m[2], 10));
+
+  /* The case number is in the path, so the deleted/archived chokepoint above
+     refuses this before it is reached — nothing extra to remember here. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/photo-stamp$/);
+  if (m && method === 'POST') return recordPhotoStamp(request, env, user, m[1]);
 
   if (p === '/storage' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);

@@ -1220,3 +1220,45 @@ CREATE TABLE IF NOT EXISTS activity_voice_event (
   case_no  TEXT    NOT NULL,
   at       TEXT    NOT NULL
 );
+
+/* THE TIMESTAMPED PHOTOGRAPH — ORIGINAL AND DERIVATIVE, NAMED AS A PAIR.
+
+   The owner's video brief is explicit that "the system must distinguish
+   ORIGINAL EVIDENCE from TIMESTAMPED COPY", and that the original is never
+   modified. Both of those are properties of the PAIR, not of either row, so
+   the pair is what is recorded: two ordinary `case_evidence` rows, and this
+   table saying which is which and what instant was burned into the second.
+
+   A COMPANION TABLE FOR THE USUAL REASON — `case_evidence` cannot gain a
+   column, because schema.sql is re-applied on every portal-setup run and
+   ALTER TABLE ADD COLUMN is not idempotent. Same reasoning as
+   activity_removed, build_custom, case_archive and activity_source.
+
+   `stamped_id` is nullable so the record can exist for the moment between the
+   Dropbox upload and the evidence insert, and so a derivative that is later
+   deleted leaves the pairing legible rather than dangling.
+
+   `source` is PROVENANCE and it matters: 'exif' means the camera's own
+   DateTimeOriginal, 'operator' means a person typed it. An evidence
+   timestamp whose origin is unrecorded is an evidence timestamp nobody can
+   defend, and this column is the difference between the two.
+
+   A CORRECTION SUPERSEDES rather than overwrites — a new row, and the
+   previous one stamped `superseded_at`, matched on `original_id` so no caller
+   can supersede another photograph's stamp by naming it. The superseded
+   derivative's own evidence row is untouched: removing it would be a purge,
+   and nothing in this portal purges. */
+CREATE TABLE IF NOT EXISTS photo_stamp (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no       TEXT    NOT NULL,
+  original_id   INTEGER NOT NULL REFERENCES case_evidence(id),
+  stamped_id    INTEGER REFERENCES case_evidence(id),
+  taken_utc     TEXT    NOT NULL,   -- the instant burned into the pixels, UTC
+  tz            TEXT    NOT NULL DEFAULT 'America/New_York',
+  source        TEXT    NOT NULL CHECK (source IN ('exif','operator')),
+  generated_by  INTEGER REFERENCES users(id),
+  generated_at  TEXT    NOT NULL,
+  superseded_at TEXT                -- null = this is the active derivative
+);
+CREATE INDEX IF NOT EXISTS idx_pstamp_case ON photo_stamp(case_no, id DESC);
+CREATE INDEX IF NOT EXISTS idx_pstamp_orig ON photo_stamp(original_id, id DESC);

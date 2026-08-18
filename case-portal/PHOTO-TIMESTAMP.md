@@ -1,0 +1,118 @@
+# Timestamp Photo — what was asked for, and what was derived (INTERNAL)
+
+**Written before any code, 2026-08-18**, the way `VIDEO-TIMESTAMP.md` was, so
+that the reasoning is on disk instead of in a session that will end.
+
+## What the owner actually said
+
+All of it:
+
+> 2. Build Timestamp Photo
+
+That is the whole brief. It arrived as item 2 of the locked roadmap order
+recorded in `NEXT.md`, immediately after *"Finish current Active Surveillance
+mobile and voice polish"*.
+
+**Four words is not a specification, and this file exists so that nobody later
+mistakes what follows for one.** Everything below is either (a) taken from the
+owner's own video-timestamp brief, which is their words about the same problem
+one file over, or (b) marked **DERIVED** — a decision this build made, which the
+owner may overturn at no cost to anything already stored.
+
+## What comes straight from the owner (`VIDEO-TIMESTAMP.md`)
+
+The video brief is not a different subject. It is the owner describing what a
+timestamped piece of evidence has to be, and every sentence of it applies to a
+photograph without translation:
+
+| The owner's rule, for video | Applied to a photograph |
+| --- | --- |
+| *"The original video must never be modified."* | The original photograph is never modified — not recompressed, not overwritten, not re-keyed. |
+| *"Create a separate timestamped derivative."* | The stamp produces a **second** evidence row. |
+| *"The system must distinguish ORIGINAL EVIDENCE from TIMESTAMPED COPY."* | Both are badged, everywhere either appears. |
+| *"Use the existing evidence/storage architecture wherever possible; do not duplicate storage systems unnecessarily."* | The derivative is an ordinary `case_evidence` row in the case's Dropbox `Photos` folder. No new store, no second upload path. |
+| *"date/time visibly burned into the bottom-right corner"* | Same corner, same face, the same `vstDraw` — literally the same function. |
+| *"Do not hard-code fixed EST year-round"* | Same `vstLabel`; `Intl` resolves EST or EDT from the date itself. |
+| No paid external service; no faking the burn-in with CSS. | Same. The pixels are burned on a canvas in the operator's own browser. |
+
+**Where the video brief and a photograph genuinely differ, it is one thing:** a
+clip has a running clock and a photograph has a single instant. Everything the
+video feature does to advance a clock frame by frame has no counterpart here,
+and none of it is carried over.
+
+## DERIVED — the decisions this build made
+
+Each of these is a judgement call. They are listed so they can be overturned
+individually rather than argued about as a lump.
+
+**D1. The door is the photograph, not a top-level screen.** Timestamp Video is a
+top-level door because the portal never holds the clip — there is nothing to
+hang the action on. A photograph is already in the case, so the action lives on
+it: the gallery, and the field view's own photo list. Adding a second top-level
+door would mean uploading the original through a path that already exists.
+
+**D2. The derivative is stored, not saved to the device.** This is the one place
+the photo path deliberately diverges from the video path, and the reason is the
+storage decision that was already made: **video is device-first because video
+bytes must never become Cloudflare storage — photographs already go to Dropbox
+and have since 2026-08-18.** Sending a stamped photograph to the device instead
+of the case would be inventing a restriction the owner did not ask for, on the
+one file type that has somewhere to go. Nothing here touches R2, so the free-plan
+failsafe is not in play, exactly as it is not for any other photograph.
+
+**D3. The instant is the operator's, seeded from the camera where the camera
+said so.** A photograph's EXIF `DateTimeOriginal` is the camera's own record of
+when the shutter fired, and it is the right seed. But EXIF is frequently absent
+(stripped by a share sheet, a screenshot, a scan) and it carries **no time zone**
+unless `OffsetTimeOriginal` is also present. So:
+
+- read it when it is there, and **say on screen that it came from the camera**;
+- when it is not there, the fields start **empty** and the operator fills them —
+  never `file.lastModified`, which on a Photos export is when the export was
+  written, and never today's date, which would be a plausible-looking lie;
+- either way the operator confirms before anything is burned, and what was
+  burned records **which of the two it was**.
+
+`file.lastModified` is rejected here for the reason already measured and written
+down in `VIDEO-TIMESTAMP.md`. It is not a second opinion about when the picture
+was taken; it is a fact about a file system.
+
+**D4. Nothing is reclassified automatically.** The derivative is created with the
+same default every field upload gets (`client_deliverable`, owner, 2026-08-14).
+The original is left exactly as it was. This means a client package will carry
+**both** unless someone decides otherwise — which is a decision about what the
+client sees, and this project does not let the system make those quietly. The
+screen says so in one sentence; holding the original back is one deliberate
+reclassification, visible and reversible, through the control that already
+exists.
+
+**D5. A correction supersedes, it does not overwrite.** Re-stamping the same
+original inserts a new record and marks the previous one superseded, matched on
+the **original's id** — an id, not a filename, so no caller can supersede
+another photograph's stamp by naming it. This is the project's existing audit
+shape (`send_log`, `build_events`, `invoice_events`, `video_stamp`), and the
+superseded derivative's own evidence row is left alone: removing it would be a
+purge, and nothing in this portal purges.
+
+## What is NOT built, and is not an oversight
+
+- **No change to what a client package ships.** Still not authorised (the same
+  line in `VIDEO-TIMESTAMP.md` still stands). The derivative is ordinary
+  evidence and is treated as ordinary evidence.
+- **No EXIF writing.** The burn is into the pixels because that is what was
+  asked for. Writing a corrected EXIF field into the original would be modifying
+  the original, which is the one thing the brief forbids outright.
+- **No batch stamping.** One photograph, one deliberate act, one confirmation of
+  the instant. A batch would mean applying one operator-typed time to pictures
+  taken at different moments.
+- **No stamping of documents or PDFs.** The action is offered on images the
+  browser can actually decode, and on nothing else.
+
+## Open for the owner
+
+1. **D4** — should stamping a photograph automatically hold the original back
+   from the client package? Doing it silently is refused above; doing it as an
+   offer on the generate screen is a small change if that is what is wanted.
+2. Whether the burned face should carry anything besides the date, time and zone
+   — a case number and an investigator's initials are both plausible and both
+   would be **DERIVED**, so neither is there.
