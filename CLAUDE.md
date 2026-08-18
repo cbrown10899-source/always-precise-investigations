@@ -1168,6 +1168,75 @@ saying "upload video" would promise what the Worker refuses; the section carries
 the owner's word and no individual control states an untruth. The four field
 actions stay **Activity / Photo / Video / Note**, asserted by name and count.
 
+## A photograph is timestamped into the case, not onto the device
+
+**The owner's brief for this is four words** — *"Build Timestamp Photo"*, item 2
+of the locked roadmap order. `case-portal/PHOTO-TIMESTAMP.md` is the durable
+record of what was taken from **their own video brief** (the original is never
+modified, the derivative is separate, the two are distinguishable, the burn is
+into the pixels, the zone is resolved from the date) and what this build
+**DERIVED**. Read it before changing any of this; each derived decision is
+listed separately so it can be overturned on its own.
+
+**It diverges from the video feature in exactly one way, and the reason is the
+storage decision, not a difference of principle.** Video is device-first because
+video bytes must never become Cloudflare storage; photographs have gone to the
+firm's own Dropbox since 2026-08-18. So the stamped photograph is **stored**, as
+an ordinary second `case_evidence` row in the case's own `Photos` folder.
+`POST /cases/:no/photo-stamp` adds no storage architecture at all — it is the
+existing Dropbox upload plus a row saying which original the copy belongs to.
+
+**The burn is `vstDraw` and the wording is `vstLabel`** — the same functions the
+video renderer uses, not copies of them. Two renderings of one stamp drift, and
+the one that drifts is the one nobody is looking at.
+
+**`photo_stamp` is a companion table** for the reason every other one here is:
+`case_evidence` cannot gain a column while `schema.sql` is re-applied on every
+portal-setup run. Guarded on every read, named in `EXPECTED_TABLES`, and swept
+**before** `case_evidence` because it points at it twice.
+
+Two refusals are load-bearing:
+
+- **The copy inherits the original's classification.** Something held back as
+  internal only, needs redaction or do not use must not become deliverable by
+  the act of being timestamped — that would make this route a way around the
+  package gate, which is the one thing the gate exists to stop. A caller asking
+  for a wider classification changes nothing, because the field is never read.
+- **A timestamped copy cannot itself be stamped.** Two burned faces on one
+  picture is a document making two claims about the same moment.
+
+**Nothing is guessed about when the picture was taken.** EXIF
+`DateTimeOriginal` seeds the fields when the file carries it, and the screen
+says the camera is where it came from; `OffsetTimeOriginal` makes the instant
+exact, and without it the reading is interpreted as Eastern **and says so**.
+With no EXIF the fields are **empty** and the screen says nothing has been
+filled in. `file.lastModified` is not a second opinion about when a picture was
+taken — on a Photos export it is when the export was written — and today's date
+is the one value guaranteed to be wrong. Neither is used, and a test asserts the
+current year never appears as a seed. What was burned records **which** it was:
+`photo_stamp.source` is `exif` or `operator`, and touching any field is what
+turns one into the other.
+
+**A correction supersedes rather than overwrites**, matched on the original's
+id so no caller can supersede another photograph's stamp by naming it. The
+earlier derivative keeps its evidence row and its file: removing it would be a
+purge, and nothing in this portal purges.
+
+**Nothing is reclassified automatically**, so a client package carries both the
+original and the copy unless someone decides otherwise — a decision about what
+the client sees, which this project does not let the system make quietly. The
+screen says so; holding the original back is one deliberate, reversible
+reclassification through the control that already exists. Whether stamping
+*should* hold the original back is open for the owner in `PHOTO-TIMESTAMP.md`.
+
+**The door is the photograph** (derived): the action is on the gallery card and
+on the field view's own media card, both roles, because `caseFor` is the
+boundary that matters and the investigator who took the picture is the one
+standing in the field with it. There is no top-level door, unlike Timestamp
+Video — video needs one because the portal never holds the clip.
+
+**Adding this table means a manual `portal-setup.yml` dispatch after merge.**
+
 ## Active Surveillance Mode
 
 `SV` in `portal/index.html` is the field view: a dark, one-handed, full-screen

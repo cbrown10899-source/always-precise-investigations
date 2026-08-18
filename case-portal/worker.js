@@ -5459,7 +5459,7 @@ async function recordPhotoStamp(request, env, user, caseNo) {
   const takenMs = Date.parse(String(form.get('taken_utc') || ''));
   if (!Number.isFinite(takenMs)) return json({ error: 'That date and time cannot be read.' }, 400);
   const tz = String(form.get('tz') || 'America/New_York');
-  if (!validZone(tz)) return json({ error: 'That time zone is not one this browser knows.' }, 400);
+  if (!validZone(tz)) return json({ error: 'That time zone is not one this system knows.' }, 400);
   const source = String(form.get('source') || '');
   if (!PHOTO_STAMP_SOURCES.includes(source)) {
     return json({ error: 'Say where the date and time came from — the camera or the operator.' }, 400);

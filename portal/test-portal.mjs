@@ -8546,6 +8546,312 @@ section('Video timestamp: a non-video file is refused, but a bare .mov is not');
   ok('the file picker still asks for video up front', /inp\.accept\s*=\s*"video\/\*"/.test(src));
 }
 
+/* ====================================================== Timestamp Photo
+
+   The owner's brief is four words; PHOTO-TIMESTAMP.md records what was taken
+   from their own video brief and what this build derived. These are the
+   claims that file makes, checked through the real page against the real
+   Worker.
+
+   The fixture is a JPEG THE BROWSER ITSELF WROTE, with an EXIF APP1 segment
+   spliced in after the SOI marker. Made rather than pasted, so a picture the
+   test says is decodable is one this browser has already proven it can
+   decode — the same reasoning as the video capability proof. */
+function exifJpeg(jpegBytes, when) {
+  // TIFF, little-endian: IFD0 holds one pointer to the Exif IFD, which holds
+  // one ASCII DateTimeOriginal. No OffsetTimeOriginal, which is the ordinary
+  // case a phone actually produces.
+  const tiff = Buffer.alloc(64);
+  tiff.write('II', 0, 'ascii');
+  tiff.writeUInt16LE(0x002A, 2);
+  tiff.writeUInt32LE(8, 4);                 // IFD0 at +8
+  tiff.writeUInt16LE(1, 8);                 // one entry
+  tiff.writeUInt16LE(0x8769, 10);           // ExifIFDPointer
+  tiff.writeUInt16LE(4, 12);                // LONG
+  tiff.writeUInt32LE(1, 14);
+  tiff.writeUInt32LE(26, 18);               // Exif IFD at +26
+  tiff.writeUInt32LE(0, 22);                // no IFD1
+  tiff.writeUInt16LE(1, 26);                // one entry
+  tiff.writeUInt16LE(0x9003, 28);           // DateTimeOriginal
+  tiff.writeUInt16LE(2, 30);                // ASCII
+  tiff.writeUInt32LE(20, 32);
+  tiff.writeUInt32LE(44, 36);               // the string, at +44
+  tiff.writeUInt32LE(0, 40);
+  tiff.write(when + '\0', 44, 'ascii');     // "2026:08:17 17:14:32"
+
+  const payload = Buffer.concat([Buffer.from('Exif\0\0', 'binary'), tiff]);
+  const head = Buffer.alloc(4);
+  head.writeUInt16BE(0xFFE1, 0);
+  head.writeUInt16BE(payload.length + 2, 2);
+  // Straight after SOI, which is where an APP1 belongs.
+  return Buffer.concat([jpegBytes.subarray(0, 2), head, payload, jpegBytes.subarray(2)]);
+}
+
+section('Timestamp Photo: the stamp is in the pixels, and the original is not touched');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Case media');
+
+  /* A REAL PICTURE, written by this browser. 800x600 so the burned face is a
+     legible 30px, which is what `vstDraw` scales it to. */
+  // Counted rather than assumed: earlier sections share these cases.
+  const before1 = await page.evaluate(() => ({
+    stamps: ((WS && WS.photo_stamps) || []).length,
+    photos: ((WS && WS.evidence) || []).filter(e => !e.deleted_at
+      && String(e.content_type || '').startsWith('image/')).length,
+  }));
+  const b64 = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 800; c.height = 600;
+    const cx = c.getContext('2d');
+    cx.fillStyle = '#3f6ea8';
+    cx.fillRect(0, 0, 800, 600);
+    return c.toDataURL('image/jpeg', 0.92).split(',')[1];
+  });
+  const withExif = exifJpeg(Buffer.from(b64, 'base64'), '2026:08:17 17:14:32');
+
+  await page.locator('#ev_file').setInputFiles({
+    name: 'IMG_4407.jpg', mimeType: 'image/jpeg', buffer: withExif });
+  await page.locator('.btn', { hasText: 'Upload picture or document' }).click();
+  await page.waitForTimeout(900);
+  ok('the photograph is in the case', has(await text(page, '#dlgBody'), 'IMG_4407.jpg'));
+
+  /* THE DOOR IS THE PHOTOGRAPH (PHOTO-TIMESTAMP.md D1), not a top-level
+     screen: there is already something in the case to hang it on. */
+  const opener = page.locator('[data-act="pstOpen"]').first();
+  ok('the photograph offers to be timestamped', await opener.count() === 1);
+  await opener.click();
+  await page.waitForTimeout(900);
+
+  /* SEEDED FROM THE CAMERA, and the screen says that is where it came from. */
+  const when = await text(page, '#pstamp');
+  ok('the screen opens on the question', has(when, 'When was it taken'), when.slice(0, 160));
+  ok('the fields are filled from the camera, not from the clock',
+     await page.locator('#pst_mo').inputValue() === '08'
+     && await page.locator('#pst_da').inputValue() === '17'
+     && await page.locator('#pst_yr').inputValue() === '2026'
+     && await page.locator('#pst_hr').inputValue() === '05'
+     && await page.locator('#pst_mi').inputValue() === '14'
+     && await page.locator('#pst_se').inputValue() === '32'
+     && await page.locator('#pst_ap').inputValue() === 'PM',
+     await page.locator('#pst_yr').inputValue());
+  ok('and it says the camera is where they came from', has(when, 'From the camera'), when.slice(0, 300));
+  /* THE ZONE IS RESOLVED FROM THE DATE — August in Virginia is EDT, and a
+     hard-coded EST would make this an hour wrong. */
+  ok('the preview reads the date, the time and the zone that date is in',
+     has(when, '08/17/2026 05:14:32 PM EDT'), when);
+
+  await page.locator('[data-act="pstBurn"]').click();
+  await page.waitForTimeout(1200);
+  ok('the copy is offered for checking before it is filed',
+     has(await text(page, '#pstamp'), 'Check the copy'));
+  ok('and the copy is shown', await page.locator('.pst-prev').count() === 1);
+
+  await page.locator('[data-act="pstSave"]').click();
+  await page.waitForTimeout(2000);
+  ok('it is filed', has(await text(page, '#pstamp'), 'Filed'), await text(page, '#pstamp'));
+  await page.locator('#pstamp [data-act="pstClose"]').first().click();
+  await page.waitForTimeout(700);
+
+  /* THE PAIR, in the case. Both rows, both badged. */
+  const pair = await page.evaluate(() => {
+    const p = (WS.photo_stamps || [])[0] || {};
+    const ev = WS.evidence || [];
+    return { stamps: (WS.photo_stamps || []).length, evidence: ev.length,
+             originalName: (ev.find(e => e.id === p.original_id) || {}).filename,
+             copyName: (ev.find(e => e.id === p.stamped_id) || {}).filename,
+             source: p.source, taken: p.taken_utc, tz: p.tz };
+  });
+  ok('one pairing is recorded', pair.stamps === before1.stamps + 1,
+     JSON.stringify({ ...pair, before: before1.stamps }));
+  ok('the original is still in the case under its own name',
+     pair.originalName === 'IMG_4407.jpg', String(pair.originalName));
+  ok('and the copy is a second file, named for what it is',
+     pair.copyName === 'IMG_4407-timestamped.jpg', String(pair.copyName));
+  ok('the provenance kept is the camera, because nothing was retyped',
+     pair.source === 'exif', pair.source);
+  ok('and the instant is the one the camera recorded, read as Eastern',
+     pair.taken === '2026-08-17T21:14:32.000Z', pair.taken);
+
+  /* Read off the CARDS, not off the panel text — "original" also appears in
+     the upload label above, and an assertion that passes on that is asserting
+     nothing. */
+  const badges = await page.evaluate(() => {
+    const p = (WS.photo_stamps || [])[0];
+    const tagsOf = (id) => {
+      const btn = document.querySelector(`.evcard [data-act="pstOpen"][data-id="${id}"]`);
+      const card = btn ? btn.closest('.evcard')
+        : [...document.querySelectorAll('.evcard')].find(c =>
+            (c.querySelector('[data-act="evClass"]') || {}).dataset?.id === String(id));
+      return card ? [...card.querySelectorAll('.tag')].map(t => t.textContent.trim().toLowerCase()) : null;
+    };
+    return { original: tagsOf(p.original_id), copy: tagsOf(p.stamped_id) };
+  });
+  ok('the original card is badged as the original',
+     (badges.original || []).includes('original'), JSON.stringify(badges.original));
+  ok('and the copy card is badged as the timestamped copy',
+     (badges.copy || []).includes('timestamped copy'), JSON.stringify(badges.copy));
+
+  /* THE BURN IS IN THE PIXELS — the whole point, and the one thing a screen
+     full of confident wording cannot stand in for. The source is a flat
+     colour, so any bright pixel in the bottom-right corner is the stamp, and
+     the top-left must still be exactly the colour it was. */
+  const pixels = await page.evaluate(async () => {
+    const p = (WS.photo_stamps || [])[0];
+    const read = async (id) => {
+      const r = await fetch(`/portal-api/cases/${WS_CASE}/evidence/${id}/file`,
+        { credentials: 'same-origin' });
+      const url = URL.createObjectURL(await r.blob());
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      const cx = c.getContext('2d');
+      cx.drawImage(img, 0, 0);
+      const bright = (x, y, w, h) => {
+        const d = cx.getImageData(x, y, w, h).data;
+        let n = 0;
+        for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] > 200 && d[i + 2] > 200) n++;
+        return n;
+      };
+      URL.revokeObjectURL(url);
+      return { w: c.width, h: c.height,
+               corner: bright(c.width - 380, c.height - 70, 370, 60),
+               topLeft: bright(0, 0, 300, 120) };
+    };
+    return { original: await read(p.original_id), copy: await read(p.stamped_id) };
+  });
+  ok('the copy is the same size as the original — nothing was cropped or scaled',
+     pixels.copy.w === pixels.original.w && pixels.copy.h === pixels.original.h,
+     JSON.stringify(pixels));
+  ok('THE STAMP IS REALLY BURNED INTO THE BOTTOM-RIGHT CORNER',
+     pixels.copy.corner > 200, JSON.stringify(pixels.copy));
+  ok('and nothing was drawn anywhere else', pixels.copy.topLeft === 0, String(pixels.copy.topLeft));
+  ok('while the ORIGINAL has no stamp in that corner at all',
+     pixels.original.corner === 0, String(pixels.original.corner));
+
+  /* A COPY OF A COPY IS NOT EVEN OFFERED — the Worker refuses it by name, and
+     a control leading to a refusal is a control that should not be drawn. */
+  const offers = await page.evaluate(() => {
+    const p = (WS.photo_stamps || [])[0];
+    const ids = [...document.querySelectorAll('[data-act="pstOpen"]')].map(b => Number(b.dataset.id));
+    return { ids, original: p.original_id, copy: p.stamped_id };
+  });
+  ok('the copy is not offered for stamping', !offers.ids.includes(offers.copy), JSON.stringify(offers));
+  ok('and the original is, so a wrong time can be corrected',
+     offers.ids.includes(offers.original), JSON.stringify(offers));
+}
+
+section('Timestamp Photo: nothing is guessed, and a correction is the operator’s');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4003').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Case media');
+
+  /* NO EXIF AT ALL — a screenshot, a scan, a file a share sheet stripped. */
+  const before2 = await page.evaluate(() => ({
+    stamps: ((WS && WS.photo_stamps) || []).length,
+    photos: ((WS && WS.evidence) || []).filter(e => !e.deleted_at
+      && String(e.content_type || '').startsWith('image/')).length,
+  }));
+  const b64 = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 400; c.height = 300;
+    const cx = c.getContext('2d');
+    cx.fillStyle = '#22333f';
+    cx.fillRect(0, 0, 400, 300);
+    return c.toDataURL('image/jpeg', 0.9).split(',')[1];
+  });
+  await page.locator('#ev_file').setInputFiles({
+    name: 'scan.jpg', mimeType: 'image/jpeg', buffer: Buffer.from(b64, 'base64') });
+  await page.locator('.btn', { hasText: 'Upload picture or document' }).click();
+  await page.waitForTimeout(900);
+  await page.locator('[data-act="pstOpen"]').first().click();
+  await page.waitForTimeout(900);
+
+  const blank = await text(page, '#pstamp');
+  ok('a file with no camera timestamp fills in NOTHING',
+     await page.locator('#pst_mo').inputValue() === ''
+     && await page.locator('#pst_yr').inputValue() === '',
+     await page.locator('#pst_yr').inputValue());
+  ok('and says so rather than inventing one', has(blank, 'nothing has been filled in'), blank.slice(0, 400));
+  ok('the burn is not offered a time it does not have',
+     has(blank, 'Fill in the date and time'), blank.slice(0, 500));
+
+  /* THE FILE'S MODIFIED DATE IS NOT A SECOND OPINION about when the picture
+     was taken, and neither is today. Neither may appear as a seed. */
+  const thisYear = String(new Date().getFullYear());
+  ok('the current date is not quietly used as the anchor',
+     await page.locator('#pst_yr').inputValue() !== thisYear);
+
+  await page.locator('#pst_mo').fill('08');
+  await page.locator('#pst_da').fill('17');
+  await page.locator('#pst_yr').fill('2026');
+  await page.locator('#pst_hr').fill('11');
+  await page.locator('#pst_mi').fill('05');
+  await page.locator('#pst_se').fill('00');
+  await page.locator('#pst_ap').selectOption('AM');
+  await page.locator('[data-act="pstBurn"]').click();
+  await page.waitForTimeout(1200);
+  ok('what the operator typed is what is drawn',
+     has(await text(page, '#pstamp'), '08/17/2026 11:05:00 AM EDT'), await text(page, '#pstamp'));
+  ok('and the screen says the operator is where it came from',
+     has(await text(page, '#pstamp'), 'entered by the operator'));
+
+  await page.locator('[data-act="pstSave"]').click();
+  await page.waitForTimeout(2000);
+  await page.locator('#pstamp [data-act="pstClose"]').first().click();
+  await page.waitForTimeout(700);
+  ok('and that is the provenance recorded',
+     await page.evaluate(() => (WS.photo_stamps || [])[0].source) === 'operator');
+
+  /* A CORRECTION SUPERSEDES. The earlier copy keeps its row — nothing in this
+     portal purges — and exactly one copy is live. */
+  const originalId = await page.evaluate(() => (WS.photo_stamps || [])[0].original_id);
+  await page.locator(`[data-act="pstOpen"][data-id="${originalId}"]`).click();
+  await page.waitForTimeout(900);
+  /* Every part again: this file carries no EXIF, so the form opens empty on
+     purpose and a correction is typed in full, exactly as it was the first
+     time. */
+  await page.locator('#pst_mo').fill('08');
+  await page.locator('#pst_da').fill('17');
+  await page.locator('#pst_yr').fill('2026');
+  await page.locator('#pst_hr').fill('12');
+  await page.locator('#pst_mi').fill('05');
+  await page.locator('#pst_se').fill('00');
+  await page.locator('#pst_ap').selectOption('PM');
+  await page.locator('[data-act="pstBurn"]').click();
+  await page.waitForTimeout(1200);
+  await page.locator('[data-act="pstSave"]').click();
+  await page.waitForTimeout(2000);
+  await page.locator('#pstamp [data-act="pstClose"]').first().click();
+  await page.waitForTimeout(700);
+
+  const after = await page.evaluate((oid) => ({
+    stamps: (WS.photo_stamps || []).length,
+    live: (WS.photo_stamps || []).filter(x => x.original_id === oid && !x.superseded_at).length,
+    mine: (WS.photo_stamps || []).filter(x => x.original_id === oid).length,
+    photos: (WS.evidence || []).filter(e => !e.deleted_at
+      && String(e.content_type || '').startsWith('image/')).length,
+  }), originalId);
+  ok('a correction records a second stamp rather than editing the first',
+     after.mine === 2 && after.stamps === before2.stamps + 2,
+     JSON.stringify({ ...after, before: before2 }));
+  ok('and exactly one of them is live for this photograph', after.live === 1,
+     JSON.stringify(after));
+  /* The original, the first copy and the correction: three pictures, because
+     the superseded one keeps its place. Nothing in this portal purges. */
+  ok('the superseded copy keeps its place in the case — nothing here purges',
+     after.photos === before2.photos + 3, JSON.stringify({ ...after, before: before2 }));
+  ok('and the gallery says which one is superseded',
+     has(await text(page, '#dlgBody'), 'superseded'));
+}
+
 section('The device answers for itself');
 {
   const page = await newPage();

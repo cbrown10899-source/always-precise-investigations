@@ -635,7 +635,12 @@
     max-width:34ch;}
   .evview-other a{color:#8fc6dc;}
   /* The page behind must not scroll while the viewer is up. */
-  body.evopen, body.vstopen{overflow:hidden;}
+  body.evopen, body.vstopen, body.pstopen{overflow:hidden;}
+  /* The copy, checked before it is filed. Bounded by height as well as width so
+     a tall picture does not push the buttons off a phone screen. */
+  .pst-prev{display:block;width:100%;max-height:46vh;object-fit:contain;
+    border-radius:9px;background:#0b1626;border:1px solid #23405f;}
+  .pst-mini{padding:0;font-size:.76rem;}
 
   /* ------------------------------------------- video timestamp generator
 
@@ -1094,6 +1099,10 @@
      runs as long as the clip does, and nothing underneath may be rebuilt while
      it is going. -->
 <div id="vstamp"></div>
+<!-- Timestamp Photo, its own root beside the video one: the copy is drawn from
+     an image held in this screen's state, and a repaint underneath must not be
+     able to pull it out from under a burn in progress. -->
+<div id="pstamp"></div>
 
 
 <script>
@@ -5708,6 +5717,443 @@ function vstProgress(){
   pc.textContent = (VST ? VST.pct : 0) + "%";
 }
 
+/* ============================================================ Timestamp Photo
+
+   The owner's brief for this is four words. What is taken from their own video
+   brief, and what this build DERIVED, is written down in PHOTO-TIMESTAMP.md.
+
+   The burn itself is `vstDraw` and the wording is `vstLabel` — the same
+   functions the video renderer uses, not copies of them. Two renderings of one
+   stamp would drift, and the one that drifted would be the one nobody was
+   looking at.
+
+   A photograph has ONE instant, so none of the video renderer's per-frame clock
+   comes across. What does come across is the rule about where that instant is
+   allowed to come from: the camera said so, or a person typed it, and the
+   record says which. Nothing here invents a time. */
+
+let PST = null;
+
+/* Read the shutter time out of the file's own EXIF, and return NULL rather than
+   a guess when it cannot be read — the same rule `vstBoxCodec` follows. What is
+   NOT read, deliberately: `file.lastModified` (when the file was written, which
+   on a Photos export is the export), tag 0x0132 DateTime (when the file was
+   last changed) and today's date. A plausible-looking wrong timestamp on a
+   piece of evidence is worse than an empty field that asks. */
+function pstExifWhen(buf){
+  let b;
+  try{ b = new DataView(buf); }catch{ return null; }
+  if(b.byteLength < 12 || b.getUint16(0) !== 0xFFD8) return null;   // JPEG only
+
+  // Walk the segment markers to APP1/Exif. Bounded: a malformed file must not
+  // spin, and the picture is still perfectly usable without a seed.
+  let off = 2, app1 = -1;
+  for(let guard = 0; guard < 64 && off + 4 <= b.byteLength; guard++){
+    if(b.getUint8(off) !== 0xFF) return null;
+    const marker = b.getUint8(off + 1);
+    if(marker === 0xD8 || (marker >= 0xD0 && marker <= 0xD9)){ off += 2; continue; }
+    if(marker === 0xDA) return null;                 // image data; no Exif here
+    const len = b.getUint16(off + 2);
+    if(len < 2) return null;
+    if(marker === 0xE1 && off + 10 <= b.byteLength
+       && b.getUint32(off + 4) === 0x45786966 && b.getUint16(off + 8) === 0){
+      app1 = off + 10;
+      break;
+    }
+    off += 2 + len;
+  }
+  if(app1 < 0 || app1 + 8 > b.byteLength) return null;
+
+  const tiff = app1;
+  const order = b.getUint16(tiff);
+  if(order !== 0x4949 && order !== 0x4D4D) return null;
+  const le = order === 0x4949;
+  const u16 = o => b.getUint16(o, le), u32 = o => b.getUint32(o, le);
+  if(u16(tiff + 2) !== 0x002A) return null;
+
+  const ascii = (o, n) => {
+    let out = "";
+    for(let i = 0; i < n && o + i < b.byteLength; i++){
+      const c = b.getUint8(o + i);
+      if(!c) break;
+      out += String.fromCharCode(c);
+    }
+    return out;
+  };
+  const field = (base, want) => {
+    if(base + 2 > b.byteLength) return null;
+    const n = u16(base);
+    if(n > 512) return null;
+    for(let i = 0; i < n; i++){
+      const e = base + 2 + i * 12;
+      if(e + 12 > b.byteLength) return null;
+      if(u16(e) !== want) continue;
+      const type = u16(e + 2), count = u32(e + 4);
+      if(type === 4) return u32(e + 8);                              // LONG
+      if(type === 2) return ascii(count <= 4 ? e + 8 : tiff + u32(e + 8), Math.min(count, 32));
+      return null;
+    }
+    return null;
+  };
+
+  let ptr;
+  try{ ptr = field(tiff + u32(tiff + 4), 0x8769); }catch{ return null; }
+  if(typeof ptr !== "number") return null;
+  let text, zone;
+  try{
+    text = field(tiff + ptr, 0x9003);                  // DateTimeOriginal
+    zone = field(tiff + ptr, 0x9011);                  // OffsetTimeOriginal
+  }catch{ return null; }
+  if(typeof text !== "string") return null;
+  const m = text.match(/^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if(!m) return null;
+  const [, yr, mo, da, hr, mi, se] = m.map(Number);
+  if(mo < 1 || mo > 12 || da < 1 || da > 31 || hr > 23 || mi > 59 || se > 59) return null;
+
+  /* THE ZONE IS A SEPARATE FACT. Without OffsetTimeOriginal an EXIF timestamp
+     is a wall-clock reading with no zone attached, so it is read in the zone
+     the operator is working in and the screen says that is what happened. With
+     the offset the instant is exact and nothing is assumed. */
+  const z = typeof zone === "string" ? zone.match(/^([+-])(\d{2}):(\d{2})$/) : null;
+  if(z){
+    const sign = z[1] === "-" ? -1 : 1;
+    return {ms: Date.UTC(yr, mo - 1, da, hr, mi, se) - sign * (+z[2] * 60 + +z[3]) * 60000,
+            zoned: true};
+  }
+  return {wall: {yr, mo, da, hr, mi, se}, zoned: false};
+}
+
+/* The operator's entry, validated — `vstStart` reads VST, so this is its
+   sibling rather than a caller of it. Same bounds, same refusals. */
+function pstWhen(){
+  const v = PST;
+  if(!v) return {ok: false, why: ""};
+  const n = k => /^\d{1,4}$/.test(String(v[k]).trim()) ? parseInt(v[k], 10) : NaN;
+  const mo = n("mo"), da = n("da"), yr = n("yr"), hr = n("hr"), mi = n("mi"), se = n("se");
+  if([mo, da, yr, hr, mi, se].some(x => !Number.isFinite(x))) return {ok: false, why: "Fill in every part of the date and time."};
+  if(mo < 1 || mo > 12) return {ok: false, why: "The month is 1 to 12."};
+  if(da < 1 || da > 31) return {ok: false, why: "The day is 1 to 31."};
+  if(yr < 2000 || yr > 2100) return {ok: false, why: "That year does not look right."};
+  if(hr < 1 || hr > 12) return {ok: false, why: "The hour is 1 to 12 — AM or PM is beside it."};
+  if(mi > 59 || se > 59) return {ok: false, why: "Minutes and seconds are 0 to 59."};
+  const h24 = (hr % 12) + (v.ap === "PM" ? 12 : 0);
+  const ms = vstToUtc(yr, mo, da, h24, mi, se, v.tz);
+  if(!Number.isFinite(ms)) return {ok: false, why: "That date and time cannot be read."};
+  return {ok: true, ms};
+}
+
+/* Collect before any repaint — EDIT_DRAFT's reason exactly: the inputs are
+   rebuilt from PST on every paint, so an edit that has not been read back
+   reverts silently while the save reports success. Touching a field is also
+   what turns the provenance from the camera's to the operator's. */
+function pstCollect(){
+  if(!PST) return;
+  let moved = false;
+  for(const k of ["mo", "da", "yr", "hr", "mi", "se"]){
+    const el = $("pst_" + k);
+    if(el){ if(String(el.value) !== String(PST[k])) moved = true; PST[k] = el.value; }
+  }
+  const ap = $("pst_ap");
+  if(ap){ if(ap.value !== PST.ap) moved = true; PST.ap = ap.value; }
+  if(moved) PST.source = "operator";
+}
+
+function pstFill(ms){
+  const p = vstParts(ms);
+  PST.mo = p.month || ""; PST.da = p.day || ""; PST.yr = p.year || "";
+  PST.hr = p.hour || ""; PST.mi = p.minute || ""; PST.se = p.second || "";
+  PST.ap = p.dayPeriod === "AM" ? "AM" : "PM";
+}
+
+async function pstOpen(evId, caseNo){
+  const id = parseInt(evId, 10);
+  const row = ((WS && WS.evidence) || []).find(e => e.id === id);
+  PST = {step: "loading", caseNo: caseNo || WS_CASE || "", evId: id,
+         name: row ? row.filename : "", tz: VST_TZ, source: "operator",
+         mo: "", da: "", yr: "", hr: "", mi: "", se: "", ap: "PM",
+         url: "", out: null, err: "", note: "", busy: false};
+  paintPStamp();
+
+  let buf;
+  try{
+    const res = await fetch(`/portal-api/cases/${encodeURIComponent(PST.caseNo)}/evidence/${id}/file`,
+      {credentials: "same-origin"});
+    if(!res.ok) throw new Error("The portal could not send that photograph back.");
+    buf = await res.arrayBuffer();
+  }catch(e){
+    if(!PST || PST.evId !== id) return;
+    PST.step = "reject";
+    PST.err = e.message || "That photograph could not be read.";
+    return paintPStamp();
+  }
+  if(!PST || PST.evId !== id) return;
+
+  const blob = new Blob([buf], {type: (row && row.content_type) || "image/jpeg"});
+  const url = URL.createObjectURL(blob);
+
+  /* THE DECODE IS PROVEN BEFORE ANYTHING IS OFFERED. A picture this browser
+     cannot open gets the reason where the action would have been, rather than
+     a Generate button standing over a fatal error — the lesson `vstProbe`
+     already learned about HEIC and .mov. */
+  const img = new Image();
+  const done = await new Promise(resolve => {
+    img.onload = () => resolve(true);
+    img.onerror = () => resolve(false);
+    img.src = url;
+  });
+  if(!PST || PST.evId !== id){ try{ URL.revokeObjectURL(url); }catch{} return; }
+  if(!done || !img.naturalWidth || !img.naturalHeight){
+    try{ URL.revokeObjectURL(url); }catch{}
+    PST.step = "reject";
+    PST.err = "This browser cannot open that picture, so there is nothing here to "
+      + "draw on. An iPhone HEIC file often does this on a computer — the camera's "
+      + "Most Compatible setting writes JPEG, which works everywhere.";
+    return paintPStamp();
+  }
+
+  PST.url = url;
+  PST.img = img;
+  PST.w = img.naturalWidth;
+  PST.h = img.naturalHeight;
+
+  const exif = pstExifWhen(buf);
+  if(exif && exif.zoned){
+    pstFill(exif.ms);
+    PST.source = "exif";
+    PST.note = "From the camera, with the time zone it recorded.";
+  }else if(exif){
+    const w = exif.wall;
+    PST.mo = String(w.mo).padStart(2, "0"); PST.da = String(w.da).padStart(2, "0");
+    PST.yr = String(w.yr);
+    PST.hr = String(((w.hr % 12) || 12)).padStart(2, "0");
+    PST.mi = String(w.mi).padStart(2, "0"); PST.se = String(w.se).padStart(2, "0");
+    PST.ap = w.hr < 12 ? "AM" : "PM";
+    PST.source = "exif";
+    PST.note = "From the camera. The camera recorded no time zone, so this is being "
+      + "read as Eastern time — correct it if the picture was taken elsewhere.";
+  }else{
+    PST.note = "This file carries no camera timestamp, so nothing has been filled in. "
+      + "Nothing is guessed here — enter when the picture was taken.";
+  }
+  PST.step = "when";
+  paintPStamp();
+}
+
+function pstClose(){
+  const v = PST;
+  if(v){
+    try{ if(v.url) URL.revokeObjectURL(v.url); }catch{}
+    try{ if(v.out && v.out.url) URL.revokeObjectURL(v.out.url); }catch{}
+  }
+  PST = null;
+  paintPStamp();
+}
+
+/* THE BURN. Same corner, same face, same function as the video renderer —
+   `vstDraw` scales itself to the picture's own resolution, so a 12-megapixel
+   photograph and a 720p frame get a stamp that reads the same size. */
+function pstBurn(){
+  pstCollect();
+  const v = PST;
+  if(!v || !v.img) return;
+  const w = pstWhen();
+  if(!w.ok){ v.err = w.why; return paintPStamp(); }
+  v.err = "";
+  const c = document.createElement("canvas");
+  c.width = v.w; c.height = v.h;
+  const cx = c.getContext("2d");
+  if(!cx){ v.err = "This browser did not give up a drawing surface."; return paintPStamp(); }
+  cx.drawImage(v.img, 0, 0, v.w, v.h);
+  vstDraw(cx, v.w, v.h, vstLabel(w.ms, v.tz));
+  v.busy = true;
+  paintPStamp();
+  c.toBlob(blob => {
+    if(!PST || PST !== v) return;
+    v.busy = false;
+    if(!blob){ v.err = "The copy could not be produced here."; return paintPStamp(); }
+    try{ if(v.out && v.out.url) URL.revokeObjectURL(v.out.url); }catch{}
+    v.out = {blob, url: URL.createObjectURL(blob), ms: w.ms, label: vstLabel(w.ms, v.tz)};
+    v.step = "preview";
+    paintPStamp();
+  }, "image/jpeg", 0.92);
+}
+
+/* FILING IT. The original is not sent, not named beyond its id, and not touched
+   — this posts the copy and the instant, and the Worker does the rest. */
+async function pstSave(){
+  const v = PST;
+  if(!v || !v.out || v.busy) return;
+  v.busy = true; v.err = ""; v.step = "working";
+  paintPStamp();
+  const fd = new FormData();
+  fd.append("file", v.out.blob, "timestamped.jpg");
+  fd.append("original_id", String(v.evId));
+  fd.append("taken_utc", new Date(v.out.ms).toISOString());
+  fd.append("tz", v.tz);
+  fd.append("source", v.source);
+  try{
+    /* Raw fetch because `api` sends JSON — the same path `uploadEvidenceFile`
+       takes, for the same reason. */
+    const res = await fetch(`/portal-api/cases/${encodeURIComponent(v.caseNo)}/photo-stamp`,
+      {method: "POST", credentials: "same-origin", body: fd});
+    const d = await res.json().catch(() => ({}));
+    if(!res.ok) throw new Error(d.error || ("That did not work (" + res.status + ")"));
+  }catch(e){
+    if(!PST || PST !== v) return;
+    v.busy = false; v.step = "preview"; v.err = e.message;
+    return paintPStamp();
+  }
+  if(!PST || PST !== v) return;
+  v.busy = false;
+  v.step = "done";
+  paintPStamp();
+  await reloadWorkspace();
+  if(PST === v) paintPStamp();
+}
+
+/* Which photographs are originals, which are copies, and which copy is live.
+   One reader, so the gallery, the field view and the screen cannot disagree. */
+function pstPairs(){
+  const rows = (WS && WS.photo_stamps) || [];
+  const byOriginal = new Map(), byCopy = new Map();
+  for(const r of rows){
+    if(r.stamped_id != null && !byCopy.has(r.stamped_id)) byCopy.set(r.stamped_id, r);
+    if(!r.superseded_at && !byOriginal.has(r.original_id)) byOriginal.set(r.original_id, r);
+  }
+  return {byOriginal, byCopy};
+}
+
+/* The badges. "ORIGINAL EVIDENCE" and "TIMESTAMPED COPY" are the owner's own
+   words for the distinction the brief requires; a filename convention is not
+   somewhere a distinction like that can live. */
+function pstBadge(e){
+  if(!e || e.deleted_at) return "";
+  const {byOriginal, byCopy} = pstPairs();
+  const copy = byCopy.get(e.id);
+  if(copy){
+    /* Re-derived, never remembered — and guarded, because an unreadable stored
+       instant would make `Intl` throw and take the whole gallery out with it.
+       `vstLabelOf` does the same for the video panel. */
+    let label = "";
+    const ms = Date.parse(copy.taken_utc);
+    if(Number.isFinite(ms)){
+      try{ label = vstLabel(ms, copy.tz || VST_TZ); }catch{ label = ""; }
+    }
+    return `<span class="tag rs-submitted">timestamped copy</span>`
+      + (copy.superseded_at ? `<span class="tag rs-draft">superseded</span>` : "")
+      + (label ? `<span class="tag">${esc(label)}</span>` : "");
+  }
+  return byOriginal.has(e.id) ? `<span class="tag">original</span>` : "";
+}
+
+/* Offered on a photograph, and never on a copy — the Worker refuses that by
+   name, and a control that leads to a refusal is a control that should not be
+   drawn. */
+function pstButton(e, cls){
+  if(!e || e.deleted_at) return "";
+  if(!String(e.content_type || "").startsWith("image/")) return "";
+  const {byOriginal, byCopy} = pstPairs();
+  if(byCopy.has(e.id)) return "";
+  return `<button class="${cls}" data-act="pstOpen" data-id="${e.id}">${
+    byOriginal.has(e.id) ? "Correct the timestamp" : "Timestamp"}</button>`;
+}
+
+function paintPStamp(){
+  const el = $("pstamp");
+  if(el) el.innerHTML = PST ? pstHtml() : "";
+  document.body.classList.toggle("pstopen", !!PST);
+}
+
+function pstHtml(){
+  const v = PST;
+  const w = pstWhen();
+  const preview = w.ok ? vstLabel(w.ms, v.tz) : "";
+  const two = n => `<option value="${n}"${v.ap === n ? " selected" : ""}>${n}</option>`;
+
+  const body =
+    v.step === "loading" ? `
+      <div class="vst-card">
+        <h4>Opening the photograph</h4>
+        <p class="vst-note">Reading it back from the case so the copy is made from
+          the file the case actually holds.</p>
+      </div>`
+    : v.step === "reject" ? `
+      <div class="vst-card">
+        <h4>This one cannot be timestamped here</h4>
+        <div class="vst-k"><span>File</span><span>${esc(v.name || "")}</span></div>
+        <p class="vst-note">${esc(v.err)}</p>
+        <button class="vst-btn" data-act="pstClose">Close</button>
+      </div>`
+    : v.step === "when" ? `
+      <div class="vst-card">
+        <h4>When was it taken?</h4>
+        <div class="vst-k"><span>Photograph</span><span>${esc(v.name || "")}</span></div>
+        <div class="vst-k"><span>Size</span><span>${v.w} &times; ${v.h}</span></div>
+        <p class="vst-note">${esc(v.note)}</p>
+      </div>
+      <div class="vst-card">
+        <div class="vst-when">
+          <label class="vst-f"><span>Month</span><input id="pst_mo" inputmode="numeric" data-act-input="pstWhen" value="${esc(v.mo)}"></label>
+          <label class="vst-f"><span>Day</span><input id="pst_da" inputmode="numeric" data-act-input="pstWhen" value="${esc(v.da)}"></label>
+          <label class="vst-f"><span>Year</span><input id="pst_yr" inputmode="numeric" data-act-input="pstWhen" value="${esc(v.yr)}"></label>
+        </div>
+        <div class="vst-when" style="margin-top:8px">
+          <label class="vst-f"><span>Hour</span><input id="pst_hr" inputmode="numeric" data-act-input="pstWhen" value="${esc(v.hr)}"></label>
+          <label class="vst-f"><span>Minute</span><input id="pst_mi" inputmode="numeric" data-act-input="pstWhen" value="${esc(v.mi)}"></label>
+          <label class="vst-f"><span>Second</span><input id="pst_se" inputmode="numeric" data-act-input="pstWhen" value="${esc(v.se)}"></label>
+        </div>
+        <div class="vst-when" style="margin-top:8px">
+          <label class="vst-f"><span>AM / PM</span>
+            <select id="pst_ap" data-act-input="pstWhen">${two("AM")}${two("PM")}</select></label>
+        </div>
+        <div class="vst-res" id="pst_res">${preview ? esc(preview) : "&mdash;"}
+          <small>${w.ok ? "This is what will be burned into the picture"
+            : esc(w.why || "Fill in the date and time")}</small></div>
+        ${v.err ? `<div class="vst-res" style="color:#ffb3b3">${esc(v.err)}</div>` : ""}
+        <button class="vst-btn go" data-act="pstBurn"${v.busy ? " disabled" : ""}>${
+          v.busy ? "Drawing&hellip;" : "Make the timestamped copy"}</button>
+        <button class="vst-btn" data-act="pstClose">Cancel</button>
+      </div>`
+    : v.step === "preview" ? `
+      <div class="vst-card">
+        <h4>Check the copy before it is filed</h4>
+        <img class="pst-prev" src="${v.out ? v.out.url : ""}" alt="The timestamped copy">
+        <div class="vst-res">${esc(v.out ? v.out.label : "")}
+          <small>${v.source === "exif" ? "from the camera's own record"
+            : "entered by the operator"}</small></div>
+        ${v.err ? `<div class="vst-res" style="color:#ffb3b3">${esc(v.err)}</div>` : ""}
+        <p class="vst-note">The original stays in the case exactly as it is &mdash;
+          this is filed beside it as a second photograph, and both will be in the
+          case from here on. It carries the same classification as the original,
+          so anything held back from a client package stays held back.</p>
+        <button class="vst-btn go" data-act="pstSave"${v.busy ? " disabled" : ""}>${
+          v.busy ? "Filing&hellip;" : "File it with the case"}</button>
+        <button class="vst-btn" data-act="pstEdit">Correct the time</button>
+        <button class="vst-btn" data-act="pstClose">Cancel</button>
+      </div>`
+    : v.step === "working" ? `
+      <div class="vst-card">
+        <h4>Filing the copy</h4>
+        <p class="vst-note">Nothing is recorded until the file itself is safely stored.</p>
+      </div>`
+    : `
+      <div class="vst-card">
+        <h4>Filed</h4>
+        <div class="vst-k"><span>Timestamp</span><span>${esc(v.out ? v.out.label : "")}</span></div>
+        <p class="vst-note">The case now holds the original and the timestamped copy,
+          both marked so nobody has to work out which is which.</p>
+        <button class="vst-btn" data-act="pstClose">Close</button>
+      </div>`;
+
+  return `<div class="vst" role="dialog" aria-modal="true" aria-label="Timestamp photo">
+    <div class="vst-bar">
+      <b>Timestamp photo${v.caseNo ? " &middot; " + esc(v.caseNo) : ""}</b>
+      ${v.step === "working" ? "" : `<button class="vst-x" data-act="pstClose">Close</button>`}
+    </div>
+    <div class="vst-body">${body}</div>
+  </div>`;
+}
+
 function paintVStamp(){
   const el = $("vstamp");
   if(el) el.innerHTML = VST ? vstHtml() : "";
@@ -5943,6 +6389,7 @@ function vstHtml(){
 
 function paint(){
   paintEvView();
+  paintPStamp();
   paintVStamp();
   if(!ME){ app.innerHTML = loginView(); $("who").hidden = true;
     document.body.classList.remove("withnav", "navopen");
@@ -7463,10 +7910,16 @@ function evidencePanel(){
              data-src="${fileUrl(e)}" data-name="${esc(e.filename)}"
              data-type="${esc(e.content_type || "")}"><u>${esc(e.filename)}</u></button></b>
           <span class="tag ${clsTone(e.classification)}">${esc(clsLabel(e.classification))}</span>
-          ${kindOf(e) === "video" ? `<span class="tag">stored earlier</span>` : ""}</div>
+          ${kindOf(e) === "video" ? `<span class="tag">stored earlier</span>` : ""}
+          ${pstBadge(e)}</div>
         <div class="tl-m">${mb(e.size_bytes)} &middot; ${esc(e.uploaded_by || "")} &middot; ${when(e.uploaded_at)}</div>
         ${e.note ? `<div class="tl-n">${esc(e.note)}</div>` : ""}
         ${momentOf(e)}
+        ${""/* Offered to BOTH roles, like the upload it follows: the investigator
+               who took the picture is the one standing in the field with it, and
+               `caseFor` is the boundary that matters. `pstButton` is the one
+               place that decides whether it may be offered at all. */}
+        ${pstButton(e, "btn sm ghost") ? `<div style="margin-top:6px">${pstButton(e, "btn sm ghost")}</div>` : ""}
         ${admin ? `<div style="margin-top:6px"><select data-act="evClass" data-id="${e.id}" style="font-size:.78rem">
             ${["needs_review","client_deliverable","internal_only","needs_redaction","do_not_use"]
               .map(c => `<option value="${c}" ${c === e.classification ? "selected" : ""}>${clsLabel(c)}</option>`).join("")}
@@ -9832,7 +10285,9 @@ function svEvidenceScreen(){
         ${isImg(e) ? `<button class="evlink" data-act="evOpen" data-src="${url(e)}" data-name="${esc(e.filename || "")}" data-type="${esc(e.content_type || "")}"><img class="evthumb" src="${url(e)}" alt="" loading="lazy"></button>`
           : `<div class="evtile" style="background:#132538">${String(e.content_type || "").startsWith("video/") ? "&#127909;" : "&#128196;"}</div>`}
         <div style="font-size:.78rem;margin-top:5px;word-break:break-all">${esc(e.filename)}</div>
-        <div style="display:flex;gap:12px;margin-top:4px">
+        ${pstBadge(e) ? `<div style="margin-top:4px">${pstBadge(e)}</div>` : ""}
+        <div style="display:flex;gap:12px;margin-top:4px;flex-wrap:wrap">
+          ${pstButton(e, "sv-back pst-mini")}
           <button class="sv-back" style="padding:0;font-size:.76rem" data-act="svEvNote" data-id="${e.id}">Caption</button>
           <button class="sv-back" style="padding:0;font-size:.76rem;color:#e79a9a" data-act="svEvDelete" data-id="${e.id}">Delete</button>
         </div>
@@ -11576,6 +12031,14 @@ document.addEventListener("click", ev => {
     vstClose();
   }
   else if(act === "vstClose"){ vstClose(); }
+  /* Timestamp Photo. `pstBurn` reads the fields itself through `pstCollect`,
+     which is also what turns the provenance from the camera's to the
+     operator's — so no repaint may happen before it. */
+  else if(act === "pstOpen"){ pstOpen(el.dataset.id, WS_CASE); }
+  else if(act === "pstBurn"){ pstBurn(); }
+  else if(act === "pstSave"){ pstSave(); }
+  else if(act === "pstEdit"){ if(PST){ PST.step = "when"; PST.err = ""; paintPStamp(); } }
+  else if(act === "pstClose"){ pstClose(); }
   else if(act === "retOpen"){ retainerReset(); RET_FORM = true; paintCase(); }
   else if(act === "retCancel"){ retainerReset(); paintCase(); }
   /* A NEW attempt, chosen by the admin after reading the payment list. The
@@ -12041,6 +12504,20 @@ document.addEventListener("input", ev => {
   /* Typing a custom retainer counts as choosing one. No repaint — the box the
      cursor is sitting in must not be rebuilt underneath it mid-number. */
   if(din === "wizRetDirty" && SHEET_WIZ){ SHEET_WIZ.retainerTouched = true; return; }
+  /* What will actually be burned in, following the typing. Only this one line
+     is rewritten — a repaint would rebuild the box the cursor is in, mid-number,
+     the same reason `vstProgress` exists. */
+  if(din === "pstWhen" && PST){
+    pstCollect();
+    const res = $("pst_res");
+    if(res){
+      const w = pstWhen();
+      res.innerHTML = (w.ok ? esc(vstLabel(w.ms, PST.tz)) : "&mdash;")
+        + `<small>${w.ok ? "This is what will be burned into the picture"
+          : esc(w.why || "Fill in the date and time")}</small>`;
+    }
+    return;
+  }
   if(din === "svArrival" && SV && !SV.dirty){
     // The same generator the desk sheet uses, so a line composed in the car and
     // the same line composed at the office cannot read differently.

@@ -116,3 +116,74 @@ purge, and nothing in this portal purges.
 2. Whether the burned face should carry anything besides the date, time and zone
    — a case number and an investigator's initials are both plausible and both
    would be **DERIVED**, so neither is there.
+
+---
+
+# What was built
+
+## The route
+
+`POST /cases/:no/photo-stamp` — multipart: the burned copy, the original's
+evidence id, the instant (UTC), the zone, and the provenance. It is the only
+writer.
+
+What it does, in order, and the order is deliberate:
+
+1. `caseFor` — an investigator reaches only their own cases, exactly as the
+   ordinary upload does. **Not admin-only:** the person who took the picture is
+   the one standing in the field with it.
+2. The `photo_stamp` guard — 503 naming `portal-setup.yml`, because the table
+   arrives by a manual dispatch while the Worker deploys on push.
+3. The original is **looked up, never trusted from the body**: this case's, not
+   deleted, and an image. Another case's photograph is refused rather than
+   silently ignored.
+4. **A copy of a copy is refused by name** (`already_a_copy`).
+5. The instant, the zone and the provenance are validated. There is no default
+   provenance — an evidence timestamp with no recorded origin is one nobody can
+   defend.
+6. Dropbox, in the ordinary upload's own words for the same three conditions.
+7. The bytes go to `/<case>/Photos/`. **Nothing is recorded until they are
+   safe** — a refused upload leaves no `photo_stamp` row and no evidence row.
+8. The evidence row, then the supersede, then the pairing.
+
+The deleted and archived gate needs nothing here: the case number is in the
+path, so `route()`'s one chokepoint answers first.
+
+## What the page does
+
+`PST` in `portal/index.html`, a sibling root beside `#vstamp`.
+
+- Reads the original **back from the case** through the existing evidence route,
+  so the copy is made from the file the case actually holds rather than from
+  something the browser happened to still have.
+- **Proves the decode before offering anything.** A picture this browser cannot
+  open gets the reason where the action would have been — the lesson `vstProbe`
+  already learned about HEIC and `.mov`, and HEIC is named in the wording
+  because it is the case an operator will actually hit.
+- Seeds from EXIF `DateTimeOriginal` (with `OffsetTimeOriginal` when the phone
+  wrote one), and says on screen which of the three it is: the camera with its
+  zone, the camera without one and therefore read as Eastern, or nothing at all.
+- Burns with **`vstDraw`** and words it with **`vstLabel`** — the video
+  renderer's own functions.
+- The burned wording **follows the typing**, and only that one line is rewritten:
+  a repaint would rebuild the box the cursor is in, mid-number.
+- Shows the copy before it is filed, then posts it.
+
+## The tests, and the one that matters
+
+The strongest assertion in the suite is a pixel read, not a wording check: the
+fixture is a **flat-colour JPEG this browser wrote itself**, with an EXIF APP1
+segment spliced in after the SOI marker, and after filing the test decodes both
+files and counts bright pixels. The bottom-right corner of the copy has them,
+the top-left has none, and the original has none in either place. A screen full
+of confident wording cannot stand in for that.
+
+The rest: the seed comes from the camera and not the clock; a file with no EXIF
+fills in nothing and says so; the current year never appears as a seed; the
+zone resolves to EDT for an August date; a correction supersedes and the
+superseded copy keeps its place; the copy is never offered for stamping and the
+original always is; every classification is inherited including the four that
+hold material back; a document is refused; another case's photograph is refused;
+an investigator can stamp on their own case and reaches nothing on another's;
+deleted and archived are refused by the gate; the table missing degrades the
+read and 503s the write; and Dropbox refusing leaves no row of any kind.
