@@ -8881,11 +8881,18 @@ section('Timestamp Photo: the copy is what the client gets, and the original is 
     return c.toDataURL('image/jpeg', 0.9).split(',')[1];
   }, [w, h, fill]), 'base64');
 
-  const upload = async (name, buffer) => {
+  /* The office form's classification selector opens on "needs review" — that is
+     the admin door's own default, not the field upload's — so a test about what
+     reaches a client package has to say which it is uploading. */
+  const upload = async (name, buffer, cls = 'client_deliverable') => {
     await page.locator('#ev_file').setInputFiles({ name, mimeType: 'image/jpeg', buffer });
+    await page.locator('#ev_class').selectOption(cls);
     await page.locator('.btn', { hasText: 'Upload picture or document' }).click();
     await page.waitForTimeout(900);
-    return page.evaluate((n) => (WS.evidence || []).find(e => e.filename === n).id, name);
+    const id = await page.evaluate((n) => (WS.evidence || []).find(e => e.filename === n).id, name);
+    ok(`${name} was uploaded as ${cls}`,
+       (await page.evaluate((i) => (WS.evidence || []).find(e => e.id === i).classification, id)) === cls);
+    return id;
   };
   const stamp = async (evId, include) => {
     await page.locator(`[data-act="pstOpen"][data-id="${evId}"]`).click();
