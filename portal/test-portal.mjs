@@ -7541,12 +7541,16 @@ section('A video this browser cannot decode says so, and offers no Generate');
   });
   await page.waitForTimeout(250);
   const stopped = await text(page, '.vst');
+  /* THE RULE, not the sentence. The owner rewrote this wording on 2026-08-18
+     ("say something factual such as: This video cannot be decoded by the current
+     browser. Your original is unchanged."), so these assert what the screen has
+     to COMMUNICATE rather than the words it used at the time. */
   ok('the screen says the format cannot be processed here',
-     has(stopped, 'cannot be processed in this browser'));
+     has(stopped, 'cannot be decoded'));
   ok('and names the codec it actually read from the file',
-     has(stopped, 'HEVC / H.265') && has(stopped, 'MOV video uses'), stopped.slice(0, 400));
-  ok('it says the original is untouched and nothing was uploaded',
-     has(stopped, 'untouched') && has(stopped, 'nothing was uploaded'));
+     has(stopped, 'HEVC / H.265'), stopped.slice(0, 400));
+  ok('it says the original is unchanged and nothing was uploaded',
+     has(stopped, 'unchanged') && has(stopped, 'nothing was uploaded'));
   /* THE FAULT THE OWNER SAW: a prominent active Generate button under a fatal
      error. It is gone, and the two safe actions remain. */
   ok('there is no Generate button under the error',
@@ -7581,7 +7585,157 @@ section('A video this browser cannot decode says so, and offers no Generate');
   const okScreen = await text(page, '.vst');
   ok('a supported file still offers Generate',
      await page.locator('[data-act="vstGo"]:not([disabled])').count() === 1);
-  ok('and says the browser can read it', has(okScreen, 'this browser can read it'));
+  /* Same reason: the compatibility line reads "Ready" now, which is the owner's
+     own wording. The rule is that a supported file reports as usable. */
+  ok('and says the file is ready', has(okScreen, 'Ready'), okScreen.slice(0, 300));
+  await page.close();
+}
+
+
+/* OWNER, 2026-08-18: iPhone and iPad video are PRIMARY input, not an edge case,
+   and the browser recommendation shipped earlier proved wrong in real use. */
+section('Compatibility is reported per device, and recommends no browser');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* THE MESSAGE THAT WAS WRONG IS GONE. It told the owner a laptop running
+     Chrome or Edge would decode their file; it did not. Nothing in the page
+     names a browser as a fix any more. */
+  const src = await page.content();
+  ok('the page no longer recommends a browser as the fix',
+     !/laptop running Chrome or Edge/i.test(src) && !/Chrome or Edge on a laptop/i.test(src));
+  ok('and says the original is unchanged instead',
+     /Your original is unchanged/.test(src));
+
+  // The three named lines the owner asked for.
+  await page.evaluate(() => {
+    VST = { step: 'preview', caseNo: 'API-20260812-4002', file: null, name: 'IMG_0440.mov',
+            size: 84 * 1048576, url: '', tz: 'America/New_York', q: '',
+            mo: '05', da: '03', yr: '2025', hr: '11', mi: '27', se: '58', ap: 'AM',
+            guessed: false, hash: null, pct: 0, err: '', saveMsg: '', diag: '',
+            out: null, recId: null, savedHere: false, started: false,
+            readable: false, codec: { cc: 'hvc1', name: 'HEVC / H.265' }, caps: vstCaps() };
+    VST.startMs = vstToUtc(2025, 5, 3, 11, 27, 58, 'America/New_York');
+    paintVStamp();
+  });
+  await page.waitForTimeout(250);
+  const t = await text(page, '.vst');
+  ok('the container is named as a container', has(t, 'MOV (QuickTime)'));
+  ok('the codec is named from the file', has(t, 'HEVC / H.265'));
+  ok('and compatibility says it cannot be decoded here',
+     has(t, 'cannot be decoded by this browser'));
+  ok('the stop states it factually, without naming a browser to switch to',
+     has(t, 'cannot be decoded by the current browser') && !has(t, 'Chrome') && !has(t, 'Edge'),
+     t.slice(0, 400));
+  ok('no Generate button sits under it',
+     await page.locator('[data-act="vstGo"]').count() === 0);
+  ok('Edit timestamp and Cancel are still offered',
+     await page.locator('[data-act="vstEditTime"]').count() === 1
+     && await page.locator('.vst [data-act="vstClose"]').count() >= 1);
+
+  /* A CODEC IS NEVER INVENTED. With nothing readable from the file the line
+     says so rather than choosing one. */
+  await page.evaluate(() => { VST.codec = null; paintVStamp(); });
+  await page.waitForTimeout(200);
+  const noc = await text(page, '.vst');
+  ok('an undetermined codec is reported as undetermined',
+     has(noc, 'could not be determined from the file'), noc.slice(0, 300));
+
+  /* DECODING AND ENCODING FAIL SEPARATELY, and iOS is the platform where the
+     first works and the second does not. A file this device can play but
+     cannot re-encode must not read as "unsupported video". */
+  await page.evaluate(() => {
+    VST.readable = true; VST.codec = { cc: 'avc1', name: 'H.264 / AVC' };
+    VST.caps = { ...vstCaps(), canRender: false };
+    paintVStamp();
+  });
+  await page.waitForTimeout(200);
+  const half = await text(page, '.vst');
+  ok('a device that can play but not write says exactly that',
+     has(half, 'can play it, but cannot write the copy here'), half.slice(0, 400));
+  await page.evaluate(() => { VST.caps = vstCaps(); paintVStamp(); });
+  await page.waitForTimeout(200);
+  ok('and a device that can do both reads Ready',
+     has(await text(page, '.vst'), 'Ready'));
+  await page.close();
+}
+
+section('The device answers for itself');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => {
+    VST = { step: 'preview', caseNo: 'API-20260812-4002', file: null, name: 'IMG_0440.mov',
+            size: 1024, url: '', tz: 'America/New_York', q: '',
+            mo: '05', da: '03', yr: '2025', hr: '11', mi: '27', se: '58', ap: 'AM',
+            guessed: false, hash: null, pct: 0, err: '', saveMsg: '', diag: '',
+            out: null, recId: null, savedHere: false, started: false,
+            readable: false, codec: { cc: 'hvc1', name: 'HEVC / H.265' }, caps: vstCaps() };
+    paintVStamp();
+  });
+  await page.waitForTimeout(200);
+  ok('an undecodable file offers the device read-out',
+     await page.locator('[data-act="vstDiag"]').count() === 1);
+
+  await page.locator('[data-act="vstDiag"]').first().click();
+  await page.waitForTimeout(3000);
+  const diag = await text(page, '.vst-diag');
+  /* EVERY ROW THE iOS QUESTION NEEDS, measured on whatever device is reading
+     it — the only honest way to fill an iPhone column from anywhere else. */
+  for (const row of ['Device', 'Decodes this file', 'Container', 'Video codec',
+                     'Canvas capture', 'MediaRecorder', 'records MP4', 'records WebM',
+                     'WebCodecs decode', 'WebCodecs encode', 'Share to device',
+                     'End-to-end test']) {
+    ok(`the read-out reports ${row}`, has(diag, row), diag.slice(0, 200));
+  }
+  /* IT ACTUALLY TRIES, rather than trusting the capability strings — on iOS
+     `isTypeSupported` returning true has not meant `start()` succeeds. */
+  ok('and it really attempted a render rather than reporting a capability string',
+     /works — wrote and re-read \d+ bytes|FAILED|not attempted/.test(diag),
+     diag.slice(-200));
+  ok('which on this machine succeeded', /works — wrote and re-read/.test(diag),
+     diag.slice(-200));
+  ok('the read-out does not scroll the page sideways', await page.evaluate(() =>
+     document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1));
+  await page.close();
+}
+
+section('Nothing about the video is persisted anywhere');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* THE DEVICE-FIRST PROMISE, asserted rather than asserted-in-a-comment: no
+     video byte reaches any browser store either, not just no R2 and no D1. */
+  const stores = await page.evaluate(async () => {
+    const ls = Object.keys(localStorage).map(k => k + '=' + localStorage.getItem(k)).join('|');
+    const ss = Object.keys(sessionStorage).map(k => k + '=' + sessionStorage.getItem(k)).join('|');
+    let dbs = [];
+    try { dbs = (await indexedDB.databases()).map(d => d.name); } catch {}
+    return { ls, ss, dbs };
+  });
+  ok('no video reaches localStorage', !/video|\.mov|\.mp4|\.webm|blob:/i.test(stores.ls), stores.ls.slice(0, 200));
+  ok('nor sessionStorage', !/video|\.mov|\.mp4|\.webm|blob:/i.test(stores.ss), stores.ss.slice(0, 200));
+  ok('and the page opens no IndexedDB at all', stores.dbs.length === 0, JSON.stringify(stores.dbs));
+
+  /* AND THE OBJECT URLS ARE RELEASED. Closing the generator revokes both, so a
+     long session does not accumulate video in the tab. */
+  const revoked = await page.evaluate(async () => {
+    const blob = new Blob([new Uint8Array(64)], { type: 'video/webm' });
+    VST = { step: 'done', caseNo: '', file: null, name: 'x.mov', size: 64,
+            url: URL.createObjectURL(blob), tz: 'America/New_York',
+            out: { blob, url: URL.createObjectURL(blob), name: 'x-timestamped.webm',
+                   size: 64, mime: 'video/webm' },
+            readable: true, codec: null, caps: vstCaps(), diag: '' };
+    const before = [VST.url, VST.out.url];
+    vstClose();
+    // A revoked object URL no longer fetches.
+    const alive = await Promise.all(before.map(u =>
+      fetch(u).then(() => true).catch(() => false)));
+    return { before, alive, closed: VST === null };
+  });
+  ok('closing the generator lets go of the video', revoked.closed
+     && revoked.alive.every(a => a === false), JSON.stringify(revoked));
   await page.close();
 }
 

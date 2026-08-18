@@ -694,6 +694,11 @@
     padding:12px;margin-top:10px;}
   .vst-stop b{color:#ffc9c9;display:block;margin-bottom:6px;}
   .vst-stop p{margin:6px 0 0;font-size:.84rem;color:#d9c3c3;line-height:1.55;}
+  /* The device read-out. Monospace and pre-wrapped so the columns line up and a
+     phone can still show it without scrolling sideways. */
+  .vst-diag{margin:10px 0 0;padding:10px;border:1px solid #23405f;border-radius:8px;
+    background:#0a1420;color:#bcd3e8;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:.72rem;line-height:1.6;white-space:pre-wrap;word-break:break-word;overflow-x:auto;}
   .vst-prev{width:100%;border-radius:10px;background:#000;display:block;}
   .vst-bar2{height:10px;border-radius:6px;background:#12243a;overflow:hidden;
     border:1px solid #23405f;margin-top:10px;}
@@ -4077,6 +4082,60 @@ function vstMime(){
 
 function vstCan(){ return !!vstMime() && typeof HTMLCanvasElement.prototype.captureStream === "function"; }
 
+/* WHAT THIS DEVICE CAN ACTUALLY DO — measured here, never inferred from the
+   user agent (owner, 2026-08-18: iOS video is a primary input, and Chrome and
+   Edge on iOS use Apple's engine, so desktop-Chrome behaviour tells you
+   nothing about them).
+
+   The renderer has two halves and they fail independently. DECODE is the
+   browser reading the file at all — Safari decodes HEVC natively where Chrome
+   usually cannot. ENCODE is producing a new file, and the current path needs
+   `canvas.captureStream()`, which WebKit has historically not implemented on
+   iOS. A device can therefore decode a clip perfectly and still be unable to
+   write the copy, which is a different sentence from "unsupported video".
+
+   `webcodecs` is reported because it is the encode route that does NOT need
+   captureStream, and Safari 16.4+ has the video half of it. Nothing here uses
+   it yet — it is measured so the owner's own iPhone can answer whether the
+   route exists, instead of anyone guessing. */
+function vstCaps(){
+  const c = {
+    canvasCapture: typeof HTMLCanvasElement.prototype.captureStream === "function",
+    mediaRecorder: typeof MediaRecorder !== "undefined",
+    recordMime: vstMime() || null,
+    webcodecsDecode: typeof VideoDecoder !== "undefined",
+    webcodecsEncode: typeof VideoEncoder !== "undefined",
+    shareFiles: !!(navigator.canShare && navigator.share),
+    savePicker: typeof window.showSaveFilePicker === "function",
+  };
+  /* Recording types worth naming separately: an H.264 MP4 is the broadly
+     playable one, and iOS Safari is the platform that offers it. */
+  c.recordMp4 = false; c.recordWebm = false;
+  if(c.mediaRecorder){
+    for(const t of ["video/mp4;codecs=avc1.42E01E", "video/mp4;codecs=avc1", "video/mp4"]){
+      try{ if(MediaRecorder.isTypeSupported(t)){ c.recordMp4 = t; break; } }catch{}
+    }
+    for(const t of ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"]){
+      try{ if(MediaRecorder.isTypeSupported(t)){ c.recordWebm = t; break; } }catch{}
+    }
+  }
+  c.canRender = c.canvasCapture && !!c.recordMime;
+  return c;
+}
+
+/* iOS is worth naming because its limits are Apple's, not the browser vendor's:
+   Chrome and Edge on iPhone and iPad are Safari underneath, so "try another
+   browser" is not advice there. Feature-detected first and only fallen back to
+   the platform string, which is the least reliable thing on the page. */
+function vstIsIOS(){
+  const p = navigator.platform || "";
+  const ua = navigator.userAgent || "";
+  // iPadOS reports as a Mac; the touch points are what give it away.
+  if(/iPad|iPhone|iPod/.test(p)) return true;
+  if(p === "MacIntel" && navigator.maxTouchPoints > 1) return true;
+  return /iPhone|iPad|iPod/.test(ua);
+}
+
 async function vstHash(file){
   if(!file || file.size > VST_HASH_MAX) return null;
   if(!(window.crypto && crypto.subtle && crypto.subtle.digest)) return null;
@@ -4163,16 +4222,44 @@ function vstProbe(url){
   });
 }
 
-/* What the screen says, and it never claims more than was determined. */
+/* The container, from the filename — which is a LABEL and is described as one.
+   The codec comes from the file's own boxes or not at all. */
+function vstContainer(){
+  const m = /\.(\w{2,5})$/.exec(String((VST && VST.name) || ""));
+  if(!m) return null;
+  const e = m[1].toUpperCase();
+  return e === "MOV" ? "MOV (QuickTime)" : e;
+}
+
+/* WHAT THE SCREEN SAYS, AND IT NEVER CLAIMS MORE THAN WAS DETERMINED.
+
+   It also NEVER RECOMMENDS A BROWSER. An earlier version said a laptop running
+   Chrome or Edge would usually decode it; the owner tested that and it was
+   wrong, and a confident pointer to a thing that does not work is worse than
+   saying only what is known. Compatibility is now reported per device, from
+   what that device actually answered. */
 function vstCompatText(){
   const v = VST;
   if(!v || v.readable !== false) return "";
   const named = v.codec ? v.codec.name : null;
-  const ext = /\.(\w{2,5})$/.exec(String(v.name || ""));
-  const kind = ext ? ext[1].toUpperCase() + " video" : "video";
-  if(named) return `This ${kind} uses ${named}, which this browser cannot decode.`;
+  const kind = vstContainer() ? vstContainer() + " video" : "video";
+  if(named) return `This ${kind} uses ${named}. This browser cannot decode it. `
+    + `Your original is unchanged.`;
   return `This browser cannot decode this ${kind}, and its codec could not be `
-    + `determined from the file.`;
+    + `determined from the file. Your original is unchanged.`;
+}
+
+/* The one line under Compatibility, in the shape the owner asked for. Four
+   states, and the difference between them matters: a file this device cannot
+   DECODE is a different problem from one it can decode but cannot RE-ENCODE,
+   and the second is the iOS case. */
+function vstCompatState(){
+  const v = VST, caps = (v && v.caps) || {};
+  if(!v) return "";
+  if(v.readable === null) return "checking on this device&hellip;";
+  if(v.readable === false) return "cannot be decoded by this browser";
+  if(!caps.canRender) return "this device can play it, but cannot write the copy here";
+  return "Ready";
 }
 
 /* Opening the generator. The file never leaves the device: it is read straight
@@ -4206,7 +4293,7 @@ function vstOpen(caseNo){
       guessed: true, hash: null, pct: 0, err: "", saveMsg: "",
       out: null, recId: null, savedHere: false, started: false,
       // null = still checking. Nothing offers Generate until this is true.
-      readable: null, codec: null,
+      readable: null, codec: null, caps: vstCaps(), diag: "",
     };
     paintVStamp();
     if(!caseNo) vstLoadCases();
@@ -4285,8 +4372,10 @@ async function vstGenerate(){
     return paintVStamp();
   }
   if(!vstCan()){
-    v.err = "This browser cannot make the timestamped copy — it has no video recorder. "
-      + "Chrome or Edge on a laptop will do it, and the original on your device is untouched either way.";
+    v.err = "This device can read the video but cannot write the copy here: it has no "
+      + "canvas recorder. Your original is unchanged."
+      + (vstIsIOS() ? " On an iPhone or iPad every browser uses Apple's engine, so another "
+        + "browser app on this device will behave the same way." : "");
     return paintVStamp();
   }
   v.startMs = s.ms; v.err = ""; v.saveMsg = ""; v.pct = 0; v.step = "working";
@@ -4439,6 +4528,31 @@ async function vstSave(){
       // Anything else: fall through and let the browser's own download try.
     }
   }
+  /* ON IPHONE AND IPAD THE SHARE SHEET IS HOW A FILE REACHES PHOTOS OR FILES.
+     `showSaveFilePicker` does not exist there and a download link lands in a
+     place the operator then has to go hunting for. `navigator.share` opens the
+     system sheet — and it RESOLVES only after the operator has completed the
+     action, so unlike a download it is something this page may honestly treat
+     as the save having been made. A cancel rejects with AbortError and is
+     reported as a cancel, never as a save. */
+  if(v.file !== undefined && navigator.canShare && navigator.share){
+    try{
+      const f = new File([v.out.blob], v.out.name, {type: v.out.mime || "video/webm"});
+      if(navigator.canShare({files: [f]})){
+        await navigator.share({files: [f], title: v.out.name});
+        v.savedHere = true;
+        v.saveMsg = "Saved from the share sheet.";
+        paintVStamp();
+        return vstMarkSaved();
+      }
+    }catch(e){
+      if(e && e.name === "AbortError"){
+        v.saveMsg = "Sharing cancelled — the copy is still here.";
+        return paintVStamp();
+      }
+      // Anything else: fall through to the ordinary download.
+    }
+  }
   const a = document.createElement("a");
   a.href = v.out.url; a.download = v.out.name;
   document.body.appendChild(a); a.click(); a.remove();
@@ -4466,6 +4580,81 @@ async function vstMarkSaved(){
     if(!res.ok) throw new Error(d.error || ("Could not record the save (" + res.status + ")."));
     if(WS && d.stamps) WS.video_stamps = d.stamps;
   }catch(e){ if(VST) VST.err = (e && e.message) || String(e); }
+}
+
+/* WHAT THIS DEVICE ACTUALLY ANSWERED — the owner's own iPhone or iPad reporting
+   for itself, rather than anyone inferring it from a user agent.
+
+   This exists because the iOS matrix cannot be measured anywhere but on an iOS
+   device, and a confident guess about it has already been wrong once. The two
+   halves are reported separately because they fail separately: decoding the
+   file and writing a new one are different capabilities, and iOS is the
+   platform where the first works and the second historically does not.
+
+   It also tries a REAL two-frame render rather than trusting the capability
+   strings — on iOS `MediaRecorder.isTypeSupported` returning true has
+   historically not meant `start()` succeeds. Nothing is stored, nothing is
+   uploaded, and the operator's own file is not touched by it. */
+async function vstDiagnose(){
+  const v = VST;
+  if(!v) return;
+  const c = vstCaps();
+  const lines = [];
+  const yn = x => x ? "yes" : "no";
+  lines.push("Device            " + (vstIsIOS() ? "iPhone / iPad (Apple engine)" : "not iOS"));
+  lines.push("Decodes this file " + (v.readable === null ? "still checking" : yn(v.readable)));
+  lines.push("Container         " + (vstContainer() || "unknown"));
+  lines.push("Video codec       " + (v.codec ? v.codec.name : "not determined from the file"));
+  lines.push("Canvas capture    " + yn(c.canvasCapture));
+  lines.push("MediaRecorder     " + yn(c.mediaRecorder));
+  lines.push("  records MP4     " + (c.recordMp4 || "no"));
+  lines.push("  records WebM    " + (c.recordWebm || "no"));
+  lines.push("WebCodecs decode  " + yn(c.webcodecsDecode));
+  lines.push("WebCodecs encode  " + yn(c.webcodecsEncode));
+  lines.push("Share to device   " + yn(c.shareFiles));
+  lines.push("Save-file picker  " + yn(c.savePicker));
+  v.diag = lines.join("\n") + "\nEnd-to-end test   running…";
+  paintVStamp();
+
+  /* The real attempt: two frames through canvas → recorder → a decodable file.
+     A capability string that lies is caught here and nowhere else. */
+  let verdict = "not attempted (no canvas recorder on this device)";
+  if(c.canRender){
+    try{
+      const cv = document.createElement("canvas"); cv.width = 64; cv.height = 48;
+      const cx = cv.getContext("2d");
+      const st = cv.captureStream(0), tr = st.getVideoTracks()[0];
+      const parts = [];
+      const rec = new MediaRecorder(st, {mimeType: c.recordMime});
+      rec.ondataavailable = e => { if(e.data && e.data.size) parts.push(e.data); };
+      const stopped = new Promise(r => { rec.onstop = () => r(); setTimeout(r, 8000); });
+      rec.start();
+      for(let i = 0; i < 4; i++){
+        cx.fillStyle = i % 2 ? "#fff" : "#123"; cx.fillRect(0, 0, 64, 48);
+        tr.requestFrame();
+        await new Promise(r => setTimeout(r, 60));
+      }
+      rec.stop();
+      await stopped;
+      const blob = new Blob(parts, {type: c.recordMime});
+      if(!blob.size) verdict = "FAILED — the recorder produced an empty file";
+      else {
+        const t = document.createElement("video");
+        t.muted = true; t.playsInline = true;
+        const url = URL.createObjectURL(blob);
+        const ok = await new Promise(r => {
+          t.onloadeddata = () => r(true); t.onerror = () => r(false);
+          setTimeout(() => r(false), 8000); t.src = url;
+        });
+        try{ URL.revokeObjectURL(url); }catch{}
+        verdict = ok ? `works — wrote and re-read ${blob.size} bytes of ${blob.type}`
+                     : "FAILED — wrote a file this device cannot read back";
+      }
+    }catch(e){ verdict = "FAILED — " + ((e && e.message) || e); }
+  }
+  if(!VST) return;
+  VST.diag = lines.join("\n") + "\nEnd-to-end test   " + verdict;
+  paintVStamp();
 }
 
 /* Only the progress bar, not the screen. A render draws a frame at a time and
@@ -4558,11 +4747,13 @@ function vstHtml(){
           <div class="vst-k"><span>Fingerprint</span><span>${v.hash
             ? esc(v.hash.slice(0, 16)) + "…"
             : "not taken &mdash; the file is too large to fingerprint in a browser"}</span></div>
-          <div class="vst-k"><span>Compatibility</span><span>${
-            v.readable === null ? "checking&hellip;"
-            : v.readable ? "this browser can read it"
-            : "cannot be processed here"}${
-            v.codec ? " &middot; " + esc(v.codec.name) : ""}</span></div>
+          ${vstContainer() ? `<div class="vst-k"><span>Container</span><span>${
+            esc(vstContainer())}</span></div>` : ""}
+          <div class="vst-k"><span>Video codec</span><span>${
+            v.codec ? esc(v.codec.name)
+              : v.readable === null ? "reading the file&hellip;"
+              : "could not be determined from the file"}</span></div>
+          <div class="vst-k"><span>Compatibility</span><span>${vstCompatState()}</span></div>
           ${v.err ? `<p class="vst-err">${esc(v.err)}</p>` : ""}
           <p class="vst-note">The original is opened, read and left exactly as it is.
             The copy is made here on this device and nothing is uploaded.</p>
@@ -4581,17 +4772,25 @@ function vstHtml(){
                timestamp is still worth correcting for a file that will be
                generated elsewhere. -->
           ${v.readable === false ? `<div class="vst-stop">
-              <b>This video format cannot be processed in this browser.</b>
+              <b>This video cannot be decoded by the current browser.</b>
               <p>${esc(vstCompatText())}</p>
-              <p>The file on your device is untouched. A laptop running Chrome or Edge
-                will usually decode it; nothing here has changed it, and nothing was
-                uploaded.</p></div>`
+              <p>Nothing here has changed it and nothing was uploaded.
+                ${vstIsIOS()
+                  ? "On an iPhone or iPad every browser uses Apple&rsquo;s engine, so another "
+                    + "browser app on this device will behave the same way."
+                  : "Which browsers can decode it has not been established here, so this "
+                    + "does not guess at one."}</p>
+              <button class="vst-btn" data-act="vstDiag">What can this device do?</button>
+              ${v.diag ? `<pre class="vst-diag">${esc(v.diag)}</pre>` : ""}</div>`
             : `<button class="vst-btn go" data-act="vstGo" ${
                 v.readable === null ? "disabled" : ""}>${
                 v.readable === null ? "Checking this video&hellip;" : "Generate timestamped video"
               }</button>`}
           <button class="vst-btn" data-act="vstEditTime">Edit timestamp</button>
           <button class="vst-btn" data-act="vstClose">Cancel</button>
+          ${v.readable !== false ? `<button class="vst-btn" data-act="vstDiag"
+              style="font-weight:400;font-size:.85rem;min-height:44px">What can this device do?</button>
+            ${v.diag ? `<pre class="vst-diag">${esc(v.diag)}</pre>` : ""}` : ""}
         </div>`
     : v.step === "working" ? `
         <div class="vst-card">
@@ -9157,6 +9356,7 @@ document.addEventListener("click", ev => {
   else if(act === "vstGo"){ vstGenerate(); }
   else if(act === "vstSave"){ vstSave(); }
   else if(act === "vstSaved"){ vstConfirmSaved(); }
+  else if(act === "vstDiag"){ vstDiagnose(); }
   else if(act === "vstAbort"){
     /* Stopping mid-render keeps nothing: no partial file is offered and the
        original is untouched, so there is nothing half-done to explain. */
