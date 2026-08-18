@@ -45,11 +45,35 @@ and none of it is carried over.
 Each of these is a judgement call. They are listed so they can be overturned
 individually rather than argued about as a lump.
 
-**D1. The door is the photograph, not a top-level screen.** Timestamp Video is a
-top-level door because the portal never holds the clip — there is nothing to
-hang the action on. A photograph is already in the case, so the action lives on
-it: the gallery, and the field view's own photo list. Adding a second top-level
-door would mean uploading the original through a path that already exists.
+**D1 — WRONG, AND CORRECTED THE SAME DAY.** The original reasoning: *"Timestamp
+Video is a top-level door because the portal never holds the clip — there is
+nothing to hang the action on. A photograph is already in the case, so the
+action lives on it."*
+
+That was true and it was **not enough**. With no photograph uploaded there is no
+card, and with no card there was no entry point **anywhere** — so the tool was
+invisible until someone had already done the thing it existed for. The owner
+went looking for it beside Timestamp Video and found nothing, which is the whole
+proof.
+
+It now has four doors, beside the video ones in every place video has one: the
+**navigation foot** (both roles, every screen), the **dashboard quick tools
+row**, its **own card on Case media**, and the **field view's media screen** —
+that last because inside the field view the navigation rail is not on screen at
+all, so the nav door does not reach it there.
+
+The top-level copies carry an **empty `data-case`**, the same rule the video
+door follows: the utility asks which case rather than adopting whichever one is
+open behind it. Unlike video it always needs a case, since the original it
+copies lives in one, so "no case" is a **question** here and never a skip. A
+case with no photographs says so and says where one comes from — an empty grid
+with no words is the same dead end in a different costume.
+
+**The lesson worth keeping:** "there is somewhere natural to put this control"
+is not the same as "someone can find this control". The second needs its own
+check, and the reachability assertions are now written as a **pair** across both
+tools, so a door that exists for one and not the other fails rather than
+ships.
 
 **D2. The derivative is stored, not saved to the device.** This is the one place
 the photo path deliberately diverges from the video path, and the reason is the
