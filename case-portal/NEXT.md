@@ -386,6 +386,85 @@ Nothing further should be built until the device says whether
 declines, that is the owner's own STOP condition and no muxer would have helped.
 If it accepts, the CSP questions above are decided before anything is installed.
 
+## 🎬 THE WEBCODECS PIPELINE — SHIPPED 2026-08-18 (#170, `463b6c5`)
+
+**The device passed the gate on the real file:** H.264 `avc1.640028`,
+1920x1080, ~48.12 s, AAC mono 44100 — WebCodecs decode **accepts that exact
+configuration**, H.264 encode available, while the media element will not decode
+the file at all. So the pipeline was built.
+
+```
+local file -> demux (this repo) -> VideoDecoder -> frame
+           -> canvas draw + burn -> VideoEncoder (H.264)
+           -> MP4 mux (vendored) -> Blob -> share / save
+```
+
+**No MediaRecorder on this path.** It stays only for the legacy formats
+`vstProveMime` has proven by round trip.
+
+### The stamp is anchored to the RECORDING — a defect the owner caught before push
+
+The default came from `file.lastModified` — when the file was **written**, which
+on a Photos export is long after the shot — and fell back to **the current
+clock**, the processing time itself. Both look plausible on screen.
+
+It reads the video's own capture metadata now, in priority order:
+**`com.apple.quicktime.creationdate`** (carries its own UTC offset — trusted),
+then **`udta/©day`**, then **`mvhd` creation_time** (no zone, Apple writes local
+time — read but marked untrusted), then the modified date (labelled *not* the
+recording). **Nothing is invented**: a file with no date gets a form that asks.
+The Apple-key fixture resolves to exactly `05/03/2025 11:27:58 AM EDT`.
+
+**An operator's correction outranks the file** — metadata applies only while the
+fields are untouched. The form names which of four sources it used.
+
+**Two parser bugs found by a 30-second probe rather than a 12-minute suite run:**
+the box-type check admitted only printable ASCII, so QuickTime's **©-prefixed
+atoms — `©day`, exactly where Apple writes the capture date — were discarded as
+corrupt**; and `ilst` children are indexed by a **binary number**, not a
+four-character code, so `vstBox` refused them. That probe habit is worth keeping.
+
+### Audio: STRIPPED BY DESIGN
+
+Owner requirement change mid-build. The muxer is never given an audio track —
+asserted against the pipeline's own source. **The AAC passthrough already written
+was removed rather than left dormant**: dead code that once muxed audio is what
+someone re-enables by accident. Nothing claims preservation; the screen says the
+copy is picture only and names the original's audio as still on the original.
+
+### One dependency, not the two approved
+
+The **demuxer is written here** because that half **is** testable in this
+container — 200 lines against mp4box's 2.26 MB. The **muxer is vendored** because
+a standards-compliant MP4 is the one thing that must be right and **cannot** be
+tested here: `portal/vendor/mp4-muxer.js`, **MIT, 69 KB**, no runtime deps, and
+no network/wasm/eval — asserted every run, scanning past the provenance note
+because that note names those APIs to promise their absence.
+
+**`.js`, not `.mjs`**, so the "no `.mjs` is ever published" deploy invariant
+survives. The manifest names the **file**, not the directory.
+
+### CSP — one directive
+
+`/portal/*` gained **`script-src 'self'`** for that single same-origin import,
+plus `media-src 'self' blob:` to preview the result. **`worker-src` was NOT
+added** — the pipeline is main-thread, so nothing needs it yet. If a worker is
+added later for UI smoothness that is its own decision.
+
+### Deployment
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` + `/portal/vendor/` | `463b6c5` | `463b6c5` | **DEPLOYED** — success at `463b6c5e` |
+| Worker / API | `463b6c5` | `8a48d7d` | **DEPLOYED** — `worker.js` untouched since #166 |
+| D1 schema | `463b6c5` | applied | unchanged — no dispatch owed |
+
+### ⚠️ iOS LIVE VERIFIED IS OPEN
+
+**This container has no WebCodecs, so the pipeline has never executed** — only
+its demuxer, its refusals and its wiring are tested. It stays open until the
+owner's device selects `IMG_0440.mov`, generates, and **plays the result back**.
+
 ## 📱 THE iPHONE ANSWERED, AND IT NAMED THE BUG — 2026-08-18
 
 **Owner ran the read-out on the real device with `IMG_0440.mov`.** Two answers
