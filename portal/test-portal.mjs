@@ -6961,7 +6961,8 @@ section('The stamp is encoded into the video, not laid over it');
     await vstGenerate();
     if (!VST || !VST.out) return { skipped: 'render failed', err: VST && VST.err };
     const out = { size: VST.out.size, name: VST.out.name, mime: VST.out.mime,
-                  step: VST.step, recId: VST.recId, savedHere: VST.savedHere };
+                  step: VST.step, recId: VST.recId, savedHere: VST.savedHere,
+                  proven: VST_PROVEN && VST_PROVEN.mime };
 
     // ---- decode the OUTPUT back and look at its pixels ----
     const v = document.createElement('video');
@@ -7004,13 +7005,21 @@ section('The stamp is encoded into the video, not laid over it');
 
   ok('the render produced a video file', !trip.skipped && trip.size > 0,
      JSON.stringify(trip).slice(0, 300));
+  const VST_PROVEN_MIME = trip.proven === undefined ? null : trip.proven;
   if (!trip.skipped) {
     ok('the output decodes as a video of the original size',
        trip.w === 320 && trip.h === 240, `${trip.w}x${trip.h}`);
-    ok('and it is WebM — never mp4, which reports supported while its codec is not',
-       /webm/.test(String(trip.mime)), String(trip.mime));
-    ok('the derivative is named as a copy, beside the original’s name',
-       trip.name === 'field-clip-timestamped.webm', trip.name);
+    /* THE RULE IS "a format this device can read back", not "not mp4". Banning
+       mp4 by name was itself a conclusion drawn from `isTypeSupported` — the
+       very thing this stopped trusting — and on this machine mp4 does round
+       trip. `vstProveMime` decides now, by writing and reading. */
+    ok('and it is a format this device proved it can read back',
+       /webm|mp4/.test(String(trip.mime))
+       && VST_PROVEN_MIME !== null && trip.mime === VST_PROVEN_MIME,
+       `${trip.mime} vs proven ${VST_PROVEN_MIME}`);
+    ok('the derivative is named for the container it actually is',
+       trip.name === 'field-clip-timestamped' + (/mp4/.test(trip.mime) ? '.mp4' : '.webm'),
+       `${trip.name} / ${trip.mime}`);
     /* THE PROOF. The source is uniformly dark; the output has bright pixels in
        the bottom-right band and nowhere else. That is the stamp, in the encoded
        file, surviving a full decode — which a CSS overlay could not do. */
@@ -7683,19 +7692,21 @@ section('The device answers for itself');
   const diag = await text(page, '.vst-diag');
   /* EVERY ROW THE iOS QUESTION NEEDS, measured on whatever device is reading
      it — the only honest way to fill an iPhone column from anywhere else. */
-  for (const row of ['Device', 'Decodes this file', 'Container', 'Video codec',
-                     'Canvas capture', 'MediaRecorder', 'records MP4', 'records WebM',
-                     'WebCodecs decode', 'WebCodecs encode', 'Share to device',
-                     'End-to-end test']) {
-    ok(`the read-out reports ${row}`, has(diag, row), diag.slice(0, 200));
+  /* The row names are the owner's own §11 list, 2026-08-18 — this read-out is
+     the regression test for the pipeline, so it reports STAGES rather than the
+     API inventory it started as. */
+  for (const row of ['Device', 'Decode original', 'Container', 'Video codec',
+                     'Audio codec', 'WebCodecs decode', 'Encode H.264',
+                     'Timestamp renderer', 'Result readable here', 'Share available']) {
+    ok(`the read-out reports ${row}`, has(diag, row), diag.slice(0, 300));
   }
   /* IT ACTUALLY TRIES, rather than trusting the capability strings — on iOS
-     `isTypeSupported` returning true has not meant `start()` succeeds. */
+     `isTypeSupported` returning true has not meant the bytes are playable, and
+     that is exactly what wrote a file the owner's iPhone could not open. */
   ok('and it really attempted a render rather than reporting a capability string',
-     /works — wrote and re-read \d+ bytes|FAILED|not attempted/.test(diag),
-     diag.slice(-200));
-  ok('which on this machine succeeded', /works — wrote and re-read/.test(diag),
-     diag.slice(-200));
+     /READS BACK|no —/.test(diag), diag.slice(-300));
+  ok('which on this machine produced a format it could read back',
+     /READS BACK/.test(diag), diag.slice(-300));
   ok('the read-out does not scroll the page sideways', await page.evaluate(() =>
      document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1));
   await page.close();
@@ -7736,6 +7747,212 @@ section('Nothing about the video is persisted anywhere');
   });
   ok('closing the generator lets go of the video', revoked.closed
      && revoked.alive.every(a => a === false), JSON.stringify(revoked));
+  await page.close();
+}
+
+
+/* OWNER DEVICE TEST, 2026-08-18, on the real iPhone:
+     MediaRecorder MP4/AVC: yes · MediaRecorder WebM/VP9: yes
+     END-TO-END: FAILED — it wrote a file the iOS device could not read back.
+   `vstMime()` returned WebM because WebM was first in the list. iOS records
+   WebM and does not play it. The format is now chosen by proving the round
+   trip, not by asking `isTypeSupported`. */
+section('The output format is proven, not declared');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const order = await page.evaluate(() => VST_MIMES);
+  ok('MP4 with H.264 is preferred over WebM', /mp4/.test(order[0]) && /avc1/.test(order[0]),
+     JSON.stringify(order.slice(0, 3)));
+  ok('and WebM is still there as the fallback', order.some(t => /webm/.test(t)));
+
+  /* THE ROUND TRIP IS THE DECISION. A format that writes but cannot be read
+     back is refused however loudly `isTypeSupported` claims it. */
+  const proven = await page.evaluate(async () => await vstProveMime());
+  ok('a format is only chosen after it writes AND reads back',
+     proven.mime === '' || proven.tried.find(t => t.mime === proven.mime).ok === true,
+     JSON.stringify(proven.tried.map(t => [t.mime, t.ok, t.why])));
+  ok('every candidate it rejected carries the reason it was rejected',
+     proven.tried.filter(t => !t.ok).every(t => !!t.why),
+     JSON.stringify(proven.tried.map(t => [t.mime, t.why])));
+  ok('and on this machine it proved one by reading it back',
+     !!proven.mime && proven.tried.some(t => t.ok && t.bytes > 0),
+     JSON.stringify(proven.tried.filter(t => t.ok)));
+
+  /* THE OWNER'S FAILURE, REPRODUCED AS A RULE: a candidate that writes bytes
+     the device cannot open is reported with that exact reason and is not
+     selected — which is what should have happened on their iPhone. */
+  const refused = await page.evaluate(async () => {
+    // A mime the recorder will not honour at all stands in for the iOS case.
+    const r = await vstRoundTrip('video/mp4;codecs=avc1.42E01E');
+    return r;
+  });
+  ok('an unusable format is never returned as the answer',
+     refused.ok === false ? !!refused.why : refused.bytes > 0,
+     JSON.stringify(refused));
+
+  ok('vstMime hands back the proven format once it is known',
+     await page.evaluate(() => VST_PROVEN && vstMime() === VST_PROVEN.mime));
+  await page.close();
+}
+
+/* OWNER §1: "DO NOT CONFUSE API PRESENCE WITH CODEC SUPPORT." The file is
+   parsed properly — not scanned for a four-character code. */
+section('The MOV is parsed, not guessed at');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const parsed = await page.evaluate(async () => {
+    const box = (type, payload) => {
+      const b = new Uint8Array(8 + payload.length);
+      new DataView(b.buffer).setUint32(0, 8 + payload.length);
+      for (let i = 0; i < 4; i++) b[4 + i] = type.charCodeAt(i);
+      b.set(payload, 8); return b;
+    };
+    const cat = (...a) => { const n = a.reduce((s, x) => s + x.length, 0);
+      const o = new Uint8Array(n); let k = 0; for (const x of a) { o.set(x, k); k += x.length; } return o; };
+    const u32 = n => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n); return b; };
+    const u16 = n => { const b = new Uint8Array(2); new DataView(b.buffer).setUint16(0, n); return b; };
+    const i32 = n => { const b = new Uint8Array(4); new DataView(b.buffer).setInt32(0, n); return b; };
+
+    // tkhd v0 with a 90-degree rotation matrix, as an upright iPhone writes.
+    const matrix = (a, b, c, d) => cat(i32(a * 65536), i32(b * 65536), u32(0),
+                                       i32(c * 65536), i32(d * 65536), u32(0),
+                                       u32(0), u32(0), u32(0x40000000));
+    const tkhd = (rotA, rotB, rotC, rotD) => box('tkhd', cat(
+      new Uint8Array(4),                       // version 0 + flags
+      new Uint8Array(20),                      // times, id, reserved
+      new Uint8Array(16),                      // more reserved
+      matrix(rotA, rotB, rotC, rotD),
+      u32(0), u32(0)));                        // width/height (unused here)
+    const mdhd = (ts, dur) => box('mdhd', cat(new Uint8Array(4), new Uint8Array(8),
+      u32(ts), u32(dur), new Uint8Array(4)));
+    const hdlr = kind => box('hdlr', cat(new Uint8Array(4), new Uint8Array(4),
+      new TextEncoder().encode(kind), new Uint8Array(12)));
+
+    // hvcC: byte1 carries tier+profile, bytes 2..5 the profile compatibility,
+    // byte 12 the level. Shaped so the codec string is derivable.
+    const hvcC = new Uint8Array(23);
+    hvcC[0] = 1; hvcC[1] = 0x01; hvcC[2] = 0x60; hvcC[12] = 93;
+    const avcC = new Uint8Array([1, 0x64, 0x00, 0x2a, 0xff]);
+
+    const visual = (cc, w, h, cfgType, cfg) => {
+      const body = new Uint8Array(78);
+      new DataView(body.buffer).setUint16(24, w);
+      new DataView(body.buffer).setUint16(26, h);
+      return box(cc, cat(body, box(cfgType, cfg)));
+    };
+    const sound = (cc, ch, rate) => {
+      const body = new Uint8Array(28);
+      new DataView(body.buffer).setUint16(16, ch);
+      new DataView(body.buffer).setUint32(24, rate << 16);
+      return box(cc, body);
+    };
+    const stsdOf = entry => box('stsd', cat(new Uint8Array(8), entry));
+    const trak = (kindStr, entry, ts, dur, tk) => box('trak', cat(
+      tk, box('mdia', cat(mdhd(ts, dur), hdlr(kindStr),
+        box('minf', box('stbl', stsdOf(entry)))))));
+
+    const mk = (entry, kindStr, tkArgs, audio) => {
+      const traks = [trak(kindStr, entry, 600, 6000, tkhd(...tkArgs))];
+      if (audio) traks.push(trak('soun', sound('mp4a', 2, 44100), 44100, 441000,
+                                 tkhd(1, 0, 0, 1)));
+      const moov = box('moov', cat(...traks));
+      const mdat = box('mdat', new Uint8Array(2 * 1048576));
+      const ftyp = box('ftyp', new Uint8Array([113, 116, 32, 32, 0, 0, 2, 0]));
+      return new File([cat(ftyp, mdat, moov)], 'IMG_0440.mov', { type: 'video/quicktime' });
+    };
+
+    return {
+      hevcPortrait: await vstParse(mk(visual('hvc1', 1920, 1080, 'hvcC', hvcC),
+        'vide', [0, 1, -1, 0], true)),
+      h264Upright: await vstParse(mk(visual('avc1', 1280, 720, 'avcC', avcC),
+        'vide', [1, 0, 0, 1], false)),
+    };
+  });
+
+  const hv = parsed.hevcPortrait, h2 = parsed.h264Upright;
+  ok('the video codec is read from the sample entry',
+     hv.video.cc === 'hvc1' && /HEVC/.test(hv.video.name), JSON.stringify(hv.video));
+  ok('with the dimensions', hv.video.width === 1920 && hv.video.height === 1080,
+     `${hv.video.width}x${hv.video.height}`);
+  ok('and the timescale and duration', hv.video.timescale === 600 && hv.video.seconds === 10,
+     JSON.stringify([hv.video.timescale, hv.video.duration, hv.video.seconds]));
+  /* THE ROTATION iOS STORES IN THE MATRIX rather than in the pixels. A
+     derivative that ignores it comes out sideways. */
+  ok('the rotation matrix is read, not ignored', hv.rotation === 90, String(hv.rotation));
+  ok('and an upright track reports no rotation', h2.rotation === 0, String(h2.rotation));
+  /* AUDIO IS A HARD REQUIREMENT NOW, so its presence is a parsed fact. */
+  ok('an audio track is found and named',
+     hv.audio && hv.audio.cc === 'mp4a' && /AAC/.test(hv.audio.name)
+     && hv.audio.channels === 2 && hv.audio.sampleRate === 44100, JSON.stringify(hv.audio));
+  ok('and a file with no audio says so, rather than assuming', h2.audio === null);
+
+  /* THE CONFIGURATION RECORD WebCodecs NEEDS — this is the difference between
+     "the API exists" and "the decoder accepts this file". */
+  ok('the HEVC configuration record is extracted', hv.video.hasConfig
+     && hv.video.configBox === 'hvcC' && hv.video.description.length === 23,
+     JSON.stringify([hv.video.configBox, hv.video.description && hv.video.description.length]));
+  ok('and a codec string is derived from it rather than hard-coded',
+     /^hvc1\.1\./.test(hv.video.codecString) && /L93/.test(hv.video.codecString),
+     hv.video.codecString);
+  ok('H.264 derives its own string from avcC profile bytes',
+     h2.video.codecString === 'avc1.64002a', h2.video.codecString);
+
+  /* NEVER INVENTED. A file whose boxes cannot be walked reports nothing. */
+  const junk = await page.evaluate(async () =>
+    await vstParse(new File([new Uint8Array(4096)], 'junk.mov', { type: 'video/quicktime' })));
+  ok('an unparseable file yields no codec at all', junk.video === null, JSON.stringify(junk));
+
+  /* BOUNDED READS — an 84.7 MB original must not be pulled into memory to read
+     a header. The fixture carries a 2 MB mdat and the parser never touches it. */
+  const bytes = await page.evaluate(async () => {
+    let read = 0;
+    const big = new Uint8Array(6 * 1048576);
+    const f = new File([big], 'big.mov', { type: 'video/quicktime' });
+    const realSlice = f.slice.bind(f);
+    f.slice = (a, b) => { read += (b - a); return realSlice(a, b); };
+    await vstParse(f);
+    return { read, size: f.size };
+  });
+  ok('the parser reads a bounded slice, never the whole file',
+     bytes.read < bytes.size / 10, JSON.stringify(bytes));
+  await page.close();
+}
+
+section('The device read-out validates the pipeline, not the API list');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(async () => {
+    const b = new Uint8Array(1024);
+    VST = { step: 'preview', caseNo: 'API-20260812-4002',
+            file: new File([b], 'IMG_0440.mov', { type: 'video/quicktime' }),
+            name: 'IMG_0440.mov', size: 1024, url: '', tz: 'America/New_York', q: '',
+            mo: '05', da: '03', yr: '2025', hr: '11', mi: '27', se: '58', ap: 'AM',
+            guessed: false, hash: null, pct: 0, err: '', saveMsg: '', diag: '',
+            out: null, recId: null, savedHere: false, started: false,
+            readable: false, codec: null, caps: vstCaps() };
+    paintVStamp();
+  });
+  await page.waitForTimeout(200);
+  await page.locator('[data-act="vstDiag"]').first().click();
+  await page.waitForTimeout(9000);
+  const d = await text(page, '.vst-diag');
+  /* EVERY ROW THE OWNER LISTED IN §11. */
+  for (const r of ['Container', 'Video codec', 'Audio codec', 'Decode original',
+                   'WebCodecs decode', 'Encode H.264', 'Timestamp renderer',
+                   'Result readable here', 'Audio preserved', 'Mux MP4', 'Share available']) {
+    ok(`the read-out reports ${r}`, has(d, r), d.slice(0, 300));
+  }
+  /* IT ASKS THE DECODER ABOUT THE FILE, not about itself. */
+  ok('WebCodecs decode is answered about this file, not the API',
+     /WebCodecs decode.*(accepts THIS file|no —)/.test(d), d.slice(0, 600));
+  /* AND IT SHOWS WHAT EACH OUTPUT FORMAT ACTUALLY DID. */
+  ok('each candidate output format is reported by what it did',
+     /READS BACK|no —/.test(d), d.slice(-500));
   await page.close();
 }
 

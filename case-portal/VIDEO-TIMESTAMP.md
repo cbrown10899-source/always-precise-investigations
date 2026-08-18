@@ -702,3 +702,105 @@ this is where the audit stops for approval.**
   reaches Photos or Files on iOS — and it resolves only after the operator
   completes it, so it may honestly be treated as saved.
 - **A device read-out**, including a real end-to-end render attempt.
+
+---
+
+# THE iOS DEVICE ANSWERED — 2026-08-18, and it named the bug
+
+**Owner ran the read-out on the real iPhone/iPad with `IMG_0440.mov`:**
+
+| Row | Device answer |
+| --- | --- |
+| Container | MOV / QuickTime |
+| **Media-element decode of the file** | **NO** |
+| Canvas capture | **YES** |
+| MediaRecorder | YES |
+| MediaRecorder reports MP4 / AVC | **YES** |
+| MediaRecorder reports WebM / VP9 | YES |
+| WebCodecs decode API present | YES |
+| WebCodecs encode API present | YES |
+| Share to device | YES |
+| Save-file picker | NO |
+| **End-to-end** | **FAILED — wrote a file the device could not read back** |
+
+## Why the end-to-end test failed — found, and fixed
+
+**`vstMime()` returned WebM because WebM was first in its list.** iOS records
+WebM and does not play it, so the test wrote a file and then could not open it.
+The device was telling the truth on every row; the code asked the wrong question.
+
+Two things changed, and the second is the durable one:
+
+1. **MP4/H.264 is now first in the preference order** — the format the owner
+   asked the derivative to be, and the one an iPhone plays.
+2. **`isTypeSupported` no longer decides anything.** `vstProveMime()` writes a
+   four-frame clip in each candidate and **reads it back on this same device**;
+   the first that survives wins, and one that cannot be read back is never
+   chosen whatever it claims. `vstGenerate` awaits it before recording.
+
+This project has now been bitten by `isTypeSupported` in **both** directions —
+a desktop reporting `video/mp4` while `avc1` reports unsupported, and an iPhone
+recording a WebM it cannot open. A capability string is not evidence. Measured
+after the change: on this container `video/mp4` **does** round-trip, so even the
+earlier "never mp4" conclusion was wrong — which is exactly why the round trip,
+not the string, is the rule.
+
+## Canvas capture works on iOS after all
+
+The published sources said `canvas.captureStream()` was unimplemented on WebKit
+iOS. **The owner's device says YES.** That is a material correction to the
+previous audit, and it means the **existing renderer may work unchanged on iOS**
+for any file the device can decode — no WebCodecs needed for those.
+
+## What is still blocked, and it is one thing
+
+**`Media-element decode of IMG_0440.mov: NO`.** The iPhone would not decode its
+own footage through a `<video>` element. So for this file the existing path
+cannot start, and WebCodecs is the only route.
+
+**"WebCodecs decode: YES" proves only that the API exists.** The owner said so
+explicitly and they are right. So the read-out now parses the file properly —
+`tkhd` / `mdhd` / `stsd`, the `avcC`/`hvcC` configuration record, dimensions,
+timescale, duration, audio track and codec, and the **rotation matrix** iOS uses
+instead of turning pixels — builds the real WebCodecs codec string from the
+configuration bytes, and asks **`VideoDecoder.isConfigSupported()` about THAT
+configuration**. It also asks `VideoEncoder` for H.264.
+
+That is the measurement that decides the pipeline, and it can only be taken on
+the device.
+
+## Two deployment constraints found before installing anything
+
+Both are specific to this project and both need an owner decision, because they
+touch things this repo treats as load-bearing:
+
+1. **`/portal/*` sets `script-src 'unsafe-inline'` with no `'self'`** — so **no
+   external script file can load on the portal at all.** A demuxer and muxer
+   would have to be **inlined into `portal/index.html`** (already 570 KB), or
+   the CSP would have to gain `'self'` — which `verify.sh` and `harden-check.yml`
+   police.
+2. **`default-src 'none'` with no `worker-src` blocks Web Workers**, so a
+   WebCodecs transcode could not be moved off the main thread without a second
+   CSP change.
+
+## The dependency audit, as requested — nothing installed
+
+| Package | Version | Licence | Unpacked | Role |
+| --- | --- | --- | --- | --- |
+| `mp4box` | 2.4.1 | **BSD-3-Clause** | 2.26 MB | demux MOV/MP4, the standard WebCodecs front end |
+| `mp4-muxer` | 5.2.2 | **MIT** | 156 KB | write a standards-compliant MP4 from encoded chunks, AVC + AAC passthrough |
+
+Both are pure JavaScript, no WASM, no server, no upload, licences compatible.
+Together they are a fraction of `@ffmpeg/core`'s 64.7 MB and sit far under the
+Pages 25 MiB per-file cap — **but see the CSP constraints above**, which decide
+*how* they would ship rather than *whether* they can.
+
+## Recommended order from here
+
+1. **Re-run the read-out on the iPhone with `IMG_0440.mov`.** It now reports the
+   owner's §11 matrix, including whether the decoder accepts the file's actual
+   configuration and which output format the device proved it can read back.
+2. **If `WebCodecs decode` says it accepts the configuration** — build the
+   pipeline, with the CSP decision made first.
+3. **If it declines** — that is the STOP the owner asked for, and no muxer would
+   have helped.
