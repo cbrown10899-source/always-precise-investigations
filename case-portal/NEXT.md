@@ -366,6 +366,26 @@ recedes but is **never removed**, and nothing is hidden with `display:none` to
 make a section look smaller. Shrinking a section by deleting its words is not
 shrinking it, and an absent zero is a different claim from a zero.
 
+## 🚦 DEPLOYMENT — 2026-08-18, master `7aa9111` (#169)
+
+| Component | Master SHA | Deployed SHA | Status |
+| --- | --- | --- | --- |
+| Public site + `/portal/` page | `7aa9111` | `7aa9111` | **DEPLOYED** — success at `7aa9111e` |
+| Worker / API | `7aa9111` | `8a48d7d` | **DEPLOYED** — `worker.js` untouched since #166 |
+| D1 schema | `7aa9111` | applied | unchanged — no dispatch owed |
+
+**LIVE VERIFIED is the owner's iPhone for this unit.** Open Timestamp Video,
+choose `IMG_0440.mov`, press **What can this device do?** — the read-out now
+answers whether the decoder accepts that file's real configuration, which is the
+gate on the whole pipeline.
+
+## ⏸️ WAITING ON: the iPhone read-out, then two CSP decisions
+
+Nothing further should be built until the device says whether
+`VideoDecoder.isConfigSupported()` accepts `IMG_0440.mov`'s configuration. If it
+declines, that is the owner's own STOP condition and no muxer would have helped.
+If it accepts, the CSP questions above are decided before anything is installed.
+
 ## 📱 THE iPHONE ANSWERED, AND IT NAMED THE BUG — 2026-08-18
 
 **Owner ran the read-out on the real device with `IMG_0440.mov`.** Two answers
