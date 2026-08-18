@@ -9,6 +9,67 @@ state. Update it when the queue moves; keep it short.
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
 truth** (recorded verbatim 2026-08-13).
 
+## 🚦 DEPLOYMENT — 2026-08-18, master `bfa426c` (#174) — Dropbox storage, report PDF, video save
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` | `bfa426c` | `bfa426c` | **DEPLOYED** — `deploy.yml` success |
+| Worker / API | `bfa426c` | `bfa426c` | **DEPLOYED** — `deploy-portal.yml` success |
+| D1 schema | `bfa426c` | unchanged | **no dispatch owed** — neither part adds a table or a column |
+
+Save point `save/2026-08-18-0716-bfa426c`. Suites: worker **1752/0**, portal
+**1526/0**, deploy guard **68/0**.
+
+**LIVE VERIFIED — OPEN.** The proxy denies the live domain from this container,
+and the PDF writer and the video upload session both only ever run in a real
+browser against a real Dropbox. What closes it, on the device: a photo appears
+under `Photos/`, **Download PDF** opens in a reader, **Save PDF to Dropbox**
+lands in `Reports/`, and a timestamped copy lands in `Video/`.
+
+## 📦 NEW CASE FILES LIVE IN DROPBOX — SHIPPED 2026-08-18 (#174)
+
+Owner: *"Use connected Dropbox App Folder as storage for NEW case photos and
+generated reports/PDFs"*, with `Photos` / `Reports` / `Video` per case; do not
+migrate or delete old R2 files; keep D1 for structured case data; refuse rather
+than fall back if Dropbox is unavailable.
+
+Two owner decisions were taken by question before building, and both narrowed
+the work: **`Video/` is created but the ordinary upload still refuses video**
+(the device-first decision of 2026-08-17 stands), and **an unreachable Dropbox
+refuses the upload** rather than falling back to R2 or double-writing.
+
+The detail is in `DROPBOX.md`. The parts that will bite whoever touches this
+next:
+
+- **No companion table.** `case_evidence.r2_key` already means "where the bytes
+  are", so a Dropbox row records `dropbox:<path>` and the prefix is the whole
+  discriminator. A table would have needed a `portal-setup` dispatch standing
+  between the merge and a working upload.
+- **The stored filename carries a random token.** Delete a photo and upload one
+  of the same name and Dropbox has no conflict to autorename around — the path
+  would repeat and `r2_key`'s UNIQUE constraint would reject the row.
+- **The R2 meter counts only Cloudflare now.** Otherwise photographs that never
+  touched Cloudflare would drive the storage card toward a cap they cannot
+  reach and eventually refuse uploads for space nothing was using.
+- **`serveEvidence` is still the only place bytes leave**, and it proxies. Do
+  not add a Dropbox share link: it would work for anyone holding it with none
+  of the case's permission checks in front.
+
+**The final report is a real PDF** (#174 too), written by the page from the
+rendered `#pkgdoc` with no library — base-14 fonts and JPEG images need no
+embedding and no compression. Built from the RENDERED document rather than the
+data behind it, because that document is already the one place deciding what a
+client may see; a second renderer would disagree eventually and the wrong one
+would be the one posted. Filed by `POST /build/:id/report-pdf` into `Reports/`,
+**not** as case evidence, audited as a `build_events` row.
+
+**A generated timestamped copy can optionally go to `Video/`**, in parts through
+a Dropbox upload session. Nothing uploads by itself, the original is never
+touched or sent, and the ordinary evidence upload still refuses video by name.
+Cancel needs nothing torn down — nothing exists at the destination until
+`finish` is called. `video_stamp.dropbox_path` was reserved when that table was
+written and had never been filled.
+
 ## 🚦 DEPLOYMENT — 2026-08-18, master `c00be24` (#173) — Dropbox callback fix
 
 | Component | Master | Deployed | Status |
