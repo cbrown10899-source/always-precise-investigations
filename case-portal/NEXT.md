@@ -9,6 +9,50 @@ state. Update it when the queue moves; keep it short.
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
 truth** (recorded verbatim 2026-08-13).
 
+## 🚦 DEPLOYMENT — 2026-08-18, master `bae2c26` (#181) — unmatched speech is kept
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` | `bae2c26` | `bae2c26` | **DEPLOYED** — `deploy.yml` success |
+| Worker / API | `bae2c26` | `1ca9a97` | **DEPLOYED** — `worker.js` untouched |
+| D1 schema | `bae2c26` | applied | unchanged — **no dispatch owed** |
+
+Save point `save/2026-08-18-2028-bae2c26`. Portal **1619/1**, worker **1779/0**, guard **68/0** — the one
+failure is the pre-existing preview fixture, untouched on the owner's
+instruction.
+
+**LIVE VERIFIED — OPEN.**
+
+## 🔄 §7 OVERRIDDEN BY THE OWNER (#181) — and why the override is right
+
+Owner, after using it: *"Voice commands are too strict. After Mobile, use a
+known command if confident; otherwise save the spoken words as an editable
+VOICE activity entry. Do not reject unmatched useful speech or pause the loop."*
+
+**§7 was written to stop a misheard phrase filing itself, and the first build
+honoured it by PAUSING the loop.** At the wheel that is the worse failure: the
+investigator narrates on to a microphone that stopped listening, and the hole
+in the day's log is found when the report is written. A surveillance log with
+gaps is the evidence problem. An unpolished but accurate sentence is not.
+
+**The part of §7 that still holds is the part that mattered:** an uncertain
+phrase never gets a canonical command id. *"Mobile change"* fits both
+`NO_CHANGE` and `CHANGE_POSITION` — opposite facts about the same minute — and
+guessing puts a claim in the log nobody made. The spoken words assert nothing
+false: `source = voice`, `command_id` **null**, editable, transcript beside it.
+
+Two outcomes after the wake word and no third — a confident match files the
+standardized sentence with its id; anything else files the spoken words. Both
+confirm briefly and return to listening.
+
+**What stays strict:** the wake word, or the log fills with the passenger's
+half of a phone call. **What is not rewritten:** the operator's words, beyond
+stripping the wake word and a leading "note".
+
+**Not dead code:** Tap to speak still goes through transcript review and an
+ambiguous transcript there still gets the chooser. Only the LOOP changed, which
+is where pausing was costing the log.
+
 ## 🚦 DEPLOYMENT — 2026-08-18, master `8adfc6d` (#180) — the iPhone voice bug
 
 | Component | Master | Deployed | Status |
