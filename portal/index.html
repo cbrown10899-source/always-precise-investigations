@@ -405,7 +405,15 @@
   .navfoot{margin-top:auto;display:flex;flex-direction:column;gap:10px;
     padding-top:16px;border-top:1px solid #23405f;}
   @media(min-width:900px){
+    /* `flex-wrap:nowrap` is LOAD-BEARING, not tidying. `.tabs` is a wrapping
+       row at the top of this file, and turning it into a column here kept the
+       wrap — so once the items were taller than the rail they wrapped into a
+       SECOND COLUMN and the navigation ran off the side. Measured on the phone
+       drawer: 296px wide, 460px of content, every child 224px or less. A
+       vertical navigation list scrolls (there is `overflow-y:auto` right here
+       for it); it must never wrap. */
     body.withnav .tabs{position:fixed;left:0;top:58px;bottom:0;width:198px;flex-direction:column;
+      flex-wrap:nowrap;
       align-items:stretch;gap:2px;padding:14px 10px;margin:0;background:#13273f;border-radius:0;
       overflow-y:auto;z-index:40;}
     body.withnav .tabs button{text-align:left;color:#c9d6e4;background:transparent;border-radius:8px;
@@ -441,7 +449,10 @@
        without viewport-fit=cover, which this page deliberately does not set.
        The field bar and the case section bar already use exactly this. */
     body.withnav.navopen .tabs{display:flex;position:fixed;left:0;top:0;bottom:0;width:76%;max-width:300px;
-      flex-direction:column;align-items:stretch;gap:2px;background:#13273f;z-index:60;
+      /* See the rail above — same inherited wrap, same second column. This is
+         the one that was actually reached: the drawer was a single item away
+         from wrapping, and adding one more door to the foot tipped it over. */
+      flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:2px;background:#13273f;z-index:60;
       padding:60px 12px max(14px, env(safe-area-inset-bottom));
       overflow-y:auto;box-shadow:0 0 0 100vmax rgba(9,18,30,.45);}
     body.withnav.navopen .tabs button{text-align:left;color:#c9d6e4;background:transparent;border-radius:8px;padding:11px 12px;}
@@ -648,6 +659,14 @@
   .pst-inc b{display:block;font-size:.9rem;color:#fff;}
   .pst-inc small{display:block;margin-top:3px;font-size:.78rem;color:#8fa9c2;line-height:1.5;}
   .pkg-sup{font-size:.74rem;color:var(--muted);line-height:1.4;margin:3px 0 4px;}
+  .pst-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));
+    gap:8px;margin-top:10px;}
+  .pst-pick{display:block;width:100%;min-height:44px;padding:6px;border-radius:10px;
+    border:1px solid #33526f;background:#0b1626;color:#cfe2f5;font:inherit;
+    font-size:.72rem;cursor:pointer;text-align:center;}
+  .pst-pick img{display:block;width:100%;height:76px;object-fit:cover;border-radius:7px;
+    background:#132538;}
+  .pst-pick span{display:block;margin-top:5px;word-break:break-all;line-height:1.3;}
 
   /* ------------------------------------------- video timestamp generator
 
@@ -1660,7 +1679,11 @@ function shell(inner){
          rule is that nobody should have to open a case to reach the utility.
          The case it belongs to is chosen inside it, against the caller's own
          case list — so the authorization boundary is the one it always was. -->
-    <button class="side-vst" data-act="vstOpen" data-case="">&#127909; Timestamp Video</button>${
+    <button class="side-vst" data-act="vstOpen" data-case="">&#127909; Timestamp Video</button>
+    <!-- And its sibling. PHOTO-TIMESTAMP.md D1 put this on the photograph only;
+         with nothing uploaded there was then no way in at all, which is how the
+         owner came to look for it here and find nothing. -->
+    <button class="side-vst" data-act="pstLaunch" data-case="">&#128247; Timestamp Photo</button>${
     ME.role === "admin"
       ? `<button class="side-intake" data-act="tab" data-tab="newlead">+ Intake a Client</button>` : ""}
   </div>`;
@@ -2277,6 +2300,7 @@ function quickToolsHtml(){
   return `<div class="qtools">
     <span class="qtools-l">Quick tools</span>
     <button class="qtool" data-act="vstOpen" data-case=""><b>&#127909;</b> Timestamp Video</button>
+    <button class="qtool" data-act="pstLaunch" data-case=""><b>&#128247;</b> Timestamp Photo</button>
   </div>`;
 }
 
@@ -5872,10 +5896,75 @@ function pstFill(ms){
   PST.ap = p.dayPeriod === "AM" ? "AM" : "PM";
 }
 
-async function pstOpen(evId, caseNo){
+/* ------------------------------------------------ THE TOP-LEVEL DOOR
+
+   PHOTO-TIMESTAMP.md D1 said the door was the photograph itself, because unlike
+   a clip the picture is already in the case. That was true and it was NOT
+   ENOUGH: with nothing uploaded yet there is no entry point anywhere, and the
+   owner went looking for the tool beside Timestamp Video and found nothing at
+   all. **D1 is superseded** — a feature reachable only from a card that may not
+   exist is a feature nobody can find.
+
+   It asks rather than assumes, exactly as Timestamp Video does: the nav button
+   carries an empty `data-case` on purpose so the utility cannot adopt whichever
+   case happens to be open behind it. Unlike video it always needs a case, since
+   the original it copies lives in one — so "no case" is a question here, never
+   a skip. */
+async function pstLaunch(caseNo){
+  PST = {step: caseNo ? "pick" : "case", caseNo: caseNo || "", evId: null,
+         cases: null, caseErr: "", photos: null, photoErr: "", copyIds: [], q: "",
+         name: "", originalClass: "", tz: VST_TZ, source: "operator", includeCopy: true,
+         mo: "", da: "", yr: "", hr: "", mi: "", se: "", ap: "PM",
+         url: "", out: null, err: "", note: "", busy: false};
+  paintPStamp();
+  return caseNo ? pstLoadPhotos(caseNo) : pstLoadCases();
+}
+
+/* An archived or deleted case refuses every write, so offering one would be
+   offering a refusal — the same filter `vstLoadCases` applies. */
+async function pstLoadCases(){
+  const live = c => !c.archived_at && !c.deleted_at;
+  if(!PST) return;
+  PST.caseErr = "";
+  if(Array.isArray(CASES) && CASES.length){ PST.cases = CASES.filter(live); return paintPStamp(); }
+  try{
+    const d = await api("/submissions?limit=200");
+    if(PST) PST.cases = (d.submissions || []).filter(live);
+  }catch(e){
+    /* A failed read is NOT an empty list — `cases` is left unset so nothing can
+       draw "you have no cases" over a server problem. */
+    if(PST) PST.caseErr = e.message;
+  }
+  paintPStamp();
+}
+
+/* The case's own photographs, read from that case's workspace rather than from
+   whatever `WS` happens to hold — the launcher may be opened on a case that is
+   not the one on screen. Copies are excluded here for the same reason
+   `pstButton` excludes them: the Worker refuses a copy of a copy by name, and a
+   control leading to a refusal should not be drawn. */
+async function pstLoadPhotos(caseNo){
+  if(!PST) return;
+  PST.photoErr = "";
+  try{
+    const ws = await api("/cases/" + encodeURIComponent(caseNo) + "/workspace");
+    if(!PST || PST.caseNo !== caseNo) return;
+    PST.copyIds = (ws.photo_stamps || []).map(x => x.stamped_id).filter(x => x != null);
+    PST.photos = (ws.evidence || []).filter(e => !e.deleted_at
+      && String(e.content_type || "").startsWith("image/")
+      && !PST.copyIds.includes(e.id));
+  }catch(e){
+    if(PST) PST.photoErr = e.message;
+  }
+  paintPStamp();
+}
+
+async function pstOpen(evId, caseNo, given){
   const id = parseInt(evId, 10);
-  const row = ((WS && WS.evidence) || []).find(e => e.id === id);
-  PST = {step: "loading", caseNo: caseNo || WS_CASE || "", evId: id,
+  const row = given
+    || ((PST && PST.photos) || []).find(e => e.id === id)
+    || ((WS && WS.evidence) || []).find(e => e.id === id);
+  PST = {step: "loading", caseNo: caseNo || (PST && PST.caseNo) || WS_CASE || "", evId: id,
          name: row ? row.filename : "", tz: VST_TZ, source: "operator",
          mo: "", da: "", yr: "", hr: "", mi: "", se: "", ap: "PM",
          /* The owner's rule, 2026-08-18: the timestamped copy is the half that
@@ -6100,8 +6189,53 @@ function pstHtml(){
   const preview = w.ok ? vstLabel(w.ms, v.tz) : "";
   const two = n => `<option value="${n}"${v.ap === n ? " selected" : ""}>${n}</option>`;
 
+  const caseName = c => c.kind === "claims"
+    ? (c.carrier || c.client_name || "Claim assignment") : (c.client_name || "Private client");
+  const q = String(v.q || "").trim().toLowerCase();
+  const pickable = (v.cases || []).filter(c => !q
+    || String(c.case_no).toLowerCase().includes(q) || caseName(c).toLowerCase().includes(q));
+
   const body =
-    v.step === "loading" ? `
+    v.step === "case" ? `
+      <div class="vst-card">
+        <h4>Which case is the photograph on?</h4>
+        <p class="vst-note">A timestamped copy is filed beside the original, so it has
+          to belong to a case. Only cases you can already open are listed &mdash;
+          choosing one here gives you no more access than you had.</p>
+        <label class="vst-f" style="margin-top:10px"><span>Find a case</span>
+          <input id="pst_q" data-act-input="pstSearch" style="text-align:left"
+            placeholder="case number or name" value="${esc(v.q || "")}"></label>
+        ${v.caseErr ? `<p class="vst-note" style="color:#ffb3b3">${esc(v.caseErr)} &mdash; the case
+          list could not be read, so this is not &ldquo;you have no cases&rdquo;. Try again.</p>`
+          : !v.cases ? `<p class="vst-note">Loading your cases&hellip;</p>`
+          : pickable.length ? `<div style="margin-top:8px">${pickable.slice(0, 40).map(c =>
+              `<button class="vst-btn" style="text-align:left;margin-top:6px"
+                 data-act="pstPickCase" data-case="${esc(c.case_no)}">${esc(c.case_no)}
+                 &mdash; ${esc(caseName(c))}</button>`).join("")}</div>`
+          : `<p class="vst-note">${v.cases.length ? "No case matches that."
+              : "You have no cases yet."}</p>`}
+        <button class="vst-btn" data-act="pstClose">Cancel</button>
+      </div>`
+    : v.step === "pick" ? `
+      <div class="vst-card">
+        <h4>Which photograph?</h4>
+        <div class="vst-k"><span>Case</span><span>${esc(v.caseNo)}</span></div>
+        ${v.photoErr ? `<p class="vst-note" style="color:#ffb3b3">${esc(v.photoErr)} &mdash; the
+          case's photographs could not be read, so this is not &ldquo;there are none&rdquo;.
+          Try again.</p>`
+          : !v.photos ? `<p class="vst-note">Loading the case's photographs&hellip;</p>`
+          : v.photos.length ? `<div class="pst-grid">${v.photos.slice(0, 60).map(e =>
+              `<button class="pst-pick" data-act="pstPickPhoto" data-id="${e.id}">
+                 <img src="/portal-api/cases/${encodeURIComponent(v.caseNo)}/evidence/${e.id}/file"
+                      alt="" loading="lazy">
+                 <span>${esc(e.filename)}</span></button>`).join("")}</div>`
+          : `<p class="vst-note">This case has no photographs in it yet, so there is
+              nothing to timestamp. Add one from <b>Case media</b> &mdash; or in the field,
+              <b>Add picture</b> &mdash; and it will be here.</p>`}
+        <button class="vst-btn" data-act="pstBackToCase">Choose a different case</button>
+        <button class="vst-btn" data-act="pstClose">Cancel</button>
+      </div>`
+    : v.step === "loading" ? `
       <div class="vst-card">
         <h4>Opening the photograph</h4>
         <p class="vst-note">Reading it back from the case so the copy is made from
@@ -7895,6 +8029,26 @@ async function reopenCase(){
    correction replaced it, and whether it reached a device. `vstLabel` re-derives
    the wording from the stored instant and zone, so the line here is the same
    text that was burned into the picture rather than a second rendering of it. */
+/* THE PHOTOGRAPH'S OWN CARD on the media screen, beside the video one rather
+   than inside it: that card's paragraph is about clips on a device, and a
+   control saying "Photo timestamp" underneath it would have the screen
+   explaining the wrong thing.
+
+   It counts only LIVE copies. A superseded one is still in the case and still
+   in the gallery, but "3 timestamped photographs" when two of them were
+   corrections of the same picture is a number that misleads at a glance. */
+function pstPanelHtml(){
+  const rows = (WS && WS.photo_stamps) || [];
+  const live = rows.filter(r => !r.superseded_at).length;
+  return `<div class="card" style="margin-bottom:14px">
+    <div class="rc-h"><b>Photo timestamp</b>${live ? `<span class="tag">${live}</span>` : ""}</div>
+    <p class="hint" style="margin:4px 0 8px">Pick a photograph already on this case and the date
+      and time are burned into the bottom-right corner of a copy. The original is never changed
+      &mdash; the copy is filed beside it and both stay in the case.</p>
+    <button class="btn sm" data-act="pstLaunch" data-case="${esc(WS_CASE)}">Photo timestamp</button>
+  </div>`;
+}
+
 function vstPanelHtml(){
   const rows = (WS && WS.video_stamps) || [];
   return `<div class="card" style="margin-bottom:14px">
@@ -7972,6 +8126,7 @@ function evidencePanel(){
 
   return `
     ${vstPanelHtml()}
+    ${pstPanelHtml()}
     <!-- UPLOAD VIDEO / PICTURE is the entry point for ADDING media (owner,
          2026-08-17) and it holds both halves of that: the picture or document
          goes to the portal, and the video is timestamped on the device it is
@@ -10326,6 +10481,10 @@ function svEvidenceScreen(){
     <div class="sv-quad">
       <button class="sv-q" data-act="svPhoto"><b>&#128247;</b>Add picture</button>
       <button class="sv-q" data-act="svVideo"><b>&#127909;</b>Timestamp video</button>
+      ${""/* Beside its sibling, and reachable in the field: inside this view the
+             navigation rail is not on screen, so the nav door does not help
+             here. */}
+      <button class="sv-q" data-act="pstLaunch" data-case="${esc(WS_CASE || "")}"><b>&#128337;</b>Timestamp photo</button>
     </div>
     ${svVideoStampsHtml()}
     <div class="sv-card">
@@ -12084,6 +12243,23 @@ document.addEventListener("click", ev => {
      which is also what turns the provenance from the camera's to the
      operator's — so no repaint may happen before it. */
   else if(act === "pstOpen"){ pstOpen(el.dataset.id, WS_CASE); }
+  /* An EMPTY data-case is a question, not a default — the same rule the video
+     door follows, so the utility cannot adopt whichever case is open behind it. */
+  else if(act === "pstLaunch"){
+    const attr = el.getAttribute("data-case");
+    pstLaunch(attr === null ? (WS_CASE || "") : attr);
+  }
+  else if(act === "pstPickCase"){
+    if(PST){ PST.caseNo = el.dataset.case; PST.step = "pick"; PST.photos = null; paintPStamp();
+             pstLoadPhotos(PST.caseNo); }
+  }
+  else if(act === "pstPickPhoto"){
+    const row = ((PST && PST.photos) || []).find(e => e.id === Number(el.dataset.id));
+    if(PST) pstOpen(el.dataset.id, PST.caseNo, row);
+  }
+  else if(act === "pstBackToCase"){
+    if(PST){ PST.step = "case"; PST.photos = null; PST.photoErr = ""; paintPStamp(); pstLoadCases(); }
+  }
   else if(act === "pstBurn"){ pstBurn(); }
   else if(act === "pstSave"){ pstSave(); }
   else if(act === "pstEdit"){ if(PST){ PST.step = "when"; PST.err = ""; paintPStamp(); } }
@@ -12557,6 +12733,8 @@ document.addEventListener("input", ev => {
      is rewritten — a repaint would rebuild the box the cursor is in, mid-number,
      the same reason `vstProgress` exists. */
   if(din === "pstInc" && PST){ PST.includeCopy = !!ev.target.checked; return paintPStamp(); }
+  if(din === "pstSearch" && PST){ PST.q = ev.target.value; paintPStamp();
+    const b = $("pst_q"); if(b){ b.focus(); b.setSelectionRange(b.value.length, b.value.length); } return; }
   if(din === "pstWhen" && PST){
     pstCollect();
     const res = $("pst_res");

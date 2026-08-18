@@ -1248,11 +1248,28 @@ going in its place, and its Add becomes an explicit **Add anyway**. Nothing
 refuses it: `POST /build/:id/items` is unchanged, because an Admin explicitly
 selecting the original is exactly what the owner allowed for.
 
-**The door is the photograph** (derived): the action is on the gallery card and
-on the field view's own media card, both roles, because `caseFor` is the
-boundary that matters and the investigator who took the picture is the one
-standing in the field with it. There is no top-level door, unlike Timestamp
-Video — video needs one because the portal never holds the clip.
+**It has the same doors Timestamp Video has, and that was a correction.** The
+first build put the action only on the photograph — the gallery card and the
+field view's media card — reasoning that unlike a clip the picture is already in
+the case. True, and not enough: with nothing uploaded there is no card, so there
+was no entry point **anywhere** and the owner could not find the tool at all.
+
+Four doors now: the **navigation foot** (both roles, every screen), the
+**dashboard quick tools row**, its **own card on Case media** (its own card, not
+a button under the video card — that paragraph is about clips), and the **field
+view's media screen**, because inside the field view the navigation rail is not
+on screen and the nav door does not reach it.
+
+The top-level copies carry an **empty `data-case`** for the same reason
+Timestamp Video's does: the utility asks which case rather than adopting
+whichever one is open behind it. Unlike video it always needs a case, so "no
+case" is a question here and never a skip, and a case with no photographs says
+so and says where one comes from.
+
+The action stays on the card too — `caseFor` is the boundary that matters and
+the investigator who took the picture is the one standing in the field with it.
+**The reachability tests are written as a pair across both tools**, so a door
+that exists for one and not the other fails rather than ships.
 
 **Adding this table means a manual `portal-setup.yml` dispatch after merge.**
 
