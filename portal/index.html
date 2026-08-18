@@ -5057,6 +5057,37 @@ async function vstTranscode(file, parsed, startMs, tz, onStage){
           audio: "stripped", sourceAudio};
 }
 
+/* IS THIS CONFIDENTLY NOT A VIDEO? (owner, 2026-08-18: desktop must reject a
+   non-video file immediately with "Video files only".)
+
+   The picker asks for `video/*`, but on a desktop the operator can switch the
+   filter to All Files and choose anything, and the wizard would then carry a
+   spreadsheet all the way to a decode failure that reads like a codec problem.
+
+   IT ONLY REFUSES WHAT IT CAN POSITIVELY IDENTIFY AS SOMETHING ELSE, and that
+   restraint is the whole design. A `.mov` that decodes perfectly well arrives
+   as `video/quicktime`, as `application/octet-stream`, or WITH NO TYPE AT ALL —
+   measured, and written down in VIDEO-TIMESTAMP.md. Refusing an empty or
+   octet-stream type would reject the exact iPhone file this feature exists for.
+   So: anything that says video passes, anything NAMED as a video passes,
+   anything with no opinion passes to the decode probe — which is the real
+   arbiter — and only a file whose type positively says image, audio, text or
+   document is turned away here. */
+const VST_VIDEO_EXT = new Set(["mov", "mp4", "m4v", "webm", "avi", "mkv", "mpg",
+                               "mpeg", "m2ts", "mts", "3gp", "3g2", "ogv", "qt"]);
+
+function vstNotVideo(f){
+  const type = String((f && f.type) || "").toLowerCase();
+  const name = String((f && f.name) || "").toLowerCase();
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 ? name.slice(dot + 1) : "";
+  if(type.startsWith("video/")) return false;        // it says it is video
+  if(VST_VIDEO_EXT.has(ext)) return false;           // it is named as one
+  // No opinion either way is the iPhone case: let the decode probe decide.
+  if(!type || type === "application/octet-stream") return false;
+  return true;
+}
+
 /* Opening the generator. The file never leaves the device: it is read straight
    from the picker, and the object URL it is read through is revoked on close. */
 function vstOpen(caseNo){
@@ -5066,6 +5097,15 @@ function vstOpen(caseNo){
   inp.onchange = async () => {
     const f = inp.files && inp.files[0];
     if(!f) return;
+    /* REFUSED BEFORE ANYTHING IS READ. No object URL is made, so there is
+       nothing to revoke, and the operator is told the one thing that helps
+       rather than a decode error three steps later. */
+    if(vstNotVideo(f)){
+      VST = {step: "reject", caseNo: caseNo || "", name: f.name,
+             why: "Video files only"};
+      paintVStamp();
+      return;
+    }
     /* THE PROVISIONAL DEFAULT ONLY. The real anchor is the video's own capture
        metadata, read by `vstParse` a moment later and applied below — the file's
        modified date is when the file was WRITTEN, not when the footage was shot,
@@ -5656,7 +5696,16 @@ function vstHtml(){
     || String(c.case_no).toLowerCase().includes(q) || caseName(c).toLowerCase().includes(q));
 
   const body =
-      v.step === "case" ? `
+      v.step === "reject" ? `
+        <div class="vst-card">
+          <h4>Video files only</h4>
+          <div class="vst-k"><span>File</span><span>${esc(v.name || "")}</span></div>
+          <p class="vst-note">That is not a video, so there is nothing here to timestamp.
+            Choose the clip itself &mdash; the file straight from the camera or the phone.</p>
+          <button class="vst-btn go" data-act="vstOpen" data-case="${esc(v.caseNo || "")}">Choose a video</button>
+          <button class="vst-btn" data-act="vstClose">Cancel</button>
+        </div>`
+    : v.step === "case" ? `
         <div class="vst-card">
           <h4>Which case is this footage for?</h4>
           <div class="vst-k"><span>File</span><span>${esc(v.name)}</span></div>
