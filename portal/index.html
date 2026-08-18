@@ -405,7 +405,15 @@
   .navfoot{margin-top:auto;display:flex;flex-direction:column;gap:10px;
     padding-top:16px;border-top:1px solid #23405f;}
   @media(min-width:900px){
+    /* `flex-wrap:nowrap` is LOAD-BEARING, not tidying. `.tabs` is a wrapping
+       row at the top of this file, and turning it into a column here kept the
+       wrap — so once the items were taller than the rail they wrapped into a
+       SECOND COLUMN and the navigation ran off the side. Measured on the phone
+       drawer: 296px wide, 460px of content, every child 224px or less. A
+       vertical navigation list scrolls (there is `overflow-y:auto` right here
+       for it); it must never wrap. */
     body.withnav .tabs{position:fixed;left:0;top:58px;bottom:0;width:198px;flex-direction:column;
+      flex-wrap:nowrap;
       align-items:stretch;gap:2px;padding:14px 10px;margin:0;background:#13273f;border-radius:0;
       overflow-y:auto;z-index:40;}
     body.withnav .tabs button{text-align:left;color:#c9d6e4;background:transparent;border-radius:8px;
@@ -441,7 +449,10 @@
        without viewport-fit=cover, which this page deliberately does not set.
        The field bar and the case section bar already use exactly this. */
     body.withnav.navopen .tabs{display:flex;position:fixed;left:0;top:0;bottom:0;width:76%;max-width:300px;
-      flex-direction:column;align-items:stretch;gap:2px;background:#13273f;z-index:60;
+      /* See the rail above — same inherited wrap, same second column. This is
+         the one that was actually reached: the drawer was a single item away
+         from wrapping, and adding one more door to the foot tipped it over. */
+      flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:2px;background:#13273f;z-index:60;
       padding:60px 12px max(14px, env(safe-area-inset-bottom));
       overflow-y:auto;box-shadow:0 0 0 100vmax rgba(9,18,30,.45);}
     body.withnav.navopen .tabs button{text-align:left;color:#c9d6e4;background:transparent;border-radius:8px;padding:11px 12px;}

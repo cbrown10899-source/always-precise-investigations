@@ -5052,6 +5052,18 @@ section('The rail on a phone: 44px targets and nothing sideways');
   });
   ok('the group headers do not push the drawer wider than itself', rail.over <= 1, JSON.stringify(rail));
   ok('and the drawer stays inside the phone', rail.right <= rail.vw + 1, JSON.stringify(rail));
+  /* NAMED FOR WHAT IT ACTUALLY GUARDS. The assertion above is the measurement,
+     but its name says "group headers" and that is only the first thing that
+     ever tripped it. What went wrong the second time was different and the name
+     sent the next reader looking in the wrong place: `.tabs` is a WRAPPING ROW
+     at the top of the stylesheet, the drawer only changes its direction, so the
+     wrap came along — and once the items were taller than the drawer they
+     wrapped into a SECOND COLUMN. Measured when it broke: 296px wide, 460px of
+     content, every child 224px or less. A vertical navigation scrolls; the
+     drawer has `overflow-y:auto` for exactly that. */
+  const wrap = await page.evaluate(() =>
+    getComputedStyle(document.querySelector('.tabs')).flexWrap);
+  ok('the drawer is a SCROLLING column, never a wrapping one', wrap === 'nowrap', wrap);
   await page.close();
 }
 
@@ -7940,9 +7952,17 @@ section('Timestamp video is reachable without opening a case');
   await signIn(page, 'trever', 'AdminPassword1x');
   await page.locator('.tabs button', { hasText: 'Dashboard' }).first().click();
   await page.waitForTimeout(600);
-  ok('the dashboard carries the quick tool', await page.locator('.qtools .qtool').count() === 1);
-  ok('labelled as a tool, not a card', has(await text(page, '.qtools'), 'Quick tools')
-     && has(await text(page, '.qtools'), 'Timestamp video'));
+  /* Two tools now, not one — Timestamp Photo joined its sibling here after the
+     owner could not find it anywhere in the live portal. Asserted by ACT and as
+     a pair: the count alone would pass on two copies of the same door. */
+  const tools = await page.evaluate(() =>
+    [...document.querySelectorAll('.qtools .qtool')].map(b => b.dataset.act));
+  ok('the dashboard carries both quick tools',
+     tools.includes('vstOpen') && tools.includes('pstLaunch'), JSON.stringify(tools));
+  ok('and nothing else has crept into the row', tools.length === 2, JSON.stringify(tools));
+  ok('labelled as tools, not cards', has(await text(page, '.qtools'), 'Quick tools')
+     && has(await text(page, '.qtools'), 'Timestamp video')
+     && has(await text(page, '.qtools'), 'Timestamp photo'));
   /* COMPACT, not a fifth equal-weight box: it must be shorter than a stat card
      and must not have become one. */
   const size = await page.evaluate(() => {
