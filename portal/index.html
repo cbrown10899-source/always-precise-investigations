@@ -8992,6 +8992,19 @@ function voiceIsWakeOnly(spoken){
   return voiceNormalize(spoken) === VOICE_WAKE;
 }
 
+/* What the operator actually SAID, with the wake word taken off the front so
+   the entry reads as their sentence rather than as an instruction to the
+   portal. A leading "note" goes too: that word was how they asked for free
+   text, not part of the observation. Nothing else is rewritten — it is their
+   record, and tidying someone's words is how a log stops matching what
+   happened. */
+function voiceSpokenWords(spoken){
+  return String(spoken == null ? "" : spoken).trim()
+    .replace(/^\s*mobile\b[\s,.:;-]*/i, "")
+    .replace(/^\s*note\b[\s,.:;-]*/i, "")
+    .trim();
+}
+
 function voiceNormalize(str){
   return String(str == null ? "" : str).toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
@@ -9273,8 +9286,8 @@ function svVoiceEngineEvent(name, e){
 }
 
 /* §9 — brief. "NO CHANGE · 10:42 AM", never a spoken paragraph. */
-function svVoiceConfirm(command, when){
-  return String(command.id).replace(/_/g, " ") + " · " + t12(hmLocal(when));
+function svVoiceConfirm(label, when){
+  return String(label).replace(/_/g, " ") + " · " + t12(hmLocal(when));
 }
 
 async function svVoiceHeard(raw){
@@ -9286,70 +9299,74 @@ async function svVoiceHeard(raw){
   /* NOT EVERYTHING IN THE CAR IS FOR US. While voice mode is on the microphone
      hears the radio, the passenger and the road; only an utterance carrying the
      wake word — or the one immediately after "Mobile" on its own — is treated
-     as addressed to the portal. Without this, a conversation fills the screen
-     with review prompts. */
+     as addressed to the portal. This is the one thing that must stay strict:
+     without it the day's log fills with the passenger's half of a phone call. */
   if(!voiceHasWake(said) && !v.armed) return;
 
   if(voiceIsWakeOnly(said)){
     v.armed = true; v.state = "command"; v.err = ""; return paint();
   }
 
+  /* AFTER "MOBILE", NOTHING SPOKEN IS THROWN AWAY (owner, 2026-08-18).
+
+     This reverses what §7 asked for, deliberately and on the owner's
+     instruction, and the reasoning is worth keeping because it is a judgement
+     about which failure costs more. §7 was written to stop a misheard phrase
+     filing itself as an official record. The first build honoured that by
+     PAUSING the loop and asking — and at the wheel that is worse: the
+     investigator carries on narrating to a microphone that stopped listening,
+     and the hole in the log is found when the report is written.
+
+     THE PART OF §7 THAT STILL HOLDS, and it is the part that mattered: an
+     uncertain phrase never gets a CANONICAL COMMAND. "Mobile change" fits both
+     NO_CHANGE and CHANGE_POSITION, which are opposite facts about the same
+     minute, and guessing between them puts a claim in the evidence log that
+     nobody made. Saving the words actually spoken asserts nothing false — it
+     records what was said, marked as voice, editable, with the raw transcript
+     kept beside it. */
   const m = voiceMatch(said);
+  const known = m.status === "ok";
+  const text = known ? m.text : voiceSpokenWords(said);
+  const commandId = known ? m.command.id : null;
+  if(!text) return;                       // "Mobile," and nothing else
 
-  if(m.status === "ok"){
-    /* §8 — one spoken command, ONE record. Speech engines re-emit a final
-       result, and an auto-filing loop turns that into a duplicate entry in the
-       evidence log. Two guards, because the spec says not to rely on matching
-       text alone: nothing files while a file is in flight, and the same
-       canonical command inside six seconds is the same command being heard
-       twice, not the investigator saying it twice.
+  /* §8 — one spoken command, ONE record. Engines re-emit a final result, and a
+     filing loop turns that into a duplicate in the evidence log. Two guards,
+     because §8 says not to rely on matching text alone: nothing files while a
+     file is in flight, and the same thing again inside six seconds is the
+     engine hearing it twice rather than the investigator saying it twice. For
+     free speech the key is the words, since there is no command id to key on.
 
-       NOT COVERED HERE: retries after an offline period, which §8 also names.
-       That half needs a server-side event key and is not built. */
-    const now = Date.now();
-    if(v.filing) return;
-    if(v.last && v.last.id === m.command.id && now - v.last.at < 6000){
-      v.armed = false; v.state = "wake"; return paint();
-    }
-    v.filing = true;
-    v.last = {id: m.command.id, at: now};
-    v.state = "processing"; v.err = ""; paint();
-
-    const when = new Date();
-    const stamp = stampNow();
-    try{
-      await api(`/cases/${encodeURIComponent(WS_CASE)}/activity`, {method: "POST", body: {
-        at_date: stamp.date, at_time: stamp.time, kind: "activity",
-        description: m.text, source: "voice", command_id: m.command.id, heard: said,
-      }});
-      v.msg = svVoiceConfirm(m.command, when);
-    }catch(e){
-      v.err = e.message;
-      v.last = null;            // it did not land, so it is not a duplicate to guard
-    }
-    v.filing = false;
-    v.armed = false;
-    v.state = v.on ? "wake" : "off";
-    await svReload();           // §9 — and LAST ACTIVITY shows it immediately
-    return;
+     NOT COVERED: retries after an offline period, which §8 also names. That
+     half needs a server-side event key and is not built. */
+  const key = commandId || ("free:" + voiceNormalize(text));
+  const now = Date.now();
+  if(v.filing) return;
+  if(v.last && v.last.id === key && now - v.last.at < 6000){
+    v.armed = false; v.state = "wake"; return paint();
   }
+  v.filing = true;
+  v.last = {id: key, at: now};
+  v.state = "processing"; v.err = ""; paint();
 
-  /* §7 and §6B — NOTHING ELSE FILES ITSELF. An ambiguous phrase, dictated
-     prose, and a phrase that matched nothing all stop the loop and hand over to
-     the review that already exists. The loop stops on purpose: the operator is
-     now looking at a question, and a microphone still listening would file
-     something over the top of it. */
-  svVoiceStop("handoff");
-  SV.heard = said;
-  SV.voiceText = null;
-  SV.voiceCmd = null;
-  v.msg = "";
-  v.err = m.status === "ambiguous"
-    ? "More than one command fits that — voice mode paused so you can choose."
-    : m.status === "dictation"
-      ? "Dictation — voice mode paused so you can read it before it goes in."
-      : "That did not match a command — voice mode paused so you can check it.";
-  paint();
+  const when = new Date();
+  const stamp = stampNow();
+  try{
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/activity`, {method: "POST", body: {
+      at_date: stamp.date, at_time: stamp.time, kind: "activity",
+      description: text, source: "voice", command_id: commandId, heard: said,
+    }});
+    v.msg = svVoiceConfirm(known ? m.command.id : "VOICE NOTE", when);
+  }catch(e){
+    v.err = e.message;
+    v.last = null;              // it did not land, so it is not a duplicate to guard
+  }
+  v.filing = false;
+  v.armed = false;
+  /* BACK TO LISTENING EITHER WAY. The loop does not stop for a phrase it did
+     not recognise — that was the whole complaint. */
+  v.state = v.on ? "wake" : "off";
+  await svReload();
 }
 
 /* §16 — foreground only, and enforced rather than merely stated. */
@@ -9376,8 +9393,9 @@ function svVoicePanelHtml(){
     <div class="sv-voicestate${v.on ? " live" : ""}">${esc(label)}</div>
     ${v.msg ? `<div class="sv-ok">&#10003; ${esc(v.msg)}</div>` : ""}
     ${v.err ? `<div class="sv-err">${esc(v.err)}</div>` : ""}
-    ${v.on ? `<div class="sv-voicenote">Say &ldquo;Mobile&rdquo; and the command &mdash; it
-      keeps listening between them, so you do not tap between entries.
+    ${v.on ? `<div class="sv-voicenote">Say &ldquo;Mobile&rdquo; and the command &mdash; or
+      just say what happened, and it is saved in your own words for you to tidy later.
+      It keeps listening between entries, so you do not tap between them.
       <b>It only listens while this page is on screen</b>, not when the phone is locked
       or this is in the background.</div>` : ""}
     ${!supported ? `<div class="sv-voicenote">This browser has no speech recognition, so

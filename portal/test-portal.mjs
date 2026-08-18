@@ -5229,47 +5229,60 @@ section('Voice mode: explicit, looping, and never filing what it is unsure of');
   ok('the same command heard twice makes one entry, not two',
      (await entries()) === after + 1, `${after} -> ${await entries()}`);
 
-  /* §7 — AMBIGUOUS NEVER FILES. Proven with a real collision added to the
-     registry, because the shipped one deliberately has no such pair. */
+  /* AN UNCERTAIN PHRASE IS KEPT, NOT REFUSED (owner, 2026-08-18). Proven with
+     a real collision added to the registry, because the shipped one has no
+     such pair. */
   const n2 = await entries();
   await page.evaluate(() => {
     VOICE_COMMANDS.push({ id: 'TEST_TIE', text: 'A test tie.', say: ['lost visual'] });
   });
   await say('Mobile, lost visual');
-  ok('an ambiguous phrase files nothing', (await entries()) === n2);
-  ok('it stops the loop rather than guessing',
-     !has(await stateText(), 'Listening for'), (await stateText()).slice(0, 200));
-  ok('and says why it paused',
-     has(await stateText(), 'More than one command fits'), (await stateText()).slice(0, 200));
-  /* §7's own screen: the CHOOSER, not a text box. An ambiguous phrase is not
-     a draft to edit — it is a question about which of two opposite facts was
-     meant, and the answer is a choice. */
-  const picks = await page.locator('[data-act="svPickCmd"]').count();
-  ok('handing it to §7’s chooser, with both candidates offered', picks === 2, String(picks));
-  ok('and nothing prefilled for the operator to accept by accident',
-     await page.locator('#sv_heard').count() === 0);
-  ok('the engine was stopped, not left listening under a question',
-     (await mic()).stopped >= 1);
+  ok('an ambiguous phrase is saved rather than thrown away', (await entries()) === n2 + 1,
+     `${n2} -> ${await entries()}`);
+  const amb = await page.evaluate(() => (WS.activity[0] || {}));
+  ok('in the words that were actually spoken', amb.description === 'lost visual', amb.description);
+  /* THE PART OF §7 THAT STILL HOLDS, and the part that mattered: NO_CHANGE and
+     CHANGE_POSITION are opposite facts about the same minute. An uncertain
+     phrase records what was SAID and claims neither. */
+  ok('claiming no canonical command, because more than one fitted it',
+     !amb.command_id, JSON.stringify(amb.command_id));
+  ok('still marked as captured by voice', amb.source === 'voice');
+  ok('and the loop kept listening rather than stopping to ask',
+     has(await stateText(), 'Listening for'), (await stateText()).slice(0, 200));
   await page.evaluate(() => { VOICE_COMMANDS.pop(); });
-  await page.locator('[data-act="svDiscard"]').click();
-  await page.waitForTimeout(400);
 
-  /* §6B — dictated prose does not file itself either. */
-  await page.locator('[data-act="svVoiceToggle"]').click();
-  await page.waitForTimeout(400);
+  /* THE CASE THE OWNER REPORTED: useful speech that matches nothing. */
   const n3 = await entries();
+  await say('Mobile, the grey van came back and parked across the street');
+  ok('an unrecognised observation is saved in the investigator’s own words',
+     (await entries()) === n3 + 1, `${n3} -> ${await entries()}`);
+  const free = await page.evaluate(() => (WS.activity[0] || {}));
+  ok('with the wake word stripped off the front',
+     free.description === 'the grey van came back and parked across the street',
+     free.description);
+  ok('and no canonical command invented for it', !free.command_id);
+  ok('the loop is still listening after saving it',
+     has(await stateText(), 'Listening for'), (await stateText()).slice(0, 200));
+  ok('and it confirmed the save briefly, like any other',
+     has(await stateText(), 'VOICE NOTE'), (await stateText()).slice(0, 200));
+
+  /* "Mobile, note …" still means free text, and the word that asked for it is
+     not part of the observation. */
+  const n4 = await entries();
   await say('Mobile, note the subject left in a grey van');
-  ok('dictation files nothing on its own', (await entries()) === n3);
-  ok('and pauses for it to be read first',
-     has(await stateText(), 'Dictation'), (await stateText()).slice(0, 200));
-  ok('with the words waiting in the review',
-     await page.locator('#sv_heard').count() === 1);
-  await page.locator('[data-act="svDiscard"]').click();
-  await page.waitForTimeout(400);
+  ok('a dictated note is saved too', (await entries()) === n4 + 1);
+  ok('without the word that asked for it',
+     (await page.evaluate(() => WS.activity[0].description)) === 'the subject left in a grey van',
+     await page.evaluate(() => WS.activity[0].description));
+
+  /* §8 still holds for free speech, which has no command id to key on. */
+  const n5 = await entries();
+  await say('Mobile, the same words twice');
+  await say('Mobile, the same words twice');
+  ok('the same free phrase heard twice makes one entry, not two',
+     (await entries()) === n5 + 1, `${n5} -> ${await entries()}`);
 
   /* OFF means the microphone is inactive — asserted as a call, not a label. */
-  await page.locator('[data-act="svVoiceToggle"]').click();
-  await page.waitForTimeout(400);
   const onCount = (await mic()).stopped;
   await page.locator('[data-act="svVoiceToggle"]').click();
   await page.waitForTimeout(400);
