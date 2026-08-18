@@ -9,6 +9,68 @@ state. Update it when the queue moves; keep it short.
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
 truth** (recorded verbatim 2026-08-13).
 
+## 🚦 DEPLOYMENT — 2026-08-18, master `8461897` (#177, #178)
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` | `8461897` | `8461897` | **DEPLOYED** — `deploy.yml` success |
+| Worker / API | `8461897` | `1ca9a97` | **DEPLOYED** — `worker.js` untouched by #178, so `deploy-portal.yml` correctly did not run |
+| D1 schema | `8461897` | applied | unchanged — **no dispatch owed** |
+
+Save point `save/2026-08-18-1825-8461897`. Suites: portal **1568/0**, worker **1779/0**, deploy guard **68/0**.
+
+**LIVE VERIFIED — OPEN**, two device checks: on the phone, log something and
+correct it from the field home (§10); on the desktop, open Timestamp Video,
+switch the picker to All Files, choose a PDF and expect *"Video files only"* —
+then choose a real `.mov` and expect it to go through.
+
+## 🎙 VOICE §10 SHIPPED (#177) — and two defects it uncovered
+
+Edit and Remove on the field home's Last activity card, correcting the newest
+entry **in place**. A removed one is struck through with Put it back. Voice
+entries carry a 🎙 VOICE tag — §3's marker finally visible where the work is.
+
+**Two defects fell out of building it. Both are the interesting part:**
+
+1. **`editActivity` was REPLACE-ALL.** It had been since it was written, and
+   nothing noticed because the timeline's Edit form was its only caller and
+   always posts all four fields. A screen that corrects *only the wording*
+   would have written NULL over the location, vehicle and internal note the
+   investigator recorded — and returned success. It now follows the rule
+   `/cases/:no/meta` already states: **absent means unchanged, blank still
+   clears**, resolved INSIDE the UPDATE from the row so two people correcting
+   different fields cannot lose each other's work.
+2. **`svDeleteEntry` forced `SV.tab = "timeline"`.** Harmless while Delete
+   existed only ON the timeline; from the Last activity card it navigated the
+   investigator away from the one screen §10 requires them to stay on.
+
+**A lesson worth keeping:** the first removal assertion **passed while standing
+on the timeline**, because the timeline shows the same *"not in the report"*
+wording — which is exactly how the unwanted jump hid. "Without navigating away"
+has to be asserted as a SCREEN, not as a message.
+
+## 🎬 VIDEO TIMESTAMP — a non-video file is refused where it is chosen (#178)
+
+Owner: desktop must reject a non-video file immediately with *"Video files
+only"*. It does, before an object URL is made.
+
+**The restraint is the design.** `VIDEO-TIMESTAMP.md` records that identical
+decodable `.mov` bytes arrive as `video/quicktime`, as
+`application/octet-stream`, or **with no type at all** — so a rule refusing an
+empty or octet-stream type would reject the exact iPhone file the feature
+exists for. Only a type that positively says image, audio, text or document is
+turned away; everything undecided reaches the **decode probe**, which is the
+real arbiter. The picker still asks for `video/*` first, and there is a test
+for both halves.
+
+**A test-quality note, not a page defect.** Adding that section made an existing
+preview assertion fail every run. A DOM diagnostic at the same instant showed
+the element present and correct — `count=1`, `previewFailed=false`,
+`<video class="vst-prev">` in the DOM. The page was never wrong; the assertion
+read its locator count at a moment it could not rely on, and the new section
+shifted the timing enough to expose it. It now samples once and prints what it
+saw. **No root cause is claimed beyond that.**
+
 ## 🚦 DEPLOYMENT — 2026-08-18, master `1ca9a97` (#176) — voice §3, source on the activity
 
 | Component | Master | Deployed | Status |
