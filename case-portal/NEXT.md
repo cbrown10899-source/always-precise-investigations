@@ -9,6 +9,52 @@ state. Update it when the queue moves; keep it short.
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
 truth** (recorded verbatim 2026-08-13).
 
+## 🚦 DEPLOYMENT — 2026-08-18, master `896e6d5` (#175) — voice command registry
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` | `896e6d5` | `896e6d5` | **DEPLOYED** — `deploy.yml` success |
+| Worker / API | `896e6d5` | `bfa426c` | **DEPLOYED** — `worker.js` untouched, so `deploy-portal.yml` correctly did not run |
+| D1 schema | `896e6d5` | unchanged | **no dispatch owed** |
+
+Save point `save/2026-08-18-0733-896e6d5`. Suites: portal **1542/0**, worker
+**1752/0**, deploy guard **68/0**.
+
+**LIVE VERIFIED — OPEN.** Speech recognition only exists in a real browser, so
+what closes it is saying *"Mobile, no change at residence"* into Active
+Surveillance on the phone and seeing the standardized sentence offered for
+review.
+
+## 🎙 VOICE COMMAND MODE — FIRST SLICE SHIPPED 2026-08-18 (#175)
+
+`SURVEILLANCE-VOICE.md` was a full spec with **nothing built** — what existed
+was the dictation half (speech → transcript → review → Use / Discard). This is
+§4 the centralized registry, §5 standardized activity text, §7 never guess: the
+slice everything else stands on.
+
+**One table and one matcher**, and a test fails if a second one appears. A
+recognized phrase offers the standard sentence with what was heard above it; an
+ambiguous one lists candidates and asks; an unrecognized one behaves exactly as
+before. Longest alias wins, so *"no change at residence"* is not filed as the
+shorter *"no change"*, and a true tie is reported rather than settled by table
+order.
+
+**Nothing auto-submits — unchanged, and worth keeping that way.** §6B and §7
+both require a human to confirm, and the existing review IS that confirmation.
+
+**The truncated aliases were not inferred.** `VEHICLE_OBSERVED` is a canonical
+command with **no alias at all**, because its only fragment is the bare word
+"observed" and registering that would file "subject observed" as a vehicle
+sighting. Nineteen of the twenty-one standard sentences are the
+implementation's wording, all in one table, all trivially rewordable — the
+owner's to change.
+
+**Next slice, and the decision it needs first:** §3 `source = voice`.
+`activity_log` has no `source` column and `ALTER TABLE ADD COLUMN` is not
+idempotent here, so it wants a **companion table** and a `portal-setup`
+dispatch. Then §2's wake-word loop and §1's compact header. The full order is in
+`SURVEILLANCE-VOICE.md` under BUILD STATUS.
+
 ## 🚦 DEPLOYMENT — 2026-08-18, master `bfa426c` (#174) — Dropbox storage, report PDF, video save
 
 | Component | Master | Deployed | Status |
