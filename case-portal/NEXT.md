@@ -9,6 +9,77 @@ state. Update it when the queue moves; keep it short.
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
 truth** (recorded verbatim 2026-08-13).
 
+## 🚦 DEPLOYMENT — 2026-08-18, master `8301f8c` (#172) — Dropbox OAuth
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` | `8301f8c` | `8301f8c` | **DEPLOYED** — `deploy.yml` success |
+| Worker / API `api-case-portal` | `8301f8c` | `8301f8c` | **DEPLOYED** — `deploy-portal.yml` success |
+| D1 schema | `8301f8c` | **NOT applied** | 🔴 **`portal-setup.yml` dispatch OWED** — `dropbox_auth` is new |
+
+Save point `save/2026-08-18-0513-8301f8c`. Suites at merge: worker **1663/0**,
+deploy guard **68/0**.
+
+**LIVE VERIFIED — OPEN, and it cannot be closed from a container.** The agent
+proxy denies `alwayspreciseinvestigations.net:443` outright (CONNECT → 403), so
+nothing here can reach the live domain; DEPLOYED rests on both workflows being
+green at `8301f8c`, which is a different claim and is stated as one.
+
+## 🔗 DROPBOX OAUTH — SHIPPED 2026-08-18 (#172), CONNECT AND CALLBACK ONLY
+
+**No file migration, deliberately.** There is no upload, download, list, move or
+delete route against Dropbox in this unit, and nothing reads or writes a file
+there. The owner's instruction was explicit — *"Do not migrate files yet"* — and
+a test asserts the absence rather than a comment claiming it.
+
+### The two things the owner has to do
+
+1. **Set the secrets on the Worker `api-case-portal`** (see `DROPBOX.md`):
+   ```
+   npx wrangler secret put DROPBOX_APP_KEY   --name api-case-portal
+   npx wrangler secret put DROPBOX_APP_SECRET --name api-case-portal
+   ```
+   or dashboard → Workers & Pages → **api-case-portal** → Settings → Variables
+   and Secrets → **Add**, type **Secret**.
+2. **Dispatch `portal-setup.yml`** so `dropbox_auth` exists. Until then the
+   write returns 503 naming that workflow and every read degrades — it does not
+   crash, which is the `missingTables()` rule this repo already runs on.
+
+### Live Redirect URI — paste this into the Dropbox App Console verbatim
+
+```
+https://alwayspreciseinvestigations.net/portal-api/dropbox/callback
+```
+
+It is not written down twice: `dropboxRedirectUri()` composes it from
+`SITE_ORIGIN` + `API_PREFIX`, and `GET /dropbox/status` returns it, so the
+value the office pastes is the value the route serves.
+
+### What is stored, and what is refused
+
+`dropbox_auth` is one row (`CHECK (id = 1)`) holding the **refresh token** and
+the account identity that proved it. **The access token is never stored** — it
+is minted per call from the refresh token and returns `null` rather than
+throwing when it cannot be. `DROPBOX_REFRESH_TOKEN` in the environment wins
+over the row, so the connection can be pinned by secret instead.
+
+The callback **proves the token before storing it**: it calls
+`/2/users/get_current_account`, and an exchange that yields a token which
+cannot be used stores nothing and returns `dropbox=unverified`. Disconnect
+**revokes at Dropbox first**, then deletes, and reports `revoked` honestly
+rather than claiming a revocation that failed — the same rule as `sendMail`
+reporting a failed send.
+
+All four routes are **admin-only**; an investigator gets 403 from every one.
+CSRF state is HttpOnly, Secure, `SameSite=Lax` (Lax because Dropbox returns via
+a top-level GET), scoped to `Path=/portal-api/dropbox`, 10-minute `Max-Age`.
+
+**The state cookie is read by splitting the header, not by a regex.** The first
+version used one, an escape survived a heredoc as a literal backslash, and
+*every* callback failed with `dropbox=state` while the suite stayed green —
+found by a 30-second targeted probe, not by the tests. Splitting has nothing to
+escape.
+
 ## 🚦 RECONCILED 2026-08-17 — master `dff3f82`, and what the ledger had missed
 
 **This file recorded none of #139–#143 and its matrix was stale at `f5a4155`
