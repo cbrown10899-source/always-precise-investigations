@@ -6957,6 +6957,10 @@ section('The stamp is encoded into the video, not laid over it');
             size: file.size, url: URL.createObjectURL(file), tz: 'America/New_York',
             mo: '08', da: '17', yr: '2026', hr: '05', mi: '14', se: '32', ap: 'PM',
             guessed: false, hash: null, pct: 0, err: '', saveMsg: '',
+            /* This source is a clip this browser just wrote and decodes again
+               below, so `readable: true` is the fixture's truthful state — the
+               legacy route is exactly what is under test here. */
+            readable: true, decodeOk: false, parsed: null,
             out: null, recId: null, savedHere: false, started: false };
     await vstGenerate();
     if (!VST || !VST.out) return { skipped: 'render failed', err: VST && VST.err };
@@ -7079,6 +7083,7 @@ section('The video timestamp screen');
             size: 51200000, url: '', tz: 'America/New_York',
             mo: '08', da: '17', yr: '2026', hr: '05', mi: '14', se: '32', ap: 'PM',
             guessed: true, hash: null, pct: 0, err: '', saveMsg: '',
+            readable: true, decodeOk: false, parsed: null,
             out: null, recId: null, savedHere: false, started: false };
     paintVStamp();
   });
@@ -7179,7 +7184,13 @@ section('The video timestamp screen on a phone');
   ok('and offers the save rather than announcing one',
      await page.locator('[data-act="vstSave"]').count() === 1
      && await page.locator('[data-act="vstSaved"]').count() === 0);
-  ok('it tells the operator to check the clock before closing', has(done, 'bottom-right corner'));
+  /* The owner reversed this on 2026-08-18: "do not require preview". Checking
+     the clock is OFFERED where the device can play the copy back, and where it
+     cannot the screen says the copy is made anyway — this fixture carries an
+     empty src, so it exercises the second. Either way the copy is never
+     reported as failed for want of a preview. */
+  ok('it never treats a missing preview as a failed copy',
+     has(done, 'bottom-right corner') || has(done, 'The copy is made'), done.slice(0, 500));
   ok('and says the portal keeps the record, not the video', has(done, 'never the video'));
 
   // Once a download has merely STARTED, it still does not claim to be saved.
@@ -7561,7 +7572,8 @@ section('A video this browser cannot decode says so, and offers no Generate');
      browser. Your original is unchanged."), so these assert what the screen has
      to COMMUNICATE rather than the words it used at the time. */
   ok('the screen says the format cannot be processed here',
-     has(stopped, 'cannot be decoded'));
+     has(stopped, 'cannot be processed on this device')
+     || has(stopped, 'could not decode'), stopped.slice(0, 400));
   ok('and names the codec it actually read from the file',
      has(stopped, 'HEVC / H.265'), stopped.slice(0, 400));
   ok('it says the original is unchanged and nothing was uploaded',
@@ -7581,7 +7593,8 @@ section('A video this browser cannot decode says so, and offers no Generate');
   const forced = await page.evaluate(async () => { await vstGenerate();
     return { err: VST.err, out: VST.out, step: VST.step }; });
   ok('calling the generator directly is refused too',
-     forced.out === null && /cannot decode/i.test(forced.err), JSON.stringify(forced));
+     forced.out === null && /could not decode|cannot be processed/i.test(forced.err),
+     JSON.stringify(forced));
 
   // While the check is still running, Generate is present but disabled.
   await page.evaluate(() => { VST.readable = null; VST.err = ''; paintVStamp(); });
@@ -7639,9 +7652,9 @@ section('Compatibility is reported per device, and recommends no browser');
   ok('the container is named as a container', has(t, 'MOV (QuickTime)'));
   ok('the codec is named from the file', has(t, 'HEVC / H.265'));
   ok('and compatibility says it cannot be decoded here',
-     has(t, 'cannot be decoded by this browser'));
+     has(t, 'cannot be decoded or processed on this device'), t.slice(0, 400));
   ok('the stop states it factually, without naming a browser to switch to',
-     has(t, 'cannot be decoded by the current browser') && !has(t, 'Chrome') && !has(t, 'Edge'),
+     has(t, 'cannot be processed on this device') && !has(t, 'Chrome') && !has(t, 'Edge'),
      t.slice(0, 400));
   ok('no Generate button sits under it',
      await page.locator('[data-act="vstGo"]').count() === 0);
@@ -7660,19 +7673,24 @@ section('Compatibility is reported per device, and recommends no browser');
   /* DECODING AND ENCODING FAIL SEPARATELY, and iOS is the platform where the
      first works and the second does not. A file this device can play but
      cannot re-encode must not read as "unsupported video". */
+  /* `vstPath` consults `vstCan()` live, so the stub goes there rather than on
+     the cached caps — stubbing a copy of the answer stopped being the same as
+     stubbing the answer when the gate moved. */
   await page.evaluate(() => {
-    VST.readable = true; VST.codec = { cc: 'avc1', name: 'H.264 / AVC' };
-    VST.caps = { ...vstCaps(), canRender: false };
+    window.__realCan = vstCan;
+    window.vstCan = () => false;
+    VST.readable = true; VST.decodeOk = false; VST.parsed = null;
+    VST.codec = { cc: 'avc1', name: 'H.264 / AVC' };
     paintVStamp();
   });
   await page.waitForTimeout(200);
   const half = await text(page, '.vst');
   ok('a device that can play but not write says exactly that',
      has(half, 'can play it, but cannot write the copy here'), half.slice(0, 400));
-  await page.evaluate(() => { VST.caps = vstCaps(); paintVStamp(); });
+  await page.evaluate(() => { window.vstCan = window.__realCan; paintVStamp(); });
   await page.waitForTimeout(200);
   ok('and a device that can do both reads Ready',
-     has(await text(page, '.vst'), 'Ready'));
+     has(await text(page, '.vst'), 'Ready'), (await text(page, '.vst')).slice(0, 300));
   await page.close();
 }
 
@@ -8363,6 +8381,135 @@ section('Processing time is never the anchor');
      /frame\.timestamp/.test(fn) && /startMs \+ Math\.floor\(tSec\)/.test(fn));
   ok('and never reads a live clock while rendering',
      !/Date\.now\(\)|new Date\(\)/.test(fn), fn.slice(0, 200));
+  await page.close();
+}
+
+
+/* OWNER BUG, 2026-08-18: "WebCodecs pipeline says YES but old media-element
+   compatibility gate still blocks generation."
+
+   One condition did it. The screen gated on `readable` — whether a <video>
+   element could decode the file — which predates the pipeline entirely. On the
+   owner's iPhone the media element says NO and WebCodecs says YES, so the one
+   device the pipeline was built for was the one it refused. */
+section('The media element no longer decides whether generation is allowed');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const setup = async (opts) => page.evaluate(o => {
+    // This container has no WebCodecs, so the capability is stubbed to model
+    // the owner's device. Everything else under test is the real code.
+    window.vstCanPipeline = () => o.pipeline;
+    VST = { step: 'preview', caseNo: '', file: null, name: 'IMG_0440.mov', size: 84 * 1048576,
+            url: '', tz: 'America/New_York', q: '',
+            mo: '05', da: '03', yr: '2025', hr: '11', mi: '27', se: '58', ap: 'AM',
+            guessed: false, hash: null, pct: 0, err: '', saveMsg: '', diag: '',
+            out: null, recId: null, savedHere: false, started: false,
+            codec: { cc: 'avc1', name: 'H.264 / AVC' }, caps: vstCaps(),
+            readable: o.readable, decodeOk: o.decodeOk,
+            parsed: o.parsed === false ? null : { rotation: 0, capture: null,
+              video: { width: 1920, height: 1080, timescale: 600, seconds: 48.12,
+                       codecString: 'avc1.640028', description: new Uint8Array([1, 2, 3]),
+                       samples: [{ offset: 0, size: 4, dts: 0, cts: 0, sync: true, duration: 600 }] },
+              audio: null } };
+    VST.startMs = vstToUtc(2025, 5, 3, 11, 27, 58, 'America/New_York');
+    paintVStamp();
+    return vstPath();
+  }, opts);
+
+  /* THE OWNER'S EXACT DEVICE STATE: media element NO, WebCodecs YES. */
+  const path = await setup({ pipeline: true, decodeOk: true, readable: false });
+  ok('with WebCodecs accepting the file, the route is the pipeline', path === 'pipeline', path);
+  const body = await text(page, '.vst');
+  ok('Generate is offered', await page.locator('[data-act="vstGo"]').count() === 1);
+  ok('and it is not disabled',
+     await page.locator('[data-act="vstGo"]:not([disabled])').count() === 1);
+  ok('the blocking panel is gone', await page.locator('.vst-stop').count() === 0);
+  ok('and compatibility reads Ready', has(body, 'Ready'), body.slice(0, 400));
+  /* THE OLD WARNING SURVIVES AS INFORMATION, which is what the owner asked for
+     — it is true and worth saying, it just may not decide anything. */
+  ok('the media player’s failure is still reported, as a note',
+     has(body, 'ordinary media player could not open') && has(body, 'generation is unaffected'),
+     body.slice(0, 600));
+
+  /* AND THE GENERATOR ITSELF NO LONGER REFUSES. It cannot complete here — this
+     container has no real WebCodecs behind the stub — but it must not fail with
+     the compatibility gate, which is the bug. */
+  const attempt = await page.evaluate(async () => {
+    await vstGenerate();
+    return { err: VST && VST.err, step: VST && VST.step };
+  });
+  ok('the generator does not refuse on compatibility',
+     !/cannot be processed on this device|cannot be decoded/i.test(attempt.err || ''),
+     JSON.stringify(attempt));
+
+  /* THE REVERSE STILL BLOCKS: no route at all is still a refusal, and it says
+     which routes failed rather than blaming the browser generically. */
+  const none = await setup({ pipeline: true, decodeOk: false, readable: false });
+  ok('a file no route can take is still blocked', none === 'none', none);
+  const stopped = await text(page, '.vst');
+  ok('the stop panel returns', await page.locator('.vst-stop').count() === 1);
+  ok('no Generate button sits under it',
+     await page.locator('[data-act="vstGo"]').count() === 0);
+  ok('and it names the decoder declining, not just the browser',
+     has(stopped, 'video decoder declined'), stopped.slice(0, 500));
+
+  /* A DEVICE WITH NO WEBCODECS AT ALL falls back to the legacy route when its
+     media element can read the file — the desktop path, unchanged. */
+  const legacy = await setup({ pipeline: false, decodeOk: false, readable: true });
+  ok('a device without WebCodecs still uses the recorder route', legacy === 'legacy', legacy);
+  ok('and Generate is offered there too',
+     await page.locator('[data-act="vstGo"]').count() === 1);
+
+  /* AN OUTSTANDING ANSWER IS NOT A REFUSAL. */
+  const checking = await setup({ pipeline: true, decodeOk: null, readable: false });
+  ok('an unanswered capability check reads as checking', checking === 'checking', checking);
+  ok('the action is disabled rather than removed',
+     await page.locator('[data-act="vstGo"][disabled]').count() === 1);
+  ok('and nothing is blocked yet', await page.locator('.vst-stop').count() === 0);
+
+  await page.close();
+}
+
+
+/* OWNER, 2026-08-18: "Do not require preview. Generate MP4, then offer Share or
+   Save." A device that will not play the copy back inside the page says nothing
+   about the copy — and on the very device this matters for, the media element
+   is already the thing that could not read the source. */
+section('The preview is optional, never a gate');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const done = async (failed) => page.evaluate(f => {
+    VST = { step: 'done', caseNo: '', file: null, name: 'IMG_0440.mov', size: 84 * 1048576,
+            url: '', tz: 'America/New_York', readable: false, decodeOk: true,
+            codec: { cc: 'avc1', name: 'H.264 / AVC' }, caps: vstCaps(), diag: '',
+            startMs: vstToUtc(2025, 5, 3, 11, 27, 58, 'America/New_York'),
+            previewFailed: f,
+            out: { blob: new Blob(['x']), url: '', name: 'IMG_0440-timestamped.mp4',
+                   size: 4096, mime: 'video/mp4', audio: 'stripped',
+                   sourceAudio: 'AAC, 1ch', frames: 1443, via: 'webcodecs' },
+            savedHere: false, started: false, err: '', saveMsg: '' };
+    paintVStamp();
+    return document.querySelector('.vst').innerText;
+  }, failed);
+
+  const ok1 = await done(false);
+  ok('a playable copy still offers the preview',
+     await page.locator('.vst-prev').count() === 1);
+  ok('and says playing it back is optional', has(ok1, 'not required'), ok1.slice(0, 500));
+
+  /* THE CASE THAT MATTERS: the page cannot play it, and that must not read as a
+     failed generation. */
+  const ok2 = await done(true);
+  ok('a copy the page cannot play drops the player', await page.locator('.vst-prev').count() === 0);
+  ok('and says the copy is made regardless', has(ok2, 'The copy is made'), ok2.slice(0, 500));
+  ok('naming the player, not the file', has(ok2, 'says nothing about the file'), ok2.slice(0, 500));
+  /* THE ACTIONS ARE UNTOUCHED — that is the whole point. */
+  ok('Save or Share is still offered', await page.locator('[data-act="vstSave"]').count() === 1);
+  ok('and nothing reports it as saved yet', has(ok2, 'not yet saved'), ok2.slice(0, 500));
+  ok('the copy is still named as an MP4', has(ok2, 'IMG_0440-timestamped.mp4'));
   await page.close();
 }
 

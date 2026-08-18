@@ -974,3 +974,49 @@ only while the fields are still untouched.
 
 Both were found by a thirty-second targeted probe rather than a twelve-minute
 suite run, which is the reason to keep that probe habit.
+
+
+---
+
+# THE GATE ASKED THE WRONG QUESTION — 2026-08-18
+
+**Owner:** *"WebCodecs pipeline says YES but old media-element compatibility gate
+still blocks generation."*
+
+Exactly right, and it was **one condition**. The screen gated on `readable` —
+whether a `<video>` element could decode the file — and that check predates the
+pipeline entirely. On the owner's iPhone the media element says **NO** and
+WebCodecs says **YES**, so **the one device the pipeline was built for was the
+one it refused.**
+
+## There are two independent routes, and either is sufficient
+
+| Route | How |
+| --- | --- |
+| **pipeline** | demux → `VideoDecoder` → burn → `VideoEncoder` → MP4 mux |
+| **legacy** | `<video>` → canvas → `MediaRecorder` |
+
+`vstPath()` is the single place that decides, and it returns
+`pipeline` / `legacy` / `checking` / `none`. Three consumers now share it — the
+Generate button, `vstGenerate` itself, and the Compatibility line — so the screen
+and the generator cannot disagree about whether a file can be processed, which is
+how the two got out of step in the first place.
+
+**An outstanding answer is not a refusal.** `checking` disables the action rather
+than removing it; only `none` blocks.
+
+## The old warning is kept, as information
+
+It is true and worth saying — it just may not decide anything. When the media
+element fails but a route exists, the screen says:
+
+> This device's ordinary media player could not open this file, but its video
+> codec can — the copy is made by decoding and re-encoding it here, so
+> generation is unaffected.
+
+And when nothing can take the file, the refusal names **which route failed**:
+no WebCodecs at all, or a decoder that declined this file's configuration. The
+owner has to know which one to chase.
+
+The read-out gained **Route for this file**, so the answer is visible rather
+than inferred from the button.

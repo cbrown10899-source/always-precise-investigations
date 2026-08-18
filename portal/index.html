@@ -4812,6 +4812,35 @@ function vstProbe(url){
   });
 }
 
+/* ---- WHICH ROUTE, IF ANY, CAN PROCESS THIS FILE ON THIS DEVICE ----
+
+   Owner bug report, 2026-08-18: "WebCodecs pipeline says YES but old
+   media-element compatibility gate still blocks generation."
+
+   Exactly right, and it was one condition. The screen gated on `readable` —
+   whether a `<video>` element could decode the file — and that predates the
+   pipeline. On the owner's iPhone the media element says NO and WebCodecs says
+   YES, so the one device the pipeline was built for was the one it refused.
+
+   THERE ARE TWO INDEPENDENT ROUTES and either is sufficient:
+
+     pipeline  demux -> VideoDecoder -> burn -> VideoEncoder -> MP4 mux
+     legacy    <video> -> canvas -> MediaRecorder
+
+   `readable` is now INFORMATIONAL — it says what the media element managed,
+   which is worth reporting and is no longer allowed to decide anything on its
+   own. Only "neither route can take this" blocks generation. */
+function vstPath(){
+  const v = VST;
+  if(!v) return "none";
+  const pipeReady = vstCanPipeline() && v.parsed && v.parsed.video && v.parsed.video.samples;
+  if(pipeReady && v.decodeOk === true) return "pipeline";
+  if(v.readable === true && vstCan()) return "legacy";
+  // An outstanding answer is not a refusal.
+  if((pipeReady && v.decodeOk === null) || v.readable === null) return "checking";
+  return "none";
+}
+
 /* The container, from the filename — which is a LABEL and is described as one.
    The codec comes from the file's own boxes or not at all. */
 function vstContainer(){
@@ -4830,13 +4859,24 @@ function vstContainer(){
    what that device actually answered. */
 function vstCompatText(){
   const v = VST;
-  if(!v || v.readable !== false) return "";
+  if(!v || vstPath() !== "none") return "";
   const named = v.codec ? v.codec.name : null;
   const kind = vstContainer() ? vstContainer() + " video" : "video";
-  if(named) return `This ${kind} uses ${named}. This browser cannot decode it. `
-    + `Your original is unchanged.`;
-  return `This browser cannot decode this ${kind}, and its codec could not be `
-    + `determined from the file. Your original is unchanged.`;
+  const what = named ? `This ${kind} uses ${named}.` : `This ${kind}'s codec could not be determined from the file.`;
+  /* Say which route failed, because they fail for different reasons and the
+     owner has to know which one to chase. */
+  /* WHICH ROUTE FAILED, AND WHY — the three answers are different problems and
+     the operator has to know which one they have. The third is the one that is
+     easy to lose: a device that PLAYS the file fine and simply cannot write a
+     copy is not a codec problem at all. */
+  const why = v.readable === true
+    ? "This device can play it, but has no way to write the copy here."
+    : !vstCanPipeline()
+      ? "This browser has no WebCodecs, and its media player could not decode the file either."
+      : v.decodeOk === false
+        ? "This device's video decoder declined this file's configuration, and its media player could not decode it either."
+        : "This device could not decode it by any route available here.";
+  return `${what} ${why} Your original is unchanged.`;
 }
 
 /* The one line under Compatibility, in the shape the owner asked for. Four
@@ -4844,12 +4884,15 @@ function vstCompatText(){
    DECODE is a different problem from one it can decode but cannot RE-ENCODE,
    and the second is the iOS case. */
 function vstCompatState(){
-  const v = VST, caps = (v && v.caps) || {};
-  if(!v) return "";
-  if(v.readable === null) return "checking on this device&hellip;";
-  if(v.readable === false) return "cannot be decoded by this browser";
-  if(!caps.canRender) return "this device can play it, but cannot write the copy here";
-  return "Ready";
+  if(!VST) return "";
+  switch(vstPath()){
+    case "checking":  return "checking on this device&hellip;";
+    case "pipeline":  return "Ready &mdash; decoded and re-encoded on this device";
+    case "legacy":    return "Ready";
+    default:          return VST.readable === true
+      ? "this device can play it, but cannot write the copy here"
+      : "cannot be decoded or processed on this device";
+  }
 }
 
 /* ================= THE REAL PIPELINE =================
@@ -5046,6 +5089,8 @@ function vstOpen(caseNo){
       out: null, recId: null, savedHere: false, started: false,
       // null = still checking. Nothing offers Generate until this is true.
       readable: null, codec: null, caps: vstCaps(), diag: "",
+      // null = still being decided. Never read as "no".
+      decodeOk: null,
     };
     paintVStamp();
     if(!caseNo) vstLoadCases();
@@ -5063,6 +5108,14 @@ function vstOpen(caseNo){
       /* THE ANCHOR. The capture metadata replaces the provisional default —
          but only while the operator has not touched the fields, because a
          correction they typed outranks anything read from the file. */
+      /* CAN THE PIPELINE ACTUALLY TAKE THIS FILE? Asked here, at pick time, so
+         the screen knows before it decides what to offer. `null` means the
+         answer is still outstanding; it is never treated as "no". */
+      if(vstCanPipeline() && p && p.video && p.video.samples){
+        vstDecoderAccepts(p.video).then(r => {
+          if(VST && VST.url === url){ VST.decodeOk = !!(r && r.supported); paintVStamp(); }
+        });
+      } else if(VST) VST.decodeOk = false;
       if(p && p.capture && VST.guessed){
         const c = vstParts(p.capture.ms);
         VST.mo = c.month; VST.da = c.day; VST.yr = c.year;
@@ -5141,19 +5194,21 @@ async function vstGenerate(){
   if(!v) return;
   const s = vstStart();
   if(!s.ok){ v.err = s.why; v.step = "when"; return paintVStamp(); }
-  if(v.readable === false){
-    v.err = vstCompatText() + " Nothing was changed and nothing was uploaded.";
+  /* THE ROUTE DECIDES, not the media element. This used to return early on
+     `readable === false`, which blocked the pipeline on exactly the devices it
+     exists for — the media element's verdict says nothing about whether
+     WebCodecs can take the file. */
+  const route = vstPath();
+  if(route === "checking"){
+    v.err = "Still checking what this device can do with the file — try again in a moment.";
     return paintVStamp();
   }
-  if(!vstCan()){
-    v.err = "This device can read the video but cannot write the copy here: it has no "
-      + "canvas recorder. Your original is unchanged."
-      + (vstIsIOS() ? " On an iPhone or iPad every browser uses Apple's engine, so another "
-        + "browser app on this device will behave the same way." : "");
+  if(route === "none"){
+    v.err = vstCompatText();
     return paintVStamp();
   }
   v.startMs = s.ms; v.err = ""; v.saveMsg = ""; v.pct = 0; v.step = "working";
-  v.savedHere = false; v.started = false; v.recId = null;
+  v.savedHere = false; v.started = false; v.recId = null; v.previewFailed = false;
   if(v.out && v.out.url){ try{ URL.revokeObjectURL(v.out.url); }catch{} }
   v.out = null;
   paintVStamp();
@@ -5162,7 +5217,7 @@ async function vstGenerate(){
      parsed — it decodes what the media element would not, writes a real MP4,
      and carries the audio across. The MediaRecorder route below is the legacy
      one and only runs where WebCodecs is absent. */
-  if(vstCanPipeline() && v.parsed && v.parsed.video && v.parsed.video.samples){
+  if(route === "pipeline"){
     try{
       v.stage = "preparing";
       const r = await vstTranscode(v.file, v.parsed, v.startMs, v.tz, (stage, pct) => {
@@ -5469,6 +5524,14 @@ async function vstDiagnose(){
   lines.push(row("MP4 mux", muxOk ? "yes — same-origin module loaded" : "no — the muxer did not load"));
   lines.push(row("Pipeline available", vstCanPipeline() && vid && vid.samples && muxOk
     ? "YES — this device can generate the MP4 here" : "no"));
+  /* THE ROUTE THAT WILL ACTUALLY BE USED. The media element's verdict above is
+     informational; this is the line that says whether Generate is offered. */
+  lines.push(row("Route for this file", {
+    pipeline: "WebCodecs — decode, burn, re-encode, mux here",
+    legacy: "media element + canvas recorder",
+    checking: "still deciding",
+    none: "none — generation is blocked",
+  }[vstPath()]));
 
   /* THE RECORDER FORMAT, PROVEN BY ROUND TRIP rather than by isTypeSupported —
      which is what wrote a file the owner's iPhone could not read back. */
@@ -5506,6 +5569,14 @@ function paintVStamp(){
   const el = $("vstamp");
   if(el) el.innerHTML = VST ? vstHtml() : "";
   document.body.classList.toggle("vstopen", !!VST);
+  /* Wired here rather than as an inline attribute, the way everything else on
+     this page is wired. A preview that will not play must not read as a failed
+     generation, so it swaps itself for a sentence and leaves Save and Share
+     exactly where they were. */
+  const prev = $("vst_prev");
+  if(prev) prev.onerror = () => {
+    if(VST && !VST.previewFailed){ VST.previewFailed = true; paintVStamp(); }
+  };
 }
 
 function vstHtml(){
@@ -5616,8 +5687,17 @@ function vstHtml(){
                reason. Edit timestamp and Cancel stay in both states — the
                timestamp is still worth correcting for a file that will be
                generated elsewhere. -->
-          ${v.readable === false ? `<div class="vst-stop">
-              <b>This video cannot be decoded by the current browser.</b>
+          <!-- THE MEDIA ELEMENT'S VERDICT IS INFORMATIONAL (owner, 2026-08-18).
+               It used to be the gate, which refused the very device the
+               pipeline was built for: on an iPhone the media element says no
+               and WebCodecs says yes. It is a note now, and only "no route at
+               all" takes the action away. -->
+          ${v.readable === false && vstPath() !== "none" ? `<p class="vst-note">
+            This device's ordinary media player could not open this file, but its
+            video codec can &mdash; the copy is made by decoding and re-encoding
+            it here, so generation is unaffected.</p>` : ""}
+          ${vstPath() === "none" ? `<div class="vst-stop">
+              <b>This video cannot be processed on this device.</b>
               <p>${esc(vstCompatText())}</p>
               <p>Nothing here has changed it and nothing was uploaded.
                 ${vstIsIOS()
@@ -5628,8 +5708,9 @@ function vstHtml(){
               <button class="vst-btn" data-act="vstDiag">What can this device do?</button>
               ${v.diag ? `<pre class="vst-diag">${esc(v.diag)}</pre>` : ""}</div>`
             : `<button class="vst-btn go" data-act="vstGo" ${
-                v.readable === null ? "disabled" : ""}>${
-                v.readable === null ? "Checking this video&hellip;" : "Generate timestamped video"
+                vstPath() === "checking" ? "disabled" : ""}>${
+                vstPath() === "checking" ? "Checking this video&hellip;"
+                  : "Generate timestamped copy"
               }</button>`}
           <button class="vst-btn" data-act="vstEditTime">Edit timestamp</button>
           <button class="vst-btn" data-act="vstClose">Cancel</button>
@@ -5650,7 +5731,17 @@ function vstHtml(){
     : `
         <div class="vst-card">
           <h4>Timestamped copy is ready</h4>
-          <video class="vst-prev" src="${esc(v.out ? v.out.url : "")}" controls playsinline></video>
+          <!-- PREVIEW IS OPTIONAL, NEVER A GATE (owner, 2026-08-18: "do not
+               require preview"). The copy is finished before this element
+               exists; if the device will not play it back in the page, that is
+               a fact about the player, not about the file — so the note
+               replaces the player and the actions below are untouched. -->
+          ${v.previewFailed
+            ? `<p class="vst-note"><b>The copy is made.</b> This device will not play it back
+                inside the page &mdash; which says nothing about the file. Save or share it and
+                open it from your device.</p>`
+            : `<video class="vst-prev" id="vst_prev" src="${esc(v.out ? v.out.url : "")}"
+                controls playsinline></video>`}
           <div class="vst-k" style="margin-top:8px"><span>File</span><span>${esc(v.out ? v.out.name : "")}</span></div>
           <div class="vst-k"><span>Size</span><span>${v.out ? mb(v.out.size) : ""}</span></div>
           <div class="vst-k"><span>Starts at</span><span>${esc(vstLabel(v.startMs, v.tz))}</span></div>
@@ -5668,14 +5759,16 @@ function vstHtml(){
           ${v.caseNo ? "" : `<p class="vst-note">Nothing about this copy is recorded in the portal
             while it belongs to no case. Attach it and the record is written then.</p>
             <button class="vst-btn" data-act="vstAttach">Attach it to a case</button>`}
-          ${v.savedHere ? "" : `<button class="vst-btn go" data-act="vstSave">Save to this device</button>`}
+          ${v.savedHere ? "" : `<button class="vst-btn go" data-act="vstSave">${
+            (navigator.canShare && navigator.share) ? "Share or save to this device"
+                                                   : "Save to this device"}</button>`}
           ${v.started && !v.savedHere ? `<p class="vst-note">The download has started. This page cannot see
             where your browser put it, so it will not claim the file is saved &mdash; check it landed, then
             confirm below.</p>
             <button class="vst-btn" data-act="vstSaved">I have got the file &mdash; mark it saved</button>` : ""}
-          <p class="vst-note">Play it back above and check the clock in the bottom-right corner before you
-            close this. The copy exists only on this device until you save it; the portal keeps the record of
-            it, never the video.</p>
+          <p class="vst-note">${v.previewFailed ? "" : "Play it back above if you want to check the "
+            + "clock in the bottom-right corner &mdash; it is not required. "}The copy exists only on this
+            device until you save it; the portal keeps the record of it, never the video.</p>
           <button class="vst-btn" data-act="vstEditTime">Correct the time and make it again</button>
           <button class="vst-btn" data-act="vstClose">Close</button>
         </div>`;
