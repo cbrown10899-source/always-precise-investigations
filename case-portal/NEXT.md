@@ -366,7 +366,23 @@ recedes but is **never removed**, and nothing is hidden with `display:none` to
 make a section look smaller. Shrinking a section by deleting its words is not
 shrinking it, and an absent zero is a different claim from a zero.
 
-## ✅ VIDEO TIMESTAMP — BUILT 2026-08-17, device-first (branch `video-timestamp`)
+## 🚦 DEPLOYMENT — 2026-08-18, master `8a48d7d`
+
+| Component | Master SHA | Deployed SHA | Status | How |
+| --- | --- | --- | --- | --- |
+| Public site + `/portal/` page | `8a48d7d` | `8a48d7d` | **DEPLOYED** | `Deploy site to Cloudflare Pages` **success at `8a48d7d0`** (run 32083870194) — the merge commit itself |
+| Worker / API | `8a48d7d` | `8a48d7d` | **DEPLOYED** | `Deploy case-portal Worker` **success at `8a48d7d0`** (run 32083870220) |
+| D1 schema | `8a48d7d` | applied | **APPLIED** | `Set up the case portal` **success at `8a48d7d0`** (run 32083932807) — dispatched because `video_stamp` is new |
+| Save point | `8a48d7d` | tagged | **SAVED** | `Save point` success at `8a48d7d0` (runs 32083870210, 32083937920) |
+
+**LIVE VERIFIED remains OPEN.** The egress proxy still blocks
+`alwayspreciseinvestigations.net` from this container — `curl` gets
+`CONNECT tunnel failed, response 403`. Every row above is a green workflow at
+the exact SHA, which is provenance, not live confirmation. **Do not upgrade any
+of them from a green workflow.** Live verification needs a browser on the
+owner's side.
+
+## ✅ VIDEO TIMESTAMP — SHIPPED 2026-08-18 (#166, `8a48d7d`), device-first
 
 **Owner decision, in two parts, that changed the architecture before a line was
 written: VIDEO IS DEVICE-FIRST.** New video bytes do not become Cloudflare
@@ -479,11 +495,12 @@ been needed in this session:
 | *"the office classifies it"* | selected the classification the row already had | moves it to one the default is not, then puts it back |
 | the section bar's names | `Report & Evidence` | `Report & Media` |
 
-### Schema change — a portal-setup dispatch is OWED after merge
+### Schema change — the portal-setup dispatch has been RUN
 
 `video_stamp` is new. `schema.sql` arrives by a **manual `portal-setup.yml`
 dispatch** while the Worker deploys on push, so between the two the table does
-not exist on the live database. Every read is guarded through `missingTables()`:
+not exist on the live database. **That dispatch was run and is green at
+`8a48d7d0`** (run 32083932807), so the table is on the live database now. Every read is guarded through `missingTables()`:
 the list degrades to `{stamps: [], not_set_up: true}`, the workspace carries an
 empty array, and the write returns 503 naming the workflow. Tested by dropping
 the table.
