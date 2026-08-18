@@ -220,11 +220,22 @@
     margin:0 0 14px;padding:0 2px;}
   .qtools-l{font-size:.76rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
     color:var(--muted);}
-  .qtool{display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:0 14px;
-    border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--navy);
-    font:inherit;font-size:.88rem;font-weight:700;cursor:pointer;}
-  .qtool b{font-weight:400;font-size:1.05rem;line-height:1;}
-  .qtool:hover{border-color:var(--teal);background:#f3fafb;}
+  /* IT HAS TO READ AS AN ACTION, and the first two attempts did not.
+
+     White on a near-white page behind a hairline border is technically visible
+     and practically invisible — the owner looked at the live dashboard and did
+     not see it. The tint that replaced it was barely better: measured, `#eaf5f7`
+     sits THREE luminance points from the page's own `#f4f5f7`, which is no
+     separation at all. There is a test that fails below 8, and it caught this.
+
+     Filled navy: unmistakable against a light page, and deliberately NOT the
+     teal the bands' own actions use, so a utility does not compete with the
+     work queue. Still one 44px row, still not a card. */
+  .qtool{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 16px;
+    border:1px solid var(--navy);border-radius:9px;background:var(--navy);color:#fff;
+    font:inherit;font-size:.9rem;font-weight:700;cursor:pointer;}
+  .qtool b{font-weight:400;font-size:1.1rem;line-height:1;}
+  .qtool:hover{background:var(--navy-2);border-color:var(--navy-2);}
   .chip{display:inline-flex;align-items:center;gap:6px;background:#eaf5f7;border:1px solid #b7dbe3;
     color:var(--navy);border-radius:999px;padding:3px 6px 3px 11px;font-size:.8rem;font-weight:700;}
   .chip button{border:0;background:none;font:inherit;font-size:1rem;cursor:pointer;color:var(--teal-ink,#1d5c6c);line-height:1;}
@@ -417,7 +428,7 @@
        deliberately quieter than it: both are doors that do something, and
        Active Surveillance is the one somebody reaches for mid-shift. */
     body.withnav .tabs .side-vst{display:block;text-align:left;
-      background:transparent;color:#c9d6e4;border:1px solid #1d3450;border-radius:9px;
+      background:#0d1826;color:#e8eef5;border:1px solid #23405f;border-radius:9px;
       padding:10px 12px;font:inherit;font-weight:700;cursor:pointer;width:100%;}
     body.withnav .tabs .side-vst:hover{background:#16283d;color:#fff;}
     body.withnav #app{margin-left:198px;}
@@ -442,7 +453,7 @@
       background:#0d1826;color:#e8eef5;border:1px solid #23405f;border-radius:9px;
       padding:11px 12px;font:inherit;font-weight:700;cursor:pointer;width:100%;}
     body.withnav.navopen .tabs .side-vst{display:block;text-align:left;
-      background:transparent;color:#c9d6e4;border:1px solid #1d3450;border-radius:9px;
+      background:#0d1826;color:#e8eef5;border:1px solid #23405f;border-radius:9px;
       padding:11px 12px;font:inherit;font-weight:700;cursor:pointer;width:100%;}
     /* The base rule below is deliberately ABOVE this media query. It used to
        sit after it, and with equal specificity the later rule won: the burger
@@ -677,6 +688,12 @@
   .vst-btn.go{background:linear-gradient(180deg,#d7a44e,#b8863a);border-color:#e0b671;
     color:#20160a;}
   .vst-btn[disabled]{opacity:.5;cursor:default;}
+  /* The compatibility stop. It takes the place of the action, so there is no
+     prominent button sitting under a fatal error. */
+  .vst-stop{border:1px solid #7a4a4a;background:#25161a;border-radius:10px;
+    padding:12px;margin-top:10px;}
+  .vst-stop b{color:#ffc9c9;display:block;margin-bottom:6px;}
+  .vst-stop p{margin:6px 0 0;font-size:.84rem;color:#d9c3c3;line-height:1.55;}
   .vst-prev{width:100%;border-radius:10px;background:#000;display:block;}
   .vst-bar2{height:10px;border-radius:6px;background:#12243a;overflow:hidden;
     border:1px solid #23405f;margin-top:10px;}
@@ -1630,7 +1647,20 @@ function shell(inner){
     </div>` : "";
   /* The send wizard is an overlay, mounted here rather than inside the Rate
      sheets view so a lead card can open it too (MASTER §5). */
-  return `<div class="tabs">${tabs}</div>${schema}${problem}${summaryCards()}${inner}${
+  /* QUICK TOOLS SIT HERE, NOT IN A VIEW (owner, 2026-08-18 — "the live dashboard
+     does not visibly show the timestamp video quick tool").
+
+     It was only ever drawn by `dashView()`, and that is the condition that hid
+     it. Two ways that bites, both real: an INVESTIGATOR has no Dashboard at all,
+     and under 900px the navigation rail — where the other copy lives — is behind
+     the burger, so on a phone anywhere but the Dashboard the only door was
+     inside a menu. The owner ruled that out by name.
+
+     Drawn once, from the shell, so it is in the same place on every top-level
+     screen for both roles. The case workspace and the field view do not go
+     through `shell()` and are deliberately untouched: each has its own door. */
+  return `<div class="tabs">${tabs}</div>${schema}${problem}${quickToolsHtml()}${
+    summaryCards()}${inner}${
     SHEET_WIZ ? sheetWizardHtml() : ""}${PAY_SEND ? paySendHtml() : ""}${
     INTAKE_SEND ? preIntakeHtml() : ""}`;
 }
@@ -2178,16 +2208,19 @@ function recentlyCompletedHtml(){
    The same door is in the navigation foot for both roles and every screen; this
    is the dashboard's copy of it, not a second implementation. */
 function quickToolsHtml(){
+  /* ONE WORDING, and it is the navigation's. Two spellings of the same control
+     meant a find-in-page for what the menu says did not match what the dashboard
+     shows — which is exactly how someone concludes a thing is not there. */
   return `<div class="qtools">
     <span class="qtools-l">Quick tools</span>
-    <button class="qtool" data-act="vstOpen" data-case=""><b>&#127909;</b> Timestamp video</button>
+    <button class="qtool" data-act="vstOpen" data-case=""><b>&#127909;</b> Timestamp Video</button>
   </div>`;
 }
 
 function dashView(){
-  if(!PKGS) return `${quickToolsHtml()}<div class="card"><div class="empty">Loading the dashboard&hellip;</div></div>`;
+  if(!PKGS) return `<div class="card"><div class="empty">Loading the dashboard&hellip;</div></div>`;
   const active = (PKGS.packages || []);
-  return `${quickToolsHtml()}${dashBands()}${nextActionsHtml()}${outNowHtml()}
+  return `${dashBands()}${nextActionsHtml()}${outNowHtml()}
     <div class="card">
       <div class="bar"><h2 style="margin:0">Case packages</h2>
         <span class="count">At-a-glance progress for active cases</span>
@@ -4053,6 +4086,95 @@ async function vstHash(file){
   }catch{ return null; }
 }
 
+/* ---- CAN THIS BROWSER ACTUALLY READ THE FILE, AND WHAT IS IN IT? ----
+
+   Owner live test, 2026-08-18: `IMG_0440.mov` read its name and start time and
+   then failed with "This browser could not read that video file", while the
+   Generate button stayed active underneath the error. Two separate faults —
+   a screen that offered an action it could not perform, and a message that
+   could not say why.
+
+   WHAT IT IS NOT: the container's MIME label. A `.mov` File carries
+   `video/quicktime`, and the guess was that the browser refuses that type
+   outright. Measured, and it is false — relabelling a decodable blob
+   `video/quicktime`, `application/octet-stream` or nothing at all still loads,
+   because the browser sniffs the bytes and ignores the label. So the refusal is
+   a real decode failure of the bitstream, and re-wrapping would fix nothing. */
+
+const VST_CODECS = {
+  avc1: 'H.264 / AVC', avc3: 'H.264 / AVC', hvc1: 'HEVC / H.265', hev1: 'HEVC / H.265',
+  vp09: 'VP9', vp08: 'VP8', av01: 'AV1', mp4v: 'MPEG-4 Part 2', jpeg: 'Motion JPEG',
+  ap4h: 'Apple ProRes', apch: 'Apple ProRes', apcn: 'Apple ProRes', apcs: 'Apple ProRes',
+};
+
+/* THE CODEC, NAMED WITHOUT DECODING AND WITHOUT READING THE FILE.
+
+   An .mov/.mp4 is a flat list of boxes, each `[4-byte size][4-char type]`, and
+   the codec is the sample-entry code inside moov > … > stsd. iPhone QuickTime
+   writes `mdat` FIRST and `moov` LAST, so a scan of the head finds nothing —
+   this walks the top-level list, which costs 16 bytes per box however large the
+   file is, then reads only the `moov` box. Measured on a 5 MB fixture: 182
+   bytes read, 0.003% of the file. Returns null rather than guessing. */
+async function vstBoxCodec(file){
+  if(!file || typeof file.slice !== "function") return null;
+  const u8 = async (off, len) => new Uint8Array(await file.slice(off, off + len).arrayBuffer());
+  try{
+    let off = 0, moov = null, guard = 0;
+    while(off + 8 <= file.size && guard++ < 200){
+      const head = await u8(off, 16);
+      if(head.length < 8) break;
+      const dv = new DataView(head.buffer, head.byteOffset, head.byteLength);
+      let size = dv.getUint32(0);
+      const type = String.fromCharCode(head[4], head[5], head[6], head[7]);
+      if(!/^[\x20-\x7e]{4}$/.test(type)) break;
+      if(size === 1){ if(head.length < 16) break; size = Number(dv.getBigUint64(8)); }
+      else if(size === 0) size = file.size - off;
+      if(size < 8) break;
+      if(type === "moov"){ moov = {start: off, size}; break; }
+      off += size;
+    }
+    // A moov larger than this is not worth pulling into memory to read a label.
+    if(!moov || moov.size > 8 * 1048576) return null;
+    const body = await u8(moov.start, moov.size);
+    let txt = "";
+    for(let i = 0; i < body.length; i++) txt += String.fromCharCode(body[i]);
+    const at = txt.indexOf("stsd");
+    if(at < 0) return null;
+    const win = txt.slice(at, at + 400);
+    for(const cc of Object.keys(VST_CODECS)) if(win.includes(cc)) return {cc, name: VST_CODECS[cc]};
+    return null;
+  }catch{ return null; }
+}
+
+/* Does this browser decode it? Asked when the file is CHOSEN, not when Generate
+   is pressed, so the screen never offers an action it cannot perform. */
+function vstProbe(url){
+  return new Promise(res => {
+    const v = document.createElement("video");
+    v.muted = true; v.playsInline = true; v.preload = "auto";
+    let done = false;
+    const finish = out => { if(done) return; done = true;
+      try{ v.removeAttribute("src"); v.load(); }catch{}
+      res(out); };
+    v.onloadeddata = () => finish({ok: true, w: v.videoWidth, h: v.videoHeight, dur: v.duration});
+    v.onerror = () => finish({ok: false, why: "error"});
+    setTimeout(() => finish({ok: false, why: "timeout"}), 20000);
+    v.src = url;
+  });
+}
+
+/* What the screen says, and it never claims more than was determined. */
+function vstCompatText(){
+  const v = VST;
+  if(!v || v.readable !== false) return "";
+  const named = v.codec ? v.codec.name : null;
+  const ext = /\.(\w{2,5})$/.exec(String(v.name || ""));
+  const kind = ext ? ext[1].toUpperCase() + " video" : "video";
+  if(named) return `This ${kind} uses ${named}, which this browser cannot decode.`;
+  return `This browser cannot decode this ${kind}, and its codec could not be `
+    + `determined from the file.`;
+}
+
 /* Opening the generator. The file never leaves the device: it is read straight
    from the picker, and the object URL it is read through is revoked on close. */
 function vstOpen(caseNo){
@@ -4083,9 +4205,21 @@ function vstOpen(caseNo){
       ap: p.dayPeriod === "AM" ? "AM" : "PM",
       guessed: true, hash: null, pct: 0, err: "", saveMsg: "",
       out: null, recId: null, savedHere: false, started: false,
+      // null = still checking. Nothing offers Generate until this is true.
+      readable: null, codec: null,
     };
     paintVStamp();
     if(!caseNo) vstLoadCases();
+    const url = VST.url;
+    /* Both run on the file as chosen. The codec scan is a few hundred bytes and
+       is only ever used to WORD the refusal — the decode probe is what decides. */
+    vstBoxCodec(f).then(c => { if(VST && VST.url === url){ VST.codec = c; paintVStamp(); } });
+    vstProbe(url).then(r => {
+      if(!VST || VST.url !== url) return;
+      VST.readable = r.ok;
+      if(r.ok){ VST.vw = r.w; VST.vh = r.h; VST.vdur = r.dur; }
+      paintVStamp();
+    });
     VST.hash = await vstHash(f);
     if(VST) paintVStamp();
   };
@@ -4146,6 +4280,10 @@ async function vstGenerate(){
   if(!v) return;
   const s = vstStart();
   if(!s.ok){ v.err = s.why; v.step = "when"; return paintVStamp(); }
+  if(v.readable === false){
+    v.err = vstCompatText() + " Nothing was changed and nothing was uploaded.";
+    return paintVStamp();
+  }
   if(!vstCan()){
     v.err = "This browser cannot make the timestamped copy — it has no video recorder. "
       + "Chrome or Edge on a laptop will do it, and the original on your device is untouched either way.";
@@ -4166,7 +4304,8 @@ async function vstGenerate(){
        a decoded frame, and the first `drawImage` would then paint nothing. */
     await new Promise((res, rej) => {
       src.onloadeddata = () => res();
-      src.onerror = () => rej(new Error("This browser could not read that video file."));
+      src.onerror = () => rej(new Error(vstCompatText()
+        || "This browser could not decode that video file."));
       setTimeout(() => rej(new Error("Reading that video file timed out.")), 30000);
     });
     const W = src.videoWidth, H = src.videoHeight;
@@ -4419,6 +4558,11 @@ function vstHtml(){
           <div class="vst-k"><span>Fingerprint</span><span>${v.hash
             ? esc(v.hash.slice(0, 16)) + "…"
             : "not taken &mdash; the file is too large to fingerprint in a browser"}</span></div>
+          <div class="vst-k"><span>Compatibility</span><span>${
+            v.readable === null ? "checking&hellip;"
+            : v.readable ? "this browser can read it"
+            : "cannot be processed here"}${
+            v.codec ? " &middot; " + esc(v.codec.name) : ""}</span></div>
           ${v.err ? `<p class="vst-err">${esc(v.err)}</p>` : ""}
           <p class="vst-note">The original is opened, read and left exactly as it is.
             The copy is made here on this device and nothing is uploaded.</p>
@@ -4429,7 +4573,23 @@ function vstHtml(){
           ${v.size > 400 * 1048576 ? `<p class="vst-note"><b>This is a large file.</b>
             The copy takes about as long as the footage runs and the screen has to stay open,
             so a laptop is the easier place for this one. It will work here.</p>` : ""}
-          <button class="vst-btn go" data-act="vstGo">Generate timestamped video</button>
+          <!-- NO GENERATE BUTTON UNDER A FATAL COMPATIBILITY ERROR (owner,
+               2026-08-18). While the check is still running it is disabled
+               rather than absent, so the control does not appear and vanish;
+               once the file is known to be unreadable it is replaced by the
+               reason. Edit timestamp and Cancel stay in both states — the
+               timestamp is still worth correcting for a file that will be
+               generated elsewhere. -->
+          ${v.readable === false ? `<div class="vst-stop">
+              <b>This video format cannot be processed in this browser.</b>
+              <p>${esc(vstCompatText())}</p>
+              <p>The file on your device is untouched. A laptop running Chrome or Edge
+                will usually decode it; nothing here has changed it, and nothing was
+                uploaded.</p></div>`
+            : `<button class="vst-btn go" data-act="vstGo" ${
+                v.readable === null ? "disabled" : ""}>${
+                v.readable === null ? "Checking this video&hellip;" : "Generate timestamped video"
+              }</button>`}
           <button class="vst-btn" data-act="vstEditTime">Edit timestamp</button>
           <button class="vst-btn" data-act="vstClose">Cancel</button>
         </div>`
