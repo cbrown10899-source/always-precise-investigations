@@ -9,6 +9,52 @@ state. Update it when the queue moves; keep it short.
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
 truth** (recorded verbatim 2026-08-13).
 
+## 🚦 DEPLOYMENT — 2026-08-18, master `1ca9a97` (#176) — voice §3, source on the activity
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` | `1ca9a97` | `1ca9a97` | **DEPLOYED** — `deploy.yml` success |
+| Worker / API | `1ca9a97` | `1ca9a97` | **DEPLOYED** — `deploy-portal.yml` success |
+| D1 schema | `1ca9a97` | **applied** | ✅ `portal-setup.yml` run 32159377362, live `/health` returned `missing_tables: []` |
+
+Save point `save/2026-08-18-1615-1ca9a97`. Suites: worker **1770/0**, portal **1544/0**, deploy guard **68/0**.
+
+**LIVE VERIFIED — OPEN.** Speech recognition only exists in a real browser.
+What closes it: saying *"Mobile, vehicle observed"* into Active Surveillance on
+the phone, seeing the standard sentence offered, pressing Use, and the entry
+landing in the timeline like any other.
+
+## 🎙 VOICE §3 SHIPPED 2026-08-18 (#176) — and the aliases the owner supplied
+
+**`VEHICLE_OBSERVED` was answered:** *"vehicle observed"* and *"vehicle
+sighting"*, and **bare "observed" is deliberately still mapped to nothing** —
+which is exactly why it had no alias before, since it would file *"subject
+observed"* as a vehicle sighting. Both halves are asserted.
+
+**`activity_source` is a companion table**, on the owner's instruction —
+*"an idempotent companion metadata table instead of altering the existing
+activity_log table"* — and because `schema.sql` is re-applied on every
+portal-setup run, which `ALTER TABLE ADD COLUMN` cannot survive.
+
+Four things hold it:
+
+- **The entry is written FIRST, the marker second.** A database without the
+  dispatch, or any failure recording the marker, costs the marker and never the
+  investigator's words.
+- **The workspace join is guarded** through `missingTables()` — between a merge
+  and the manual dispatch the table does not exist, and the workspace is the
+  most-used screen in the portal.
+- **`source` is a closed list matching the column's CHECK**, so an unknown value
+  is dropped rather than stored. It marks how an entry was CAPTURED, survives an
+  edit, and grants no privilege: §11/§12 hold, and edit and remove are identical.
+- **`heard` is diagnostic only.** §5 permits keeping the transcript; it never
+  replaces the standard text and is deliberately **out of the workspace
+  payload** — a test fails if it appears there.
+
+**Next:** §1 the compact mobile status header (mobile-first, testable at phone
+widths) and §10 LAST ACTIVITY, then §2's wake-word loop — which needs a real
+microphone and will land LIVE VERIFIED OPEN.
+
 ## 🚦 DEPLOYMENT — 2026-08-18, master `896e6d5` (#175) — voice command registry
 
 | Component | Master | Deployed | Status |
