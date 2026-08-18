@@ -366,6 +366,69 @@ recedes but is **never removed**, and nothing is hidden with `display:none` to
 make a section look smaller. Shrinking a section by deleting its words is not
 shrinking it, and an absent zero is a different claim from a zero.
 
+## 🔧 TWO OWNER-REPORTED FAULTS, 2026-08-18 — both real, both fixed
+
+### 1. "The live dashboard does not visibly show the Timestamp Video quick tool"
+
+**It was rendering. The owner was still right.** Measured against the real page:
+the control was at y=106 on the first screenful at both 1280px and 390px — and it
+was a **white pill on a near-white page**. Present, and practically invisible.
+
+Two genuine conditions were hiding it as well, and both are the kind this file
+warns about:
+
+- **It was drawn only by `dashView()`.** An **investigator has no Dashboard at
+  all**, so their only copy was the navigation rail — and under 900px that rail
+  is behind the burger (measured: `.tabs` computes to `display:none`). So on a
+  phone, on any screen but the Dashboard, the only door was **inside a menu**,
+  which the owner ruled out by name.
+- **Two spellings of one control.** The dashboard said *Timestamp video*, the
+  navigation said *Timestamp Video* — so a find-in-page for what the menu says did
+  not match what the screen shows. That is exactly how someone concludes a thing
+  is not there.
+
+Fixed by moving `quickToolsHtml()` into `shell()` — **one row, one writer, every
+top-level screen, both roles**. The case workspace and the field view do not go
+through `shell()` and are deliberately untouched; each already has its own door.
+
+**The styling took three attempts and a test caught the second one.** White on
+`#f4f5f7` was invisible; the tint that replaced it measured **3 luminance points**
+from the page behind it, which is no separation at all. It is filled navy now, and
+there is an assertion that fails below 8 — the fix that does not work has to fail
+like a fix that does not work.
+
+### 2. "IMG_0440.mov — this browser could not read that video file"
+
+The tool read the filename and start time, failed, and **left the large Generate
+button active underneath the error**.
+
+**The cause is a real bitstream decode failure, not the container label** — and
+the first hypothesis was wrong and was measured rather than argued. Identical
+decodable bytes load whether the blob claims `video/quicktime`,
+`application/octet-stream`, `video/mp4` or nothing at all: the browser sniffs
+content and ignores the declared type. **Re-wrapping the container fixes nothing.**
+
+`vstBoxCodec()` now names the codec from the file's own `stsd` box with no
+decoder — and iPhone QuickTime writes `moov` **last**, so it walks to the end.
+Measured on a 5 MB fixture in that layout: **182 bytes read, 0.003% of the file**.
+When the boxes cannot be read it returns null and the screen says the codec could
+not be determined, rather than naming one.
+
+The check runs when the file is **chosen**: an undecodable file shows a
+compatibility stop **where the action was**, the button is disabled (not absent)
+while the check runs, and Edit timestamp and Cancel stay in every state.
+
+**Browser-side FFmpeg/WASM was audited and is NOT recommended** — measured, not
+argued: no `SharedArrayBuffer` (so no threads), `@ffmpeg/core` is **64.7 MB**
+against Cloudflare Pages' **25 MiB** per-file cap, `file.arrayBuffer()` throws
+above **1 GB** on this platform, and a transcode cannot stream. It would work on
+demo clips and fail on the files this exists for. **The recommendation is the
+iPhone camera setting** — *Most Compatible* writes H.264, which the existing
+renderer already handles. Full audit in `VIDEO-TIMESTAMP.md`.
+
+**No dependency was installed and none is proposed.** Video is still device-first;
+nothing about storage, photos or legacy R2 video changed.
+
 ## 🚦 DEPLOYMENT — 2026-08-18, master `8a48d7d`
 
 | Component | Master SHA | Deployed SHA | Status | How |

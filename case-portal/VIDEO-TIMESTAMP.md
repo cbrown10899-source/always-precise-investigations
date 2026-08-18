@@ -400,3 +400,174 @@ codec produces a file nothing can play. `vstMime()` never offers it.
   original form: there is no stored derivative for a package to prefer.
 - **Any decision about legacy stored video.** Recorded in `NEXT.md` as an open
   question. Do not sweep it as a side effect of anything.
+
+---
+
+# MOV / HEVC AUDIT — 2026-08-18, from the owner's live test
+
+**The failing case, in the owner's words:** `IMG_0440.mov` read its filename and
+recording start time (`05/03/2025 11:27:58 AM EDT`), then reported *"This browser
+could not read that video file"* — while the large **Generate timestamped video**
+button stayed active underneath the error.
+
+## 1. Why it fails
+
+**A real decode failure of the bitstream. Not the container label.**
+
+The first hypothesis was that `.mov` is refused by MIME type: a `.mov` File
+carries `video/quicktime`, the object URL inherits it, and Chrome does not
+register that type in `canPlayType` (measured: `video/quicktime` returns the
+empty string, meaning "cannot play", while `video/webm; codecs=vp9` returns
+"probably").
+
+**That hypothesis is wrong, and it was measured rather than argued.** The same
+decodable bytes were relabelled and loaded through the real code path:
+
+| Blob type on identical bytes | Loads? |
+| --- | --- |
+| `video/webm` | yes |
+| `video/quicktime` | **yes** |
+| `application/octet-stream` | **yes** |
+| no type at all | **yes** |
+
+The browser sniffs the content and ignores the declared type for a blob URL. So
+**re-wrapping the container would fix nothing**, and the refusal is the decoder
+genuinely being unable to decode what is inside.
+
+## 2. The likely codec — named from the file, never guessed
+
+An iPhone writes `.mov` in one of two camera settings: **High Efficiency →
+HEVC/H.265**, **Most Compatible → H.264/AVC**. Chrome decodes H.264 essentially
+everywhere; its HEVC support exists only where the OS and hardware provide it and
+is commonly absent. **HEVC is therefore the strong hypothesis for this file — and
+the code no longer relies on a hypothesis.**
+
+`vstBoxCodec()` reads the codec out of the file's own boxes with no decoder:
+walk the top-level box list (`[4-byte size][4-char type]`), find `moov`, and read
+the sample-entry four-character code in `stsd` — `avc1`/`avc3` = H.264,
+`hvc1`/`hev1` = HEVC, plus VP9, AV1, MPEG-4 Part 2, MJPEG and ProRes.
+
+**iPhone QuickTime writes `mdat` first and `moov` LAST**, so a head-only scan
+finds nothing; this walks to the end. Measured on a 5 MB fixture with that exact
+layout: **182 bytes read, 0.003% of the file**, and it named `hvc1` correctly.
+When the boxes cannot be read it returns **null** and the screen says the codec
+could not be determined, rather than naming one.
+
+## 3. What the browser renderer supports today
+
+Unchanged and still working: anything the browser can decode goes in, and
+**VP9/WebM** comes out. On the tested platform `video/mp4` reports supported
+while its only real codec `avc1` reports **not**, so mp4 output is refused by
+construction.
+
+## 4. The UI fault, fixed
+
+Both halves of the owner's report are addressed, and the check now runs when the
+file is **chosen** rather than when Generate is pressed:
+
+- **A file that cannot be decoded shows a compatibility stop where the action
+  was.** No prominent Generate button under a fatal error.
+- **While the check is still running the button is present but disabled**, so it
+  does not appear and vanish.
+- **Edit timestamp and Cancel stay in every state** — a timestamp is still worth
+  correcting for a file that will be generated elsewhere.
+- The wording names the codec only when it was actually read.
+- `vstGenerate` refuses on its own as well; the page is not the only guard.
+
+## 5. Browser-side FFmpeg / WASM — measured, and the answer is NO for real files
+
+Measured in the browser this project tests with:
+
+| Measurement | Value |
+| --- | --- |
+| `crossOriginIsolated` | **false** |
+| `SharedArrayBuffer` | **absent** |
+| Largest single `WebAssembly.Memory` | ~4,065 MB (32-bit wasm ceiling) |
+| Largest single `ArrayBuffer` | **1,024 MB — 2,048 MB throws `RangeError`** |
+| `hardwareConcurrency` | 4 |
+| `@ffmpeg/core` unpacked | **64.7 MB** (`core-mt`: 65.7 MB) |
+
+Five things follow, and each is independently disqualifying for
+surveillance-size video:
+
+1. **No `SharedArrayBuffer` means no multithreaded build.** `core-mt` needs it,
+   and it needs COOP/COEP cross-origin isolation, which `/portal/*` does not set.
+   Only the single-threaded core is usable, and it is several times slower.
+2. **It cannot be served from Cloudflare Pages.** Pages caps a single file at
+   25 MiB; the core is **64.7 MB**. It would have to come from a third-party CDN
+   — a dependency the owner's own rules push against — or be split, which the
+   loader does not support.
+3. **ffmpeg.wasm's world is one 32-bit memory.** Input, output and working
+   buffers share it. `WORKERFS` can map the input `File` without copying it, but
+   the **output still lands in memory**, so a long clip's H.264 output alone can
+   exceed what is available.
+4. **`file.arrayBuffer()` fails above 1 GB on this platform** — measured. Any
+   path that materialises a surveillance file as one buffer is already broken.
+5. **It cannot stream or chunk a transcode.** Splitting at keyframes and
+   concatenating is a real technique, but it is a project, not a fallback, and it
+   multiplies the memory problem by the number of concurrent segments.
+
+**So: no. Browser-side FFmpeg/WASM does not solve MOV/HEVC for real surveillance
+video, and it would be dishonest to ship it as though it did.** It would work for
+small clips and fail on exactly the files that matter.
+
+## 6. Memory, CPU and time
+
+Single-threaded WASM H.264 encode runs roughly **0.2×–1× realtime** on 4 cores
+for 1080p — a 10-minute clip is 10–50 minutes with the tab open, on one core,
+with no ability to use the machine's hardware encoder. The current canvas +
+`MediaRecorder` path is **1× realtime and hardware-accelerated**, so it is
+strictly faster as well as smaller.
+
+## 7. Can the output be MP4 / H.264?
+
+Not from the current path — `avc1` reports unsupported for recording. From
+ffmpeg.wasm it could be, but `libx264` is **GPL**, which would put the whole page
+under a licence the owner has not chosen, and H.264 carries patent licensing that
+is not settled by "it runs in a browser". **This needs an owner decision before
+anyone writes code, not after.**
+
+## 8. iPhone and mobile
+
+An iPhone shoots the problem format and is the worst place to transcode it: no
+`SharedArrayBuffer` in Safari without isolation, a hard per-tab memory ceiling
+that kills the tab rather than throwing, and thermal throttling on a long encode.
+**Mobile should stay timestamp-entry plus generation for formats the phone can
+already decode**, and say plainly why anything else must be finished on a laptop.
+Safari **can** decode HEVC natively, so an iPhone may well render its own footage
+successfully where Chrome cannot — the compatibility check reports what the
+browser in front of the user can actually do, which is the honest answer.
+
+## 9. Would a local desktop helper be more reliable?
+
+**Yes, decisively — and it is the only option that handles real files.** A native
+`ffmpeg` on the owner's own machine has no 32-bit memory ceiling, streams input
+and output to disk, uses hardware encoders, and handles HEVC and any other codec.
+The costs are equally real: something must be installed and kept up to date, it
+is a second place where evidence is handled, and it is outside everything this
+project currently deploys.
+
+## 10. Recommendation
+
+**Ship the compatibility fix — already coded and tested — and stop there.**
+
+The tool is now honest: it names the codec when it can read it, refuses clearly
+when it cannot, and never offers an action it cannot perform. For H.264 `.mov`
+and everything else the browser decodes, it works today.
+
+For HEVC specifically, in order of preference:
+
+1. **Ask the owner to change the iPhone camera setting** to *Settings → Camera →
+   Formats → Most Compatible*. Zero engineering, zero dependency, zero cost, and
+   it makes every future clip H.264 — which the existing renderer already
+   handles. **This is the recommendation.**
+2. **Try the clip in Safari**, which decodes HEVC natively where Chrome does not.
+   The tool already works there if the browser can decode the file.
+3. **A local desktop helper**, if 1 and 2 are not acceptable — but that is a new
+   piece of software and its own decision.
+4. **Browser-side FFmpeg/WASM — do not.** Measured above; it fails on the files
+   this exists for.
+
+**No large dependency was installed and none is proposed.** Nothing in the
+storage architecture changed: video is still device-first, no bytes reach R2 or
+D1, photos and legacy video are untouched.

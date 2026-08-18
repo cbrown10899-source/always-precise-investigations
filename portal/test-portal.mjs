@@ -7367,6 +7367,224 @@ section('The four field actions are untouched');
   await page.close();
 }
 
+
+/* OWNER REPORT, 2026-08-18: "the live dashboard does not visibly show the
+   timestamp video quick tool". It rendered — but only from `dashView()`, which
+   is a condition that hides it in two real ways: an investigator has no
+   Dashboard at all, and under 900px the navigation rail (the other copy) is
+   behind the burger, so on a phone anywhere but the Dashboard the only door was
+   inside a menu. It is drawn from the shell now. */
+section('Timestamp Video is on every top-level screen, for both roles');
+{
+  for (const [who, pass, role, tabs] of [
+    ['trever', 'AdminPassword1x', 'admin', ['Dashboard', 'Cases', 'Intakes', 'Rate Sheets']],
+    ['dana', 'FieldWork2026x', 'investigator', ['My assignments', 'Today', 'Reports']],
+  ]) {
+    const page = await newPage();
+    await signIn(page, who, pass);
+    await page.waitForTimeout(400);
+    for (const t of tabs) {
+      await page.locator('.tabs button', { hasText: t }).first().click();
+      await page.waitForTimeout(500);
+      const n = await page.locator('.qtools [data-act="vstOpen"]').count();
+      ok(`${role} · ${t} carries the quick tool`, n === 1, String(n));
+    }
+    /* ONE WORDING. Two spellings of the same control meant a find-in-page for
+       what the menu says did not match what the screen shows. */
+    const label = await text(page, '.qtools [data-act="vstOpen"]');
+    ok(`and the ${role}'s reads Timestamp Video`, /Timestamp Video/.test(label), label);
+    const navLabel = await page.locator('.navfoot [data-act="vstOpen"]').innerText();
+    ok(`matching the navigation exactly (${role})`,
+       label.replace(/\s+/g, ' ').includes('Timestamp Video')
+       && navLabel.replace(/\s+/g, ' ').includes('Timestamp Video'), `${label} | ${navLabel}`);
+    await page.close();
+  }
+}
+
+section('The quick tool is discoverable, not merely present');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).first().click();
+  await page.waitForTimeout(700);
+
+  const m = await page.evaluate(() => {
+    const b = document.querySelector('.qtools [data-act="vstOpen"]');
+    const r = b.getBoundingClientRect(), cs = getComputedStyle(b);
+    const px = c => c.match(/\d+/g).map(Number);
+    const lum = c => { const [r0,g,b0] = px(c); return 0.299*r0 + 0.587*g + 0.114*b0; };
+    const page_ = getComputedStyle(document.body).backgroundColor;
+    return { y: Math.round(r.y), h: Math.round(r.height), w: Math.round(r.width),
+             onFirstScreen: r.y >= 0 && r.y < innerHeight,
+             bg: cs.backgroundColor, pageBg: page_,
+             // How far the control's surface sits from the page behind it.
+             contrast: Math.abs(lum(cs.backgroundColor) - lum(page_)),
+             sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth };
+  });
+  ok('it is on the first screenful', m.onFirstScreen && m.y < 300, JSON.stringify(m));
+  ok('it is a 44px target', m.h >= 44, `${m.h}px`);
+  /* THE ORIGINAL FAILURE WAS NOT ABSENCE — it was a white pill on a near-white
+     page. Its surface has to be visibly different from what is behind it. */
+  ok('its surface stands off the page behind it', m.contrast >= 8, JSON.stringify(m));
+  ok('and nothing scrolls sideways', m.sw <= m.cw + 1, `${m.sw} vs ${m.cw}`);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  const p = await page.evaluate(() => {
+    const b = document.querySelector('.qtools [data-act="vstOpen"]');
+    const r = b.getBoundingClientRect();
+    const nav = document.querySelector('.tabs');
+    return { h: Math.round(r.height), y: Math.round(r.y),
+             onFirstScreen: r.y >= 0 && r.y < innerHeight,
+             navHidden: getComputedStyle(nav).display === 'none',
+             sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth };
+  });
+  /* THE POINT OF THE FIX. On a phone the navigation rail IS hidden behind the
+     burger — so if the only copy lived there, the door would be in a menu,
+     which the owner ruled out by name. */
+  ok('on a phone the navigation rail really is behind the burger', p.navHidden);
+  ok('and the quick tool is still on the screen, not in that menu',
+     p.onFirstScreen && p.h >= 44, JSON.stringify(p));
+  ok('with nothing scrolling sideways at 390px', p.sw <= p.cw + 1, `${p.sw} vs ${p.cw}`);
+
+  // It reaches the workflow that already shipped — not a second one.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForTimeout(300);
+  const wired = await page.evaluate(() => {
+    const b = document.querySelector('.qtools [data-act="vstOpen"]');
+    return { act: b.dataset.act, caseAttr: b.getAttribute('data-case'),
+             opensExisting: typeof vstOpen === 'function',
+             oneGenerator: typeof vstGenerate === 'function' && typeof vstHtml === 'function' };
+  });
+  ok('it opens the generator that already shipped', wired.act === 'vstOpen'
+     && wired.opensExisting && wired.oneGenerator, JSON.stringify(wired));
+  ok('and carries no case of its own, so it cannot adopt whichever one is open',
+     wired.caseAttr === '', JSON.stringify(wired));
+  await page.close();
+}
+
+/* OWNER LIVE TEST, 2026-08-18: IMG_0440.mov read its name and start time, then
+   failed with "This browser could not read that video file" — while the large
+   Generate button stayed active underneath the error. */
+section('A video this browser cannot decode says so, and offers no Generate');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* THE LABEL IS NOT THE GATE, and that is measured rather than assumed: the
+     same decodable bytes load whether the blob claims quicktime, mp4, octet-
+     stream or nothing. So a `.mov` refusal is a real decode failure and
+     re-wrapping the container would fix nothing. */
+  const labels = await page.evaluate(async () => {
+    const c = document.createElement('canvas'); c.width = 160; c.height = 120;
+    const x = c.getContext('2d');
+    const st = c.captureStream(0), tr = st.getVideoTracks()[0];
+    const parts = []; const rec = new MediaRecorder(st, { mimeType: vstMime() });
+    rec.ondataavailable = e => { if (e.data.size) parts.push(e.data); };
+    rec.start();
+    for (let i = 0; i < 10; i++) { x.fillStyle = '#123'; x.fillRect(0, 0, 160, 120);
+      tr.requestFrame(); await new Promise(r => setTimeout(r, 33)); }
+    await new Promise(r => { rec.onstop = r; rec.stop(); });
+    const good = new Blob(parts, { type: 'video/webm' });
+    const out = {};
+    for (const t of ['video/webm', 'video/quicktime', 'application/octet-stream', ''])
+      out[t || '(none)'] = (await vstProbe(URL.createObjectURL(new Blob([good], { type: t })))).ok;
+    return out;
+  });
+  ok('the container label does not decide whether a video loads',
+     Object.values(labels).every(v => v === true), JSON.stringify(labels));
+
+  /* THE CODEC IS NAMED FROM THE FILE'S OWN BOXES, without decoding it — and
+     with `moov` LAST, which is how iPhone QuickTime writes it. */
+  const named = await page.evaluate(async () => {
+    const box = (type, payload) => {
+      const b = new Uint8Array(8 + payload.length);
+      new DataView(b.buffer).setUint32(0, 8 + payload.length);
+      for (let i = 0; i < 4; i++) b[4 + i] = type.charCodeAt(i);
+      b.set(payload, 8); return b;
+    };
+    const cat = (...a) => { const n = a.reduce((s, x) => s + x.length, 0);
+      const o = new Uint8Array(n); let k = 0; for (const x of a) { o.set(x, k); k += x.length; } return o; };
+    const mk = (cc) => {
+      const stsd = box('stsd', cat(new Uint8Array(8), box(cc, new Uint8Array(70))));
+      const moov = box('moov', box('trak', box('mdia', box('minf', box('stbl', stsd)))));
+      const mdat = box('mdat', new Uint8Array(3 * 1048576));      // 3 MB of "picture"
+      const ftyp = box('ftyp', new Uint8Array([113,116,32,32, 0,0,2,0]));
+      return new File([cat(ftyp, mdat, moov)], 'IMG_0440.mov', { type: 'video/quicktime' });
+    };
+    return { hevc: await vstBoxCodec(mk('hvc1')), h264: await vstBoxCodec(mk('avc1')),
+             prores: await vstBoxCodec(mk('ap4h')) };
+  });
+  ok('HEVC is named from the file, with moov last as QuickTime writes it',
+     named.hevc && named.hevc.cc === 'hvc1' && /HEVC/.test(named.hevc.name), JSON.stringify(named));
+  ok('and H.264 is told apart from it', named.h264 && /H\.264/.test(named.h264.name),
+     JSON.stringify(named));
+  ok('and a third codec is not forced into either', named.prores && /ProRes/.test(named.prores.name),
+     JSON.stringify(named));
+
+  /* NOTHING IS CLAIMED THAT WAS NOT DETERMINED. A file whose codec cannot be
+     read says exactly that, rather than picking one. */
+  const unknown = await page.evaluate(async () =>
+    await vstBoxCodec(new File([new Uint8Array(2048)], 'junk.mov', { type: 'video/quicktime' })));
+  ok('an unreadable container names no codec at all', unknown === null, JSON.stringify(unknown));
+
+  // The screen, on a file this browser genuinely cannot decode.
+  await page.evaluate(() => {
+    VST = { step: 'preview', caseNo: 'API-20260812-4002', file: null, name: 'IMG_0440.mov',
+            size: 84 * 1048576, url: '', tz: 'America/New_York', q: '',
+            mo: '05', da: '03', yr: '2025', hr: '11', mi: '27', se: '58', ap: 'AM',
+            guessed: false, hash: null, pct: 0, err: '', saveMsg: '',
+            out: null, recId: null, savedHere: false, started: false,
+            readable: false, codec: { cc: 'hvc1', name: 'HEVC / H.265' } };
+    VST.startMs = vstToUtc(2025, 5, 3, 11, 27, 58, 'America/New_York');
+    paintVStamp();
+  });
+  await page.waitForTimeout(250);
+  const stopped = await text(page, '.vst');
+  ok('the screen says the format cannot be processed here',
+     has(stopped, 'cannot be processed in this browser'));
+  ok('and names the codec it actually read from the file',
+     has(stopped, 'HEVC / H.265') && has(stopped, 'MOV video uses'), stopped.slice(0, 400));
+  ok('it says the original is untouched and nothing was uploaded',
+     has(stopped, 'untouched') && has(stopped, 'nothing was uploaded'));
+  /* THE FAULT THE OWNER SAW: a prominent active Generate button under a fatal
+     error. It is gone, and the two safe actions remain. */
+  ok('there is no Generate button under the error',
+     await page.locator('[data-act="vstGo"]').count() === 0);
+  ok('Edit timestamp is still offered',
+     await page.locator('[data-act="vstEditTime"]').count() === 1);
+  ok('so is Cancel', await page.locator('.vst [data-act="vstClose"]').count() >= 1);
+  ok('and the timestamp it did read is still shown',
+     has(stopped, '05/03/2025 11:27:58 AM EDT'), stopped.slice(0, 300));
+
+  /* AND THE GENERATOR REFUSES ON ITS OWN. The page is not the only guard: a
+     caller reaching vstGenerate directly is still stopped. */
+  const forced = await page.evaluate(async () => { await vstGenerate();
+    return { err: VST.err, out: VST.out, step: VST.step }; });
+  ok('calling the generator directly is refused too',
+     forced.out === null && /cannot decode/i.test(forced.err), JSON.stringify(forced));
+
+  // While the check is still running, Generate is present but disabled.
+  await page.evaluate(() => { VST.readable = null; VST.err = ''; paintVStamp(); });
+  await page.waitForTimeout(200);
+  const checking = await page.evaluate(() => {
+    const b = document.querySelector('[data-act="vstGo"]');
+    return { exists: !!b, disabled: b ? b.disabled : null, text: b ? b.textContent.trim() : '' };
+  });
+  ok('while the check runs the action is disabled rather than absent',
+     checking.exists && checking.disabled === true, JSON.stringify(checking));
+  ok('and says what it is doing', /checking/i.test(checking.text), checking.text);
+
+  // A readable file gets the ordinary screen back.
+  await page.evaluate(() => { VST.readable = true; VST.codec = null; paintVStamp(); });
+  await page.waitForTimeout(200);
+  const okScreen = await text(page, '.vst');
+  ok('a supported file still offers Generate',
+     await page.locator('[data-act="vstGo"]:not([disabled])').count() === 1);
+  ok('and says the browser can read it', has(okScreen, 'this browser can read it'));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
