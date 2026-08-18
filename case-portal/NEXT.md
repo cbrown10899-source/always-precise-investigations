@@ -366,6 +366,72 @@ recedes but is **never removed**, and nothing is hidden with `display:none` to
 make a section look smaller. Shrinking a section by deleting its words is not
 shrinking it, and an absent zero is a different claim from a zero.
 
+## 📱 iOS VIDEO IS PRIMARY INPUT — audit + safe fixes, 2026-08-18
+
+**Owner requirement, and it overturns the previous unit's advice:** iPhone and
+iPad video are **primary input, not an edge case**. "Change the camera to Most
+Compatible" is at best a tip for future recordings, and **"a laptop running
+Chrome or Edge will usually decode it" is rejected outright — it was untested
+and it was wrong in the owner's own test.** Existing Apple footage must work.
+
+**The audit is in `VIDEO-TIMESTAMP.md` and separates MEASURED from PUBLISHED
+from UNKNOWN by name**, because iOS Safari cannot be run in this container and
+guessing about it has already cost the owner a wasted test.
+
+### The finding that reframes everything
+
+**The renderer has two halves that fail independently, and iOS is exactly where
+one works and the other does not.**
+
+- **Decode:** iOS Safari has native hardware **HEVC**. It very likely reads
+  `IMG_0440.mov` fine — where Chrome on Windows cannot.
+- **Encode:** the current path needs `canvas.captureStream()`, which WebKit has
+  historically not implemented usably on iOS.
+
+So an iPhone is probably a device that can **play** the file and cannot **write
+the copy** — which is a different sentence from "unsupported video", and the UI
+now says the right one.
+
+Two more published facts that matter: iOS `MediaRecorder` supports
+**`video/mp4;codecs=avc1`** (the broadly playable output this project cannot
+produce on desktop), and **`isTypeSupported` has historically returned true where
+`start()` then fails on iOS** — so a capability string is not evidence.
+
+### The route that would make iOS first-class: WebCodecs, NOT ffmpeg
+
+Safari 16.4+ has `VideoDecoder`/`VideoEncoder`, hardware-backed. demux →
+decode → burn → encode → mux → share sheet. It beats ffmpeg.wasm on every axis
+that disqualified ffmpeg.wasm: **~230 KB of pure JS instead of 64.7 MB**, no
+`SharedArrayBuffer`, **a few frames of memory instead of the whole file**,
+hardware speed, and no GPL. **It would also fix the desktop**, which currently
+cannot emit H.264 and writes WebM.
+
+**It needs two small dependencies (an MP4 demuxer and muxer). Nothing was
+installed. This is the decision the owner has to make, and the audit stops
+there.**
+
+### Safe fixes shipped now
+
+- **Every browser recommendation removed from the page.** Nothing names a
+  browser it has not proven.
+- **Container and codec are separate named lines** — container described as the
+  label it is, codec read from the file's boxes or reported as undetermined,
+  never invented.
+- **Compatibility tells "cannot decode" apart from "can play but cannot write
+  the copy here."**
+- **iOS is detected and named**, so the screen never suggests another browser on
+  a platform where every browser is Safari.
+- **`navigator.share({files})` is the save path where it exists** — the system
+  share sheet is how a file reaches Photos or Files on iOS, and it resolves only
+  after the operator completes it, so it may honestly be called saved.
+- **A device read-out** that runs a REAL end-to-end render attempt rather than
+  trusting capability strings. **This is the instrument that fills the iOS
+  matrix**: the owner runs it on the iPhone that shot the file.
+
+**Four of my own assertions from the previous unit encoded the old WORDING** and
+were sharpened to the rule instead — the owner rewrote the copy, and a test that
+pins a sentence fails when the sentence was supposed to change.
+
 ## 🚦 DEPLOYMENT — 2026-08-18, master `32dbb98` (#167)
 
 | Component | Master SHA | Deployed SHA | Status | How |

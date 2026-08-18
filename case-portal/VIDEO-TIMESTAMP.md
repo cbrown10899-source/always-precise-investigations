@@ -571,3 +571,134 @@ For HEVC specifically, in order of preference:
 **No large dependency was installed and none is proposed.** Nothing in the
 storage architecture changed: video is still device-first, no bytes reach R2 or
 D1, photos and legacy video are untouched.
+
+---
+
+# iOS VIDEO COMPATIBILITY AUDIT — 2026-08-18
+
+**Owner requirement:** iPhone and iPad video are **primary input**, not an edge
+case, and the previous unit's advice — change the camera to *Most Compatible*,
+or use a laptop running Chrome or Edge — is **rejected**. Existing Apple footage
+must have a usable workflow.
+
+## The honesty constraint, stated first
+
+**iOS Safari cannot be run in this container.** The browser here is headless
+Chromium built without proprietary codecs. Every previous claim about "a laptop
+running Chrome or Edge" was made without measurement and proved wrong in the
+owner's own test. So this audit separates three things by name:
+
+- **MEASURED HERE** — run in this container, reproducible.
+- **PUBLISHED** — from vendor and standards sources, cited, not measured here.
+- **UNKNOWN UNTIL THE DEVICE ANSWERS** — which is why the tool now carries a
+  device read-out that the owner's own iPhone fills in.
+
+## What was MEASURED here
+
+| Fact | Result |
+| --- | --- |
+| A blob's MIME label decides nothing | Identical decodable bytes load as `video/quicktime`, `video/mp4`, `application/octet-stream` or with no type at all — the browser sniffs content |
+| The codec can be read without decoding | `stsd` sample entry, walking to the END for QuickTime's `moov`-last layout — **182 bytes read of a 5 MB fixture** |
+| `SharedArrayBuffer` / `crossOriginIsolated` | absent / false |
+| Largest single `ArrayBuffer` | **1,024 MB; 2,048 MB throws `RangeError`** |
+| `@ffmpeg/core` unpacked | **64.7 MB** vs Cloudflare Pages' 25 MiB per-file cap |
+
+## What is PUBLISHED, and what it implies
+
+The renderer has **two halves that fail independently**, and iOS is precisely
+the platform where one works and the other does not:
+
+| Capability | iOS Safari (published) | Consequence |
+| --- | --- | --- |
+| **HEVC/H.265 decode** | native, hardware, standard since 2017 | iOS can very likely **read** `IMG_0440.mov` when Chrome on Windows cannot |
+| `canvas.captureStream()` | **reported unimplemented / unreliable on WebKit iOS**; the captured track "does not appear to contain valid information", with intermittent `onstop`/`ondataavailable` failures | **the current encode path is the part that breaks on iOS** |
+| `MediaRecorder` | present since iOS 14.3; **`video/mp4;codecs=avc1`** — and WebM/VP8/VP9 from iOS 18.4 | iOS can produce a **broadly playable H.264 MP4**, which this project's desktop path cannot |
+| `MediaRecorder.isTypeSupported` | **has historically returned true where `start()` then fails on iOS** | a capability string is not evidence; only an actual render is |
+| **WebCodecs** `VideoDecoder`/`VideoEncoder` | **present from Safari 16.4** (video-only subset), hardware-backed; full support from Safari 26 | an encode route that **does not need `captureStream` at all** |
+| `navigator.share({files})` | the system share sheet — Photos, Files | the correct iOS save path, and it resolves only after the user completes it |
+| `showSaveFilePicker` | absent | the desktop "honest save" path does not exist on iOS |
+
+**Chrome and Edge on iPhone and iPad are Safari underneath.** "Try another
+browser" is not advice on iOS, and the tool no longer offers it.
+
+## Why `IMG_0440.mov` failed, precisely
+
+A **real bitstream decode failure on the machine that opened it** — not the
+container, not the extension, not the MIME label. The likely codec is HEVC
+(iPhone *High Efficiency*), and the tool now reads that from the file's own
+boxes rather than inferring it. The original was never modified, which is correct.
+
+## The route that would make iOS first-class — WebCodecs, not FFmpeg
+
+demux (`mp4box.js`) → `VideoDecoder` (hvc1, hardware) → canvas draw + burn →
+`VideoEncoder` (avc1, hardware) → MP4 muxer → share sheet.
+
+It is **materially better than ffmpeg.wasm on every axis that disqualified
+ffmpeg.wasm**, and that is the re-evaluation the owner asked for:
+
+| | ffmpeg.wasm | WebCodecs route |
+| --- | --- | --- |
+| Download size | **64.7 MB** — exceeds the Pages 25 MiB file cap | ~230 KB of pure JS (demuxer + muxer) |
+| Threads | needs `SharedArrayBuffer`, absent | not needed |
+| Memory | whole input **and output** in one 32-bit heap | **a few frames at a time — genuinely streaming** |
+| Speed | software, ~0.2–1× realtime on 4 cores | **hardware, typically faster than realtime** |
+| HEVC | software decode | **hardware decode on iOS** |
+| H.264 out | `libx264`, **GPL** + patent questions | the platform's own encoder |
+| Licensing | GPL contamination of the page | none |
+
+**It also fixes the desktop.** The current path cannot emit H.264 (`avc1`
+reports unsupported for recording here), so it writes WebM. A WebCodecs encoder
+would produce the MP4/H.264 the owner asked for wherever the platform provides
+the encoder.
+
+**Two new dependencies would be required** — an MP4 demuxer and an MP4 muxer,
+both small, pure JavaScript, permissively licensed. **Nothing was installed and
+this is where the audit stops for approval.**
+
+## Large surveillance video
+
+- **ffmpeg.wasm: unsafe.** `file.arrayBuffer()` already throws above 1 GB here,
+  and its model needs input and output resident simultaneously.
+- **WebCodecs: safe by construction** — one frame in, one chunk out. The binding
+  constraint becomes where the OUTPUT is written, which on desktop is
+  `showSaveFilePicker` + a `FileSystemWritableFileStream` (streams to disk, no
+  ceiling) and on iOS is a Blob in memory until shared.
+- **The current path is already ~1× realtime**, because the clip is played
+  through once. That is the floor for any approach; a 40-minute clip is a
+  40-minute render with the screen awake, which is a real operational limit on a
+  phone regardless of codec.
+- **Mobile thermal and memory risk is real** on long clips. Even with a working
+  iOS encode path, a long surveillance file is better finished on a desktop.
+
+## Recommendation
+
+1. **Ship the small safe fixes already made** (below) — the tool is now honest on
+   every device and recommends no browser it has not proven.
+2. **Have the owner run the device read-out on the iPhone or iPad that shot
+   `IMG_0440.mov`, with that file selected.** It reports decode, canvas capture,
+   MediaRecorder MP4/WebM, WebCodecs, share, and an **actual end-to-end render
+   attempt** — because on iOS the capability strings have historically lied.
+   That single screen fills every row of the iOS matrix with measurement instead
+   of inference, and it decides between Outcome A and Outcome B.
+3. **Then approve or decline the WebCodecs route**, which is the only path that
+   makes iOS HEVC first-class without a large dependency. It needs two small
+   pure-JS libraries and is a real piece of work, so it is a decision, not a fix.
+4. **A local Windows helper is not needed if the WebCodecs route is approved** —
+   and it is the fallback if it is declined.
+
+## The small safe fixes made in this unit
+
+- **Every browser recommendation removed.** The screen states what happened and
+  that the original is unchanged, and names no browser it has not proven.
+- **Container and codec reported as separate named lines**, with the container
+  described as a label and the codec read from the file or reported as
+  undetermined — never invented.
+- **Compatibility distinguishes "cannot decode" from "can play but cannot write
+  the copy here"** — the second is the iOS case, and calling it "unsupported
+  video" would have been wrong.
+- **iOS is detected and named**, so the screen does not suggest another browser
+  on a platform where every browser is Safari.
+- **The share sheet is the save path where it exists**, which is how a file
+  reaches Photos or Files on iOS — and it resolves only after the operator
+  completes it, so it may honestly be treated as saved.
+- **A device read-out**, including a real end-to-end render attempt.
