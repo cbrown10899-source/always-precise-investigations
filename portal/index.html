@@ -641,6 +641,13 @@
   .pst-prev{display:block;width:100%;max-height:46vh;object-fit:contain;
     border-radius:9px;background:#0b1626;border:1px solid #23405f;}
   .pst-mini{padding:0;font-size:.76rem;}
+  .pst-inc{display:flex;gap:10px;align-items:flex-start;background:#12243a;
+    border:1px solid #2b4a6b;border-radius:10px;padding:11px 12px;margin-top:10px;
+    cursor:pointer;}
+  .pst-inc input{width:22px;height:22px;flex:none;margin-top:1px;}
+  .pst-inc b{display:block;font-size:.9rem;color:#fff;}
+  .pst-inc small{display:block;margin-top:3px;font-size:.78rem;color:#8fa9c2;line-height:1.5;}
+  .pkg-sup{font-size:.74rem;color:var(--muted);line-height:1.4;margin:3px 0 4px;}
 
   /* ------------------------------------------- video timestamp generator
 
@@ -5871,6 +5878,9 @@ async function pstOpen(evId, caseNo){
   PST = {step: "loading", caseNo: caseNo || WS_CASE || "", evId: id,
          name: row ? row.filename : "", tz: VST_TZ, source: "operator",
          mo: "", da: "", yr: "", hr: "", mi: "", se: "", ap: "PM",
+         /* The owner's rule, 2026-08-18: the timestamped copy is the half that
+            goes to the client, and it is ON unless the office says otherwise. */
+         includeCopy: true, originalClass: row ? row.classification : "",
          url: "", out: null, err: "", note: "", busy: false};
   paintPStamp();
 
@@ -5991,6 +6001,7 @@ async function pstSave(){
   fd.append("taken_utc", new Date(v.out.ms).toISOString());
   fd.append("tz", v.tz);
   fd.append("source", v.source);
+  fd.append("include_copy", v.includeCopy ? "true" : "false");
   try{
     /* Raw fetch because `api` sends JSON — the same path `uploadEvidenceFile`
        takes, for the same reason. */
@@ -6044,6 +6055,25 @@ function pstBadge(e){
       + (label ? `<span class="tag">${esc(label)}</span>` : "");
   }
   return byOriginal.has(e.id) ? `<span class="tag">original</span>` : "";
+}
+
+/* AN ORIGINAL WHOSE TIMESTAMPED COPY IS THE ONE GOING TO THE CLIENT.
+
+   Owner, 2026-08-18: *"do not automatically include both original and
+   timestamped copy in the client package... Original keeps its existing
+   classification unless Admin explicitly selects it."* So nothing is
+   reclassified and nothing is refused — the picker simply stops offering the
+   original as the ordinary pick while its copy is cleared to ship, and offers
+   it as a deliberate act instead.
+
+   Read off the COPY'S OWN CLASSIFICATION rather than a stored flag, so an admin
+   who later holds the copy back gets the original offered normally again. */
+function pstSupersededForPackage(e, list){
+  const stamp = pstPairs().byOriginal.get(e && e.id);
+  if(!stamp || stamp.stamped_id == null) return null;
+  const copy = (list || []).find(x => x.id === stamp.stamped_id);
+  if(!copy || copy.deleted_at || copy.classification !== "client_deliverable") return null;
+  return copy;
 }
 
 /* Offered on a photograph, and never on a copy — the Worker refuses that by
@@ -6122,10 +6152,23 @@ function pstHtml(){
           <small>${v.source === "exif" ? "from the camera's own record"
             : "entered by the operator"}</small></div>
         ${v.err ? `<div class="vst-res" style="color:#ffb3b3">${esc(v.err)}</div>` : ""}
-        <p class="vst-note">The original stays in the case exactly as it is &mdash;
-          this is filed beside it as a second photograph, and both will be in the
-          case from here on. It carries the same classification as the original,
-          so anything held back from a client package stays held back.</p>
+        ${""/* THE PACKAGE RULE (owner, 2026-08-18). A package must never carry
+               both halves of the pair by default, and the copy is the half that
+               goes. What this decides is the classification the copy is BORN
+               with, which is what package eligibility already reads — there is
+               no second flag to fall out of step with it. */}
+        <label class="pst-inc"><input type="checkbox" id="pst_inc" data-act-input="pstInc"${
+          v.includeCopy ? " checked" : ""}${
+          v.originalClass && v.originalClass !== "client_deliverable" ? " disabled" : ""}>
+          <span><b>Include timestamped copy in client package</b>
+          <small>${v.originalClass && v.originalClass !== "client_deliverable"
+            ? `The original is marked ${esc(String(v.originalClass).replace(/_/g, " "))}, so the copy
+               is held back the same way. Timestamping never widens what may be sent.`
+            : v.includeCopy
+              ? "The copy is what the client receives. The original stays in the case, classified exactly as it is now, and is not put in the package alongside it."
+              : "The copy is filed as internal only. Nothing is sent to the client until someone changes that."}</small></span></label>
+        <p class="vst-note">The original is not touched and not reclassified &mdash;
+          this is filed beside it as a second photograph.</p>
         <button class="vst-btn go" data-act="pstSave"${v.busy ? " disabled" : ""}>${
           v.busy ? "Filing&hellip;" : "File it with the case"}</button>
         <button class="vst-btn" data-act="pstEdit">Correct the time</button>
@@ -8142,9 +8185,15 @@ function packagePanel(){
         ${img ? `<img src="/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${e.id}/file" alt="">` : ""}
         <div style="margin:4px 0 2px;word-break:break-all"><b>${esc(e.filename)}</b></div>
         <div style="color:var(--muted)">${eligible(e) ? "Client deliverable" : esc(e.classification.replace(/_/g, " "))}</div>
-        ${b.status === "draft" ? (on
-          ? `<button class="btn sm ghost" data-act="pkgRemove" data-id="${item ? item.id : ""}">Remove</button>`
-          : `<button class="btn sm" data-act="pkgAdd" data-id="${e.id}">Add</button>`) : (on ? "In package" : "")}
+        ${(() => {
+          if(b.status !== "draft") return on ? "In package" : "";
+          if(on) return `<button class="btn sm ghost" data-act="pkgRemove" data-id="${item ? item.id : ""}">Remove</button>`;
+          const sup = pstSupersededForPackage(e, ev);
+          return sup
+            ? `<div class="pkg-sup">The timestamped copy goes in its place.</div>
+               <button class="btn sm ghost" data-act="pkgAdd" data-id="${e.id}">Add anyway</button>`
+            : `<button class="btn sm" data-act="pkgAdd" data-id="${e.id}">Add</button>`;
+        })()}
       </div>`;
     }).join("")}</div>` : "";
 
@@ -12507,6 +12556,7 @@ document.addEventListener("input", ev => {
   /* What will actually be burned in, following the typing. Only this one line
      is rewritten — a repaint would rebuild the box the cursor is in, mid-number,
      the same reason `vstProgress` exists. */
+  if(din === "pstInc" && PST){ PST.includeCopy = !!ev.target.checked; return paintPStamp(); }
   if(din === "pstWhen" && PST){
     pstCollect();
     const res = $("pst_res");

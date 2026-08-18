@@ -8854,6 +8854,130 @@ section('Timestamp Photo: nothing is guessed, and a correction is the operator�
      has(await text(page, '#dlgBody'), 'superseded'));
 }
 
+/* THE PACKAGE RULE, owner 2026-08-18: a package must never carry both halves of
+   the pair by default; the copy is the half that goes; the original keeps its
+   classification unless an Admin explicitly selects it. */
+section('Timestamp Photo: the copy is what the client gets, and the original is not put beside it');
+{
+  /* Its own case, so nothing else in the suite has already put material in a
+     package on it and the picker is read in a known state. */
+  await post('/ingest', {
+    case_no: 'API-20260812-4020', service: 'Surveillance',
+    client_name: 'Package Rule', client_phone: '4345550142',
+    subject_name: 'Sam Watched', objective: 'Which half of the pair goes out.',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4020').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Case media');
+
+  const jpeg = async (w, h, fill) => Buffer.from(await page.evaluate(([W, H, F]) => {
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const cx = c.getContext('2d');
+    cx.fillStyle = F; cx.fillRect(0, 0, W, H);
+    return c.toDataURL('image/jpeg', 0.9).split(',')[1];
+  }, [w, h, fill]), 'base64');
+
+  const upload = async (name, buffer) => {
+    await page.locator('#ev_file').setInputFiles({ name, mimeType: 'image/jpeg', buffer });
+    await page.locator('.btn', { hasText: 'Upload picture or document' }).click();
+    await page.waitForTimeout(900);
+    return page.evaluate((n) => (WS.evidence || []).find(e => e.filename === n).id, name);
+  };
+  const stamp = async (evId, include) => {
+    await page.locator(`[data-act="pstOpen"][data-id="${evId}"]`).click();
+    await page.waitForTimeout(900);
+    await page.locator('#pst_mo').fill('08');
+    await page.locator('#pst_da').fill('17');
+    await page.locator('#pst_yr').fill('2026');
+    await page.locator('#pst_hr').fill('02');
+    await page.locator('#pst_mi').fill('30');
+    await page.locator('#pst_se').fill('00');
+    await page.locator('#pst_ap').selectOption('PM');
+    await page.locator('[data-act="pstBurn"]').click();
+    await page.waitForTimeout(1200);
+    const box = page.locator('#pst_inc');
+    const state = { present: await box.count() === 1, checked: await box.isChecked() };
+    if (include === false) { await box.uncheck(); await page.waitForTimeout(250); }
+    await page.locator('[data-act="pstSave"]').click();
+    await page.waitForTimeout(2000);
+    await page.locator('#pstamp [data-act="pstClose"]').first().click();
+    await page.waitForTimeout(700);
+    return state;
+  };
+  const classOf = (id) => page.evaluate((i) =>
+    ((WS.evidence || []).find(e => e.id === i) || {}).classification, id);
+  const copyOf = (id) => page.evaluate((i) =>
+    ((WS.photo_stamps || []).find(x => x.original_id === i && !x.superseded_at) || {}).stamped_id, id);
+
+  /* DEFAULT ON — and it is the checkbox that says so, not a comment. */
+  const shipped = await upload('ship.jpg', await jpeg(600, 400, '#2f6f3f'));
+  const first = await stamp(shipped);
+  ok('the generate screen offers the package choice', first.present);
+  ok('and it is ON by default', first.checked === true, String(first.checked));
+  const shippedCopy = await copyOf(shipped);
+  ok('so the copy is what the client can be sent',
+     (await classOf(shippedCopy)) === 'client_deliverable', await classOf(shippedCopy));
+  ok('and the ORIGINAL is left exactly as the admin classified it',
+     (await classOf(shipped)) === 'client_deliverable', await classOf(shipped));
+
+  /* TURNED OFF — the copy is held back, and still nothing happens to the
+     original. There is no third state and no second flag. */
+  const held = await upload('held.jpg', await jpeg(600, 400, '#6f2f3f'));
+  await stamp(held, false);
+  const heldCopy = await copyOf(held);
+  ok('turning it off files the copy as internal only',
+     (await classOf(heldCopy)) === 'internal_only', await classOf(heldCopy));
+  ok('and the original is STILL untouched',
+     (await classOf(held)) === 'client_deliverable', await classOf(held));
+
+  /* THE PICKER. "Do not automatically include both" lives here, because this
+     is where inclusion actually happens. */
+  await wsTab(page, 'Package');
+  await page.waitForTimeout(400);
+  if (await page.locator('[data-act="pkgStart"]').count()) {
+    await page.locator('[data-act="pkgStart"]').click();
+    await page.waitForTimeout(900);
+  }
+  const picker = await page.evaluate(([origId, copyId, heldId]) => {
+    const cardFor = (id) => [...document.querySelectorAll('.pkg-item')].find(c =>
+      [...c.querySelectorAll('[data-act="pkgAdd"], [data-act="pkgRemove"]')]
+        .some(b => b.dataset.id === String(id)));
+    const read = (id) => {
+      const c = cardFor(id);
+      if (!c) return null;
+      const add = c.querySelector('[data-act="pkgAdd"]');
+      return { note: (c.querySelector('.pkg-sup') || {}).textContent || '',
+               button: add ? add.textContent.trim() : null };
+    };
+    return { original: read(origId), copy: read(copyId), heldOriginal: read(heldId) };
+  }, [shipped, shippedCopy, held]);
+
+  ok('the original whose copy is going says so',
+     /timestamped copy goes in its place/i.test((picker.original || {}).note || ''),
+     JSON.stringify(picker.original));
+  ok('and its Add becomes a deliberate one, not the ordinary one',
+     (picker.original || {}).button === 'Add anyway', JSON.stringify(picker.original));
+  ok('the copy itself is offered normally — it is the half that ships',
+     (picker.copy || {}).button === 'Add' && !(picker.copy || {}).note,
+     JSON.stringify(picker.copy));
+  /* AND WHEN THE COPY IS HELD BACK the original is the one on offer again —
+     read off the copy's live classification, never off a stored flag, so this
+     follows an admin who changes their mind. */
+  ok('an original whose copy was held back is offered the ordinary way',
+     (picker.heldOriginal || {}).button === 'Add' && !(picker.heldOriginal || {}).note,
+     JSON.stringify(picker.heldOriginal));
+
+  /* NOTHING IS REFUSED. The owner allowed an Admin to select the original. */
+  await page.locator(`.pkg-item [data-act="pkgAdd"][data-id="${shipped}"]`).click();
+  await page.waitForTimeout(900);
+  ok('and an admin who explicitly selects the original gets it',
+     await page.evaluate((id) => (PKG.items || []).some(i => i.evidence_id === id), shipped));
+}
+
 section('The device answers for itself');
 {
   const page = await newPage();

@@ -9560,6 +9560,92 @@ section('Timestamping cannot promote held-back material');
   }
 }
 
+/* THE PACKAGE RULE, owner 2026-08-18: "do not automatically include both
+   original and timestamped copy in the client package. Add 'Include timestamped
+   copy in client package' default ON. Original keeps its existing
+   classification unless Admin explicitly selects it." */
+section('Timestamped photograph — which half of the pair goes to the client');
+{
+  DBX.reset();
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-PSTP', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+
+  const mk = (n) => new File([new Uint8Array(300).fill(67)], n, { type: 'image/jpeg' });
+  const upWith = (cls, name) => {
+    const fd = new FormData();
+    fd.append('file', mk(name));
+    fd.append('classification', cls);
+    return worker.fetch(new Request(API + '/cases/API-PSTP/evidence', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  };
+  const stamp = (id, include) => {
+    const fd = new FormData();
+    fd.append('file', new File([new Uint8Array(400).fill(67)], 'burned.jpg', { type: 'image/jpeg' }));
+    fd.append('original_id', String(id));
+    fd.append('taken_utc', '2026-08-17T21:14:32.000Z');
+    fd.append('tz', 'America/New_York');
+    fd.append('source', 'operator');
+    if (include !== undefined) fd.append('include_copy', String(include));
+    return worker.fetch(new Request(API + '/cases/API-PSTP/photo-stamp', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  };
+  const classOf = async (id) => (await env.DB.prepare(
+    'SELECT classification AS c FROM case_evidence WHERE id = ?').bind(id).first()).c;
+
+  /* DEFAULT ON — the copy is the one that ships, so an ordinary deliverable
+     photograph produces a deliverable copy and nothing has to be said. */
+  const a = await jsonOf(await upWith('client_deliverable', 'a.jpg'));
+  const aCopy = await jsonOf(await stamp(a.id));
+  ok('the switch defaults to ON when nothing is said', aCopy.include_copy === true,
+     JSON.stringify(aCopy.include_copy));
+  ok('so the copy is client-deliverable', (await classOf(aCopy.id)) === 'client_deliverable');
+  ok('and it says so in the answer, rather than leaving it to be believed',
+     aCopy.classification === 'client_deliverable', aCopy.classification);
+  ok('the ORIGINAL is not reclassified by any of it',
+     (await classOf(a.id)) === 'client_deliverable');
+
+  /* OFF — the copy is held back. `internal_only` is how this portal already
+     says "in the case, not for the client"; there is no second flag. */
+  const b = await jsonOf(await upWith('client_deliverable', 'b.jpg'));
+  const bCopy = await jsonOf(await stamp(b.id, false));
+  ok('turning it off is honoured', bCopy.include_copy === false, JSON.stringify(bCopy.include_copy));
+  ok('the copy is held back as internal only', (await classOf(bCopy.id)) === 'internal_only');
+  ok('and the original is STILL exactly as the admin left it',
+     (await classOf(b.id)) === 'client_deliverable');
+  /* Which is the whole point: the package gate is the classification, so a
+     held-back copy is not eligible and nothing else had to learn a new rule. */
+  const build = await jsonOf(await call(env, '/cases/API-PSTP/build', { method: 'POST', cookie: admin }));
+  const refused = await call(env, `/build/${build.build.id}/items`,
+    { method: 'POST', cookie: admin, body: { evidence_id: bCopy.id } });
+  ok('a held-back copy cannot enter a package', refused.status === 400, String(refused.status));
+
+  /* "unless Admin explicitly selects it" — the original is never refused. */
+  const chosen = await call(env, `/build/${build.build.id}/items`,
+    { method: 'POST', cookie: admin, body: { evidence_id: b.id } });
+  ok('and an admin may still explicitly put the ORIGINAL in the package',
+     chosen.status === 201, String(chosen.status));
+
+  /* ON CANNOT WIDEN. The inheritance ceiling is the package gate. */
+  const c = await jsonOf(await upWith('internal_only', 'c.jpg'));
+  const cCopy = await jsonOf(await stamp(c.id, true));
+  ok('asking to include a copy of held-back material does not promote it',
+     (await classOf(cCopy.id)) === 'internal_only', await classOf(cCopy.id));
+
+  /* OFF DOES NOT REWRITE A STRONGER CLASSIFICATION into a milder one. */
+  const d = await jsonOf(await upWith('do_not_use', 'd.jpg'));
+  const dCopy = await jsonOf(await stamp(d.id, false));
+  ok('turning it off on do-not-use material keeps do-not-use, not internal only',
+     (await classOf(dCopy.id)) === 'do_not_use', await classOf(dCopy.id));
+
+  /* There is NO second source of truth for this: no column, anywhere. */
+  const cols = await env.DB.prepare('PRAGMA table_info(photo_stamp)').all();
+  ok('no include_in_package column exists to disagree with the classification',
+     !(cols.results || []).some((c2) => /include/i.test(c2.name)),
+     (cols.results || []).map((c2) => c2.name).join(','));
+}
+
 section('Timestamped photograph — the boundaries it inherits');
 {
   DBX.reset();

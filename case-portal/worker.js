@@ -5465,6 +5465,34 @@ async function recordPhotoStamp(request, env, user, caseNo) {
     return json({ error: 'Say where the date and time came from — the camera or the operator.' }, 400);
   }
 
+  /* THE PACKAGE RULE (owner, 2026-08-18): *"Preserve the original untouched as
+     case evidence, but do not automatically include both original and
+     timestamped copy in the client package. Add 'Include timestamped copy in
+     client package' default ON. Original keeps its existing classification
+     unless Admin explicitly selects it."*
+
+     The copy is the one that goes to the client, so ON means it is born with
+     the original's classification and OFF means it is born held back. There is
+     NO SECOND FLAG: package eligibility already IS
+     `classification === 'client_deliverable'`, and a second source of truth for
+     one question is how the two come to disagree. The classification is the
+     record of what was chosen, and it stays correct when an admin changes their
+     mind through the control that already exists.
+
+     ON CANNOT WIDEN ANYTHING. A held-back original still produces a held-back
+     copy — the inheritance ceiling is the package gate — and OFF on an original
+     that was already held back inherits rather than rewriting `do_not_use` into
+     the milder `internal_only`. The switch chooses between "as the original"
+     and "held back", never "wider than the original".
+
+     AND THE ORIGINAL IS NOT TOUCHED, here or anywhere else in this route. Its
+     classification is the admin's, exactly as the owner said. */
+  const askedInclude = form.get('include_copy');
+  const includeCopy = askedInclude == null
+    || !['0', 'false', 'no', 'off'].includes(String(askedInclude).trim().toLowerCase());
+  const copyClass = (includeCopy || original.classification !== 'client_deliverable')
+    ? original.classification : 'internal_only';
+
   const lim = storageLimits(env);
   if (file.size > lim.maxFileBytes) {
     return json({ error: `That copy is ${(file.size / 1048576).toFixed(1)} MB and the per-file limit is `
@@ -5507,8 +5535,9 @@ async function recordPhotoStamp(request, env, user, caseNo) {
        entry_id, subject_id, note, uploaded_by, uploaded_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(caseNo, DBX_KEY_PREFIX + meta.path_display, filename, 'image/jpeg', file.size,
-          /* inherited, never widened — see the second refusal above */
-          original.classification,
+          /* inherited, never widened — and held back outright when the office
+             said not to send this copy. See the package rule above. */
+          copyClass,
           /* the copy sits where the original sits, so the timeline and the
              subject card show the pair together rather than in two places */
           original.entry_id, original.subject_id, null, user.id, now).run();
@@ -5527,7 +5556,10 @@ async function recordPhotoStamp(request, env, user, caseNo) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(caseNo, originalId, stampedId, new Date(takenMs).toISOString(), tz, source, user.id, now).run();
 
-  return json({ ok: true, id: stampedId, photo_stamps: await photoStampsFor(env, caseNo),
+  /* Returned so the choice is observable and asserted rather than believed —
+     the same reason every send route returns its `send_context`. */
+  return json({ ok: true, id: stampedId, include_copy: includeCopy, classification: copyClass,
+                photo_stamps: await photoStampsFor(env, caseNo),
                 usage: await evidenceUsage(env) }, 201);
 }
 

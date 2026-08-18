@@ -77,14 +77,9 @@ unless `OffsetTimeOriginal` is also present. So:
 down in `VIDEO-TIMESTAMP.md`. It is not a second opinion about when the picture
 was taken; it is a fact about a file system.
 
-**D4. Nothing is reclassified automatically.** The derivative is created with the
-same default every field upload gets (`client_deliverable`, owner, 2026-08-14).
-The original is left exactly as it was. This means a client package will carry
-**both** unless someone decides otherwise — which is a decision about what the
-client sees, and this project does not let the system make those quietly. The
-screen says so in one sentence; holding the original back is one deliberate
-reclassification, visible and reversible, through the control that already
-exists.
+**D4 — SUPERSEDED BY THE OWNER, 2026-08-18.** See "The package rule" below.
+This build originally shipped both halves of the pair as deliverable and said
+so on screen; the owner read that and decided otherwise the same day.
 
 **D5. A correction supersedes, it does not overwrite.** Re-stamping the same
 original inserts a new record and marks the previous one superseded, matched on
@@ -108,12 +103,50 @@ purge, and nothing in this portal purges.
 - **No stamping of documents or PDFs.** The action is offered on images the
   browser can actually decode, and on nothing else.
 
+## The package rule — the owner's own words, 2026-08-18
+
+> Preserve the original untouched as case evidence, but do not automatically
+> include both original and timestamped copy in the client package.
+> Add "Include timestamped copy in client package" default ON. Original keeps
+> its existing classification unless Admin explicitly selects it.
+
+Three sentences, and each one lands somewhere different:
+
+**"Preserve the original untouched as case evidence"** — unchanged, and it was
+already the first rule of the whole feature. Nothing in the stamp route reads or
+writes the original beyond looking it up.
+
+**"Include timestamped copy in client package, default ON"** — a checkbox on the
+generate screen, and what it decides is the classification the copy is **born
+with**. ON: the original's own classification, so an ordinary deliverable
+photograph produces a deliverable copy. OFF: `internal_only`, which is how this
+portal already says *in the case, not for the client*.
+
+There is deliberately **no second flag**. Package eligibility already IS
+`classification === 'client_deliverable'`; an `include_in_package` column beside
+it would be a second answer to one question, and the two would disagree the
+first time an admin changed the copy's classification by hand. The
+classification is the record.
+
+Two things the switch cannot do. It cannot **widen**: a held-back original still
+produces a held-back copy, because the inheritance ceiling is the package gate
+and that is the one thing the gate exists to stop. And turning it OFF on an
+original that was already `do_not_use` inherits rather than rewriting it as the
+milder `internal_only` — the switch picks between *as the original* and *held
+back*, never a third meaning.
+
+**"Original keeps its existing classification unless Admin explicitly selects
+it"** — so the original is not reclassified by anything here, and the "do not
+include both" half is enforced where inclusion actually happens: **the package
+picker**. An original whose live timestamped copy is deliverable is shown as
+having the copy going in its place, and its Add becomes an explicit **Add
+anyway** rather than the ordinary one. Nothing refuses it; the Worker's
+`POST /build/:id/items` is untouched, because an Admin explicitly selecting the
+original is exactly what the owner allowed for.
+
 ## Open for the owner
 
-1. **D4** — should stamping a photograph automatically hold the original back
-   from the client package? Doing it silently is refused above; doing it as an
-   offer on the generate screen is a small change if that is what is wanted.
-2. Whether the burned face should carry anything besides the date, time and zone
+1. Whether the burned face should carry anything besides the date, time and zone
    — a case number and an investigator's initials are both plausible and both
    would be **DERIVED**, so neither is there.
 

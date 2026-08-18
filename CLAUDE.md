@@ -1222,12 +1222,31 @@ id so no caller can supersede another photograph's stamp by naming it. The
 earlier derivative keeps its evidence row and its file: removing it would be a
 purge, and nothing in this portal purges.
 
-**Nothing is reclassified automatically**, so a client package carries both the
-original and the copy unless someone decides otherwise — a decision about what
-the client sees, which this project does not let the system make quietly. The
-screen says so; holding the original back is one deliberate, reversible
-reclassification through the control that already exists. Whether stamping
-*should* hold the original back is open for the owner in `PHOTO-TIMESTAMP.md`.
+**A package never carries both halves of the pair by default** (owner,
+2026-08-18): *"do not automatically include both original and timestamped copy
+in the client package. Add 'Include timestamped copy in client package' default
+ON. Original keeps its existing classification unless Admin explicitly selects
+it."*
+
+That lands in two places, and **not** in a new column. Package eligibility
+already IS `classification === 'client_deliverable'`, so the checkbox decides
+the classification the copy is **born with** — ON gives it the original's, OFF
+gives it `internal_only` — and the classification stays the single record of the
+decision even after an admin changes it by hand. A second `include_in_package`
+flag would be a second answer to one question, and the two would disagree the
+first time someone used the ordinary control.
+
+The switch **cannot widen**: a held-back original still produces a held-back
+copy, and OFF on a `do_not_use` original inherits rather than rewriting it as
+the milder `internal_only`. It picks between *as the original* and *held back*,
+never a third meaning.
+
+**The original's classification is never touched by any of this.** The
+"not both" half is enforced where inclusion actually happens — the package
+picker shows an original whose live copy is deliverable as having the copy
+going in its place, and its Add becomes an explicit **Add anyway**. Nothing
+refuses it: `POST /build/:id/items` is unchanged, because an Admin explicitly
+selecting the original is exactly what the owner allowed for.
 
 **The door is the photograph** (derived): the action is on the gallery card and
 on the field view's own media card, both roles, because `caseFor` is the
