@@ -426,3 +426,42 @@ header, and Last Activity edit/remove on the Home screen.
    note under the table says so.
 4. ~~§6B free-form dictation flow~~ — **RECOVERED 2026-08-15** (transmission 4 of 5).
 5. ~~§16 tail~~ — **RECOVERED 2026-08-15** (transmission 5 of 5).
+
+---
+
+## BUILD STATUS — first slice shipped 2026-08-18
+
+**Built: §4 the registry, §5 standardized text, §7 never guess.** One table in
+`portal/index.html` (`VOICE_COMMANDS`) and one matcher (`voiceMatch`) — the only
+place in the portal that turns a spoken phrase into a canonical command, and the
+only place that decides what it is stored as. It feeds the transcript review
+that already existed, so a recognized phrase now offers §5's standardized
+sentence instead of the raw words, an ambiguous one asks which was meant, and an
+unrecognized one behaves exactly as it did before.
+
+**Still true, and deliberately unchanged: nothing auto-submits.** §6B and §7
+both require a human to confirm, and the existing Use / Discard review is that
+confirmation. This slice did not reverse it and did not add a path around it.
+
+### What is NOT built yet, in the order it probably wants doing
+
+| | Section | Note |
+| --- | --- | --- |
+| 🔴 | §3 `source = voice` on the activity record | **Decide the storage deliberately.** `activity_log` has no `source` column and `ALTER TABLE ADD COLUMN` is not idempotent — `schema.sql` is re-applied on every portal-setup run, so adding one there binds a fresh database and not the live one. The standing precedent is a companion table (`activity_removed`, `build_custom`). Needs a portal-setup dispatch whichever way it goes |
+| 🔴 | §2 wake-word listening loop, VOICE MODE ON/OFF | The hands-free half. Explicit control, never auto-activating |
+| 🔴 | §1 compact status header | Reclaims the space the big timer takes on mobile |
+| 🔴 | §6B dictation mode as a loop | The SAVE / EDIT / DISCARD wording and the return to listening. The behaviour it depends on already exists |
+| 🔴 | §8 duplicate protection, §9 spoken confirmation, §10 LAST ACTIVITY, §13 photo/video commands | |
+
+### Two things the owner still has to supply
+
+- **The truncated spoken aliases in §4.** `VEHICLE_OBSERVED` is registered as a
+  canonical command with **no alias at all**, because its only fragment is the
+  bare word "observed" and registering that would file "subject observed" as a
+  vehicle sighting. A command that never matches is honest; one that matches the
+  wrong thing is not. `SUBJECT_DEPARTED`, `SUBJECT_VEHICLE_ABSENT`, `NO_ACTIVITY`
+  and `MOBILE_SURVEILLANCE` are registered on their visible fragments only.
+- **The standardized sentences.** §5 gives two verbatim and they are used
+  exactly. The other nineteen are this implementation's wording, written in the
+  same register, and every one of them is in the single `VOICE_COMMANDS` table —
+  reword any of them in one edit.

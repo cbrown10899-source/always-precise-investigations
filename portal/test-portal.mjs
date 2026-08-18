@@ -5112,6 +5112,92 @@ section('A phone can actually reach the navigation');
   await page.close();
 }
 
+/* -------------------------------- the voice command registry (SURVEILLANCE-VOICE)
+
+   §4 ONE centralized registry, §5 standardized activity text, §7 never guess.
+   The matcher is pure, so it is tested as a function against the real registry
+   in the real page rather than by talking to a microphone. */
+section('Voice commands: one registry, standard wording, and no guessing');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const m = (said) => page.evaluate((x) => {
+    const r = voiceMatch(x);
+    return { status: r.status, id: r.command ? r.command.id : null, text: r.text || null,
+             candidates: (r.candidates || []).map((c) => c.id) };
+  }, said);
+
+  /* §5's two verbatim examples, spoken the way §5 spells them — including the
+     trailing "stand by" that must not stop the command being recognized. */
+  let r = await m('Mobile, doing a drive-by check of residence, stand by.');
+  ok('the drive-by check is recognized through the words after it',
+     r.status === 'ok' && r.id === 'MOBILE_RESIDENCE_CHECK', r.status + ' ' + r.id);
+  ok('and stores the standardized sentence, not the transcript',
+     r.text === 'Mobile check of residence was conducted.', r.text);
+  r = await m('Mobile, no change at residence.');
+  ok('no change at residence is its own command, not the shorter one',
+     r.status === 'ok' && r.id === 'NO_CHANGE_RESIDENCE', r.id);
+  ok('with §5’s own wording', r.text === 'No change observed at the residence.', r.text);
+  /* The shorter command still works on its own — the longest alias winning is
+     what keeps these two apart. */
+  r = await m('Mobile, no change');
+  ok('and the shorter one still means the shorter one', r.id === 'NO_CHANGE', r.id);
+
+  /* The wake word is optional for matching, and is part of the alias where the
+     owner wrote it that way. */
+  r = await m('Mobile check');
+  ok('"Mobile check" is the mobile check command', r.id === 'MOBILE_CHECK', r.id);
+  r = await m('no change');
+  ok('and a command said without the wake word still matches', r.id === 'NO_CHANGE', r.id);
+
+  /* §6B — "Mobile, note" is the door into dictation, and dictation is NOT a
+     command that files itself. */
+  r = await m('Mobile, note the subject left in a grey van');
+  ok('"Mobile, note" is dictation rather than a filed command',
+     r.status === 'dictation' && r.id === 'FREE_FORM_DICTATION_MODE', r.status);
+
+  /* §7 — never guess. Something unplanned is UNRECOGNIZED; it is not bent
+     onto the nearest command. */
+  r = await m('Mobile, the weather has turned');
+  ok('an unplanned phrase is unrecognized, not approximated',
+     r.status === 'unrecognized' && r.id === null, r.status + ' ' + r.id);
+
+  /* §4 — the aliases that arrived truncated were NOT inferred. VEHICLE_OBSERVED
+     exists as a canonical command and deliberately matches nothing, because its
+     only fragment is the bare word "observed" and registering that would file
+     "subject observed" as a vehicle sighting. */
+  const reg = await page.evaluate(() => VOICE_COMMANDS.map(
+    (c) => ({ id: c.id, n: c.say.length })));
+  ok('every canonical command in §4 is in the registry', reg.length >= 21, String(reg.length));
+  ok('VEHICLE_OBSERVED is present but deliberately unaliased',
+     (reg.find((c) => c.id === 'VEHICLE_OBSERVED') || {}).n === 0);
+  r = await m('Mobile, subject observed');
+  ok('so "subject observed" is the subject, never the vehicle',
+     r.id === 'SUBJECT_OBSERVED', r.id);
+
+  /* §7's hard case: two DIFFERENT commands that fit equally well. Proven by
+     adding one, because the shipped registry deliberately has no such pair —
+     the mechanism has to work the day someone adds one. */
+  const amb = await page.evaluate(() => {
+    VOICE_COMMANDS.push({ id: 'TEST_TIE', text: 'A test tie.', say: ['no change'] });
+    const r = voiceMatch('Mobile, no change');
+    VOICE_COMMANDS.pop();
+    return { status: r.status, candidates: (r.candidates || []).map((c) => c.id) };
+  });
+  ok('two commands that fit equally are reported ambiguous, not resolved by table order',
+     amb.status === 'ambiguous' && amb.candidates.length === 2, amb.status + ' ' + amb.candidates);
+  ok('and the registry is unchanged afterwards',
+     (await m('Mobile, no change')).status === 'ok');
+
+  /* ONE REGISTRY. §4: "No scattered phrase matching through UI components." */
+  const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+  ok('the standard sentences exist in exactly one place',
+     (src.match(/No change observed at the residence\./g) || []).length === 1);
+  ok('and only the registry decides what a spoken phrase means',
+     (src.match(/function voiceMatch\(/g) || []).length === 1);
+}
+
 section('The Active Surveillance mark');
 {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'portal/manifest.webmanifest'), 'utf8'));
