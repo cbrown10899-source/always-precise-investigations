@@ -4829,12 +4829,146 @@ async function markVideoStampSaved(env, user, caseNo, id) {
 const EXTERNAL_PROVIDERS = {
   dropbox: {
     label: 'Dropbox',
-    configured: env => Boolean(env.DROPBOX_APP_KEY && env.DROPBOX_APP_SECRET && env.DROPBOX_REFRESH_TOKEN),
-    note: 'Create a Dropbox app and add DROPBOX_APP_KEY, DROPBOX_APP_SECRET and '
-        + 'DROPBOX_REFRESH_TOKEN as Worker secrets. Until then video delivery is arranged '
-        + 'separately and nothing else waits.',
+    /* The app's OWN credentials are secrets and are the prerequisite. Whether a
+       connection exists on top of them is a separate question — `dropboxState`
+       answers it — because "the app is set up" and "an admin has connected the
+       company account" fail differently and the office needs to know which. */
+    configured: env => Boolean(env.DROPBOX_APP_KEY && env.DROPBOX_APP_SECRET),
+    note: 'Add DROPBOX_APP_KEY and DROPBOX_APP_SECRET as Worker secrets, then an admin '
+        + 'connects the company App Folder from Settings. Until then video delivery is '
+        + 'arranged separately and nothing else waits.',
   },
 };
+
+/* ================= DROPBOX OAUTH — the company App Folder =================
+
+   Owner, 2026-08-18: connect and callback, secrets only, and no file migration
+   yet. This is the connection and nothing more — there is no upload, download,
+   list or move route in this file, deliberately.
+
+   THE LIVE REDIRECT URI, which is what the Dropbox App Console must be given:
+
+       https://alwayspreciseinvestigations.net/portal-api/dropbox/callback
+
+   It is derived, never typed: `SITE_ORIGIN` plus the Worker's own mount prefix.
+   Dropbox matches the redirect string EXACTLY, so a hand-copied constant that
+   drifts from the route is a failure that only shows up in production — and it
+   is sent identically on the authorize and the token-exchange calls, which
+   Dropbox also requires.
+
+   SECRETS ONLY. `DROPBOX_APP_KEY` and `DROPBOX_APP_SECRET` are Worker secrets.
+   Neither appears in this file, in `schema.sql`, in the page, or in any
+   response — there is a test that greps for them.
+
+   THE CSRF STATE RIDES IN A COOKIE, not a table. It is HttpOnly, Secure,
+   SameSite=Lax and short-lived; Lax is correct because Dropbox returns the
+   browser by a top-level GET navigation, which Lax permits and which a
+   cross-site POST could not forge. The cookie is cleared the moment it is read,
+   so a state is single-use.
+
+   AND THE CALLBACK REQUIRES AN ADMIN SESSION of its own. The state proves the
+   response belongs to a request this portal made; the session proves who is
+   making it. Neither alone is enough: a state cookie without a session would
+   let anyone who obtained the URL complete a connection, and a session without
+   a state would accept an authorization code the portal never asked for. */
+
+const DBX_STATE_COOKIE = 'dbx_oauth';
+const DBX_STATE_TTL = 600;                  // ten minutes is long enough to sign in to Dropbox
+/* App Folder apps are confined to their own folder by Dropbox, so these are the
+   narrowest scopes that still let the delivery work land later. They are asked
+   for now because re-authorising is a manual act by the owner and asking twice
+   is worse than asking once. */
+const DBX_SCOPES = 'account_info.read files.metadata.read files.metadata.write '
+  + 'files.content.read files.content.write';
+
+function dropboxRedirectUri(env) {
+  const origin = String(env.SITE_ORIGIN || '').replace(/\/+$/, '');
+  return `${origin}${API_PREFIX}/dropbox/callback`;
+}
+
+function dbxStateCookie(value, seconds) {
+  return `${DBX_STATE_COOKIE}=${value}; HttpOnly; Secure; SameSite=Lax; `
+    + `Path=${API_PREFIX}/dropbox; Max-Age=${seconds}`;
+}
+/* Split rather than matched. A regex built by string concatenation carried one
+   backslash too many and compiled to a literal `\s`, so the cookie was never
+   found and every callback failed the state check — a bug that reads as a
+   security refusal and is really a typo. Splitting has nothing to escape. */
+function dbxStateFrom(request) {
+  for (const part of String(request.headers.get('Cookie') || '').split(';')) {
+    const at = part.indexOf('=');
+    if (at < 0) continue;
+    if (part.slice(0, at).trim() !== DBX_STATE_COOKIE) continue;
+    const v = part.slice(at + 1).trim();
+    return /^[A-Za-z0-9_-]{16,128}$/.test(v) ? v : null;
+  }
+  return null;
+}
+
+function redirectTo(url, extra = {}) {
+  return new Response(null, { status: 302, headers: { Location: url, ...extra } });
+}
+
+/* What the office is told. Never the token — not here and not anywhere. */
+async function dropboxState(env) {
+  const out = {
+    app_configured: EXTERNAL_PROVIDERS.dropbox.configured(env),
+    redirect_uri: dropboxRedirectUri(env),
+    connected: false, account_email: null, account_name: null,
+    connected_at: null, scopes: null, source: null, not_set_up: false,
+  };
+  /* A refresh token supplied as a Worker SECRET still counts, and outranks the
+     stored one. That path existed before this flow did, and an owner who has
+     already pasted a token should not be told they are disconnected. */
+  if (env.DROPBOX_REFRESH_TOKEN) {
+    out.connected = true; out.source = 'worker secret';
+    return out;
+  }
+  if ((await missingTables(env)).includes('dropbox_auth')) { out.not_set_up = true; return out; }
+  const row = await env.DB.prepare(
+    `SELECT d.account_email, d.account_name, d.scopes, d.connected_at, u.display_name AS by_name
+       FROM dropbox_auth d LEFT JOIN users u ON u.id = d.connected_by WHERE d.id = 1`).first();
+  if (row) {
+    out.connected = true; out.source = 'connected by an admin';
+    out.account_email = row.account_email; out.account_name = row.account_name;
+    out.connected_at = row.connected_at; out.scopes = row.scopes;
+    out.connected_by = row.by_name || null;
+  }
+  return out;
+}
+
+/* The refresh token, read for one purpose: minting a short-lived access token.
+   It is never returned to a caller and never logged. */
+async function dropboxRefreshToken(env) {
+  if (env.DROPBOX_REFRESH_TOKEN) return env.DROPBOX_REFRESH_TOKEN;
+  if ((await missingTables(env)).includes('dropbox_auth')) return null;
+  const row = await env.DB.prepare('SELECT refresh_token FROM dropbox_auth WHERE id = 1').first();
+  return row ? row.refresh_token : null;
+}
+
+function dropboxBasic(env) {
+  return 'Basic ' + btoa(`${env.DROPBOX_APP_KEY}:${env.DROPBOX_APP_SECRET}`);
+}
+
+/* Access tokens are short-lived and are MINTED, never stored — there is nothing
+   to leak later and nothing to go stale. Returns null rather than throwing, the
+   way `sendMail` does: an outage here must not take a screen down. */
+async function dropboxAccessToken(env) {
+  if (!EXTERNAL_PROVIDERS.dropbox.configured(env)) return null;
+  const refresh = await dropboxRefreshToken(env);
+  if (!refresh) return null;
+  try {
+    const res = await fetch('https://api.dropboxapi.com/oauth2/token', {
+      method: 'POST',
+      headers: { Authorization: dropboxBasic(env),
+                 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refresh }),
+    });
+    if (!res.ok) return null;
+    const d = await res.json();
+    return d.access_token || null;
+  } catch { return null; }
+}
 
 async function buildEvent(env, buildId, user, action, detail) {
   await env.DB.prepare(
@@ -6094,7 +6228,7 @@ const EXPECTED_TABLES = [
   'case_day_pauses', 'lead_status', 'send_log', 'invoice_retainer',
   'payment_methods', 'payment_send', 'retainer_receipt', 'case_archive', 'case_deleted', 'notify_recipient', 'case_phone',
   'retainer_payment', 'retainer_payment_void', 'retainer_payment_token',
-  'video_stamp',
+  'video_stamp', 'dropbox_auth',
 ];
 
 async function missingTables(env) {
@@ -6735,6 +6869,131 @@ async function route(request, env) {
   /* Video timestamping. Addressed under /cases/:no/ on purpose, so the deleted
      and archived chokepoint above already covers the two writes and neither has
      to remember the rule for itself. */
+  /* ---- DROPBOX: connect, callback, status, disconnect ----
+
+     Admin-only, all four. An investigator has no business holding the firm's
+     Dropbox connection open or closed, and `/status` is admin-only too because
+     it names the connected account. */
+
+  if (p === '/dropbox/status' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return json({ dropbox: await dropboxState(env) });
+  }
+
+  if (p === '/dropbox/connect' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if (!EXTERNAL_PROVIDERS.dropbox.configured(env)) {
+      return json({ error: 'Dropbox is not set up on this Worker yet. '
+        + EXTERNAL_PROVIDERS.dropbox.note, code: 'provider_not_configured' }, 503);
+    }
+    if ((await missingTables(env)).includes('dropbox_auth')) {
+      return json({ error: 'The Dropbox connection table is not on this database yet. Run the '
+        + 'portal-setup workflow once and try again.', code: 'not_set_up' }, 503);
+    }
+    const state = crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
+    const url = new URL('https://www.dropbox.com/oauth2/authorize');
+    url.searchParams.set('client_id', env.DROPBOX_APP_KEY);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('redirect_uri', dropboxRedirectUri(env));
+    url.searchParams.set('state', state);
+    /* `offline` is what returns a REFRESH token. Without it Dropbox hands back a
+        four-hour access token and the connection quietly dies overnight. */
+    url.searchParams.set('token_access_type', 'offline');
+    url.searchParams.set('scope', DBX_SCOPES);
+    return redirectTo(url.toString(), { 'Set-Cookie': dbxStateCookie(state, DBX_STATE_TTL) });
+  }
+
+  if (p === '/dropbox/callback' && method === 'GET') {
+    /* Cleared on EVERY exit from here, success or failure, so a state is
+       single-use whatever happened to it. */
+    const clear = { 'Set-Cookie': dbxStateCookie('x', 0) };
+    const back = (status) => redirectTo(`${env.SITE_ORIGIN}/portal/?dropbox=${status}`, clear);
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403, clear);
+
+    const url = new URL(request.url);
+    const err = url.searchParams.get('error');
+    // The operator pressing Cancel on Dropbox's own screen is not a failure.
+    if (err) return back(err === 'access_denied' ? 'cancelled' : 'error');
+
+    const code = url.searchParams.get('code');
+    const state = url.searchParams.get('state');
+    const cookie = dbxStateFrom(request);
+    if (!code || !state || !cookie || state !== cookie) return back('state');
+
+    if (!EXTERNAL_PROVIDERS.dropbox.configured(env)
+        || (await missingTables(env)).includes('dropbox_auth')) return back('error');
+
+    let tok;
+    try {
+      const res = await fetch('https://api.dropboxapi.com/oauth2/token', {
+        method: 'POST',
+        headers: { Authorization: dropboxBasic(env),
+                   'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code', code,
+          // Dropbox requires this to match the authorize call exactly.
+          redirect_uri: dropboxRedirectUri(env),
+        }),
+      });
+      if (!res.ok) return back('exchange');
+      tok = await res.json();
+    } catch { return back('exchange'); }
+    if (!tok || !tok.refresh_token) return back('exchange');
+
+    /* THE CONNECTION IS PROVEN BEFORE IT IS CLAIMED. The account read is what
+       makes "connected" a fact rather than an assumption, and it is also where
+       the email in the status panel comes from — a connection nobody can
+       identify is a connection nobody can audit. A token that will not answer
+       is not stored at all. */
+    let acct = null;
+    try {
+      const who = await fetch('https://api.dropboxapi.com/2/users/get_current_account', {
+        method: 'POST', headers: { Authorization: `Bearer ${tok.access_token}` },
+      });
+      if (who.ok) acct = await who.json();
+    } catch { acct = null; }
+    if (!acct) return back('unverified');
+
+    const now = nowIso();
+    await env.DB.prepare(
+      `INSERT INTO dropbox_auth (id, refresh_token, account_id, account_email, account_name,
+         scopes, connected_by, connected_at, last_checked_at)
+       VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+       ON CONFLICT(id) DO UPDATE SET refresh_token = ?1, account_id = ?2, account_email = ?3,
+         account_name = ?4, scopes = ?5, connected_by = ?6, connected_at = ?7, last_checked_at = ?7`)
+      .bind(tok.refresh_token, acct.account_id || null, (acct.email || null),
+            (acct.name && acct.name.display_name) || null, tok.scope || DBX_SCOPES,
+            user.id, now).run();
+    return back('connected');
+  }
+
+  if (p === '/dropbox/disconnect' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if ((await missingTables(env)).includes('dropbox_auth')) {
+      return json({ error: 'Nothing is stored to disconnect.', code: 'not_set_up' }, 503);
+    }
+    /* REVOKE AT DROPBOX FIRST, then forget it here. Deleting the row alone
+       would leave a live token on the account with nothing in the portal to
+       revoke it with — the opposite of disconnecting. If the revoke cannot be
+       reached the row still goes, and the answer says so rather than implying
+       the token is dead. */
+    let revoked = false;
+    const at = await dropboxAccessToken(env);
+    if (at) {
+      try {
+        const r = await fetch('https://api.dropboxapi.com/2/auth/token/revoke', {
+          method: 'POST', headers: { Authorization: `Bearer ${at}` } });
+        revoked = r.ok;
+      } catch { revoked = false; }
+    }
+    await env.DB.prepare('DELETE FROM dropbox_auth WHERE id = 1').run();
+    return json({ ok: true, revoked,
+      detail: revoked ? 'The token was revoked at Dropbox and forgotten here.'
+        : 'Forgotten here. Dropbox could not be reached to revoke it, so remove this app '
+          + 'from the Dropbox account page as well.',
+      dropbox: await dropboxState(env) });
+  }
+
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/video-stamps$/);
   if (m && method === 'GET') return listVideoStamps(env, user, m[1]);
 

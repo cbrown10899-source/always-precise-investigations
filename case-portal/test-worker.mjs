@@ -8490,6 +8490,282 @@ section('Video timestamp on a database that has not been set up');
   ok('as does the case list', (await call(env, '/submissions', { cookie: admin })).status === 200);
 }
 
+
+/* ---------------------------------------------------- Dropbox OAuth
+
+   Owner, 2026-08-18: connect and callback for the company App Folder, secrets
+   only, no file migration yet.
+
+   Every outbound call is intercepted, so nothing in this suite reaches Dropbox
+   and no real credential exists anywhere in it. */
+section('Dropbox OAuth — connect');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const l = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const t = new URL(l, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${t}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  /* THE APP'S OWN CREDENTIALS ARE A PREREQUISITE, and their absence is a
+     different answer from "nobody has connected yet". */
+  let res = await call(env, '/dropbox/connect', { cookie: admin });
+  ok('without the app secrets, connect refuses and says what is missing',
+     res.status === 503 && /DROPBOX_APP_KEY/.test((await jsonOf(res)).error));
+  ok('and names it as a provider problem, not a user error',
+     (await jsonOf(await call(env, '/dropbox/connect', { cookie: admin }))).code
+       === 'provider_not_configured');
+
+  env.DROPBOX_APP_KEY = 'test-app-key';
+  env.DROPBOX_APP_SECRET = 'test-app-secret';
+
+  /* ADMIN ONLY. An investigator has no business holding the firm's Dropbox
+     connection open or closed — nor reading which account it is. */
+  ok('an investigator cannot start a connection',
+     (await call(env, '/dropbox/connect', { cookie: dana })).status === 403);
+  ok('nor read its status', (await call(env, '/dropbox/status', { cookie: dana })).status === 403);
+  ok('nor disconnect it',
+     (await call(env, '/dropbox/disconnect', { method: 'POST', cookie: dana })).status === 403);
+
+  res = await call(env, '/dropbox/connect', { cookie: admin });
+  ok('an admin is redirected to Dropbox', res.status === 302);
+  const to = new URL(res.headers.get('Location'));
+  ok('at Dropbox’s own authorize endpoint',
+     to.origin === 'https://www.dropbox.com' && to.pathname === '/oauth2/authorize', to.href);
+  ok('with the app key, which came from the secret', to.searchParams.get('client_id') === 'test-app-key');
+  /* WITHOUT `offline` Dropbox returns a four-hour access token and the
+     connection dies overnight. This is the parameter that makes it durable. */
+  ok('asking for offline access, so a refresh token comes back',
+     to.searchParams.get('token_access_type') === 'offline');
+  ok('and for the App Folder scopes',
+     /files\.content\.write/.test(to.searchParams.get('scope') || ''), to.searchParams.get('scope'));
+
+  /* THE REDIRECT URI IS DERIVED, never typed — Dropbox matches it exactly, so a
+     constant that drifts from the route fails only in production. */
+  ok('the redirect URI is the Worker’s own live callback',
+     to.searchParams.get('redirect_uri')
+       === 'https://alwayspreciseinvestigations.net/portal-api/dropbox/callback',
+     to.searchParams.get('redirect_uri'));
+
+  const cookie = res.headers.get('Set-Cookie') || '';
+  ok('a CSRF state is minted and carried in a cookie', /dbx_oauth=[A-Za-z0-9_-]{16,}/.test(cookie), cookie);
+  /* The cookie must survive Dropbox's cross-site return, which is a top-level
+     GET — Lax permits exactly that and nothing weaker is needed. */
+  ok('the state cookie is HttpOnly, Secure and SameSite=Lax',
+     /HttpOnly/.test(cookie) && /Secure/.test(cookie) && /SameSite=Lax/.test(cookie), cookie);
+  ok('scoped to the Dropbox routes and short-lived',
+     /Path=\/portal-api\/dropbox/.test(cookie) && /Max-Age=600/.test(cookie), cookie);
+  ok('and two connects mint different states',
+     (await call(env, '/dropbox/connect', { cookie: admin })).headers.get('Set-Cookie') !== cookie);
+}
+
+section('Dropbox OAuth — callback');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  env.DROPBOX_APP_KEY = 'test-app-key';
+  env.DROPBOX_APP_SECRET = 'test-app-secret';
+
+  // Every outbound call is intercepted; nothing reaches Dropbox.
+  const realFetch = globalThis.fetch;
+  let calls = [];
+  const stub = (opts = {}) => {
+    globalThis.fetch = async (url, init) => {
+      const u = String(url && url.url ? url.url : url);
+      calls.push({ u, init });
+      if (u.includes('/oauth2/token')) {
+        if (opts.tokenFails) return new Response('nope', { status: 400 });
+        return new Response(JSON.stringify({
+          access_token: 'sl.ACCESS', refresh_token: 'RT-abc', scope: 'files.content.write',
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (u.includes('get_current_account')) {
+        if (opts.accountFails) return new Response('no', { status: 401 });
+        return new Response(JSON.stringify({ account_id: 'dbid:123', email: 'office@example.com',
+          name: { display_name: 'Always Precise' } }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (u.includes('token/revoke')) return new Response('', { status: opts.revokeFails ? 500 : 200 });
+      return new Response('{}', { status: 200 });
+    };
+  };
+  const startFlow = async () => {
+    const r = await call(env, '/dropbox/connect', { cookie: admin });
+    const sc = r.headers.get('Set-Cookie') || '';
+    return sc.match(/dbx_oauth=([A-Za-z0-9_-]+)/)[1];
+  };
+  const callback = (qs, extraCookie) => call(env, '/dropbox/callback' + qs,
+    { cookie: admin + (extraCookie ? '; ' + extraCookie : '') });
+
+  try {
+    stub();
+    const state = await startFlow();
+
+    /* THE STATE IS WHAT PROVES THE RESPONSE BELONGS TO A REQUEST THIS PORTAL
+       MADE. Every way of getting it wrong is refused, and none of them stores
+       anything. */
+    let r = await callback(`?code=C&state=${state}`);           // no cookie
+    ok('a callback with no state cookie is refused',
+       r.status === 302 && /dropbox=state/.test(r.headers.get('Location')), r.headers.get('Location'));
+    r = await callback('?code=C', `dbx_oauth=${state}`);
+    ok('a callback with no state parameter is refused',
+       /dropbox=state/.test(r.headers.get('Location')));
+    r = await callback(`?code=C&state=${'z'.repeat(64)}`, `dbx_oauth=${state}`);
+    ok('a mismatched state is refused',
+       /dropbox=state/.test(r.headers.get('Location')));
+    ok('and none of those stored anything',
+       (await env.DB.prepare('SELECT COUNT(*) AS n FROM dropbox_auth').first()).n === 0);
+
+    /* The operator pressing Cancel on Dropbox's own screen is not a failure. */
+    r = await callback('?error=access_denied&state=x', `dbx_oauth=${state}`);
+    ok('cancelling at Dropbox comes back as cancelled, not an error',
+       /dropbox=cancelled/.test(r.headers.get('Location')), r.headers.get('Location'));
+
+    // ---- the happy path ----
+    calls = [];
+    r = await callback(`?code=CODE-1&state=${state}`, `dbx_oauth=${state}`);
+    ok('a valid callback lands back in the portal, connected',
+       r.status === 302 && /dropbox=connected/.test(r.headers.get('Location')), r.headers.get('Location'));
+    /* THE STATE IS SINGLE-USE: the cookie is cleared on the way out, whatever
+       happened, so a replayed URL cannot re-run the exchange. */
+    ok('and the state cookie is cleared on the way out',
+       /dbx_oauth=x;/.test(r.headers.get('Set-Cookie') || '')
+       && /Max-Age=0/.test(r.headers.get('Set-Cookie') || ''), r.headers.get('Set-Cookie'));
+
+    const tokenCall = calls.find(c => c.u.includes('/oauth2/token'));
+    ok('the code was exchanged with Dropbox', !!tokenCall);
+    ok('authenticated with the app secret, not the code',
+       /^Basic /.test(tokenCall.init.headers.Authorization));
+    ok('and the redirect URI was sent again, as Dropbox requires',
+       String(tokenCall.init.body).includes(
+         encodeURIComponent('https://alwayspreciseinvestigations.net/portal-api/dropbox/callback')),
+       String(tokenCall.init.body));
+    /* THE CONNECTION IS PROVEN BEFORE IT IS CLAIMED — the account read is what
+       turns "we have a token" into "it works". */
+    ok('the account was read back before anything claimed to be connected',
+       calls.some(c => c.u.includes('get_current_account')));
+
+    const row = await env.DB.prepare('SELECT * FROM dropbox_auth WHERE id = 1').first();
+    ok('the refresh token is stored, so the connection outlives the hour',
+       row && row.refresh_token === 'RT-abc');
+    ok('with the account it belongs to, so it can be audited',
+       row.account_email === 'office@example.com' && row.account_name === 'Always Precise');
+    ok('and who connected it', row.connected_by === 1 && !!row.connected_at);
+    /* ONE ROW. This is the firm's connection, not a per-user login. */
+    ok('it is a single row, enforced by the schema',
+       (await env.DB.prepare('SELECT COUNT(*) AS n FROM dropbox_auth').first()).n === 1);
+
+    // ---- status: says everything except the token ----
+    const st = (await jsonOf(await call(env, '/dropbox/status', { cookie: admin }))).dropbox;
+    ok('status reports the connection', st.connected === true && st.app_configured === true);
+    ok('naming the account and when', st.account_email === 'office@example.com' && !!st.connected_at);
+    ok('and the exact live redirect URI, so it can be copied into Dropbox',
+       st.redirect_uri === 'https://alwayspreciseinvestigations.net/portal-api/dropbox/callback',
+       st.redirect_uri);
+    /* THE TOKEN NEVER LEAVES. Not in status, not anywhere. */
+    ok('the refresh token is in no response',
+       !JSON.stringify(st).includes('RT-abc'), JSON.stringify(st));
+
+    // ---- a token that will not answer is not stored ----
+    const env2 = freshEnv();
+    await bootstrapAdmin(env2);
+    const a2 = (await login(env2, 'trever', 'FirstAdminPass1')).cookie;
+    env2.DROPBOX_APP_KEY = 'k'; env2.DROPBOX_APP_SECRET = 's';
+    const r2 = await call(env2, '/dropbox/connect', { cookie: a2 });
+    const s2 = (r2.headers.get('Set-Cookie') || '').match(/dbx_oauth=([A-Za-z0-9_-]+)/)[1];
+    stub({ accountFails: true });
+    const bad = await call(env2, `/dropbox/callback?code=C&state=${s2}`,
+      { cookie: a2 + `; dbx_oauth=${s2}` });
+    ok('a token Dropbox will not answer for is reported unverified',
+       /dropbox=unverified/.test(bad.headers.get('Location')), bad.headers.get('Location'));
+    ok('and is not stored at all',
+       (await env2.DB.prepare('SELECT COUNT(*) AS n FROM dropbox_auth').first()).n === 0);
+
+    // ---- a failed exchange stores nothing either ----
+    const r3 = await call(env2, '/dropbox/connect', { cookie: a2 });
+    const s3 = (r3.headers.get('Set-Cookie') || '').match(/dbx_oauth=([A-Za-z0-9_-]+)/)[1];
+    stub({ tokenFails: true });
+    const bad2 = await call(env2, `/dropbox/callback?code=C&state=${s3}`,
+      { cookie: a2 + `; dbx_oauth=${s3}` });
+    ok('a refused exchange says so', /dropbox=exchange/.test(bad2.headers.get('Location')));
+    ok('and stores nothing',
+       (await env2.DB.prepare('SELECT COUNT(*) AS n FROM dropbox_auth').first()).n === 0);
+
+    // ---- disconnect revokes, then forgets ----
+    stub();
+    const off = await jsonOf(await call(env, '/dropbox/disconnect', { method: 'POST', cookie: admin }));
+    ok('disconnect revokes the token at Dropbox first', off.revoked === true
+       && calls.some(c => c.u.includes('token/revoke')));
+    ok('then forgets it here',
+       (await env.DB.prepare('SELECT COUNT(*) AS n FROM dropbox_auth').first()).n === 0);
+    ok('and reports itself disconnected', off.dropbox.connected === false);
+
+    /* IF THE REVOKE CANNOT BE REACHED the row still goes — but the answer says
+       so rather than implying the token is dead. */
+    const r4 = await call(env, '/dropbox/connect', { cookie: admin });
+    const s4 = (r4.headers.get('Set-Cookie') || '').match(/dbx_oauth=([A-Za-z0-9_-]+)/)[1];
+    await call(env, `/dropbox/callback?code=C&state=${s4}`, { cookie: admin + `; dbx_oauth=${s4}` });
+    stub({ revokeFails: true });
+    const off2 = await jsonOf(await call(env, '/dropbox/disconnect', { method: 'POST', cookie: admin }));
+    ok('an unreachable revoke is reported honestly', off2.revoked === false
+       && /remove this app from the Dropbox account page/.test(off2.detail), off2.detail);
+    ok('and the row is gone regardless',
+       (await env.DB.prepare('SELECT COUNT(*) AS n FROM dropbox_auth').first()).n === 0);
+  } finally { globalThis.fetch = realFetch; }
+}
+
+section('Dropbox — secrets only, and no file migration yet');
+{
+  const src = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  const schema = fs.readFileSync(path.join(HERE, 'schema.sql'), 'utf8');
+  /* SECRETS ONLY. Every credential is read from the environment; none is
+     written down here, in the schema, or anywhere the deploy can reach. */
+  ok('the app key and secret are only ever read from the environment',
+     /env\.DROPBOX_APP_KEY/.test(src) && /env\.DROPBOX_APP_SECRET/.test(src));
+  ok('and no literal Dropbox credential is in the Worker',
+     !/(sl\.[A-Za-z0-9_-]{20,}|dbx_[A-Za-z0-9]{20,}|['"][a-z0-9]{15}['"]\s*;?\s*\/\/\s*app key)/i.test(src));
+  ok('nor in the schema', !/DROPBOX|sl\.[A-Za-z0-9_-]{20,}/.test(schema));
+  ok('and the token column is never selected into a response body',
+     !/refresh_token[^\n]*json\(/.test(src));
+
+  /* NO FILE MIGRATION YET — the owner was explicit, so there is no upload,
+     download, list or move route in this build at all. */
+  ok('there is no Dropbox file route in this build',
+     !/\/dropbox\/(upload|files|list|move|migrate|download)/.test(src));
+  ok('and nothing calls the Dropbox content endpoints',
+     !/content\.dropboxapi\.com/.test(src));
+
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  /* THE SCHEMA GUARD, like every table added after the live database existed. */
+  await env.DB.prepare('DROP TABLE dropbox_auth').run();
+  ok('health names the missing table',
+     (await jsonOf(await call(env, '/health'))).missing_tables.includes('dropbox_auth'));
+  const st = (await jsonOf(await call(env, '/dropbox/status', { cookie: admin }))).dropbox;
+  ok('status degrades rather than failing', st.connected === false && st.not_set_up === true);
+  env.DROPBOX_APP_KEY = 'k'; env.DROPBOX_APP_SECRET = 's';
+  const c = await call(env, '/dropbox/connect', { cookie: admin });
+  ok('and connect names the workflow to run',
+     c.status === 503 && /portal-setup/.test((await jsonOf(c)).error));
+
+  /* A REFRESH TOKEN SUPPLIED AS A WORKER SECRET still counts — that path
+     predates this flow and an owner who already pasted one is not disconnected. */
+  const env2 = freshEnv();
+  await bootstrapAdmin(env2);
+  const a2 = (await login(env2, 'trever', 'FirstAdminPass1')).cookie;
+  env2.DROPBOX_APP_KEY = 'k'; env2.DROPBOX_APP_SECRET = 's';
+  env2.DROPBOX_REFRESH_TOKEN = 'from-a-secret';
+  const st2 = (await jsonOf(await call(env2, '/dropbox/status', { cookie: a2 }))).dropbox;
+  ok('a refresh token held as a Worker secret reads as connected',
+     st2.connected === true && st2.source === 'worker secret');
+  ok('and that secret is not echoed back either',
+     !JSON.stringify(st2).includes('from-a-secret'));
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

@@ -1136,3 +1136,38 @@ CREATE TABLE IF NOT EXISTS video_stamp (
   created_at      TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_vstamp_case ON video_stamp(case_no, id DESC);
+
+/* ------------------------------------------------------------ Dropbox OAuth
+
+   The company Dropbox connection, made by an admin through the connect and
+   callback flow. ONE ROW, id pinned to 1 — this is the firm's single App Folder
+   connection, not a per-user login, and a CHECK keeps it that way rather than
+   trusting every writer to remember.
+
+   WHAT IS AND IS NOT HERE. The app key and app secret are Worker SECRETS and
+   never touch this table, this file or the repository. What is stored is the
+   refresh token the flow returns, because a refresh token is the only part that
+   has to outlive the request — access tokens are minted from it on demand and
+   are never written down.
+
+   That refresh token is a long-lived credential at rest in D1, and that is worth
+   saying out loud rather than burying: anyone with the database has the firm's
+   Dropbox App Folder. It is scoped to the App Folder, it can be revoked from
+   the Dropbox account page or by Disconnect here, and nothing reads it back out
+   over the API — no route returns it, and `/dropbox/status` deliberately reports
+   the account and the moment, never the token.
+
+   `account_email` is stored because a connection nobody can identify is a
+   connection nobody can audit; it is read from Dropbox at callback time, which
+   also proves the token works before anything claims to be connected. */
+CREATE TABLE IF NOT EXISTS dropbox_auth (
+  id             INTEGER PRIMARY KEY CHECK (id = 1),
+  refresh_token  TEXT NOT NULL,
+  account_id     TEXT,
+  account_email  TEXT,
+  account_name   TEXT,
+  scopes         TEXT,
+  connected_by   INTEGER REFERENCES users(id),
+  connected_at   TEXT NOT NULL,
+  last_checked_at TEXT
+);
