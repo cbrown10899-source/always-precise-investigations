@@ -451,7 +451,8 @@ confirmation. This slice did not reverse it and did not add a path around it.
 | 🔴 | §2 wake-word listening loop, VOICE MODE ON/OFF | The hands-free half. Explicit control, never auto-activating |
 | 🔴 | §1 compact status header | Reclaims the space the big timer takes on mobile |
 | 🔴 | §6B dictation mode as a loop | The SAVE / EDIT / DISCARD wording and the return to listening. The behaviour it depends on already exists |
-| 🔴 | §8 duplicate protection, §9 spoken confirmation, §10 LAST ACTIVITY, §13 photo/video commands | |
+| ✅ | §10 LAST ACTIVITY | **Shipped 2026-08-18.** Edit and Remove on the field home, correcting the newest entry *in place* — the editor opens inside the card and the home screen never leaves the screen. A removed one is struck through with Put it back. Two defects fell out of building it, both fixed and both tested: `editActivity` was **replace-all**, so a wording-only correction would have written NULL over the location and vehicle the investigator recorded; and `svDeleteEntry` forced a jump to the timeline, which was harmless while Delete only existed ON the timeline and navigated you away from the field home the moment it did not |
+| 🔴 | §8 duplicate protection, §9 spoken confirmation, §13 photo/video commands | |
 
 ### Two things the owner still has to supply
 
@@ -488,3 +489,19 @@ confirmation. This slice did not reverse it and did not add a path around it.
   whether or not a command matched and whether or not the operator edited the
   wording afterwards. The canonical command rides along only when there was one:
   "use my own words instead" claims none.
+
+### What §10 taught, worth keeping
+
+**A screen that corrects one field exposes every route that replaces all of
+them.** `editActivity` had been replace-all since it was written and nothing had
+noticed, because the timeline's Edit form was its only caller and always posted
+all four fields. The rule it now follows is the one `/cases/:no/meta` already
+states in its own words: **an absent field means unchanged, a blank string still
+clears**, and the untouched fields are resolved INSIDE the UPDATE from the row
+rather than from a value read a moment earlier.
+
+**"Without navigating away" has to be asserted as a screen, not as a message.**
+The first version of the removal test passed while standing on the timeline,
+because the timeline shows the same "not in the report" wording — which is
+exactly how the unwanted jump hid. The assertions now pin a home-screen marker
+alongside the text.

@@ -4050,13 +4050,34 @@ async function editActivity(request, env, user, caseNo, id) {
   const description = String(body.description || '').trim().slice(0, 4000);
   if (!description) return json({ error: 'Describe what happened.' }, 400);
 
+  /* AN ABSENT FIELD MEANS UNCHANGED — the rule `/cases/:no/meta` already
+     states in its own words, and for the same reason. This was replace-all,
+     and nothing noticed while the timeline's Edit form was the only caller,
+     because it always posts all four. The moment a screen corrects just the
+     wording — §10's Last activity, which fixes a typo without leaving the
+     field — a caller posting only a description would write NULL over the
+     location and the vehicle the investigator recorded, and be told it
+     succeeded.
+
+     A BLANK STRING STILL CLEARS: that is the operator saying there is no
+     location, and it is how the full form removes one. Only an absent key is
+     left alone.
+
+     And it is resolved INSIDE the UPDATE, from the row, never from a value
+     read a moment earlier — two people correcting different fields of the same
+     entry interleave as A reads, B reads, A writes, B writes, and a
+     read-then-write loses one of them without a sound. */
+  const has = (k) => body != null && Object.prototype.hasOwnProperty.call(body, k);
   await env.DB.prepare(
-    `UPDATE activity_log SET description = ?, location = ?, vehicle = ?, internal_note = ?,
-            edited_at = ?, edited_by = ? WHERE id = ?`)
+    `UPDATE activity_log SET description = ?1,
+            location      = CASE WHEN ?2 = 1 THEN ?3 ELSE location END,
+            vehicle       = CASE WHEN ?4 = 1 THEN ?5 ELSE vehicle END,
+            internal_note = CASE WHEN ?6 = 1 THEN ?7 ELSE internal_note END,
+            edited_at = ?8, edited_by = ?9 WHERE id = ?10`)
     .bind(description,
-          String(body.location || '').slice(0, 300) || null,
-          String(body.vehicle || '').slice(0, 300) || null,
-          String(body.internal_note || '').slice(0, 2000) || null,
+          has('location') ? 1 : 0, String(body.location || '').slice(0, 300) || null,
+          has('vehicle') ? 1 : 0, String(body.vehicle || '').slice(0, 300) || null,
+          has('internal_note') ? 1 : 0, String(body.internal_note || '').slice(0, 2000) || null,
           nowIso(), user.id, id).run();
   return json({ ok: true, id });
 }

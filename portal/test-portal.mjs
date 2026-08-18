@@ -5117,6 +5117,105 @@ section('A phone can actually reach the navigation');
    §4 ONE centralized registry, §5 standardized activity text, §7 never guess.
    The matcher is pure, so it is tested as a function against the real registry
    in the real page rather than by talking to a microphone. */
+/* ---------------------------- §10 LAST ACTIVITY, corrected where you stand
+
+   SURVEILLANCE-VOICE.md §10: the investigator "must be able to correct the most
+   recent activity WITHOUT NAVIGATING AWAY from the Active Surveillance Home
+   screen". At the wheel, leaving the screen to fix a typo is how you lose the
+   thing you were watching.
+
+   That the rest of the entry survives a wording-only correction is proved in
+   the Worker suite, against the route — this is the screen. */
+section('Voice §10: the last activity is corrected without leaving the field screen');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', (e) => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('dana');
+  await page.locator('#p').fill('FieldWork2026x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  await page.locator('[data-act="svEnter"]').click();
+  await page.waitForTimeout(700);
+
+  // Whichever state earlier sections left the day in, get one running.
+  if (await page.locator('[data-act="svStartDay"]').count()) {
+    await page.locator('#sv_start').fill('06:30');
+    await page.locator('[data-act="svStartDay"]').click();
+    await page.waitForTimeout(900);
+  }
+
+  /* An entry to correct. Note is the one quick action that opens the form
+     without depending on which template lines happen to be configured. */
+  await page.locator('[data-act="svNote"]').first().click();
+  await page.waitForTimeout(400);
+  await page.locator('#sv_desc').fill('No chnage observed at the residence.');
+  await page.locator('[data-act="svSaveEntry"]').first().click();
+  await page.waitForTimeout(1000);
+  await page.locator('[data-act="svTab"][data-t="home"]').first().click();
+  await page.waitForTimeout(700);
+
+  const homeText = () => text(page, '.sv-body');
+  ok('the last activity is on the field home', has(await homeText(), 'No chnage observed'),
+     (await homeText()).slice(0, 200));
+  ok('with Edit and Remove right there',
+     await page.locator('[data-act="svLastEdit"]').count() === 1
+     && await page.locator('[data-act="svDelete"]').count() >= 1);
+
+  /* WITHOUT NAVIGATING AWAY. The editor opens INSIDE the home screen, so the
+     assertion is that the things which MAKE it the home screen are still on it. */
+  await page.locator('[data-act="svLastEdit"]').click();
+  await page.waitForTimeout(400);
+  ok('editing opens in place', await page.locator('#sv_last_edit').count() === 1);
+  ok('and the screen is still the field home, not the activity form',
+     await page.locator('.sv-quad').count() === 1
+     && await page.locator('[data-act="svLastSave"]').count() === 1
+     && await page.locator('#sv_desc').count() === 0);
+  ok('the bottom navigation never moved', await page.locator('.sv-nav button').count() === 5);
+
+  await page.locator('#sv_last_edit').fill('No change observed at the residence.');
+  await page.locator('[data-act="svLastSave"]').click();
+  await page.waitForTimeout(1000);
+  ok('the correction lands, still on the home screen',
+     has(await homeText(), 'No change observed at the residence.')
+     && await page.locator('.sv-quad').count() === 1, (await homeText()).slice(0, 200));
+
+  /* Cancel leaves the entry exactly as it was — an editor you cannot back out
+     of is one nobody opens at the wheel. */
+  await page.locator('[data-act="svLastEdit"]').click();
+  await page.waitForTimeout(350);
+  await page.locator('#sv_last_edit').fill('Something typed and thought better of.');
+  await page.locator('[data-act="svLastCancel"]').click();
+  await page.waitForTimeout(500);
+  ok('cancelling changes nothing',
+     has(await homeText(), 'No change observed at the residence.')
+     && !has(await homeText(), 'thought better of'));
+
+  /* REMOVE, and the way back — the same system the timeline uses (§11). */
+  page.once('dialog', (d) => d.accept());
+  await page.locator('[data-act="svDelete"]').first().click();
+  await page.waitForTimeout(1000);
+  /* AND IT IS STILL THE HOME SCREEN. The timeline shows the same "not in the
+     report" wording, so without pinning the screen this passed while standing
+     somewhere else — which is how the jump to the timeline hid here. */
+  ok('removing keeps you on the field home', await page.locator('.sv-quad').count() === 1,
+     (await homeText()).slice(0, 200));
+  ok('a removed last entry says so on the home screen',
+     has(await homeText(), 'not in the report'), (await homeText()).slice(0, 240));
+  ok('and offers to put it back without leaving either',
+     await page.locator('[data-act="svRestore"]').count() >= 1);
+  await page.locator('[data-act="svRestore"]').first().click();
+  await page.waitForTimeout(1000);
+  ok('putting it back restores it in place',
+     has(await homeText(), 'No change observed at the residence.')
+     && await page.locator('[data-act="svLastEdit"]').count() === 1,
+     (await homeText()).slice(0, 260));
+}
+
 section('Voice commands: one registry, standard wording, and no guessing');
 {
   const page = await newPage();

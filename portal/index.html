@@ -796,6 +796,11 @@
   .sv-back{background:none;border:0;color:#8fb4d9;font:inherit;font-size:.86rem;font-weight:700;
     cursor:pointer;padding:8px 2px 12px;display:inline-block;}
   .sv-backbar{padding:6px 16px 0;max-width:640px;margin:0 auto;}
+  /* Looks like .sv-back, means something else. The field home asserts it
+     carries NO back control, so an edit and a remove must not wear that
+     class merely because they are the same size. */
+  .sv-tap{background:none;border:0;color:#8fb4d9;font:inherit;font-size:.86rem;font-weight:700;
+    cursor:pointer;padding:8px 2px 12px;display:inline-block;}
   .sv-since{text-align:center;color:#8fb4d9;font-size:.82rem;margin-bottom:18px;}
 
   /* ===== MOBILE PR 1 — the field screen ranked by what gets pressed =====
@@ -8762,11 +8767,46 @@ function svHomeScreen(){
 
     ${svMicHtml()}
 
+    ${""/* §10 — LAST ACTIVITY, correctable HERE. The spec is explicit: the
+           investigator "must be able to correct the most recent activity
+           without navigating away from the Active Surveillance Home screen",
+           which is the difference between fixing a typo at the wheel and
+           losing the thread of what you were watching.
+
+           It posts to the SAME route the timeline's Edit uses, which is §11:
+           voice-created and hand-typed activity share one edit system, and
+           nothing about how an entry was made changes what correcting it
+           does. */}
     <div class="sv-card">
       <h3>Last activity</h3>
-      ${last ? `<div class="sv-row"><span>${esc(t12(last.at_time))}</span></div>
-        <div style="font-size:.95rem">${esc(String(last.description || "").slice(0, 120))}</div>`
-       : `<div style="color:#8fb4d9">Nothing logged yet today.</div>`}
+      ${!last ? `<div style="color:#8fb4d9">Nothing logged yet today.</div>`
+        : last.removed_at ? `
+          <div class="sv-row"><span>${esc(t12(last.at_time))}</span></div>
+          <div style="font-size:.95rem;text-decoration:line-through;opacity:.55">${
+            esc(String(last.description || "").slice(0, 200))}</div>
+          <div style="font-size:.82rem;color:#8fb4d9;margin-top:4px">Removed &mdash; not in the report.</div>
+          <button class="sv-btn line" style="margin-top:8px" data-act="svRestore"
+            data-id="${last.id}">Put it back</button>`
+        : SV.lastEdit === last.id ? `
+          <div class="sv-row"><span>${esc(t12(last.at_time))}</span></div>
+          <textarea id="sv_last_edit" rows="3"
+            style="width:100%">${esc(String(last.description || ""))}</textarea>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button class="sv-btn gold" data-act="svLastSave" data-id="${last.id}">Save</button>
+            <button class="sv-btn line" data-act="svLastCancel">Cancel</button>
+          </div>
+          <div style="font-size:.78rem;color:#8fb4d9;margin-top:6px">Only the wording changes here.
+            The time, place and vehicle on the entry are left exactly as they are.</div>`
+        : `
+          <div class="sv-row"><span>${esc(t12(last.at_time))}</span>${
+            last.source === "voice" ? `<span style="font-size:.72rem;letter-spacing:.06em;
+              opacity:.75">&#127908; VOICE</span>` : ""}</div>
+          <div style="font-size:.95rem">${esc(String(last.description || "").slice(0, 200))}</div>
+          <div style="display:flex;gap:16px;margin-top:8px">
+            <button class="sv-tap" style="padding:0" data-act="svLastEdit" data-id="${last.id}">Edit</button>
+            <button class="sv-tap" style="padding:0;color:#e79a9a" data-act="svDelete"
+              data-id="${last.id}">Remove</button>
+          </div>`}
       <button class="sv-btn line" style="margin-top:10px" data-act="svTab" data-t="timeline">View timeline</button>
     </div>
 
@@ -10155,7 +10195,14 @@ async function svDeleteEntry(id){
   SV.err = "";
   try{
     await api(`/cases/${encodeURIComponent(WS_CASE)}/activity/${id}/delete`, {method:"POST", body:{}});
-    SV.entry = null; SV.tab = "timeline";
+    /* THE CALLER'S SCREEN IS THE CALLER'S. Moving to the timeline was harmless
+       when Delete only existed ON the timeline — from §10's Last activity card
+       it navigated the investigator away from the field home, which is the one
+       thing that screen is required not to do. Leaving the entry form is still
+       right, because the thing it was editing is gone. */
+    const wasEditing = !!SV.entry;
+    SV.entry = null;
+    if(wasEditing) SV.tab = "timeline";
   }catch(e){ SV.err = e.message; }
   await svReload();
 }
@@ -10180,6 +10227,24 @@ async function svCaptionEvidence(id){
   SV.err = "";
   try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/evidence/${id}`, {method:"POST", body:{note}}); }
   catch(e){ SV.err = e.message; }
+  await svReload();
+}
+
+/* §10's save. The description ONLY is posted, which is safe because the route
+   treats an absent field as unchanged — deliberately, and only since this
+   screen existed to need it: it was replace-all, and a correction from here
+   would have written NULL over the location and vehicle the investigator
+   recorded and reported success. */
+async function svSaveLast(id){
+  const t = $("sv_last_edit") ? $("sv_last_edit").value.trim() : "";
+  if(!t){ SV.err = "An entry still needs a description."; return paint(); }
+  SV.err = ""; SV.ok = "";
+  try{
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/activity/${id}`,
+      {method: "POST", body: {description: t}});
+    SV.lastEdit = null;
+    SV.ok = "✓ Entry corrected.";
+  }catch(e){ SV.err = e.message; }
   await svReload();
 }
 
@@ -11075,7 +11140,12 @@ document.addEventListener("click", ev => {
     if(confirm("Remove this entry from the timeline?\n\nIt stops appearing in the report, and the office can still see that it was removed and put it back."))
       svDeleteEntry(Number(el.dataset.id));
   }
-  else if(act === "svRestore"){ svRestoreEntry(Number(el.dataset.id)); }
+  else if(act === "svRestore"){ SV.lastEdit = null; svRestoreEntry(Number(el.dataset.id)); }
+  else if(act === "svLastEdit"){
+    SV.lastEdit = Number(el.dataset.id); SV.err = ""; SV.ok = ""; paint();
+  }
+  else if(act === "svLastCancel"){ SV.lastEdit = null; SV.err = ""; paint(); }
+  else if(act === "svLastSave"){ svSaveLast(Number(el.dataset.id)); }
   else if(act === "svEvDelete"){
     if(confirm("Remove this file?\n\nThe record that it existed stays with the office."))
       svDeleteEvidence(Number(el.dataset.id));
