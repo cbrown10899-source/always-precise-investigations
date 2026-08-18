@@ -16,8 +16,8 @@ above it**, and items 3–5 are explicitly not to be started until 1 is finished
 
 | # | Work | State |
 | --- | --- | --- |
-| 1 | Finish current Active Surveillance mobile and voice polish | **IN PROGRESS** — §13 photo/video commands, §8 retry/offline and server-side duplicate protection, §1/§16.1 compact status |
-| 2 | Build Timestamp Photo | not started |
+| 1 | Finish current Active Surveillance mobile and voice polish | **DONE — DEPLOYED** at `c333d3f` (#182). §13 photo/video commands, §8 retry/offline and server-side duplicate protection, §1/§16.1 compact status. Two device-only checks OPEN, below. |
+| 2 | Build Timestamp Photo | **NEXT** — not started |
 | 3 | Admin report workflow and mobile report fix | not started — **queued, do not begin** |
 | 4 | Full portal aesthetic cleanup | not started — **queued, do not begin** |
 | 5 | Remaining Portal Ops productivity features | not started |
@@ -26,6 +26,58 @@ Recorded mid-unit on the owner's instruction: *"Do not interrupt the current
 coding unit. Record this queue only, then continue the work already in
 progress."* It therefore travels with the Active Surveillance branch rather than
 as a separate merge.
+
+## 🚦 DEPLOYMENT — 2026-08-18, master `c333d3f` (#182) — the mobile/voice unit closes
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` | `c333d3f` | `c333d3f` | **DEPLOYED** — `deploy.yml` success |
+| Worker / API | `c333d3f` | `c333d3f` | **DEPLOYED** — `deploy-portal.yml` success |
+| D1 schema | `c333d3f` | applied | **DISPATCH RUN** — `portal-setup.yml` 32186595371 success |
+
+Save point `save/2026-08-18-2112-c333d3f`. Portal **1641/0**, worker **1789/0**,
+guard **68/0** — including the 21 new portal assertions and the 10 new worker
+ones. The preview fixture that failed on the #181 run passed on this one; it was
+never touched, on the owner's instruction, so treat it as timing-dependent
+rather than fixed.
+
+**`activity_voice_event` is live.** `portal-setup.yml` ran against the merged
+tree and the deployed Worker answered
+`{"ok":true,"configured":true,"email":true,"missing_tables":[],"storage_pct":0}`
+— an empty list from the Worker whose own `EXPECTED_TABLES` names the new table
+is the proof, not the schema step's exit code.
+
+**LIVE VERIFIED — OPEN**, and specifically these two, because neither can be
+observed anywhere but a phone:
+
+1. Say *"Mobile, take photo"* and confirm the camera is genuinely **one tap**
+   away and that **nothing appears in the log** until the picture lands.
+2. Put the phone in airplane mode, speak an observation, and confirm it is
+   **held** and then **sends itself** when signal returns — as one entry, not two.
+
+### What shipped
+
+- **§13 — the capture is prepared, never claimed.** A spoken word cannot open a
+  camera; the browser wants a gesture and iOS means it. So the command puts the
+  capture one tap away and says so, and nothing is written until a file actually
+  arrives. An activity entry announcing a photograph that does not exist is
+  exactly the fabricated record this project refuses everywhere else. The loop
+  keeps listening while the card waits.
+- **§8 — no signal must not lose the observation.** A surveillance position is
+  precisely where there is no bar of service. A failed send is queued on the
+  phone, the count is **shown** rather than hidden in a variable, and it flushes
+  itself when the network returns. A 4xx is a refusal and is not retried; only a
+  dropped connection is.
+- **§8's other half is server-side, because it has to be.** A POST that landed
+  and whose response was lost is indistinguishable from one that never arrived,
+  so the client names each utterance and keeps that name across every retry, and
+  the Worker answers a repeat with the entry that already exists. Same words
+  under a new name are a new entry — the investigator may genuinely have said it
+  twice. `activity_voice_event` is a companion table for the usual reason, and
+  its read is guarded, so the Worker works before the dispatch has run.
+- **§1/§16.1 — the status is two lines, not five.** Everything the old block
+  said is still there. The measurement is in the test rather than the eye: the
+  block is ≤78px and the quick controls start in the top third of the phone.
 
 ## 🚦 DEPLOYMENT — 2026-08-18, master `bae2c26` (#181) — unmatched speech is kept
 
