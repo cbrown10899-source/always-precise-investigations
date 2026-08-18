@@ -9,6 +9,61 @@ state. Update it when the queue moves; keep it short.
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
 truth** (recorded verbatim 2026-08-13).
 
+## 🚦 DEPLOYMENT — 2026-08-18, master `8adfc6d` (#180) — the iPhone voice bug
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` | `8adfc6d` | `8adfc6d` | **DEPLOYED** — `deploy.yml` success |
+| Worker / API | `8adfc6d` | `1ca9a97` | **DEPLOYED** — `worker.js` untouched |
+| D1 schema | `8adfc6d` | applied | unchanged — **no dispatch owed** |
+
+Save point `save/2026-08-18-2004-8adfc6d`. Portal **1615/1**, worker **1779/0**, guard **68/0** — the one
+failure is the pre-existing preview fixture, left untouched on the owner's
+instruction.
+
+**LIVE VERIFIED — OPEN, and only the iPhone can close it.**
+
+## 🐞 "ON, MICROPHONE LIT, NOTHING HAPPENS" (#180)
+
+Owner on the device: voice mode ON, iOS indicator active, *"saying Mobile
+produces no result and Tap to speak does nothing."*
+
+**Two symptoms. One needed no Safari knowledge to find:** the page had **two
+recognisers** — the loop's and Tap to speak's — and a browser gives a page
+**one** speech session. With the loop holding it, the manual button started a
+second engine on top of the first and the browser ignored it. That is exactly
+what a button that does nothing looks like. Tap to speak now TAKES the session
+and the loop stands down.
+
+**The other is `continuous`,** which iOS Safari does not honour: the session
+starts, the indicator lights, and no result is ever delivered — the report word
+for word. The loop is now **one-shot restarted on `end`**, the portable shape,
+one code path, no device sniffing. A start that throws no longer leaves the
+panel claiming ON, which is the shape of the whole complaint.
+
+**THE DEVICE NOW SAYS WHAT IT DID.** Every `SpeechRecognition` event with a
+timestamp, **alongside the calls this page makes itself** (`start() called`,
+`restarting`, `start() threw`). That distinction is the diagnostic: *"we called
+start and the engine never said start"* is a different fault from *"start,
+audiostart, speechstart, end, no result"*. Shown ON THE PHONE and open by
+default — a console nobody can open on an iPhone in a car is not a diagnostic.
+Errors are logged even when they stop nothing; silence about `no-speech` is
+what made this invisible.
+
+**What is NOT proven:** this container has no speech engine, so only the
+session-collision fix is demonstrated. The `continuous` fix is reasoned from
+the reported behaviour and Safari's known treatment of it. **The log is the
+instrument for the next device test** — if it shows `start() called` and
+nothing after, that is a different finding from a full
+`start → audiostart → speechstart → end` with no `result`.
+
+**A test-quality note, now explained rather than guessed at.** The
+"a playable copy still offers the preview" assertion is not flaky: the fixture
+builds `<video src="">`, the media error fires, and the page CORRECTLY flips to
+"this device will not play it back". The assertion was racing that event. Left
+untouched on the owner's instruction; the fix is to count the preview in the
+same evaluate as the paint.
+
 ## 🚦 DEPLOYMENT — 2026-08-18, master `b73e02d` (#179) — voice §2 wake-word loop
 
 | Component | Master | Deployed | Status |
