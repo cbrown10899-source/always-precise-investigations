@@ -8890,8 +8890,15 @@ section('The preview is optional, never a gate');
   }, failed);
 
   const ok1 = await done(false);
-  ok('a playable copy still offers the preview',
-     await page.locator('.vst-prev').count() === 1);
+  const prevCount = await page.locator('.vst-prev').count();
+  const prevDiag = await page.evaluate(() => ({
+    n: document.querySelectorAll('.vst-prev').length,
+    roots: document.querySelectorAll('#vstamp').length,
+    step: JSON.stringify(VST && VST.step),
+    failed: JSON.stringify(VST && VST.previewFailed),
+  }));
+  ok('a playable copy still offers the preview', prevCount === 1,
+     `locator=${prevCount} dom=${prevDiag.n} roots=${prevDiag.roots} step=${prevDiag.step} previewFailed=${prevDiag.failed}`);
   ok('and says playing it back is optional', has(ok1, 'not required'), ok1.slice(0, 500));
 
   /* THE CASE THAT MATTERS: the page cannot play it, and that must not read as a
