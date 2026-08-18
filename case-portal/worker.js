@@ -1985,6 +1985,78 @@ async function dropboxDownload(env, token, path) {
   } catch { return null; }
 }
 
+/* UPLOAD SESSIONS, for the timestamped video (owner, Part 2).
+
+   A surveillance clip is far larger than anything else this portal moves, and
+   a single-request upload has to hold the whole file at once — in the browser,
+   in the Worker, and in one HTTP request that fails as a whole. A session
+   moves it in pieces: the Worker holds ONE chunk at a time, an interrupted
+   upload resumes from its own offset instead of starting again, and abandoning
+   it costs nothing because nothing exists at the destination until finish is
+   called.
+
+   That last property is what makes Cancel honest here. There is no session to
+   tear down and no partial file to clean up — a session nobody finishes simply
+   expires, and the case's Video folder never had anything in it. */
+const DBX_CHUNK = 8 * 1024 * 1024;
+
+/* Overridable for the same reason the storage caps are: a test that moves a
+   real multi-chunk file through the real session code proves more than one
+   that moves eight megabytes to prove the same thing slowly. */
+function dbxChunkBytes(env) {
+  const n = parseInt(env.DBX_CHUNK_BYTES || '', 10);
+  return Number.isFinite(n) && n > 0 ? n : DBX_CHUNK;
+}
+
+async function dropboxSessionStart(env, token) {
+  try {
+    const res = await fetch(DBX_CONTENT + '/2/files/upload_session/start', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token,
+                 'Content-Type': 'application/octet-stream',
+                 'Dropbox-API-Arg': dbxArg({ close: false }) },
+      body: new Uint8Array(0),
+    });
+    if (!res.ok) return null;
+    const j = await res.json();
+    return j && j.session_id ? j.session_id : null;
+  } catch { return null; }
+}
+
+/** One chunk at `offset`. Dropbox is the authority on where the session
+    actually is, so a retry of the same chunk at the same offset is safe and a
+    wrong offset is refused by Dropbox rather than guessed at here. */
+async function dropboxSessionAppend(env, token, sessionId, offset, body) {
+  try {
+    const res = await fetch(DBX_CONTENT + '/2/files/upload_session/append_v2', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token,
+                 'Content-Type': 'application/octet-stream',
+                 'Dropbox-API-Arg': dbxArg({
+                   cursor: { session_id: sessionId, offset }, close: false }) },
+      body,
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
+async function dropboxSessionFinish(env, token, sessionId, offset, path) {
+  try {
+    const res = await fetch(DBX_CONTENT + '/2/files/upload_session/finish', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token,
+                 'Content-Type': 'application/octet-stream',
+                 'Dropbox-API-Arg': dbxArg({
+                   cursor: { session_id: sessionId, offset },
+                   commit: { path, mode: 'add', autorename: true, mute: true } }) },
+      body: new Uint8Array(0),
+    });
+    if (!res.ok) return null;
+    const meta = await res.json();
+    return meta && meta.path_display ? meta : null;
+  } catch { return null; }
+}
+
 async function dropboxDelete(env, token, path) {
   try {
     const res = await fetch('https://api.dropboxapi.com/2/files/delete_v2', {
@@ -4838,6 +4910,100 @@ async function uploadEvidence(request, env, user, caseNo) {
    it stays behind `caseFor`, the role check and the case's own gates. A shared
    Dropbox link would be a URL that works for anyone who has it, for as long as
    it exists, with none of that in front of it: do not add one. */
+/* SAVING A TIMESTAMPED COPY TO DROPBOX (owner, Part 2, 2026-08-18).
+
+   OPTIONAL AND EXPLICIT. Nothing here runs by itself: the copy is generated on
+   the operator's device as it always was, saved to that device as it always
+   was, and this route exists only for the moment they press a button asking
+   for it to go to the case folder as well. There is no automatic upload, and
+   the ordinary evidence upload still refuses video by name — the device-first
+   decision of 2026-08-17 is intact, and this is a second door beside it rather
+   than a way around it.
+
+   THE ORIGINAL IS NEVER TOUCHED. What moves is the derivative that was just
+   made; the source clip stays where it was shot and this Worker never sees it.
+
+   NO R2 COPY, at any size. The bytes go to the case's Video folder and nowhere
+   else — which is also why the free-plan failsafe is not consulted: it defends
+   the Cloudflare free tier, and nothing here goes near it.
+
+   NOT ADMIN-ONLY. The investigator who shot the footage is the one standing in
+   the field with it; `caseFor` scopes them to their own cases, which is the
+   boundary that matters. */
+async function videoStampToDropbox(request, env, user, caseNo, stampId, step) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  if ((await missingTables(env)).includes('video_stamp')) {
+    return json({ error: 'The video record table is not on this database yet. Run the '
+      + 'portal-setup workflow once and try again.', code: 'not_set_up' }, 503);
+  }
+  const row = await env.DB.prepare(
+    `SELECT id, case_no, derivative_name, original_name, dropbox_path
+       FROM video_stamp WHERE id = ? AND case_no = ?`).bind(stampId, caseNo).first();
+  if (!row) return json({ error: 'not found' }, 404);
+
+  const problem = await dropboxStorageProblem(env);
+  if (problem === 'provider_not_configured') {
+    return json({ error: 'Dropbox is not set up on this Worker yet, so there is nowhere to put '
+      + 'the copy. ' + EXTERNAL_PROVIDERS.dropbox.note, code: problem }, 503);
+  }
+  if (problem) {
+    return json({ error: 'No Dropbox account is connected, so there is nowhere to put the copy. '
+      + 'The timestamped file is already on this device.', code: problem }, 503);
+  }
+  const token = await dropboxAccessToken(env);
+  if (!token) {
+    return json({ error: 'Dropbox could not be reached. The timestamped copy is still on this '
+      + 'device — nothing was lost.', code: 'dropbox_unreachable' }, 503);
+  }
+
+  if (step === 'start') {
+    const sid = await dropboxSessionStart(env, token);
+    if (!sid) {
+      return json({ error: 'Dropbox would not start the upload. The copy is still on this device.',
+        code: 'dropbox_unreachable' }, 503);
+    }
+    return json({ ok: true, session_id: sid, chunk_bytes: dbxChunkBytes(env) });
+  }
+
+  const url = new URL(request.url);
+  if (step === 'append') {
+    const sid = String(url.searchParams.get('session') || '');
+    const offset = parseInt(url.searchParams.get('offset'), 10);
+    if (!sid || !Number.isInteger(offset) || offset < 0) {
+      return json({ error: 'bad cursor' }, 400);
+    }
+    const body = await request.arrayBuffer();
+    /* One chunk at a time is the whole point — a caller that sends more than
+       was agreed is refused rather than allowed to define the memory use. */
+    if (body.byteLength > dbxChunkBytes(env)) return json({ error: 'chunk too large' }, 413);
+    if (!(await dropboxSessionAppend(env, token, sid, offset, body))) {
+      return json({ error: 'Dropbox refused that part of the upload. It can be retried from the '
+        + 'same point.', code: 'dropbox_unreachable', offset }, 503);
+    }
+    return json({ ok: true, offset: offset + body.byteLength });
+  }
+
+  const b = await readJson(request);
+  const sid = String(b.session_id || '');
+  const offset = parseInt(b.offset, 10);
+  if (!sid || !Number.isInteger(offset) || offset < 0) return json({ error: 'bad cursor' }, 400);
+  const name = String(row.derivative_name || ('timestamped-' + row.id))
+    .replace(/[^A-Za-z0-9._ -]/g, '_').slice(0, 120) || ('timestamped-' + row.id);
+  await dropboxEnsureCaseFolders(env, token, caseNo);
+  const meta = await dropboxSessionFinish(env, token, sid, offset,
+    `/${caseNo}/Video/${dropboxStoredName(name)}`);
+  if (!meta) {
+    return json({ error: 'Dropbox would not complete the upload. The copy is still on this device.',
+      code: 'dropbox_unreachable' }, 503);
+  }
+  /* `dropbox_path` was reserved on this table when it was written and nothing
+     has filled it until now — so the record of where the copy went needs no
+     new column and no schema dispatch. */
+  await env.DB.prepare('UPDATE video_stamp SET dropbox_path = ? WHERE id = ?')
+    .bind(meta.path_display, stampId).run();
+  return json({ ok: true, path: meta.path_display });
+}
+
 /* THE FINAL REPORT AS A REAL FILE (owner, 2026-08-18: "Final Reports need a
    real PDF file, not Print only").
 
@@ -7376,6 +7542,11 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/video-stamp$/);
   if (m && method === 'POST') return recordVideoStamp(request, env, user, m[1]);
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/video-stamp\/(\d{1,12})\/dropbox\/(start|append|finish)$/);
+  if (m && method === 'POST') {
+    return videoStampToDropbox(request, env, user, m[1], parseInt(m[2], 10), m[3]);
+  }
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/video-stamp\/(\d{1,12})\/saved$/);
   if (m && method === 'POST') return markVideoStampSaved(env, user, m[1], parseInt(m[2], 10));

@@ -112,6 +112,55 @@ function d1(db) {
 const db = new DatabaseSync(':memory:');
 db.exec(SCHEMA);
 
+/* ------------------------------------------------------------ fake Dropbox
+
+   New case photos go to Dropbox since 2026-08-18, so the Worker under test
+   needs one that answers. This intercepts only the Worker's own outbound calls
+   — Node's fetch — and never the browser's, which talks to the local server
+   over real HTTP. Files are kept in memory so a test can assert where one
+   landed rather than inferring it from a 201. */
+const DBX = {
+  files: new Map(),
+  folders: new Set(),
+  reset() { this.files.clear(); this.folders.clear(); },
+  paths() { return [...this.files.keys()]; },
+};
+const REAL_FETCH = globalThis.fetch;
+globalThis.fetch = async (url, init) => {
+  const u = String(url && url.url ? url.url : url);
+  if (!u.includes('dropboxapi.com')) return REAL_FETCH(url, init);
+  const arg = () => JSON.parse((init.headers || {})['Dropbox-API-Arg'] || '{}');
+  if (u.includes('/oauth2/token')) {
+    return new Response(JSON.stringify({ access_token: 'sl.FAKE', expires_in: 14400 }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  if (u.includes('/2/files/create_folder_batch')) {
+    for (const f of JSON.parse(init.body).paths) DBX.folders.add(f);
+    return new Response('{"entries":[]}', { status: 200 });
+  }
+  /* MATCHED EXACTLY. `/2/files/upload_session/start`.includes('/2/files/upload')
+     is true, so a loose match here swallows every session call and the plain
+     upload branch answers all three steps. */
+  if (u.endsWith('/2/files/upload')) {
+    const a = arg();
+    const body = init.body;
+    const bytes = body instanceof ArrayBuffer ? new Uint8Array(body)
+      : ArrayBuffer.isView(body) ? new Uint8Array(body.buffer) : new Uint8Array(0);
+    DBX.files.set(a.path, bytes);
+    return new Response(JSON.stringify({ path_display: a.path, path_lower: a.path.toLowerCase(),
+      rev: 'r' + DBX.files.size, size: bytes.length }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  if (u.includes('/2/files/download')) {
+    const f = DBX.files.get(arg().path);
+    return f ? new Response(f, { status: 200 }) : new Response('not_found', { status: 409 });
+  }
+  if (u.includes('/2/files/delete_v2')) {
+    return new Response('{}', { status: DBX.files.delete(JSON.parse(init.body).path) ? 200 : 409 });
+  }
+  return new Response('{}', { status: 200 });
+};
+
 const r2store = new Map();
 const env = {
   DB: d1(db),
@@ -120,6 +169,12 @@ const env = {
   BOOTSTRAP_TOKEN: 'e2e-bootstrap',
   PBKDF2_ITER: '10000',
   INGEST_PER_MINUTE: '500',
+  /* A connected Dropbox is the default state of the portal now, the same way
+     it is the default state of production — a case cannot take a photograph
+     without one. */
+  DROPBOX_APP_KEY: 'e2e-app-key',
+  DROPBOX_APP_SECRET: 'e2e-app-secret',
+  DROPBOX_REFRESH_TOKEN: 'e2e-refresh',
   EVIDENCE: {                    // the R2 stand-in — bytes in, bytes out
     async put(key, body, opts) { r2store.set(key, { body, opts }); },
     async get(key) { const o = r2store.get(key); return o ? { body: o.body } : null; },
@@ -7756,14 +7811,20 @@ section('The final report is a real PDF, written by the page');
   /* IT IS THE DOCUMENT ON SCREEN, not a second rendering of the same data —
      the case number is in the bytes because it was read off #pkgdoc. */
   ok('the content comes from the rendered document', pdf.caseNo);
-  ok('and the photographs are carried as JPEG image objects', pdf.jpeg >= 1, String(pdf.jpeg));
+  /* Every photograph the document shows becomes an image object, and none is
+     invented. Counted against the rendered document rather than asserted as a
+     bare number, so this stays true for a package with no photographs. */
+  const shown = await page.evaluate(() =>
+    document.querySelectorAll('#pkgdoc img').length);
+  ok('every photograph in the document is carried as a JPEG image object',
+     pdf.jpeg === shown, pdf.jpeg + ' image objects for ' + shown + ' pictures');
 
   /* THE PACKAGE IS RE-READ BEFORE THE FILE IS MADE, the same rule printing
      already follows: this is the moment the document leaves the building. */
   const reread = await page.evaluate(async () => {
     let n = 0;
     const real = window.fetch;
-    window.fetch = (...a) => { if (String(a[0]).includes('/package')) n++; return real(...a); };
+    window.fetch = (...a) => { if (String(a[0]).includes('/build')) n++; return real(...a); };
     await pkgPdfBuild();
     window.fetch = real;
     return n;

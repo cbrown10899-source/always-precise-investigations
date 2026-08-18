@@ -5378,6 +5378,67 @@ async function vstRecord(){
    cannot observe, so it says the download has STARTED and leaves the operator
    to confirm it arrived. Safari cannot silently put a file into Photos and
    nothing here pretends it can. */
+/* OPTIONALLY, ALSO TO DROPBOX (owner, Part 2, 2026-08-18).
+
+   NOTHING HERE HAPPENS ON ITS OWN. The copy is generated on this device and
+   saved to this device exactly as before; this runs only when the operator
+   asks for a copy to go to the case folder as well. The original is never
+   touched and never sent — what goes up is the derivative that was just made.
+
+   SENT IN PARTS, through the Worker, using a Dropbox upload session. A
+   surveillance clip is the largest thing this portal moves and a single
+   request would have to hold all of it at once, in three places, failing as a
+   whole. In parts, an interruption resumes from its own offset and Cancel
+   costs nothing: nothing exists at the destination until finish is called, so
+   an abandoned upload leaves no half a file in the case folder. */
+async function vstDropboxSave(){
+  const v = VST;
+  if(!v || !v.out || !v.out.blob || !v.caseNo || !v.recId) return;
+  v.dbxBusy = true; v.dbxPct = 0; v.dbxCancel = false; v.err = ""; v.saveMsg = "";
+  paintVStamp();
+  const at = (step, opts) => fetch(
+    `/portal-api/cases/${encodeURIComponent(v.caseNo)}/video-stamp/${v.recId}/dropbox/${step}`,
+    {method: "POST", credentials: "same-origin", ...(opts || {})});
+  try{
+    let res = await at("start");
+    let d = await res.json().catch(() => ({}));
+    if(!res.ok) throw new Error(d.error || "Dropbox would not start the upload.");
+    const session = d.session_id;
+    const chunk = d.chunk_bytes || (8 * 1024 * 1024);
+    const blob = v.out.blob;
+    let offset = 0;
+    while(offset < blob.size){
+      if(v.dbxCancel){
+        v.saveMsg = "Dropbox upload cancelled. Nothing was left in the case folder, and the "
+                  + "copy is still on this device.";
+        break;
+      }
+      const part = await blob.slice(offset, offset + chunk).arrayBuffer();
+      const r = await at(`append?session=${encodeURIComponent(session)}&offset=${offset}`, {body: part});
+      const dd = await r.json().catch(() => ({}));
+      if(!r.ok) throw new Error(dd.error || "Dropbox refused part of the upload.");
+      offset = dd.offset;
+      v.dbxPct = Math.min(99, Math.round((offset / blob.size) * 100));
+      paintVStamp();
+    }
+    if(!v.dbxCancel){
+      const r = await at("finish", {headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({session_id: session, offset})});
+      const df = await r.json().catch(() => ({}));
+      if(!r.ok) throw new Error(df.error || "Dropbox would not complete the upload.");
+      v.dbxPath = df.path;
+      v.dbxPct = 100;
+      v.saveMsg = "A copy is in the case Dropbox folder — " + df.path;
+    }
+  }catch(e){
+    /* The operator's own file is untouched by any of this, and saying so is the
+       difference between a failed upload and a lost afternoon. */
+    v.err = e.message + " The timestamped copy is still on this device.";
+  }
+  v.dbxBusy = false;
+  paintVStamp();
+}
+
 async function vstSave(){
   const v = VST;
   if(!v || !v.out) return;
@@ -5762,6 +5823,14 @@ function vstHtml(){
           ${v.savedHere ? "" : `<button class="vst-btn go" data-act="vstSave">${
             (navigator.canShare && navigator.share) ? "Share or save to this device"
                                                    : "Save to this device"}</button>`}
+          ${v.caseNo && v.recId ? `
+            <button class="vst-btn" data-act="vstDropbox" ${v.dbxBusy || v.dbxPath ? "disabled" : ""}>${
+              v.dbxPath ? "Copy saved to Dropbox"
+                        : v.dbxBusy ? `Sending to Dropbox&hellip; ${v.dbxPct || 0}%`
+                                    : "Also save a copy to the case Dropbox folder"}</button>
+            ${v.dbxBusy ? `<button class="vst-btn" data-act="vstDropboxCancel">Cancel the Dropbox upload</button>` : ""}
+            <p class="vst-note">Optional, and separate from saving to this device. The original stays
+              on your device untouched either way.</p>` : ""}
           ${v.started && !v.savedHere ? `<p class="vst-note">The download has started. This page cannot see
             where your browser put it, so it will not claim the file is saved &mdash; check it landed, then
             confirm below.</p>
@@ -10628,6 +10697,10 @@ document.addEventListener("click", ev => {
   else if(act === "vstGo"){ vstGenerate(); }
   else if(act === "vstSave"){ vstSave(); }
   else if(act === "vstSaved"){ vstConfirmSaved(); }
+  else if(act === "vstDropbox"){ vstDropboxSave(); }
+  /* Cancel is a flag the loop reads between parts, not a torn-down request:
+     the session is simply never finished, so nothing lands in the folder. */
+  else if(act === "vstDropboxCancel"){ if(VST){ VST.dbxCancel = true; paintVStamp(); } }
   else if(act === "vstDiag"){ vstDiagnose(); }
   else if(act === "vstAbort"){
     /* Stopping mid-render keeps nothing: no partial file is offered and the

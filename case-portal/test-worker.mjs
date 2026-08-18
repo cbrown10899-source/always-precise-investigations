@@ -112,11 +112,12 @@ const DBX = {
   files: new Map(),      // path -> bytes
   folders: new Set(),
   calls: [],
+  sessions: new Map(),   // id -> { parts: [], offset }
   down: false,           // Dropbox unreachable
   uploadFails: false,    // reachable, refuses the write
   deleteFails: false,
   reset() {
-    this.files.clear(); this.folders.clear(); this.calls = [];
+    this.files.clear(); this.folders.clear(); this.calls = []; this.sessions.clear();
     this.down = false; this.uploadFails = false; this.deleteFails = false;
   },
   paths() { return [...this.files.keys()]; },
@@ -138,10 +139,14 @@ async function fakeDropbox(url, init) {
     for (const f of JSON.parse(init.body).paths) DBX.folders.add(f);
     return new Response('{"entries":[]}', { status: 200 });
   }
-  if (u.includes('/2/files/upload')) {
+  /* MATCHED EXACTLY. `/2/files/upload_session/start`.includes('/2/files/upload')
+     is true, so a loose match here swallows every session call and the plain
+     upload branch answers all three steps. */
+  if (u.endsWith('/2/files/upload')) {
     if (DBX.uploadFails) return new Response('conflict', { status: 409 });
     const a = arg();
     let path = a.path;
+    if (!path) return new Response('malformed_path', { status: 400 });
     if (DBX.files.has(path) && a.autorename) path = path + '-1';
     const body = init.body;
     const bytes = body instanceof ArrayBuffer ? new Uint8Array(body)
@@ -149,6 +154,50 @@ async function fakeDropbox(url, init) {
     DBX.files.set(path, bytes);
     return new Response(JSON.stringify({ path_display: path, path_lower: path.toLowerCase(),
       rev: 'r' + DBX.files.size, size: bytes.length }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  /* SESSIONS, modelled with real offsets. Dropbox is the authority on where a
+     session has got to, so the fake refuses a wrong offset the way Dropbox
+     does — otherwise "retry" and "resume" would pass without ever being
+     exercised. */
+  if (u.includes('/2/files/upload_session/start')) {
+    if (DBX.uploadFails) return new Response('nope', { status: 500 });
+    const id = 'sess-' + (DBX.sessions.size + 1);
+    DBX.sessions.set(id, { parts: [], offset: 0 });
+    return new Response(JSON.stringify({ session_id: id }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  if (u.includes('/2/files/upload_session/append_v2')) {
+    if (DBX.uploadFails) return new Response('nope', { status: 500 });
+    const cur = arg().cursor || {};
+    const sess = DBX.sessions.get(cur.session_id);
+    if (!sess) return new Response('closed_session', { status: 409 });
+    if (cur.offset !== sess.offset) return new Response('incorrect_offset', { status: 409 });
+    const body = init.body;
+    const bytes = body instanceof ArrayBuffer ? new Uint8Array(body)
+      : ArrayBuffer.isView(body) ? new Uint8Array(body.buffer) : new Uint8Array(0);
+    sess.parts.push(bytes);
+    sess.offset += bytes.length;
+    return new Response('', { status: 200 });
+  }
+  if (u.includes('/2/files/upload_session/finish')) {
+    if (DBX.uploadFails) return new Response('nope', { status: 500 });
+    const a = arg();
+    const sess = DBX.sessions.get((a.cursor || {}).session_id);
+    if (!sess) return new Response('closed_session', { status: 409 });
+    if ((a.cursor || {}).offset !== sess.offset) return new Response('incorrect_offset', { status: 409 });
+    let total = 0;
+    for (const part of sess.parts) total += part.length;
+    const joined = new Uint8Array(total);
+    let at = 0;
+    for (const part of sess.parts) { joined.set(part, at); at += part.length; }
+    let path = (a.commit || {}).path;
+    if (!path) return new Response('malformed_path', { status: 400 });
+    if (DBX.files.has(path)) path = path + '-1';
+    DBX.files.set(path, joined);
+    DBX.sessions.delete((a.cursor || {}).session_id);
+    return new Response(JSON.stringify({ path_display: path, path_lower: path.toLowerCase(),
+      rev: 'r' + DBX.files.size, size: total }),
       { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
   if (u.includes('/2/files/download')) {
@@ -8912,6 +8961,164 @@ section('Dropbox storage — a demo case is swept from both stores');
      DBX.inFolder('Photos').length === 1
      && (await env.DB.prepare("SELECT COUNT(*) AS n FROM case_evidence WHERE case_no = 'API-REAL1'")
           .first()).n === 1);
+}
+
+/* ------------------- the timestamped copy, optionally saved to Dropbox
+
+   Owner, Part 2, 2026-08-18: an OPTIONAL Save to Dropbox for a successfully
+   generated timestamped video. Device-first architecture kept, original
+   untouched, copy still generated locally, no automatic upload, no R2 video
+   copy, ordinary evidence upload still refuses video, upload sessions for large
+   files. */
+section('Timestamped video — the optional save to Dropbox');
+{
+  const fakeR2 = () => {
+    const store = new Map();
+    return {
+      async put(key, body) { store.set(key, { body }); },
+      async get(key) { const o = store.get(key); return o ? { body: o.body } : null; },
+      async delete(key) { store.delete(key); },
+      _store: store,
+    };
+  };
+  DBX.reset();
+  const env = freshEnv();
+  env.EVIDENCE = fakeR2();
+  env.DBX_CHUNK_BYTES = '1000';    // real multi-chunk sessions, small fixtures
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const l = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const t = new URL(l, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${t}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find((u) => u.username === 'dana').id;
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  await ingest(env, { case_no: 'API-VD1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  await call(env, '/submissions/API-VD1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+
+  const stamp = await jsonOf(await call(env, '/cases/API-VD1/video-stamp', { method: 'POST', cookie: dana,
+    body: { original_name: 'IMG_0440.mov', original_size: 5_000_000,
+            start_utc: '2026-08-18T14:00:00.000Z', derivative_name: 'IMG_0440-timestamped.mp4' } }));
+  const sid = stamp.id || (stamp.stamp && stamp.stamp.id);
+  ok('a generated copy has a record to hang the save on', typeof sid === 'number', JSON.stringify(stamp).slice(0, 160));
+  ok('and nothing has been sent to Dropbox by making it', DBX.files.size === 0);
+
+  const step = (path, opts, cookie) => worker.fetch(new Request(
+    API + `/cases/API-VD1/video-stamp/${sid}/dropbox/` + path, {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: cookie || dana, ...(opts && opts.headers) },
+      body: opts && opts.body }), env);
+  const bytesOf = (n, fill) => { const a = new Uint8Array(n); a.fill(fill); return a; };
+
+  /* A SUCCESSFUL SAVE, moved as a session in real chunks. */
+  const started = await jsonOf(await step('start', {}));
+  ok('a save starts an upload session', typeof started.session_id === 'string');
+  ok('and the chunk size is agreed up front, not assumed', started.chunk_bytes === 1000);
+
+  const payload = bytesOf(3500, 7);            // four chunks at 1000 bytes
+  let offset = 0, chunks = 0;
+  while (offset < payload.length && chunks < 20) {
+    const part = payload.slice(offset, offset + started.chunk_bytes);
+    const r = await jsonOf(await worker.fetch(new Request(
+      API + `/cases/API-VD1/video-stamp/${sid}/dropbox/append?session=${started.session_id}&offset=${offset}`,
+      { method: 'POST', headers: { Origin: ORIGIN, Cookie: dana }, body: part }), env));
+    offset = r.offset; chunks++;
+  }
+  ok('a large file goes up in parts, not in one request', chunks === 4, String(chunks));
+  const done = await jsonOf(await step('finish',
+    { headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: started.session_id, offset }) }));
+  ok('and finishing files it in the case Video folder',
+     done.ok === true && done.path.startsWith('/API-VD1/Video/IMG_0440-timestamped-'), done.path);
+  ok('with every byte of the copy, reassembled in order',
+     DBX.files.get(done.path).length === 3500);
+  /* THE RECORD SAYS WHERE IT WENT, in the column that was reserved for it when
+     this table was written — no new column and no schema dispatch. */
+  ok('the video record names the Dropbox path',
+     (await env.DB.prepare('SELECT dropbox_path FROM video_stamp WHERE id = ?').bind(sid).first())
+       .dropbox_path === done.path);
+  /* NO R2 VIDEO COPY, at any size. */
+  ok('and no copy of the video went to R2', env.EVIDENCE._store.size === 0);
+
+  /* RETRY. Dropbox is the authority on where the session is, so a chunk sent
+     at the wrong offset is refused rather than silently written in the wrong
+     place, and re-sending the right one carries on. */
+  const s2 = await jsonOf(await step('start', {}));
+  await worker.fetch(new Request(
+    API + `/cases/API-VD1/video-stamp/${sid}/dropbox/append?session=${s2.session_id}&offset=0`,
+    { method: 'POST', headers: { Origin: ORIGIN, Cookie: dana }, body: bytesOf(1000, 3) }), env);
+  const wrong = await worker.fetch(new Request(
+    API + `/cases/API-VD1/video-stamp/${sid}/dropbox/append?session=${s2.session_id}&offset=5000`,
+    { method: 'POST', headers: { Origin: ORIGIN, Cookie: dana }, body: bytesOf(200, 3) }), env);
+  ok('a part sent at the wrong offset is refused', wrong.status === 503);
+  const retried = await jsonOf(await worker.fetch(new Request(
+    API + `/cases/API-VD1/video-stamp/${sid}/dropbox/append?session=${s2.session_id}&offset=1000`,
+    { method: 'POST', headers: { Origin: ORIGIN, Cookie: dana }, body: bytesOf(500, 3) }), env));
+  ok('and the upload carries on from where it really was', retried.offset === 1500);
+
+  /* CANCEL. There is nothing to tear down: a session nobody finishes leaves
+     nothing at the destination. */
+  const before = DBX.files.size;
+  ok('an abandoned upload leaves no file behind', DBX.files.size === before && before === 1);
+  ok('and nothing was recorded for it',
+     (await env.DB.prepare(
+       "SELECT COUNT(*) AS n FROM video_stamp WHERE dropbox_path IS NOT NULL").first()).n === 1);
+
+  /* A CHUNK LARGER THAN AGREED is refused — the caller does not get to decide
+     how much this Worker holds at once. */
+  const s3 = await jsonOf(await step('start', {}));
+  ok('an oversized part is refused', (await worker.fetch(new Request(
+    API + `/cases/API-VD1/video-stamp/${sid}/dropbox/append?session=${s3.session_id}&offset=0`,
+    { method: 'POST', headers: { Origin: ORIGIN, Cookie: dana }, body: bytesOf(4000, 1) }), env)).status === 413);
+
+  /* DROPBOX UNAVAILABLE, and a connection that has been revoked — different
+     conditions, each named, neither losing the operator's file. */
+  DBX.down = true;
+  let bad = await step('start', {});
+  DBX.down = false;
+  ok('an unreachable Dropbox refuses the save', bad.status === 503
+     && (await jsonOf(bad)).code === 'dropbox_unreachable');
+  DBX.uploadFails = true;
+  bad = await step('start', {});
+  DBX.uploadFails = false;
+  ok('and one that answers but will not open a session', bad.status === 503
+     && (await jsonOf(bad)).code === 'dropbox_unreachable');
+  delete env.DROPBOX_REFRESH_TOKEN;
+  bad = await step('start', {});
+  ok('a revoked or absent connection says exactly that', bad.status === 503
+     && (await jsonOf(bad)).code === 'dropbox_not_connected');
+  env.DROPBOX_REFRESH_TOKEN = 'RT-test';
+  ok('none of those wrote anything anywhere',
+     DBX.files.size === 1 && env.EVIDENCE._store.size === 0);
+
+  /* THE ORIGINAL IS UNTOUCHED. The portal never had it — the record carries its
+     name, its size and, when the browser could compute one, its hash, and the
+     save changes none of them. */
+  const rec = await env.DB.prepare(
+    'SELECT original_name, original_size, dropbox_path FROM video_stamp WHERE id = ?').bind(sid).first();
+  ok('the original is named, sized and unchanged by the save',
+     rec.original_name === 'IMG_0440.mov' && rec.original_size === 5000000);
+  ok('and no route in this build uploads the original anywhere',
+     !DBX.paths().some((f) => f.includes('IMG_0440.mov')), DBX.paths().join(' '));
+
+  /* THE ORDINARY EVIDENCE UPLOAD STILL REFUSES VIDEO. This is a second door,
+     not a way around the device-first decision. */
+  const fd = new FormData();
+  fd.append('file', new File([bytesOf(300, 9)], 'clip.mp4', { type: 'video/mp4' }));
+  const still = await worker.fetch(new Request(API + '/cases/API-VD1/evidence', {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: dana }, body: fd }), env);
+  ok('the ordinary evidence upload still refuses video by name',
+     still.status === 400 && (await jsonOf(still)).code === 'video_device_first');
+
+  /* SCOPED THE WAY EVERY CASE ROUTE IS. */
+  await ingest(env, { case_no: 'API-VD2', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  ok('an investigator cannot save into a case that is not theirs',
+     (await worker.fetch(new Request(API + `/cases/API-VD2/video-stamp/${sid}/dropbox/start`,
+       { method: 'POST', headers: { Origin: ORIGIN, Cookie: dana } }), env)).status === 404);
+  ok('and a record from another case is not reachable by id',
+     (await worker.fetch(new Request(API + `/cases/API-VD2/video-stamp/${sid}/dropbox/start`,
+       { method: 'POST', headers: { Origin: ORIGIN, Cookie: admin } }), env)).status === 404);
 }
 
 section('Dropbox OAuth — connect');

@@ -243,3 +243,53 @@ The record is a `build_events` row (`report_pdf_saved`), an existing audit trail
 whose `action` column is free text, so nothing had to be widened or added.
 Filing twice keeps both files; a corrected report written over the one already
 sent to a client would leave no trace that they differ.
+
+## The timestamped video, optionally saved to Dropbox
+
+Owner, Part 2, 2026-08-18. A successfully generated timestamped copy can be sent
+to the case's `Video` folder by an explicit action on the video panel. Everything
+about that sentence is load-bearing:
+
+- **Optional and explicit.** Nothing uploads by itself. The copy is generated on
+  the device and saved to the device exactly as before; this is a second button
+  beside that, not a step in the same flow.
+- **The original is never touched and never sent.** What goes up is the
+  derivative that was just made. The Worker never sees the source clip.
+- **The ordinary evidence upload still refuses video by name.** This is a second
+  door, not a way around the device-first decision of 2026-08-17. There is a
+  test that fails if that refusal ever stops working.
+- **No R2 copy, at any size.** The bytes go to the case's `Video` folder and
+  nowhere else — which is also why the free-plan failsafe is not consulted here:
+  it defends the Cloudflare free tier and nothing on this path goes near it.
+- **Not admin-only.** The investigator who shot the footage is the one holding
+  it; `caseFor` scopes them to their own cases, which is the boundary that
+  matters.
+
+### Why an upload session
+
+`POST /cases/:no/video-stamp/:id/dropbox/{start,append,finish}`.
+
+A surveillance clip is the largest thing this portal moves. A single request
+would have to hold the whole file at once — in the browser, in the Worker, and
+in one HTTP request that fails as a whole. A session moves it in parts: the
+Worker holds **one chunk at a time**, an interrupted upload resumes from its own
+offset, and a chunk larger than the agreed size is refused so a caller cannot
+decide how much this Worker holds.
+
+**Dropbox is the authority on where a session has got to.** A part sent at the
+wrong offset is refused rather than written in the wrong place, and the error
+carries the offset so the client can carry on from the right one.
+
+**Cancel needs nothing torn down.** Nothing exists at the destination until
+`finish` is called, so an abandoned session leaves no half a file in the case
+folder and expires on Dropbox's side. Cancel is a flag the upload loop reads
+between parts.
+
+`video_stamp.dropbox_path` records where it went. That column was **reserved
+when the table was written and nothing had filled it until now**, so this needed
+no new column, no companion table and no `portal-setup` dispatch.
+
+The chunk size is 8 MB, overridable with `DBX_CHUNK_BYTES` for the same reason
+the storage caps are overridable: a test that moves a real multi-chunk file
+through the real session code proves more than one that moves eight megabytes to
+prove the same thing slowly.
