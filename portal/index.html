@@ -8788,6 +8788,123 @@ function svHomeScreen(){
   </div>`;
 }
 
+/* ------------------------------------- the voice command registry (§4, §5, §7)
+
+   SURVEILLANCE-VOICE.md §4: "ONE centralized command registry. No scattered
+   phrase matching through UI components." This is it — the only place in the
+   portal that turns something spoken into a canonical command, and the only
+   place that decides what a recognized command is stored as.
+
+   §5: a known command stores STANDARDIZED language, not the raw transcript.
+   The wording below is this implementation's, not the owner's, except the two
+   sentences §5 gives verbatim (NO_CHANGE_RESIDENCE and MOBILE_RESIDENCE_CHECK).
+   It is all in one table so any of it can be reworded in one edit.
+
+   §4 also says the SPOKEN ALIASES that arrived truncated "must not be
+   inferred". So each `say` list holds the owner's own words and nothing
+   reconstructed. VEHICLE_OBSERVED is deliberately left with NO alias: its
+   fragment is the bare word "observed", and registering that would quietly
+   file "subject observed" as a vehicle sighting — a command that never matches
+   is honest, one that matches the wrong thing is not. Those rows are waiting
+   on the owner's phrasing, not on code.
+
+   WHAT THIS SLICE DOES NOT DO. It does not listen for a wake word, does not
+   run a hands-free loop, and does not write `source = voice` — that last one
+   needs a companion table decided deliberately (`activity_log` has no `source`
+   column and ALTER TABLE is not idempotent here). This is §4/§5/§7 only,
+   feeding the transcript review that already exists. Nothing auto-submits, and
+   nothing about the existing flow was reversed. */
+
+const VOICE_WAKE = "mobile";
+
+const VOICE_COMMANDS = [
+  { id: "ARRIVAL", text: "Investigator arrived on location.",
+    say: ["arrival", "arrived"] },
+  { id: "NO_CHANGE_RESIDENCE", text: "No change observed at the residence.",
+    say: ["no change at residence", "no change at the residence"] },
+  { id: "NO_CHANGE", text: "No change observed.",
+    say: ["no change"] },
+  { id: "MOBILE_RESIDENCE_CHECK", text: "Mobile check of residence was conducted.",
+    say: ["doing a drive by check of residence", "drive by check of residence", "drive by check"] },
+  { id: "MOBILE_CHECK", text: "Mobile check was conducted.",
+    say: ["mobile check"] },
+  { id: "SUBJECT_OBSERVED", text: "Subject observed.",
+    say: ["subject observed"] },
+  { id: "SUBJECT_DEPARTED", text: "Subject departed the location.",
+    say: ["departed"] },
+  { id: "SUBJECT_ARRIVED", text: "Subject arrived at the location.",
+    say: ["subject arrived"] },
+  { id: "SUBJECT_RETURNED", text: "Subject returned to the location.",
+    say: ["subject returned"] },
+  /* The owner's fragment for this one is the bare word "observed". Registering
+     that would swallow "subject observed". Awaiting their phrasing. */
+  { id: "VEHICLE_OBSERVED", text: "Subject vehicle observed.", say: [] },
+  { id: "SUBJECT_VEHICLE_PRESENT", text: "Subject vehicle present at the location.",
+    say: ["subject vehicle present"] },
+  { id: "SUBJECT_VEHICLE_ABSENT", text: "Subject vehicle absent from the location.",
+    say: ["vehicle absent"] },
+  { id: "LOST_VISUAL", text: "Visual contact lost.",
+    say: ["lost visual"] },
+  { id: "REGAINED_VISUAL", text: "Visual contact regained.",
+    say: ["regained visual"] },
+  { id: "POSITION_CHANGE", text: "Surveillance position changed.",
+    say: ["changing position"] },
+  { id: "DIRECT_VIEW", text: "Direct view of the location established.",
+    say: ["direct view"] },
+  { id: "INDIRECT_VIEW", text: "Indirect view of the location only.",
+    say: ["indirect view"] },
+  { id: "NO_ACTIVITY", text: "No activity observed.",
+    say: ["no activity"] },
+  { id: "STATIONARY_SURVEILLANCE", text: "Stationary surveillance conducted.",
+    say: ["stationary surveillance"] },
+  { id: "MOBILE_SURVEILLANCE", text: "Mobile surveillance conducted.",
+    say: ["conducting mobile surveillance"] },
+  /* §6B. Not an activity sentence — it is the door into free-form dictation,
+     which §6 says must never file itself. */
+  { id: "FREE_FORM_DICTATION_MODE", text: null, dictation: true,
+    say: ["note"] },
+];
+
+function voiceNormalize(str){
+  return String(str == null ? "" : str).toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/* "Mobile, no change" and "no change" are the same command. The wake word is
+   stripped for matching, but the unstripped form is matched too, because a
+   couple of the owner's aliases carry "mobile" inside them ("Mobile check"). */
+function voiceForms(spoken){
+  const full = voiceNormalize(spoken);
+  const bare = full.startsWith(VOICE_WAKE + " ") ? full.slice(VOICE_WAKE.length + 1).trim() : full;
+  return bare === full ? [full] : [full, bare];
+}
+
+/* §7 — NEVER GUESS. Three outcomes and no fourth: one command matched, more
+   than one could have, or none did. The longest alias wins, so "no change at
+   residence" is not filed as the shorter "no change"; a genuine tie between
+   two DIFFERENT commands is reported as ambiguous rather than resolved by the
+   order this table happens to be written in. */
+function voiceMatch(spoken){
+  const forms = voiceForms(spoken);
+  if(!forms[0]) return {status: "empty"};
+  let best = [], bestLen = -1;
+  for(const cmd of VOICE_COMMANDS){
+    for(const alias of cmd.say){
+      const a = voiceNormalize(alias);
+      if(!a) continue;
+      if(!forms.some((f) => f === a || f.startsWith(a + " "))) continue;
+      if(a.length > bestLen){ bestLen = a.length; best = [cmd]; }
+      else if(a.length === bestLen && best.indexOf(cmd) < 0) best.push(cmd);
+    }
+  }
+  const said = forms[forms.length - 1];
+  if(!best.length) return {status: "unrecognized", said};
+  if(best.length > 1) return {status: "ambiguous", said, candidates: best.slice()};
+  const cmd = best[0];
+  if(cmd.dictation) return {status: "dictation", said, command: cmd};
+  return {status: "ok", said, command: cmd, text: cmd.text};
+}
+
 /* Voice (P8). Level 1 is the phone's own keyboard dictation, which every text
    field here already accepts. Level 2 is this: the browser's speech API where
    it exists, ALWAYS reviewed before it becomes a log entry — nothing spoken is
@@ -8796,15 +8913,51 @@ function svMicHtml(){
   const supported = typeof window !== "undefined"
     && (window.SpeechRecognition || window.webkitSpeechRecognition);
   if(SV.heard != null){
+    const m = voiceMatch(SV.heard);
+
+    /* §7 — NEVER GUESS. More than one command could have been meant, so the
+       portal asks instead of choosing. Nothing is prefilled and nothing is
+       logged: the operator picks, or keeps their own words. */
+    if(m.status === "ambiguous" && SV.voiceText == null){
+      return `<div class="sv-heard">
+        <div style="font-weight:800;margin-bottom:6px">Which did you mean?</div>
+        <div style="font-size:.85rem;color:#5c6775;margin-bottom:8px">Heard
+          &ldquo;${esc(SV.heard)}&rdquo; &mdash; more than one command fits it, so nothing
+          has been chosen for you.</div>
+        ${m.candidates.map((c, i) => `<button class="btn sm" style="display:block;width:100%;
+          text-align:left;margin-bottom:6px" data-act="svPickCmd"
+          data-i="${i}">${esc(c.text)}</button>`).join("")}
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <button class="btn sm ghost" data-act="svKeepWords">Use my own words instead</button>
+          <button class="btn sm ghost" data-act="svDiscard">Discard</button>
+        </div>
+      </div>`;
+    }
+
+    /* §5 — a recognized command stores STANDARDIZED language, not the raw
+       transcript. The transcript is shown above it so the operator can see
+       what it was matched from, and the box stays editable because the review
+       is the point. */
+    const std = SV.voiceText != null ? SV.voiceText
+      : m.status === "ok" ? m.text
+      : m.status === "dictation"
+        ? String(SV.heard).replace(/^\s*mobile[\s,]*/i, "").replace(/^\s*note[\s,]*/i, "").trim()
+        : SV.heard;
+    const standardized = SV.voiceText != null || m.status === "ok";
     return `<div class="sv-heard">
-      <div style="font-weight:800;margin-bottom:6px">Heard &mdash; read it before it goes in</div>
-      <textarea id="sv_heard" rows="4">${esc(SV.heard)}</textarea>
+      <div style="font-weight:800;margin-bottom:6px">${
+        standardized ? "Recognized &mdash; read it before it goes in"
+                     : m.status === "dictation" ? "Note &mdash; read it before it goes in"
+                                                : "Heard &mdash; read it before it goes in"}</div>
+      ${standardized || m.status === "dictation" ? `<div style="font-size:.8rem;color:#5c6775;
+        margin-bottom:6px">Heard &ldquo;${esc(SV.heard)}&rdquo;</div>` : ""}
+      <textarea id="sv_heard" rows="4">${esc(std)}</textarea>
       <div style="display:flex;gap:8px;margin-top:10px">
         <button class="btn sm" data-act="svUseText">Use this text</button>
         <button class="btn sm ghost" data-act="svDiscard">Discard</button>
       </div>
       <div style="font-size:.78rem;color:#5c6775;margin-top:8px">
-        Dictation is handled by your device or browser; this page keeps no audio.
+        ${standardized ? "Standard wording for that command &mdash; edit it if this time was different. " : ""}Dictation is handled by your device or browser; this page keeps no audio.
         Nothing is logged until you press Use.</div>
     </div>`;
   }
@@ -10929,11 +11082,21 @@ document.addEventListener("click", ev => {
   }
   else if(act === "svUseText"){
     const t = $("sv_heard") ? $("sv_heard").value : "";
-    SV.heard = null; SV.tab = "activity";
+    SV.heard = null; SV.voiceText = null; SV.tab = "activity";
     SV.entry = {text: t, ...stampNow()};
     paint();
   }
-  else if(act === "svDiscard"){ SV.heard = null; paint(); }
+  else if(act === "svDiscard"){ SV.heard = null; SV.voiceText = null; paint(); }
+  /* §7's other half: the operator resolves the ambiguity, the portal never
+     does. Picking writes the chosen standard sentence into the review box; it
+     still is not logged until Use. */
+  else if(act === "svPickCmd"){
+    const m = voiceMatch(SV.heard);
+    const c = m.candidates && m.candidates[parseInt(el.dataset.i, 10)];
+    if(c) SV.voiceText = c.text;
+    paint();
+  }
+  else if(act === "svKeepWords"){ SV.voiceText = SV.heard; paint(); }
   else if(act === "svFullReport"){ exitSurveillance(); WS_TAB = "reports"; paintCase(); }
   else if(act === "evTab"){ EV_TAB = el.dataset.t; paintCase(); }
   else if(act === "evJump"){ EV_TAB = el.dataset.t || "all"; WS_TAB = "evidence"; WS_ERR = ""; paintCase(); }
