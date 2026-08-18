@@ -18,8 +18,8 @@ item is finished.
 | # | Work | State |
 | --- | --- | --- |
 | 1 | Finish current Active Surveillance mobile and voice polish | **DONE — DEPLOYED** at `c333d3f` (#182). §13 photo/video commands, §8 retry/offline and server-side duplicate protection, §1/§16.1 compact status. Two device-only checks OPEN, below. |
-| 2 | Build Timestamp Photo | **IN PROGRESS** — branch `photo-timestamp` |
-| 3 | Visible Dropbox portal UI for Admin | not started — **queued, do not begin**. Added by the owner 2026-08-18 |
+| 2 | Build Timestamp Photo | **DONE — DEPLOYED** at `ad77b2e` (#183). Two device-only checks OPEN, below. |
+| 3 | Visible Dropbox portal UI for Admin | **NEXT** — not started. Added by the owner 2026-08-18 |
 | 4 | Admin report workflow and mobile report fix | not started — **queued, do not begin** |
 | 5 | Full portal aesthetic cleanup | not started — **queued, do not begin** |
 | 6 | Remaining Portal Ops productivity features | not started |
@@ -35,6 +35,57 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Do not interrupt the current coding unit. Record this queue only"*, and
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
+
+## 🚦 DEPLOYMENT — 2026-08-18, master `ad77b2e` (#183) — Timestamp Photo
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` | `ad77b2e` | `ad77b2e` | **DEPLOYED** — `deploy.yml` 32193706447 success |
+| Worker / API | `ad77b2e` | `ad77b2e` | **DEPLOYED** — `deploy-portal.yml` 32193706374 success |
+| D1 schema | `ad77b2e` | applied | **DISPATCH RUN** — `portal-setup.yml` 32196546101 success |
+
+Save point `save/2026-08-18-2239-ad77b2e`. Worker **1849/0**, portal **1687/0**,
+guard **68/0**.
+
+**`photo_stamp` is live.** The deployed Worker answered
+`{"ok":true,"configured":true,"email":true,"missing_tables":[],"storage_pct":0}`
+— an empty list from the build whose own `EXPECTED_TABLES` names the new table,
+which is the proof rather than the schema step's exit code. The dispatch also
+reported *"An account already exists — nothing to do"* and destroyed the
+bootstrap token: nothing about accounts changed.
+
+**LIVE VERIFIED — OPEN**, and specifically these two, because neither can be
+observed anywhere but a phone:
+
+1. An iPhone photograph carrying real camera EXIF — confirm the fields are
+   seeded from the camera and the zone wording matches what the phone actually
+   wrote.
+2. An HEIC file — confirm the refusal reads the way it should where the browser
+   cannot decode it, and that no Generate button is offered under it.
+
+### What shipped
+
+- **The pair.** A photograph already in the case gains a **second**
+  `case_evidence` row in the case's own Dropbox `Photos` folder. The original is
+  never modified — asserted at the bytes, not at the row. `photo_stamp` names
+  which is which.
+- **The burn is `vstDraw`, worded by `vstLabel`** — the video renderer's own
+  functions, not copies. The strongest test in the suite is a **pixel read**:
+  the copy's bottom-right corner has bright pixels, its top-left has none, and
+  the original has none in either place.
+- **Nothing is guessed about when the picture was taken.** EXIF
+  `DateTimeOriginal` seeds it and the screen says the camera is where it came
+  from; with no EXIF the form is empty and says so. `file.lastModified` and
+  today's date are never used, and a test asserts the current year never appears
+  as a seed.
+- **Two refusals**: the copy inherits the original's classification, so
+  stamping cannot promote held-back material past the package gate; and a
+  timestamped copy cannot itself be stamped.
+- **The package rule** (owner, mid-build): an *Include timestamped copy in
+  client package* checkbox, default ON, decides the classification the copy is
+  born with. No second flag — package eligibility already IS the classification.
+  The original is never reclassified, and the picker offers it as an explicit
+  **Add anyway** while its copy is the one going.
 
 ## 🚦 DEPLOYMENT — 2026-08-18, master `c333d3f` (#182) — the mobile/voice unit closes
 
