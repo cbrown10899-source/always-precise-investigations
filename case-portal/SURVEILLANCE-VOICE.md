@@ -449,11 +449,12 @@ confirmation. This slice did not reverse it and did not add a path around it.
 | --- | --- | --- |
 | ✅ | §3 `source = voice` on the activity record | **Shipped 2026-08-18.** `activity_source` is a companion table keyed on `entry_id`, on the owner's instruction — "an idempotent companion metadata table instead of altering the existing activity_log table" — which is also the only thing `schema.sql` can do, being re-applied on every portal-setup run. `source` is a closed list matching the column's CHECK, so an unknown value is dropped rather than stored. The entry is written FIRST and the marker second, so a database that has not had the dispatch run costs the marker and never the investigator's words. §11/§12 hold: the same edit, the same removal, no privilege |
 | ✅ | §2 wake-word loop + VOICE MODE ON/OFF, §9 confirmation, §14 states, §16 foreground limit | **Shipped 2026-08-18.** Explicit toggle on the field home; opening Active Surveillance constructs no recogniser at all. Say "Mobile" and the command in one breath, or "Mobile" alone to arm it. A confidently matched command files a real entry and returns to listening without a tap. §16 is enforced, not merely written: the loop stops when the page is hidden and says why |
-| 🟡 | §8 duplicate protection | **Half built, with the loop, because the loop is what creates the failure.** Repeated finals from the engine are guarded by an in-flight lock plus a six-second same-command window. **The offline/retry half is NOT built** and needs a server-side event key |
-| 🔴 | §1 compact status header | Reclaims the space the big timer takes on mobile |
+| ✅ | §8 duplicate protection | **Completed 2026-08-18.** The engine half (in-flight lock + same-command window) plus the network half: the client names each utterance and keeps that name across retries, and `activity_voice_event` makes a second arrival return the entry that already exists. **Needs a portal-setup dispatch** |
+| ✅ | §1 / §16.1 compact status header | **Shipped 2026-08-18.** Two lines instead of four or five. Measured, not admired: the test asserts the block's height and that the quick controls start in the top third of the phone, which is what §16.1 actually asked for |
 | 🔴 | §6B dictation mode as a loop | The SAVE / EDIT / DISCARD wording and the return to listening. The behaviour it depends on already exists |
 | ✅ | §10 LAST ACTIVITY | **Shipped 2026-08-18.** Edit and Remove on the field home, correcting the newest entry *in place* — the editor opens inside the card and the home screen never leaves the screen. A removed one is struck through with Put it back. Two defects fell out of building it, both fixed and both tested: `editActivity` was **replace-all**, so a wording-only correction would have written NULL over the location and vehicle the investigator recorded; and `svDeleteEntry` forced a jump to the timeline, which was harmless while Delete only existed ON the timeline and navigated you away from the field home the moment it did not |
-| 🔴 | §8 duplicate protection, §9 spoken confirmation, §13 photo/video commands | |
+| ✅ | §13 photo/video voice commands | **Shipped 2026-08-18.** "Mobile, take photo" and "Mobile, video" PREPARE the capture and claim nothing — a spoken word cannot open a camera, and an entry saying a photograph was taken would be exactly the faked evidence §13 forbids |
+| 🔴 | §9 audible confirmation | The on-screen confirmation is built; a tone is not |
 
 ### Two things the owner still has to supply
 
@@ -644,3 +645,37 @@ a final result still produces one entry.
 **The review screens are not dead code.** "Tap to speak" still goes through
 transcript review, and an ambiguous transcript there still gets §7's chooser.
 What changed is the LOOP, which is where pausing was costing the log.
+
+## The mobile/voice polish unit, 2026-08-18
+
+**§13 — prepared, never claimed.** A spoken command cannot open a camera: the
+browser requires a gesture and iOS enforces it. So "Mobile, take photo" puts the
+capture one tap away, high on the screen, and **nothing is written until a file
+actually arrives** — the existing upload path's own rule, unchanged. There is a
+test asserting the command creates neither an activity nor an evidence row.
+*"Never fake evidence creation"* was the whole instruction.
+
+**§8 — finished, and the second half needed the server.** The browser cannot
+tell a POST that landed with a lost response from one that never arrived. The
+client now names each utterance and keeps that name across every retry;
+`activity_voice_event` makes a second arrival return the entry that already
+exists. **This adds a table, so a portal-setup dispatch is owed** — and until it
+runs a retry DOES duplicate, which is asserted, so the cost of not running it is
+written down rather than assumed.
+
+**Offline.** A surveillance position is exactly where there is no bar of
+service, so an entry that cannot be sent is held and sent when the network
+returns. The count of held entries is shown, because an entry waiting in a queue
+nobody can see is an entry the investigator believes was filed. A refusal (4xx)
+is not retried — only a dropped connection is, or a malformed entry would retry
+until the battery died.
+
+**Known limit, stated rather than discovered:** the held queue does not survive
+the page being closed. Persisting a claimant's narrative to the phone's local
+storage is a data-boundary decision nobody has made, and not one to take as a
+side effect of a retry loop.
+
+**§1 / §16.1 — compact, and measured.** Two lines instead of four or five. The
+assertion is not that it looks tidier but that the block is under 78px and the
+quick controls start in the top third of the screen, which is what "high enough
+for easy thumb reach" means when the other hand is holding a camera.

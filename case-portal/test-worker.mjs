@@ -8885,6 +8885,84 @@ section('Correcting the wording of an entry leaves the rest of it alone');
      (await read()).description === 'Corrected again.');
 }
 
+/* ------------------------- §8's other half: a retry is not a second entry
+
+   §8: "Retries caused by connection/offline synchronisation must also not
+   create duplicates." The browser cannot do this half — a POST that landed and
+   whose response was lost is indistinguishable from one that never arrived. So
+   the client names each utterance and keeps that name across retries, and this
+   side answers with the entry that already exists. */
+section('Voice §8: the same utterance twice is one entry, however it arrives');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-EVT1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+
+  const send = (body) => call(env, '/cases/API-EVT1/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-08-18', at_time: '11:00', kind: 'activity', ...body } });
+  const count = async () =>
+    (await env.DB.prepare("SELECT COUNT(*) AS n FROM activity_log WHERE case_no = 'API-EVT1'")
+      .first()).n;
+
+  const first = await jsonOf(await send({
+    description: 'No change observed at the residence.', source: 'voice',
+    command_id: 'NO_CHANGE_RESIDENCE', event_id: 'evt-aaaaaaaa1111' }));
+  ok('the first arrival creates the entry', typeof first.id === 'number' && !first.duplicate);
+  ok('and it is one row', (await count()) === 1);
+
+  /* THE RETRY. Same utterance, same name, and the client cannot know whether
+     the first one landed. */
+  const again = await jsonOf(await send({
+    description: 'No change observed at the residence.', source: 'voice',
+    command_id: 'NO_CHANGE_RESIDENCE', event_id: 'evt-aaaaaaaa1111' }));
+  ok('the retry writes nothing', (await count()) === 1);
+  ok('and answers with the entry that already exists',
+     again.id === first.id && again.duplicate === true, JSON.stringify(again));
+
+  /* A DIFFERENT UTTERANCE IS A DIFFERENT ENTRY, even with identical words —
+     the investigator may genuinely have said it twice. */
+  const twice = await jsonOf(await send({
+    description: 'No change observed at the residence.', source: 'voice',
+    command_id: 'NO_CHANGE_RESIDENCE', event_id: 'evt-bbbbbbbb2222' }));
+  ok('the same words under a new name are a new entry',
+     twice.id !== first.id && (await count()) === 2);
+
+  /* AN ENTRY WITHOUT A NAME still works — every manual entry is one, and the
+     quick buttons do not mint event ids. */
+  const plain = await jsonOf(await send({ description: 'Typed by hand.' }));
+  ok('an entry with no event id is unaffected',
+     typeof plain.id === 'number' && (await count()) === 3);
+
+  const rows = await env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM activity_voice_event').first();
+  ok('only the named utterances are recorded as events', rows.n === 2, String(rows.n));
+
+  /* THE TABLE ARRIVES BY A MANUAL DISPATCH, so the Worker must work without it,
+     and what must never be lost is the entry. */
+  const bare = freshEnv();
+  await bootstrapAdmin(bare);
+  const a2 = (await login(bare, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(bare, { case_no: 'API-EVT2', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  await bare.DB.prepare('DROP TABLE activity_voice_event').run();
+  const madeA = await jsonOf(await call(bare, '/cases/API-EVT2/activity', { method: 'POST', cookie: a2,
+    body: { at_date: '2026-08-18', at_time: '11:05', kind: 'activity',
+            description: 'Said before the schema caught up.', source: 'voice',
+            event_id: 'evt-cccccccc3333' } }));
+  ok('without the table the entry is still made', typeof madeA.id === 'number');
+  ok('health names the missing table',
+     (await jsonOf(await call(bare, '/health'))).missing_tables.includes('activity_voice_event'));
+  /* And WITHOUT it a retry does duplicate — which is the state before this
+     table existed, and is why the dispatch matters. Asserted so the cost of
+     not running it is written down rather than assumed. */
+  const madeB = await jsonOf(await call(bare, '/cases/API-EVT2/activity', { method: 'POST', cookie: a2,
+    body: { at_date: '2026-08-18', at_time: '11:05', kind: 'activity',
+            description: 'Said before the schema caught up.', source: 'voice',
+            event_id: 'evt-cccccccc3333' } }));
+  ok('and until the dispatch runs, a retry is a second entry — the cost, written down',
+     madeB.id !== madeA.id);
+}
+
 section('Dropbox storage — where a new case file goes');
 {
   const fakeR2 = () => {

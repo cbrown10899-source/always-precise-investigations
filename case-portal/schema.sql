@@ -1198,3 +1198,25 @@ CREATE TABLE IF NOT EXISTS activity_source (
   heard      TEXT,                    -- raw transcript, diagnostic only
   at         TEXT NOT NULL
 );
+
+/* ONE SPOKEN COMMAND, ONE RECORD — THE HALF THE CLIENT CANNOT DO (§8).
+
+   The loop already guards against a speech engine re-emitting a final result,
+   but §8 also names "retries caused by connection/offline synchronisation",
+   and those cross a network the browser cannot reason about: a POST that
+   actually landed and whose response was lost looks identical to one that
+   never arrived. Only the server can tell those apart, and only if the client
+   names the utterance.
+
+   The client mints an event id per utterance and keeps it across every retry.
+   A second arrival with the same id returns the entry that already exists
+   rather than writing another.
+
+   A COMPANION TABLE, like activity_source beside it: schema.sql is re-applied
+   on every portal-setup run and ALTER TABLE ADD COLUMN is not idempotent. */
+CREATE TABLE IF NOT EXISTS activity_voice_event (
+  event_id TEXT    PRIMARY KEY,
+  entry_id INTEGER NOT NULL REFERENCES activity_log(id),
+  case_no  TEXT    NOT NULL,
+  at       TEXT    NOT NULL
+);
