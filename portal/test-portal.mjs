@@ -112,6 +112,55 @@ function d1(db) {
 const db = new DatabaseSync(':memory:');
 db.exec(SCHEMA);
 
+/* ------------------------------------------------------------ fake Dropbox
+
+   New case photos go to Dropbox since 2026-08-18, so the Worker under test
+   needs one that answers. This intercepts only the Worker's own outbound calls
+   — Node's fetch — and never the browser's, which talks to the local server
+   over real HTTP. Files are kept in memory so a test can assert where one
+   landed rather than inferring it from a 201. */
+const DBX = {
+  files: new Map(),
+  folders: new Set(),
+  reset() { this.files.clear(); this.folders.clear(); },
+  paths() { return [...this.files.keys()]; },
+};
+const REAL_FETCH = globalThis.fetch;
+globalThis.fetch = async (url, init) => {
+  const u = String(url && url.url ? url.url : url);
+  if (!u.includes('dropboxapi.com')) return REAL_FETCH(url, init);
+  const arg = () => JSON.parse((init.headers || {})['Dropbox-API-Arg'] || '{}');
+  if (u.includes('/oauth2/token')) {
+    return new Response(JSON.stringify({ access_token: 'sl.FAKE', expires_in: 14400 }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  if (u.includes('/2/files/create_folder_batch')) {
+    for (const f of JSON.parse(init.body).paths) DBX.folders.add(f);
+    return new Response('{"entries":[]}', { status: 200 });
+  }
+  /* MATCHED EXACTLY. `/2/files/upload_session/start`.includes('/2/files/upload')
+     is true, so a loose match here swallows every session call and the plain
+     upload branch answers all three steps. */
+  if (u.endsWith('/2/files/upload')) {
+    const a = arg();
+    const body = init.body;
+    const bytes = body instanceof ArrayBuffer ? new Uint8Array(body)
+      : ArrayBuffer.isView(body) ? new Uint8Array(body.buffer) : new Uint8Array(0);
+    DBX.files.set(a.path, bytes);
+    return new Response(JSON.stringify({ path_display: a.path, path_lower: a.path.toLowerCase(),
+      rev: 'r' + DBX.files.size, size: bytes.length }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  if (u.includes('/2/files/download')) {
+    const f = DBX.files.get(arg().path);
+    return f ? new Response(f, { status: 200 }) : new Response('not_found', { status: 409 });
+  }
+  if (u.includes('/2/files/delete_v2')) {
+    return new Response('{}', { status: DBX.files.delete(JSON.parse(init.body).path) ? 200 : 409 });
+  }
+  return new Response('{}', { status: 200 });
+};
+
 const r2store = new Map();
 const env = {
   DB: d1(db),
@@ -120,6 +169,12 @@ const env = {
   BOOTSTRAP_TOKEN: 'e2e-bootstrap',
   PBKDF2_ITER: '10000',
   INGEST_PER_MINUTE: '500',
+  /* A connected Dropbox is the default state of the portal now, the same way
+     it is the default state of production — a case cannot take a photograph
+     without one. */
+  DROPBOX_APP_KEY: 'e2e-app-key',
+  DROPBOX_APP_SECRET: 'e2e-app-secret',
+  DROPBOX_REFRESH_TOKEN: 'e2e-refresh',
   EVIDENCE: {                    // the R2 stand-in — bytes in, bytes out
     async put(key, body, opts) { r2store.set(key, { body, opts }); },
     async get(key) { const o = r2store.get(key); return o ? { body: o.body } : null; },
@@ -7692,6 +7747,89 @@ section('Compatibility is reported per device, and recommends no browser');
   ok('and a device that can do both reads Ready',
      has(await text(page, '.vst'), 'Ready'), (await text(page, '.vst')).slice(0, 300));
   await page.close();
+}
+
+/* ------------------------- the final report as a real file, made on this machine
+
+   Owner, 2026-08-18: "Final Reports need a real PDF file, not Print only. Add
+   Download PDF and Save PDF to Dropbox Reports. Keep Print optional."
+
+   The PDF is written by the page, from the package document already rendered on
+   screen, with no library. So it is tested where it is made: the generator is
+   run against the real document and the bytes it produces are read back. */
+section('The final report is a real PDF, written by the page');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Package');
+  await page.waitForTimeout(800);
+
+  const acts = await page.evaluate(() => [...document.querySelectorAll('[data-act]')]
+    .map((b) => b.dataset.act + '|' + b.textContent.trim()));
+  ok('Download PDF is offered on the finished package',
+     acts.some((a) => a.startsWith('pkgPdf|')), acts.join(' , ').slice(0, 300));
+  ok('and Save PDF to Dropbox beside it',
+     acts.some((a) => a.startsWith('pkgPdfDropbox|')), acts.join(' , ').slice(0, 300));
+  /* PRINT IS KEPT, and kept SECONDARY — the owner asked for it to stay
+     available, not to stay the only way out of the screen. */
+  ok('Print is still there, and no longer the only way to get the report out',
+     acts.some((a) => a === 'pkgPrint|Print'), acts.join(' , ').slice(0, 300));
+
+  /* THE GENERATOR ITSELF, run against the document that is on screen. */
+  const pdf = await page.evaluate(async () => {
+    const blob = await pdfFromDoc(document.getElementById('pkgdoc'));
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    let all = '';
+    for (let i = 0; i < buf.length; i++) all += String.fromCharCode(buf[i]);
+    return {
+      type: blob.type,
+      size: buf.length,
+      head: all.slice(0, 8),
+      tail: all.slice(-8),
+      pages: (all.match(/\/Type \/Page[^s]/g) || []).length,
+      fonts: all.includes('/BaseFont /Helvetica') && all.includes('/BaseFont /Helvetica-Bold'),
+      xref: all.includes('\nxref\n') && all.includes('startxref'),
+      jpeg: (all.match(/\/Filter \/DCTDecode/g) || []).length,
+      caseNo: all.includes('API-20260812-4002'),
+      startxref: Number((all.match(/startxref\s+(\d+)/) || [])[1] || -1),
+    };
+  });
+
+  ok('what comes back is a PDF, not a print dialog',
+     pdf.type === 'application/pdf' && pdf.head === '%PDF-1.4', pdf.head);
+  ok('with a real body rather than a stub', pdf.size > 1500, String(pdf.size));
+  ok('carrying at least one page', pdf.pages >= 1, String(pdf.pages));
+  /* NO LIBRARY AND NO EMBEDDED FONT — the base-14 fonts are declared by name,
+     which is the whole reason this needs no dependency. */
+  ok('both base-14 fonts are declared rather than embedded', pdf.fonts);
+  ok('a cross-reference table is written and pointed at',
+     pdf.xref && pdf.startxref > 0 && pdf.startxref < pdf.size,
+     pdf.startxref + ' of ' + pdf.size);
+  ok('and it ends where a PDF ends', pdf.tail.includes('%%EOF'), pdf.tail);
+  /* IT IS THE DOCUMENT ON SCREEN, not a second rendering of the same data —
+     the case number is in the bytes because it was read off #pkgdoc. */
+  ok('the content comes from the rendered document', pdf.caseNo);
+  /* Every photograph the document shows becomes an image object, and none is
+     invented. Counted against the rendered document rather than asserted as a
+     bare number, so this stays true for a package with no photographs. */
+  const shown = await page.evaluate(() =>
+    document.querySelectorAll('#pkgdoc img').length);
+  ok('every photograph in the document is carried as a JPEG image object',
+     pdf.jpeg === shown, pdf.jpeg + ' image objects for ' + shown + ' pictures');
+
+  /* THE PACKAGE IS RE-READ BEFORE THE FILE IS MADE, the same rule printing
+     already follows: this is the moment the document leaves the building. */
+  const reread = await page.evaluate(async () => {
+    let n = 0;
+    const real = window.fetch;
+    window.fetch = (...a) => { if (String(a[0]).includes('/build')) n++; return real(...a); };
+    await pkgPdfBuild();
+    window.fetch = real;
+    return n;
+  });
+  ok('the package is re-read before the PDF is built', reread >= 1, String(reread));
 }
 
 section('The device answers for itself');
