@@ -1178,13 +1178,30 @@ into the pixels, the zone is resolved from the date) and what this build
 **DERIVED**. Read it before changing any of this; each derived decision is
 listed separately so it can be overturned on its own.
 
-**It diverges from the video feature in exactly one way, and the reason is the
-storage decision, not a difference of principle.** Video is device-first because
-video bytes must never become Cloudflare storage; photographs have gone to the
-firm's own Dropbox since 2026-08-18. So the stamped photograph is **stored**, as
-an ordinary second `case_evidence` row in the case's own `Photos` folder.
-`POST /cases/:no/photo-stamp` adds no storage architecture at all — it is the
-existing Dropbox upload plus a row saying which original the copy belongs to.
+**It follows Timestamp Video's ORDER exactly** (owner, after a device test,
+2026-08-19): *"choose a local photo first on iOS Android Mac or Windows,
+timestamp it locally, then optionally choose a case only for Dropbox or case
+filing."* Pick the picture, set the moment, burn it on that machine, keep it.
+**Nothing is uploaded and the portal holds no record unless a case is
+deliberately chosen** — the same bargain the video tool makes. That is a rule
+with a test: the suite asserts the byte store and both tables are unchanged
+after the copy exists and while a case is being chosen.
+
+Two earlier decisions of mine were overruled by the field, in order. The first
+put the door only on a photograph already in the case, so with nothing uploaded
+there was no way in at all. The fix for that led with a **required case picker**,
+which made a utility ask about filing before it would do its one job. Both are
+recorded as superseded in `PHOTO-TIMESTAMP.md` with their original reasoning
+kept.
+
+**When a case IS chosen, the storage is unchanged**: the stamped photograph is an
+ordinary second `case_evidence` row in the case's own `Photos` folder, and
+`POST /cases/:no/photo-stamp` adds no storage architecture — it is the existing
+Dropbox upload plus a row saying which original the copy belongs to. A picture
+that came off a device has its **original filed first**, untouched, because the
+owner's rule is that the original is preserved as case evidence and the pair is
+meaningless without it. A picture already in the case is already the original and
+nothing extra is uploaded.
 
 **The burn is `vstDraw` and the wording is `vstLabel`** — the same functions the
 video renderer uses, not copies of them. Two renderings of one stamp drift, and

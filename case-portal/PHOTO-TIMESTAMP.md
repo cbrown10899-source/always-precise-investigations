@@ -75,14 +75,27 @@ check, and the reachability assertions are now written as a **pair** across both
 tools, so a door that exists for one and not the other fails rather than
 ships.
 
-**D2. The derivative is stored, not saved to the device.** This is the one place
-the photo path deliberately diverges from the video path, and the reason is the
-storage decision that was already made: **video is device-first because video
-bytes must never become Cloudflare storage — photographs already go to Dropbox
-and have since 2026-08-18.** Sending a stamped photograph to the device instead
-of the case would be inventing a restriction the owner did not ask for, on the
-one file type that has somewhere to go. Nothing here touches R2, so the free-plan
-failsafe is not in play, exactly as it is not for any other photograph.
+**D2 — REPLACED BY THE OWNER AFTER A DEVICE TEST, 2026-08-19.** The original
+reasoning was that photographs have somewhere to go, so a stamped photograph
+should be stored rather than saved to the device. What that produced was a tool
+that could not do its one job without first being told where to file the result.
+
+The owner's words: *"Match Timestamp Video: choose a local photo first on iOS
+Android Mac or Windows, timestamp it locally, then optionally choose a case only
+for Dropbox or case filing."*
+
+So the ORDER changed, not the storage. The copy is made on the operator's own
+machine from a picture on that machine, and it is theirs immediately — saved to
+the device through the same file-picker / share-sheet path the video tool uses,
+with the same honesty about which of those may be called a save. **Filing is a
+separate, optional act**, and it is the only thing that uploads anything or
+leaves a record in the portal. When a case IS chosen, the original goes up
+beside the copy — the owner's rule that it is preserved untouched as case
+evidence is what makes the pair a pair.
+
+Both entrances still exist. A photograph already in the case (the gallery card,
+the field media card) skips the picker and skips uploading an original, because
+it is already the original.
 
 **D3. The instant is the operator's, seeded from the camera where the camera
 said so.** A photograph's EXIF `DateTimeOriginal` is the camera's own record of
