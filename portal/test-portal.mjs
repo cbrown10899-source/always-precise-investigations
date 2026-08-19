@@ -8726,7 +8726,8 @@ section('Timestamp Photo: the stamp is in the pixels, and the original is not to
   await page.waitForTimeout(400);
   await page.locator('[data-act="pstFile"]').click();
   await page.waitForTimeout(2000);
-  ok('it is filed', has(await text(page, '#pstamp'), 'Filed'), await text(page, '#pstamp'));
+  ok('it is saved to Dropbox', has(await text(page, '#pstamp'), 'Saved to Dropbox'),
+     await text(page, '#pstamp'));
   await page.locator('#pstamp [data-act="pstClose"]').first().click();
   await page.waitForTimeout(700);
 
@@ -9334,7 +9335,7 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
   const first = await text(page, '#pstamp');
   ok('it goes straight to the question it exists to ask',
      has(first, 'When was it taken'), first.slice(0, 200));
-  ok('and no case has been asked for at all', !has(first, 'File it to which case'),
+  ok('and no case has been asked for at all', !has(first, 'which case'),
      first.slice(0, 300));
 
   /* A photograph off a device carries no EXIF from a canvas, so the form is
@@ -9356,8 +9357,17 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
      has(prev, '08/19/2026 09:45:10 AM EDT'), prev);
   ok('keeping it on this device is the first thing offered',
      await page.locator('[data-act="pstSaveDevice"]').count() === 1);
-  ok('and the screen says filing is optional', has(prev, 'Filing it to a case is'),
+  ok('and the screen says the rest is optional', has(prev, 'Everything below is'),
      prev.slice(0, 600));
+  /* THE DEVICE SAVE IS UNTOUCHED and stays the first thing offered — the owner's
+     words, 2026-08-19: "Keep Save to this device exactly as the local iOS/share
+     option." Saving to Dropbox is a SECOND control beside it, never instead. */
+  ok('keeping it on the device is still its own control',
+     await page.locator('[data-act="pstSaveDevice"]').count() === 1);
+  ok('and Dropbox is a separate one beside it',
+     await page.locator('[data-act="pstChooseCase"]').count()
+     + await page.locator('[data-act="pstToCase"]').count() >= 1);
+  ok('which says where it is going', has(prev, 'Save to Dropbox'), prev.slice(0, 600));
 
   /* NOTHING HAS LEFT THE MACHINE. This is the whole bargain, and it is the
      same one Timestamp Video makes — measured against the counts taken before
@@ -9372,9 +9382,14 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
   await page.locator('[data-act="pstChooseCase"]').click();
   await page.waitForTimeout(900);
   ok('choosing to file is what asks for a case',
-     has(await text(page, '#pstamp'), 'File it to which case'));
+     has(await text(page, '#pstamp'), 'Save to Dropbox')
+     && has(await text(page, '#pstamp'), 'which case'));
+  /* AND IT SAYS WHY IT IS ASKING. The firm's Dropbox keeps a folder per case,
+     so the case is the one thing a save needs — not a formality in the way. */
+  ok('and says why a case is needed at all',
+     has(await text(page, '#pstamp'), 'folder per case'), (await text(page, '#pstamp')).slice(0, 400));
   ok('and it says the copy is yours either way',
-     has(await text(page, '#pstamp'), 'You do not have to file it at all'));
+     has(await text(page, '#pstamp'), 'You do not have to save it to Dropbox at all'));
   ok('with a way back that keeps it here',
      await page.locator('[data-act="pstBackToPreview"]').count() === 1);
 
@@ -9389,7 +9404,9 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
   ok('and it is on by default', await page.locator('#pst_inc').isChecked());
   await page.locator('[data-act="pstFile"]').click();
   await page.waitForTimeout(2500);
-  ok('and then it is filed', has(await text(page, '#pstamp'), 'Filed to API-20260812-4021'),
+  ok('and then it is saved to Dropbox',
+     has(await text(page, '#pstamp'), 'Saved to Dropbox')
+     && has(await text(page, '#pstamp'), 'API-20260812-4021'),
      (await text(page, '#pstamp')).slice(0, 200));
 
   /* BOTH HALVES REACHED THE CASE. The owner's rule is that the original is

@@ -6436,25 +6436,29 @@ function pstHtml(){
           cannot see where a file went, so this page will not claim it arrived &mdash; check
           your downloads.</p>` : ""}
         <button class="vst-btn go" data-act="pstSaveDevice">Save to this device</button>
-        <p class="vst-note">It was made here and it is yours already. Filing it to a case is
-          optional &mdash; that is the only step that uploads anything or leaves a record in
-          the portal.</p>
-        ${""/* Opened from a case, filing does not ask again — the door already
-               said which one. Opened from the top level it asks, and only here,
-               after the copy exists. */}
+        <p class="vst-note">It was made here and it is yours already. Everything below is
+          optional &mdash; saving to Dropbox is the only step that uploads anything or
+          leaves a record in the portal.</p>
+        ${""/* SAVE TO DROPBOX (owner, 2026-08-19), beside the device save rather
+               than instead of it. The firm's Dropbox is organised per case —
+               `/<case>/Photos/` — so a case is what a save needs, and it is
+               asked for ONLY when the door did not already name one. A file put
+               there with no record is one nobody can find again, which is the
+               orphan this project sweeps for elsewhere. */}
         ${v.caseNo ? `
-          <button class="vst-btn" data-act="pstToCase">File the copy to ${esc(v.caseNo)}</button>
-          <button class="vst-btn" data-act="pstChooseCase">File it to a different case&hellip;</button>`
-        : `<button class="vst-btn" data-act="pstChooseCase">File it to a case&hellip;</button>`}
+          <button class="vst-btn" data-act="pstToCase">Save to Dropbox &middot; ${esc(v.caseNo)}</button>
+          <button class="vst-btn" data-act="pstChooseCase">Save to a different case&hellip;</button>`
+        : `<button class="vst-btn" data-act="pstChooseCase">Save to Dropbox&hellip;</button>`}
         <button class="vst-btn" data-act="pstEdit">Correct the time</button>
         <button class="vst-btn" data-act="pstClose">Close</button>
       </div>`
     : v.step === "case" ? `
       <div class="vst-card">
-        <h4>File it to which case?</h4>
-        <p class="vst-note">Only cases you can already open are listed &mdash; choosing one
-          here gives you no more access than you had. The original goes in beside the copy,
-          untouched, so the pair is a pair.</p>
+        <h4>Save to Dropbox &mdash; which case?</h4>
+        <p class="vst-note">The firm's Dropbox keeps a folder per case, so this is the one
+          thing a save needs to know. Only cases you can already open are listed &mdash;
+          choosing one here gives you no more access than you had. The original goes in beside
+          the copy, untouched, so the pair is a pair.</p>
         <label class="vst-f" style="margin-top:10px"><span>Find a case</span>
           <input id="pst_q" data-act-input="pstSearch" style="text-align:left"
             placeholder="case number or name" value="${esc(v.q || "")}"></label>
@@ -6468,14 +6472,14 @@ function pstHtml(){
                  &mdash; ${esc(caseName(c))}</button>`).join("")}</div>`
           : `<p class="vst-note">${v.cases.length ? "No case matches that."
               : "You have no cases to file this to yet."}</p>`}
-        <p class="vst-note" style="margin-top:12px">You do not have to file it at all. The copy
-          is on this device either way, and until a case is chosen the portal keeps no record
-          of it.</p>
-        <button class="vst-btn" data-act="pstBackToPreview">Not now &mdash; keep it here</button>
+        <p class="vst-note" style="margin-top:12px">You do not have to save it to Dropbox at
+          all. The copy is on this device either way, and until a case is chosen nothing is
+          uploaded and the portal keeps no record of it.</p>
+        <button class="vst-btn" data-act="pstBackToPreview">Not now &mdash; keep it on this device</button>
       </div>`
     : v.step === "confirm" ? `
       <div class="vst-card">
-        <h4>Filing to ${esc(v.caseNo)}</h4>
+        <h4>Save to Dropbox &middot; ${esc(v.caseNo)}</h4>
         ${""/* THE PACKAGE RULE (owner, 2026-08-18). A package must never carry
                both halves of the pair by default, and the copy is the half that
                goes. What this decides is the classification the copy is BORN
@@ -6496,20 +6500,20 @@ function pstHtml(){
           : "The original is filed first, exactly as it came off your device, and the copy beside it."}</p>
         ${v.err ? `<div class="vst-res" style="color:#ffb3b3">${esc(v.err)}</div>` : ""}
         <button class="vst-btn go" data-act="pstFile"${v.busy ? " disabled" : ""}>${
-          v.busy ? "Filing&hellip;" : "File it"}</button>
+          v.busy ? "Saving&hellip;" : "Save to Dropbox"}</button>
         <button class="vst-btn" data-act="pstBackToPreview">Back</button>
       </div>`
     : v.step === "working" ? `
       <div class="vst-card">
-        <h4>Filing the copy</h4>
+        <h4>Saving to Dropbox</h4>
         <p class="vst-note">Nothing is recorded until the file itself is safely stored.</p>
       </div>`
     : `
       <div class="vst-card">
-        <h4>Filed to ${esc(v.filed ? v.filed.caseNo : v.caseNo)}</h4>
+        <h4>Saved to Dropbox &middot; ${esc(v.filed ? v.filed.caseNo : v.caseNo)}</h4>
         <div class="vst-k"><span>Timestamp</span><span>${esc(v.out ? v.out.label : "")}</span></div>
-        <p class="vst-note">The case now holds the original and the timestamped copy, both
-          marked so nobody has to work out which is which.</p>
+        <p class="vst-note">The case folder now holds the original and the timestamped copy,
+          both marked so nobody has to work out which is which.</p>
         <button class="vst-btn" data-act="pstSaveDevice">Also save to this device</button>
         <button class="vst-btn" data-act="pstClose">Close</button>
       </div>`;
