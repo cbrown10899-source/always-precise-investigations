@@ -5896,28 +5896,40 @@ function pstFill(ms){
   PST.ap = p.dayPeriod === "AM" ? "AM" : "PM";
 }
 
-/* ------------------------------------------------ THE TOP-LEVEL DOOR
+/* ------------------------------------------------ THE DOOR, AND WHAT IT OPENS
 
-   PHOTO-TIMESTAMP.md D1 said the door was the photograph itself, because unlike
-   a clip the picture is already in the case. That was true and it was NOT
-   ENOUGH: with nothing uploaded yet there is no entry point anywhere, and the
-   owner went looking for the tool beside Timestamp Video and found nothing at
-   all. **D1 is superseded** — a feature reachable only from a card that may not
-   exist is a feature nobody can find.
+   OWNER, AFTER A LIVE DEVICE TEST (2026-08-19): *"Match Timestamp Video: choose
+   a local photo first on iOS Android Mac or Windows, timestamp it locally, then
+   optionally choose a case only for Dropbox or case filing."*
 
-   It asks rather than assumes, exactly as Timestamp Video does: the nav button
-   carries an empty `data-case` on purpose so the utility cannot adopt whichever
-   case happens to be open behind it. Unlike video it always needs a case, since
-   the original it copies lives in one — so "no case" is a question here, never
-   a skip. */
-async function pstLaunch(caseNo){
-  PST = {step: caseNo ? "pick" : "case", caseNo: caseNo || "", evId: null,
-         cases: null, caseErr: "", photos: null, photoErr: "", copyIds: [], q: "",
-         name: "", originalClass: "", tz: VST_TZ, source: "operator", includeCopy: true,
-         mo: "", da: "", yr: "", hr: "", mi: "", se: "", ap: "PM",
-         url: "", out: null, err: "", note: "", busy: false};
-  paintPStamp();
-  return caseNo ? pstLoadPhotos(caseNo) : pstLoadCases();
+   That replaces two earlier decisions of mine, both of which the field found
+   wrong in turn:
+
+   - **D1** put the door on the photograph already in the case. With nothing
+     uploaded there was no card, so there was no way in at all.
+   - The fix for D1 led with a **required case picker**, which the owner then hit
+     on a real device: it made a utility ask about filing before it would do the
+     one thing it is for.
+
+   The order now matches Timestamp Video exactly. Pick the picture, set the
+   moment, burn it here on this machine, keep it. A case is asked for only when
+   something is to be FILED, and never before. Nothing is uploaded, and the
+   portal holds no record, unless a case is chosen — the same bargain the video
+   tool already makes. */
+
+/* The picker itself. `image/*` and no `capture` attribute on purpose: capture
+   would force the camera, and the owner asked to CHOOSE a local photo. On iOS
+   this offers Photo Library, Take Photo and Files; on Android the gallery or
+   the camera; on Mac and Windows the ordinary file dialog. */
+function pstLaunch(caseNo){
+  const inp = document.createElement("input");
+  inp.type = "file";
+  inp.accept = "image/*";
+  inp.onchange = () => {
+    const f = inp.files && inp.files[0];
+    if(f) pstBegin(f, caseNo || "");
+  };
+  inp.click();
 }
 
 /* An archived or deleted case refuses every write, so offering one would be
@@ -5938,104 +5950,113 @@ async function pstLoadCases(){
   paintPStamp();
 }
 
-/* The case's own photographs, read from that case's workspace rather than from
-   whatever `WS` happens to hold — the launcher may be opened on a case that is
-   not the one on screen. Copies are excluded here for the same reason
-   `pstButton` excludes them: the Worker refuses a copy of a copy by name, and a
-   control leading to a refusal should not be drawn. */
-async function pstLoadPhotos(caseNo){
-  if(!PST) return;
-  PST.photoErr = "";
-  try{
-    const ws = await api("/cases/" + encodeURIComponent(caseNo) + "/workspace");
-    if(!PST || PST.caseNo !== caseNo) return;
-    PST.copyIds = (ws.photo_stamps || []).map(x => x.stamped_id).filter(x => x != null);
-    PST.photos = (ws.evidence || []).filter(e => !e.deleted_at
-      && String(e.content_type || "").startsWith("image/")
-      && !PST.copyIds.includes(e.id));
-  }catch(e){
-    if(PST) PST.photoErr = e.message;
-  }
-  paintPStamp();
+/* The blank slate both entrances fill in. `local` is the file off this machine,
+   `evId` the evidence row when the picture was already in a case; exactly one
+   of them is ever set, and which one decides what filing has to upload. */
+function pstFresh(caseNo, extra){
+  return Object.assign({
+    step: "loading", caseNo: caseNo || "", evId: null, local: null,
+    name: "", originalClass: "", tz: VST_TZ, source: "operator", includeCopy: true,
+    cases: null, caseErr: "", q: "",
+    mo: "", da: "", yr: "", hr: "", mi: "", se: "", ap: "PM",
+    url: "", img: null, w: 0, h: 0, out: null,
+    err: "", note: "", msg: "", busy: false, savedHere: false, started: false, filed: null,
+  }, extra || {});
 }
 
-async function pstOpen(evId, caseNo, given){
-  const id = parseInt(evId, 10);
-  const row = given
-    || ((PST && PST.photos) || []).find(e => e.id === id)
-    || ((WS && WS.evidence) || []).find(e => e.id === id);
-  PST = {step: "loading", caseNo: caseNo || (PST && PST.caseNo) || WS_CASE || "", evId: id,
-         name: row ? row.filename : "", tz: VST_TZ, source: "operator",
-         mo: "", da: "", yr: "", hr: "", mi: "", se: "", ap: "PM",
-         /* The owner's rule, 2026-08-18: the timestamped copy is the half that
-            goes to the client, and it is ON unless the office says otherwise. */
-         includeCopy: true, originalClass: row ? row.classification : "",
-         url: "", out: null, err: "", note: "", busy: false};
-  paintPStamp();
-
-  let buf;
-  try{
-    const res = await fetch(`/portal-api/cases/${encodeURIComponent(PST.caseNo)}/evidence/${id}/file`,
-      {credentials: "same-origin"});
-    if(!res.ok) throw new Error("The portal could not send that photograph back.");
-    buf = await res.arrayBuffer();
-  }catch(e){
-    if(!PST || PST.evId !== id) return;
-    PST.step = "reject";
-    PST.err = e.message || "That photograph could not be read.";
-    return paintPStamp();
-  }
-  if(!PST || PST.evId !== id) return;
-
-  const blob = new Blob([buf], {type: (row && row.content_type) || "image/jpeg"});
+/* Everything from bytes to the "when" question, shared by both entrances: the
+   decode is PROVEN before anything is offered, and the instant is seeded from
+   the file's own EXIF or from nothing at all. */
+async function pstFromBytes(buf, type, token){
+  const v = PST;
+  const blob = new Blob([buf], {type: type || "image/jpeg"});
   const url = URL.createObjectURL(blob);
-
-  /* THE DECODE IS PROVEN BEFORE ANYTHING IS OFFERED. A picture this browser
-     cannot open gets the reason where the action would have been, rather than
-     a Generate button standing over a fatal error — the lesson `vstProbe`
-     already learned about HEIC and .mov. */
   const img = new Image();
-  const done = await new Promise(resolve => {
+  const ok = await new Promise(resolve => {
     img.onload = () => resolve(true);
     img.onerror = () => resolve(false);
     img.src = url;
   });
-  if(!PST || PST.evId !== id){ try{ URL.revokeObjectURL(url); }catch{} return; }
-  if(!done || !img.naturalWidth || !img.naturalHeight){
+  if(PST !== v || v.token !== token){ try{ URL.revokeObjectURL(url); }catch{} return; }
+  if(!ok || !img.naturalWidth || !img.naturalHeight){
     try{ URL.revokeObjectURL(url); }catch{}
-    PST.step = "reject";
-    PST.err = "This browser cannot open that picture, so there is nothing here to "
+    v.step = "reject";
+    v.err = "This browser cannot open that picture, so there is nothing here to "
       + "draw on. An iPhone HEIC file often does this on a computer — the camera's "
       + "Most Compatible setting writes JPEG, which works everywhere.";
     return paintPStamp();
   }
-
-  PST.url = url;
-  PST.img = img;
-  PST.w = img.naturalWidth;
-  PST.h = img.naturalHeight;
+  v.url = url; v.img = img; v.w = img.naturalWidth; v.h = img.naturalHeight;
 
   const exif = pstExifWhen(buf);
   if(exif && exif.zoned){
     pstFill(exif.ms);
-    PST.source = "exif";
-    PST.note = "From the camera, with the time zone it recorded.";
+    v.source = "exif";
+    v.note = "From the camera, with the time zone it recorded.";
   }else if(exif){
     const w = exif.wall;
-    PST.mo = String(w.mo).padStart(2, "0"); PST.da = String(w.da).padStart(2, "0");
-    PST.yr = String(w.yr);
-    PST.hr = String(((w.hr % 12) || 12)).padStart(2, "0");
-    PST.mi = String(w.mi).padStart(2, "0"); PST.se = String(w.se).padStart(2, "0");
-    PST.ap = w.hr < 12 ? "AM" : "PM";
-    PST.source = "exif";
-    PST.note = "From the camera. The camera recorded no time zone, so this is being "
+    v.mo = String(w.mo).padStart(2, "0"); v.da = String(w.da).padStart(2, "0");
+    v.yr = String(w.yr);
+    v.hr = String(((w.hr % 12) || 12)).padStart(2, "0");
+    v.mi = String(w.mi).padStart(2, "0"); v.se = String(w.se).padStart(2, "0");
+    v.ap = w.hr < 12 ? "AM" : "PM";
+    v.source = "exif";
+    v.note = "From the camera. The camera recorded no time zone, so this is being "
       + "read as Eastern time — correct it if the picture was taken elsewhere.";
   }else{
-    PST.note = "This file carries no camera timestamp, so nothing has been filled in. "
+    v.note = "This file carries no camera timestamp, so nothing has been filled in. "
       + "Nothing is guessed here — enter when the picture was taken.";
   }
-  PST.step = "when";
+  v.step = "when";
   paintPStamp();
+}
+
+/* A PICTURE OFF THIS MACHINE. Nothing leaves it: the bytes are read here, the
+   stamp is drawn here, and the copy stays here unless a case is chosen later. */
+async function pstBegin(file, caseNo){
+  const token = (PST_SEQ += 1);
+  PST = pstFresh(caseNo, {name: file.name || "photo.jpg", local: file, token});
+  paintPStamp();
+  let buf;
+  try{ buf = await file.arrayBuffer(); }
+  catch(e){
+    if(PST && PST.token === token){ PST.step = "reject"; PST.err = "That file could not be read."; paintPStamp(); }
+    return;
+  }
+  if(!PST || PST.token !== token) return;
+  return pstFromBytes(buf, file.type, token);
+}
+let PST_SEQ = 0;
+
+/* A PICTURE ALREADY IN THE CASE — the gallery card and the field media card.
+   It is read back from the case rather than from anything the browser happens
+   to be holding, so the copy is made from the file the case actually has. */
+async function pstOpen(evId, caseNo, given){
+  const id = parseInt(evId, 10);
+  const row = given
+    || ((WS && WS.evidence) || []).find(e => e.id === id);
+  const token = (PST_SEQ += 1);
+  const on = caseNo || WS_CASE || "";
+  PST = pstFresh(on, {evId: id, token,
+    name: row ? row.filename : "", originalClass: row ? row.classification : ""});
+  paintPStamp();
+
+  let buf;
+  try{
+    const res = await fetch(`/portal-api/cases/${encodeURIComponent(on)}/evidence/${id}/file`,
+      {credentials: "same-origin"});
+    if(!res.ok) throw new Error("The portal could not send that photograph back.");
+    buf = await res.arrayBuffer();
+  }catch(e){
+    if(PST && PST.token === token){
+      PST.step = "reject";
+      PST.err = e.message || "That photograph could not be read.";
+      paintPStamp();
+    }
+    return;
+  }
+  if(!PST || PST.token !== token) return;
+  return pstFromBytes(buf, (row && row.content_type) || "image/jpeg", token);
 }
 
 function pstClose(){
@@ -6067,47 +6088,110 @@ function pstBurn(){
   v.busy = true;
   paintPStamp();
   c.toBlob(blob => {
-    if(!PST || PST !== v) return;
+    if(PST !== v) return;
     v.busy = false;
     if(!blob){ v.err = "The copy could not be produced here."; return paintPStamp(); }
     try{ if(v.out && v.out.url) URL.revokeObjectURL(v.out.url); }catch{}
-    v.out = {blob, url: URL.createObjectURL(blob), ms: w.ms, label: vstLabel(w.ms, v.tz)};
+    const base = String(v.name || "photo").replace(/\.[A-Za-z0-9]{1,8}$/, "");
+    v.out = {blob, url: URL.createObjectURL(blob), ms: w.ms, label: vstLabel(w.ms, v.tz),
+             name: base + "-timestamped.jpg"};
     v.step = "preview";
     paintPStamp();
   }, "image/jpeg", 0.92);
 }
 
-/* FILING IT. The original is not sent, not named beyond its id, and not touched
-   — this posts the copy and the instant, and the Worker does the rest. */
-async function pstSave(){
+/* KEEPING IT, WITHOUT A CASE AND WITHOUT THE PORTAL. The video tool's own save
+   path, and its own honesty about what a browser can and cannot know: the file
+   picker resolving and the share sheet completing are the only two things that
+   may be reported as saved, and an ordinary download only ever says it has
+   STARTED. */
+async function pstSaveDevice(){
   const v = PST;
-  if(!v || !v.out || v.busy) return;
+  if(!v || !v.out) return;
+  v.err = ""; v.msg = "";
+  if(typeof window.showSaveFilePicker === "function"){
+    try{
+      const h = await window.showSaveFilePicker({suggestedName: v.out.name,
+        types: [{description: "Timestamped photograph", accept: {"image/jpeg": [".jpg"]}}]});
+      const w = await h.createWritable();
+      await w.write(v.out.blob);
+      await w.close();
+      v.savedHere = true;
+      v.msg = "Saved to this device.";
+      return paintPStamp();
+    }catch(e){
+      if(e && e.name === "AbortError"){ v.msg = "Save cancelled — the copy is still here."; return paintPStamp(); }
+      // Anything else: fall through and let the browser's own download try.
+    }
+  }
+  /* ON IPHONE AND IPAD THE SHARE SHEET IS HOW A FILE REACHES PHOTOS OR FILES.
+     It resolves only after the operator completes the action, so unlike a
+     download it is something this page may honestly call a save. */
+  if(navigator.canShare && navigator.share){
+    try{
+      const f = new File([v.out.blob], v.out.name, {type: "image/jpeg"});
+      if(navigator.canShare({files: [f]})){
+        await navigator.share({files: [f], title: v.out.name});
+        v.savedHere = true;
+        v.msg = "Saved from the share sheet.";
+        return paintPStamp();
+      }
+    }catch(e){
+      if(e && e.name === "AbortError"){ v.msg = "Sharing cancelled — the copy is still here."; return paintPStamp(); }
+      // Anything else: fall through to the ordinary download.
+    }
+  }
+  const a = document.createElement("a");
+  a.href = v.out.url; a.download = v.out.name;
+  document.body.appendChild(a); a.click(); a.remove();
+  v.started = true;
+  v.msg = "";
+  paintPStamp();
+}
+
+/* FILING IT, WHICH IS THE ONLY THING THAT NEEDS A CASE. For a picture off this
+   machine the ORIGINAL goes up first — the owner's rule is that it is preserved
+   untouched as case evidence, and the pair is meaningless without it — and then
+   the copy is filed against it. For a picture that was already in the case there
+   is nothing to upload: it is already the original. */
+async function pstFileToCase(){
+  const v = PST;
+  if(!v || !v.out || v.busy || !v.caseNo) return;
   v.busy = true; v.err = ""; v.step = "working";
   paintPStamp();
-  const fd = new FormData();
-  fd.append("file", v.out.blob, "timestamped.jpg");
-  fd.append("original_id", String(v.evId));
-  fd.append("taken_utc", new Date(v.out.ms).toISOString());
-  fd.append("tz", v.tz);
-  fd.append("source", v.source);
-  fd.append("include_copy", v.includeCopy ? "true" : "false");
   try{
-    /* Raw fetch because `api` sends JSON — the same path `uploadEvidenceFile`
-       takes, for the same reason. */
+    let originalId = v.evId;
+    if(originalId == null){
+      const fd0 = new FormData();
+      fd0.append("file", v.local, v.name || "photo.jpg");
+      const r0 = await fetch(`/portal-api/cases/${encodeURIComponent(v.caseNo)}/evidence`,
+        {method: "POST", credentials: "same-origin", body: fd0});
+      const d0 = await r0.json().catch(() => ({}));
+      if(!r0.ok) throw new Error(d0.error || ("The original could not be filed (" + r0.status + ")"));
+      originalId = d0.id;
+    }
+    const fd = new FormData();
+    fd.append("file", v.out.blob, "timestamped.jpg");
+    fd.append("original_id", String(originalId));
+    fd.append("taken_utc", new Date(v.out.ms).toISOString());
+    fd.append("tz", v.tz);
+    fd.append("source", v.source);
+    fd.append("include_copy", v.includeCopy ? "true" : "false");
     const res = await fetch(`/portal-api/cases/${encodeURIComponent(v.caseNo)}/photo-stamp`,
       {method: "POST", credentials: "same-origin", body: fd});
     const d = await res.json().catch(() => ({}));
     if(!res.ok) throw new Error(d.error || ("That did not work (" + res.status + ")"));
+    v.filed = {caseNo: v.caseNo, id: d.id};
   }catch(e){
-    if(!PST || PST !== v) return;
+    if(PST !== v) return;
     v.busy = false; v.step = "preview"; v.err = e.message;
     return paintPStamp();
   }
-  if(!PST || PST !== v) return;
+  if(PST !== v) return;
   v.busy = false;
   v.step = "done";
   paintPStamp();
-  await reloadWorkspace();
+  if(WS_CASE && WS_CASE === v.caseNo) await reloadWorkspace();
   if(PST === v) paintPStamp();
 }
 
@@ -6188,7 +6272,6 @@ function pstHtml(){
   const w = pstWhen();
   const preview = w.ok ? vstLabel(w.ms, v.tz) : "";
   const two = n => `<option value="${n}"${v.ap === n ? " selected" : ""}>${n}</option>`;
-
   const caseName = c => c.kind === "claims"
     ? (c.carrier || c.client_name || "Claim assignment") : (c.client_name || "Private client");
   const q = String(v.q || "").trim().toLowerCase();
@@ -6196,50 +6279,10 @@ function pstHtml(){
     || String(c.case_no).toLowerCase().includes(q) || caseName(c).toLowerCase().includes(q));
 
   const body =
-    v.step === "case" ? `
-      <div class="vst-card">
-        <h4>Which case is the photograph on?</h4>
-        <p class="vst-note">A timestamped copy is filed beside the original, so it has
-          to belong to a case. Only cases you can already open are listed &mdash;
-          choosing one here gives you no more access than you had.</p>
-        <label class="vst-f" style="margin-top:10px"><span>Find a case</span>
-          <input id="pst_q" data-act-input="pstSearch" style="text-align:left"
-            placeholder="case number or name" value="${esc(v.q || "")}"></label>
-        ${v.caseErr ? `<p class="vst-note" style="color:#ffb3b3">${esc(v.caseErr)} &mdash; the case
-          list could not be read, so this is not &ldquo;you have no cases&rdquo;. Try again.</p>`
-          : !v.cases ? `<p class="vst-note">Loading your cases&hellip;</p>`
-          : pickable.length ? `<div style="margin-top:8px">${pickable.slice(0, 40).map(c =>
-              `<button class="vst-btn" style="text-align:left;margin-top:6px"
-                 data-act="pstPickCase" data-case="${esc(c.case_no)}">${esc(c.case_no)}
-                 &mdash; ${esc(caseName(c))}</button>`).join("")}</div>`
-          : `<p class="vst-note">${v.cases.length ? "No case matches that."
-              : "You have no cases yet."}</p>`}
-        <button class="vst-btn" data-act="pstClose">Cancel</button>
-      </div>`
-    : v.step === "pick" ? `
-      <div class="vst-card">
-        <h4>Which photograph?</h4>
-        <div class="vst-k"><span>Case</span><span>${esc(v.caseNo)}</span></div>
-        ${v.photoErr ? `<p class="vst-note" style="color:#ffb3b3">${esc(v.photoErr)} &mdash; the
-          case's photographs could not be read, so this is not &ldquo;there are none&rdquo;.
-          Try again.</p>`
-          : !v.photos ? `<p class="vst-note">Loading the case's photographs&hellip;</p>`
-          : v.photos.length ? `<div class="pst-grid">${v.photos.slice(0, 60).map(e =>
-              `<button class="pst-pick" data-act="pstPickPhoto" data-id="${e.id}">
-                 <img src="/portal-api/cases/${encodeURIComponent(v.caseNo)}/evidence/${e.id}/file"
-                      alt="" loading="lazy">
-                 <span>${esc(e.filename)}</span></button>`).join("")}</div>`
-          : `<p class="vst-note">This case has no photographs in it yet, so there is
-              nothing to timestamp. Add one from <b>Case media</b> &mdash; or in the field,
-              <b>Add picture</b> &mdash; and it will be here.</p>`}
-        <button class="vst-btn" data-act="pstBackToCase">Choose a different case</button>
-        <button class="vst-btn" data-act="pstClose">Cancel</button>
-      </div>`
-    : v.step === "loading" ? `
+    v.step === "loading" ? `
       <div class="vst-card">
         <h4>Opening the photograph</h4>
-        <p class="vst-note">Reading it back from the case so the copy is made from
-          the file the case actually holds.</p>
+        <p class="vst-note">Reading it here on this device. Nothing is uploaded.</p>
       </div>`
     : v.step === "reject" ? `
       <div class="vst-card">
@@ -6280,12 +6323,57 @@ function pstHtml(){
       </div>`
     : v.step === "preview" ? `
       <div class="vst-card">
-        <h4>Check the copy before it is filed</h4>
+        <h4>The timestamped copy</h4>
         <img class="pst-prev" src="${v.out ? v.out.url : ""}" alt="The timestamped copy">
         <div class="vst-res">${esc(v.out ? v.out.label : "")}
           <small>${v.source === "exif" ? "from the camera's own record"
             : "entered by the operator"}</small></div>
+        ${v.msg ? `<div class="vst-res" style="color:#a9d8ba;font-size:.9rem">${esc(v.msg)}</div>` : ""}
         ${v.err ? `<div class="vst-res" style="color:#ffb3b3">${esc(v.err)}</div>` : ""}
+        ${v.started && !v.savedHere ? `<p class="vst-note">The download has STARTED. A browser
+          cannot see where a file went, so this page will not claim it arrived &mdash; check
+          your downloads.</p>` : ""}
+        <button class="vst-btn go" data-act="pstSaveDevice">Save to this device</button>
+        <p class="vst-note">It was made here and it is yours already. Filing it to a case is
+          optional &mdash; that is the only step that uploads anything or leaves a record in
+          the portal.</p>
+        ${""/* Opened from a case, filing does not ask again — the door already
+               said which one. Opened from the top level it asks, and only here,
+               after the copy exists. */}
+        ${v.caseNo ? `
+          <button class="vst-btn" data-act="pstToCase">File the copy to ${esc(v.caseNo)}</button>
+          <button class="vst-btn" data-act="pstChooseCase">File it to a different case&hellip;</button>`
+        : `<button class="vst-btn" data-act="pstChooseCase">File it to a case&hellip;</button>`}
+        <button class="vst-btn" data-act="pstEdit">Correct the time</button>
+        <button class="vst-btn" data-act="pstClose">Close</button>
+      </div>`
+    : v.step === "case" ? `
+      <div class="vst-card">
+        <h4>File it to which case?</h4>
+        <p class="vst-note">Only cases you can already open are listed &mdash; choosing one
+          here gives you no more access than you had. The original goes in beside the copy,
+          untouched, so the pair is a pair.</p>
+        <label class="vst-f" style="margin-top:10px"><span>Find a case</span>
+          <input id="pst_q" data-act-input="pstSearch" style="text-align:left"
+            placeholder="case number or name" value="${esc(v.q || "")}"></label>
+        ${v.caseErr ? `<p class="vst-note" style="color:#ffb3b3">${esc(v.caseErr)} &mdash; the case
+          list could not be read, so this is not &ldquo;you have no cases&rdquo;. Try again, or
+          keep the copy on this device and file it later.</p>`
+          : !v.cases ? `<p class="vst-note">Loading your cases&hellip;</p>`
+          : pickable.length ? `<div style="margin-top:8px">${pickable.slice(0, 40).map(c =>
+              `<button class="vst-btn" style="text-align:left;margin-top:6px"
+                 data-act="pstPickCase" data-case="${esc(c.case_no)}">${esc(c.case_no)}
+                 &mdash; ${esc(caseName(c))}</button>`).join("")}</div>`
+          : `<p class="vst-note">${v.cases.length ? "No case matches that."
+              : "You have no cases to file this to yet."}</p>`}
+        <p class="vst-note" style="margin-top:12px">You do not have to file it at all. The copy
+          is on this device either way, and until a case is chosen the portal keeps no record
+          of it.</p>
+        <button class="vst-btn" data-act="pstBackToPreview">Not now &mdash; keep it here</button>
+      </div>`
+    : v.step === "confirm" ? `
+      <div class="vst-card">
+        <h4>Filing to ${esc(v.caseNo)}</h4>
         ${""/* THE PACKAGE RULE (owner, 2026-08-18). A package must never carry
                both halves of the pair by default, and the copy is the half that
                goes. What this decides is the classification the copy is BORN
@@ -6301,12 +6389,13 @@ function pstHtml(){
             : v.includeCopy
               ? "The copy is what the client receives. The original stays in the case, classified exactly as it is now, and is not put in the package alongside it."
               : "The copy is filed as internal only. Nothing is sent to the client until someone changes that."}</small></span></label>
-        <p class="vst-note">The original is not touched and not reclassified &mdash;
-          this is filed beside it as a second photograph.</p>
-        <button class="vst-btn go" data-act="pstSave"${v.busy ? " disabled" : ""}>${
-          v.busy ? "Filing&hellip;" : "File it with the case"}</button>
-        <button class="vst-btn" data-act="pstEdit">Correct the time</button>
-        <button class="vst-btn" data-act="pstClose">Cancel</button>
+        <p class="vst-note">${v.evId != null
+          ? "The original is already on this case and is not touched."
+          : "The original is filed first, exactly as it came off your device, and the copy beside it."}</p>
+        ${v.err ? `<div class="vst-res" style="color:#ffb3b3">${esc(v.err)}</div>` : ""}
+        <button class="vst-btn go" data-act="pstFile"${v.busy ? " disabled" : ""}>${
+          v.busy ? "Filing&hellip;" : "File it"}</button>
+        <button class="vst-btn" data-act="pstBackToPreview">Back</button>
       </div>`
     : v.step === "working" ? `
       <div class="vst-card">
@@ -6315,16 +6404,17 @@ function pstHtml(){
       </div>`
     : `
       <div class="vst-card">
-        <h4>Filed</h4>
+        <h4>Filed to ${esc(v.filed ? v.filed.caseNo : v.caseNo)}</h4>
         <div class="vst-k"><span>Timestamp</span><span>${esc(v.out ? v.out.label : "")}</span></div>
-        <p class="vst-note">The case now holds the original and the timestamped copy,
-          both marked so nobody has to work out which is which.</p>
+        <p class="vst-note">The case now holds the original and the timestamped copy, both
+          marked so nobody has to work out which is which.</p>
+        <button class="vst-btn" data-act="pstSaveDevice">Also save to this device</button>
         <button class="vst-btn" data-act="pstClose">Close</button>
       </div>`;
 
   return `<div class="vst" role="dialog" aria-modal="true" aria-label="Timestamp photo">
     <div class="vst-bar">
-      <b>Timestamp photo${v.caseNo ? " &middot; " + esc(v.caseNo) : ""}</b>
+      <b>Timestamp photo${v.caseNo && v.step !== "case" ? " &middot; " + esc(v.caseNo) : ""}</b>
       ${v.step === "working" ? "" : `<button class="vst-x" data-act="pstClose">Close</button>`}
     </div>
     <div class="vst-body">${body}</div>
@@ -12243,25 +12333,26 @@ document.addEventListener("click", ev => {
      which is also what turns the provenance from the camera's to the
      operator's — so no repaint may happen before it. */
   else if(act === "pstOpen"){ pstOpen(el.dataset.id, WS_CASE); }
-  /* An EMPTY data-case is a question, not a default — the same rule the video
-     door follows, so the utility cannot adopt whichever case is open behind it. */
+  /* The door opens the FILE PICKER, not a screen — the owner's rule after the
+     device test is that the utility does its one job before it asks about
+     filing. A data-case here is only remembered for later; nothing is uploaded
+     until the copy exists and a case is deliberately chosen. */
   else if(act === "pstLaunch"){
     const attr = el.getAttribute("data-case");
     pstLaunch(attr === null ? (WS_CASE || "") : attr);
   }
-  else if(act === "pstPickCase"){
-    if(PST){ PST.caseNo = el.dataset.case; PST.step = "pick"; PST.photos = null; paintPStamp();
-             pstLoadPhotos(PST.caseNo); }
-  }
-  else if(act === "pstPickPhoto"){
-    const row = ((PST && PST.photos) || []).find(e => e.id === Number(el.dataset.id));
-    if(PST) pstOpen(el.dataset.id, PST.caseNo, row);
-  }
-  else if(act === "pstBackToCase"){
-    if(PST){ PST.step = "case"; PST.photos = null; PST.photoErr = ""; paintPStamp(); pstLoadCases(); }
-  }
   else if(act === "pstBurn"){ pstBurn(); }
-  else if(act === "pstSave"){ pstSave(); }
+  else if(act === "pstSaveDevice"){ pstSaveDevice(); }
+  /* Already on a case: the copy has somewhere to go without asking. */
+  else if(act === "pstToCase"){ if(PST){ PST.step = "confirm"; PST.err = ""; paintPStamp(); } }
+  else if(act === "pstChooseCase"){
+    if(PST){ PST.step = "case"; PST.err = ""; paintPStamp(); pstLoadCases(); }
+  }
+  else if(act === "pstPickCase"){
+    if(PST){ PST.caseNo = el.dataset.case; PST.step = "confirm"; paintPStamp(); }
+  }
+  else if(act === "pstBackToPreview"){ if(PST){ PST.step = "preview"; PST.err = ""; paintPStamp(); } }
+  else if(act === "pstFile"){ pstFileToCase(); }
   else if(act === "pstEdit"){ if(PST){ PST.step = "when"; PST.err = ""; paintPStamp(); } }
   else if(act === "pstClose"){ pstClose(); }
   else if(act === "retOpen"){ retainerReset(); RET_FORM = true; paintCase(); }

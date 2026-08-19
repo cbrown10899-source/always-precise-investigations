@@ -269,6 +269,28 @@ const text = (page, sel) => page.locator(sel).first().innerText();
 const has = (haystack, needle) => haystack.toLowerCase().includes(needle.toLowerCase());
 // The list is newest-first, so never address a row by position.
 const rowFor = (page, caseNo) => page.locator('tbody tr', { hasText: caseNo }).first();
+/* A FIXTURE ENTRY MUST BE STAMPED EARLIER IN THE DAY THAN ANYTHING A LATER
+   SECTION FILES WITH THE REAL CLOCK. The timeline orders by at_time, and later
+   sections stamp with `stampNow()`, so a fixture typed at a fixed hour sits on
+   top of them whenever the suite happens to run before that hour.
+
+   That is exactly what bit: fixtures at 09:41 and 10:05 sorted below a real
+   entry on every run until one started at 01:00, and then nine voice assertions
+   read the wrong row and the field-home edit hit "that entry belongs to another
+   investigator" — because it genuinely did. Measured at the failure:
+
+     id  6  10:05  Trever Brown   "Subject returned to residence and entered…"
+     id 11  01:00  Dana Field     "No change observed at the residence."  (voice)
+
+   Nothing about the product was wrong: 10:05 IS later in the day than 01:00.
+   Clamped at 00:00 so a run a minute after midnight cannot roll into yesterday
+   and land back on top; a tie then falls to `id DESC`, which is the real
+   creation order. */
+const earlierToday = (mins) => {
+  const d = new Date();
+  const m = Math.max(0, d.getHours() * 60 + d.getMinutes() - mins);
+  return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+};
 // The case dialog is a workspace with tabs; most detail is no longer on the
 // first panel, so a test that wants a panel has to open it. Panels live
 // inside four sections now (UIBUILD P6) — when the wanted sub-tab is not in
@@ -1453,7 +1475,7 @@ section('The Custom tab carries every composer');
   await page.locator('#a_desc').fill('Subject departed residence.');
   await page.locator('#a_va').check();
   await page.locator('#a_sd').check();
-  await page.locator('#a_time').fill('09:41');
+  await page.locator('#a_time').fill(earlierToday(4));
   await page.locator('.btn', { hasText: 'Add to the log' }).click();
   await page.waitForTimeout(500);
   const flagged = await text(page, '#dlgBody');
@@ -2098,7 +2120,7 @@ section('Quick lines: search, favorites, one tap');
      (await page.locator('#qa_desc').inputValue()) === 'Subject returned to residence.');
   ok('the time is already on the clock', (await page.locator('#qa_time').inputValue()).length === 5);
   ok('the rare fields wait behind one fold', await page.locator('.amfold summary').count() === 1);
-  await page.locator('#qa_time').fill('10:05');
+  await page.locator('#qa_time').fill(earlierToday(3));
   await page.locator('.btn', { hasText: 'Add to log' }).click();
   await page.waitForTimeout(500);
   ok('the quick entry is on the timeline',
@@ -8664,13 +8686,24 @@ section('Timestamp Photo: the stamp is in the pixels, and the original is not to
   ok('the preview reads the date, the time and the zone that date is in',
      has(when, '08/17/2026 05:14:32 PM EDT'), when);
 
+  const evidenceBefore = await page.evaluate(() => (WS.evidence || []).length);
   await page.locator('[data-act="pstBurn"]').click();
   await page.waitForTimeout(1200);
   ok('the copy is offered for checking before it is filed',
-     has(await text(page, '#pstamp'), 'Check the copy'));
+     has(await text(page, '#pstamp'), 'The timestamped copy'));
   ok('and the copy is shown', await page.locator('.pst-prev').count() === 1);
 
-  await page.locator('[data-act="pstSave"]').click();
+  /* NOTHING HAS BEEN UPLOADED YET, and that is the owner's rule after the
+     device test: the copy is made here and filing is a separate, optional act. */
+  ok('the copy exists without anything having been uploaded',
+     await page.evaluate((n) => (WS.evidence || []).length === n, evidenceBefore));
+  ok('and filing is offered rather than assumed',
+     await page.locator('[data-act="pstToCase"]').count() === 1);
+  ok('with keeping it on the device offered first',
+     await page.locator('[data-act="pstSaveDevice"]').count() === 1);
+  await page.locator('[data-act="pstToCase"]').click();
+  await page.waitForTimeout(400);
+  await page.locator('[data-act="pstFile"]').click();
   await page.waitForTimeout(2000);
   ok('it is filed', has(await text(page, '#pstamp'), 'Filed'), await text(page, '#pstamp'));
   await page.locator('#pstamp [data-act="pstClose"]').first().click();
@@ -8825,7 +8858,9 @@ section('Timestamp Photo: nothing is guessed, and a correction is the operator�
   ok('and the screen says the operator is where it came from',
      has(await text(page, '#pstamp'), 'entered by the operator'));
 
-  await page.locator('[data-act="pstSave"]').click();
+  await page.locator('[data-act="pstToCase"]').click();
+  await page.waitForTimeout(400);
+  await page.locator('[data-act="pstFile"]').click();
   await page.waitForTimeout(2000);
   await page.locator('#pstamp [data-act="pstClose"]').first().click();
   await page.waitForTimeout(700);
@@ -8849,7 +8884,9 @@ section('Timestamp Photo: nothing is guessed, and a correction is the operator�
   await page.locator('#pst_ap').selectOption('PM');
   await page.locator('[data-act="pstBurn"]').click();
   await page.waitForTimeout(1200);
-  await page.locator('[data-act="pstSave"]').click();
+  await page.locator('[data-act="pstToCase"]').click();
+  await page.waitForTimeout(400);
+  await page.locator('[data-act="pstFile"]').click();
   await page.waitForTimeout(2000);
   await page.locator('#pstamp [data-act="pstClose"]').first().click();
   await page.waitForTimeout(700);
@@ -8926,10 +8963,14 @@ section('Timestamp Photo: the copy is what the client gets, and the original is 
     await page.locator('#pst_ap').selectOption('PM');
     await page.locator('[data-act="pstBurn"]').click();
     await page.waitForTimeout(1200);
+    /* The package question belongs to FILING, so it is on the step that files
+       — not on the copy, which is made whether or not it is ever filed. */
+    await page.locator('[data-act="pstToCase"]').click();
+    await page.waitForTimeout(400);
     const box = page.locator('#pst_inc');
     const state = { present: await box.count() === 1, checked: await box.isChecked() };
     if (include === false) { await box.uncheck(); await page.waitForTimeout(250); }
-    await page.locator('[data-act="pstSave"]').click();
+    await page.locator('[data-act="pstFile"]').click();
     await page.waitForTimeout(2000);
     await page.locator('#pstamp [data-act="pstClose"]').first().click();
     await page.waitForTimeout(700);
@@ -9014,12 +9055,12 @@ section('Timestamp Photo: the copy is what the client gets, and the original is 
    found by someone looking for it beside Timestamp Video. These assertions are
    about REACHABILITY, and they are written so the same class of defect cannot
    come back for either tool. */
-section('Timestamp Photo has a top-level door, beside Timestamp Video');
+section('Timestamp Photo asks for a picture first, and for a case only to file it');
 {
   await post('/ingest', {
     case_no: 'API-20260812-4021', service: 'Surveillance',
-    client_name: 'No Pictures Yet', client_phone: '4345550143',
-    subject_name: 'Sam Watched', objective: 'A case with nothing uploaded.',
+    client_name: 'Filed Later', client_phone: '4345550143',
+    subject_name: 'Sam Watched', objective: 'A case chosen after the fact.',
   }, { 'X-Ingest-Key': 'e2e-ingest-key' });
 
   const page = await newPage();
@@ -9027,11 +9068,10 @@ section('Timestamp Photo has a top-level door, beside Timestamp Video');
 
   /* BOTH UTILITIES, IN BOTH PLACES. Asserted as a pair rather than by name
      alone: the rule is that these two are siblings, and a door that exists for
-     one and not the other is exactly what happened. */
+     one and not the other is exactly what went wrong the first time. */
   const doors = await page.evaluate(() => ({
     tools: [...document.querySelectorAll('.qtool')].map(b => b.dataset.act),
     nav: [...document.querySelectorAll('.navfoot button')].map(b => b.dataset.act),
-    toolText: [...document.querySelectorAll('.qtool')].map(b => b.textContent.trim()),
   }));
   ok('the dashboard quick tools offer the video utility', doors.tools.includes('vstOpen'),
      JSON.stringify(doors.tools));
@@ -9039,61 +9079,116 @@ section('Timestamp Photo has a top-level door, beside Timestamp Video');
      JSON.stringify(doors.tools));
   ok('the navigation foot carries both as well',
      doors.nav.includes('vstOpen') && doors.nav.includes('pstLaunch'), JSON.stringify(doors.nav));
-  ok('and the photo one says what it is', doors.toolText.some(t => /timestamp photo/i.test(t)),
-     JSON.stringify(doors.toolText));
 
-  /* IT ASKS, IT DOES NOT ADOPT. The nav copy carries an empty data-case on
-     purpose so the utility cannot pick up whichever case is open behind it. */
-  ok('the top-level door carries no case', await page.evaluate(() =>
-     document.querySelector('.qtool[data-act="pstLaunch"]').getAttribute('data-case') === ''));
-  await page.locator('.qtool[data-act="pstLaunch"]').click();
-  await page.waitForTimeout(800);
-  ok('opening it asks which case', has(await text(page, '#pstamp'), 'Which case is the photograph on'),
+  /* THE DEFECT THE OWNER FOUND ON A DEVICE: the door led with a required case
+     picker, so a utility asked about filing before it would do its one job.
+     It now opens the PICTURE PICKER, exactly as Timestamp Video does. */
+  const b64 = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 640; c.height = 480;
+    const cx = c.getContext('2d');
+    cx.fillStyle = '#274a6d';
+    cx.fillRect(0, 0, 640, 480);
+    return c.toDataURL('image/jpeg', 0.92).split(',')[1];
+  });
+  const local = Buffer.from(b64, 'base64');
+
+  const filesAtStart = DBX.files.size;
+  const evAtStart = db.prepare('SELECT COUNT(*) AS n FROM case_evidence').get().n;
+  const stampsAtStart = db.prepare('SELECT COUNT(*) AS n FROM photo_stamp').get().n;
+
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.locator('.qtool[data-act="pstLaunch"]').click(),
+  ]);
+  /* Reaching this line at all IS the assertion: `waitForEvent('filechooser')`
+     resolved, so the door opened a picture picker. Before the owner's device
+     test it opened a required case picker and no chooser would ever have
+     fired. */
+  ok('the door opens a picture picker rather than asking about filing',
+     chooser !== null && !chooser.isMultiple());
+  await chooser.setFiles({ name: 'from-phone.jpg', mimeType: 'image/jpeg', buffer: local });
+  await page.waitForTimeout(1200);
+
+  const first = await text(page, '#pstamp');
+  ok('it goes straight to the question it exists to ask',
+     has(first, 'When was it taken'), first.slice(0, 200));
+  ok('and no case has been asked for at all', !has(first, 'File it to which case'),
+     first.slice(0, 300));
+
+  /* A photograph off a device carries no EXIF from a canvas, so the form is
+     empty and says so — the same honesty as the in-case path. */
+  await page.locator('#pst_mo').fill('08');
+  await page.locator('#pst_da').fill('19');
+  await page.locator('#pst_yr').fill('2026');
+  await page.locator('#pst_hr').fill('09');
+  await page.locator('#pst_mi').fill('45');
+  await page.locator('#pst_se').fill('10');
+  await page.locator('#pst_ap').selectOption('AM');
+  await page.locator('[data-act="pstBurn"]').click();
+  await page.waitForTimeout(1400);
+
+  const prev = await text(page, '#pstamp');
+  ok('the copy is made here on this machine',
+     has(prev, 'The timestamped copy') && await page.locator('.pst-prev').count() === 1);
+  ok('and it is stamped with what was typed',
+     has(prev, '08/19/2026 09:45:10 AM EDT'), prev);
+  ok('keeping it on this device is the first thing offered',
+     await page.locator('[data-act="pstSaveDevice"]').count() === 1);
+  ok('and the screen says filing is optional', has(prev, 'Filing it to a case is'),
+     prev.slice(0, 600));
+
+  /* NOTHING HAS LEFT THE MACHINE. This is the whole bargain, and it is the
+     same one Timestamp Video makes — measured against the counts taken before
+     the picture was even chosen. */
+  ok('the picture was read and burned with nothing uploaded',
+     DBX.files.size === filesAtStart
+     && db.prepare('SELECT COUNT(*) AS n FROM case_evidence').get().n === evAtStart,
+     `${DBX.files.size} vs ${filesAtStart}`);
+  ok('and no record of it exists in the portal',
+     db.prepare('SELECT COUNT(*) AS n FROM photo_stamp').get().n === stampsAtStart);
+
+  await page.locator('[data-act="pstChooseCase"]').click();
+  await page.waitForTimeout(900);
+  ok('choosing to file is what asks for a case',
+     has(await text(page, '#pstamp'), 'File it to which case'));
+  ok('and it says the copy is yours either way',
+     has(await text(page, '#pstamp'), 'You do not have to file it at all'));
+  ok('with a way back that keeps it here',
+     await page.locator('[data-act="pstBackToPreview"]').count() === 1);
+
+  ok('still nothing uploaded while the case is being chosen',
+     db.prepare('SELECT COUNT(*) AS n FROM case_evidence').get().n === evAtStart
+     && DBX.files.size === filesAtStart);
+
+  await page.locator('[data-act="pstPickCase"][data-case="API-20260812-4021"]').click();
+  await page.waitForTimeout(700);
+  ok('the package question belongs to filing, so it is asked here',
+     await page.locator('#pst_inc').count() === 1);
+  ok('and it is on by default', await page.locator('#pst_inc').isChecked());
+  await page.locator('[data-act="pstFile"]').click();
+  await page.waitForTimeout(2500);
+  ok('and then it is filed', has(await text(page, '#pstamp'), 'Filed to API-20260812-4021'),
      (await text(page, '#pstamp')).slice(0, 200));
 
-  /* A CASE WITH NOTHING IN IT SAYS SO, and says where to put one — an empty
-     grid with no words is the same dead end in a different costume. */
-  await page.locator('[data-act="pstPickCase"][data-case="API-20260812-4021"]').click();
-  await page.waitForTimeout(900);
-  const empty = await text(page, '#pstamp');
-  ok('a case with no photographs says so plainly',
-     has(empty, 'no photographs in it yet'), empty.slice(0, 300));
-  ok('and points at where one comes from', has(empty, 'Case media') && has(empty, 'Add picture'),
-     empty.slice(0, 400));
-  ok('offering no photograph to pick', await page.locator('.pst-pick').count() === 0);
-
-  /* THE REAL PATH. 4020 carries an original and its timestamped copy from the
-     package-rule section above. */
-  await page.locator('[data-act="pstBackToCase"]').click();
-  await page.waitForTimeout(700);
-  await page.locator('[data-act="pstPickCase"][data-case="API-20260812-4020"]').click();
-  await page.waitForTimeout(1100);
-  ok('a case with photographs lists them', await page.locator('.pst-pick').count() >= 1,
-     String(await page.locator('.pst-pick').count()));
-
-  /* A COPY IS NOT OFFERED — the Worker refuses a copy of a copy by name, and
-     the picker must not lead anyone to that refusal. */
-  const offered = await page.evaluate(() => ({
-    ids: [...document.querySelectorAll('.pst-pick')].map(b => Number(b.dataset.id)),
-    copies: (PST.copyIds || []),
-  }));
-  ok('and no timestamped copy is among them', offered.copies.length > 0
-     && !offered.ids.some(i => offered.copies.includes(i)), JSON.stringify(offered));
-
-  await page.locator('.pst-pick').first().click();
-  await page.waitForTimeout(1400);
-  ok('choosing one opens the timestamp screen',
-     has(await text(page, '#pstamp'), 'When was it taken'), (await text(page, '#pstamp')).slice(0, 200));
-  await page.locator('#pstamp [data-act="pstClose"]').first().click();
-  await page.waitForTimeout(400);
-
-  /* THE TAP TARGET, because this one is used one-handed in a car. */
-  const size = await page.evaluate(() => {
-    const b = document.querySelector('.qtool[data-act="pstLaunch"]');
-    const r = b.getBoundingClientRect();
-    return { h: Math.round(r.height), w: Math.round(r.width) };
-  });
-  ok('the door is a real tap target', size.h >= 40 && size.w >= 100, JSON.stringify(size));
+  /* BOTH HALVES REACHED THE CASE. The owner's rule is that the original is
+     preserved untouched as case evidence, so a picture that was never in the
+     case has to be filed as well as stamped. */
+  const rows = db.prepare(
+    `SELECT filename FROM case_evidence WHERE case_no = 'API-20260812-4021'
+      ORDER BY id`).all().map(r => r.filename);
+  ok('the original went in beside the copy', rows.includes('from-phone.jpg'), JSON.stringify(rows));
+  ok('and so did the timestamped copy',
+     rows.includes('from-phone-timestamped.jpg'), JSON.stringify(rows));
+  ok('exactly two, so the copy did not arrive on its own', rows.length === 2, JSON.stringify(rows));
+  ok('and two files reached the store, not one',
+     DBX.files.size === filesAtStart + 2, `${DBX.files.size} vs ${filesAtStart}`);
+  const pair = db.prepare(
+    `SELECT COUNT(*) AS n FROM photo_stamp WHERE case_no = 'API-20260812-4021'`).get().n;
+  ok('and the pair is recorded exactly once',
+     pair === 1
+     && db.prepare('SELECT COUNT(*) AS n FROM photo_stamp').get().n === stampsAtStart + 1,
+     String(pair));
   await page.close();
 }
 
