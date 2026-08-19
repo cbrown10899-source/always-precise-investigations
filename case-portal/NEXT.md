@@ -19,8 +19,8 @@ item is finished.
 | --- | --- | --- |
 | 1 | Finish current Active Surveillance mobile and voice polish | **DONE — DEPLOYED** at `c333d3f` (#182). §13 photo/video commands, §8 retry/offline and server-side duplicate protection, §1/§16.1 compact status. Two device-only checks OPEN, below. |
 | 2 | Build Timestamp Photo | ✅ **DONE — LIVE VERIFIED** by the owner on 2026-08-19 at `b0304cb` (#188), portrait layout and Save to Dropbox included. Shipped over #183–#188. |
-| 3 | Visible Dropbox portal UI for Admin | **IN FLIGHT** on `dropbox-ui`. Added by the owner 2026-08-18 |
-| 4 | Admin report workflow and mobile report fix | not started — **queued, do not begin** |
+| 3 | Visible Dropbox portal UI for Admin | ✅ **DONE — DEPLOYED** at `5baabd3` (#189). LIVE VERIFY **OPEN** for the owner |
+| 4 | Admin report workflow and mobile report fix | **NEXT** — not started. Resume instructions below |
 | 5 | Full portal mobile / aesthetic UI cleanup | not started — **queued, do not begin**. Carries a specific brief, below |
 | 6 | **Legal / Law Firm intake** (third intake type) | not started — **queued, do not begin**. Added by the owner 2026-08-19; **reordered by them to sit after the UI work**. Full brief below |
 | 7 | Remaining Portal Ops productivity features | not started |
@@ -125,6 +125,52 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
 
+## ▶️ RESUME HERE — item 4, Admin report workflow and mobile report fix
+
+**Nothing is in flight.** Master is clean, the Dropbox unit is merged and
+deployed, and no branch is half-done. A new session starts a new branch.
+
+| | |
+| --- | --- |
+| Master | **`5baabd3`** — deployed, `deploy.yml` run `32218652523` success |
+| Save point | **`save/2026-08-19-0514-5baabd3`** |
+| Branch to cut | anything; `dropbox-ui` is merged and can be deleted |
+| Queue position | item **4 of 7** |
+
+```bash
+git fetch origin && git checkout master && git pull origin master   # expect 5baabd3
+git checkout -b report-workflow
+node case-portal/test-worker.mjs    # baseline 1879 / 0
+node portal/test-portal.mjs         # baseline 1808 / 0   (~20 min)
+node .github/test-deploy.mjs        # baseline 68 / 0
+```
+
+**Then the serial chain, per unit** (owner: *"Finish, test, merge and deploy
+each unit before starting the next"*): CODED → focused tests → full suites once
+→ TESTED → push → PR → MERGED → pull master → deploy → DEPLOYED → live verify →
+**save point** → next unit.
+
+**Two save points per unit** (owner, 2026-08-19): one when the unit deploys —
+`save-point.yml` fires automatically on a human push to master, so a merge
+creates it without a dispatch — and one **manual dispatch immediately before
+the next unit's first commit**. A dispatch is idempotent, so a duplicate costs
+nothing and a missing one costs a resume.
+
+**Item 4 has no written brief from the owner yet** beyond its queue line,
+*"Admin report workflow and mobile report fix"*. Establish what is genuinely
+broken before designing anything — the same first job that turned out to be the
+whole of item 3. Item 5's hamburger brief is written out below and is a
+different unit; do not merge the two.
+
+### Running the portal suite in this environment
+
+It was killed three times in the session that built item 3. What matters:
+**results are only written at the end**, by the normal path or the crash
+handler, so a SIGKILL loses the entire run. Use the harness-managed background
+task, not `nohup` — `nohup` did not survive the shell session and produced a
+log containing nothing at all. Budget ~20 minutes and do not interleave a
+second Playwright run; they bind the same port.
+
 ## 💾 SAVE POINT — 2026-08-19, branch `dropbox-ui`
 
 Taken on the owner's instruction, **mid-unit and without interrupting it**:
@@ -172,6 +218,30 @@ node .github/test-deploy.mjs                    # expect 68 / 0
 
 Then the ordinary chain: PR → merge if green → pull master → deploy → live
 verify → **save point** → next unit (item 4, Admin report/mobile workflow fix).
+
+## 🚦 DEPLOYMENT — 2026-08-19, master `5baabd3` (#189) — visible Dropbox Admin UI
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` | `5baabd3` | `5baabd3` | **DEPLOYED** — `deploy.yml` 32218652523 success |
+| `api-case-portal` | `5baabd3` | unchanged | Worker changed, `deploy-portal.yml` runs on `case-portal/worker.js` |
+| Save point | — | — | `save/2026-08-19-0514-5baabd3` |
+| Schema | — | — | **none.** `app_config` already existed; **no portal-setup dispatch owed** |
+
+**LIVE VERIFY is OPEN and is the owner's**, on their standing instruction. This
+container has no outbound route to the site — `curl` to
+`/.well-known/build.txt` returned HTTP 000 — so "deployed" here means the
+workflow succeeded, not that the page was seen. What needs a human:
+
+1. **Settings → Dropbox card** — does it name the connected account, and does
+   **Open Dropbox** land in the right place?
+2. **Record the real App Folder name** in that card. No test can know it, and
+   until it is entered there are deliberately **no per-case links** — Open
+   Dropbox goes to `/home/Apps` instead.
+3. **A case → Case media → In Dropbox** — do Photos / Reports / Video open the
+   right three folders?
+
+Tests at merge: portal **1808 / 0**, worker **1879 / 0**, deploy guard **68 / 0**.
 
 ## 🚦 DEPLOYMENT — 2026-08-19, master `b0304cb` (#188) — portrait geometry, Save to Dropbox
 
