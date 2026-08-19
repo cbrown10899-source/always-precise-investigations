@@ -12341,6 +12341,7 @@ document.addEventListener("click", ev => {
     const attr = el.getAttribute("data-case");
     pstLaunch(attr === null ? (WS_CASE || "") : attr);
   }
+  else if(act === "pstBurn"){ pstBurn(); }
   else if(act === "pstSaveDevice"){ pstSaveDevice(); }
   /* Already on a case: the copy has somewhere to go without asking. */
   else if(act === "pstToCase"){ if(PST){ PST.step = "confirm"; PST.err = ""; paintPStamp(); } }
