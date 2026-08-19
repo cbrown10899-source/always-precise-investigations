@@ -9055,6 +9055,67 @@ section('Timestamp Photo: the copy is what the client gets, and the original is 
    found by someone looking for it beside Timestamp Video. These assertions are
    about REACHABILITY, and they are written so the same class of defect cannot
    come back for either tool. */
+/* THE DECODE DEFECT the owner's iPhone hit on IMG_3576.jpeg.
+
+   `pstFromBytes` rebuilt the picture as `new Blob([buf], {type: file.type ||
+   "image/jpeg"})` — rewrapping the operator's file under a type this page chose.
+   A File is already a Blob and already knows what it is, and relabelling it is a
+   way to make a good photograph undecodable, which is the very failure the
+   function exists to report.
+
+   HONEST ABOUT WHAT THIS PROVES. Chromium sniffs image bytes and decodes a
+   mislabelled blob anyway — measured: the OLD code also reached the "when" step
+   with a JPEG declared `image/heic`. So the behavioural check below guards the
+   OUTCOME and is not evidence that this was the iPhone's cause; Safari's
+   strictness cannot be reproduced here. The assertion with teeth is the
+   structural one: the local path must hand over the File, never a rebuild. */
+section('Timestamp Photo decodes the operator’s own file, not a relabelled copy');
+{
+  const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+  const begin = src.slice(src.indexOf('async function pstBegin'),
+                          src.indexOf('async function pstOpen'));
+  ok('the local path exists to be checked', begin.length > 0);
+  ok('it hands the File itself to the decoder',
+     /pstFromBytes\(file, buf, token\)/.test(begin), begin.slice(-200));
+  ok('and never rebuilds the picture as a new Blob',
+     !/new Blob\(/.test(begin), begin.slice(-200));
+
+  /* The in-case path has no File — only bytes off the evidence route — so it
+     MUST build a Blob, and from the content type the case recorded rather than
+     from a default. That is a fact about the stored file, not a guess. */
+  const open = src.slice(src.indexOf('async function pstOpen'),
+                         src.indexOf('function pstClose'));
+  ok('the in-case path builds its blob from the recorded content type',
+     /new Blob\(\[buf\], \{type: \(row && row\.content_type\)/.test(open), open.slice(-260));
+
+  /* The outcome, at any rate: a file whose declared type disagrees with its
+     bytes still reaches the question this tool exists to ask. */
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const b64 = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 320; c.height = 240;
+    const cx = c.getContext('2d');
+    cx.fillStyle = '#2d5f8a';
+    cx.fillRect(0, 0, 320, 240);
+    return c.toDataURL('image/jpeg', 0.9).split(',')[1];
+  });
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.locator('.qtool[data-act="pstLaunch"]').click(),
+  ]);
+  await chooser.setFiles({ name: 'IMG_3576.jpeg', mimeType: 'image/heic',
+    buffer: Buffer.from(b64, 'base64') });
+  await page.waitForTimeout(1500);
+  ok('a picture whose declared type disagrees with its bytes still opens',
+     has(await text(page, '#pstamp'), 'When was it taken'),
+     (await text(page, '#pstamp')).slice(0, 200));
+  ok('at its own size, so the decode was real',
+     JSON.stringify(await page.evaluate(() => ({ w: PST.w, h: PST.h }))) === '{"w":320,"h":240}',
+     JSON.stringify(await page.evaluate(() => ({ w: PST.w, h: PST.h }))));
+  await page.close();
+}
+
 section('Timestamp Photo asks for a picture first, and for a case only to file it');
 {
   await post('/ingest', {

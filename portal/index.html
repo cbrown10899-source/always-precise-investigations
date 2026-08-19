@@ -5967,10 +5967,20 @@ function pstFresh(caseNo, extra){
 /* Everything from bytes to the "when" question, shared by both entrances: the
    decode is PROVEN before anything is offered, and the instant is seeded from
    the file's own EXIF or from nothing at all. */
-async function pstFromBytes(buf, type, token){
+async function pstFromBytes(source, buf, token){
   const v = PST;
-  const blob = new Blob([buf], {type: type || "image/jpeg"});
-  const url = URL.createObjectURL(blob);
+  /* DECODE THE FILE ITSELF. This used to rebuild the picture as
+     `new Blob([buf], {type: file.type || "image/jpeg"})` — rewrapping the bytes
+     under a type this page chose. A File is already a Blob and already knows
+     what it is; relabelling it is a way to make a perfectly good photograph
+     undecodable, which is precisely the failure this function exists to report.
+     `VIDEO-TIMESTAMP.md` wrote the same lesson down for clips: the browser
+     reads the bytes, and the declared type is not evidence.
+
+     The in-case path has no File — only bytes that came back down the evidence
+     route — so its caller builds a Blob from the content type the case itself
+     recorded, which is a fact rather than a guess. */
+  const url = URL.createObjectURL(source);
   const img = new Image();
   const ok = await new Promise(resolve => {
     img.onload = () => resolve(true);
@@ -6024,7 +6034,7 @@ async function pstBegin(file, caseNo){
     return;
   }
   if(!PST || PST.token !== token) return;
-  return pstFromBytes(buf, file.type, token);
+  return pstFromBytes(file, buf, token);
 }
 let PST_SEQ = 0;
 
@@ -6056,7 +6066,8 @@ async function pstOpen(evId, caseNo, given){
     return;
   }
   if(!PST || PST.token !== token) return;
-  return pstFromBytes(buf, (row && row.content_type) || "image/jpeg", token);
+  return pstFromBytes(new Blob([buf], {type: (row && row.content_type) || "image/jpeg"}),
+                      buf, token);
 }
 
 function pstClose(){
