@@ -5223,6 +5223,12 @@ section('Voice mode: explicit, looping, and never filing what it is unsure of');
   await say('no change at residence');
   ok('the command files a real activity entry', (await entries()) === before + 1);
   const filed = await page.evaluate(() => (WS.activity[0] || {}));
+  // TEMPORARY DIAGNOSTIC — remove once the ordering question is answered.
+  console.log('DIAG top-of-timeline:', JSON.stringify(await page.evaluate(() =>
+    (WS.activity || []).slice(0, 5).map(a => ({ id: a.id, d: a.at_date, t: a.at_time,
+      who: a.investigator, src: a.source, desc: String(a.description || '').slice(0, 44) })))));
+  console.log('DIAG now:', JSON.stringify(await page.evaluate(() =>
+    ({ iso: new Date().toISOString(), local: new Date().toString().slice(0, 33) }))));
   ok('with the standardized wording, not the transcript',
      filed.description === 'No change observed at the residence.', filed.description);
   ok('marked as captured by voice, with the command that made it',
