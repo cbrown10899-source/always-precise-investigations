@@ -9103,6 +9103,73 @@ section('Timestamp Photo: the copy is what the client gets, and the original is 
    the harness served the page with NO policy at all. It now serves the real one,
    so these assertions are evidence about the deployed page rather than about a
    page that only exists here. */
+/* THE OVERLAY'S LAYOUT, measured on real phone geometry.
+
+   `vstDraw` sized the face from the HEIGHT while the stamp runs along the
+   WIDTH. On landscape that is harmless; on portrait it produced a giant face
+   and a stamp that spanned the whole picture. Measured with the old code, left
+   gap in pixels: 3024x4032 -> 11, 1080x1920 -> 7, 900x1600 -> 6, 750x1334 -> 2.
+   None of those quite clipped in this browser, but none had a safe margin
+   either, and a longer zone abbreviation or a narrower picture would run off.
+
+   `vstDraw` is the ONE writer for photographs and video alike, so this fixes a
+   portrait clip for both. */
+section('The burned stamp fits inside the picture, portrait included');
+{
+  const page = await newPage();
+  const boxes = await page.evaluate(() => {
+    const label = '08/19/2026 05:14:32 PM EDT';
+    const shot = (W, H) => {
+      const c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      const cx = c.getContext('2d');
+      cx.fillStyle = '#3f6ea8';
+      cx.fillRect(0, 0, W, H);
+      vstDraw(cx, W, H, label);
+      const d = cx.getImageData(0, 0, W, H).data;
+      let minX = W, maxX = -1, minY = H, maxY = -1;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4;
+        if (d[i] > 200 && d[i + 1] > 200 && d[i + 2] > 200) {
+          if (x < minX) minX = x; if (x > maxX) maxX = x;
+          if (y < minY) minY = y; if (y > maxY) maxY = y;
+        }
+      }
+      return { W, H, pad: Math.round(Math.min(W, H) * 0.035),
+               left: minX, right: W - 1 - maxX, top: minY, bottom: H - 1 - maxY,
+               textH: maxY - minY + 1, found: maxX >= 0 };
+    };
+    return {
+      'portrait 3024x4032': shot(3024, 4032),
+      'portrait 1080x1920': shot(1080, 1920),
+      'portrait 750x1334': shot(750, 1334),
+      'landscape 4032x3024': shot(4032, 3024),
+      'square 1000x1000': shot(1000, 1000),
+    };
+  });
+
+  for (const [name, b] of Object.entries(boxes)) {
+    ok(`${name}: the stamp is drawn at all`, b.found, JSON.stringify(b));
+    /* NOTHING CLIPS. The left edge is where a too-large face runs off, so this
+       is the assertion the portrait defect would have failed. */
+    ok(`${name}: nothing runs off the left`, b.left > 0, JSON.stringify(b));
+    /* AND IT KEEPS ITS SAFE MARGIN — the whole string sits inside the padding
+       rather than merely inside the canvas. */
+    ok(`${name}: the whole stamp is inside the safe margin`, b.left >= b.pad,
+       JSON.stringify(b));
+    ok(`${name}: bottom-right, with a margin on the right`, b.right > 0 && b.right >= b.pad * 0.7,
+       JSON.stringify(b));
+    ok(`${name}: and one along the bottom`, b.bottom > 0 && b.bottom >= b.pad * 0.4,
+       JSON.stringify(b));
+    ok(`${name}: it sits in the bottom half, not floating`, b.top > b.H / 2, JSON.stringify(b));
+    /* SMALLER BY DEFAULT. The old rule was H * 0.05; a face taken from the short
+       side is what stops a portrait picture getting an enormous one. */
+    ok(`${name}: the face is smaller than the old height-based rule`,
+       b.textH < b.H * 0.05, JSON.stringify(b));
+  }
+  await page.close();
+}
+
 section('Timestamp Photo under the policy the site actually serves');
 {
   ok('the harness serves a policy at all', PORTAL_CSP.length > 0, PORTAL_CSP.slice(0, 60));

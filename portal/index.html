@@ -4131,10 +4131,43 @@ function vstStart(){
    survives bright daylight and an unlit car park alike, a modest safe margin,
    and a MONOSPACE face — a proportional one makes the seconds digits shift
    sideways as they change, and the brief says it must not move. */
+/* SIZED FROM THE SHORT SIDE, THEN FITTED TO THE WIDTH.
+
+   This used to be `H * 0.05`, which is the height — while the stamp runs along
+   the WIDTH. On a landscape frame that is harmless. On a PORTRAIT photograph it
+   is not: an iPhone picture is 3024 x 4032, so the face came out at about 202px
+   and the 26-character stamp wanted roughly 3150px on an image 3024px wide. The
+   left end ran off the picture.
+
+   Two changes, and both are for photographs and video alike — `vstDraw` is the
+   one writer for both, and a portrait clip had exactly the same defect:
+
+   - the default is taken from the SHORT side, so portrait and landscape get the
+     same visual weight rather than one of them getting a giant face;
+   - and then it is MEASURED and scaled to fit inside the safe margins, so the
+     full date, time and zone are always whole. `measureText` is exact, so one
+     proportional correction lands it; the loop after it only settles rounding.
+
+   The floor is 8px. A 26-character stamp needs about 125px of width at that
+   size, so anything that could reasonably be called a photograph fits long
+   before reaching it. */
 function vstDraw(cx, W, H, text){
   const pad = Math.round(Math.min(W, H) * 0.035);
-  const size = Math.max(14, Math.round(H * 0.05));
-  cx.font = `600 ${size}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`;
+  const face = px => `600 ${px}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`;
+  const room = Math.max(1, W - pad * 2);
+  let size = Math.max(12, Math.round(Math.min(W, H) * 0.045));
+  cx.font = face(size);
+  const wide = cx.measureText(text).width;
+  if(wide > room){
+    size = Math.max(8, Math.floor(size * room / wide));
+    cx.font = face(size);
+  }
+  /* Rounding can leave it a hair over; nudge down until it is genuinely inside.
+     Bounded so a pathological face cannot spin here. */
+  for(let i = 0; i < 24 && size > 8 && cx.measureText(text).width > room; i++){
+    size -= 1;
+    cx.font = face(size);
+  }
   cx.textAlign = "right";
   cx.textBaseline = "alphabetic";
   cx.save();
