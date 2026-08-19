@@ -269,6 +269,28 @@ const text = (page, sel) => page.locator(sel).first().innerText();
 const has = (haystack, needle) => haystack.toLowerCase().includes(needle.toLowerCase());
 // The list is newest-first, so never address a row by position.
 const rowFor = (page, caseNo) => page.locator('tbody tr', { hasText: caseNo }).first();
+/* A FIXTURE ENTRY MUST BE STAMPED EARLIER IN THE DAY THAN ANYTHING A LATER
+   SECTION FILES WITH THE REAL CLOCK. The timeline orders by at_time, and later
+   sections stamp with `stampNow()`, so a fixture typed at a fixed hour sits on
+   top of them whenever the suite happens to run before that hour.
+
+   That is exactly what bit: fixtures at 09:41 and 10:05 sorted below a real
+   entry on every run until one started at 01:00, and then nine voice assertions
+   read the wrong row and the field-home edit hit "that entry belongs to another
+   investigator" — because it genuinely did. Measured at the failure:
+
+     id  6  10:05  Trever Brown   "Subject returned to residence and entered…"
+     id 11  01:00  Dana Field     "No change observed at the residence."  (voice)
+
+   Nothing about the product was wrong: 10:05 IS later in the day than 01:00.
+   Clamped at 00:00 so a run a minute after midnight cannot roll into yesterday
+   and land back on top; a tie then falls to `id DESC`, which is the real
+   creation order. */
+const earlierToday = (mins) => {
+  const d = new Date();
+  const m = Math.max(0, d.getHours() * 60 + d.getMinutes() - mins);
+  return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+};
 // The case dialog is a workspace with tabs; most detail is no longer on the
 // first panel, so a test that wants a panel has to open it. Panels live
 // inside four sections now (UIBUILD P6) — when the wanted sub-tab is not in
@@ -1453,7 +1475,7 @@ section('The Custom tab carries every composer');
   await page.locator('#a_desc').fill('Subject departed residence.');
   await page.locator('#a_va').check();
   await page.locator('#a_sd').check();
-  await page.locator('#a_time').fill('09:41');
+  await page.locator('#a_time').fill(earlierToday(4));
   await page.locator('.btn', { hasText: 'Add to the log' }).click();
   await page.waitForTimeout(500);
   const flagged = await text(page, '#dlgBody');
@@ -2098,7 +2120,7 @@ section('Quick lines: search, favorites, one tap');
      (await page.locator('#qa_desc').inputValue()) === 'Subject returned to residence.');
   ok('the time is already on the clock', (await page.locator('#qa_time').inputValue()).length === 5);
   ok('the rare fields wait behind one fold', await page.locator('.amfold summary').count() === 1);
-  await page.locator('#qa_time').fill('10:05');
+  await page.locator('#qa_time').fill(earlierToday(3));
   await page.locator('.btn', { hasText: 'Add to log' }).click();
   await page.waitForTimeout(500);
   ok('the quick entry is on the timeline',
@@ -5223,12 +5245,6 @@ section('Voice mode: explicit, looping, and never filing what it is unsure of');
   await say('no change at residence');
   ok('the command files a real activity entry', (await entries()) === before + 1);
   const filed = await page.evaluate(() => (WS.activity[0] || {}));
-  // TEMPORARY DIAGNOSTIC — remove once the ordering question is answered.
-  console.log('DIAG top-of-timeline:', JSON.stringify(await page.evaluate(() =>
-    (WS.activity || []).slice(0, 5).map(a => ({ id: a.id, d: a.at_date, t: a.at_time,
-      who: a.investigator, src: a.source, desc: String(a.description || '').slice(0, 44) })))));
-  console.log('DIAG now:', JSON.stringify(await page.evaluate(() =>
-    ({ iso: new Date().toISOString(), local: new Date().toString().slice(0, 33) }))));
   ok('with the standardized wording, not the transcript',
      filed.description === 'No change observed at the residence.', filed.description);
   ok('marked as captured by voice, with the command that made it',
