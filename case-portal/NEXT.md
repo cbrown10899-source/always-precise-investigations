@@ -125,6 +125,54 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
 
+## 💾 SAVE POINT — 2026-08-19, branch `dropbox-ui`
+
+Taken on the owner's instruction, **mid-unit and without interrupting it**:
+*"Create a safe save point now without interrupting the current Dropbox unit."*
+
+| | |
+| --- | --- |
+| Branch | `dropbox-ui` (pushed to origin) |
+| Master | `21fb3cc` — unchanged; the Dropbox unit is **not merged** |
+| Roadmap item | 3 of 7, **IN FLIGHT** |
+| Tag / Release | `save-point.yml` dispatched against the branch |
+
+**Standing rule from the owner, 2026-08-19:** *"From now on create another save
+point after every completed merge/deploy and before starting the next major
+queued unit, so a session timeout can be resumed exactly."* So the workflow is
+dispatched **twice per unit** from here on — once when the unit is deployed, and
+once again immediately before the next unit's first commit. A dispatch is
+idempotent (it exits if the tag already exists), so a duplicate costs nothing
+and a missing one costs a resume.
+
+### What is proven at this save point, and what is not
+
+| | State |
+| --- | --- |
+| `case-portal/test-worker.mjs` | **1879 / 0** — run against this tree |
+| `.github/test-deploy.mjs` | **68 / 0** |
+| `portal/test-portal.mjs` | **NOT green.** 1791 passed, 0 failed, **then the run crashed** — in my own new section. Fixed on this branch; a rerun is in flight |
+| Merge / deploy | **NOT DONE.** Nothing of this unit is on master or live |
+
+The crash is worth recording rather than smoothing over: `1791 passed, 0 failed`
+reads like success and is not. The case workspace is a **full page**
+(`VIEW = "case"`), so the top-level `.tabs` nav is not on screen inside it, and
+my test clicked Settings from within an open case and timed out after every one
+of its own assertions had passed. The two existing tests that make this trip
+already leave through `[data-act="backToCases"]` first; mine now does too.
+
+### To resume from here
+
+```bash
+git fetch origin && git checkout dropbox-ui     # 5 commits ahead of master
+node case-portal/test-worker.mjs                # expect 1879 / 0
+node portal/test-portal.mjs                     # the one still to prove
+node .github/test-deploy.mjs                    # expect 68 / 0
+```
+
+Then the ordinary chain: PR → merge if green → pull master → deploy → live
+verify → **save point** → next unit (item 4, Admin report/mobile workflow fix).
+
 ## 🚦 DEPLOYMENT — 2026-08-19, master `b0304cb` (#188) — portrait geometry, Save to Dropbox
 
 | Component | Master | Deployed | Status |

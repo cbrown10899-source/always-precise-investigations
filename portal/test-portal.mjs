@@ -10399,6 +10399,10 @@ section('Dropbox is visible, and it is not a file manager');
      !has(await text(page, '#dlgBody'), 'In Dropbox'));
 
   // ---- the admin records it once ----
+  /* The workspace is a full page, not a popup, so the top-level nav is not on
+     screen inside it — leave by its own back control first. */
+  await page.locator('[data-act="backToCases"]').click();
+  await page.waitForTimeout(300);
   await page.locator('.tabs button', { hasText: 'Settings' }).click();
   await page.waitForTimeout(700);
 
