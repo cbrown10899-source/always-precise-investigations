@@ -4131,40 +4131,47 @@ function vstStart(){
    survives bright daylight and an unlit car park alike, a modest safe margin,
    and a MONOSPACE face — a proportional one makes the seconds digits shift
    sideways as they change, and the brief says it must not move. */
-/* SIZED FROM THE SHORT SIDE, THEN FITTED TO THE WIDTH.
+/* SIZED FROM THE AVAILABLE WIDTH, then shrunk until the whole stamp fits.
 
-   This used to be `H * 0.05`, which is the height — while the stamp runs along
-   the WIDTH. On a landscape frame that is harmless. On a PORTRAIT photograph it
-   is not: an iPhone picture is 3024 x 4032, so the face came out at about 202px
-   and the 26-character stamp wanted roughly 3150px on an image 3024px wide. The
-   left end ran off the picture.
+   Two goes at this. It was `H * 0.05` — the HEIGHT — while the stamp runs along
+   the WIDTH, which on portrait gave a huge face. Taking it from the SHORT side
+   fixed the size but not the proportion: the same face on a narrower picture
+   still covers far more of it. Measured with a 26-character stamp, the drawn
+   text as a fraction of the image width:
 
-   Two changes, and both are for photographs and video alike — `vstDraw` is the
-   one writer for both, and a portrait clip had exactly the same defect:
+     landscape 4032 x 3024   52%     <- the owner confirmed this one reads right
+     portrait  3024 x 4032   70%     <- reported oversized, and it was
 
-   - the default is taken from the SHORT side, so portrait and landscape get the
-     same visual weight rather than one of them getting a giant face;
-   - and then it is MEASURED and scaled to fit inside the safe margins, so the
-     full date, time and zone are always whole. `measureText` is exact, so one
-     proportional correction lands it; the loop after it only settles rounding.
+   So the face is now derived from the WIDTH, to hit the same fraction whatever
+   the shape: measure the text once at a known size to learn how wide this face
+   actually is, then solve for the size that lands on the target. `measureText`
+   is exact, so this is arithmetic rather than a guess, and the fallback font a
+   given device picks is accounted for because it is the one being measured.
 
-   The floor is 8px. A 26-character stamp needs about 125px of width at that
-   size, so anything that could reasonably be called a photograph fits long
-   before reaching it. */
+   `H * 0.08` caps it so a wide, short picture cannot get a stamp taller than
+   itself, and the loop afterwards is the hard guarantee: whatever the target
+   said, the text ends up inside the safe margins or it keeps shrinking. The
+   floor is 8px, which a stamp of this length clears in about 125px of width.
+
+   `vstDraw` is the ONE writer for photographs and video alike, so a portrait
+   clip is fixed in both. */
 function vstDraw(cx, W, H, text){
   const pad = Math.round(Math.min(W, H) * 0.035);
   const face = px => `600 ${px}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`;
   const room = Math.max(1, W - pad * 2);
-  let size = Math.max(12, Math.round(Math.min(W, H) * 0.045));
+
+  /* How wide this face draws this string, per pixel of font size. */
+  const PROBE = 100;
+  cx.font = face(PROBE);
+  const per = Math.max(0.0001, cx.measureText(text).width / PROBE);
+
+  let size = Math.round(W * 0.52 / per);          // the target share of the width
+  size = Math.min(size, Math.round(H * 0.08));    // never taller than the picture wants
+  size = Math.max(8, size);
   cx.font = face(size);
-  const wide = cx.measureText(text).width;
-  if(wide > room){
-    size = Math.max(8, Math.floor(size * room / wide));
-    cx.font = face(size);
-  }
-  /* Rounding can leave it a hair over; nudge down until it is genuinely inside.
-     Bounded so a pathological face cannot spin here. */
-  for(let i = 0; i < 24 && size > 8 && cx.measureText(text).width > room; i++){
+  /* THE GUARANTEE. Nothing above is allowed to leave the stamp hanging over the
+     margin: it shrinks until the whole date, time and zone are inside. */
+  for(let i = 0; i < 64 && size > 8 && cx.measureText(text).width > room; i++){
     size -= 1;
     cx.font = face(size);
   }
