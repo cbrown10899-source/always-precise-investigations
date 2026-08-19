@@ -53,6 +53,47 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
 
+## 🚦 DEPLOYMENT — 2026-08-19, master `0b97f27` (#186) — decode the file itself
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` | `0b97f27` | `0b97f27` | **DEPLOYED** — `deploy.yml` 32206882408 success |
+| Worker / API | `ad77b2e` | `ad77b2e` | unchanged — **untouched** |
+| D1 schema | `ad77b2e` | applied | unchanged — **no dispatch owed** |
+
+Save point `save/2026-08-19-0159-0b97f27`. Portal **1724/1**, guard **68/0**.
+The one portal failure is the pre-existing preview fixture.
+
+**LIVE VERIFIED — OPEN**: the owner's retest of the **same `IMG_3576.jpeg`** on
+the same iPhone.
+
+### The defect
+
+The owner's iPhone refused `IMG_3576.jpeg`. `pstFromBytes` rebuilt the picture as
+`new Blob([buf], {type: file.type || "image/jpeg"})` — rewrapping the operator's
+own file under a type **this page chose**. A `File` is already a `Blob` and
+already knows what it is. The local path now hands over the File; the in-case
+path has only bytes off the evidence route, so it still builds a Blob, from the
+content type the case recorded.
+
+### ⚠️ WHAT THIS DOES NOT PROVE — read before assuming it is fixed
+
+**Chromium decodes a mislabelled blob anyway.** Measured with the OLD code
+restored: a JPEG declared `image/heic` still reached the "when" step. So this is
+**not evidence** that the rewrap was what the iPhone hit, and Safari's
+strictness cannot be reproduced in this container.
+
+If `IMG_3576.jpeg` still fails, the cause is elsewhere and the next step is
+putting the file's own magic number and the decoder's error **on the screen**, so
+a screenshot answers it instead of raising another round of speculation. That was
+built and then deliberately reverted — along with a second decoder
+(`createImageBitmap` before `<img>`) — because shipping three changes at once
+would leave the retest unable to say which one mattered.
+
+The assertion with teeth here is **structural**: the local path hands over the
+File and never rebuilds a Blob. The behavioural one guards the outcome, not the
+regression, and says so in its own words.
+
 ## 🚦 DEPLOYMENT — 2026-08-19, master `c77dd11` (#185) — picture first, case last
 
 | Component | Master | Deployed | Status |
