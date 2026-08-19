@@ -10427,7 +10427,17 @@ section('Dropbox is visible, and it is not a file manager');
   await page.locator('[data-act="dbxFolder"]').click();
   await page.waitForTimeout(600);
   body = await page.locator('#app').innerText();
-  ok('the folder name saves', has(body, 'Saved'), body.slice(0, 400));
+  ok('the folder name saves', has(body, 'Saved. Case folder links use this name'),
+     body.slice(0, 400));
+  /* THE VALUE THAT SAVED IS THE ONE THEY TYPED. `paint()` rebuilds the inputs
+     from DBX, so painting the "Saving…" state before reading the box wiped the
+     typed name and posted an EMPTY one -- and then reported "Cleared." as
+     though that had been asked for. Naming the wrong outcome is the assertion:
+     "Saved" alone was true of the broken version too. */
+  ok('and it is not silently cleared by the act of saving it',
+     !has(body, 'Cleared.')
+     && (await page.evaluate(() => DBX && DBX.folder_name)) === 'Always Precise Investigations',
+     String(await page.evaluate(() => DBX && DBX.folder_name)));
   ok('and Open Dropbox now points at the firm folder',
      (await openBtn().first().getAttribute('href'))
        === 'https://www.dropbox.com/home/Apps/Always%20Precise%20Investigations',

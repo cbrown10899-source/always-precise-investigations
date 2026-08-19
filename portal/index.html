@@ -3968,9 +3968,15 @@ function dropboxSettingsHtml(){
 }
 
 async function saveDropboxFolder(clear){
-  DBX_MSG = ""; DBX_SAVING = true; paint();
+  /* READ THE BOX BEFORE PAINTING. This is the EDIT_DRAFT rule and I broke it
+     exactly as written: `paint()` rebuilds the inputs from `DBX`, so painting
+     the "Saving…" state first wiped the admin's typed name and the save then
+     sent an EMPTY value — and reported "Cleared." as though that had been
+     asked for. The name they typed was destroyed by the act of saving it.
+     Anything that repaints must collect first. */
   const el = $("dbx_folder");
   const name = clear ? "" : (el ? el.value.trim() : "");
+  DBX_MSG = ""; DBX_SAVING = true; paint();
   try{
     const r = await api("/dropbox/folder", {method:"POST", body:{folder_name: name}});
     DBX = r.dropbox; DBX_ERR = ""; DBX_DRAFT = null;
