@@ -9055,6 +9055,73 @@ section('Timestamp Photo: the copy is what the client gets, and the original is 
    found by someone looking for it beside Timestamp Video. These assertions are
    about REACHABILITY, and they are written so the same class of defect cannot
    come back for either tool. */
+/* A REFUSAL THAT ANSWERS QUESTIONS INSTEAD OF RAISING THEM.
+
+   The owner's device refused IMG_3576.jpeg with a sentence about HEIC — a guess
+   dressed as a diagnosis, because the page had no idea what the file actually
+   was. It now reads the magic number, tries two decoders, and puts what it saw
+   on the screen. */
+section('Timestamp Photo: what it saw, when it will not decode a picture');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* THE SNIFFER, against headers it should know and one it should not. It must
+     never guess: an unrecognised file comes back as its own bytes. */
+  const sniffed = await page.evaluate(() => {
+    const of = (arr) => pstSniff(new Uint8Array(arr).buffer);
+    const ftyp = (brand) => [0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70,
+      ...[...brand].map(c => c.charCodeAt(0)), 0, 0, 0, 0];
+    return {
+      jpeg: of([0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0, 0, 0, 0, 0]),
+      png: of([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0]),
+      gif: of([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0, 0, 0, 0, 0, 0]),
+      webp: of([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4, 0x57, 0x45, 0x42, 0x50]),
+      heic: of(ftyp('heic')),
+      avif: of(ftyp('avif')),
+      junk: of([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]),
+    };
+  });
+  ok('a JPEG is named as one', sniffed.jpeg === 'JPEG', sniffed.jpeg);
+  ok('and a PNG', sniffed.png === 'PNG', sniffed.png);
+  ok('and a GIF', sniffed.gif === 'GIF', sniffed.gif);
+  ok('and a WEBP', sniffed.webp === 'WEBP', sniffed.webp);
+  /* HEIC is the case the owner actually hit, and it is reported by its BRAND
+     rather than assumed — the same family carries avif and several others. */
+  ok('an iPhone HEIC is reported by its own brand',
+     sniffed.heic === 'ISO container, brand heic', sniffed.heic);
+  ok('and so is an AVIF, rather than both being called HEIC',
+     sniffed.avif === 'ISO container, brand avif', sniffed.avif);
+  ok('something unrecognised comes back as its own bytes, never a guess',
+     /^unrecognised \(01 02 03 04 05 06 07 08\)$/.test(sniffed.junk), sniffed.junk);
+
+  /* THE REFUSAL ITSELF. A file that is not a picture at all is the one thing
+     that can be relied on to fail in every browser. */
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.locator('.qtool[data-act="pstLaunch"]').click(),
+  ]);
+  await chooser.setFiles({ name: 'not-a-photo.jpg', mimeType: 'image/jpeg',
+    buffer: Buffer.from('this is plainly not an image', 'utf8') });
+  await page.waitForTimeout(1500);
+
+  const card = await text(page, '#pstamp');
+  ok('it is refused rather than offered a Generate button',
+     has(card, 'cannot be timestamped here')
+     && await page.locator('[data-act="pstBurn"]').count() === 0, card.slice(0, 200));
+  ok('and it names the file', has(card, 'not-a-photo.jpg'));
+  /* THE FACTS, so the next report is an answer. */
+  ok('it says what the bytes actually are', has(card, 'unrecognised'), card);
+  ok('and what the file claimed to be', has(card, 'image/jpeg'), card);
+  ok('and how big it was', has(card, 'bytes'), card);
+  ok('and which decoders were tried', has(card, 'Decoder'), card);
+  ok('it no longer asserts HEIC as the cause of every failure',
+     !has(card, 'Most Compatible'), card.slice(0, 400));
+  await page.locator('#pstamp [data-act="pstClose"]').first().click();
+  await page.waitForTimeout(300);
+  await page.close();
+}
+
 section('Timestamp Photo asks for a picture first, and for a case only to file it');
 {
   await post('/ingest', {
