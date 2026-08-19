@@ -18,7 +18,7 @@ item is finished.
 | # | Work | State |
 | --- | --- | --- |
 | 1 | Finish current Active Surveillance mobile and voice polish | **DONE — DEPLOYED** at `c333d3f` (#182). §13 photo/video commands, §8 retry/offline and server-side duplicate protection, §1/§16.1 compact status. Two device-only checks OPEN, below. |
-| 2 | Build Timestamp Photo | **DONE — DEPLOYED** at `ad77b2e` (#183). Two device-only checks OPEN, below. |
+| 2 | Build Timestamp Photo | **DONE — DEPLOYED** at `ad77b2e` (#183), findable at `2067755` (#184). Device checks OPEN, below. |
 | 3 | Visible Dropbox portal UI for Admin | **NEXT** — not started. Added by the owner 2026-08-18 |
 | 4 | Admin report workflow and mobile report fix | not started — **queued, do not begin** |
 | 5 | Full portal aesthetic cleanup | not started — **queued, do not begin**. Carries a specific brief, below |
@@ -52,6 +52,50 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Do not interrupt the current coding unit. Record this queue only"*, and
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
+
+## 🚦 DEPLOYMENT — 2026-08-19, master `2067755` (#184) — Timestamp Photo, findable
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` | `2067755` | `2067755` | **DEPLOYED** — `deploy.yml` 32199484685 success |
+| Worker / API | `ad77b2e` | `ad77b2e` | unchanged — **`worker.js` and `schema.sql` untouched** |
+| D1 schema | `ad77b2e` | applied | unchanged — **no dispatch owed** |
+
+Save point `save/2026-08-19-0000-2067755`. Portal **1704/1**, guard **68/0**,
+worker **1849/0** at `ad77b2e`. The one portal failure is the pre-existing
+preview fixture, untouched on the owner's standing instruction and
+timing-dependent — it passed on the two runs before this one.
+
+**LIVE VERIFIED — OPEN**, for the owner's iPhone: that the tool is now findable,
+plus the two checks carried from #183 (a photograph with real camera EXIF, and
+an HEIC file whose refusal has to read correctly where the browser cannot decode
+it).
+
+### The defect
+
+Owner, live: *"Timestamp Photo is deployed but not visible anywhere in the live
+portal."* `pstOpen` was rendered in **exactly one place** — inside `pstButton()`,
+which draws only on an evidence card for a photograph that already exists —
+while `vstOpen` had three call sites. With nothing uploaded there was no card,
+and with no card there was no entry point anywhere.
+
+That was **D1** in `PHOTO-TIMESTAMP.md`, now marked superseded with its original
+reasoning kept. Four doors: the navigation foot (both roles, every screen), the
+dashboard quick-tools row, its own card on Case media, and the field view's
+media screen. The top-level copies carry an empty `data-case`, so the utility
+asks which case rather than adopting whichever one is open behind it.
+
+### The bigger thing found on the way
+
+**The phone navigation drawer wrapped into a second column**, and adding one
+door tipped it over. `.tabs` is a wrapping ROW at the top of the stylesheet; the
+rail and the drawer change its direction and inherit the wrap. Measured when it
+broke: drawer **296px wide, 460px of content, every child 224px or less** — no
+item was too wide, there were two columns of them.
+
+Both column layouts are now `flex-wrap:nowrap`. **The drawer had been one item
+away from splitting for as long as that rule existed**, so any door added to the
+navigation would have triggered it. Worth knowing before item 5 starts.
 
 ## 🚦 DEPLOYMENT — 2026-08-18, master `ad77b2e` (#183) — Timestamp Photo
 
