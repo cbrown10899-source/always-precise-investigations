@@ -10401,6 +10401,24 @@ section('Dropbox is visible, and it is not a file manager');
   // ---- the admin records it once ----
   await page.locator('.tabs button', { hasText: 'Settings' }).click();
   await page.waitForTimeout(700);
+
+  /* A REFUSAL MUST LEAVE THEM LOOKING AT THEIR OWN WORDS — the rule PAY_DRAFT
+     exists for. Every paint rebuilds this input from the stored value, so
+     without a draft a name refused for a bad character reverted to what was
+     stored while the error still described what they typed. */
+  await page.locator('#dbx_folder').fill('Apps/Always Precise');
+  await page.locator('[data-act="dbxFolder"]').click();
+  await page.waitForTimeout(600);
+  let refused = await page.locator('#app').innerText();
+  ok('a folder name with a slash is refused, in the Worker\'s own words',
+     has(refused, 'cannot contain'), refused.slice(0, 500));
+  ok('and what they typed is still in the box',
+     (await page.locator('#dbx_folder').inputValue()) === 'Apps/Always Precise');
+  ok('with the screen saying it is not saved', has(refused, 'Not saved'));
+  ok('a refused name changes no link — Open Dropbox still goes to Apps',
+     (await openBtn().first().getAttribute('href')) === 'https://www.dropbox.com/home/Apps',
+     String(await openBtn().first().getAttribute('href')));
+
   await page.locator('#dbx_folder').fill('Always Precise Investigations');
   await page.locator('[data-act="dbxFolder"]').click();
   await page.waitForTimeout(600);

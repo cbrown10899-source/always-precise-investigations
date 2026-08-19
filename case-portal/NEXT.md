@@ -19,7 +19,7 @@ item is finished.
 | --- | --- | --- |
 | 1 | Finish current Active Surveillance mobile and voice polish | **DONE — DEPLOYED** at `c333d3f` (#182). §13 photo/video commands, §8 retry/offline and server-side duplicate protection, §1/§16.1 compact status. Two device-only checks OPEN, below. |
 | 2 | Build Timestamp Photo | ✅ **DONE — LIVE VERIFIED** by the owner on 2026-08-19 at `b0304cb` (#188), portrait layout and Save to Dropbox included. Shipped over #183–#188. |
-| 3 | Visible Dropbox portal UI for Admin | **NEXT** — not started. Added by the owner 2026-08-18 |
+| 3 | Visible Dropbox portal UI for Admin | **IN FLIGHT** on `dropbox-ui`. Added by the owner 2026-08-18 |
 | 4 | Admin report workflow and mobile report fix | not started — **queued, do not begin** |
 | 5 | Full portal aesthetic cleanup | not started — **queued, do not begin**. Carries a specific brief, below |
 | 6 | Remaining Portal Ops productivity features | not started |
@@ -43,10 +43,30 @@ the same way rather than judged by eye.
 
 **Item 3, in the owner's own words** (2026-08-18): *"add visible Dropbox portal
 UI for Admin: connection status, account, Open Dropbox Folder, and case links
-for Photos Reports Video."* Recorded verbatim and NOT designed here — the
-Dropbox connect flow and its OAuth already exist (`DROPBOX.md`), so the first
-job when this comes up is to establish what is genuinely missing versus merely
-not surfaced, rather than assuming either.
+for Photos Reports Video."* Plus, on starting it: *"Use existing Dropbox
+backend; do not build a file manager."*
+
+**What that first job actually found.** The backend was complete and the window
+was the only missing piece. `/dropbox/status` already returned the connection,
+the account, when and by whom; `connect`, `callback` and `disconnect` all
+existed; `DBX_FOLDERS` already named Photos / Reports / Video. **Nothing in
+`portal/index.html` called any of it** — the page did not contain the string
+`/dropbox/status`. So no storage behaviour changed, and none needed to.
+
+**The one thing genuinely missing was a name.** This app has App-folder access,
+so every path the API returns is app-relative — `/API-1234/Photos`, never
+`/Apps/<name>/API-1234/Photos` — and Dropbox does not tell an app-folder app
+what its own folder was called. The web URL needs it. It is therefore **asked
+for once** and stored in `app_config` (an existing table, so **no schema change
+and no portal-setup dispatch**), and until it is answered there is **no per-case
+link at all**: `case_url_template` is null rather than a guess and Open Dropbox
+falls back to `/home/Apps`, which is correct plus one click.
+
+**A Dropbox web link is not a shared link**, and that is what makes this safe to
+put on a case screen: it opens the firm's own Dropbox and shows nothing to
+anyone signed in elsewhere. `create_shared_link_with_settings` would hand the
+files to any URL holder; a test asserts no `api.dropboxapi.com/2/sharing` call
+exists at all. Full reasoning in `DROPBOX.md` → *The visible half*.
 
 Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Do not interrupt the current coding unit. Record this queue only"*, and

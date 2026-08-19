@@ -3821,9 +3821,15 @@ let DBX = null;        // the Worker's dropbox state — null until loaded
 let DBX_ERR = "";      // a failed load is NOT "disconnected"; see loadSends
 let DBX_MSG = "";
 let DBX_SAVING = false;
+/* WHAT THEY TYPED, WHEN THE WORKER REFUSED IT — the rule PAY_DRAFT exists for.
+   Every paint rebuilds the input from `DBX.folder_name`, so without this a name
+   refused for a bad character reverted to the stored one while the error still
+   described the name they typed. `null` means untouched; an empty string is a
+   deliberate answer and must survive as one. */
+let DBX_DRAFT = null;
 
 async function loadDropbox(){
-  if(ME.role !== "admin") return;
+  if(!ME || ME.role !== "admin") return;
   DBX_ERR = "";
   try{ DBX = (await api("/dropbox/status")).dropbox; }
   catch(e){ DBX = null; DBX_ERR = e.message; }
@@ -3915,7 +3921,11 @@ function dropboxSettingsHtml(){
      goes to Apps and says so, instead of to a path that may not exist. */
   const folderBox = `<label class="f"><span>App Folder name
       <span class="opt">what you called the app in Dropbox</span></span>
-      <input id="dbx_folder" value="${esc(d.folder_name || "")}" placeholder="e.g. Always Precise Investigations"></label>
+      <input id="dbx_folder" value="${esc(DBX_DRAFT !== null ? DBX_DRAFT : (d.folder_name || ""))}"
+        placeholder="e.g. Always Precise Investigations"></label>
+    ${DBX_DRAFT !== null ? `<p class="hint" style="color:var(--bad)"><b>Not saved.</b> The box above
+      is what you typed; the links still use ${d.folder_name
+        ? `<b>${esc(d.folder_name)}</b>` : `no folder name`}.</p>` : ""}
     <div class="actions">
       <button class="btn sm" data-act="dbxFolder" ${DBX_SAVING ? "disabled" : ""}>${
         DBX_SAVING ? "Saving&hellip;" : "Save folder name"}</button>
@@ -3963,9 +3973,9 @@ async function saveDropboxFolder(clear){
   const name = clear ? "" : (el ? el.value.trim() : "");
   try{
     const r = await api("/dropbox/folder", {method:"POST", body:{folder_name: name}});
-    DBX = r.dropbox; DBX_ERR = "";
+    DBX = r.dropbox; DBX_ERR = ""; DBX_DRAFT = null;
     DBX_MSG = name ? "Saved. Case folder links use this name." : "Cleared.";
-  }catch(e){ DBX_MSG = e.message; }
+  }catch(e){ DBX_MSG = e.message; DBX_DRAFT = name; }
   DBX_SAVING = false; paint();
 }
 
@@ -3982,7 +3992,7 @@ async function disconnectDropbox(){
 }
 
 function settingsView(){
-  return `${dropboxSettingsHtml()}${notifySettingsHtml()}${paymentSettingsHtml()}<div class="card">
+  return `${notifySettingsHtml()}${paymentSettingsHtml()}${dropboxSettingsHtml()}<div class="card">
     <div class="bar"><h2 style="margin:0">Settings</h2></div>
     <h3 style="margin:6px 0 4px;font-size:1rem">Developer &amp; testing</h3>
     <p class="note">Working material for trying the portal out. None of it touches a real case.</p>
@@ -7197,8 +7207,14 @@ async function openCase(caseNo, tab){
   recentPush(caseNo);
   /* The Dropbox connection is the FIRM'S, not the case's, so this is fetched
      once and reused: an admin opening ten cases makes one request. `loadDropbox`
-     returns immediately for an investigator, who is refused the route anyway. */
-  if(!DBX && !DBX_ERR) loadDropbox();
+     returns immediately for an investigator, who is refused the route anyway.
+
+     A FAILED CHECK IS RETRIED on the next case, deliberately. Skipping on
+     `DBX_ERR` would let one dropped request remove the folder links for the
+     rest of the session with nothing on the case screen to explain it — the
+     absence of a link says nothing, which is exactly what makes it worth
+     retrying rather than remembering. */
+  if(!DBX) loadDropbox();
   // Landing straight on the Package panel (the dashboard's Build jump) needs
   // the build fetched, exactly as the tab click would have done.
   if(WS_TAB === "package"){ PKG = null; return loadPackage(); }
@@ -12546,7 +12562,7 @@ document.addEventListener("click", ev => {
     if(TAB === "settings" && ME.role === "admin"){
       PAY_MSG = ""; PAY_ERR = false; PAY_DRAFT = {}; loadPaymentMethods();
       NOTIFY = null; NOTIFY_MSG = ""; NOTIFY_NEW = false; loadNotify();
-      DBX = null; DBX_MSG = ""; DBX_SAVING = false; loadDropbox();
+      DBX = null; DBX_MSG = ""; DBX_SAVING = false; DBX_DRAFT = null; loadDropbox();
     }
     document.body.classList.remove("navopen");
     if(TAB === "myreports") api("/my/reports").then(d => { MY_REPORTS = d; paint(); }).catch(()=>{});

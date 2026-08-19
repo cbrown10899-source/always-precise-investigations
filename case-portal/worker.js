@@ -5766,8 +5766,16 @@ async function dropboxState(env) {
   };
   /* Read BEFORE the early returns. The folder name is what makes a link
      openable, and it is just as useful on a connection held as a Worker
-     secret as on one an admin made. */
-  const folderName = await configValue(env, DBX_FOLDER_KEY, null);
+     secret as on one an admin made.
+
+     SWALLOWED ON PURPOSE, the way `dropboxAccessToken` and `sendMail` are: this
+     function's whole job is to degrade rather than take the Settings screen
+     down, and it now performs a read it did not before. The cost of losing it
+     is a fallback to the Apps folder and no per-case link — never a link that
+     goes somewhere wrong — while the connection state below still reports its
+     own failures. */
+  let folderName = null;
+  try { folderName = await configValue(env, DBX_FOLDER_KEY, null); } catch { folderName = null; }
   out.folder_name = folderName || null;
   Object.assign(out, dropboxWebUrls(folderName));
   /* A refresh token supplied as a Worker SECRET still counts, and outranks the

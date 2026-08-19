@@ -10298,6 +10298,23 @@ section('Dropbox — secrets only, and no file migration yet');
      (await call(env3, '/dropbox/folder',
        { method: 'POST', cookie: '', body: { folder_name: 'x' } })).status === 401);
 
+  /* THE STATUS SCREEN DEGRADES RATHER THAN GOING DOWN, and this read is new —
+     `dropboxState` now queries app_config before its own early returns. A
+     database that cannot answer it must still report the connection. */
+  const envNoCfg = freshEnv();
+  await bootstrapAdmin(envNoCfg);
+  const aNo = (await login(envNoCfg, 'trever', 'FirstAdminPass1')).cookie;
+  envNoCfg.DROPBOX_APP_KEY = 'k'; envNoCfg.DROPBOX_APP_SECRET = 's';
+  envNoCfg.DROPBOX_REFRESH_TOKEN = 'from-a-secret';
+  await envNoCfg.DB.prepare('DROP TABLE app_config').run();
+  const degraded = await call(envNoCfg, '/dropbox/status', { cookie: aNo });
+  ok('with app_config gone the status still answers', degraded.status === 200);
+  const dNo = (await jsonOf(degraded)).dropbox;
+  ok('still reporting the connection', dNo.connected === true);
+  ok('and falling back to the Apps folder rather than a wrong link',
+     dNo.folder_name === null && dNo.case_url_template === null
+       && dNo.web_url === 'https://www.dropbox.com/home/Apps');
+
   /* THE FOLDER NAME IS FOR A LINK AND NOTHING ELSE. Uploads address the App
      Folder root, which needs no name — so a wrong name costs a link, never a
      misplaced file. Proven by the upload path being unable to see the value. */
