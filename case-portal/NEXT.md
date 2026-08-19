@@ -23,6 +23,46 @@ item is finished.
 | 4 | Admin report workflow and mobile report fix | not started — **queued, do not begin** |
 | 5 | Full portal aesthetic cleanup | not started — **queued, do not begin**. Carries a specific brief, below |
 | 6 | Remaining Portal Ops productivity features | not started |
+| 7 | **Legal / Law Firm intake** (third intake type) | not started — **queued, do not begin until 3 is finished**. Added by the owner 2026-08-19. Full brief below |
+
+**Item 7 — LEGAL / LAW FIRM intake.** Queued by the owner on 2026-08-19 with the
+instruction *"AFTER YOU FINISH THE CURRENT CODING UNIT IN FULL, build the next
+queued intake addition below. Do not interrupt or abandon work already in
+progress."* Recorded here **mid-unit and not designed**, the same way items 3
+and 5 were. The owner's brief is long and specific; the whole of it is kept
+verbatim in **`case-portal/LEGAL-INTAKE.md`**, which is the working record for
+that unit and must be read before any code is written for it.
+
+The parts that are decisions rather than description, and so are easiest to get
+wrong by paraphrase:
+
+- **Pricing is the PRIVATE source, reused — never a second Legal copy.** *"If
+  Private pricing changes later, Legal must automatically reflect the same
+  pricing."* That means `PERSONAL` / `agreedRetainer()` and the existing private
+  retainer selector ($1,500 standard, $2,000, $3,000, Custom), not new constants.
+- **But NOT private payment methods.** *"Do not show Cash App or Venmo on Legal /
+  Law Firm intake."* Legal's four are BILL.com Invoice / ACH, Retainer Check —
+  Pick Up at Firm, Retainer Check — Mail, and Existing Billing Arrangement. This
+  splits `CONTEXT_TAKES_PAYMENT`'s current two-way private/insurance model, so
+  that is where the design work is.
+- **Nothing about choosing or requesting payment is payment.** *"Sending payment
+  instructions is never payment. Selecting a payment method is never payment.
+  Creating a BILL.com invoice is never payment."* The portal already draws this
+  line — `payment_send` records that the firm asked, `retainer_payment` records
+  arrival, and they are separate tables so no later edit can confuse them. Legal
+  extends that shape rather than inventing one.
+- **Use existing status terminology where an equivalent state exists**, rather
+  than a redundant parallel status system.
+- **Legal intakes belong in the existing Intakes system**, badged LEGAL — not a
+  separate disconnected lead system.
+- **Quick Legal Assignment** is a deliberately short admin-only path, because
+  *"Do not make a longtime attorney relationship harder just because the portal
+  exists."*
+- **Any schema addition must be additive** and follow the portal-setup workflow
+  — which in this repo means a companion table rather than widening a CHECK, and
+  a `missingTables()` guard on every read.
+
+**Real-device verification stays OPEN for the owner**, on their instruction.
 
 **Item 5 carries a specific brief, in the owner's own words** (2026-08-18):
 
