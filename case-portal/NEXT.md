@@ -53,6 +53,62 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
 
+## 🚦 DEPLOYMENT — 2026-08-19, master `4ca9480` (#187) — the CSP blocked every photograph
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` + `_headers` | `4ca9480` | `4ca9480` | **DEPLOYED** — `deploy.yml` 32208855261 success |
+| Worker / API | `ad77b2e` | `ad77b2e` | unchanged — **untouched** |
+| D1 schema | `ad77b2e` | applied | unchanged — **no dispatch owed** |
+
+Save point `save/2026-08-19-0231-4ca9480`. Portal **1732/0** — the first fully
+green run, and the first ever under the real policy. Guard **68/0**.
+
+**LIVE VERIFIED — OPEN**: the owner's iPhone retest.
+
+### 🚨 THE CSP BLOCKED EVERY PHOTOGRAPH — and the file was never the problem
+
+```
+img-src 'self' data:;      ← no blob:
+media-src 'self' blob:;    ← video had it all along
+```
+
+Timestamp Photo loads the operator's own picture into an `<img>` from a **blob
+URL** made in the tab. Without `blob:` the browser **blocked it** and fired
+`onerror`, and the page faithfully reported *"cannot decode"*. Every photograph
+failed on every device. **Timestamp Video was fine** because `<video>` falls
+under `media-src` — which is exactly why the two behaved differently, and the
+answer was sitting in `_headers` through two wrong fixes.
+
+`img-src` now allows `blob:`, the same permission `media-src` already had. No
+remote origin is added and an assertion guards against one appearing.
+
+### 🧪 WHY NO TEST COULD SEE IT — the part worth keeping
+
+**`_headers` is applied by Cloudflare Pages, and the suite served the page with
+no Content-Security-Policy at all.** Every test for months ran against a page
+that exists nowhere but in the harness.
+
+The harness now reads the real policy out of `_headers` and serves it on every
+`/portal/` response. **Anything that depends on the deployed headers is now
+testable**, and the first run under it found nothing else broken.
+
+The assertion that would have caught this is in with it: **a blocked `<img>` is
+`complete` with a natural size of ZERO** — it draws as nothing and reads as a
+working page — so the test asserts the preview's real pixel dimensions rather
+than that an element exists.
+
+### What else went in
+
+- **`createImageBitmap` before the `<img>`.** It takes the Blob directly, with no
+  object URL and therefore no `img-src` to satisfy, so the feature no longer
+  depends on the policy being right.
+- **The refusal reports what it saw**: the magic number from the file's own
+  header, what the file claimed to be, its size, and what each decoder did — and
+  it names a blocked blob URL where the `<img>` error is reported, because a
+  browser reports a policy block exactly like a corrupt file. That
+  indistinguishability is what sent two rounds of work at the wrong thing.
+
 ## 🚦 DEPLOYMENT — 2026-08-19, master `0b97f27` (#186) — decode the file itself
 
 | Component | Master | Deployed | Status |
