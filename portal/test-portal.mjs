@@ -8726,7 +8726,8 @@ section('Timestamp Photo: the stamp is in the pixels, and the original is not to
   await page.waitForTimeout(400);
   await page.locator('[data-act="pstFile"]').click();
   await page.waitForTimeout(2000);
-  ok('it is filed', has(await text(page, '#pstamp'), 'Filed'), await text(page, '#pstamp'));
+  ok('it is saved to Dropbox', has(await text(page, '#pstamp'), 'Saved to Dropbox'),
+     await text(page, '#pstamp'));
   await page.locator('#pstamp [data-act="pstClose"]').first().click();
   await page.waitForTimeout(700);
 
@@ -9103,6 +9104,123 @@ section('Timestamp Photo: the copy is what the client gets, and the original is 
    the harness served the page with NO policy at all. It now serves the real one,
    so these assertions are evidence about the deployed page rather than about a
    page that only exists here. */
+/* THE OVERLAY'S LAYOUT, measured on real phone geometry.
+
+   Two goes at this, and the second is the one that mattered.
+
+   It was `H * 0.05` — the HEIGHT — while the stamp runs along the WIDTH. Left
+   gap in pixels with that code: 3024x4032 -> 11, 1080x1920 -> 7, 750x1334 -> 2.
+   Edge to edge, no safe margin at all.
+
+   Sizing from the SHORT side fixed the margin but not the PROPORTION, and the
+   owner reported portrait still oversized. They were right, and the number says
+   why — the drawn text as a share of the image width:
+
+     landscape 4032x3024   52%   <- confirmed as reading correctly
+     portrait  3024x4032   70%   <- the same face on a narrower picture
+
+   The face is now derived from the WIDTH, so the share is the same whatever the
+   shape. That is what these assertions check: not merely that the stamp fits,
+   but that portrait and landscape agree — because "it fits" was true of the
+   version the owner rejected.
+
+   `vstDraw` is the ONE writer for photographs and video alike, so this fixes a
+   portrait clip for both. */
+section('The burned stamp fits inside the picture, portrait included');
+{
+  const page = await newPage();
+  const boxes = await page.evaluate(() => {
+    const label = '08/19/2026 05:14:32 PM EDT';
+    const shot = (W, H) => {
+      const c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      const cx = c.getContext('2d');
+      cx.fillStyle = '#3f6ea8';
+      cx.fillRect(0, 0, W, H);
+      vstDraw(cx, W, H, label);
+      const d = cx.getImageData(0, 0, W, H).data;
+      let minX = W, maxX = -1, minY = H, maxY = -1;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4;
+        if (d[i] > 200 && d[i + 1] > 200 && d[i + 2] > 200) {
+          if (x < minX) minX = x; if (x > maxX) maxX = x;
+          if (y < minY) minY = y; if (y > maxY) maxY = y;
+        }
+      }
+      return { W, H, pad: Math.round(Math.min(W, H) * 0.035),
+               left: minX, right: W - 1 - maxX, top: minY, bottom: H - 1 - maxY,
+               textH: maxY - minY + 1, found: maxX >= 0 };
+    };
+    return {
+      'portrait 3024x4032': shot(3024, 4032),
+      'portrait 1080x1920': shot(1080, 1920),
+      'portrait 750x1334': shot(750, 1334),
+      'landscape 4032x3024': shot(4032, 3024),
+      'square 1000x1000': shot(1000, 1000),
+    };
+  });
+
+  for (const [name, b] of Object.entries(boxes)) {
+    ok(`${name}: the stamp is drawn at all`, b.found, JSON.stringify(b));
+    /* NOTHING CLIPS. The left edge is where a too-large face runs off, so this
+       is the assertion the portrait defect would have failed. */
+    ok(`${name}: nothing runs off the left`, b.left > 0, JSON.stringify(b));
+    /* AND IT KEEPS ITS SAFE MARGIN — the whole string sits inside the padding
+       rather than merely inside the canvas. */
+    ok(`${name}: the whole stamp is inside the safe margin`, b.left >= b.pad,
+       JSON.stringify(b));
+    ok(`${name}: bottom-right, with a margin on the right`, b.right > 0 && b.right >= b.pad * 0.7,
+       JSON.stringify(b));
+    ok(`${name}: and one along the bottom`, b.bottom > 0 && b.bottom >= b.pad * 0.4,
+       JSON.stringify(b));
+    ok(`${name}: it sits in the bottom half, not floating`, b.top > b.H / 2, JSON.stringify(b));
+    /* SMALLER BY DEFAULT. The old rule was H * 0.05. */
+    ok(`${name}: the face is smaller than the old height-based rule`,
+       b.textH < b.H * 0.05, JSON.stringify(b));
+  }
+
+  /* THE ASSERTION THE SECOND ATTEMPT NEEDED. Every one of these fitted inside
+     its margins under the rejected version too — what was wrong was that a
+     portrait picture carried a far larger stamp than a landscape one. So the
+     property is AGREEMENT: the stamp occupies the same share of the width
+     whatever the shape, and portrait no longer dominates the frame. */
+  const shares = Object.entries(boxes)
+    .filter(([n]) => !/wide/.test(n))
+    .map(([n, b]) => [n, (b.right >= 0 ? (b.W - b.left - b.right) / b.W : 0)]);
+  for (const [n, share] of shares) {
+    ok(`${n}: the stamp takes about half the width, not most of it`,
+       share > 0.4 && share < 0.62, `${(share * 100).toFixed(1)}%`);
+  }
+  const lo = Math.min(...shares.map(([, v]) => v));
+  const hi = Math.max(...shares.map(([, v]) => v));
+  ok('portrait and landscape agree on how much of the width the stamp takes',
+     hi - lo < 0.05, `${(lo * 100).toFixed(1)}% to ${(hi * 100).toFixed(1)}%`);
+
+  /* And a very wide, short picture is held back by the HEIGHT instead, so a
+     banner does not get a stamp taller than itself. */
+  const wide = await page.evaluate(() => {
+    const W = 4000, H = 500;
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const cx = c.getContext('2d');
+    cx.fillStyle = '#3f6ea8';
+    cx.fillRect(0, 0, W, H);
+    vstDraw(cx, W, H, '08/19/2026 05:14:32 PM EDT');
+    const d = cx.getImageData(0, 0, W, H).data;
+    let minY = H, maxY = -1;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4;
+      if (d[i] > 200 && d[i + 1] > 200 && d[i + 2] > 200) {
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+    }
+    return { H, textH: maxY - minY + 1, bottom: H - 1 - maxY };
+  });
+  ok('a wide, short picture is capped by its height instead',
+     wide.textH < wide.H * 0.12 && wide.bottom > 0, JSON.stringify(wide));
+  await page.close();
+}
+
 section('Timestamp Photo under the policy the site actually serves');
 {
   ok('the harness serves a policy at all', PORTAL_CSP.length > 0, PORTAL_CSP.slice(0, 60));
@@ -9267,7 +9385,7 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
   const first = await text(page, '#pstamp');
   ok('it goes straight to the question it exists to ask',
      has(first, 'When was it taken'), first.slice(0, 200));
-  ok('and no case has been asked for at all', !has(first, 'File it to which case'),
+  ok('and no case has been asked for at all', !has(first, 'which case'),
      first.slice(0, 300));
 
   /* A photograph off a device carries no EXIF from a canvas, so the form is
@@ -9289,8 +9407,17 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
      has(prev, '08/19/2026 09:45:10 AM EDT'), prev);
   ok('keeping it on this device is the first thing offered',
      await page.locator('[data-act="pstSaveDevice"]').count() === 1);
-  ok('and the screen says filing is optional', has(prev, 'Filing it to a case is'),
+  ok('and the screen says the rest is optional', has(prev, 'Everything below is'),
      prev.slice(0, 600));
+  /* THE DEVICE SAVE IS UNTOUCHED and stays the first thing offered — the owner's
+     words, 2026-08-19: "Keep Save to this device exactly as the local iOS/share
+     option." Saving to Dropbox is a SECOND control beside it, never instead. */
+  ok('keeping it on the device is still its own control',
+     await page.locator('[data-act="pstSaveDevice"]').count() === 1);
+  ok('and Dropbox is a separate one beside it',
+     await page.locator('[data-act="pstChooseCase"]').count()
+     + await page.locator('[data-act="pstToCase"]').count() >= 1);
+  ok('which says where it is going', has(prev, 'Save to Dropbox'), prev.slice(0, 600));
 
   /* NOTHING HAS LEFT THE MACHINE. This is the whole bargain, and it is the
      same one Timestamp Video makes — measured against the counts taken before
@@ -9305,9 +9432,14 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
   await page.locator('[data-act="pstChooseCase"]').click();
   await page.waitForTimeout(900);
   ok('choosing to file is what asks for a case',
-     has(await text(page, '#pstamp'), 'File it to which case'));
+     has(await text(page, '#pstamp'), 'Save to Dropbox')
+     && has(await text(page, '#pstamp'), 'which case'));
+  /* AND IT SAYS WHY IT IS ASKING. The firm's Dropbox keeps a folder per case,
+     so the case is the one thing a save needs — not a formality in the way. */
+  ok('and says why a case is needed at all',
+     has(await text(page, '#pstamp'), 'folder per case'), (await text(page, '#pstamp')).slice(0, 400));
   ok('and it says the copy is yours either way',
-     has(await text(page, '#pstamp'), 'You do not have to file it at all'));
+     has(await text(page, '#pstamp'), 'You do not have to save it to Dropbox at all'));
   ok('with a way back that keeps it here',
      await page.locator('[data-act="pstBackToPreview"]').count() === 1);
 
@@ -9322,7 +9454,9 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
   ok('and it is on by default', await page.locator('#pst_inc').isChecked());
   await page.locator('[data-act="pstFile"]').click();
   await page.waitForTimeout(2500);
-  ok('and then it is filed', has(await text(page, '#pstamp'), 'Filed to API-20260812-4021'),
+  ok('and then it is saved to Dropbox',
+     has(await text(page, '#pstamp'), 'Saved to Dropbox')
+     && has(await text(page, '#pstamp'), 'API-20260812-4021'),
      (await text(page, '#pstamp')).slice(0, 200));
 
   /* BOTH HALVES REACHED THE CASE. The owner's rule is that the original is
