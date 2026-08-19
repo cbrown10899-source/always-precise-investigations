@@ -185,6 +185,12 @@ const env = {
 // ONE server serves the page and mounts the Worker at /portal-api/*, because
 // that is how it is deployed. Serving the API from a second origin would let a
 // cross-site cookie bug pass unnoticed — which is exactly what it did before.
+/* Read once, from the file Cloudflare Pages actually applies. */
+const PORTAL_CSP = ((fs.readFileSync(path.join(ROOT, '_headers'), 'utf8')
+  .split('/portal/*')[1] || '').split('\n')
+  .find(l => l.includes('Content-Security-Policy')) || '')
+  .replace(/^\s*Content-Security-Policy:\s*/, '').trim();
+
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.svg': 'image/svg+xml',
                 '.webp': 'image/webp', '.png': 'image/png',
                 '.webmanifest': 'application/manifest+json' };
@@ -213,7 +219,16 @@ const server = http.createServer(async (req, res) => {
   let p = path.join(ROOT, decodeURIComponent(req.url.split('?')[0]));
   if (fs.existsSync(p) && fs.statSync(p).isDirectory()) p = path.join(p, 'index.html');
   if (!fs.existsSync(p)) { res.writeHead(404); return res.end('not found'); }
-  res.writeHead(200, { 'Content-Type': TYPES[path.extname(p)] || 'text/plain' });
+  /* THE REAL CSP, off the real `_headers`, on every /portal/ response.
+     This suite ran for months against a page with NO Content-Security-Policy at
+     all, because `_headers` is applied by Cloudflare Pages and nothing here read
+     it. That is a whole class of failure the tests could not see, and it cost a
+     live one: `img-src` did not allow `blob:`, so Timestamp Photo's <img> was
+     BLOCKED on the phone and passed in every test. Serving the real policy is
+     the only way this suite can be evidence about the deployed page. */
+  const head = { 'Content-Type': TYPES[path.extname(p)] || 'text/plain' };
+  if (req.url.startsWith('/portal/')) head['Content-Security-Policy'] = PORTAL_CSP;
+  res.writeHead(200, head);
   res.end(fs.readFileSync(p));
 });
 await new Promise(r => server.listen(0, '127.0.0.1', r));
@@ -5819,7 +5834,13 @@ section('The Active Surveillance mark');
   const portalCsp = (headers.split('/portal/*')[1] || '').split('\n')
     .find(l => l.includes('Content-Security-Policy')) || '';
   ok('the portal CSP allows its own manifest', /manifest-src 'self'/.test(portalCsp), portalCsp);
-  ok('and still allows only its own images', /img-src 'self' data:/.test(portalCsp));
+  /* `blob:` is the page's OWN picture, made in this tab and readable by nobody
+     else — the same permission `media-src` has carried since the video tool
+     shipped. Without it Timestamp Photo was blocked on every device. */
+  ok('images are its own, plus data: and its own blobs',
+     /img-src 'self' data: blob:/.test(portalCsp), portalCsp);
+  ok('and no remote origin is allowed to supply one',
+     !/img-src[^;]*https?:/.test(portalCsp), portalCsp);
   ok('while defaulting to none', /default-src 'none'/.test(portalCsp));
 
   const page = await newPage();
@@ -9069,6 +9090,78 @@ section('Timestamp Photo: the copy is what the client gets, and the original is 
    OUTCOME and is not evidence that this was the iPhone's cause; Safari's
    strictness cannot be reproduced here. The assertion with teeth is the
    structural one: the local path must hand over the File, never a rebuild. */
+/* THE BUG THAT COST TWO DEPLOYS, and the reason no test could see it.
+
+   `_headers` said `img-src 'self' data:` — no `blob:`. Timestamp Photo loads the
+   operator's own picture into an <img> from a blob URL made in the tab, so the
+   BROWSER BLOCKED IT and fired `onerror`, and the page honestly reported
+   "cannot decode". Every photograph failed on every device; the file was never
+   the problem. Timestamp Video was fine because `<video>` falls under
+   `media-src`, which had carried `blob:` all along.
+
+   This suite could not see it: `_headers` is applied by Cloudflare Pages, and
+   the harness served the page with NO policy at all. It now serves the real one,
+   so these assertions are evidence about the deployed page rather than about a
+   page that only exists here. */
+section('Timestamp Photo under the policy the site actually serves');
+{
+  ok('the harness serves a policy at all', PORTAL_CSP.length > 0, PORTAL_CSP.slice(0, 60));
+  ok('and it is the deployed one, allowing the page its own blobs as images',
+     /img-src 'self' data: blob:/.test(PORTAL_CSP), PORTAL_CSP);
+
+  const page = await newPage();
+  const refusals = [];
+  page.on('console', (m) => {
+    if (/Content Security Policy|Refused to load/i.test(m.text())) refusals.push(m.text().slice(0, 100));
+  });
+  ok('the page really is served with it', /img-src/.test(await page.evaluate(async () => {
+    const r = await fetch('/portal/', { credentials: 'same-origin' });
+    return r.headers.get('content-security-policy') || '';
+  })));
+
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const b64 = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 400; c.height = 300;
+    const cx = c.getContext('2d');
+    cx.fillStyle = '#2d5f8a';
+    cx.fillRect(0, 0, 400, 300);
+    return c.toDataURL('image/jpeg', 0.9).split(',')[1];
+  });
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.locator('.qtool[data-act="pstLaunch"]').click(),
+  ]);
+  await chooser.setFiles({ name: 'IMG_3533.jpeg', mimeType: 'image/jpeg',
+    buffer: Buffer.from(b64, 'base64') });
+  await page.waitForTimeout(1600);
+  ok('an ordinary phone JPEG decodes under the real policy',
+     has(await text(page, '#pstamp'), 'When was it taken'),
+     (await text(page, '#pstamp')).slice(0, 200));
+
+  await page.locator('#pst_mo').fill('08');
+  await page.locator('#pst_da').fill('19');
+  await page.locator('#pst_yr').fill('2026');
+  await page.locator('#pst_hr').fill('10');
+  await page.locator('#pst_mi').fill('15');
+  await page.locator('#pst_se').fill('00');
+  await page.locator('[data-act="pstBurn"]').click();
+  await page.waitForTimeout(1600);
+
+  /* THE ASSERTION THAT WOULD HAVE CAUGHT IT. The preview is a blob: URL in an
+     <img>; a blocked one is `complete` with a natural size of ZERO, which looks
+     like nothing at all on screen and reads as a working page. */
+  const prev = await page.evaluate(() => {
+    const i = document.querySelector('.pst-prev');
+    return i ? { complete: i.complete, w: i.naturalWidth, h: i.naturalHeight } : null;
+  });
+  ok('and the copy is actually VISIBLE, not a blocked blob with no pixels',
+     prev && prev.complete && prev.w === 400 && prev.h === 300, JSON.stringify(prev));
+  ok('with the browser refusing nothing along the way',
+     refusals.length === 0, JSON.stringify(refusals));
+  await page.close();
+}
+
 section('Timestamp Photo decodes the operator’s own file, not a relabelled copy');
 {
   const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');

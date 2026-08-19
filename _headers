@@ -57,4 +57,11 @@
   # and no CDN is used — the file is committed in this repo and listed in the
   # deploy allow-list. `worker-src` is deliberately NOT added: the pipeline
   # runs on the main thread, so nothing here needs a worker yet.
-  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; manifest-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'
+  # `img-src` gained `blob:` on 2026-08-19, and it is the same permission
+  # `media-src` has carried since the video tool shipped. Timestamp Photo loads
+  # the operator's own picture into an <img> from a blob URL made on this page;
+  # without `blob:` the browser BLOCKED it and fired `onerror`, which the page
+  # faithfully reported as "cannot decode". Every photograph failed, on every
+  # device — the file was never the problem. A blob URL is same-origin and
+  # opaque to anyone else, which is why `media-src` was already allowed it.
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; manifest-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'
