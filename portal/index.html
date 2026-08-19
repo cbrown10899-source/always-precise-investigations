@@ -5955,7 +5955,7 @@ async function pstLoadCases(){
    of them is ever set, and which one decides what filing has to upload. */
 function pstFresh(caseNo, extra){
   return Object.assign({
-    step: "loading", caseNo: caseNo || "", evId: null, local: null, inCase: false,
+    step: "loading", caseNo: caseNo || "", evId: null, local: null,
     name: "", originalClass: "", tz: VST_TZ, source: "operator", includeCopy: true,
     cases: null, caseErr: "", q: "",
     mo: "", da: "", yr: "", hr: "", mi: "", se: "", ap: "PM",
@@ -6037,7 +6037,7 @@ async function pstOpen(evId, caseNo, given){
     || ((WS && WS.evidence) || []).find(e => e.id === id);
   const token = (PST_SEQ += 1);
   const on = caseNo || WS_CASE || "";
-  PST = pstFresh(on, {evId: id, inCase: true, token,
+  PST = pstFresh(on, {evId: id, token,
     name: row ? row.filename : "", originalClass: row ? row.classification : ""});
   paintPStamp();
 
@@ -6337,8 +6337,12 @@ function pstHtml(){
         <p class="vst-note">It was made here and it is yours already. Filing it to a case is
           optional &mdash; that is the only step that uploads anything or leaves a record in
           the portal.</p>
-        ${v.inCase ? `
-          <button class="vst-btn" data-act="pstToCase">File the copy to ${esc(v.caseNo)}</button>`
+        ${""/* Opened from a case, filing does not ask again — the door already
+               said which one. Opened from the top level it asks, and only here,
+               after the copy exists. */}
+        ${v.caseNo ? `
+          <button class="vst-btn" data-act="pstToCase">File the copy to ${esc(v.caseNo)}</button>
+          <button class="vst-btn" data-act="pstChooseCase">File it to a different case&hellip;</button>`
         : `<button class="vst-btn" data-act="pstChooseCase">File it to a case&hellip;</button>`}
         <button class="vst-btn" data-act="pstEdit">Correct the time</button>
         <button class="vst-btn" data-act="pstClose">Close</button>
@@ -6385,7 +6389,7 @@ function pstHtml(){
             : v.includeCopy
               ? "The copy is what the client receives. The original stays in the case, classified exactly as it is now, and is not put in the package alongside it."
               : "The copy is filed as internal only. Nothing is sent to the client until someone changes that."}</small></span></label>
-        <p class="vst-note">${v.inCase
+        <p class="vst-note">${v.evId != null
           ? "The original is already on this case and is not touched."
           : "The original is filed first, exactly as it came off your device, and the copy beside it."}</p>
         ${v.err ? `<div class="vst-res" style="color:#ffb3b3">${esc(v.err)}</div>` : ""}
