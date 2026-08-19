@@ -1041,6 +1041,36 @@ Four things are load-bearing:
 Video is still refused by the ordinary upload; the device-first decision below
 is untouched.
 
+**And since 2026-08-19 the portal SAYS all of this** (owner: *"visible Dropbox
+portal UI for Admin: connection status, account, Open Dropbox Folder, and case
+links for Photos Reports Video. Use existing Dropbox backend; do not build a
+file manager."*). Settings carries a Dropbox card; Case media carries **In
+Dropbox** with one link per folder. **No storage behaviour changed** — the
+routes, folders and refusals are exactly as they were, and nothing lists,
+renames, moves, deletes or downloads a file.
+
+**A Dropbox web link is not a shared link, and that is the whole safety of it.**
+`https://www.dropbox.com/home/...` opens the FIRM'S OWN Dropbox: signed in to
+that account you see the folder, signed in to any other you see nothing. It
+carries no token and no bytes. `create_shared_link_with_settings` would hand the
+case files to anyone holding the URL — it is called nowhere, and a test asserts
+no `api.dropboxapi.com/2/sharing` call exists at all. Do not add one. Every link
+carries `rel="noopener noreferrer"`, because the portal URL holds the case
+number and it must not ride to Dropbox in a `Referer`.
+
+**The App Folder name cannot be derived, so it is asked for once.** App-folder
+access means every path the API returns is app-relative — `/API-1234/Photos`,
+never `/Apps/<name>/API-1234/Photos` — and Dropbox does not tell an app what its
+own folder was called. It lives in **`app_config`**, an existing table, so this
+needed no schema change and **no portal-setup dispatch**. Until it is filled in
+there is **no per-case link at all**: `case_url_template` is null rather than a
+guess and Open Dropbox goes to `/home/Apps`, which is correct plus one click.
+The name builds a URL and nothing else — uploads address the App Folder root,
+which needs no name — so a wrong name costs a link, never a misplaced file, and
+a test asserts the upload path cannot read it. `dropboxWebUrls()` is the one
+writer of the shape; the page substitutes into its template and assembles no
+path of its own. Detail in `case-portal/DROPBOX.md`.
+
 ## The free-plan failsafe
 
 The owner runs Cloudflare on free tiers and wants zero possibility of a

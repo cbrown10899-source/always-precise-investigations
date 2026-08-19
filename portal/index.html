@@ -3796,8 +3796,209 @@ async function notifyAction(path, body){
   await loadNotify();
 }
 
+/* WHERE THE FIRM'S CASE FILES ACTUALLY ARE (owner, 2026-08-18).
+
+   Since the Dropbox move, every new photograph and generated report goes to the
+   firm's own Dropbox App Folder — and the portal said so NOWHERE. An admin
+   could not tell whether the connection was alive, which account it was, or how
+   to get to the files outside the portal. The plumbing was all built; only the
+   window was missing.
+
+   THIS IS NOT A FILE MANAGER, deliberately (owner: "use existing Dropbox
+   backend; do not build a file manager"). Nothing here lists, renames, moves,
+   deletes or downloads a file. Case media is already in the gallery, proxied
+   through the Worker where the case's permission checks are. What this adds is
+   the one thing the portal genuinely could not do: get you to the folder.
+
+   EVERY VALUE IS THE WORKER'S. Connection, account, the three folder names and
+   the URL template all arrive from `/dropbox/status`; this page substitutes a
+   case number into a template it is given and assembles no path of its own.
+
+   ADMIN ONLY, like all four Dropbox routes. `/status` names the connected
+   account, and an investigator has no business holding the firm's connection
+   open or closed. */
+let DBX = null;        // the Worker's dropbox state — null until loaded
+let DBX_ERR = "";      // a failed load is NOT "disconnected"; see loadSends
+let DBX_MSG = "";
+let DBX_SAVING = false;
+/* WHAT THEY TYPED, WHEN THE WORKER REFUSED IT — the rule PAY_DRAFT exists for.
+   Every paint rebuilds the input from `DBX.folder_name`, so without this a name
+   refused for a bad character reverted to the stored one while the error still
+   described the name they typed. `null` means untouched; an empty string is a
+   deliberate answer and must survive as one. */
+let DBX_DRAFT = null;
+
+async function loadDropbox(){
+  if(!ME || ME.role !== "admin") return;
+  DBX_ERR = "";
+  try{ DBX = (await api("/dropbox/status")).dropbox; }
+  catch(e){ DBX = null; DBX_ERR = e.message; }
+  paint();
+}
+
+/* The one place a case's Dropbox link is built, and it is a SUBSTITUTION into
+   the Worker's template rather than a path this page knows how to write.
+   Returns [] when there is no template — no folder name recorded, or nothing
+   connected — because a link that goes to the wrong place is worse than no
+   link. Case numbers are pinned to [A-Za-z0-9-] at ingest so encoding them
+   changes nothing; it is here because relying on that from a second file is
+   how the pinning stops being checked. */
+function dbxCaseLinks(caseNo){
+  if(!DBX || !DBX.case_url_template || !DBX.connected || !caseNo) return [];
+  return (DBX.folders || []).map(f => ({
+    name: f,
+    url: DBX.case_url_template
+      .replace("{case}", encodeURIComponent(caseNo))
+      .replace("{folder}", encodeURIComponent(f)),
+  }));
+}
+
+/* Opens the firm's own Dropbox in the browser. It is NOT a shared link: it
+   carries no token and no bytes, and someone signed in to a different Dropbox
+   account sees nothing. `noreferrer` keeps the portal's own URL — which
+   contains the case number — out of Dropbox's Referer header. */
+function dbxLink(url, label, cls){
+  return `<a class="${cls}" style="display:inline-block;text-decoration:none" href="${esc(url)}"
+    target="_blank" rel="noopener noreferrer">${label}</a>`;
+}
+
+function dbxCaseLinksHtml(caseNo){
+  if(ME.role !== "admin") return "";
+  const links = dbxCaseLinks(caseNo);
+  if(!links.length) return "";
+  return `<div class="rc-h" style="margin:14px 0 6px"><b>In Dropbox</b></div>
+    <p class="hint" style="margin-top:0">The firm's own Dropbox, opened in a new tab. These are
+      the folders this case's files are stored in &mdash; nothing is shared and nobody signed in
+      to a different Dropbox account can open them. A folder appears once something has been
+      stored in it.</p>
+    <div class="actions">${links.map(l =>
+      dbxLink(l.url, `${esc(l.name)} &#8599;`, "btn sm ghost")).join("")}</div>`;
+}
+
+function dropboxSettingsHtml(){
+  if(ME.role !== "admin") return "";
+
+  /* Four states, kept apart because they fail differently and the office needs
+     to know which: the load failed, the app's own secrets are missing, the
+     table is not on the database yet, and nobody has connected an account.
+     Only the last one is something an admin can fix from this screen. */
+  const head = `<div class="bar"><h2 style="margin:0">Dropbox &mdash; where case files are stored</h2></div>`;
+  const wrap = body => `<div class="card">${head}${body}</div>`;
+
+  if(DBX_ERR) return wrap(`<div class="err">The Dropbox connection could not be checked &mdash;
+    ${esc(DBX_ERR)}. This says nothing about whether it is connected.</div>`);
+  if(!DBX) return wrap(`<div class="empty">Checking the Dropbox connection&hellip;</div>`);
+
+  const d = DBX;
+  const state = !d.app_configured
+    ? `<span class="tag rs-draft">Not set up on the Worker</span>`
+    : d.not_set_up ? `<span class="tag rs-draft">Database not migrated</span>`
+    : d.connected ? `<span class="tag closed">Connected</span>`
+                  : `<span class="tag new">Not connected</span>`;
+
+  const account = d.connected
+    ? `<div class="tl-m">${d.account_name ? `<b>${esc(d.account_name)}</b>` : ""}${
+        d.account_email ? ` &middot; ${esc(d.account_email)}` : ""}${
+        !d.account_name && !d.account_email
+          ? `The account is not recorded &mdash; this connection came from a Worker secret,
+             which carries the token and nothing about who it belongs to.` : ""}</div>
+       <div class="tl-m">${esc(d.source || "")}${d.connected_by ? ` &middot; ${esc(d.connected_by)}` : ""}${
+        d.connected_at ? ` &middot; ${when(d.connected_at)}` : ""}</div>`
+    : "";
+
+  const why = !d.app_configured
+    ? `<p class="hint">The Worker has no Dropbox app credentials, so nothing can connect yet.
+        New photographs and reports are refused rather than stored somewhere else.</p>`
+    : d.not_set_up
+      ? `<p class="hint">The connection table is not on this database yet. Run the
+          <b>portal-setup</b> workflow once, then connect.</p>`
+      : !d.connected
+        ? `<p class="hint">Nothing is connected, so new photographs and generated reports cannot
+            be stored. Files already saved are unaffected.</p>` : "";
+
+  /* The folder name is the ONE thing Dropbox will not tell an app about itself,
+     so it is asked for rather than guessed — and until it is answered the link
+     goes to Apps and says so, instead of to a path that may not exist. */
+  const folderBox = `<label class="f"><span>App Folder name
+      <span class="opt">what you called the app in Dropbox</span></span>
+      <input id="dbx_folder" value="${esc(DBX_DRAFT !== null ? DBX_DRAFT : (d.folder_name || ""))}"
+        placeholder="e.g. Always Precise Investigations"></label>
+    ${DBX_DRAFT !== null ? `<p class="hint" style="color:var(--bad)"><b>Not saved.</b> The box above
+      is what you typed; the links still use ${d.folder_name
+        ? `<b>${esc(d.folder_name)}</b>` : `no folder name`}.</p>` : ""}
+    <div class="actions">
+      <button class="btn sm" data-act="dbxFolder" ${DBX_SAVING ? "disabled" : ""}>${
+        DBX_SAVING ? "Saving&hellip;" : "Save folder name"}</button>
+      ${d.folder_name ? `<button class="btn sm ghost" data-act="dbxFolderClear" ${
+        DBX_SAVING ? "disabled" : ""}>Clear</button>` : ""}
+    </div>
+    <p class="hint">Dropbox does not tell an app what its own App Folder was named, and the web
+      address needs it. ${d.folder_name
+        ? `Case folder links below and on every case use it.`
+        : `Until it is filled in, <b>Open Dropbox</b> goes to your Apps folder and there are no
+           per-case links &mdash; a link to a folder that may not exist is worse than one more
+           click.`} It is not a credential and no file is stored using it.</p>`;
+
+  return wrap(`
+    <div class="row"><span>Connection</span><span>${state}</span></div>
+    ${account}
+    ${why}
+    <p class="note">New case photographs and generated reports are stored in the firm's own
+      Dropbox, in a folder per case &mdash; ${(d.folders || []).map(f => `<b>${esc(f)}</b>`).join(", ")}.
+      The portal keeps the case record; Dropbox holds the files.</p>
+    <div class="actions">
+      ${dbxLink(d.web_url || "https://www.dropbox.com/home/Apps",
+         `Open Dropbox${d.folder_name ? ` &middot; ${esc(d.folder_name)}` : " Apps folder"} &#8599;`,
+         "btn sm ghost")}
+      ${d.app_configured && !d.not_set_up
+        ? (d.connected
+            ? (d.source === "worker secret" ? "" : `<button class="btn sm ghost" data-act="dbxDisconnect">Disconnect</button>`)
+            : `<a class="btn sm" style="display:inline-block;text-decoration:none"
+            href="${API}/dropbox/connect">Connect the firm&rsquo;s Dropbox</a>`)
+        : ""}
+    </div>
+    ${d.source === "worker secret" ? `<p class="hint">This connection is held as a Worker secret, so
+      it cannot be disconnected from here. Remove the secret to end it.</p>` : ""}
+    ${folderBox}
+    ${DBX_MSG ? `<div class="note">${esc(DBX_MSG)}</div>` : ""}
+    <p class="hint">Nothing on this screen lists, moves or downloads a file, and no link here is a
+      Dropbox <i>shared</i> link &mdash; each one opens the firm's own Dropbox and shows nothing to
+      anyone signed in elsewhere. Case files themselves are served through the portal, where the
+      case's permissions are checked.</p>`);
+}
+
+async function saveDropboxFolder(clear){
+  /* READ THE BOX BEFORE PAINTING. This is the EDIT_DRAFT rule and I broke it
+     exactly as written: `paint()` rebuilds the inputs from `DBX`, so painting
+     the "Saving…" state first wiped the admin's typed name and the save then
+     sent an EMPTY value — and reported "Cleared." as though that had been
+     asked for. The name they typed was destroyed by the act of saving it.
+     Anything that repaints must collect first. */
+  const el = $("dbx_folder");
+  const name = clear ? "" : (el ? el.value.trim() : "");
+  DBX_MSG = ""; DBX_SAVING = true; paint();
+  try{
+    const r = await api("/dropbox/folder", {method:"POST", body:{folder_name: name}});
+    DBX = r.dropbox; DBX_ERR = ""; DBX_DRAFT = null;
+    DBX_MSG = name ? "Saved. Case folder links use this name." : "Cleared.";
+  }catch(e){ DBX_MSG = e.message; DBX_DRAFT = name; }
+  DBX_SAVING = false; paint();
+}
+
+async function disconnectDropbox(){
+  if(!confirm("Disconnect the firm's Dropbox? New photographs and reports cannot be stored "
+    + "until it is reconnected. Files already saved are not touched.")) return;
+  DBX_MSG = "";
+  try{
+    const r = await api("/dropbox/disconnect", {method:"POST", body:{}});
+    DBX = r.dropbox; DBX_ERR = "";
+    DBX_MSG = r.detail || "Disconnected.";
+  }catch(e){ DBX_MSG = e.message; }
+  paint();
+}
+
 function settingsView(){
-  return `${notifySettingsHtml()}${paymentSettingsHtml()}<div class="card">
+  return `${notifySettingsHtml()}${paymentSettingsHtml()}${dropboxSettingsHtml()}<div class="card">
     <div class="bar"><h2 style="margin:0">Settings</h2></div>
     <h3 style="margin:6px 0 4px;font-size:1rem">Developer &amp; testing</h3>
     <p class="note">Working material for trying the portal out. None of it touches a real case.</p>
@@ -7010,6 +7211,16 @@ async function openCase(caseNo, tab){
      means a case this user was actually allowed to open. A refusal returns
      above this line and leaves no trace of the case number. */
   recentPush(caseNo);
+  /* The Dropbox connection is the FIRM'S, not the case's, so this is fetched
+     once and reused: an admin opening ten cases makes one request. `loadDropbox`
+     returns immediately for an investigator, who is refused the route anyway.
+
+     A FAILED CHECK IS RETRIED on the next case, deliberately. Skipping on
+     `DBX_ERR` would let one dropped request remove the folder links for the
+     rest of the session with nothing on the case screen to explain it — the
+     absence of a link says nothing, which is exactly what makes it worth
+     retrying rather than remembering. */
+  if(!DBX) loadDropbox();
   // Landing straight on the Package panel (the dashboard's Build jump) needs
   // the build fetched, exactly as the tab click would have done.
   if(WS_TAB === "package"){ PKG = null; return loadPackage(); }
@@ -8375,7 +8586,8 @@ function evidencePanel(){
       const shown = EV_TAB === "all" ? rows : rows.filter(e => !e.deleted_at && kindOf(e) === EV_TAB);
       return shown.length ? `<div class="evgrid">${shown.map(card).join("")}</div>`
         : `<div class="empty">${rows.length ? "Nothing of this type on the case." : "Nothing stored on this case yet."}</div>`;
-    })()}`;
+    })()}
+    ${dbxCaseLinksHtml(WS_CASE)}`;
 }
 
 async function uploadEvidenceFile(){
@@ -12356,6 +12568,7 @@ document.addEventListener("click", ev => {
     if(TAB === "settings" && ME.role === "admin"){
       PAY_MSG = ""; PAY_ERR = false; PAY_DRAFT = {}; loadPaymentMethods();
       NOTIFY = null; NOTIFY_MSG = ""; NOTIFY_NEW = false; loadNotify();
+      DBX = null; DBX_MSG = ""; DBX_SAVING = false; DBX_DRAFT = null; loadDropbox();
     }
     document.body.classList.remove("navopen");
     if(TAB === "myreports") api("/my/reports").then(d => { MY_REPORTS = d; paint(); }).catch(()=>{});
@@ -12456,6 +12669,9 @@ document.addEventListener("click", ev => {
   }
   else if(act === "pstBurn"){ pstBurn(); }
   else if(act === "pstSaveDevice"){ pstSaveDevice(); }
+  else if(act === "dbxFolder"){ saveDropboxFolder(false); }
+  else if(act === "dbxFolderClear"){ saveDropboxFolder(true); }
+  else if(act === "dbxDisconnect"){ disconnectDropbox(); }
   /* Already on a case: the copy has somewhere to go without asking. */
   else if(act === "pstToCase"){ if(PST){ PST.step = "confirm"; PST.err = ""; paintPStamp(); } }
   else if(act === "pstChooseCase"){

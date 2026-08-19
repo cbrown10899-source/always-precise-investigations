@@ -19,10 +19,62 @@ item is finished.
 | --- | --- | --- |
 | 1 | Finish current Active Surveillance mobile and voice polish | **DONE — DEPLOYED** at `c333d3f` (#182). §13 photo/video commands, §8 retry/offline and server-side duplicate protection, §1/§16.1 compact status. Two device-only checks OPEN, below. |
 | 2 | Build Timestamp Photo | ✅ **DONE — LIVE VERIFIED** by the owner on 2026-08-19 at `b0304cb` (#188), portrait layout and Save to Dropbox included. Shipped over #183–#188. |
-| 3 | Visible Dropbox portal UI for Admin | **NEXT** — not started. Added by the owner 2026-08-18 |
+| 3 | Visible Dropbox portal UI for Admin | **IN FLIGHT** on `dropbox-ui`. Added by the owner 2026-08-18 |
 | 4 | Admin report workflow and mobile report fix | not started — **queued, do not begin** |
-| 5 | Full portal aesthetic cleanup | not started — **queued, do not begin**. Carries a specific brief, below |
-| 6 | Remaining Portal Ops productivity features | not started |
+| 5 | Full portal mobile / aesthetic UI cleanup | not started — **queued, do not begin**. Carries a specific brief, below |
+| 6 | **Legal / Law Firm intake** (third intake type) | not started — **queued, do not begin**. Added by the owner 2026-08-19; **reordered by them to sit after the UI work**. Full brief below |
+| 7 | Remaining Portal Ops productivity features | not started |
+
+**The order after the Dropbox UI is the owner's own, 2026-08-19**: *"After
+Dropbox UI: 1) Admin report/mobile workflow fix, 2) full portal mobile/aesthetic
+UI cleanup, 3) Legal/Law Firm intake."* Legal was queued earlier the same day
+ahead of a reorder — *"Update the queue so UI work comes before the new Legal
+intake"* — so it moved from 7 to 6 and **both UI items run first**.
+
+**And each one ships before the next begins**, in their words: *"Finish, test,
+merge and deploy each unit before starting the next."* That is the serial chain
+this project already runs — clean master, branch, CODED, focused tests, full
+suites once, TESTED, push, PR, MERGED, deploy, DEPLOYED, live verify — applied
+per unit rather than batching two units into one merge.
+
+**Item 6 — LEGAL / LAW FIRM intake.** Queued by the owner on 2026-08-19 with the
+instruction *"AFTER YOU FINISH THE CURRENT CODING UNIT IN FULL, build the next
+queued intake addition below. Do not interrupt or abandon work already in
+progress."* Recorded here **mid-unit and not designed**, the same way items 3
+and 5 were. The owner's brief is long and specific; the whole of it is kept
+verbatim in **`case-portal/LEGAL-INTAKE.md`**, which is the working record for
+that unit and must be read before any code is written for it.
+
+The parts that are decisions rather than description, and so are easiest to get
+wrong by paraphrase:
+
+- **Pricing is the PRIVATE source, reused — never a second Legal copy.** *"If
+  Private pricing changes later, Legal must automatically reflect the same
+  pricing."* That means `PERSONAL` / `agreedRetainer()` and the existing private
+  retainer selector ($1,500 standard, $2,000, $3,000, Custom), not new constants.
+- **But NOT private payment methods.** *"Do not show Cash App or Venmo on Legal /
+  Law Firm intake."* Legal's four are BILL.com Invoice / ACH, Retainer Check —
+  Pick Up at Firm, Retainer Check — Mail, and Existing Billing Arrangement. This
+  splits `CONTEXT_TAKES_PAYMENT`'s current two-way private/insurance model, so
+  that is where the design work is.
+- **Nothing about choosing or requesting payment is payment.** *"Sending payment
+  instructions is never payment. Selecting a payment method is never payment.
+  Creating a BILL.com invoice is never payment."* The portal already draws this
+  line — `payment_send` records that the firm asked, `retainer_payment` records
+  arrival, and they are separate tables so no later edit can confuse them. Legal
+  extends that shape rather than inventing one.
+- **Use existing status terminology where an equivalent state exists**, rather
+  than a redundant parallel status system.
+- **Legal intakes belong in the existing Intakes system**, badged LEGAL — not a
+  separate disconnected lead system.
+- **Quick Legal Assignment** is a deliberately short admin-only path, because
+  *"Do not make a longtime attorney relationship harder just because the portal
+  exists."*
+- **Any schema addition must be additive** and follow the portal-setup workflow
+  — which in this repo means a companion table rather than widening a CHECK, and
+  a `missingTables()` guard on every read.
+
+**Real-device verification stays OPEN for the owner**, on their instruction.
 
 **Item 5 carries a specific brief, in the owner's own words** (2026-08-18):
 
@@ -43,15 +95,83 @@ the same way rather than judged by eye.
 
 **Item 3, in the owner's own words** (2026-08-18): *"add visible Dropbox portal
 UI for Admin: connection status, account, Open Dropbox Folder, and case links
-for Photos Reports Video."* Recorded verbatim and NOT designed here — the
-Dropbox connect flow and its OAuth already exist (`DROPBOX.md`), so the first
-job when this comes up is to establish what is genuinely missing versus merely
-not surfaced, rather than assuming either.
+for Photos Reports Video."* Plus, on starting it: *"Use existing Dropbox
+backend; do not build a file manager."*
+
+**What that first job actually found.** The backend was complete and the window
+was the only missing piece. `/dropbox/status` already returned the connection,
+the account, when and by whom; `connect`, `callback` and `disconnect` all
+existed; `DBX_FOLDERS` already named Photos / Reports / Video. **Nothing in
+`portal/index.html` called any of it** — the page did not contain the string
+`/dropbox/status`. So no storage behaviour changed, and none needed to.
+
+**The one thing genuinely missing was a name.** This app has App-folder access,
+so every path the API returns is app-relative — `/API-1234/Photos`, never
+`/Apps/<name>/API-1234/Photos` — and Dropbox does not tell an app-folder app
+what its own folder was called. The web URL needs it. It is therefore **asked
+for once** and stored in `app_config` (an existing table, so **no schema change
+and no portal-setup dispatch**), and until it is answered there is **no per-case
+link at all**: `case_url_template` is null rather than a guess and Open Dropbox
+falls back to `/home/Apps`, which is correct plus one click.
+
+**A Dropbox web link is not a shared link**, and that is what makes this safe to
+put on a case screen: it opens the firm's own Dropbox and shows nothing to
+anyone signed in elsewhere. `create_shared_link_with_settings` would hand the
+files to any URL holder; a test asserts no `api.dropboxapi.com/2/sharing` call
+exists at all. Full reasoning in `DROPBOX.md` → *The visible half*.
 
 Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Do not interrupt the current coding unit. Record this queue only"*, and
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
+
+## 💾 SAVE POINT — 2026-08-19, branch `dropbox-ui`
+
+Taken on the owner's instruction, **mid-unit and without interrupting it**:
+*"Create a safe save point now without interrupting the current Dropbox unit."*
+
+| | |
+| --- | --- |
+| Branch | `dropbox-ui` (pushed to origin) |
+| Master | `21fb3cc` — unchanged; the Dropbox unit is **not merged** |
+| Roadmap item | 3 of 7, **IN FLIGHT** |
+| Tag / Release | `save-point.yml` dispatched against the branch |
+
+**Standing rule from the owner, 2026-08-19:** *"From now on create another save
+point after every completed merge/deploy and before starting the next major
+queued unit, so a session timeout can be resumed exactly."* So the workflow is
+dispatched **twice per unit** from here on — once when the unit is deployed, and
+once again immediately before the next unit's first commit. A dispatch is
+idempotent (it exits if the tag already exists), so a duplicate costs nothing
+and a missing one costs a resume.
+
+### What is proven at this save point, and what is not
+
+| | State |
+| --- | --- |
+| `case-portal/test-worker.mjs` | **1879 / 0** — run against this tree |
+| `.github/test-deploy.mjs` | **68 / 0** |
+| `portal/test-portal.mjs` | **NOT green.** 1791 passed, 0 failed, **then the run crashed** — in my own new section. Fixed on this branch; a rerun is in flight |
+| Merge / deploy | **NOT DONE.** Nothing of this unit is on master or live |
+
+The crash is worth recording rather than smoothing over: `1791 passed, 0 failed`
+reads like success and is not. The case workspace is a **full page**
+(`VIEW = "case"`), so the top-level `.tabs` nav is not on screen inside it, and
+my test clicked Settings from within an open case and timed out after every one
+of its own assertions had passed. The two existing tests that make this trip
+already leave through `[data-act="backToCases"]` first; mine now does too.
+
+### To resume from here
+
+```bash
+git fetch origin && git checkout dropbox-ui     # 5 commits ahead of master
+node case-portal/test-worker.mjs                # expect 1879 / 0
+node portal/test-portal.mjs                     # the one still to prove
+node .github/test-deploy.mjs                    # expect 68 / 0
+```
+
+Then the ordinary chain: PR → merge if green → pull master → deploy → live
+verify → **save point** → next unit (item 4, Admin report/mobile workflow fix).
 
 ## 🚦 DEPLOYMENT — 2026-08-19, master `b0304cb` (#188) — portrait geometry, Save to Dropbox
 

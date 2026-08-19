@@ -293,3 +293,90 @@ The chunk size is 8 MB, overridable with `DBX_CHUNK_BYTES` for the same reason
 the storage caps are overridable: a test that moves a real multi-chunk file
 through the real session code proves more than one that moves eight megabytes to
 prove the same thing slowly.
+
+## The visible half — what an admin can see and open
+
+Owner, 2026-08-18: *"add visible Dropbox portal UI for Admin: connection status,
+account, Open Dropbox Folder, and case links for Photos Reports Video. Use
+existing Dropbox backend; do not build a file manager."*
+
+Everything above this section was plumbing the portal never mentioned. An admin
+could not tell whether the connection was alive, which account it was, or how to
+reach the files outside the portal. **No storage behaviour changed here** — the
+routes, the folders and the refusals are exactly as they were.
+
+| Where | What |
+| --- | --- |
+| Settings → *Dropbox — where case files are stored* | connection state, account, when and by whom, **Open Dropbox**, the App Folder name |
+| A case → Case media → *In Dropbox* | one link each to that case's `Photos`, `Reports` and `Video` |
+
+**It is not a file manager, deliberately.** Nothing lists, renames, moves,
+deletes or downloads a file. Case media is already in the gallery, proxied
+through `serveEvidence` where the case's permission checks are. What this adds
+is the one thing the portal genuinely could not do: get you to the folder.
+
+### A Dropbox web link is not a shared link
+
+This is the whole safety of the feature. `https://www.dropbox.com/home/...`
+opens **the firm's own Dropbox** in the browser of whoever clicks it: signed in
+to that account they see the folder, signed in to any other account they see
+nothing. It carries no token and no bytes.
+
+`create_shared_link_with_settings` would be the opposite — a URL that hands the
+case files to anyone holding it — and it is **not called anywhere in this
+Worker**. A test asserts no `api.dropboxapi.com/2/sharing` call exists at all,
+matched on the API URL rather than on the words, so the warning above can name
+the endpoint without failing its own guard. Do not add it.
+
+`rel="noopener noreferrer"` is on every one of these links: the portal URL
+carries the case number, and it must not ride to Dropbox in a `Referer`.
+
+### The App Folder name cannot be derived, so it is asked for
+
+This app has **App-folder access**, so every path the API returns is relative to
+that folder — `/API-1234/Photos`, never `/Apps/<name>/API-1234/Photos`. Dropbox
+does not tell an app-folder app what its own folder was called, and the web URL
+needs it.
+
+So an admin records it once. It lives in **`app_config`** under `dropbox_folder`
+— an existing table, so this needed no schema change and **no `portal-setup`
+dispatch stands between the merge and it working**.
+
+**Until it is answered there is no per-case link at all.** `case_url_template`
+is `null` rather than a guess, and **Open Dropbox** falls back to
+`https://www.dropbox.com/home/Apps`, which is correct plus one click. Sending
+someone to a path that may not exist is worse.
+
+**The name builds a web URL and nothing else.** Uploads address the App Folder
+root, which needs no name, so a name typed wrong costs a link that lands in the
+wrong place in the admin's *own* Dropbox — never a misplaced file. A test
+asserts the upload path cannot read the value.
+
+A name carrying `\ / : ? * < > " |` is **refused and named**, not silently
+stripped: Dropbox refuses those in a folder name, so a value with one was
+mistyped, and quietly editing what an admin typed is how a wrong value looks
+right. An empty value **clears** it, and the links go with it.
+
+### One writer for the URL shape
+
+`dropboxWebUrls()` in the Worker is the only place the shape is written. It
+returns `web_url` and a `case_url_template` carrying `{case}` and `{folder}`;
+the page **substitutes** into that template and assembles no path of its own.
+The three folder names are sent in `folders` from `DBX_FOLDERS` — the same list
+`dropboxFolderFor` chooses an upload's destination from — so a fourth folder
+cannot appear in one place and not the other.
+
+### Admin only, and a failed check is not "disconnected"
+
+`/dropbox/folder` joins the other four as admin-only. An investigator gets 403
+from it and from `/status`, and the case panel renders **no** Dropbox links for
+them — asserted by a test that also checks no `dropbox.com` address appears in
+that panel's markup at all.
+
+The Settings card keeps the three states this project keeps everywhere apart:
+**checking**, **loaded**, and **the check failed** — which says so and says
+plainly that it means nothing about whether Dropbox is connected.
+
+A connection held as `DROPBOX_REFRESH_TOKEN` carries a token and nothing about
+whose account it is. The card says the account is **not recorded** and why,
+rather than leaving a blank, and offers no Disconnect it could not honour.
