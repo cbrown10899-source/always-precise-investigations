@@ -5705,6 +5705,52 @@ function redirectTo(url, extra = {}) {
   return new Response(null, { status: 302, headers: { Location: url, ...extra } });
 }
 
+/* ---- WHERE THE FIRM'S FILES ARE, AS A LINK AN ADMIN CAN OPEN ----
+
+   Owner, 2026-08-18: the portal stores case files in Dropbox but said so
+   nowhere. This is the visible half — connection, account, and a way through
+   to the folder — and it is deliberately NOT a file manager: nothing here
+   lists, renames, moves or downloads anything. The gallery already shows what
+   is on a case, proxied through `serveEvidence` where the case's permission
+   checks are.
+
+   A DROPBOX WEB LINK IS NOT A SHARED LINK, and the difference is the whole
+   safety of this. `https://www.dropbox.com/home/...` opens the FIRM'S OWN
+   Dropbox in the browser of whoever clicks it: signed in to that account they
+   see the folder, and signed in to any other account they see nothing. It
+   carries no token and no bytes. `create_shared_link_with_settings` would be
+   the opposite — a URL that hands the files to anyone holding it — and it is
+   not called anywhere in this Worker. Do not add it.
+
+   THE APP FOLDER NAME CANNOT BE DERIVED. This app has App-folder access, so
+   every path the API returns is relative to that folder: `/API-1234/Photos`,
+   never `/Apps/<name>/API-1234/Photos`. Dropbox does not tell an app-folder app
+   what its own folder was called, and the web URL needs it. So an admin records
+   it once, in `app_config` — an existing table, so no schema change and no
+   portal-setup dispatch stands between this merging and it working.
+
+   UNTIL THEY DO, THERE IS NO PER-CASE LINK. `case_url_template` is null rather
+   than a guess: sending someone to a path that does not exist is worse than
+   the Apps folder plus one click, which is what `web_url` falls back to. */
+
+const DBX_WEB_HOME = 'https://www.dropbox.com/home';
+const DBX_FOLDER_KEY = 'dropbox_folder';
+
+/* Dropbox refuses these in a folder name, so a value carrying one was mistyped
+   and would build a URL that goes nowhere. Named rather than stripped: silently
+   editing what an admin typed is how a wrong value looks right. */
+const DBX_NAME_BAD = /[\\\/:?*<>"|]/;
+
+/** The one place the web URL's SHAPE is written. The page substitutes into the
+    template; it never assembles a path of its own, so there is no second
+    version of this to drift. */
+function dropboxWebUrls(folderName) {
+  const name = String(folderName || '').trim();
+  if (!name) return { web_url: `${DBX_WEB_HOME}/Apps`, case_url_template: null };
+  const base = `${DBX_WEB_HOME}/Apps/${encodeURIComponent(name)}`;
+  return { web_url: base, case_url_template: `${base}/{case}/{folder}` };
+}
+
 /* What the office is told. Never the token — not here and not anywhere. */
 async function dropboxState(env) {
   const out = {
@@ -5712,7 +5758,18 @@ async function dropboxState(env) {
     redirect_uri: dropboxRedirectUri(env),
     connected: false, account_email: null, account_name: null,
     connected_at: null, scopes: null, source: null, not_set_up: false,
+    /* The three per-case folders, sent rather than hard-coded in the page:
+       `dropboxFolderFor` decides where an upload lands and this is the same
+       list, so a fourth folder cannot appear in one place and not the other. */
+    folders: DBX_FOLDERS.slice(),
+    folder_name: null, web_url: null, case_url_template: null,
   };
+  /* Read BEFORE the early returns. The folder name is what makes a link
+     openable, and it is just as useful on a connection held as a Worker
+     secret as on one an admin made. */
+  const folderName = await configValue(env, DBX_FOLDER_KEY, null);
+  out.folder_name = folderName || null;
+  Object.assign(out, dropboxWebUrls(folderName));
   /* A refresh token supplied as a Worker SECRET still counts, and outranks the
      stored one. That path existed before this flow did, and an owner who has
      already pasted a token should not be told they are disconnected. */
@@ -7806,6 +7863,31 @@ async function route(request, env) {
     return redirectTo(url.toString(), { 'Set-Cookie': dbxStateCookie(carried, DBX_STATE_TTL) });
   }
 
+
+  /* THE APP FOLDER'S NAME, recorded once so the links resolve. It is not a
+     credential and not a path the Worker uploads to — every upload addresses
+     the App Folder root, which needs no name. This value builds a WEB URL and
+     nothing else, so getting it wrong costs a link that lands in the wrong
+     place in the admin's own Dropbox, never a misplaced file.
+
+     An empty value CLEARS it, and that is the admin saying they would rather
+     have no link than a wrong one. `configValue` reads the row back, so an
+     absent key and a cleared key answer identically. */
+  if (p === '/dropbox/folder' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    const body = await readJson(request);
+    const name = String(body.folder_name == null ? '' : body.folder_name).trim().slice(0, 120);
+    if (name && DBX_NAME_BAD.test(name)) {
+      return json({ error: 'A Dropbox folder name cannot contain \\ / : ? * < > " or |. '
+        + 'Type the folder name on its own, not a path or a web address.',
+        code: 'bad_folder_name' }, 400);
+    }
+    await env.DB.prepare(
+      `INSERT INTO app_config (key, value, updated_by, updated_at) VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT(key) DO UPDATE SET value = ?2, updated_by = ?3, updated_at = ?4`)
+      .bind(DBX_FOLDER_KEY, name, user.id, nowIso()).run();
+    return json({ ok: true, dropbox: await dropboxState(env) });
+  }
 
   if (p === '/dropbox/disconnect' && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);

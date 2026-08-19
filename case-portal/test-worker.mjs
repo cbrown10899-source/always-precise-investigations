@@ -10197,6 +10197,112 @@ section('Dropbox — secrets only, and no file migration yet');
      st2.connected === true && st2.source === 'worker secret');
   ok('and that secret is not echoed back either',
      !JSON.stringify(st2).includes('from-a-secret'));
+
+  /* ---------------------------------------------------------------------
+     THE VISIBLE HALF: status, account, and a way through to the folder.
+
+     Everything the Settings card draws comes from `/dropbox/status`, so these
+     assert the DATA rather than the markup — the page test asserts what an
+     admin sees. What matters here is that the Worker never guesses a path and
+     never mints a shared link. */
+
+  const env3 = freshEnv();
+  await bootstrapAdmin(env3);
+  const a3 = (await login(env3, 'trever', 'FirstAdminPass1')).cookie;
+  env3.DROPBOX_APP_KEY = 'k'; env3.DROPBOX_APP_SECRET = 's';
+  env3.DROPBOX_REFRESH_TOKEN = 'from-a-secret';
+  const dbxOf = async (cookie = a3, e = env3) =>
+    (await jsonOf(await call(e, '/dropbox/status', { cookie }))).dropbox;
+
+  let d3 = await dbxOf();
+  ok('the three case folders come from the Worker, not the page',
+     JSON.stringify(d3.folders) === JSON.stringify(['Photos', 'Reports', 'Video']),
+     JSON.stringify(d3.folders));
+  ok('with no folder name recorded there is NO per-case link',
+     d3.folder_name === null && d3.case_url_template === null);
+  ok('and Open Dropbox falls back to the Apps folder rather than a guessed path',
+     d3.web_url === 'https://www.dropbox.com/home/Apps', d3.web_url);
+
+  /* THE NAME IS RECORDED IN app_config — an existing table, so nothing here
+     waits on a portal-setup dispatch. */
+  const setFolder = (name, cookie = a3, e = env3) =>
+    call(e, '/dropbox/folder', { method: 'POST', cookie, body: { folder_name: name } });
+
+  const saved = await jsonOf(await setFolder('Always Precise Investigations'));
+  ok('an admin records the App Folder name and gets the fresh state back',
+     saved.ok === true && saved.dropbox.folder_name === 'Always Precise Investigations');
+  ok('it is stored as configuration, not as a new table',
+     (await env3.DB.prepare("SELECT value FROM app_config WHERE key = 'dropbox_folder'").first())
+       .value === 'Always Precise Investigations');
+
+  d3 = await dbxOf();
+  ok('Open Dropbox now points at the firm folder, with the name URL-encoded',
+     d3.web_url === 'https://www.dropbox.com/home/Apps/Always%20Precise%20Investigations',
+     d3.web_url);
+  ok('and a per-case template appears',
+     d3.case_url_template
+       === 'https://www.dropbox.com/home/Apps/Always%20Precise%20Investigations/{case}/{folder}',
+     d3.case_url_template);
+
+  /* A DROPBOX WEB LINK IS NOT A SHARED LINK. This is the whole safety of the
+     feature: the URL opens the FIRM'S OWN Dropbox and hands out nothing. */
+  ok('no link is a Dropbox shared link — nothing hands the files to a URL holder',
+     !d3.web_url.includes('/s/') && !d3.web_url.includes('/scl/')
+       && !d3.case_url_template.includes('/s/'));
+  const wsrc = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  /* Asserted on the API URL a call would have to use, not on the words — the
+     comment above `dropboxWebUrls` names the endpoint precisely so nobody adds
+     it, and a test that failed on the warning would be deleted rather than
+     obeyed. */
+  ok('and the Worker calls no Dropbox sharing endpoint at all',
+     !/api\.dropboxapi\.com\/2\/sharing/.test(wsrc));
+  ok('nor a direct download endpoint for a folder link',
+     !/dropbox\.com\/home[^`'"]*\?dl=/.test(wsrc));
+
+  /* THE TOKEN STILL NEVER LEAVES, now that the state carries more. */
+  ok('the enriched status still echoes no token',
+     !JSON.stringify(d3).includes('from-a-secret'), JSON.stringify(d3).slice(0, 200));
+
+  // ---- a mistyped name is named, not silently edited ----
+  for(const bad of ['Apps/Always Precise', 'C:\\Dropbox', 'a?b', 'a*b', 'a<b', 'a>b', 'a"b', 'a|b']){
+    const r = await call(env3, '/dropbox/folder',
+      { method: 'POST', cookie: a3, body: { folder_name: bad } });
+    ok(`a folder name containing ${JSON.stringify(bad.replace(/[A-Za-z ]/g, ''))} is refused`,
+       r.status === 400 && (await jsonOf(r)).code === 'bad_folder_name');
+  }
+  ok('and the refusal left the good name in place',
+     (await dbxOf()).folder_name === 'Always Precise Investigations');
+
+  // ---- clearing is an answer, not a failure ----
+  const cleared = await jsonOf(await setFolder(''));
+  ok('an empty value clears the name', cleared.dropbox.folder_name === null);
+  ok('and the per-case links go with it, rather than pointing somewhere wrong',
+     cleared.dropbox.case_url_template === null
+       && cleared.dropbox.web_url === 'https://www.dropbox.com/home/Apps');
+  await setFolder('Always Precise Investigations');
+
+  /* ADMIN ONLY, like every other Dropbox route. `/status` names the account and
+     the folder is the firm's; an investigator gets neither. */
+  const iv = await jsonOf(await invite(env3, a3,
+    { username: 'dana3', display_name: 'Dana', role: 'investigator' }));
+  const tk = new URL(iv.url, 'https://x.test').searchParams.get('invite');
+  await call(env3, `/invite/${tk}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana3 = (await login(env3, 'dana3', 'FieldWork2026x')).cookie;
+  ok('an investigator cannot read the Dropbox status',
+     (await call(env3, '/dropbox/status', { cookie: dana3 })).status === 403);
+  ok('nor record the folder name',
+     (await setFolder('Somewhere Else', dana3)).status === 403);
+  ok('and their attempt changed nothing',
+     (await dbxOf()).folder_name === 'Always Precise Investigations');
+  ok('signed out, the folder route is 401 rather than 403',
+     (await call(env3, '/dropbox/folder',
+       { method: 'POST', cookie: '', body: { folder_name: 'x' } })).status === 401);
+
+  /* THE FOLDER NAME IS FOR A LINK AND NOTHING ELSE. Uploads address the App
+     Folder root, which needs no name — so a wrong name costs a link, never a
+     misplaced file. Proven by the upload path being unable to see the value. */
+  ok('no upload path reads the folder name',
+     !/dropboxUpload[\s\S]{0,600}DBX_FOLDER_KEY/.test(wsrc));
 }
 
 /* ------------------------------------------------------------------ report */

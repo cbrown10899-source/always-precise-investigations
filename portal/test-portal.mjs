@@ -10337,6 +10337,132 @@ section('The preview is optional, never a gate');
   await page.close();
 }
 
+/* WHERE THE FIRM'S CASE FILES ARE, SAID OUT LOUD (owner, 2026-08-18).
+
+   Since the Dropbox move the portal has stored every new photograph and
+   generated report in the firm's Dropbox and told nobody: no connection state,
+   no account, no way through to the folder. The plumbing was built; the window
+   was missing. These assert what an ADMIN SEES, which is the half the Worker
+   tests cannot reach.
+
+   AND WHAT AN INVESTIGATOR DOES NOT. All four Dropbox routes are admin-only —
+   `/status` names the firm's account — so none of this may render for them. */
+section('Dropbox is visible, and it is not a file manager');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Settings' }).click();
+  await page.waitForTimeout(700);
+  let body = await page.locator('#app').innerText();
+
+  ok('Settings names where case files are stored',
+     has(body, 'Dropbox') && has(body, 'where case files are stored'), body.slice(0, 300));
+  ok('the connection state is shown', has(body, 'Connected'), body.slice(0, 600));
+  ok('and the three per-case folders are named',
+     has(body, 'Photos') && has(body, 'Reports') && has(body, 'Video'));
+
+  /* THE TEST ENV IS CONNECTED BY WORKER SECRET, which carries a token and
+     nothing about whose account it is. The screen must say that rather than
+     leaving a blank where the account should be. */
+  ok('a secret-held connection says the account is not recorded',
+     has(body, 'not recorded') && has(body, 'Worker secret'), body.slice(0, 900));
+  ok('and offers no Disconnect it could not honour',
+     await page.locator('[data-act="dbxDisconnect"]').count() === 0);
+  ok('saying instead how to end it', has(body, 'Remove the secret'));
+
+  /* NOT A FILE MANAGER (owner: "use existing Dropbox backend; do not build a
+     file manager"). Asserted as an absence of the controls one would have. */
+  ok('nothing here lists, renames or downloads a file', has(body, 'Nothing on this screen lists'));
+  ok('and the card says its links are not shared links',
+     has(body, 'shared') && has(body, 'shows nothing to'), body.slice(0, 1200));
+
+  // ---- with no folder name, the link is honest about where it goes ----
+  const openBtn = () => page.locator('#app a', { hasText: 'Open Dropbox' });
+  ok('Open Dropbox is offered', await openBtn().count() === 1);
+  ok('and with no folder name recorded it goes to the Apps folder, not a guess',
+     (await openBtn().first().getAttribute('href')) === 'https://www.dropbox.com/home/Apps',
+     String(await openBtn().first().getAttribute('href')));
+  ok('the screen says why it cannot be more specific',
+     has(body, 'does not tell an app what its own App Folder was named'));
+  ok('a Dropbox link opens in a new tab and leaks no referrer',
+     (await openBtn().first().getAttribute('target')) === '_blank'
+     && String(await openBtn().first().getAttribute('rel')).includes('noreferrer'));
+
+  /* NO PER-CASE LINKS UNTIL THERE IS A NAME. A link to a path that may not
+     exist is worse than one more click, and the Worker returns no template. */
+  await page.locator('.tabs button', { hasText: 'Cases' }).click();
+  await page.waitForTimeout(400);
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Case media');
+  ok('a case shows no Dropbox folder links while the name is unknown',
+     !has(await text(page, '#dlgBody'), 'In Dropbox'));
+
+  // ---- the admin records it once ----
+  await page.locator('.tabs button', { hasText: 'Settings' }).click();
+  await page.waitForTimeout(700);
+  await page.locator('#dbx_folder').fill('Always Precise Investigations');
+  await page.locator('[data-act="dbxFolder"]').click();
+  await page.waitForTimeout(600);
+  body = await page.locator('#app').innerText();
+  ok('the folder name saves', has(body, 'Saved'), body.slice(0, 400));
+  ok('and Open Dropbox now points at the firm folder',
+     (await openBtn().first().getAttribute('href'))
+       === 'https://www.dropbox.com/home/Apps/Always%20Precise%20Investigations',
+     String(await openBtn().first().getAttribute('href')));
+
+  // ---- and the case gains its three folder links ----
+  await page.locator('.tabs button', { hasText: 'Cases' }).click();
+  await page.waitForTimeout(400);
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Case media');
+  const media = await text(page, '#dlgBody');
+  ok('the case now carries its Dropbox folders', has(media, 'In Dropbox'), media.slice(0, 400));
+  const links = page.locator('#dlgBody a', { hasText: /Photos|Reports|Video/ });
+  const hrefs = await links.evaluateAll(els => els.map(e => e.getAttribute('href')));
+  ok('one link per folder, three of them',
+     hrefs.length === 3, JSON.stringify(hrefs));
+  ok('each addressed to THIS case, inside the firm folder',
+     hrefs.every(h => h.startsWith(
+       'https://www.dropbox.com/home/Apps/Always%20Precise%20Investigations/API-20260812-4002/')),
+     JSON.stringify(hrefs));
+  ok('naming Photos, Reports and Video',
+     hrefs.some(h => h.endsWith('/Photos')) && hrefs.some(h => h.endsWith('/Reports'))
+       && hrefs.some(h => h.endsWith('/Video')), JSON.stringify(hrefs));
+  /* THE SAFETY OF THE WHOLE FEATURE: these open the firm's own Dropbox. A
+     shared link would hand the case files to anyone holding the URL. */
+  ok('and none of them is a Dropbox shared link',
+     hrefs.every(h => !h.includes('/s/') && !h.includes('/scl/') && !h.includes('dl=1')),
+     JSON.stringify(hrefs));
+  ok('the case says plainly that nothing is shared',
+     has(media, 'nothing is shared'), media.slice(0, 400));
+  await page.close();
+}
+
+section('An investigator is shown none of the firm\'s Dropbox');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  const nav = await text(page, '.tabs');
+  ok('there is no Settings door for them', !has(nav, 'Settings'));
+  const shell = await page.locator('#app').innerText();
+  ok('and nothing about the connection or the account is on their screen',
+     !has(shell, 'Dropbox'), shell.slice(0, 400));
+
+  /* THE CASE SCREEN IS THE ONE THAT COULD LEAK IT — the folder links render
+     beside media an investigator is allowed to see. */
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Case media');
+  const media = await text(page, '#dlgBody');
+  ok('the case media panel offers them no Dropbox folder links',
+     !has(media, 'In Dropbox'), media.slice(0, 400));
+  ok('and no dropbox.com address is anywhere on it',
+     !(await page.locator('#dlgBody').innerHTML()).includes('dropbox.com'));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
