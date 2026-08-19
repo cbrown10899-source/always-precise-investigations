@@ -18,7 +18,7 @@ item is finished.
 | # | Work | State |
 | --- | --- | --- |
 | 1 | Finish current Active Surveillance mobile and voice polish | **DONE — DEPLOYED** at `c333d3f` (#182). §13 photo/video commands, §8 retry/offline and server-side duplicate protection, §1/§16.1 compact status. Two device-only checks OPEN, below. |
-| 2 | Build Timestamp Photo | **DONE — DEPLOYED** at `ad77b2e` (#183), findable at `2067755` (#184). Device checks OPEN, below. |
+| 2 | Build Timestamp Photo | **DONE — DEPLOYED** at `ad77b2e` (#183), findable at `2067755` (#184), picture-first at `c77dd11` (#185). Device checks OPEN, below. |
 | 3 | Visible Dropbox portal UI for Admin | **NEXT** — not started. Added by the owner 2026-08-18 |
 | 4 | Admin report workflow and mobile report fix | not started — **queued, do not begin** |
 | 5 | Full portal aesthetic cleanup | not started — **queued, do not begin**. Carries a specific brief, below |
@@ -52,6 +52,68 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Do not interrupt the current coding unit. Record this queue only"*, and
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
+
+## 🚦 DEPLOYMENT — 2026-08-19, master `c77dd11` (#185) — picture first, case last
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` | `c77dd11` | `c77dd11` | **DEPLOYED** — `deploy.yml` 32204378491 success |
+| Worker / API | `ad77b2e` | `ad77b2e` | unchanged — **`worker.js` and `schema.sql` untouched** |
+| D1 schema | `ad77b2e` | applied | unchanged — **no dispatch owed** |
+
+Save point `save/2026-08-19-0117-c77dd11`. Portal **1718/1**, guard **68/0**,
+worker **1849/0** at `ad77b2e`. The one portal failure is the pre-existing
+preview fixture, untouched on the owner's standing instruction.
+
+**LIVE VERIFIED — OPEN**, for the owner's device test: that the door opens the
+photo picker rather than a case picker, that the copy can be kept without
+choosing a case at all, and the two checks carried from #183 (real camera EXIF,
+and an HEIC refusal reading correctly).
+
+### The workflow error
+
+Owner, after a live test: *"Remove the required case picker at entry"*, then
+*"Match Timestamp Video: choose a local photo first on iOS Android Mac or
+Windows, timestamp it locally, then optionally choose a case only for Dropbox or
+case filing."*
+
+The door now opens the picture picker. **Nothing is uploaded and the portal
+holds no record unless a case is deliberately chosen** — asserted against counts
+taken before the picture was even chosen. Filing a picture off a device sends
+the **original first** and the copy against it, because the original is
+preserved untouched as case evidence and the pair is meaningless without it.
+
+**Two of my decisions were overruled by the field, in order**, and both are
+recorded as superseded in `PHOTO-TIMESTAMP.md` with their original reasoning
+kept: D1 put the door only on a photograph already in the case, and its fix led
+with a required case picker.
+
+### 🕒 THE SUITE ONLY PASSED AFTER 10:05 IN THE MORNING
+
+Worth reading before the next red run is blamed on the change in front of it.
+
+Two fixtures typed **fixed times** into the form (`09:41`, `10:05`) while every
+later section stamps with the real clock through `stampNow()`. The timeline
+orders by `at_time`, so those fixtures sat on top of anything filed earlier in
+the day. Nine voice assertions and a crash appeared, and **reproduced identically
+on master** — the same commit that scored 1704/1 the previous evening scored
+1057/9 at 01:00.
+
+```
+id  6  10:05  Trever Brown   "Subject returned to residence and entered…"
+id 11  01:00  Dana Field     "No change observed at the residence."  (voice)
+```
+
+**Nothing about the product was wrong.** 10:05 IS later in the day than 01:00;
+the ordering, the field home's `acts[0]` and the *"belongs to another
+investigator"* refusal were all correct. Fixtures are now stamped **relative to
+the run** and clamped at `00:00`, so a run a minute past midnight cannot roll
+into yesterday.
+
+Three hypotheses were wrong first — the run crossing midnight, a function lost
+in a rewrite, the form defaulting to a fixed time — and each was killed by
+evidence rather than argued down. The fourth attempt was a **diagnostic instead
+of a guess** and answered it in one run.
 
 ## 🚦 DEPLOYMENT — 2026-08-19, master `2067755` (#184) — Timestamp Photo, findable
 
