@@ -53,6 +53,59 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
 
+## 🚦 DEPLOYMENT — 2026-08-19, master `b0304cb` (#188) — portrait geometry, Save to Dropbox
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` | `b0304cb` | `b0304cb` | **DEPLOYED** — `deploy.yml` 32212125408 success |
+| Worker / API | `ad77b2e` | `ad77b2e` | unchanged — **untouched** |
+| D1 schema | `ad77b2e` | applied | unchanged — **no dispatch owed** |
+
+Save point `save/2026-08-19-0326-b0304cb`. Portal **1778/0**, guard **68/0**.
+
+**LIVE VERIFIED — OPEN**: the owner's retest of portrait and landscape output,
+and Save to Dropbox after generation.
+
+**Timestamp Photo works on the iPhone** (owner, this session) — the CSP was it.
+
+### The overlay took two goes, and the second is the lesson
+
+`vstDraw` sized the face from `H * 0.05` — the **height** — while the stamp runs
+along the **width**. Left gap with that code: `3024x4032 → 11px`,
+`1080x1920 → 7px`, `750x1334 → 2px`. Edge to edge, no margin.
+
+Sizing from the **short side** fixed the margin and **not the proportion**, and
+the owner came back with *"landscape is correct; portrait is still oversized"*.
+They were right:
+
+| | share of image width |
+| --- | --- |
+| landscape 4032×3024 | 52% — reads correctly |
+| portrait 3024×4032 | **70%** — the same face on a narrower picture |
+
+The face is now solved from the **width**: measure the text once at a known size
+to learn how wide that face draws this string, then compute the size for the
+target share. `H * 0.08` caps a wide short picture, and a bounded loop guarantees
+the whole stamp lands inside the margins. After: portrait **51.4%**, landscape
+**51.7%**, and the same across 1080×1920, 750×1334 and square.
+
+**The assertion is AGREEMENT, not fit.** Every geometry fitted inside its margins
+under the rejected version too — *"it fits"* was true of the thing the owner
+rejected. What was wrong was that portrait carried a bigger stamp than landscape,
+so that is what the test measures.
+
+`vstDraw` is the one writer for photographs **and** video, so the same portrait
+defect is fixed in the video renderer.
+
+### Save to Dropbox
+
+Beside **Save to this device**, never instead of it — the device save is
+untouched and stays first. Dropbox is organised **per case**, so the case picker
+appears only when the door did not already name one, and the case step says *why*
+it is asking. Skipping it keeps the copy on the device with nothing uploaded and
+no record in the portal. A file placed in Dropbox with no record would be one
+nobody can find again, which is the orphan shape `DEMO_SWEEP` exists to prevent.
+
 ## 🚦 DEPLOYMENT — 2026-08-19, master `4ca9480` (#187) — the CSP blocked every photograph
 
 | Component | Master | Deployed | Status |
