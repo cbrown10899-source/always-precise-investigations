@@ -1207,6 +1207,23 @@ nothing extra is uploaded.
 video renderer uses, not copies of them. Two renderings of one stamp drift, and
 the one that drifts is the one nobody is looking at.
 
+**`vstDraw` sizes the face from the WIDTH, and that is load-bearing.** It has
+been wrong twice. `H * 0.05` — the height — while the stamp runs along the width
+left 2 to 11 pixels of margin on portrait; sizing from the short side fixed the
+margin and left the PROPORTION wrong, so a portrait picture carried a stamp
+across 70% of its width against 52% on landscape, and the owner rejected it on
+sight. It now measures the text once at a known size to learn how wide that face
+actually draws the string, then solves for a target share of the width — which
+also absorbs whatever fallback font a device picks, because that is the font
+being measured. `H * 0.08` caps a wide, short picture; a bounded loop guarantees
+the whole date, time and zone land inside the margins.
+
+**The test asserts AGREEMENT between orientations, not fit.** Every geometry
+fitted inside its margins under the version the owner rejected — *"it fits"* was
+true of the broken one. What was wrong was portrait carrying a bigger stamp than
+landscape, so that is what is measured: portrait 51.4%, landscape 51.7%. Do not
+re-derive this from a height.
+
 **`photo_stamp` is a companion table** for the reason every other one here is:
 `case_evidence` cannot gain a column while `schema.sql` is re-applied on every
 portal-setup run. Guarded on every read, named in `EXPECTED_TABLES`, and swept

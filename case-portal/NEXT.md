@@ -18,7 +18,7 @@ item is finished.
 | # | Work | State |
 | --- | --- | --- |
 | 1 | Finish current Active Surveillance mobile and voice polish | **DONE — DEPLOYED** at `c333d3f` (#182). §13 photo/video commands, §8 retry/offline and server-side duplicate protection, §1/§16.1 compact status. Two device-only checks OPEN, below. |
-| 2 | Build Timestamp Photo | **DONE — DEPLOYED** at `ad77b2e` (#183), findable at `2067755` (#184), picture-first at `c77dd11` (#185). Device checks OPEN, below. |
+| 2 | Build Timestamp Photo | ✅ **DONE — LIVE VERIFIED** by the owner on 2026-08-19 at `b0304cb` (#188), portrait layout and Save to Dropbox included. Shipped over #183–#188. |
 | 3 | Visible Dropbox portal UI for Admin | **NEXT** — not started. Added by the owner 2026-08-18 |
 | 4 | Admin report workflow and mobile report fix | not started — **queued, do not begin** |
 | 5 | Full portal aesthetic cleanup | not started — **queued, do not begin**. Carries a specific brief, below |
@@ -63,8 +63,15 @@ with whatever branch is in flight rather than as a separate merge.
 
 Save point `save/2026-08-19-0326-b0304cb`. Portal **1778/0**, guard **68/0**.
 
-**LIVE VERIFIED — OPEN**: the owner's retest of portrait and landscape output,
-and Save to Dropbox after generation.
+✅ **LIVE VERIFIED** — owner, 2026-08-19: *"Timestamp Photo is LIVE VERIFIED
+including portrait layout and Save to Dropbox."*
+
+**This closes every device check carried forward since #183.** The entries below
+still read "OPEN" because that is what was true when each was written; none of
+them is outstanding. The one path the owner's own files never exercised is the
+REFUSAL — theirs all decoded — and that is not a gap so much as an untested
+edge: it now reports the file's magic number and each decoder's own words, so
+the first time it fires it explains itself.
 
 **Timestamp Photo works on the iPhone** (owner, this session) — the CSP was it.
 
