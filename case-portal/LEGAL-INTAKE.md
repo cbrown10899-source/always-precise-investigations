@@ -5,6 +5,17 @@ Queued by the owner on **2026-08-19**, mid-unit, with the instruction:
 > AFTER YOU FINISH THE CURRENT CODING UNIT IN FULL, build the next queued intake
 > addition below. Do not interrupt or abandon work already in progress.
 
+**Reordered by the owner the same day**, before any code was written for it:
+
+> Update the queue so UI work comes before the new Legal intake.
+
+> After Dropbox UI: 1) Admin report/mobile workflow fix, 2) full portal
+> mobile/aesthetic UI cleanup, 3) Legal/Law Firm intake. Finish, test, merge and
+> deploy each unit before starting the next.
+
+So this is **item 6**, behind both UI units, and each of those ships on its own
+merge and its own deploy before the next one starts.
+
 **Nothing in this file is designed by me.** It is the brief as written, kept so
 that the unit is built from the owner's words rather than from a paraphrase that
 has already lost the decisions. Read it before writing any code for item 7.

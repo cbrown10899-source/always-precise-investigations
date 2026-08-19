@@ -21,11 +21,23 @@ item is finished.
 | 2 | Build Timestamp Photo | ✅ **DONE — LIVE VERIFIED** by the owner on 2026-08-19 at `b0304cb` (#188), portrait layout and Save to Dropbox included. Shipped over #183–#188. |
 | 3 | Visible Dropbox portal UI for Admin | **IN FLIGHT** on `dropbox-ui`. Added by the owner 2026-08-18 |
 | 4 | Admin report workflow and mobile report fix | not started — **queued, do not begin** |
-| 5 | Full portal aesthetic cleanup | not started — **queued, do not begin**. Carries a specific brief, below |
-| 6 | Remaining Portal Ops productivity features | not started |
-| 7 | **Legal / Law Firm intake** (third intake type) | not started — **queued, do not begin until 3 is finished**. Added by the owner 2026-08-19. Full brief below |
+| 5 | Full portal mobile / aesthetic UI cleanup | not started — **queued, do not begin**. Carries a specific brief, below |
+| 6 | **Legal / Law Firm intake** (third intake type) | not started — **queued, do not begin**. Added by the owner 2026-08-19; **reordered by them to sit after the UI work**. Full brief below |
+| 7 | Remaining Portal Ops productivity features | not started |
 
-**Item 7 — LEGAL / LAW FIRM intake.** Queued by the owner on 2026-08-19 with the
+**The order after the Dropbox UI is the owner's own, 2026-08-19**: *"After
+Dropbox UI: 1) Admin report/mobile workflow fix, 2) full portal mobile/aesthetic
+UI cleanup, 3) Legal/Law Firm intake."* Legal was queued earlier the same day
+ahead of a reorder — *"Update the queue so UI work comes before the new Legal
+intake"* — so it moved from 7 to 6 and **both UI items run first**.
+
+**And each one ships before the next begins**, in their words: *"Finish, test,
+merge and deploy each unit before starting the next."* That is the serial chain
+this project already runs — clean master, branch, CODED, focused tests, full
+suites once, TESTED, push, PR, MERGED, deploy, DEPLOYED, live verify — applied
+per unit rather than batching two units into one merge.
+
+**Item 6 — LEGAL / LAW FIRM intake.** Queued by the owner on 2026-08-19 with the
 instruction *"AFTER YOU FINISH THE CURRENT CODING UNIT IN FULL, build the next
 queued intake addition below. Do not interrupt or abandon work already in
 progress."* Recorded here **mid-unit and not designed**, the same way items 3
