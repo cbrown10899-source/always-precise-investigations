@@ -6100,6 +6100,63 @@ section('An admin\'s own report needs no approval ritual');
        .status === 'draft');
 }
 
+/* ---- UNIT 5: the dashboard's Recent Activity and the Dropbox flag ----
+   The feed is EXISTING tables read cheaply and merged — no new storage, no
+   media bytes, hidden cases excluded, admin only. */
+section('Recent activity: existing data, cheaply, admin only');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const tok = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  ok('an investigator is refused the cross-case feed',
+     (await call(env, '/recent-activity', { cookie: inv })).status === 403);
+  ok('signed out it is 401',
+     (await call(env, '/recent-activity', { cookie: '' })).status === 401);
+
+  let feed = (await jsonOf(await call(env, '/recent-activity', { cookie: admin }))).activity;
+  ok('an empty portal answers an empty feed, not an error', Array.isArray(feed) && feed.length === 0);
+
+  await ingest(env, { case_no: 'API-RA1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  await call(env, '/cases/API-RA1/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-18', start_time: '07:00' } });
+  await call(env, '/cases/API-RA1/day/end', { method: 'POST', cookie: admin, body: { end_time: '11:00' } });
+
+  feed = (await jsonOf(await call(env, '/recent-activity', { cookie: admin }))).activity;
+  ok('the intake appears', feed.some(r => r.kind === 'intake' && r.case_no === 'API-RA1'));
+  ok('the day appears, as ended', feed.some(r => r.kind === 'day' && /ended/.test(r.detail)));
+  ok('newest first', feed.length >= 2
+     && feed.every((r, i) => i === 0 || feed[i - 1].at >= r.at), JSON.stringify(feed.slice(0, 3)));
+  ok('rows carry when, what and which case, and nothing else heavy',
+     feed.every(r => r.at && r.kind && r.case_no && typeof r.detail === 'string'
+       && !('body' in r) && !('payload' in r)));
+
+  /* Hidden means hidden: an archived case's history leaves the feed with it. */
+  await call(env, '/cases/API-RA1/archive', { method: 'POST', cookie: admin, body: {} });
+  feed = (await jsonOf(await call(env, '/recent-activity', { cookie: admin }))).activity;
+  ok('an archived case leaves the feed', !feed.some(r => r.case_no === 'API-RA1'),
+     JSON.stringify(feed.slice(0, 3)));
+
+  /* The Dropbox flag on /summary: admin sees it, investigator does not.
+     freshEnv is CONNECTED by default (the owner's default state), so the
+     disconnected reading is manufactured by removing the token. */
+  delete env.DROPBOX_REFRESH_TOKEN;
+  let sum = (await jsonOf(await call(env, '/summary', { cookie: admin }))).summary;
+  ok('the admin summary says whether the file store is alive',
+     sum.dropbox_configured === true && sum.dropbox_ok === false,
+     JSON.stringify({ok: sum.dropbox_ok, cfg: sum.dropbox_configured}));
+  env.DROPBOX_REFRESH_TOKEN = 'rt';
+  sum = (await jsonOf(await call(env, '/summary', { cookie: admin }))).summary;
+  ok('and connected reads as connected', sum.dropbox_ok === true);
+  const isum = (await jsonOf(await call(env, '/summary', { cookie: inv }))).summary;
+  ok('an investigator\'s summary carries no firm-wide storage flag',
+     isum.dropbox_ok === undefined && isum.dropbox_configured === undefined);
+}
+
 section('The daily report builder');
 {
   const env = freshEnv();

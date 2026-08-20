@@ -1566,6 +1566,20 @@ async function caseSummary(env, user) {
   // The storage meter (the free-plan failsafe's face on the dashboard).
   if (admin && have('case_evidence')) {
     out.storage = await evidenceUsage(env);
+    /* UNIT 5 — the dashboard names a dead file store instead of the office
+       discovering it at the next upload. Local reads only: env + one D1 row.
+       `dropboxState` never calls Dropbox, so this cannot slow the dashboard
+       or count against anyone's API. */
+    if (user.role === 'admin') {
+      /* Admin only, like the /dropbox/status it summarises. A boolean names no
+         account — but an investigator learns storage state from the upload
+         refusal that affects them, not from a firm-wide flag. */
+      try {
+        const dbx = await dropboxState(env);
+        out.dropbox_ok = Boolean(dbx.connected);
+        out.dropbox_configured = Boolean(dbx.app_configured);
+      } catch { /* the summary is not allowed to fail over a status read */ }
+    }
   }
 
   // The two stage-driven cards (priority 20): the ball in the client's court,
@@ -1602,6 +1616,57 @@ async function caseSummary(env, user) {
   }
 
   return json({ summary: out });
+}
+
+/* ---- UNIT 5: RECENT ACTIVITY (owner) ----
+
+   "Provide a useful compact Recent Activity section from existing
+   structured/audit/activity data... Do not load large media assets just to
+   render the activity feed."
+
+   Every source below is a table that already exists, read by indexed-enough
+   columns with its own LIMIT, merged and cut in JS. No media is touched —
+   evidence contributes its FILENAME and where it went, never bytes. Archived
+   and deleted cases are excluded the same way every dashboard read excludes
+   them. Admin-only, like the dashboard that draws it: the feed spans every
+   case, which is exactly what an investigator's view must never do. */
+async function recentActivity(env) {
+  const hidden = await hiddenCases(env);
+  const missing = await missingTables(env);
+  const per = 10, out = [];
+  const push = (rows, kind, label) => {
+    for (const r of rows || []) {
+      if (!r.at || hidden.has(r.case_no)) continue;
+      out.push({ at: r.at, kind, case_no: r.case_no, detail: label(r) });
+    }
+  };
+  const q = async sql => { try { return (await env.DB.prepare(sql).all()).results; } catch { return []; } };
+
+  push(await q(`SELECT case_no, created_at AS at, kind FROM submissions
+                 ORDER BY id DESC LIMIT ${per}`),
+    'intake', r => r.kind === 'claims' ? 'Carrier assignment received' : 'Intake received');
+  push(await q(`SELECT case_no, created_at AS at, end_time FROM case_days
+                 ORDER BY id DESC LIMIT ${per}`),
+    'day', r => r.end_time ? 'Investigation day ended' : 'Investigation day started');
+  push(await q(`SELECT case_no, status_at AS at, status FROM case_reports
+                 WHERE status_at IS NOT NULL ORDER BY id DESC LIMIT ${per}`),
+    'report', r => `Report ${r.status === 'needs_revision' ? 'sent back' : r.status}`);
+  push(await q(`SELECT case_no, uploaded_at AS at, filename, r2_key FROM case_evidence
+                 WHERE deleted_at IS NULL ORDER BY id DESC LIMIT ${per}`),
+    'evidence', r => `${String(r.r2_key || '').startsWith('dropbox:') ? 'Filed to Dropbox' : 'Media added'} — ${r.filename}`);
+  if (!missing.includes('retainer_payment')) {
+    push(await q(`SELECT case_no, recorded_at AS at FROM retainer_payment
+                   ORDER BY id DESC LIMIT ${per}`),
+      'payment', () => 'Retainer payment recorded');
+  }
+  push(await q(`SELECT b.case_no, e.at AS at, e.action FROM build_events e
+                 JOIN case_builds b ON b.id = e.build_id
+                WHERE e.action IN ('finalized', 'delivered')
+                ORDER BY e.id DESC LIMIT ${per}`),
+    'package', r => r.action === 'delivered' ? 'Package delivered' : 'Package finalized');
+
+  out.sort((a, b) => a.at < b.at ? 1 : -1);
+  return out.slice(0, 12);
 }
 
 /* Case numbers that have left the working set: archived or deleted. Guarded on
@@ -7476,6 +7541,10 @@ async function route(request, env) {
   /* Counts for the dashboard. Scoped like everything else — an investigator's
      totals are their own cases, not the firm's book of work. */
   if (p === '/summary' && method === 'GET') return caseSummary(env, user);
+  if (p === '/recent-activity' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return json({ activity: await recentActivity(env) });
+  }
 
   /* The case workspace. Every route below re-checks that this caller may open
      this case, against the database, so a changed case number in the URL is
