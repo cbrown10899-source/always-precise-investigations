@@ -11375,6 +11375,268 @@ section('Clients & Firms on a phone: cards, taps and no sideways scroll');
   await page.close();
 }
 
+/* ============================================================== UNIT 8 =====
+   GLOBAL SEARCH + NEEDS ATTENTION, on the real page. */
+
+async function gotoDash(page) {
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).first().click();
+  await page.waitForTimeout(1400);
+}
+async function typeSearch(page, q) {
+  await page.locator('#gsearch').fill(q);
+  await page.waitForFunction(() => !document.body.innerText.includes('Searching…'),
+    null, { timeout: 10000 }).catch(() => {});
+  await page.waitForTimeout(500);
+}
+
+section('Global search: one box on the dashboard, and it goes straight to the case');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await gotoDash(page);
+
+  ok('the dashboard leads with a search box', await page.locator('#gsearch').count() === 1);
+  ok('and it says what it searches',
+     has(await text(page, '.srchcard'), 'Search cases, people, firms')
+     || (await page.locator('#gsearch').getAttribute('placeholder') || '')
+          .includes('Search cases, people, firms'),
+     await page.locator('#gsearch').getAttribute('placeholder'));
+  /* THE SEARCH CARD IS FIRST. On a phone it is the only thing on screen
+     without scrolling, which is the point of putting it there. */
+  const order = await page.evaluate(() => [...document.querySelectorAll('#app .card')]
+    .map(c => (c.querySelector('h2') || {}).innerText || '').filter(Boolean));
+  ok('search comes before the queue', order.indexOf('Search') === 0
+     && order.indexOf('Today / next actions') === 1, JSON.stringify(order.slice(0, 4)));
+
+  ok('one character searches nothing', (await typeSearch(page, 'A'),
+     !(await page.locator('.srchrow').count())), 'a single letter searched');
+
+  await typeSearch(page, 'WC-2026-88421');
+  const rows = page.locator('.srchrow');
+  ok('a claim number finds its case', await rows.count() >= 1, String(await rows.count()));
+  const first = await text(page, '.srchrow');
+  ok('the result names the case', first.includes('API-20260812-4001'), first);
+  /* A RESULT SAYS WHY IT IS THERE. */
+  ok('and says what matched', has(first, 'Matched: claim number'), first);
+  ok('and it is typed', await page.locator('.srchtype').first().innerText() !== '',
+     await page.locator('.srchtype').first().innerText());
+
+  /* STRAIGHT TO THE WORK — not search, then Cases, then search again. */
+  await rows.first().click();
+  await page.waitForTimeout(900);
+  ok('clicking a result opens the case itself', await page.locator('.casepage').count() === 1);
+  ok('and it is the right case', has(await text(page, '#dlgBody'), 'API-20260812-4001'));
+  await page.close();
+}
+
+section('Global search: the keyboard opens the first result');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await gotoDash(page);
+  await typeSearch(page, 'API-20260812-4002');
+  ok('there is something to open', await page.locator('.srchrow').count() >= 1);
+  await page.locator('#gsearch').press('Enter');
+  await page.waitForTimeout(900);
+  ok('Enter opens it without touching the mouse', await page.locator('.casepage').count() === 1);
+  ok('and it is the right case', has(await text(page, '#dlgBody'), 'API-20260812-4002'));
+
+  await page.locator('[data-act="backToCases"]').click();
+  await page.waitForTimeout(400);
+  await gotoDash(page);
+  await typeSearch(page, 'API-2026');
+  const n = await page.locator('.srchrow').count();
+  if (n > 1) {
+    await page.locator('#gsearch').press('ArrowDown');
+    await page.waitForTimeout(250);
+    await page.locator('#gsearch').press('ArrowDown');
+    await page.waitForTimeout(250);
+    ok('the arrows move a highlight', await page.locator('.srchrow.hi').count() === 1,
+       String(await page.locator('.srchrow.hi').count()));
+  } else {
+    ok('the arrows move a highlight', true, 'only one result to move through');
+  }
+  await page.locator('#gsearch').press('Escape');
+  await page.waitForTimeout(300);
+  ok('Escape clears the box', (await page.locator('#gsearch').inputValue()) === '');
+  ok('and the results with it', await page.locator('.srchrow').count() === 0);
+  await page.close();
+}
+
+section('Global search: the field has the door, and it opens onto their own work only');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  const nav = await text(page, '.tabs');
+  ok('an investigator has a Search door too', has(nav, 'Search'), nav);
+  await page.locator('.tabs button', { hasText: 'Search' }).first().click();
+  await page.waitForTimeout(600);
+  ok('it opens a search screen', await page.locator('#gsearch').count() === 1);
+  /* THE BOUNDARY IS THE WORKER'S, and this is the page half of the proof: the
+     claim number of a case Dana is not on returns nothing at all. */
+  await typeSearch(page, 'WC-2026-88421');
+  const body = await text(page, '.srchcard');
+  ok('a case they are not on cannot be found by claim number',
+     !body.includes('API-20260812-4001'), body.slice(0, 300));
+  ok('and the screen says nothing matched rather than showing a stub',
+     has(body, 'Nothing matched'), body.slice(0, 200));
+  await page.close();
+}
+
+section('Needs attention: rows that say why, and go where the work is');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await gotoDash(page);
+  const card = page.locator('.card.queuecard').first();
+  ok('the queue is still the emphasised card', await card.count() === 1);
+  const rows = card.locator('.qrow');
+  const n = await rows.count();
+  ok('it has work in it', n > 0, `${n} rows`);
+
+  /* EVERY ROW ANSWERS FOUR QUESTIONS: what, which case, why, what can I do. */
+  const firstRow = rows.first();
+  ok('a row says WHAT', (await firstRow.locator('.qwhat').innerText()).trim().length > 0);
+  ok('a row says WHY', (await firstRow.locator('.qwhy').innerText()).trim().length > 0,
+     await firstRow.locator('.qwhy').innerText());
+  ok('a row names the case', (await firstRow.locator('.qno').innerText()).trim().length > 0);
+  ok('and offers exactly one action', await firstRow.locator('.btn').count() === 1);
+
+  /* SEVERITY IS A WORD, not only a colour. */
+  const sev = await card.locator('.sev').first().innerText();
+  ok('each row carries a severity in words', ['URGENT', 'ATTENTION', 'INFO'].includes(sev.trim()),
+     sev);
+
+  /* THE FILTERS ARE SIMPLE AND THEY WORK. */
+  ok('the filters are offered', await card.locator('.attnlenses .lens').count() >= 2,
+     String(await card.locator('.attnlenses .lens').count()));
+  const kindChip = card.locator('.attnlenses .lens', { hasText: 'Intakes' });
+  if (await kindChip.count()) {
+    await kindChip.first().click();
+    await page.waitForTimeout(500);
+    const kinds = await card.locator('.qwhat').allInnerTexts();
+    ok('filtering to Intakes leaves only intakes',
+       kinds.every(t => /intake/i.test(t)), JSON.stringify(kinds));
+    await card.locator('.attnlenses .lens', { hasText: 'All' }).first().click();
+    await page.waitForTimeout(500);
+  } else {
+    ok('filtering to Intakes leaves only intakes', true, 'no intake alerts in this fixture');
+  }
+
+  // The action lands on the panel that does the work.
+  const target = rows.first();
+  const caseNo = (await target.locator('.qno').innerText()).trim().split(' ')[0];
+  const wantTab = await target.locator('.btn').getAttribute('data-tab');
+  await target.locator('.btn').click();
+  await page.waitForTimeout(900);
+  ok('the action opens the case', await page.locator('.casepage').count() === 1);
+  ok('at the right case', has(await text(page, '#dlgBody'), caseNo), caseNo);
+  ok('and it named the panel it would open', !!wantTab, String(wantTab));
+  await page.close();
+}
+
+section('Needs attention: an alert leaves because the thing was done');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* A private case with an agreed retainer and nothing received. */
+  await page.locator('.tabs button', { hasText: 'Intakes' }).first().click();
+  await page.waitForTimeout(300);
+  await page.locator('[data-act="tab"][data-tab="newlead"]').first().click();
+  await page.waitForTimeout(300);
+  await page.locator('[data-act="nlKind"][data-k="consumer"]').click();
+  await page.waitForTimeout(300);
+  await page.locator('#nl_client').fill('Retainer Owing');
+  await page.locator('[data-act="nlSave"][data-open="1"]').click();
+  await page.waitForTimeout(900);
+  const caseNo = await page.evaluate(async () => {
+    const d = await (await fetch('/portal-api/submissions?limit=1', { credentials: 'same-origin' })).json();
+    return d.submissions[0].case_no;
+  });
+  await page.evaluate(async no => {
+    await fetch(`/portal-api/cases/${no}/retainer`, { method: 'POST',
+      credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ retainer_amount: 1500 }) });
+  }, caseNo);
+
+  await page.locator('[data-act="backToCases"]').click();
+  await page.waitForTimeout(300);
+  await gotoDash(page);
+  let card = await text(page, '.card.queuecard');
+  ok('the unpaid retainer is on the queue', card.includes(caseNo) && has(card, 'Retainer'),
+     card.slice(0, 400));
+  ok('and it is urgent, in words', has(card, 'URGENT'), card.slice(0, 200));
+
+  /* RECORD THE MONEY — and the alert goes, with nothing to dismiss. */
+  await page.evaluate(async no => {
+    await fetch(`/portal-api/cases/${no}/retainer/payment`, { method: 'POST',
+      credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount: 1500, paid_on: '2026-08-01', method: 'check',
+        client_token: 'tok-page-attn-1' }) });
+  }, caseNo);
+  await gotoDash(page);
+  card = await text(page, '.card.queuecard');
+  ok('recording the payment takes the alert away', !has(card, 'Retainer outstanding'),
+     card.slice(0, 400));
+  ok('and there was never a dismiss button to press',
+     await page.locator('[data-act*="ismiss"]').count() === 0);
+  await page.close();
+}
+
+section('Search and alerts on a phone: stacked, tappable, no sideways scroll');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors on the phone dashboard (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(250);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+  await page.locator('.burger').click();
+  await page.waitForTimeout(400);
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).first().click();
+  await page.waitForTimeout(1500);
+
+  const font = await page.evaluate(() => {
+    const el = document.querySelector('#gsearch');
+    return el ? parseFloat(getComputedStyle(el).fontSize) : 0;
+  });
+  ok('the search input is 16px, so focusing it does not zoom iOS', font >= 16, String(font));
+
+  await page.locator('#gsearch').fill('API-2026');
+  await page.waitForTimeout(900);
+  ok('results appear on the phone', await page.locator('.srchrow').count() >= 1);
+
+  const over = await page.evaluate(() => {
+    const vw = window.innerWidth, out = [];
+    for (const el of document.querySelectorAll('#app *')) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.right > vw + 1) {
+        out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
+      }
+    }
+    return { doc: Math.round(document.documentElement.scrollWidth - vw), els: out.slice(0, 4) };
+  });
+  ok('the dashboard with results still fits the phone', over.doc <= 1, JSON.stringify(over));
+  ok('and nothing hangs past the right edge', over.els.length === 0, JSON.stringify(over));
+
+  let smallest = 999;
+  for (const r of await page.locator('.srchrow').all()) {
+    const box = await r.boundingBox();
+    if (box && box.height > 0 && box.height < smallest) smallest = box.height;
+  }
+  ok('a result is a big enough target', smallest === 999 || smallest >= 44, String(smallest));
+
+  let qsmall = 999;
+  for (const b of await page.locator('.qrow .btn').all()) {
+    const box = await b.boundingBox();
+    if (box && box.height > 0 && box.height < qsmall) qsmall = box.height;
+  }
+  ok('and so is every queue action', qsmall === 999 || qsmall >= 44, String(qsmall));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
