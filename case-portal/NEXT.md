@@ -21,7 +21,7 @@ item is finished.
 | 2 | Build Timestamp Photo | ✅ **DONE — LIVE VERIFIED** by the owner on 2026-08-19 at `b0304cb` (#188), portrait layout and Save to Dropbox included. Shipped over #183–#188. |
 | 3 | Visible Dropbox portal UI for Admin | ✅ **DONE — DEPLOYED** at `5baabd3` (#189). LIVE VERIFY **OPEN** for the owner |
 | 4 | Admin report workflow and mobile report fix | ✅ **DONE — DEPLOYED** at `94b1f5b` (#190). LIVE VERIFY **OPEN** for the owner |
-| 5 | Full portal mobile / aesthetic UI cleanup | **NEXT** — not started. Carries a specific brief, below |
+| 5 | Full portal UI/mobile/dashboard modernization | ✅ **DONE — DEPLOYED** at `6446e3c` (#191). LIVE VERIFY **OPEN** for the owner |
 | 6 | **Legal / Law Firm intake** (third intake type) | not started — **queued, do not begin until the owner reviews Unit 5**. Full brief in `LEGAL-INTAKE.md` |
 | 7 | Repeat Client / Firm Profiles | not started |
 | 8 | Global Case Search + advanced Needs Attention | not started |
@@ -147,7 +147,35 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
 
-## ▶️ RESUME HERE — item 5, full portal mobile / aesthetic UI cleanup
+## ⏸ HOLD — item 6 (Legal / Law Firm intake) waits for the owner's Unit 5 review
+
+The owner's instruction closing the Unit 5 brief: *"Do NOT begin Legal Intake
+Item 6 until the owner reviews the Unit 5 result."* So there is deliberately no
+RESUME-into-item-6 block yet. When the review comes back, the Legal brief is
+verbatim in `LEGAL-INTAKE.md`, the queue is items 6–15 in the table above, and
+master carries everything below.
+
+## 📌 Unit 5 — what shipped (#191, `6446e3c`)
+
+The shell, measured at 320/390/768/1200 and asserted as numbers: the burger in
+the conventional corner on a real surface with a real open state; the drawer's
+dim is a real backdrop (taps no longer pass through to live controls, and the
+burger is no longer buried under the open drawer); Intake Accept at ≥208×44
+(was 42–60px wide × up to 119px tall); the cases list and Out now as stacked
+records under 560px with the `.hide` columns restored; Quick Tools as the
+day's six doors; 16px inputs + 44px floors + `:focus-visible` portal-wide on
+phones. Dashboard: `GET /recent-activity` (existing tables, filenames never
+bytes, hidden cases excluded, admin-only) and a Dropbox needs-attention card
+that exists only in the broken states, from local state. **No schema change,
+no portal-setup dispatch, no new storage, no Dropbox calls from the
+dashboard.**
+
+**LIVE VERIFY (owner):** the header/drawer on the actual iPhone, the six-door
+launcher, stacked case records, Recent activity, and daily feel.
+
+## ⏸ superseded — the item-5 resume block this replaced
+
+### (was) ▶️ RESUME HERE — item 5, full portal mobile / aesthetic UI cleanup
 
 **Nothing is in flight.** Items 1–4 are merged and deployed; no branch is
 half-done. A new session starts a new branch off master.
@@ -292,6 +320,17 @@ node .github/test-deploy.mjs                    # expect 68 / 0
 
 Then the ordinary chain: PR → merge if green → pull master → deploy → live
 verify → **save point** → next unit (item 4, Admin report/mobile workflow fix).
+
+## 🚦 DEPLOYMENT — 2026-08-20, master `6446e3c` (#191) — Unit 5, portal shell modernization
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` | `6446e3c` | `6446e3c` | **DEPLOYED** — `deploy.yml` 32333635650 success |
+| `api-case-portal` | `6446e3c` | `6446e3c` | **DEPLOYED** — `deploy-portal.yml` 32333635594 success |
+| Save point | — | — | `save/2026-08-20-0455-6446e3c` (the merge push's automatic firing — the new one-per-unit policy) |
+| Schema | — | — | **none.** No portal-setup dispatch owed |
+
+Tests at merge: portal **1849/0**, worker **1907/0**, deploy guard **68/0**.
 
 ## 🚦 DEPLOYMENT — 2026-08-20, master `94b1f5b` (#190) — admin report workflow, mobile report fix
 
