@@ -10797,7 +10797,8 @@ section('Profiles: a firm is saved once and reused, and a case never moves again
   ok('the case records which profile it came from',
      wsA.profile && wsA.profile.link && Number(wsA.profile.link.profile_id) === FIRM_ID,
      JSON.stringify(wsA.profile && wsA.profile.link));
-  ok('and which person on it', wsA.profile.contact && wsA.profile.contact.last_name === 'Harmon');
+  ok('and which person on it', wsA.profile.contact_name === 'Ruth Harmon',
+     JSON.stringify(wsA.profile.contact_name));
   /* THE CASE-SPECIFIC FACTS ARE THE CASE'S OWN. A matter number is per matter
      and must never be a firm-wide value. */
   ok('the matter number is the new one, not anything remembered',
@@ -11149,13 +11150,18 @@ section('Profiles: a submission is linked or saved only when an admin says so');
   let ws = await jsonOf(await call(env, `/cases/${NO}/workspace`, { cookie: admin }));
   ok('a fresh public submission is linked to nothing', ws.profile.link === null,
      JSON.stringify(ws.profile.link));
-  ok('but the admin reviewing it is shown the possible match',
-     (ws.profile.suggested || []).some(m => m.id === firm.id),
+  /* AND OPENING IT GOES LOOKING FOR NOTHING. The suggestion is a question the
+     admin asks — pressing Look for a match — not a duplicate check run on
+     every case anyone opens. */
+  ok('and opening the case ran no search on its behalf', ws.profile.suggested === undefined,
      JSON.stringify(ws.profile.suggested));
-  ok('the suggestion says why it surfaced',
-     ws.profile.suggested[0].why.length > 0, JSON.stringify(ws.profile.suggested[0].why));
-  /* A SUGGESTION IS NOT AN ACT. Reading the case must not have changed a row. */
-  ok('and looking at it wrote nothing',
+  const asked = await jsonOf(await call(env, `/cases/${NO}/profile-match`, { cookie: admin }));
+  ok('when the admin asks, the possible match is there',
+     (asked.matches || []).some(m => m.id === firm.id), JSON.stringify(asked.matches));
+  ok('and it says why it surfaced', asked.matches[0].why.length > 0,
+     JSON.stringify(asked.matches[0].why));
+  /* A SUGGESTION IS NOT AN ACT. Asking must not have changed a row. */
+  ok('and looking wrote nothing',
      (await env.DB.prepare('SELECT COUNT(*) AS n FROM case_profile').first()).n === 0);
   const before = await env.DB.prepare('SELECT name, email FROM profile WHERE id = ?').bind(firm.id).first();
 
@@ -11333,6 +11339,336 @@ section('Profiles: the guards, the sweep and a database that has not been set up
   let threw = '';
   try { twice.exec(SCHEMA); } catch (e) { threw = String(e); }
   ok('the schema applies twice without error', threw === '', threw);
+}
+
+section('Profiles: the defects the review found, each pinned so it cannot come back');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  /* 1. THE ADDRESS ARM USED TO STOP WORKING once the directory passed the
+     bound of its own scan — and it failed toward creating the duplicate. It is
+     an indexed equality on a stored column now, so position cannot matter.
+     Proven with the twin planted LAST, behind more rows than any old cap. */
+  for (let i = 0; i < 60; i++) {
+    await call(env, '/profiles', { method: 'POST', cookie: admin, body: {
+      kind: 'private_client', name: `Filler Person ${i}`,
+      address: `${i} Filler Street, Roanoke VA`, confirm_new: true } });
+  }
+  await call(env, '/profiles', { method: 'POST', cookie: admin, body: {
+    kind: 'law_firm', name: 'Church Avenue Advocates',
+    address: '900 Church Ave SW, Roanoke VA', confirm_new: true } });
+  let res = await call(env, '/profiles', { method: 'POST', cookie: admin, body: {
+    kind: 'private_client', name: 'Somebody Else Entirely',
+    address: '900 Church Ave SW,  Roanoke VA' } });
+  ok('a shared address is caught however many profiles are in front of it',
+     res.status === 409, String(res.status));
+  ok('and it says the address is what matched',
+     (await jsonOf(res)).matches.some(m => m.why.includes('address')));
+  /* And the derived column moves when the address does — a normalised copy
+     only two of three writers maintain is the stale duplicate this project
+     refuses everywhere else. */
+  const moved = (await jsonOf(await call(env, '/profiles', { method: 'POST', cookie: admin, body: {
+    kind: 'law_firm', name: 'Moving Firm', address: '1 Old Road', confirm_new: true } }))).profile;
+  await call(env, `/profiles/${moved.id}`, { method: 'POST', cookie: admin,
+    body: { address: '2 New Road', confirm_new: true } });
+  res = await call(env, '/profiles', { method: 'POST', cookie: admin,
+    body: { kind: 'private_client', name: 'At The New Place', address: '2 New Road' } });
+  ok('an edited address is compared at its new value', res.status === 409, String(res.status));
+  res = await call(env, '/profiles', { method: 'POST', cookie: admin,
+    body: { kind: 'private_client', name: 'At The Old Place', address: '1 Old Road' } });
+  ok('and no longer at its old one', res.status === 201, String(res.status));
+
+  /* 2. NO STATEMENT MAY GROW WITH THE CUSTOMER'S DATA. D1 caps bound
+     parameters per query; node:sqlite does not, so this is the shape that
+     passes every test and fails only in production. Counted directly. */
+  const env2 = freshEnv();
+  await bootstrapAdmin(env2);
+  const a2 = (await login(env2, 'trever', 'FirstAdminPass1')).cookie;
+  for (let i = 0; i < 150; i++) {
+    await call(env2, '/profiles', { method: 'POST', cookie: a2, body: {
+      kind: 'law_firm', name: `Search Target Firm ${i}`, email: `target${i}@x.example`,
+      phones: [{ number: `540555${String(1000 + i)}`, label: 'work' }], confirm_new: true } });
+  }
+  let widest = 0;
+  const realPrepare = env2.DB.prepare.bind(env2.DB);
+  env2.DB.prepare = sql => {
+    const st = realPrepare(sql);
+    const wrap = s2 => ({ ...s2, bind: (...p) => { widest = Math.max(widest, p.length); return wrap(s2.bind(...p)); },
+      first: s2.first, all: s2.all, run: s2.run });
+    return wrap(st);
+  };
+  const wide = await call(env2, '/profiles?q=target&limit=200', { cookie: a2 });
+  env2.DB.prepare = realPrepare;
+  ok('a search over a big directory still answers', wide.status === 200, String(wide.status));
+  ok('and NO statement binds more than 100 parameters', widest <= 100, `widest was ${widest}`);
+  const got = (await jsonOf(wide)).profiles;
+  ok('the page it returns is capped rather than unbounded', got.length <= 60, String(got.length));
+
+  /* 3. A MALFORMED CONTACT MUST NOT HALF-WRITE A PROFILE. */
+  const env3 = freshEnv();
+  await bootstrapAdmin(env3);
+  const a3 = (await login(env3, 'trever', 'FirstAdminPass1')).cookie;
+  res = await call(env3, '/profiles', { method: 'POST', cookie: a3, body: {
+    kind: 'law_firm', name: 'Half Written LLP', contacts: [null], confirm_new: true } });
+  ok('a null contact does not take the whole request down', res.status === 201, String(res.status));
+  ok('and the profile it made is whole',
+     (await jsonOf(res)).profile.contacts.length === 0);
+
+  /* 4. RENAMING IS A CREATE, for the duplicate check. Without it the one door
+     the check did not guard was editing firm A's name into firm B's. */
+  const first = (await jsonOf(await call(env3, '/profiles', { method: 'POST', cookie: a3,
+    body: { kind: 'law_firm', name: 'Okonkwo & Bell', confirm_new: true } }))).profile;
+  const second = (await jsonOf(await call(env3, '/profiles', { method: 'POST', cookie: a3,
+    body: { kind: 'law_firm', name: 'Vance & Loeb', confirm_new: true } }))).profile;
+  res = await call(env3, `/profiles/${second.id}`, { method: 'POST', cookie: a3,
+    body: { name: 'Okonkwo & Bell' } });
+  ok('renaming a firm onto another firm\'s name is refused', res.status === 409, String(res.status));
+  ok('naming the one it would collide with',
+     (await jsonOf(res)).matches.some(m => m.id === first.id));
+  ok('and the rename did NOT happen',
+     (await jsonOf(await call(env3, `/profiles/${second.id}`, { cookie: a3 }))).profile.name === 'Vance & Loeb');
+  res = await call(env3, `/profiles/${second.id}`, { method: 'POST', cookie: a3,
+    body: { name: 'Okonkwo & Bell', confirm_new: true } });
+  ok('and an admin who means it can still do it', res.status === 200, String(res.status));
+  /* An edit that changes neither name, email, address nor phones is not a
+     duplicate question and must not be interrupted by one. */
+  res = await call(env3, `/profiles/${second.id}`, { method: 'POST', cookie: a3,
+    body: { notes: 'Bills quarterly.' } });
+  ok('an unrelated edit is never stopped by the duplicate check', res.status === 200, String(res.status));
+
+  /* 5. PROVENANCE IS A SNAPSHOT. Removing a contact from the firm must not
+     blank a line on a case that did not change. */
+  const env4 = freshEnv();
+  await bootstrapAdmin(env4);
+  const a4 = (await login(env4, 'trever', 'FirstAdminPass1')).cookie;
+  const firm4 = (await jsonOf(await call(env4, '/profiles', { method: 'POST', cookie: a4, body: {
+    kind: 'law_firm', name: 'Snapshot & Co',
+    contacts: [{ first_name: 'Ann', last_name: 'Snapshot', role: 'Attorney', preferred: true }],
+  } }))).profile;
+  const made4 = await jsonOf(await call(env4, '/intakes', { method: 'POST', cookie: a4, body: {
+    kind: 'legal', profile_id: firm4.id, profile_contact_id: firm4.contacts[0].id,
+    firm_name: 'Snapshot & Co', attorney_name: 'Ann Snapshot' } }));
+  let ws4 = await jsonOf(await call(env4, `/cases/${made4.case_no}/workspace`, { cookie: a4 }));
+  ok('the case records WHO it was started from', ws4.profile.contact_name === 'Ann Snapshot',
+     JSON.stringify(ws4.profile.contact_name));
+  await call(env4, `/profiles/${firm4.id}/contacts/${firm4.contacts[0].id}/remove`,
+    { method: 'POST', cookie: a4 });
+  ws4 = await jsonOf(await call(env4, `/cases/${made4.case_no}/workspace`, { cookie: a4 }));
+  ok('removing her from the firm does not blank the case\'s own record of her',
+     ws4.profile.contact_name === 'Ann Snapshot', JSON.stringify(ws4.profile.contact_name));
+
+  /* 6. THE CASE WORKSPACE DOES NOT GO LOOKING FOR A MATCH. It used to run the
+     whole duplicate check on every admin open of every unlinked case. */
+  const psrc = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  const cpf = (psrc.match(/async function caseProfileFor\([\s\S]*?\n}\n/) || [''])[0];
+  ok('caseProfileFor runs no match at all', cpf.length > 0 && !/profileMatchesFor/.test(cpf));
+  const sub6 = await jsonOf(await ingest(env4, legalPayload({ firm_name: 'Snapshot & Co' })));
+  const ws6 = await jsonOf(await call(env4, `/cases/${sub6.case_no}/workspace`, { cookie: a4 }));
+  ok('an unlinked case simply reports no link', ws6.profile.link === null
+     && ws6.profile.suggested === undefined, JSON.stringify(ws6.profile));
+  const asked = await call(env4, `/cases/${sub6.case_no}/profile-match`, { cookie: a4 });
+  ok('and the match is there when an admin asks for it', asked.status === 200);
+  ok('finding the firm the case names',
+     (await jsonOf(asked)).matches.some(m => m.id === firm4.id),
+     JSON.stringify((await jsonOf(asked)).matches));
+
+  /* 7. THE DELETE REFUSAL COUNTS WHAT IT CAN ALSO SHOW. A bare total said
+     "on 1 case" while Recent matters showed none, with no route out. */
+  await call(env4, `/cases/${made4.case_no}/delete`, { method: 'POST', cookie: a4,
+    body: { reason: 'test' } });
+  res = await call(env4, `/profiles/${firm4.id}/delete`, { method: 'POST', cookie: a4 });
+  ok('a profile whose only case was removed is still kept', res.status === 409, String(res.status));
+  const refusal7 = await jsonOf(res);
+  ok('and the sentence says so rather than naming a case nobody can see',
+     refusal7.visible_cases === 0 && refusal7.removed_cases === 1
+     && /removed from the working set/.test(refusal7.error), refusal7.error);
+
+  /* 8. A LAW FIRM'S MATTERS ARE NOT LABELLED "PRIVATE". A legal case IS
+     kind='consumer', so reading kind alone mislabelled every one of them. */
+  const detail8 = await jsonOf(await call(env4, `/profiles/${firm4.id}`, { cookie: a4 }));
+  ok('the firm\'s own matter is marked legal, not private',
+     (detail8.matters || []).length === 0 || detail8.matters.every(m => m.legal === true),
+     JSON.stringify(detail8.matters));
+
+  /* 9. THE BILLING DESK IS SEARCHABLE, which the owner's field list names. */
+  const env5 = freshEnv();
+  await bootstrapAdmin(env5);
+  const a5 = (await login(env5, 'trever', 'FirstAdminPass1')).cookie;
+  await call(env5, '/profiles', { method: 'POST', cookie: a5, body: {
+    kind: 'law_firm', name: 'Ledger & Reed', billing_name: 'Delphine Watts',
+    billing_email: 'ap@ledgerreed.example', confirm_new: true } });
+  const byBilling = async q => (await jsonOf(await call(env5,
+    `/profiles?q=${encodeURIComponent(q)}`, { cookie: a5 }))).profiles.map(p2 => p2.name);
+  ok('a billing contact typed on the firm is findable by name',
+     (await byBilling('delphine')).includes('Ledger & Reed'));
+  ok('and by their billing email', (await byBilling('ap@ledgerreed.example')).includes('Ledger & Reed'));
+}
+
+section('Profiles: an assignment edited on the way through never touches the firm');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const firm = (await jsonOf(await call(env, '/profiles', { method: 'POST', cookie: admin, body: {
+    kind: 'law_firm', name: 'Constant & Co', email: 'office@constant.example',
+    address: '1 Unchanged Way', payment_arrangement: 'bill_ach',
+    phones: [{ number: '540-555-1111', label: 'work' }],
+    contacts: [{ first_name: 'Ruth', last_name: 'Constant', role: 'Attorney',
+      email: 'ruth@constant.example', preferred: true,
+      phones: [{ number: '540-555-2222', label: 'work' }] }],
+  } }))).profile;
+  /* The PROFILE, not the response: `matters` is the reverse read of the link
+     table and gains a row on purpose when a case is created from the firm.
+     Comparing the whole body would have called that a mutation. */
+  const saved = async () => JSON.stringify(
+    (await jsonOf(await call(env, `/profiles/${firm.id}`, { cookie: admin }))).profile);
+  const before = await saved();
+
+  /* THE OFFICE CHANGES EVERYTHING ON THE WAY THROUGH — a different phone, a
+     different email, a different arrangement, even a different firm name. That
+     is an edit to THIS assignment, and the owner's distinction is that it must
+     not become the firm's new permanent anything. */
+  const made = await jsonOf(await call(env, '/intakes', { method: 'POST', cookie: admin, body: {
+    kind: 'legal', profile_id: firm.id, profile_contact_id: firm.contacts[0].id,
+    firm_name: 'Constant & Co (Salem office)', firm_address: '99 Different Road',
+    firm_phone: '540-555-9999', firm_email: 'salem@constant.example',
+    attorney_name: 'Ruth Constant', attorney_email: 'ruth.constant@salem.example',
+    attorney_phone: '540-555-8888', payment_arrangement: 'check_mail',
+    client_name: 'A Client', subject_name: 'A Subject',
+  } }));
+  const after = await saved();
+  ok('THE SAVED PROFILE IS BYTE-FOR-BYTE WHAT IT WAS', after === before,
+     'the assignment mutated the firm');
+  /* And the link really was recorded, so the comparison above is not passing
+     because nothing happened. */
+  ok('while the link to it was recorded',
+     (await env.DB.prepare('SELECT COUNT(*) AS n FROM case_profile WHERE profile_id = ?')
+       .bind(firm.id).first()).n === 1);
+
+  const ws = await jsonOf(await call(env, `/cases/${made.case_no}/workspace`, { cookie: admin }));
+  ok('while the CASE carries what the office actually typed',
+     ws.legal.firm_phone === '540-555-9999' && ws.legal.firm_address === '99 Different Road'
+     && ws.legal.payment_arrangement === 'check_mail', JSON.stringify(ws.legal.firm_phone));
+  ok('and still records which profile it came from',
+     Number(ws.profile.link.profile_id) === firm.id);
+}
+
+section('Profiles: the firm\'s own details ride along, so nobody retypes a letterhead');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const firm = (await jsonOf(await call(env, '/profiles', { method: 'POST', cookie: admin, body: {
+    kind: 'law_firm', name: 'Letterhead LLP', email: 'office@letterhead.example',
+    address: '400 Franklin Road, Roanoke VA', billing_name: 'Del Watts',
+    billing_email: 'ap@letterhead.example',
+    phones: [{ number: '(540) 555-7000', label: 'work' }],
+    contacts: [
+      { first_name: 'Iris', last_name: 'Loeb', role: 'Attorney', email: 'iris@letterhead.example',
+        preferred: true, phones: [{ number: '540-555-7001', label: 'work' }] },
+      { first_name: 'Cora', last_name: 'Nye', role: 'Paralegal', email: 'cora@letterhead.example',
+        phones: [{ number: '540-555-7002', label: 'work' }] },
+      { first_name: 'Del', last_name: 'Watts', role: 'Billing Contact', email: 'ap@letterhead.example' },
+    ],
+  } }))).profile;
+  const para = firm.contacts.find(c => c.role === 'Paralegal');
+  const bill = firm.contacts.find(c => c.role === 'Billing Contact');
+
+  /* What the page posts once a firm is chosen: the person, the firm's own
+     block, and the two people the owner's steps 4 and 5 ask for. */
+  const made = await jsonOf(await call(env, '/intakes', { method: 'POST', cookie: admin, body: {
+    kind: 'legal', profile_id: firm.id, profile_contact_id: firm.contacts[0].id,
+    firm_name: 'Letterhead LLP', attorney_name: 'Iris Loeb',
+    attorney_email: 'iris@letterhead.example', attorney_phone: '540-555-7001',
+    firm_address: '400 Franklin Road, Roanoke VA', firm_phone: '(540) 555-7000',
+    firm_email: 'office@letterhead.example',
+    paralegal_name: 'Cora Nye', paralegal_email: 'cora@letterhead.example',
+    paralegal_phone: '540-555-7002',
+    billing_name: 'Del Watts', billing_email: 'ap@letterhead.example',
+  } }));
+  const ws = await jsonOf(await call(env, `/cases/${made.case_no}/workspace`, { cookie: admin }));
+  ok('the office address reached the case', ws.legal.firm_address === '400 Franklin Road, Roanoke VA',
+     String(ws.legal.firm_address));
+  ok('and the switchboard', ws.legal.firm_phone === '(540) 555-7000', String(ws.legal.firm_phone));
+  ok('the paralegal the office chose is on the matter',
+     ws.legal.paralegal_name === 'Cora Nye' && ws.legal.paralegal_phone === '540-555-7002',
+     String(ws.legal.paralegal_name));
+  ok('so is the billing contact', ws.legal.billing_name === 'Del Watts'
+     && ws.legal.billing_email === 'ap@letterhead.example', String(ws.legal.billing_name));
+  ok('and the matter number is still the matter\'s own, not the firm\'s',
+     !ws.legal.matter_number, String(ws.legal.matter_number));
+  ok('the paralegal and billing contact are people on the firm, not invented',
+     !!para && !!bill && para.last_name === 'Nye' && bill.last_name === 'Watts');
+}
+
+section('Profiles: saving a carrier from the quick form keeps the adjuster a person');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const made = await jsonOf(await call(env, '/intakes', { method: 'POST', cookie: admin, body: {
+    kind: 'claims', save_profile: true, carrier: 'Blue Ridge Mutual',
+    client_name: 'Hal Ivers', client_email: 'hivers@brm.example', client_phone: '540-555-6601',
+    adjuster: 'Hal Ivers', adjuster_email: 'hivers@brm.example', adjuster_phone: '540-555-6601',
+    claim_number: 'BRM-4004', subject_name: 'C. Vaughn',
+  } }));
+  ok('the carrier is saved', made.profile_saved === true, JSON.stringify(made));
+  const p = (await jsonOf(await call(env, `/profiles/${made.profile_id}`, { cookie: admin }))).profile;
+  ok('typed as an insurance organization', p.kind === 'insurance_org', p.kind);
+  ok('named as the carrier, not the adjuster', p.name === 'Blue Ridge Mutual', p.name);
+  /* THE ADJUSTER IS A PERSON AT THE CARRIER. Filing their email as the
+     company's main address is how the next assignment prefills a switchboard
+     with somebody's direct line — and leaves no contact to choose at all. */
+  ok('the adjuster is a CONTACT on the carrier',
+     (p.contacts || []).some(c => c.last_name === 'Ivers' && c.role === 'Adjuster'),
+     JSON.stringify((p.contacts || []).map(c => `${c.last_name}:${c.role}`)));
+  ok('their email is theirs, on their own row',
+     (p.contacts || []).some(c => c.email === 'hivers@brm.example'));
+  ok('and it was NOT filed as the carrier\'s main email', p.email !== 'hivers@brm.example',
+     String(p.email));
+  ok('nothing case-specific went onto the carrier',
+     !JSON.stringify(p).includes('BRM-4004') && !JSON.stringify(p).includes('Vaughn'));
+}
+
+section('Profiles: a production database keeps its rows when setup runs again');
+{
+  /* portal-setup RE-APPLIES schema.sql on every run, so the question is not
+     "does it apply twice" but "does a database with real rows in it survive
+     the second apply". Nothing else asserts that for these tables. */
+  const { DatabaseSync } = await import('node:sqlite');
+  const live = new DatabaseSync(':memory:');
+  live.exec(SCHEMA);
+  const env = { ...freshEnv(), DB: d1(live) };
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const firm = (await jsonOf(await call(env, '/profiles', { method: 'POST', cookie: admin, body: {
+    kind: 'law_firm', name: 'Survivor & Partners', email: 'office@survivor.example',
+    address: '7 Enduring Lane', phones: [{ number: '540-555-0007', label: 'work' }],
+    contacts: [{ first_name: 'Grace', last_name: 'Survivor', role: 'Attorney', preferred: true,
+      phones: [{ number: '540-555-0008', label: 'mobile' }] }],
+  } }))).profile;
+  const made = await jsonOf(await call(env, '/intakes', { method: 'POST', cookie: admin, body: {
+    kind: 'legal', profile_id: firm.id, profile_contact_id: firm.contacts[0].id,
+    firm_name: 'Survivor & Partners', attorney_name: 'Grace Survivor' } }));
+  const snap = () => ['profile', 'profile_contact', 'profile_phone', 'case_profile']
+    .map(t => `${t}=${live.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get().n}`).join(' ');
+  const beforeCounts = snap();
+  const beforeRow = JSON.stringify(live.prepare('SELECT * FROM profile WHERE id = ?').get(firm.id));
+
+  live.exec(SCHEMA);   // exactly what portal-setup does on its next run
+
+  ok('re-applying the schema keeps every row', snap() === beforeCounts, `${beforeCounts} -> ${snap()}`);
+  ok('and does not rewrite one', JSON.stringify(
+    live.prepare('SELECT * FROM profile WHERE id = ?').get(firm.id)) === beforeRow);
+  const after = await jsonOf(await call(env, `/profiles/${firm.id}`, { cookie: admin }));
+  ok('the firm still reads back whole', after.profile.name === 'Survivor & Partners'
+     && after.profile.contacts.length === 1 && after.profile.phones.length === 1,
+     JSON.stringify(after.profile.name));
+  ok('and the case is still linked to it',
+     Number((await jsonOf(await call(env, `/cases/${made.case_no}/workspace`, { cookie: admin })))
+       .profile.link.profile_id) === firm.id);
 }
 
 section('Profiles: the link route is inside the case gate, and the phone shape is the approved one');

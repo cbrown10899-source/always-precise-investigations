@@ -90,6 +90,12 @@ Inspected before any table was designed (the brief's own instruction):
   the denormalised search columns on `submissions`; it is never displayed.
   "Secondary phone" is simply a second row.
 
+- **D6a — The link carries the contact's NAME, not just their id.** Reading it
+  back through the live contact list meant removing a person from the firm
+  blanked a line on a case that had not changed — while the screen said "no
+  case changed", which was true of the stored data and false of what the office
+  saw. Provenance is a snapshot like the rest of the case.
+
 - **D6 — `case_profile` is the only connection, written on explicit acts
   only:** creating an assignment from a selected profile, **Use this profile**
   on review of a submission, and **Save as profile** from a case. One row per
@@ -111,6 +117,14 @@ Inspected before any table was designed (the brief's own instruction):
   `DEMO_SWEEP` while the other three tables are not: a link is case data, a
   profile is reference data, and clearing a test case must remove the link
   without touching the firm.
+
+- **D7a — A match is computed when an admin asks the question, not when they
+  open a case.** The first build computed the suggestion inside the case
+  workspace read, so every admin opening any unlinked case ran the whole
+  duplicate check — four profile-table reads on the most-opened screen in the
+  portal, billed per row read, for a question nobody had asked. **Look for a
+  match** is a button now, and `GET /cases/:no/profile-match` is what it calls.
+  This is D7's own sentence taken literally.
 
 - **D7 — No inference, anywhere.** The `recipientIsCarrier()` lesson is
   standing policy: never classify by matching stored strings against a case.
@@ -217,8 +231,16 @@ Four structures the second derivation proposed were deliberately NOT adopted:
   serving search and duplicate detection). Rejected for drift surface: a
   derived side table must be rebuilt by every writer and fails silently when
   one forgets — the stale-duplicate-of-a-boundary problem — while same-row
-  derived columns (`name_norm`, `digits`) cannot orphan, and at this
-  directory's scale the query-time comparisons are already indexed or trivial.
+  derived columns (`name_norm`, `address_norm`, `digits`) cannot orphan.
+  **The cost that argument does not remove, stated honestly:** a substring
+  SEARCH is `LIKE '%x%'` and no index can seek it, so each search arm reads its
+  table. That is bounded — admin-only, debounced, capped at `CANDIDATE_CAP`
+  candidates and `PAGE_CAP` rows — and it buys back the thing that matters: the
+  comparisons that run WITHOUT a person asking (the duplicate check's name,
+  address and phone equalities) are indexed lookups, and the case workspace
+  runs none of them at all. An early draft of this build claimed in a comment
+  that every branch was an indexed lookup; it was not true, and a comment
+  asserting something untrue about a boundary is worse than no comment.
 - **A delete tombstone table.** The owner's brief prefers INACTIVE for
   profiles "already referenced by assignments" — which is a carve-out: a
   never-referenced profile (a typo, a test) may really delete. Refusing

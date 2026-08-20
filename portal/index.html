@@ -3027,7 +3027,8 @@ function profileDetailView(){
           <button class="btn" data-act="profSave" data-id="${P.id}">Save profile</button>
           <button class="btn ghost" data-act="profCancel">Cancel</button>
         </div>
-        ${PROF_FORM.err ? `<div class="err">${esc(PROF_FORM.err)}</div>` : ""}`
+        ${PROF_FORM.err ? `<div class="err">${esc(PROF_FORM.err)}</div>` : ""}
+        ${(PROF_FORM.matches || []).length ? profDupHtml(PROF_FORM) : ""}`
       : `<div class="quick">
           <div class="rowline"><span>Address</span><b>${esc(P.address || "—")}</b></div>
           <div class="rowline"><span>Main email</span><b>${esc(P.email || "—")}</b></div>
@@ -3070,7 +3071,7 @@ function profileDetailView(){
           <td data-l="Case"><span class="mono">${esc(m.case_no)}</span>${
             m.archived ? ` <span class="tag">Archived</span>` : ""}</td>
           <td data-l="Client">${esc(m.client_name || "—")}</td>
-          <td data-l="Type" class="hide">${esc(m.kind === "claims" ? "Insurance" : "Private")}</td>
+          <td data-l="Type" class="hide">${esc(m.legal ? "Legal" : m.kind === "claims" ? "Insurance" : "Private")}</td>
           <td data-l="Started" class="hide">${when(m.created_at)}</td></tr>`).join("")}</tbody></table></div>
         <p class="hint">These are links to the cases themselves &mdash; nothing about them is
           copied here, and each one keeps the details it was created with.</p>`
@@ -3287,8 +3288,8 @@ function caseProfileHtml(){
       <div class="quick">
         <div class="rowline"><span>${esc(PROF_KIND_LABEL[P.profile.kind] || "Profile")}</span>
           <b>${esc(P.profile.name)}${P.profile.active ? "" : " (inactive)"}</b></div>
-        ${P.contact ? `<div class="rowline"><span>Contact used</span>
-          <b>${esc(profWho(P.contact))}${P.contact.role ? ` &middot; ${esc(P.contact.role)}` : ""}</b></div>` : ""}
+        ${P.contact_name ? `<div class="rowline"><span>Contact used</span>
+          <b>${esc(P.contact_name)}</b></div>` : ""}
         <div class="actions">
           <button class="btn sm ghost" data-act="profOpenFromCase" data-id="${P.profile.id}">Open profile</button>
           <button class="btn sm ghost" data-act="caseProfClear">Remove the link</button>
@@ -3301,7 +3302,7 @@ function caseProfileHtml(){
   const sugg = P.suggested || [];
   return `<div class="card">
     <div class="bar"><h2 style="margin:0">Client profile</h2>
-      <span class="count">${sugg.length ? "Possible match" : "Not saved"}</span></div>
+      <span class="count">${sugg.length ? "Possible match" : P.looked ? "No match" : "Not saved"}</span></div>
     <div class="quick">
       ${sugg.length ? `<div class="dupwarn">
         <b>Possible existing profile.</b>
@@ -3313,12 +3314,15 @@ function caseProfileHtml(){
           them, and never writes what was submitted into their saved details.</p>
         <button class="btn sm ghost" data-act="caseProfSave" data-confirm="1">Save as a separate new profile</button>
       </div>`
-      : `<p class="note">No saved client or firm is linked to this case.</p>
+      : `<p class="note">No saved client or firm is linked to this case.${
+           P.looked ? " Nothing saved looks like a match." : ""}</p>
          <div class="actions">
+           ${P.looked ? "" : `<button class="btn sm ghost" data-act="caseProfMatch">Look for a match</button>`}
            <button class="btn sm" data-act="caseProfSave">Save as profile</button>
          </div>
          <p class="hint">Saving keeps the firm, the people and the numbers this case already
-           carries, so the next assignment from them starts filled in.</p>`}
+           carries, so the next assignment from them starts filled in.${
+           P.looked ? "" : " Looking for a match reads the saved directory and changes nothing."}</p>`}
     </div>
   </div>`;
 }
@@ -3344,6 +3348,7 @@ async function profSave(confirmNew){
   }
   try{
     if(editing){
+      if(confirmNew) body.confirm_new = true;
       const r = await api(`/profiles/${PROF_OPEN.profile.id}`, {method: "POST", body});
       PROF_OPEN.profile = r.profile;
       PROF_FORM = null; PROF_MSG = "Saved. Cases already created keep the details they were created with.";
@@ -3415,15 +3420,31 @@ function nlPrefill(p, contact){
     v.nl_email = (contact && contact.email) || p.email || "";
     v.nl_phone = (contactPhone && contactPhone.number) || (firstPhone && firstPhone.number) || "";
     if(p.payment_arrangement) v.nl_arrangement = p.payment_arrangement;
+    /* THE FIRM'S OWN DETAILS RIDE ALONG, not just the person's. The owner's
+       words are "do not ask Admin to re-enter the firm's address and contact
+       data" — without these the case's Legal panel opened blank on the office
+       address and the switchboard, and somebody retyped a letterhead the
+       portal already had. They are not rendered as inputs on this short form;
+       they are carried on the draft and posted with it. */
+    NL.firm = {
+      firm_address: p.address || "",
+      firm_phone: (firstPhone && firstPhone.number) || "",
+      firm_email: p.email || "",
+      billing_name: p.billing_name || "",
+      billing_email: p.billing_email || "",
+    };
   }else if(NL.kind === "claims"){
     v.nl_carrier = p.name;
     v.nl_client = who;
     v.nl_email = (contact && contact.email) || p.email || "";
     v.nl_phone = (contactPhone && contactPhone.number) || (firstPhone && firstPhone.number) || "";
+    NL.firm = null;
   }else{
     v.nl_client = p.name;
     v.nl_email = p.email || "";
     v.nl_phone = (firstPhone && firstPhone.number) || "";
+    /* A repeat private client's address is identity, not a case fact. */
+    NL.firm = {client_address: p.address || ""};
   }
   /* NOTHING CASE-SPECIFIC IS PREFILLED. Not a claim number, not a subject, not
      an objective, not a matter number, not a deadline — those belong to the
@@ -3456,9 +3477,25 @@ function nlPickerHtml(){
           saved profile.</div></div>
       ${(NL.profile.contacts || []).filter(c2 => c2.active).length > 1 ? `
         <label class="f" style="margin:8px 0 0"><span>Contact for this assignment</span>
-          <select data-act="nlPickContact">${NL.profile.contacts.filter(c2 => c2.active).map(c2 =>
+          <select id="nl_pickc" data-act-change="nlPickContact">${
+            NL.profile.contacts.filter(c2 => c2.active).map(c2 =>
             `<option value="${c2.id}"${c2.id === NL.contact_id ? " selected" : ""}>${
               esc(profWho(c2))}${c2.role ? ` — ${esc(c2.role)}` : ""}</option>`).join("")}</select></label>` : ""}
+      ${NL.kind === "legal" && (NL.profile.contacts || []).some(c2 => c2.active
+          && /paralegal|assistant/i.test(c2.role || "")) ? `
+        <label class="f" style="margin:8px 0 0"><span>Paralegal / assistant
+          <span class="opt">optional</span></span>
+          <select id="nl_pickpara" data-act-change="nlPickPara"><option value="">None on this matter</option>${
+            NL.profile.contacts.filter(c2 => c2.active && /paralegal|assistant/i.test(c2.role || ""))
+              .map(c2 => `<option value="${c2.id}"${c2.id === NL.paralegal_id ? " selected" : ""}
+                >${esc(profWho(c2))}</option>`).join("")}</select></label>` : ""}
+      ${NL.kind === "legal" && (NL.profile.contacts || []).some(c2 => c2.active
+          && /billing/i.test(c2.role || "")) ? `
+        <label class="f" style="margin:8px 0 0"><span>Billing contact <span class="opt">optional</span></span>
+          <select id="nl_pickbill" data-act-change="nlPickBill"><option value="">The firm's usual</option>${
+            NL.profile.contacts.filter(c2 => c2.active && /billing/i.test(c2.role || ""))
+              .map(c2 => `<option value="${c2.id}"${c2.id === NL.billing_id ? " selected" : ""}
+                >${esc(profWho(c2))}</option>`).join("")}</select></label>` : ""}
       <button class="btn sm ghost" data-act="nlPickClear">Start fresh instead</button>
     </div>`;
   }
@@ -13565,6 +13602,26 @@ async function submitManualIntake(openAfter){
       assignment_type: g("nl_asgtype"), payment_arrangement: g("nl_arrangement"),
       deadline: g("nl_legal_deadline"),
     });
+    /* The paralegal and the billing contact the office chose off the firm —
+       the owner's steps 4 and 5. Chosen, never assumed: no selection posts
+       nothing rather than the firm's first paralegal. */
+    const para = NL.paralegal, bill = NL.billing;
+    if(para){
+      body.paralegal_name = [para.first_name, para.last_name].filter(Boolean).join(" ");
+      body.paralegal_email = para.email || "";
+      body.paralegal_phone = ((para.phones || [])[0] || {}).number || "";
+    }
+    if(bill){
+      body.billing_name = [bill.first_name, bill.last_name].filter(Boolean).join(" ");
+      body.billing_email = bill.email || "";
+      body.billing_phone = ((bill.phones || [])[0] || {}).number || "";
+    }
+  }
+  /* The firm's own details, carried from the profile rather than retyped.
+     Anything the office edited on the form wins — these fill only what the
+     short form does not ask for. */
+  if(NL.firm){
+    for(const [k, val2] of Object.entries(NL.firm)) if(val2 && !body[k]) body[k] = val2;
   }
   /* UNIT 7 — the profile this came from, recorded ALONGSIDE the case rather
      than as part of it. Everything above is what the office actually has on
@@ -14223,6 +14280,8 @@ document.addEventListener("click", ev => {
     for(const k of ["nl_firm", "nl_atty", "nl_email", "nl_phone", "nl_carrier", "nl_client",
       "nl_arrangement"]) delete keep[k];
     NL.profile = null; NL.profile_id = null; NL.contact_id = null; NL.v = keep;
+    NL.firm = null; NL.paralegal = null; NL.paralegal_id = null;
+    NL.billing = null; NL.billing_id = null;
     paint();
   }
   else if(act === "legalSave"){ saveLegalPanel(); }
@@ -14327,6 +14386,13 @@ document.addEventListener("click", ev => {
   }
   /* On the case: link it, save it, or clear the link. All three are things an
      admin presses; none of them happens on its own. */
+  /* The match is run because this was pressed — not on every case open, which
+     is what it used to cost. */
+  else if(act === "caseProfMatch"){
+    api(`/cases/${encodeURIComponent(WS_CASE)}/profile-match`)
+      .then(r => { WS.profile = {...(WS.profile || {}), suggested: r.matches || [], looked: true}; })
+      .catch(e => { WS_NOTICE = e.message; }).then(paintCase);
+  }
   else if(act === "caseProfLink"){
     api(`/cases/${encodeURIComponent(WS_CASE)}/profile`, {method: "POST",
       body: {profile_id: Number(el.dataset.id)}})
@@ -14392,6 +14458,34 @@ document.addEventListener("submit", ev => {
   else if(a === "saveDetails") saveCaseDetails();
   else if(a === "saveSubject") saveSubjectRec(el.dataset.id ? Number(el.dataset.id) : null);
   else if(a === "saveVehicle") saveVehicleRec(Number(el.dataset.sid), el.dataset.vid ? Number(el.dataset.vid) : null);
+});
+
+/* THE PAGE HAD NO `change` LISTENER, so a <select> whose whole job is choosing
+   between saved contacts did nothing at all: it rendered, it looked right, and
+   picking a different attorney changed neither the prefilled name nor what was
+   posted. A control that draws is not a control that works — the same lesson
+   the Timestamp Video quick tool taught at a different layer. */
+document.addEventListener("change", ev => {
+  const act = ev.target.dataset ? ev.target.dataset.actChange : "";
+  if(!act || !NL) return;
+  if(act === "nlPickContact"){
+    nlCollect();
+    const c = (NL.profile.contacts || []).find(x => String(x.id) === ev.target.value);
+    if(c){ NL.contact_id = c.id; nlPrefill(NL.profile, c); }
+    paint();
+  }else if(act === "nlPickPara"){
+    nlCollect();
+    const c = (NL.profile.contacts || []).find(x => String(x.id) === ev.target.value);
+    NL.paralegal_id = c ? c.id : null;
+    NL.paralegal = c || null;
+    paint();
+  }else if(act === "nlPickBill"){
+    nlCollect();
+    const c = (NL.profile.contacts || []).find(x => String(x.id) === ev.target.value);
+    NL.billing_id = c ? c.id : null;
+    NL.billing = c || null;
+    paint();
+  }
 });
 
 document.addEventListener("input", ev => {

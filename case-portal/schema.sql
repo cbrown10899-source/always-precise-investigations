@@ -1348,6 +1348,7 @@ CREATE TABLE IF NOT EXISTS profile (
   name_norm           TEXT    NOT NULL,   -- computed in the Worker; D1 has no regex
   email               TEXT,               -- the office inbox, or the private client's own
   address             TEXT,
+  address_norm        TEXT    NOT NULL DEFAULT '',  -- the same address normalised, for the duplicate check
   billing_name        TEXT,               -- an AP desk that is not one of the contacts
   billing_email       TEXT,
   payment_arrangement TEXT,               -- law_firm only; validated against LEGAL_ARRANGEMENTS
@@ -1360,6 +1361,7 @@ CREATE TABLE IF NOT EXISTS profile (
 );
 CREATE INDEX IF NOT EXISTS idx_profile_dir  ON profile(active, kind, name);
 CREATE INDEX IF NOT EXISTS idx_profile_norm ON profile(name_norm);
+CREATE INDEX IF NOT EXISTS idx_profile_addr ON profile(address_norm);
 
 /* The organisation's people. first_name and last_name are separate columns —
    the owner's rule is that a firm's attorneys, paralegals and billing contact
@@ -1440,11 +1442,18 @@ CREATE INDEX IF NOT EXISTS idx_pphone_dig ON profile_phone(digits);
    Worker are already the house norm (build_items.evidence_id,
    case_phone.subject_id). */
 CREATE TABLE IF NOT EXISTS case_profile (
-  case_no    TEXT PRIMARY KEY,
-  profile_id INTEGER NOT NULL,
-  contact_id INTEGER,                     -- the person the assignment was started from
-  source     TEXT,                        -- prefill | linked | saved_from_case
-  linked_by  INTEGER REFERENCES users(id),
-  linked_at  TEXT NOT NULL
+  case_no      TEXT PRIMARY KEY,
+  profile_id   INTEGER NOT NULL,
+  contact_id   INTEGER,                   -- the person the assignment was started from
+  /* THE PROVENANCE IS A SNAPSHOT TOO. Reading the contact's name back through
+     the live contact list meant removing that person from the firm blanked a
+     line on a case that had not changed — while the screen said "no case
+     changed", which was true of the data and false of what the office saw.
+     The name of who the assignment was started from is a fact about the
+     assignment; it is written once and never re-resolved. */
+  contact_name TEXT,
+  source       TEXT,                      -- prefill | linked | saved_from_case
+  linked_by    INTEGER REFERENCES users(id),
+  linked_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_caseprof_recent ON case_profile(profile_id, linked_at DESC);
