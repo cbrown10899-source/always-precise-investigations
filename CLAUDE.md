@@ -918,7 +918,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 2217 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 2258 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # the page against the real Worker
 ```
 
@@ -1030,6 +1030,56 @@ page on focus), the five report sub-tabs wrap instead of hiding behind an
 unmarked scroll, and every control in the report screen meets the 44px tap
 floor the field bars already enforce. The portal-wide pass is item 5; this was
 deliberately scoped to the report screen.
+
+## Six report styles, one report engine
+
+Unit 9. The client document can print in six styles — Surveillance, Domestic /
+Custody, Insurance, Legal, Process / Locate, General — and **there is still one
+renderer, one PDF writer and one package workflow**. A template is
+configuration: a title, section headings, their order, and which optional
+sections a style includes. It decides nothing about the facts.
+
+**The architecture works because of a decision Unit 4 already made.** The PDF
+is written from the rendered `#pkgdoc`, not from the data behind it — so a
+template that changes the document changes the preview, the print view, the
+downloaded file and the Dropbox copy together. Six templates are six configs
+over that one renderer; six renderers would be six things to drift, and a test
+asserts there is exactly one `%PDF-1.` writer in the page.
+
+**A section with nothing in it is skipped**, whichever template asked for it —
+a heading over nothing is how a document starts implying it has something to
+say. And templates provide **labels, never narrative**: a style may call a
+section "Observed Activities", it may not write a sentence about what was
+observed. No template asserts service was effected, a custody arrangement was
+breached, or a claim was fraudulent; those are conclusions, and this system
+only prints conclusions a person actually wrote. There is a test for each.
+
+**`build_template` is a marker table** beside `case_builds` — the `build_custom`
+reasoning, since `schema.sql` is re-applied on every portal-setup run and a
+column cannot be added idempotently. The id carries **no CHECK**, so a seventh
+style is an ordinary Worker edit. **Absent means general**: every report that
+exists today has no row and keeps printing exactly as it always did, which is
+also what stops a later change to the definitions from rewriting historical
+documents.
+
+**A finalized package refuses to be restyled** and says to reopen it — the rule
+the rest of the build already follows, and the reason is that a document a
+client may already have is not restyled underneath them. Finalize writes which
+template it went out in into the build event, so the trail answers "which style
+did that go in" without inferring.
+
+**The default is suggested, never applied.** It is inferred only from the case's
+own type or its category marker — legal marker → Legal, claims → Insurance,
+custody/domestic case type → Domestic, locate/process → Process / Locate — and
+never from free text. It decides what the picker opens on; it writes nothing.
+
+Switching is a local repaint first and the one write after, so previewing
+another style costs no server work and stores no PDF. If that write fails the
+picker rolls back and says so — a preview showing one style while the record
+holds another is the exact drift this unit exists to avoid. That is also why it
+calls `api()` rather than `pkgApi()`: `pkgApi` swallows its own failure.
+
+**Adding this table means a manual `portal-setup.yml` dispatch after merge.**
 
 ## Invoices
 
