@@ -4764,7 +4764,10 @@ section('A queue row opens the case at the panel that does the work');
 section('A queue that could not be built refuses to look empty');
 {
   const page = await newPage();
-  await page.route('**/portal-api/summary*', r => r.abort());
+  /* UNIT 8 moved the queue's derivation to the Worker, so the read that can
+     fail is /attention. The RULE is unchanged and is what this section is
+     for: a source that did not answer must never be drawn as a clear desk. */
+  await page.route('**/portal-api/attention*', r => r.abort());
   await signIn(page, 'trever', 'AdminPassword1x');
   await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
   await page.waitForTimeout(1300);
@@ -4905,26 +4908,61 @@ section('A completed list that failed says so')
    Each case below kills ONE input and asserts the queue says what it cannot
    see instead of saying there is nothing to do. */
 section('A queue missing an input never claims a clear desk');
-for (const [what, route, named] of [
-  ['the packages read', '**/portal-api/packages*', 'retainers and packages to build'],
-  ['the case list',     '**/portal-api/submissions*', 'new intakes'],
-]) {
+{
+  /* THE MECHANISM CHANGED, THE RULE DID NOT. Before Unit 8 the queue was
+     derived in the browser from several reads, and a failed one was named as a
+     missing input. It is one Worker read now — but that read is itself guarded
+     table by table, so a half-applied schema silently drops whole CATEGORIES
+     of work. The Worker reports what it could not look at, and the page says
+     its view is partial rather than claiming a clear desk. Driven here through
+     the real answer, so the wording and the plumbing are both exercised. */
   const page = await newPage();
-  await page.route(route, r => r.abort());
+  await page.route('**/portal-api/attention*', async r => {
+    await r.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ alerts: [], counts: { urgent: 0, attention: 0, info: 0 },
+        kinds: {}, total: 0,
+        missing_sources: ['retainers outstanding', 'overdue invoices'],
+        windows: { legal_days: 14, quiet_days: 21, long_day_hours: 14 } }),
+    });
+  });
   await signIn(page, 'trever', 'AdminPassword1x');
   await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
   await page.waitForTimeout(1400);
-  /* SCOPED TO THE QUEUE CARD, not the whole page. "New intakes" is also a card
-     label in the band above, so asking the page whether it contains those words
-     is a question that answers yes whatever happens — a test that passes with
-     the bug in place is worse than no test. */
   const q = await queueCard(page).innerText();
 
-  ok(`${what} down: the queue never says nothing needs you`,
-     !has(q, 'Nothing needs you'), q.slice(0, 300));
-  ok(`${what} down: it says its view is partial`,
+  ok('a partial queue never says nothing needs you', !has(q, 'Nothing needs you'), q.slice(0, 300));
+  ok('it says its view is partial',
      has(q, 'queue is missing') || has(q, 'queue is incomplete'), q.slice(0, 300));
-  ok(`${what} down: and names what it could not read`, has(q, named), q.slice(0, 300));
+  ok('and names what it could not read',
+     has(q, 'retainers outstanding') && has(q, 'overdue invoices'), q.slice(0, 300));
+  await page.close();
+}
+
+/* And the same notice rides ALONGSIDE real rows, not only on an empty list —
+   a queue with three things on it and two categories unread is still partial. */
+section('A partial queue says so even when it has rows');
+{
+  const page = await newPage();
+  await page.route('**/portal-api/attention*', async r => {
+    await r.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({
+        alerts: [{ key: 'intakes:API-PARTIAL-1', severity: 'urgent', kind: 'intakes',
+          case_no: 'API-PARTIAL-1', what: 'Intake awaiting a decision',
+          why: 'Somebody — waiting 3 days',
+          action: { label: 'Review intake', view: 'case', tab: 'assign' } }],
+        counts: { urgent: 1, attention: 0, info: 0 }, kinds: { intakes: 1 }, total: 1,
+        missing_sources: ['legal dates'],
+        windows: { legal_days: 14, quiet_days: 21, long_day_hours: 14 } }),
+    });
+  });
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).click();
+  await page.waitForTimeout(1400);
+  const q = await queueCard(page).innerText();
+  ok('the rows it does have are drawn', has(q, 'Intake awaiting a decision'), q.slice(0, 200));
+  ok('and it still says what it could not read', has(q, 'legal dates'), q.slice(0, 400));
   await page.close();
 }
 
@@ -11465,6 +11503,9 @@ section('Global search: the keyboard opens the first result');
 
 section('Global search: the field has the door, and it opens onto their own work only');
 {
+  await post('/ingest', { case_no: 'API-NOTDANA-1', client_name: 'Not Danas Client',
+    claim_number: 'CLAIM-NOT-DANAS', carrier: 'Somebody Else Mutual',
+    subject_name: 'Not Danas Subject' }, { 'X-Ingest-Key': env.INGEST_KEY });
   const page = await newPage();
   await signIn(page, 'dana', 'FieldWork2026x');
   const nav = await text(page, '.tabs');
@@ -11472,12 +11513,14 @@ section('Global search: the field has the door, and it opens onto their own work
   await page.locator('.tabs button', { hasText: 'Search' }).first().click();
   await page.waitForTimeout(600);
   ok('it opens a search screen', await page.locator('#gsearch').count() === 1);
-  /* THE BOUNDARY IS THE WORKER'S, and this is the page half of the proof: the
-     claim number of a case Dana is not on returns nothing at all. */
-  await typeSearch(page, 'WC-2026-88421');
+  /* THE BOUNDARY IS THE WORKER'S, and this is the page half of the proof.
+     The case has to be one Dana is genuinely NOT on — earlier sections assign
+     her the fixture cases, so this section plants its own and never touches
+     the assignment. */
+  await typeSearch(page, 'CLAIM-NOT-DANAS');
   const body = await text(page, '.srchcard');
   ok('a case they are not on cannot be found by claim number',
-     !body.includes('API-20260812-4001'), body.slice(0, 300));
+     !body.includes('API-NOTDANA-1'), body.slice(0, 300));
   ok('and the screen says nothing matched rather than showing a stub',
      has(body, 'Nothing matched'), body.slice(0, 200));
   await page.close();
@@ -11546,7 +11589,11 @@ section('Needs attention: an alert leaves because the thing was done');
   await page.waitForTimeout(300);
   await page.locator('[data-act="nlKind"][data-k="consumer"]').click();
   await page.waitForTimeout(300);
-  await page.locator('#nl_client').fill('Retainer Owing');
+  /* The client's name must not contain the word the assertion below looks
+     for — "Retainer Owing" made the row match on its own client name rather
+     than on the alert, and the test failed for a reason that was not the
+     product's. */
+  await page.locator('#nl_client').fill('Ambrose Quill');
   await page.locator('[data-act="nlSave"][data-open="1"]').click();
   await page.waitForTimeout(900);
   const caseNo = await page.evaluate(async () => {
@@ -11563,8 +11610,8 @@ section('Needs attention: an alert leaves because the thing was done');
   await page.waitForTimeout(300);
   await gotoDash(page);
   let card = await text(page, '.card.queuecard');
-  ok('the unpaid retainer is on the queue', card.includes(caseNo) && has(card, 'Retainer'),
-     card.slice(0, 400));
+  ok('the unpaid retainer is on the queue',
+     card.includes(caseNo) && has(card, 'Retainer outstanding'), card.slice(0, 400));
   ok('and it is urgent, in words', has(card, 'URGENT'), card.slice(0, 200));
 
   /* RECORD THE MONEY — and the alert goes, with nothing to dismiss. */
@@ -11575,9 +11622,18 @@ section('Needs attention: an alert leaves because the thing was done');
         client_token: 'tok-page-attn-1' }) });
   }, caseNo);
   await gotoDash(page);
-  card = await text(page, '.card.queuecard');
-  ok('recording the payment takes the alert away', !has(card, 'Retainer outstanding'),
-     card.slice(0, 400));
+  /* SCOPED TO THIS CASE'S RETAINER. Another fixture case may legitimately have
+     an unpaid retainer of its own, so asking the whole card whether the words
+     appear anywhere answers yes whatever happened here — and the case itself
+     rightly STAYS on the queue, because nobody has accepted the intake yet.
+     What must go is the retainer alert, and only that. */
+  const mine = page.locator('.qrow', { hasText: caseNo });
+  const mineText = await mine.count() ? await mine.first().innerText() : '';
+  ok('recording the payment takes the retainer alert away',
+     !has(mineText, 'Retainer outstanding') && !has(mineText, 'Retainer part paid'),
+     mineText.slice(0, 200));
+  ok('while the case itself is still queued for the review it does need',
+     has(mineText, 'Intake'), mineText.slice(0, 200));
   ok('and there was never a dismiss button to press',
      await page.locator('[data-act*="ismiss"]').count() === 0);
   await page.close();

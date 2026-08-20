@@ -12079,6 +12079,42 @@ section('Needs attention: every alert is something that is actually true');
      JSON.stringify((a.alerts || []).map(x => x.case_no)));
 }
 
+section('Needs attention: a list that could not see everything says so');
+{
+  /* THE GUARDS ARE RIGHT — a half-applied schema must not take the dashboard
+     down — but a guard that silently drops a whole CATEGORY turns "nothing
+     needs you" into a claim nobody checked. The list names what it could not
+     look at, and the page draws a partial view instead of a clear desk. */
+  const { DatabaseSync } = await import('node:sqlite');
+  const bare = new DatabaseSync(':memory:');
+  bare.exec(SCHEMA);
+  for (const t of ['case_retainer', 'invoices', 'legal_intake']) bare.exec(`DROP TABLE ${t}`);
+  const env = { ...freshEnv(), DB: d1(bare) };
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  const res = await call(env, '/attention', { cookie: admin });
+  ok('the list still answers on a half-applied schema', res.status === 200, String(res.status));
+  const a = await jsonOf(res);
+  ok('and names each source it could not read',
+     (a.missing_sources || []).includes('retainers outstanding')
+     && (a.missing_sources || []).includes('overdue invoices')
+     && (a.missing_sources || []).includes('legal dates'),
+     JSON.stringify(a.missing_sources));
+  ok('it raises no alert from a table it never read',
+     !(a.alerts || []).some(x => x.kind === 'payments' || x.kind === 'legal'),
+     JSON.stringify((a.alerts || []).map(x => x.kind)));
+
+  /* AND ON A WHOLE DATABASE, NOTHING MISSING. The list above must not be a
+     constant — a "missing" array that is always full says nothing. */
+  const whole = freshEnv();
+  await bootstrapAdmin(whole);
+  const a2 = (await login(whole, 'trever', 'FirstAdminPass1')).cookie;
+  const full = await jsonOf(await call(whole, '/attention', { cookie: a2 }));
+  ok('with every table present it reports nothing missing',
+     (full.missing_sources || []).length === 0, JSON.stringify(full.missing_sources));
+}
+
 section('Needs attention: a paused or held case is a decision, not neglect');
 {
   const env = freshEnv();

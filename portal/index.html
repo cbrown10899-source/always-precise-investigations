@@ -1295,7 +1295,11 @@
        page; and a queue row's action is full width so it cannot be a 40px
        target beside a long sentence. */
     .srchrow{flex-direction:column;gap:4px;}
-    .attnlenses{overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px;}
+    /* The chips WRAP rather than scroll sideways. A scrolling strip keeps the
+       page from moving but still leaves its own children hanging past the
+       right edge, which is exactly what the overflow probe measures — and a
+       filter you have to discover by swiping is worse than one you can see. */
+    .attnlenses{flex-wrap:wrap;}
     .qrow{flex-direction:column;align-items:stretch;gap:8px;}
     .qgo .btn{width:100%;min-height:44px;}
   }
@@ -2666,6 +2670,19 @@ function nextActionsHtml(){
     <div class="empty-title">Nothing under that filter.</div>
     <div class="empty-hint">Clear it to see everything waiting.</div></div>`);
 
+  /* AN INCOMPLETE QUEUE MAY NOT REPORT A CLEAR DESK. Some sources answered and
+     some could not be read at all; with nothing from the ones that did, the
+     honest statement is that we do not know, and it names which part is
+     missing. The rule predates Unit 8 — only the place it is enforced moved
+     when the derivation went to the Worker. */
+  const blind = (ATTN && ATTN.missing_sources) || [];
+  if(!rows.length && blind.length) return head(`<div class="empty">
+    <div class="empty-title">The queue is incomplete.</div>
+    <div class="empty-hint">Nothing came back from the alerts that did load, but
+      ${esc(attnList(blind))} could not be read &mdash; so this is not a clear desk, it is a
+      partial view. It usually means the database is missing tables the portal-setup workflow
+      creates.</div></div>`);
+
   if(!rows.length) return head(`<div class="empty">
     <div class="empty-title">Nothing needs you right now.</div>
     <div class="empty-hint">This fills itself as work arrives &mdash; a new intake, a finished day
@@ -2695,7 +2712,16 @@ function nextActionsHtml(){
     </div>`;
   }).join("")}</div>
   ${rows.length > QUEUE_MAX ? `<div class="qfoot">Showing the first ${QUEUE_MAX} of
-    ${rows.length}. Filter above to narrow it.</div>` : ""}`);
+    ${rows.length}. Filter above to narrow it.</div>` : ""}
+  ${blind.length ? `<div class="qfoot">This queue is missing ${esc(attnList(blind))} &mdash; those
+    could not be read, so there may be more waiting than is listed here.</div>` : ""}`);
+}
+
+/* "a, b and c" — the queue's own, because the sentence above is the only
+   place on this page that needs it. */
+function attnList(a){
+  return a.length < 2 ? (a[0] || "")
+    : a.slice(0, -1).join(", ") + " and " + a[a.length - 1];
 }
 
 function recentActivityHtml(){

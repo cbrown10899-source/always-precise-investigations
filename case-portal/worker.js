@@ -2225,7 +2225,22 @@ async function needsAttention(env, user) {
   if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
 
   const missing = await missingTables(env);
-  const have = t => !missing.includes(t);
+  /* WHAT THIS LIST COULD NOT LOOK AT, named. Every rule below is guarded on
+     its tables existing — which is right, because a half-applied schema must
+     not take the dashboard down — but a guard that silently drops a whole
+     CATEGORY of work turns "nothing needs you" into a claim nobody checked.
+     That sentence is the most reassuring one on the page and it has to be
+     earned by every source answering, not by the survivors happening to be
+     empty. So the sources that could not be read are collected and returned,
+     and the page says its view is partial instead of looking clear. The rule
+     is the client-side queue's from Unit 5; only the place it is enforced
+     moved when the derivation did. */
+  const blind = [];
+  const have = (t, names) => {
+    const ok = !missing.includes(t);
+    if (!ok && names) for (const n of [].concat(names)) if (!blind.includes(n)) blind.push(n);
+    return ok;
+  };
   const now = nowIso();
   const today = now.slice(0, 10);
   const out = [];
@@ -2255,7 +2270,7 @@ async function needsAttention(env, user) {
   }
 
   // ---- REPORTS: a day was worked and no report exists, or one is waiting.
-  if (have('case_days') && have('case_reports')) {
+  if (have('case_days', 'reports owed') && have('case_reports', 'reports owed')) {
     for (const r of (await q(
       `SELECT d.case_no, d.day_date, d.id AS day_id FROM case_days d
          LEFT JOIN case_reports rp ON rp.day_id = d.id
@@ -2275,7 +2290,7 @@ async function needsAttention(env, user) {
   }
 
   // ---- PAYMENTS. Arithmetic, never a stored flag — the invoice rule. ------
-  if (have('case_retainer')) {
+  if (have('case_retainer', 'retainers outstanding')) {
     /* A private retainer that has been agreed and not fully received. Summed
        across the payment log, so a partial instalment reads as a balance
        rather than as unpaid. */
@@ -2302,7 +2317,7 @@ async function needsAttention(env, user) {
       if (out.length >= ATTN.TOTAL) break;
     }
   }
-  if (have('invoices')) {
+  if (have('invoices', 'overdue invoices')) {
     /* OVERDUE IS COMPUTED AGAINST TODAY, never stored — and never on a draft
        or a void, which is the rule the invoice module already states. */
     for (const r of (await q(
@@ -2325,7 +2340,7 @@ async function needsAttention(env, user) {
   }
 
   // ---- LEGAL DATES. Only dates a firm actually gave us, never derived. ----
-  if (have('legal_intake')) {
+  if (have('legal_intake', 'legal dates')) {
     const soon = new Date(Date.parse(today + 'T00:00:00Z') + ATTN.LEGAL_DATE_DAYS * 86400000)
       .toISOString().slice(0, 10);
     for (const [col, label] of [['hearing_date', 'Hearing'], ['trial_date', 'Trial'],
@@ -2359,7 +2374,7 @@ async function needsAttention(env, user) {
   }
 
   // ---- PACKAGES: started and not finalized. -------------------------------
-  if (have('case_builds')) {
+  if (have('case_builds', 'unfinished packages')) {
     for (const r of (await q(
       `SELECT b.case_no, b.version, b.created_at,
               (SELECT COUNT(*) FROM build_items bi WHERE bi.build_id = b.id) AS items
@@ -2413,7 +2428,7 @@ async function needsAttention(env, user) {
   }
 
   // ---- AUTHORIZATION running out, against the configured threshold. ------
-  if (have('case_meta') && have('case_days')) {
+  if (have('case_meta', 'authorization limits') && have('case_days', 'authorization limits')) {
     const first = String(await configValue(env, 'auth_warn_thresholds', '75,90,100'))
       .split(',').map(parseFloat).filter(Number.isFinite).sort((a, b) => a - b)[0] ?? 75;
     for (const r of (await q(
@@ -2471,6 +2486,9 @@ async function needsAttention(env, user) {
   return json({
     alerts: all.slice(0, ATTN.TOTAL),
     counts, kinds, total: all.length,
+    /* Empty when every source answered. Non-empty means this is a PARTIAL view
+       and the page must not draw it as a clear desk. */
+    missing_sources: blind,
     windows: { legal_days: ATTN.LEGAL_DATE_DAYS, quiet_days: ATTN.QUIET_DAYS,
       long_day_hours: ATTN.LONG_DAY_HOURS },
   });
