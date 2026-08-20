@@ -7748,6 +7748,32 @@ async function buildReports(env, buildId, caseNo) {
   return results || [];
 }
 
+/* ------------------------------------------------ UNIT 9: report templates
+
+   SIX STYLES, ONE ENGINE. A template is a presentation choice — the document's
+   title, its section headings, their order and which optional sections appear.
+   It decides nothing about the facts: the report body, the evidence selection,
+   the timestamps and the activity entries are the same records whichever one
+   is chosen, and the document, the PDF, the print view and the Dropbox copy
+   all still come from the one renderer.
+
+   THE IDS ARE VALIDATED HERE and carry no CHECK in the schema, so a seventh
+   style is an ordinary edit. `general` is the fallback and the format every
+   report that exists today already prints in. */
+const REPORT_TEMPLATES = ['surveillance', 'domestic', 'insurance', 'legal', 'process', 'general'];
+const DEFAULT_TEMPLATE = 'general';
+
+/* Which template a build is using. ABSENT MEANS GENERAL — every existing
+   report has no row and must keep rendering exactly as it does. Guarded, like
+   every table added after the live database existed. */
+async function buildTemplate(env, buildId) {
+  if ((await missingTables(env)).includes('build_template')) return DEFAULT_TEMPLATE;
+  const row = await env.DB.prepare('SELECT template FROM build_template WHERE build_id = ?')
+    .bind(buildId).first();
+  const t = row && row.template;
+  return REPORT_TEMPLATES.includes(t) ? t : DEFAULT_TEMPLATE;
+}
+
 /* Whether this build is the Custom package. Read from the marker table for
    the reason recorded above `build_custom` in schema.sql. */
 async function isCustomBuild(env, buildId) {
@@ -7834,7 +7860,26 @@ async function buildState(env, caseNo) {
     investigator: sub.investigator || '', authorized_hours: sub.authorized_hours,
     objective: payload.objective || '', date_of_loss: payload.date_of_loss || '',
     claim_type: payload.claim_type || '', geographic_limits: payload.geographic_limits || '',
+    /* UNIT 9 — the fields the subject and dates sections of a template draw
+       from. Straight off the intake payload and the legal row, exactly as
+       recorded: a template that has no value for one of these simply does not
+       print that line, and none of them is ever filled with a placeholder. */
+    subject_description: payload.subject_description || '',
+    subject_address: payload.subject_address || '',
+    vehicle: payload.vehicle || payload.subject_vehicle || '',
   } : null;
+  /* The dates a firm actually gave us, when this is a legal matter and the
+     table is there. Never derived from one another. */
+  if (caseInfo && !(await missingTables(env)).includes('legal_intake')) {
+    const li = await env.DB.prepare(
+      'SELECT hearing_date, trial_date, deadline FROM legal_intake WHERE case_no = ?')
+      .bind(caseNo).first();
+    if (li) {
+      caseInfo.hearing_date = li.hearing_date || '';
+      caseInfo.trial_date = li.trial_date || '';
+      caseInfo.deadline = li.deadline || '';
+    }
+  }
 
   /* Approved days not in the package — the admin adds a later day without
      rebuilding, and sees at a glance that one is missing. */
@@ -7850,6 +7895,10 @@ async function buildState(env, caseNo) {
     available_reports: available,
     summary,
     custom,
+    /* The chosen style. The page renders the document from this; nothing about
+       the report's CONTENT is decided by it. */
+    template: build ? await buildTemplate(env, build.id) : DEFAULT_TEMPLATE,
+    templates: REPORT_TEMPLATES,
     package_type: build ? (custom ? 'custom' : build.package_type) : null,
     case_info: caseInfo,
     items: items || [],
@@ -8338,6 +8387,7 @@ const DEMO_SWEEP = [
   ['build_reports',         'DELETE FROM build_reports WHERE build_id IN (SELECT id FROM case_builds WHERE case_no LIKE ?)'],
   ['build_summary',         'DELETE FROM build_summary WHERE build_id IN (SELECT id FROM case_builds WHERE case_no LIKE ?)'],
   ['build_custom',          'DELETE FROM build_custom WHERE build_id IN (SELECT id FROM case_builds WHERE case_no LIKE ?)'],
+  ['build_template',        'DELETE FROM build_template WHERE build_id IN (SELECT id FROM case_builds WHERE case_no LIKE ?)'],
   ['external_files',        'DELETE FROM external_files WHERE evidence_id IN (SELECT id FROM case_evidence WHERE case_no LIKE ?)'],
   ['invoice_lines',         'DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE case_no LIKE ?)'],
   ['invoice_payments',      'DELETE FROM invoice_payments WHERE invoice_id IN (SELECT id FROM invoices WHERE case_no LIKE ?)'],
@@ -8994,6 +9044,7 @@ const EXPECTED_TABLES = [
   'video_stamp', 'dropbox_auth', 'activity_source', 'activity_voice_event',
   'photo_stamp',
   'profile', 'profile_contact', 'profile_phone', 'case_profile',
+  'build_template',
 ];
 
 async function missingTables(env) {
@@ -9670,6 +9721,37 @@ async function route(request, env) {
     return json(await buildState(env, b.case_no));
   }
 
+  /* UNIT 9 — which of the six styles this document prints in. The same rule
+     the rest of the build follows: a finalized package is changed by reopening
+     it, never by a quiet edit underneath a document somebody may already have
+     sent. Nothing about the report's content moves either way. */
+  m = p.match(/^\/build\/(\d{1,12})\/template$/);
+  if (m && method === 'POST') {
+    const b = await adminBuild(env, user, parseInt(m[1], 10));
+    if (!b) return json({ error: 'not found' }, 404);
+    if ((await missingTables(env)).includes('build_template')) {
+      return json({ error: 'The build_template table is not on this database yet. Run the '
+        + 'portal-setup workflow once and try again — every report still prints in the general '
+        + 'format meanwhile.', code: 'not_set_up' }, 503);
+    }
+    if (b.status !== 'draft') {
+      return json({ error: 'This package is finalized. Reopen it to change the report template — '
+        + 'a finalized document is not restyled underneath a client who may already have it.' }, 400);
+    }
+    const body = await readJson(request);
+    const t = String(body.template || '');
+    if (!REPORT_TEMPLATES.includes(t)) {
+      return json({ error: `Unknown report template. Choose one of: ${REPORT_TEMPLATES.join(', ')}.` }, 400);
+    }
+    await env.DB.prepare(
+      `INSERT INTO build_template (build_id, template, set_by, set_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(build_id) DO UPDATE SET template = excluded.template,
+         set_by = excluded.set_by, set_at = excluded.set_at`)
+      .bind(b.id, t, user.id, nowIso()).run();
+    await buildEvent(env, b.id, user, 'template', t);
+    return json(await buildState(env, b.case_no));
+  }
+
   m = p.match(/^\/build\/(\d{1,12})\/items$/);
   if (m && method === 'POST') {
     const b = await adminBuild(env, user, parseInt(m[1], 10));
@@ -9765,7 +9847,13 @@ async function route(request, env) {
     await env.DB.prepare(
       'UPDATE case_builds SET status = ?, finalized_by = ?, finalized_at = ?, updated_by = ?, updated_at = ? WHERE id = ?')
       .bind('finalized', user.id, nowIso(), user.id, nowIso(), b.id).run();
-    await buildEvent(env, b.id, user, 'finalized', `v${b.version}, ${(items || []).length} item(s)`);
+    /* WHAT IT WAS FINALIZED WITH, on the record. The marker row already holds
+       it and a finalized build refuses to change it — this puts it in the
+       audit trail too, so "which style did that document go out in" is
+       answerable from the events without inferring anything. */
+    const finalTemplate = await buildTemplate(env, b.id);
+    await buildEvent(env, b.id, user, 'finalized',
+      `v${b.version}, ${(items || []).length} item(s), ${finalTemplate} template`);
     await notifyAdmins(env, 'packages', b.case_no);
     return json(await buildState(env, b.case_no));
   }

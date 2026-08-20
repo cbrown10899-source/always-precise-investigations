@@ -1457,3 +1457,34 @@ CREATE TABLE IF NOT EXISTS case_profile (
   linked_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_caseprof_recent ON case_profile(profile_id, linked_at DESC);
+
+/* ------------------------------------------- WHICH REPORT TEMPLATE (Unit 9)
+
+   Six report STYLES over ONE report engine. A template is presentation — the
+   document's title, its section headings, their order, and which optional
+   sections appear — and it decides nothing about the facts: the report body,
+   the evidence selection, the timestamps and the activity entries are the same
+   records whichever template is chosen.
+
+   A MARKER TABLE, not a column on `case_builds`, for the reason written above
+   `build_custom` a few tables up: schema.sql is re-applied on every
+   portal-setup run, `ALTER TABLE ADD COLUMN` is not idempotent, and a column
+   added here would bind a FRESH database while the LIVE one kept the old
+   shape. Same family as build_custom, build_summary and activity_removed.
+
+   `template` carries NO CHECK, deliberately — a seventh style must cost an
+   ordinary Worker edit, never a table rebuild. The allowed ids live in the
+   Worker beside the other validated vocabularies.
+
+   ABSENT MEANS GENERAL. Every report that exists today has no row here and
+   must keep rendering exactly as it does, so the reader treats a missing row
+   as the general format rather than as a problem. That is also what stops a
+   later change to the template definitions from rewriting historical
+   documents: a finalized build keeps the id it was finalized with, and a
+   build that never chose one keeps the format it was always printed in. */
+CREATE TABLE IF NOT EXISTS build_template (
+  build_id INTEGER PRIMARY KEY,
+  template TEXT    NOT NULL,          -- validated in the Worker, no CHECK
+  set_by   INTEGER REFERENCES users(id),
+  set_at   TEXT    NOT NULL
+);
