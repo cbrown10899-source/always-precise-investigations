@@ -1307,3 +1307,144 @@ CREATE TABLE IF NOT EXISTS legal_intake (
   updated_at          TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_legal_case ON legal_intake(case_no);
+
+/* ------------------------------------------ REPEAT CLIENT / FIRM PROFILES
+   (Unit 7, owner brief and derivations in case-portal/PROFILES.md.)
+
+   A PROFILE IS A REUSABLE DEFAULT. A CASE IS A SNAPSHOT. Selecting a profile
+   PREFILLS a new assignment; the case is then written from the form body the
+   way it always was, into `submissions` and `legal_intake`, and nothing in any
+   case read path joins back to these tables. So "editing a firm must not
+   rewrite prior cases" is STRUCTURAL — there is no code path by which it
+   could — rather than a rule someone has to keep remembering.
+
+   `kind` CARRIES NO CHECK CONSTRAINT, deliberately. schema.sql is re-applied
+   on every portal-setup run and CREATE TABLE IF NOT EXISTS is a no-op against
+   a database that already has the table, so a CHECK edited here would bind a
+   FRESH database while the LIVE one kept the old one — passing every test and
+   failing only in production. `submissions.kind` is this project's own proof
+   of the cost: it could not widen for Legal, so a legal case had to be stored
+   as 'consumer' with a payload marker. A fourth client category must be an
+   ordinary Worker edit. Same reasoning as payment_methods.method,
+   retainer_payment.method and legal_intake.payment_arrangement.
+
+   NO PRICE LIVES HERE AND NOTHING CAN BE MARKED PAID FROM A PROFILE. There is
+   deliberately no retainer, rate, matter number or amount column anywhere in
+   these four tables: agreedRetainer(), case_retainer and RATES stay the only
+   pricing sources, and a per-firm figure would be a second answer to them that
+   goes stale the moment the real one moves. `payment_arrangement` is a legal
+   ARRANGEMENT preference and never a payment — the same word the case panel
+   uses, and it means the same thing there: a request.
+
+   The address is ONE block rather than city/state/ZIP columns, because every
+   surface it prefills or is saved from already stores one block
+   (legal_intake.firm_address, the payload's client_address, invoices.bill_to).
+   Splitting it here would mean parsing on the way in and composing on the way
+   out — two places to be wrong about the same string. */
+CREATE TABLE IF NOT EXISTS profile (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind                TEXT    NOT NULL,   -- law_firm | insurance_org | private_client (Worker-validated, no CHECK)
+  name                TEXT    NOT NULL,   -- the firm, the carrier, or the person: ONE searched column
+  name_norm           TEXT    NOT NULL,   -- computed in the Worker; D1 has no regex
+  email               TEXT,               -- the office inbox, or the private client's own
+  address             TEXT,
+  billing_name        TEXT,               -- an AP desk that is not one of the contacts
+  billing_email       TEXT,
+  payment_arrangement TEXT,               -- law_firm only; validated against LEGAL_ARRANGEMENTS
+  notes               TEXT,               -- admin-only, never sent anywhere
+  active              INTEGER NOT NULL DEFAULT 1,
+  created_by          INTEGER REFERENCES users(id),
+  created_at          TEXT    NOT NULL,
+  updated_by          INTEGER REFERENCES users(id),
+  updated_at          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_profile_dir  ON profile(active, kind, name);
+CREATE INDEX IF NOT EXISTS idx_profile_norm ON profile(name_norm);
+
+/* The organisation's people. first_name and last_name are separate columns —
+   the owner's rule is that a firm's attorneys, paralegals and billing contact
+   must not be crammed into one concatenated text field — and nothing stores a
+   composed display string, so there is none to drift.
+
+   `role` carries no CHECK for the reason above and one more: the vocabulary
+   DIFFERS BY PROFILE KIND (Attorney/Paralegal/Legal Assistant/Billing/Office
+   Manager against Adjuster/Claims Examiner/SIU/Attorney/Billing), which a
+   single-column CHECK cannot express at all — it could only be the union, and
+   would then permit Adjuster on a law firm while still refusing to widen. */
+CREATE TABLE IF NOT EXISTS profile_contact (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  profile_id INTEGER NOT NULL,
+  first_name TEXT,
+  last_name  TEXT,
+  name_norm  TEXT    NOT NULL DEFAULT '', -- the two names normalised, for search
+  role       TEXT,                        -- per-kind vocabulary, validated in the Worker
+  email      TEXT,
+  preferred  INTEGER NOT NULL DEFAULT 0,  -- the one contact a new assignment defaults to
+  active     INTEGER NOT NULL DEFAULT 1,
+  position   INTEGER NOT NULL DEFAULT 0,
+  notes      TEXT,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT    NOT NULL,
+  updated_by INTEGER REFERENCES users(id),
+  updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pcontact      ON profile_contact(profile_id, active, position);
+CREATE INDEX IF NOT EXISTS idx_pcontact_norm ON profile_contact(name_norm);
+/* At most one preferred contact per profile, enforced by the DATABASE rather
+   than by a check in the route — so two taps on a flaky connection cannot
+   crown two. The case_day_pauses open-pause index is the same shape. */
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pcontact_pref
+  ON profile_contact(profile_id) WHERE preferred = 1;
+
+/* Numbers are ROWS, one per number with its own label — the case_phone rule,
+   and the owner's approved multiple-number direction. `contact_id` NULL means
+   the number belongs to the ORGANISATION itself (the main office line, or a
+   private client's own numbers), which columns hanging off a contact could not
+   have carried. `position` 0 is the primary and 1 the secondary, so "secondary
+   phone" needed no second column.
+
+   `digits` is the number reduced to its digits, written by the Worker at save
+   time: phone search has to match (540) 555-1212 against 5405551212 and D1 has
+   no regex, so the canonical form is stored beside the one the office typed.
+   It is a search key and is never displayed. */
+CREATE TABLE IF NOT EXISTS profile_phone (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  profile_id INTEGER NOT NULL,
+  contact_id INTEGER,                     -- NULL = the organisation's own line
+  label      TEXT,                        -- mobile | work | home | other
+  number     TEXT    NOT NULL,            -- exactly as the office typed it
+  digits     TEXT    NOT NULL DEFAULT '', -- the same number, digits only, for search
+  position   INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT    NOT NULL,
+  updated_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pphone     ON profile_phone(profile_id, contact_id, position);
+CREATE INDEX IF NOT EXISTS idx_pphone_dig ON profile_phone(digits);
+
+/* THE ONE CONNECTION BETWEEN A PROFILE AND A CASE, and it is written only by
+   an explicit act: creating an assignment from a selected profile, an admin
+   pressing Use this profile on a submission, or Save as profile from a case.
+   Never inferred from a matching name, an address or an email — the
+   recipientIsCarrier() lesson is standing policy here.
+
+   `case_no` is the primary key: one profile per case, so re-associating
+   REPLACEs rather than accumulating, and the case screen has one answer to
+   show. Recent matters is the reverse read, indexed and LIMITed.
+
+   Case-scoped, so DEMO_SWEEP deletes it with the case. The other three tables
+   are NOT swept: a link is case data and a profile is reference data, and
+   clearing a test case must not delete a real firm. And no REFERENCES clause
+   on profile_id, deliberately — a foreign key here invites ON DELETE CASCADE,
+   which is the exact thing the owner forbade ("do not delete a historical case
+   because a client profile was removed"). Cross-boundary ids validated in the
+   Worker are already the house norm (build_items.evidence_id,
+   case_phone.subject_id). */
+CREATE TABLE IF NOT EXISTS case_profile (
+  case_no    TEXT PRIMARY KEY,
+  profile_id INTEGER NOT NULL,
+  contact_id INTEGER,                     -- the person the assignment was started from
+  source     TEXT,                        -- prefill | linked | saved_from_case
+  linked_by  INTEGER REFERENCES users(id),
+  linked_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_caseprof_recent ON case_profile(profile_id, linked_at DESC);

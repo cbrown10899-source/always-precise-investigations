@@ -10702,6 +10702,691 @@ section('Dropbox — secrets only, and no file migration yet');
      !/dropboxUpload[\s\S]{0,600}DBX_FOLDER_KEY/.test(wsrc));
 }
 
+/* ============================================================ UNIT 7 =====
+   REPEAT CLIENT / FIRM PROFILES.
+
+   The property under test throughout is the one the whole unit rests on: a
+   profile is a reusable DEFAULT and a case is a SNAPSHOT, so editing a firm
+   can change nothing about a case that already exists. It is asserted the
+   only way worth asserting it — a real case is created from a real profile,
+   the profile is then really edited, and every stored copy of the case is
+   read back byte for byte. */
+
+let lglSeq = 0;
+const legalPayload = (over = {}) => ({
+  case_no: `API-LGP-${++lglSeq}`,
+  assignment: 'legal', service: 'Legal investigation assignment',
+  contact_name: 'Tessa Boyd', client_name: 'Estate of L. Byrd',
+  firm_name: 'Harmon & Reed LLP', firm_email: 'office@harmonreed.example',
+  firm_phone: '(540) 555-0199', firm_address: '12 Court Square, Roanoke VA',
+  attorney_name: 'Ruth Harmon', attorney_email: 'rharmon@harmonreed.example',
+  attorney_phone: '540-555-0142',
+  matter_number: 'M-2211', subject_name: 'Adverse Party',
+  objective: 'Document daily activity', ...over,
+});
+
+section('Profiles: a firm is saved once and reused, and a case never moves again');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  // --- create the firm, with the people on it -----------------------------
+  let res = await call(env, '/profiles', { method: 'POST', cookie: admin, body: {
+    kind: 'law_firm', name: 'Harmon & Reed LLP', email: 'office@harmonreed.example',
+    address: '12 Court Square, Roanoke VA', payment_arrangement: 'check_pickup',
+    phones: [{ number: '(540) 555-0199', label: 'work' }],
+    contacts: [
+      { first_name: 'Ruth', last_name: 'Harmon', role: 'Attorney',
+        email: 'rharmon@harmonreed.example', preferred: true,
+        phones: [{ number: '540-555-0142', label: 'work' }, { number: '540 555 7788', label: 'mobile' }] },
+      { first_name: 'Owen', last_name: 'Pike', role: 'Attorney', email: 'opike@harmonreed.example' },
+      { first_name: 'Cora', last_name: 'Nye', role: 'Paralegal', email: 'cnye@harmonreed.example',
+        phones: [{ number: '540-555-0143', label: 'work' }] },
+      { first_name: 'Del', last_name: 'Watts', role: 'Billing Contact', email: 'ap@harmonreed.example' },
+    ],
+  } });
+  ok('an admin creates a law firm profile', res.status === 201, String(res.status));
+  const firm = (await jsonOf(res)).profile;
+  const FIRM_ID = firm.id;
+  ok('it is typed as a law firm', firm.kind === 'law_firm', firm.kind);
+  ok('two attorneys, a paralegal and a billing contact all sit on it',
+     firm.contacts.filter(c => c.role === 'Attorney').length === 2
+     && firm.contacts.some(c => c.role === 'Paralegal')
+     && firm.contacts.some(c => c.role === 'Billing Contact'),
+     JSON.stringify(firm.contacts.map(c => c.role)));
+  ok('names are stored apart, never concatenated',
+     firm.contacts[0].first_name === 'Ruth' && firm.contacts[0].last_name === 'Harmon');
+  ok('one contact carries two labelled numbers',
+     (firm.contacts.find(c => c.last_name === 'Harmon').phones || []).length === 2,
+     JSON.stringify(firm.contacts.find(c => c.last_name === 'Harmon').phones));
+  ok('and the firm has its own office line',
+     firm.phones.length === 1 && firm.phones[0].number === '(540) 555-0199');
+  ok('exactly one contact is the preferred one',
+     firm.contacts.filter(c => c.preferred).length === 1);
+
+  /* NO FIGURE OF ANY KIND LIVES ON A PROFILE. The authoritative pricing source
+     stays authoritative because there is nothing here to disagree with it. */
+  ok('a profile holds no retainer, rate or matter number',
+     !('retainer' in firm) && !('retainer_amount' in firm) && !('rate' in firm)
+     && !('matter_number' in firm),
+     Object.keys(firm).join(','));
+  ok('the arrangement it does hold is one of the owner\'s four',
+     firm.payment_arrangement === 'check_pickup');
+
+  // --- start an assignment from it ---------------------------------------
+  res = await call(env, '/intakes', { method: 'POST', cookie: admin, body: {
+    kind: 'legal', profile_id: FIRM_ID,
+    profile_contact_id: firm.contacts.find(c => c.last_name === 'Harmon').id,
+    // what the browser prefilled, and what the office typed on top of it
+    firm_name: 'Harmon & Reed LLP', firm_email: 'office@harmonreed.example',
+    firm_phone: '(540) 555-0199', firm_address: '12 Court Square, Roanoke VA',
+    attorney_name: 'Ruth Harmon', attorney_email: 'rharmon@harmonreed.example',
+    payment_arrangement: 'check_pickup',
+    client_name: 'Estate of L. Byrd', subject_name: 'Adverse Party',
+    matter_number: 'M-9001', assignment_type: 'Surveillance',
+  } });
+  ok('an assignment is created from the profile', res.status === 201, String(res.status));
+  const CASE_A = (await jsonOf(res)).case_no;
+
+  const wsA = await jsonOf(await call(env, `/cases/${CASE_A}/workspace`, { cookie: admin }));
+  ok('the case is a legal case as before', !!wsA.legal, JSON.stringify(wsA.legal && wsA.legal.firm_name));
+  ok('the firm details were prefilled onto it',
+     wsA.legal.firm_name === 'Harmon & Reed LLP' && wsA.legal.firm_phone === '(540) 555-0199'
+     && wsA.legal.attorney_name === 'Ruth Harmon', JSON.stringify(wsA.legal.firm_phone));
+  ok('the case records which profile it came from',
+     wsA.profile && wsA.profile.link && Number(wsA.profile.link.profile_id) === FIRM_ID,
+     JSON.stringify(wsA.profile && wsA.profile.link));
+  ok('and which person on it', wsA.profile.contact && wsA.profile.contact.last_name === 'Harmon');
+  /* THE CASE-SPECIFIC FACTS ARE THE CASE'S OWN. A matter number is per matter
+     and must never be a firm-wide value. */
+  ok('the matter number is the new one, not anything remembered',
+     wsA.legal.matter_number === 'M-9001', wsA.legal.matter_number);
+
+  // --- now edit the firm, hard -------------------------------------------
+  res = await call(env, `/profiles/${FIRM_ID}`, { method: 'POST', cookie: admin, body: {
+    name: 'Harmon Reed & Vance LLP', email: 'new@harmonreed.example',
+    address: '400 Franklin Road, Roanoke VA',
+    phones: [{ number: '(540) 555-2200', label: 'work' }],
+  } });
+  ok('the firm is renamed, re-addressed and given a new number', res.status === 200, String(res.status));
+  const edited = (await jsonOf(res)).profile;
+  ok('the profile itself changed', edited.name === 'Harmon Reed & Vance LLP'
+     && edited.phones[0].number === '(540) 555-2200');
+
+  const wsA2 = await jsonOf(await call(env, `/cases/${CASE_A}/workspace`, { cookie: admin }));
+  ok('THE EXISTING CASE DID NOT MOVE — firm name',
+     wsA2.legal.firm_name === 'Harmon & Reed LLP', wsA2.legal.firm_name);
+  ok('THE EXISTING CASE DID NOT MOVE — office phone',
+     wsA2.legal.firm_phone === '(540) 555-0199', wsA2.legal.firm_phone);
+  ok('THE EXISTING CASE DID NOT MOVE — office address',
+     wsA2.legal.firm_address === '12 Court Square, Roanoke VA', wsA2.legal.firm_address);
+  /* Both stored copies, because the list reads the columns and the screen
+     reads the payload — a drift between them is how one screen would show the
+     new name and another the old. */
+  const rowA = await env.DB.prepare(
+    'SELECT client_name, payload FROM submissions WHERE case_no = ?').bind(CASE_A).first();
+  ok('and neither stored copy of the case moved',
+     JSON.parse(rowA.payload).firm_name === 'Harmon & Reed LLP'
+     && !JSON.parse(rowA.payload).firm_name.includes('Vance'), rowA.client_name);
+  ok('the link still points at the same profile, which is now simply renamed',
+     wsA2.profile.link && Number(wsA2.profile.link.profile_id) === FIRM_ID
+     && wsA2.profile.profile.name === 'Harmon Reed & Vance LLP');
+
+  // --- deactivate ---------------------------------------------------------
+  res = await call(env, `/profiles/${FIRM_ID}`, { method: 'POST', cookie: admin, body: { active: false } });
+  ok('the firm can be deactivated', res.status === 200 && (await jsonOf(res)).profile.active === 0);
+  let list = await jsonOf(await call(env, '/profiles', { cookie: admin }));
+  ok('an inactive firm leaves the default directory',
+     !list.profiles.some(p => p.id === FIRM_ID), JSON.stringify(list.profiles.map(p => p.name)));
+  list = await jsonOf(await call(env, '/profiles?inactive=1', { cookie: admin }));
+  ok('and is found under the inactive lens', list.profiles.some(p => p.id === FIRM_ID));
+  const wsA3 = await jsonOf(await call(env, `/cases/${CASE_A}/workspace`, { cookie: admin }));
+  ok('deactivating changed nothing at all about the case',
+     wsA3.legal.firm_name === 'Harmon & Reed LLP' && wsA3.status === wsA.status);
+  await call(env, `/profiles/${FIRM_ID}`, { method: 'POST', cookie: admin, body: { active: true } });
+
+  // --- deletion cannot reach a case --------------------------------------
+  res = await call(env, `/profiles/${FIRM_ID}/delete`, { method: 'POST', cookie: admin });
+  ok('deleting a firm that has cases is REFUSED', res.status === 409, String(res.status));
+  const refusal = await jsonOf(res);
+  ok('the refusal names the count and points at Inactive',
+     refusal.code === 'profile_in_use' && refusal.cases === 1 && /Inactive/.test(refusal.error),
+     refusal.error);
+  const stillThere = await env.DB.prepare('SELECT COUNT(*) AS n FROM submissions WHERE case_no = ?')
+    .bind(CASE_A).first();
+  ok('and the case is untouched by the attempt', Number(stillThere.n) === 1);
+
+  // A profile no case has ever used really does delete.
+  const spare = (await jsonOf(await call(env, '/profiles', { method: 'POST', cookie: admin,
+    body: { kind: 'private_client', name: 'Typo McTypo', confirm_new: true } }))).profile;
+  res = await call(env, `/profiles/${spare.id}/delete`, { method: 'POST', cookie: admin });
+  ok('an unused profile deletes cleanly', res.status === 200, String(res.status));
+  ok('and it is gone', (await call(env, `/profiles/${spare.id}`, { cookie: admin })).status === 404);
+}
+
+section('Profiles: the picker finds a firm by any of the things the office remembers');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await call(env, '/profiles', { method: 'POST', cookie: admin, body: {
+    kind: 'law_firm', name: 'Calloway Legal Group', email: 'front@calloway.example',
+    phones: [{ number: '(540) 555-3311', label: 'work' }],
+    contacts: [{ first_name: 'Beatrix', last_name: 'Sandoval', role: 'Paralegal',
+      email: 'bsandoval@calloway.example', phones: [{ number: '540.555.9090', label: 'mobile' }] }],
+  } });
+  await call(env, '/profiles', { method: 'POST', cookie: admin, body: {
+    kind: 'insurance_org', name: 'Blue Ridge Mutual', email: 'claims@brm.example',
+    contacts: [{ first_name: 'Hal', last_name: 'Ivers', role: 'Adjuster', email: 'hivers@brm.example' }],
+  } });
+
+  const find = async q => (await jsonOf(await call(env,
+    `/profiles?q=${encodeURIComponent(q)}`, { cookie: admin }))).profiles.map(p => p.name);
+  ok('by organisation name', (await find('calloway')).includes('Calloway Legal Group'));
+  ok('by a paralegal\'s name', (await find('sandoval')).includes('Calloway Legal Group'));
+  ok('by an adjuster\'s name', (await find('ivers')).includes('Blue Ridge Mutual'));
+  ok('by email', (await find('bsandoval@calloway.example')).includes('Calloway Legal Group'));
+  /* THE FORMATTING OF A PHONE NUMBER MAKES NO DIFFERENCE — the whole reason
+     `digits` is stored beside the number the office typed. */
+  ok('by the office number typed with brackets', (await find('(540) 555-3311')).includes('Calloway Legal Group'));
+  ok('by the same number typed bare', (await find('5405553311')).includes('Calloway Legal Group'));
+  ok('by a mobile stored with dots, searched with dashes',
+     (await find('540-555-9090')).includes('Calloway Legal Group'));
+  ok('a search that matches nothing returns nothing rather than everything',
+     (await find('zzzz-nothing')).length === 0);
+
+  const byKind = async k => (await jsonOf(await call(env, `/profiles?kind=${k}`, { cookie: admin })))
+    .profiles.map(p => p.name);
+  ok('the law-firm lens shows only firms', JSON.stringify(await byKind('law_firm')) === '["Calloway Legal Group"]');
+  ok('the insurance lens shows only carriers', JSON.stringify(await byKind('insurance_org')) === '["Blue Ridge Mutual"]');
+  ok('and the unfiltered list shows both', (await byKind('')).length === 2);
+
+  /* NO N+1: the directory's contacts, phones and case counts come back for the
+     whole page in one read each. Asserted structurally, on the source. */
+  const psrc = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  const fn = (psrc.match(/async function searchProfiles\([\s\S]*?\n}\n/) || [''])[0];
+  ok('searchProfiles has no per-profile query inside a loop',
+     fn.length > 0 && !/for\s*\([^)]*\)\s*\{[^}]*await env\.DB\.prepare/.test(fn));
+  ok('it reads contacts and phones for the whole result set at once',
+     /profile_contact WHERE profile_id IN \(/.test(fn) && /profile_phone\s*\n?\s*WHERE profile_id IN \(/.test(fn));
+}
+
+section('Profiles: a possible duplicate WARNS and never merges');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const first = (await jsonOf(await call(env, '/profiles', { method: 'POST', cookie: admin, body: {
+    kind: 'law_firm', name: 'Smith Law', email: 'hello@smithlaw.example',
+    phones: [{ number: '(540) 555-4400', label: 'work' }],
+  } }))).profile;
+
+  let res = await call(env, '/profiles', { method: 'POST', cookie: admin,
+    body: { kind: 'law_firm', name: 'Smith Law Group' } });
+  ok('a similar name is stopped with POSSIBLE EXISTING PROFILE', res.status === 409, String(res.status));
+  let b = await jsonOf(res);
+  ok('the warning names what it matched',
+     b.code === 'possible_duplicate' && b.matches[0].id === first.id
+     && b.matches[0].why.includes('similar_name'), JSON.stringify(b.matches));
+  ok('and NOTHING was written', (await env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM profile').first()).n === 1);
+
+  /* "Smith Law" and "Smith Law Group" MAY OR MAY NOT be the same firm, and
+     the portal does not guess: Continue as New really does continue. */
+  res = await call(env, '/profiles', { method: 'POST', cookie: admin,
+    body: { kind: 'law_firm', name: 'Smith Law Group', confirm_new: true } });
+  ok('Continue as New creates the second firm', res.status === 201, String(res.status));
+  const second = (await jsonOf(res)).profile;
+  ok('two separate profiles now exist',
+     (await env.DB.prepare('SELECT COUNT(*) AS n FROM profile').first()).n === 2);
+  const stillFirst = await jsonOf(await call(env, `/profiles/${first.id}`, { cookie: admin }));
+  ok('and the FIRST one was not rewritten by the second',
+     stillFirst.profile.name === 'Smith Law' && stillFirst.profile.email === 'hello@smithlaw.example',
+     stillFirst.profile.name);
+  ok('they are genuinely different rows', second.id !== first.id);
+
+  // The other three normalized comparisons.
+  res = await call(env, '/profiles', { method: 'POST', cookie: admin,
+    body: { kind: 'private_client', name: 'Completely Different', email: 'HELLO@SmithLaw.example  ' } });
+  ok('the same email in different case and spacing is caught', res.status === 409);
+  ok('and it says so by name', (await jsonOf(res)).matches[0].why.includes('email'));
+  res = await call(env, '/profiles', { method: 'POST', cookie: admin,
+    body: { kind: 'private_client', name: 'Also Different', phone: '+1 540 555 4400' } });
+  ok('the same number written differently is caught', res.status === 409);
+  ok('and it says so by name', (await jsonOf(res)).matches[0].why.includes('phone'));
+
+  /* An unrelated firm must not be caught: a warning that fires on everything
+     is a warning nobody reads. */
+  res = await call(env, '/profiles', { method: 'POST', cookie: admin,
+    body: { kind: 'law_firm', name: 'Okonkwo & Bell', email: 'clerk@okbell.example' } });
+  ok('an unrelated firm saves with no warning at all', res.status === 201, String(res.status));
+
+  /* AND THERE IS NO MERGE TO REACH. Not a route, not a function, not a column. */
+  const psrc = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  ok('no merge routine exists anywhere in the Worker',
+     !/function\s+\w*[Mm]ergeProfile|merged_into|profile_merge/.test(psrc));
+  ok('and no statement updates a profile from a submission',
+     !/UPDATE profile[\s\S]{0,200}FROM submissions/i.test(psrc));
+
+  // Contacts: warned, never merged, and two people may share a name.
+  const cRes1 = await call(env, `/profiles/${first.id}/contacts`, { method: 'POST', cookie: admin,
+    body: { first_name: 'Ann', last_name: 'Smith', role: 'Attorney', email: 'asmith@smithlaw.example' } });
+  ok('a first contact is added', cRes1.status === 201, String(cRes1.status));
+  let cRes = await call(env, `/profiles/${first.id}/contacts`, { method: 'POST', cookie: admin,
+    body: { first_name: 'Ann', last_name: 'Smith', role: 'Paralegal' } });
+  ok('a same-named contact WARNS', cRes.status === 409, String(cRes.status));
+  ok('and names why', (await jsonOf(cRes)).code === 'possible_duplicate_contact');
+  cRes = await call(env, `/profiles/${first.id}/contacts`, { method: 'POST', cookie: admin,
+    body: { first_name: 'Ann', last_name: 'Smith', role: 'Paralegal', confirm_new: true } });
+  ok('but two people really may share a name', cRes.status === 201, String(cRes.status));
+  const both = (await jsonOf(cRes)).profile.contacts.filter(c => c.last_name === 'Smith');
+  ok('both are kept, apart, with their own roles',
+     both.length === 2 && both.some(c => c.role === 'Attorney') && both.some(c => c.role === 'Paralegal'),
+     JSON.stringify(both.map(c => c.role)));
+  ok('and the first one\'s email was not overwritten by the second',
+     both.find(c => c.role === 'Attorney').email === 'asmith@smithlaw.example');
+}
+
+section('Profiles: reuse on the insurance and private paths carries identity and nothing else');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  const carrier = (await jsonOf(await call(env, '/profiles', { method: 'POST', cookie: admin, body: {
+    kind: 'insurance_org', name: 'Blue Ridge Mutual', email: 'claims@brm.example',
+    address: '900 Orange Ave, Roanoke VA',
+    phones: [{ number: '(540) 555-6600', label: 'work' }],
+    contacts: [{ first_name: 'Hal', last_name: 'Ivers', role: 'Adjuster',
+      email: 'hivers@brm.example', preferred: true,
+      phones: [{ number: '540-555-6601', label: 'work' }] }],
+  } }))).profile;
+
+  // First claim on this carrier.
+  const one = await jsonOf(await call(env, '/intakes', { method: 'POST', cookie: admin, body: {
+    kind: 'claims', profile_id: carrier.id, carrier: 'Blue Ridge Mutual',
+    adjuster: 'Hal Ivers', adjuster_email: 'hivers@brm.example',
+    claim_number: 'BRM-1001', subject_name: 'C. Vaughn', objective: 'Three days',
+  } }));
+  // A later, entirely separate claim from the same carrier.
+  const two = await jsonOf(await call(env, '/intakes', { method: 'POST', cookie: admin, body: {
+    kind: 'claims', profile_id: carrier.id, carrier: 'Blue Ridge Mutual',
+    adjuster: 'Hal Ivers', adjuster_email: 'hivers@brm.example',
+    claim_number: 'BRM-2002', subject_name: 'D. Rowe',
+  } }));
+  const p1 = JSON.parse((await env.DB.prepare('SELECT payload FROM submissions WHERE case_no = ?')
+    .bind(one.case_no).first()).payload);
+  const p2 = JSON.parse((await env.DB.prepare('SELECT payload FROM submissions WHERE case_no = ?')
+    .bind(two.case_no).first()).payload);
+  ok('the carrier and adjuster carried across both assignments',
+     p1.carrier === 'Blue Ridge Mutual' && p2.carrier === 'Blue Ridge Mutual'
+     && p2.adjuster === 'Hal Ivers');
+  /* THE NEW MATTER IS NEW. An old claim number, subject or objective must not
+     ride along on the next assignment from the same carrier. */
+  ok('the new claim has its OWN claim number', p2.claim_number === 'BRM-2002', p2.claim_number);
+  ok('and its own subject', p2.subject_name === 'D. Rowe', p2.subject_name);
+  ok('and no objective was inherited from the earlier claim', !p2.objective, String(p2.objective));
+  ok('the earlier claim is unchanged', p1.claim_number === 'BRM-1001' && p1.subject_name === 'C. Vaughn');
+  ok('both cases are still typed as claims',
+     (await env.DB.prepare("SELECT COUNT(*) AS n FROM submissions WHERE kind = 'claims'").first()).n === 2);
+
+  // Private client: identity only.
+  const person = (await jsonOf(await call(env, '/profiles', { method: 'POST', cookie: admin, body: {
+    kind: 'private_client', name: 'Marguerite Vance', email: 'mv@example.com',
+    address: '77 Elm Street, Bedford VA',
+    phones: [{ number: '540-555-7777', label: 'mobile' }, { number: '540-555-7778', label: 'work' }],
+  } }))).profile;
+  ok('a private client is the profile — no contact row is required',
+     person.contacts.length === 0 && person.phones.length === 2, JSON.stringify(person.phones.length));
+  const pc = await jsonOf(await call(env, '/intakes', { method: 'POST', cookie: admin, body: {
+    kind: 'consumer', profile_id: person.id, client_name: 'Marguerite Vance',
+    client_email: 'mv@example.com', client_phone: '540-555-7777',
+    service: 'Surveillance', subject_name: 'A New Subject Entirely',
+  } }));
+  const pp = JSON.parse((await env.DB.prepare('SELECT payload FROM submissions WHERE case_no = ?')
+    .bind(pc.case_no).first()).payload);
+  ok('the repeat private client\'s identity carried', pp.client_name === 'Marguerite Vance'
+     && pp.client_phone === '540-555-7777');
+  ok('and nothing about a previous case did',
+     pp.subject_name === 'A New Subject Entirely' && !pp.allegations && !pp.notes,
+     JSON.stringify(Object.keys(pp)));
+}
+
+section('Profiles are the firm\'s own — the public and the field never see them');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  const firm = (await jsonOf(await call(env, '/profiles', { method: 'POST', cookie: admin, body: {
+    kind: 'law_firm', name: 'Harmon & Reed LLP', email: 'office@harmonreed.example',
+    contacts: [{ first_name: 'Ruth', last_name: 'Harmon', role: 'Attorney',
+      email: 'rharmon@harmonreed.example', preferred: true }],
+  } }))).profile;
+
+  // --- the investigator ---------------------------------------------------
+  for (const [label, p, method] of [
+    ['browse the directory', '/profiles', 'GET'],
+    ['open a profile', `/profiles/${firm.id}`, 'GET'],
+    ['search for a saved attorney', '/profiles?q=harmon', 'GET'],
+    ['run the match check', '/profiles/match?name=harmon', 'GET'],
+    ['create one', '/profiles', 'POST'],
+    ['edit one', `/profiles/${firm.id}`, 'POST'],
+    ['add a contact', `/profiles/${firm.id}/contacts`, 'POST'],
+    ['delete one', `/profiles/${firm.id}/delete`, 'POST'],
+  ]) {
+    const r = await call(env, p, { method, cookie: dana, body: method === 'POST' ? {} : undefined });
+    ok(`an investigator cannot ${label}`, r.status === 403, `${p} -> ${r.status}`);
+  }
+  for (const [label, p, method] of [
+    ['browse the directory', '/profiles', 'GET'],
+    ['open a profile', `/profiles/${firm.id}`, 'GET'],
+    ['create one', '/profiles', 'POST'],
+  ]) {
+    const r = await call(env, p, { method, body: method === 'POST' ? {} : undefined });
+    ok(`a signed-out caller cannot ${label}`, r.status === 401, `${p} -> ${r.status}`);
+  }
+
+  // A case the investigator IS on still tells them nothing about the firm.
+  const made = await jsonOf(await call(env, '/intakes', { method: 'POST', cookie: admin, body: {
+    kind: 'legal', profile_id: firm.id, firm_name: 'Harmon & Reed LLP',
+    attorney_name: 'Ruth Harmon', attorney_email: 'rharmon@harmonreed.example',
+    subject_name: 'Watched Party', objective: 'Document activity',
+  } }));
+  const danaId = (await env.DB.prepare("SELECT id FROM users WHERE username = 'dana'").first()).id;
+  await call(env, `/submissions/${made.case_no}/assign`, { method: 'POST', cookie: admin,
+    body: { user_id: danaId } });
+  const wsD = await call(env, `/cases/${made.case_no}/workspace`, { cookie: dana });
+  ok('the investigator can open their own case', wsD.status === 200, String(wsD.status));
+  const ws = await jsonOf(wsD);
+  ok('and the workspace carries no profile key at all', ws.profile === undefined,
+     JSON.stringify(ws.profile));
+  /* Both halves of what actually reaches their browser: the workspace and the
+     redacted case detail. A field the page declines to draw is still in the
+     network tab, so the assertion is on the response, not the screen. */
+  const detail = await jsonOf(await call(env, `/submissions/${made.case_no}`, { cookie: dana }));
+  const whole = JSON.stringify(ws) + JSON.stringify(detail);
+  ok('nothing about the firm reached them', !whole.includes('Harmon') && !whole.includes('harmonreed'),
+     whole.slice(0, 300));
+  ok('while the subject still does', whole.includes('Watched Party'), JSON.stringify(detail).slice(0, 300));
+  ok('and the case detail carries no profile either', detail.profile === undefined,
+     JSON.stringify(detail.profile));
+
+  /* THE PUBLIC SIDE HAS NO DOOR, which is stronger than a refusal at one. */
+  const psrc = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  const ingestFn = (psrc.match(/async function handleIngest\([\s\S]*?\n}\n/) || [''])[0];
+  ok('the public ingest reads no profile table', ingestFn.length > 0
+     && !/\bprofile\b/.test(ingestFn.replace(/\/\*[\s\S]*?\*\//g, '')), 'ingest mentions a profile');
+  /* And a payload that names one writes no link — the submitted form cannot
+     associate itself with a firm even by guessing an id. */
+  const sneaky = await ingest(env, legalPayload({ profile_id: firm.id, case_no: 'API-SNEAK-1' }));
+  ok('a public submission is still accepted', sneaky.status === 200, String(sneaky.status));
+  const sneakNo = (await jsonOf(sneaky)).case_no;
+  const linked = await env.DB.prepare('SELECT COUNT(*) AS n FROM case_profile WHERE case_no = ?')
+    .bind(sneakNo).first();
+  ok('but a profile_id in a public payload links nothing', Number(linked.n) === 0, String(linked.n));
+}
+
+section('Profiles: a submission is linked or saved only when an admin says so');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const firm = (await jsonOf(await call(env, '/profiles', { method: 'POST', cookie: admin, body: {
+    kind: 'law_firm', name: 'Harmon & Reed LLP', email: 'office@harmonreed.example',
+    phones: [{ number: '(540) 555-0199', label: 'work' }],
+    contacts: [{ first_name: 'Ruth', last_name: 'Harmon', role: 'Attorney', preferred: true }],
+  } }))).profile;
+
+  const sub = await jsonOf(await ingest(env, legalPayload()));
+  const NO = sub.case_no;
+  let ws = await jsonOf(await call(env, `/cases/${NO}/workspace`, { cookie: admin }));
+  ok('a fresh public submission is linked to nothing', ws.profile.link === null,
+     JSON.stringify(ws.profile.link));
+  ok('but the admin reviewing it is shown the possible match',
+     (ws.profile.suggested || []).some(m => m.id === firm.id),
+     JSON.stringify(ws.profile.suggested));
+  ok('the suggestion says why it surfaced',
+     ws.profile.suggested[0].why.length > 0, JSON.stringify(ws.profile.suggested[0].why));
+  /* A SUGGESTION IS NOT AN ACT. Reading the case must not have changed a row. */
+  ok('and looking at it wrote nothing',
+     (await env.DB.prepare('SELECT COUNT(*) AS n FROM case_profile').first()).n === 0);
+  const before = await env.DB.prepare('SELECT name, email FROM profile WHERE id = ?').bind(firm.id).first();
+
+  // Explicit association.
+  let res = await call(env, `/cases/${NO}/profile`, { method: 'POST', cookie: admin,
+    body: { profile_id: firm.id, contact_id: firm.contacts[0].id } });
+  ok('the admin can associate it explicitly', res.status === 200, String(res.status));
+  ws = await jsonOf(await call(env, `/cases/${NO}/workspace`, { cookie: admin }));
+  ok('the link is recorded', Number(ws.profile.link.profile_id) === firm.id);
+  ok('with who did it and when', ws.profile.link.linked_by && ws.profile.link.linked_at);
+  const after = await env.DB.prepare('SELECT name, email FROM profile WHERE id = ?').bind(firm.id).first();
+  ok('ASSOCIATING DID NOT WRITE THE SUBMITTED VALUES INTO THE SAVED PROFILE',
+     after.name === before.name && after.email === before.email,
+     `${before.name}/${before.email} -> ${after.name}/${after.email}`);
+
+  // Unlink, then Save as profile on a case that matches nothing.
+  await call(env, `/cases/${NO}/profile`, { method: 'POST', cookie: admin, body: { clear: true } });
+  ws = await jsonOf(await call(env, `/cases/${NO}/workspace`, { cookie: admin }));
+  ok('it can be unlinked again', ws.profile.link === null);
+
+  const fresh = await jsonOf(await ingest(env, legalPayload({
+    firm_name: 'Okonkwo & Bell', firm_email: 'clerk@okbell.example', firm_phone: '540-555-8080',
+    attorney_name: 'Femi Okonkwo', attorney_email: 'fo@okbell.example',
+    paralegal_name: 'Ines Bell', paralegal_email: 'ib@okbell.example',
+  })));
+  res = await call(env, `/cases/${fresh.case_no}/profile`, { method: 'POST', cookie: admin,
+    body: { save_as_profile: true } });
+  ok('Save as Profile creates one from what the case already holds', res.status === 201, String(res.status));
+  const saved = (await jsonOf(res)).profile;
+  ok('typed from the case — a legal submission makes a law firm',
+     saved.profile.kind === 'law_firm', saved.profile.kind);
+  const savedFull = await jsonOf(await call(env, `/profiles/${saved.profile.id}`, { cookie: admin }));
+  ok('the firm name came across', savedFull.profile.name === 'Okonkwo & Bell');
+  ok('and so did the people the case named, with their roles',
+     savedFull.profile.contacts.some(c => c.last_name === 'Okonkwo' && c.role === 'Attorney')
+     && savedFull.profile.contacts.some(c => c.last_name === 'Bell' && c.role === 'Paralegal'),
+     JSON.stringify(savedFull.profile.contacts.map(c => `${c.last_name}:${c.role}`)));
+  ok('the case is now linked to it',
+     Number((await jsonOf(await call(env, `/cases/${fresh.case_no}/workspace`, { cookie: admin })))
+       .profile.link.profile_id) === saved.profile.id);
+
+  /* Save as profile on a case that DOES look like an existing firm refuses,
+     rather than quietly adding a second Harmon & Reed. */
+  const dup = await jsonOf(await ingest(env, legalPayload({ matter_number: 'M-3333' })));
+  res = await call(env, `/cases/${dup.case_no}/profile`, { method: 'POST', cookie: admin,
+    body: { save_as_profile: true } });
+  ok('and it refuses when the firm already exists', res.status === 409, String(res.status));
+  ok('naming the profile it would duplicate',
+     (await jsonOf(res)).matches.some(m => m.id === firm.id));
+}
+
+section('Profiles: nothing on one can be paid, and no price is frozen into one');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const firm = (await jsonOf(await call(env, '/profiles', { method: 'POST', cookie: admin, body: {
+    kind: 'law_firm', name: 'Vance & Loeb', payment_arrangement: 'check_pickup',
+  } }))).profile;
+
+  /* An arrangement is a REQUEST. Choosing one on a firm cannot put money on
+     any ledger — the same rule the case panel already lives by. */
+  ok('the arrangement is stored as a default', firm.payment_arrangement === 'check_pickup');
+  ok('no retainer payment exists anywhere',
+     (await env.DB.prepare('SELECT COUNT(*) AS n FROM retainer_payment').first()).n === 0);
+  const made = await jsonOf(await call(env, '/intakes', { method: 'POST', cookie: admin, body: {
+    kind: 'legal', profile_id: firm.id, firm_name: 'Vance & Loeb',
+    attorney_name: 'Iris Loeb', payment_arrangement: 'check_pickup',
+  } }));
+  ok('nor after an assignment is started from it',
+     (await env.DB.prepare('SELECT COUNT(*) AS n FROM retainer_payment').first()).n === 0);
+  ok('and the case has no retainer marked received',
+     !(await env.DB.prepare('SELECT received FROM case_retainer WHERE case_no = ?')
+       .bind(made.case_no).first()),
+     'a retainer row appeared from nowhere');
+
+  /* THE ARRANGEMENT IS A LAW-FIRM PREFERENCE ONLY. A carrier is authorized in
+     hour blocks and a private client pays a retainer; neither is billed this
+     way, and offering it would be the wrong billing model on the wrong door. */
+  let res = await call(env, '/profiles', { method: 'POST', cookie: admin, body: {
+    kind: 'insurance_org', name: 'Somewhere Mutual', payment_arrangement: 'bill_ach' } });
+  ok('an insurance profile is refused a legal payment arrangement', res.status === 400, String(res.status));
+  res = await call(env, '/profiles', { method: 'POST', cookie: admin, body: {
+    kind: 'law_firm', name: 'Bad Arrangement LLP', payment_arrangement: 'venmo' } });
+  ok('and a made-up arrangement is refused outright', res.status === 400, String(res.status));
+
+  /* CASH APP AND VENMO STILL REACH A LAW FIRM THROUGH NO CODE PATH — the
+     profile added no new door to that, which is the thing worth proving. */
+  const psrc = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  const profBlock = psrc.slice(psrc.indexOf('REPEAT CLIENT / FIRM PROFILES (Unit 7'));
+  ok('no profile code mentions a consumer payment method',
+     !/cash_app|venmo/i.test(profBlock.slice(0, 20000)));
+  ok('and no profile column stores a figure',
+     !/retainer_amount|hourly|package_price|fee_due/.test(
+       (fs.readFileSync(path.join(HERE, 'schema.sql'), 'utf8')
+         .match(/CREATE TABLE IF NOT EXISTS profile[\s\S]*?\n\);/) || [''])[0]));
+}
+
+section('Profiles: the guards, the sweep and a database that has not been set up yet');
+{
+  /* THE TABLES ARRIVE BY A MANUAL portal-setup DISPATCH while the Worker
+     deploys on push, so between the two they do not exist. Every read must
+     degrade and every write must say which workflow to run — the shape
+     legal_intake and case_archive already established. */
+  const bare = new DatabaseSync(':memory:');
+  bare.exec(SCHEMA);
+  for (const t of ['case_profile', 'profile_phone', 'profile_contact', 'profile']) {
+    bare.exec(`DROP TABLE ${t}`);
+  }
+  const env = { ...freshEnv(), DB: d1(bare) };
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  let res = await call(env, '/profiles', { cookie: admin });
+  ok('the directory answers rather than failing', res.status === 200, String(res.status));
+  let b = await jsonOf(res);
+  ok('and says it is not set up yet, naming nothing it cannot show',
+     b.not_set_up === true && b.profiles.length === 0);
+  res = await call(env, '/profiles', { method: 'POST', cookie: admin,
+    body: { kind: 'law_firm', name: 'Anything LLP' } });
+  ok('a write returns 503 naming the workflow', res.status === 503, String(res.status));
+  ok('in words the office can act on', /portal-setup/.test((await jsonOf(res)).error));
+
+  const sub = await jsonOf(await ingest(env, legalPayload()));
+  ok('an intake still lands on a database without the profile tables',
+     !!sub.case_no, JSON.stringify(sub));
+  const ws = await jsonOf(await call(env, `/cases/${sub.case_no}/workspace`, { cookie: admin }));
+  ok('and the case workspace still loads', !!ws.case_no && ws.profile.not_set_up === true,
+     JSON.stringify(ws.profile));
+  const quick = await call(env, '/intakes', { method: 'POST', cookie: admin,
+    body: { kind: 'legal', firm_name: 'Some Firm', profile_id: 4, save_profile: true } });
+  ok('a quick assignment naming a profile still creates the case', quick.status === 201,
+     String(quick.status));
+
+  /* THE SWEEP: the link goes with a test case, the firm does not. */
+  const env2 = freshEnv();
+  await bootstrapAdmin(env2);
+  const admin2 = (await login(env2, 'trever', 'FirstAdminPass1')).cookie;
+  const keep = (await jsonOf(await call(env2, '/profiles', { method: 'POST', cookie: admin2,
+    body: { kind: 'law_firm', name: 'Kept & Kept LLP',
+      contacts: [{ first_name: 'A', last_name: 'Keeper', role: 'Attorney' }] } }))).profile;
+  await call(env2, '/demo-case', { method: 'POST', cookie: admin2 });
+  const demoNo = (await env2.DB.prepare(
+    "SELECT case_no FROM submissions WHERE case_no LIKE 'TEST-%' LIMIT 1").first()).case_no;
+  await call(env2, `/cases/${demoNo}/profile`, { method: 'POST', cookie: admin2,
+    body: { profile_id: keep.id } });
+  ok('a test case can be linked to a firm',
+     (await env2.DB.prepare('SELECT COUNT(*) AS n FROM case_profile').first()).n === 1);
+  await call(env2, '/demo-case/clear', { method: 'POST', cookie: admin2 });
+  ok('clearing the test case removes its link',
+     (await env2.DB.prepare('SELECT COUNT(*) AS n FROM case_profile').first()).n === 0);
+  ok('and leaves the firm, its people and its numbers exactly where they were',
+     (await env2.DB.prepare('SELECT COUNT(*) AS n FROM profile').first()).n === 1
+     && (await env2.DB.prepare('SELECT COUNT(*) AS n FROM profile_contact').first()).n === 1,
+     'a real client was swept away with a test case');
+
+  /* The registration a new table needs, checked on the source rather than
+     believed: /health must know it, or it reports a clean schema on a
+     database that then 503s. */
+  const psrc = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  const expected = (psrc.match(/const EXPECTED_TABLES = \[([\s\S]*?)\n\];/) || [, ''])[1];
+  for (const t of ['profile', 'profile_contact', 'profile_phone', 'case_profile']) {
+    ok(`${t} is named in EXPECTED_TABLES`, new RegExp(`'${t}'`).test(expected));
+  }
+  const sweep = (psrc.match(/const DEMO_SWEEP = \[([\s\S]*?)\n\];/) || [, ''])[1];
+  ok('case_profile is swept', /'case_profile'/.test(sweep));
+  ok('but the reference tables are NOT — a firm is not case data',
+     !/\['profile'/.test(sweep) && !/\['profile_contact'/.test(sweep)
+     && !/\['profile_phone'/.test(sweep));
+
+  /* Applying the schema twice must be a no-op, because portal-setup re-applies
+     it on every run. */
+  const twice = new DatabaseSync(':memory:');
+  twice.exec(SCHEMA);
+  let threw = '';
+  try { twice.exec(SCHEMA); } catch (e) { threw = String(e); }
+  ok('the schema applies twice without error', threw === '', threw);
+}
+
+section('Profiles: the link route is inside the case gate, and the phone shape is the approved one');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const firm = (await jsonOf(await call(env, '/profiles', { method: 'POST', cookie: admin,
+    body: { kind: 'law_firm', name: 'Gate Test LLP' } }))).profile;
+  const made = await jsonOf(await call(env, '/intakes', { method: 'POST', cookie: admin,
+    body: { kind: 'legal', firm_name: 'Gate Test LLP', attorney_name: 'A B' } }));
+
+  await call(env, `/cases/${made.case_no}/delete`, { method: 'POST', cookie: admin,
+    body: { reason: 'test' } });
+  let res = await call(env, `/cases/${made.case_no}/profile`, { method: 'POST', cookie: admin,
+    body: { profile_id: firm.id } });
+  ok('a DELETED case cannot acquire a client relationship', res.status === 409, String(res.status));
+  ok('and the refusal is the standing one', (await jsonOf(res)).case_deleted === true);
+  await call(env, `/cases/${made.case_no}/undelete`, { method: 'POST', cookie: admin });
+  await call(env, `/cases/${made.case_no}/archive`, { method: 'POST', cookie: admin });
+  res = await call(env, `/cases/${made.case_no}/profile`, { method: 'POST', cookie: admin,
+    body: { profile_id: firm.id } });
+  ok('nor can an ARCHIVED one', res.status === 409, String(res.status));
+
+  /* The reason it is under /cases/:no/ at all: the gate is matched on the
+     path, so a route named otherwise would be invisible to it. */
+  const psrc = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  ok('the link route is addressed under the case, not the profile',
+     /\/\^\\\/cases\\\/\(\[A-Za-z0-9-\]\{3,64\}\)\\\/profile\$\//.test(psrc)
+     || /cases\\\/\(\[A-Za-z0-9-\]\{3,64\}\)\\\/profile\$/.test(psrc),
+     'no /cases/:no/profile route found');
+
+  // Phones: the approved four labels, and both are kept.
+  const env2 = freshEnv();
+  await bootstrapAdmin(env2);
+  const a2 = (await login(env2, 'trever', 'FirstAdminPass1')).cookie;
+  const p = (await jsonOf(await call(env2, '/profiles', { method: 'POST', cookie: a2, body: {
+    kind: 'private_client', name: 'Two Numbers',
+    phones: [{ number: '540-555-1000', label: 'mobile' }, { number: '540-555-2000', label: 'work' },
+      { number: '540-555-3000', label: 'not-a-label' }],
+  } }))).profile;
+  ok('a primary and a secondary number are both kept, in order',
+     p.phones.length === 3 && p.phones[0].number === '540-555-1000'
+     && p.phones[1].number === '540-555-2000', JSON.stringify(p.phones));
+  ok('the four approved labels are honoured',
+     p.phones[0].label === 'mobile' && p.phones[1].label === 'work');
+  ok('and an unrecognised label is dropped rather than stored as one',
+     p.phones[2].label === '', JSON.stringify(p.phones[2]));
+  const digits = await env2.DB.prepare(
+    'SELECT digits FROM profile_phone WHERE profile_id = ? ORDER BY position').bind(p.id).all();
+  ok('every row carries its search key', (digits.results || []).every(r => r.digits.length >= 10),
+     JSON.stringify(digits.results));
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));
