@@ -12141,12 +12141,27 @@ section('The timeline is a view: it loads no media and never claims an empty cas
   await wsTab(page, 'Timeline');
   await page.waitForTimeout(800);
 
-  ok('drawing the timeline asks for the timeline',
-     asked.some(u => /\/cases\/[^/]+\/timeline/.test(u)), JSON.stringify(asked.slice(0, 6)));
+  const tlIdx = asked.findIndex(u => /\/cases\/[^/]+\/timeline/.test(u));
+  ok('drawing the timeline asks for the timeline', tlIdx >= 0, JSON.stringify(asked.slice(0, 6)));
+  /* MEASURED FROM THE TIMELINE'S OWN REQUEST ONWARDS. The screen this arrives
+     from has a media strip on it, and its thumbnails are already in flight when
+     the tab is clicked — blaming those on the timeline is measuring the panel
+     you just left. */
+  const after = tlIdx >= 0 ? asked.slice(tlIdx) : asked;
   ok('and fetches no evidence bytes to do it',
-     !asked.some(u => /\/evidence\/\d+\/file/.test(u)), JSON.stringify(asked.slice(0, 8)));
+     !after.some(u => /\/evidence\/\d+\/file/.test(u)), JSON.stringify(after.slice(0, 8)));
   ok('and calls Dropbox not at all',
-     !asked.some(u => /dropbox/i.test(u)), JSON.stringify(asked.slice(0, 8)));
+     !after.some(u => /dropbox/i.test(u)), JSON.stringify(after.slice(0, 8)));
+
+  /* AND AGAIN WITH NOTHING ELSE MOVING. The panel is already on screen, so a
+     re-read repaints the timeline and only the timeline: anything fetched here
+     is the timeline's doing and nobody else's. */
+  asked.length = 0;
+  await page.locator('[data-act="tlRetry"]').first().click();
+  await page.waitForTimeout(900);
+  ok('a re-read fetches the timeline and nothing else',
+     asked.length > 0 && asked.every(u => /\/cases\/[^/]+\/timeline/.test(u) || !/portal-api/.test(u)),
+     JSON.stringify(asked.slice(0, 8)));
 
   /* A FAILED READ IS NOT A QUIET CASE. */
   await page.route('**/portal-api/cases/*/timeline*', r => r.abort());
