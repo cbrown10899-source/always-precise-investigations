@@ -1178,6 +1178,21 @@
      focus treatment for every interactive control, never removed, and distinct
      from hover so a tab-through reads as a tab-through. */
   .btn:focus-visible,.qtool:focus-visible,.tabs button:focus-visible,
+  /* --------------------------------------- UNIT 9: report templates */
+  .tmplgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(210px,100%),1fr));gap:10px;}
+  .tmplcard{text-align:left;font:inherit;padding:12px 14px;border:1px solid var(--line);
+    border-radius:12px;background:#fff;cursor:pointer;min-height:64px;min-width:0;
+    overflow-wrap:anywhere;}
+  .tmplcard:hover:not(:disabled){border-color:var(--teal);}
+  /* SELECTED IS OBVIOUS AND IT IS A WORD, not only a border. */
+  .tmplcard.on{border-color:var(--teal);background:#eef7f8;box-shadow:inset 0 0 0 1px var(--teal);}
+  .tmplcard:disabled{opacity:.55;cursor:default;}
+  .tmpl-n{font-weight:800;}
+  .tmpl-on{font-size:.64rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;
+    padding:2px 6px;border-radius:5px;background:var(--teal);color:#fff;vertical-align:1px;}
+  .tmpl-s{font-size:.83rem;color:var(--muted);margin-top:2px;}
+  .tmpl-sug{font-size:.74rem;color:var(--teal);margin-top:4px;font-weight:700;}
+
   /* ------------------------------------- UNIT 8: search & attention */
   .srchbox{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:12px;
     padding:4px 10px;background:#fff;}
@@ -1253,7 +1268,7 @@
   .usingprof{border:1px solid var(--teal);background:#eef7f8;border-radius:12px;
     padding:12px 14px;margin:0 0 14px;}
   .sheet-card.on{border-color:var(--teal);background:#eef7f8;}
-  .lens:focus-visible,.pickitem:focus-visible,.srchrow:focus-visible,.evtab:focus-visible,.rpnav button:focus-visible,
+  .lens:focus-visible,.pickitem:focus-visible,.srchrow:focus-visible,.tmplcard:focus-visible,.evtab:focus-visible,.rpnav button:focus-visible,
   .top .burger:focus-visible,.navback:focus-visible,
   input:focus-visible,select:focus-visible,textarea:focus-visible{
     outline:2px solid var(--teal);outline-offset:2px;}
@@ -1294,6 +1309,9 @@
        the side; the filter strip scrolls inside itself rather than widening the
        page; and a queue row's action is full width so it cannot be a 40px
        target beside a long sentence. */
+    /* The template picker stacks; each card keeps a comfortable target. */
+    .tmplgrid{grid-template-columns:1fr;}
+    .tmplcard{min-height:56px;}
     .srchrow{flex-direction:column;gap:4px;}
     /* The chips WRAP rather than scroll sideways. A scrolling strip keeps the
        page from moving but still leaves its own children hanging past the
@@ -10165,6 +10183,7 @@ function packagePanel(){
       </div>`
     : completedView}
     ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
+    ${tmplPickerHtml()}
     ${doc}`;
 }
 
@@ -10229,6 +10248,149 @@ function pkgSynopsis(reps, nPhoto, nVideo){
    Every <img> points at the ORIGINAL evidence route. The document holds no
    copy and writes nothing back, so printing a package can never overwrite
    the evidence it was built from (MASTER §13). */
+/* =============================================== UNIT 9: REPORT TEMPLATES
+
+   SIX STYLES, ONE ENGINE. Everything below is CONFIGURATION for the single
+   document renderer beneath it — a title, section headings, their order, and
+   which optional sections a style includes. Nothing here invents a fact, edits
+   a timestamp, touches an activity entry, or renders anything the general
+   format could not already render.
+
+   AND THERE IS STILL ONE PDF. The PDF is built from the rendered `#pkgdoc`
+   (see the note above the PDF writer), so a template that changes the document
+   changes the preview, the print view, the downloaded file and the Dropbox
+   copy together. That is why the template is a config over the renderer rather
+   than a second renderer: six of these would be six things to drift.
+
+   `sections` is the ORDER, and a section that has no content is skipped by the
+   renderer whichever template asked for it — a heading over nothing is how a
+   document starts implying it has something to say.
+
+   THE WORDING IS LABELS, NEVER NARRATIVE. A template may call a section
+   "Observed Activities" instead of "Narrative"; it may not write a sentence
+   about what was observed. No template asserts service was effected, a custody
+   arrangement was breached or a claim was fraudulent — those are conclusions,
+   and this system only ever prints conclusions a person actually wrote. */
+const REPORT_TEMPLATES = {
+  surveillance: {
+    label: "Surveillance",
+    blurb: "Chronological field observation report",
+    title: "SURVEILLANCE REPORT",
+    heads: { narrative: "CHRONOLOGICAL OBSERVATIONS", days: "SURVEILLANCE — DAY",
+             objective: "ASSIGNMENT / OBJECTIVE", info: "CASE INFORMATION",
+             photos: "PHOTOGRAPHIC EVIDENCE" },
+    sections: ["info", "objective", "subject", "summary", "narrative", "photos", "videos", "index"],
+  },
+  domestic: {
+    label: "Domestic / Custody",
+    blurb: "Family and domestic investigation format",
+    title: "INVESTIGATION REPORT",
+    heads: { narrative: "OBSERVATIONS / FINDINGS", days: "OBSERVATIONS — DAY",
+             objective: "ASSIGNMENT", info: "CASE INFORMATION", subject: "PARTIES",
+             photos: "PHOTOGRAPHIC EVIDENCE" },
+    sections: ["info", "objective", "subject", "summary", "narrative", "photos", "videos", "index"],
+  },
+  insurance: {
+    label: "Insurance",
+    blurb: "Claim-focused investigation format",
+    title: "INVESTIGATION REPORT",
+    heads: { info: "CLAIM INFORMATION", objective: "ASSIGNMENT",
+             narrative: "OBSERVED ACTIVITIES", days: "INVESTIGATION ACTIVITY — DAY",
+             subject: "SUBJECT / VEHICLE INFORMATION", photos: "PHOTOGRAPHIC EVIDENCE" },
+    sections: ["info", "objective", "subject", "summary", "narrative", "photos", "videos", "index"],
+  },
+  legal: {
+    label: "Legal",
+    blurb: "Law-firm and litigation matter format",
+    title: "LEGAL INVESTIGATION REPORT",
+    heads: { info: "MATTER INFORMATION", objective: "ASSIGNMENT",
+             narrative: "FINDINGS / OBSERVATIONS", days: "INVESTIGATION ACTIVITY — DAY",
+             dates: "IMPORTANT DATES", photos: "EVIDENCE" },
+    sections: ["info", "dates", "objective", "subject", "summary", "narrative", "photos", "videos", "index"],
+  },
+  process: {
+    label: "Process / Locate",
+    blurb: "Locate and service activity format",
+    title: "INVESTIGATION REPORT",
+    heads: { objective: "ASSIGNMENT", subject: "SUBJECT / KNOWN ADDRESSES",
+             narrative: "LOCATE ATTEMPTS / OBSERVED INFORMATION",
+             days: "ATTEMPTS — DAY", info: "CASE INFORMATION" },
+    sections: ["info", "objective", "subject", "narrative", "summary", "photos", "videos", "index"],
+  },
+  general: {
+    label: "General",
+    blurb: "Flexible standard investigation report",
+    title: "INVESTIGATIVE REPORT",
+    heads: {},
+    sections: ["info", "objective", "summary", "narrative", "photos", "videos", "index"],
+  },
+};
+/* The headings the general format has always used. A template overrides the
+   ones it wants and inherits the rest, so a new template cannot accidentally
+   blank a section's name. */
+const TEMPLATE_HEADS = { info: "CASE INFORMATION", objective: "ASSIGNMENT OBJECTIVE",
+  summary: "COMBINED SUMMARY", narrative: "NARRATIVE", days: "INVESTIGATION — DAY",
+  subject: "SUBJECT INFORMATION", dates: "IMPORTANT DATES", photos: "PHOTOGRAPHS",
+  videos: "VIDEO EVIDENCE", index: "EVIDENCE INDEX" };
+
+function tmplDef(id){ return REPORT_TEMPLATES[id] || REPORT_TEMPLATES.general; }
+function tmplHead(id, key){
+  const t = tmplDef(id);
+  return (t.heads && t.heads[key]) || TEMPLATE_HEADS[key] || key.toUpperCase();
+}
+
+/* THE DEFAULT IS INFERRED ONLY WHERE THE RECORD IS DETERMINISTIC — the case's
+   own type or its category marker, never a guess at free text. Anything the
+   mapping does not recognise is General, and the admin can change any of it.
+   This chooses what the picker OPENS on; it never writes by itself. */
+function tmplDefaultFor(){
+  const ci = (PKG && PKG.case_info) || {};
+  const c = (CASES || []).find(x => x.case_no === WS_CASE) || {};
+  if(c.legal) return "legal";
+  if(c.kind === "claims" || ci.claim_number || ci.carrier) return "insurance";
+  const type = String(ci.case_type || "").toLowerCase();
+  const svc = String(ci.service || "").toLowerCase();
+  if(/custody|domestic|cohabitation|infidelity|adultery/.test(type)) return "domestic";
+  if(/locate|skip trace/.test(type) || /process serv/.test(svc)) return "process";
+  if(/surveillance/.test(type) || /surveillance/.test(svc)) return "surveillance";
+  return "general";
+}
+/* What the document is actually printing in: the build's stored choice when it
+   has one, otherwise the general format every existing report already prints
+   in. The DEFAULT above is an opening suggestion for the picker, not a silent
+   restyle of a document nobody chose a style for. */
+function tmplCurrent(){
+  const t = PKG && PKG.template;
+  return REPORT_TEMPLATES[t] ? t : "general";
+}
+
+function tmplPickerHtml(){
+  if(!PKG || !PKG.build) return "";
+  const cur = tmplCurrent(), draft = PKG.build.status === "draft";
+  const suggested = tmplDefaultFor();
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Report template</h2>
+      <span class="count">${esc(tmplDef(cur).label)}</span></div>
+    <div class="tmplgrid">
+      ${Object.entries(REPORT_TEMPLATES).map(([id, t]) => `
+        <button class="tmplcard${id === cur ? " on" : ""}" data-act="tmplPick" data-t="${id}"
+          ${draft ? "" : "disabled"} aria-pressed="${id === cur ? "true" : "false"}">
+          <div class="tmpl-n">${esc(t.label)}${id === cur ? ` <span class="tmpl-on">Selected</span>` : ""}</div>
+          <div class="tmpl-s">${esc(t.blurb)}</div>
+          ${id === suggested && id !== cur ? `<div class="tmpl-sug">Suggested for this case</div>` : ""}
+        </button>`).join("")}
+    </div>
+    ${draft
+      ? `<p class="hint">The style changes the document's headings and the order of its sections.
+          It never changes the report, the evidence or the times &mdash; and the preview below,
+          the printed page, the downloaded PDF and the Dropbox copy all come from it.</p>`
+      : `<p class="hint">This package is finalized, so its template is fixed at
+          <b>${esc(tmplDef(cur).label)}</b>. Reopen the build to change it &mdash; a document a
+          client may already have is not restyled underneath them.</p>`}
+    ${PKG.template_msg ? `<div class="note">${esc(PKG.template_msg)}</div>` : ""}
+  </div>`;
+}
+
 function pkgDocHtml(){
   const b = PKG && PKG.build;
   if(!b) return "";
@@ -10271,48 +10433,96 @@ function pkgDocHtml(){
     ["Authorized hours", ci.authorized_hours != null ? String(ci.authorized_hours) : ""],
     ["Days of investigation", reps.length ? String(reps.length) : ""],
   ].filter(([, v]) => v);
+  /* UNIT 9 — THE TEMPLATE DECIDES ORDER AND LABELS, NOTHING ELSE. Every
+     section below renders the same records it always did; the template says
+     what each is called and which order they come in, and a section with
+     nothing in it is skipped whichever template asked for it. */
+  const tid = tmplCurrent(), tdef = tmplDef(tid);
+  const H = k => esc(tmplHead(tid, k));
+  const rule = ` style="border-top:1px solid var(--line);padding-top:14px"`;
+  let drawn = 0;
+  const sec = body => { if(!body) return ""; drawn++; return body; };
+
+  /* The subject block is drawn from the case's OWN recorded fields. It is
+     offered by the templates that make sense of it and skipped when the case
+     records none of them — never filled with a placeholder. */
+  const subjRows = !ci ? [] : [
+    ["Subject", ci.subject_name || ""],
+    ["Description", ci.subject_description || ""],
+    ["Address", ci.subject_address || ""],
+    ["Vehicle", ci.vehicle || ""],
+  ].filter(([, v]) => v);
+  /* Dates the record actually holds. Nothing is derived from another date —
+     the standing rule from the legal intake. */
+  const dateRows = !ci ? [] : [
+    ["Hearing", ci.hearing_date ? fmtDay(ci.hearing_date) : ""],
+    ["Trial", ci.trial_date ? fmtDay(ci.trial_date) : ""],
+    ["Investigation deadline", ci.deadline ? fmtDay(ci.deadline) : ""],
+  ].filter(([, v]) => v);
+
+  const BLOCK = {
+    info: () => infoRows.length ? `<h3>${H("info")}</h3>
+      <table class="doc-table"><tbody>${infoRows.map(([k, v]) =>
+        `<tr><td style="width:34%"><b>${esc(k)}</b></td><td>${esc(v)}</td></tr>`).join("")}</tbody></table>` : "",
+    dates: () => dateRows.length ? `<h3${drawn ? rule : ""}>${H("dates")}</h3>
+      <table class="doc-table"><tbody>${dateRows.map(([k, v]) =>
+        `<tr><td style="width:34%"><b>${esc(k)}</b></td><td>${esc(v)}</td></tr>`).join("")}</tbody></table>` : "",
+    objective: () => (ci && ci.objective) ? `<h3${drawn ? rule : ""}>${H("objective")}</h3>
+      <div style="white-space:pre-line;font-size:.95rem">${esc(ci.objective)}</div>` : "",
+    subject: () => subjRows.length ? `<h3${drawn ? rule : ""}>${H("subject")}</h3>
+      <table class="doc-table"><tbody>${subjRows.map(([k, v]) =>
+        `<tr><td style="width:34%"><b>${esc(k)}</b></td><td>${esc(v)}</td></tr>`).join("")}</tbody></table>` : "",
+    /* The combined summary stays exactly what it was: the admin's own
+       paragraph, and facts DERIVED at render time so adding a day cannot
+       leave a stale sentence behind. */
+    summary: () => reps.length > 1 ? `<h3${drawn ? rule : ""}>${H("summary")}</h3>
+      ${PKG.summary ? `<div style="white-space:pre-line;font-size:.95rem;margin-bottom:8px">${esc(PKG.summary)}</div>` : ""}
+      <div style="font-size:.95rem">${esc(pkgSynopsis(reps, photos.length, videos.length))}</div>` : "",
+    narrative: () => reps.length ? reps.map((r, i) => `
+      <h3${i || drawn ? rule : ""}>${
+        reps.length > 1 ? `${H("days")} ${i + 1}` : H("narrative")} <span style="font-weight:400;font-size:.85rem;color:var(--muted)">${
+        esc(fmtDay(r.report_date))}${r.start_time ? ` &middot; ${esc(t12(r.start_time))}${
+        r.end_time ? `&ndash;${esc(t12(r.end_time))}` : ""}` : ""}${
+        r.hours != null ? ` &middot; ${esc(String(r.hours))} h` : ""}${
+        r.investigator ? ` &middot; ${esc(r.investigator)}` : ""}</span></h3>
+      <div style="white-space:pre-line;font-size:.95rem">${esc(r.body)}</div>`).join("")
+      : `<p style="color:var(--muted)">No report attached yet.</p>`,
+    photos: () => photos.length ? `<h3${drawn ? rule : ""}>${H("photos")}</h3>
+      ${photos.map(r => `<div style="margin:0 0 14px">
+        <img src="/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${r.e.id}/file" alt="">
+        <div style="font-size:.85rem;color:var(--muted)">Photo ${String(r.n).padStart(2, "0")}${r.time ? ` &middot; ${esc(r.time)}` : ""} &middot; ${esc(r.desc)}</div>
+      </div>`).join("")}` : "",
+    videos: () => videos.length ? `<h3${drawn ? rule : ""}>${H("videos")}</h3>
+      ${videos.map((r, i2) => `<div style="margin:0 0 10px">
+        <b>Video ${String(i2 + 1).padStart(2, "0")}</b>${r.time ? ` &middot; ${esc(r.time)}` : ""}
+        <div style="font-size:.9rem">${esc(r.desc)}</div>
+      </div>`).join("")}
+      <p style="font-size:.9rem"><b>VIDEO DELIVERY</b> &mdash; Selected video evidence is provided
+        through the accompanying electronic evidence delivery. Video package reference: ${esc(WS_CASE)}.</p>` : "",
+    index: () => rows.length ? `<h3${drawn ? rule : ""}>${H("index")}</h3>
+      <table class="doc-table"><thead><tr><th>Exhibit</th><th>Time</th><th>Type</th><th>Description</th><th>Delivery</th></tr></thead>
+        <tbody>${rows.map(r => `<tr>
+          <td>${r.role === "photo" ? "Photo" : r.role === "video" ? "Video" : "Document"} ${String(r.n).padStart(2, "0")}</td>
+          <td>${esc(r.time)}</td><td>${esc(r.role)}</td><td>${esc(r.desc)}</td>
+          <td>${r.role === "video" ? "Video delivery" : "Report"}</td>
+        </tr>`).join("")}</tbody></table>` : "",
+  };
+
   return `<h3 style="margin:18px 0 6px;font-size:1rem">The document <span class="opt">exactly what prints</span></h3>
   <div id="pkgdoc">
     <div class="doc-head">
       <div><h2>Always Precise Investigations, LLC</h2>
         <div style="font-size:.85rem;color:var(--muted)">Va DCJS #11-9159 &middot; (434) 907-0975</div></div>
       <div style="text-align:right">
-        <div style="font-size:1.1rem;font-weight:800;letter-spacing:.05em">INVESTIGATIVE REPORT</div>
+        <div style="font-size:1.1rem;font-weight:800;letter-spacing:.05em">${esc(tdef.title)}</div>
         <div><b>${esc(WS_CASE)}</b></div>
         ${reps.length ? `<div style="font-size:.88rem">${reps.length === 1
           ? `Report of ${esc(fmtDay(reps[0].report_date))}`
           : `${reps.length} days &middot; ${esc(fmtDay(reps[0].report_date))} &ndash; ${esc(fmtDay(reps[reps.length - 1].report_date))}`}</div>` : ""}
       </div>
     </div>
-    ${infoRows.length ? `<h3>CASE INFORMATION</h3>
-      <table class="doc-table"><tbody>${infoRows.map(([k, v]) =>
-        `<tr><td style="width:34%"><b>${esc(k)}</b></td><td>${esc(v)}</td></tr>`).join("")}</tbody></table>` : ""}
-    ${ci && ci.objective ? `<h3>ASSIGNMENT OBJECTIVE</h3>
-      <div style="white-space:pre-line;font-size:.95rem">${esc(ci.objective)}</div>` : ""}
-    ${reps.length > 1 ? `<h3>COMBINED SUMMARY</h3>
-      ${PKG.summary ? `<div style="white-space:pre-line;font-size:.95rem;margin-bottom:8px">${esc(PKG.summary)}</div>` : ""}
-      <div style="font-size:.95rem">${esc(pkgSynopsis(reps, photos.length, videos.length))}</div>` : ""}
-    ${reps.length ? reps.map((r, i) => `
-      <h3${i || infoRows.length || (ci && ci.objective) ? ` style="border-top:1px solid var(--line);padding-top:14px"` : ""}>${
-        reps.length > 1 ? `INVESTIGATION &mdash; DAY ${i + 1}` : "NARRATIVE"} <span style="font-weight:400;font-size:.85rem;color:var(--muted)">${
-        esc(fmtDay(r.report_date))}${r.start_time ? ` &middot; ${esc(t12(r.start_time))}${
-        r.end_time ? `&ndash;${esc(t12(r.end_time))}` : ""}` : ""}${
-        r.hours != null ? ` &middot; ${esc(String(r.hours))} h` : ""}${
-        r.investigator ? ` &middot; ${esc(r.investigator)}` : ""}</span></h3>
-      <div style="white-space:pre-line;font-size:.95rem">${esc(r.body)}</div>`).join("")
-      : `<p style="color:var(--muted)">No report attached yet.</p>`}
-    ${photos.length ? `<h3 style="border-top:1px solid var(--line);padding-top:14px">PHOTOGRAPHS</h3>
-      ${photos.map(r => `<div style="margin:0 0 14px">
-        <img src="/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${r.e.id}/file" alt="">
-        <div style="font-size:.85rem;color:var(--muted)">Photo ${String(r.n).padStart(2, "0")}${r.time ? ` &middot; ${esc(r.time)}` : ""} &middot; ${esc(r.desc)}</div>
-      </div>`).join("")}` : ""}
-    ${videos.length ? `<h3 style="border-top:1px solid var(--line);padding-top:14px">VIDEO EVIDENCE</h3>
-      ${videos.map((r, i2) => `<div style="margin:0 0 10px">
-        <b>Video ${String(i2 + 1).padStart(2, "0")}</b>${r.time ? ` &middot; ${esc(r.time)}` : ""}
-        <div style="font-size:.9rem">${esc(r.desc)}</div>
-      </div>`).join("")}
-      <p style="font-size:.9rem"><b>VIDEO DELIVERY</b> &mdash; Selected video evidence is provided
-        through the accompanying electronic evidence delivery. Video package reference: ${esc(WS_CASE)}.</p>` : ""}
+    ${(tdef.sections || REPORT_TEMPLATES.general.sections)
+      .map(k => sec(BLOCK[k] ? BLOCK[k]() : "")).join("")}
     ${""/* Nothing about withheld material belongs in HERE. #pkgdoc is the only
           region the print stylesheet leaves visible, so anything inside it is
           the CLIENT's document — and a client must never be told that evidence
@@ -10320,13 +10530,6 @@ function pkgDocHtml(){
           do-not-use. Naming a count would disclose the very material the
           classification withholds. The admin is told instead, on the package
           screen, which does not print: see pkgWithheldNote(). */}
-    ${rows.length ? `<h3 style="border-top:1px solid var(--line);padding-top:14px">EVIDENCE INDEX</h3>
-      <table class="doc-table"><thead><tr><th>Exhibit</th><th>Time</th><th>Type</th><th>Description</th><th>Delivery</th></tr></thead>
-        <tbody>${rows.map(r => `<tr>
-          <td>${r.role === "photo" ? "Photo" : r.role === "video" ? "Video" : "Document"} ${String(r.n).padStart(2, "0")}</td>
-          <td>${esc(r.time)}</td><td>${esc(r.role)}</td><td>${esc(r.desc)}</td>
-          <td>${r.role === "video" ? "Video delivery" : "Report"}</td>
-        </tr>`).join("")}</tbody></table>` : ""}
     <p style="font-size:.85rem;border-top:1px solid var(--line);padding-top:10px;color:var(--muted)">
       Prepared by Always Precise Investigations, LLC. The investigator may provide testimony
       regarding their own observations when appropriate and separately arranged.</p>
@@ -14534,6 +14737,32 @@ document.addEventListener("click", ev => {
     VIEW = "list"; TAB = "profiles";
     const id = el.dataset.id;
     render().then(() => profOpenId(id));
+  }
+  /* UNIT 9 — choosing a report style. The preview turns over LOCALLY first, so
+     switching between templates is a repaint rather than a round trip, and the
+     one write that records the choice follows. Nothing is regenerated and no
+     PDF is stored by looking: the document, the print view, the download and
+     the Dropbox copy all come from this same rendering when they are asked
+     for. */
+  else if(act === "tmplPick"){
+    if(!PKG || !PKG.build || PKG.build.status !== "draft") return;
+    const want = el.dataset.t;
+    if(want === tmplCurrent()) return;
+    const was = PKG.template;
+    PKG.template = want; PKG.template_msg = ""; paintCase();
+    /* api() rather than pkgApi(): pkgApi swallows its own failure into WS_ERR
+       and reloads, so the rollback below would never run and the picker would
+       sit showing a style the record does not hold. */
+    api(`/build/${PKG.build.id}/template`, {method: "POST", body: {template: want}})
+      .then(st => { PKG = st; paintCase(); })
+      .catch(e => {
+        /* AND IT SAYS SO IF THE CHOICE DID NOT STICK. A preview showing one
+           style while the record holds another is the drift this whole unit is
+           built to avoid. */
+        PKG.template = was;
+        PKG.template_msg = "That template was not saved — " + e.message;
+        paintCase();
+      });
   }
   else if(act === "attnFilter"){ ATTN_FILTER = el.dataset.k || "all"; paint(); }
   else if(act === "attnRetry"){ ATTN_ERR = ""; loadAttention().then(paint); }

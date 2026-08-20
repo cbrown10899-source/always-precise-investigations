@@ -12154,6 +12154,188 @@ section('Needs attention: a paused or held case is a decision, not neglect');
      quiet.every(x => x.severity === 'info'), JSON.stringify(quiet.map(x => x.severity)));
 }
 
+/* ============================================================== UNIT 9 =====
+   MULTIPLE REPORT TEMPLATES — six styles, one engine.
+
+   The Worker's half is small on purpose: a validated id, a marker row, and the
+   rule that a finalized document is not restyled underneath a client. The
+   document itself is rendered by the page, from one renderer, so the portal
+   suite is where the headings are asserted. */
+
+section('Report templates: a style is recorded, and it changes no fact');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-TMPL-1', client_name: 'Template Client',
+    subject_name: 'Watched Party', service: 'Surveillance', objective: 'Document activity' });
+  const danaLink = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana Field', role: 'investigator' }))).url;
+  const tok = new URL(danaLink, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const danaId = (await env.DB.prepare("SELECT id FROM users WHERE username = 'dana'").first()).id;
+  await call(env, '/submissions/API-TMPL-1/assign', { method: 'POST', cookie: admin,
+    body: { user_id: danaId } });
+
+  // A day, a report and a build to hang the template on.
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  await call(env, '/cases/API-TMPL-1/day/start', { method: 'POST', cookie: dana,
+    body: { day_date: '2026-08-10', start_time: '08:00' } });
+  await call(env, '/cases/API-TMPL-1/activity', { method: 'POST', cookie: dana,
+    body: { at_date: '2026-08-10', at_time: '09:15', kind: 'activity',
+      description: 'Subject departed the residence.' } });
+  await call(env, '/cases/API-TMPL-1/day/end', { method: 'POST', cookie: dana,
+    body: { end_time: '16:00', summary: 'Observed.' } });
+  /* Generated FROM THE DAY, the way the report screen does it. */
+  const dayId = (await jsonOf(await call(env, '/cases/API-TMPL-1/workspace', { cookie: admin })))
+    .days[0].id;
+  const rep = await jsonOf(await call(env, '/cases/API-TMPL-1/reports/generate',
+    { method: 'POST', cookie: admin, body: { day_id: dayId } }));
+  const repId = rep.id;
+  ok('a report exists to put in the package', !!repId, JSON.stringify(rep).slice(0, 160));
+  await call(env, `/cases/API-TMPL-1/reports/${repId}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'approved' } });
+  let st = await jsonOf(await call(env, '/cases/API-TMPL-1/build', { method: 'POST', cookie: admin }));
+  const buildId = st.build.id;
+
+  ok('a new build prints in the general format', st.template === 'general', String(st.template));
+  ok('and the six styles are offered', (st.templates || []).length === 6,
+     JSON.stringify(st.templates));
+  for (const t of ['surveillance', 'domestic', 'insurance', 'legal', 'process', 'general']) {
+    ok(`${t} is one of them`, (st.templates || []).includes(t));
+  }
+
+  /* WHAT THE DOCUMENT IS MADE OF MUST NOT MOVE when the style does. Captured
+     before and after, and compared as a whole. */
+  const facts = s2 => JSON.stringify({
+    reports: (s2.reports || []).map(r => [r.id, r.report_date, r.body, r.hours, r.status]),
+    items: (s2.items || []).map(i => [i.evidence_id, i.role, i.sort]),
+    evidence: (s2.evidence || []).map(e => [e.id, e.filename, e.classification, e.entry_time]),
+    info: s2.case_info,
+  });
+  const before = facts(st);
+  const act = await env.DB.prepare(
+    "SELECT id, at_time, description FROM activity_log WHERE case_no = 'API-TMPL-1'").all();
+  const actBefore = JSON.stringify(act.results);
+
+  let res = await call(env, `/build/${buildId}/template`, { method: 'POST', cookie: admin,
+    body: { template: 'surveillance' } });
+  ok('the admin can choose a style', res.status === 200, String(res.status));
+  st = await jsonOf(res);
+  ok('and it is recorded', st.template === 'surveillance', String(st.template));
+  ok('THE REPORT, THE EVIDENCE AND THE CASE FACTS ARE UNCHANGED', facts(st) === before,
+     'switching the template moved a fact');
+  const actAfter = await env.DB.prepare(
+    "SELECT id, at_time, description FROM activity_log WHERE case_no = 'API-TMPL-1'").all();
+  ok('and not one activity entry or timestamp moved',
+     JSON.stringify(actAfter.results) === actBefore);
+
+  // Switching again is just another choice; nothing accumulates.
+  st = await jsonOf(await call(env, `/build/${buildId}/template`, { method: 'POST', cookie: admin,
+    body: { template: 'legal' } }));
+  ok('a second choice replaces the first', st.template === 'legal', String(st.template));
+  ok('and there is exactly one row for the build, not one per template',
+     (await env.DB.prepare('SELECT COUNT(*) AS n FROM build_template WHERE build_id = ?')
+       .bind(buildId).first()).n === 1);
+  ok('and still no report row was created for it',
+     (await env.DB.prepare("SELECT COUNT(*) AS n FROM case_reports WHERE case_no = 'API-TMPL-1'")
+       .first()).n === 1);
+
+  res = await call(env, `/build/${buildId}/template`, { method: 'POST', cookie: admin,
+    body: { template: 'not-a-style' } });
+  ok('an unknown style is refused', res.status === 400, String(res.status));
+  ok('naming the ones that exist', /surveillance/.test((await jsonOf(res)).error));
+
+  ok('an investigator cannot restyle a client document',
+     (await call(env, `/build/${buildId}/template`, { method: 'POST', cookie: dana,
+       body: { template: 'general' } })).status === 403);
+
+  /* FINALIZING KEEPS THE STYLE, and says which one in the trail. A report-only
+     package so the content gates are satisfied by the report alone — the
+     gates are not this section's subject. */
+  await call(env, `/build/${buildId}/package`, { method: 'POST', cookie: admin,
+    body: { package_type: 'report_only' } });
+  const finRes = await call(env, `/build/${buildId}/finalize`, { method: 'POST', cookie: admin });
+  st = await jsonOf(finRes);
+  ok('the build finalizes', finRes.status === 200 && st.build && st.build.status === 'finalized',
+     `${finRes.status} ${JSON.stringify(st.gates || st.error || '')}`);
+  ok('and keeps the template it was finalized with', st.template === 'legal', String(st.template));
+  ok('the event trail records which one',
+     (st.events || []).some(e => e.action === 'finalized' && /legal template/.test(e.detail || '')),
+     JSON.stringify((st.events || []).map(e => `${e.action}:${e.detail}`)));
+
+  /* AND A FINALIZED DOCUMENT IS NOT RESTYLED UNDERNEATH A CLIENT. */
+  res = await call(env, `/build/${buildId}/template`, { method: 'POST', cookie: admin,
+    body: { template: 'surveillance' } });
+  ok('changing a finalized package\'s style is refused', res.status === 400, String(res.status));
+  ok('and it says to reopen it, the rule the rest of the build follows',
+     /[Rr]eopen/.test((await jsonOf(res)).error), (await jsonOf(res)).error);
+  ok('the stored style did not move',
+     (await jsonOf(await call(env, '/cases/API-TMPL-1/build', { cookie: admin }))).template === 'legal');
+
+  await call(env, `/build/${buildId}/reopen`, { method: 'POST', cookie: admin });
+  res = await call(env, `/build/${buildId}/template`, { method: 'POST', cookie: admin,
+    body: { template: 'surveillance' } });
+  ok('reopening it makes the style changeable again', res.status === 200, String(res.status));
+}
+
+section('Report templates: an older report keeps printing the way it always did');
+{
+  /* The table arrives by a manual portal-setup dispatch, and every report that
+     exists today has no row in it. Both cases must read as the general format
+     rather than as a problem. */
+  const { DatabaseSync } = await import('node:sqlite');
+  const bare = new DatabaseSync(':memory:');
+  bare.exec(SCHEMA);
+  bare.exec('DROP TABLE build_template');
+  const env = { ...freshEnv(), DB: d1(bare) };
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-OLD-1', client_name: 'Older Client',
+    subject_name: 'S', service: 'Surveillance' });
+  const st = await jsonOf(await call(env, '/cases/API-OLD-1/build', { method: 'POST', cookie: admin }));
+  ok('a build still opens with the table absent', !!st.build, JSON.stringify(st.build));
+  ok('and reports the general format rather than failing', st.template === 'general',
+     String(st.template));
+  const res = await call(env, `/build/${st.build.id}/template`, { method: 'POST', cookie: admin,
+    body: { template: 'legal' } });
+  ok('the one write says which workflow to run', res.status === 503, String(res.status));
+  ok('in words the office can act on', /portal-setup/.test((await jsonOf(res)).error));
+
+  /* And on a whole database, a build nobody has chosen a style for. */
+  const env2 = freshEnv();
+  await bootstrapAdmin(env2);
+  const a2 = (await login(env2, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env2, { case_no: 'API-OLD-2', client_name: 'Untouched', subject_name: 'S' });
+  const st2 = await jsonOf(await call(env2, '/cases/API-OLD-2/build', { method: 'POST', cookie: a2 }));
+  ok('a build with no stored style is general, not blank', st2.template === 'general',
+     String(st2.template));
+  ok('and nothing was written to say so',
+     (await env2.DB.prepare('SELECT COUNT(*) AS n FROM build_template').first()).n === 0);
+}
+
+section('Report templates: the guards a new table owes');
+{
+  const src = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  const expected = (src.match(/const EXPECTED_TABLES = \[([\s\S]*?)\n\];/) || [, ''])[1];
+  ok('build_template is named in EXPECTED_TABLES', /'build_template'/.test(expected));
+  const sweep = (src.match(/const DEMO_SWEEP = \[([\s\S]*?)\n\];/) || [, ''])[1];
+  ok('and swept with its case, through its parent build',
+     /\['build_template',\s*'DELETE FROM build_template WHERE build_id IN \(SELECT id FROM case_builds/.test(sweep));
+  /* ONE PDF PIPELINE. The templates are configuration over the single
+     renderer, so there must be exactly one place that writes a PDF — six
+     copies of it is the thing this unit exists not to do. */
+  const page = fs.readFileSync(path.join(HERE, '..', 'portal', 'index.html'), 'utf8');
+  const writers = (page.match(/%PDF-1\./g) || []).length;
+  ok('there is exactly one PDF writer in the page', writers === 1, String(writers));
+  const tmplBlock = (page.match(/const REPORT_TEMPLATES = \{[\s\S]*?\n\};/) || [''])[0];
+  ok('the six templates are configuration, not code paths',
+     tmplBlock.length > 0 && !/function |=>|fetch\(|api\(/.test(tmplBlock),
+     'a template definition contains logic');
+  ok('and none of them writes narrative prose',
+     tmplBlock.length > 0 && !/committed|fraud|violation|confirmed|successfully served/i.test(tmplBlock));
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));
