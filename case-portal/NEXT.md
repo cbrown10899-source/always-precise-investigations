@@ -22,8 +22,30 @@ item is finished.
 | 3 | Visible Dropbox portal UI for Admin | ✅ **DONE — DEPLOYED** at `5baabd3` (#189). LIVE VERIFY **OPEN** for the owner |
 | 4 | Admin report workflow and mobile report fix | ✅ **DONE — DEPLOYED** at `94b1f5b` (#190). LIVE VERIFY **OPEN** for the owner |
 | 5 | Full portal mobile / aesthetic UI cleanup | **NEXT** — not started. Carries a specific brief, below |
-| 6 | **Legal / Law Firm intake** (third intake type) | not started — **queued, do not begin**. Added by the owner 2026-08-19; **reordered by them to sit after the UI work**. Full brief below |
-| 7 | Remaining Portal Ops productivity features | not started |
+| 6 | **Legal / Law Firm intake** (third intake type) | not started — **queued, do not begin until the owner reviews Unit 5**. Full brief in `LEGAL-INTAKE.md` |
+| 7 | Repeat Client / Firm Profiles | not started |
+| 8 | Global Case Search + advanced Needs Attention | not started |
+| 9 | Multiple Report Templates | not started |
+| 10 | Case Timeline | not started |
+| 11 | Evidence Integrity | not started |
+| 12 | Storage Health | not started |
+| 13 | Case Closeout | not started |
+| 14 | Client Delivery Center | not started |
+| 15 | Retention Controls | not started |
+
+**Items 7–15 were locked by the owner on 2026-08-20**, replacing the old
+"Remaining Portal Ops" catch-all. Unit 5's brief deliberately fences off two of
+them: the dashboard's Needs Attention panel is the **lightweight version using
+data that already exists** (the rules/search engine is item 8), and surfacing
+an existing case-search entry point is fine but **the Global Search engine is
+item 8**. Report template selection is item 9.
+
+**Save-point policy changed by the owner, 2026-08-20** (supersedes the
+two-per-unit rule): no save points for routine edits or ordinary commits; one
+save point after a unit is fully merged + deployed + machine-verified (the
+merge push's automatic `save-point.yml` firing satisfies this); one extra only
+before a genuinely risky schema/storage migration. **No redundant pre-unit
+tags.**
 
 **The order after the Dropbox UI is the owner's own, 2026-08-19**: *"After
 Dropbox UI: 1) Admin report/mobile workflow fix, 2) full portal mobile/aesthetic

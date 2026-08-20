@@ -8017,24 +8017,31 @@ section('Timestamp video is reachable without opening a case');
      owner could not find it anywhere in the live portal. Asserted by ACT and as
      a pair: the count alone would pass on two copies of the same door. */
   const tools = await page.evaluate(() =>
-    [...document.querySelectorAll('.qtools .qtool')].map(b => b.dataset.act));
-  ok('the dashboard carries both quick tools',
-     tools.includes('vstOpen') && tools.includes('pstLaunch'), JSON.stringify(tools));
-  ok('and nothing else has crept into the row', tools.length === 2, JSON.stringify(tools));
+    [...document.querySelectorAll('.qtools .qtool')].map(b => b.dataset.act + ':' + (b.dataset.tab || '')));
+  ok('the dashboard carries both timestamp tools',
+     tools.some(t => t.startsWith('vstOpen')) && tools.some(t => t.startsWith('pstLaunch')),
+     JSON.stringify(tools));
+  /* UNIT 5 (owner) widened the row into the day's launcher, so the creep guard
+     re-pins to the NEW set — still exact, still by act, so a duplicate door or
+     a stray addition fails rather than accumulating. */
+  ok('and the row is exactly the day\'s six doors, no creep',
+     JSON.stringify(tools) === JSON.stringify(
+       ['pstLaunch:', 'vstOpen:', 'surveillance:', 'tab:newlead', 'tab:cases', 'tab:delivery']),
+     JSON.stringify(tools));
   ok('labelled as tools, not cards', has(await text(page, '.qtools'), 'Quick tools')
      && has(await text(page, '.qtools'), 'Timestamp video')
      && has(await text(page, '.qtools'), 'Timestamp photo'));
-  /* COMPACT, not a fifth equal-weight box: it must be shorter than a stat card
-     and must not have become one. */
+  /* COMPACT means dense per tool, not short overall — six doors are taller
+     than two were, and the owner asked for the six. What must not happen is a
+     TOOL swelling into a stat card, or the launcher adopting card chrome. */
   const size = await page.evaluate(() => {
     const q = document.querySelector('.qtools');
-    const card = document.querySelector('.stat');
-    return { q: Math.round(q.getBoundingClientRect().height),
-             card: card ? Math.round(card.getBoundingClientRect().height) : 0,
+    const tool = document.querySelector('.qtool');
+    return { tool: Math.round(tool.getBoundingClientRect().height),
              cards: q.querySelectorAll('.card, .stat').length };
   });
-  ok('it is a row rather than another dashboard card',
-     size.cards === 0 && (!size.card || size.q <= size.card), JSON.stringify(size));
+  ok('each tool stays a control, never a card',
+     size.cards === 0 && size.tool >= 44 && size.tool <= 52, JSON.stringify(size));
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(400);
@@ -10663,6 +10670,156 @@ section('The report screen fits a phone — measured, not eyeballed');
      ed && ed.font >= 16, JSON.stringify(ed));
   ok('and spans the phone instead of a third of it (was 223px of 375)',
      ed && ed.share >= 0.66, JSON.stringify(ed));
+  await page.close(); await ctx.close();
+}
+
+/* ---- UNIT 5 (owner): portal modernization. Everything here was measured
+   broken at a real width before it was changed, and the numbers are what the
+   assertions hold — the "agreement not fit" lesson, applied to a shell. */
+section('The mobile header is a control, not a glyph');
+{
+  const ctx = await browser.newContext({ viewport: { width: 320, height: 568 } });
+  const page = await ctx.newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+
+  const b = await page.evaluate(() => {
+    const el = document.getElementById('burger');
+    const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+    const lum = c => { const m = c.match(/\d+/g); return m
+      ? 0.299 * m[0] + 0.587 * m[1] + 0.114 * m[2] : null; };
+    const top = lum(getComputedStyle(document.querySelector('.top')).backgroundColor);
+    return { w: r.width, h: r.height,
+      fromRight: Math.round(document.documentElement.clientWidth - r.right),
+      lumDiff: Math.abs(lum(cs.backgroundColor) - top),
+      expanded: el.getAttribute('aria-expanded') };
+  });
+  /* Measured before the fix: 236px from the right on a transparent surface. */
+  ok('the burger holds the conventional corner', b.fromRight <= 24, JSON.stringify(b));
+  ok('at tap size', b.w >= 44 && b.h >= 44, JSON.stringify(b));
+  ok('on a surface the eye can find (the 8-point house floor)',
+     b.lumDiff >= 8, String(b.lumDiff));
+  ok('and it says it is closed', b.expanded === 'false');
+
+  await page.locator('#burger').click();
+  await page.waitForTimeout(350);
+  const open = await page.evaluate(() => {
+    const t = document.querySelector('.tabs');
+    const btns = [...t.querySelectorAll('button')];
+    const xs = new Set(btns.map(x => Math.round(x.getBoundingClientRect().left)));
+    const br = document.getElementById('burger').getBoundingClientRect();
+    const hit = document.elementFromPoint(br.left + br.width / 2, br.top + br.height / 2);
+    const back = document.querySelector('.navback');
+    const edge = document.elementFromPoint(document.documentElement.clientWidth - 4, 300);
+    return { cols: xs.size, clipped: t.scrollWidth - t.clientWidth,
+      expanded: document.getElementById('burger').getAttribute('aria-expanded'),
+      burgerReachable: Boolean(hit && hit.closest('#burger')),
+      backdropReal: Boolean(back) && getComputedStyle(back).display === 'block',
+      outsideTapLands: edge ? (edge.classList.contains('navback') ? 'backdrop' : 'elsewhere') : 'nothing' };
+  });
+  ok('the drawer is one column', open.cols === 1, String(open.cols));
+  ok('with nothing clipped sideways', open.clipped === 0);
+  ok('the burger says it is open', open.expanded === 'true');
+  ok('and is still reachable to close — it used to be buried under the drawer',
+     open.burgerReachable === true);
+  /* The dim used to be a box-shadow: decoration a tap went straight through,
+     onto whatever control sat underneath. It is a real element now. */
+  ok('the dim is a real backdrop', open.backdropReal === true);
+  ok('and an outside tap lands on it, not on the page beneath',
+     open.outsideTapLands === 'backdrop', open.outsideTapLands);
+  await page.locator('.navback').click({ position: { x: 314, y: 300 } });
+  await page.waitForTimeout(250);
+  ok('tapping outside closes the drawer',
+     await page.evaluate(() => !document.body.classList.contains('navopen')));
+
+  /* Quick tools: the day's launcher, at tap size, nothing overflowing. */
+  const qt = await page.evaluate(() => {
+    const doc = document.documentElement;
+    const btns = [...document.querySelectorAll('.qtool')].map(x => {
+      const r = x.getBoundingClientRect();
+      return { t: x.textContent.trim(), h: Math.round(r.height),
+               fits: r.right <= doc.clientWidth + 1 }; });
+    return { overflowX: doc.scrollWidth - doc.clientWidth, btns };
+  });
+  ok('the page does not scroll sideways at 320px', qt.overflowX === 0, String(qt.overflowX));
+  ok('quick tools reach the day\'s doors',
+     ['Timestamp Photo', 'Timestamp Video', 'Active Surveillance', 'Cases']
+       .every(name => qt.btns.some(x => x.t.includes(name))), JSON.stringify(qt.btns));
+  ok('every tool is a tap target that fits',
+     qt.btns.every(x => x.h >= 44 && x.fits), JSON.stringify(qt.btns));
+
+  /* The dashboard's operational panels render. */
+  const dash = await page.evaluate(() => ({
+    bands: document.querySelectorAll('.band').length,
+    recent: document.querySelectorAll('.card h2').length &&
+      [...document.querySelectorAll('.card h2')].some(h => h.textContent === 'Recent activity'),
+  }));
+  ok('the two bands render', dash.bands === 2);
+  ok('and Recent activity is on the dashboard', dash.recent === true);
+  await page.close(); await ctx.close();
+}
+
+section('Recent activity rows are doors, and stacked records read on a phone');
+{
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await ctx.newPage();
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(1000);
+
+  ok('the feed carries real events from this suite\'s own work',
+     await page.locator('.ra-row').count() >= 3,
+     String(await page.locator('.ra-row').count()));
+  const row = page.locator('.ra-row').first();
+  const caseNo = await row.evaluate(el => el.dataset.case);
+  await row.click();
+  await page.waitForTimeout(600);
+  ok('clicking a feed row opens its case',
+     await page.evaluate(() => VIEW) === 'case'
+     && await page.evaluate(() => WS_CASE) === caseNo, caseNo);
+  await page.locator('[data-act="backToCases"]').click();
+  await page.waitForTimeout(300);
+
+  /* The cases list on a phone: stacked records, nothing behind a sideways
+     scroll, and the columns .hide drops come BACK. Measured before: 187px of
+     every row was behind an inner scroll at 320px. */
+  await page.evaluate(() => { const b = [...document.querySelectorAll('[data-act="tab"]')]
+    .find(x => x.dataset.tab === 'cases'); if (b) b.click(); });
+  await page.waitForTimeout(600);
+  const tbl = await page.evaluate(() => {
+    const wrap = document.querySelector('.stacktbl');
+    const tr = wrap && wrap.querySelector('tbody tr');
+    const hid = tr && tr.querySelector('td.hide');
+    return { innerScroll: wrap ? wrap.scrollWidth - wrap.clientWidth : null,
+      rowIsBlock: tr ? getComputedStyle(tr).display : null,
+      hiddenColBack: hid ? getComputedStyle(hid).display : null,
+      labelled: tr ? tr.querySelectorAll('td[data-l]').length : 0 };
+  });
+  ok('no row hides behind an inner sideways scroll', tbl.innerScroll === 0, JSON.stringify(tbl));
+  ok('rows draw as stacked records', tbl.rowIsBlock === 'block');
+  ok('the phone gets the hidden columns back', tbl.hiddenColBack === 'block');
+  ok('each cell says what it is', tbl.labelled >= 4, String(tbl.labelled));
+
+  /* Intakes: the Accept control is a control. Measured before: 42-60px wide
+     and up to 119px tall. */
+  await page.evaluate(() => { const b = [...document.querySelectorAll('[data-act="tab"]')]
+    .find(x => x.dataset.tab === 'leads'); if (b) b.click(); });
+  await page.waitForTimeout(700);
+  const acc = await page.evaluate(() =>
+    [...document.querySelectorAll('.pc-next > .btn')].map(x => {
+      const r = x.getBoundingClientRect();
+      return { w: Math.round(r.width), h: Math.round(r.height) }; }));
+  ok('Accept is wider than it is tall, at tap height',
+     acc.length >= 1 && acc.every(a => a.w >= 120 && a.h >= 44 && a.h <= 60),
+     JSON.stringify(acc));
   await page.close(); await ctx.close();
 }
 

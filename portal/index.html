@@ -216,8 +216,17 @@
   /* Quick tools: one compact row of case-independent utilities, in the same
      visual language as .alsoline so the dashboard gains a shortcut and not a
      fifth equal-weight box. 44px minimum, wraps rather than overflowing. */
-  .qtools{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;
-    margin:0 0 14px;padding:0 2px;}
+  .qtools{margin:0 0 14px;padding:0 2px;}
+  /* .qtgrid, not .qgrid — that name was already taken by the field view's
+     84px action grid at the other end of this stylesheet, and the later rule
+     was silently winning. The third source-order casualty this project has
+     records for; a distinct name ends the contest instead of refereeing it. */
+  .qtgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(200px,100%),1fr));
+    gap:8px;margin-top:6px;}
+  /* The Timestamp pair reads as a pair: same accent edge on both, and the grid
+     keeps them adjacent because they are declared adjacent. */
+  .qtgrid .qtool{width:100%;justify-content:flex-start;}
+  .qtool.qt-pair{border-left:3px solid var(--teal);}
   .qtools-l{font-size:.76rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
     color:var(--muted);}
   /* IT HAS TO READ AS AN ACTION, and the first two attempts did not.
@@ -378,8 +387,26 @@
      glyph stays compact and the button grows around it, so nothing looks
      heavier and a thumb lands on it. Measured by a test at phone width, not
      eyeballed. */
-  .burger{display:none;background:transparent;border:0;color:#fff;font-size:1.4rem;cursor:pointer;
-    padding:0;min-width:50px;min-height:50px;align-items:center;justify-content:center;}
+  /* `.top button` styles the sign-out and would beat a bare `.burger` on
+     specificity (0-1-1 over 0-1-0) whatever the source order — the dead-rule
+     lesson again, this time horizontal. Every burger rule carries `.top` so
+     the contest cannot happen. */
+  .top .burger{display:none;background:#1f3a58;border:1px solid #4a6b91;color:#fff;font-size:1.3rem;
+    cursor:pointer;border-radius:10px;padding:0;min-width:46px;min-height:46px;
+    align-items:center;justify-content:center;margin-left:0;
+    /* Above the backdrop (55): while the drawer is open the visible ✕ must be
+       the thing a tap actually reaches, not the dim behind it. */
+    position:relative;z-index:70;}
+  .top .burger:active{background:#2c4a6e;}
+  .top .burger .b-close{display:none;}
+  body.navopen .top .burger{background:#2c4a6e;border-color:#7592b5;}
+  body.navopen .top .burger .b-open{display:none;}
+  body.navopen .top .burger .b-close{display:inline;}
+  /* The backdrop is display-gated by body.navopen, so there is no JS state to
+     forget; z-index sits under the drawer (60) and over everything else. */
+  .navback{display:none;position:fixed;inset:0;background:rgba(9,18,30,.45);border:0;
+    padding:0;cursor:pointer;z-index:55;}
+  body.navopen .navback{display:block;}
   /* NAVIGATION GROUPS (owner, 2026-08-16). The rail was eight flat doors that
      said nothing about which part of the business each belongs to. Three
      labelled groups do.
@@ -454,7 +481,7 @@
          from wrapping, and adding one more door to the foot tipped it over. */
       flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:2px;background:#13273f;z-index:60;
       padding:60px 12px max(14px, env(safe-area-inset-bottom));
-      overflow-y:auto;box-shadow:0 0 0 100vmax rgba(9,18,30,.45);}
+      overflow-y:auto;box-shadow:6px 0 24px rgba(9,18,30,.35);}
     body.withnav.navopen .tabs button{text-align:left;color:#c9d6e4;background:transparent;border-radius:8px;padding:11px 12px;}
     body.withnav.navopen .tabs button.on{background:#1f3a58;color:#fff;}
     body.withnav.navopen .tabs .side-intake{display:block;text-align:center;
@@ -473,7 +500,7 @@
        Never move the base rule back below this block. */
     /* inline-flex, not inline-block: the centring above only applies to a flex
        container, and without it the 50px box holds an off-centre glyph. */
-    .burger{display:inline-flex;}
+    .top .burger{display:inline-flex;}
   }
   /* Reports & Packages stacks three existing panels; the gap lives on the
      container so no panel carries a margin that depends on its position. */
@@ -507,6 +534,16 @@
   .pc-m.part{border-color:#e9d8a6;background:#fdfaf1;}
   .pc-next{display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1px solid var(--line);
     padding-top:10px;margin-top:4px;}
+  /* UNIT 5 (owner: "Intake Accept-style controls can appear narrow/unfinished").
+     Measured at 320–1200px: Accept rendered 42–60px wide and up to 119px TALL —
+     the flex row gave the ghost cluster the width and squeezed the PRIMARY
+     action to its min-content, wrapping "Accept →" letter by letter. A primary
+     action never shrinks below its own words. */
+  .pc-next > .btn{flex:none;white-space:nowrap;min-height:44px;}
+  @media(max-width:560px){
+    .pc-next{flex-direction:column;align-items:stretch;}
+    .pc-next > .btn{width:100%;}
+  }
   .pc-next small{display:block;color:var(--muted);font-size:.72rem;}
   /* The same 44px floor `.bandhead .btn` already takes, and for the same reason:
      `.btn.sm` is 7px of padding on a .82rem line, about 35px. This row is where
@@ -1111,6 +1148,39 @@
     dl.detail dt{margin-top:8px;}
     th.hide,td.hide{display:none;}
   }
+  /* UNIT 5 — stacked records for phone-width tables. Same markup, same
+     handlers; the label a stacked cell prints over itself comes from its own
+     data-l. The hidden columns come BACK here: a stacked record has the room
+     the row did not. Scoped by .stacktbl so dense desktop tables that read
+     fine in their scroll box are untouched. */
+  @media(max-width:560px){
+    .stacktbl thead{display:none;}
+    .stacktbl table,.stacktbl tbody{display:block;width:100%;}
+    .stacktbl tr{display:block;border:1px solid var(--line);border-radius:10px;
+      background:#fff;padding:10px 12px;margin-bottom:10px;}
+    .stacktbl td{display:block;border:0;padding:3px 0;}
+    .stacktbl td.hide{display:block;}
+    .stacktbl td[data-l]::before{content:attr(data-l);display:block;font-size:.66rem;
+      font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);}
+  }
+  /* UNIT 5 — the activity feed rows: full-width buttons so the whole row is
+     the door to its case, metadata quiet, nothing loaded but text. */
+  .ra-list{display:grid;gap:6px;}
+  .ra-row{display:flex;align-items:center;gap:10px;width:100%;text-align:left;font:inherit;
+    background:#fff;border:1px solid var(--line);border-radius:9px;padding:9px 12px;cursor:pointer;}
+  .ra-row:hover{border-color:var(--teal);}
+  .ra-i{flex:none;font-size:1rem;}
+  .ra-what{min-width:0;font-size:.88rem;overflow-wrap:anywhere;}
+  .ra-case{display:block;font-size:.7rem;color:var(--muted);margin-top:1px;}
+  .ra-when{margin-left:auto;flex:none;font-size:.72rem;color:var(--muted);white-space:nowrap;}
+  /* UNIT 5 — the keyboard has to be able to SEE where it is. One visible
+     focus treatment for every interactive control, never removed, and distinct
+     from hover so a tab-through reads as a tab-through. */
+  .btn:focus-visible,.qtool:focus-visible,.tabs button:focus-visible,
+  .lens:focus-visible,.evtab:focus-visible,.rpnav button:focus-visible,
+  .top .burger:focus-visible,.navback:focus-visible,
+  input:focus-visible,select:focus-visible,textarea:focus-visible{
+    outline:2px solid var(--teal);outline-offset:2px;}
   /* Item 4's mobile report fix — every value here was MEASURED at 375px
      before it was changed; the suite asserts the numbers, not the look. */
   @media(max-width:560px){
@@ -1127,6 +1197,14 @@
     .rpnav{flex-wrap:wrap;}
     .rpnav button{min-height:44px;}
     .ractions .btn{min-height:44px;}
+    /* UNIT 5 — the .rbody rule above, made the portal-wide rule it always
+       should have been: ANY input under 16px makes iOS zoom the page on
+       focus, not just the report editor. And every form control on a phone
+       meets the same 44px floor the field bars set. */
+    input,select,textarea{font-size:16px;}
+    input:not([type="checkbox"]):not([type="radio"]),select{min-height:44px;}
+    .btn{min-height:44px;}
+    .evtab,.lens{min-height:44px;}
   }
 </style>
 </head>
@@ -1136,10 +1214,23 @@
   <div class="wrap">
     <svg width="34" height="34" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="10" fill="#13273f"/><path d="M32 12l6 8-6 8-6-8z" fill="#3d97ad"/><path d="M32 30l10 12H22z" fill="#c99a3b"/></svg>
     <div class="name">ALWAYS PRECISE<span>INVESTIGATIONS · CASE PORTAL</span></div>
-    <button class="burger" id="burger" data-act="navToggle" hidden>&#9776;</button>
     <div class="who" id="who" hidden></div>
+    <!-- UNIT 5 (owner): "the mobile hamburger control has been too small, oddly
+         positioned and unclear as a clickable control." Measured at 320px it sat
+         236px from the RIGHT edge — mid-header — on a fully transparent
+         background. It now holds the conventional corner, on a real surface,
+         with an explicit open state; the glyph pair is swapped by CSS off
+         body.navopen so the button always says what tapping it will do. -->
+    <button class="burger" id="burger" data-act="navToggle" aria-label="Menu"
+      aria-expanded="false" hidden><span class="b-open">&#9776;</span><span class="b-close">&#10005;</span></button>
   </div>
 </div>
+<!-- The drawer's dim used to be a box-shadow — decoration, not an element — so
+     a tap "outside the menu" passed straight through to whatever control sat
+     underneath it, and the burger itself was covered by the open drawer with
+     nothing left to close it. A real backdrop intercepts those taps and IS the
+     close control. -->
+<button class="navback" data-act="navToggle" aria-label="Close menu" tabindex="-1"></button>
 
 <main id="app"></main>
 <!-- The evidence viewer is a SIBLING of the app root, not a panel inside it.
@@ -1918,14 +2009,14 @@ function outNowHtml(){
   return `<div class="card">
     <div class="bar"><h2 style="margin:0">Out now</h2>
       <span class="count">${rows.length} in the field</span></div>
-    <div style="overflow-x:auto"><table>
+    <div class="stacktbl" style="overflow-x:auto"><table>
       <thead><tr><th>Investigator</th><th>Case</th><th>Started</th><th>Elapsed</th><th class="hide">Last activity</th></tr></thead>
       <tbody>${rows.map(r => `<tr class="click" data-act="openCase" data-case="${esc(r.case_no)}">
-        <td><b>${esc(r.investigator || "—")}</b></td>
-        <td class="mono">${esc(r.case_no)}<div class="tl-m">${esc(r.subject_name || "")}</div></td>
-        <td>${esc(t12(r.start_time))}</td>
-        <td>${ago(r.started_at)}</td>
-        <td class="hide">${r.last_activity
+        <td data-l="Investigator"><b>${esc(r.investigator || "—")}</b></td>
+        <td class="mono" data-l="Case">${esc(r.case_no)}<div class="tl-m">${esc(r.subject_name || "")}</div></td>
+        <td data-l="Started">${esc(t12(r.start_time))}</td>
+        <td data-l="Elapsed">${ago(r.started_at)}</td>
+        <td class="hide" data-l="Last activity">${r.last_activity
           ? `${esc(String(r.last_activity.description || "").slice(0, 44))}
              <div class="tl-m">${ago(r.last_activity.created_at)} ago &middot; ${r.activity_count} total</div>`
           : `<span class="tl-m">Nothing logged yet</span>`}</td>
@@ -2044,6 +2135,16 @@ function dashBands(){
        this card reports and does not scold: a case can run unassigned. */
     + statCard("Needs assignment", s.unassigned || 0, "No investigator yet — optional",
                "", {go: "cases"})
+    /* UNIT 5 — a dead file store is attention, a healthy one is not: the card
+       exists only in the broken states, because "Dropbox: fine" on every
+       morning's dashboard is how a card stops being read. The flag arrives on
+       /summary (admin only) from local state — nothing here calls Dropbox. */
+    + (s.dropbox_configured !== undefined && !s.dropbox_ok
+        ? statCard("Dropbox", "Off",
+            s.dropbox_configured
+              ? "Not connected — new photos and reports cannot be stored"
+              : "Not set up on the Worker yet",
+            "over", {go: "settings"}) : "")
     + (stLoud ? statCard("Storage",
                (st.bytes_used / 1073741824).toFixed(st.bytes_used > 107374182 ? 1 : 2) + " GB",
                stPct + "% of the free plan" + (stPct >= 90 ? " — uploads pause at the cap" : ""),
@@ -2322,18 +2423,64 @@ function recentlyCompletedHtml(){
 function quickToolsHtml(){
   /* ONE WORDING, and it is the navigation's. Two spellings of the same control
      meant a find-in-page for what the menu says did not match what the dashboard
-     shows — which is exactly how someone concludes a thing is not there. */
+     shows — which is exactly how someone concludes a thing is not there.
+
+     UNIT 5 (owner): the row becomes the day's launcher — the two Timestamp
+     tools stay a visual pair, and the doors an admin actually reaches for join
+     them. Every entry is a place or tool that already exists; nothing here is
+     a new destination, so nothing here can disagree with the rail. The grid
+     wraps on phones and every target keeps the 44px floor. */
+  const admin = ME.role === "admin";
   return `<div class="qtools">
     <span class="qtools-l">Quick tools</span>
-    <button class="qtool" data-act="vstOpen" data-case=""><b>&#127909;</b> Timestamp Video</button>
-    <button class="qtool" data-act="pstLaunch" data-case=""><b>&#128247;</b> Timestamp Photo</button>
+    <div class="qtgrid">
+      <button class="qtool qt-pair" data-act="pstLaunch" data-case=""><b>&#128247;</b> Timestamp Photo</button>
+      <button class="qtool qt-pair" data-act="vstOpen" data-case=""><b>&#127909;</b> Timestamp Video</button>
+      <button class="qtool" data-act="surveillance"><b>&#128373;</b> Active Surveillance</button>
+      ${admin ? `<button class="qtool" data-act="tab" data-tab="newlead"><b>&#10133;</b> Intake a Client</button>` : ""}
+      <button class="qtool" data-act="tab" data-tab="cases"><b>&#128193;</b> Cases</button>
+      ${admin ? `<button class="qtool" data-act="tab" data-tab="delivery"><b>&#128230;</b> Reports &amp; Packages</button>` : ""}
+    </div>
   </div>`;
+}
+
+/* UNIT 5 — RECENT ACTIVITY. Three states kept apart, the loadSends rule:
+   never loaded, failed (which says so), and loaded-and-quiet. The rows are
+   the Worker's — time, what, which case — and each links to its case. */
+let RECENT = null, RECENT_ERR = "";
+async function loadRecent(){
+  RECENT_ERR = "";
+  try{ RECENT = (await api("/recent-activity")).activity; }
+  catch(e){ RECENT = null; RECENT_ERR = e.message; }
+  paint();
+}
+const RECENT_ICON = { intake: "&#128234;", day: "&#128373;", report: "&#128196;",
+                      evidence: "&#128247;", payment: "&#128181;", package: "&#128230;" };
+function recentActivityHtml(){
+  if(ME.role !== "admin") return "";
+  const body = RECENT_ERR
+    ? `<div class="err">Recent activity could not be loaded &mdash; ${esc(RECENT_ERR)}. That is a
+        read failure, not a quiet portal.</div>`
+    : !RECENT ? `<div class="empty">Loading recent activity&hellip;</div>`
+    : !RECENT.length ? `<div class="empty"><div class="empty-title">Nothing recorded yet.</div>
+        <div class="empty-hint">Intakes, days, reports, media, payments and packages appear here
+        as they happen.</div></div>`
+    : `<div class="ra-list">${RECENT.map(r => `
+        <button class="ra-row" data-act="openCase" data-case="${esc(r.case_no)}">
+          <span class="ra-i">${RECENT_ICON[r.kind] || "&#8226;"}</span>
+          <span class="ra-what">${esc(r.detail)}<span class="ra-case mono">${esc(r.case_no)}</span></span>
+          <span class="ra-when">${when(r.at)}</span>
+        </button>`).join("")}</div>`;
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Recent activity</h2>
+      <span class="count">The last few things that happened, newest first</span></div>
+    ${body}</div>`;
 }
 
 function dashView(){
   if(!PKGS) return `<div class="card"><div class="empty">Loading the dashboard&hellip;</div></div>`;
   const active = (PKGS.packages || []);
-  return `${dashBands()}${nextActionsHtml()}${outNowHtml()}
+  return `${dashBands()}${nextActionsHtml()}${outNowHtml()}${recentActivityHtml()}
     <div class="card">
       <div class="bar"><h2 style="margin:0">Case packages</h2>
         <span class="count">At-a-glance progress for active cases</span>
@@ -3404,18 +3551,24 @@ function casesView(){
   //
   // The client/carrier column is admin-only: the Worker does not send those
   // fields to an investigator at all, so there is nothing to put in it.
+  /* UNIT 5 — on a phone this table kept 187px of every row behind an inner
+     scroll (measured at 320px). Under 560px the rows draw as stacked records:
+     same markup, same handlers, every cell readable — including the columns
+     `.hide` drops, which a stacked record has room for. `data-l` is the label
+     the stacked cell prints over itself; the table header still owns the
+     desktop names. */
   const body = rows.map(c => `
     <tr class="click" data-act="openCase" data-case="${esc(c.case_no)}">
-      <td class="mono">${esc(c.case_no)}</td>
-      <td class="hide">${when(c.created_at)}</td>
-      <td><span class="tag ${c.kind === "claims" ? "claims" : "consumer"}">${c.kind === "claims" ? "Claim" : "Client"}</span>${
+      <td class="mono" data-l="Case">${esc(c.case_no)}</td>
+      <td class="hide" data-l="Received">${when(c.created_at)}</td>
+      <td data-l="Type"><span class="tag ${c.kind === "claims" ? "claims" : "consumer"}">${c.kind === "claims" ? "Claim" : "Client"}</span>${
         isDemo(c.case_no) ? '<span class="tag demo-tag">Test</span>' : ""}</td>
-      ${admin ? `<td>${esc(c.kind === "claims" ? (c.carrier || "—") : (c.client_name || "—"))}
+      ${admin ? `<td data-l="Client / carrier">${esc(c.kind === "claims" ? (c.carrier || "—") : (c.client_name || "—"))}
           ${c.claim_number ? `<div class="mono">${esc(c.claim_number)}</div>` : ""}</td>
-      <td class="hide">${esc(c.subject_name || "—")}</td>`
-      : `<td>${esc(c.subject_name || "—")}</td>`}
-      <td><span class="tag ${esc(c.stage || c.status)}">${esc(label(c.stage || c.status))}</span></td>
-      ${admin ? `<td class="hide">${esc(c.assigned_name || "—")}</td>` : ""}
+      <td class="hide" data-l="Subject">${esc(c.subject_name || "—")}</td>`
+      : `<td data-l="Subject">${esc(c.subject_name || "—")}</td>`}
+      <td data-l="Status"><span class="tag ${esc(c.stage || c.status)}">${esc(label(c.stage || c.status))}</span></td>
+      ${admin ? `<td class="hide" data-l="Assigned">${esc(c.assigned_name || "—")}</td>` : ""}
     </tr>`).join("");
 
   const more = srcTotal > src.length
@@ -3453,7 +3606,7 @@ function casesView(){
     ${lens}
     ${recentStripHtml()}
     ${more}
-    ${rows.length ? `<div style="overflow-x:auto"><table>
+    ${rows.length ? `<div class="stacktbl" style="overflow-x:auto"><table>
       <thead><tr><th>Case</th><th class="hide">Received</th><th>Type</th>
       ${admin ? `<th>Client / carrier</th><th class="hide">Subject</th>` : `<th>Subject</th>`}
       <th>Status</th>${admin ? `<th class="hide">Assigned</th>` : ""}</tr></thead>
@@ -7118,6 +7271,7 @@ async function render(){
     // Packages already use. Landed on, not only clicked into, for the reason
     // directly above.
     if((TAB === "dashboard" || TAB === "delivery") && !COMPLETED) loadCompleted();
+    if(TAB === "dashboard" && ME.role === "admin" && !RECENT && !RECENT_ERR) loadRecent();
     // Same rule for who-is-out: landed on, not only clicked into.
     try{ OUT_NOW = await api("/active"); }catch(e){ OUT_NOW = null; }
   }
@@ -12581,7 +12735,10 @@ document.addEventListener("click", ev => {
   if(!el) return;
   const act = el.dataset.act;
   if(act === "backToCases"){ VIEW = "list"; render(); }
-  else if(act === "navToggle"){ document.body.classList.toggle("navopen"); }
+  else if(act === "navToggle"){
+    const open = document.body.classList.toggle("navopen");
+    const bg = $("burger"); if(bg) bg.setAttribute("aria-expanded", open ? "true" : "false");
+  }
   else if(act === "pkgJump"){ openCase(el.dataset.case, el.dataset.tab === "overview" ? undefined : el.dataset.tab); }
   /* The top-level door into the field view (owner, 2026-08-14). It used to
      exist ONLY inside a case's Overview tab, so on an iPad you had to open
@@ -12600,7 +12757,7 @@ document.addEventListener("click", ev => {
     /* The send history is admin-only and lives beside the pre-case sends, so it
        is fetched when that screen is opened rather than held from sign-in. */
     if(TAB === "sheets" && ME.role === "admin"){ SEND_MSG = ""; loadSends(); }
-    if(TAB === "dashboard"){ PKGS = null; loadPackages(); loadCompleted(); }
+    if(TAB === "dashboard"){ PKGS = null; loadPackages(); loadCompleted(); RECENT = null; loadRecent(); }
     /* Reports & Packages reads the two routes it is assembled from, both
        admin-only in the Worker. Fetched on arrival for the same reason the
        dashboard refetches: a stale package stage is a wrong next step. */
