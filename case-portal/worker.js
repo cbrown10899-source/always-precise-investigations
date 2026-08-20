@@ -777,6 +777,69 @@ const LEGAL_ASSIGNMENTS = ['Surveillance', 'Locate / Skip trace', 'Background in
   'Witness locate / interview', 'Domestic / custody investigation', 'Civil investigation',
   'Evidence / documentation', 'Process / service support', 'Other / custom assignment'];
 
+/* ---------------------------------------------- UNIT 7: client profiles
+
+   A PROFILE IS A REUSABLE DEFAULT, A CASE IS A SNAPSHOT (PROFILES.md). These
+   constants are the vocabulary; none of them is a CHECK constraint in the
+   schema, for the reason written above legal_intake and payment_methods —
+   schema.sql is re-applied on every portal-setup run and cannot widen one.
+
+   `kind` is also IMMUTABLE after creation. A firm with history must not be
+   re-typed into a private client: the directory lenses, the prefill mapping
+   and the roles below all key off it, and the honest correction is to
+   deactivate and create the right one. Nothing reads `kind` from an edit. */
+const PROFILE_KINDS = {
+  law_firm:       'Law firm',
+  insurance_org:  'Insurance / organization',
+  private_client: 'Private client',
+};
+/* The roles differ BY KIND, which is the second reason a CHECK could not have
+   carried them: one column's constraint would have to be the union of both
+   lists, and would then happily accept Adjuster on a law firm. */
+const PROFILE_ROLES = {
+  law_firm:       ['Attorney', 'Paralegal', 'Legal Assistant', 'Billing Contact', 'Office Manager', 'Other'],
+  insurance_org:  ['Adjuster', 'Claims Examiner', 'SIU Contact', 'Attorney', 'Billing Contact', 'Other'],
+  private_client: ['Primary contact', 'Billing Contact', 'Other'],
+};
+/* The phone labels are `PHONE_LABELS`, declared once for case_phone further
+   down and reused here rather than copied: mobile/work/home/other is the
+   owner's approved set on both sides, and two copies of one vocabulary drift. */
+const PROFILE_TABLES = ['profile', 'profile_contact', 'profile_phone', 'case_profile'];
+
+/* Normalisation for COMPARISON ONLY, and deliberately not clever. It folds
+   case, punctuation and every kind of space — including the non-breaking and
+   zero-width ones that produced four separate defects in the send-context
+   work — and does nothing else.
+
+   What it must NOT do is the load-bearing half: no stripping of LLC/PC/Group,
+   no St→Street, no Gmail dot or plus-tag removal. Every one of those is
+   inference dressed as tidying, and each is exactly how "Smith Law" and
+   "Smith Law Group" would become one key — the thing the owner named and
+   forbade. The comparison only ever SURFACES candidates to a person. */
+const normText = v => String(v == null ? '' : v)
+  .replace(/[\u00a0\u1680\u2000-\u200d\u202f\u205f\u3000\ufeff]/g, ' ')
+  .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const normDigits = v => String(v == null ? '' : v).replace(/\D+/g, '');
+/* Two numbers are the same when their last ten digits are — a leading 1 or a
+   +1 must not defeat a match, and nothing shorter than ten digits is compared
+   loosely at all. */
+const samePhone = (a, b) => {
+  const x = normDigits(a), y = normDigits(b);
+  if (!x || !y) return false;
+  return (x.length >= 10 && y.length >= 10) ? x.slice(-10) === y.slice(-10) : x === y;
+};
+const cleanProfileText = v => String(v == null ? '' : v)
+  .replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, 2000) || null;
+
+/** Which of the four profile tables are absent. schema.sql arrives by a MANUAL
+    portal-setup dispatch while the Worker deploys on push, so between the two
+    these do not exist — every read degrades and the writes 503 by name. */
+async function profilesMissing(env) {
+  const missing = await missingTables(env);
+  return PROFILE_TABLES.filter(t => missing.includes(t));
+}
+const profilesReady = async env => (await profilesMissing(env)).length === 0;
+
 /* The inverse: which product a context sends. Declared rather than derived with
    a ternary, because a ternary has to pick a side for anything it does not
    recognise and the wrong side here is the one carrying payment methods. This
@@ -1635,8 +1698,15 @@ async function createManualIntake(request, env, user) {
       if (legal && !(await missingTables(env)).includes('legal_intake')) {
         try { await writeLegalRow(env, caseNo, payload, user.id); } catch { /* payload holds it */ }
       }
+      /* UNIT 7 — THE PROFILE IS RECORDED AFTER THE CASE IS WRITTEN, AND FROM
+         THE BODY ONLY. Prefill happened in the browser: whatever the office
+         left in those inputs is what went into `payload` above, so an edit
+         made on the way through is an edit to THIS assignment and nothing
+         else. Nothing re-reads the profile to build the case, and nothing
+         writes back to it — the link row is provenance. */
+      const prof = await profileOnCreate(env, caseNo, body, payload, kind, legal, user);
       await notifyAdmins(env, 'intakes', caseNo);
-      return json({ ok: true, case_no: caseNo, legal }, 201);
+      return json({ ok: true, case_no: caseNo, legal, ...prof }, 201);
     } catch (e) {
       if (!String(e).includes('UNIQUE')) throw e;
     }
@@ -3850,6 +3920,12 @@ async function caseWorkspace(env, user, caseNo) {
        every one of these fields names the paying side. The subject fields the
        field needs ride the ordinary payload allow-list, not this. */
     legal: admin ? await legalFor(env, caseNo) : undefined,
+    /* UNIT 7 — which saved profile this assignment came from, and (only when
+       there is none) the possible match computed from the case's own values.
+       ADMIN ONLY for the same reason as the line above: a profile IS the
+       paying side. An investigator gets no key at all, so the field does not
+       reach their browser to be read out of the network tab. */
+    profile: admin ? await caseProfileFor(env, caseNo) : undefined,
     tasks: tasks || [],
     offers: offers || [],
     my_offer: myOffer || null,
@@ -3900,6 +3976,875 @@ async function setLegalDetail(request, env, user, caseNo) {
        updated_by = ?, updated_at = ? WHERE case_no = ?`)
     .bind(...mentioned.map(f => vals[f]), user.id, nowIso(), caseNo).run();
   return json({ ok: true, legal: await legalFor(env, caseNo) });
+}
+
+/* ======================================================================
+   REPEAT CLIENT / FIRM PROFILES (Unit 7 — the derivations are in
+   case-portal/PROFILES.md, one per entry).
+
+   THE WHOLE ARCHITECTURE IN ONE SENTENCE: a profile is a reusable DEFAULT,
+   a case is a SNAPSHOT, and the only thing connecting them is one explicit
+   `case_profile` row. Prefill copies profile values into the assignment form;
+   `createManualIntake` writes the case from the form BODY exactly as it always
+   did; no case read joins a profile. So "editing a firm must not rewrite prior
+   cases" is a property of the shape rather than a rule to remember — there is
+   no code path by which it could.
+
+   AND NOTHING HERE INFERS. A possible match is computed only when an admin is
+   looking at the question, and every outcome is a button they press. There is
+   no merge routine, no upsert and no writer that puts submitted values into an
+   existing profile — "never auto-merge" is the absence of the code, not a
+   guard in front of it. The recipientIsCarrier() history is why.
+   ====================================================================== */
+
+const NO_PROFILES = 'The client profile tables are not on this database yet. '
+  + 'Run the portal-setup workflow once and try again — nothing else is affected.';
+
+/** One profile with its people and their numbers. Three queries, never one per
+    contact: the phones come back for the whole profile in a single read and
+    are attached in memory. */
+async function profileDetail(env, id) {
+  if (!(await profilesReady(env))) return null;
+  const p = await env.DB.prepare('SELECT * FROM profile WHERE id = ?').bind(id).first();
+  if (!p) return null;
+  const { results: contacts } = await env.DB.prepare(
+    `SELECT id, first_name, last_name, role, email, preferred, active, position, notes
+       FROM profile_contact WHERE profile_id = ? ORDER BY active DESC, position, id`)
+    .bind(id).all();
+  const { results: phones } = await env.DB.prepare(
+    `SELECT id, contact_id, label, number, position FROM profile_phone
+      WHERE profile_id = ? ORDER BY position, id`).bind(id).all();
+  const own = [], byContact = new Map();
+  for (const ph of phones || []) {
+    const entry = { id: ph.id, label: ph.label || '', number: ph.number };
+    if (ph.contact_id == null) own.push(entry);
+    else {
+      const k = String(ph.contact_id);
+      if (!byContact.has(k)) byContact.set(k, []);
+      byContact.get(k).push(entry);
+    }
+  }
+  return {
+    ...p,
+    kind_label: PROFILE_KINDS[p.kind] || p.kind,
+    phones: own,
+    contacts: (contacts || []).map(c => ({ ...c, phones: byContact.get(String(c.id)) || [] })),
+  };
+}
+
+/** The cases this profile has been used on. The reverse read of the ONE link
+    table — cheap, indexed and capped, and it holds no copy of anything.
+    A deleted case is out (it is out of every ordinary view); an archived one
+    stays, badged, because a firm's history is the point of the list. */
+async function profileMatters(env, id, limit = 10) {
+  const missing = await missingTables(env);
+  const deletedCut = missing.includes('case_deleted') ? ''
+    : 'AND cp.case_no NOT IN (SELECT case_no FROM case_deleted)';
+  const archived = missing.includes('case_archive') ? '0'
+    : '(SELECT COUNT(*) FROM case_archive a WHERE a.case_no = cp.case_no)';
+  /* The legal marker rides along, because a legal case IS kind='consumer' —
+     a Type column reading `kind` alone labelled every law firm's matters
+     "Private", on the law firm's own screen. Same category fact the lead card
+     and the case list already carry. */
+  const { results } = await env.DB.prepare(
+    `SELECT cp.case_no, cp.linked_at, cp.source, s.kind, s.status, s.client_name,
+            s.created_at, ${archived} AS archived,
+            CASE WHEN json_valid(s.payload) AND json_extract(s.payload, '$.assignment') = 'legal'
+                 THEN 1 ELSE 0 END AS legal
+       FROM case_profile cp JOIN submissions s ON s.case_no = cp.case_no
+      WHERE cp.profile_id = ? ${deletedCut}
+      ORDER BY s.created_at DESC LIMIT ?`).bind(id, limit).all();
+  return (results || []).map(r => ({ ...r, archived: !!Number(r.archived), legal: !!Number(r.legal) }));
+}
+
+/* THE DUPLICATE WARNING. Returns candidates and WHY each one surfaced, so the
+   office reads "same phone number" rather than a bare list it has to work out.
+   It never returns a decision: `POST /profiles` refuses without an explicit
+   confirm_new, and there is nothing it could call to merge if it wanted to.
+
+   Inactive profiles are INCLUDED deliberately. A duplicate check that skips
+   them manufactures the duplicate it exists to prevent, the first time an old
+   firm comes back. */
+async function profileMatchesFor(env, { name, email, phone, address, exclude } = {}) {
+  if (!(await profilesReady(env))) return [];
+  const nn = normText(name), ne = String(email || '').trim().toLowerCase();
+  const na = normText(address), nd = normDigits(phone);
+  const hits = new Map();
+  const add = (row, why) => {
+    if (!row || (exclude && Number(row.id) === Number(exclude))) return;
+    const k = String(row.id);
+    if (!hits.has(k)) hits.set(k, { id: row.id, kind: row.kind, name: row.name, active: !!row.active, why: [] });
+    if (!hits.get(k).why.includes(why)) hits.get(k).why.push(why);
+  };
+
+  if (nn) {
+    /* Exact normalised equality, then containment either way — "Smith Law"
+       inside "Smith Law Group" and the reverse. Containment is a SUGGESTION
+       and is never treated as sameness; the office decides. Guarded at four
+       characters so "law" does not match the whole directory. */
+    const { results } = await env.DB.prepare(
+      `SELECT id, kind, name, name_norm, active FROM profile
+        WHERE name_norm = ?1 OR (LENGTH(?1) >= 4 AND name_norm LIKE '%' || ?1 || '%')
+           OR (LENGTH(name_norm) >= 4 AND INSTR(?1, name_norm) > 0)
+        LIMIT 25`).bind(nn).all();
+    for (const r of results || []) add(r, r.name_norm === nn ? 'name' : 'similar_name');
+  }
+  if (ne) {
+    const { results } = await env.DB.prepare(
+      `SELECT id, kind, name, active FROM profile WHERE LOWER(TRIM(email)) = ? LIMIT 25`)
+      .bind(ne).all();
+    for (const r of results || []) add(r, 'email');
+    const { results: cc } = await env.DB.prepare(
+      `SELECT p.id, p.kind, p.name, p.active FROM profile_contact c
+         JOIN profile p ON p.id = c.profile_id
+        WHERE LOWER(TRIM(c.email)) = ? LIMIT 25`).bind(ne).all();
+    for (const r of cc || []) add(r, 'contact_email');
+  }
+  if (nd.length >= 7) {
+    /* Matched on the last ten digits, so formatting and a leading 1 cannot
+       defeat it. The stored `digits` column is what makes this an index read
+       rather than string surgery in SQL, which D1 has no regex for anyway. */
+    const tail = nd.slice(-10);
+    const { results } = await env.DB.prepare(
+      `SELECT DISTINCT p.id, p.kind, p.name, p.active FROM profile_phone ph
+         JOIN profile p ON p.id = ph.profile_id
+        WHERE ph.digits LIKE '%' || ? LIMIT 25`).bind(tail).all();
+    for (const r of results || []) add(r, 'phone');
+  }
+  if (na && na.length >= 8) {
+    /* An indexed equality on the stored normalised column, like the name.
+       It began as a bounded scan — SELECT ... LIMIT 400 — on the reasoning
+       that an address is the weakest signal and not worth an index. That was
+       wrong in the way that matters: the limit had no ORDER BY and no relation
+       to the address being compared, so past four hundred addressed profiles
+       the arm silently stopped finding anything, and it failed toward CREATING
+       the duplicate the check exists to prevent. A signal that quietly switches
+       off as the directory grows is worse than no signal. */
+    const { results } = await env.DB.prepare(
+      `SELECT id, kind, name, active FROM profile WHERE address_norm = ? LIMIT 25`)
+      .bind(na).all();
+    for (const r of results || []) add(r, 'address');
+  }
+  return [...hits.values()].slice(0, 10);
+}
+
+/* The directory and the picker are the SAME read, which is why the two can
+   never disagree about what a search finds. The contacts, phones and case
+   counts for the whole result set come back in one query each — never one per
+   profile.
+
+   WHAT THE SEARCH ARMS ACTUALLY COST, said plainly rather than claimed away:
+   a substring search is `LIKE '%x%'`, and no index can seek that, so each arm
+   reads its table. That is the deliberate trade for an admin-only, debounced
+   search over a directory of hundreds — and it is bounded on both ends: each
+   arm takes at most CANDIDATE_CAP ids, and the page itself is capped below.
+   The lookups that CAN be indexed — the duplicate check's name, address and
+   phone equalities — are, and those are the ones that run without a person
+   asking for them.
+
+   THE CAP IS NOT COSMETIC. D1 allows a limited number of bound parameters in
+   one statement (100 at the time of writing), and the `id IN (...)` list below
+   is built from the arms above — so an unbounded candidate set is a statement
+   that grows with the customer's data and fails only in production, which
+   node:sqlite would never show. Capped here, where the number is visible. */
+const CANDIDATE_CAP = 40;
+/* And the page itself, because the per-row reads bind one id each. */
+const PAGE_CAP = 60;
+async function searchProfiles(env, { q = '', kind = '', includeInactive = false, limit = 60 } = {}) {
+  if (!(await profilesReady(env))) return { profiles: [], not_set_up: true };
+  const term = String(q || '').trim();
+  const nq = normText(term), dq = normDigits(term);
+  const raw = term.toLowerCase();
+  let ids = null;
+
+  if (term) {
+    ids = new Set();
+    const take = rs => {
+      for (const r of rs || []) { if (ids.size >= CANDIDATE_CAP) return; ids.add(Number(r.id)); }
+    };
+    const { results: byName } = await env.DB.prepare(
+      `SELECT id FROM profile WHERE name_norm LIKE '%' || ? || '%' LIMIT ${CANDIDATE_CAP}`).bind(nq).all();
+    take(byName);
+    if (raw.includes('@') || raw.length >= 3) {
+      /* The org's own fields, INCLUDING the billing desk — the owner's list of
+         searchable fields names the billing contact, and one typed into the
+         profile's billing fields rather than added as a person was unfindable. */
+      const { results: byEmail } = await env.DB.prepare(
+        `SELECT id FROM profile
+          WHERE (email IS NOT NULL AND LOWER(email) LIKE '%' || ?1 || '%')
+             OR (billing_email IS NOT NULL AND LOWER(billing_email) LIKE '%' || ?1 || '%')
+             OR (billing_name IS NOT NULL AND LOWER(billing_name) LIKE '%' || ?1 || '%')
+          LIMIT ${CANDIDATE_CAP}`)
+        .bind(raw).all();
+      take(byEmail);
+      const { results: byContact } = await env.DB.prepare(
+        `SELECT DISTINCT profile_id AS id FROM profile_contact
+          WHERE name_norm LIKE '%' || ?1 || '%'
+             OR (email IS NOT NULL AND LOWER(email) LIKE '%' || ?2 || '%') LIMIT ${CANDIDATE_CAP}`)
+        .bind(nq, raw).all();
+      take(byContact);
+    }
+    if (dq.length >= 3) {
+      const { results: byPhone } = await env.DB.prepare(
+        `SELECT DISTINCT profile_id AS id FROM profile_phone WHERE digits LIKE '%' || ? || '%' LIMIT ${CANDIDATE_CAP}`)
+        .bind(dq).all();
+      take(byPhone);
+    }
+    if (!ids.size) return { profiles: [] };
+  }
+
+  const where = [], binds = [];
+  if (ids) { where.push(`id IN (${[...ids].map(() => '?').join(',')})`); binds.push(...ids); }
+  if (kind && PROFILE_KINDS[kind]) { where.push('kind = ?'); binds.push(kind); }
+  if (!includeInactive) where.push('active = 1');
+  const { results } = await env.DB.prepare(
+    `SELECT id, kind, name, email, address, active, payment_arrangement
+       FROM profile ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+      ORDER BY active DESC, name COLLATE NOCASE LIMIT ?`)
+    .bind(...binds, Math.min(PAGE_CAP, limit)).all();
+  const rows = results || [];
+  if (!rows.length) return { profiles: [] };
+
+  /* Two reads for the whole page, not two per row. */
+  const inList = rows.map(() => '?').join(',');
+  const rowIds = rows.map(r => r.id);
+  const { results: contacts } = await env.DB.prepare(
+    `SELECT id, profile_id, first_name, last_name, role, email, preferred, active
+       FROM profile_contact WHERE profile_id IN (${inList}) AND active = 1
+      ORDER BY preferred DESC, position, id`).bind(...rowIds).all();
+  const { results: phones } = await env.DB.prepare(
+    `SELECT id, profile_id, contact_id, label, number FROM profile_phone
+      WHERE profile_id IN (${inList}) ORDER BY position, id`).bind(...rowIds).all();
+  const { results: counts } = await env.DB.prepare(
+    `SELECT profile_id, COUNT(*) AS n FROM case_profile
+      WHERE profile_id IN (${inList}) GROUP BY profile_id`).bind(...rowIds).all();
+
+  const cIdx = new Map(), pOwn = new Map(), pFor = new Map(), nCase = new Map();
+  for (const c of contacts || []) {
+    const k = String(c.profile_id);
+    if (!cIdx.has(k)) cIdx.set(k, []);
+    cIdx.get(k).push(c);
+  }
+  for (const ph of phones || []) {
+    const entry = { id: ph.id, label: ph.label || '', number: ph.number };
+    if (ph.contact_id == null) {
+      const k = String(ph.profile_id);
+      if (!pOwn.has(k)) pOwn.set(k, []);
+      pOwn.get(k).push(entry);
+    } else {
+      const k = String(ph.contact_id);
+      if (!pFor.has(k)) pFor.set(k, []);
+      pFor.get(k).push(entry);
+    }
+  }
+  for (const c of counts || []) nCase.set(String(c.profile_id), Number(c.n) || 0);
+
+  return {
+    profiles: rows.map(r => ({
+      ...r,
+      active: !!r.active,
+      kind_label: PROFILE_KINDS[r.kind] || r.kind,
+      phones: pOwn.get(String(r.id)) || [],
+      contacts: (cIdx.get(String(r.id)) || []).map(c => ({
+        ...c, preferred: !!c.preferred, active: !!c.active,
+        phones: pFor.get(String(c.id)) || [],
+      })),
+      case_count: nCase.get(String(r.id)) || 0,
+    })),
+  };
+}
+
+/* A phone list, replaced wholesale — the `saveCasePhones` rule, and for the
+   same reason: the office edits a list as a list, and a diff would only be a
+   way to get it wrong. `digits` is written here, beside the number, so the
+   search key can never be missing from a row that exists. */
+async function saveProfilePhones(env, profileId, contactId, list) {
+  const del = contactId == null
+    ? env.DB.prepare('DELETE FROM profile_phone WHERE profile_id = ? AND contact_id IS NULL').bind(profileId)
+    : env.DB.prepare('DELETE FROM profile_phone WHERE profile_id = ? AND contact_id = ?').bind(profileId, contactId);
+  await del.run();
+  const now = nowIso();
+  let i = 0;
+  for (const p of Array.isArray(list) ? list : []) {
+    const number = cleanPhone(p && p.number);
+    if (!number) continue;
+    const label = PHONE_LABELS.includes(String(p.label || '').toLowerCase())
+      ? String(p.label).toLowerCase() : null;
+    await env.DB.prepare(
+      `INSERT INTO profile_phone (profile_id, contact_id, label, number, digits, position, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(profileId, contactId, label, number, normDigits(number), i++, now, now).run();
+  }
+  return i;
+}
+
+/* PROFILE FIELDS, once. `kind` is NOT here: it is set at creation and never
+   read from an edit (PROFILES.md D2). Neither is anything with a figure in
+   it — there is no retainer, rate or matter number on a profile, so the
+   authoritative pricing source stays the only one. */
+const PROFILE_FIELDS = ['name', 'email', 'address', 'billing_name', 'billing_email',
+  'payment_arrangement', 'notes'];
+
+function readProfileBody(body, kind) {
+  const out = {};
+  for (const f of PROFILE_FIELDS) {
+    if (body[f] === undefined) continue;
+    out[f] = cleanProfileText(body[f]);
+  }
+  if (out.payment_arrangement) {
+    /* The one commercial default a profile carries, and it is an ARRANGEMENT
+       rather than a payment — the same four the case panel validates against,
+       and law firms only. It prefills a select; it can never mark anything
+       paid, and nothing here touches retainer_payment. */
+    if (kind !== 'law_firm') return { error: 'A payment arrangement is a law-firm preference — '
+      + 'insurance and private clients are billed under their own existing rules.' };
+    if (!LEGAL_ARRANGEMENTS[out.payment_arrangement]) {
+      return { error: 'Pick one of the four legal payment arrangements.' };
+    }
+  }
+  return { out };
+}
+
+async function listProfilesRoute(request, env) {
+  const url = new URL(request.url);
+  const missing = await profilesMissing(env);
+  if (missing.length) {
+    return json({ profiles: [], not_set_up: true, missing,
+      note: NO_PROFILES }, 200);
+  }
+  const out = await searchProfiles(env, {
+    q: url.searchParams.get('q') || '',
+    kind: url.searchParams.get('kind') || '',
+    includeInactive: url.searchParams.get('inactive') === '1',
+    /* Bounded for the same reason CANDIDATE_CAP is: `limit` binds a parameter
+       per row in the contact, phone and count reads below. */
+    limit: Math.min(PAGE_CAP, Number(url.searchParams.get('limit')) || 60),
+  });
+  return json({ ...out, kinds: PROFILE_KINDS, roles: PROFILE_ROLES, phone_labels: PHONE_LABELS });
+}
+
+async function getProfileRoute(env, id) {
+  if ((await profilesMissing(env)).length) return json({ error: NO_PROFILES, code: 'not_set_up' }, 503);
+  const p = await profileDetail(env, id);
+  if (!p) return json({ error: 'not found' }, 404);
+  return json({ profile: p, matters: await profileMatters(env, id),
+    roles: PROFILE_ROLES[p.kind] || PROFILE_ROLES.law_firm, phone_labels: PHONE_LABELS });
+}
+
+/* CREATE. Always an INSERT — there is deliberately no upsert here, so no
+   request can rewrite an existing profile by resembling it.
+
+   A possible match REFUSES the write and names what matched. The office then
+   either uses the existing profile or posts again with confirm_new, which is
+   the owner's "Use Existing / Continue as New" as two different requests
+   rather than a flag someone could default to true. */
+async function createProfile(request, env, user) {
+  if ((await profilesMissing(env)).length) return json({ error: NO_PROFILES, code: 'not_set_up' }, 503);
+  const body = await readJson(request);
+  const kind = String(body.kind || '');
+  if (!PROFILE_KINDS[kind]) {
+    return json({ error: 'Pick a profile type: law firm, insurance / organization, or private client.' }, 400);
+  }
+  const read = readProfileBody(body, kind);
+  if (read.error) return json({ error: read.error }, 400);
+  const vals = read.out;
+  if (!vals.name) {
+    return json({ error: kind === 'private_client' ? 'Name the client.'
+      : kind === 'law_firm' ? 'Name the law firm.' : 'Name the carrier or organization.' }, 400);
+  }
+
+  const firstPhone = Array.isArray(body.phones) && body.phones.length ? body.phones[0].number : body.phone;
+  if (!body.confirm_new) {
+    const matches = await profileMatchesFor(env, {
+      name: vals.name, email: vals.email, phone: firstPhone, address: vals.address });
+    if (matches.length) {
+      return json({ error: 'Possible existing profile.', code: 'possible_duplicate', matches }, 409);
+    }
+  }
+
+  const now = nowIso();
+  const res = await env.DB.prepare(
+    `INSERT INTO profile (kind, name, name_norm, email, address, address_norm, billing_name,
+       billing_email, payment_arrangement, notes, active, created_by, created_at, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`)
+    .bind(kind, vals.name, normText(vals.name), vals.email || null, vals.address || null,
+      normText(vals.address), vals.billing_name || null, vals.billing_email || null,
+      vals.payment_arrangement || null, vals.notes || null, user.id, now, user.id, now).run();
+  const id = res.meta.last_row_id;
+
+  const phones = Array.isArray(body.phones) ? body.phones
+    : (body.phone ? [{ number: body.phone, label: body.phone_label }] : []);
+  await saveProfilePhones(env, id, null, phones);
+  for (const c of Array.isArray(body.contacts) ? body.contacts : []) {
+    await insertContact(env, id, c, user);
+  }
+  return json({ ok: true, profile: await profileDetail(env, id) }, 201);
+}
+
+/** One contact row plus its numbers. Shared by create-with-contacts and the
+    add-a-contact route so a contact is written in exactly one place. */
+async function insertContact(env, profileId, c, user) {
+  if (!c || typeof c !== 'object') return null;
+  const first = cleanProfileText(c.first_name), last = cleanProfileText(c.last_name);
+  if (!first && !last) return null;
+  const now = nowIso();
+  const preferred = c.preferred ? 1 : 0;
+  if (preferred) {
+    /* One preferred per profile, and the index enforces it — this clears the
+       old one so setting a new preferred is not a refusal. */
+    await env.DB.prepare('UPDATE profile_contact SET preferred = 0 WHERE profile_id = ?')
+      .bind(profileId).run();
+  }
+  const pos = await env.DB.prepare(
+    'SELECT COALESCE(MAX(position), -1) + 1 AS n FROM profile_contact WHERE profile_id = ?')
+    .bind(profileId).first();
+  const res = await env.DB.prepare(
+    `INSERT INTO profile_contact (profile_id, first_name, last_name, name_norm, role, email,
+       preferred, active, position, notes, created_by, created_at, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`)
+    .bind(profileId, first, last, normText(`${first || ''} ${last || ''}`),
+      cleanProfileText(c.role), cleanProfileText(c.email), preferred,
+      Number(pos && pos.n) || 0, cleanProfileText(c.notes), user.id, now, user.id, now).run();
+  const id = res.meta.last_row_id;
+  const phones = Array.isArray(c.phones) ? c.phones
+    : (c.phone ? [{ number: c.phone, label: c.phone_label }] : []);
+  await saveProfilePhones(env, profileId, id, phones);
+  return id;
+}
+
+/* EDIT. The /meta write rules: an absent key means unchanged, a blank string
+   clears, and the untouched columns are resolved INSIDE the UPDATE rather than
+   read a moment earlier — two admins posting different subsets must not
+   interleave into a silent loss. `kind` is never read. */
+async function updateProfile(request, env, user, id) {
+  if ((await profilesMissing(env)).length) return json({ error: NO_PROFILES, code: 'not_set_up' }, 503);
+  const row = await env.DB.prepare('SELECT id, kind FROM profile WHERE id = ?').bind(id).first();
+  if (!row) return json({ error: 'not found' }, 404);
+  const body = await readJson(request);
+  const read = readProfileBody(body, row.kind);
+  if (read.error) return json({ error: read.error }, 400);
+  const vals = read.out;
+  if (body.name !== undefined && !vals.name) return json({ error: 'A profile needs a name.' }, 400);
+
+  /* A RENAME IS A CREATE, FOR THIS PURPOSE. Without this, the one door the
+     duplicate check does not guard is editing firm A's name into firm B's —
+     which lands exactly where "never merge, never guess" is trying not to be,
+     just by a different route. `exclude` keeps a profile from matching itself. */
+  if (!body.confirm_new && (vals.name !== undefined || vals.email !== undefined
+      || vals.address !== undefined || Array.isArray(body.phones))) {
+    const firstPhone = Array.isArray(body.phones) && body.phones.length ? body.phones[0].number : null;
+    const matches = await profileMatchesFor(env, {
+      name: vals.name, email: vals.email, address: vals.address, phone: firstPhone, exclude: id });
+    if (matches.length) {
+      return json({ error: 'Possible existing profile.', code: 'possible_duplicate', matches }, 409);
+    }
+  }
+
+  const sets = [], binds = [];
+  for (const f of PROFILE_FIELDS) {
+    if (vals[f] === undefined) continue;
+    sets.push(`${f} = ?`); binds.push(vals[f]);
+    /* The derived columns move with their source in the same statement. A
+       normalised copy written by only two of three writers is the stale
+       duplicate-of-a-boundary this project already refuses elsewhere. */
+    if (f === 'name') { sets.push('name_norm = ?'); binds.push(normText(vals[f])); }
+    if (f === 'address') { sets.push('address_norm = ?'); binds.push(normText(vals[f])); }
+  }
+  if (body.active !== undefined) { sets.push('active = ?'); binds.push(body.active ? 1 : 0); }
+  if (Array.isArray(body.phones)) await saveProfilePhones(env, id, null, body.phones);
+  if (sets.length) {
+    await env.DB.prepare(
+      `UPDATE profile SET ${sets.join(', ')}, updated_by = ?, updated_at = ? WHERE id = ?`)
+      .bind(...binds, user.id, nowIso(), id).run();
+  } else if (!Array.isArray(body.phones)) {
+    return json({ error: 'Nothing to change.' }, 400);
+  }
+  return json({ ok: true, profile: await profileDetail(env, id) });
+}
+
+/* ADD A CONTACT. A likely duplicate WARNS and does not write; posting again
+   with confirm_new writes it, because two people at a firm really can share a
+   name and the owner said so explicitly. Nothing merges either way. */
+async function addProfileContact(request, env, user, id) {
+  if ((await profilesMissing(env)).length) return json({ error: NO_PROFILES, code: 'not_set_up' }, 503);
+  const p = await env.DB.prepare('SELECT id FROM profile WHERE id = ?').bind(id).first();
+  if (!p) return json({ error: 'not found' }, 404);
+  const body = await readJson(request);
+  const first = cleanProfileText(body.first_name), last = cleanProfileText(body.last_name);
+  if (!first && !last) return json({ error: 'A contact needs a first or last name.' }, 400);
+
+  if (!body.confirm_new) {
+    const dupes = await contactDuplicates(env, id, body);
+    if (dupes.length) {
+      return json({ error: 'Possible duplicate contact.', code: 'possible_duplicate_contact',
+        matches: dupes }, 409);
+    }
+  }
+  const cid = await insertContact(env, id, body, user);
+  return json({ ok: true, contact_id: cid, profile: await profileDetail(env, id) }, 201);
+}
+
+/** Obvious duplicates WITHIN one organisation: the same email, the same
+    number, or the same name. Returns what matched and never acts on it. */
+async function contactDuplicates(env, profileId, c, excludeId) {
+  const ne = String(c.email || '').trim().toLowerCase();
+  const nn = normText(`${c.first_name || ''} ${c.last_name || ''}`);
+  const phone = Array.isArray(c.phones) && c.phones.length ? c.phones[0].number : c.phone;
+  const nd = normDigits(phone);
+  const { results } = await env.DB.prepare(
+    `SELECT id, first_name, last_name, role, email, name_norm FROM profile_contact
+      WHERE profile_id = ? AND active = 1`).bind(profileId).all();
+  const out = [];
+  for (const r of results || []) {
+    if (excludeId && Number(r.id) === Number(excludeId)) continue;
+    const why = [];
+    if (ne && String(r.email || '').trim().toLowerCase() === ne) why.push('email');
+    if (nn && r.name_norm === nn) why.push('name');
+    if (why.length) out.push({ id: r.id, first_name: r.first_name, last_name: r.last_name,
+      role: r.role, email: r.email, why });
+  }
+  if (nd.length >= 7 && out.length < 5) {
+    const tail = nd.slice(-10);
+    const { results: ph } = await env.DB.prepare(
+      `SELECT DISTINCT c.id, c.first_name, c.last_name, c.role, c.email FROM profile_phone p
+         JOIN profile_contact c ON c.id = p.contact_id
+        WHERE p.profile_id = ? AND c.active = 1 AND p.digits LIKE '%' || ?`)
+      .bind(profileId, tail).all();
+    for (const r of ph || []) {
+      if (excludeId && Number(r.id) === Number(excludeId)) continue;
+      const seen = out.find(o => Number(o.id) === Number(r.id));
+      if (seen) { if (!seen.why.includes('phone')) seen.why.push('phone'); }
+      else out.push({ ...r, why: ['phone'] });
+    }
+  }
+  return out;
+}
+
+async function updateProfileContact(request, env, user, id, cid) {
+  if ((await profilesMissing(env)).length) return json({ error: NO_PROFILES, code: 'not_set_up' }, 503);
+  const row = await env.DB.prepare(
+    'SELECT * FROM profile_contact WHERE id = ? AND profile_id = ?').bind(cid, id).first();
+  if (!row) return json({ error: 'not found' }, 404);
+  const body = await readJson(request);
+  const sets = [], binds = [];
+  const named = k => body[k] !== undefined;
+  if (named('first_name') || named('last_name')) {
+    const first = named('first_name') ? cleanProfileText(body.first_name) : row.first_name;
+    const last = named('last_name') ? cleanProfileText(body.last_name) : row.last_name;
+    if (!first && !last) return json({ error: 'A contact needs a first or last name.' }, 400);
+    sets.push('first_name = ?', 'last_name = ?', 'name_norm = ?');
+    binds.push(first, last, normText(`${first || ''} ${last || ''}`));
+  }
+  for (const f of ['role', 'email', 'notes']) {
+    if (named(f)) { sets.push(`${f} = ?`); binds.push(cleanProfileText(body[f])); }
+  }
+  if (named('active')) { sets.push('active = ?'); binds.push(body.active ? 1 : 0); }
+  if (named('preferred')) {
+    if (body.preferred) {
+      await env.DB.prepare('UPDATE profile_contact SET preferred = 0 WHERE profile_id = ?').bind(id).run();
+    }
+    sets.push('preferred = ?'); binds.push(body.preferred ? 1 : 0);
+  }
+  if (Array.isArray(body.phones)) await saveProfilePhones(env, id, cid, body.phones);
+  if (sets.length) {
+    await env.DB.prepare(
+      `UPDATE profile_contact SET ${sets.join(', ')}, updated_by = ?, updated_at = ? WHERE id = ?`)
+      .bind(...binds, user.id, nowIso(), cid).run();
+  } else if (!Array.isArray(body.phones)) {
+    return json({ error: 'Nothing to change.' }, 400);
+  }
+  return json({ ok: true, profile: await profileDetail(env, id) });
+}
+
+/** Removing a CONTACT is always allowed: the cases that used them copied what
+    mattered at intake, so nothing historical moves. Deactivating is offered
+    beside it in the page as the gentler state. */
+async function removeProfileContact(env, id, cid) {
+  if ((await profilesMissing(env)).length) return json({ error: NO_PROFILES, code: 'not_set_up' }, 503);
+  const row = await env.DB.prepare(
+    'SELECT id FROM profile_contact WHERE id = ? AND profile_id = ?').bind(cid, id).first();
+  if (!row) return json({ error: 'not found' }, 404);
+  await env.DB.prepare('DELETE FROM profile_phone WHERE profile_id = ? AND contact_id = ?')
+    .bind(id, cid).run();
+  await env.DB.prepare('DELETE FROM profile_contact WHERE id = ?').bind(cid).run();
+  return json({ ok: true, profile: await profileDetail(env, id) });
+}
+
+/* DELETE A PROFILE — and it REFUSES when any case has ever been linked to it,
+   naming the count and pointing at Deactivate instead. That refusal is what
+   makes "never cascades to cases" structural: the only profile that can be
+   deleted is one no case has ever used, so there is nothing for a cascade to
+   reach. Nothing about a case is touched on either path. */
+async function deleteProfile(env, id) {
+  if ((await profilesMissing(env)).length) return json({ error: NO_PROFILES, code: 'not_set_up' }, 503);
+  const row = await env.DB.prepare('SELECT id, name FROM profile WHERE id = ?').bind(id).first();
+  if (!row) return json({ error: 'not found' }, 404);
+  /* COUNTED HONESTLY. The refusal protects EVERY link, including one on a case
+     the office has since removed from the working set — but Recent matters
+     excludes those, so a bare total said "on 1 case" while the profile showed
+     none, with no route out. The sentence now names what the admin can see and
+     says separately when a removed case is holding it. */
+  const used = await env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM case_profile WHERE profile_id = ?').bind(id).first();
+  const n = Number(used && used.n) || 0;
+  if (n) {
+    const missing = await missingTables(env);
+    const hidden = missing.includes('case_deleted') ? { n: 0 } : await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM case_profile cp
+        WHERE cp.profile_id = ? AND cp.case_no IN (SELECT case_no FROM case_deleted)`)
+      .bind(id).first();
+    const gone = Number(hidden && hidden.n) || 0;
+    const shown = n - gone;
+    return json({ error: `${row.name} is on ${shown} case${shown === 1 ? '' : 's'}`
+      + (gone ? `, and ${gone} more that ${gone === 1 ? 'has' : 'have'} been removed from the `
+        + 'working set' : '')
+      + '. It is kept — set it to Inactive instead, which takes it out of the picker and the '
+      + 'directory\'s Active view and leaves every one of those cases untouched.',
+      code: 'profile_in_use', cases: n, visible_cases: shown, removed_cases: gone }, 409);
+  }
+  await env.DB.prepare('DELETE FROM profile_phone WHERE profile_id = ?').bind(id).run();
+  await env.DB.prepare('DELETE FROM profile_contact WHERE profile_id = ?').bind(id).run();
+  await env.DB.prepare('DELETE FROM profile WHERE id = ?').bind(id).run();
+  return json({ ok: true, deleted: id });
+}
+
+/** Which profile a case was started from, for the admin workspace.
+
+    IT DOES NOT GO LOOKING FOR A MATCH. The first version computed the possible
+    match here, so every admin opening any unlinked case ran the whole
+    duplicate check — four reads of the profile tables, on the most-opened
+    screen in the portal, for a question nobody had asked. The comment claimed
+    it was fine "because an admin is looking at that case and asked for it";
+    they had not asked, and D7's own words are that a match is computed only
+    when an admin is looking at THE QUESTION. The card now offers Look for a
+    match, and that press is what runs it. */
+async function caseProfileFor(env, caseNo) {
+  if ((await profilesMissing(env)).length) return { not_set_up: true };
+  const link = await env.DB.prepare('SELECT * FROM case_profile WHERE case_no = ?').bind(caseNo).first();
+  if (!link) return { link: null };
+  const p = await profileDetail(env, link.profile_id);
+  /* The person is read from the LINK, not resolved through the live contact
+     list: provenance is a snapshot like the rest of the case, so removing
+     someone from the firm cannot blank a line on a case that did not change. */
+  return { link, profile: p ? { id: p.id, kind: p.kind, kind_label: p.kind_label,
+    name: p.name, email: p.email, address: p.address, active: !!p.active } : null,
+    contact_name: link.contact_name || null };
+}
+
+/** The match for one case, when an admin presses for it. Same function the
+    duplicate refusal uses, reading the case's OWN values. */
+async function caseProfileMatch(env, caseNo) {
+  if ((await profilesMissing(env)).length) return json({ matches: [], not_set_up: true });
+  const sub = await env.DB.prepare(
+    `SELECT case_no, kind, payload, client_name, client_email, client_phone, carrier
+       FROM submissions WHERE case_no = ?`).bind(caseNo).first();
+  if (!sub) return json({ error: 'not found' }, 404);
+  let p = {}; try { p = JSON.parse(sub.payload || '{}'); } catch { p = {}; }
+  const name = isLegalSub(sub) ? (p.firm_name || sub.client_name)
+    : sub.kind === 'claims' ? (sub.carrier || sub.client_name) : sub.client_name;
+  return json({ matches: await profileMatchesFor(env, {
+    name, email: sub.client_email || p.firm_email, phone: sub.client_phone || p.firm_phone,
+    address: p.firm_address || p.client_address }) });
+}
+
+/* LINKING A CASE TO A PROFILE, and it is the only writer of `case_profile`
+   besides the create-from-profile path.
+
+   It lives at /cases/:no/profile ON PURPOSE: the router's deleted/archived
+   chokepoint matches any non-GET under /cases|submissions|leads/:no/, so this
+   inherits that gate rather than needing a check of its own. A route named
+   /profiles/:id/cases carrying the case number in its BODY would be invisible
+   to it — which is exactly the trap caseSendRefusal() was written to close. */
+async function linkCaseProfile(request, env, user, caseNo) {
+  if ((await profilesMissing(env)).length) return json({ error: NO_PROFILES, code: 'not_set_up' }, 503);
+  const sub = await env.DB.prepare('SELECT case_no, kind, payload, client_name, client_email, client_phone, carrier '
+    + 'FROM submissions WHERE case_no = ?').bind(caseNo).first();
+  if (!sub) return json({ error: 'not found' }, 404);
+  const body = await readJson(request);
+
+  if (body.clear) {
+    await env.DB.prepare('DELETE FROM case_profile WHERE case_no = ?').bind(caseNo).run();
+    return json({ ok: true, profile: await caseProfileFor(env, caseNo) });
+  }
+
+  /* SAVE AS PROFILE — the explicit action on a submission that matches
+     nothing. It creates a NEW profile from the case's own values and links it;
+     it never writes into an existing one, which is the owner's "do not
+     silently overwrite saved contact information" as an absent code path. */
+  if (body.save_as_profile) {
+    let p = {}; try { p = JSON.parse(sub.payload || '{}'); } catch { p = {}; }
+    const legal = isLegalSub(sub);
+    const kind = legal ? 'law_firm' : sub.kind === 'claims' ? 'insurance_org' : 'private_client';
+    const name = cleanProfileText(body.name) || cleanProfileText(
+      legal ? (p.firm_name || p.attorney_name) : sub.kind === 'claims' ? (sub.carrier || sub.client_name)
+        : sub.client_name);
+    if (!name) return json({ error: 'This case has no firm, carrier or client name to save.' }, 400);
+    const matches = body.confirm_new ? []
+      : await profileMatchesFor(env, { name, email: sub.client_email, phone: sub.client_phone });
+    if (matches.length) {
+      return json({ error: 'Possible existing profile.', code: 'possible_duplicate', matches }, 409);
+    }
+    const now = nowIso();
+    const res = await env.DB.prepare(
+      `INSERT INTO profile (kind, name, name_norm, email, address, address_norm, billing_name,
+         billing_email, payment_arrangement, notes, active, created_by, created_at, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?, ?, ?, ?)`)
+      .bind(kind, name, normText(name),
+        cleanProfileText(legal ? (p.firm_email || sub.client_email) : sub.client_email),
+        cleanProfileText(legal ? p.firm_address : p.client_address),
+        normText(legal ? p.firm_address : p.client_address),
+        cleanProfileText(legal ? p.billing_name : null),
+        cleanProfileText(legal ? p.billing_email : null),
+        legal && LEGAL_ARRANGEMENTS[p.payment_arrangement] ? p.payment_arrangement : null,
+        user.id, now, user.id, now).run();
+    const pid = res.meta.last_row_id;
+    const mainPhone = legal ? (p.firm_phone || sub.client_phone) : sub.client_phone;
+    if (mainPhone) await saveProfilePhones(env, pid, null, [{ number: mainPhone, label: 'work' }]);
+    /* The people the case already names become contacts — the owner's
+       "if the assignment already contains the information, reuse those
+       entered values", so nobody retypes a firm they just filed. */
+    if (legal) {
+      for (const [prefix, role] of [['attorney', 'Attorney'], ['paralegal', 'Paralegal'],
+        ['billing', 'Billing Contact']]) {
+        const who = cleanProfileText(p[`${prefix}_name`]);
+        if (!who) continue;
+        const parts = who.split(/\s+/);
+        await insertContact(env, pid, {
+          first_name: parts.slice(0, -1).join(' ') || who,
+          last_name: parts.length > 1 ? parts[parts.length - 1] : '',
+          role, email: p[`${prefix}_email`], phone: p[`${prefix}_phone`], phone_label: 'work',
+          preferred: prefix === 'attorney',
+        }, user);
+      }
+    } else if (sub.kind === 'claims' && p.adjuster) {
+      const parts = String(p.adjuster).trim().split(/\s+/);
+      await insertContact(env, pid, {
+        first_name: parts.slice(0, -1).join(' ') || p.adjuster,
+        last_name: parts.length > 1 ? parts[parts.length - 1] : '',
+        role: 'Adjuster', email: p.adjuster_email, phone: p.adjuster_phone, phone_label: 'work',
+        preferred: true,
+      }, user);
+    }
+    await writeCaseProfile(env, caseNo, pid, null, 'saved_from_case', user);
+    return json({ ok: true, created: true, profile: await caseProfileFor(env, caseNo) }, 201);
+  }
+
+  const pid = Number(body.profile_id);
+  if (!Number.isInteger(pid) || pid <= 0) return json({ error: 'Pick a profile.' }, 400);
+  const p = await env.DB.prepare('SELECT id FROM profile WHERE id = ?').bind(pid).first();
+  if (!p) return json({ error: 'That profile no longer exists.' }, 404);
+  await writeCaseProfile(env, caseNo, pid, body.contact_id, 'linked', user);
+  return json({ ok: true, profile: await caseProfileFor(env, caseNo) });
+}
+
+/* What a newly created assignment does about profiles, in one place so the
+   three quick forms behave identically.
+
+   Two separate things, and they are deliberately not the same thing:
+
+   - `profile_id` came from the picker, so the link is recorded. The case's
+     own values are already written and are never revisited.
+   - `save_profile` is the "also keep this as a reusable profile" tick. It
+     creates a profile ONLY on a clean miss. Where a possible match exists it
+     creates NOTHING and says so, because a convenience tick must not be the
+     one door that walks past the warning every deliberate door stops at —
+     the office is pointed at Save as profile on the case, where Use existing
+     is offered beside it.
+
+   Never throws: a profile is a convenience and must not be able to lose an
+   assignment that has already been written. */
+async function profileOnCreate(env, caseNo, body, payload, kind, legal, user) {
+  if ((await profilesMissing(env)).length) return {};
+  try {
+    const pid = Number(body.profile_id);
+    if (Number.isInteger(pid) && pid > 0) {
+      const p = await env.DB.prepare('SELECT id FROM profile WHERE id = ?').bind(pid).first();
+      if (p) {
+        await writeCaseProfile(env, caseNo, pid, body.profile_contact_id, 'prefill', user);
+        return { profile_id: pid };
+      }
+      return {};
+    }
+    if (!body.save_profile) return {};
+    const pkind = legal ? 'law_firm' : kind === 'claims' ? 'insurance_org' : 'private_client';
+    const name = cleanProfileText(legal ? (payload.firm_name || payload.attorney_name)
+      : kind === 'claims' ? (payload.carrier || payload.client_name) : payload.client_name);
+    if (!name) return { profile_saved: false, profile_reason: 'no_name' };
+    const matches = await profileMatchesFor(env, {
+      name, email: payload.client_email, phone: payload.client_phone });
+    if (matches.length) return { profile_saved: false, profile_reason: 'possible_duplicate', matches };
+    const now = nowIso();
+    const res = await env.DB.prepare(
+      `INSERT INTO profile (kind, name, name_norm, email, address, address_norm, billing_name,
+         billing_email, payment_arrangement, active, created_by, created_at, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`)
+      .bind(pkind, name, normText(name),
+        /* THE ORGANISATION'S OWN ADDRESS, never a person's. On a claims quick
+           form the only contact fields are the adjuster's, and filing those as
+           the CARRIER's main email and switchboard is how the next assignment
+           from that carrier prefills somebody's direct line as the company
+           number — with no contact row to choose from at all. A carrier's
+           general address is left empty until someone types one. */
+        cleanProfileText(legal ? (payload.firm_email || payload.client_email)
+          : kind === 'claims' ? null : payload.client_email),
+        cleanProfileText(legal ? payload.firm_address
+          : kind === 'claims' ? null : payload.client_address),
+        normText(legal ? payload.firm_address : kind === 'claims' ? null : payload.client_address),
+        cleanProfileText(payload.billing_name), cleanProfileText(payload.billing_email),
+        legal && LEGAL_ARRANGEMENTS[payload.payment_arrangement] ? payload.payment_arrangement : null,
+        user.id, now, user.id, now).run();
+    const newId = res.meta.last_row_id;
+    const mainPhone = legal ? (payload.firm_phone || payload.client_phone)
+      : kind === 'claims' ? payload.firm_phone : payload.client_phone;
+    if (mainPhone) await saveProfilePhones(env, newId, null, [{ number: mainPhone, label: 'work' }]);
+    /* The person the assignment names becomes a contact on the organisation —
+       the same shape Save as profile builds from a case. */
+    const asContact = (who, role, email, phone) => {
+      const parts = String(who).trim().split(/\s+/);
+      return { first_name: parts.slice(0, -1).join(' ') || who,
+        last_name: parts.length > 1 ? parts[parts.length - 1] : '',
+        role, email, phone, phone_label: 'work', preferred: true };
+    };
+    if (legal && payload.attorney_name) {
+      await insertContact(env, newId, asContact(payload.attorney_name, 'Attorney',
+        payload.attorney_email, payload.attorney_phone), user);
+    } else if (kind === 'claims') {
+      const who = payload.adjuster || payload.client_name;
+      if (who) {
+        await insertContact(env, newId, asContact(who, 'Adjuster',
+          payload.adjuster_email || payload.client_email,
+          payload.adjuster_phone || payload.client_phone), user);
+      }
+    }
+    await writeCaseProfile(env, caseNo, newId, null, 'saved_from_case', user);
+    return { profile_saved: true, profile_id: newId };
+  } catch { return {}; }
+}
+
+/** The only statement that writes `case_profile`. One row per case, so
+    re-associating replaces rather than accumulates, and the stamp is the
+    "assignment started from profile" audit entry.
+
+    The contact's NAME is copied in beside their id, because provenance is a
+    snapshot: reading it back through the live contact list meant removing a
+    person from the firm blanked a line on a case that had not changed. */
+async function writeCaseProfile(env, caseNo, profileId, contactId, source, user) {
+  const cid = Number(contactId);
+  const id = Number.isInteger(cid) && cid > 0 ? cid : null;
+  let name = null;
+  if (id) {
+    const c = await env.DB.prepare(
+      'SELECT first_name, last_name FROM profile_contact WHERE id = ? AND profile_id = ?')
+      .bind(id, profileId).first();
+    if (c) name = [c.first_name, c.last_name].filter(Boolean).join(' ') || null;
+  }
+  await env.DB.prepare(
+    `INSERT INTO case_profile (case_no, profile_id, contact_id, contact_name, source, linked_by, linked_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(case_no) DO UPDATE SET profile_id = excluded.profile_id,
+       contact_id = excluded.contact_id, contact_name = excluded.contact_name,
+       source = excluded.source, linked_by = excluded.linked_by, linked_at = excluded.linked_at`)
+    .bind(caseNo, profileId, id, name, source, user ? user.id : null, nowIso()).run();
 }
 
 async function setCaseMeta(request, env, caseNo) {
@@ -6844,6 +7789,11 @@ const DEMO_SWEEP = [
   /* --- photo_stamp points at case_evidence TWICE, so it goes first --- */
   ['photo_stamp',           'DELETE FROM photo_stamp WHERE case_no LIKE ?'],
   ['legal_intake',          'DELETE FROM legal_intake WHERE case_no LIKE ?'],
+  /* The LINK goes, the PROFILE stays. A link is case data; a firm is
+     reference data that other cases still point at, so clearing a test case
+     must not delete a real client. `profile`, `profile_contact` and
+     `profile_phone` are deliberately absent from this list. */
+  ['case_profile',          'DELETE FROM case_profile WHERE case_no LIKE ?'],
 
   /* --- everything else keyed by case_no --- */
   ['case_evidence',         'DELETE FROM case_evidence WHERE case_no LIKE ?'],
@@ -7476,6 +8426,7 @@ const EXPECTED_TABLES = [
   'retainer_payment', 'retainer_payment_void', 'retainer_payment_token',
   'video_stamp', 'dropbox_auth', 'activity_source', 'activity_voice_event',
   'photo_stamp',
+  'profile', 'profile_contact', 'profile_phone', 'case_profile',
 ];
 
 async function missingTables(env) {
@@ -7911,6 +8862,75 @@ async function route(request, env) {
   if (m && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return setLegalDetail(request, env, user, m[1]);
+  }
+
+  /* ------------------------------------------------- UNIT 7: profiles
+
+     ADMIN ONLY AT EVERY DOOR, exactly like /sheets and /pricing. There is no
+     public route into any of this: the ingest never reads a profile table, so
+     a public intake user cannot browse firms, search saved attorneys or
+     discover a saved contact — not because a check refuses them, but because
+     no route exists on that side of the wall. */
+  if (p === '/profiles' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return listProfilesRoute(request, env);
+  }
+  if (p === '/profiles' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return createProfile(request, env, user);
+  }
+  /* The possible-match check on its own, so the page can warn while the office
+     is still typing rather than only when they press Save. It reads; it never
+     writes, and it is the same function the refusal uses. */
+  if (p === '/profiles/match' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if ((await profilesMissing(env)).length) return json({ matches: [], not_set_up: true });
+    const u = new URL(request.url);
+    return json({ matches: await profileMatchesFor(env, {
+      name: u.searchParams.get('name'), email: u.searchParams.get('email'),
+      phone: u.searchParams.get('phone'), address: u.searchParams.get('address'),
+      exclude: u.searchParams.get('exclude'),
+    }) });
+  }
+  m = p.match(/^\/profiles\/(\d+)$/);
+  if (m) {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if (method === 'GET') return getProfileRoute(env, Number(m[1]));
+    if (method === 'POST') return updateProfile(request, env, user, Number(m[1]));
+  }
+  m = p.match(/^\/profiles\/(\d+)\/delete$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return deleteProfile(env, Number(m[1]));
+  }
+  m = p.match(/^\/profiles\/(\d+)\/contacts$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return addProfileContact(request, env, user, Number(m[1]));
+  }
+  m = p.match(/^\/profiles\/(\d+)\/contacts\/(\d+)$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return updateProfileContact(request, env, user, Number(m[1]), Number(m[2]));
+  }
+  m = p.match(/^\/profiles\/(\d+)\/contacts\/(\d+)\/remove$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return removeProfileContact(env, Number(m[1]), Number(m[2]));
+  }
+  /* Under /cases/:no/ deliberately, so the deleted- and archived-case gate
+     above sees it without a check of its own. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/profile$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return linkCaseProfile(request, env, user, m[1]);
+  }
+  /* Look for a saved profile matching THIS case — a read, run because an admin
+     pressed for it rather than every time a case is opened. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/profile-match$/);
+  if (m && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return caseProfileMatch(env, m[1]);
   }
 
   if (p === '/intakes' && method === 'POST') {

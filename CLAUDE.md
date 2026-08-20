@@ -355,6 +355,100 @@ case-media upload — the public form grew no upload door, and says so.
 
 **Adding this table means a manual `portal-setup.yml` dispatch after merge.**
 
+## A profile is a default; a case is a snapshot
+
+Unit 7 (owner brief verbatim in `case-portal/PROFILES.md`, derived decisions
+listed there one per entry). Saved **Clients & Firms** — law firm, insurance
+organization, private client — so a repeat assignment starts prefilled instead
+of retyped.
+
+**The architecture is one sentence:** prefill copies profile values into the
+assignment form, `createManualIntake` writes the case from that **body** exactly
+as it always did, and no case read joins a profile. So *"editing a firm must not
+rewrite prior cases"* is a property of the shape rather than a rule someone has
+to remember — there is no code path by which it could. The suite proves it the
+only way worth proving it: create a case from a firm, rename the firm, read both
+stored copies of the case back byte for byte.
+
+Four additive tables. `profile` is the org **or** the person — one `name`
+column, so the directory, the picker and the duplicate check all search one
+place; a private client needs no contact row. `profile_contact` keeps first and
+last names apart (never concatenated, and nothing stores a composed display
+string to drift). `profile_phone` is the `case_phone` pattern — one row per
+number, label, number as typed — plus a stored `digits` key, because phone
+search must match `(540) 555-1212` against `5405551212` and D1 has no regex.
+`case_profile` is the **one** link, keyed by `case_no`.
+
+**`kind` carries no CHECK.** `submissions.kind` is this project's own proof of
+the cost — it could not widen for Legal, so a legal case is `consumer` plus a
+payload marker. A fourth client category must be an ordinary Worker edit. The
+roles differ *by kind* anyway, which a single-column CHECK could not express at
+all. `kind` is also immutable after creation: a firm with history is never
+re-typed into a private client.
+
+**There is no merge, and that is the absence of code rather than a guard.** No
+upsert, no `merged_into`, no routine that writes submitted values into an
+existing profile. A possible match **refuses the write** and names what it
+matched; *Continue as new* is a second request. Normalisation is deliberately
+not clever — no stripping of LLC/PC/Group, no St→Street, no Gmail-dot removal,
+because each of those is inference dressed as tidying and is exactly how "Smith
+Law" and "Smith Law Group" would become one key. Inactive profiles stay inside
+duplicate detection: skipping them manufactures the duplicate the check exists
+to prevent.
+
+**No figure lives on a profile.** No retainer, rate, matter number or billing
+reference — `agreedRetainer()`, `PERSONAL` and `RATES` stay the only pricing
+sources, so nothing can freeze a price into a firm. The one commercial default
+is the legal payment **arrangement**, law-firm only, validated against the same
+`LEGAL_ARRANGEMENTS` the case panel uses: a request, never a payment, and no
+profile read touches `retainer_payment` or `case_retainer`.
+
+**Delete refuses a profile any case has ever used** (409 naming the count,
+offering Inactive). That refusal is what makes "never cascades to cases"
+structural: the only deletable profile is one nothing points at.
+
+**The link route is `POST /cases/:no/profile` on purpose** — the router's
+deleted/archived chokepoint matches any non-GET under `/cases|submissions|leads/:no/`,
+so it inherits the gate. A route named `/profiles/:id/cases` with the case
+number in its body would be invisible to it, which is the `caseSendRefusal()`
+trap already paid for once. `case_profile` is in `DEMO_SWEEP`; the three
+reference tables deliberately are not — a link is case data, a firm is not.
+
+**Admin-only at every door, and the public side has none.** The ingest reads no
+profile table, so a submitted payload naming a `profile_id` links nothing
+(asserted). `WS.profile` is admin-gated like `WS.legal`; the case list gained no
+profile columns; investigators get no directory, no picker, no chip.
+
+**A match is computed when an admin asks, never when they open a case.** The
+first build ran the whole duplicate check inside the case workspace read — four
+profile-table reads on the most-opened screen in the portal, billed per row
+read, for a question nobody had asked, behind a comment claiming they had.
+**Look for a match** is a button, and `GET /cases/:no/profile-match` is what it
+calls. The comparisons that DO run unasked (name, address, phone equality) are
+indexed lookups; the substring search is not, and `PROFILES.md` says so rather
+than claiming otherwise.
+
+**No statement may grow with the customer's data.** The search once built one
+query with up to 401 bound parameters — D1 caps them, `node:sqlite` does not,
+so it was green in every test and broken only in production. `CANDIDATE_CAP`
+and `PAGE_CAP` bound it and a test counts the widest bind. The same class of
+mistake as the `client_token` column that never reached the live database.
+
+Four page and data bugs this unit found, all familiar shapes: the quick-intake
+form was uncontrolled, so the repaint after choosing a profile would have
+discarded whatever was typed and submitted the empty value while reporting
+success (it holds a draft now — the `EDIT_DRAFT` rule); the directory only
+fetched when it had never loaded, so a firm saved from a case was missing from
+the screen whose whole job is answering "do we already have them?"; the contact
+`<select>` was **inert**, because the page had no `change` listener at all — it
+rendered, it looked right, and choosing a different attorney did nothing (a
+control that draws is not a control that works, the Timestamp Video lesson at a
+different layer); and removing a contact blanked a case's record of who it was
+started from while the screen said "no case changed", so the link carries
+`contact_name` now — provenance is a snapshot like the rest of the case.
+
+**Adding these tables means a manual `portal-setup.yml` dispatch after merge.**
+
 ## Carrier rates are internal — and this file is public-adjacent
 
 The insurance rate strategy lives in `case-portal/PRICING.md`, with the
@@ -766,8 +860,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 1609 checks: auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 1382 checks: the page against the real Worker
+node case-portal/test-worker.mjs   # 2081 checks: auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # the page against the real Worker
 ```
 
 The portal tests run the real page against the real Worker against real SQLite,
