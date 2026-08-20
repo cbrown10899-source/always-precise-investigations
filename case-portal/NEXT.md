@@ -29,10 +29,11 @@ item is finished.
 | 10 | Case Timeline | ✅ **DONE — DEPLOYED** at `8d93a9e` (#196). LIVE VERIFY **OPEN** for the owner |
 | 11 | Evidence Integrity | **IN FLIGHT** |
 | 12 | **Report Daily Summary Builder** | not started — inserted by the owner 2026-08-20, mid-Unit-11 |
-| 13 | Storage Health | not started |
-| 14 | Case Closeout | not started |
-| 15 | Client Delivery Center | not started |
-| 16 | Retention Controls | not started |
+| 13 | **Portal palette normalization** | not started — queued by the owner 2026-08-20, mid-Unit-11 |
+| 14 | Storage Health | not started |
+| 15 | Case Closeout | not started |
+| 16 | Client Delivery Center | not started |
+| 17 | Retention Controls | not started |
 
 **Item 12 — REPORT DAILY SUMMARY BUILDER — was inserted by the owner on
 2026-08-20**, while Unit 11 was in flight, with the instruction *"Do not start
@@ -57,6 +58,19 @@ polishing *"must be a separate explicit owner decision"*; a missing value is
 silently overwrite a manually edited paragraph** — which is this project's
 `EDIT_DRAFT` rule arriving in a fourth place, so it will need collecting typed
 values before any repaint.
+
+**Item 13 — PORTAL PALETTE NORMALIZATION — was queued by the owner on
+2026-08-20**, also mid-Unit-11, with *"Do not interrupt the active coding
+unit."* The brief is verbatim in **`case-portal/PALETTE.md`**. No explicit
+position was given; it sits at 13 because the brief's own component list names
+*"future File Queue, future Storage Health, future Case Closeout, future
+Client Delivery"* as inheritors of the palette, which only works if it lands
+before them — if the owner meant a different slot, moving the row is the whole
+change. The locked direction in one line: the CURRENT dashboard colors become
+tokens (navy primary, teal accent, sparing gold, light surfaces, muted status
+colors), values read from the live page rather than invented, applied as a
+visual-system normalization that changes no business logic, storage,
+permissions or behavior.
 
 **Items 7–15 were locked by the owner on 2026-08-20**, replacing the old
 "Remaining Portal Ops" catch-all. Unit 5's brief deliberately fences off two of
