@@ -27,7 +27,7 @@ item is finished.
 | 8 | Global Case Search + advanced Needs Attention | ✅ **DONE — DEPLOYED** at `8d28196` (#194). LIVE VERIFY **OPEN** for the owner |
 | 9 | Multiple Report Templates | ✅ **DONE — DEPLOYED** at `9979fca` (#195). LIVE VERIFY **OPEN** for the owner |
 | 10 | Case Timeline | ✅ **DONE — DEPLOYED** at `8d93a9e` (#196). LIVE VERIFY **OPEN** for the owner |
-| 11 | Evidence Integrity | **IN FLIGHT** |
+| 11 | Evidence Integrity | ✅ **DONE — DEPLOYED** at `0c0c134` (#197). LIVE VERIFY **OPEN** for the owner |
 | 12 | **Report Daily Summary Builder** | not started — inserted by the owner 2026-08-20, mid-Unit-11 |
 | 13 | **Portal palette normalization** | not started — queued by the owner 2026-08-20, mid-Unit-11 |
 | 14 | Storage Health | not started |
@@ -185,6 +185,49 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Do not interrupt the current coding unit. Record this queue only"*, and
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
+
+## 📌 Unit 11 — what shipped (#197, `0c0c134`)
+
+**Evidence Integrity — the hash is taken where the bytes already pass.** One
+additive table, `evidence_integrity`, answers the owner's nine questions per
+artifact; detail in CLAUDE.md under *"The hash is taken where the bytes
+already pass"*, owner brief and derived decisions in
+`case-portal/EVIDENCE-INTEGRITY.md`.
+
+**The design in one line:** every filing path hashes the buffer it was already
+holding (upload, timestamp photo, filed report PDF — `hash_origin: worker`),
+the timestamped video is hashed by the generating device, the only place it
+exists whole (`hash_origin: device`), and NOTHING is ever downloaded, swept or
+backfilled to produce a hash — historical files read *Not yet recorded* until
+an admin presses **Record integrity hash**, one file at a time. **Verify
+integrity** recomputes and compares, writes nothing, and answers match /
+mismatch / unavailable — an unreadable file is never a pass. A re-record
+supersedes and keeps history; deleted evidence keeps every record; a metadata
+edit moves nothing. Original/derivative comes only from explicit relationships
+(`photo_stamp`, the build, the video record) — no filename inference exists.
+The manifest is metadata in two statements, credential-free, printed through
+`#mandoc`; the page still has exactly one `%PDF-1.` writer. Hash routes scope
+the id to the case in one statement, so they cannot probe other cases;
+`storage_ref` is admin-only; the field sees hash/role/provenance on its own
+cases with no levers.
+
+**Also in #197, ledger-only:** the two owner queue inserts of 2026-08-20 —
+item 12 Report Daily Summary Builder (`DAILY-SUMMARY.md`) and item 13 Portal
+palette normalization (`PALETTE.md`), both briefs verbatim.
+
+**Schema: `evidence_integrity` — `portal-setup.yml` WAS dispatched after merge
+and succeeded** (run `32422210710`, against `0c0c134`). Both deploys green:
+site `32422192326`, portal Worker `32422192291`.
+
+**Suites at merge:** worker **2436/0**, portal **2137/0** (one re-run: the
+first full run failed 2 checks in the Unit-8-era video-render section — its own
+fixture self-check under parallel-Chromium load, a path this unit has zero diff
+against; three isolated runs and the confirming full run all green), intake
+**236/0**, deploy guard **68/0**.
+
+**LIVE VERIFY (owner):** upload a photo and read its Integrity block; Verify on
+a real file; Record hash on a pre-Unit-11 file; the manifest on paper; the full
+hash wrapping on a phone.
 
 ## 📌 Unit 10 — what shipped (#196, `8d93a9e`)
 
@@ -555,6 +598,21 @@ node .github/test-deploy.mjs                    # expect 68 / 0
 
 Then the ordinary chain: PR → merge if green → pull master → deploy → live
 verify → **save point** → next unit (item 4, Admin report/mobile workflow fix).
+
+## 🚦 DEPLOYMENT — 2026-08-20, master `0c0c134` (#197) — Unit 11, Evidence Integrity
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/intake/` + `/portal/` | `0c0c134` | `0c0c134` | **DEPLOYED** — `deploy.yml` 32422192326 success |
+| `api-case-portal` | `0c0c134` | `0c0c134` | **DEPLOYED** — `deploy-portal.yml` 32422192291 success |
+| Schema (`evidence_integrity`) | `0c0c134` | applied | **`portal-setup.yml` 32422210710 success** — dispatched at merge, nothing else owed |
+| Save point | — | — | `save/2026-08-20-2200-0c0c134`, the merge push's automatic firing |
+
+Tests at merge: worker **2436/0**, portal **2137/0**, intake **236/0**, deploy
+guard **68/0**. The container has no outbound route to the live domain, so
+"applied" is the workflow's success against the merge SHA plus the deployed
+Worker whose `EXPECTED_TABLES` names the table — `/portal-api/health` on the
+owner's device is the final confirmation, the standing standard.
 
 ## 🚦 DEPLOYMENT — 2026-08-20, master `8d93a9e` (#196) — Unit 10, Case Timeline
 
