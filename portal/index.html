@@ -12854,7 +12854,14 @@ document.addEventListener("click", ev => {
   else if(act === "pkgRemove"){ pkgApi(`/build/${PKG.build.id}/items/${el.dataset.id}/remove`); }
   else if(act === "pkgRepAdd"){ pkgApi(`/build/${PKG.build.id}/reports`, {report_id: Number(el.dataset.id)}); }
   else if(act === "pkgRepRemove"){ pkgApi(`/build/${PKG.build.id}/reports/${el.dataset.id}/remove`); }
-  else if(act === "pkgFinalize"){ pkgApi(`/build/${PKG.build.id}/finalize`); }
+  else if(act === "pkgFinalize"){
+    /* Finalize can change more than the build: it stamps the admin's own
+       still-draft reports approved (item 4). The package repaints from the
+       response, but the Reports tab draws from WS — reload it, or flipping
+       there right after shows "Draft" on a report the server just approved.
+       The stale-tab rule, again. */
+    pkgApi(`/build/${PKG.build.id}/finalize`).then(() => reloadWorkspace());
+  }
   else if(act === "pkgReopen"){ pkgApi(`/build/${PKG.build.id}/reopen`); }
   else if(act === "pkgDelivered"){ pkgApi(`/build/${PKG.build.id}/delivered`); }
   else if(act === "pkgPrint"){ pkgPrint(); }
