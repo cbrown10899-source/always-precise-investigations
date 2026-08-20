@@ -56,6 +56,7 @@
   @media(max-width:520px){.two{grid-template-columns:1fr;}}
 
   .opt{display:block;border:1.5px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:10px;cursor:pointer;transition:border-color .15s,background .15s;}
+  .substep{margin:18px 0 6px;font-size:.9rem;color:#12305a;letter-spacing:.02em;}
   .opt:hover{border-color:var(--teal-2);}
   .opt.sel{border-color:var(--teal-2);background:#f0f8fa;}
   .opt .badge{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:999px;background:var(--teal-2);
@@ -172,7 +173,8 @@ const authPreset = id => AUTH_PRESETS.find(a => a.id === id) || null;
 const FEES = {
   surveillance: { label:"Surveillance" },
   process:      { label:"Process Serving" },
-  claims:       { label:"Insurance Claim Assignment", billed:true }
+  claims:       { label:"Insurance Claim Assignment", billed:true },
+  legal:        { label:"Legal Investigation Assignment", billed:true }
 };
 /* Web3Forms access key goes here for email delivery; until then submissions
    go through FormSubmit to the firm inbox (needs one-time activation). */
@@ -211,22 +213,38 @@ const CARRIER_ONLY = /^(insurance|carrier|claims)$/i
 const PRIVATE_ONLY = /^private$/i
   .test(new URLSearchParams(location.search).get("assignment") || "");
 
-const S = { step:0, svc:CARRIER_ONLY ? "claims" : null, sig:null, files:[] };
+/* And ?assignment=legal is the third door (Unit 6, LEGAL-INTAKE.md): the link
+   a law office is sent. The path is fixed, the picker is dropped, and the page
+   titles itself "Legal Investigation Assignment" — a case-assignment form for
+   attorneys and paralegals, not a consumer questionnaire. Bare /intake/ still
+   offers everything. */
+const LEGAL_ONLY = /^legal$/i
+  .test(new URLSearchParams(location.search).get("assignment") || "");
+
+const S = { step:0, svc:CARRIER_ONLY ? "claims" : LEGAL_ONLY ? "legal" : null, sig:null, files:[] };
 // A carrier assignment collects claim details and ends in invoicing, so the
 // claims path has its own step list; surveillance adds a step to choose how
 // much coverage to buy. All three share the first two steps, which is what
 // makes it safe to switch service without stranding S.step.
 const STEPS       = ["info","service","subject","objective","agreement"];
 const CLAIM_STEPS = ["info","service","claim","subject","objective","authorization","agreement","billing"];
+/* The legal path (Unit 6): firm and contacts, then the matter, then the
+   subject the firm already knows about, then the assignment itself. No payment
+   step and no figure anywhere — a paralegal finishes this in a few minutes
+   with what is on their desk, and anything not to hand follows later. */
+const LEGAL_STEPS = ["info","service","firm","matter","subject","objective","agreement"];
 function steps(){
-  // The carrier door has no service picker to show, so it is dropped rather
+  // A fixed door has no service picker to show, so it is dropped rather
   // than rendered and skipped — a step that exists but is never reached still
   // draws a segment on the progress bar.
   if(CARRIER_ONLY) return CLAIM_STEPS.filter(s => s !== "service");
+  if(LEGAL_ONLY) return LEGAL_STEPS.filter(s => s !== "service");
   if(S.svc==="claims") return CLAIM_STEPS;
+  if(S.svc==="legal") return LEGAL_STEPS;
   return STEPS;
 }
 function isClaims(){ return S.svc==="claims"; }
+function isLegal(){ return S.svc==="legal"; }
 const app = document.getElementById("app");
 const $ = id => document.getElementById(id);
 
@@ -281,6 +299,10 @@ document.addEventListener("DOMContentLoaded", () => {
   if(CARRIER_ONLY){
     $("m-kind").textContent = "INVESTIGATIONS · ASSIGNMENT INTAKE";
     document.title = "Secure Assignment Intake — Always Precise Investigations";
+  }
+  if(LEGAL_ONLY){
+    $("m-kind").textContent = "INVESTIGATIONS · LEGAL ASSIGNMENT";
+    document.title = "Legal Investigation Assignment — Always Precise Investigations";
   }
   render();
 });
@@ -376,6 +398,90 @@ function view(step){
       <input type="radio" name="svc" ${S.svc==="claims"?"checked":""}><b>Insurance Claim Assignment</b>
       <div class="desc">For carriers, TPAs, self-insured employers and defense counsel. Workers' comp, auto and liability claims — billed to the carrier, nothing due at assignment.</div>
     </label>`}
+    ${PRIVATE_ONLY ? "" : `<label class="opt" id="opt-legal" onclick="pickSvc('legal')">
+      <input type="radio" name="svc" ${S.svc==="legal"?"checked":""}><b>Legal / Law Firm</b>
+      <div class="desc">For attorneys, paralegals and law-firm staff assigning investigative work — surveillance, locates, background, witness work and more. Retainer arranged with the firm; nothing collected here.</div>
+    </label>`}
+    ${navButtons()}
+  </div>`;
+
+  if(step==="firm") return `<div class="card">
+    <h2>Law firm &amp; contacts</h2>
+    <p class="lead">Who is assigning this work and who we coordinate with. An attorney or a
+      paralegal can complete this &mdash; whoever is filling it in, we only need the people who
+      actually exist on this file.</p>
+    <label class="f"><span>Law firm <b class="req">*</b></span><input type="text" data-k="lf_firm" autocomplete="organization" placeholder="Firm or office name"></label>
+    <div class="two">
+      <label class="f"><span>Office phone</span><input type="tel" data-k="lf_firm_phone"></label>
+      <label class="f"><span>Office email</span><input type="email" data-k="lf_firm_email"></label>
+    </div>
+    <label class="f"><span>Office address</span><input type="text" data-k="lf_firm_addr" autocomplete="street-address"></label>
+    <h3 class="substep">Assigning attorney <b class="req">*</b></h3>
+    <label class="f"><span>Attorney name <b class="req">*</b></span><input type="text" data-k="lf_atty"></label>
+    <div class="two">
+      <label class="f"><span>Attorney email</span><input type="email" data-k="lf_atty_email"></label>
+      <label class="f"><span>Attorney phone</span><input type="tel" data-k="lf_atty_phone"></label>
+    </div>
+    <h3 class="substep">Paralegal / legal assistant <span class="opt">if one is on this file</span></h3>
+    <div class="two">
+      <label class="f"><span>Name</span><input type="text" data-k="lf_para"></label>
+      <label class="f"><span>Email</span><input type="email" data-k="lf_para_email"></label>
+    </div>
+    <label class="f"><span>Phone</span><input type="tel" data-k="lf_para_phone"></label>
+    <h3 class="substep">Billing contact <span class="opt">if different</span></h3>
+    <div class="two">
+      <label class="f"><span>Name</span><input type="text" data-k="lf_bill"></label>
+      <label class="f"><span>Email</span><input type="email" data-k="lf_bill_email"></label>
+    </div>
+    <div class="two">
+      <label class="f"><span>Phone</span><input type="tel" data-k="lf_bill_phone"></label>
+      <label class="f"><span>Billing / matter reference</span><input type="text" data-k="lf_bill_ref" placeholder="If your office bills against one"></label>
+    </div>
+    ${navButtons()}
+  </div>`;
+
+  if(step==="matter") return `<div class="card">
+    <h2>The matter</h2>
+    <p class="lead">Enough to open the file and run a conflict check. Anything not to hand can
+      follow later &mdash; nothing here holds up the assignment.</p>
+    <label class="f"><span>Your client <b class="req">*</b> <span class="opt">or give the matter number below</span></span>
+      <input type="text" data-k="lm_client" placeholder="Who the firm represents"></label>
+    <div class="two">
+      <label class="f"><span>Firm matter number</span><input type="text" data-k="lm_matter"></label>
+      <label class="f"><span>Court case number</span><input type="text" data-k="lm_court_no"></label>
+    </div>
+    <label class="f"><span>Court / jurisdiction</span><input type="text" data-k="lm_court" placeholder="e.g. Roanoke County Circuit Court"></label>
+    <label class="f"><span>Assignment type</span>
+      <select data-k="lm_type">
+        <option value="">Select&hellip;</option>
+        <option>Surveillance</option>
+        <option>Locate / Skip trace</option>
+        <option>Background investigation</option>
+        <option>Witness locate / interview</option>
+        <option>Domestic / custody investigation</option>
+        <option>Civil investigation</option>
+        <option>Evidence / documentation</option>
+        <option>Process / service support</option>
+        <option>Other / custom assignment</option>
+      </select></label>
+    <label class="f"><span>Other names for the conflict check <span class="opt">optional</span></span>
+      <input type="text" data-k="lm_conflicts" placeholder="Other parties or entities to check, comma-separated"></label>
+    <h3 class="substep">Dates that matter <span class="opt">only what is known &mdash; we never invent a deadline from another date</span></h3>
+    <div class="two">
+      <label class="f"><span>Investigation deadline</span><input type="date" data-k="lm_deadline"></label>
+      <label class="f"><span>Hearing date</span><input type="date" data-k="lm_hearing"></label>
+    </div>
+    <div class="two">
+      <label class="f"><span>Trial date</span><input type="date" data-k="lm_trial"></label>
+      <label class="f"><span>Other important date</span><input type="date" data-k="lm_other"></label>
+    </div>
+    <label class="f"><span>What is the other date <span class="opt">if you gave one</span></span>
+      <input type="text" data-k="lm_other_label" placeholder="e.g. mediation, discovery cutoff"></label>
+    <label class="f"><span>Special instructions <span class="opt">optional</span></span>
+      <textarea data-k="lm_instructions" rows="3" placeholder="Anything the investigator must know or must not do"></textarea></label>
+    <p class="hint">Supporting documents &mdash; pleadings, orders, photos, prior reports &mdash; are
+      exchanged once the assignment is accepted, through the office. Nothing needs to be attached
+      to submit this.</p>
     ${navButtons()}
   </div>`;
 
@@ -523,11 +629,33 @@ function view(step){
       ? `<div class="row"><span>Billing</span><b>Invoiced to the carrier</b></div>
          <div class="row"><span>Rate</span><span>Confirmed in writing before work begins</span></div>
          <div class="row"><span>Additional fees</span><span>None &mdash; mileage, travel and reporting included</span></div>`
+      : isLegal()
+      ? `<div class="row"><span>Retainer</span><b>Arranged with the firm in writing</b></div>
+         <div class="row"><span>Additional fees</span><span>None &mdash; mileage, travel and the report included</span></div>`
       : `<div class="row"><span>Fee</span><b>Sent to you in writing</b></div>
          <div class="row"><span>Additional fees</span><span>None &mdash; mileage, travel and the report included</span></div>`;
     const dueLine = isClaims()
       ? `<div class="row due"><span>Due at assignment</span><span>Nothing — invoiced</span></div>`
+      : isLegal()
+      ? `<div class="row due"><span>Due now</span><span>Nothing — no payment is collected on this form</span></div>`
       : `<div class="row due"><span>Due now</span><span>Nothing — we send your fee sheet first</span></div>`;
+
+    /* The legal payment ARRANGEMENT (LEGAL-INTAKE.md D8): how the firm intends
+       to handle the retainer, so the office can act on it — a request, never a
+       payment. Nothing here is Cash App or Venmo, and choosing one records
+       nothing as paid anywhere. */
+    const arrangement = !isLegal() ? "" : `
+      <h3 class="substep">Retainer arrangement</h3>
+      <p class="hint">How your office prefers to handle the retainer. Choosing one here arranges
+        it &mdash; nothing is collected on this form, and nothing is marked paid by choosing.</p>
+      ${[["bill_ach","BILL.com invoice / ACH","We invoice the firm electronically."],
+         ["check_pickup","Retainer check — pick up at your office","Let us know when the check is ready and we will arrange pickup at your office."],
+         ["check_mail","Retainer check — by mail","Mailing details are confirmed with the office when the assignment is accepted."],
+         ["existing_billing","Existing billing arrangement","For firms we already bill — nothing new to set up."]]
+        .map(([k, label, desc]) => `<label class="opt" onclick="pickArr('${k}')">
+          <input type="radio" name="larr" ${val.l_arrangement===k?"checked":""}><b>${label}</b>
+          <div class="desc">${desc}</div>
+        </label>`).join("")}`;
     return `<div class="card">
       <h2>${isClaims()?"Assignment terms &amp; authorization":"Agreement &amp; signature"}</h2>
       <p class="lead">${isClaims()
@@ -540,8 +668,20 @@ function view(step){
       <p class="hint">You can submit with the information currently available. Additional details
         can be provided later as the case develops.</p>` : "")(naSummary())}
       <div class="feebox">${feeLines}${dueLine}</div>
+      ${arrangement}
       <div class="agree">
-      ${isClaims() ? `
+      ${isLegal() ? `
+        <h4>Assignment</h4>
+        <p>The law firm retains ${FIRM.name} ("the firm," Va DCJS #${FIRM.license}) to perform the investigative assignment described in this intake. Work begins on written acceptance and the agreed retainer arrangement; submitting this form does not by itself start work or create a charge.</p>
+        <h4>Retainer &amp; billing</h4>
+        <p>The retainer and rate are confirmed with the firm in writing before work begins. Work is billed against the retainer; the firm is told before the retainer is exhausted, and nothing beyond it is worked without approval. No payment is collected on this form, and no payment method chosen here is treated as payment received.</p>
+        <h4>No additional fees</h4>
+        <p>The confirmed rate is the billed amount. Mileage, travel time, tolls, parking, database and record fees, video review and report preparation are included and are not billed as separate line items. An assignment outside the firm's service area has its travel quoted and agreed before acceptance.</p>
+        <h4>Lawful conduct</h4>
+        <p>All work is performed lawfully and from lawful vantage points. The firm does not trespass on private property, record into a residence, place tracking devices on vehicles it has no authority over, access accounts or devices, or misrepresent itself to obtain financial or medical records.</p>
+        <h4>Work product &amp; confidentiality</h4>
+        <p>Deliverables are a written report with supporting photographs and footage, prepared for use in litigation. Work product is released only to the assigning firm and its designees, and matter information is kept confidential except as required by law. The investigator who performed the work is available for deposition and hearing testimony as to what they personally observed. Investigative work cannot guarantee a particular result or finding.</p>
+      ` : isClaims() ? `
         <h4>Assignment</h4>
         <p>The assigning party retains ${FIRM.name} ("the firm," Va DCJS #${FIRM.license}) to perform the claim investigation described in this intake. Work begins on written acceptance of the assignment; no payment is due at intake.</p>
         <h4>Billing</h4>
@@ -600,12 +740,13 @@ function view(step){
 
 /* ============ Step actions ============ */
 function pickSvc(k){
-  // The private door does not offer the carrier path; refusing it here too
-  // means a stale link or a hand-typed value cannot reach it either.
-  if(PRIVATE_ONLY && k === "claims") return;
+  // The private door does not offer the carrier or legal paths; refusing here
+  // too means a stale link or a hand-typed value cannot reach them either.
+  if(PRIVATE_ONLY && (k === "claims" || k === "legal")) return;
   capture(); S.svc=k; render();
 }
 function pickAuth(k){ capture(); val.z_auth=k; render(); }
+function pickArr(k){ capture(); val.l_arrangement=k; render(); }
 function pickFiles(input){ S.files=[...input.files].map(f=>f.name); const n=$("filenote"); if(n) n.textContent = S.files.length? S.files.length+" file(s) attached: "+S.files.join(", ") : "Attach court papers or a photo of the subject if you have them."; }
 
 
@@ -635,6 +776,14 @@ function validate(step){
     if(!(val.c_phone||"").trim() && !(val.c_email||"").trim()) return "Add a phone number or email so we can reach you.";
   }
   if(step==="service" && !S.svc) return "Please choose a service.";
+  if(step==="firm"){
+    if(!(val.lf_firm||"").trim()) return "Please name the law firm.";
+    if(!(val.lf_atty||"").trim()) return "Please name the assigning attorney.";
+  }
+  if(step==="matter"){
+    if(!(val.lm_client||"").trim() && !(val.lm_matter||"").trim())
+      return "Give the client's name or the firm's matter number — the file has to be identifiable.";
+  }
   if(step==="authorization"){
     if(!val.z_auth) return "Please choose how many hours you are authorizing — or pick Authorization pending.";
     if(val.z_auth==="custom" && !(val.z_custom||"").trim()) return "Please describe the custom authorization.";
@@ -693,6 +842,33 @@ function buildPayload(){
     signed_name:val.a_typed||"", signature:S.sig||"",
     submitted_at:new Date().toLocaleString()
   };
+  if(isLegal()){
+    /* The legal payload (LEGAL-INTAKE.md). Two identities are deliberately
+       kept apart: `client_name` is the FIRM'S CLIENT — the party the matter is
+       about, what the office needs on the case — while the reachable contact
+       is the SUBMITTER (the paralegal or attorney filling this in), whose
+       details ride client_email/client_phone plus contact_name so a call-back
+       reaches the person who actually sent it. assignment:'legal' is the
+       marker of record the Worker files the case by. */
+    Object.assign(p, {
+      assignment: "legal",
+      contact_name: val.c_name||"",
+      client_name: val.lm_client||"",
+      firm_name: val.lf_firm||"", firm_address: val.lf_firm_addr||"",
+      firm_phone: val.lf_firm_phone||"", firm_email: val.lf_firm_email||"",
+      attorney_name: val.lf_atty||"", attorney_email: val.lf_atty_email||"", attorney_phone: val.lf_atty_phone||"",
+      paralegal_name: val.lf_para||"", paralegal_email: val.lf_para_email||"", paralegal_phone: val.lf_para_phone||"",
+      billing_name: val.lf_bill||"", billing_email: val.lf_bill_email||"", billing_phone: val.lf_bill_phone||"",
+      billing_reference: val.lf_bill_ref||"",
+      matter_number: val.lm_matter||"", court_case_number: val.lm_court_no||"",
+      court_jurisdiction: val.lm_court||"",
+      assignment_type: val.lm_type||"", conflict_names: val.lm_conflicts||"",
+      deadline: val.lm_deadline||"", hearing_date: val.lm_hearing||"",
+      trial_date: val.lm_trial||"", other_date: val.lm_other||"", other_date_label: val.lm_other_label||"",
+      special_instructions: val.lm_instructions||"",
+      payment_arrangement: val.l_arrangement||""
+    });
+  }
   if(isClaims()){
     // Claim identifiers lead the payload so the assignment email is filable
     // against the carrier's own record without opening the attachment.
@@ -764,8 +940,12 @@ function buildNotice(p, stored){
   return {
     case_no: p.case_no,
     service: p.service,
-    type: p.claim_number || p.carrier ? "Insurance claim assignment" : "Client intake",
-    contact_name: p.client_name || p.signed_name || "",
+    type: p.assignment === "legal" ? "Legal investigation assignment"
+        : p.claim_number || p.carrier ? "Insurance claim assignment" : "Client intake",
+    /* For a legal assignment the reachable person is the SUBMITTER — the
+       paralegal or attorney — never the firm's client, whose name is case
+       content and stays in the portal. */
+    contact_name: (p.assignment === "legal" ? p.contact_name : p.client_name) || p.signed_name || "",
     contact_phone: p.client_phone || "",
     contact_email: p.client_email || "",
     submitted_at: p.submitted_at,

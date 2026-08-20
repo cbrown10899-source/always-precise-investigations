@@ -770,12 +770,154 @@ section('The private door — /intake/?assignment=private');
      !services.includes('Insurance Claim Assignment'));
   ok('nor a rate beside anything, as ever', !services.includes('$'));
 
+  ok('the legal path is not offered on the private door either',
+     !services.includes('Legal / Law Firm'));
+
   // The belt behind the missing card: even a hand-typed call cannot take it.
   await page.evaluate(() => pickSvc('claims'));
   await page.waitForTimeout(150);
   ok('the door refuses the carrier path even when asked directly',
      !(await page.locator('.card').innerText()).includes('Claim details')
      && await page.evaluate(() => S.svc) !== 'claims');
+  await page.evaluate(() => pickSvc('legal'));
+  await page.waitForTimeout(150);
+  ok('and the legal path even when asked directly',
+     await page.evaluate(() => S.svc) !== 'legal');
+  await page.close();
+}
+
+/* ------------------------------------------- UNIT 6: the legal door ------ */
+
+section('The legal door — /intake/?assignment=legal');
+{
+  submitted = null; stored = null;
+  const page = await (await browser.newContext()).newPage();
+  await page.route('**api.web3forms.com/**', route => {
+    submitted = JSON.parse(route.request().postData() || '{}');
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' });
+  });
+  await page.route('**formsubmit.co/**', route => route.abort());
+  await page.route('**/portal-api/ingest', route => {
+    stored = JSON.parse(route.request().postData() || '{}');
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+  });
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(BASE + '?assignment=legal');
+  await page.waitForTimeout(200);
+
+  ok('the page titles itself the Legal Investigation Assignment',
+     (await page.title()).includes('Legal Investigation Assignment'));
+  ok('and the masthead says legal assignment',
+     (await page.locator('.name').innerText()).includes('LEGAL ASSIGNMENT'));
+  ok('the service picker is gone from the flow — six steps', await dots(page) === 6);
+
+  // Step 1: the submitter — a paralegal, in this walk.
+  await set(page, 'c_name', 'Tessa Boyd');
+  await set(page, 'c_email', 'tboyd@harmonboyle.test');
+  await advance(page);
+
+  // Step 2: the firm.
+  ok('the firm step asks a law office\'s questions', await heading(page) === 'Law firm & contacts');
+  const firmStep = await page.locator('.card').innerText();
+  ok('a paralegal is not required and says so',
+     firmStep.includes('if one is on this file'));
+  await advance(page);
+  ok('the firm is required, in words', (await err(page)).includes('law firm'));
+  await set(page, 'lf_firm', 'Harmon & Boyle PLC');
+  await advance(page);
+  ok('the attorney is required, in words', (await err(page)).includes('attorney'));
+  await set(page, 'lf_atty', 'R. Harmon');
+  await set(page, 'lf_atty_email', 'rharmon@harmonboyle.test');
+  await set(page, 'lf_para', 'Tessa Boyd');
+  await advance(page);
+
+  // Step 3: the matter.
+  ok('the matter step opens', await heading(page) === 'The matter');
+  await advance(page);
+  ok('the file must be identifiable — client OR matter number',
+     (await err(page)).includes('matter number'));
+  await set(page, 'lm_client', 'Estate of L. Byrd');
+  await set(page, 'lm_matter', 'M-2211');
+  await set(page, 'lm_court', 'Roanoke County Circuit Court');
+  await page.locator('[data-k="lm_type"]').selectOption('Witness locate / interview');
+  await set(page, 'lm_deadline', '2026-09-15');
+  const matterStep = await page.locator('.card').innerText();
+  ok('the dates say no deadline is invented from another date',
+     matterStep.includes('never invent a deadline'));
+  ok('documents are exchanged after acceptance — nothing must be attached',
+     matterStep.includes('once the assignment is accepted'));
+  await advance(page);
+
+  // Steps 4–5: subject and objective, the shared machinery.
+  await set(page, 's_name', 'J. Q. Adverse');
+  await page.locator('[data-k="s_addr_na"]').check();
+  await advance(page);
+  await set(page, 'o_goal', 'Locate and interview the witness before the hearing.');
+  await advance(page);
+
+  // Step 6: the agreement — arrangement, terms, signature; never a payment.
+  const agree = await page.locator('.card').innerText();
+  ok('the retainer is arranged with the firm — no figure anywhere',
+     agree.includes('Arranged with the firm') && !agree.includes('$'));
+  ok('the four legal arrangements are offered',
+     agree.includes('BILL.com invoice / ACH') && agree.includes('pick up at your office')
+     && agree.includes('by mail') && agree.includes('Existing billing arrangement'));
+  ok('no consumer payment method is on the page',
+     !agree.includes('Venmo') && !agree.includes('Cash App'));
+  ok('choosing is said plainly not to be paying',
+     agree.includes('nothing is marked paid by choosing'));
+  ok('the pickup wording is the owner\'s',
+     agree.includes('we will arrange pickup at your office'));
+  await page.evaluate(() => pickArr('check_pickup'));
+  await page.waitForTimeout(120);
+  await page.locator('[data-k="a_consent"]').check();
+  await set(page, 'a_typed', 'Tessa Boyd');
+  await sign(page);
+  await advance(page);
+  await page.waitForTimeout(400);
+
+  /* The submission's proof is the intercepted ingest itself — page wording is
+     secondary, and 'received' also appears in the agreement terms, which is
+     how a stuck walk once read as a submitted one. */
+  ok('the assignment submits and is recorded', stored !== null,
+     (await page.locator('.record, .card').first().innerText()).slice(0, 120));
+  ok('the final record says the assignment was submitted',
+     /Assignment submitted|Intake submitted/.test(await page.locator('.record').innerText()));
+  ok('the portal record is marked legal', stored && stored.assignment === 'legal');
+  ok('with the firm, the attorney and the matter',
+     stored.firm_name === 'Harmon & Boyle PLC' && stored.attorney_name === 'R. Harmon'
+     && stored.matter_number === 'M-2211');
+  ok('the firm\'s client is the case\'s client; the submitter is the contact',
+     stored.client_name === 'Estate of L. Byrd' && stored.contact_name === 'Tessa Boyd'
+     && stored.client_email === 'tboyd@harmonboyle.test');
+  ok('the arrangement rides as a request', stored.payment_arrangement === 'check_pickup');
+  ok('the NA state rides as status, never a placeholder',
+     stored.subject_address === '' && stored.subject_address_status === 'not_available');
+
+  /* THE RELAY BOUNDARY, legal edition: the notice says an assignment arrived
+     and who to call back — the firm's matter never leaves the building. */
+  ok('the relay is told the type and the submitter',
+     submitted && submitted.subject.includes('Legal investigation assignment')
+     && submitted.contact_name === 'Tessa Boyd');
+  const relay = JSON.stringify(submitted);
+  ok('and receives no firm, client, matter, court, subject or arrangement',
+     !relay.includes('Harmon') && !relay.includes('Byrd') && !relay.includes('M-2211')
+     && !relay.includes('Adverse') && !relay.includes('check_pickup')
+     && !relay.includes('Roanoke County'), relay.slice(0, 200));
+  await page.close();
+}
+
+section('Bare /intake/ offers the three businesses');
+{
+  const page = await newPage();
+  await set(page, 'c_name', 'Walk In');
+  await set(page, 'c_phone', '5405550100');
+  await advance(page);
+  const services = await page.locator('.card').innerText();
+  ok('private client work is offered', services.includes('Surveillance') && services.includes('Process Serving'));
+  ok('the insurance assignment is offered', services.includes('Insurance Claim Assignment'));
+  ok('the legal / law firm path is offered', services.includes('Legal / Law Firm'));
+  ok('with no figure beside anything', !services.includes('$'));
   await page.close();
 }
 
