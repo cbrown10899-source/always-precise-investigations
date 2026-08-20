@@ -11165,7 +11165,7 @@ section('Clients & Firms: a possible duplicate is a question, not a merge');
 section('Clients & Firms: the field never sees the directory');
 {
   const page = await newPage();
-  await signIn(page, 'dana', 'FieldPassword2x');
+  await signIn(page, 'dana', 'FieldWork2026x');
   const nav = await text(page, '.tabs');
   ok('an investigator has no Clients & Firms door', !has(nav, 'Clients'), nav);
   /* And asking for it directly gets them nothing — the page holds no data the
