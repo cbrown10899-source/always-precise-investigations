@@ -25,7 +25,7 @@ item is finished.
 | 6 | **Legal / Law Firm intake** (third intake type) | ✅ **DONE — DEPLOYED** at `1b24467` (#192). LIVE VERIFY **OPEN** for the owner |
 | 7 | Repeat Client / Firm Profiles | ✅ **DONE — DEPLOYED** at `860f8fb` (#193). LIVE VERIFY **OPEN** for the owner |
 | 8 | Global Case Search + advanced Needs Attention | ✅ **DONE — DEPLOYED** at `8d28196` (#194). LIVE VERIFY **OPEN** for the owner |
-| 9 | Multiple Report Templates | not started |
+| 9 | Multiple Report Templates | ✅ **DONE — DEPLOYED** at `9979fca` (#195). LIVE VERIFY **OPEN** for the owner |
 | 10 | Case Timeline | not started |
 | 11 | Evidence Integrity | not started |
 | 12 | Storage Health | not started |
@@ -146,6 +146,41 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Do not interrupt the current coding unit. Record this queue only"*, and
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
+
+## 📌 Unit 9 — what shipped (#195, `9979fca`)
+
+**Multiple Report Templates — six styles, ONE report engine.** Surveillance,
+Domestic / Custody, Insurance, Legal, Process / Locate and General, as
+configurations over the single document renderer. Detail in CLAUDE.md under
+*"Six report styles, one report engine"*.
+
+**Why it stays one engine:** the PDF is written from the rendered `#pkgdoc`
+(Unit 4's decision), so a template that changes the document changes the
+preview, the print view, the download and the Dropbox copy together. A test
+asserts there is exactly one `%PDF-1.` writer in the page and that the template
+definitions contain no logic at all.
+
+A template supplies the title, the section headings, their order and which
+optional sections appear — **labels, never narrative**. No template asserts
+service was effected, custody was breached or a claim was fraudulent. A section
+with nothing in it is skipped whichever template asked for it.
+
+`build_template` is a marker table (the `build_custom` reasoning), the id
+carries no CHECK, and **absent means general** — every report that exists today
+keeps printing exactly as it did, which is also what stops a later change to the
+definitions from rewriting history. A finalized package refuses to be restyled
+and says to reopen; finalize records which style it went out in.
+
+**Schema: `build_template` — `portal-setup.yml` WAS dispatched after merge and
+succeeded** (run `32406425630`, against `9979fca`). Both deploys green: site
+`32406372476`, portal Worker `32406372478`.
+
+**Suites at merge:** worker **2258/0**, portal **2019/0**, intake **236/0**
+(untouched), deploy guard **68/0**.
+
+**LIVE VERIFY (owner):** how each of the six actually reads on paper and on
+screen, and whether the headings are the words the firm wants in front of a
+carrier, a law firm and a private client.
 
 ## 📌 Unit 8 — what shipped (#194, `8d28196`)
 
@@ -430,6 +465,21 @@ node .github/test-deploy.mjs                    # expect 68 / 0
 
 Then the ordinary chain: PR → merge if green → pull master → deploy → live
 verify → **save point** → next unit (item 4, Admin report/mobile workflow fix).
+
+## 🚦 DEPLOYMENT — 2026-08-20, master `9979fca` (#195) — Unit 9, Multiple Report Templates
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/intake/` + `/portal/` | `9979fca` | `9979fca` | **DEPLOYED** — `deploy.yml` 32406372476 success |
+| `api-case-portal` | `9979fca` | `9979fca` | **DEPLOYED** — `deploy-portal.yml` 32406372478 success |
+| Schema (`build_template`) | `9979fca` | applied | **`portal-setup.yml` 32406425630 success** — dispatched at merge, nothing else owed |
+| Save point | — | — | `save/2026-08-20-1901-9979fca`, the merge push's automatic firing |
+
+Tests at merge: worker **2258/0**, portal **2019/0**, intake **236/0**, deploy
+guard **68/0**. The container has no outbound route, so "applied" is the
+workflow's success against the merge SHA plus the deployed Worker whose
+`EXPECTED_TABLES` names the table — `/portal-api/health` on the owner's device
+is the final confirmation, the standing standard.
 
 ## 🚦 DEPLOYMENT — 2026-08-20, master `8d28196` (#194) — Unit 8, Global Search + Needs Attention
 
