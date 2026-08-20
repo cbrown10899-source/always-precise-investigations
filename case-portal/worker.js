@@ -8709,6 +8709,708 @@ async function linkEvidence(request, env, user, caseNo, evidenceId) {
 
 /* ----------------------------------------------------------------- users */
 
+/* =========================================================================
+   UNIT 10 — THE CASE TIMELINE (owner brief, 2026-08-20)
+
+   "The timeline is a VIEW over existing case records. Source records remain
+   authoritative." So there is NO timeline table, nothing is copied, and every
+   arm below is a case-scoped read of a table that already existed. Editing
+   happens where the record lives; this route only reads.
+
+   IT NEEDED NO SCHEMA AND NO INDEX, and that was checked rather than assumed:
+   every arm is an equality lookup on a column that is already the leading part
+   of an index — activity_log(case_no, at_date, at_time), case_days(case_no,
+   day_date), case_reports(case_no, report_date), case_evidence(case_no),
+   retainer_payment(case_no, id), invoices(case_no), invoice_payments
+   (invoice_id), invoice_events(invoice_id), case_builds(case_no), build_events
+   (build_id), photo_stamp(case_no, id), video_stamp(case_no, id),
+   case_offers(case_no, status), legal_intake(case_no), and the four
+   single-row markers keyed by case_no. Nothing here scans.
+
+   AND NO STATEMENT GROWS WITH THE CASE. Every arm carries its own LIMIT from
+   the TL block; the invoice and build children are read with ONE statement
+   each through a subquery on their parent rather than a query per parent, so
+   a case with forty invoices costs the same two reads as a case with one.
+   Unit 7's 401-bound-parameter lesson: a query whose width follows the
+   customer's data is green in every test and broken only in production. */
+
+const TL_TZ = 'America/New_York';
+
+const TL = {
+  PAGE: 200,            // events returned when the caller asks for no size
+  MAX:  600,            // the most one request will ever return
+  // Per-source caps. Bounded reads, newest first at the source.
+  ACTIVITY: 500, EVIDENCE: 400, DAYS: 200, REPORTS: 200, STAMPS: 200,
+  PAYMENTS: 200, INVOICES: 100, INVOICE_EVENTS: 150,
+  BUILDS: 60, BUILD_EVENTS: 150, OFFERS: 50,
+};
+
+/* Same-instant ties break on this, then on the source row id. Insertion order
+   is NOT chronology — an entry typed at 9pm about something seen at 8pm has to
+   land at 8pm — so the sort key is the event's own time and this table is what
+   makes two events sharing one keep a stable, explainable order. */
+const TL_RANK = {
+  case_created: 10, assigned: 20, status: 25,
+  day_start: 30, activity: 35, day_end: 40,
+  photo: 50, video: 51, photo_stamp: 52, video_stamp: 53,
+  report_created: 60, report_status: 61,
+  payment: 70, payment_void: 71, invoice: 72, invoice_status: 73,
+  package: 80, legal_date: 90, archived: 95, deleted: 96,
+};
+
+/* The filter buckets. One per event type, so a chip cannot disagree with what
+   it filters. `legal` is the brief's IMPORTANT DATES. */
+const TL_CATEGORY = {
+  case_created: 'case', assigned: 'case', status: 'case',
+  archived: 'case', deleted: 'case',
+  day_start: 'activity', day_end: 'activity', activity: 'activity',
+  photo: 'media', video: 'media', photo_stamp: 'media', video_stamp: 'media',
+  report_created: 'reports', report_status: 'reports',
+  payment: 'payments', payment_void: 'payments',
+  invoice: 'payments', invoice_status: 'payments',
+  package: 'package', legal_date: 'legal',
+};
+
+/* The timeline's own words. The Worker composes each title because the TITLE
+   is what says which of several facts a row is — "Report approved" against
+   "Report submitted" is the whole content of that event — and deriving it
+   again in the page would be the same rule written twice. Unit 8's
+   needsAttention already composes its sentences here for the same reason. */
+const TL_STAGE_WORD = { open: 'Open', assigned: 'Assigned', in_progress: 'In progress',
+  report_review: 'Report review', awaiting_client: 'Awaiting client', complete: 'Complete',
+  on_hold: 'On hold', cancelled: 'Cancelled', closed: 'Closed' };
+const TL_REPORT_WORD = { submitted: 'submitted', needs_revision: 'sent back for revision',
+  approved: 'approved', delivered: 'delivered' };
+const TL_METHOD_WORD = { cash_app: 'Cash App', venmo: 'Venmo', check: 'Check', cash: 'Cash',
+  ach_bill: 'ACH / BILL', ach: 'ACH', card: 'Card', wire: 'Wire', other: 'Other' };
+const TL_INVOICE_WORD = { voided: 'voided', status_paid: 'paid',
+  status_sent_to_bill: 'sent to BILL', status_sent_to_client: 'sent to the client',
+  status_ready: 'marked ready' };
+const TL_BUILD_WORD = { created: 'started', finalized: 'finalized',
+  delivered: 'delivered', reopened: 'reopened' };
+
+/* ---------------------------------------------------------------- the zone
+
+   EST OR EDT FROM THE DATE ITSELF. Two kinds of timestamp live in this
+   database and a chronology has to sort them against each other:
+
+     - UTC INSTANTS — created_at, uploaded_at, recorded_at, status_at,
+       taken_utc, start_utc, at. Written by nowIso(); unambiguous.
+     - LOCAL WALL CLOCK — activity_log.at_date/at_time, case_days.day_date with
+       start_time/end_time, retainer_payment.paid_on, invoice_payments
+       .paid_date, case_reports.report_date and the legal dates. These are what
+       a person wrote down where they were standing, and `ymdLocal` in the page
+       files them in the investigator's own local day for exactly that reason.
+
+   Comparing the two without converting is how an 8:15 PM observation sorts
+   ahead of a 9:00 PM one that was recorded an hour earlier. So wall-clock
+   values are read AS America/New_York, both kinds land on one UTC axis for the
+   sort, and the axis is never shown to anybody.
+
+   WHAT IS DISPLAYED IS COMPOSED HERE, in that zone, and sent as strings. A
+   laptop set to Pacific must not draw a Virginia surveillance entry three
+   hours early while the report beside it says otherwise, and one writer is
+   this project's standing answer to two renderings of one fact.
+
+   NOTHING IS REWRITTEN. A wall-clock row keeps the date and time it was
+   recorded with, verbatim; only the sort key is derived. */
+
+function etFields(ms) {
+  const p = {};
+  for (const x of new Intl.DateTimeFormat('en-US', {
+      timeZone: TL_TZ, hour12: false, year: 'numeric', month: '2-digit',
+      day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+      timeZoneName: 'short' }).formatToParts(new Date(ms))) p[x.type] = x.value;
+  if (p.hour === '24') p.hour = '00';     // en-US writes midnight as hour 24
+  return p;
+}
+
+/* -240 in EDT, -300 in EST — read from the instant, never assumed. */
+function etOffsetMinutes(ms) {
+  const p = etFields(ms);
+  return (Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - ms) / 60000;
+}
+
+/* An instant, as the Eastern wall clock shows it. */
+function tlAt(iso) {
+  const ms = Date.parse(String(iso || ''));
+  if (!Number.isFinite(ms)) return null;
+  const p = etFields(ms);
+  return { at: new Date(ms).toISOString(), date: `${p.year}-${p.month}-${p.day}`,
+           time: `${p.hour}:${p.minute}`, tz: p.timeZoneName || '' };
+}
+
+/* An Eastern wall-clock date, and optionally a time, as the instant it names.
+   TWO PASSES: the offset is read at the naive guess and again at the corrected
+   instant, which is what makes the changeover weekends come out right instead
+   of being an hour wrong twice a year.
+
+   `time` stays null when the record carries only a date. A date-only event is
+   sorted at the start of its day and SAYS it has no time — inventing noon to
+   make it sort nicely would be a precision claim the record does not make. */
+function tlLocal(ymd, hhmm) {
+  const d = String(ymd || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+  const raw = String(hhmm || '');
+  const t = /^\d{2}:\d{2}/.test(raw) ? raw.slice(0, 5) : null;
+  const guess = Date.parse(`${d}T${t || '00:00'}:00Z`);
+  if (!Number.isFinite(guess)) return null;
+  let ms = guess - etOffsetMinutes(guess) * 60000;
+  ms = guess - etOffsetMinutes(ms) * 60000;
+  const p = etFields(ms);
+  return { at: new Date(ms).toISOString(), date: d, time: t, tz: p.timeZoneName || '' };
+}
+
+/* One event. `when` is a tlAt/tlLocal result; `rec` is the moment the record
+   was MADE, carried only when it is a different calendar day from the event —
+   "logged the next morning" is worth saying, "logged the same minute" is
+   noise. */
+function tlEvent(type, when, fields, rec) {
+  if (!when) return null;
+  const recAt = rec && rec !== when.at ? tlAt(rec) : null;
+  return {
+    type, category: TL_CATEGORY[type] || 'case',
+    at: when.at, date: when.date, time: when.time || null, tz: when.tz || '',
+    rank: TL_RANK[type] || 50, seq: 0,
+    ...(recAt && recAt.date !== when.date
+        ? { recorded_at: recAt.at, recorded_date: recAt.date, recorded_time: recAt.time }
+        : {}),
+    ...fields,
+  };
+}
+
+const tlNum = v => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+const tlMoney = v => (tlNum(v) == null ? '' : '$' + Number(v).toLocaleString('en-US',
+  { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+
+/* Long free text is a TITLE on a timeline, not the whole entry. The Activity
+   log is one tap away and holds the entry in full; a chronology that prints a
+   400-word note stops being a chronology. */
+function tlShort(s, n) {
+  const t = String(s || '').replace(/\s+/g, ' ').trim();
+  return t.length > n ? t.slice(0, n - 1).trimEnd() + '…' : t;
+}
+
+/* ------------------------------------------------------------ the composer */
+async function caseTimeline(env, user, caseNo, url) {
+  const row = await caseFor(env, user, caseNo);
+  if (!row) return json({ error: 'not found' }, 404);
+  const admin = user.role === 'admin';
+  const q = url ? url.searchParams : new URLSearchParams();
+
+  let limit = parseInt(q.get('limit') || '', 10);
+  if (!Number.isFinite(limit) || limit <= 0) limit = TL.PAGE;
+  limit = Math.min(limit, TL.MAX);
+
+  /* THE RANGE NARROWS THE READ rather than the rendering, so "last 7 days" on
+     a large case comes back complete instead of capped. An Eastern calendar
+     range means two different windows in SQL — a UTC instant window for the
+     instant columns, and a plain string window for the date columns — and both
+     are BOUND, never interpolated. Absent bounds become sentinels that sort
+     outside every real value, so the statements keep one shape. */
+  const dayOk = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+  const fromD = dayOk(q.get('from')) ? q.get('from') : null;
+  const toD   = dayOk(q.get('to'))   ? q.get('to')   : null;
+  const LO_D = fromD || '0000-01-01', HI_D = toD || '9999-12-31';
+  const LO = fromD ? tlLocal(fromD, '00:00').at : '0000-01-01T00:00:00.000Z';
+  const HI = toD
+    ? new Date(Date.parse(tlLocal(toD, '23:59').at) + 59999).toISOString()
+    : '9999-12-31T23:59:59.999Z';
+
+  const missing = await missingTables(env);
+  /* NAME WHAT CANNOT BE SEEN. A table that has not arrived yet (schema.sql
+     comes by a manual portal-setup dispatch while the Worker deploys on push)
+     must not read as "nothing happened" — the collector below carries every
+     source that could not be consulted into the response. */
+  const blind = [];
+  const have = (t, label) => {
+    const ok = !missing.includes(t);
+    if (!ok && label && !blind.includes(label)) blind.push(label);
+    return ok;
+  };
+
+  /* `caseFor` returns only what the permission check needs, so the facts the
+     header and the first event want are read once, here, rather than twice. */
+  const info = await env.DB.prepare(
+    `SELECT created_at, subject_name, client_name, carrier, claim_number
+       FROM submissions WHERE case_no = ?`).bind(caseNo).first() || {};
+  const stRow = have('case_status')
+    ? await env.DB.prepare(
+        `SELECT s.stage, s.set_at, u.display_name AS who FROM case_status s
+           LEFT JOIN users u ON u.id = s.set_by WHERE s.case_no = ?`).bind(caseNo).first()
+    : null;
+
+  const ev = [];
+  const capped = [];
+  /* THE RANGE APPLIES TO EVERY EVENT, including the handful that come from a
+     single row and so have no LIMIT of their own. Without this, narrowing to
+     the last seven days still returned "Case opened" from two years ago — a
+     filter that quietly exempts some of its subject is worse than no filter. */
+  const inRange = when => Boolean(when) && when.at >= LO && when.at <= HI;
+  const push = (e, seq) => { if (e) { e.seq = Number(seq) || 0; ev.push(e); } };
+  const cap = (rows, n, label) => {
+    if (rows && rows.length >= n && !capped.includes(label)) capped.push(label);
+    return rows || [];
+  };
+
+  /* ------------------------------------------------------------ 1. the case */
+  const opened = tlAt(info.created_at);
+  if (inRange(opened)) {
+    push(tlEvent('case_created', opened, {
+      title: 'Case opened',
+      detail: row.kind === 'claims' ? 'Claim assignment' : 'Client intake',
+      link: { tab: 'overview' },
+    }), 0);
+  }
+
+  /* ONE status event, and that is not a shortcut — `case_status` is
+     current-state only, one row per case. There is no stage history table, so
+     a timeline listing every status change would be inventing the ones nobody
+     recorded. What is shown is what is known: the stage the case is in, and
+     when it was set. */
+  const stAt = stRow && stRow.set_at ? tlAt(stRow.set_at) : null;
+  if (inRange(stAt)) {
+    push(tlEvent('status', stAt, {
+      title: 'Status set to ' + (TL_STAGE_WORD[stRow.stage] || stRow.stage),
+      who: stRow.who || '', status: stRow.stage, link: { tab: 'assign' },
+    }), 0);
+  }
+
+  if (admin && have('case_archive')) {
+    const a = await env.DB.prepare(
+      `SELECT a.archived_at, u.display_name AS who FROM case_archive a
+         LEFT JOIN users u ON u.id = a.archived_by WHERE a.case_no = ?`).bind(caseNo).first();
+    const at = a ? tlAt(a.archived_at) : null;
+    if (inRange(at)) push(tlEvent('archived', at,
+      { title: 'Case archived', who: a.who || '', link: { tab: 'billing' } }), 0);
+  }
+  if (admin && have('case_deleted')) {
+    const d = await env.DB.prepare(
+      `SELECT d.deleted_at, d.reason, u.display_name AS who FROM case_deleted d
+         LEFT JOIN users u ON u.id = d.deleted_by WHERE d.case_no = ?`).bind(caseNo).first();
+    const at = d ? tlAt(d.deleted_at) : null;
+    if (inRange(at)) push(tlEvent('deleted', at,
+      { title: 'Case deleted', detail: d.reason || '', who: d.who || '',
+        link: { tab: 'billing' } }), 0);
+  }
+
+  /* Assignment. `submissions.assigned_to` keeps no history, so the record of
+     WHEN somebody was put on this case is the offer they accepted — an actual
+     recorded moment rather than one derived from the current column. Offers
+     are admin territory in the workspace and stay admin territory here. */
+  if (admin) {
+    const offers = cap((await env.DB.prepare(
+      `SELECT o.id, o.status, o.responded_at, o.offered_at, u.display_name AS who
+         FROM case_offers o LEFT JOIN users u ON u.id = o.investigator_id
+        WHERE o.case_no = ? AND o.status = 'accepted' AND o.responded_at IS NOT NULL
+          AND o.responded_at >= ? AND o.responded_at <= ?
+        ORDER BY o.id DESC LIMIT ?`).bind(caseNo, LO, HI, TL.OFFERS).all()).results,
+      TL.OFFERS, 'assignments');
+    for (const o of offers) {
+      push(tlEvent('assigned', tlAt(o.responded_at), {
+        title: 'Investigator assigned', detail: o.who ? o.who + ' accepted the assignment' : '',
+        who: o.who || '', link: { tab: 'assign' },
+      }, o.offered_at), o.id);
+    }
+  }
+
+  /* ------------------------------------------------------- 2. investigation */
+  const days = cap((await env.DB.prepare(
+    `SELECT d.id, d.day_date, d.start_time, d.end_time, d.hours, d.miles, d.created_at,
+            d.ended_at, u.display_name AS who
+       FROM case_days d LEFT JOIN users u ON u.id = d.investigator_id
+      WHERE d.case_no = ? AND d.day_date >= ? AND d.day_date <= ?
+      ORDER BY d.day_date DESC, d.id DESC LIMIT ?`)
+    .bind(caseNo, LO_D, HI_D, TL.DAYS).all()).results, TL.DAYS, 'investigation days');
+  for (const d of days) {
+    push(tlEvent('day_start', tlLocal(d.day_date, d.start_time), {
+      title: 'Investigation day started', who: d.who || '', link: { tab: 'field' },
+    }, d.created_at), d.id);
+    if (d.end_time) {
+      const bits = [];
+      if (tlNum(d.hours) != null) bits.push(tlNum(d.hours) + ' hr');
+      if (tlNum(d.miles) != null) bits.push(tlNum(d.miles) + ' mi');
+      push(tlEvent('day_end', tlLocal(d.day_date, d.end_time), {
+        title: 'Investigation day ended', detail: bits.join(' · '),
+        who: d.who || '', link: { tab: 'field' },
+      }, d.ended_at), d.id);
+    }
+  }
+
+  /* The activity log, removed entries included and marked. `activity_removed`
+     is the project's standing shape — an entry can be removed, never erased —
+     so the chronology shows it struck out rather than pretending the moment
+     never happened, which is the same thing the Activity log itself does. */
+  const hasSource = have('activity_source', 'voice-created entries');
+  const hasRemoved = have('activity_removed', 'removed entries');
+  const acts = cap((await env.DB.prepare(
+    `SELECT a.id, a.day_id, a.at_date, a.at_time, a.kind, a.description, a.location,
+            a.vehicle, a.created_at, a.edited_at, u.display_name AS who
+            ${hasRemoved ? ', r.removed_at, ru.display_name AS removed_by' : ''}
+            ${hasSource ? ', s.source' : ''}
+       FROM activity_log a LEFT JOIN users u ON u.id = a.investigator_id
+       ${hasRemoved ? `LEFT JOIN activity_removed r ON r.entry_id = a.id
+                       LEFT JOIN users ru ON ru.id = r.removed_by` : ''}
+       ${hasSource ? 'LEFT JOIN activity_source s ON s.entry_id = a.id' : ''}
+      WHERE a.case_no = ? AND a.at_date >= ? AND a.at_date <= ?
+      ORDER BY a.at_date DESC, a.at_time DESC, a.id DESC LIMIT ?`)
+    .bind(caseNo, LO_D, HI_D, TL.ACTIVITY).all()).results, TL.ACTIVITY, 'activity entries');
+
+  /* ------------------------------------------------------------- 3. media */
+  const evidence = cap((await env.DB.prepare(
+    `SELECT e.id, e.filename, e.content_type, e.entry_id, e.classification,
+            e.uploaded_at, e.deleted_at, u.display_name AS who
+       FROM case_evidence e LEFT JOIN users u ON u.id = e.uploaded_by
+      WHERE e.case_no = ? ${admin ? '' : 'AND e.deleted_at IS NULL'}
+        AND e.uploaded_at IS NOT NULL AND e.uploaded_at >= ? AND e.uploaded_at <= ?
+      ORDER BY e.id DESC LIMIT ?`)
+    .bind(caseNo, LO, HI, TL.EVIDENCE).all()).results, TL.EVIDENCE, 'case media');
+
+  /* THE RELATIONSHIP IS THE COLUMN, NEVER THE CLOCK. `case_evidence.entry_id`
+     is the only thing that says a photograph documents a moment; two records
+     sharing a minute say nothing. So an activity entry carries the files that
+     NAME it and no others, and this is a pass over rows already fetched — no
+     second query, and nothing per entry. */
+  const byEntry = new Map();
+  for (const f of evidence) {
+    if (!f.entry_id || f.deleted_at) continue;
+    const list = byEntry.get(f.entry_id) || [];
+    list.push({ id: f.id, filename: f.filename,
+                kind: String(f.content_type || '').startsWith('video/') ? 'video' : 'photo' });
+    byEntry.set(f.entry_id, list);
+  }
+
+  for (const a of acts) {
+    const extra = [];
+    if (a.location) extra.push('at ' + a.location);
+    if (a.vehicle) extra.push('vehicle ' + a.vehicle);
+    const att = byEntry.get(a.id) || [];
+    push(tlEvent('activity', tlLocal(a.at_date, a.at_time), {
+      title: tlShort(a.description, 180),
+      detail: extra.join(' · '),
+      who: a.who || '',
+      kind: a.kind,
+      ...(hasSource && a.source === 'voice' ? { source: 'voice' } : {}),
+      ...(a.removed_at ? { removed: true, status: 'Removed',
+                           removed_by: a.removed_by || '' } : {}),
+      ...(a.edited_at ? { edited: true } : {}),
+      ...(att.length ? { attached: att.slice(0, 12) } : {}),
+      link: { tab: 'activity', id: a.id },
+    }, a.created_at), a.id);
+  }
+
+  for (const f of evidence) {
+    const video = String(f.content_type || '').startsWith('video/');
+    push(tlEvent(video ? 'video' : 'photo', tlAt(f.uploaded_at), {
+      title: f.filename,
+      detail: f.entry_id ? 'Filed against an activity entry' : '',
+      who: f.who || '',
+      status: f.deleted_at ? 'Removed' : '',
+      ...(f.deleted_at ? { removed: true } : {}),
+      classification: f.classification || '',
+      link: { tab: 'evidence', id: f.id },
+    }), f.id);
+  }
+
+  /* The timestamped copies. Their EVENT time is the instant burned into the
+     pixels — what the photograph or the footage says happened — and their
+     RECORD time is when the copy was generated. Those are genuinely different
+     facts and the pair is exactly what PHOTO-TIMESTAMP.md exists to keep
+     apart, so both are carried. Superseded corrections are left out: the
+     active derivative is the one that stands. */
+  if (have('photo_stamp', 'timestamped photographs')) {
+    const stamps = cap((await env.DB.prepare(
+      `SELECT p.id, p.taken_utc, p.generated_at, p.source, p.stamped_id, p.original_id,
+              e.filename, u.display_name AS who
+         FROM photo_stamp p
+         LEFT JOIN case_evidence e ON e.id = COALESCE(p.stamped_id, p.original_id)
+         LEFT JOIN users u ON u.id = p.generated_by
+        WHERE p.case_no = ? AND p.superseded_at IS NULL
+          AND p.taken_utc >= ? AND p.taken_utc <= ?
+        ORDER BY p.id DESC LIMIT ?`)
+      .bind(caseNo, LO, HI, TL.STAMPS).all()).results, TL.STAMPS, 'timestamped photographs');
+    for (const s of stamps) {
+      push(tlEvent('photo_stamp', tlAt(s.taken_utc), {
+        title: s.filename || 'Timestamped photograph',
+        detail: 'Timestamped copy filed — taken time from '
+              + (s.source === 'exif' ? 'the camera' : 'the operator'),
+        who: s.who || '',
+        link: s.stamped_id ? { tab: 'evidence', id: s.stamped_id } : { tab: 'evidence' },
+      }, s.generated_at), s.id);
+    }
+  }
+
+  /* Video is device-first: no bytes here and none in Cloudflare, so this table
+     IS the whole of what the portal knows about a timestamped clip. */
+  if (have('video_stamp', 'timestamped video')) {
+    const stamps = cap((await env.DB.prepare(
+      `SELECT v.id, v.original_name, v.derivative_name, v.start_utc, v.generated_at,
+              v.saved_at, u.display_name AS who
+         FROM video_stamp v LEFT JOIN users u ON u.id = v.generated_by
+        WHERE v.case_no = ? AND v.superseded_at IS NULL
+          AND v.start_utc >= ? AND v.start_utc <= ?
+        ORDER BY v.id DESC LIMIT ?`)
+      .bind(caseNo, LO, HI, TL.STAMPS).all()).results, TL.STAMPS, 'timestamped video');
+    for (const s of stamps) {
+      push(tlEvent('video_stamp', tlAt(s.start_utc), {
+        title: s.derivative_name || s.original_name || 'Timestamped video',
+        detail: 'Timestamped copy generated on the device'
+              + (s.saved_at ? '' : ' — not yet confirmed saved'),
+        who: s.who || '', status: s.saved_at ? '' : 'Not confirmed saved',
+        link: { tab: 'evidence' },
+      }, s.generated_at), s.id);
+    }
+  }
+
+  /* ------------------------------------------------------------ 4. reports */
+  const reports = cap((await env.DB.prepare(
+    `SELECT r.id, r.report_date, r.status, r.created_at, r.status_at,
+            u.display_name AS who, su.display_name AS status_by
+       FROM case_reports r LEFT JOIN users u ON u.id = r.investigator_id
+       LEFT JOIN users su ON su.id = r.status_by
+      WHERE r.case_no = ? ORDER BY r.report_date DESC, r.id DESC LIMIT ?`)
+    .bind(caseNo, TL.REPORTS).all()).results, TL.REPORTS, 'reports');
+  for (const r of reports) {
+    const created = tlAt(r.created_at);
+    if (inRange(created)) {
+      push(tlEvent('report_created', created, {
+        title: 'Report drafted',
+        detail: r.report_date ? 'for ' + r.report_date : '',
+        who: r.who || '', status: r.status, link: { tab: 'reports', id: r.id },
+      }), r.id);
+    }
+    /* `status_at` is one moment, not a history — a report that went draft →
+       submitted → approved keeps only the last of those. So one status event
+       per report, saying what it says. */
+    if (r.status_at && r.status !== 'draft') {
+      const sa = tlAt(r.status_at);
+      if (inRange(sa)) {
+        push(tlEvent('report_status', sa, {
+          title: 'Report ' + (TL_REPORT_WORD[r.status] || r.status),
+          detail: r.report_date ? 'for ' + r.report_date : '',
+          who: r.status_by || '', status: r.status, link: { tab: 'reports', id: r.id },
+        }), r.id);
+      }
+    }
+  }
+
+  /* ----------------------------------------------------------- 5. the money
+     ADMIN ONLY, and by not running rather than by filtering. An investigator
+     is never sent what the client pays — the boundary redactRow draws around
+     client_phone and FIELD_KEEP draws around the not-to-exceed. */
+  if (admin) {
+    if (have('retainer_payment', 'retainer payments')) {
+      const voidOk = have('retainer_payment_void', 'voided payments');
+      const pays = cap((await env.DB.prepare(
+        `SELECT p.id, p.amount, p.method, p.paid_on, p.reference, p.recorded_at,
+                u.display_name AS who
+                ${voidOk ? ', v.voided_at, v.reason AS void_reason, vu.display_name AS voided_by' : ''}
+           FROM retainer_payment p LEFT JOIN users u ON u.id = p.recorded_by
+           ${voidOk ? `LEFT JOIN retainer_payment_void v ON v.payment_id = p.id
+                       LEFT JOIN users vu ON vu.id = v.voided_by` : ''}
+          WHERE p.case_no = ? ORDER BY p.id DESC LIMIT ?`)
+        .bind(caseNo, TL.PAYMENTS).all()).results, TL.PAYMENTS, 'retainer payments');
+      for (const p of pays) {
+        const when = p.paid_on ? tlLocal(p.paid_on, null) : tlAt(p.recorded_at);
+        if (inRange(when)) {
+          push(tlEvent('payment', when, {
+            title: tlMoney(p.amount) + ' retainer payment recorded',
+            detail: [TL_METHOD_WORD[p.method] || p.method || '',
+                     p.reference ? 'ref ' + p.reference : ''].filter(Boolean).join(' · '),
+            who: p.who || '',
+            ...(voidOk && p.voided_at ? { removed: true, status: 'Voided' } : {}),
+            link: { tab: 'billing', id: p.id },
+          }, p.recorded_at), p.id);
+        }
+        if (voidOk && p.voided_at) {
+          const va = tlAt(p.voided_at);
+          if (inRange(va)) {
+            push(tlEvent('payment_void', va, {
+              title: 'Payment of ' + tlMoney(p.amount) + ' voided',
+              detail: p.void_reason || '', who: p.voided_by || '',
+              status: 'Voided', link: { tab: 'billing', id: p.id },
+            }), p.id);
+          }
+        }
+      }
+    }
+
+    const invoices = cap((await env.DB.prepare(
+      `SELECT i.id, i.invoice_no, i.status, i.created_at, u.display_name AS who
+         FROM invoices i LEFT JOIN users u ON u.id = i.created_by
+        WHERE i.case_no = ? ORDER BY i.id DESC LIMIT ?`)
+      .bind(caseNo, TL.INVOICES).all()).results, TL.INVOICES, 'invoices');
+    const invNo = new Map(invoices.map(i => [i.id, i.invoice_no]));
+    for (const i of invoices) {
+      const c = tlAt(i.created_at);
+      if (inRange(c)) {
+        push(tlEvent('invoice', c, {
+          title: 'Invoice ' + (i.invoice_no || '') + ' created',
+          who: i.who || '', status: i.status, link: { tab: 'invoices', id: i.id },
+        }), i.id);
+      }
+    }
+    if (invoices.length) {
+      /* ONE statement for every invoice's payments, resolved through a
+         subquery on the parent — never a query per invoice. Same shape as
+         DEMO_SWEEP's children, and the reason is the same: a read whose COUNT
+         follows the customer's data is the N+1 this brief names by name. */
+      const pays = cap((await env.DB.prepare(
+        `SELECT p.id, p.invoice_id, p.amount, p.method, p.paid_date, p.recorded_at,
+                p.reference, u.display_name AS who
+           FROM invoice_payments p LEFT JOIN users u ON u.id = p.recorded_by
+          WHERE p.invoice_id IN (SELECT id FROM invoices WHERE case_no = ?)
+          ORDER BY p.id DESC LIMIT ?`)
+        .bind(caseNo, TL.PAYMENTS).all()).results, TL.PAYMENTS, 'invoice payments');
+      for (const p of pays) {
+        const when = p.paid_date ? tlLocal(p.paid_date, null) : tlAt(p.recorded_at);
+        if (!inRange(when)) continue;
+        push(tlEvent('payment', when, {
+          title: tlMoney(p.amount) + ' payment recorded',
+          detail: [invNo.get(p.invoice_id) ? 'Invoice ' + invNo.get(p.invoice_id) : '',
+                   TL_METHOD_WORD[p.method] || p.method || '',
+                   p.reference ? 'ref ' + p.reference : ''].filter(Boolean).join(' · '),
+          who: p.who || '', link: { tab: 'invoices', id: p.invoice_id },
+        }, p.recorded_at), p.id);
+      }
+
+      /* The invoice audit trail, narrowed to the transitions that are events.
+         `edited`, `lines_replaced` and `bill_ref_added` are bookkeeping — the
+         brief's "every low-value technical event" — and `payment_recorded`
+         would say a second time what the payment row above already says. */
+      const iev = cap((await env.DB.prepare(
+        `SELECT e.id, e.invoice_id, e.action, e.detail, e.at, u.display_name AS who
+           FROM invoice_events e LEFT JOIN users u ON u.id = e.user_id
+          WHERE e.invoice_id IN (SELECT id FROM invoices WHERE case_no = ?)
+            AND e.action IN ('voided','status_paid','status_sent_to_bill',
+                             'status_sent_to_client','status_ready')
+            AND e.at IS NOT NULL AND e.at >= ? AND e.at <= ?
+          ORDER BY e.id DESC LIMIT ?`)
+        .bind(caseNo, LO, HI, TL.INVOICE_EVENTS).all()).results,
+        TL.INVOICE_EVENTS, 'invoice history');
+      for (const e of iev) {
+        push(tlEvent('invoice_status', tlAt(e.at), {
+          title: 'Invoice ' + (invNo.get(e.invoice_id) || '') + ' — '
+               + (TL_INVOICE_WORD[e.action] || e.action),
+          who: e.who || '', status: e.action === 'voided' ? 'void' : '',
+          ...(e.action === 'voided' ? { removed: true } : {}),
+          link: { tab: 'invoices', id: e.invoice_id },
+        }), e.id);
+      }
+    }
+  }
+
+  /* --------------------------------------------------------- 6. the package
+     Admin territory, like /build itself. Narrowed to the lifecycle: an item
+     added or a summary edited is work in progress, not a case event. */
+  if (admin) {
+    const builds = cap((await env.DB.prepare(
+      'SELECT id, version FROM case_builds WHERE case_no = ? ORDER BY id DESC LIMIT ?')
+      .bind(caseNo, TL.BUILDS).all()).results, TL.BUILDS, 'packages');
+    const version = new Map(builds.map(b => [b.id, b.version]));
+    if (builds.length) {
+      const bev = cap((await env.DB.prepare(
+        `SELECT e.id, e.build_id, e.action, e.detail, e.at, u.display_name AS who
+           FROM build_events e LEFT JOIN users u ON u.id = e.user_id
+          WHERE e.build_id IN (SELECT id FROM case_builds WHERE case_no = ?)
+            AND e.action IN ('created','finalized','delivered','reopened')
+            AND e.at IS NOT NULL AND e.at >= ? AND e.at <= ?
+          ORDER BY e.id DESC LIMIT ?`)
+        .bind(caseNo, LO, HI, TL.BUILD_EVENTS).all()).results,
+        TL.BUILD_EVENTS, 'package history');
+      for (const e of bev) {
+        push(tlEvent('package', tlAt(e.at), {
+          title: 'Client package ' + (TL_BUILD_WORD[e.action] || e.action)
+               + (version.has(e.build_id) ? ' — v' + version.get(e.build_id) : ''),
+          detail: e.action === 'finalized' ? String(e.detail || '') : '',
+          who: e.who || '', status: e.action,
+          link: { tab: 'package', id: e.build_id },
+        }), e.id);
+      }
+    }
+  }
+
+  /* ---------------------------------------------------- 7. important dates
+     ONLY WHAT A FIRM ACTUALLY GAVE US. These are typed into the legal panel;
+     nothing here derives one date from another, and a case with no legal row
+     simply has no dates — the brief's "do not invent problems from weak
+     assumptions", one unit later. Admin only, like the Legal panel itself:
+     the firm is who is paying. */
+  if (admin && have('legal_intake', 'legal dates')) {
+    const L = await env.DB.prepare(
+      `SELECT hearing_date, trial_date, deadline, other_date, other_date_label
+         FROM legal_intake WHERE case_no = ?`).bind(caseNo).first();
+    if (L) {
+      const dates = [['hearing_date', 'Hearing'], ['trial_date', 'Trial'],
+                     ['deadline', 'Deadline'],
+                     ['other_date', String(L.other_date_label || '').trim() || 'Key date']];
+      let n = 0;
+      for (const [k, word] of dates) {
+        if (!dayOk(L[k]) || L[k] < LO_D || L[k] > HI_D) continue;
+        push(tlEvent('legal_date', tlLocal(L[k], null), {
+          title: word, detail: 'Recorded by the firm', link: { tab: 'legal' },
+        }), ++n);
+      }
+    }
+  }
+
+  /* ------------------------------------------------------------- the order
+     Event time first — an entry typed the next morning about something seen
+     at 8pm belongs at 8pm — then the fixed type rank, then the source row id.
+     Deterministic and explainable; no two runs can disagree. */
+  ev.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)
+                 || (a.rank - b.rank) || (a.seq - b.seq));
+
+  const counts = {};
+  for (const e of ev) counts[e.category] = (counts[e.category] || 0) + 1;
+
+  const order = String(q.get('order') || '') === 'asc' ? 'asc' : 'desc';
+  const ordered = order === 'asc' ? ev : ev.slice().reverse();
+  const events = ordered.slice(0, limit);
+
+  /* The header context the brief asks for — enough to know whose chronology
+     this is, never a second copy of the case header. The client is the paying
+     side and stays admin-only; the subject reaches both roles, the way it
+     always does here. */
+  const assignee = row.assigned_to ? await env.DB.prepare(
+    'SELECT display_name FROM users WHERE id = ?').bind(row.assigned_to).first() : null;
+
+  const span = ev.length
+    ? { from: ev[0].date, to: ev[ev.length - 1].date } : null;
+
+  return json({
+    case_no: caseNo,
+    context: {
+      case_no: caseNo,
+      kind: row.kind,
+      stage: stRow ? stRow.stage : (row.status === 'new' ? 'open' : row.status),
+      subject: info.subject_name || '',
+      investigator: assignee ? assignee.display_name : '',
+      /* The paying side is the office's, exactly as it is everywhere else
+         here: an investigator's header carries the subject and the case. */
+      ...(admin ? { client: row.kind === 'claims'
+                      ? (info.carrier || info.client_name || '')
+                      : (info.client_name || ''),
+                    claim_number: info.claim_number || '' } : {}),
+      span,
+    },
+    events,
+    counts,
+    total: ev.length,
+    order,
+    limit,
+    from: fromD, to: toD,
+    /* Sources whose reads hit their own cap, and sources that could not be
+       read at all. Both are named rather than drawn as an empty stretch of
+       chronology: a timeline that quietly stops is worse than one that says
+       where it stops. */
+    capped_sources: capped,
+    missing_sources: blind,
+    tz: TL_TZ,
+    server_now: nowIso(),
+  });
+}
+
 async function listUsers(env) {
   // includes each person's compensation so the Staff tab can edit it in place
   const { results } = await env.DB.prepare(
@@ -9394,6 +10096,14 @@ async function route(request, env) {
      not a way into someone else's work. */
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/workspace$/);
   if (m && method === 'GET') return caseWorkspace(env, user, m[1]);
+
+  /* THE TIMELINE IS A READ, and reads stay open on a deleted or archived case
+     on purpose: an admin has to be able to see what happened before deciding
+     whether to put one back. `caseTimeline` re-checks the caller through
+     `caseFor` like every route here, and the paying-side arms simply do not
+     run for an investigator. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/timeline$/);
+  if (m && method === 'GET') return caseTimeline(env, user, m[1], url);
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/meta$/);
   if (m && method === 'POST') {

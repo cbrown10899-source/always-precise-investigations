@@ -1016,6 +1016,80 @@
   .pkg-step.done{border-color:#9fd3b2;background:#f4faf6;color:#1a6b3c;}
   .pkg-step.na{opacity:.55;}
   .pkg-step.on{border-color:var(--teal);background:#eaf5f7;color:var(--navy);}
+  /* ---------------------------------------------- UNIT 10 — the case timeline
+     A VERTICAL OPERATIONAL TIMELINE, not a table. The grid is three columns on
+     a desk — time, rail, body — and ONE on a phone, where a 44px-wide time
+     column beside a wrapping description is how a chronology becomes unreadable.
+     New names on purpose: `.tl` already belongs to the activity log at the other
+     end of this stylesheet, and the last three source-order casualties here all
+     began as a class name two rules were fighting over. */
+  .tl2-wrap{min-width:0;}
+  .tl2-bar{display:flex;flex-direction:column;gap:2px;margin-bottom:6px;}
+  .tl2-chips{margin-bottom:6px;}
+  .tl2-chips .lens b{font-weight:800;color:var(--navy);}
+  .tl2-sep{width:1px;align-self:stretch;background:var(--line);margin:2px 4px;}
+  .tl2-chips .lens.on b{color:#fff;}
+  .tl2-dates{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin:2px 0 10px;}
+  .tl2-dates .f{margin:0;}
+  .tl2-dates input{font:inherit;border:1px solid var(--line);border-radius:8px;padding:7px 9px;}
+  .tl2-note{font-size:.82rem;color:var(--muted);margin:0 0 8px;}
+  .tl2-doc{min-width:0;}
+  .tl2-ctx{border:1px solid var(--line);border-radius:10px;background:#fbfbf9;
+    padding:11px 14px;margin:0 0 14px;display:flex;flex-wrap:wrap;gap:6px 22px;align-items:center;}
+  .tl2-ctxn{font-size:1.02rem;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .tl2-ctxb{font-size:.85rem;color:var(--ink);overflow-wrap:anywhere;min-width:0;}
+  .tl2-ctxb span{display:block;font-size:.68rem;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--muted);font-weight:700;}
+  .tl2-day{font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;font-weight:800;
+    color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:5px;margin:18px 0 4px;}
+  .tl2-day:first-child{margin-top:2px;}
+  ol.tl2{list-style:none;margin:0;padding:0;}
+  .tl2-i{display:grid;grid-template-columns:78px 24px minmax(0,1fr);gap:0 10px;
+    padding:11px 0 12px;border-bottom:1px solid #efefe9;min-width:0;}
+  .tl2-i:last-child{border-bottom:0;}
+  .tl2-i.off{opacity:.55;}
+  .tl2-i.off .tl2-t{text-decoration:line-through;}
+  .tl2-when{text-align:right;padding-top:2px;min-width:0;}
+  .tl2-h{display:block;font-weight:800;font-size:.9rem;color:var(--ink);white-space:nowrap;}
+  .tl2-allday{color:var(--muted);font-weight:700;}
+  .tl2-z{display:block;font-size:.64rem;letter-spacing:.06em;color:var(--muted);font-weight:700;}
+  .tl2-line{position:relative;display:flex;justify-content:center;}
+  .tl2-line::before{content:"";position:absolute;top:26px;bottom:-13px;width:1px;background:var(--line);}
+  .tl2-i:last-child .tl2-line::before{display:none;}
+  .tl2-dot{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;
+    justify-content:center;font-size:.72rem;font-style:normal;border:1px solid var(--line);
+    background:#fff;flex:0 0 auto;}
+  .tl2-body{min-width:0;overflow-wrap:anywhere;}
+  .tl2-head{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:3px;}
+  .tl2-kind{font-size:.63rem;letter-spacing:.1em;text-transform:uppercase;font-weight:800;
+    padding:2px 7px;border-radius:4px;border:1px solid var(--line);background:#fff;color:var(--muted);}
+  .tl2-state{font-size:.66rem;font-weight:700;color:var(--muted);border:1px solid var(--line);
+    border-radius:999px;padding:1px 8px;background:#fafaf7;}
+  .tl2-t{font-size:.96rem;line-height:1.45;color:var(--ink);font-weight:600;}
+  .tl2-d{font-size:.86rem;line-height:1.45;color:var(--muted);margin-top:2px;}
+  .tl2-att{margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
+  .tl2-attl{font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;font-weight:700;
+    color:var(--muted);}
+  .tl2-file{font:inherit;font-size:.78rem;font-weight:600;border:1px solid #b7dbe3;background:#eaf5f7;
+    color:#1d5c6c;border-radius:6px;padding:3px 8px;cursor:pointer;max-width:100%;
+    overflow-wrap:anywhere;text-align:left;}
+  .tl2-m{margin-top:5px;display:flex;gap:5px 12px;flex-wrap:wrap;align-items:center;
+    font-size:.78rem;color:var(--muted);}
+  .tl2-go{font:inherit;font-size:.78rem;font-weight:700;background:none;border:0;padding:0;
+    color:var(--teal);cursor:pointer;text-decoration:underline;}
+  .tl2-foot{display:flex;gap:8px;flex-wrap:wrap;align-items:center;border-top:1px solid var(--line);
+    margin-top:14px;padding-top:12px;}
+  .tl2-count{font-size:.82rem;color:var(--muted);font-weight:600;margin-right:auto;}
+  /* The event categories, as the dot and the badge. Colour is never the only
+     indicator — the badge carries the word beside it, which is Unit 8's rule
+     one screen along. */
+  .tl2-dot.c-activity,.tl2-kind.c-activity{border-color:#b7dbe3;background:#eaf5f7;color:#1d5c6c;}
+  .tl2-dot.c-media,.tl2-kind.c-media{border-color:#c9b6e8;background:#f2ecfb;color:#4a2f77;}
+  .tl2-dot.c-reports,.tl2-kind.c-reports{border-color:#c9c2a8;background:#f7f4ea;color:#6b5a26;}
+  .tl2-dot.c-payments,.tl2-kind.c-payments{border-color:#9fd3b2;background:#f0f9f4;color:#1a6b3c;}
+  .tl2-dot.c-case,.tl2-kind.c-case{border-color:#c3ccd8;background:#f2f5f8;color:#33465e;}
+  .tl2-dot.c-package,.tl2-kind.c-package{border-color:#e6c48f;background:#fdf5e6;color:#7a5f2a;}
+  .tl2-dot.c-legal,.tl2-kind.c-legal{border-color:#e2aca6;background:#fbefee;color:#a6392f;}
   @media print{
     body.printing-invoice *{visibility:hidden !important;}
     body.printing-invoice #invdoc, body.printing-invoice #invdoc *{visibility:visible !important;}
@@ -1026,6 +1100,17 @@
     body.printing-report *{visibility:hidden !important;}
     body.printing-report #repdoc, body.printing-report #repdoc *{visibility:visible !important;}
     body.printing-report #repdoc{position:absolute;left:0;top:0;width:100%;border:0;padding:0;}
+    /* UNIT 10 — the timeline prints the SAME rendering that is on screen. There
+       is no second document and no PDF writer: the browser's own print dialog
+       is what saves one, on an explicit action, and nothing is stored. */
+    body.printing-timeline *{visibility:hidden !important;}
+    body.printing-timeline #tldoc, body.printing-timeline #tldoc *{visibility:visible !important;}
+    body.printing-timeline #tldoc{position:absolute;left:0;top:0;width:100%;border:0;padding:0;}
+    /* The "Open …" action means nothing on paper; the attached FILENAMES do,
+       so they print as plain text rather than as buttons. */
+    body.printing-timeline .tl2-go{visibility:hidden !important;}
+    body.printing-timeline .tl2-file{border:0;background:none;padding:0;color:#333;}
+    body.printing-timeline .tl2-i{break-inside:avoid;}
   }
   @media(max-width:640px){.cal-cell{min-height:54px;} .cal-ev{font-size:.58rem;padding:1px 3px;}}
   .comprow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:2px 0 8px;}
@@ -1320,6 +1405,26 @@
     .attnlenses{flex-wrap:wrap;}
     .qrow{flex-direction:column;align-items:stretch;gap:8px;}
     .qgo .btn{width:100%;min-height:44px;}
+    /* UNIT 10 — the timeline on a phone. ONE COLUMN. The three-column grid puts
+       a 78px time gutter and a 24px rail beside the description, which at 375px
+       leaves the text about 210px and turns every observation into a ladder of
+       two-word lines. Stacked, the time and the zone read across the top the way
+       a person says them, the rail is dropped rather than shrunk (a 1px line
+       nobody can see is decoration paid for in width), and the description gets
+       the whole screen. Long filenames wrap because .tl2-file already breaks
+       anywhere; the chips wrap rather than scroll, for the reason the Unit 8
+       strip does. */
+    .tl2-i{grid-template-columns:1fr;gap:0;padding:13px 0 14px;}
+    .tl2-when{text-align:left;display:flex;gap:8px;align-items:baseline;padding:0 0 4px;}
+    .tl2-h{display:inline;font-size:.95rem;}
+    .tl2-z{display:inline;}
+    .tl2-line{display:none;}
+    .tl2-chips{flex-wrap:wrap;}
+    .tl2-ctx{gap:8px 18px;}
+    .tl2-dates{flex-direction:column;align-items:stretch;}
+    .tl2-dates input{width:100%;}
+    .tl2-foot .btn{min-height:44px;}
+    .tl2-go,.tl2-file{min-height:44px;display:inline-flex;align-items:center;}
   }
 </style>
 </head>
@@ -8500,6 +8605,7 @@ async function openCase(caseNo, tab){
   // Landing straight on the Package panel (the dashboard's Build jump) needs
   // the build fetched, exactly as the tab click would have done.
   if(WS_TAB === "package"){ PKG = null; return loadPackage(); }
+  if(WS_TAB === "timeline"){ paintCase(); return loadTimeline(); }
   paintCase();
 }
 
@@ -8526,7 +8632,11 @@ function wsSections(){
   if(ME.role === "admin"){
     return [
       ["overview",  "Overview",          [["overview","Overview"], ["details","Intake details"], ["subject","Subject"]], "Home", "&#8962;"],
-      ["fieldwork", "Fieldwork",         [["field","Field work"], ["activity","Activity log"]], "Field", "&#128065;"],
+      ["fieldwork", "Fieldwork",         [["field","Field work"], ["activity","Activity log"],
+                                          /* UNIT 10 — the chronology of the whole case, beside the
+                                             log it is mostly made of. Both roles carry it; what is
+                                             IN it is decided in the Worker. */
+                                          ["timeline","Timeline"]], "Field", "&#128065;"],
       ["repev",     "Report & Media",    [["reports","Reports"], ["evidence","Case media"], ["package","Package"]], "Report", "&#128196;"],
       ["admin",     "Admin",             [["edit","Edit case"], ["assign","Assignment"],
                                           /* Unit 6: only a legal case carries the firm/matter panel —
@@ -8544,7 +8654,8 @@ function wsSections(){
   if(WS && WS.authorization && WS.authorization.authorized_hours != null) assignment.push(["auth","Authorization"]);
   return [
     ["assignment", "Assignment", assignment, "Home", "&#8962;"],
-    ["activity",   "Activity",   [["field","Field work"], ["activity","Activity log"], ["expenses","Expenses"]], "Activity", "&#9998;"],
+    ["activity",   "Activity",   [["field","Field work"], ["activity","Activity log"],
+                                   ["timeline","Timeline"], ["expenses","Expenses"]], "Activity", "&#9998;"],
     ["evidence",   "Case media", [["evidence","Case media"]], "Media", "&#128247;"],
     ["report",     "Report",     [["reports","Reports"]], "Report", "&#128196;"],
   ];
@@ -8728,6 +8839,342 @@ function ovRecordPaymentHtml(r){
 /* The activity panel is the TIMELINE (UIBUILD P10): the day's story first,
    with one prominent + Add activity that opens the sheet. The form no longer
    sits on the page. */
+/* =========================================================================
+   UNIT 10 — THE CASE TIMELINE (owner brief, 2026-08-20)
+
+   "OPEN CASE -> TIMELINE -> SEE WHAT HAPPENED IN ORDER -> FILTER IF NEEDED ->
+   OPEN THE UNDERLYING ITEM." So this panel is chronology and navigation, and
+   it edits nothing: every row's action goes to the screen the record actually
+   lives on, which is where editing already works.
+
+   THE WORKER COMPOSES THE WORDS AND THE CLOCK. Dates, times and the EST/EDT
+   label arrive as strings because the case is worked in Virginia and a laptop
+   set to another zone must not draw an 8:15 PM observation at 5:15 PM while
+   the report beside it says otherwise. One writer, as everywhere else here. */
+
+let TL = null;           // the loaded payload — null means NEVER LOADED
+let TL_ERR = "";         // why it did not load — never drawn as an empty case
+let TL_CASE = "";        // which case TL belongs to
+let TL_CAT = "all";      // the category chip
+let TL_RANGE = "all";    // all | today | 7 | custom
+let TL_FROM = "", TL_TO = "";
+let TL_ORDER = "desc";   // newest first by default
+let TL_LIMIT = 0;        // 0 = the Worker's own page size
+let TL_BUSY = false;
+
+/* Category chips. Only the ones with something behind them are drawn, so an
+   investigator sees no Payments chip and a case with no court dates has no
+   Dates chip — a filter that is always empty stops being read. */
+const TL_CATS = [
+  ["activity", "Activity", "&#9998;"],
+  ["media",    "Media",    "&#128247;"],
+  ["reports",  "Reports",  "&#128196;"],
+  ["payments", "Payments", "&#128179;"],
+  ["case",     "Case",     "&#8962;"],
+  ["package",  "Package",  "&#128230;"],
+  ["legal",    "Dates",    "&#128197;"],
+];
+const TL_CAT_LABEL = Object.fromEntries(TL_CATS.map(c => [c[0], c[1]]));
+
+/* One glyph per event type. Restrained on purpose and text-only — no image
+   asset ships for this, and the badge carries the WORD as well as the mark so
+   it does not depend on recognising a shape. */
+const TL_ICON = {
+  case_created: "&#8962;", assigned: "&#128100;", status: "&#9873;",
+  archived: "&#128230;", deleted: "&#128465;",
+  day_start: "&#9654;", day_end: "&#9632;", activity: "&#9998;",
+  photo: "&#128247;", video: "&#127909;", photo_stamp: "&#128247;", video_stamp: "&#127909;",
+  report_created: "&#128196;", report_status: "&#128196;",
+  payment: "&#128179;", payment_void: "&#128179;",
+  invoice: "&#129534;", invoice_status: "&#129534;",
+  package: "&#128230;", legal_date: "&#128197;",
+};
+/* The state chip's word. `label()` is the page's general map and covers the
+   case stages; a report status, a package action and an invoice transition are
+   its own vocabulary, and a chip reading "needs_revision" is a database column
+   showing through. */
+const TL_STATE_WORD = { draft: "Draft", submitted: "Submitted", needs_revision: "Needs revision",
+  approved: "Approved", delivered: "Delivered", void: "Void", voided: "Voided",
+  finalized: "Finalized", reopened: "Reopened", created: "Started", ready: "Ready",
+  paid: "Paid", partially_paid: "Part paid", sent_to_bill: "Sent to BILL",
+  sent_to_client: "Sent to client" };
+const tlState = s => TL_STATE_WORD[s] || label(s);
+
+const TL_TYPE_WORD = {
+  case_created: "Case", assigned: "Assignment", status: "Case",
+  archived: "Case", deleted: "Case",
+  day_start: "Day", day_end: "Day", activity: "Observation",
+  photo: "Photo", video: "Video", photo_stamp: "Photo", video_stamp: "Video",
+  report_created: "Report", report_status: "Report",
+  payment: "Payment", payment_void: "Payment",
+  invoice: "Invoice", invoice_status: "Invoice",
+  package: "Package", legal_date: "Legal date",
+};
+
+function tlQuery(){
+  const p = [];
+  if(TL_ORDER === "asc") p.push("order=asc");
+  if(TL_LIMIT) p.push("limit=" + TL_LIMIT);
+  const r = tlRangeDays();
+  if(r.from) p.push("from=" + r.from);
+  if(r.to) p.push("to=" + r.to);
+  return p.length ? "?" + p.join("&") : "";
+}
+
+/* The range, as two calendar days. `ymdLocal` is what the rest of the page
+   already means by "today" — the day where the person is standing — so Today
+   and Last 7 days agree with the day an entry was filed under. */
+function tlRangeDays(){
+  if(TL_RANGE === "custom") return { from: TL_FROM || "", to: TL_TO || "" };
+  if(TL_RANGE === "all") return { from: "", to: "" };
+  const days = TL_RANGE === "today" ? 0 : 6;
+  const start = new Date(); start.setDate(start.getDate() - days);
+  return { from: ymdLocal(start), to: ymdLocal(new Date()) };
+}
+
+async function loadTimeline(force){
+  if(!WS_CASE) return;
+  /* A CASE CHANGE INVALIDATES IT. Everything here is page-level state, so
+     without this the previous case's chronology would draw under the new case's
+     header for as long as the fetch took — and, on a failure, permanently. */
+  if(TL_CASE !== WS_CASE){ TL = null; TL_ERR = ""; TL_CASE = WS_CASE;
+    TL_CAT = "all"; TL_RANGE = "all"; TL_FROM = ""; TL_TO = ""; TL_LIMIT = 0; }
+  if(TL && !force) return;
+  TL_BUSY = true;
+  try{
+    TL = await api("/cases/" + encodeURIComponent(WS_CASE) + "/timeline" + tlQuery());
+    TL_ERR = "";
+  }catch(e){
+    /* THREE STATES, KEPT APART. A failed read must never draw as "nothing has
+       happened on this case" — the same rule loadSends was rewritten for, and
+       the one this portal has already been bitten by. */
+    TL = null; TL_ERR = e.message || "The timeline did not load.";
+  }
+  TL_BUSY = false;
+  paintCase();
+}
+
+function tlEvents(){
+  if(!TL) return [];
+  return TL_CAT === "all" ? (TL.events || [])
+                          : (TL.events || []).filter(e => e.category === TL_CAT);
+}
+
+/* 24-hour to the way people read it, through the same `t12` the activity log
+   and the reports already use. A date-only record shows a dash and says so on
+   hover rather than being given a time it does not have. */
+function tlClock(e){
+  return e.time
+    ? `<span class="tl2-h">${esc(t12(e.time))}</span><span class="tl2-z">${esc(e.tz || "")}</span>`
+    : `<span class="tl2-h tl2-allday" title="This record carries a date and no time">&mdash;</span>
+       <span class="tl2-z">all day</span>`;
+}
+
+function tlEventHtml(e){
+  const cat = esc(e.category || "case");
+  const src = (e.link && e.link.tab) || "";
+  const go = src
+    ? `<button class="tl2-go" data-act="tlGo" data-tab="${esc(src)}"${
+        e.link.id != null ? ` data-id="${esc(String(e.link.id))}"` : ""
+      } data-type="${esc(e.type)}">${esc(TL_GO_WORD[src] || "Open")}</button>` : "";
+  return `<li class="tl2-i${e.removed ? " off" : ""}">
+    <div class="tl2-when">${tlClock(e)}</div>
+    <div class="tl2-line" aria-hidden="true"><i class="tl2-dot c-${cat}">${TL_ICON[e.type] || "&bull;"}</i></div>
+    <div class="tl2-body">
+      <div class="tl2-head">
+        <span class="tl2-kind c-${cat}">${esc(TL_TYPE_WORD[e.type] || e.type)}</span>
+        ${e.status ? `<span class="tl2-state">${esc(tlState(e.status))}</span>` : ""}
+        ${e.source === "voice" ? `<span class="tl2-state">Voice</span>` : ""}
+        ${e.edited ? `<span class="tl2-state">Edited</span>` : ""}
+      </div>
+      <div class="tl2-t">${esc(e.title || "")}</div>
+      ${e.detail ? `<div class="tl2-d">${esc(e.detail)}</div>` : ""}
+      ${(e.attached || []).length ? `<div class="tl2-att">
+        <span class="tl2-attl">Attached evidence</span>
+        ${e.attached.map(a => `<button class="tl2-file" data-act="tlGo" data-tab="evidence"
+          data-id="${esc(String(a.id))}" data-type="${esc(a.kind)}"
+          >${a.kind === "video" ? "&#127909;" : "&#128247;"} ${esc(a.filename)}</button>`).join("")}
+      </div>` : ""}
+      <div class="tl2-m">
+        ${e.who ? `<span>${esc(e.who)}</span>` : ""}
+        ${e.recorded_date ? `<span title="This was recorded after the fact">recorded ${
+          esc(fmtDay(e.recorded_date))}${e.recorded_time ? " " + esc(t12(e.recorded_time)) : ""}</span>` : ""}
+        ${e.removed && e.removed_by ? `<span>removed by ${esc(e.removed_by)}</span>` : ""}
+        ${go}
+      </div>
+    </div>
+  </li>`;
+}
+
+/* Which word the action button uses. The tab is where the record lives; the
+   word is what an operator calls that screen. */
+const TL_GO_WORD = { activity: "Open activity", evidence: "Open media",
+  reports: "Open report", billing: "Open billing", invoices: "Open invoice",
+  package: "Open package", legal: "Open case details", assign: "Open assignment",
+  field: "Open field work", overview: "Open case" };
+
+function tlHeadHtml(){
+  const c = (TL && TL.context) || {};
+  const bits = [];
+  if(c.subject) bits.push(["Subject", c.subject]);
+  if(c.client) bits.push([c.kind === "claims" ? "Carrier" : "Client", c.client]);
+  if(c.claim_number) bits.push(["Claim", c.claim_number]);
+  if(c.investigator) bits.push(["Investigator", c.investigator]);
+  if(c.span) bits.push(["Covers", fmtDay(c.span.from) + " – " + fmtDay(c.span.to)]);
+  /* NOT A SECOND CASE HEADER. The case number and status are three lines above
+     this panel already; what is repeated here is only what a chronology needs
+     to be read on its own — and on paper, where the header is not. */
+  return `<div class="tl2-ctx">
+    <div class="tl2-ctxn"><b>${esc(TL ? TL.case_no : WS_CASE)}</b>
+      ${c.stage ? `<span class="tag ${esc(c.stage)}">${esc(label(c.stage))}</span>` : ""}</div>
+    ${bits.map(([k, v]) => `<div class="tl2-ctxb"><span>${esc(k)}</span>${esc(v)}</div>`).join("")}
+  </div>`;
+}
+
+function tlFiltersHtml(){
+  const counts = (TL && TL.counts) || {};
+  const total = (TL && TL.total) || 0;
+  const chips = TL_CATS.filter(([k]) => counts[k]);
+  const r = tlRangeDays();
+  return `<div class="tl2-bar">
+    <div class="lensrow tl2-chips" role="group" aria-label="Filter the timeline">
+      <button class="lens ${TL_CAT === "all" ? "on" : ""}" data-act="tlCat" data-c="all"${
+        TL_CAT === "all" ? ' aria-current="true"' : ""}>All <b>${total}</b></button>
+      ${chips.map(([k, lbl, icon]) => `<button class="lens ${TL_CAT === k ? "on" : ""}"
+        data-act="tlCat" data-c="${k}"${TL_CAT === k ? ' aria-current="true"' : ""}
+        ><span aria-hidden="true">${icon}</span> ${esc(lbl)} <b>${counts[k]}</b></button>`).join("")}
+    </div>
+    <div class="lensrow tl2-chips" role="group" aria-label="Date range and order">
+      ${[["all", "All time"], ["today", "Today"], ["7", "Last 7 days"], ["custom", "Dates…"]]
+        .map(([k, lbl]) => `<button class="lens ${TL_RANGE === k ? "on" : ""}" data-act="tlRange"
+          data-r="${k}"${TL_RANGE === k ? ' aria-current="true"' : ""}>${esc(lbl)}</button>`).join("")}
+      <span class="tl2-sep" aria-hidden="true"></span>
+      ${[["desc", "Newest first"], ["asc", "Oldest first"]].map(([k, lbl]) =>
+        `<button class="lens ${TL_ORDER === k ? "on" : ""}" data-act="tlOrder" data-o="${k}"${
+          TL_ORDER === k ? ' aria-current="true"' : ""}>${esc(lbl)}</button>`).join("")}
+    </div>
+    ${TL_RANGE === "custom" ? `<div class="tl2-dates">
+      <label class="f"><span>From</span><input type="date" id="tl_from" value="${esc(TL_FROM)}"></label>
+      <label class="f"><span>To</span><input type="date" id="tl_to" value="${esc(TL_TO)}"></label>
+      <button class="btn sm" data-act="tlDates">Apply</button>
+      ${TL_FROM || TL_TO ? `<button class="btn sm ghost" data-act="tlRange" data-r="all">Clear</button>` : ""}
+    </div>` : r.from ? `<div class="tl2-note">Showing ${esc(fmtDay(r.from))} to ${esc(fmtDay(r.to))}.</div>` : ""}
+  </div>`;
+}
+
+/* WHAT IS ON SCREEN AGAINST WHAT EXISTS. Three numbers can differ — the rows
+   the chip left, the events this request returned, and how many the case has —
+   and saying "12 of 150" when 150 are not on screen either is the kind of
+   half-true count that stops being read. Each case is spelled out. */
+function tlCountText(rows, shown, total){
+  const partial = total > shown;
+  if(TL_CAT === "all"){
+    return partial ? `${shown} of ${total} events`
+                   : `${shown} event${shown === 1 ? "" : "s"}`;
+  }
+  const cat = TL_CAT_LABEL[TL_CAT] || TL_CAT;
+  return partial ? `${rows} ${cat} in the ${shown} loaded — ${total} events in all`
+                 : `${rows} ${cat} of ${shown} events`;
+}
+
+function timelinePanel(){
+  /* NEVER LOADED, LOADED AND EMPTY, AND FAILED are three different answers and
+     the failure is checked FIRST. A timeline that draws as a quiet case when
+     the read fell over is the reassuring direction to be wrong in, which is
+     the one this portal has already paid for once. */
+  if(TL_ERR) return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Timeline</h2>
+      <span class="tag rs-needs_revision">Did not load</span></div>
+    <div class="err">${esc(TL_ERR)}</div>
+    <p class="hint">This is <b>not</b> the same as nothing having happened. The chronology could
+      not be read, so what is on this case is unknown from here.</p>
+    <div class="actions"><button class="btn sm ghost" data-act="tlRetry">Try again</button></div>
+  </div>`;
+  if(!TL) return `<div class="empty">Reading the case&hellip;</div>`;
+
+  const rows = tlEvents();
+  const shown = (TL.events || []).length;
+  const more = (TL.total || 0) > shown;
+  const days = [];
+  for(const e of rows){
+    if(!days.length || days[days.length - 1].d !== e.date) days.push({ d: e.date, list: [] });
+    days[days.length - 1].list.push(e);
+  }
+
+  return `<div class="tl2-wrap">
+    ${tlFiltersHtml()}
+    ${TL.capped_sources && TL.capped_sources.length ? `<div class="note">
+      This case has more than the timeline reads in one go &mdash;
+      ${esc(TL.capped_sources.join(", "))} ${TL.capped_sources.length > 1 ? "were" : "was"}
+      cut at the read limit. Narrow the dates to see further back.</div>` : ""}
+    ${TL.missing_sources && TL.missing_sources.length ? `<div class="note">
+      Not every source could be read: ${esc(TL.missing_sources.join(", "))}.
+      Those parts of the chronology are missing rather than empty.</div>` : ""}
+
+    <div id="tldoc" class="tl2-doc">
+      ${tlHeadHtml()}
+      ${!rows.length ? `<div class="empty">${TL.total
+        ? `Nothing in this case is <b>${esc(TL_CAT_LABEL[TL_CAT] || TL_CAT)}</b>.
+           <button class="btn sm ghost" data-act="tlCat" data-c="all">Show everything</button>`
+        : (tlRangeDays().from
+            ? `Nothing happened on this case in that range.`
+            : `Nothing has been recorded on this case yet. Starting a day, logging an
+               entry or filing a photograph is what fills this in.`)}</div>`
+      : days.map(g => `<div class="tl2-day">${esc(fmtDay(g.d))}</div>
+          <ol class="tl2">${g.list.map(tlEventHtml).join("")}</ol>`).join("")}
+    </div>
+
+    <div class="tl2-foot">
+      <span class="tl2-count">${esc(tlCountText(rows.length, shown, TL.total || 0))}</span>
+      ${more ? `<button class="btn sm ghost" data-act="tlMore">Show more</button>` : ""}
+      <button class="btn sm ghost" data-act="tlPrint">Print / save as PDF</button>
+      <button class="btn sm ghost" data-act="tlRetry">Refresh</button>
+    </div>
+    <p class="hint">The timeline is a view of the case's own records &mdash; nothing here is a
+      second copy, and nothing is edited from this screen. Open an entry to change it.</p>
+  </div>`;
+}
+
+/* PRINT REUSES WHAT IS ALREADY ON SCREEN. The brief's preferred first export is
+   "a printable/exportable chronological view", and the browser's own print
+   dialog saves a PDF from it — so nothing is generated, stored, uploaded to
+   Dropbox or written to R2, and there is no second PDF writer in this file.
+   `#tldoc` is the printed region, matching #invdoc / #pkgdoc / #repdoc. */
+function tlPrint(){
+  document.body.classList.add("printing-timeline");
+  window.print();
+  setTimeout(() => document.body.classList.remove("printing-timeline"), 400);
+}
+
+/* THE LINK OPENS THE RECORD, and for a file that means the viewer rather than
+   a tab that merely contains it somewhere. Everything else routes by WS_TAB,
+   which is this page's one piece of case routing. */
+function tlGo(tab, id, kind){
+  /* A FILE OPENS IN THE VIEWER, not in a tab that happens to contain it. The
+     evidence row is already in the workspace, so this costs no request. */
+  if(tab === "evidence" && id){
+    const ev = ((WS && WS.evidence) || []).find(x => String(x.id) === String(id));
+    if(ev){
+      EV_VIEW = { src: API + "/cases/" + encodeURIComponent(WS_CASE) + "/evidence/" + ev.id + "/file",
+                  name: ev.filename || "", type: ev.content_type || "" };
+      paintEvView();
+      return;
+    }
+  }
+  // An invoice lives outside the case workspace; opening it means opening it.
+  if(tab === "invoices"){ if(id) return openInvoice(Number(id));
+    TAB = "invoices"; INV_OPEN = null; INV_MSG = ""; VIEW = "list"; paint(); return loadInvoices(); }
+  /* A LINK MUST LAND SOMEWHERE THAT EXISTS. The Legal panel only appears on a
+     case that has one and Billing is admin territory, so a tab this caller
+     does not have would leave WS_TAB pointing at a panel the section bar
+     cannot even show — a dead end reached by a control that looked live. */
+  const known = wsSections().some(sec => sec[2].some(t => t[0] === tab));
+  WS_NOTICE = ""; ACT_MODAL = null; WS_ERR = "";
+  WS_TAB = known ? tab : "overview";
+  if(WS_TAB === "package"){ PKG = null; loadPackage(); return; }
+  paintCase();
+}
+
 function activityPanel(){
   const a = (WS && WS.activity) || [];
   const open = WS && WS.open_day;
@@ -10982,6 +11429,7 @@ function caseBodyHtml(){
   const panel =
       WS_TAB === "activity" ? activityPanel()
     : WS_TAB === "field"    ? fieldPanel()
+    : WS_TAB === "timeline" ? timelinePanel()
     : WS_TAB === "reports"  ? reportsPanel()
     : WS_TAB === "expenses" ? expensesPanel()
     : WS_TAB === "notes"    ? notesPanel()
@@ -14336,13 +14784,35 @@ document.addEventListener("click", ev => {
   else if(act === "clearDemo"){ clearDemoCases(); }
   else if(act === "wsTab"){ if(WS_TAB !== el.dataset.tab){ WS_NOTICE = ""; ACT_MODAL = null; }
     WS_TAB = el.dataset.tab; WS_ERR = "";
-    if(WS_TAB === "package"){ PKG = null; loadPackage(); } else paintCase(); }
+    if(WS_TAB === "package"){ PKG = null; loadPackage(); }
+    else if(WS_TAB === "timeline"){ paintCase(); loadTimeline(); } else paintCase(); }
   else if(act === "wsSec"){
     // A section opens on its first panel; WS_TAB stays the only routing state.
     const sec = wsSections().find(x => x[0] === el.dataset.sec);
     if(sec){ if(WS_TAB !== sec[2][0][0]){ WS_NOTICE = ""; ACT_MODAL = null; }
       WS_TAB = sec[2][0][0]; WS_ERR = "";
-      if(WS_TAB === "package"){ PKG = null; loadPackage(); } else paintCase(); } }
+      if(WS_TAB === "package"){ PKG = null; loadPackage(); }
+      else if(WS_TAB === "timeline"){ paintCase(); loadTimeline(); } else paintCase(); } }
+  /* UNIT 10 — the timeline. Each of these either repaints what is already
+     loaded (the category chip filters in the browser, so a phone does not wait
+     on a round trip) or re-reads with a narrower request (the range and the
+     order, which the Worker applies so a narrowed window comes back complete). */
+  else if(act === "tlCat"){ TL_CAT = el.dataset.c || "all"; paintCase(); }
+  else if(act === "tlRange"){
+    TL_RANGE = el.dataset.r || "all";
+    if(TL_RANGE !== "custom"){ TL_FROM = ""; TL_TO = ""; loadTimeline(true); } else paintCase(); }
+  else if(act === "tlDates"){
+    const f = document.getElementById("tl_from"), t = document.getElementById("tl_to");
+    TL_FROM = f ? f.value : ""; TL_TO = t ? t.value : "";
+    if(TL_FROM || TL_TO) loadTimeline(true); else paintCase(); }
+  else if(act === "tlOrder"){
+    const want = el.dataset.o === "asc" ? "asc" : "desc";
+    if(want !== TL_ORDER){ TL_ORDER = want; loadTimeline(true); } }
+  else if(act === "tlMore"){
+    TL_LIMIT = Math.min(600, ((TL && TL.limit) || 200) * 2); loadTimeline(true); }
+  else if(act === "tlRetry"){ loadTimeline(true); }
+  else if(act === "tlPrint"){ tlPrint(); }
+  else if(act === "tlGo"){ tlGo(el.dataset.tab, el.dataset.id, el.dataset.type); }
   else if(act === "qkind"){ QKIND = el.dataset.k; WS_ERR = ""; paintCase(); }
   else if(act === "actOpen"){ WS_ERR = "";
     ACT_MODAL = {tab:"quick", cat: favLines().length ? "fav" : "arrival", search:"", pick:null, edit:null};

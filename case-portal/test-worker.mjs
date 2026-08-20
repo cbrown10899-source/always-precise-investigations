@@ -12336,6 +12336,555 @@ section('Report templates: the guards a new table owes');
      tmplBlock.length > 0 && !/committed|fraud|violation|confirmed|successfully served/i.test(tmplBlock));
 }
 
+/* =========================================================================
+   UNIT 10 — THE CASE TIMELINE
+
+   A VIEW over existing records, so the tests are mostly about two things a
+   view can get wrong: what it puts in the wrong ORDER, and what it shows the
+   wrong PERSON. The third — that it is a view at all — is asserted by reading
+   `schema.sql` and the source rather than trusting a comment. */
+
+async function tlCase(env, admin, caseNo, extra = {}) {
+  await ingest(env, {
+    case_no: caseNo, kind: 'consumer', service: 'Surveillance',
+    client_name: 'Ambrose Quill', client_email: 'ambrose@example.com',
+    client_phone: '5405550110', subject_name: 'Rex Marlow',
+    objective: 'Document the daily routine', ...extra,
+  });
+  return caseNo;
+}
+const tlGet = async (env, cookie, caseNo, qs = '') =>
+  jsonOf(await call(env, `/cases/${caseNo}/timeline${qs}`, { cookie }));
+const tlTypes = tl => (tl.events || []).map(e => e.type);
+const tlFind = (tl, type) => (tl.events || []).find(e => e.type === type);
+
+section('Case timeline — the chronology');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const danaId = (await jsonOf(await call(env, '/users', { cookie: admin })))
+    .users.find(u => u.username === 'dana').id;
+
+  await tlCase(env, admin, 'API-TL-1');
+  await call(env, '/submissions/API-TL-1/assign',
+    { method: 'POST', cookie: admin, body: { user_id: danaId } });
+  await call(env, '/submissions/API-TL-1/status',
+    { method: 'POST', cookie: admin, body: { status: 'in_progress' } });
+
+  /* An evening in JULY — EDT, not EST, and that is the point of picking it. */
+  await call(env, '/cases/API-TL-1/day/start', { method: 'POST', cookie: dana,
+    body: { day_date: '2026-07-14', start_time: '18:00', start_mileage: 10 } });
+  await call(env, '/cases/API-TL-1/activity', { method: 'POST', cookie: dana,
+    body: { at_date: '2026-07-14', at_time: '20:15', kind: 'activity',
+            description: 'Subject departed residence in white Ford F-150.',
+            location: '123 Elm St' } });
+  const secondEntry = (await jsonOf(await call(env, '/cases/API-TL-1/activity',
+    { method: 'POST', cookie: dana,
+      body: { at_date: '2026-07-14', at_time: '21:06', kind: 'photo',
+              description: 'Photographed the vehicle at the second address.' } }))).id;
+  await call(env, '/cases/API-TL-1/day/end', { method: 'POST', cookie: dana,
+    body: { end_time: '22:30', end_mileage: 55 } });
+
+  const fd = new FormData();
+  fd.append('file', new File([new Uint8Array(64)], 'IMG_4021.jpg', { type: 'image/jpeg' }));
+  fd.append('entry_id', String(secondEntry));
+  const up = await worker.fetch(new Request(API + '/cases/API-TL-1/evidence',
+    { method: 'POST', headers: { Origin: ORIGIN, Cookie: dana }, body: fd }), env);
+  const photoId = (await jsonOf(up)).id;
+
+  await call(env, '/cases/API-TL-1/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 750, method: 'check', paid_on: '2026-07-16', reference: '1042' } });
+
+  const tl = await tlGet(env, admin, 'API-TL-1');
+
+  ok('the timeline carries the case-created event',
+     Boolean(tlFind(tl, 'case_created')));
+  ok('and the day it started and the day it ended',
+     Boolean(tlFind(tl, 'day_start')) && Boolean(tlFind(tl, 'day_end')));
+  ok('and both activity entries',
+     tlTypes(tl).filter(t => t === 'activity').length === 2);
+  ok('and the photograph that was filed',
+     Boolean(tlFind(tl, 'photo')) && tlFind(tl, 'photo').title === 'IMG_4021.jpg');
+  ok('and the retainer payment, with the amount in the title',
+     /\$750\.00/.test((tlFind(tl, 'payment') || {}).title || ''));
+  ok('and the status the case was set to',
+     /In progress/.test((tlFind(tl, 'status') || {}).title || ''));
+
+  /* ORDER. Newest first is the default because the first question on opening a
+     case is "what has happened lately"; every event still carries its own
+     event time and the ascending read is one parameter away. */
+  const desc = (tl.events || []).map(e => e.at);
+  ok('the default order is newest first', tl.order === 'desc');
+  ok('and it is genuinely sorted by event time',
+     desc.every((v, i) => i === 0 || desc[i - 1] >= v), JSON.stringify(desc));
+
+  const asc = await tlGet(env, admin, 'API-TL-1', '?order=asc');
+  const ats = (asc.events || []).map(e => e.at);
+  ok('ascending is the same chronology read forwards',
+     ats.every((v, i) => i === 0 || ats[i - 1] <= v));
+  ok('and it holds exactly the same events',
+     asc.total === tl.total && ats.length === desc.length);
+
+  /* EVENT TIME, NOT INSERTION ORDER. Every entry above was written to the
+     database today, in the order it appears in this file; every one of them
+     belongs on 14 July, in the order the investigator saw them. If the sort
+     were reading created_at this walk would come out reversed. */
+  const july = (asc.events || []).filter(e => e.date === '2026-07-14');
+  ok('a day recorded after the fact still reads in the order it happened',
+     july.map(e => e.time).join(',') === '18:00,20:15,21:06,22:30',
+     july.map(e => e.time).join(','));
+
+  /* THE TWO CLOCKS. The activity was seen at 20:15 on the 14th and typed into
+     the portal today, so both facts are carried and they are different. */
+  const obs = (tl.events || []).find(e => e.type === 'activity' && e.time === '20:15');
+  ok('an entry keeps the time it happened', obs && obs.date === '2026-07-14');
+  ok('and separately records when it was written down',
+     obs && obs.recorded_date && obs.recorded_date !== obs.date);
+
+  /* EST OR EDT FROM THE DATE ITSELF. */
+  ok('a July event is stamped EDT', obs && obs.tz === 'EDT');
+
+  /* THE RELATIONSHIP IS THE COLUMN. */
+  const withPhoto = (tl.events || []).find(e => e.type === 'activity' && e.time === '21:06');
+  ok('an activity entry names the evidence that was filed against it',
+     withPhoto && (withPhoto.attached || []).some(a => a.filename === 'IMG_4021.jpg'));
+  ok('and the entry that has nothing filed against it claims nothing',
+     obs && !obs.attached);
+  ok('the evidence event links back to the media screen',
+     (tlFind(tl, 'photo') || {}).link.tab === 'evidence'
+     && tlFind(tl, 'photo').link.id === photoId);
+
+  /* A DATE IS NOT A MOMENT. The client paid on the 16th; nobody wrote down
+     what time, and the timeline does not invent one. */
+  const pay = tlFind(tl, 'payment');
+  ok('a date-only record says it has no time', pay && pay.time === null);
+  ok('and still sorts on its own date', pay && pay.date === '2026-07-16');
+  ok('and carries the day it was recorded separately',
+     pay && pay.recorded_date && pay.recorded_date !== pay.date);
+
+  /* Links. Every event offers the screen its record lives on. */
+  ok('every event carries a link to its own source',
+     (tl.events || []).every(e => e.link && typeof e.link.tab === 'string' && e.link.tab));
+  ok('the activity events point at the Activity log',
+     (tl.events || []).filter(e => e.type === 'activity')
+       .every(e => e.link.tab === 'activity' && Number.isFinite(e.link.id)));
+  ok('the payment points at Billing', pay.link.tab === 'billing');
+
+  /* The header context — enough to know whose chronology this is. */
+  ok('the header names the case, the subject and the investigator',
+     tl.context.case_no === 'API-TL-1' && tl.context.subject === 'Rex Marlow'
+     && tl.context.investigator === 'Dana');
+  ok('and the range the timeline actually represents',
+     tl.context.span && tl.context.span.from === '2026-07-14');
+  ok('the zone the times are in is stated, not assumed',
+     tl.tz === 'America/New_York');
+}
+
+section('Case timeline — winter, and the changeover');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await tlCase(env, admin, 'API-TL-TZ');
+
+  /* DO NOT HARD-CODE EST YEAR-ROUND, and do not hard-code EDT either. Three
+     dates: deep winter, deep summer, and the evening before the spring
+     changeover — read back through the same composer. */
+  for (const [date, zone] of [['2026-01-15', 'EST'], ['2026-07-15', 'EDT'],
+                              ['2026-03-07', 'EST'], ['2026-03-09', 'EDT']]) {
+    await call(env, `/cases/API-TL-TZ/activity`, { method: 'POST', cookie: admin,
+      body: { at_date: date, at_time: '21:00', kind: 'activity',
+              description: 'Observation on ' + date } });
+  }
+  const tl = await tlGet(env, admin, 'API-TL-TZ', '?order=asc');
+  const zones = (tl.events || []).filter(e => e.type === 'activity')
+    .map(e => `${e.date}:${e.tz}`);
+  ok('EST and EDT are resolved from the date, on both sides of the changeover',
+     zones.join(' ') === '2026-01-15:EST 2026-03-07:EST 2026-03-09:EDT 2026-07-15:EDT',
+     zones.join(' '));
+
+  /* 9pm Eastern is 2am UTC the NEXT day. The sort axis has to know that or a
+     late-evening entry lands on the wrong side of a midnight boundary. */
+  const jan = (tl.events || []).find(e => e.date === '2026-01-15');
+  ok('a 9pm Eastern entry sorts as the following UTC morning',
+     jan && jan.at.startsWith('2026-01-16T02:00'), jan && jan.at);
+  ok('while the date and time it is SHOWN with are the ones recorded',
+     jan && jan.time === '21:00' && jan.date === '2026-01-15');
+}
+
+section('Case timeline — same-time ties, and removed entries');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await tlCase(env, admin, 'API-TL-TIE');
+
+  const ids = [];
+  for (const d of ['first', 'second', 'third']) {
+    ids.push((await jsonOf(await call(env, '/cases/API-TL-TIE/activity',
+      { method: 'POST', cookie: admin,
+        body: { at_date: '2026-06-02', at_time: '14:30', kind: 'activity',
+                description: 'The ' + d + ' thing at half past two' } }))).id);
+  }
+  let tl = await tlGet(env, admin, 'API-TL-TIE', '?order=asc');
+  const tied = (tl.events || []).filter(e => e.type === 'activity');
+  ok('three events at one minute keep a stable, explainable order',
+     tied.map(e => e.link.id).join(',') === ids.join(','), tied.map(e => e.link.id).join(','));
+  const again = await tlGet(env, admin, 'API-TL-TIE', '?order=asc');
+  ok('and the same order on a second read',
+     (again.events || []).filter(e => e.type === 'activity').map(e => e.link.id).join(',')
+     === ids.join(','));
+  ok('newest-first is exactly that order reversed',
+     (await tlGet(env, admin, 'API-TL-TIE')).events
+       .filter(e => e.type === 'activity').map(e => e.link.id).join(',')
+     === ids.slice().reverse().join(','));
+
+  /* AN ENTRY CAN BE REMOVED, NEVER ERASED — the project's standing shape, and
+     the timeline reflects the authoritative state rather than a second copy. */
+  await call(env, `/cases/API-TL-TIE/activity/${ids[1]}/delete`,
+    { method: 'POST', cookie: admin, body: { reason: 'Duplicate' } });
+  tl = await tlGet(env, admin, 'API-TL-TIE', '?order=asc');
+  const removed = (tl.events || []).find(e => e.link && e.link.id === ids[1]);
+  ok('a removed entry is still on the timeline', Boolean(removed));
+  ok('and is marked removed rather than quietly dropped',
+     removed && removed.removed === true && removed.status === 'Removed');
+  ok('while the entries beside it are untouched',
+     (tl.events || []).filter(e => e.type === 'activity' && !e.removed).length === 2);
+}
+
+section('Case timeline — reports, invoices, packages and legal dates');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await tlCase(env, admin, 'API-TL-2');
+
+  await call(env, '/cases/API-TL-2/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-05-04', start_time: '09:00', start_mileage: 0 } });
+  await call(env, '/cases/API-TL-2/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-05-04', at_time: '09:30', kind: 'activity',
+            description: 'Arrived at the address.' } });
+  const dayId = (await jsonOf(await call(env, '/cases/API-TL-2/workspace',
+    { cookie: admin }))).days[0].id;
+  await call(env, '/cases/API-TL-2/day/end', { method: 'POST', cookie: admin,
+    body: { end_time: '13:00', end_mileage: 30 } });
+  const repId = (await jsonOf(await call(env, '/cases/API-TL-2/reports/generate',
+    { method: 'POST', cookie: admin, body: { day_id: dayId } }))).id;
+  await call(env, `/cases/API-TL-2/reports/${repId}/status`,
+    { method: 'POST', cookie: admin, body: { status: 'approved' } });
+
+  const inv = await jsonOf(await call(env, '/cases/API-TL-2/invoices',
+    { method: 'POST', cookie: admin, body: {} }));
+  const invId = inv.id || (inv.invoice && inv.invoice.id);
+  await call(env, `/invoices/${invId}/lines`, { method: 'POST', cookie: admin,
+    body: { lines: [{ description: 'Surveillance, 4 hours', qty: 4, rate: 100, amount: 400 }] } });
+  await call(env, `/invoices/${invId}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'ready' } });
+  await call(env, `/invoices/${invId}/payments`, { method: 'POST', cookie: admin,
+    body: { amount: 400, method: 'ach', paid_date: '2026-05-20', reference: 'BILL-9' } });
+
+  const build = await jsonOf(await call(env, '/cases/API-TL-2/build',
+    { method: 'POST', cookie: admin, body: {} }));
+  const buildId = build.build ? build.build.id : build.id;
+
+  const tl = await tlGet(env, admin, 'API-TL-2');
+
+  ok('a report shows as drafted', Boolean(tlFind(tl, 'report_created')));
+  ok('and its approval is its own event, in the words of the status',
+     /approved/.test((tlFind(tl, 'report_status') || {}).title || ''));
+  ok('the report events open the Reports screen',
+     (tlFind(tl, 'report_created') || {}).link.tab === 'reports');
+  ok('an invoice shows as created, named by its number',
+     /Invoice API-INV/.test((tlFind(tl, 'invoice') || {}).title || ''),
+     (tlFind(tl, 'invoice') || {}).title);
+  const invPay = (tl.events || []).find(e => e.type === 'payment' && /\$400/.test(e.title));
+  ok('an invoice payment shows at the date the client paid',
+     invPay && invPay.date === '2026-05-20');
+  ok('and names the invoice it was against', invPay && /API-INV/.test(invPay.detail || ''));
+  ok('a package start is a package event',
+     Boolean(tlFind(tl, 'package')) && Number.isFinite(tlFind(tl, 'package').link.id));
+
+  /* NOISE IS NOT CHRONOLOGY. Editing a line, adding a BILL reference and
+     adding an item to a package are all recorded in their own audit tables and
+     none of them is a case event. */
+  await call(env, `/invoices/${invId}/lines`, { method: 'POST', cookie: admin,
+    body: { lines: [{ description: 'Surveillance, 4 hours', qty: 4, rate: 100, amount: 400 },
+                    { description: 'Report preparation', qty: 1, rate: 0, amount: 0 }] } });
+  const after = await tlGet(env, admin, 'API-TL-2');
+  ok('replacing an invoice line adds nothing to the timeline',
+     after.total === tl.total, `${tl.total} -> ${after.total}`);
+  ok('and the low-value invoice audit actions never appear',
+     !(after.events || []).some(e => /edited|lines_replaced|bill_ref/i.test(e.title || '')));
+
+  /* IMPORTANT DATES — only what a firm actually gave us. */
+  await tlCase(env, admin, 'API-TL-LEG', { assignment: 'legal' });
+  await call(env, '/cases/API-TL-LEG/legal', { method: 'POST', cookie: admin,
+    body: { firm_name: 'Quill & Marlow LLP', attorney_name: 'A. Quill',
+            hearing_date: '2026-09-15', trial_date: '2026-11-02' } });
+  const leg = await tlGet(env, admin, 'API-TL-LEG');
+  const dates = (leg.events || []).filter(e => e.type === 'legal_date');
+  ok('a hearing and a trial date the firm gave us are on the timeline',
+     dates.length === 2 && dates.some(d => d.title === 'Hearing')
+     && dates.some(d => d.title === 'Trial'), JSON.stringify(dates.map(d => d.title)));
+  ok('they carry the date and no invented time',
+     dates.every(d => d.time === null) && dates.some(d => d.date === '2026-09-15'));
+  ok('and a case with no dates recorded shows none',
+     !(await tlGet(env, admin, 'API-TL-2')).events.some(e => e.type === 'legal_date'));
+  ok('no deadline is derived from another date',
+     !dates.some(d => d.title === 'Deadline'));
+}
+
+section('Case timeline — who may see it');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  for (const [u, n] of [['dana', 'Dana'], ['sam', 'Sam']]) {
+    const link = (await jsonOf(await invite(env, admin,
+      { username: u, display_name: n, role: 'investigator' }))).url;
+    const t = new URL(link, 'https://x.test').searchParams.get('invite');
+    await call(env, `/invite/${t}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  }
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const sam = (await login(env, 'sam', 'FieldWork2026x')).cookie;
+  const users = (await jsonOf(await call(env, '/users', { cookie: admin }))).users;
+  const danaId = users.find(u => u.username === 'dana').id;
+
+  await tlCase(env, admin, 'API-TL-P');
+  await call(env, '/submissions/API-TL-P/assign',
+    { method: 'POST', cookie: admin, body: { user_id: danaId } });
+  await call(env, '/cases/API-TL-P/activity', { method: 'POST', cookie: dana,
+    body: { at_date: '2026-04-02', at_time: '10:00', kind: 'activity',
+            description: 'Observation on the assigned case.' } });
+  await call(env, '/cases/API-TL-P/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 1500, method: 'check', paid_on: '2026-04-01' } });
+  const inv = await jsonOf(await call(env, '/cases/API-TL-P/invoices',
+    { method: 'POST', cookie: admin, body: {} }));
+  await call(env, '/cases/API-TL-P/build', { method: 'POST', cookie: admin, body: {} });
+
+  const asAdmin = await tlGet(env, admin, 'API-TL-P');
+  ok('an admin sees the money and the package',
+     (asAdmin.counts.payments || 0) >= 2 && (asAdmin.counts.package || 0) >= 1);
+
+  const asDana = await tlGet(env, dana, 'API-TL-P');
+  ok('the assigned investigator sees the timeline of their own case',
+     Array.isArray(asDana.events) && asDana.events.length > 0);
+  ok('and their observation is on it',
+     (asDana.events || []).some(e => e.type === 'activity'));
+  /* THE PAYING SIDE IS NOT FILTERED OUT — IT IS NEVER READ. */
+  ok('but no payment reaches them', !asDana.counts.payments
+     && !(asDana.events || []).some(e => e.category === 'payments'));
+  ok('and no invoice', !(asDana.events || []).some(e => /Invoice/i.test(e.title || '')));
+  ok('and no client package', !asDana.counts.package
+     && !(asDana.events || []).some(e => e.category === 'package'));
+  ok('and the header does not name who is paying',
+     !('client' in asDana.context) && !('claim_number' in asDana.context));
+  ok('while the subject, who is watched rather than paying, does reach them',
+     asDana.context.subject === 'Rex Marlow');
+
+  const asSam = await call(env, '/cases/API-TL-P/timeline', { cookie: sam });
+  ok('an investigator who is not on the case is refused', asSam.status === 404);
+  const anon = await call(env, '/cases/API-TL-P/timeline');
+  ok('and a caller with no session is refused', anon.status === 401);
+
+  /* An investigator's Legal dates: the firm is who is paying. */
+  await tlCase(env, admin, 'API-TL-PL', { assignment: 'legal' });
+  await call(env, '/submissions/API-TL-PL/assign',
+    { method: 'POST', cookie: admin, body: { user_id: danaId } });
+  await call(env, '/cases/API-TL-PL/legal', { method: 'POST', cookie: admin,
+    body: { firm_name: 'Quill & Marlow LLP', hearing_date: '2026-09-15' } });
+  const legDana = await tlGet(env, dana, 'API-TL-PL');
+  ok('a firm’s hearing date is not sent to the field',
+     !(legDana.events || []).some(e => e.type === 'legal_date'));
+
+  /* Deleted evidence is admin bookkeeping, the way it is in the workspace. */
+  const fd = new FormData();
+  fd.append('file', new File([new Uint8Array(32)], 'gone.jpg', { type: 'image/jpeg' }));
+  const evId = (await jsonOf(await worker.fetch(new Request(API + '/cases/API-TL-P/evidence',
+    { method: 'POST', headers: { Origin: ORIGIN, Cookie: dana }, body: fd }), env))).id;
+  await call(env, `/cases/API-TL-P/evidence/${evId}/delete`, { method: 'POST', cookie: admin, body: {} });
+  ok('a removed file stays on the office timeline, marked',
+     ((await tlGet(env, admin, 'API-TL-P')).events || [])
+       .some(e => e.title === 'gone.jpg' && e.removed === true));
+  ok('and is simply absent from the field timeline',
+     !((await tlGet(env, dana, 'API-TL-P')).events || []).some(e => e.title === 'gone.jpg'));
+}
+
+section('Case timeline — the range, the cap and what it admits');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await tlCase(env, admin, 'API-TL-R');
+
+  for (const d of ['2026-02-01', '2026-02-10', '2026-03-01', '2026-03-15']) {
+    await call(env, '/cases/API-TL-R/activity', { method: 'POST', cookie: admin,
+      body: { at_date: d, at_time: '12:00', kind: 'activity', description: 'On ' + d } });
+  }
+  let tl = await tlGet(env, admin, 'API-TL-R', '?from=2026-03-01&to=2026-03-31');
+  ok('a date range narrows the read',
+     (tl.events || []).filter(e => e.type === 'activity').length === 2);
+  ok('and the range is echoed back', tl.from === '2026-03-01' && tl.to === '2026-03-31');
+  ok('a bound day is inclusive at both ends',
+     (await tlGet(env, admin, 'API-TL-R', '?from=2026-02-10&to=2026-02-10'))
+       .events.filter(e => e.type === 'activity').length === 1);
+  ok('rubbish in the range is ignored rather than obeyed',
+     (await tlGet(env, admin, 'API-TL-R', '?from=lastTuesday')).from === null);
+  /* THE RANGE APPLIES TO EVERY EVENT, including the ones that come from a
+     single row and have no LIMIT of their own — a filter that quietly exempts
+     part of its own subject is worse than no filter. */
+  const narrow = await tlGet(env, admin, 'API-TL-R', '?from=2026-02-01&to=2026-02-28');
+  ok('the case-opened event obeys the range like everything else',
+     !narrow.events.some(e => e.type === 'case_created'),
+     JSON.stringify(narrow.events.map(e => e.type)));
+  ok('and so does the status event', !narrow.events.some(e => e.type === 'status'));
+  ok('while the events inside the range are all there',
+     narrow.events.filter(e => e.type === 'activity').length === 2);
+
+  ok('the cap is stated with the page', tl.limit > 0 && tl.limit <= 600);
+  const small = await tlGet(env, admin, 'API-TL-R', '?limit=2');
+  ok('a caller may ask for fewer', (small.events || []).length === 2);
+  ok('and is told how many there really are', small.total > 2);
+  ok('an absurd limit is clamped rather than honoured',
+     (await tlGet(env, admin, 'API-TL-R', '?limit=99999')).limit === 600);
+
+  /* NAME WHAT CANNOT BE SEEN. A table that has not arrived yet must not read
+     as "nothing happened" — the rule Unit 8's missing_sources already carries. */
+  const bare = freshEnv();
+  bare.DB.prepare('DROP TABLE photo_stamp').run();
+  bare.DB.prepare('DROP TABLE legal_intake').run();
+  await bootstrapAdmin(bare);
+  const a2 = (await login(bare, 'trever', 'FirstAdminPass1')).cookie;
+  await tlCase(bare, a2, 'API-TL-M');
+  const degraded = await tlGet(bare, a2, 'API-TL-M');
+  ok('a missing table degrades instead of taking the timeline out',
+     Array.isArray(degraded.events) && degraded.events.length > 0);
+  ok('and the sources it could not read are named',
+     (degraded.missing_sources || []).includes('timestamped photographs')
+     && (degraded.missing_sources || []).includes('legal dates'),
+     JSON.stringify(degraded.missing_sources));
+  ok('a healthy database names none',
+     Array.isArray(tl.missing_sources) && tl.missing_sources.length === 0);
+  ok('and nothing is capped on a small case',
+     Array.isArray(tl.capped_sources) && tl.capped_sources.length === 0);
+}
+
+section('Case timeline — a very large case, and a case put away');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await tlCase(env, admin, 'API-TL-BIG');
+
+  /* 501 entries against a cap of 500. Planted straight into the table because
+     the point is the CAP, not the route that writes them. */
+  for (let i = 0; i < 501; i++) {
+    await env.DB.prepare(
+      `INSERT INTO activity_log (case_no, investigator_id, at_date, at_time, kind,
+         description, created_at, created_by)
+       VALUES (?, 1, ?, ?, 'activity', ?, ?, 1)`)
+      .bind('API-TL-BIG', '2026-06-' + String((i % 28) + 1).padStart(2, '0'),
+            String(i % 24).padStart(2, '0') + ':00', 'Entry ' + i,
+            new Date().toISOString()).run();
+  }
+  const big = await tlGet(env, admin, 'API-TL-BIG');
+  ok('a very large case does not return everything at once',
+     (big.events || []).length <= big.limit && big.limit <= 600,
+     `${(big.events || []).length} at limit ${big.limit}`);
+  ok('and it says how many there are behind what it sent', big.total > big.events.length);
+  ok('the source that hit its own read cap is named',
+     (big.capped_sources || []).includes('activity entries'),
+     JSON.stringify(big.capped_sources));
+  const more = await tlGet(env, admin, 'API-TL-BIG', '?limit=600');
+  ok('asking for more returns more', (more.events || []).length > (big.events || []).length);
+  ok('and never more than the hard ceiling', (more.events || []).length <= 600);
+  /* A NARROWER WINDOW COMES BACK COMPLETE, which is what the range is for. */
+  const window = await tlGet(env, admin, 'API-TL-BIG', '?from=2026-06-03&to=2026-06-03');
+  ok('a narrowed range is not capped', !(window.capped_sources || []).length,
+     JSON.stringify(window.capped_sources));
+
+  /* READS STAY OPEN ON A CASE THAT HAS BEEN PUT AWAY. An admin has to be able
+     to see what happened before deciding whether to bring one back, and the
+     workspace is where that button is — the same rule the delete gate already
+     states about GETs. */
+  await tlCase(env, admin, 'API-TL-GONE');
+  await call(env, '/cases/API-TL-GONE/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-04-04', at_time: '11:00', kind: 'activity',
+            description: 'Something that happened before it was filed away.' } });
+  await call(env, '/cases/API-TL-GONE/delete',
+    { method: 'POST', cookie: admin, body: { reason: 'Opened twice' } });
+  const gone = await call(env, '/cases/API-TL-GONE/timeline', { cookie: admin });
+  ok('a deleted case still reads its own timeline', gone.status === 200);
+  const goneTl = await jsonOf(gone);
+  ok('with the record intact',
+     (goneTl.events || []).some(e => /before it was filed away/.test(e.title || '')));
+  ok('and the deletion itself is on it', Boolean(tlFind(goneTl, 'deleted')));
+
+  await tlCase(env, admin, 'API-TL-ARCH');
+  await call(env, '/cases/API-TL-ARCH/archive', { method: 'POST', cookie: admin, body: {} });
+  const arch = await tlGet(env, admin, 'API-TL-ARCH');
+  ok('an archived case reads too, and says when it was archived',
+     Boolean(tlFind(arch, 'archived')));
+  /* And a write against it is still refused, by the router's one chokepoint —
+     the timeline changed nothing about that. */
+  ok('while a write to that case is still refused',
+     (await call(env, '/cases/API-TL-ARCH/activity', { method: 'POST', cookie: admin,
+        body: { at_date: '2026-04-04', at_time: '11:00', kind: 'activity',
+                description: 'x' } })).status === 409);
+  const routes = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  ok('and the timeline route itself answers nothing but GET',
+     /\/timeline\$\/\);\n\s*if \(m && method === 'GET'\) return caseTimeline/.test(routes));
+}
+
+section('Case timeline — a view, and only a view');
+{
+  const src = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  const schema = fs.readFileSync(path.join(HERE, 'schema.sql'), 'utf8');
+
+  ok('there is no timeline table', !/CREATE TABLE[^;]*timeline/i.test(schema));
+  ok('and nothing named timeline is in the expected-table list',
+     !/timeline/i.test((src.match(/const EXPECTED_TABLES = \[([\s\S]*?)\n\];/) || [, ''])[1]));
+
+  const fn = (src.match(/async function caseTimeline\([\s\S]*?\n\}\n/) || [''])[0];
+  ok('the composer exists', fn.length > 0);
+  ok('and it writes nothing at all',
+     !/INSERT INTO|UPDATE |DELETE FROM/i.test(fn),
+     'the timeline composer contains a write');
+  ok('it reads no bytes: no R2 and no Dropbox call',
+     !/EVIDENCE_BUCKET|dropboxapi|dropbox(Upload|Download|Fetch)/i.test(fn));
+  ok('and it never reads an object key or a byte buffer',
+     !/r2_key|arrayBuffer|\bbody\.bytes\b/i.test(fn));
+
+  /* N+1 IS THE FAILURE MODE OF A COMPOSED VIEW. The invoice and package
+     children are read through a subquery on their parent — one statement each,
+     whatever the case holds. */
+  ok('invoice children are read in one statement, through their parent',
+     /invoice_id IN \(SELECT id FROM invoices WHERE case_no = \?\)/.test(fn));
+  ok('package children the same way',
+     /build_id IN \(SELECT id FROM case_builds WHERE case_no = \?\)/.test(fn));
+  ok('no query is issued from inside a loop over rows',
+     !/for \([^)]*\) \{[^}]*await env\.DB\.prepare/.test(fn));
+
+  /* EVERY ARM IS BOUNDED. */
+  const limits = (fn.match(/LIMIT \?/g) || []).length;
+  ok('every read carries a bound limit', limits >= 10, String(limits));
+  ok('and no limit is spliced into the SQL as a number',
+     !/LIMIT \d/.test(fn));
+  ok('the range bounds are bound parameters, never interpolated',
+     !/\$\{(LO|HI|fromD|toD)/.test(fn));
+
+  /* THE ZONE IS RESOLVED, NOT ASSUMED. */
+  ok('the zone is named once', (src.match(/const TL_TZ = 'America\/New_York'/g) || []).length === 1);
+  ok('and no fixed Eastern offset is written anywhere in the timeline code',
+     !/-0?5:00|-0?4:00|UTC-5|EST\b.*hard/i.test(fn));
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));
