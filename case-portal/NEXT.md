@@ -22,7 +22,7 @@ item is finished.
 | 3 | Visible Dropbox portal UI for Admin | ✅ **DONE — DEPLOYED** at `5baabd3` (#189). LIVE VERIFY **OPEN** for the owner |
 | 4 | Admin report workflow and mobile report fix | ✅ **DONE — DEPLOYED** at `94b1f5b` (#190). LIVE VERIFY **OPEN** for the owner |
 | 5 | Full portal UI/mobile/dashboard modernization | ✅ **DONE — DEPLOYED** at `6446e3c` (#191). LIVE VERIFY **OPEN** for the owner |
-| 6 | **Legal / Law Firm intake** (third intake type) | not started — **queued, do not begin until the owner reviews Unit 5**. Full brief in `LEGAL-INTAKE.md` |
+| 6 | **Legal / Law Firm intake** (third intake type) | **IN FLIGHT** on `legal-intake`. Brief + derived decisions in `LEGAL-INTAKE.md` |
 | 7 | Repeat Client / Firm Profiles | not started |
 | 8 | Global Case Search + advanced Needs Attention | not started |
 | 9 | Multiple Report Templates | not started |

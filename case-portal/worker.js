@@ -2339,6 +2339,9 @@ function redactRow(row) {
      FIELD_KEEP and the client_* columns above. */
   const { carrier, claim_number, client_name, client_email, client_phone, lead_status,
           send_count, last_sent_at, retainer_received, pay_sent_at, pay_methods,
+          /* the firm IS the paying side (Unit 6) — the LEGAL category stays,
+             the identity goes */
+          legal_firm, legal_attorney, legal_assignment, legal_deadline, legal_arrangement,
           ...rest } = row;
   return rest;
 }
@@ -2387,6 +2390,19 @@ async function listSubmissions(request, env, user) {
      practice; the guard costs two lines and `missing` is already computed. */
   const haveRet = !missing.includes('case_retainer');
   const havePay = !missing.includes('payment_send');
+  /* UNIT 6 — the lead card's legal identity: firm-led, with the assignment,
+     the deadline and the arrangement beside it. Guarded like every table that
+     arrives by portal-setup, and STRIPPED by redactRow below — the firm is who
+     is paying, which an investigator is never shown. */
+  const haveLegal = !missing.includes('legal_intake');
+  const legalCols = haveLegal
+    ? `(SELECT li.firm_name FROM legal_intake li WHERE li.case_no = s.case_no) AS legal_firm,
+       (SELECT li.attorney_name FROM legal_intake li WHERE li.case_no = s.case_no) AS legal_attorney,
+       (SELECT li.assignment_type FROM legal_intake li WHERE li.case_no = s.case_no) AS legal_assignment,
+       (SELECT li.deadline FROM legal_intake li WHERE li.case_no = s.case_no) AS legal_deadline,
+       (SELECT li.payment_arrangement FROM legal_intake li WHERE li.case_no = s.case_no) AS legal_arrangement`
+    : `NULL AS legal_firm, NULL AS legal_attorney, NULL AS legal_assignment,
+       NULL AS legal_deadline, NULL AS legal_arrangement`;
   const retCol = haveRet
     ? '(SELECT cr.received FROM case_retainer cr WHERE cr.case_no = s.case_no) AS retainer_received'
     : 'NULL AS retainer_received';
@@ -2419,10 +2435,15 @@ async function listSubmissions(request, env, user) {
 
   const { results } = await env.DB.prepare(
     `SELECT s.case_no, s.kind, s.service, s.status, s.client_name, s.client_email, s.subject_name,
+            /* UNIT 6 — a CATEGORY fact like kind, never a firm detail: the badge
+               may say LEGAL to both roles, the firm's identity may not. */
+            CASE WHEN json_valid(s.payload)
+                  AND json_extract(s.payload, '$.assignment') = 'legal'
+                 THEN 1 ELSE 0 END AS legal,
             (SELECT COUNT(*) FROM send_log sl WHERE sl.case_no = s.case_no AND sl.ok = 1) AS send_count,
             (SELECT MAX(sent_at) FROM send_log sl WHERE sl.case_no = s.case_no AND sl.ok = 1) AS last_sent_at,
             s.carrier, s.claim_number, s.created_at, s.assigned_to, u.display_name AS assigned_name,
-            cs.stage, ls.status AS lead_status, ${retCol}, ${payCols}, ${archCol}, ${delCol}
+            cs.stage, ls.status AS lead_status, ${retCol}, ${payCols}, ${legalCols}, ${archCol}, ${delCol}
        FROM submissions s LEFT JOIN users u ON u.id = s.assigned_to
        LEFT JOIN case_status cs ON cs.case_no = s.case_no
        LEFT JOIN lead_status ls ON ls.case_no = s.case_no
