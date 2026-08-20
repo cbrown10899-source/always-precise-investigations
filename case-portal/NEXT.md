@@ -26,7 +26,7 @@ item is finished.
 | 7 | Repeat Client / Firm Profiles | ✅ **DONE — DEPLOYED** at `860f8fb` (#193). LIVE VERIFY **OPEN** for the owner |
 | 8 | Global Case Search + advanced Needs Attention | ✅ **DONE — DEPLOYED** at `8d28196` (#194). LIVE VERIFY **OPEN** for the owner |
 | 9 | Multiple Report Templates | ✅ **DONE — DEPLOYED** at `9979fca` (#195). LIVE VERIFY **OPEN** for the owner |
-| 10 | Case Timeline | not started |
+| 10 | Case Timeline | ✅ **DONE — DEPLOYED** at `8d93a9e` (#196). LIVE VERIFY **OPEN** for the owner |
 | 11 | Evidence Integrity | not started |
 | 12 | Storage Health | not started |
 | 13 | Case Closeout | not started |
@@ -146,6 +146,57 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Do not interrupt the current coding unit. Record this queue only"*, and
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
+
+## 📌 Unit 10 — what shipped (#196, `8d93a9e`)
+
+**Case Timeline — a VIEW over existing case records.** `GET /cases/:no/timeline`
+composes a case's chronology at read time from fourteen tables that already
+existed: the submission, the status, the days, the activity log with its removed
+and voice companions, the evidence, both stamp tables, the reports, the retainer
+and invoice payments, the invoice and build events, the legal dates and the
+archive and delete markers. Detail in CLAUDE.md under *"The timeline is a view,
+and it needed no table"*; the owner's brief verbatim and eighteen derived
+decisions are in `case-portal/TIMELINE.md`.
+
+**No schema, and NO INDEX — checked rather than assumed.** Every arm is an
+equality lookup on a column that already leads an index (`idx_activity_case`,
+`idx_days_case`, `idx_reports_case`, `idx_evidence_case`, `idx_retpay_case`,
+`idx_invoices_case`, `idx_invpay`, `idx_invevents`, `idx_builds_case`,
+`idx_bevents`, `idx_pstamp_case`, `idx_vstamp_case`, `idx_offers_case`,
+`idx_legal_case`, and the four markers keyed by `case_no`). **So this is the
+first unit in five that owed no `portal-setup` dispatch**, and none was run.
+
+**The clock is the hard part.** UTC instants and local wall clock both live in
+this database, and comparing them unconverted is how an 8:15 PM observation
+sorts ahead of a 9:00 PM one recorded an hour earlier. Wall-clock values are
+read AS America/New_York, both kinds land on one UTC axis for the sort, and that
+axis is never shown — what IS displayed is composed in the Worker so a laptop in
+another zone cannot disagree with the report beside it. **Nothing stored is
+rewritten.** EST or EDT comes from the date in two passes. A date-only record
+sorts at the start of its day and SAYS it has no time; event time and record
+time are carried separately when they fall on different days.
+
+**The role boundary is applied by NOT RUNNING the arm** — payments, invoices,
+packages, offers, the archive and delete markers and the legal dates are read
+only for an admin, and an investigator's header carries no `client` key at all.
+The evidence relationship is `entry_id`, never the clock. Every arm is bounded;
+invoice and build children go through ONE statement each via a subquery on their
+parent; `capped_sources` and `missing_sources` name what could not be reached.
+
+**Three of the brief's candidate events are deliberately absent** because no
+record of them exists: PDF generated, intake converted, and Dropbox storage
+actions. Adding any would have meant inventing an audit system for the timeline.
+
+**Export is the printable view** (`#tldoc`, beside `#invdoc`/`#pkgdoc`/`#repdoc`)
+— there is still exactly one `%PDF-1.` writer in the page, and the generated-PDF
+follow-up is bounded and written up rather than half-built (`TIMELINE.md` D15).
+
+**Suites at merge:** worker **2363/0**, portal **2112/0**, intake **236/0**
+(untouched), deploy guard **68/0**.
+
+**LIVE VERIFY (owner):** the timeline on a real phone — one column, the filter
+chips, the date range, the print — and whether the chronology of a real case
+reads the way the office would tell it.
 
 ## 📌 Unit 9 — what shipped (#195, `9979fca`)
 
@@ -465,6 +516,22 @@ node .github/test-deploy.mjs                    # expect 68 / 0
 
 Then the ordinary chain: PR → merge if green → pull master → deploy → live
 verify → **save point** → next unit (item 4, Admin report/mobile workflow fix).
+
+## 🚦 DEPLOYMENT — 2026-08-20, master `8d93a9e` (#196) — Unit 10, Case Timeline
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/intake/` + `/portal/` | `8d93a9e` | `8d93a9e` | **DEPLOYED** — `deploy.yml` 32415586935 success |
+| `api-case-portal` | `8d93a9e` | `8d93a9e` | **DEPLOYED** — `deploy-portal.yml` 32415587080 success |
+| Schema | — | — | **No change.** Nothing owed; portal-setup deliberately NOT run |
+| Save point | — | — | `save/2026-08-20-2043-8d93a9e`, the merge push's automatic firing (`save-point.yml` 32415586976 success) |
+
+Tests at merge: worker **2363/0**, portal **2112/0**, intake **236/0**, deploy
+guard **68/0**. The container has no outbound route to the live domain (the
+environment's network policy answers 403 at the gateway), so "DEPLOYED" here is
+each workflow's success against the merge SHA — `/.well-known/build.txt` and
+`/portal-api/health` on the owner's device are the final confirmation, the
+standing standard.
 
 ## 🚦 DEPLOYMENT — 2026-08-20, master `9979fca` (#195) — Unit 9, Multiple Report Templates
 
