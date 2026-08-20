@@ -11723,6 +11723,437 @@ section('Profiles: the link route is inside the case gate, and the phone shape i
      JSON.stringify(digits.results));
 }
 
+/* ============================================================ UNIT 8 =====
+   GLOBAL SEARCH + NEEDS ATTENTION.
+
+   The security half is the part that matters: search must not become the one
+   door that hands an investigator the firm's whole book of work. It is
+   asserted as a WALK — every field the brief names, tried against a case the
+   investigator is not on, each one expected to find nothing. */
+
+section('Global search: the office finds a case by whatever it remembers');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  // A claims case with a claimant, a vehicle and an adjuster.
+  await ingest(env, {
+    case_no: 'API-SRCH-0001', service: 'Insurance Claim Assignment',
+    carrier: 'Blue Ridge Mutual', claim_number: 'WC-2026-77421',
+    client_name: 'Hal Ivers', client_email: 'HIvers@BRM.example',
+    client_phone: '(434) 907-0975', adjuster: 'Hal Ivers',
+    subject_name: 'Kathryn Leslee Phillips', objective: 'Document activity',
+  });
+  // A legal case with a firm, an attorney, a paralegal and a matter number.
+  await ingest(env, legalPayload({
+    case_no: 'API-SRCH-0002', firm_name: 'Smith & Jones PLLC',
+    attorney_name: 'John Smith', paralegal_name: 'Beatrix Sandoval',
+    billing_name: 'Del Watts', matter_number: 'M-99120',
+    client_name: 'Estate of L. Byrd', subject_name: 'Adverse Party',
+  }));
+  // A structured subject with an alias, an address, a phone and a vehicle.
+  const subRes = await call(env, '/cases/API-SRCH-0001/subjects', { method: 'POST', cookie: admin,
+    body: { name: 'Kathryn Leslee Phillips', alias: 'Katie Phillips',
+      addresses: '881 Peachtree Lane, Bedford VA', phone: '434.907.0975' } });
+  ok('a structured subject is recorded', subRes.status === 201 || subRes.status === 200,
+     String(subRes.status));
+  const subId = (await env.DB.prepare(
+    "SELECT id FROM case_subjects WHERE case_no = 'API-SRCH-0001'").first()).id;
+  await call(env, `/cases/API-SRCH-0001/subjects/${subId}/vehicles`, { method: 'POST', cookie: admin,
+    body: { year: '2023', make: 'Ford', model: 'F-150', color: 'White',
+      plate: 'ABC-1234', plate_state: 'VA' } });
+  // And a saved firm profile, from Unit 7.
+  await call(env, '/profiles', { method: 'POST', cookie: admin, body: {
+    kind: 'law_firm', name: 'Smith & Jones PLLC', confirm_new: true,
+    contacts: [{ first_name: 'John', last_name: 'Smith', role: 'Attorney', preferred: true }] } });
+
+  const find = async q => (await jsonOf(await call(env,
+    `/search?q=${encodeURIComponent(q)}`, { cookie: admin }))).results || [];
+  const hasCase = (rs, no) => rs.some(r => r.case_no === no);
+  const why = (rs, no) => (rs.find(r => r.case_no === no) || {}).matched || [];
+
+  ok('by case number', hasCase(await find('API-SRCH-0001'), 'API-SRCH-0001'));
+  ok('by a case-number fragment from the front', hasCase(await find('api-srch'), 'API-SRCH-0001'));
+  ok('by claim number', hasCase(await find('WC-2026-77421'), 'API-SRCH-0001'));
+  ok('by matter number', hasCase(await find('M-99120'), 'API-SRCH-0002'));
+  ok('by client name', hasCase(await find('hal ivers'), 'API-SRCH-0001'));
+  ok('by carrier', hasCase(await find('blue ridge'), 'API-SRCH-0001'));
+  ok('by law firm', hasCase(await find('smith & jones'), 'API-SRCH-0002'));
+  ok('by attorney', hasCase(await find('john smith'), 'API-SRCH-0002'));
+  ok('by paralegal', hasCase(await find('sandoval'), 'API-SRCH-0002'));
+  ok('by billing contact', hasCase(await find('del watts'), 'API-SRCH-0002'));
+  ok('by subject name', hasCase(await find('kathryn'), 'API-SRCH-0001'));
+  ok('by alias', hasCase(await find('katie phillips'), 'API-SRCH-0001'));
+  ok('by address', hasCase(await find('peachtree'), 'API-SRCH-0001'));
+  ok('by vehicle make and model', hasCase(await find('f-150'), 'API-SRCH-0001'));
+
+  /* FORMATTING MUST NOT DECIDE WHETHER SOMETHING IS FOUND. Every one of these
+     is the same phone number and the same plate. */
+  for (const typed of ['4349070975', '434-907-0975', '(434) 907-0975', '434.907.0975']) {
+    ok(`by phone typed "${typed}"`, hasCase(await find(typed), 'API-SRCH-0001'), typed);
+  }
+  for (const typed of ['ABC1234', 'ABC-1234', 'abc 1234']) {
+    ok(`by plate typed "${typed}"`, hasCase(await find(typed), 'API-SRCH-0001'), typed);
+  }
+  ok('email is case-insensitive', hasCase(await find('hivers@brm.example'), 'API-SRCH-0001'));
+  ok('names are case-insensitive', hasCase(await find('KATHRYN'), 'API-SRCH-0001'));
+
+  /* A RESULT SAYS WHAT MATCHED — otherwise the office is guessing why a row
+     is on screen. */
+  ok('the result names the field that matched',
+     why(await find('WC-2026-77421'), 'API-SRCH-0001').includes('claim number'),
+     JSON.stringify(why(await find('WC-2026-77421'), 'API-SRCH-0001')));
+  const plateHit = (await find('ABC-1234')).find(r => r.type === 'vehicle');
+  ok('a plate match comes back AS a vehicle', !!plateHit, JSON.stringify(await find('ABC-1234')));
+  ok('naming the vehicle and its plate',
+     plateHit && plateHit.title.includes('F-150') && plateHit.plate === 'ABC-1234',
+     JSON.stringify(plateHit));
+  ok('and pointing at the case it belongs to',
+     plateHit && plateHit.dest.view === 'case' && plateHit.dest.case_no === 'API-SRCH-0001',
+     JSON.stringify(plateHit && plateHit.dest));
+  const subjHit = (await find('katie phillips')).find(r => r.type === 'subject');
+  ok('a subject match comes back AS a subject, pointing at their case',
+     subjHit && subjHit.dest.case_no === 'API-SRCH-0001' && subjHit.dest.tab === 'subject',
+     JSON.stringify(subjHit));
+  const firmHit = (await find('smith & jones')).find(r => r.type === 'profile');
+  ok('the saved firm comes back as a profile, pointing at the directory',
+     firmHit && firmHit.dest.view === 'profile' && firmHit.title === 'Smith & Jones PLLC',
+     JSON.stringify(firmHit));
+  ok('and names a person on it', firmHit && /John Smith/.test(firmHit.subtitle || ''),
+     JSON.stringify(firmHit && firmHit.subtitle));
+
+  /* An intake nobody has accepted is labelled as an intake, not as a case. */
+  const intakeHit = (await find('API-SRCH-0001')).find(r => r.case_no === 'API-SRCH-0001');
+  ok('a case still awaiting a decision is typed as an intake',
+     intakeHit && intakeHit.type === 'intake', JSON.stringify(intakeHit && intakeHit.type));
+
+  /* ONE CASE IS ONE RESULT, however many arms it matched on. */
+  const both = await find('hal ivers');
+  ok('a case matching several ways appears once',
+     both.filter(r => r.case_no === 'API-SRCH-0001' && r.type !== 'subject'
+       && r.type !== 'vehicle').length === 1, JSON.stringify(both.map(r => r.type)));
+  ok('carrying more than one reason', why(both, 'API-SRCH-0001').length >= 1);
+
+  ok('a one-character query does not search at all',
+     (await jsonOf(await call(env, '/search?q=a', { cookie: admin }))).too_short === true);
+  ok('and nothing matching returns nothing rather than everything',
+     (await find('zzzz-no-such-thing')).length === 0);
+}
+
+section('Global search: two people of the same name stay two people');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  for (const no of ['API-DUP-0001', 'API-DUP-0002']) {
+    await ingest(env, { case_no: no, client_name: 'Marguerite Vance',
+      subject_name: 'James Wright', service: 'Surveillance' });
+    await call(env, `/cases/${no}/subjects`, { method: 'POST', cookie: admin,
+      body: { name: 'James Wright' } });
+  }
+  const rs = (await jsonOf(await call(env, '/search?q=james%20wright', { cookie: admin }))).results;
+  const subs = rs.filter(r => r.type === 'subject');
+  ok('the same name on two matters comes back twice', subs.length === 2,
+     JSON.stringify(subs.map(r => r.case_no)));
+  ok('and each says which case it is', subs[0].case_no !== subs[1].case_no
+     && subs.every(r => r.subtitle && r.subtitle.startsWith('API-DUP')),
+     JSON.stringify(subs.map(r => r.subtitle)));
+  ok('nothing merged them into one record',
+     new Set(subs.map(r => r.case_no)).size === 2);
+}
+
+section('Global search: an investigator cannot find a case that is not theirs');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana Field', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const danaId = (await env.DB.prepare("SELECT id FROM users WHERE username = 'dana'").first()).id;
+
+  /* MINE: a case Dana is actually on. */
+  await ingest(env, { case_no: 'API-MINE-0001', client_name: 'My Client',
+    subject_name: 'My Subject', service: 'Surveillance' });
+  await call(env, '/submissions/API-MINE-0001/assign', { method: 'POST', cookie: admin,
+    body: { user_id: danaId } });
+  await call(env, '/cases/API-MINE-0001/subjects', { method: 'POST', cookie: admin,
+    body: { name: 'My Subject', phone: '540-555-1111' } });
+
+  /* THEIRS: everything the brief names, on a case Dana is not on. */
+  await ingest(env, legalPayload({
+    case_no: 'API-THEIRS-0001', firm_name: 'Harmon & Reed LLP', attorney_name: 'Ruth Harmon',
+    paralegal_name: 'Cora Nye', billing_name: 'Del Watts', matter_number: 'M-SECRET-1',
+    client_name: 'Secret Client', client_email: 'secret@example.com',
+    subject_name: 'Their Subject',
+  }));
+  await env.DB.prepare(
+    `UPDATE submissions SET claim_number = 'CLAIM-SECRET-1', carrier = 'Secret Mutual',
+       client_phone = '(276) 555-9999' WHERE case_no = 'API-THEIRS-0001'`).run();
+  await call(env, '/cases/API-THEIRS-0001/subjects', { method: 'POST', cookie: admin,
+    body: { name: 'Their Subject', alias: 'Secret Alias',
+      addresses: '12 Secret Road', phone: '276-555-9999' } });
+  const theirSub = (await env.DB.prepare(
+    "SELECT id FROM case_subjects WHERE case_no = 'API-THEIRS-0001'").first()).id;
+  await call(env, `/cases/API-THEIRS-0001/subjects/${theirSub}/vehicles`, { method: 'POST',
+    cookie: admin, body: { make: 'Secret', model: 'Wagon', plate: 'ZZZ-9999', plate_state: 'VA' } });
+
+  const danaFind = async q => (await jsonOf(await call(env,
+    `/search?q=${encodeURIComponent(q)}`, { cookie: dana }))).results || [];
+
+  ok('an investigator CAN find their own case', (await danaFind('API-MINE-0001')).length > 0);
+  ok('and their own subject', (await danaFind('My Subject')).some(r => r.type === 'subject'));
+
+  /* THE WALK. Every field the brief names, tried against the case Dana is not
+     on — each one must find nothing at all. */
+  for (const [what, q] of [
+    ['case number', 'API-THEIRS-0001'],
+    ['claim number', 'CLAIM-SECRET-1'],
+    ['matter number', 'M-SECRET-1'],
+    ['client name', 'Secret Client'],
+    ['client email', 'secret@example.com'],
+    ['client phone', '(276) 555-9999'],
+    ['carrier', 'Secret Mutual'],
+    ['law firm', 'Harmon & Reed'],
+    ['attorney', 'Ruth Harmon'],
+    ['paralegal', 'Cora Nye'],
+    ['billing contact', 'Del Watts'],
+    ['subject name', 'Their Subject'],
+    ['subject alias', 'Secret Alias'],
+    ['subject address', 'Secret Road'],
+    ['subject phone', '276-555-9999'],
+    ['licence plate', 'ZZZ-9999'],
+    ['vehicle make', 'Secret Wagon'],
+  ]) {
+    const rs = await danaFind(q);
+    const leaked = rs.filter(r => r.case_no === 'API-THEIRS-0001' || r.type === 'profile'
+      || JSON.stringify(r).includes('SECRET') || JSON.stringify(r).includes('Harmon'));
+    ok(`an investigator searching by ${what} finds nothing of another case`,
+       leaked.length === 0, `${q} -> ${JSON.stringify(rs).slice(0, 200)}`);
+  }
+
+  /* AND THE SAVED DIRECTORY IS NOT REACHABLE THROUGH SEARCH EITHER. */
+  await call(env, '/profiles', { method: 'POST', cookie: admin,
+    body: { kind: 'law_firm', name: 'Harmon & Reed LLP', confirm_new: true } });
+  const viaSearch = await danaFind('harmon');
+  ok('nor can they reach the profile directory through it',
+     !viaSearch.some(r => r.type === 'profile'), JSON.stringify(viaSearch));
+
+  /* A colleague's name is not a way round it either. */
+  ok('nor by searching a colleague', (await danaFind('trever')).every(
+     r => r.case_no !== 'API-THEIRS-0001'));
+
+  ok('a signed-out caller cannot search at all',
+     (await call(env, '/search?q=harmon')).status === 401);
+  ok('and cannot read the attention list',
+     (await call(env, '/attention')).status === 401);
+  ok('an investigator cannot read the attention list',
+     (await call(env, '/attention', { cookie: dana })).status === 403);
+}
+
+section('Needs attention: every alert is something that is actually true');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const attn = async () => jsonOf(await call(env, '/attention', { cookie: admin }));
+
+  /* AN EMPTY BOOK OF WORK RAISES NOTHING. A list that invents work is worse
+     than no list — this is the assertion that stops every rule below from
+     being satisfied by a constant. */
+  let a = await attn();
+  ok('with no cases at all, there is nothing to do',
+     (a.alerts || []).filter(x => x.kind !== 'storage').length === 0,
+     JSON.stringify(a.alerts));
+
+  // --- an intake nobody has accepted --------------------------------------
+  await ingest(env, { case_no: 'API-ATT-0001', client_name: 'Waiting Client',
+    subject_name: 'Someone', service: 'Surveillance' });
+  a = await attn();
+  const intake = (a.alerts || []).find(x => x.kind === 'intakes' && x.case_no === 'API-ATT-0001');
+  ok('a new intake asks to be reviewed', !!intake, JSON.stringify(a.alerts));
+  ok('and says which case and what to do',
+     intake && intake.case_no === 'API-ATT-0001' && intake.action.view === 'case'
+     && /review/i.test(intake.action.label), JSON.stringify(intake));
+  ok('and why it is on the list', intake && /Waiting Client/.test(intake.why),
+     JSON.stringify(intake && intake.why));
+
+  /* AND IT GOES AWAY BECAUSE THE THING WAS DONE — there is no dismiss. */
+  const danaLink = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana Field', role: 'investigator' }))).url;
+  const dTok = new URL(danaLink, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${dTok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const danaId = (await env.DB.prepare("SELECT id FROM users WHERE username = 'dana'").first()).id;
+  await call(env, '/submissions/API-ATT-0001/assign', { method: 'POST', cookie: admin,
+    body: { user_id: danaId } });
+  a = await attn();
+  ok('accepting it takes the alert away, with nothing to dismiss',
+     !(a.alerts || []).some(x => x.kind === 'intakes' && x.case_no === 'API-ATT-0001'),
+     JSON.stringify(a.alerts));
+
+  // --- a retainer that was agreed and not paid ----------------------------
+  await ingest(env, { case_no: 'API-ATT-0002', client_name: 'Owing Client',
+    service: 'Surveillance', subject_name: 'S' });
+  await call(env, '/cases/API-ATT-0002/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 1500 } });
+  a = await attn();
+  let pay = (a.alerts || []).find(x => x.kind === 'payments' && x.case_no === 'API-ATT-0002');
+  ok('an unpaid retainer is urgent', pay && pay.severity === 'urgent', JSON.stringify(pay));
+  ok('and names the figure', pay && pay.why.includes('$1,500'), JSON.stringify(pay && pay.why));
+
+  /* A PART PAYMENT READS AS A BALANCE, not as unpaid — the money is
+     arithmetic across the log, never a flag. */
+  await call(env, '/cases/API-ATT-0002/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 500, paid_on: '2026-08-01', method: 'check', client_token: 'tok-attn-1' } });
+  a = await attn();
+  pay = (a.alerts || []).find(x => x.kind === 'payments' && x.case_no === 'API-ATT-0002');
+  ok('a part payment turns it into a balance', pay && /1,000/.test(pay.why), JSON.stringify(pay && pay.why));
+  ok('and softens it from urgent', pay && pay.severity === 'attention', JSON.stringify(pay && pay.severity));
+
+  await call(env, '/cases/API-ATT-0002/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 1000, paid_on: '2026-08-02', method: 'check', client_token: 'tok-attn-2' } });
+  a = await attn();
+  ok('paying the rest removes it entirely',
+     !(a.alerts || []).some(x => x.kind === 'payments' && x.case_no === 'API-ATT-0002'),
+     JSON.stringify((a.alerts || []).filter(x => x.kind === 'payments')));
+
+  // --- a legal date the firm actually gave us -----------------------------
+  const soon = new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10);
+  const far = new Date(Date.now() + 200 * 86400000).toISOString().slice(0, 10);
+  await ingest(env, legalPayload({ case_no: 'API-ATT-0003', firm_name: 'Datewise LLP' }));
+  await call(env, '/cases/API-ATT-0003/legal', { method: 'POST', cookie: admin,
+    body: { hearing_date: soon, trial_date: far } });
+  a = await attn();
+  const legalAlerts = (a.alerts || []).filter(x => x.kind === 'legal' && x.case_no === 'API-ATT-0003');
+  ok('a hearing inside the window is surfaced',
+     legalAlerts.some(x => /Hearing/.test(x.what)), JSON.stringify(legalAlerts.map(x => x.what)));
+  /* AND A DATE MONTHS AWAY IS NOT AN ALERT TODAY. */
+  ok('a trial two hundred days out is not shouted about now',
+     !legalAlerts.some(x => /Trial/.test(x.what)), JSON.stringify(legalAlerts.map(x => x.what)));
+  ok('the alert names the date and the firm',
+     legalAlerts.some(x => x.why.includes(soon) && x.why.includes('Datewise')),
+     JSON.stringify(legalAlerts.map(x => x.why)));
+
+  /* NOTHING IS INFERRED FROM ANOTHER DATE. With only a hearing set, no
+     "investigation deadline" may appear. */
+  ok('no deadline is invented from the hearing',
+     !legalAlerts.some(x => /deadline/i.test(x.what)), JSON.stringify(legalAlerts.map(x => x.what)));
+
+  // --- a day worked with no report ----------------------------------------
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  await call(env, '/cases/API-ATT-0001/day/start', { method: 'POST', cookie: dana,
+    body: { day_date: '2026-08-10', start_time: '08:00' } });
+  await call(env, '/cases/API-ATT-0001/day/end', { method: 'POST', cookie: dana,
+    body: { end_time: '16:00', summary: 'Nothing observed.' } });
+  a = await attn();
+  const rep = (a.alerts || []).find(x => x.kind === 'reports' && x.case_no === 'API-ATT-0001');
+  ok('a finished day with no report asks for one', !!rep, JSON.stringify(a.alerts));
+  ok('and points at the report screen', rep && rep.action.tab === 'reports', JSON.stringify(rep));
+
+  // --- severity and shape --------------------------------------------------
+  a = await attn();
+  ok('every alert names what, which case and an action',
+     (a.alerts || []).every(x => x.what && x.action && x.action.label
+       && (x.case_no || x.kind === 'storage')), JSON.stringify(a.alerts.slice(0, 2)));
+  ok('every severity is one of the three', (a.alerts || []).every(
+     x => ['urgent', 'attention', 'info'].includes(x.severity)),
+     JSON.stringify([...new Set((a.alerts || []).map(x => x.severity))]));
+  ok('the urgent ones come first',
+     (a.alerts || []).map(x => ({ urgent: 0, attention: 1, info: 2 }[x.severity]))
+       .every((v, i, arr) => i === 0 || arr[i - 1] <= v), JSON.stringify(a.alerts.map(x => x.severity)));
+  ok('the counts match the list',
+     a.counts.urgent + a.counts.attention + a.counts.info === a.total, JSON.stringify(a.counts));
+  ok('and the windows it used are stated rather than hidden',
+     a.windows && a.windows.legal_days === 14 && a.windows.quiet_days === 21,
+     JSON.stringify(a.windows));
+
+  /* A CASE THAT LEFT THE WORKING SET LEAVES THE LIST. */
+  await call(env, '/cases/API-ATT-0003/delete', { method: 'POST', cookie: admin,
+    body: { reason: 'test' } });
+  a = await attn();
+  ok('a deleted case raises nothing at all',
+     !(a.alerts || []).some(x => x.case_no === 'API-ATT-0003'),
+     JSON.stringify((a.alerts || []).map(x => x.case_no)));
+}
+
+section('Needs attention: a list that could not see everything says so');
+{
+  /* THE GUARDS ARE RIGHT — a half-applied schema must not take the dashboard
+     down — but a guard that silently drops a whole CATEGORY turns "nothing
+     needs you" into a claim nobody checked. The list names what it could not
+     look at, and the page draws a partial view instead of a clear desk. */
+  const { DatabaseSync } = await import('node:sqlite');
+  const bare = new DatabaseSync(':memory:');
+  bare.exec(SCHEMA);
+  for (const t of ['case_retainer', 'invoices', 'legal_intake']) bare.exec(`DROP TABLE ${t}`);
+  const env = { ...freshEnv(), DB: d1(bare) };
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  const res = await call(env, '/attention', { cookie: admin });
+  ok('the list still answers on a half-applied schema', res.status === 200, String(res.status));
+  const a = await jsonOf(res);
+  ok('and names each source it could not read',
+     (a.missing_sources || []).includes('retainers outstanding')
+     && (a.missing_sources || []).includes('overdue invoices')
+     && (a.missing_sources || []).includes('legal dates'),
+     JSON.stringify(a.missing_sources));
+  ok('it raises no alert from a table it never read',
+     !(a.alerts || []).some(x => x.kind === 'payments' || x.kind === 'legal'),
+     JSON.stringify((a.alerts || []).map(x => x.kind)));
+
+  /* AND ON A WHOLE DATABASE, NOTHING MISSING. The list above must not be a
+     constant — a "missing" array that is always full says nothing. */
+  const whole = freshEnv();
+  await bootstrapAdmin(whole);
+  const a2 = (await login(whole, 'trever', 'FirstAdminPass1')).cookie;
+  const full = await jsonOf(await call(whole, '/attention', { cookie: a2 }));
+  ok('with every table present it reports nothing missing',
+     (full.missing_sources || []).length === 0, JSON.stringify(full.missing_sources));
+}
+
+section('Needs attention: a paused or held case is a decision, not neglect');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana Field', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const danaId = (await env.DB.prepare("SELECT id FROM users WHERE username = 'dana'").first()).id;
+
+  const old = new Date(Date.now() - 60 * 86400000).toISOString();
+  for (const no of ['API-QUIET-1', 'API-HELD-1']) {
+    await ingest(env, { case_no: no, client_name: 'Quiet Client', subject_name: 'S',
+      service: 'Surveillance' });
+    await call(env, `/submissions/${no}/assign`, { method: 'POST', cookie: admin,
+      body: { user_id: danaId } });
+    await env.DB.prepare('UPDATE submissions SET created_at = ? WHERE case_no = ?')
+      .bind(old, no).run();
+  }
+  /* The route reads `status`, not `stage` — the older vocabulary, kept. */
+  const held = await call(env, '/submissions/API-HELD-1/status', { method: 'POST', cookie: admin,
+    body: { status: 'on_hold' } });
+  ok('the case really is on hold', held.status === 200
+     && (await env.DB.prepare("SELECT stage FROM case_status WHERE case_no = 'API-HELD-1'")
+       .first()).stage === 'on_hold', String(held.status));
+
+  const a = await jsonOf(await call(env, '/attention', { cookie: admin }));
+  const quiet = (a.alerts || []).filter(x => x.what === 'No activity recently');
+  ok('a working case with nothing recorded for weeks is surfaced',
+     quiet.some(x => x.case_no === 'API-QUIET-1'), JSON.stringify(quiet.map(x => x.case_no)));
+  /* THE ONE THE BRIEF WARNS ABOUT: a case deliberately on hold is not
+     neglected, and calling it neglected is how an alert list stops being read. */
+  ok('a case the office put ON HOLD is not called neglected',
+     !quiet.some(x => x.case_no === 'API-HELD-1'), JSON.stringify(quiet.map(x => x.case_no)));
+  ok('and the quiet alert is only information, not an emergency',
+     quiet.every(x => x.severity === 'info'), JSON.stringify(quiet.map(x => x.severity)));
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

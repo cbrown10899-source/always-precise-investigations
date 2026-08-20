@@ -1178,6 +1178,44 @@
      focus treatment for every interactive control, never removed, and distinct
      from hover so a tab-through reads as a tab-through. */
   .btn:focus-visible,.qtool:focus-visible,.tabs button:focus-visible,
+  /* ------------------------------------- UNIT 8: search & attention */
+  .srchbox{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:12px;
+    padding:4px 10px;background:#fff;}
+  .srchbox:focus-within{border-color:var(--teal);box-shadow:0 0 0 3px rgba(23,124,138,.12);}
+  .srchicon{opacity:.55;font-size:1rem;}
+  /* 16px is the iOS zoom floor and it applies at EVERY width here, not only on
+     phones: this box is the first thing touched on the dashboard. */
+  .srchbox input{flex:1 1 auto;min-width:0;font:inherit;font-size:16px;border:0;outline:0;
+    padding:10px 0;background:transparent;}
+  .srchclear{border:0;background:transparent;font-size:1.3rem;line-height:1;cursor:pointer;
+    color:var(--muted);padding:0 6px;min-height:44px;min-width:44px;}
+  .srchlist{display:flex;flex-direction:column;gap:6px;margin-top:10px;}
+  .srchrow{display:flex;gap:10px;align-items:flex-start;text-align:left;font:inherit;width:100%;
+    padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;
+    cursor:pointer;min-height:52px;min-width:0;}
+  .srchrow:hover,.srchrow.hi{border-color:var(--teal);background:#f4fafb;}
+  .srchtype{flex:0 0 auto;font-size:.66rem;font-weight:800;letter-spacing:.04em;
+    text-transform:uppercase;padding:3px 7px;border-radius:6px;background:#eef2f6;color:#41566e;}
+  .srchtype-subject{background:#e6f2ea;color:#22613c;}
+  .srchtype-vehicle{background:#fdf1e3;color:#8a5116;}
+  .srchtype-profile{background:#e8e2f5;color:#4a3577;}
+  .srchtype-intake{background:#fdecec;color:#8f2f2f;}
+  .srchmain{display:flex;flex-direction:column;gap:1px;min-width:0;overflow-wrap:anywhere;}
+  .srchtitle{font-weight:700;}
+  .srchsub{font-size:.84rem;color:var(--muted);}
+  .srchwhy{font-size:.74rem;color:var(--muted);font-style:italic;}
+  /* SEVERITY IS A WORD, not only a colour — the chip reads the same to
+     somebody who cannot tell the two shades apart. */
+  .sev{display:inline-block;font-size:.64rem;font-weight:800;letter-spacing:.04em;
+    text-transform:uppercase;padding:2px 6px;border-radius:5px;margin-right:6px;
+    vertical-align:1px;}
+  .sev-urgent{background:#fdecec;color:#8f2f2f;border:1px solid #efc9c9;}
+  .sev-attention{background:#fdf3e3;color:#875314;border:1px solid #eddcbd;}
+  .sev-info{background:#eef2f6;color:#41566e;border:1px solid #dde4ec;}
+  .qwhy{font-size:.83rem;color:var(--muted);margin-top:2px;}
+  .attnlenses{margin:0 0 12px;}
+  .lensn{opacity:.7;font-weight:800;}
+
   /* ------------------------------------------ UNIT 7: clients & firms */
   .profbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px;}
   .profsearch{flex:1 1 260px;min-width:0;font:inherit;padding:9px 12px;border-radius:10px;
@@ -1215,7 +1253,7 @@
   .usingprof{border:1px solid var(--teal);background:#eef7f8;border-radius:12px;
     padding:12px 14px;margin:0 0 14px;}
   .sheet-card.on{border-color:var(--teal);background:#eef7f8;}
-  .lens:focus-visible,.pickitem:focus-visible,.evtab:focus-visible,.rpnav button:focus-visible,
+  .lens:focus-visible,.pickitem:focus-visible,.srchrow:focus-visible,.evtab:focus-visible,.rpnav button:focus-visible,
   .top .burger:focus-visible,.navback:focus-visible,
   input:focus-visible,select:focus-visible,textarea:focus-visible{
     outline:2px solid var(--teal);outline-offset:2px;}
@@ -1252,6 +1290,18 @@
     .cc-acts .btn{min-height:44px;}
     .duprow{flex-direction:column;align-items:flex-start;}
     .pickitem{min-height:52px;}
+    /* UNIT 8 on a phone: a result is a stacked card, never a row that runs off
+       the side; the filter strip scrolls inside itself rather than widening the
+       page; and a queue row's action is full width so it cannot be a 40px
+       target beside a long sentence. */
+    .srchrow{flex-direction:column;gap:4px;}
+    /* The chips WRAP rather than scroll sideways. A scrolling strip keeps the
+       page from moving but still leaves its own children hanging past the
+       right edge, which is exactly what the overflow probe measures — and a
+       filter you have to discover by swiping is worse than one you can see. */
+    .attnlenses{flex-wrap:wrap;}
+    .qrow{flex-direction:column;align-items:stretch;gap:8px;}
+    .qgo .btn{width:100%;min-height:44px;}
   }
 </style>
 </head>
@@ -1376,6 +1426,17 @@ const LEAD_LABEL = {lead:"Lead", rate_sheet_sent:"Rate sheet sent", intake_sent:
   intake_received:"Intake received", contacted:"Contacted", more_info_requested:"More info requested",
   converted:"Converted to case", declined:"Declined", closed_lead:"Closed lead"};
 let LEAD_MSG = "";    // one-shot confirmation on the leads desk
+/* UNIT 8 — one search box, and the office's exception list. Both keep the
+   three states apart that this page has been bitten by twice: never loaded,
+   loaded and genuinely empty, and failed. A failed read is never drawn as a
+   clear desk or as "nothing found". */
+let SRCH = { q: "", results: null, err: "", busy: false, open: false, hi: -1 };
+let ATTN = null, ATTN_OK = false, ATTN_ERR = "", ATTN_FILTER = "all";
+const ATTN_SEV = { urgent: "Urgent", attention: "Attention", info: "Info" };
+const ATTN_KIND = { intakes: "Intakes", reports: "Reports", payments: "Payments",
+  legal: "Legal", packages: "Packages", cases: "Cases", storage: "Storage" };
+const SRCH_TYPE = { case: "Case", intake: "Intake", subject: "Subject",
+  vehicle: "Vehicle", profile: "Profile" };
 /* UNIT 7 — the client & firm directory. PROF_OK keeps "did not load" apart
    from "genuinely empty", the distinction loadSends() was fixed to make: an
    outage drawn as an empty directory reads as reassurance in the one screen
@@ -1873,6 +1934,7 @@ function shell(inner){
   const tabs = (ME.role === "admin"
     ? group("Operations",
         item("dashboard", "&#8962; Dashboard"),
+        item("search", "&#128269; Search"),
         item("cases", "&#128193; Cases"),
         item("leads", "&#128234; Intakes"),
         item("profiles", "&#127970; Clients &amp; Firms"),
@@ -1885,6 +1947,9 @@ function shell(inner){
         item("staff", "&#128101; Staff"),
         item("settings", "&#9881; Settings"))
     : group("Operations",
+        /* The field gets the same door. What it FINDS is decided in the
+           Worker, scoped to their own cases — not by leaving the door out. */
+        item("search", "&#128269; Search"),
         item("cases", "&#128193; My assignments"),
         item("today", "&#9728; Today"),
         item("calendar", "&#128197; Calendar"))
@@ -2317,6 +2382,15 @@ const QUEUE_RULES = [
   ["closing",   "Complete — run the closing checklist","Open closing",      "billing"],
 ];
 
+/* The queue's three states — never loaded, loaded and empty, failed — used to
+   be derived in the browser from `/summary` counts, with `queueUnknowns()`
+   naming the sources that had not answered. UNIT 8 moved the derivation to the
+   Worker (`/attention`), which knows WHY each row is there and which panel does
+   the work, so those helpers had no readers left and are gone rather than left
+   sitting as a second, staler answer to the same question. The rule they
+   existed for is unchanged and is enforced in `nextActionsHtml` below: a read
+   that failed is never drawn as a clear desk. */
+
 /* WHAT THE QUEUE COULD NOT SEE (Codex stop-time review, 2026-08-16).
 
    The first version guarded only `SUMMARY === null`, and that is one of four
@@ -2326,109 +2400,9 @@ const QUEUE_RULES = [
    comment — each of which quietly deleted a category of work and left the
    queue free to announce a clear desk.
 
-   "Nothing needs you right now" is the single most reassuring sentence on this
-   page. It has to be earned by every source answering, not by the survivors
-   happening to be empty. */
-function queueUnknowns(){
-  const out = [];
-  if(!CASES_OK) out.push("new intakes");
-  if(!PKGS_OK) out.push("retainers and packages to build");
-  if(SCHEMA_MISSING.length) out.push("whatever lives in the database tables that are missing");
-  return out;
-}
 
-function andList(a){
-  return a.length < 2 ? (a[0] || "")
-    : a.slice(0, -1).join(", ") + " and " + a[a.length - 1];
-}
 
-function nextActionRows(){
-  const s = SUMMARY;
-  if(!s) return null;
-  // Only trust the packages payload when the read actually succeeded — its
-  // failure value is an empty list, which is what a quiet week also looks like.
-  const pk = (PKGS_OK && PKGS && Array.isArray(PKGS.packages)) ? PKGS.packages : [];
-  const A = k => Array.isArray(s[k]) ? s[k] : [];
 
-  const sets = {
-    // A new intake has no case-number set on /summary, so it comes from the
-    // case list the page already holds — the same read the Intakes desk uses,
-    // and only when that read succeeded.
-    new: CASES_OK ? (CASES || []).filter(c => (c.stage || c.status) === "new").map(c => c.case_no) : [],
-    reports: A("reports_due"),
-    tasks: A("tasks_overdue"),
-    retainer: pk.filter(p => p.kind === "consumer" && p.retainer && !p.retainer.received).map(p => p.case_no),
-    auth: A("auth_low"),
-    build: pk.filter(p => ["approved", "delivered"].includes(p.report_status)
-      && p.build_status !== "finalized").map(p => p.case_no),
-    expenses: A("expenses_pending"),
-    closing: A("ready_to_close"),
-  };
-
-  /* ONE ROW PER CASE, HIGHEST REASON FIRST. A case can be in four of these
-     sets at once, and four rows for one file is a queue nobody finishes. The
-     row says how many other things that case is waiting on, so the count is
-     never hidden — only the repetition is. */
-  const seen = new Map();
-  for(const [key, what, action, tab] of QUEUE_RULES){
-    for(const no of sets[key] || []){
-      if(seen.has(no)){ seen.get(no).more++; continue; }
-      seen.set(no, {no, what, action, tab, more: 0});
-    }
-  }
-  return [...seen.values()];
-}
-
-function nextActionsHtml(){
-  const rows = nextActionRows();
-  const gaps = queueUnknowns();
-  const count = !rows ? "the office's queue"
-    : gaps.length ? `${rows.length} waiting, and part of it unread`
-    : rows.length ? `${rows.length} waiting` : "the office's queue";
-  const head = body => `<div class="card queuecard">
-    <div class="bar"><h2 style="margin:0">Today / next actions</h2>
-      <span class="count">${esc(count)}</span></div>
-    ${body}</div>`;
-
-  /* DID NOT LOAD IS NOT AN EMPTY QUEUE — the same rule the bands follow. */
-  if(!rows) return head(`<div class="empty">The queue could not be built, because the dashboard
-    totals did not load. Do not read this as a clear desk.</div>`);
-
-  /* AN INCOMPLETE QUEUE MAY NOT REPORT A CLEAR DESK. Some sources answered and
-     some did not; with nothing from the ones that did, the honest statement is
-     that we do not know, and it names which part we cannot see. */
-  if(!rows.length && gaps.length) return head(`<div class="empty">
-    <div class="empty-title">The queue is incomplete.</div>
-    <div class="empty-hint">Nothing came back from the alerts that did load, but
-      ${esc(andList(gaps))} could not be read &mdash; so this is not a clear desk, it is a
-      partial view. Reload, and if it keeps happening say so before assuming there is no
-      work.</div></div>`);
-
-  if(!rows.length) return head(`<div class="empty">
-    <div class="empty-title">Nothing needs you right now.</div>
-    <div class="empty-hint">This fills itself as work arrives — a new intake, a finished day with
-      no report, a task falling due, a retainer still unpaid, or a report approved and waiting on
-      its package. Nothing here is a to-do list somebody has to keep up to date.</div></div>`);
-
-  const shown = rows.slice(0, QUEUE_MAX);
-  return head(`<div class="queue">${shown.map(r => {
-    const who = caseBrief(r.no);
-    return `<div class="qrow">
-      <div class="qmain">
-        <div class="qwhat">${esc(r.what)}${r.more
-          ? ` <span class="qmore">&middot; ${r.more} more on this case</span>` : ""}</div>
-        ${who ? `<div class="qwho">${esc(who)}</div>` : ""}
-        <div class="qno mono">${esc(r.no)}</div>
-      </div>
-      <div class="qgo"><button class="btn sm ghost" data-act="pkgJump"
-        data-case="${esc(r.no)}" data-tab="${esc(r.tab)}">${esc(r.action)} &rarr;</button></div>
-    </div>`;
-  }).join("")}</div>
-  ${rows.length > QUEUE_MAX ? `<div class="qfoot">Showing the first ${QUEUE_MAX} of
-    ${rows.length}. The rest are behind the cards above.</div>` : ""}
-  ${gaps.length ? `<div class="qfoot">This queue is missing ${esc(andList(gaps))} &mdash; those
-    could not be read, so there may be more waiting than is listed here.</div>` : ""}`);
-}
 
 /* RECENTLY COMPLETED — a compact list off `/completed`, the same route the
    Cases lens and Reports & Packages read. The desk itself keeps the full cards
@@ -2522,6 +2496,234 @@ async function loadRecent(){
 }
 const RECENT_ICON = { intake: "&#128234;", day: "&#128373;", report: "&#128196;",
                       evidence: "&#128247;", payment: "&#128181;", package: "&#128230;" };
+/* ================================================ UNIT 8: GLOBAL SEARCH
+
+   ONE COMPONENT, TWO PLACEMENTS — the dashboard's first card and its own
+   top-level screen — so the office never has to open Cases first, and the two
+   can never drift into different behaviour. Both roles have it; the Worker
+   decides what each may find.
+
+   The request is debounced and refuses to run under two characters, so typing
+   a case number is one or two round trips rather than fourteen. */
+
+let SRCH_TIMER = null;
+function srchSoon(){
+  if(SRCH_TIMER) clearTimeout(SRCH_TIMER);
+  SRCH_TIMER = setTimeout(() => { SRCH_TIMER = null; runSearch(); }, 220);
+}
+
+async function runSearch(){
+  const q = (SRCH.q || "").trim();
+  SRCH.hi = -1;
+  if(q.length < 2){ SRCH.results = null; SRCH.err = ""; SRCH.busy = false; paint(); return; }
+  SRCH.busy = true; SRCH.err = "";
+  try{
+    const d = await api("/search?q=" + encodeURIComponent(q));
+    /* A LATE ANSWER TO AN OLD QUERY MUST NOT LAND. Typing "smith" fires for
+       "sm" and "smi" too, and the slowest of them arriving last would paint
+       results for a question the office had already moved on from. */
+    if((SRCH.q || "").trim() !== q) return;
+    SRCH.results = d.results || []; SRCH.capped = !!d.capped;
+  }catch(e){
+    if((SRCH.q || "").trim() !== q) return;
+    /* NOT AN EMPTY RESULT LIST. "Nothing found" and "the search did not run"
+       are different answers and only one of them is reassuring. */
+    SRCH.results = null; SRCH.err = e.message;
+  }
+  SRCH.busy = false;
+  paint();
+}
+
+function srchResultHtml(r, i){
+  const type = SRCH_TYPE[r.type] || "Result";
+  const dest = r.dest || {};
+  const attrs = dest.view === "profile"
+    ? `data-act="srchGoProfile" data-id="${esc(String(dest.id))}"`
+    : `data-act="srchGoCase" data-case="${esc(dest.case_no || "")}"${
+        dest.tab ? ` data-tab="${esc(dest.tab)}"` : ""}`;
+  return `<button class="srchrow${i === SRCH.hi ? " hi" : ""}" ${attrs}>
+    <span class="srchtype srchtype-${esc(r.type)}">${esc(type)}</span>
+    <span class="srchmain">
+      <span class="srchtitle">${esc(r.title || "")}</span>
+      ${r.subtitle ? `<span class="srchsub">${esc(r.subtitle)}</span>` : ""}
+      <span class="srchwhy">Matched: ${esc((r.matched || []).join(", "))}</span>
+    </span>
+  </button>`;
+}
+
+function searchPanelHtml(){
+  const q = (SRCH.q || "").trim();
+  const body = SRCH.err
+    ? `<div class="err">The search did not run &mdash; ${esc(SRCH.err)}. This is not
+        "nothing found". <button class="btn sm ghost" data-act="srchRetry">Try again</button></div>`
+    : q.length < 2
+    ? `<p class="hint">Two letters or more. Try a case number, a claim or matter number, a
+        person, a firm, a phone number or a licence plate.</p>`
+    : SRCH.busy && SRCH.results === null
+    ? `<div class="empty">Searching&hellip;</div>`
+    : SRCH.results === null
+    ? ""
+    : !SRCH.results.length
+    ? `<div class="empty">Nothing matched &ldquo;${esc(q)}&rdquo;.</div>`
+    : `<div class="srchlist">${SRCH.results.map(srchResultHtml).join("")}</div>
+       ${SRCH.capped ? `<div class="qfoot">Showing the first ${SRCH.results.length}. Narrow the
+         search to see the rest &mdash; nothing is hidden behind a page control.</div>` : ""}`;
+  return `<label class="srchbox">
+      <span class="srchicon" aria-hidden="true">&#128269;</span>
+      <input id="gsearch" type="search" autocomplete="off" data-act-input="srchType"
+        placeholder="Search cases, people, firms&hellip;" value="${esc(SRCH.q || "")}"
+        aria-label="Search cases, people, firms">
+      ${q ? `<button class="srchclear" data-act="srchClear" aria-label="Clear">&times;</button>` : ""}
+    </label>
+    ${body}`;
+}
+
+function searchCardHtml(){
+  return `<div class="card srchcard">
+    <div class="bar"><h2 style="margin:0">Search</h2>
+      <span class="count">Cases, people, firms, vehicles</span></div>
+    ${searchPanelHtml()}
+  </div>`;
+}
+
+function searchView(){
+  return `<div class="card srchcard">
+    <div class="bar"><h2 style="margin:0">Search</h2>
+      <span class="count">One box for the whole desk</span></div>
+    ${searchPanelHtml()}
+    <p class="hint">This searches the records you are authorised to see &mdash; case and claim
+      numbers, people, firms, phone numbers, addresses and vehicles. It does not read documents,
+      photographs or anything in Dropbox.</p>
+  </div>`;
+}
+
+/* ============================================ UNIT 8: NEEDS ATTENTION
+
+   The Unit 5 queue, fed by the Worker instead of derived from counts in the
+   browser. Same card, same one-row-per-case discipline, same refusal to draw a
+   failed read as a clear desk — but each row now knows WHY it is there and
+   which panel does the work.
+
+   THERE IS NO DISMISSAL. A row leaves because the thing was done. */
+
+async function loadAttention(){
+  ATTN_ERR = "";
+  try{
+    const d = await api("/attention");
+    ATTN = d; ATTN_OK = true;
+  }catch(e){
+    ATTN = null; ATTN_OK = false;
+    ATTN_ERR = "The attention list could not be loaded — " + e.message;
+  }
+}
+
+/* ONE ROW PER CASE, most serious first, with the rest counted on the row.
+   A case can be in four alert sets at once and four rows for one file is a
+   queue nobody finishes — the rule the Unit 5 card already enforced. */
+function attnRows(){
+  if(!ATTN || !Array.isArray(ATTN.alerts)) return null;
+  const want = ATTN_FILTER;
+  const list = ATTN.alerts.filter(a =>
+    want === "all" || a.severity === want || a.kind === want);
+  const byCase = new Map();
+  for(const a of list){
+    const key = a.case_no || `x:${a.kind}:${a.what}`;
+    if(!byCase.has(key)) byCase.set(key, { ...a, more: 0 });
+    else byCase.get(key).more++;
+  }
+  return [...byCase.values()];
+}
+
+function attnFilterHtml(){
+  if(!ATTN) return "";
+  const c = ATTN.counts || {}, k = ATTN.kinds || {};
+  const chip = (v, label, n) => `<button class="lens${ATTN_FILTER === v ? " on" : ""}"
+    data-act="attnFilter" data-k="${v}">${label}${n ? ` <span class="lensn">${n}</span>` : ""}</button>`;
+  return `<div class="lenses attnlenses">
+    ${chip("all", "All", ATTN.total || 0)}
+    ${c.urgent ? chip("urgent", "Urgent", c.urgent) : ""}
+    ${Object.entries(ATTN_KIND).filter(([key]) => k[key])
+      .map(([key, label]) => chip(key, label, k[key])).join("")}
+  </div>`;
+}
+
+function nextActionsHtml(){
+  const rows = attnRows();
+  const count = !rows ? "the office's queue"
+    : rows.length ? `${ATTN.total || rows.length} waiting` : "nothing waiting";
+  const head = body => `<div class="card queuecard">
+    <div class="bar"><h2 style="margin:0">Today / next actions</h2>
+      <span class="count">${esc(count)}</span></div>
+    ${rows && (ATTN.total || 0) ? attnFilterHtml() : ""}
+    ${body}</div>`;
+
+  /* DID NOT LOAD IS NOT AN EMPTY QUEUE. This page has been bitten twice by an
+     outage drawn as good news, and the queue is the worst place for it. */
+  if(!rows) return head(`<div class="empty">
+    <div class="empty-title">The queue could not be built.</div>
+    <div class="empty-hint">${esc(ATTN_ERR || "The attention list did not load.")}
+      Do not read this as a clear desk.
+      <button class="btn sm ghost" data-act="attnRetry" style="margin-left:8px">Try again</button>
+    </div></div>`);
+
+  if(!rows.length && ATTN_FILTER !== "all") return head(`<div class="empty">
+    <div class="empty-title">Nothing under that filter.</div>
+    <div class="empty-hint">Clear it to see everything waiting.</div></div>`);
+
+  /* AN INCOMPLETE QUEUE MAY NOT REPORT A CLEAR DESK. Some sources answered and
+     some could not be read at all; with nothing from the ones that did, the
+     honest statement is that we do not know, and it names which part is
+     missing. The rule predates Unit 8 — only the place it is enforced moved
+     when the derivation went to the Worker. */
+  const blind = (ATTN && ATTN.missing_sources) || [];
+  if(!rows.length && blind.length) return head(`<div class="empty">
+    <div class="empty-title">The queue is incomplete.</div>
+    <div class="empty-hint">Nothing came back from the alerts that did load, but
+      ${esc(attnList(blind))} could not be read &mdash; so this is not a clear desk, it is a
+      partial view. It usually means the database is missing tables the portal-setup workflow
+      creates.</div></div>`);
+
+  if(!rows.length) return head(`<div class="empty">
+    <div class="empty-title">Nothing needs you right now.</div>
+    <div class="empty-hint">This fills itself as work arrives &mdash; a new intake, a finished day
+      with no report, a retainer still unpaid, a hearing coming up, a package left unfinished.
+      Nothing here is a to-do list somebody has to keep up to date, and nothing here is dismissed:
+      a row leaves when the thing is done.</div></div>`);
+
+  const shown = rows.slice(0, QUEUE_MAX);
+  return head(`<div class="queue">${shown.map(r => {
+    const who = r.case_no ? caseBrief(r.case_no) : "";
+    const act = r.action || {};
+    /* Colour is never the only signal — the chip says the word. */
+    const chip = `<span class="sev sev-${esc(r.severity)}">${esc(ATTN_SEV[r.severity] || r.severity)}</span>`;
+    const go = act.view === "settings"
+      ? `<button class="btn sm ghost" data-act="tab" data-tab="settings">${esc(act.label || "Open")} &rarr;</button>`
+      : `<button class="btn sm ghost" data-act="pkgJump" data-case="${esc(r.case_no || "")}"
+           data-tab="${esc(act.tab || "overview")}">${esc(act.label || "Open")} &rarr;</button>`;
+    return `<div class="qrow">
+      <div class="qmain">
+        <div class="qwhat">${chip}${esc(r.what)}${r.more
+          ? ` <span class="qmore">&middot; ${r.more} more on this case</span>` : ""}</div>
+        <div class="qwhy">${esc(r.why || "")}</div>
+        ${who ? `<div class="qwho">${esc(who)}</div>` : ""}
+        ${r.case_no ? `<div class="qno mono">${esc(r.case_no)}</div>` : ""}
+      </div>
+      <div class="qgo">${go}</div>
+    </div>`;
+  }).join("")}</div>
+  ${rows.length > QUEUE_MAX ? `<div class="qfoot">Showing the first ${QUEUE_MAX} of
+    ${rows.length}. Filter above to narrow it.</div>` : ""}
+  ${blind.length ? `<div class="qfoot">This queue is missing ${esc(attnList(blind))} &mdash; those
+    could not be read, so there may be more waiting than is listed here.</div>` : ""}`);
+}
+
+/* "a, b and c" — the queue's own, because the sentence above is the only
+   place on this page that needs it. */
+function attnList(a){
+  return a.length < 2 ? (a[0] || "")
+    : a.slice(0, -1).join(", ") + " and " + a[a.length - 1];
+}
+
 function recentActivityHtml(){
   if(ME.role !== "admin") return "";
   const body = RECENT_ERR
@@ -2546,7 +2748,11 @@ function recentActivityHtml(){
 function dashView(){
   if(!PKGS) return `<div class="card"><div class="empty">Loading the dashboard&hellip;</div></div>`;
   const active = (PKGS.packages || []);
-  return `${dashBands()}${nextActionsHtml()}${outNowHtml()}${recentActivityHtml()}
+  /* UNIT 8 hierarchy: SEARCH first, then what needs doing, then the live
+     state, then the tools. The owner reaches for one of the first two nine
+     times out of ten, and on a phone the first card is the only one on screen
+     without scrolling. */
+  return `${searchCardHtml()}${nextActionsHtml()}${dashBands()}${outNowHtml()}${recentActivityHtml()}
     <div class="card">
       <div class="bar"><h2 style="margin:0">Case packages</h2>
         <span class="count">At-a-glance progress for active cases</span>
@@ -8027,6 +8233,7 @@ function paint(){
     : TAB === "leads" ? leadsView()
     : TAB === "newlead" ? newLeadView()
     : TAB === "profiles" ? profilesView()
+    : TAB === "search" ? searchView()
     : TAB === "sheets" ? sheetsView()
     : TAB === "delivery" ? deliveryView()
     : TAB === "invoices" ? invoicesView()
@@ -8040,7 +8247,7 @@ function paint(){
   /* The directory and picker searches repaint on every keystroke, so the
      cursor has to be handed back or typing lands one character at a time in a
      box that keeps losing focus. Same treatment the case search already gets. */
-  for(const id of ["prof_q", "nl_pick"]){
+  for(const id of ["prof_q", "nl_pick", "gsearch"]){
     const el = $(id);
     if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
   }
@@ -8124,6 +8331,10 @@ async function render(){
     // directly above.
     if((TAB === "dashboard" || TAB === "delivery") && !COMPLETED) loadCompleted();
     if(TAB === "dashboard" && ME.role === "admin" && !RECENT && !RECENT_ERR) loadRecent();
+    /* The exception list, fetched on arrival like everything else the
+       dashboard draws — and refetched, because a stale queue is a wrong next
+       action rather than an old number. */
+    if(TAB === "dashboard" && ME.role === "admin") await loadAttention();
     /* The directory, landed on rather than only clicked into — the same rule,
        and the same reason: a tab reached by reload must still fetch.
 
@@ -8208,6 +8419,8 @@ function sessionForget(){
   PAYCFG = null; PAY_DRAFT = {}; PAY_MSG = ""; PAY_ERR = false;
   SUMMARY = null; SHEETS = []; SHEET_MAIL = ""; OPEN_SHEET = null; SHEET_MSG = ""; SHEET_WIZ = null;
   NL = null; LEAD_SEND = null; LEAD_MSG = ""; PAY_SEND = null;
+  SRCH = { q: "", results: null, err: "", busy: false, hi: -1 };
+  ATTN = null; ATTN_OK = false; ATTN_ERR = ""; ATTN_FILTER = "all";
   PROF = null; PROF_OK = false; PROF_ERR = ""; PROF_SETUP = false; PROF_MSG = "";
   PROF_Q = ""; PROF_KIND = ""; PROF_INACTIVE = false;
   PROF_OPEN = null; PROF_FORM = null; PROF_CONTACT = null;
@@ -13673,6 +13886,24 @@ async function submitManualIntake(openAfter){
 /* Escape is the desktop way out of the viewer, beside the Back control. Scoped
    to the viewer alone so it cannot start closing other things by surprise. */
 document.addEventListener("keydown", ev => {
+  /* UNIT 8 — keyboard on the search box, and ONLY there: arrows to move,
+     Enter to open, Escape to clear. Scoped to the input so it cannot start
+     stealing keys from the rest of the portal. */
+  if(ev.target && ev.target.id === "gsearch"){
+    const n = (SRCH.results || []).length;
+    if(ev.key === "ArrowDown" && n){ ev.preventDefault(); SRCH.hi = (SRCH.hi + 1) % n; paint(); return; }
+    if(ev.key === "ArrowUp" && n){ ev.preventDefault(); SRCH.hi = (SRCH.hi - 1 + n) % n; paint(); return; }
+    if(ev.key === "Enter" && n){
+      ev.preventDefault();
+      const r = (SRCH.results || [])[SRCH.hi < 0 ? 0 : SRCH.hi];
+      if(!r) return;
+      const d = r.dest || {};
+      if(d.view === "profile"){ VIEW = "list"; TAB = "profiles"; render().then(() => profOpenId(d.id)); }
+      else openCase(d.case_no, d.tab || undefined);
+      return;
+    }
+    if(ev.key === "Escape"){ SRCH = { q: "", results: null, err: "", busy: false, hi: -1 }; paint(); return; }
+  }
   if(ev.key === "Escape" && EV_VIEW){ EV_VIEW = null; paintEvView(); }
   /* Escape does NOT abandon a render in progress — a stray key must not throw
      away a copy that has been running for minutes. Stop is a deliberate button. */
@@ -13706,7 +13937,12 @@ document.addEventListener("click", ev => {
     /* The send history is admin-only and lives beside the pre-case sends, so it
        is fetched when that screen is opened rather than held from sign-in. */
     if(TAB === "sheets" && ME.role === "admin"){ SEND_MSG = ""; loadSends(); }
-    if(TAB === "dashboard"){ PKGS = null; loadPackages(); loadCompleted(); RECENT = null; loadRecent(); }
+    if(TAB === "dashboard"){ PKGS = null; loadPackages(); loadCompleted(); RECENT = null; loadRecent();
+      loadAttention().then(paint); }
+    /* Arriving at Search is a fresh box: the last query is not the office's
+       current question, and a stale result list under a stale term is worse
+       than an empty one. */
+    if(TAB === "search"){ SRCH = { q: "", results: null, err: "", busy: false, hi: -1 }; }
     /* Reports & Packages reads the two routes it is assembled from, both
        admin-only in the Worker. Fetched on arrival for the same reason the
        dashboard refetches: a stale package stage is a wrong next step. */
@@ -14286,6 +14522,21 @@ document.addEventListener("click", ev => {
   }
   else if(act === "legalSave"){ saveLegalPanel(); }
   /* ------------------------------------------ UNIT 7: clients & firms */
+  /* ---------------------------------------------- UNIT 8: search & alerts */
+  else if(act === "srchClear"){ SRCH = { q: "", results: null, err: "", busy: false, hi: -1 }; paint(); }
+  else if(act === "srchRetry"){ SRCH.err = ""; runSearch(); }
+  else if(act === "srchGoCase"){
+    /* STRAIGHT TO THE WORK. The whole point is not search -> results -> cases
+       -> search again; a result opens the case at the panel that matched. */
+    openCase(el.dataset.case, el.dataset.tab || undefined);
+  }
+  else if(act === "srchGoProfile"){
+    VIEW = "list"; TAB = "profiles";
+    const id = el.dataset.id;
+    render().then(() => profOpenId(id));
+  }
+  else if(act === "attnFilter"){ ATTN_FILTER = el.dataset.k || "all"; paint(); }
+  else if(act === "attnRetry"){ ATTN_ERR = ""; loadAttention().then(paint); }
   else if(act === "profKind"){ PROF_KIND = el.dataset.k || ""; loadProfiles().then(paint); }
   else if(act === "profInactive"){ PROF_INACTIVE = el.checked; loadProfiles().then(paint); }
   else if(act === "profReload"){ PROF_OK = false; PROF_ERR = ""; loadProfiles().then(paint); }
@@ -14493,6 +14744,7 @@ document.addEventListener("input", ev => {
   /* UNIT 7 — the two searches. Both repaint, and both hand the cursor back in
      paint() rather than here, because the box is rebuilt by that repaint. */
   if(din === "profSearch"){ PROF_Q = ev.target.value; profSearchSoon(); return; }
+  if(din === "srchType"){ SRCH.q = ev.target.value; srchSoon(); return; }
   if(din === "nlPickSearch" && NL){ nlCollect(); nlPickSearch(ev.target.value); return; }
   if(din === "svSearch" && SV){ SV.search = ev.target.value; paint();
     const q = $("sv_q"); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } return; }

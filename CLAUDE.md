@@ -681,6 +681,64 @@ in the broken states** — a card that always says "fine" stops being read — a
 its flag rides `/summary` for admins from local state; nothing on the
 dashboard calls Dropbox.
 
+## One search box, and a queue that says why
+
+Unit 8. `GET /search` is structured operational search over records the portal
+already holds — case, claim and matter numbers, client and carrier, the
+subject's name, alias, address and phone, the vehicle's make, model, colour and
+plate, the firm and its people, the saved directory, and the investigator by
+name. **No document text, no media, no Dropbox, no semantic anything**, and the
+brief says so explicitly.
+
+**The role boundary is in the SQL.** Case-scoped arms apply `s.assigned_to` for
+an investigator; the arms that read the PAYING side — the client's own phone,
+the firm, the attorney, the saved profiles, a colleague's name — **do not run
+for them at all**, which is stronger than filtering their output. The test is a
+walk: every field the brief names, tried against a case the investigator is not
+on, each expected to find nothing.
+
+**Formatting must not decide whether something is found.** A phone typed four
+ways and a plate typed three all match, because SQLite has no regex and the
+punctuation is stripped in SQL by nested `REPLACE` — written once as
+`SQL_PHONE`/`SQL_PLATE`, since five copies of that expression is five chances
+to strip a different set.
+
+**What is and is not indexed is stated, not implied.** `case_no` and
+`claim_number` are matched by PREFIX and can seek; everything else is a
+substring or a punctuation-stripped comparison that no index can serve, so each
+of those reads its table, bounded by `SEARCH_ARM_CAP` and `SEARCH_TOTAL_CAP`.
+Unit 7's parameter-bound lesson holds: no statement here grows with the
+customer's data.
+
+`GET /attention` turns Unit 5's counts into the exception list. Each alert says
+**what, which case, why and where to go**, and every one is derived from state
+already recorded — an intake nobody accepted, a day that finished with no
+report, money the ledger says is outstanding, a date a firm actually gave us.
+**Nothing is inferred from a weak assumption**: no deadline derived from
+another, no category the schema cannot answer, and a case **on hold is not
+neglected** (there is a test for exactly that). Windows live in one `ATTN`
+block so they are arguable rather than scattered: 14 days for a legal date, 21
+for a quiet case, 14 hours for a day that was probably never ended.
+
+**There is no dismissal, deliberately.** An alert leaves because the thing was
+DONE — the payment recorded, the report written, the intake accepted. A dismiss
+button would be a second status system competing with the first, and the one
+that drifts is the one nobody is looking at. Severity is a **word** as well as
+a colour, so it reads the same to someone who cannot tell the two shades apart.
+
+The page keeps the Unit 5 queue card, its one-row-per-case rule and its refusal
+to draw a failed read as a clear desk; only the data source moved. Search has a
+door for **both** roles — an investigator has no dashboard, and what they find
+is decided in the Worker rather than by leaving the door out.
+
+**A caution this unit paid for:** removing the three helpers the old
+client-side derivation left behind, I cut back to the wrong comment boundary
+and deleted `recentlyCompletedHtml`, `quickToolsHtml` and `loadRecent` with
+them. The page threw on sign-in and rendered nothing. When deleting a region of
+this file, check afterwards that every top-level declaration on master still
+has one here — the check is three lines of Python and it would have caught it
+before the suite did.
+
 ## The dashboard
 
 `summaryCards()` draws an alerts strip above the case list, built to answer
@@ -860,7 +918,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 2081 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 2217 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # the page against the real Worker
 ```
 
