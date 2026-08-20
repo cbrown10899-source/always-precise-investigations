@@ -22,8 +22,8 @@ item is finished.
 | 3 | Visible Dropbox portal UI for Admin | ✅ **DONE — DEPLOYED** at `5baabd3` (#189). LIVE VERIFY **OPEN** for the owner |
 | 4 | Admin report workflow and mobile report fix | ✅ **DONE — DEPLOYED** at `94b1f5b` (#190). LIVE VERIFY **OPEN** for the owner |
 | 5 | Full portal UI/mobile/dashboard modernization | ✅ **DONE — DEPLOYED** at `6446e3c` (#191). LIVE VERIFY **OPEN** for the owner |
-| 6 | **Legal / Law Firm intake** (third intake type) | **IN FLIGHT** on `legal-intake`. Brief + derived decisions in `LEGAL-INTAKE.md` |
-| 7 | Repeat Client / Firm Profiles | not started |
+| 6 | **Legal / Law Firm intake** (third intake type) | ✅ **DONE — DEPLOYED** at `1b24467` (#192). LIVE VERIFY **OPEN** for the owner |
+| 7 | Repeat Client / Firm Profiles | **NEXT** — do not begin until the owner reviews Unit 6 |
 | 8 | Global Case Search + advanced Needs Attention | not started |
 | 9 | Multiple Report Templates | not started |
 | 10 | Case Timeline | not started |
@@ -147,7 +147,41 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
 
-## ⏸ HOLD — item 6 (Legal / Law Firm intake) waits for the owner's Unit 5 review
+## ⏸ HOLD — item 7 (Repeat Client / Firm Profiles) waits for the owner's Unit 6 review
+
+The owner's instruction closing the Unit 6 brief: *"Do NOT begin Repeat
+Client / Firm Profiles until Unit 6 is merged, deployed and reviewed."* Unit 6
+deliberately stopped short of it — the quick form asks for the firm fresh each
+time, and reuse is that unit's whole subject.
+
+## 📌 Unit 6 — what shipped (#192, `1b24467`)
+
+The Legal / Law Firm intake, on two structural choices (LEGAL-INTAKE.md, brief
+verbatim + derived decisions D1–D8): a legal case IS `kind='consumer'`, so
+Private pricing is the legal pricing **structurally** — one source, nothing to
+synchronise; and `SEND_CONTEXT.LEGAL` with `CONTEXT_TAKES_PAYMENT === PRIVATE`
+means Cash App/Venmo reach a law firm through **no code path**. The four
+arrangements (BILL.com/ACH, check pickup, check mail, existing billing) are
+requests, never payments — `check_pickup` reads *Awaiting pickup* until the
+office records money on Billing. `?assignment=legal` is the public door
+("Legal Investigation Assignment"); Quick Legal Assignment is the phone-call
+path (firm OR attorney is enough; the agreed retainer goes through the
+existing retainer writer). The firm is who is paying: `WS.legal` and the
+`legal_*` list columns never reach an investigator, while the LEGAL badge (a
+category fact) and the subject do.
+
+**Schema: `legal_intake` (additive) — `portal-setup.yml` was dispatched at
+merge**; run id in the deployment table. Until/unless it applied, legal
+intakes still land safely in the payload and the panel says so.
+
+**LIVE VERIFY (owner):** the public legal form on a phone end-to-end
+(alwayspreciseinvestigations.net/intake/?assignment=legal), Quick Legal
+Assignment on the real portal, the LEGAL card and Legal panel, and that
+choosing an arrangement never marks anything paid.
+
+## ⏸ superseded — the item-6 hold this replaced
+
+### (was) HOLD — item 6 waits for the owner's Unit 5 review
 
 The owner's instruction closing the Unit 5 brief: *"Do NOT begin Legal Intake
 Item 6 until the owner reviews the Unit 5 result."* So there is deliberately no
@@ -320,6 +354,22 @@ node .github/test-deploy.mjs                    # expect 68 / 0
 
 Then the ordinary chain: PR → merge if green → pull master → deploy → live
 verify → **save point** → next unit (item 4, Admin report/mobile workflow fix).
+
+## 🚦 DEPLOYMENT — 2026-08-20, master `1b24467` (#192) — Unit 6, the Legal / Law Firm intake
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/intake/` + `/portal/` | `1b24467` | `1b24467` | **DEPLOYED** — `deploy.yml` 32345854743 success |
+| `api-case-portal` | `1b24467` | `1b24467` | **DEPLOYED** — `deploy-portal.yml` 32345854625 success |
+| Schema (`legal_intake`) | `1b24467` | applied | **`portal-setup.yml` 32345885993 success** — dispatched at merge, nothing else owed |
+| Save point | — | — | the merge push's automatic firing; tag below |
+
+Tests at merge: worker **1940/0**, intake **236/0**, portal **1868/0**, deploy
+guard **68/0**. This container has no outbound route to the live site, so
+"applied" is the workflow's success plus the deployed Worker whose
+`EXPECTED_TABLES` names the table — `/portal-api/health` reporting
+`missing_tables: []` on the owner's device is the final confirmation, the same
+standard `photo_stamp` set.
 
 ## 🚦 DEPLOYMENT — 2026-08-20, master `6446e3c` (#191) — Unit 5, portal shell modernization
 
