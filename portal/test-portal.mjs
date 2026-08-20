@@ -12840,6 +12840,192 @@ section('Daily summary on a phone: one column, honest targets, nothing sideways'
      JSON.stringify(wrap));
 }
 
+section('The palette lives in one place, and the page reads at every size');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* EVERY TOKEN THE OWNER'S CONCEPT LIST NAMES, resolving to a real color. */
+  const tokens = await page.evaluate(() => {
+    const cs = getComputedStyle(document.documentElement);
+    const names = ['--navy','--navy-2','--navy-3','--teal','--teal-2','--gold','--ink','--muted',
+      '--line','--paper','--card','--panel','--good','--bad','--warn','--info','--focus','--disabled',
+      '--ok-bg','--ok-ink','--warn-bg','--gold-bg','--gold-ink','--bad-bg','--bad-ink',
+      '--info-bg','--info-ink','--neutral-bg','--neutral-ink',
+      '--field-bg','--field-ink','--field-label','--field-line','--head-ink','--head-sub'];
+    return Object.fromEntries(names.map(n => [n, cs.getPropertyValue(n).trim()]));
+  });
+  for (const [n, v] of Object.entries(tokens)) {
+    ok(`${n} resolves`, v.length > 0, v);
+  }
+
+  /* THE ANTI-DRIFT BUDGET. Before this unit the stylesheet held 205 distinct
+     color literals outside :root; the families now live as tokens, so any
+     color used more than twice must BE a token. White is exempt — "white" is
+     not drift. The ceiling catches the next 16-copies-of-one-navy quietly
+     arriving, without pinning every one-off shade. */
+  const drift = await page.evaluate(() => {
+    const css = [...document.querySelectorAll('style')].map(el => el.textContent).join('\n');
+    const rootBlock = css.slice(css.indexOf(':root{'), css.indexOf('}', css.indexOf(':root{')));
+    const counts = {};
+    for (const m of css.matchAll(/#[0-9a-fA-F]{3,8}\b/g)) {
+      const v = m[0].toLowerCase();
+      counts[v] = (counts[v] || 0) + 1;
+    }
+    for (const m of rootBlock.matchAll(/#[0-9a-fA-F]{3,8}\b/g)) {
+      counts[m[0].toLowerCase()] -= 1;
+    }
+    const over = Object.entries(counts)
+      .filter(([v, n]) => n > 2 && v !== '#fff' && v !== '#ffffff');
+    return { over, gone: ['#13273f', '#c99a3b', '#0d1826', '#eaf5f7', '#dff2e5']
+      .map(v => [v, counts[v] || 0]) };
+  });
+  ok('no non-white color is used more than twice outside the token layer',
+     drift.over.length === 0, JSON.stringify(drift.over));
+  for (const [v, n] of drift.gone) {
+    ok(`${v} lives only in :root now`, n === 0, String(n));
+  }
+
+  /* THE PIECES DRAW FROM THE TOKENS — computed, not believed. */
+  const painted = await page.evaluate(() => {
+    const cs = el => el ? getComputedStyle(el) : null;
+    const btn = document.createElement('button'); btn.className = 'btn';
+    document.body.appendChild(btn);
+    const tag = document.createElement('span'); tag.className = 'tag rs-approved';
+    tag.textContent = 'Approved'; document.body.appendChild(tag);
+    const out = {
+      topBg: cs(document.querySelector('.top')).backgroundColor,
+      btnBg: cs(btn).backgroundColor, btnInk: cs(btn).color,
+      tagBg: cs(tag).backgroundColor, tagInk: cs(tag).color,
+    };
+    btn.remove(); tag.remove();
+    return out;
+  });
+  ok('the header is the navy', painted.topBg === 'rgb(14, 26, 44)', painted.topBg);
+  ok('the primary button is navy with light ink',
+     painted.btnBg === 'rgb(19, 39, 63)' || painted.btnBg === 'rgb(14, 26, 44)', painted.btnBg);
+  ok('an approved chip is the success PAIR — tint and ink together',
+     painted.tagBg === 'rgb(223, 242, 229)' && painted.tagInk === 'rgb(26, 107, 60)',
+     JSON.stringify(painted));
+
+  /* CONTRAST, MEASURED — the brief says do not assume. 4.5:1 for text roles,
+     3:1 for the focus indicator. Computed from the live tokens so a later
+     "small tweak" to one half of a pair fails here. */
+  const contrast = await page.evaluate(() => {
+    const cs = getComputedStyle(document.documentElement);
+    const val = n => cs.getPropertyValue(n).trim();
+    const lum = h => {
+      h = h.replace('#', '');
+      if (h.length === 3) h = [...h].map(c => c + c).join('');
+      const [r, g, b] = [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16) / 255)
+        .map(c => c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const ratio = (x, y) => {
+      const [hi, lo] = [lum(x), lum(y)].sort((p, q) => q - p);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    return {
+      navyBtn: ratio('#ffffff', val('--navy-2')),
+      inkOnPaper: ratio(val('--ink'), val('--paper')),
+      mutedOnPaper: ratio(val('--muted'), val('--paper')),
+      warnChip: ratio(val('--warn'), val('--warn-bg')),
+      warnOnWhite: ratio(val('--warn'), '#ffffff'),
+      okChip: ratio(val('--ok-ink'), val('--ok-bg')),
+      badChip: ratio(val('--bad-ink'), val('--bad-bg')),
+      infoChip: ratio(val('--info-ink'), val('--info-bg')),
+      neutralChip: ratio(val('--neutral-ink'), val('--neutral-bg')),
+      goldNote: ratio(val('--gold-ink'), val('--gold-bg')),
+      goldCta: ratio(val('--navy-2'), val('--gold')),
+      headOnNavy: ratio(val('--head-ink'), val('--navy')),
+      fieldInk: ratio(val('--field-ink'), val('--field-bg')),
+      fieldLabel: ratio(val('--field-label'), val('--field-bg')),
+      focusRing: ratio(val('--focus'), '#ffffff'),
+    };
+  });
+  for (const [k, need] of [['navyBtn', 4.5], ['inkOnPaper', 4.5], ['mutedOnPaper', 4.5],
+    ['warnChip', 4.5], ['warnOnWhite', 4.5], ['okChip', 4.5], ['badChip', 4.5],
+    ['infoChip', 4.5], ['neutralChip', 4.5], ['goldNote', 4.5], ['goldCta', 4.5],
+    ['headOnNavy', 4.5], ['fieldInk', 4.5], ['fieldLabel', 4.5], ['focusRing', 3]]) {
+    ok(`${k} reads at ${need}:1 or better`, contrast[k] >= need, contrast[k].toFixed(2));
+  }
+
+  /* STATUS IS NEVER COLOR ALONE — every visible chip carries words. */
+  const wordless = await page.evaluate(() =>
+    [...document.querySelectorAll('.tag')].filter(t => !t.textContent.trim()).length);
+  ok('every status chip on screen carries a text label', wordless === 0, String(wordless));
+
+  /* THE SELECTED ROUTE IS VISIBLY SELECTED — a real computed difference. */
+  const nav = await page.evaluate(() => {
+    const on = document.querySelector('.tabs button.on');
+    const off = [...document.querySelectorAll('.tabs button:not(.on)')][0];
+    if (!on || !off) return null;
+    return { on: getComputedStyle(on).backgroundColor, off: getComputedStyle(off).backgroundColor };
+  });
+  ok('the selected sidebar route differs from its neighbors',
+     !!nav && nav.on !== nav.off, JSON.stringify(nav));
+
+  /* FOCUS SURVIVED THE SWEEP. */
+  const focus = await page.evaluate(() => {
+    const css = [...document.querySelectorAll('style')].map(el => el.textContent).join('\n');
+    return /:focus-visible[^}]*outline:\s*2px solid var\(--teal\)/.test(css);
+  });
+  ok('the keyboard focus treatment is intact and token-fed', focus);
+}
+
+section('The palette changed no behavior and broke no phone');
+{
+  /* The four-width probe the shell work established: the swept page still
+     fits, the inputs still hold 16px, and the field bars still reach. */
+  for (const [label, w, h] of [['375', 375, 812], ['390', 390, 844], ['430', 430, 932]]) {
+    const page = await (await browser.newContext({ viewport: { width: +w, height: h } })).newPage();
+    page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+    await page.goto(SITE + '/portal/');
+    await page.waitForTimeout(300);
+    await page.locator('#u').fill('trever');
+    await page.locator('#p').fill('AdminPassword1x');
+    await page.locator('#loginBtn').click();
+    await page.waitForTimeout(1400);
+    const over = await page.evaluate(() =>
+      document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    ok(`${label}px: no horizontal overflow after the sweep`, over <= 0, String(over));
+    const burger = page.locator('.burger');
+    ok(`${label}px: the burger is there and visible`, await burger.isVisible());
+    await burger.click(); await page.waitForTimeout(300);
+    const drawerBg = await page.evaluate(() => {
+      const t = document.querySelector('.tabs');
+      return t ? getComputedStyle(t).backgroundColor : '';
+    });
+    ok(`${label}px: the drawer is still the navy family`,
+       /rgb\((1[0-9]|2[0-9]), (2[0-9]|3[0-9]), (4[0-9]|5[0-9]|6[0-9])\)/.test(drawerBg), drawerBg);
+    const inputPx = await page.evaluate(() => {
+      const i = document.createElement('input');
+      document.body.appendChild(i);
+      const v = parseFloat(getComputedStyle(i).fontSize);
+      i.remove(); return v;
+    });
+    ok(`${label}px: inputs hold the 16px floor`, inputPx >= 16, String(inputPx));
+    await page.close();
+  }
+
+  /* Print stays ink-conscious: the print rules still isolate the document
+     regions, and no print rule paints a navy background over paper. */
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const print = await page.evaluate(() => {
+    const css = [...document.querySelectorAll('style')].map(el => el.textContent).join('\n');
+    const m = css.match(/@media print\{([\s\S]*?)\n  \}/);
+    const block = m ? m[1] : '';
+    return {
+      isolates: /visibility:hidden/.test(block) && /#pkgdoc/.test(block) && /#tldoc/.test(block)
+        && /#mandoc/.test(block) && /#repdoc/.test(block),
+      paintsNavy: /background:[^;}]*var\(--navy/.test(block) || /background:[^;}]*#0e1a2c/.test(block),
+    };
+  });
+  ok('the print rules still isolate every document region', print.isolates);
+  ok('and no print rule paints navy over paper', !print.paintsNavy);
+}
+
 section('Evidence integrity: the card states the record and the office can act on it');
 {
   db.prepare(`INSERT INTO submissions (case_no, kind, status, client_name, subject_name, payload, created_at)

@@ -225,3 +225,45 @@ Noted at queueing time only; **no design decisions are made here.**
 - "A staff screen must not assert something untrue" applies to color too:
   status tones are words as well as colours (Unit 8's severity rule), so no
   status may become colour-only in the normalization.
+
+---
+
+## BUILT — 2026-08-20 (Unit 13). The decisions this build DERIVED
+
+- **D1 — The palette was READ, not chosen.** The live page already carried
+  thirteen tokens (`--navy … --warn`); the unit completed that one layer with
+  the conceptual roles the brief names — every added value is a color the
+  deployed portal was already drawing. 237 literal occurrences (of 205
+  distinct colors) were swept into `var()` references; what remains outside
+  `:root` is white plus one-and-two-use shades.
+- **D2 — The field family is deliberately apart** (`--field-*`): Active
+  Surveillance and the timestamp tools run dark and high-contrast for
+  one-handed use in the dark, and naming their tokens separately is what stops
+  a later "normalization" from quietly restyling a field control to office
+  values.
+- **D3 — Semantic chips are PAIRS** (`--ok-bg`/`--ok-ink` …): a tint without
+  its ink is how a chip drifts illegible, so the tokens ship as pairs and the
+  suite asserts the computed pair on a live chip.
+- **D4 — Two measured contrast fixes, at the token:** `--warn` deepened
+  `#a86a12 → #96600f` (4.43→5.28 on white, 3.98→4.74 on its tint — the only
+  text-role pair that failed 4.5), and `--disabled` set to `#6f7d8c` rather
+  than the field-muted value that read 2.2:1 on paper. Everything else passed
+  as measured, including the gold CTA's navy ink at 6.79:1.
+- **D5 — PRIMARY IS NAVY, and the teal fill was the drift.** The live `.btn`
+  filled teal; the owner's brief says twice that primary is dark navy with
+  teal as accent. `.btn` is now `--navy-2` (hover `--navy`), `.btn.accent`
+  keeps the teal fill for deliberate accent actions, and `.btn.ghost` is
+  unchanged.
+- **D6 — The anti-drift budget is the durable test:** no non-white color may
+  be used more than twice outside `:root`. It caught two families the sweep
+  missed (the media/voice purple, now `--media-*`, and a duplicate
+  selected-card wash consolidated onto `--teal-wash`) and it is what catches
+  the next sixteen copies of one navy arriving quietly.
+- **D7 — Print and the phone are asserted, not assumed:** the print rules
+  still isolate all four document regions and paint no navy over paper; the
+  375/390/430 probes still show no overflow, a visible burger, a navy drawer
+  and the 16px input floor.
+- **D8 — Deferred, named:** the one-and-two-use shades (hover variants,
+  calendar chips, SV specials) stay literal — pinning every shade would be the
+  brittleness the brief warns against; the budget holds the line at the
+  families. The File Queue aesthetic stays recorded above, unbuilt.
