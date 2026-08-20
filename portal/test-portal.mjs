@@ -11942,6 +11942,426 @@ section('Report templates on a phone: stacked, tappable, no sideways scroll');
   await page.close();
 }
 
+/* =========================================================================
+   UNIT 10 — THE CASE TIMELINE, in the browser.
+
+   The Worker suite proves the chronology and the boundary. What can only be
+   proved here is that the panel DRAWS that chronology, that its controls do
+   something (a control that renders is not a control that works — the Unit 7
+   inert `<select>`), and that it fits a phone. */
+
+section('The case timeline draws the case in order');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+
+  await wsTab(page, 'Timeline');
+  await page.waitForTimeout(700);
+
+  ok('the Timeline panel exists in the case workspace',
+     await page.locator('.tl2-wrap').count() === 1);
+  ok('and it is the tab that is on', has(await text(page, '.wstabs button.on'), 'Timeline'));
+
+  const doc = await text(page, '#tldoc');
+  ok('the case opening is on it', has(doc, 'Case opened'), doc.slice(0, 400));
+  ok('the day that was worked is on it', has(doc, 'Investigation day'), doc.slice(0, 600));
+  ok('and the observations that were logged',
+     has(doc, 'Subject vehicle observed parked at residence.'));
+  ok('the report is on it', has(doc, 'Report'), doc.slice(0, 900));
+
+  /* CHRONOLOGY, NOT INSERTION ORDER. The 7:14 entry was typed into the portal
+     after the 8:17 one in an earlier section of this suite; it belongs first. */
+  const day = await page.evaluate(() => {
+    const times = [...document.querySelectorAll('#tldoc .tl2-i')].map(li => ({
+      t: (li.querySelector('.tl2-h') || {}).textContent || '',
+      s: (li.querySelector('.tl2-t') || {}).textContent || '' }));
+    return times;
+  });
+  const iPark = day.findIndex(r => r.s.includes('parked at residence'));
+  const iGym = day.findIndex(r => r.s.includes('ABC Fitness'));
+  ok('the entries read newest first by default', iPark > iGym && iGym >= 0,
+     JSON.stringify(day.map(d => d.t + ' ' + d.s.slice(0, 24))));
+
+  ok('every event carries the hour it happened',
+     day.length > 0 && day.every(r => /\d/.test(r.t) || r.t.includes('—')));
+  const zones = await page.evaluate(() =>
+    [...document.querySelectorAll('#tldoc .tl2-z')].map(z => z.textContent.trim()));
+  ok('and the zone it happened in, EST or EDT from the date',
+     zones.some(z => z === 'EST' || z === 'EDT'), JSON.stringify(zones.slice(0, 6)));
+
+  /* Each event says what KIND it is in words, not only in colour. */
+  const kinds = await page.evaluate(() =>
+    [...document.querySelectorAll('#tldoc .tl2-kind')].map(k => k.textContent.trim()));
+  ok('the event type is a word beside the mark, never colour alone',
+     kinds.includes('Observation') && kinds.includes('Case'), JSON.stringify(kinds.slice(0, 8)));
+
+  // The context strip — enough to read the chronology on its own.
+  const ctx = await text(page, '.tl2-ctx');
+  ok('the timeline names its case', has(ctx, 'API-20260812-4002'));
+  ok('and the subject it is about', has(ctx, 'John Subject'));
+  ok('and the range it covers', has(ctx, 'Covers'));
+  ok('but is not a second copy of the case header',
+     !has(ctx, 'Edit case') && await page.locator('.tl2-ctx .caseheader').count() === 0);
+
+  await page.close();
+}
+
+section('The timeline filters, re-orders and links to the record');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Timeline');
+  await page.waitForTimeout(700);
+
+  const chips = await text(page, '.tl2-chips');
+  ok('there is an All chip carrying the total', has(chips, 'All'));
+  for (const c of ['Activity', 'Case']) {
+    ok(`there is a ${c} filter`, has(chips, c), chips);
+  }
+  ok('a category with nothing behind it is not offered as a filter',
+     !has(chips, 'Dates'), chips);
+
+  const all = (await page.locator('#tldoc .tl2-i').count());
+  await page.locator('.tl2-chips .lens', { hasText: 'Activity' }).first().click();
+  await page.waitForTimeout(300);
+  const acts = await page.locator('#tldoc .tl2-i').count();
+  ok('a filter narrows the list', acts > 0 && acts < all, `${acts} of ${all}`);
+  ok('and every row left is that category',
+     (await page.evaluate(() => [...document.querySelectorAll('#tldoc .tl2-kind')]
+       .every(k => ['Observation', 'Day'].includes(k.textContent.trim())))));
+  ok('the chosen chip is marked as current',
+     await page.locator('.tl2-chips .lens.on', { hasText: 'Activity' }).count() === 1);
+
+  await page.locator('.tl2-chips .lens', { hasText: 'All' }).first().click();
+  await page.waitForTimeout(300);
+  ok('and All puts them back', await page.locator('#tldoc .tl2-i').count() === all);
+
+  /* THE ORDER TOGGLE IS A REAL CONTROL. It re-reads rather than reversing what
+     is loaded, because the Worker is what decides which end the cap cuts. */
+  const firstBefore = await page.locator('#tldoc .tl2-t').first().innerText();
+  const lastBefore = await page.locator('#tldoc .tl2-t').last().innerText();
+  ok('the order is an explicit choice, not a toggle that hides its state',
+     await page.locator('[data-act="tlOrder"]').count() === 2);
+  ok('and newest first is the one that is on',
+     await page.locator('[data-act="tlOrder"].on').first().innerText() === 'Newest first');
+  await page.locator('[data-act="tlOrder"][data-o="asc"]').click();
+  await page.waitForTimeout(800);
+  const firstAfter = await page.locator('#tldoc .tl2-t').first().innerText();
+  ok('reading oldest first genuinely changes the order', firstBefore !== firstAfter,
+     `${firstBefore} / ${firstAfter}`);
+  ok('and the chosen order is the one marked current',
+     await page.locator('[data-act="tlOrder"].on').first().innerText() === 'Oldest first');
+  /* The two readings are the same list from opposite ends. Note what is NOT
+     asserted: that "Case opened" is the oldest event. A case entered into the
+     portal today can carry a day worked last week — the timeline sorts on when
+     things HAPPENED, not on when they were typed in, which is the whole point
+     of the unit. */
+  ok('oldest-first begins where newest-first ended', firstAfter === lastBefore,
+     `${firstAfter} / ${lastBefore}`);
+  ok('and ends where newest-first began',
+     (await page.locator('#tldoc .tl2-t').last().innerText()) === firstBefore);
+  ok('and the case being opened is on the timeline either way',
+     has(await text(page, '#tldoc'), 'Case opened'));
+  await page.locator('[data-act="tlOrder"][data-o="desc"]').click();
+  await page.waitForTimeout(800);
+
+  /* THE RANGE NARROWS THE READ. */
+  await page.locator('.tl2-chips .lens', { hasText: 'Last 7 days' }).click();
+  await page.waitForTimeout(700);
+  ok('a date range is applied and said out loud',
+     has(await text(page, '.tl2-wrap'), 'Showing'));
+  /* A RE-READ SAYS SO. Without it the beat between the click and the answer
+     reads as a control that did nothing — which is how a person learns to
+     press it twice. */
+  await page.route('**/portal-api/cases/*/timeline*', async r => {
+    await new Promise(res => setTimeout(res, 900)); r.continue();
+  });
+  await page.locator('.tl2-chips .lens', { hasText: 'All time' }).click();
+  await page.waitForTimeout(250);
+  ok('a re-read says it is re-reading rather than looking inert',
+     has(await text(page, '.tl2-wrap'), 'Re-reading'));
+  await page.waitForTimeout(1200);
+  ok('and says nothing of the sort once it is back',
+     !has(await text(page, '.tl2-wrap'), 'Re-reading'));
+  await page.unroute('**/portal-api/cases/*/timeline*');
+  await page.locator('.tl2-chips .lens', { hasText: 'Last 7 days' }).click();
+  await page.waitForTimeout(700);
+  await page.locator('.tl2-chips .lens', { hasText: 'Dates' }).click();
+  await page.waitForTimeout(300);
+  ok('a custom range offers two date inputs',
+     await page.locator('#tl_from').count() === 1 && await page.locator('#tl_to').count() === 1);
+  await page.locator('.tl2-chips .lens', { hasText: 'All time' }).click();
+  await page.waitForTimeout(700);
+  ok('and All time brings the whole case back',
+     await page.locator('#tldoc .tl2-i').count() === all, String(all));
+
+  /* TIMELINE IS NAVIGATION. Every row offers the screen its record lives on,
+     and nothing is editable from here. */
+  ok('every event offers a way into its own record',
+     await page.locator('#tldoc .tl2-go').count() === all,
+     `${await page.locator('#tldoc .tl2-go').count()} of ${all}`);
+  ok('and the timeline itself holds no edit control',
+     await page.locator('#tldoc input, #tldoc textarea, #tldoc select').count() === 0);
+
+  const go = page.locator('#tldoc .tl2-go', { hasText: 'Open activity' }).first();
+  await go.click();
+  await page.waitForTimeout(450);
+  ok('opening an observation lands on the Activity log',
+     has(await text(page, '.wstabs button.on'), 'Activity log'));
+  ok('and the entry it named is there',
+     has(await text(page, '#dlgBody'), 'Subject vehicle observed parked at residence.'));
+
+  await wsTab(page, 'Timeline');
+  await page.waitForTimeout(700);
+  const rep = page.locator('#tldoc .tl2-go', { hasText: 'Open report' }).first();
+  if (await rep.count()) {
+    await rep.click();
+    await page.waitForTimeout(450);
+    ok('opening a report event lands on Reports',
+       has(await text(page, '.wstabs button.on'), 'Reports'));
+  } else {
+    ok('opening a report event lands on Reports', false, 'no report event was drawn');
+  }
+  await page.close();
+}
+
+section('The timeline is a view: it loads no media and never claims an empty case');
+{
+  const page = await newPage();
+  const asked = [];
+  page.on('request', r => asked.push(r.url()));
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(450);
+  asked.length = 0;
+  await wsTab(page, 'Timeline');
+  await page.waitForTimeout(800);
+
+  const tlIdx = asked.findIndex(u => /\/cases\/[^/]+\/timeline/.test(u));
+  ok('drawing the timeline asks for the timeline', tlIdx >= 0, JSON.stringify(asked.slice(0, 6)));
+  /* MEASURED FROM THE TIMELINE'S OWN REQUEST ONWARDS. The screen this arrives
+     from has a media strip on it, and its thumbnails are already in flight when
+     the tab is clicked — blaming those on the timeline is measuring the panel
+     you just left. */
+  const after = tlIdx >= 0 ? asked.slice(tlIdx) : asked;
+  ok('and fetches no evidence bytes to do it',
+     !after.some(u => /\/evidence\/\d+\/file/.test(u)), JSON.stringify(after.slice(0, 8)));
+  ok('and calls Dropbox not at all',
+     !after.some(u => /dropbox/i.test(u)), JSON.stringify(after.slice(0, 8)));
+
+  /* AND AGAIN WITH NOTHING ELSE MOVING. The panel is already on screen, so a
+     re-read repaints the timeline and only the timeline: anything fetched here
+     is the timeline's doing and nobody else's. */
+  asked.length = 0;
+  await page.locator('[data-act="tlRetry"]').first().click();
+  await page.waitForTimeout(900);
+  ok('a re-read fetches the timeline and nothing else',
+     asked.length > 0 && asked.every(u => /\/cases\/[^/]+\/timeline/.test(u) || !/portal-api/.test(u)),
+     JSON.stringify(asked.slice(0, 8)));
+
+  /* A FAILED READ IS NOT A QUIET CASE. */
+  await page.route('**/portal-api/cases/*/timeline*', r => r.abort());
+  await page.locator('[data-act="tlRetry"]').first().click();
+  await page.waitForTimeout(700);
+  const failed = await text(page, '.wspanel');
+  ok('a failed read says so', has(failed, 'Did not load'), failed.slice(0, 300));
+  ok('and says plainly that it is not the same as nothing having happened',
+     has(failed, 'not the same as nothing'));
+  ok('rather than drawing an empty chronology',
+     await page.locator('#tldoc .tl2-i').count() === 0
+     && !has(failed, 'Nothing has been recorded'));
+  ok('and offers to try again', await page.locator('[data-act="tlRetry"]').count() >= 1);
+  await page.unroute('**/portal-api/cases/*/timeline*');
+  await page.locator('[data-act="tlRetry"]').first().click();
+  await page.waitForTimeout(800);
+  ok('and it comes back when the read works', await page.locator('#tldoc .tl2-i').count() > 0);
+
+  /* PRINT REUSES WHAT IS ON SCREEN. #tldoc is the printed region, beside the
+     three that already exist, and there is still exactly one PDF writer. */
+  ok('there is a print action', await page.locator('[data-act="tlPrint"]').count() === 1);
+  ok('and it prints the rendering that is on screen', await page.locator('#tldoc').count() === 1);
+  ok('nothing about printing uploads or stores anything',
+     !asked.some(u => /report-pdf|dropbox|\/build\//.test(u)), JSON.stringify(asked.slice(0, 8)));
+  await page.close();
+}
+
+section('An investigator gets the timeline of their own case, without the money');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await page.waitForTimeout(400);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  await wsTab(page, 'Timeline');
+  await page.waitForTimeout(900);
+
+  ok('the field view of a case has a Timeline', await page.locator('.tl2-wrap').count() === 1);
+  ok('and it is drawn', await page.locator('#tldoc .tl2-i').count() > 0);
+  const chips = await text(page, '.tl2-chips');
+  ok('with no Payments filter, because no payment is sent to the field',
+     !has(chips, 'Payments'), chips);
+  ok('and no Package filter', !has(chips, 'Package'), chips);
+  const doc = await text(page, '#tldoc');
+  ok('no money reaches the field timeline',
+     !doc.includes('$') && !has(doc, 'payment recorded') && !has(doc, 'Invoice'),
+     doc.slice(0, 500));
+  ok('and the carrier who is paying is not named in its header',
+     !has(await text(page, '.tl2-ctx'), 'Example Mutual'));
+  ok('while the subject they are watching is', has(await text(page, '.tl2-ctx'), 'Pat Coleman'));
+  await page.close();
+}
+
+section('The timeline on a phone');
+for (const [label, w, h] of [['phone 375', 375, 812], ['phone 390', 390, 844], ['desktop 1200', 1200, 900]]) {
+  const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(1400);
+  /* NAVIGATE THE WAY A PERSON ON A PHONE DOES. Under 900px the rail is a
+     drawer behind the burger, so a click straight at the Cases button waits
+     thirty seconds on an element that is rendered and not visible. */
+  const burger = page.locator('.burger');
+  if (await burger.isVisible()) { await burger.click(); await page.waitForTimeout(300); }
+  await page.locator('.side button, .tabs button', { hasText: 'Cases' }).first().click();
+  await page.waitForTimeout(600);
+  await page.locator('tbody tr', { hasText: 'API-20260812-4002' }).first().click();
+  await page.waitForTimeout(600);
+  await wsTab(page, 'Timeline');
+  await page.waitForTimeout(900);
+
+  ok(`${label}: the timeline is drawn`, await page.locator('#tldoc .tl2-i').count() > 0);
+
+  const over = await page.evaluate(() => {
+    const vw = window.innerWidth, out = [];
+    for (const el of document.querySelectorAll('#app *')) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.right > vw + 1) {
+        out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
+      }
+    }
+    return { doc: Math.round(document.documentElement.scrollWidth - vw), els: out.slice(0, 5) };
+  });
+  ok(`${label}: the page does not scroll sideways`, over.doc <= 1, JSON.stringify(over));
+  ok(`${label}: and nothing hangs past the right edge`, over.els.length === 0, JSON.stringify(over));
+
+  if (w < 560) {
+    /* ONE COLUMN. The 78px time gutter and the rail come off, so a description
+       gets the screen instead of a ladder of two-word lines. */
+    const geom = await page.evaluate(() => {
+      const li = document.querySelector('#tldoc .tl2-i');
+      const body = li && li.querySelector('.tl2-body');
+      const rail = li && li.querySelector('.tl2-line');
+      const panel = document.querySelector('.wspanel');
+      return { cols: li ? getComputedStyle(li).gridTemplateColumns : '',
+               bodyW: body ? Math.round(body.getBoundingClientRect().width) : 0,
+               panelW: panel ? Math.round(panel.getBoundingClientRect().width) : 0,
+               railShown: rail ? getComputedStyle(rail).display !== 'none' : false,
+               vw: window.innerWidth };
+    });
+    ok(`${label}: an event is one column, not three`,
+       geom.cols.split(' ').length === 1, geom.cols);
+    ok(`${label}: the rail is dropped rather than shrunk`, geom.railShown === false);
+    /* MEASURED AGAINST THE PANEL, NOT THE VIEWPORT. 86px of the 375 goes to the
+       page shell — main 16+16, card 14+14 and its border, dlg 12+12 — which
+       every panel in this portal pays and which the report editor's own fix
+       already addresses at that level. What the timeline must not do is take
+       any MORE, and stacking is what buys that: the description gets every
+       pixel the panel has, against 78px of time gutter and 34px of rail on a
+       desk. Asserting a viewport share instead would be asserting the shell. */
+    ok(`${label}: the description gets the whole panel width`,
+       geom.panelW > 0 && Math.abs(geom.bodyW - geom.panelW) <= 1,
+       `${geom.bodyW} of ${geom.panelW}`);
+
+    /* A long filename must wrap, not push the card sideways. */
+    const wrap = await page.evaluate(() => {
+      const b = document.querySelector('.tl2-file') || document.querySelector('.tl2-t');
+      if (!b) return { ok: true, style: 'none present' };
+      return { ok: ['anywhere', 'break-word'].includes(getComputedStyle(b).overflowWrap),
+               style: getComputedStyle(b).overflowWrap };
+    });
+    ok(`${label}: long text and filenames wrap rather than widen the row`, wrap.ok, wrap.style);
+
+    /* 44px targets and 16px inputs, the portal-wide rules. */
+    let smallest = 999, which = '';
+    for (const b of await page.locator('.tl2-chips .lens, .tl2-foot .btn, .tl2-go').all()) {
+      const box = await b.boundingBox();
+      if (box && box.height < smallest) { smallest = box.height; which = (await b.innerText()).trim(); }
+    }
+    ok(`${label}: every timeline control clears 44px`, smallest === 999 || smallest >= 44,
+       `smallest ${smallest}px on "${which}"`);
+
+    await page.locator('.tl2-chips .lens', { hasText: 'Dates' }).click();
+    await page.waitForTimeout(350);
+    const inp = await page.evaluate(() => {
+      const el = document.getElementById('tl_from');
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      return { size: parseFloat(cs.fontSize), h: Math.round(el.getBoundingClientRect().height) };
+    });
+    ok(`${label}: the date inputs are 16px so iOS does not zoom`, inp && inp.size >= 16,
+       JSON.stringify(inp));
+    ok(`${label}: and meet the tap floor`, inp && inp.h >= 44, JSON.stringify(inp));
+    const over2 = await page.evaluate(() =>
+      Math.round(document.documentElement.scrollWidth - window.innerWidth));
+    ok(`${label}: opening the date range does not widen the page`, over2 <= 1, String(over2));
+  } else {
+    const geom = await page.evaluate(() => {
+      const li = document.querySelector('#tldoc .tl2-i');
+      const body = li && li.querySelector('.tl2-body');
+      const panel = document.querySelector('.wspanel');
+      return { cols: li ? getComputedStyle(li).gridTemplateColumns : '',
+               bodyW: body ? Math.round(body.getBoundingClientRect().width) : 0,
+               panelW: panel ? Math.round(panel.getBoundingClientRect().width) : 0 };
+    });
+    ok(`${label}: a desk keeps the time gutter and the rail`,
+       geom.cols.split(' ').length === 3, geom.cols);
+    ok(`${label}: and there is room to spare for them`,
+       geom.panelW - geom.bodyW > 90 && geom.bodyW > 500,
+       `${geom.bodyW} of ${geom.panelW}`);
+  }
+  await page.close();
+}
+
+section('The timeline print region is its own, and adds no PDF writer');
+{
+  const src = fs.readFileSync(path.join(ROOT, 'portal', 'index.html'), 'utf8');
+  ok('the timeline prints from #tldoc', /body\.printing-timeline #tldoc/.test(src));
+  ok('and the three regions that were already there are untouched',
+     /body\.printing-package #pkgdoc/.test(src)
+     && /body\.printing-report #repdoc/.test(src)
+     && /body\.printing-invoice #invdoc/.test(src));
+  ok('there is still exactly one PDF writer in the page',
+     (src.match(/%PDF-1\./g) || []).length === 1);
+  const panel = (src.match(/function timelinePanel\(\)\{[\s\S]*?\n\}\n/) || [''])[0];
+  ok('the timeline panel exists', panel.length > 0);
+  ok('and it renders no image or video element',
+     !/<img|<video|createObjectURL/i.test(panel));
+  ok('and it stores nothing and uploads nothing',
+     !/localStorage|sessionStorage|FormData|report-pdf/i.test(panel));
+  /* THE PHONE RULES LIVE AT THE END. Source order has killed a rule in this
+     file three times, so the timeline's overrides come after everything they
+     override — and its class names are its own rather than a contest with the
+     activity log's `.tl`, which is what made `.qgrid` the third casualty. */
+  const lastMedia = src.lastIndexOf('@media(max-width:560px)');
+  ok('the timeline phone rules are in the last phone block',
+     lastMedia > 0 && src.indexOf('.tl2-i{grid-template-columns:1fr', lastMedia) > lastMedia);
+  const tlCss = (src.match(/UNIT 10 — the case timeline[\s\S]*?\n  @media print\{/) || [''])[0];
+  ok('every timeline rule is under its own prefix',
+     tlCss.length > 0 && (tlCss.match(/^  \.[a-z0-9-]+/gm) || [])
+       .every(sel => sel.trim().startsWith('.tl2-')),
+     JSON.stringify((tlCss.match(/^  \.[a-z0-9-]+/gm) || []).filter(x => !x.trim().startsWith('.tl2-'))));
+}
+
+/* ------------------------------------------------------------------ report */
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();

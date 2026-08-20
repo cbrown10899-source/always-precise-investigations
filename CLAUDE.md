@@ -918,7 +918,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 2258 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 2357 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # the page against the real Worker
 ```
 
@@ -1080,6 +1080,92 @@ holds another is the exact drift this unit exists to avoid. That is also why it
 calls `api()` rather than `pkgApi()`: `pkgApi` swallows its own failure.
 
 **Adding this table means a manual `portal-setup.yml` dispatch after merge.**
+
+## The timeline is a view, and it needed no table
+
+Unit 10 (owner brief verbatim in `case-portal/TIMELINE.md`, derived decisions
+listed there one per entry). `GET /cases/:no/timeline` composes a case's
+chronology **at read time** from fourteen tables that already existed —
+submission, status, days, activity (with its removed and voice companions),
+evidence, both stamp tables, reports, retainer and invoice payments, invoice
+and build events, the legal dates, and the archive and delete markers. There is
+no timeline table, nothing is copied, and the panel writes nothing: every row
+links to the screen its record lives on, which is where editing already worked.
+
+**It also needed no index, and that was checked rather than assumed.** Every
+arm is an equality lookup on a column that is already the leading part of an
+index (`idx_activity_case`, `idx_days_case`, `idx_evidence_case`,
+`idx_retpay_case`, `idx_invoices_case`, `idx_builds_case`, `idx_pstamp_case`,
+`idx_vstamp_case`, `idx_legal_case`, and the four markers keyed by `case_no`).
+**So this unit is the first in five that needs no `portal-setup` dispatch.**
+
+**Two clocks live in this database and a chronology has to sort them against
+each other.** UTC instants (`created_at`, `uploaded_at`, `recorded_at`,
+`status_at`, `taken_utc`, `start_utc`) and local wall clock
+(`activity_log.at_date`/`at_time`, `case_days.day_date`, `paid_on`,
+`paid_date`, the legal dates). Comparing them unconverted is how an 8:15 PM
+observation sorts ahead of a 9:00 PM one recorded an hour earlier. `tlLocal()`
+reads a wall-clock value **as America/New_York** and `tlAt()` reads an instant,
+so both land on one UTC axis — which is never shown. **What is displayed is
+composed in the Worker**, because a laptop set to Pacific must not draw a
+Virginia entry three hours early while the report beside it says otherwise.
+Nothing is rewritten: a wall-clock row keeps the date and time it was recorded
+with, verbatim, and only the sort key is derived.
+
+**EST or EDT comes from the date, in two passes** — the offset is read at the
+naive guess and again at the corrected instant, which is what makes the
+changeover weekends right instead of an hour wrong twice a year. Do not
+hard-code an offset here, the same rule `vstLabel` already follows.
+
+**A date is not a moment.** `paid_on` and the legal dates carry a day and no
+time; those events sort at the start of their day, are sent with `time: null`,
+and draw as "all day". Inventing noon so they mix nicely with timed events
+would be a precision claim the record does not make. **Event time and record
+time are separate** and both are carried when they fall on different days —
+"logged the next morning" is worth saying.
+
+**The role boundary is applied by NOT RUNNING the arm.** Payments, invoices,
+packages, offers, the archive and delete markers and the legal dates are read
+only for an admin; an investigator's header carries no `client` and no
+`claim_number` key at all. That mirrors `caseWorkspace` field for field and is
+stronger than filtering rows out of a result already fetched.
+
+**The relationship is the column, never the clock.** `case_evidence.entry_id`
+is the only thing that says a photograph documents a moment, and the attachment
+list is a pass over rows already fetched — no second query and nothing per
+entry. Invoice and build children go through **one** statement each via a
+subquery on their parent, so a case with forty invoices costs what a case with
+one costs. Every arm carries a bound `LIMIT ?`, the range bounds are bound
+parameters with sentinels rather than interpolated SQL, and **what gets cut is
+named**: `capped_sources` for an arm that hit its read limit and
+`missing_sources` for a table that has not arrived, so a timeline that stops
+does not read as a case where nothing else happened.
+
+**Noise is excluded by name.** `invoice_events` is narrowed to the transitions
+(`voided`, `status_paid`, `status_sent_to_bill`, `status_sent_to_client`,
+`status_ready`) and `build_events` to the lifecycle (`created`, `finalized`,
+`delivered`, `reopened`). Three candidates in the brief are **deliberately
+absent because no record of them exists**: PDF generated (written in the
+browser from `#pkgdoc`, recorded nowhere), intake converted (`lead_status` is
+current-state only), and Dropbox storage actions (a refused upload is refused,
+not logged). Adding any of them would mean inventing an audit system for the
+timeline, which the brief forbids. `case_status` and `submissions.assigned_to`
+keep no history either, so there is one status event and the assignment is the
+offer that was **accepted** — a recorded moment rather than a derivation.
+
+**Export is the printable view, and the PDF is a documented follow-up.**
+`#tldoc` is a print region beside `#invdoc`, `#pkgdoc` and `#repdoc`, and the
+browser's own dialog saves a PDF from it. Generating one would mean either
+generalising the single `%PDF-1.` writer Unit 9 has just stabilised or adding a
+second, which a test forbids. Nothing is stored, uploaded or written to R2, and
+no PDF is produced automatically.
+
+**`.tl2-` is its own prefix and its phone rules are last** — `.tl` already
+belongs to the activity log, and source order has killed three rules in that
+file. On a phone the three-column grid becomes one: the 78px time gutter and
+the rail come off and the description gets the **whole panel width** (289 of
+289 at 375px). The test asserts agreement with the panel rather than a share of
+the viewport, because 86px of the 375 is the page shell every panel pays.
 
 ## Invoices
 
