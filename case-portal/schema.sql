@@ -1556,3 +1556,40 @@ CREATE TABLE IF NOT EXISTS evidence_integrity (
 );
 CREATE INDEX IF NOT EXISTS idx_eint_case ON evidence_integrity(case_no, id DESC);
 CREATE INDEX IF NOT EXISTS idx_eint_art  ON evidence_integrity(artifact_kind, artifact_id, id DESC);
+
+/* ---------------------------------------------------- DAILY SUMMARY (Unit 12)
+
+   The owner's brief is verbatim in case-portal/DAILY-SUMMARY.md. One authored
+   narrative paragraph per INVESTIGATION DAY — the professional prose the
+   report builder assembles from the day's own recorded facts and the writer
+   then edits freely.
+
+   A COMPANION TABLE KEYED BY day_id, for the standing reason (schema.sql is
+   re-applied on every portal-setup run; case_reports and case_days cannot gain
+   a column idempotently) — and day_id as PRIMARY KEY is the same shape as
+   idx_reports_day: a day has one report and one summary, and "do not carry
+   yesterday's selections into another day" is structural because the row IS
+   per-day.
+
+   `narrative` is the authored text — a SNAPSHOT, like every narrative here.
+   Editing the activity log later rewrites nothing stored in this row; the
+   builder offers a rebuild and a person decides. `config` is the builder's
+   selections (chosen opening, vehicle ids, included activity entries, wording
+   modes), stored so reopening the builder restores the writer's choices
+   instead of guessing them — selections and prose kept apart so regenerating
+   one sentence never has to parse the paragraph.
+
+   NOTHING HERE DUPLICATES THE ACTIVITY LOG. The log stays the authoritative
+   source record; this is downstream authored material, the same relationship
+   `case_reports.body` already has to it. */
+CREATE TABLE IF NOT EXISTS case_day_summary (
+  day_id     INTEGER PRIMARY KEY,     -- the investigation day this narrates
+  case_no    TEXT    NOT NULL,
+  narrative  TEXT    NOT NULL DEFAULT '',
+  config     TEXT    NOT NULL DEFAULT '{}',
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT    NOT NULL,
+  updated_by INTEGER REFERENCES users(id),
+  updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_dsummary_case ON case_day_summary(case_no);

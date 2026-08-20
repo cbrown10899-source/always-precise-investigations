@@ -1276,7 +1276,8 @@ section('Drafting and reviewing a daily report in the browser');
   await page.locator('.rpnav button', { hasText: 'Chronology' }).click();
   await page.waitForTimeout(250);
   ok('Chronology is the timeline extract', has(await text(page, '#dlgBody'), '7:14 AM'));
-  await page.locator('.rpnav button', { hasText: 'Summary' }).click();
+  /* Exact, since Unit 12 added a "Daily summary" tab beside this one. */
+  await page.locator('.rpnav button', { hasText: /^Summary$/ }).click();
   await page.waitForTimeout(250);
   ok('Summary is the day', has(await text(page, '#dlgBody'), 'Hours'));
   await page.locator('.rpnav button', { hasText: 'Draft preview' }).click();
@@ -11184,8 +11185,8 @@ section('Clients & Firms: a firm saved once, then an assignment in seconds');
   await page.waitForTimeout(500);
   ok('the firm really is renamed', (await text(page, 'body')).includes('Calloway Reed & Vance'));
 
-  await page.locator('.tabs button', { hasText: 'Cases' }).first().click();
-  await page.waitForTimeout(400);
+  { const cbtn = page.locator('.tabs button', { hasText: 'Cases' });
+    if (await cbtn.count()) { await cbtn.first().click(); await page.waitForTimeout(400); } }
   await rowFor(page, caseNo).click();
   await page.waitForTimeout(400);
   await wsTab(page, 'Legal');
@@ -12371,6 +12372,473 @@ section('The timeline print region is its own, and adds no PDF writer');
    discipline; these sections prove what a PERSON sees — the card states the
    record truthfully, the actions answer where the button is, the manifest is
    a readable document, and none of it costs a phone its layout. */
+
+section('Daily summary: deterministic sentences over the day\'s own facts');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+
+  /* THE ENGINE FIRST, as pure functions: every grammar case the brief names,
+     asserted on the exact words. No fixture needed — this is arithmetic. */
+  const eng = await page.evaluate(() => ({
+    weekday: dsWeekday('2026-08-20'),
+    heading: dsHeading('2026-08-22'),
+    mdy: dsMDY('2026-08-20'),
+    full: dsVehiclesSentence([{ year: '2022', make: 'Chevrolet', model: 'Silverado',
+      color: '', plate: 'ABC-1234', plate_state: 'VA', registered_owner: 'John Smith' }], 'in the driveway'),
+    two: dsVehiclesSentence([
+      { year: '2022', make: 'Chevrolet', model: 'Silverado', plate: 'ABC-1234', plate_state: 'VA', registered_owner: 'John Smith' },
+      { year: '2020', make: 'Toyota', model: 'Camry', plate: 'XYZ-5678', plate_state: 'VA', registered_owner: 'Jane Smith' },
+    ], 'in the driveway'),
+    noYear: dsVehiclesSentence([{ make: 'Toyota', model: 'Camry', color: 'gray' }], 'on the street'),
+    noOwner: dsVehiclesSentence([{ year: '2019', make: 'Ford', model: 'F-150', plate: 'K99', plate_state: 'VA' }], 'at the residence'),
+    an: dsVehiclesSentence([{ make: 'Acura', model: 'TL' }], 'in the driveway'),
+    none: dsVehiclesSentence([], 'in the driveway'),
+  }));
+  ok('08-20-2026 is a Thursday, on every machine', eng.weekday === 'Thursday', eng.weekday);
+  ok('the day heading reads like a report', eng.heading === 'SATURDAY, AUGUST 22, 2026', eng.heading);
+  ok('and the inline date is month-day-year', eng.mdy === '08-20-2026', eng.mdy);
+  ok('one vehicle reads exactly as the office would write it',
+     eng.full === 'A 2022 Chevrolet Silverado bearing Virginia registration ABC-1234 was observed '
+       + 'in the driveway. The vehicle was recorded as registered to John Smith.', eng.full);
+  ok('two vehicles read as a list with their owners inline',
+     eng.two === 'Two vehicles were observed in the driveway: a 2022 Chevrolet Silverado bearing '
+       + 'Virginia registration ABC-1234, registered to John Smith, and a 2020 Toyota Camry bearing '
+       + 'Virginia registration XYZ-5678, registered to Jane Smith.', eng.two);
+  ok('a missing year prints no blank year', eng.noYear === 'A gray Toyota Camry was observed on the street.', eng.noYear);
+  ok('a missing owner prints NO owner clause — never "registered to unknown"',
+     !/unknown/i.test(eng.noOwner) && !/registered to/.test(eng.noOwner), eng.noOwner);
+  ok('the article bends to the word', eng.an.startsWith('An Acura'), eng.an);
+  ok('no vehicles is silence, never an invented absence', eng.none === '');
+
+  /* NOW THE BUILDER, on a real day with real vehicles. */
+  await page.evaluate(async no => {
+    const post = (p2, b2) => fetch('/portal-api' + p2, { method: 'POST',
+      credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(b2 || {}) }).then(r => r.json());
+    const sj = await post(`/cases/${no}/subjects`, { name: 'Walter Mott',
+      addresses: '41 Cedar Ln, Roanoke VA' });
+    await post(`/cases/${no}/subjects/${sj.id}/vehicles`, { year: '2022', make: 'Chevrolet',
+      model: 'Silverado', color: 'White', plate: 'ABC-1234', plate_state: 'VA',
+      registered_owner: 'John Smith' });
+    await post(`/cases/${no}/day/start`, { day_date: '2026-08-20', start_time: '08:03' });
+    for (const [t, d] of [['09:14', 'Subject departed residence in white pickup.'],
+                          ['11:42', 'Subject returned to residence.']]) {
+      await post(`/cases/${no}/activity`, { at_date: '2026-08-20', at_time: t, description: d });
+    }
+    await post(`/cases/${no}/day/end`, { end_time: '12:15' });
+    const ws = await (await fetch(`/portal-api/cases/${no}/workspace`,
+      { credentials: 'same-origin' })).json();
+    const day = (ws.days || []).find(d => d.day_date === '2026-08-20');
+    await post(`/cases/${no}/reports/generate`, { day_id: day.id });
+  }, 'API-20260812-4001');
+  await page.reload();
+  await page.waitForTimeout(700);
+  { const cbtn = page.locator('.tabs button', { hasText: 'Cases' });
+    if (await cbtn.count()) { await cbtn.first().click(); await page.waitForTimeout(400); } }
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  /* Snapshot the WHOLE activity log before the builder is touched — the
+     container's real date can coincide with the fixture day, so other
+     sections' entries may share it and only before-vs-after is honest. */
+  const logBefore = await page.evaluate(async no => {
+    const ws = await (await fetch(`/portal-api/cases/${no}/workspace`,
+      { credentials: 'same-origin' })).json();
+    return JSON.stringify(ws.activity.map(a => [a.id, a.at_date, a.at_time, a.description]));
+  }, 'API-20260812-4001');
+  await wsTab(page, 'Reports');
+  await page.waitForTimeout(400);
+  await page.locator('.rcard', { hasText: '2026-08-20' }).first().click();
+  await page.waitForTimeout(400);
+  await page.locator('.rpnav button', { hasText: 'Daily summary' }).click();
+  await page.waitForTimeout(400);
+
+  ok('the builder opens on the day, named like a report heading',
+     has(await text(page, '.dsb-wrap'), 'THURSDAY, AUGUST 20, 2026'));
+  const para0 = await page.locator('#ds_text').inputValue();
+  ok('the opening prefilled from the day and the case',
+     has(para0, 'On Thursday, 08-20-2026, surveillance was initiated at 8:03 AM'), para0);
+  ok('the subject\'s address seeded the location',
+     has(para0, "41 Cedar Ln"), para0);
+  ok('and the builder SAYS where its suggestions came from',
+     has(await text(page, '.dsb-wrap'), 'FROM DAY') && has(await text(page, '.dsb-wrap'), 'FROM CASE'));
+
+  /* Pick the vehicle and both moments; the paragraph rebuilds live. */
+  await page.locator('[id^="ds_veh_"]').first().check();
+  await page.waitForTimeout(300);
+  const moments = page.locator('[id^="ds_act_"]');
+  await moments.nth(0).check(); await page.waitForTimeout(250);
+  await moments.nth(1).check(); await page.waitForTimeout(250);
+  let para = await page.locator('#ds_text').inputValue();
+  ok('the chosen vehicle writes its sentence',
+     has(para, 'A 2022 white Chevrolet Silverado bearing Virginia registration ABC-1234 was observed in the driveway.'), para);
+  ok('a chosen moment arrives as written, timed in words',
+     has(para, 'At 9:14 AM, subject departed residence in white pickup.'), para);
+  ok('the moments land in the day\'s order',
+     para.indexOf('9:14 AM') < para.indexOf('11:42 AM'), para);
+
+  /* Turn the second moment into the deterministic return sentence. */
+  const secondId = await moments.nth(1).getAttribute('id');
+  await page.locator('#ds_mode_' + secondId.replace('ds_act_', '')).selectOption('return');
+  await page.waitForTimeout(250);
+  para = await page.locator('#ds_text').inputValue();
+  ok('a template mode rewrites just that sentence',
+     has(para, 'At 11:42 AM, the subject returned to the residence.'), para);
+
+  /* Exclude the first moment — its sentence leaves, nothing else moves. */
+  await moments.nth(0).uncheck();
+  await page.waitForTimeout(250);
+  para = await page.locator('#ds_text').inputValue();
+  ok('an excluded moment leaves the paragraph',
+     !has(para, '9:14 AM') && has(para, '11:42 AM'), para);
+
+  /* Close the day with a stated reason and save. */
+  await page.locator('#ds_reason').selectOption('returned');
+  await page.waitForTimeout(250);
+  await page.locator('[data-act="dsSave"]').click();
+  await page.waitForTimeout(600);
+  ok('the summary saves and says so', has(await text(page, '.dsb-wrap'), 'Saved'));
+
+  /* THE LOG IS UNTOUCHED — the builder narrates it, never edits it. */
+  const logAfter = await page.evaluate(async no => {
+    const ws = await (await fetch(`/portal-api/cases/${no}/workspace`,
+      { credentials: 'same-origin' })).json();
+    return JSON.stringify(ws.activity.map(a => [a.id, a.at_date, a.at_time, a.description]));
+  }, 'API-20260812-4001');
+  ok('every activity entry still reads exactly as logged',
+     logAfter === logBefore, logAfter.slice(0, 200));
+}
+
+section('Daily summary: the writer\'s words survive everything but a deliberate rebuild');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  await wsTab(page, 'Reports');
+  await page.waitForTimeout(400);
+  await page.locator('.rcard', { hasText: '2026-08-20' }).first().click();
+  await page.waitForTimeout(400);
+  await page.locator('.rpnav button', { hasText: 'Daily summary' }).click();
+  await page.waitForTimeout(400);
+
+  /* Type into the paragraph: it becomes the writer's. */
+  await page.locator('#ds_text').click();
+  await page.locator('#ds_text').press('End');
+  await page.locator('#ds_text').type(' Hand-written closing thought.');
+  await page.waitForTimeout(200);
+  /* A control change now repaints — and must NOT touch the words. */
+  await page.locator('#ds_gap').selectOption('before_end');
+  await page.waitForTimeout(350);
+  let para = await page.locator('#ds_text').inputValue();
+  ok('a control change no longer rewrites a claimed paragraph',
+     has(para, 'Hand-written closing thought.'), para);
+  ok('and the screen says the wording is protected',
+     has(await text(page, '.dsb-wrap'), 'protected'));
+
+  /* Walk away and come back: tab, then a full repaint. */
+  await page.locator('.rpnav button', { hasText: 'Chronology' }).click();
+  await page.waitForTimeout(300);
+  await page.locator('.rpnav button', { hasText: 'Daily summary' }).click();
+  await page.waitForTimeout(300);
+  para = await page.locator('#ds_text').inputValue();
+  ok('leaving the tab and returning keeps the words', has(para, 'Hand-written closing thought.'), para);
+  await page.evaluate(() => paint());
+  await page.waitForTimeout(300);
+  para = await page.locator('#ds_text').inputValue();
+  ok('a page repaint keeps them too', has(para, 'Hand-written closing thought.'), para);
+
+  /* Rebuild asks first; declined, nothing changes. */
+  page.once('dialog', d => d.dismiss());
+  await page.locator('[data-act="dsRebuild"]').click();
+  await page.waitForTimeout(300);
+  para = await page.locator('#ds_text').inputValue();
+  ok('Rebuild asks, and No means no', has(para, 'Hand-written closing thought.'), para);
+  page.once('dialog', d => d.accept());
+  await page.locator('[data-act="dsRebuild"]').click();
+  await page.waitForTimeout(300);
+  para = await page.locator('#ds_text').inputValue();
+  ok('Yes rebuilds from the selections', !has(para, 'Hand-written closing thought.')
+     && has(para, 'surveillance was initiated'), para);
+
+  /* A SECOND DAY STARTS CLEAN — nothing crossed over. */
+  await page.evaluate(async no => {
+    const post = (p2, b2) => fetch('/portal-api' + p2, { method: 'POST',
+      credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(b2 || {}) }).then(r => r.json());
+    await post(`/cases/${no}/day/start`, { day_date: '2026-08-21', start_time: '07:30' });
+    await post(`/cases/${no}/activity`, { at_date: '2026-08-21', at_time: '08:05',
+      description: 'No activity observed at the residence.' });
+    await post(`/cases/${no}/day/end`, { end_time: '10:00' });
+    const ws = await (await fetch(`/portal-api/cases/${no}/workspace`,
+      { credentials: 'same-origin' })).json();
+    const day = (ws.days || []).find(d => d.day_date === '2026-08-21');
+    await post(`/cases/${no}/reports/generate`, { day_id: day.id });
+  }, 'API-20260812-4001');
+  await page.reload();
+  await page.waitForTimeout(700);
+  { const cbtn = page.locator('.tabs button', { hasText: 'Cases' });
+    if (await cbtn.count()) { await cbtn.first().click(); await page.waitForTimeout(400); } }
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  await wsTab(page, 'Reports');
+  await page.waitForTimeout(400);
+  await page.locator('.rcard', { hasText: '2026-08-21' }).first().click();
+  await page.waitForTimeout(400);
+  await page.locator('.rpnav button', { hasText: 'Daily summary' }).click();
+  await page.waitForTimeout(400);
+  para = await page.locator('#ds_text').inputValue();
+  ok('Friday does not inherit Thursday\'s vehicles or moments',
+     has(para, 'On Friday, 08-21-2026') && !has(para, 'Silverado') && !has(para, '11:42'), para);
+  ok('and no moment arrives pre-selected on a fresh day',
+     await page.locator('[id^="ds_act_"]:checked').count() === 0);
+}
+
+section('Daily summary: the narrative rides the documents, clean of builder scaffolding');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+
+  /* Approve the day's report and re-save a known paragraph to carry. */
+  await page.evaluate(async no => {
+    const post = (p2, b2) => fetch('/portal-api' + p2, { method: 'POST',
+      credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(b2 || {}) }).then(r => r.json());
+    const ws = await (await fetch(`/portal-api/cases/${no}/workspace`,
+      { credentials: 'same-origin' })).json();
+    const day = (ws.days || []).find(d => d.day_date === '2026-08-20');
+    const rep = (ws.reports || []).find(r => r.day_id === day.id);
+    await post(`/cases/${no}/reports/${rep.id}/status`, { status: 'approved' });
+    await post(`/cases/${no}/days/${day.id}/summary`, {
+      narrative: 'On Thursday, 08-20-2026, surveillance was initiated at 8:03 AM at the subject’s '
+        + 'residence at 41 Cedar Ln, Roanoke VA. At 11:42 AM, the subject returned to the residence. '
+        + 'Surveillance was concluded at 12:15 PM after the subject returned to the residence and no '
+        + 'additional activity was observed.' });
+  }, 'API-20260812-4001');
+  await page.reload();
+  await page.waitForTimeout(700);
+  { const cbtn = page.locator('.tabs button', { hasText: 'Cases' });
+    if (await cbtn.count()) { await cbtn.first().click(); await page.waitForTimeout(400); } }
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+
+  /* The report's own draft document leads with it. */
+  await wsTab(page, 'Reports');
+  await page.waitForTimeout(400);
+  await page.locator('.rcard', { hasText: '2026-08-20' }).first().click();
+  await page.waitForTimeout(400);
+  const rep = await page.locator('#repdoc').innerText();
+  ok('the day\'s document leads with the authored paragraph',
+     has(rep, 'surveillance was initiated at 8:03 AM'), rep.slice(0, 200));
+  ok('prose before chronology — the paragraph sits above the body',
+     rep.indexOf('surveillance was initiated at 8:03 AM') < rep.indexOf('CHRONOLOG')
+       || !has(rep, 'CHRONOLOG'));
+
+  /* And the client package prints it under the day heading. The shared
+     fixture case may already carry a FINALIZED package from earlier
+     sections, so this section makes its own draft version through the API —
+     POST /cases/:no/build opens a new version over a finalized one — and
+     attaches the day's report by id rather than hoping an offer button is
+     on screen. */
+  await page.evaluate(async no => {
+    const post = (p2, b2) => fetch('/portal-api' + p2, { method: 'POST',
+      credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(b2 || {}) }).then(r => r.json());
+    let st = await (await fetch(`/portal-api/cases/${no}/build`,
+      { credentials: 'same-origin' })).json();
+    if (!st.build || st.build.status !== 'draft') { await post(`/cases/${no}/build`); }
+    st = await (await fetch(`/portal-api/cases/${no}/build`,
+      { credentials: 'same-origin' })).json();
+    const ws = await (await fetch(`/portal-api/cases/${no}/workspace`,
+      { credentials: 'same-origin' })).json();
+    const day = (ws.days || []).find(d => d.day_date === '2026-08-20');
+    const rep = (ws.reports || []).find(r => r.day_id === day.id);
+    if (!(st.reports || []).some(r => r.id === rep.id)) {
+      await post(`/build/${st.build.id}/reports`, { report_id: rep.id });
+    }
+  }, 'API-20260812-4001');
+  await wsTab(page, 'Package');
+  await page.waitForTimeout(700);
+  const doc = await page.locator('#pkgdoc').innerText();
+  ok('the package document carries the day\'s paragraph',
+     has(doc, 'surveillance was initiated at 8:03 AM'), doc.slice(0, 300));
+  ok('ahead of that day\'s detailed body', 
+     doc.indexOf('surveillance was initiated at 8:03 AM') < doc.indexOf('INVESTIGATION NOTES')
+       || !has(doc, 'INVESTIGATION NOTES'));
+  /* THE DOCUMENT IS CLEAN: no builder scaffolding of any kind. */
+  for (const tokenWord of ['FROM DAY', 'FROM CASE', 'FROM ACTIVITY', '[VEHICLE]', '[TIME]']) {
+    ok(`the document never says "${tokenWord}"`, !has(doc, tokenWord));
+  }
+  ok('and no dropdown or checkbox lives inside the printed region',
+     await page.locator('#pkgdoc select, #pkgdoc input, #pkgdoc textarea').count() === 0);
+  ok('the report document is equally clean',
+     await page.locator('#repdoc select, #repdoc input, #repdoc textarea').count() === 0);
+
+  /* EVERY TEMPLATE CARRIES IT. The paragraph rides the day section, and all
+     six styles include one — the template decides labels and order, never
+     whether the day's narrative exists. */
+  for (const tid of ['surveillance', 'legal', 'general']) {
+    await page.evaluate(async id => {
+      const st = await (await fetch(`/portal-api/cases/API-20260812-4001/build`,
+        { credentials: 'same-origin' })).json();
+      await fetch(`/portal-api/build/${st.build.id}/template`, { method: 'POST',
+        credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ template: id }) });
+    }, tid);
+    await wsTab(page, 'Package');
+    await page.waitForTimeout(600);
+    ok(`the ${tid} style prints the day's paragraph too`,
+       has(await page.locator('#pkgdoc').innerText(), 'surveillance was initiated at 8:03 AM'));
+  }
+}
+
+section('Daily summary: the field writes its own day and nothing more');
+{
+  await post('/ingest', {
+    case_no: 'API-DSFIELD-1', service: 'Surveillance',
+    client_name: 'Field Client', subject_name: 'Field Subject',
+    objective: 'Document daily activity',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* Give dana a case with a worked day. */
+  await page.evaluate(async () => {
+    const post = (p2, b2) => fetch('/portal-api' + p2, { method: 'POST',
+      credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(b2 || {}) }).then(r => r.json());
+    const users = await (await fetch('/portal-api/users', { credentials: 'same-origin' })).json();
+    const dana = users.users.find(u => u.username === 'dana');
+    await post('/submissions/API-DSFIELD-1/assign', { user_id: dana.id });
+  });
+  const inv = await newPage();
+  await signIn(inv, 'dana', 'FieldWork2026x');
+  await rowFor(inv, 'API-DSFIELD-1').click();
+  await inv.waitForTimeout(500);
+  await inv.evaluate(async no => {
+    const post = (p2, b2) => fetch('/portal-api' + p2, { method: 'POST',
+      credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(b2 || {}) }).then(r => r.json());
+    await post(`/cases/${no}/day/start`, { day_date: '2026-08-20', start_time: '06:45' });
+    await post(`/cases/${no}/activity`, { at_date: '2026-08-20', at_time: '07:20',
+      description: 'Subject departed in gray sedan.' });
+    await post(`/cases/${no}/day/end`, { end_time: '14:30' });
+    const ws = await (await fetch(`/portal-api/cases/${no}/workspace`,
+      { credentials: 'same-origin' })).json();
+    await post(`/cases/${no}/reports/generate`, { day_id: ws.days[0].id });
+  }, 'API-DSFIELD-1');
+  await inv.reload();
+  await inv.waitForTimeout(700);
+  { const cbtn = inv.locator('.tabs button', { hasText: 'Cases' });
+    if (await cbtn.count()) { await cbtn.first().click(); await inv.waitForTimeout(400); } }
+  await rowFor(inv, 'API-DSFIELD-1').click();
+  await inv.waitForTimeout(500);
+  await wsTab(inv, 'Reports');
+  await inv.waitForTimeout(400);
+  await inv.locator('.rcard').first().click();
+  await inv.waitForTimeout(400);
+  await inv.locator('.rpnav button', { hasText: 'Daily summary' }).click();
+  await inv.waitForTimeout(400);
+  ok('the investigator has the builder on their own day',
+     await inv.locator('#ds_text').count() === 1);
+  await inv.locator('[data-act="dsSave"]').click();
+  await inv.waitForTimeout(500);
+  ok('and their save lands', has(await text(inv, '.dsb-wrap'), 'Saved'));
+
+  /* Submitted, the day is with the office: the builder goes read-only. */
+  await inv.evaluate(async no => {
+    const post = (p2, b2) => fetch('/portal-api' + p2, { method: 'POST',
+      credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(b2 || {}) }).then(r => r.json());
+    const ws = await (await fetch(`/portal-api/cases/${no}/workspace`,
+      { credentials: 'same-origin' })).json();
+    await post(`/cases/${no}/reports/${ws.reports[0].id}/status`, { status: 'submitted' });
+  }, 'API-DSFIELD-1');
+  await inv.reload();
+  await inv.waitForTimeout(700);
+  { const cbtn = inv.locator('.tabs button', { hasText: 'Cases' });
+    if (await cbtn.count()) { await cbtn.first().click(); await inv.waitForTimeout(400); } }
+  await rowFor(inv, 'API-DSFIELD-1').click();
+  await inv.waitForTimeout(500);
+  await wsTab(inv, 'Reports');
+  await inv.waitForTimeout(400);
+  await inv.locator('.rcard').first().click();
+  await inv.waitForTimeout(400);
+  await inv.locator('.rpnav button', { hasText: 'Daily summary' }).click();
+  await inv.waitForTimeout(400);
+  ok('with the report submitted, the summary is read-only for its writer',
+     await inv.locator('#ds_text[disabled]').count() === 1
+       && await inv.locator('[data-act="dsSave"]').count() === 0);
+  ok('and the screen says why', has(await text(inv, '.dsb-wrap'), 'with the office'));
+  /* The Worker is the boundary, not the page. */
+  const denied = await inv.evaluate(async no => {
+    const ws = await (await fetch(`/portal-api/cases/${no}/workspace`,
+      { credentials: 'same-origin' })).json();
+    const r = await fetch(`/portal-api/cases/${no}/days/${ws.days[0].id}/summary`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ narrative: 'around the review' }) });
+    return r.status;
+  }, 'API-DSFIELD-1');
+  ok('the Worker refuses the write regardless of the page', denied === 409, String(denied));
+  await inv.close();
+}
+
+section('Daily summary on a phone: one column, honest targets, nothing sideways');
+{
+  /* NAVIGATE THE WAY A PERSON ON A PHONE DOES — under 900px the rail is a
+     drawer behind the burger, the same lesson the timeline's phone section
+     already carries. */
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(1400);
+  const burger = page.locator('.burger');
+  if (await burger.isVisible()) { await burger.click(); await page.waitForTimeout(300); }
+  await page.locator('.side button, .tabs button', { hasText: 'Cases' }).first().click();
+  await page.waitForTimeout(600);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(500);
+  await wsTab(page, 'Reports');
+  await page.waitForTimeout(400);
+  await page.locator('.rcard', { hasText: '2026-08-20' }).first().click();
+  await page.waitForTimeout(400);
+  await page.locator('.rpnav button', { hasText: 'Daily summary' }).click();
+  await page.waitForTimeout(500);
+
+  const over = await page.evaluate(() =>
+    document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  ok('no horizontal overflow at 390px', over <= 0, String(over));
+  const ta = await page.evaluate(() => {
+    const el = document.getElementById('ds_text');
+    return el ? parseFloat(getComputedStyle(el).fontSize) : 0;
+  });
+  ok('the paragraph edits at 16px — iOS must not zoom', ta >= 16, String(ta));
+  const grid = await page.evaluate(() => {
+    const g = document.querySelector('.dsb-grid');
+    return g ? getComputedStyle(g).gridTemplateColumns.split(' ').length : 0;
+  });
+  ok('the builder grid stacks to one column', grid === 1, String(grid));
+  const box = await page.locator('[id^="ds_act_"]').first().boundingBox();
+  ok('a moment\'s checkbox is a thumb target', !!box && box.height >= 18 && box.width >= 18,
+     JSON.stringify(box));
+  const save = await page.locator('[data-act="dsSave"]').boundingBox();
+  ok('Save meets the 44px floor', !!save && save.height >= 44, JSON.stringify(save));
+  const wrap = await page.evaluate(() => {
+    const w = document.querySelector('.dsb-wrap');
+    const p = document.querySelector('.wspanel .quick') || w.parentElement;
+    return { w: w.getBoundingClientRect().width, p: p.getBoundingClientRect().width };
+  });
+  ok('the builder fills its panel and no more', wrap.w <= wrap.p + 1,
+     JSON.stringify(wrap));
+}
 
 section('Evidence integrity: the card states the record and the office can act on it');
 {
