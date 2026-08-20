@@ -159,9 +159,17 @@ default; a case is a snapshot"*.
 after merge.** Until it runs the directory says so, the pickers do not offer,
 and the one write returns 503 naming the workflow.
 
-State at the last push (`e3744b2`): worker suite **2081/0**, deploy guard
-**68/0**, the Unit 7 portal sections **44/0** run in isolation, and the full
-portal suite running once for regression.
+Two independent reviews audited the diff — one adversarially against the
+boundary claims, one line by line against the owner's brief. The boundaries
+held; twelve defects elsewhere were found and fixed, each with a test (see the
+commit at `4610487`). The two worth remembering are in CLAUDE.md: the case
+workspace was running the whole duplicate check on every open, and one search
+statement could bind more parameters than D1 allows — green in every test,
+broken only in production.
+
+State: worker suite **2128/0**, intake **236/0** (untouched), deploy guard
+**68/0**, the Unit 7 portal sections **70/0** in isolation, full portal suite
+running once for regression.
 
 ### (superseded) HOLD — item 7 waited for the owner's Unit 6 review
 

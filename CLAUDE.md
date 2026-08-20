@@ -419,13 +419,33 @@ profile table, so a submitted payload naming a `profile_id` links nothing
 (asserted). `WS.profile` is admin-gated like `WS.legal`; the case list gained no
 profile columns; investigators get no directory, no picker, no chip.
 
-Two page bugs this unit found, both familiar: the quick-intake form was
-uncontrolled, so the repaint after choosing a profile would have discarded
-whatever was typed and submitted the empty value while reporting success (it
-holds a draft now and collects before every repaint — the `EDIT_DRAFT` rule);
-and the directory only fetched when it had never loaded, so a firm saved from a
-case was missing from the screen whose whole job is answering "do we already
-have them?".
+**A match is computed when an admin asks, never when they open a case.** The
+first build ran the whole duplicate check inside the case workspace read — four
+profile-table reads on the most-opened screen in the portal, billed per row
+read, for a question nobody had asked, behind a comment claiming they had.
+**Look for a match** is a button, and `GET /cases/:no/profile-match` is what it
+calls. The comparisons that DO run unasked (name, address, phone equality) are
+indexed lookups; the substring search is not, and `PROFILES.md` says so rather
+than claiming otherwise.
+
+**No statement may grow with the customer's data.** The search once built one
+query with up to 401 bound parameters — D1 caps them, `node:sqlite` does not,
+so it was green in every test and broken only in production. `CANDIDATE_CAP`
+and `PAGE_CAP` bound it and a test counts the widest bind. The same class of
+mistake as the `client_token` column that never reached the live database.
+
+Four page and data bugs this unit found, all familiar shapes: the quick-intake
+form was uncontrolled, so the repaint after choosing a profile would have
+discarded whatever was typed and submitted the empty value while reporting
+success (it holds a draft now — the `EDIT_DRAFT` rule); the directory only
+fetched when it had never loaded, so a firm saved from a case was missing from
+the screen whose whole job is answering "do we already have them?"; the contact
+`<select>` was **inert**, because the page had no `change` listener at all — it
+rendered, it looked right, and choosing a different attorney did nothing (a
+control that draws is not a control that works, the Timestamp Video lesson at a
+different layer); and removing a contact blanked a case's record of who it was
+started from while the screen said "no case changed", so the link carries
+`contact_name` now — provenance is a snapshot like the rest of the case.
 
 **Adding these tables means a manual `portal-setup.yml` dispatch after merge.**
 
