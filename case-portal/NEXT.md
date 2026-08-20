@@ -28,7 +28,7 @@ item is finished.
 | 9 | Multiple Report Templates | ✅ **DONE — DEPLOYED** at `9979fca` (#195). LIVE VERIFY **OPEN** for the owner |
 | 10 | Case Timeline | ✅ **DONE — DEPLOYED** at `8d93a9e` (#196). LIVE VERIFY **OPEN** for the owner |
 | 11 | Evidence Integrity | ✅ **DONE — DEPLOYED** at `0c0c134` (#197). LIVE VERIFY **OPEN** for the owner |
-| 12 | **Report Daily Summary Builder** | not started — inserted by the owner 2026-08-20, mid-Unit-11 |
+| 12 | Report Daily Summary Builder | ✅ **DONE — DEPLOYED** at `46ccad6` (#198). LIVE VERIFY **OPEN** for the owner |
 | 13 | **Portal palette normalization** | not started — queued by the owner 2026-08-20, mid-Unit-11 |
 | 14 | Storage Health | not started |
 | 15 | Case Closeout | not started |
@@ -185,6 +185,45 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Do not interrupt the current coding unit. Record this queue only"*, and
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
+
+## 📌 Unit 12 — what shipped (#198, `46ccad6`)
+
+**Report Daily Summary Builder — deterministic sentences over the day's own
+facts.** A sixth view on the report screen (a report IS one day) assembles
+each worked day's professional paragraph live from the day's recorded facts
+and the writer's explicit picks, then hands the words over. Detail in
+CLAUDE.md under *"The day writes its paragraph, and only a person writes the
+log"*; owner brief verbatim and derived decisions D1–D11 in
+`case-portal/DAILY-SUMMARY.md`.
+
+**No LLM, no inference, no case fact leaving the portal.** The `ds*` engine is
+deterministic templates; a missing value SHAPES the sentence (no year prints
+no year, "registered to unknown" cannot be produced); the weekday is computed
+at UTC from the date itself. The vehicle grammar, count words, owner clauses
+and every opening/closing variant are pinned to exact words in the suite.
+
+**`case_day_summary`** — one additive companion table, `day_id` PRIMARY KEY,
+narrative and selections in separate columns. The paragraph is a snapshot:
+later activity edits rewrite nothing, Rebuild asks first, typing claims the
+box and controls stop rewriting it through repaints and tab switches. Save
+follows the `/meta` rule. Write authority mirrors `saveReport` exactly, so the
+handoff boundary is inherited — a submitted day is 409 for its writer, and the
+paragraph reaches a package only inside a day section that passed the existing
+shippable gate. Prints prose-before-chronology in `#repdoc` and `#pkgdoc`
+under all six templates; both documents asserted clean of chips, brackets and
+form controls. The activity log is measured byte-identical across the
+builder's whole workflow.
+
+**Schema: `case_day_summary` — `portal-setup.yml` WAS dispatched after merge
+and succeeded** (run `32429215344`, against `46ccad6`). Both deploys green:
+site `32429203873`, portal Worker `32429203869`.
+
+**Suites at merge:** worker **2453/0**, portal **2190/0**, intake **236/0**
+(untouched), deploy guard **68/0**.
+
+**LIVE VERIFY (owner):** write a real day's paragraph on the phone — the
+builder at 390px, a vehicle sentence against a real vehicle record, the
+protected-wording flow, and how the paragraph reads on the printed package.
 
 ## 📌 Unit 11 — what shipped (#197, `0c0c134`)
 
@@ -598,6 +637,21 @@ node .github/test-deploy.mjs                    # expect 68 / 0
 
 Then the ordinary chain: PR → merge if green → pull master → deploy → live
 verify → **save point** → next unit (item 4, Admin report/mobile workflow fix).
+
+## 🚦 DEPLOYMENT — 2026-08-20, master `46ccad6` (#198) — Unit 12, Report Daily Summary Builder
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/intake/` + `/portal/` | `46ccad6` | `46ccad6` | **DEPLOYED** — `deploy.yml` 32429203873 success |
+| `api-case-portal` | `46ccad6` | `46ccad6` | **DEPLOYED** — `deploy-portal.yml` 32429203869 success |
+| Schema (`case_day_summary`) | `46ccad6` | applied | **`portal-setup.yml` 32429215344 success** — dispatched at merge, nothing else owed |
+| Save point | — | — | `save/2026-08-20-2334-46ccad6`, the merge push's automatic firing |
+
+Tests at merge: worker **2453/0**, portal **2190/0**, intake **236/0**, deploy
+guard **68/0**. The container has no outbound route to the live domain, so
+"applied" is the workflow's success against the merge SHA plus the deployed
+Worker whose `EXPECTED_TABLES` names the table — `/portal-api/health` on the
+owner's device is the final confirmation, the standing standard.
 
 ## 🚦 DEPLOYMENT — 2026-08-20, master `0c0c134` (#197) — Unit 11, Evidence Integrity
 
