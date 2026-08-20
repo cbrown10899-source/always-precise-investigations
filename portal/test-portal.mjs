@@ -11632,8 +11632,19 @@ section('Needs attention: an alert leaves because the thing was done');
   ok('recording the payment takes the retainer alert away',
      !has(mineText, 'Retainer outstanding') && !has(mineText, 'Retainer part paid'),
      mineText.slice(0, 200));
-  ok('while the case itself is still queued for the review it does need',
-     has(mineText, 'Intake'), mineText.slice(0, 200));
+  /* ASKED OF THE DATA, not the rendered card. The queue shows the first eight
+     and says so, and on a busy desk this case's remaining alert can sit below
+     that line — which is the cap working, not the alert being wrong. What must
+     be true is that the payment removed the PAYMENT alert and left the review
+     this case still needs. */
+  const mineAlerts = await page.evaluate(async no => {
+    const d = await (await fetch('/portal-api/attention', { credentials: 'same-origin' })).json();
+    return (d.alerts || []).filter(a => a.case_no === no).map(a => a.kind);
+  }, caseNo);
+  ok('the payment alert is gone from the list itself',
+     !mineAlerts.includes('payments'), JSON.stringify(mineAlerts));
+  ok('while the review this case still needs remains',
+     mineAlerts.includes('intakes'), JSON.stringify(mineAlerts));
   ok('and there was never a dismiss button to press',
      await page.locator('[data-act*="ismiss"]').count() === 0);
   await page.close();
