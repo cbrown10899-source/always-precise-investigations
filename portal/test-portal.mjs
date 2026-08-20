@@ -12364,6 +12364,224 @@ section('The timeline print region is its own, and adds no PDF writer');
 
 /* ------------------------------------------------------------------ report */
 
+/* =========================================================================
+   UNIT 11 — EVIDENCE INTEGRITY IN THE BROWSER
+
+   The Worker suite proves the hashing, the supersede history and the byte
+   discipline; these sections prove what a PERSON sees — the card states the
+   record truthfully, the actions answer where the button is, the manifest is
+   a readable document, and none of it costs a phone its layout. */
+
+section('Evidence integrity: the card states the record and the office can act on it');
+{
+  db.prepare(`INSERT INTO submissions (case_no, kind, status, client_name, subject_name, payload, created_at)
+     VALUES ('API-INTP-1', 'consumer', 'new', 'Hash Client', 'Subject H',
+             '{"objective":"Integrity on the card"}', ?)`).run(new Date().toISOString());
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-INTP-1').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Case media');
+
+  /* An upload through the page: the card carries the integrity block at once. */
+  const bytes = Buffer.alloc(2048, 71);
+  await page.locator('#ev_file').setInputFiles({
+    name: 'porch.jpg', mimeType: 'image/jpeg', buffer: bytes });
+  await page.locator('.btn', { hasText: 'Upload picture or document' }).click();
+  await page.waitForTimeout(800);
+  const card = () => page.locator('.evcard', { hasText: 'porch.jpg' }).first();
+  let integ = await card().locator('.integ').innerText();
+  ok('a fresh upload wears "Hash recorded", as an original, hashed by the portal',
+     has(integ, 'Hash recorded') && has(integ, 'Original') && has(integ, 'hashed by the portal')
+       && has(integ, 'Dropbox'), integ.slice(0, 200));
+
+  /* THE FULL DIGEST IS THE REAL ONE — read out of the details fold and
+     compared against a SHA-256 of the same bytes computed here. */
+  await card().locator('.integ summary').click();
+  const shown = (await card().locator('.integ details .hash').innerText()).trim();
+  const expected = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+  ok('the full hash is copyable text and is the digest of the filed bytes',
+     shown === expected, shown);
+  ok('and the abbreviation shows its ends, not a truncated record',
+     has(await card().locator('.integ').innerText(), expected.slice(0, 4)));
+
+  /* VERIFY: match while the bytes stand, mismatch the moment they differ. */
+  await card().locator('[data-act="ihVerify"]').click();
+  await page.waitForTimeout(600);
+  ok('verify against unchanged bytes says the current bytes match',
+     has(await card().locator('.integ').innerText(), 'match the recorded hash'));
+  const key = db.prepare(`SELECT r2_key FROM case_evidence WHERE case_no='API-INTP-1' AND filename='porch.jpg'`)
+    .get().r2_key.replace(/^dropbox:/, '');
+  await page.evaluate(() => {});           // settle
+  DBX.files.set(key, Buffer.alloc(2048, 72));
+  await card().locator('[data-act="ihVerify"]').click();
+  await page.waitForTimeout(600);
+  integ = await card().locator('.integ').innerText();
+  ok('changed bytes read as NOT matching, with the current digest shown',
+     has(integ, 'do NOT match') && has(integ, 'now:'), integ.slice(0, 260));
+
+  /* A metadata edit is not a file event: reclassify, and the record stands. */
+  await card().locator('[data-act="evClass"]').selectOption('internal_only');
+  await page.waitForTimeout(600);
+  ok('reclassifying does not move the hash',
+     (await card().locator('.integ').innerText()).includes(expected.slice(0, 4)));
+
+  /* A FILE FROM BEFORE THE FEATURE: "Not yet recorded" plus the one explicit
+     way forward, which reads the file once and fills the record in. */
+  DBX.files.set('/API-INTP-1/Photos/older.jpg', Buffer.alloc(900, 50));
+  db.prepare(`INSERT INTO case_evidence (case_no, r2_key, filename, content_type, size_bytes,
+      classification, uploaded_at) VALUES ('API-INTP-1', 'dropbox:/API-INTP-1/Photos/older.jpg',
+      'older.jpg', 'image/jpeg', 900, 'client_deliverable', '2026-07-02T10:00:00.000Z')`).run();
+  await page.locator('.close').click();
+  await page.waitForTimeout(300);
+  await rowFor(page, 'API-INTP-1').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Case media');
+  const older = () => page.locator('.evcard', { hasText: 'older.jpg' }).first();
+  integ = await older().locator('.integ').innerText();
+  ok('a historical file reads "Not yet recorded" — never a guessed hash',
+     has(integ, 'Not yet recorded') && has(integ, 'No hash has been captured'));
+  await older().locator('[data-act="ihRecord"]').click();
+  await page.waitForTimeout(800);
+  integ = await older().locator('.integ').innerText();
+  ok('Record integrity hash reads the file once and the card turns recorded',
+     has(integ, 'Hash recorded') && has(integ, 'hashed by the portal'), integ.slice(0, 200));
+
+  await page.close();
+}
+
+section('Evidence integrity: the field sees the record and holds no lever');
+{
+  /* dana holds API-20260812-4001 from the assignment section. Their own upload
+     through the page creates the record they then see — the same round trip the
+     field actually makes. */
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Case media');
+  await page.locator('#ev_file').setInputFiles({
+    name: 'field.jpg', mimeType: 'image/jpeg', buffer: Buffer.alloc(1200, 80) });
+  await page.locator('.btn', { hasText: 'Upload picture or document' }).click();
+  await page.waitForTimeout(800);
+  const integs = page.locator('.integ');
+  ok('an investigator sees integrity on the case they hold',
+     (await integs.count()) >= 1);
+  ok('but no Verify, no Record — reading bytes back is the office\'s act',
+     (await page.locator('[data-act="ihVerify"]').count()) === 0
+       && (await page.locator('[data-act="ihRecord"]').count()) === 0);
+  ok('and no manifest door either',
+     (await page.locator('[data-act="manOpen"]').count()) === 0);
+  await page.close();
+}
+
+section('The evidence manifest: a readable document, printable, honest when it fails');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-INTP-1').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Case media');
+
+  await page.locator('[data-act="manOpen"]').click();
+  await page.waitForTimeout(700);
+  const doc = await text(page, '#mandoc');
+  ok('the manifest names the case and counts its files',
+     has(doc, 'Evidence Integrity Manifest') && has(doc, 'API-INTP-1') && has(doc, 'file(s)'));
+  ok('every recorded file prints its full SHA-256',
+     (doc.match(/SHA-256 [0-9a-f]{64}/g) || []).length >= 2, doc.slice(0, 300));
+  ok('roles and classifications ride along',
+     has(doc, 'Original') && has(doc, 'Internal only'));
+  ok('and the wording claims a portal record, not a legal blessing',
+     has(doc, 'not a third-party authentication'));
+  const whole = await text(page, '#dlgBody');
+  ok('nothing secret is anywhere near it',
+     !/RT-test|sl\.FAKE|Bearer|refresh_token/i.test(whole));
+
+  /* PRINT is the existing print-region pattern: the body class flips, #mandoc
+     is the visible region, and no second PDF writer exists anywhere. */
+  await page.evaluate(() => { window.print = () => { window.__printed = true; }; });
+  await page.locator('[data-act="manPrint"]').click();
+  const printedVia = await page.evaluate(() => ({
+    printed: Boolean(window.__printed),
+    cls: document.body.className,
+  }));
+  ok('Print goes through the browser dialog with the manifest as the print region',
+     printedVia.printed && /printing-manifest/.test(printedVia.cls), JSON.stringify(printedVia));
+  await page.waitForTimeout(600);
+  ok('and the page comes back out of print dress',
+     !/printing-manifest/.test(await page.evaluate(() => document.body.className)));
+
+  await page.locator('[data-act="manBack"]').click();
+  await page.waitForTimeout(400);
+  ok('Back lands on Case media, not somewhere new',
+     has(await text(page, '#dlgBody'), 'Case media'));
+
+  /* A FAILED READ SAYS SO — never an empty manifest. */
+  await page.route('**/portal-api/cases/*/manifest', r => r.abort());
+  await page.locator('[data-act="manOpen"]').click();
+  await page.waitForTimeout(600);
+  const failed = await text(page, '#dlgBody');
+  ok('a manifest that could not load says so and offers to try again',
+     !has(failed, 'Evidence Integrity Manifest') && (await page.locator('[data-act="manOpen"]').count()) >= 1,
+     failed.slice(0, 200));
+  await page.unroute('**/portal-api/cases/*/manifest');
+  await page.close();
+}
+
+section('Evidence integrity on a phone: the hash wraps, the buttons reach the floor');
+{
+  /* Navigate the way a person on a phone does — under 900px the rail is a
+     drawer behind the burger, and signIn's straight click at Cases would wait
+     on a rendered, invisible button. */
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(1200);
+  const burger = page.locator('.burger');
+  if (await burger.isVisible()) { await burger.click(); await page.waitForTimeout(300); }
+  await page.locator('.side button, .tabs button', { hasText: 'Cases' }).first().click();
+  await page.waitForTimeout(600);
+  await page.locator('tbody tr', { hasText: 'API-INTP-1' }).first().click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Case media');
+
+  /* No sideways scroll with a 64-character token on screen. */
+  await page.locator('.evcard .integ summary').first().click();
+  await page.waitForTimeout(200);
+  const m = await page.evaluate(() => {
+    const doc = document.documentElement;
+    const hash = document.querySelector('.integ details .hash');
+    const card = hash && hash.closest('.evcard');
+    const btn = document.querySelector('.integ .btn');
+    const b = btn && btn.getBoundingClientRect();
+    return {
+      overflow: doc.scrollWidth - doc.clientWidth,
+      hashInside: hash && card ? hash.getBoundingClientRect().right <= card.getBoundingClientRect().right + 1 : null,
+      btnH: b ? b.height : 0,
+    };
+  });
+  ok('the page does not scroll sideways with a full hash open', m.overflow <= 0, String(m.overflow));
+  ok('the sixty-four characters wrap inside their own card', m.hashInside === true);
+  ok('the integrity buttons meet the 44px floor', m.btnH >= 44, String(m.btnH));
+
+  /* The manifest on the same phone: readable, and still no sideways scroll. */
+  await page.locator('[data-act="manOpen"]').click();
+  await page.waitForTimeout(700);
+  const m2 = await page.evaluate(() => ({
+    overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    rows: document.querySelectorAll('#mandoc .man-i').length,
+  }));
+  ok('the manifest fits the phone', m2.overflow <= 0, String(m2.overflow));
+  ok('with its rows intact', m2.rows >= 2, String(m2.rows));
+  await page.close();
+}
+
 await browser.close();
 server.close();
 

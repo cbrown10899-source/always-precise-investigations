@@ -4366,6 +4366,15 @@ async function caseWorkspace(env, user, caseNo) {
   const photoStamps = missingForStamps.includes('photo_stamp')
     ? [] : await photoStampsFor(env, caseNo);
 
+  /* Unit 11: the live integrity record for each artifact, metadata only —
+     no byte is read to draw a hash that is already recorded. Null (not [])
+     when the table has not arrived, so the page can say "not set up yet"
+     instead of drawing every file as unrecorded. Both roles receive it:
+     an investigator who can open the case may see the hash of evidence they
+     can already download, minus `storage_ref`, which is office filing. */
+  const integrity = missingForStamps.includes('evidence_integrity')
+    ? null : await integrityFor(env, caseNo, admin);
+
   // Follow-up tasks (priority 19): the office sees them all; an investigator
   // only the ones assigned to them.
   const { results: tasks } = await env.DB.prepare(
@@ -4482,6 +4491,7 @@ async function caseWorkspace(env, user, caseNo) {
     evidence: evidence || [],
     video_stamps: videoStamps,
     photo_stamps: photoStamps,
+    integrity,
     /* UNIT 6 — the firm, the matter, the dates and the arrangement. ADMIN
        ONLY: who is paying is exactly what an investigator is never sent, and
        every one of these fields names the paying side. The subject fields the
@@ -6731,6 +6741,196 @@ async function evidenceUsage(env) {
 
 const EVIDENCE_CLASSES = ['client_deliverable', 'internal_only', 'do_not_use', 'needs_review', 'needs_redaction'];
 
+/* ------------------------------------------------------- EVIDENCE INTEGRITY
+
+   Unit 11. The owner's brief is verbatim in case-portal/EVIDENCE-INTEGRITY.md
+   and the decisions this build DERIVED are listed there one per entry; read it
+   before changing any of this.
+
+   THE HASH DESCRIBES THE EXACT BYTES OF THE ARTIFACT IT IS RECORDED AGAINST.
+   An original and its timestamped copy are two artifacts and will have two
+   different hashes — this file never claims otherwise, and there is no code
+   path that copies one artifact's digest onto another.
+
+   WHERE THE HASHING HAPPENS IS THE WHOLE DESIGN. Every supported artifact is
+   hashed AT THE MOMENT IT IS ALREADY BEING FILED, out of the buffer the route
+   is holding anyway: the upload, the timestamped photograph and the report PDF
+   all read `file.arrayBuffer()` before handing it to Dropbox, so hashing costs
+   one digest over bytes that are already in memory and NOTHING is downloaded
+   to compute it. The one exception is the timestamped video, which arrives in
+   8 MB pieces and is never in one place here at all — see `hash_origin`.
+
+   AND NOTHING IS BACKFILLED. Historical files are not fetched from Dropbox to
+   populate this table; they read as "not yet recorded" until an admin asks. */
+
+const INTEGRITY_ARTIFACTS = ['evidence', 'video_stamp', 'report_pdf'];
+const INTEGRITY_ROLES = ['original', 'derivative'];
+const INTEGRITY_DERIVATIVES = ['timestamped_photo', 'timestamped_video', 'report_pdf', 'other_generated'];
+const INTEGRITY_ORIGINS = ['worker', 'device'];
+const HEX64 = /^[0-9a-f]{64}$/;
+const INTEGRITY_NOT_SET_UP = 'Evidence integrity is not set up on this database yet. '
+  + 'Run the portal-setup workflow once and try again.';
+
+/* The ceiling on a re-read. Recording or verifying a hash for a file already in
+   storage means holding it whole, and this Worker's memory is not the place to
+   discover that a 400 MB clip does not fit. It defaults to the per-file upload
+   limit because anything filed through this portal is already under it, and it
+   is env-overridable so the tests can exercise the refusal with small files. */
+function integrityReadCap(env) {
+  const n = parseInt(env && env.INTEGRITY_MAX_BYTES, 10);
+  return Number.isFinite(n) && n > 0 ? n : storageLimits(env).maxFileBytes;
+}
+
+/** SHA-256 of raw bytes, lowercase hex. The one hashing primitive for this
+    feature; `sha256Hex` above takes a string and is for tokens. */
+async function sha256Bytes(buf) {
+  return hex(await crypto.subtle.digest('SHA-256', buf));
+}
+
+async function integrityMissing(env) {
+  return (await missingTables(env)).includes('evidence_integrity');
+}
+
+/* WRITE ONE INTEGRITY RECORD, AND NEVER LIE ABOUT HAVING DONE IT.
+
+   Returns `{ ok: true, id }` or `{ ok: false, reason }` — it does not throw and
+   it does not decide what the caller's response should be. That matters at the
+   filing routes: the bytes are already safely stored by the time this runs, so
+   a failure here must not turn a successful upload into an error, and it must
+   not be swallowed either. The caller reports `integrity: 'not_recorded'` with
+   the reason, which is the brief's rule ("do not falsely show success if hash
+   recording failed") pointed in the direction that keeps the file.
+
+   A RE-RECORD SUPERSEDES. The previous live row for this artifact is stamped
+   and kept — `photo_stamp`'s shape, and the reason is the same: an integrity
+   history that can be quietly overwritten is worth nothing in the one
+   conversation it exists for. */
+async function recordIntegrity(env, rec) {
+  if (!env.DB) return { ok: false, reason: 'no_database' };
+  if (await integrityMissing(env)) return { ok: false, reason: 'not_set_up' };
+  if (!INTEGRITY_ARTIFACTS.includes(rec.artifact_kind)) return { ok: false, reason: 'bad_artifact' };
+  if (!INTEGRITY_ROLES.includes(rec.artifact_role)) return { ok: false, reason: 'bad_role' };
+  if (rec.derivative_type && !INTEGRITY_DERIVATIVES.includes(rec.derivative_type)) {
+    return { ok: false, reason: 'bad_derivative_type' };
+  }
+  if (!INTEGRITY_ORIGINS.includes(rec.hash_origin)) return { ok: false, reason: 'bad_origin' };
+  /* A DIGEST THAT IS NOT A DIGEST IS REFUSED. The device-computed path means a
+     value arrives over the wire, and "sha256" that is 12 characters of
+     something else would sit in the manifest looking like evidence. */
+  if (rec.sha256 != null && !HEX64.test(String(rec.sha256))) return { ok: false, reason: 'bad_hash' };
+  const now = nowIso();
+  try {
+    await env.DB.prepare(
+      `UPDATE evidence_integrity SET superseded_at = ?
+        WHERE artifact_kind = ? AND artifact_id = ? AND superseded_at IS NULL`)
+      .bind(now, rec.artifact_kind, rec.artifact_id).run();
+    const res = await env.DB.prepare(
+      `INSERT INTO evidence_integrity
+         (case_no, artifact_kind, artifact_id, filename, content_type, byte_size, sha256,
+          hash_origin, artifact_role, derivative_type, source_kind, source_id, source_ref,
+          storage_provider, storage_ref, capture_at, generated_at, filed_at, recorded_by, recorded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(rec.case_no, rec.artifact_kind, rec.artifact_id, rec.filename || null,
+            rec.content_type || null, Number.isFinite(rec.byte_size) ? rec.byte_size : null,
+            rec.sha256 || null, rec.hash_origin, rec.artifact_role, rec.derivative_type || null,
+            rec.source_kind || null, Number.isInteger(rec.source_id) ? rec.source_id : null,
+            rec.source_ref || null, rec.storage_provider || null, rec.storage_ref || null,
+            rec.capture_at || null, rec.generated_at || null, rec.filed_at || null,
+            rec.recorded_by || null, now).run();
+    return { ok: true, id: res.meta ? res.meta.last_row_id : null };
+  } catch { return { ok: false, reason: 'write_failed' }; }
+}
+
+/* Hash the bytes a filing route is already holding, and record them. Wrapped
+   because all three worker-side filing paths do exactly this and a fourth copy
+   of it is a fourth chance to forget the supersede or the provenance. */
+async function recordIntegrityForBytes(env, buf, rec) {
+  let digest = null;
+  try { digest = await sha256Bytes(buf); } catch { return { ok: false, reason: 'hash_failed' }; }
+  return recordIntegrity(env, { ...rec, sha256: digest, hash_origin: 'worker',
+                                byte_size: buf.byteLength });
+}
+
+/* THE LIVE RECORD FOR ONE ARTIFACT — the newest row that has not been
+   superseded. Everything on screen reads through here, so "the current record"
+   has one definition. */
+async function integrityRow(env, kind, id) {
+  if (await integrityMissing(env)) return null;
+  return env.DB.prepare(
+    `SELECT * FROM evidence_integrity
+      WHERE artifact_kind = ? AND artifact_id = ? AND superseded_at IS NULL
+      ORDER BY id DESC LIMIT 1`).bind(kind, id).first();
+}
+
+/* ORDINARY RENDERING READS METADATA AND NOTHING ELSE. This is the query the
+   case workspace runs: one bounded pass over the case's live integrity rows,
+   no join to storage, no byte anywhere near it.
+
+   `storage_ref` IS ADMIN-ONLY. It is the path inside the firm's own App Folder
+   — no token and no credential, but it is the office's filing rather than the
+   field's, and the investigator boundary in this project is an allow-list
+   rather than a judgement call. */
+function integrityOut(r, admin) {
+  return {
+    id: r.id, artifact_kind: r.artifact_kind, artifact_id: r.artifact_id,
+    filename: r.filename, content_type: r.content_type, byte_size: r.byte_size,
+    sha256: r.sha256, hash_origin: r.hash_origin, artifact_role: r.artifact_role,
+    derivative_type: r.derivative_type, source_kind: r.source_kind, source_id: r.source_id,
+    source_ref: r.source_ref, storage_provider: r.storage_provider,
+    capture_at: r.capture_at, generated_at: r.generated_at, filed_at: r.filed_at,
+    recorded_at: r.recorded_at, recorded_by: r.recorded_by_name || null,
+    ...(admin ? { storage_ref: r.storage_ref } : {}),
+  };
+}
+
+const INTEGRITY_CAP = 400;
+
+async function integrityFor(env, caseNo, admin) {
+  if (await integrityMissing(env)) return null;
+  const { results } = await env.DB.prepare(
+    `SELECT e.*, u.display_name AS recorded_by_name
+       FROM evidence_integrity e LEFT JOIN users u ON u.id = e.recorded_by
+      WHERE e.case_no = ? AND e.superseded_at IS NULL
+      ORDER BY e.id DESC LIMIT ?`).bind(caseNo, INTEGRITY_CAP).all();
+  return (results || []).map(r => integrityOut(r, admin));
+}
+
+/* READ AN ARTIFACT'S AUTHORITATIVE BYTES, ONCE, ON PURPOSE.
+
+   Only the two explicit admin actions call this — Record integrity hash and
+   Verify integrity. Nothing on an ordinary case open, nothing on the dashboard,
+   and never a sweep of a folder.
+
+   It refuses rather than guessing: a file the store will not give up is
+   `unavailable`, and one too large to hold is `too_large`. Neither writes
+   anything, because a hash nobody could compute is not a hash. */
+async function artifactBytes(env, row) {
+  const cap = integrityReadCap(env);
+  if (Number.isFinite(row.size_bytes) && row.size_bytes > cap) {
+    return { error: 'too_large', cap };
+  }
+  try {
+    if (isDropboxKey(row.r2_key)) {
+      const token = await dropboxAccessToken(env);
+      if (!token) return { error: 'unavailable', why: 'dropbox_unreachable' };
+      const got = await dropboxDownload(env, token, dropboxPathFromKey(row.r2_key));
+      if (!got) return { error: 'unavailable', why: 'missing_from_dropbox' };
+      const buf = await got.arrayBuffer();
+      if (buf.byteLength > cap) return { error: 'too_large', cap };
+      return { buf };
+    }
+    if (!env.EVIDENCE) return { error: 'unavailable', why: 'no_bucket' };
+    const obj = await env.EVIDENCE.get(row.r2_key);
+    if (!obj) return { error: 'unavailable', why: 'missing_from_bucket' };
+    const buf = await obj.arrayBuffer();
+    if (buf.byteLength > cap) return { error: 'too_large', cap };
+    return { buf };
+  } catch { return { error: 'unavailable', why: 'read_failed' }; }
+}
+
+function storageOfKey(key) { return isDropboxKey(key) ? 'dropbox' : 'r2'; }
+
+
 async function uploadEvidence(request, env, user, caseNo) {
   if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
   let form;
@@ -6824,8 +7024,13 @@ async function uploadEvidence(request, env, user, caseNo) {
      been put in two of them. */
   const folder = dropboxFolderFor(file.type);
   await dropboxEnsureCaseFolders(env, dbxToken, caseNo);
+  /* HELD ONCE, USED TWICE (Unit 11). The buffer was already being read whole to
+     hand to Dropbox; keeping the reference lets the digest be taken from the
+     same bytes rather than fetching the file back afterwards to hash it. No
+     second copy is made and nothing extra is read. */
+  const buf = await file.arrayBuffer();
   const meta = await dropboxUpload(env, dbxToken,
-    `/${caseNo}/${folder}/${dropboxStoredName(filename)}`, await file.arrayBuffer());
+    `/${caseNo}/${folder}/${dropboxStoredName(filename)}`, buf);
   /* NOTHING IS RECORDED UNTIL THE BYTES ARE SAFE. A row written before the
      upload succeeded is a case file the portal lists and cannot produce. */
   if (!meta) {
@@ -6842,8 +7047,29 @@ async function uploadEvidence(request, env, user, caseNo) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(caseNo, key, filename, file.type || null, file.size, classification,
           entryId, subjectId, note, user.id, now).run();
-  return json({ ok: true, id: res.meta ? res.meta.last_row_id : null,
-                usage: await evidenceUsage(env) }, 201);
+  const evId = res.meta ? res.meta.last_row_id : null;
+
+  /* THE INTEGRITY RECORD GOES AFTER THE ROW IT DESCRIBES, and its failure never
+     turns a stored file into an error: the bytes are safe by now, so the honest
+     answer is the upload succeeded and the hash did not get written, with the
+     reason. Reported rather than swallowed — the brief forbids both lies. */
+  const integ = evId == null ? { ok: false, reason: 'no_row' }
+    : await recordIntegrityForBytes(env, buf, {
+        case_no: caseNo, artifact_kind: 'evidence', artifact_id: evId,
+        filename, content_type: file.type || null,
+        /* AN UPLOADED FILE IS AN ORIGINAL. This route is the door material
+           comes IN through; the two derivative doors are elsewhere and say so
+           for themselves, and nothing here infers a source from a filename. */
+        artifact_role: 'original',
+        storage_provider: 'dropbox', storage_ref: meta.path_display,
+        /* FILED, NOT CAPTURED. When the picture was taken is the camera's to
+           say and this route is not told it — substituting the upload moment
+           would be the portal inventing a capture time. */
+        filed_at: now, recorded_by: user.id,
+      });
+  return json({ ok: true, id: evId, usage: await evidenceUsage(env),
+                integrity: integ.ok ? 'recorded' : 'not_recorded',
+                ...(integ.ok ? {} : { integrity_reason: integ.reason }) }, 201);
 }
 
 /* THE ONLY PLACE EVIDENCE BYTES LEAVE, whichever store they are in — which is
@@ -6942,7 +7168,45 @@ async function videoStampToDropbox(request, env, user, caseNo, stampId, step) {
      new column and no schema dispatch. */
   await env.DB.prepare('UPDATE video_stamp SET dropbox_path = ? WHERE id = ?')
     .bind(meta.path_display, stampId).run();
-  return json({ ok: true, path: meta.path_display });
+
+  /* THE ONE ARTIFACT THIS WORKER CANNOT HASH ITSELF, and the record says so.
+
+     A timestamped clip arrives in 8 MB pieces and is never in one place here —
+     that is the whole point of the session upload, and holding it whole to take
+     a digest would undo it. Web Crypto has no incremental digest, so there is
+     no honest way for the Worker to compute this one.
+
+     So the DEVICE THAT GENERATED THE FILE hashes it, out of the very blob it
+     just saved, and sends the digest with `finish`. `hash_origin: 'device'`
+     records that, exactly the way `photo_stamp.source` records whether a
+     timestamp came from the camera or from a person — an integrity record whose
+     origin is unstated is one nobody can weigh.
+
+     AND IT IS OPTIONAL. An older page that sends no digest still uploads; the
+     copy simply reads as not yet recorded rather than being refused, and a
+     value that is not a SHA-256 is refused by `recordIntegrity` rather than
+     stored looking like one. */
+  const claimed = String(b.sha256 || '').trim().toLowerCase();
+  let integ = { ok: false, reason: 'no_hash_sent' };
+  if (claimed) {
+    integ = await recordIntegrity(env, {
+      case_no: caseNo, artifact_kind: 'video_stamp', artifact_id: stampId,
+      filename: name, content_type: 'video/webm',
+      byte_size: Number.isInteger(offset) ? offset : null,
+      sha256: claimed, hash_origin: 'device',
+      artifact_role: 'derivative', derivative_type: 'timestamped_video',
+      /* THE SOURCE IS NOT IN THE PORTAL. The original clip never leaves the
+         device that shot it, so there is no id to point at — only the name it
+         was made from, which `video_stamp` already recorded. Saying 'external'
+         is the truthful answer; inventing an evidence id would not be. */
+      source_kind: 'external', source_ref: row.original_name || null,
+      storage_provider: 'dropbox', storage_ref: meta.path_display,
+      generated_at: nowIso(), filed_at: nowIso(), recorded_by: user.id,
+    });
+  }
+  return json({ ok: true, path: meta.path_display,
+                integrity: integ.ok ? 'recorded' : 'not_recorded',
+                ...(integ.ok ? {} : { integrity_reason: integ.reason }) });
 }
 
 /* THE FINAL REPORT AS A REAL FILE (owner, 2026-08-18: "Final Reports need a
@@ -7001,17 +7265,36 @@ async function saveBuildPdf(request, env, user, buildId) {
   }
   await dropboxEnsureCaseFolders(env, token, b.case_no);
   const name = `${b.case_no} report v${b.version || 1}.pdf`;
+  const buf = await file.arrayBuffer();
   const meta = await dropboxUpload(env, token,
-    `/${b.case_no}/Reports/${dropboxStoredName(name)}`, await file.arrayBuffer());
+    `/${b.case_no}/Reports/${dropboxStoredName(name)}`, buf);
   if (!meta) {
     return json({ error: 'Dropbox refused the file, so the report was not filed. '
       + 'Nothing was lost — download it or try again in a moment.', code: 'dropbox_unreachable' }, 503);
   }
 
+  const at = nowIso();
   await env.DB.prepare(
     'INSERT INTO build_events (build_id, action, detail, user_id, at) VALUES (?, ?, ?, ?, ?)')
-    .bind(buildId, 'report_pdf_saved', meta.path_display, user.id, nowIso()).run();
-  return json({ ok: true, path: meta.path_display, bytes: file.size });
+    .bind(buildId, 'report_pdf_saved', meta.path_display, user.id, at).run();
+
+  /* THE FILED PDF IS HASHED, AND ONLY BECAUSE IT WAS DELIBERATELY FILED. A PDF
+     the operator merely downloads is not an artifact this portal holds, so it
+     gets no record — the brief's "hash the final generated artifact IF it is
+     being deliberately filed". `artifact_id` is the BUILD, because a report PDF
+     is not a `case_evidence` row (a report of the case is not evidence in it)
+     and the build is what it is a rendering of. */
+  const integ = await recordIntegrityForBytes(env, buf, {
+    case_no: b.case_no, artifact_kind: 'report_pdf', artifact_id: buildId,
+    filename: name, content_type: 'application/pdf',
+    artifact_role: 'derivative', derivative_type: 'report_pdf',
+    source_kind: 'build', source_id: buildId, source_ref: `Case build v${b.version || 1}`,
+    storage_provider: 'dropbox', storage_ref: meta.path_display,
+    generated_at: at, filed_at: at, recorded_by: user.id,
+  });
+  return json({ ok: true, path: meta.path_display, bytes: file.size,
+                integrity: integ.ok ? 'recorded' : 'not_recorded',
+                ...(integ.ok ? {} : { integrity_reason: integ.reason }) });
 }
 
 async function serveEvidence(env, user, caseNo, eid) {
@@ -7091,6 +7374,251 @@ async function deleteEvidence(env, user, caseNo, eid) {
     .bind(user.id, nowIso(), eid).run();
   return json({ ok: true, usage: await evidenceUsage(env),
                 ...(remains ? { dropbox_file_remains: true } : {}) });
+}
+
+/* ------------------------------------------------- integrity on demand
+
+   TWO ADMIN ACTIONS AND NOTHING AUTOMATIC. Historical files are not swept, the
+   dashboard verifies nothing, and opening a case reads metadata only. Bytes are
+   re-read here and only here, because somebody pressed a button asking for it.
+
+   Both are admin-only. An investigator SEES the integrity record for evidence
+   they can already open — it rides with the workspace — but recording and
+   verifying spend bandwidth against the firm's Dropbox and are office actions,
+   the same boundary `editEvidence` already draws. */
+
+/** The evidence row plus its live integrity record, or a Response to return. */
+async function integrityTarget(env, user, caseNo, eid) {
+  if (!(await caseFor(env, user, caseNo))) return { res: json({ error: 'not found' }, 404) };
+  if (user.role !== 'admin') return { res: json({ error: ADMIN_ONLY }, 403) };
+  if (await integrityMissing(env)) {
+    return { res: json({ error: INTEGRITY_NOT_SET_UP, code: 'not_set_up' }, 503) };
+  }
+  /* SCOPED TO THE CASE IN THE SAME STATEMENT, so this route cannot be used to
+     ask whether some other case's evidence id exists — the brief's "do not
+     allow a hash endpoint to become a way to probe unrelated file existence".
+     A row on another case answers exactly as a row that never existed. */
+  const row = await env.DB.prepare(
+    `SELECT id, case_no, r2_key, filename, content_type, size_bytes, uploaded_at, deleted_at
+       FROM case_evidence WHERE id = ? AND case_no = ?`).bind(eid, caseNo).first();
+  if (!row) return { res: json({ error: 'not found' }, 404) };
+  return { row };
+}
+
+/* RECORD INTEGRITY HASH — the explicit backfill, one file at a time.
+
+   This is the only way a file that was filed before this feature existed gets a
+   hash, and it is deliberately a button rather than a migration: downloading
+   every historical object to populate a table would spend the firm's bandwidth
+   on a question nobody asked. */
+async function recordEvidenceHash(env, user, caseNo, eid) {
+  const t = await integrityTarget(env, user, caseNo, eid);
+  if (t.res) return t.res;
+  const row = t.row;
+  /* Removed evidence keeps its record and its earlier hash; there are no bytes
+     left to read, so there is nothing honest to record now. */
+  if (row.deleted_at) {
+    return json({ error: 'That file was removed from the case, so there are no bytes to hash. '
+      + 'Any hash recorded before it was removed is still on the record.',
+      code: 'deleted' }, 400);
+  }
+  const got = await artifactBytes(env, row);
+  if (got.error === 'too_large') {
+    return json({ error: `That file is larger than the ${Math.floor(got.cap / 1048576)} MB this `
+      + 'can hold in one piece, so its hash cannot be computed here.',
+      code: 'too_large', status: 'unavailable' }, 413);
+  }
+  if (got.error) {
+    /* NOTHING IS WRITTEN. "Do not invent a hash" — a file the store will not
+       give up leaves the record exactly as it was. */
+    return json({ error: 'The stored file could not be read just now, so nothing was recorded. '
+      + 'Its integrity status is unchanged.', code: got.why, status: 'unavailable' }, 503);
+  }
+
+  const existing = await integrityRow(env, 'evidence', row.id);
+  const digest = await sha256Bytes(got.buf);
+  const rec = await recordIntegrity(env, {
+    case_no: caseNo, artifact_kind: 'evidence', artifact_id: row.id,
+    filename: row.filename, content_type: row.content_type, byte_size: got.buf.byteLength,
+    sha256: digest, hash_origin: 'worker',
+    /* WHAT IT IS, NOT WHAT IT LOOKS LIKE. If this file is the stamped half of a
+       recorded pair it is a derivative of the original that pair names — read
+       from `photo_stamp`, which is an explicit relationship, never from the
+       filename. Anything else is an original. */
+    ...(await roleFromRecord(env, row.id)),
+    storage_provider: storageOfKey(row.r2_key), storage_ref: row.r2_key,
+    filed_at: row.uploaded_at || null, recorded_by: user.id,
+  });
+  if (!rec.ok) return json({ error: 'The hash could not be written.', code: rec.reason }, 500);
+  return json({ ok: true, sha256: digest, byte_size: got.buf.byteLength,
+                /* A RE-READ IS NAMED AS ONE, and it says whether the answer
+                   changed — recording over a differing hash silently is the
+                   thing the supersede history exists to prevent. */
+                re_recorded: !!existing,
+                ...(existing && existing.sha256
+                    ? { previous_sha256: existing.sha256, changed: existing.sha256 !== digest }
+                    : {}),
+                integrity: await integrityRowOut(env, 'evidence', row.id) });
+}
+
+/** Whether an evidence row is an original or the derivative half of a recorded
+    pair. The ONLY source is `photo_stamp` — an explicit relationship. */
+async function roleFromRecord(env, evidenceId) {
+  if ((await missingTables(env)).includes('photo_stamp')) {
+    return { artifact_role: 'original' };
+  }
+  const pair = await env.DB.prepare(
+    `SELECT p.original_id, e.filename FROM photo_stamp p
+       LEFT JOIN case_evidence e ON e.id = p.original_id
+      WHERE p.stamped_id = ? ORDER BY p.id DESC LIMIT 1`).bind(evidenceId).first();
+  if (!pair) return { artifact_role: 'original' };
+  return { artifact_role: 'derivative', derivative_type: 'timestamped_photo',
+           source_kind: 'evidence', source_id: pair.original_id,
+           source_ref: pair.filename || null };
+}
+
+async function integrityRowOut(env, kind, id) {
+  const r = await integrityRow(env, kind, id);
+  return r ? integrityOut(r, true) : null;
+}
+
+/* VERIFY INTEGRITY — does what is stored now still match what was recorded?
+
+   IT WRITES NOTHING, deliberately. A stored "verified on the 3rd" would draw as
+   a present-tense claim about bytes nobody has looked at since, which is the
+   failure this project has already been bitten by in three other places. The
+   answer is about NOW, so it is computed now and shown now. */
+async function verifyEvidenceHash(env, user, caseNo, eid) {
+  const t = await integrityTarget(env, user, caseNo, eid);
+  if (t.res) return t.res;
+  const row = t.row;
+  const rec = await integrityRow(env, 'evidence', row.id);
+  if (!rec || !rec.sha256) {
+    return json({ status: 'not_recorded',
+      message: 'No hash has been recorded for this file yet, so there is nothing to compare against.' });
+  }
+  if (row.deleted_at) {
+    return json({ status: 'unavailable', recorded_sha256: rec.sha256,
+      message: 'That file was removed from the case, so its current bytes cannot be read.' });
+  }
+  const got = await artifactBytes(env, row);
+  if (got.error === 'too_large') {
+    return json({ status: 'unavailable', recorded_sha256: rec.sha256, code: 'too_large',
+      message: `That file is larger than the ${Math.floor(got.cap / 1048576)} MB this can hold in `
+        + 'one piece, so it cannot be re-read here.' });
+  }
+  if (got.error) {
+    /* UNAVAILABLE IS NOT A PASS. An unreadable file must never render as a
+       match — that is a failsafe reporting the opposite of the truth. */
+    return json({ status: 'unavailable', recorded_sha256: rec.sha256, code: got.why,
+      message: 'The stored file could not be read just now, so nothing could be compared.' });
+  }
+  const digest = await sha256Bytes(got.buf);
+  return json({
+    status: digest === rec.sha256 ? 'match' : 'mismatch',
+    recorded_sha256: rec.sha256, current_sha256: digest,
+    byte_size: got.buf.byteLength, recorded_at: rec.recorded_at,
+    message: digest === rec.sha256
+      ? 'The current bytes match the hash recorded by this portal.'
+      : 'The current bytes do NOT match the hash recorded by this portal.',
+  });
+}
+
+/* THE EVIDENCE MANIFEST — composed from integrity metadata and the evidence
+   rows beside it, on demand, admin-only.
+
+   NO BYTES ARE READ TO BUILD IT and no Dropbox call is made: everything in it
+   is already in D1. It carries no token, no credential and no share link —
+   `storage_provider` says where the file lives and `storage_ref` is the path
+   inside the firm's own App Folder, which is filing, not access. */
+async function evidenceManifest(env, user, caseNo) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  const missing = await missingTables(env);
+  const haveIntegrity = !missing.includes('evidence_integrity');
+
+  const { results: rows } = await env.DB.prepare(
+    `SELECT e.id, e.filename, e.content_type, e.size_bytes, e.classification, e.entry_id,
+            e.uploaded_at, e.deleted_at, e.r2_key, u.display_name AS uploaded_by
+       FROM case_evidence e LEFT JOIN users u ON u.id = e.uploaded_by
+      WHERE e.case_no = ? ORDER BY e.id ASC LIMIT ?`).bind(caseNo, INTEGRITY_CAP).all();
+
+  /* ONE STATEMENT for every integrity row on the case, then a pass over what is
+     already in memory — never one lookup per file. */
+  const byArtifact = new Map();
+  if (haveIntegrity) {
+    const { results: ints } = await env.DB.prepare(
+      `SELECT e.*, u.display_name AS recorded_by_name
+         FROM evidence_integrity e LEFT JOIN users u ON u.id = e.recorded_by
+        WHERE e.case_no = ? AND e.superseded_at IS NULL
+        ORDER BY e.id DESC LIMIT ?`).bind(caseNo, INTEGRITY_CAP).all();
+    for (const r of ints || []) byArtifact.set(r.artifact_kind + ':' + r.artifact_id, r);
+  }
+
+  let n = 0;
+  const items = (rows || []).map(e => {
+    const r = byArtifact.get('evidence:' + e.id);
+    return {
+      n: ++n, evidence_id: e.id, filename: e.filename, content_type: e.content_type,
+      byte_size: e.size_bytes, classification: e.classification,
+      uploaded_by: e.uploaded_by || null, filed_at: e.uploaded_at || null,
+      deleted_at: e.deleted_at || null,
+      storage_provider: storageOfKey(e.r2_key),
+      artifact_role: r ? r.artifact_role : null,
+      derivative_type: r ? r.derivative_type : null,
+      source_id: r ? r.source_id : null, source_ref: r ? r.source_ref : null,
+      capture_at: r ? r.capture_at : null, generated_at: r ? r.generated_at : null,
+      sha256: r ? r.sha256 : null, hash_origin: r ? r.hash_origin : null,
+      recorded_at: r ? r.recorded_at : null,
+      recorded_by: r ? (r.recorded_by_name || null) : null,
+      /* THE STATUS IS DERIVED FROM WHAT IS RECORDED, not from a stored flag —
+         so it cannot go stale, the same rule invoices already follow for
+         `overdue`. Nothing here claims a file was verified: only that a hash
+         is on record, or that none is. */
+      status: r && r.sha256 ? 'recorded' : 'not_recorded',
+    };
+  });
+
+  /* The artifacts that are NOT `case_evidence` rows — the filed report PDFs and
+     the timestamped video copies — listed apart, because they are not case
+     evidence and the manifest must not imply they are. */
+  const others = [];
+  if (haveIntegrity) {
+    for (const [k, r] of byArtifact) {
+      if (k.startsWith('evidence:')) continue;
+      others.push({
+        artifact_kind: r.artifact_kind, artifact_id: r.artifact_id, filename: r.filename,
+        content_type: r.content_type, byte_size: r.byte_size, sha256: r.sha256,
+        hash_origin: r.hash_origin, artifact_role: r.artifact_role,
+        derivative_type: r.derivative_type, source_ref: r.source_ref,
+        storage_provider: r.storage_provider, generated_at: r.generated_at,
+        filed_at: r.filed_at, recorded_at: r.recorded_at,
+        recorded_by: r.recorded_by_name || null,
+      });
+    }
+    others.sort((a, b) => String(a.filed_at || '').localeCompare(String(b.filed_at || '')));
+  }
+
+  const sub = await env.DB.prepare(
+    'SELECT case_no, client_name, subject_name, carrier, claim_number FROM submissions WHERE case_no = ?')
+    .bind(caseNo).first();
+
+  return json({
+    case_no: caseNo,
+    case: sub ? { client: sub.client_name, subject: sub.subject_name,
+                  carrier: sub.carrier, claim_number: sub.claim_number } : null,
+    items, other_artifacts: others,
+    counts: {
+      total: items.length,
+      recorded: items.filter(i => i.status === 'recorded').length,
+      not_recorded: items.filter(i => i.status === 'not_recorded').length,
+      removed: items.filter(i => i.deleted_at).length,
+    },
+    /* NAMED RATHER THAN IMPLIED — the Unit 10 rule. A manifest built before the
+       table arrived must not read as a case whose files have no hashes. */
+    ...(haveIntegrity ? {} : { missing_sources: ['evidence_integrity'] }),
+    generated_at: nowIso(),
+  });
 }
 
 /* ------------------------------------------------- video timestamp records
@@ -7362,8 +7890,12 @@ async function recordPhotoStamp(request, env, user, caseNo) {
   const base = String(original.filename || 'photo').replace(/\.[A-Za-z0-9]{1,8}$/, '');
   const filename = (base + '-timestamped.jpg').replace(/[^A-Za-z0-9._ -]/g, '_').slice(0, 120);
   await dropboxEnsureCaseFolders(env, dbxToken, caseNo);
+  /* Held once and used twice — see the note in `uploadEvidence`. The digest is
+     of THE COPY'S OWN BYTES: a timestamped derivative is a different file from
+     its original and this route never claims the two match. */
+  const buf = await file.arrayBuffer();
   const meta = await dropboxUpload(env, dbxToken,
-    `/${caseNo}/Photos/${dropboxStoredName(filename)}`, await file.arrayBuffer());
+    `/${caseNo}/Photos/${dropboxStoredName(filename)}`, buf);
   /* NOTHING IS RECORDED UNTIL THE BYTES ARE SAFE — and nothing about the
      original has been touched at any point above or below this line. */
   if (!meta) {
@@ -7398,10 +7930,30 @@ async function recordPhotoStamp(request, env, user, caseNo) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(caseNo, originalId, stampedId, new Date(takenMs).toISOString(), tz, source, user.id, now).run();
 
+  /* THE DERIVATIVE'S INTEGRITY RECORD, with the relationship stated rather than
+     inferred: `source_id` is the original's evidence id — the same id the
+     pairing itself is keyed on — never a guess from a similar filename. The
+     capture instant is the one that was burned into the pixels, which is the
+     only authoritative answer this route has, and `generated_at` is separate
+     from it because when the picture was taken and when the copy was made are
+     two different facts. */
+  const integ = stampedId == null ? { ok: false, reason: 'no_row' }
+    : await recordIntegrityForBytes(env, buf, {
+        case_no: caseNo, artifact_kind: 'evidence', artifact_id: stampedId,
+        filename, content_type: 'image/jpeg',
+        artifact_role: 'derivative', derivative_type: 'timestamped_photo',
+        source_kind: 'evidence', source_id: originalId, source_ref: original.filename || null,
+        storage_provider: 'dropbox', storage_ref: meta.path_display,
+        capture_at: new Date(takenMs).toISOString(), generated_at: now, filed_at: now,
+        recorded_by: user.id,
+      });
+
   /* Returned so the choice is observable and asserted rather than believed —
      the same reason every send route returns its `send_context`. */
   return json({ ok: true, id: stampedId, include_copy: includeCopy, classification: copyClass,
                 photo_stamps: await photoStampsFor(env, caseNo),
+                integrity: integ.ok ? 'recorded' : 'not_recorded',
+                ...(integ.ok ? {} : { integrity_reason: integ.reason }),
                 usage: await evidenceUsage(env) }, 201);
 }
 
@@ -8405,6 +8957,9 @@ const DEMO_SWEEP = [
 
   /* --- photo_stamp points at case_evidence TWICE, so it goes first --- */
   ['photo_stamp',           'DELETE FROM photo_stamp WHERE case_no LIKE ?'],
+  /* Integrity records go with the case they describe — a hash of a deleted test
+     file is not evidence of anything. Before case_evidence, which it points at. */
+  ['evidence_integrity',    'DELETE FROM evidence_integrity WHERE case_no LIKE ?'],
   ['legal_intake',          'DELETE FROM legal_intake WHERE case_no LIKE ?'],
   /* The LINK goes, the PROFILE stays. A link is case data; a firm is
      reference data that other cases still point at, so clearing a test case
@@ -9757,7 +10312,7 @@ const EXPECTED_TABLES = [
   'video_stamp', 'dropbox_auth', 'activity_source', 'activity_voice_event',
   'photo_stamp',
   'profile', 'profile_contact', 'profile_phone', 'case_profile',
-  'build_template',
+  'build_template', 'evidence_integrity',
 ];
 
 async function missingTables(env) {
@@ -10744,6 +11299,17 @@ async function route(request, env) {
      refuses this before it is reached — nothing extra to remember here. */
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/photo-stamp$/);
   if (m && method === 'POST') return recordPhotoStamp(request, env, user, m[1]);
+
+  /* Unit 11: integrity is explicit. Two byte-reading actions and one metadata
+     view; nothing here runs on an ordinary case open. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/evidence\/(\d{1,12})\/record-hash$/);
+  if (m && method === 'POST') return recordEvidenceHash(env, user, m[1], parseInt(m[2], 10));
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/evidence\/(\d{1,12})\/verify$/);
+  if (m && method === 'POST') return verifyEvidenceHash(env, user, m[1], parseInt(m[2], 10));
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/manifest$/);
+  if (m && method === 'GET') return evidenceManifest(env, user, m[1]);
 
   if (p === '/storage' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);

@@ -1488,3 +1488,71 @@ CREATE TABLE IF NOT EXISTS build_template (
   set_by   INTEGER REFERENCES users(id),
   set_at   TEXT    NOT NULL
 );
+
+/* ------------------------------------------------------- EVIDENCE INTEGRITY
+
+   Unit 11 (owner brief verbatim in case-portal/EVIDENCE-INTEGRITY.md). Enough
+   metadata to answer, for one artifact: what file is this, whose case, who put
+   it here, when it was captured / filed / generated, whether it is an original
+   or a derivative of something, what its SHA-256 is, where the authoritative
+   copy lives, and whether the bytes still match.
+
+   WHAT THIS IS NOT. It is an INTEGRITY RECORD, not a chain of custody: nothing
+   here records a custody transfer, because the portal does not observe one. The
+   wording everywhere reads "current bytes match the hash recorded by this
+   portal", never "verified" in the sense a court means it.
+
+   ONE ROW PER FILING, NOT PER FILE. `artifact_kind` + `artifact_id` name the
+   thing; the live record is the newest row for that pair with `superseded_at`
+   null. That is `photo_stamp`'s shape and it is here for the same reason — a
+   correction must not erase what was recorded before it, so a re-record
+   supersedes and the earlier hash stays readable. Nothing in this portal
+   replaces stored bytes (Dropbox uploads are `add` + autorename and there is no
+   replace route), so a superseding row is a re-READING of the same file, and
+   the history is what shows that the answer changed.
+
+   `sha256` IS NULLABLE AND THAT IS THE POINT. A file whose bytes cannot be read
+   gets no row at all rather than a placeholder — "do not invent a hash" — and
+   the column is nullable only so a future artifact class that is genuinely
+   size-exempt can be recorded without one. Nothing writes a null today.
+
+   `hash_origin` IS PROVENANCE, the same idea as `photo_stamp.source`. 'worker'
+   means this Worker held the bytes and hashed them. 'device' means the browser
+   that GENERATED the file hashed it there and sent the digest — the only
+   honest answer for a timestamped video, whose bytes never exist in one piece
+   anywhere but that device. An integrity record whose origin is unrecorded is
+   one nobody can weigh.
+
+   NO CHECK CONSTRAINTS, per the standing rule: `artifact_kind`, `artifact_role`
+   and `derivative_type` are validated in the Worker so a new artifact class is
+   an ordinary edit rather than a table rebuild schema.sql cannot do
+   idempotently.
+
+   NO MEDIA LIVES HERE. No blob column, no thumbnail, no copy — the bytes stay
+   in exactly one place and this table only describes them. */
+CREATE TABLE IF NOT EXISTS evidence_integrity (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no          TEXT    NOT NULL,
+  artifact_kind    TEXT    NOT NULL,   -- evidence | video_stamp | report_pdf (Worker-validated)
+  artifact_id      INTEGER NOT NULL,   -- the id within that kind
+  filename         TEXT,
+  content_type     TEXT,
+  byte_size        INTEGER,
+  sha256           TEXT,               -- 64 lowercase hex
+  hash_origin      TEXT    NOT NULL,   -- worker | device
+  artifact_role    TEXT    NOT NULL,   -- original | derivative
+  derivative_type  TEXT,               -- timestamped_photo | timestamped_video | report_pdf | other_generated
+  source_kind      TEXT,               -- evidence | build | external
+  source_id        INTEGER,            -- the id, when the source is held by the portal
+  source_ref       TEXT,               -- the name/reference, when it is not
+  storage_provider TEXT,               -- dropbox | r2 | device
+  storage_ref      TEXT,               -- dropbox path or r2 key; admin-only on the way out
+  capture_at       TEXT,               -- when the material was captured, if authoritative
+  generated_at     TEXT,               -- when a derivative was made
+  filed_at         TEXT,               -- when the portal received/filed it
+  recorded_by      INTEGER REFERENCES users(id),
+  recorded_at      TEXT    NOT NULL,
+  superseded_at    TEXT                -- null = the live record for this artifact
+);
+CREATE INDEX IF NOT EXISTS idx_eint_case ON evidence_integrity(case_no, id DESC);
+CREATE INDEX IF NOT EXISTS idx_eint_art  ON evidence_integrity(artifact_kind, artifact_id, id DESC);

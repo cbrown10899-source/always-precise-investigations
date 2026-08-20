@@ -12914,6 +12914,499 @@ section('Case timeline — a view, and only a view');
      !/-0?5:00|-0?4:00|UTC-5|EST\b.*hard/i.test(fn));
 }
 
+/* =========================================================================
+   UNIT 11 — EVIDENCE INTEGRITY
+
+   The owner's brief is in EVIDENCE-INTEGRITY.md. The property under test is
+   narrow and worth stating: the hash describes THE EXACT BYTES OF THE ONE
+   ARTIFACT it is recorded against, it is taken where the bytes already pass,
+   and nothing is ever downloaded, duplicated or invented to produce one. */
+
+const shaOf = async (bytes) =>
+  [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+    .map((b) => b.toString(16).padStart(2, '0')).join('');
+
+section('Evidence integrity: a filing is hashed out of the bytes it already holds');
+{
+  const env = freshEnv();
+  DBX.reset();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-INT1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+
+  const mk = (name, n, type, fill = 65) => new File([new Uint8Array(n).fill(fill)], name, { type });
+  const up = (file, extra = {}) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    for (const [k, v] of Object.entries(extra)) fd.append(k, v);
+    return worker.fetch(new Request(API + '/cases/API-INT1/evidence', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  };
+
+  const first = await jsonOf(await up(mk('gate.jpg', 1800, 'image/jpeg')));
+  ok('an upload reports its integrity record in the same breath',
+     first.integrity === 'recorded', JSON.stringify(first));
+  const row = await env.DB.prepare(
+    `SELECT * FROM evidence_integrity WHERE artifact_kind = 'evidence' AND artifact_id = ?`)
+    .bind(first.id).first();
+  ok('the record exists, on the right case', row && row.case_no === 'API-INT1');
+  ok('and its digest is a real SHA-256 of the bytes that were stored',
+     row.sha256 === await shaOf(new Uint8Array(1800).fill(65)), row.sha256);
+  ok('sixty-four lowercase hex characters, no more and no less',
+     /^[0-9a-f]{64}$/.test(row.sha256));
+  ok('an upload is an ORIGINAL, and the worker hashed it itself',
+     row.artifact_role === 'original' && row.hash_origin === 'worker');
+  ok('the record names where the authoritative copy lives',
+     row.storage_provider === 'dropbox' && String(row.storage_ref || '').startsWith('/API-INT1/Photos/'));
+  ok('filed time is the upload moment and capture time is NOT invented from it',
+     row.filed_at != null && row.capture_at == null);
+  ok('byte size rides with the digest it describes', row.byte_size === 1800);
+
+  /* SAME BYTES, SAME HASH — two files of identical content agree; a different
+     content disagrees. The definition of the tool, pinned once. */
+  const twin = await jsonOf(await up(mk('gate-again.jpg', 1800, 'image/jpeg')));
+  const other = await jsonOf(await up(mk('side.jpg', 1800, 'image/jpeg', 66)));
+  const shaFor = async id => (await env.DB.prepare(
+    `SELECT sha256 FROM evidence_integrity WHERE artifact_kind='evidence' AND artifact_id = ?`)
+    .bind(id).first()).sha256;
+  ok('the same bytes under two names carry the same hash',
+     await shaFor(twin.id) === row.sha256);
+  ok('and changed bytes carry a different one', await shaFor(other.id) !== row.sha256);
+
+  /* A METADATA EDIT IS NOT A FILE EVENT. Reclassifying does not touch bytes,
+     so the integrity record does not move — a hash that changed because a
+     label did would be describing the office, not the file. */
+  await call(env, `/cases/API-INT1/evidence/${first.id}`, { method: 'POST', cookie: admin,
+    body: { classification: 'internal_only', note: 'hold this one back' } });
+  const after = await env.DB.prepare(
+    `SELECT sha256, recorded_at, superseded_at FROM evidence_integrity
+      WHERE artifact_kind='evidence' AND artifact_id = ? ORDER BY id DESC`).bind(first.id).all();
+  ok('a classification edit leaves the hash record exactly as it was',
+     after.results.length === 1 && after.results[0].sha256 === row.sha256
+       && after.results[0].superseded_at == null);
+
+  /* THE WORKSPACE READS METADATA ONLY. Drawing recorded hashes must not cost
+     a single byte from storage. */
+  const before = DBX.calls.length;
+  const ws = await jsonOf(await call(env, '/cases/API-INT1/workspace', { cookie: admin }));
+  ok('the workspace carries the live integrity records',
+     Array.isArray(ws.integrity) && ws.integrity.length === 3);
+  ok('and fetched not one byte from storage to do it', DBX.calls.length === before,
+     DBX.calls.slice(before).join(' '));
+  const wsRec = ws.integrity.find(r => r.artifact_id === first.id);
+  ok('an admin sees the storage reference on the record', wsRec && typeof wsRec.storage_ref === 'string');
+}
+
+section('Evidence integrity: the derivative names its source, and neither claims the other');
+{
+  const env = freshEnv();
+  DBX.reset();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-INT2', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+
+  const orig = new File([new Uint8Array(2000).fill(1)], 'IMG_4021.jpg', { type: 'image/jpeg' });
+  const fd = new FormData(); fd.append('file', orig);
+  const upRes = await jsonOf(await worker.fetch(new Request(API + '/cases/API-INT2/evidence', {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env));
+  const origSha = (await env.DB.prepare(
+    `SELECT sha256 FROM evidence_integrity WHERE artifact_kind='evidence' AND artifact_id = ?`)
+    .bind(upRes.id).first()).sha256;
+
+  /* The timestamped copy is DIFFERENT bytes — that is the whole point of the
+     pair — and its record must say derivative-of rather than pretending. */
+  const sfd = new FormData();
+  sfd.append('file', new File([new Uint8Array(2600).fill(9)], 'x.jpg', { type: 'image/jpeg' }));
+  sfd.append('original_id', String(upRes.id));
+  sfd.append('taken_utc', '2026-08-19T18:32:00.000Z');
+  sfd.append('tz', 'America/New_York');
+  sfd.append('source', 'exif');
+  const st = await jsonOf(await worker.fetch(new Request(API + '/cases/API-INT2/photo-stamp', {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: sfd }), env));
+  ok('the timestamped copy files and records in one motion', st.integrity === 'recorded', JSON.stringify(st));
+
+  const rec = await env.DB.prepare(
+    `SELECT * FROM evidence_integrity WHERE artifact_kind='evidence' AND artifact_id = ?`)
+    .bind(st.id).first();
+  ok('the copy is a DERIVATIVE, and says of what kind',
+     rec.artifact_role === 'derivative' && rec.derivative_type === 'timestamped_photo');
+  ok('its source is the original\'s own id — an explicit relationship, never a filename guess',
+     rec.source_kind === 'evidence' && rec.source_id === upRes.id && rec.source_ref === 'IMG_4021.jpg');
+  ok('the burned instant is the capture time and the generation is its own moment',
+     rec.capture_at === '2026-08-19T18:32:00.000Z' && rec.generated_at != null
+       && rec.capture_at !== rec.generated_at);
+  ok('the derivative\'s hash is of ITS OWN bytes, not the original\'s',
+     rec.sha256 === await shaOf(new Uint8Array(2600).fill(9)) && rec.sha256 !== origSha);
+  const origAfter = await env.DB.prepare(
+    `SELECT sha256, superseded_at FROM evidence_integrity WHERE artifact_kind='evidence' AND artifact_id = ?`)
+    .bind(upRes.id).first();
+  ok('and making the copy left the original\'s record untouched',
+     origAfter.sha256 === origSha && origAfter.superseded_at == null);
+}
+
+section('Evidence integrity: the filed report PDF and the device-hashed video copy');
+{
+  const env = freshEnv();
+  env.DBX_CHUNK_BYTES = '1000';
+  DBX.reset();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-INT3', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+
+  /* THE REPORT PDF — hashed because it was deliberately FILED. */
+  const st = await jsonOf(await call(env, '/cases/API-INT3/build', { method: 'POST', cookie: admin }));
+  const pdfBytes = new Uint8Array(1500).fill(37);
+  const pfd = new FormData();
+  pfd.append('file', new File([pdfBytes], 'r.pdf', { type: 'application/pdf' }));
+  const saved = await jsonOf(await worker.fetch(new Request(API + `/build/${st.build.id}/report-pdf`, {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: pfd }), env));
+  ok('a filed report PDF records its integrity alongside the filing',
+     saved.ok === true && saved.integrity === 'recorded', JSON.stringify(saved));
+  const prec = await env.DB.prepare(
+    `SELECT * FROM evidence_integrity WHERE artifact_kind='report_pdf' AND artifact_id = ?`)
+    .bind(st.build.id).first();
+  ok('as a derivative of the build, hashed by the worker from the filed bytes',
+     prec.artifact_role === 'derivative' && prec.derivative_type === 'report_pdf'
+       && prec.source_kind === 'build' && prec.sha256 === await shaOf(pdfBytes));
+  ok('and it is NOT a case_evidence row — a report of the case is not evidence in it',
+     (await env.DB.prepare(`SELECT COUNT(*) AS n FROM case_evidence WHERE case_no='API-INT3'`).first()).n === 0);
+
+  /* THE TIMESTAMPED VIDEO — the one artifact the Worker never holds whole, so
+     the DEVICE's digest is recorded and the record says so. */
+  const vs = await jsonOf(await call(env, '/cases/API-INT3/video-stamp', { method: 'POST', cookie: admin,
+    body: { original_name: 'IMG_0500.mov', original_size: 4000,
+            start_utc: '2026-08-19T13:00:00.000Z', derivative_name: 'IMG_0500-timestamped.webm' } }));
+  const clip = new Uint8Array(2100).fill(5);
+  const s1 = await jsonOf(await worker.fetch(new Request(
+    API + `/cases/API-INT3/video-stamp/${vs.id}/dropbox/start`,
+    { method: 'POST', headers: { Origin: ORIGIN, Cookie: admin } }), env));
+  let off = 0;
+  while (off < clip.length) {
+    const part = clip.slice(off, off + s1.chunk_bytes);
+    const r = await jsonOf(await worker.fetch(new Request(
+      API + `/cases/API-INT3/video-stamp/${vs.id}/dropbox/append?session=${s1.session_id}&offset=${off}`,
+      { method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: part }), env));
+    off = r.offset;
+  }
+  const clipSha = await shaOf(clip);
+  const fin = await jsonOf(await worker.fetch(new Request(
+    API + `/cases/API-INT3/video-stamp/${vs.id}/dropbox/finish`,
+    { method: 'POST', headers: { Origin: ORIGIN, Cookie: admin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: s1.session_id, offset: off, sha256: clipSha }) }), env));
+  ok('a finish carrying the device digest records it', fin.integrity === 'recorded', JSON.stringify(fin));
+  const vrec = await env.DB.prepare(
+    `SELECT * FROM evidence_integrity WHERE artifact_kind='video_stamp' AND artifact_id = ?`)
+    .bind(vs.id).first();
+  ok('origin says the DEVICE hashed it — the worker never held these bytes whole',
+     vrec.hash_origin === 'device' && vrec.sha256 === clipSha);
+  ok('its source is named as external: the original clip never entered the portal',
+     vrec.artifact_role === 'derivative' && vrec.derivative_type === 'timestamped_video'
+       && vrec.source_kind === 'external' && vrec.source_ref === 'IMG_0500.mov' && vrec.source_id == null);
+
+  /* A DIGEST THAT IS NOT A DIGEST IS REFUSED, and an absent one is honest. */
+  const vs2 = await jsonOf(await call(env, '/cases/API-INT3/video-stamp', { method: 'POST', cookie: admin,
+    body: { original_name: 'B.mov', start_utc: '2026-08-19T13:00:00.000Z', derivative_name: 'b.webm' } }));
+  const s2 = await jsonOf(await worker.fetch(new Request(
+    API + `/cases/API-INT3/video-stamp/${vs2.id}/dropbox/start`,
+    { method: 'POST', headers: { Origin: ORIGIN, Cookie: admin } }), env));
+  const one = new Uint8Array(400).fill(2);
+  await worker.fetch(new Request(
+    API + `/cases/API-INT3/video-stamp/${vs2.id}/dropbox/append?session=${s2.session_id}&offset=0`,
+    { method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: one }), env);
+  const fin2 = await jsonOf(await worker.fetch(new Request(
+    API + `/cases/API-INT3/video-stamp/${vs2.id}/dropbox/finish`,
+    { method: 'POST', headers: { Origin: ORIGIN, Cookie: admin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: s2.session_id, offset: 400, sha256: 'not-a-hash' }) }), env));
+  ok('a junk value is refused rather than stored looking like evidence',
+     fin2.ok === true && fin2.integrity === 'not_recorded' && fin2.integrity_reason === 'bad_hash',
+     JSON.stringify(fin2));
+  ok('and nothing junk reached the table',
+     (await env.DB.prepare(`SELECT COUNT(*) AS n FROM evidence_integrity WHERE artifact_kind='video_stamp' AND artifact_id = ?`)
+       .bind(vs2.id).first()).n === 0);
+  ok('the upload itself still succeeded — the copy is filed either way',
+     typeof fin2.path === 'string' && DBX.files.has(fin2.path));
+}
+
+section('Evidence integrity: record on demand, verify on demand, and never a byte unasked');
+{
+  const env = freshEnv();
+  DBX.reset();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-INT4', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+
+  /* A FILE FROM BEFORE THE FEATURE: planted directly, the only way one can
+     exist, with real bytes already sitting in the store. */
+  DBX.files.set('/API-INT4/Photos/old-one.jpg', new Uint8Array(900).fill(50));
+  await env.DB.prepare(
+    `INSERT INTO case_evidence (case_no, r2_key, filename, content_type, size_bytes,
+       classification, uploaded_at) VALUES ('API-INT4', 'dropbox:/API-INT4/Photos/old-one.jpg',
+       'old-one.jpg', 'image/jpeg', 900, 'client_deliverable', '2026-07-01T12:00:00.000Z')`).run();
+  const eid = (await env.DB.prepare(`SELECT id FROM case_evidence WHERE case_no='API-INT4'`).first()).id;
+
+  /* NOT YET RECORDED, and nothing goes looking on its own. */
+  const b4 = DBX.calls.length;
+  const ws = await jsonOf(await call(env, '/cases/API-INT4/workspace', { cookie: admin }));
+  ok('a historical file simply has no integrity record yet',
+     Array.isArray(ws.integrity) && !ws.integrity.some(r => r.artifact_id === eid));
+  ok('and NOTHING downloaded it to change that — no automatic backfill, ever',
+     DBX.calls.length === b4);
+
+  /* VERIFY WITH NOTHING RECORDED says so, and reads nothing. */
+  const v0 = await jsonOf(await call(env, `/cases/API-INT4/evidence/${eid}/verify`,
+    { method: 'POST', cookie: admin }));
+  ok('verify with no recorded hash says not recorded, and does not invent one',
+     v0.status === 'not_recorded');
+
+  /* RECORD INTEGRITY HASH — the explicit act, one read, one record. */
+  const dl0 = DBX.calls.filter(c => c.includes('/2/files/download')).length;
+  const rec = await jsonOf(await call(env, `/cases/API-INT4/evidence/${eid}/record-hash`,
+    { method: 'POST', cookie: admin }));
+  ok('an explicit Record hash reads the file once and records the digest',
+     rec.ok === true && rec.sha256 === await shaOf(new Uint8Array(900).fill(50))
+       && DBX.calls.filter(c => c.includes('/2/files/download')).length === dl0 + 1);
+  ok('the record is honest about being first, not a re-reading', rec.re_recorded === false);
+  ok('and it rides back with role and provenance filled in',
+     rec.integrity && rec.integrity.artifact_role === 'original' && rec.integrity.hash_origin === 'worker');
+
+  /* VERIFY — match, then mismatch after the stored bytes change, then honest
+     unavailability when the store will not answer. */
+  const v1 = await jsonOf(await call(env, `/cases/API-INT4/evidence/${eid}/verify`,
+    { method: 'POST', cookie: admin }));
+  ok('verify against unchanged bytes: the current bytes match the recorded hash',
+     v1.status === 'match' && v1.recorded_sha256 === rec.sha256 && v1.current_sha256 === rec.sha256);
+  ok('and the wording claims exactly that much — a portal record, not a legal blessing',
+     /match the hash recorded by this portal/.test(v1.message));
+
+  DBX.files.set('/API-INT4/Photos/old-one.jpg', new Uint8Array(900).fill(51));
+  const v2 = await jsonOf(await call(env, `/cases/API-INT4/evidence/${eid}/verify`,
+    { method: 'POST', cookie: admin }));
+  ok('changed bytes are a MISMATCH, named in both digests',
+     v2.status === 'mismatch' && v2.recorded_sha256 === rec.sha256
+       && v2.current_sha256 !== rec.sha256);
+
+  DBX.down = true;
+  const v3 = await jsonOf(await call(env, `/cases/API-INT4/evidence/${eid}/verify`,
+    { method: 'POST', cookie: admin }));
+  ok('an unreachable store is UNAVAILABLE — never a false pass, never a false fail',
+     v3.status === 'unavailable' && v3.recorded_sha256 === rec.sha256);
+  const r2 = await call(env, `/cases/API-INT4/evidence/${eid}/record-hash`,
+    { method: 'POST', cookie: admin });
+  ok('and Record hash writes NOTHING it could not read', r2.status === 503
+     && (await env.DB.prepare(`SELECT COUNT(*) AS n FROM evidence_integrity WHERE artifact_id = ?`)
+         .bind(eid).first()).n === 1);
+  DBX.down = false;
+
+  /* A RE-RECORD SUPERSEDES AND SAYS THE ANSWER CHANGED — history kept. */
+  const rr = await jsonOf(await call(env, `/cases/API-INT4/evidence/${eid}/record-hash`,
+    { method: 'POST', cookie: admin }));
+  ok('re-recording names the previous digest and the fact it changed',
+     rr.re_recorded === true && rr.previous_sha256 === rec.sha256 && rr.changed === true);
+  const hist = await env.DB.prepare(
+    `SELECT sha256, superseded_at FROM evidence_integrity WHERE artifact_id = ? ORDER BY id`)
+    .bind(eid).all();
+  ok('the earlier record is superseded, kept and still readable',
+     hist.results.length === 2 && hist.results[0].superseded_at != null
+       && hist.results[0].sha256 === rec.sha256 && hist.results[1].superseded_at == null);
+
+  /* TOO LARGE is refused, not attempted. */
+  env.INTEGRITY_MAX_BYTES = '500';
+  const big = await call(env, `/cases/API-INT4/evidence/${eid}/record-hash`,
+    { method: 'POST', cookie: admin });
+  ok('a file over the read ceiling is refused by size, before any byte moves',
+     big.status === 413 && (await jsonOf(big)).code === 'too_large');
+  const vbig = await jsonOf(await call(env, `/cases/API-INT4/evidence/${eid}/verify`,
+    { method: 'POST', cookie: admin }));
+  ok('and verify says unavailable rather than pretending it compared',
+     vbig.status === 'unavailable' && vbig.code === 'too_large');
+  delete env.INTEGRITY_MAX_BYTES;
+
+  /* DELETED EVIDENCE: the tombstone keeps the history; the bytes are gone. */
+  await call(env, `/cases/API-INT4/evidence/${eid}/delete`, { method: 'POST', cookie: admin });
+  ok('deleting the evidence leaves every integrity row it ever had',
+     (await env.DB.prepare(`SELECT COUNT(*) AS n FROM evidence_integrity WHERE artifact_id = ?`)
+       .bind(eid).first()).n === 2);
+  const vdel = await jsonOf(await call(env, `/cases/API-INT4/evidence/${eid}/verify`,
+    { method: 'POST', cookie: admin }));
+  ok('verify on removed evidence is unavailable, with the recorded hash still shown',
+     vdel.status === 'unavailable' && typeof vdel.recorded_sha256 === 'string');
+  ok('and Record hash refuses to hash bytes that are no longer there',
+     (await call(env, `/cases/API-INT4/evidence/${eid}/record-hash`,
+       { method: 'POST', cookie: admin })).status === 400);
+}
+
+section('Evidence integrity: the manifest is metadata, complete and secret-free');
+{
+  const env = freshEnv();
+  DBX.reset();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const uname = 'mia';
+  const l = (await jsonOf(await invite(env, admin, { username: uname, display_name: uname, role: 'investigator' }))).url;
+  const t = new URL(l, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${t}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const mia = (await login(env, 'mia', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const miaId = users.users.find(u => u.username === 'mia').id;
+
+  await ingest(env, { case_no: 'API-INT5', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  await call(env, '/submissions/API-INT5/assign', { method: 'POST', cookie: admin, body: { user_id: miaId } });
+
+  const put = (name, n, fill, extra = {}) => {
+    const fd = new FormData();
+    fd.append('file', new File([new Uint8Array(n).fill(fill)], name, { type: 'image/jpeg' }));
+    for (const [k, v] of Object.entries(extra)) fd.append(k, v);
+    return worker.fetch(new Request(API + '/cases/API-INT5/evidence', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  };
+  const a = await jsonOf(await put('one.jpg', 700, 10));
+  await put('held.jpg', 800, 11, { classification: 'internal_only' });
+  /* One timestamped derivative, so the manifest has a relationship to show. */
+  const sfd = new FormData();
+  sfd.append('file', new File([new Uint8Array(750).fill(12)], 'x.jpg', { type: 'image/jpeg' }));
+  sfd.append('original_id', String(a.id));
+  sfd.append('taken_utc', '2026-08-19T15:00:00.000Z');
+  sfd.append('tz', 'America/New_York');
+  sfd.append('source', 'operator');
+  await worker.fetch(new Request(API + '/cases/API-INT5/photo-stamp', {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: sfd }), env);
+  /* And one filed report PDF, which must appear APART from the evidence. */
+  const st = await jsonOf(await call(env, '/cases/API-INT5/build', { method: 'POST', cookie: admin }));
+  const pfd = new FormData();
+  pfd.append('file', new File([new Uint8Array(600).fill(13)], 'r.pdf', { type: 'application/pdf' }));
+  await worker.fetch(new Request(API + `/build/${st.build.id}/report-pdf`, {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: pfd }), env);
+
+  const b4 = DBX.calls.length;
+  const man = await jsonOf(await call(env, '/cases/API-INT5/manifest', { cookie: admin }));
+  ok('the manifest lists every evidence row, numbered in filing order',
+     man.items.length === 3 && man.items[0].n === 1 && man.items[2].n === 3);
+  ok('each carries its digest, role and uploader',
+     man.items.every(i => /^[0-9a-f]{64}$/.test(i.sha256) && i.artifact_role && i.uploaded_by));
+  const deriv = man.items.find(i => i.artifact_role === 'derivative');
+  ok('the derivative names its source by id and by name',
+     deriv && deriv.source_id === a.id && deriv.source_ref === 'one.jpg'
+       && deriv.derivative_type === 'timestamped_photo');
+  ok('classification rides so the package rules can be respected downstream',
+     man.items.some(i => i.classification === 'internal_only'));
+  ok('the counts answer at a glance',
+     man.counts.total === 3 && man.counts.recorded === 3 && man.counts.not_recorded === 0);
+  ok('the filed report PDF is listed apart — it is not case evidence',
+     man.other_artifacts.length === 1 && man.other_artifacts[0].artifact_kind === 'report_pdf');
+  ok('building it read metadata only — not one byte, not one Dropbox call',
+     DBX.calls.length === b4);
+  const raw = JSON.stringify(man);
+  ok('and nothing secret is in it — no token, no credential, no tell-tale',
+     !/RT-test|sl\.FAKE|refresh|app-secret|Bearer/i.test(raw));
+
+  /* WHO MAY SEE WHAT. The manifest is the office's document. The workspace
+     integrity block reaches the field WITHOUT the office's filing paths. */
+  ok('an investigator is refused the manifest',
+     (await call(env, '/cases/API-INT5/manifest', { cookie: mia })).status === 403);
+  const wsMia = await jsonOf(await call(env, '/cases/API-INT5/workspace', { cookie: mia }));
+  ok('the field still sees integrity for a case that is theirs',
+     Array.isArray(wsMia.integrity) && wsMia.integrity.length === 4);
+  ok('but never the storage reference — office filing stays office',
+     wsMia.integrity.every(r => !('storage_ref' in r)));
+  ok('recording is an office action', (await call(env,
+     `/cases/API-INT5/evidence/${a.id}/record-hash`, { method: 'POST', cookie: mia })).status === 403);
+  ok('verifying too', (await call(env,
+     `/cases/API-INT5/evidence/${a.id}/verify`, { method: 'POST', cookie: mia })).status === 403);
+
+  /* THE PROBE. A hash route must not answer "does that id exist elsewhere":
+     another case's evidence id through this case's door reads NOT FOUND,
+     byte-identical to an id that never existed. */
+  await ingest(env, { case_no: 'API-INT6', service: 'Surveillance', client_name: 'C2', subject_name: 'S2' });
+  const ofd = new FormData();
+  ofd.append('file', new File([new Uint8Array(500).fill(14)], 'other.jpg', { type: 'image/jpeg' }));
+  const other = await jsonOf(await worker.fetch(new Request(API + '/cases/API-INT6/evidence', {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: ofd }), env));
+  const probe = await call(env, `/cases/API-INT5/evidence/${other.id}/verify`,
+    { method: 'POST', cookie: admin });
+  const ghost = await call(env, `/cases/API-INT5/evidence/999999/verify`,
+    { method: 'POST', cookie: admin });
+  ok('another case\'s id and a nonexistent id answer identically',
+     probe.status === 404 && ghost.status === 404
+       && (await jsonOf(probe)).error === (await jsonOf(ghost)).error);
+  ok('no session, no answer', (await call(env, '/cases/API-INT5/manifest', {})).status === 401);
+}
+
+section('Evidence integrity: the guards a new table owes');
+{
+  /* THE SOURCE-LEVEL FACTS, read rather than trusted. */
+  const src = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  const expected = (src.match(/const EXPECTED_TABLES = \[([\s\S]*?)\n\];/) || [, ''])[1];
+  ok('evidence_integrity is named in EXPECTED_TABLES', /'evidence_integrity'/.test(expected));
+  const sweep = (src.match(/const DEMO_SWEEP = \[([\s\S]*?)\n\];/) || [, ''])[1];
+  ok('and swept by case, before case_evidence which it points at',
+     sweep.indexOf("['evidence_integrity'") > -1
+       && sweep.indexOf("['evidence_integrity'") < sweep.indexOf("['case_evidence'"));
+  const ddl = fs.readFileSync(path.join(HERE, 'schema.sql'), 'utf8');
+  const table = (ddl.match(/CREATE TABLE IF NOT EXISTS evidence_integrity \(([\s\S]*?)\);/) || [, ''])[1];
+  ok('the table carries no CHECK — a new artifact kind is a Worker edit, never a rebuild',
+     table.length > 0 && !/CHECK/i.test(table));
+  ok('and no blob column — the record describes bytes and never holds them',
+     !/BLOB/i.test(table));
+
+  /* A DATABASE THE DISPATCH HAS NOT REACHED: everything degrades, nothing
+     throws, and the writes name the workflow to run. */
+  const env = freshEnv();
+  DBX.reset();
+  const db = new DatabaseSync(':memory:');
+  db.exec(SCHEMA.replace(/CREATE TABLE IF NOT EXISTS evidence_integrity[\s\S]*?\);/, '')
+                .replace(/CREATE INDEX IF NOT EXISTS idx_eint_[a-z]+\s+ON evidence_integrity[^;]*;/g, ''));
+  env.DB = d1(db);
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-INT7', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  const fd = new FormData();
+  fd.append('file', new File([new Uint8Array(400).fill(20)], 'p.jpg', { type: 'image/jpeg' }));
+  const up = await jsonOf(await worker.fetch(new Request(API + '/cases/API-INT7/evidence', {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env));
+  ok('an upload still succeeds before the dispatch — the file matters more than its ledger',
+     typeof up.id === 'number' && up.integrity === 'not_recorded' && up.integrity_reason === 'not_set_up',
+     JSON.stringify(up));
+  const ws = await jsonOf(await call(env, '/cases/API-INT7/workspace', { cookie: admin }));
+  ok('the workspace says the table has not arrived — null, not an empty ledger',
+     ws.integrity === null);
+  const rec = await call(env, `/cases/API-INT7/evidence/${up.id}/record-hash`,
+    { method: 'POST', cookie: admin });
+  ok('Record hash returns 503 naming the workflow to run',
+     rec.status === 503 && /portal-setup/.test((await jsonOf(rec)).error || ''));
+  const man = await jsonOf(await call(env, '/cases/API-INT7/manifest', { cookie: admin }));
+  ok('the manifest still renders and NAMES what it could not see',
+     man.items.length === 1 && (man.missing_sources || []).includes('evidence_integrity'));
+
+  /* THE SWEEP, against a live table: the TEST- rows go, the real case keeps
+     every record it ever had. */
+  const env2 = freshEnv();
+  DBX.reset();
+  await bootstrapAdmin(env2);
+  const admin2 = (await login(env2, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env2, { case_no: 'API-KEEP1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  const fd2 = new FormData();
+  fd2.append('file', new File([new Uint8Array(300).fill(30)], 'keep.jpg', { type: 'image/jpeg' }));
+  await worker.fetch(new Request(API + '/cases/API-KEEP1/evidence', {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin2 }, body: fd2 }), env2);
+  await call(env2, '/demo-case', { method: 'POST', cookie: admin2 });
+  const demo = (await env2.DB.prepare(
+    `SELECT case_no FROM submissions WHERE case_no LIKE 'TEST-%'`).first()).case_no;
+  const fd3 = new FormData();
+  fd3.append('file', new File([new Uint8Array(300).fill(31)], 'demo.jpg', { type: 'image/jpeg' }));
+  await worker.fetch(new Request(API + `/cases/${demo}/evidence`, {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin2 }, body: fd3 }), env2);
+  ok('the demo case put a row in the integrity table',
+     (await env2.DB.prepare(`SELECT COUNT(*) AS n FROM evidence_integrity WHERE case_no LIKE 'TEST-%'`)
+       .first()).n === 1);
+  await call(env2, '/demo-case/clear', { method: 'POST', cookie: admin2 });
+  ok('clearing the demo case sweeps its integrity rows',
+     (await env2.DB.prepare(`SELECT COUNT(*) AS n FROM evidence_integrity WHERE case_no LIKE 'TEST-%'`)
+       .first()).n === 0);
+  ok('and the real case\'s record is untouched',
+     (await env2.DB.prepare(`SELECT COUNT(*) AS n FROM evidence_integrity WHERE case_no = 'API-KEEP1'`)
+       .first()).n === 1);
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));
