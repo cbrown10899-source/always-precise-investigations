@@ -328,3 +328,64 @@ on every portal-setup run, so a column cannot be added to `case_reports`
 idempotently. That is a companion-table decision to be made when the unit is
 designed, against the same reasoning that produced `build_custom`,
 `activity_removed` and `photo_stamp`.
+
+---
+
+## BUILT — 2026-08-20 (Unit 12). The decisions this build DERIVED
+
+Each is separately overturnable; none is the owner's words unless quoted.
+
+- **D1 — The builder is a view on the report screen, not a new screen.** The
+  brief's flow opens "OPEN REPORT -> DAILY SUMMARIES -> SELECT WORKED DAY";
+  a report already IS one day (`idx_reports_day`), so the builder is a sixth
+  view (`Daily summary`) in the report's own sub-nav, and "select worked day"
+  is the report card list that already exists. Multi-day independence follows
+  from the shape instead of from bookkeeping.
+- **D2 — Storage is `case_day_summary`, keyed by `day_id` as PRIMARY KEY.**
+  `case_reports.body` already means the day's detailed chronology and has its
+  own editing rules; writing the paragraph into it would give one field two
+  writers. A companion table (the standing `ALTER TABLE` reasoning) with the
+  day as its key makes "do not carry yesterday's selections into another day"
+  structural. `narrative` (the authored text) and `config` (the selections)
+  are separate columns so regeneration never parses prose.
+- **D3 — The narrative is a SNAPSHOT.** Editing the activity log later
+  rewrites nothing stored; the load-time comparison flags a divergence and
+  the builder offers Rebuild, which asks first. This is the brief's "changing
+  Activity Log entries later must NOT silently rewrite a previously finalized
+  report narrative", applied from the first save rather than only at finalize.
+- **D4 — Write authority mirrors `saveReport`, exactly.** Admin always; the
+  day's own investigator while that day's report (if any) is still theirs
+  (`draft`/`needs_revision`); 409 "with the office" past that. No new
+  finalization authority anywhere. The paragraph can only reach a client
+  package inside a day section, and a day section only renders for a report
+  that passed the existing shippable gate — so the investigator→office
+  handoff boundary is inherited, not re-implemented.
+- **D5 — The sentences are deterministic templates in the page** (`ds*`
+  functions), composed from recorded values and explicit picks. No LLM, no
+  network call, no inference. A missing value shapes the sentence: no year
+  prints no year, no plate prints no plate clause, and "registered to
+  unknown" is a sentence the engine cannot produce.
+- **D6 — The weekday belongs to the date.** `dsWeekday` builds the date at
+  UTC and reads it back at UTC, so no machine's zone can shift 08-20 into
+  Wednesday — the timezone lesson from the timeline, applied at the other
+  end.
+- **D7 — Manual-edit protection is a claimed-paragraph flag.** The moment the
+  writer types in the textarea, `manual` flips and no control rewrites the
+  box; controls keep collecting (the EDIT_DRAFT rule) so nothing typed is
+  lost to a repaint. Rebuild is the one way back, it confirms first, and a
+  declined confirm changes nothing.
+- **D8 — Source chips (`FROM DAY` / `FROM CASE` / `FROM ACTIVITY`) exist only
+  in the builder.** The documents are asserted clean of them, of brackets,
+  and of any form control inside the print regions.
+- **D9 — The paragraph prints in BOTH documents, prose before chronology:**
+  the day's own draft (`#repdoc`) and the package's day section (`#pkgdoc`,
+  all six templates). Nothing about the raw activity chronology is removed —
+  the admin already owns the report body and can trim it deliberately.
+- **D10 — `buildState` names it `narrative`**, because `day_summary` on those
+  rows already means the field day's own end-of-day note (`case_days.summary`)
+  — one key, one meaning.
+- **D11 — Deferred, named:** per-sentence regeneration (the whole paragraph
+  rebuilds; individual sentence blocks would need a structured paragraph
+  model), reordering of included moments (they print in the day's own
+  chronological order, which is what a chronology is), and any AI polishing
+  (the owner's own line: a separate explicit decision).

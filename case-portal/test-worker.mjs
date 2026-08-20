@@ -13407,6 +13407,143 @@ section('Evidence integrity: the guards a new table owes');
        .first()).n === 1);
 }
 
+section('Daily summary: authored prose per day, and the log it reads stays untouched');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  await call(env, `/invite/${new URL(link, 'https://x.test').searchParams.get('invite')}/accept`,
+    { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const dana = users.users.find(u => u.username === 'dana');
+
+  await ingest(env, { case_no: 'API-DS1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  await ingest(env, { case_no: 'API-DS2', service: 'Surveillance', client_name: 'C2', subject_name: 'S2' });
+  await call(env, '/submissions/API-DS1/assign', { method: 'POST', cookie: admin, body: { user_id: dana.id } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  // Dana works a day and logs three moments.
+  await call(env, '/cases/API-DS1/day/start', { method: 'POST', cookie: inv,
+    body: { day_date: '2026-08-20', start_time: '08:03' } });
+  for (const [t, d] of [['08:03', 'Surveillance initiated at subject residence.'],
+                        ['09:14', 'Subject departed residence in white pickup.'],
+                        ['11:42', 'Subject returned to residence.']]) {
+    await call(env, '/cases/API-DS1/activity', { method: 'POST', cookie: inv,
+      body: { at_date: '2026-08-20', at_time: t, description: d } });
+  }
+  await call(env, '/cases/API-DS1/day/end', { method: 'POST', cookie: inv,
+    body: { end_time: '12:15' } });
+  let ws = await jsonOf(await call(env, '/cases/API-DS1/workspace', { cookie: inv }));
+  const dayId = ws.days[0].id;
+  const beforeLog = JSON.stringify(ws.activity.map(a => [a.id, a.at_time, a.description]));
+
+  // The investigator writes their own day's paragraph.
+  const NARR = 'On Thursday, 08-20-2026, surveillance was initiated at 8:03 AM at the subject’s residence. '
+    + 'At 9:14 AM, the subject exited the residence and departed in a white pickup. '
+    + 'At 11:42 AM, the subject returned to the residence. Surveillance was concluded at 12:15 PM.';
+  let res = await call(env, `/cases/API-DS1/days/${dayId}/summary`, { method: 'POST', cookie: inv,
+    body: { narrative: NARR, config: { opening: 'residence', acts: [1, 2] } } });
+  ok('the day’s own investigator may write its summary', res.status === 200, res.status);
+  let out = await jsonOf(res);
+  ok('and the save answers with the case’s summaries', Array.isArray(out.day_summaries)
+     && out.day_summaries.length === 1 && out.day_summaries[0].narrative === NARR);
+
+  ws = await jsonOf(await call(env, '/cases/API-DS1/workspace', { cookie: inv }));
+  ok('the workspace carries it for the report screen',
+     Array.isArray(ws.day_summaries) && ws.day_summaries[0].day_id === dayId
+     && ws.day_summaries[0].narrative === NARR);
+  ok('writing the narrative touched no activity row',
+     JSON.stringify(ws.activity.map(a => [a.id, a.at_time, a.description])) === beforeLog);
+
+  // The /meta rule: absent means unchanged, in both directions.
+  res = await call(env, `/cases/API-DS1/days/${dayId}/summary`, { method: 'POST', cookie: inv,
+    body: { config: { opening: 'vicinity' } } });
+  ws = await jsonOf(await call(env, '/cases/API-DS1/workspace', { cookie: inv }));
+  ok('posting only selections leaves the prose exactly as written',
+     ws.day_summaries[0].narrative === NARR
+     && JSON.parse(ws.day_summaries[0].config).opening === 'vicinity');
+  res = await call(env, `/cases/API-DS1/days/${dayId}/summary`, { method: 'POST', cookie: inv,
+    body: { narrative: NARR + ' No additional activity was observed.' } });
+  ws = await jsonOf(await call(env, '/cases/API-DS1/workspace', { cookie: inv }));
+  ok('posting only prose leaves the selections alone',
+     JSON.parse(ws.day_summaries[0].config).opening === 'vicinity'
+     && ws.day_summaries[0].narrative.endsWith('No additional activity was observed.'));
+
+  ok('nothing to change is refused rather than quietly written',
+     (await call(env, `/cases/API-DS1/days/${dayId}/summary`, { method: 'POST', cookie: inv, body: {} })).status === 400);
+
+  // Boundaries: wrong case, other investigator, public.
+  ok('a day id under another case answers like one that never existed',
+     (await call(env, `/cases/API-DS2/days/${dayId}/summary`, { method: 'POST', cookie: admin,
+       body: { narrative: 'x' } })).status === 404);
+  ok('a public caller is refused',
+     (await call(env, `/cases/API-DS1/days/${dayId}/summary`, { method: 'POST',
+       body: { narrative: 'x' } })).status === 401);
+
+  const link2 = (await jsonOf(await invite(env, admin, { username: 'reed', display_name: 'Reed', role: 'investigator' }))).url;
+  await call(env, `/invite/${new URL(link2, 'https://x.test').searchParams.get('invite')}/accept`,
+    { method: 'POST', body: { password: 'FieldWork2026y' } });
+  await call(env, '/submissions/API-DS1/assign', { method: 'POST', cookie: admin,
+    body: { user_id: (await jsonOf(await call(env, '/users', { cookie: admin }))).users.find(u => u.username === 'reed').id } });
+  const reed = (await login(env, 'reed', 'FieldWork2026y')).cookie;
+  res = await call(env, `/cases/API-DS1/days/${dayId}/summary`, { method: 'POST', cookie: reed,
+    body: { narrative: 'not mine' } });
+  ok('another investigator on the case still cannot write someone else’s day',
+     res.status === 403, res.status);
+  /* Assigning reed REPLACED dana — assigned_to is a single column — so hand the
+     case back before the review-boundary walk, which is dana's. */
+  await call(env, '/submissions/API-DS1/assign', { method: 'POST', cookie: admin, body: { user_id: dana.id } });
+
+  // The review boundary: once the report is with the office, so is the summary.
+  const gen = await jsonOf(await call(env, '/cases/API-DS1/reports/generate', { method: 'POST', cookie: inv,
+    body: { day_id: dayId } }));
+  await call(env, `/cases/API-DS1/reports/${gen.id}/status`, { method: 'POST', cookie: inv,
+    body: { status: 'submitted' } });
+  res = await call(env, `/cases/API-DS1/days/${dayId}/summary`, { method: 'POST', cookie: inv,
+    body: { narrative: 'editing around the review' } });
+  ok('a submitted day is with the office for its writer', res.status === 409, res.status);
+  ok('while an admin may still edit it',
+     (await call(env, `/cases/API-DS1/days/${dayId}/summary`, { method: 'POST', cookie: admin,
+       body: { narrative: NARR } })).status === 200);
+  await call(env, `/cases/API-DS1/reports/${gen.id}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'needs_revision' } });
+  ok('handed back, the writer may edit again',
+     (await call(env, `/cases/API-DS1/days/${dayId}/summary`, { method: 'POST', cookie: inv,
+       body: { narrative: NARR } })).status === 200);
+
+  // The paragraph rides the package with the day it narrates.
+  await call(env, `/cases/API-DS1/reports/${gen.id}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'approved' } });
+  const st = await jsonOf(await call(env, '/cases/API-DS1/build', { method: 'POST', cookie: admin, body: {} }));
+  const rep = (st.reports || []).find(r => r.day_id === dayId);
+  ok('the package’s report row carries the narrative', rep && rep.narrative === NARR,
+     JSON.stringify((st.reports || []).map(r => ({ d: r.day_id, n: r.narrative }))));
+  ok('under its own key — the field day’s note (day_summary) keeps its meaning',
+     rep.day_summary !== rep.narrative);
+}
+
+section('Daily summary: the guards a new table owes');
+{
+  const env = freshEnv();
+  const db = new DatabaseSync(':memory:');
+  db.exec(SCHEMA.replace(/CREATE TABLE IF NOT EXISTS case_day_summary[\s\S]*?\);/, '')
+                .replace(/CREATE INDEX IF NOT EXISTS idx_dsummary_case[^;]*;/, ''));
+  env.DB = d1(db);
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-DSG1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  await call(env, '/cases/API-DSG1/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-20', start_time: '08:00' } });
+  const ws = await jsonOf(await call(env, '/cases/API-DSG1/workspace', { cookie: admin }));
+  ok('before portal-setup the workspace says UNKNOWN, not "no day has a summary"',
+     ws.day_summaries === null, JSON.stringify(ws.day_summaries));
+  const res = await call(env, `/cases/API-DSG1/days/${ws.days[0].id}/summary`,
+    { method: 'POST', cookie: admin, body: { narrative: 'x' } });
+  ok('and the write refuses naming the workflow to run',
+     res.status === 503 && /portal-setup/.test((await jsonOf(res)).error || ''), res.status);
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

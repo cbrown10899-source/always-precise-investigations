@@ -4491,6 +4491,14 @@ async function caseWorkspace(env, user, caseNo) {
     evidence: evidence || [],
     video_stamps: videoStamps,
     photo_stamps: photoStamps,
+    /* The authored daily-summary paragraphs, one per investigation day (Unit
+       12). Guarded like the two stamp tables: the table arrives by a manual
+       portal-setup dispatch, and `null` here means UNKNOWN — the page must
+       draw "not set up yet" rather than "no day has a summary". Both roles:
+       the summary is report prose, and the investigator who writes the day's
+       report writes its paragraph under the same rules. */
+    day_summaries: missingForStamps.includes('case_day_summary') ? null
+      : await daySummariesFor(env, caseNo),
     integrity,
     /* UNIT 6 — the firm, the matter, the dates and the arrangement. ADMIN
        ONLY: who is paying is exactly what an investigator is never sent, and
@@ -8371,6 +8379,25 @@ async function buildState(env, caseNo) {
         .bind(build.report_id, caseNo).first();
     }
     reports = await buildReports(env, build.id, caseNo);
+    /* The authored daily-summary paragraph for each day this package carries
+       (Unit 12) — attached to the report rows the document already renders,
+       through ONE guarded statement on the build. Named `narrative` because
+       `day_summary` on these rows is already the field day's own end-of-day
+       note (case_days.summary), and two meanings under one key is how a
+       document says the wrong thing politely. */
+    if (reports.length && !(await missingTables(env)).includes('case_day_summary')) {
+      const { results: dsRows } = await env.DB.prepare(
+        `SELECT day_id, narrative FROM case_day_summary
+          WHERE day_id IN (SELECT r.day_id FROM build_reports br
+                             JOIN case_reports r ON r.id = br.report_id
+                            WHERE br.build_id = ? AND r.day_id IS NOT NULL)`)
+        .bind(build.id).all();
+      const dsBy = new Map((dsRows || []).map(r => [r.day_id, r.narrative]));
+      for (const r of reports) {
+        const n = r.day_id != null ? dsBy.get(r.day_id) : null;
+        if (n && String(n).trim()) r.narrative = n;
+      }
+    }
     custom = await isCustomBuild(env, build.id);
     const sum = await env.DB.prepare('SELECT body FROM build_summary WHERE build_id = ?')
       .bind(build.id).first();
@@ -8949,7 +8976,8 @@ const DEMO_SWEEP = [
   ['subject_vehicles',      'DELETE FROM subject_vehicles WHERE subject_id IN (SELECT id FROM case_subjects WHERE case_no LIKE ?)'],
   ['retainer_payment_void', 'DELETE FROM retainer_payment_void WHERE payment_id IN (SELECT id FROM retainer_payment WHERE case_no LIKE ?)'],
 
-  /* --- the three that reference case_days, before case_days itself --- */
+  /* --- the four that reference case_days, before case_days itself --- */
+  ['case_day_summary',      'DELETE FROM case_day_summary WHERE case_no LIKE ?'],
   ['activity_log',          'DELETE FROM activity_log WHERE case_no LIKE ?'],
   ['case_reports',          'DELETE FROM case_reports WHERE case_no LIKE ?'],
   ['case_expenses',         'DELETE FROM case_expenses WHERE case_no LIKE ?'],
@@ -9154,6 +9182,98 @@ async function generateReport(request, env, user, caseNo) {
           draftBody(day, results || []), nowIso()).run();
 
   return json({ ok: true, id: res.meta ? res.meta.last_row_id : null, entries: (results || []).length }, 201);
+}
+
+/* ----------------------------------------------- daily summary (Unit 12)
+
+   THE PARAGRAPH IS AUTHORED MATERIAL AND THE ACTIVITY LOG IS ITS SOURCE, in
+   exactly the relationship case_reports.body already has: the builder reads
+   the day's recorded facts, a person chooses and edits, and what is stored
+   here is what they wrote. Nothing in these routes reads or writes
+   activity_log — there is no code path by which building a narrative can
+   alter the record it narrates.
+
+   THE SENTENCES THEMSELVES ARE COMPOSED IN THE PAGE, deterministically, from
+   structured values — the Worker stores and serves. No LLM is called anywhere
+   in this feature (the brief forbids it), and no case fact leaves the portal
+   to build a paragraph. */
+
+const DS_NARRATIVE_MAX = 20000;
+const DS_CONFIG_MAX = 30000;
+const DSUMMARY_NOT_SET_UP = 'The daily summary table is not on this database yet. '
+  + 'Run the portal-setup workflow once and try again.';
+
+async function daySummariesFor(env, caseNo) {
+  const { results } = await env.DB.prepare(
+    `SELECT s.day_id, s.narrative, s.config, s.updated_at, s.created_at,
+            u.display_name AS updated_by
+       FROM case_day_summary s LEFT JOIN users u ON u.id = COALESCE(s.updated_by, s.created_by)
+      WHERE s.case_no = ? ORDER BY s.day_id LIMIT 100`).bind(caseNo).all();
+  return results || [];
+}
+
+/* WHO MAY WRITE A DAY'S SUMMARY IS WHO MAY WRITE THAT DAY'S REPORT — the
+   saveReport rules, deliberately mirrored rather than invented: an admin
+   always; the day's own investigator while the day's report (if one exists)
+   is still theirs to edit. Once the report is with the office or signed off,
+   the investigator's summary is too — prose that prints beside the report
+   must not be editable around a review the report itself already had. No new
+   finalization authority is granted to anyone. */
+async function saveDaySummary(request, env, user, caseNo, dayId) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  if ((await missingTables(env)).includes('case_day_summary')) {
+    return json({ error: DSUMMARY_NOT_SET_UP, code: 'not_set_up' }, 503);
+  }
+  /* The day is scoped to the case IN THE STATEMENT, so a day id from another
+     case answers exactly like one that never existed. */
+  const day = await env.DB.prepare(
+    'SELECT id, investigator_id FROM case_days WHERE id = ? AND case_no = ?')
+    .bind(dayId, caseNo).first();
+  if (!day) return json({ error: 'not found' }, 404);
+
+  const admin = user.role === 'admin';
+  if (!admin && day.investigator_id !== user.id) {
+    return json({ error: 'That day belongs to another investigator.' }, 403);
+  }
+  if (!admin) {
+    const rep = await env.DB.prepare(
+      'SELECT status FROM case_reports WHERE day_id = ?').bind(dayId).first();
+    if (rep && !['draft', 'needs_revision'].includes(rep.status)) {
+      return json({ error: 'This day’s report is with the office for review.' }, 409);
+    }
+  }
+
+  const body = await readJson(request);
+  /* THE /meta RULE: an absent field is unchanged, a present one is the new
+     value (an empty narrative is the writer clearing it). Resolved INSIDE the
+     upsert from the row, so two writers posting different subsets interleave
+     without one erasing the other's half. */
+  const hasNarrative = body.narrative !== undefined;
+  const hasConfig = body.config !== undefined;
+  if (!hasNarrative && !hasConfig) return json({ error: 'Nothing to change.' }, 400);
+  const narrative = hasNarrative ? String(body.narrative || '') : null;
+  if (narrative != null && narrative.length > DS_NARRATIVE_MAX) {
+    return json({ error: 'That narrative is longer than a report day can hold.' }, 400);
+  }
+  let config = null;
+  if (hasConfig) {
+    if (typeof body.config !== 'object' || body.config == null || Array.isArray(body.config)) {
+      return json({ error: 'The builder selections did not read as an object.' }, 400);
+    }
+    config = JSON.stringify(body.config);
+    if (config.length > DS_CONFIG_MAX) return json({ error: 'Those selections are too large to store.' }, 400);
+  }
+  const now = nowIso();
+  await env.DB.prepare(
+    `INSERT INTO case_day_summary (day_id, case_no, narrative, config, created_by, created_at, updated_by, updated_at)
+     VALUES (?1, ?2, COALESCE(?3, ''), COALESCE(?4, '{}'), ?5, ?6, ?5, ?6)
+     ON CONFLICT(day_id) DO UPDATE SET
+       narrative = COALESCE(?3, narrative),
+       config    = COALESCE(?4, config),
+       updated_by = ?5, updated_at = ?6`)
+    .bind(dayId, caseNo, narrative, config, user.id, now).run();
+  return json({ ok: true, day_id: dayId,
+                day_summaries: await daySummariesFor(env, caseNo) });
 }
 
 async function saveReport(request, env, user, caseNo, id) {
@@ -10312,7 +10432,7 @@ const EXPECTED_TABLES = [
   'video_stamp', 'dropbox_auth', 'activity_source', 'activity_voice_event',
   'photo_stamp',
   'profile', 'profile_contact', 'profile_phone', 'case_profile',
-  'build_template', 'evidence_integrity',
+  'build_template', 'evidence_integrity', 'case_day_summary',
 ];
 
 async function missingTables(env) {
@@ -11803,6 +11923,9 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/tasks\/(\d{1,12})\/status$/);
   if (m && method === 'POST') return setTaskStatus(request, env, user, m[1], parseInt(m[2], 10));
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/days\/(\d{1,12})\/summary$/);
+  if (m && method === 'POST') return saveDaySummary(request, env, user, m[1], parseInt(m[2], 10));
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/reports\/generate$/);
   if (m && method === 'POST') return generateReport(request, env, user, m[1]);

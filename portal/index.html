@@ -1381,6 +1381,22 @@
   .top .burger:focus-visible,.navback:focus-visible,
   input:focus-visible,select:focus-visible,textarea:focus-visible{
     outline:2px solid var(--teal);outline-offset:2px;}
+  /* UNIT 12 — daily summary builder, base rules. The phone overrides live in
+     the media block BELOW this, at the end of the stylesheet, because source
+     order has killed three rules in this file already. .dsb- is its own
+     prefix, per the class-name-contest rule. */
+  .dsb-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 12px;margin-top:6px;}
+  .dsb-act{display:flex;flex-direction:column;gap:6px;padding:6px 4px;border-bottom:1px dashed var(--line);}
+  .dsb-act > label{display:flex;gap:8px;align-items:flex-start;cursor:pointer;}
+  .dsb-act input[type=checkbox]{margin-top:3px;flex:none;}
+  .dsb-actrow{display:flex;gap:8px;flex-wrap:wrap;margin-left:26px;}
+  .dsb-actrow select,.dsb-actrow input{font-size:.85rem;}
+  .dsb-chip{display:inline-block;font-size:.62rem;font-weight:700;letter-spacing:.06em;
+    color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:1px 5px;
+    vertical-align:middle;margin-left:4px;}
+  .rvnarr{white-space:pre-line;font-size:.95rem;margin:0 0 12px;padding-bottom:10px;
+    border-bottom:1px solid var(--line);}
+
   /* Item 4's mobile report fix — every value here was MEASURED at 375px
      before it was changed; the suite asserts the numbers, not the look. */
   @media(max-width:560px){
@@ -1454,7 +1470,15 @@
     .integ .btn{min-height:44px;}
     .integ .ih{row-gap:4px;}
     #mandoc{padding:16px 12px;}
+    /* UNIT 12 — the daily summary builder on a phone: everything stacks, the
+       checkboxes meet the floor, and nothing scrolls sideways. */
+    .dsb-grid{grid-template-columns:1fr;}
+    .dsb-actrow{flex-direction:column;align-items:stretch;}
+    .dsb-actrow select,.dsb-actrow input{width:100%;}
+    .dsb-act > label{min-height:44px;}
+    .dsb-act input[type=checkbox]{width:22px;height:22px;}
   }
+
 </style>
 </head>
 <body>
@@ -8619,6 +8643,10 @@ async function openCase(caseNo, tab){
   /* Unit 11: integrity answers and the manifest belong to the case they were
      read on — carried to the next case they would state another file's facts. */
   EV_VERIFY = {}; EV_IBUSY = 0; MAN = null; MAN_OPEN = false; MAN_ERR = ""; MAN_BUSY = false;
+  /* Unit 12: a daily-summary draft belongs to the case whose day it narrates —
+     carried to the next case it would offer one case's paragraph for another
+     case's day. Day ids are global, so this is a correctness reset, not tidying. */
+  DS_DRAFT = {};
   /* THE RETAINER FORM BELONGS TO THE CASE IT WAS OPENED ON. All of its state is
      page-level, so without this an unfinished payment followed the admin to the
      next case: the form still open, still carrying the FIGURE they typed for
@@ -9513,6 +9541,425 @@ function fieldPanel(){
 /* Reports. The draft is assembled from the log, then it is a document someone
    writes — so the editor is a plain textarea, and nothing moves to the next
    stage without a person pressing a button. */
+/* ------------------------------------------------ daily summary (Unit 12)
+
+   THE PARAGRAPH IS BUILT, NEVER GUESSED. Every sentence below is a
+   deterministic template over values the case actually records or the writer
+   explicitly picked — the owner's brief forbids invented facts and forbids
+   sending case facts to a language model, so there is no inference and no
+   network call anywhere in this engine. A value that is absent SHAPES the
+   sentence rather than being filled: no year prints no year, no plate prints
+   no plate clause, no registered owner prints no owner clause. "Registered to
+   unknown" is a sentence this engine cannot produce.
+
+   The wording lives here once. The Worker stores what the writer saved and
+   decides nothing about phrasing. */
+
+const DS_STATES = { AL:"Alabama", AK:"Alaska", AZ:"Arizona", AR:"Arkansas", CA:"California",
+  CO:"Colorado", CT:"Connecticut", DE:"Delaware", FL:"Florida", GA:"Georgia", HI:"Hawaii",
+  ID:"Idaho", IL:"Illinois", IN:"Indiana", IA:"Iowa", KS:"Kansas", KY:"Kentucky",
+  LA:"Louisiana", ME:"Maine", MD:"Maryland", MA:"Massachusetts", MI:"Michigan",
+  MN:"Minnesota", MS:"Mississippi", MO:"Missouri", MT:"Montana", NE:"Nebraska",
+  NV:"Nevada", NH:"New Hampshire", NJ:"New Jersey", NM:"New Mexico", NY:"New York",
+  NC:"North Carolina", ND:"North Dakota", OH:"Ohio", OK:"Oklahoma", OR:"Oregon",
+  PA:"Pennsylvania", RI:"Rhode Island", SC:"South Carolina", SD:"South Dakota",
+  TN:"Tennessee", TX:"Texas", UT:"Utah", VT:"Vermont", VA:"Virginia", WA:"Washington",
+  WV:"West Virginia", WI:"Wisconsin", WY:"Wyoming", DC:"District of Columbia" };
+
+/* The weekday belongs to the DATE, not to any clock: built at UTC noon-less
+   midnight and read back as UTC, so no machine's zone can shift 08-20 into
+   Wednesday. The same rule tlLocal() follows at the other end. */
+function dsDateParts(dateStr){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || ""));
+  if(!m) return null;
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+}
+function dsWeekday(dateStr){
+  const d = dsDateParts(dateStr);
+  return d ? d.toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" }) : "";
+}
+function dsHeading(dateStr){
+  const d = dsDateParts(dateStr);
+  return d ? d.toLocaleDateString("en-US", { weekday: "long", month: "long",
+    day: "numeric", year: "numeric", timeZone: "UTC" }).toUpperCase() : "";
+}
+function dsMDY(dateStr){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || ""));
+  return m ? `${m[2]}-${m[3]}-${m[1]}` : String(dateStr || "");
+}
+function dsArticle(next){ return /^[aeiou]/i.test(String(next || "").trim()) ? "an" : "a"; }
+function dsCountWord(n){
+  const w = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"];
+  return w[n] || String(n);
+}
+function dsTime(t){ return t ? t12(t) : ""; }
+function dsSentence(str){
+  let t = String(str || "").trim();
+  if(!t) return "";
+  t = t[0].toUpperCase() + t.slice(1);
+  return /[.!?]$/.test(t) ? t : t + ".";
+}
+
+/* One vehicle as prose, from its recorded fields and nothing else. */
+function dsVehiclePhrase(v){
+  const bits = [String(v.year || "").trim(), String(v.color || "").trim().toLowerCase(),
+                String(v.make || "").trim(), String(v.model || "").trim()].filter(Boolean);
+  let out = bits.length ? `${dsArticle(bits[0])} ${bits.join(" ")}` : "a vehicle";
+  const plate = String(v.plate || "").trim();
+  if(plate){
+    const st = DS_STATES[String(v.plate_state || "").trim().toUpperCase()]
+      || String(v.plate_state || "").trim();
+    out += st ? ` bearing ${st} registration ${plate}` : ` bearing registration ${plate}`;
+  }
+  return out;
+}
+function dsVehicleShort(v){
+  const bits = [String(v.color || "").trim().toLowerCase(), String(v.make || "").trim(),
+                String(v.model || "").trim()].filter(Boolean);
+  return bits.length ? bits.join(" ") : (String(v.plate || "").trim() || "the vehicle");
+}
+
+/* The vehicles sentence: zero is NOT written here (an explicit no-vehicles
+   line is its own deliberate choice), one gets its own sentence with the
+   owner as a second sentence, several read as a list with inline owners. */
+function dsVehiclesSentence(vs, where){
+  const w = String(where || "in the driveway").trim();
+  if(!vs.length) return "";
+  if(vs.length === 1){
+    const v = vs[0];
+    let out = dsSentence(`${dsVehiclePhrase(v)} was observed ${w}`);
+    const owner = String(v.registered_owner || "").trim();
+    if(owner) out += ` The vehicle was recorded as registered to ${owner}.`;
+    return out;
+  }
+  const parts = vs.map(v => {
+    const owner = String(v.registered_owner || "").trim();
+    return dsVehiclePhrase(v) + (owner ? `, registered to ${owner}` : "");
+  });
+  const list = parts.length === 2 ? parts.join(", and ")
+    : parts.slice(0, -1).join(", ") + ", and " + parts[parts.length - 1];
+  return `${dsCountWord(vs.length)} vehicles were observed ${w}: ${list}.`;
+}
+
+const DS_OPENINGS = [
+  ["residence", "…at the subject's residence"],
+  ["vicinity",  "…in the vicinity of the location"],
+  ["commenced", "Investigative activity commenced…"],
+];
+function dsOpening(kind, day, sel){
+  const wd = dsWeekday(day.day_date), md = dsMDY(day.day_date);
+  const t = dsTime(sel.start_time || day.start_time);
+  const loc = String(sel.location || "").trim();
+  if(!wd || !t) return "";
+  if(kind === "vicinity")  return `On ${wd}, ${md}, surveillance was initiated at ${t}${loc ? ` in the vicinity of ${loc}` : ""}.`;
+  if(kind === "commenced") return `On ${wd}, ${md}, investigative activity commenced at ${t}${loc ? ` at ${loc}` : ""}.`;
+  return `On ${wd}, ${md}, surveillance was initiated at ${t} at ${loc || "the subject's residence"}.`;
+}
+
+const DS_MODES = [
+  ["as",       "As written"],
+  ["depart",   "Subject departed"],
+  ["arrive",   "Subject arrived"],
+  ["business", "Entered a business"],
+  ["mobile",   "Mobile surveillance"],
+  ["return",   "Returned to residence"],
+  ["custom",   "My own wording"],
+];
+function dsActSentence(e, mode, sel){
+  const t = dsTime(e.at_time);
+  const veh = (sel.act_veh && sel.act_veh[e.id])
+    ? dsVehicleList().find(v => String(v.id) === String(sel.act_veh[e.id])) : null;
+  const loc = String(e.location || "").trim();
+  if(mode === "depart")
+    return `At ${t}, the subject exited ${loc || "the residence"} and departed${veh ? ` in the ${dsVehicleShort(veh)}` : ""}.`;
+  if(mode === "arrive")   return `At ${t}, the subject arrived at ${loc || "the location"}.`;
+  if(mode === "business") return `At ${t}, the subject arrived at ${loc || "the establishment"} and entered the establishment.`;
+  if(mode === "mobile")   return `Mobile surveillance was initiated as the subject departed the area.`;
+  if(mode === "return")   return `At ${t}, the subject returned to the residence.`;
+  if(mode === "custom")   return dsSentence((sel.act_text && sel.act_text[e.id]) || "");
+  return `At ${t}, ${String(e.description || "").trim().replace(/^([A-Z])/, c => c.toLowerCase())}`
+    .replace(/[.!?]?$/, ".");
+}
+
+const DS_GAPS = [
+  ["period", "No activity was observed at the residence during this period."],
+  ["before_end", "No additional activity was observed prior to the conclusion of surveillance."],
+];
+const DS_REASONS = [
+  ["", "— no stated reason —"],
+  ["returned",  "after the subject returned to the residence and no additional activity was observed"],
+  ["noactivity","after no additional activity was observed"],
+  ["lost",      "after visual contact with the subject was lost during mobile surveillance"],
+  ["released",  "at the direction of the client"],
+  ["hours",     "upon reaching the authorized hours"],
+  ["weather",   "due to weather conditions"],
+  ["custom",    "my own wording…"],
+];
+function dsClosing(day, sel){
+  const t = dsTime(sel.end_time || day.end_time);
+  if(!t) return "";
+  let why = "";
+  if(sel.reason === "custom") why = String(sel.reason_text || "").trim();
+  else if(sel.reason) why = (DS_REASONS.find(r => r[0] === sel.reason) || ["", ""])[1];
+  return `Surveillance was concluded at ${t}${why ? ` ${why}` : ""}.`;
+}
+
+/* The whole paragraph, in the day's own order: opening, vehicles, the chosen
+   activity moments chronologically, the optional quiet line, the close. */
+function dsCompose(day, sel){
+  const parts = [];
+  const open = dsOpening(sel.opening || "residence", day, sel);
+  if(open) parts.push(open);
+  if(sel.no_vehicles) parts.push("No vehicles associated with the subject were observed at the residence.");
+  else parts.push(dsVehiclesSentence(
+    dsVehicleList().filter(v => (sel.vehicles || []).includes(v.id)), sel.veh_where));
+  for(const e of dsDayEntries(sel.day_id)){
+    if(!(sel.acts || []).includes(e.id)) continue;
+    parts.push(dsActSentence(e, (sel.act_mode && sel.act_mode[e.id]) || "as", sel));
+  }
+  if(sel.gap) parts.push((DS_GAPS.find(g => g[0] === sel.gap) || ["", ""])[1]);
+  const close = dsClosing(day, sel);
+  if(close) parts.push(close);
+  return parts.filter(Boolean).join(" ");
+}
+
+function dsVehicleList(){
+  return ((WS && WS.subjects) || []).flatMap(sj => sj.vehicles || []);
+}
+function dsDayEntries(dayId){
+  return ((WS && WS.activity) || []).filter(e => e.day_id === dayId && !e.removed_at)
+    .slice().sort((a, b) => (a.at_time < b.at_time ? -1 : a.at_time > b.at_time ? 1
+      : a.id - b.id));
+}
+function dsSavedFor(dayId){
+  return ((WS && WS.day_summaries) || []).find(r => r.day_id === dayId) || null;
+}
+
+/* PER-DAY, STRUCTURALLY. Everything the builder holds is keyed by the day id,
+   so Thursday's vehicles cannot leak into Friday by any code path — the
+   cross-day independence the brief demands is the shape of the state. */
+let DS_DRAFT = {};
+function dsState(day){
+  if(DS_DRAFT[day.id]) return DS_DRAFT[day.id];
+  const saved = dsSavedFor(day.id);
+  let sel = null;
+  if(saved && saved.config){ try{ sel = JSON.parse(saved.config); }catch{} }
+  if(!sel || typeof sel !== "object") sel = null;
+  const st = {
+    manual: !!(saved && String(saved.narrative || "").trim()) && !(sel && sel.composed),
+    text: saved ? String(saved.narrative || "") : "",
+    sel: Object.assign({
+      day_id: day.id, opening: "residence",
+      start_time: day.start_time || "", end_time: day.end_time || "",
+      location: dsDefaultLocation(), veh_where: "in the driveway",
+      vehicles: [], acts: [], act_mode: {}, act_text: {}, act_veh: {},
+      gap: "", reason: "", reason_text: "", no_vehicles: false,
+    }, sel || {}),
+  };
+  st.sel.day_id = day.id;
+  /* A saved paragraph that exactly matches what its selections compose is
+     still the machine's; anything else is the writer's and is protected. */
+  if(saved && String(saved.narrative || "").trim()){
+    st.manual = saved.narrative !== dsCompose(day, st.sel);
+  }
+  if(!saved) st.text = dsCompose(day, st.sel);
+  DS_DRAFT[day.id] = st;
+  return st;
+}
+function dsDefaultLocation(){
+  const sj = ((WS && WS.subjects) || [])[0];
+  const addr = sj && String(sj.addresses || "").split(/\n/)[0].trim();
+  return addr ? `the subject's residence at ${addr}` : "";
+}
+
+/* EVERY VALUE FIRST, THEN THE REPAINT — the edCollect rule, because this
+   panel rebuilds itself on every control change and a textarea that is not
+   read back before the rebuild is a paragraph silently reverted. */
+function dsCollect(dayId){
+  const st = DS_DRAFT[dayId];
+  if(!st) return;
+  const g = id => $(id);
+  const ta = g("ds_text"); if(ta) st.text = ta.value;
+  const sel = st.sel;
+  if(g("ds_open")) sel.opening = g("ds_open").value;
+  if(g("ds_time")) sel.start_time = g("ds_time").value;
+  if(g("ds_loc")) sel.location = g("ds_loc").value;
+  if(g("ds_vwhere")) sel.veh_where = g("ds_vwhere").value === "custom"
+    ? (g("ds_vwherec") ? g("ds_vwherec").value : sel.veh_where)
+    : g("ds_vwhere").value;
+  if(g("ds_noveh")) sel.no_vehicles = g("ds_noveh").checked;
+  sel.vehicles = dsVehicleList().filter(v => g("ds_veh_" + v.id) && g("ds_veh_" + v.id).checked)
+    .map(v => v.id);
+  sel.acts = dsDayEntries(dayId).filter(e => g("ds_act_" + e.id) && g("ds_act_" + e.id).checked)
+    .map(e => e.id);
+  for(const e of dsDayEntries(dayId)){
+    if(g("ds_mode_" + e.id)) sel.act_mode[e.id] = g("ds_mode_" + e.id).value;
+    if(g("ds_cust_" + e.id)) sel.act_text[e.id] = g("ds_cust_" + e.id).value;
+    if(g("ds_vsel_" + e.id)) sel.act_veh[e.id] = g("ds_vsel_" + e.id).value;
+  }
+  if(g("ds_end")) sel.end_time = g("ds_end").value;
+  if(g("ds_reason")) sel.reason = g("ds_reason").value;
+  if(g("ds_reasonc")) sel.reason_text = g("ds_reasonc").value;
+}
+
+/* A control changed: capture everything, then recompose ONLY when the
+   paragraph is still the machine's. A manually edited paragraph is never
+   touched by a control — the writer is told the two have parted and offered
+   Rebuild, which is a deliberate act with a confirmation. */
+function dsCtl(dayId){
+  dsCollect(dayId);
+  const st = DS_DRAFT[dayId];
+  const day = ((WS && WS.days) || []).find(d => d.id === dayId);
+  if(st && day && !st.manual) st.text = dsCompose(day, st.sel);
+  paintCase();
+}
+function dsRebuild(dayId){
+  const st = DS_DRAFT[dayId];
+  const day = ((WS && WS.days) || []).find(d => d.id === dayId);
+  if(!st || !day) return;
+  dsCollect(dayId);
+  if(st.manual && !confirm("Rebuild the paragraph from the selections? Your manual wording "
+    + "for this day will be replaced.")) return;
+  st.text = dsCompose(day, st.sel);
+  st.manual = false;
+  paintCase();
+}
+async function dsSave(dayId){
+  dsCollect(dayId);
+  const st = DS_DRAFT[dayId];
+  if(!st) return;
+  st.err = ""; st.okmsg = "";
+  const day = ((WS && WS.days) || []).find(d => d.id === dayId);
+  const composed = !st.manual || (day && st.text === dsCompose(day, st.sel));
+  const res = await api(`/cases/${encodeURIComponent(WS_CASE)}/days/${dayId}/summary`, {
+    method: "POST",
+    body: { narrative: st.text, config: Object.assign({}, st.sel, { composed }) },
+  });
+  if(res && res.ok){
+    st.okmsg = "Saved.";
+    if(WS) WS.day_summaries = res.day_summaries || WS.day_summaries;
+  } else st.err = (res && res.error) || "Could not save the summary.";
+  paintCase();
+}
+
+function dsChip(kind){
+  const lbl = { day: "FROM DAY", case: "FROM CASE", act: "FROM ACTIVITY" }[kind];
+  return lbl ? `<span class="dsb-chip">${lbl}</span>` : "";
+}
+
+function dsBuilderHtml(open, day, editable){
+  if(!day) return `<div class="empty">This report is not tied to a recorded day, so there is no day to narrate.</div>`;
+  if(WS && WS.day_summaries === null){
+    return `<div class="note">The daily summary table is not on this database yet.
+      Run the <b>portal-setup</b> workflow once and reload.</div>`;
+  }
+  const st = dsState(day);
+  const sel = st.sel;
+  const entries = dsDayEntries(day.id);
+  const vehicles = dsVehicleList();
+  const saved = dsSavedFor(day.id);
+  const veh = v => `<label class="dsb-act"><input type="checkbox" id="ds_veh_${v.id}" data-act-change="dsCtl"
+      data-day="${day.id}" ${ (sel.vehicles || []).includes(v.id) ? "checked" : "" } ${editable ? "" : "disabled"}>
+    <span>${esc(dsVehiclePhrase(v))}${v.registered_owner ? ` <span class="opt">reg. ${esc(v.registered_owner)}</span>` : ""}
+      ${dsChip("case")}</span></label>`;
+  const act = e => {
+    const mode = (sel.act_mode && sel.act_mode[e.id]) || "as";
+    const on = (sel.acts || []).includes(e.id);
+    return `<div class="dsb-act">
+      <label><input type="checkbox" id="ds_act_${e.id}" data-act-change="dsCtl" data-day="${day.id}"
+        ${on ? "checked" : ""} ${editable ? "" : "disabled"}>
+        <span><b>${esc(t12(e.at_time))}</b> ${esc(e.description)} ${dsChip("act")}</span></label>
+      ${on ? `<div class="dsb-actrow">
+        <select id="ds_mode_${e.id}" data-act-change="dsCtl" data-day="${day.id}" ${editable ? "" : "disabled"}>
+          ${DS_MODES.map(([k, l]) => `<option value="${k}" ${k === mode ? "selected" : ""}>${l}</option>`).join("")}
+        </select>
+        ${mode === "depart" && vehicles.length ? `<select id="ds_vsel_${e.id}" data-act-change="dsCtl"
+            data-day="${day.id}" ${editable ? "" : "disabled"}>
+          <option value="">no vehicle named</option>
+          ${vehicles.map(v => `<option value="${v.id}" ${(sel.act_veh && String(sel.act_veh[e.id]) === String(v.id)) ? "selected" : ""}>${esc(dsVehicleShort(v))}</option>`).join("")}
+        </select>` : ""}
+        ${mode === "custom" ? `<input id="ds_cust_${e.id}" data-act-input="dsDirtyCtl" data-day="${day.id}"
+          value="${esc((sel.act_text && sel.act_text[e.id]) || "")}" placeholder="Your wording for this moment"
+          ${editable ? "" : "disabled"}>` : ""}
+      </div>` : ""}
+    </div>`;
+  };
+  return `<div class="dsb-wrap">
+    <div class="rc-h"><b>${esc(dsHeading(day.day_date))}</b>
+      ${saved ? `<span class="tag rs-approved">Saved${saved.updated_at ? " " + when(saved.updated_at) : ""}</span>`
+              : `<span class="tag rs-draft">Not saved yet</span>`}</div>
+    <p class="hint" style="margin:4px 0 10px">The paragraph builds itself from the day&rsquo;s recorded
+      facts and what you pick below &mdash; then the words are yours to edit. Nothing here changes the
+      activity log.</p>
+
+    <div class="dsb-grid">
+      <label class="f"><span>Opening ${dsChip("day")}</span>
+        <select id="ds_open" data-act-change="dsCtl" data-day="${day.id}" ${editable ? "" : "disabled"}>
+          ${DS_OPENINGS.map(([k, l]) => `<option value="${k}" ${k === (sel.opening || "residence") ? "selected" : ""}>${l}</option>`).join("")}
+        </select></label>
+      <label class="f"><span>Started ${dsChip("day")}</span>
+        <input id="ds_time" type="time" value="${esc(sel.start_time || "")}" data-act-change="dsCtl"
+          data-day="${day.id}" ${editable ? "" : "disabled"}></label>
+      <label class="f"><span>Location ${sel.location ? dsChip("case") : ""}</span>
+        <input id="ds_loc" value="${esc(sel.location || "")}" data-act-input="dsDirtyCtl" data-day="${day.id}"
+          placeholder="e.g. the subject's residence at 41 Cedar Ln" ${editable ? "" : "disabled"}></label>
+    </div>
+
+    <div class="rc-h" style="margin-top:10px"><b>Vehicles observed</b></div>
+    ${vehicles.length ? vehicles.map(veh).join("") : `<div class="tl-m">No vehicles are recorded on this case&rsquo;s subjects yet.</div>`}
+    <div class="dsb-grid">
+      <label class="f"><span>Where</span>
+        <select id="ds_vwhere" data-act-change="dsCtl" data-day="${day.id}" ${editable ? "" : "disabled"}>
+          ${["in the driveway", "at the residence", "on the street", "at the location"].map(w =>
+            `<option value="${w}" ${w === sel.veh_where ? "selected" : ""}>${w}</option>`).join("")}
+          <option value="custom" ${!["in the driveway","at the residence","on the street","at the location"].includes(sel.veh_where) ? "selected" : ""}>somewhere else…</option>
+        </select></label>
+      ${!["in the driveway","at the residence","on the street","at the location"].includes(sel.veh_where)
+        ? `<label class="f"><span>Say where</span><input id="ds_vwherec" value="${esc(sel.veh_where)}"
+             data-act-input="dsDirtyCtl" data-day="${day.id}" ${editable ? "" : "disabled"}></label>` : ""}
+      <label class="dsb-act" style="align-self:end"><input type="checkbox" id="ds_noveh"
+          data-act-change="dsCtl" data-day="${day.id}" ${sel.no_vehicles ? "checked" : ""} ${editable ? "" : "disabled"}>
+        <span>No vehicles were observed <span class="opt">your confirmation, not a guess</span></span></label>
+    </div>
+
+    <div class="rc-h" style="margin-top:10px"><b>The day&rsquo;s moments</b>
+      <span class="opt">${entries.length} logged &mdash; pick what the narrative tells</span></div>
+    ${entries.length ? entries.map(act).join("") : `<div class="tl-m">Nothing was logged on this day.</div>`}
+
+    <div class="dsb-grid" style="margin-top:10px">
+      <label class="f"><span>Quiet period</span>
+        <select id="ds_gap" data-act-change="dsCtl" data-day="${day.id}" ${editable ? "" : "disabled"}>
+          <option value="">— not stated —</option>
+          ${DS_GAPS.map(([k, l]) => `<option value="${k}" ${k === sel.gap ? "selected" : ""}>${l}</option>`).join("")}
+        </select></label>
+      <label class="f"><span>Concluded ${dsChip("day")}</span>
+        <input id="ds_end" type="time" value="${esc(sel.end_time || "")}" data-act-change="dsCtl"
+          data-day="${day.id}" ${editable ? "" : "disabled"}></label>
+      <label class="f"><span>Reason</span>
+        <select id="ds_reason" data-act-change="dsCtl" data-day="${day.id}" ${editable ? "" : "disabled"}>
+          ${DS_REASONS.map(([k, l]) => `<option value="${k}" ${k === sel.reason ? "selected" : ""}>${l}</option>`).join("")}
+        </select></label>
+      ${sel.reason === "custom" ? `<label class="f"><span>In your words</span>
+        <input id="ds_reasonc" value="${esc(sel.reason_text || "")}" data-act-input="dsDirtyCtl"
+          data-day="${day.id}" placeholder="e.g. at the adjuster's request" ${editable ? "" : "disabled"}></label>` : ""}
+    </div>
+
+    <div class="rc-h" style="margin-top:12px"><b>The paragraph</b>
+      ${st.manual ? `<span class="tag rs-submitted">Yours &mdash; protected</span>` : `<span class="tag">Built from selections</span>`}</div>
+    <textarea id="ds_text" rows="7" class="rbody" data-act-input="dsText" data-day="${day.id}"
+      ${editable ? "" : "disabled"}>${esc(st.text)}</textarea>
+    ${st.manual ? `<p class="hint">This wording is protected: the controls above stopped rewriting the
+      box the moment it became yours. <b>Rebuild</b> replaces it from the selections, and asks first.</p>` : ""}
+    <div class="ractions">
+      ${editable ? `<button class="btn sm" data-act="dsSave" data-day="${day.id}">Save summary</button>
+      <button class="btn sm ghost" data-act="dsRebuild" data-day="${day.id}">Rebuild from selections</button>` :
+      `<span class="tl-m">This day&rsquo;s report is with the office, so its summary is read-only for you.</span>`}
+    </div>
+    ${st.err ? `<div class="err">${esc(st.err)}</div>` : ""}
+    ${st.okmsg ? `<div class="note">${esc(st.okmsg)}</div>` : ""}
+  </div>`;
+}
+
 function reportsPanel(){
   const admin = ME.role === "admin";
   const reports = (WS && WS.reports) || [];
@@ -9561,8 +10008,8 @@ function reportOpenHtml(open, admin, badge){
   const attached = ((WS && WS.evidence) || []).filter(e => !e.deleted_at && entryIds.has(e.entry_id));
   const vers = REP_VERS[open.id];
 
-  const views = [["preview","Draft preview"], ["chronology","Chronology"], ["summary","Summary"],
-                 ["attachments","Attachments"], ["versions","Versions"]];
+  const views = [["preview","Draft preview"], ["dsb","Daily summary"], ["chronology","Chronology"],
+                 ["summary","Summary"], ["attachments","Attachments"], ["versions","Versions"]];
   const nav = `<div class="rpnav">${views.map(([k, lbl]) =>
     `<button class="${REP_VIEW === k ? "on" : ""}" data-act="repView" data-v="${k}">${lbl}${
       k === "attachments" && attached.length ? ` (${attached.length})` : ""}</button>`).join("")}</div>`;
@@ -9574,6 +10021,7 @@ function reportOpenHtml(open, admin, badge){
           <button class="btn sm" data-act="saveReport" data-id="${open.id}">Save changes</button>
           <button class="btn sm ghost" data-act="repView" data-v="preview">Done editing</button>
         </div>`
+    : REP_VIEW === "dsb" ? dsBuilderHtml(open, day, editable)
     : REP_VIEW === "chronology" ? (dayEntries.length
         ? `<ol class="tl">${dayEntries.map(e => `<li class="tl-i">
              <div class="tl-t">${esc(t12(e.at_time))}</div>
@@ -9621,6 +10069,14 @@ function reportOpenHtml(open, admin, badge){
             ${open.investigator ? `<div style="font-size:.8rem;color:#44505c">Investigator: ${esc(open.investigator)}</div>` : ""}
           </div>
         </div>
+        ${(() => {
+          /* The authored daily paragraph leads the day's document when one has
+             been saved — prose first, then the detailed chronology the body
+             holds. Builder chips never reach here: this is the document. */
+          const dsn = dsSavedFor(open.day_id);
+          return dsn && String(dsn.narrative || "").trim()
+            ? `<div class="rvnarr">${esc(dsn.narrative)}</div>` : "";
+        })()}
         <pre class="rvbody">${esc(open.body)}</pre>
       </div>`;
 
@@ -11138,6 +11594,7 @@ function pkgDocHtml(){
         r.end_time ? `&ndash;${esc(t12(r.end_time))}` : ""}` : ""}${
         r.hours != null ? ` &middot; ${esc(String(r.hours))} h` : ""}${
         r.investigator ? ` &middot; ${esc(r.investigator)}` : ""}</span></h3>
+      ${r.narrative ? `<div style="white-space:pre-line;font-size:.95rem;margin:0 0 10px">${esc(r.narrative)}</div>` : ""}
       <div style="white-space:pre-line;font-size:.95rem">${esc(r.body)}</div>`).join("")
       : `<p style="color:var(--muted)">No report attached yet.</p>`,
     photos: () => photos.length ? `<h3${drawn ? rule : ""}>${H("photos")}</h3>
@@ -15144,6 +15601,8 @@ document.addEventListener("click", ev => {
   else if(act === "svEndDay"){ svEndDay(); }
   else if(act === "endOtherDay"){ endOtherAdminsDay(el.dataset.id, el.dataset.who); }
   else if(act === "edSave"){ saveCaseEdit(); }
+  else if(act === "dsSave"){ dsSave(parseInt(el.dataset.day, 10)); }
+  else if(act === "dsRebuild"){ dsRebuild(parseInt(el.dataset.day, 10)); }
   else if(act === "edAddPhone"){
     /* EVERY field is captured first, not just the phones. Repainting rebuilds
        the whole panel, so collecting only phone rows is what silently reverted
@@ -15634,6 +16093,8 @@ document.addEventListener("submit", ev => {
    the Timestamp Video quick tool taught at a different layer. */
 document.addEventListener("change", ev => {
   const act = ev.target.dataset ? ev.target.dataset.actChange : "";
+  /* The daily summary's controls: capture-then-recompose, per day. */
+  if(act === "dsCtl"){ dsCtl(parseInt(ev.target.dataset.day, 10)); return; }
   if(!act || !NL) return;
   if(act === "nlPickContact"){
     nlCollect();
@@ -15657,6 +16118,28 @@ document.addEventListener("change", ev => {
 
 document.addEventListener("input", ev => {
   const din = ev.target.dataset ? ev.target.dataset.actInput : "";
+  /* Typing IN the paragraph is the writer taking it over: the flag flips and
+     nothing rewrites the box — no repaint here, the cursor is in it. */
+  if(din === "dsText"){
+    const st = DS_DRAFT[parseInt(ev.target.dataset.day, 10)];
+    if(st){ st.text = ev.target.value; st.manual = true; }
+    return;
+  }
+  /* Typing in a small builder field: keep the value, recompose the paragraph
+     only while it is still the machine's, and do NOT rebuild the box the
+     cursor is sitting in — only the textarea is rewritten, and only when the
+     writer has not claimed it. */
+  if(din === "dsDirtyCtl"){
+    const dayId = parseInt(ev.target.dataset.day, 10);
+    dsCollect(dayId);
+    const st = DS_DRAFT[dayId];
+    const day = ((WS && WS.days) || []).find(d => d.id === dayId);
+    if(st && day && !st.manual){
+      st.text = dsCompose(day, st.sel);
+      const ta = $("ds_text"); if(ta) ta.value = st.text;
+    }
+    return;
+  }
   /* UNIT 7 — the two searches. Both repaint, and both hand the cursor back in
      paint() rather than here, because the box is rebuilt by that repaint. */
   if(din === "profSearch"){ PROF_Q = ev.target.value; profSearchSoon(); return; }
