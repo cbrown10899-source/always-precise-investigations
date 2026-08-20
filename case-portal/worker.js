@@ -1927,6 +1927,555 @@ async function recentActivity(env) {
   return out.slice(0, 12);
 }
 
+/* ====================================================== UNIT 8: GLOBAL SEARCH
+
+   ONE BOX THAT FINDS THE CASE. Structured operational search over records the
+   portal already holds — no document text, no media, no Dropbox, no semantic
+   anything. Each arm is a bounded query against a real column, and every
+   result says WHAT matched so the office is never guessing why a row appeared.
+
+   THE ROLE BOUNDARY IS IN THE SQL, not in the page. Every case-scoped arm
+   joins `submissions` and applies `s.assigned_to = ?` for an investigator, so
+   search cannot become the one door that hands them the firm's whole book of
+   work. The arms that read the PAYING side — the client's own phone, the firm,
+   the attorney, the saved profiles, a colleague's name — do not run for them at
+   all: an arm that cannot execute is a stronger boundary than one that filters.
+
+   WHAT IS AND IS NOT INDEXED, stated rather than implied. `case_no` and
+   `claim_number` carry indexes and are matched by PREFIX, which can seek.
+   Everything else is a substring or a punctuation-stripped comparison, which
+   no index can serve — so each of those reads its table, bounded by ARM_CAP and
+   by the arm count. That is the deliberate trade for an operational directory
+   of this size; it is not dressed up as something faster than it is. */
+
+const SEARCH_ARM_CAP = 8;    // rows any single arm may contribute
+const SEARCH_TOTAL_CAP = 24; // rows the whole answer may carry
+const SEARCH_MIN = 2;        // shorter than this matches half the database
+
+/* Digits only, for a phone typed any of the ways a phone gets typed. */
+const searchDigits = v => String(v == null ? '' : v).replace(/\D+/g, '');
+/* Letters and numbers only, upper case: ABC-123, ABC 123 and abc123 are one
+   plate. Nothing else is folded — a plate is not a name. */
+const searchPlate = v => String(v == null ? '' : v).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+
+/* SQLite has no regex, so the punctuation a person types into a phone number or
+   a plate is stripped in SQL by nesting REPLACE. Written once, here, because
+   five copies of this expression is five chances to strip a different set. */
+const sqlStrip = (col, chars) =>
+  chars.split('').reduce((acc, c) => `REPLACE(${acc}, '${c}', '')`, col);
+const SQL_PHONE = col => sqlStrip(col, "()- .+");
+const SQL_PLATE = col => `UPPER(${sqlStrip(col, "()- .")})`;
+
+async function globalSearch(request, env, user) {
+  const url = new URL(request.url);
+  const raw = String(url.searchParams.get('q') || '').trim();
+  if (raw.length < SEARCH_MIN) return json({ results: [], q: raw, too_short: true });
+
+  const admin = user.role === 'admin';
+  const like = `%${raw.toLowerCase()}%`;
+  const prefix = `${raw.toLowerCase()}%`;
+  const digits = searchDigits(raw);
+  const plate = searchPlate(raw);
+  const missing = await missingTables(env);
+  const have = t => !missing.includes(t);
+
+  /* A deleted case has left every ordinary view, so it has left this one.
+     An archived case is still a real case and is found, badged. */
+  const notDeleted = have('case_deleted')
+    ? 'AND s.case_no NOT IN (SELECT case_no FROM case_deleted)' : '';
+  const mine = admin ? '' : 'AND s.assigned_to = ?';
+  const meBind = admin ? [] : [user.id];
+
+  /* One entry per thing found. A case that matches on three arms is ONE
+     result carrying three reasons, not three rows saying the same case. */
+  const found = new Map();
+  const add = (key, row, matched) => {
+    const existing = found.get(key);
+    if (existing) {
+      if (existing.matched.length < 3 && !existing.matched.includes(matched)) existing.matched.push(matched);
+      return;
+    }
+    if (found.size >= SEARCH_TOTAL_CAP) return;
+    found.set(key, { ...row, matched: [matched] });
+  };
+
+  const run = async (sql, binds) => {
+    try { return (await env.DB.prepare(sql).bind(...binds).all()).results || []; }
+    catch { return []; }   // one arm's failure must not empty the whole answer
+  };
+
+  const CASE_COLS = `s.case_no, s.kind, s.status, s.client_name, s.carrier, s.claim_number,
+    s.subject_name, s.created_at, cs.stage,
+    CASE WHEN json_valid(s.payload) AND json_extract(s.payload, '$.assignment') = 'legal'
+         THEN 1 ELSE 0 END AS legal`;
+  const CASE_FROM = `FROM submissions s LEFT JOIN case_status cs ON cs.case_no = s.case_no`;
+  const caseRow = r => ({
+    type: (r.stage || r.status) === 'new' || (r.stage || r.status) === 'awaiting_client'
+      ? 'intake' : 'case',
+    case_no: r.case_no, kind: r.kind, legal: !!Number(r.legal),
+    stage: r.stage || r.status,
+    /* An investigator is never told who is paying, so the line under a case is
+       the SUBJECT for them and the client for the office. */
+    title: r.case_no,
+    subtitle: admin ? (r.legal ? r.client_name : r.kind === 'claims' ? (r.carrier || r.client_name)
+      : r.client_name) || r.subject_name || '' : (r.subject_name || ''),
+    claim_number: admin ? r.claim_number : null,
+    dest: { view: 'case', case_no: r.case_no },
+  });
+
+  // ---- the case's own identifiers. Prefix-matched, so the index can seek. --
+  for (const [col, label] of [['s.case_no', 'case number'], ['s.claim_number', 'claim number']]) {
+    for (const r of await run(
+      `SELECT ${CASE_COLS} ${CASE_FROM}
+        WHERE LOWER(${col}) LIKE ? ${mine} ${notDeleted}
+        ORDER BY s.created_at DESC LIMIT ${SEARCH_ARM_CAP}`, [prefix, ...meBind])) {
+      add(`case:${r.case_no}`, caseRow(r), label);
+    }
+  }
+
+  // ---- who the case is for. Admin only: this is the paying side. ----------
+  if (admin) {
+    for (const [col, label] of [['s.client_name', 'client name'], ['s.carrier', 'carrier'],
+      ['s.client_email', 'email']]) {
+      for (const r of await run(
+        `SELECT ${CASE_COLS} ${CASE_FROM}
+          WHERE LOWER(${col}) LIKE ? ${notDeleted}
+          ORDER BY s.created_at DESC LIMIT ${SEARCH_ARM_CAP}`, [like])) {
+        add(`case:${r.case_no}`, caseRow(r), label);
+      }
+    }
+    if (digits.length >= 7) {
+      for (const r of await run(
+        `SELECT ${CASE_COLS} ${CASE_FROM}
+          WHERE s.client_phone IS NOT NULL AND ${SQL_PHONE('s.client_phone')} LIKE ?
+            ${notDeleted} ORDER BY s.created_at DESC LIMIT ${SEARCH_ARM_CAP}`, [`%${digits}`])) {
+        add(`case:${r.case_no}`, caseRow(r), 'client phone');
+      }
+    }
+    // The investigator by name, so "what is Dana on?" is one search.
+    for (const r of await run(
+      `SELECT ${CASE_COLS} ${CASE_FROM} JOIN users u ON u.id = s.assigned_to
+        WHERE LOWER(u.display_name) LIKE ? ${notDeleted}
+        ORDER BY s.created_at DESC LIMIT ${SEARCH_ARM_CAP}`, [like])) {
+      add(`case:${r.case_no}`, caseRow(r), 'investigator');
+    }
+  }
+
+  // ---- the subject. Fieldwork, so BOTH roles, scoped to their own cases. --
+  if (have('case_subjects')) {
+    for (const [col, label] of [['sub.name', 'subject name'], ['sub.alias', 'alias'],
+      ['sub.addresses', 'address']]) {
+      for (const r of await run(
+        `SELECT ${CASE_COLS}, sub.id AS subject_id, sub.name AS sub_name, sub.alias AS sub_alias
+           ${CASE_FROM} JOIN case_subjects sub ON sub.case_no = s.case_no
+          WHERE LOWER(${col}) LIKE ? ${mine} ${notDeleted}
+          ORDER BY s.created_at DESC LIMIT ${SEARCH_ARM_CAP}`, [like, ...meBind])) {
+        add(`subject:${r.subject_id}`, {
+          ...caseRow(r), type: 'subject',
+          title: r.sub_name, subtitle: r.case_no,
+          alias: r.sub_alias || null,
+          dest: { view: 'case', case_no: r.case_no, tab: 'subject' },
+        }, label);
+      }
+    }
+    if (digits.length >= 7) {
+      for (const r of await run(
+        `SELECT ${CASE_COLS}, sub.id AS subject_id, sub.name AS sub_name
+           ${CASE_FROM} JOIN case_subjects sub ON sub.case_no = s.case_no
+          WHERE sub.phone IS NOT NULL AND ${SQL_PHONE('sub.phone')} LIKE ?
+            ${mine} ${notDeleted} ORDER BY s.created_at DESC LIMIT ${SEARCH_ARM_CAP}`,
+        [`%${digits}`, ...meBind])) {
+        add(`subject:${r.subject_id}`, {
+          ...caseRow(r), type: 'subject', title: r.sub_name, subtitle: r.case_no,
+          dest: { view: 'case', case_no: r.case_no, tab: 'subject' },
+        }, 'subject phone');
+      }
+    }
+  }
+
+  // ---- the vehicle. Also fieldwork, also both roles. ----------------------
+  if (have('subject_vehicles')) {
+    const vRow = r => ({
+      ...caseRow(r), type: 'vehicle',
+      title: [r.v_year, r.v_make, r.v_model].filter(Boolean).join(' ') || 'Vehicle',
+      subtitle: [[r.v_state, r.v_plate].filter(Boolean).join(' '), r.case_no].filter(Boolean).join(' · '),
+      plate: r.v_plate || null, color: r.v_color || null,
+      dest: { view: 'case', case_no: r.case_no, tab: 'subject' },
+    });
+    const V = `v.id AS vehicle_id, v.year AS v_year, v.make AS v_make, v.model AS v_model,
+      v.color AS v_color, v.plate AS v_plate, v.plate_state AS v_state`;
+    const VJOIN = `JOIN case_subjects sub ON sub.case_no = s.case_no
+                   JOIN subject_vehicles v ON v.subject_id = sub.id`;
+    if (plate.length >= 2) {
+      for (const r of await run(
+        `SELECT ${CASE_COLS}, ${V} ${CASE_FROM} ${VJOIN}
+          WHERE v.plate IS NOT NULL AND ${SQL_PLATE('v.plate')} LIKE ?
+            ${mine} ${notDeleted} ORDER BY s.created_at DESC LIMIT ${SEARCH_ARM_CAP}`,
+        [`%${plate}%`, ...meBind])) {
+        add(`vehicle:${r.vehicle_id}`, vRow(r), 'license plate');
+      }
+    }
+    for (const [col, label] of [['v.make', 'vehicle make'], ['v.model', 'vehicle model'],
+      ['v.color', 'vehicle colour']]) {
+      for (const r of await run(
+        `SELECT ${CASE_COLS}, ${V} ${CASE_FROM} ${VJOIN}
+          WHERE LOWER(${col}) LIKE ? ${mine} ${notDeleted}
+          ORDER BY s.created_at DESC LIMIT ${SEARCH_ARM_CAP}`, [like, ...meBind])) {
+        add(`vehicle:${r.vehicle_id}`, vRow(r), label);
+      }
+    }
+  }
+
+  // ---- the firm on a case, and the matter. ADMIN ONLY: `redactRow` strips
+  //      every one of these columns from an investigator's case list, so
+  //      search must not be the way back to them.
+  if (admin && have('legal_intake')) {
+    for (const [col, label] of [['li.firm_name', 'law firm'], ['li.attorney_name', 'attorney'],
+      ['li.paralegal_name', 'paralegal'], ['li.billing_name', 'billing contact'],
+      ['li.matter_number', 'matter number'], ['li.court_case_number', 'court case number']]) {
+      for (const r of await run(
+        `SELECT ${CASE_COLS}, li.firm_name, li.attorney_name, li.matter_number
+           ${CASE_FROM} JOIN legal_intake li ON li.case_no = s.case_no
+          WHERE LOWER(${col}) LIKE ? ${notDeleted}
+          ORDER BY s.created_at DESC LIMIT ${SEARCH_ARM_CAP}`, [like])) {
+        const row = caseRow(r);
+        add(`case:${r.case_no}`, { ...row,
+          subtitle: [r.firm_name, r.attorney_name].filter(Boolean).join(' · ') || row.subtitle,
+          matter_number: r.matter_number || null }, label);
+      }
+    }
+  }
+
+  /* ---- the saved directory (Unit 7). ADMIN ONLY, and reusing the SAME
+     function the picker and the directory read, so the three can never
+     disagree about what a search finds. */
+  if (admin && !(await profilesMissing(env)).length) {
+    const { profiles } = await searchProfiles(env, { q: raw, limit: 6, includeInactive: true });
+    for (const p of profiles || []) {
+      const who = (p.contacts || [])[0];
+      add(`profile:${p.id}`, {
+        type: 'profile', profile_kind: p.kind, kind_label: p.kind_label,
+        title: p.name,
+        subtitle: who ? `${[who.first_name, who.last_name].filter(Boolean).join(' ')}${
+          who.role ? `, ${who.role}` : ''}` : (p.email || ''),
+        case_count: p.case_count || 0, active: !!p.active,
+        dest: { view: 'profile', id: p.id },
+      }, 'saved profile');
+    }
+  }
+
+  return json({
+    q: raw,
+    results: [...found.values()].slice(0, SEARCH_TOTAL_CAP),
+    capped: found.size >= SEARCH_TOTAL_CAP,
+  });
+}
+
+/* ================================================= UNIT 8: NEEDS ATTENTION
+
+   THE QUESTION IS "WHAT REQUIRES ACTION NOW?", not "here are twenty numbers".
+   Every alert names WHAT, WHICH CASE, WHY and WHERE TO GO, and every one of
+   them is derived from state the portal already records — an intake nobody has
+   accepted, a day that finished with no report, money the ledger says is
+   outstanding, a date a firm actually gave us.
+
+   NOTHING IS INFERRED FROM A WEAK ASSUMPTION. There is no "probably stale",
+   no deadline derived from another deadline, and no alert whose data does not
+   exist yet: a category the schema cannot answer is simply absent, the same
+   rule the dashboard cards already follow. A case on hold is not neglected,
+   and a paused surveillance day is a decision rather than a problem.
+
+   THERE IS NO DISMISSAL, deliberately. An alert goes away because the thing
+   was DONE — the payment recorded, the report written, the intake accepted.
+   A dismiss button would be a second status system competing with the first,
+   and the one that drifts is the one nobody is looking at.
+
+   Windows, in one place so they are arguable rather than scattered: */
+const ATTN = {
+  LEGAL_DATE_DAYS: 14,   // a hearing, trial or deadline this close is worth saying
+  QUIET_DAYS: 21,        // a working case with nothing recorded for three weeks
+  LONG_DAY_HOURS: 14,    // a surveillance day this long was probably never ended
+  INTAKE_STALE_DAYS: 2,  // an intake nobody has looked at
+  PER_KIND: 6,           // rows any single rule may contribute
+  TOTAL: 40,
+};
+
+/* One row per thing to do. `key` is what makes an alert identical to itself
+   across reloads; nothing is stored, so it exists only for the page. */
+const attnRow = (severity, kind, caseNo, what, why, action) =>
+  ({ key: `${kind}:${caseNo}`, severity, kind, case_no: caseNo, what, why, action });
+
+/* Money in an alert sentence. The two existing `money` helpers are locals
+   inside other functions; this is the alert list's own, and it formats only —
+   every figure it prints was computed from the ledger by the caller. */
+const attnMoney = n => '$' + Number(n).toLocaleString('en-US',
+  { minimumFractionDigits: Number.isInteger(Number(n)) ? 0 : 2, maximumFractionDigits: 2 });
+
+const daysBetween = (aIso, bIso) => {
+  const a = Date.parse(aIso), b = Date.parse(bIso);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  return Math.floor((b - a) / 86400000);
+};
+
+async function needsAttention(env, user) {
+  /* ADMIN ONLY, like /recent-activity and the storage card it sits beside: this
+     is the office's exception list across the whole book of work, and an
+     investigator's own outstanding work reaches them through their own
+     screens. */
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+
+  const missing = await missingTables(env);
+  const have = t => !missing.includes(t);
+  const now = nowIso();
+  const today = now.slice(0, 10);
+  const out = [];
+  const q = async (sql, binds = []) => {
+    try { return (await env.DB.prepare(sql).bind(...binds).all()).results || []; }
+    catch { return []; }
+  };
+  /* A case that has been archived or deleted is out of the working set, so it
+     is out of the list of things that need doing. One read, reused. */
+  const hidden = await hiddenCases(env);
+  const visible = r => !hidden.has(r.case_no);
+
+  // ---- INTAKES: submitted, and nobody has accepted or declined them. ------
+  for (const r of (await q(
+    `SELECT s.case_no, s.created_at, s.client_name, s.carrier, s.kind
+       FROM submissions s LEFT JOIN case_status cs ON cs.case_no = s.case_no
+      WHERE s.status = 'new' AND COALESCE(cs.stage, 'open') IN ('open', 'new')
+      ORDER BY s.created_at LIMIT ${ATTN.PER_KIND * 2}`)).filter(visible)) {
+    const age = daysBetween(r.created_at, now);
+    if (age === null) continue;
+    out.push(attnRow(age >= ATTN.INTAKE_STALE_DAYS ? 'urgent' : 'attention', 'intakes',
+      r.case_no, 'Intake awaiting a decision',
+      `${r.client_name || r.carrier || 'A new submission'} — ${
+        age === 0 ? 'arrived today' : age === 1 ? 'waiting a day' : `waiting ${age} days`}`,
+      { label: 'Review intake', view: 'case', tab: 'assign' }));
+    if (out.length >= ATTN.TOTAL) break;
+  }
+
+  // ---- REPORTS: a day was worked and no report exists, or one is waiting.
+  if (have('case_days') && have('case_reports')) {
+    for (const r of (await q(
+      `SELECT d.case_no, d.day_date, d.id AS day_id FROM case_days d
+         LEFT JOIN case_reports rp ON rp.day_id = d.id
+        WHERE d.end_time IS NOT NULL AND rp.id IS NULL
+        ORDER BY d.day_date LIMIT ${ATTN.PER_KIND}`)).filter(visible)) {
+      out.push(attnRow('attention', 'reports', r.case_no, 'Day worked, no report',
+        `The day of ${r.day_date} finished with nothing written up`,
+        { label: 'Open reports', view: 'case', tab: 'reports' }));
+    }
+    for (const r of (await q(
+      `SELECT case_no, report_date FROM case_reports
+        WHERE status = 'submitted' ORDER BY report_date LIMIT ${ATTN.PER_KIND}`)).filter(visible)) {
+      out.push(attnRow('attention', 'reports', r.case_no, 'Report waiting on the office',
+        `Submitted for ${r.report_date} and not approved yet`,
+        { label: 'Open reports', view: 'case', tab: 'reports' }));
+    }
+  }
+
+  // ---- PAYMENTS. Arithmetic, never a stored flag — the invoice rule. ------
+  if (have('case_retainer')) {
+    /* A private retainer that has been agreed and not fully received. Summed
+       across the payment log, so a partial instalment reads as a balance
+       rather than as unpaid. */
+    const paidCol = have('retainer_payment')
+      ? `COALESCE((SELECT SUM(rp.amount) FROM retainer_payment rp
+                    WHERE rp.case_no = cr.case_no
+                      ${have('retainer_payment_void')
+                        ? 'AND rp.id NOT IN (SELECT payment_id FROM retainer_payment_void)' : ''}), 0)`
+      : '0';
+    for (const r of (await q(
+      `SELECT cr.case_no, cr.retainer_amount, cr.received, ${paidCol} AS paid
+         FROM case_retainer cr JOIN submissions s ON s.case_no = cr.case_no
+        WHERE cr.retainer_amount > 0 AND s.status != 'closed'
+        LIMIT ${ATTN.PER_KIND * 2}`)).filter(visible)) {
+      const owed = Number(r.retainer_amount) - Number(r.paid || 0);
+      if (Number(r.received) && owed <= 0) continue;
+      if (owed <= 0) continue;
+      const partial = Number(r.paid) > 0;
+      out.push(attnRow(partial ? 'attention' : 'urgent', 'payments', r.case_no,
+        partial ? 'Retainer part paid' : 'Retainer outstanding',
+        partial ? `${attnMoney(owed)} of ${attnMoney(r.retainer_amount)} still to come`
+          : `${attnMoney(r.retainer_amount)} agreed, nothing recorded yet`,
+        { label: 'Open billing', view: 'case', tab: 'billing' }));
+      if (out.length >= ATTN.TOTAL) break;
+    }
+  }
+  if (have('invoices')) {
+    /* OVERDUE IS COMPUTED AGAINST TODAY, never stored — and never on a draft
+       or a void, which is the rule the invoice module already states. */
+    for (const r of (await q(
+      `SELECT i.case_no, i.invoice_no, i.due_date,
+              COALESCE((SELECT SUM(l.amount) FROM invoice_lines l WHERE l.invoice_id = i.id), 0)
+                + i.adjustments AS total,
+              COALESCE((SELECT SUM(p.amount) FROM invoice_payments p WHERE p.invoice_id = i.id), 0) AS paid
+         FROM invoices i
+        WHERE i.status NOT IN ('draft', 'void', 'paid')
+          AND i.due_date IS NOT NULL AND i.due_date < ?
+        ORDER BY i.due_date LIMIT ${ATTN.PER_KIND}`, [today])).filter(visible)) {
+      const owed = Number(r.total) - Number(r.paid);
+      if (owed <= 0) continue;
+      const late = daysBetween(r.due_date, today);
+      out.push(attnRow('urgent', 'payments', r.case_no, 'Invoice overdue',
+        `${r.invoice_no} — ${attnMoney(owed)} outstanding, due ${r.due_date}${
+          late ? ` (${late} day${late === 1 ? '' : 's'} ago)` : ''}`,
+        { label: 'Open billing', view: 'case', tab: 'invoices' }));
+    }
+  }
+
+  // ---- LEGAL DATES. Only dates a firm actually gave us, never derived. ----
+  if (have('legal_intake')) {
+    const soon = new Date(Date.parse(today + 'T00:00:00Z') + ATTN.LEGAL_DATE_DAYS * 86400000)
+      .toISOString().slice(0, 10);
+    for (const [col, label] of [['hearing_date', 'Hearing'], ['trial_date', 'Trial'],
+      ['deadline', 'Investigation deadline']]) {
+      for (const r of (await q(
+        `SELECT li.case_no, li.${col} AS d, li.firm_name FROM legal_intake li
+           JOIN submissions s ON s.case_no = li.case_no
+          WHERE li.${col} IS NOT NULL AND li.${col} != '' AND li.${col} >= ? AND li.${col} <= ?
+            AND s.status != 'closed'
+          ORDER BY li.${col} LIMIT ${ATTN.PER_KIND}`, [today, soon])).filter(visible)) {
+        const away = daysBetween(today, r.d);
+        out.push(attnRow(away !== null && away <= 3 ? 'urgent' : 'attention', 'legal',
+          r.case_no, `${label} approaching`,
+          `${r.firm_name ? r.firm_name + ' — ' : ''}${r.d}${
+            away === 0 ? ' (today)' : away === 1 ? ' (tomorrow)' : ` (in ${away} days)`}`,
+          { label: 'Open the case', view: 'case', tab: 'legal' }));
+      }
+    }
+    /* The retainer cheque the firm asked us to collect. It is a REQUEST, and
+       it stays awaiting until the office records the money — so this says
+       "still awaiting", never "unpaid". */
+    for (const r of (await q(
+      `SELECT li.case_no, li.firm_name FROM legal_intake li
+         JOIN submissions s ON s.case_no = li.case_no
+        WHERE li.payment_arrangement = 'check_pickup' AND s.status != 'closed'
+        LIMIT ${ATTN.PER_KIND}`)).filter(visible)) {
+      out.push(attnRow('info', 'legal', r.case_no, 'Retainer cheque awaiting pickup',
+        `${r.firm_name || 'The firm'} asked us to collect it at their office`,
+        { label: 'Open billing', view: 'case', tab: 'billing' }));
+    }
+  }
+
+  // ---- PACKAGES: started and not finalized. -------------------------------
+  if (have('case_builds')) {
+    for (const r of (await q(
+      `SELECT b.case_no, b.version, b.created_at,
+              (SELECT COUNT(*) FROM build_items bi WHERE bi.build_id = b.id) AS items
+         FROM case_builds b WHERE b.status = 'draft'
+        ORDER BY b.created_at LIMIT ${ATTN.PER_KIND}`)).filter(visible)) {
+      out.push(attnRow('attention', 'packages', r.case_no, 'Client package unfinished',
+        Number(r.items) ? `Version ${r.version} has ${r.items} exhibit${
+          Number(r.items) === 1 ? '' : 's'} chosen and is not finalized`
+          : `Version ${r.version} was started with nothing selected yet`,
+        { label: 'Open the package', view: 'case', tab: 'package' }));
+    }
+  }
+
+  // ---- SURVEILLANCE: a day that has almost certainly not been ended. ------
+  if (have('case_days')) {
+    for (const r of (await q(
+      `SELECT d.case_no, d.created_at, u.display_name AS who FROM case_days d
+         LEFT JOIN users u ON u.id = d.investigator_id
+        WHERE d.end_time IS NULL ORDER BY d.created_at LIMIT ${ATTN.PER_KIND}`)).filter(visible)) {
+      const hours = (Date.parse(now) - Date.parse(r.created_at)) / 3600000;
+      if (!Number.isFinite(hours) || hours < ATTN.LONG_DAY_HOURS) continue;
+      out.push(attnRow('attention', 'cases', r.case_no, 'Day still running',
+        `${r.who || 'Someone'} has had a day open for ${Math.floor(hours)} hours`,
+        { label: 'Open the case', view: 'case', tab: 'field' }));
+    }
+  }
+
+  // ---- QUIET CASES, narrowly. A case someone is actively assigned to, with
+  //      nothing recorded for three weeks, no day running, and not on hold —
+  //      a paused or held case is a decision, not neglect.
+  if (have('case_days') && have('activity_log')) {
+    const cut = new Date(Date.parse(now) - ATTN.QUIET_DAYS * 86400000).toISOString();
+    for (const r of (await q(
+      `SELECT s.case_no, s.created_at,
+              (SELECT MAX(a.created_at) FROM activity_log a WHERE a.case_no = s.case_no) AS last_act,
+              (SELECT MAX(d.created_at) FROM case_days d WHERE d.case_no = s.case_no) AS last_day,
+              (SELECT COUNT(*) FROM case_days d WHERE d.case_no = s.case_no AND d.end_time IS NULL) AS running
+         FROM submissions s LEFT JOIN case_status cs ON cs.case_no = s.case_no
+        WHERE s.assigned_to IS NOT NULL AND s.status IN ('assigned', 'in_progress')
+          AND COALESCE(cs.stage, '') NOT IN ('on_hold', 'complete', 'closed', 'cancelled')
+        LIMIT 60`)).filter(visible)) {
+      if (Number(r.running)) continue;
+      const last = [r.last_act, r.last_day, r.created_at].filter(Boolean).sort().pop();
+      if (!last || last >= cut) continue;
+      const quiet = daysBetween(last, now);
+      out.push(attnRow('info', 'cases', r.case_no, 'No activity recently',
+        `Nothing recorded for ${quiet} days on an assigned case`,
+        { label: 'Open the case', view: 'case' }));
+      if (out.length >= ATTN.TOTAL) break;
+    }
+  }
+
+  // ---- AUTHORIZATION running out, against the configured threshold. ------
+  if (have('case_meta') && have('case_days')) {
+    const first = String(await configValue(env, 'auth_warn_thresholds', '75,90,100'))
+      .split(',').map(parseFloat).filter(Number.isFinite).sort((a, b) => a - b)[0] ?? 75;
+    for (const r of (await q(
+      `SELECT m.case_no, m.authorized_hours, COALESCE(SUM(d.hours), 0) AS used
+         FROM case_meta m LEFT JOIN case_days d ON d.case_no = m.case_no
+         JOIN submissions s ON s.case_no = m.case_no
+        WHERE m.authorized_hours > 0 AND s.status != 'closed'
+        GROUP BY m.case_no, m.authorized_hours LIMIT 60`)).filter(visible)) {
+      const pct = (Number(r.used) / Number(r.authorized_hours)) * 100;
+      if (!(pct >= first)) continue;
+      out.push(attnRow(pct >= 100 ? 'urgent' : 'attention', 'cases', r.case_no,
+        pct >= 100 ? 'Authorization used up' : 'Authorization running low',
+        `${Math.round(pct)}% of ${r.authorized_hours} authorized hours used`,
+        { label: 'Open authorization', view: 'case', tab: 'auth' }));
+      if (out.length >= ATTN.TOTAL) break;
+    }
+  }
+
+  /* ---- STORAGE. The Dropbox card's rule from Unit 5, applied here: it exists
+     ONLY in the broken states. A card that always says "fine" stops being read,
+     and this list is the one place that must stay worth reading. Local reads
+     only — env plus one row, never a call to Dropbox. */
+  const storage = [];
+  try {
+    const dbx = await dropboxState(env);
+    if (!dbx.app_configured) {
+      storage.push(attnRow('attention', 'storage', '', 'Dropbox is not configured',
+        'New case photos and reports have nowhere to go until it is',
+        { label: 'Open settings', view: 'settings' }));
+    } else if (!dbx.connected) {
+      storage.push(attnRow('urgent', 'storage', '', 'Dropbox is disconnected',
+        'An upload will be refused until the connection is made again',
+        { label: 'Open settings', view: 'settings' }));
+    }
+  } catch { /* a status read must not take the list down */ }
+  if (have('case_evidence')) {
+    try {
+      const usage = await evidenceUsage(env);
+      const pct = Number(usage && usage.percent_of_free);
+      if (Number.isFinite(pct) && pct >= 75) {
+        storage.push(attnRow(pct >= 90 ? 'urgent' : 'attention', 'storage', '',
+          'Stored evidence is near the cap',
+          `${Math.round(pct)}% of the free-tier allowance is in use`,
+          { label: 'Open settings', view: 'settings' }));
+      }
+    } catch { /* likewise */ }
+  }
+
+  const SEV = { urgent: 0, attention: 1, info: 2 };
+  const all = [...storage, ...out].sort((a, b) => SEV[a.severity] - SEV[b.severity]);
+  const counts = { urgent: 0, attention: 0, info: 0 };
+  for (const a of all) counts[a.severity]++;
+  const kinds = {};
+  for (const a of all) kinds[a.kind] = (kinds[a.kind] || 0) + 1;
+  return json({
+    alerts: all.slice(0, ATTN.TOTAL),
+    counts, kinds, total: all.length,
+    windows: { legal_days: ATTN.LEGAL_DATE_DAYS, quiet_days: ATTN.QUIET_DAYS,
+      long_day_hours: ATTN.LONG_DAY_HOURS },
+  });
+}
+
 /* Case numbers that have left the working set: archived or deleted. Guarded on
    each table existing, for the standing deploy-order reason. */
 async function hiddenCases(env) {
@@ -8758,6 +9307,14 @@ async function route(request, env) {
   /* Counts for the dashboard. Scoped like everything else — an investigator's
      totals are their own cases, not the firm's book of work. */
   if (p === '/summary' && method === 'GET') return caseSummary(env, user);
+
+  /* UNIT 8 — one box that finds the case. Role-scoped INSIDE the SQL, not by
+     the page: an investigator's search reaches only cases assigned to them,
+     and the arms that read the paying side do not run for them at all. */
+  if (p === '/search' && method === 'GET') return globalSearch(request, env, user);
+  /* And the exception list the office works from. Admin-only, like the
+     recent-activity feed and the storage card it summarises. */
+  if (p === '/attention' && method === 'GET') return needsAttention(env, user);
   if (p === '/recent-activity' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return json({ activity: await recentActivity(env) });
