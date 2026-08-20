@@ -502,6 +502,43 @@ The consumer flow therefore ends at the **agreement**, not a payment: submitting
 records the case, the office reads it and sends the sheet, and work starts once
 the client agrees. The terms say exactly that.
 
+## Unit 5 — the shell is measured, not styled
+
+Every Unit 5 change began as a number from a four-width probe (320/390/768/
+1200) and was re-measured before it was kept; the suite asserts the numbers.
+Three rules came out of it that outlive the unit:
+
+- **A class name is a contest.** `.qgrid` already belonged to the field view's
+  84px action grid at the other end of the stylesheet, and the later rule won
+  silently — the third source-order casualty on record (the dead `.dlg` phone
+  rule and the buried burger base rule are the others). New shell classes get
+  distinct names (`.qtgrid`), and phone overrides live at the END of the
+  stylesheet, after everything they override.
+- **The dim must be an element.** The drawer's backdrop was a 100vmax
+  box-shadow — decoration — so a tap "outside the menu" passed through to live
+  controls underneath, and the open drawer covered the burger with nothing left
+  to close it. `.navback` is a real button: it intercepts, it closes, and the
+  burger sits above it (z-index) swapping ☰/✕ off `body.navopen` with
+  `aria-expanded` kept true-to-state.
+- **A primary action never shrinks below its own words.** Intake Accept
+  measured 42–60px wide × up to 119px tall — the flex row handed the ghost
+  cluster the width and let the primary wrap letter by letter.
+
+**Stacked records, not hidden columns**: under 560px, `.stacktbl` tables draw
+each row as a block labelled from its own `data-l` — same markup, same
+handlers — and the columns `.hide` drops come BACK, because a stacked record
+has the room the row did not. The 16px-input rule is portal-wide on phones
+(any smaller input makes iOS zoom on focus), with the 44px floor on form
+controls and one `:focus-visible` treatment on every interactive control.
+
+**Recent activity is existing tables, cheaply.** `GET /recent-activity`
+merges per-source LIMITed reads (submissions, days, report statuses, evidence
+filenames — never bytes — retainer payments, build events), excludes hidden
+cases, cuts at 12, admin-only. The Dropbox needs-attention card **exists only
+in the broken states** — a card that always says "fine" stops being read — and
+its flag rides `/summary` for admins from local state; nothing on the
+dashboard calls Dropbox.
+
 ## The dashboard
 
 `summaryCards()` draws an alerts strip above the case list, built to answer
