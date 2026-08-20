@@ -11054,9 +11054,32 @@ section('Clients & Firms: a firm saved once, then an assignment in seconds');
   ok('no objective was carried over', await page.locator('#nl_obj').inputValue() === '');
   ok('and no deadline was invented', await page.locator('#nl_legal_deadline').inputValue() === '');
 
-  // The contact is a choice, not a fixture.
+  /* THE CONTACT IS A CHOICE, AND THE CHOICE HAS TO WORK. The first version of
+     this control rendered a <select> that nothing listened to: picking a
+     different attorney changed neither the form nor what was posted, and a
+     test that only counted its options passed straight over it. */
   ok('the other people are offered for this assignment',
-     await page.locator('[data-act="nlPickContact"] option').count() === 4);
+     await page.locator('#nl_pickc option').count() === 4);
+  await page.locator('#nl_pickc').selectOption({ label: 'Owen Pike — Attorney' });
+  await page.waitForTimeout(400);
+  ok('choosing a different attorney really changes the assignment',
+     await page.locator('#nl_atty').inputValue() === 'Owen Pike',
+     await page.locator('#nl_atty').inputValue());
+  ok('and brings their own email with them',
+     await page.locator('#nl_email').inputValue() === 'op@calloway.example',
+     await page.locator('#nl_email').inputValue());
+  await page.locator('#nl_pickc').selectOption({ label: 'Renata Calloway — Attorney' });
+  await page.waitForTimeout(400);
+  ok('and switching back restores the first one',
+     await page.locator('#nl_atty').inputValue() === 'Renata Calloway');
+  /* The owner's steps 4 and 5: a paralegal and a billing contact, chosen off
+     the firm rather than retyped. */
+  ok('the firm\'s paralegals are offered', await page.locator('#nl_pickpara').count() === 1);
+  await page.locator('#nl_pickpara').selectOption({ label: 'Beatrix Sandoval' });
+  await page.waitForTimeout(300);
+  ok('the firm\'s billing contacts are offered', await page.locator('#nl_pickbill').count() === 1);
+  await page.locator('#nl_pickbill').selectOption({ label: 'Del Watts' });
+  await page.waitForTimeout(300);
 
   /* EDIT THIS ASSIGNMENT: the phone changed for this case only. */
   await page.locator('#nl_phone').fill('540-555-0000');
@@ -11075,10 +11098,27 @@ section('Clients & Firms: a firm saved once, then an assignment in seconds');
      rendered text — read them the way the office sees them. */
   ok('and the attorney', await page.locator('#lg_attorney_name').inputValue() === 'Renata Calloway',
      await page.locator('#lg_attorney_name').inputValue());
+  /* Named as ONE fact, because an OR whose second half is trivially true of an
+     empty field proves nothing — which is what the first version of this
+     assertion did. */
   ok('and the number typed for THIS assignment, not the firm\'s',
-     await page.locator('#lg_attorney_phone').inputValue() === '540-555-0000'
-       || await page.locator('#lg_firm_phone').inputValue() !== '(540) 555-3311',
+     await page.locator('#lg_attorney_phone').inputValue() === '540-555-0000',
      await page.locator('#lg_attorney_phone').inputValue());
+  /* THE FIRM'S OWN DETAILS CAME ACROSS, so nobody retypes a letterhead the
+     portal already holds — the owner's "do not ask Admin to re-enter the
+     firm's address and contact data". */
+  ok('the firm\'s office address arrived with it',
+     await page.locator('#lg_firm_address').inputValue() === '55 Campbell Ave, Roanoke VA',
+     await page.locator('#lg_firm_address').inputValue());
+  ok('and the switchboard',
+     await page.locator('#lg_firm_phone').inputValue() === '(540) 555-3311',
+     await page.locator('#lg_firm_phone').inputValue());
+  ok('and the paralegal the office picked off the firm',
+     await page.locator('#lg_paralegal_name').inputValue() === 'Beatrix Sandoval',
+     await page.locator('#lg_paralegal_name').inputValue());
+  ok('and the billing contact',
+     await page.locator('#lg_billing_name').inputValue() === 'Del Watts',
+     await page.locator('#lg_billing_name').inputValue());
   const caseNo = await page.evaluate(async () => {
     const d = await (await fetch('/portal-api/submissions?limit=1', { credentials: 'same-origin' })).json();
     return d.submissions[0].case_no;
@@ -11159,6 +11199,87 @@ section('Clients & Firms: a possible duplicate is a question, not a merge');
   ok('BOTH firms now exist, apart',
      list.includes('Ridgeline Law Group') && list.includes('Ridgeline Law'),
      list.slice(0, 300));
+  await page.close();
+}
+
+section('Clients & Firms: New Assignment from a profile routes by type');
+{
+  /* Written as a SET across the three kinds, the way the Timestamp pair's
+     reachability tests are, so a door that works for one and not the others
+     fails instead of shipping. */
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const mk = async (kind, name, email) => {
+    await gotoProfiles(page);
+    await page.locator('[data-act="profNew"]').click();
+    await page.waitForTimeout(300);
+    await page.locator(`[data-act="profFormKind"][data-k="${kind}"]`).click();
+    await page.waitForTimeout(200);
+    await page.locator('#pf_name').fill(name);
+    await page.locator('#pf_email').fill(email);
+    await page.locator('[data-act="profSave"]').first().click();
+    await page.waitForTimeout(600);
+    if (await page.locator('[data-act="profSave"][data-confirm="1"]').count()) {
+      await page.locator('[data-act="profSave"][data-confirm="1"]').click();
+      await page.waitForTimeout(600);
+    }
+  };
+  for (const [kind, name, email, wantHeading, wantField] of [
+    ['law_firm', 'Routing Law Offices', 'r@routing.example', 'Quick Legal Assignment', '#nl_firm'],
+    ['insurance_org', 'Routing Mutual', 'r@routingmutual.example', 'insurance', '#nl_carrier'],
+    ['private_client', 'Rosalind Routing', 'ros@routing.example', 'private client', '#nl_client'],
+  ]) {
+    await mk(kind, name, email);
+    await page.locator('[data-act="profStart"]').first().click();
+    await page.waitForTimeout(600);
+    const head = await text(page, '.card');
+    ok(`a ${kind} profile opens the right intake`, has(head, wantHeading), head.slice(0, 120));
+    ok(`and the ${kind} profile's name is already in it`,
+       (await page.locator(wantField).inputValue()) === name,
+       await page.locator(wantField).inputValue());
+    ok(`and its email came too (${kind})`,
+       (await page.locator('#nl_email').inputValue()) === email);
+    /* Identity only — never a fact from a previous matter. */
+    ok(`no case-specific value rode along (${kind})`,
+       (await page.locator('#nl_subject').inputValue()) === ''
+       && (await page.locator('#nl_obj').inputValue()) === '');
+  }
+  await page.close();
+}
+
+section('Clients & Firms: a case says which profile it came from, and asks before it searches');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* An ordinary intake with no profile behind it. */
+  await page.locator('.tabs button', { hasText: 'Intakes' }).first().click();
+  await page.waitForTimeout(300);
+  await page.locator('[data-act="tab"][data-tab="newlead"]').first().click();
+  await page.waitForTimeout(300);
+  await page.locator('[data-act="nlKind"][data-k="consumer"]').click();
+  await page.waitForTimeout(300);
+  await page.locator('#nl_client').fill('Rosalind Routing');
+  await page.locator('#nl_email').fill('ros@routing.example');
+  await page.locator('[data-act="nlSave"][data-open="1"]').click();
+  await page.waitForTimeout(900);
+  await wsTab(page, 'Edit case');
+  let body = await text(page, '#dlgBody');
+  ok('an unlinked case says so', has(body, 'No saved client or firm is linked'), body.slice(0, 200));
+  /* THE SEARCH IS A PRESS. It used to run on every case open, for every admin,
+     whether or not anyone wanted it. */
+  ok('and offers to look rather than having looked', await page.locator('[data-act="caseProfMatch"]').count() === 1);
+  await page.locator('[data-act="caseProfMatch"]').click();
+  await page.waitForTimeout(700);
+  body = await text(page, '#dlgBody');
+  ok('pressing it finds the saved client of the same name',
+     has(body, 'Possible existing profile') && body.includes('Rosalind Routing'), body.slice(0, 300));
+  await page.locator('[data-act="caseProfLink"]').first().click();
+  await page.waitForTimeout(700);
+  body = await text(page, '#dlgBody');
+  ok('and the case can be associated with them explicitly',
+     body.includes('Rosalind Routing') && has(body, 'Remove the link'), body.slice(0, 200));
+  ok('with the reassurance that this case will not move',
+     has(body, 'never this one'), body.slice(0, 400));
   await page.close();
 }
 
