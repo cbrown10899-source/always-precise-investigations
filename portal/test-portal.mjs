@@ -1297,10 +1297,28 @@ section('Drafting and reviewing a daily report in the browser');
   ok('and there is a way to take the document with you',
      await page.locator('.btn', { hasText: 'Download draft' }).count() === 1);
 
-  await page.locator('.btn', { hasText: 'Submit report' }).click();
+  /* ITEM 4 (owner, 2026-08-19): an admin no longer submits to themselves —
+     their own draft offers Approve directly. The REVIEW cycle below is the
+     investigator->office handoff, so the field half arrives the way it really
+     does (the field's own route; the investigator's actual Submit CLICK is
+     exercised in the item-4 section on dana's case) and every office half
+     stays a real click on this screen. */
+  ok('an admin\'s own draft offers Approve directly',
+     await page.locator('[data-act="reportStatus"][data-to="approved"]').count() === 1);
+  ok('and no submit-to-myself button',
+     await page.locator('.btn', { hasText: 'Submit report' }).count() === 0);
+  const repId = await page.evaluate(() => WS_REPORT);
+  const fieldSubmit = () => page.evaluate(async (id) => {
+    await fetch(`/portal-api/cases/API-20260812-4002/reports/${id}/status`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'submitted' }) });
+    await reloadWorkspace();
+  }, repId);
+  await fieldSubmit();
   await page.waitForTimeout(600);
   let panel = await text(page, '#dlgBody');
-  ok('submitting moves it along', has(panel, 'Submitted'));
+  ok('a submission moves it along', has(panel, 'Submitted'));
   ok('an admin reviewing gets Approve', await page.locator('.btn', { hasText: 'Approve' }).count() === 1);
   ok('and Send back', await page.locator('.btn', { hasText: 'Send back' }).count() === 1);
 
@@ -1311,7 +1329,7 @@ section('Drafting and reviewing a daily report in the browser');
   ok('sending it back records the note', panel.includes('Add the vehicle description.'));
   ok('and it reads as needing revision', has(panel, 'Needs revision'));
 
-  await page.locator('.btn', { hasText: 'Submit report' }).click();
+  await fieldSubmit();
   await page.waitForTimeout(600);
   await page.locator('.btn', { hasText: 'Approve' }).click();
   await page.waitForTimeout(600);
@@ -10583,6 +10601,10 @@ section('An investigator\'s report still goes through the office');
      await page.locator('[data-act="reportStatus"][data-to="submitted"]').count() === 1);
   ok('and never Approve',
      await page.locator('[data-act="reportStatus"][data-to="approved"]').count() === 0);
+  await page.locator('[data-act="reportStatus"][data-to="submitted"]').click();
+  await page.waitForTimeout(600);
+  ok('their submit still hands the report to the office',
+     has(await text(page, '#dlgBody'), 'Submitted'));
   await page.close();
 }
 
