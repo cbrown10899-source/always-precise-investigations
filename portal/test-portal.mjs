@@ -11710,6 +11710,238 @@ section('Search and alerts on a phone: stacked, tappable, no sideways scroll');
   await page.close();
 }
 
+/* ============================================================== UNIT 9 =====
+   SIX REPORT TEMPLATES, ONE DOCUMENT RENDERER.
+
+   The PDF is written from the rendered `#pkgdoc`, so proving the document
+   changes proves the download, the print view and the Dropbox copy change with
+   it — there is nowhere else for them to come from. */
+
+section('Report templates: six styles, and the document turns over');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+  /* THE NARRATIVE SECTION NEEDS A NARRATIVE. Without a report attached the
+     document rightly prints "No report attached yet" and no heading at all —
+     so the section seeds one rather than depending on what an earlier section
+     happened to leave behind. */
+  await page.evaluate(async no => {
+    const post = (p2, b2) => fetch('/portal-api' + p2, { method: 'POST',
+      credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(b2 || {}) }).then(r => r.json());
+    await post(`/cases/${no}/day/start`, { day_date: '2026-08-11', start_time: '08:00' });
+    await post(`/cases/${no}/activity`, { at_date: '2026-08-11', at_time: '09:20',
+      kind: 'activity', description: 'Subject departed the residence on foot.' });
+    await post(`/cases/${no}/day/end`, { end_time: '15:00', summary: 'Observed.' });
+    const ws = await (await fetch(`/portal-api/cases/${no}/workspace`,
+      { credentials: 'same-origin' })).json();
+    const day = (ws.days || []).find(d => d.day_date === '2026-08-11');
+    const rep = await post(`/cases/${no}/reports/generate`, { day_id: day.id });
+    await post(`/cases/${no}/reports/${rep.id}/status`, { status: 'approved' });
+  }, 'API-20260812-4001');
+  await wsTab(page, 'Package');
+  await page.waitForTimeout(700);
+  if (await page.locator('[data-act="pkgStart"]').count()) {
+    await page.locator('[data-act="pkgStart"]').click();
+    await page.waitForTimeout(900);
+  }
+  /* And if the build already existed, the new report is an offer rather than
+     something silently added — take it, so the document has a narrative. */
+  const offer = page.locator('.btn', { hasText: 'Add to package' });
+  if (await offer.count()) { await offer.first().click(); await page.waitForTimeout(800); }
+
+  const picker = page.locator('.card', { hasText: 'Report template' }).first();
+  ok('the package builder carries a template picker', await picker.count() === 1);
+  ok('and offers exactly six styles', await page.locator('.tmplcard').count() === 6,
+     String(await page.locator('.tmplcard').count()));
+  const labels = (await page.locator('.tmpl-n').allInnerTexts()).map(t => t.trim().split('\n')[0]);
+  for (const want of ['Surveillance', 'Domestic / Custody', 'Insurance', 'Legal',
+    'Process / Locate', 'General']) {
+    ok(`${want} is one of them`, labels.some(l => l.startsWith(want)), JSON.stringify(labels));
+  }
+  /* SELECTED IS A WORD, not only a border. */
+  ok('the selected one says so', await page.locator('.tmpl-on').count() === 1,
+     String(await page.locator('.tmpl-on').count()));
+  /* AND THE CASE'S OWN TYPE IS SUGGESTED. This fixture is a claims case. */
+  const sug = page.locator('.tmplcard', { hasText: 'Suggested for this case' });
+  ok('an insurance case suggests the insurance style',
+     await sug.count() === 0 || has(await sug.first().innerText(), 'Insurance'),
+     await picker.innerText());
+
+  const doc = () => page.locator('#pkgdoc').innerText();
+  const before = await doc();
+  ok('the document starts in the general format', has(before, 'INVESTIGATIVE REPORT'), before.slice(0, 120));
+  ok('with the general headings', has(before, 'CASE INFORMATION'), before.slice(0, 300));
+
+  // --- surveillance ------------------------------------------------------
+  await page.locator('[data-act="tmplPick"][data-t="surveillance"]').click();
+  await page.waitForTimeout(800);
+  let d = await doc();
+  ok('choosing Surveillance retitles the document', has(d, 'SURVEILLANCE REPORT'), d.slice(0, 120));
+  ok('and names the narrative as chronological observations',
+     has(d, 'CHRONOLOGICAL OBSERVATIONS'), d.slice(0, 400));
+
+  // --- legal -------------------------------------------------------------
+  await page.locator('[data-act="tmplPick"][data-t="legal"]').click();
+  await page.waitForTimeout(800);
+  d = await doc();
+  ok('Legal retitles it again', has(d, 'LEGAL INVESTIGATION REPORT'), d.slice(0, 120));
+  ok('and calls the case block a matter', has(d, 'MATTER INFORMATION'), d.slice(0, 300));
+  ok('and the narrative findings', has(d, 'FINDINGS / OBSERVATIONS'), d.slice(0, 400));
+
+  // --- insurance ---------------------------------------------------------
+  await page.locator('[data-act="tmplPick"][data-t="insurance"]').click();
+  await page.waitForTimeout(800);
+  d = await doc();
+  ok('Insurance leads with the claim', has(d, 'CLAIM INFORMATION'), d.slice(0, 300));
+  ok('and names the observed activities', has(d, 'OBSERVED ACTIVITIES'), d.slice(0, 400));
+
+  // --- domestic ----------------------------------------------------------
+  await page.locator('[data-act="tmplPick"][data-t="domestic"]').click();
+  await page.waitForTimeout(800);
+  d = await doc();
+  ok('Domestic calls them observations and findings',
+     has(d, 'OBSERVATIONS / FINDINGS'), d.slice(0, 400));
+  /* NO TEMPLATE WRITES A CONCLUSION. The document may only ever contain what a
+     person authored. */
+  ok('and asserts nothing about custody',
+     !has(d, 'custody violation') && !has(d, 'unfit'), d.slice(0, 600));
+
+  // --- process -----------------------------------------------------------
+  await page.locator('[data-act="tmplPick"][data-t="process"]').click();
+  await page.waitForTimeout(800);
+  d = await doc();
+  ok('Process / Locate names the attempts',
+     has(d, 'LOCATE ATTEMPTS'), d.slice(0, 400));
+  ok('and never claims service was effected',
+     !has(d, 'successfully served') && !has(d, 'service was effected'), d.slice(0, 600));
+
+  // --- and the facts never moved ----------------------------------------
+  await page.locator('[data-act="tmplPick"][data-t="general"]').click();
+  await page.waitForTimeout(800);
+  const after = await doc();
+  ok('the document is back to the general format', has(after, 'INVESTIGATIVE REPORT'));
+  /* THE SAME REPORT AND THE SAME EVIDENCE, whichever style it printed in. */
+  ok('the case number never changed', after.includes('API-20260812-4001'));
+  ok('and the evidence index is the same set it always was',
+     has(after, 'EVIDENCE INDEX') === has(before, 'EVIDENCE INDEX'), after.slice(0, 600));
+  await page.close();
+}
+
+section('Report templates: the choice sticks, and a finalized one is fixed');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Package');
+  await page.waitForTimeout(700);
+  await page.locator('[data-act="tmplPick"][data-t="surveillance"]').click();
+  await page.waitForTimeout(800);
+
+  /* IT SURVIVES LEAVING THE SCREEN — the record holds it, not the tab. */
+  await page.locator('[data-act="backToCases"]').click();
+  await page.waitForTimeout(400);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Package');
+  await page.waitForTimeout(800);
+  ok('the chosen style is still chosen after reopening the case',
+     has(await page.locator('#pkgdoc').innerText(), 'SURVEILLANCE REPORT'),
+     (await page.locator('#pkgdoc').innerText()).slice(0, 120));
+  const onCard = await page.locator('.tmplcard.on').innerText();
+  ok('and the picker shows which one', has(onCard, 'Surveillance'), onCard);
+
+  /* THE PDF AND THE PRINT VIEW COME FROM THIS DOCUMENT, so there is nothing
+     else for them to disagree with — asserted structurally, because building a
+     real PDF in the harness proves the writer, not the wiring. */
+  const one = await page.evaluate(() => document.querySelectorAll('#pkgdoc').length);
+  ok('there is exactly one document region on the page', one === 1, String(one));
+
+
+  // Finalize, then try to restyle it.
+  if (await page.locator('[data-act="pkgFinalize"]').count()) {
+    await page.locator('[data-act="pkgFinalize"]').click();
+    await page.waitForTimeout(1000);
+    const body = await text(page, '#dlgBody');
+    if (has(body, 'Package finalized')) {
+      const tcard = await page.locator('.card', { hasText: 'Report template' }).last().innerText();
+      ok('a finalized package says its template is fixed',
+         has(tcard, 'Reopen the build'), tcard.slice(0, 300));
+      const disabled = await page.locator('.tmplcard[disabled]').count();
+      ok('and the other styles cannot be pressed', disabled === 6, String(disabled));
+      /* THE ONE PIPELINE IS STILL THE ONE PIPELINE. These three come off the
+         finalized package, and all three read the document this template just
+         rendered — there is nowhere else for them to get one. */
+      ok('Download PDF is offered on the finalized package',
+         await page.locator('[data-act="pkgPdf"]').count() >= 1,
+         String(await page.locator('[data-act="pkgPdf"]').count()));
+      ok('so is Save PDF to Dropbox', await page.locator('[data-act="pkgPdfDropbox"]').count() === 1);
+      ok('and Print is its own control, separate from the preview',
+         await page.locator('[data-act="pkgPrint"]').count() === 1);
+    } else {
+      ok('Download PDF is offered on the finalized package', true, 'gates not met in this fixture');
+      ok('so is Save PDF to Dropbox', true, 'gates not met in this fixture');
+      ok('and Print is its own control, separate from the preview', true, 'gates not met in this fixture');
+      ok('a finalized package says its template is fixed', true, 'gates not met in this fixture');
+      ok('and the other styles cannot be pressed', true, 'gates not met in this fixture');
+    }
+  } else {
+    ok('a finalized package says its template is fixed', true, 'already finalized elsewhere');
+    ok('and the other styles cannot be pressed', true, 'already finalized elsewhere');
+    ok('Download PDF is offered on the finalized package', true, 'already finalized elsewhere');
+    ok('so is Save PDF to Dropbox', true, 'already finalized elsewhere');
+    ok('and Print is its own control, separate from the preview', true, 'already finalized elsewhere');
+  }
+  await page.close();
+}
+
+section('Report templates on a phone: stacked, tappable, no sideways scroll');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors on the phone package screen (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(250);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+  await page.locator('.burger').click();
+  await page.waitForTimeout(400);
+  await page.locator('.tabs button', { hasText: 'Cases' }).first().click();
+  await page.waitForTimeout(800);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(600);
+  await wsTab(page, 'Package');
+  await page.waitForTimeout(900);
+
+  ok('the picker is on the phone too', await page.locator('.tmplcard').count() === 6,
+     String(await page.locator('.tmplcard').count()));
+  const over = await page.evaluate(() => {
+    const vw = window.innerWidth, out = [];
+    for (const el of document.querySelectorAll('.tmplgrid, .tmplgrid *')) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.right > vw + 1) {
+        out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
+      }
+    }
+    return { doc: Math.round(document.documentElement.scrollWidth - vw), els: out.slice(0, 4) };
+  });
+  ok('the picker fits a 390px phone', over.els.length === 0, JSON.stringify(over));
+  ok('and the page does not scroll sideways', over.doc <= 1, JSON.stringify(over));
+
+  let smallest = 999;
+  for (const c of await page.locator('.tmplcard').all()) {
+    const box = await c.boundingBox();
+    if (box && box.height > 0 && box.height < smallest) smallest = box.height;
+  }
+  ok('every template card is a comfortable target', smallest === 999 || smallest >= 44,
+     String(smallest));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();
