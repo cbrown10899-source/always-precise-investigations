@@ -409,4 +409,49 @@ from what is there rather than from a blank page.
 
 ## DERIVED — decisions I made that the owner did not state
 
-*(empty — nothing is derived until the unit begins)*
+Written when the unit began (2026-08-20), one decision per entry so each can be
+overturned on its own.
+
+- **D1 — `submissions.kind` stays `'consumer'`; legal is a companion marker.**
+  The CHECK cannot widen idempotently (the `build_custom` reasoning), and
+  keeping legal cases typed `consumer` makes the pricing rule STRUCTURAL rather
+  than synchronised: `agreedRetainer()`, `case_retainer`, the private sheet and
+  the invoice retainer block all key off `consumer`, so Legal reflects Private
+  pricing because it IS the private pricing path — there is no second copy to
+  drift. The marker of record is `payload.assignment === 'legal'`, written at
+  ingest into the submission's own row (one reader: `isLegalSub()`); the
+  `legal_intake` table carries the structured firm/matter detail.
+- **D2 — the Cash App / Venmo exclusion is a third send context, not a filter.**
+  `SEND_CONTEXT.LEGAL` joins the model; `CONTEXT_TAKES_PAYMENT` stays
+  `ctx === PRIVATE`, so a legal send has NO code path to the payment block —
+  the same shape that already protects carriers. The legal rate sheet is the
+  `private_retainer` product (same figures, D1) sent in the LEGAL context, and
+  `/payment-options/email` refuses a legal case by name the way it refuses a
+  claims case.
+- **D3 — documents attach after acceptance**, through the existing
+  authenticated case-media upload (Dropbox rules unchanged). The public form
+  does not grow an unauthenticated upload door; it says documents are exchanged
+  once the assignment is accepted. Quick Legal (admin) can upload immediately,
+  because the case exists and the admin is signed in.
+- **D4 — assignment types are one extensible list** (`LEGAL_ASSIGNMENTS` in the
+  Worker, mirrored as the form's options) stored as free text — "Other /
+  Custom" and future categories need no schema change.
+- **D5 — Quick Legal Assignment reuses the existing writers**: the route
+  creates the submission + legal row; the retainer amount is recorded through
+  the existing `/cases/:no/retainer` semantics so the agreed figure keeps its
+  one writer; payment arrangement is legal-row data, never a payment record.
+- **D6 — the public legal path** is
+  `info → service → firm → matter → subject → objective → agreement`. Required:
+  submitter name+contact (existing rule), firm name, attorney name, client name
+  OR matter reference (the file must be identifiable — the private minimal
+  rule), and the one-line objective. Everything else optional or
+  "I don't have this at this time". No payment step, no dollar figures.
+- **D7 — `?assignment=legal` is the legal door** (fixes the path, drops the
+  picker, retitles "Legal Investigation Assignment"); the bare picker offers
+  all three businesses; the private door (`?assignment=private`) refuses
+  `legal` in `pickSvc` exactly as it refuses `claims`.
+- **D8 — payment arrangement is a request, never a payment**: stored on the
+  legal row (`bill_ach | check_pickup | check_mail | existing_billing`), shown
+  to the office as words ("Awaiting pickup" for check_pickup), and nothing
+  about it touches `retainer_payment` — the asked/arrived split the portal
+  already enforces.

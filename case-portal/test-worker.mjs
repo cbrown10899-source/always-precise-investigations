@@ -6157,6 +6157,188 @@ section('Recent activity: existing data, cheaply, admin only');
      isum.dropbox_ok === undefined && isum.dropbox_configured === undefined);
 }
 
+/* ---- UNIT 6: LEGAL / LAW FIRM intake (LEGAL-INTAKE.md) ----
+   The two rules everything else hangs off: a legal case IS kind='consumer'
+   (D1 — pricing is structural, not synchronised), and Cash App / Venmo reach
+   a law firm through NO code path (D2 — a third send context, not a filter). */
+section('Legal intake: private pricing structurally, private payments never');
+{
+  /* Stand in for the mail provider, the invitation section's pattern — sends
+     must leave nothing and be assertable. */
+  const realFetch = globalThis.fetch;
+  let mailTo = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mailTo.push(JSON.parse(init.body).to);
+      return new Response('{"id":"re_ok"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const tok = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  // ---- the public legal ingest ----
+  const r = await ingest(env, { case_no: 'API-LGL1', assignment: 'legal',
+    service: 'Legal investigation assignment',
+    firm_name: 'Harmon & Boyle PLC', firm_phone: '540-555-0101',
+    attorney_name: 'R. Harmon', attorney_email: 'rharmon@example.com',
+    paralegal_name: 'T. Boyd', paralegal_email: 'tboyd@example.com',
+    billing_name: 'Accounts', billing_reference: 'HB-2211',
+    matter_number: 'M-88', court_case_number: 'CL26-991',
+    court_jurisdiction: 'Roanoke County Circuit Court',
+    assignment_type: 'Witness locate / interview',
+    client_name: 'Client LLC', subject_name: 'Opposing Party',
+    deadline: '2026-09-10', hearing_date: '2026-09-22',
+    payment_arrangement: 'check_pickup',
+    objective: 'Locate and interview the listed witness.' });
+  ok('a legal assignment ingests', r.status === 200 || r.status === 201, String(r.status));
+
+  const sub = await env.DB.prepare('SELECT kind, payload FROM submissions WHERE case_no = ?')
+    .bind('API-LGL1').first();
+  ok('stored kind=consumer — the pricing path IS the private one (D1)',
+     sub.kind === 'consumer');
+  ok('marked legal on its own row', JSON.parse(sub.payload).assignment === 'legal');
+  const row = await env.DB.prepare('SELECT * FROM legal_intake WHERE case_no = ?')
+    .bind('API-LGL1').first();
+  ok('the structured firm row is written', row && row.firm_name === 'Harmon & Boyle PLC');
+  ok('with the matter, the court and the arrangement',
+     row.matter_number === 'M-88' && row.court_jurisdiction === 'Roanoke County Circuit Court'
+     && row.payment_arrangement === 'check_pickup');
+  ok('a legal payload that also names a carrier still files as LEGAL, never a claim',
+     (await (async () => { await ingest(env, { case_no: 'API-LGL2', assignment: 'legal',
+        carrier: 'Should Not Matter', firm_name: 'Second Firm', attorney_name: 'A',
+        client_name: 'C2', objective: 'x' });
+        return (await env.DB.prepare("SELECT kind FROM submissions WHERE case_no = 'API-LGL2'").first()).kind;
+     })()) === 'consumer');
+
+  // ---- the private pricing source, structurally ----
+  await call(env, '/cases/API-LGL1/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 2000 } });
+  ok('the private retainer routes accept a legal case unchanged',
+     Number((await env.DB.prepare("SELECT retainer_amount FROM case_retainer WHERE case_no = 'API-LGL1'")
+       .first()).retainer_amount) === 2000);
+  const ws = await jsonOf(await call(env, '/cases/API-LGL1/workspace', { cookie: admin }));
+  ok('the workspace carries the legal panel for an admin',
+     ws.legal && ws.legal.firm_name === 'Harmon & Boyle PLC' && ws.legal.source === 'table',
+     JSON.stringify(ws.legal || null).slice(0, 200));
+
+  /* ---- the investigator boundary: the firm is who is PAYING ---- */
+  await call(env, '/submissions/API-LGL1/assign', { method: 'POST', cookie: admin,
+    body: { user_id: (await jsonOf(await call(env, '/users', { cookie: admin })))
+      .users.find(u => u.username === 'dana').id } });
+  const iws = await jsonOf(await call(env, '/cases/API-LGL1/workspace', { cookie: inv }));
+  ok('an investigator gets no legal panel at all', iws.legal === undefined || iws.legal === null);
+  const itext = JSON.stringify(iws);
+  const isub = JSON.stringify(await jsonOf(await call(env, '/submissions/API-LGL1', { cookie: inv })));
+  ok('and no firm, attorney, paralegal, billing or matter identity reaches them anywhere',
+     [itext, isub].every(t => !t.includes('Harmon') && !t.includes('rharmon') && !t.includes('T. Boyd')
+       && !t.includes('HB-2211') && !t.includes('M-88')), isub.slice(0, 240));
+  ok('while the subject still reaches the field', isub.includes('Opposing Party'), isub.slice(0, 240));
+
+  // ---- sends: the sheet is the private product; the payment block never rides ----
+  const sheets = (await jsonOf(await call(env, '/sheets', { cookie: admin }))).sheets;
+  const priv = sheets.find(x => x.id === 'private_retainer');
+  ok('the sheet catalogue is unchanged — no third pricing product',
+     sheets.length === 2 && priv && sheets.some(x => x.id === 'insurance_assignment'));
+
+  const sent = await jsonOf(await call(env, `/sheets/private_retainer/email`, { method: 'POST', cookie: admin,
+    body: { to: 'tboyd@example.com', name: 'T. Boyd', case_no: 'API-LGL1' } }));
+  ok('the private sheet sends to a legal case — same figures, one source',
+     sent.ok === true, JSON.stringify(sent).slice(0, 200));
+  ok('in the LEGAL send context, stated and observable',
+     sent.send_context === 'legal', JSON.stringify(sent.send_context));
+
+  const withPay = await call(env, `/sheets/private_retainer/email`, { method: 'POST', cookie: admin,
+    body: { to: 'tboyd@example.com', name: 'T. Boyd', case_no: 'API-LGL1', include_payment: true } });
+  ok('the payment block is refused on a legal case by name',
+     withPay.status === 400 && (await jsonOf(withPay)).code === 'legal_no_payment_block');
+
+  const payOpts = await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+    body: { to: 'tboyd@example.com', name: 'T. Boyd', case_no: 'API-LGL1' } });
+  ok('standalone payment options are refused for a legal case, in words',
+     payOpts.status === 400 && /legal assignment/.test((await jsonOf(payOpts)).error));
+  ok('and nothing about any of that recorded a payment',
+     (await env.DB.prepare("SELECT COUNT(*) AS n FROM retainer_payment WHERE case_no = 'API-LGL1'").first()).n === 0);
+
+  // ---- the intake doors ----
+  const leadIntake = await jsonOf(await call(env, '/leads/API-LGL1/send-intake', { method: 'POST', cookie: admin,
+    body: { to: 'tboyd@example.com' } }));
+  ok('a legal lead is sent the LEGAL door, never the private form',
+     leadIntake.ok === true && leadIntake.send_context === 'legal'
+     && /assignment=legal/.test((await env.DB.prepare(
+          "SELECT door FROM send_log WHERE kind = 'intake' ORDER BY id DESC LIMIT 1").first()).door),
+     JSON.stringify(leadIntake).slice(0, 240));
+  const pre = await jsonOf(await call(env, '/intake-link/email', { method: 'POST', cookie: admin,
+    body: { to: 'new@example.com', name: 'New Firm', kind: 'legal' } }));
+  ok('the pre-case send offers legal as an explicit product',
+     pre.ok === true && /assignment=legal/.test((await env.DB.prepare(
+       "SELECT door FROM send_log WHERE kind = 'intake' AND case_no IS NULL ORDER BY id DESC LIMIT 1")
+       .first()).door), JSON.stringify(pre).slice(0, 240));
+
+  // ---- Quick Legal Assignment ----
+  const q = await jsonOf(await call(env, '/intakes', { method: 'POST', cookie: admin,
+    body: { kind: 'legal', firm_name: 'Calloway Law', attorney_name: 'M. Calloway',
+            attorney_email: 'mc@example.com', client_name: 'Estate of Byrd',
+            subject_name: 'J. Q. Adverse', assignment_type: 'Surveillance',
+            deadline: '2026-09-01', payment_arrangement: 'check_pickup',
+            notes: 'Attorney called — pick up papers and retainer at the office.' } }));
+  ok('Quick Legal creates the intake', q.ok === true && q.legal === true, JSON.stringify(q));
+  const qSub = await env.DB.prepare('SELECT kind, payload, client_name FROM submissions WHERE case_no = ?')
+    .bind(q.case_no).first();
+  ok('as consumer + legal marker, like the public door',
+     qSub.kind === 'consumer' && JSON.parse(qSub.payload).assignment === 'legal');
+  ok('the attorney is the reachable contact when no client contact was typed',
+     qSub.client_name === 'Estate of Byrd'
+     && JSON.parse(qSub.payload).client_email === 'mc@example.com');
+  const qRow = await env.DB.prepare('SELECT * FROM legal_intake WHERE case_no = ?').bind(q.case_no).first();
+  ok('with its structured row and the pickup arrangement — awaiting pickup, NOT paid',
+     qRow && qRow.payment_arrangement === 'check_pickup');
+  ok('and no payment recorded by any of it',
+     (await env.DB.prepare('SELECT COUNT(*) AS n FROM retainer_payment WHERE case_no = ?').bind(q.case_no).first()).n === 0);
+  ok('a bad arrangement is refused, in words',
+     ((await call(env, '/intakes', { method: 'POST', cookie: admin,
+       body: { kind: 'legal', firm_name: 'X', payment_arrangement: 'cash_app' } })).status) === 400);
+  ok('an investigator cannot create one',
+     (await call(env, '/intakes', { method: 'POST', cookie: inv,
+       body: { kind: 'legal', firm_name: 'X' } })).status === 403);
+
+  // ---- the editor: absent means unchanged, blank clears ----
+  const e1 = await jsonOf(await call(env, '/cases/API-LGL1/legal', { method: 'POST', cookie: admin,
+    body: { trial_date: '2026-11-02' } }));
+  ok('posting one field changes one field',
+     e1.legal.trial_date === '2026-11-02' && e1.legal.firm_name === 'Harmon & Boyle PLC'
+     && e1.legal.payment_arrangement === 'check_pickup', JSON.stringify(e1.legal).slice(0, 200));
+  const e2 = await jsonOf(await call(env, '/cases/API-LGL1/legal', { method: 'POST', cookie: admin,
+    body: { paralegal_name: '' } }));
+  ok('a blank clears; everything unmentioned holds',
+     e2.legal.paralegal_name === null && e2.legal.trial_date === '2026-11-02');
+  ok('an investigator cannot write the legal panel',
+     (await call(env, '/cases/API-LGL1/legal', { method: 'POST', cookie: inv,
+       body: { firm_name: 'X' } })).status === 403);
+  ok('a private case is refused the legal panel by name',
+     await (async () => { await ingest(env, { case_no: 'API-PRV9', client_name: 'P', objective: 'x' });
+       return (await call(env, '/cases/API-PRV9/legal', { method: 'POST', cookie: admin,
+         body: { firm_name: 'X' } })).status === 400; })());
+
+  /* ---- Private and Insurance unchanged, asserted side by side ---- */
+  await ingest(env, { case_no: 'API-CLM9', carrier: 'Acme Mutual', claim_number: 'C-1',
+    client_name: 'Adjuster', objective: 'x' });
+  ok('a claims ingest still files as claims',
+     (await env.DB.prepare("SELECT kind FROM submissions WHERE case_no = 'API-CLM9'").first()).kind === 'claims');
+  const privSend = await jsonOf(await call(env, `/sheets/private_retainer/email`, { method: 'POST', cookie: admin,
+    body: { to: 'p@example.com', name: 'P', case_no: 'API-PRV9', include_payment: false } }));
+  ok('a private case still takes the private sheet in the PRIVATE context',
+     privSend.ok === true && privSend.send_context === 'private', JSON.stringify(privSend).slice(0, 200));
+  ok('every send in this section really left through the stand-in', mailTo.length >= 4, String(mailTo.length));
+  globalThis.fetch = realFetch;
+}
+
 section('The daily report builder');
 {
   const env = freshEnv();
