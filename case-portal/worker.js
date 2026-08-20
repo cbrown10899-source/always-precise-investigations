@@ -5837,20 +5837,41 @@ async function buildEvent(env, buildId, user, action, detail) {
     .bind(buildId, action, detail || null, user ? user.id : null, nowIso()).run();
 }
 
-async function latestApprovedReport(env, caseNo) {
+/* ---- WHICH REPORTS A PACKAGE MAY CARRY (owner, 2026-08-19) ----
+
+   "For an Admin who is assembling and delivering the case themselves, remove
+   redundant approval barriers." The review flow exists for a HANDOFF — an
+   investigator submits, the office signs off. A report whose day was worked
+   by an ADMIN has no handoff in it: the author IS the office, and making them
+   approve their own words back to themselves was ritual, not review.
+
+   So the rule, in one place: a report is package-ready when it has been
+   approved or delivered, OR when its author holds the admin role — decided by
+   the author's CURRENT role, because "is there a reviewer above this person"
+   is a question about now, not about the day the report was filed. An
+   investigator's report still waits for the office however it arrives, and an
+   investigator still cannot approve anything (`setReportStatus` is unchanged).
+
+   Statuses stay the single record: finalize stamps any still-draft
+   admin-authored report `approved` at the moment the package is sealed, so
+   the completed desk, the dashboard and the badges never disagree with what
+   actually shipped. */
+async function latestShippableReport(env, caseNo) {
   return await env.DB.prepare(
-    `SELECT id, report_date, status FROM case_reports
-      WHERE case_no = ? AND status IN ('approved', 'delivered')
-      ORDER BY report_date DESC, id DESC LIMIT 1`).bind(caseNo).first();
+    `SELECT r.id, r.report_date, r.status FROM case_reports r
+      LEFT JOIN users u ON u.id = r.investigator_id
+      WHERE r.case_no = ? AND (r.status IN ('approved', 'delivered') OR u.role = 'admin')
+      ORDER BY r.report_date DESC, r.id DESC LIMIT 1`).bind(caseNo).first();
 }
 
-/* Every approved day on the case, oldest first — the order a reader expects
-   Day 1, Day 2, Day 3 to appear in. */
-async function approvedReports(env, caseNo) {
+/* Every package-ready day on the case, oldest first — the order a reader
+   expects Day 1, Day 2, Day 3 to appear in. */
+async function shippableReports(env, caseNo) {
   const { results } = await env.DB.prepare(
-    `SELECT id, report_date, status, day_id FROM case_reports
-      WHERE case_no = ? AND status IN ('approved', 'delivered')
-      ORDER BY report_date ASC, id ASC`).bind(caseNo).all();
+    `SELECT r.id, r.report_date, r.status, r.day_id FROM case_reports r
+      LEFT JOIN users u ON u.id = r.investigator_id
+      WHERE r.case_no = ? AND (r.status IN ('approved', 'delivered') OR u.role = 'admin')
+      ORDER BY r.report_date ASC, r.id ASC`).bind(caseNo).all();
   return results || [];
 }
 
@@ -5859,7 +5880,7 @@ async function approvedReports(env, caseNo) {
    a later day is one click. Ordered by the day's own date, never by the order
    the office happened to approve them in. */
 async function seedBuildReports(env, buildId, caseNo, user) {
-  const reps = await approvedReports(env, caseNo);
+  const reps = await shippableReports(env, caseNo);
   let n = 0;
   for (const r of reps) {
     await env.DB.prepare(
@@ -5874,7 +5895,7 @@ async function seedBuildReports(env, buildId, caseNo, user) {
 async function buildReports(env, buildId, caseNo) {
   const { results } = await env.DB.prepare(
     `SELECT r.id, r.report_date, r.status, r.body, r.day_id, br.sort,
-            u.display_name AS investigator,
+            u.display_name AS investigator, u.role AS investigator_role,
             d.day_date, d.start_time, d.end_time, d.hours, d.miles, d.summary AS day_summary
        FROM build_reports br
        JOIN case_reports r ON r.id = br.report_id AND r.case_no = ?
@@ -5924,7 +5945,9 @@ async function buildState(env, caseNo) {
         WHERE i.build_id = ? ORDER BY i.role, i.sort, i.id`).bind(build.id).all());
     if (build.report_id) {
       report = await env.DB.prepare(
-        'SELECT id, report_date, status, body FROM case_reports WHERE id = ? AND case_no = ?')
+        `SELECT r.id, r.report_date, r.status, r.body, u.role AS investigator_role
+           FROM case_reports r LEFT JOIN users u ON u.id = r.investigator_id
+          WHERE r.id = ? AND r.case_no = ?`)
         .bind(build.report_id, caseNo).first();
     }
     reports = await buildReports(env, build.id, caseNo);
@@ -5974,7 +5997,7 @@ async function buildState(env, caseNo) {
   /* Approved days not in the package — the admin adds a later day without
      rebuilding, and sees at a glance that one is missing. */
   const inPkg = new Set(reports.map(r => r.id));
-  const available = (await approvedReports(env, caseNo)).filter(r => !inPkg.has(r.id));
+  const available = (await shippableReports(env, caseNo)).filter(r => !inPkg.has(r.id));
 
   return {
     invoices: caseInvoices || [],
@@ -5992,7 +6015,7 @@ async function buildState(env, caseNo) {
     external_files: extRows || [],
     events: events || [],
     gates,
-    approved_report: await latestApprovedReport(env, caseNo),
+    approved_report: await latestShippableReport(env, caseNo),
     providers: Object.fromEntries(Object.entries(EXTERNAL_PROVIDERS).map(([k, prov]) =>
       [k, { label: prov.label, configured: prov.configured(env), note: prov.note }])),
   };
@@ -6009,10 +6032,23 @@ async function buildGates(env, build, items, report, reports, custom) {
   const set = (reports && reports.length) ? reports
     : (report ? [report] : []);
   if (!set.length) {
-    gates.push('No report is attached — approve a daily report first.');
+    /* Two different situations were behind one message. "Approve a daily
+       report first" told an ADMIN with no reports at all to approve something
+       that did not exist — and told an admin whose own drafts now seed
+       automatically nothing useful either. Say which it is. */
+    const any = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM case_reports WHERE case_no = ?').bind(build.case_no).first();
+    /* "Still with the investigator" would be wrong for a SUBMITTED report —
+       that one is with the office. One sentence that is true of a draft and
+       of a submission alike, and names the admin's own next act. */
+    gates.push(Number(any && any.n)
+      ? 'No report is attached — the daily reports on this case are not approved yet.'
+      : 'No report is attached — generate a daily report first.');
   } else {
     for (const r of set) {
-      if (!['approved', 'delivered'].includes(r.status)) {
+      /* The handoff rule (see latestShippableReport): an investigator's
+         report waits for the office; an admin's own report does not. */
+      if (!['approved', 'delivered'].includes(r.status) && r.investigator_role !== 'admin') {
         gates.push(`The report of ${r.report_date} is ${r.status} — it must be approved.`);
       }
     }
@@ -7583,7 +7619,7 @@ async function route(request, env) {
     const open = await env.DB.prepare(
       "SELECT id FROM case_builds WHERE case_no = ? AND status = 'draft'").bind(m[1]).first();
     if (open) return json({ error: 'A draft build is already open on this case.' }, 409);
-    const rep = await latestApprovedReport(env, m[1]);
+    const rep = await latestShippableReport(env, m[1]);
     const ver = await env.DB.prepare(
       'SELECT COALESCE(MAX(version), 0) AS v FROM case_builds WHERE case_no = ?').bind(m[1]).first();
     const now = nowIso();
@@ -7595,8 +7631,8 @@ async function route(request, env) {
        used to ship its third day alone (MASTER §13). */
     const seeded = await seedBuildReports(env, res.meta.last_row_id, m[1], user);
     await buildEvent(env, res.meta.last_row_id, user, 'created',
-      seeded.length > 1 ? `on ${seeded.length} approved reports, ${seeded[0].report_date} to ${seeded[seeded.length - 1].report_date}`
-        : rep ? `on the approved report of ${rep.report_date}` : 'no approved report yet');
+      seeded.length > 1 ? `on ${seeded.length} reports, ${seeded[0].report_date} to ${seeded[seeded.length - 1].report_date}`
+        : rep ? `on the report of ${rep.report_date}` : 'no report ready yet');
     return json(await buildState(env, m[1]), 201);
   }
 
@@ -7608,10 +7644,14 @@ async function route(request, env) {
     if (b.status !== 'draft') return json({ error: 'Reopen the build to change it.' }, 400);
     const rid = parseInt((await readJson(request)).report_id, 10);
     const r = await env.DB.prepare(
-      'SELECT id, report_date, status FROM case_reports WHERE id = ? AND case_no = ?')
+      `SELECT r.id, r.report_date, r.status, u.role AS investigator_role
+         FROM case_reports r LEFT JOIN users u ON u.id = r.investigator_id
+        WHERE r.id = ? AND r.case_no = ?`)
       .bind(rid, b.case_no).first();
     if (!r) return json({ error: 'That report is not on this case.' }, 400);
-    if (!['approved', 'delivered'].includes(r.status)) {
+    /* An investigator's report still needs the office's sign-off before it can
+       ride in a package; an admin attaching their own draft IS the office. */
+    if (!['approved', 'delivered'].includes(r.status) && r.investigator_role !== 'admin') {
       return json({ error: `The report of ${r.report_date} is ${r.status} — approve it first.` }, 400);
     }
     const dupe = await env.DB.prepare(
@@ -7758,7 +7798,7 @@ async function route(request, env) {
           b.report_id = last.id;
         }
         await buildEvent(env, b.id, user, 'report_attached',
-          `${seeded.length} approved report(s) at finalize`);
+          `${seeded.length} report(s) at finalize`);
       }
     }
     const { results: items } = await env.DB.prepare(
@@ -7766,9 +7806,26 @@ async function route(request, env) {
     const report = b.report_id ? await env.DB.prepare(
       'SELECT id, report_date, status FROM case_reports WHERE id = ? AND case_no = ?')
       .bind(b.report_id, b.case_no).first() : null;
+    const attachedNow = await buildReports(env, b.id, b.case_no);
     const gates = await buildGates(env, b, items || [], report,
-      await buildReports(env, b.id, b.case_no), await isCustomBuild(env, b.id));
+      attachedNow, await isCustomBuild(env, b.id));
     if (gates.length) return json({ error: 'Not ready to finalize.', gates }, 400);
+    /* THE FINALIZE IS THE SIGN-OFF. Any report still unapproved here passed
+       the gates, so it is an admin's own work — stamp it approved as part of
+       sealing the package, recorded against the finalizing admin, so the
+       status column stays the one answer to "was this signed off" everywhere
+       else in the portal. A stamp, not a silent bypass: status_by names who,
+       status_at names when, and the build event names which. */
+    const unapproved = attachedNow.filter(r => !['approved', 'delivered'].includes(r.status));
+    for (const r of unapproved) {
+      await env.DB.prepare(
+        'UPDATE case_reports SET status = ?, status_at = ?, status_by = ? WHERE id = ?')
+        .bind('approved', nowIso(), user.id, r.id).run();
+    }
+    if (unapproved.length) {
+      await buildEvent(env, b.id, user, 'reports_approved',
+        `${unapproved.map(r => r.report_date).join(', ')} — the finalizing admin's sign-off`);
+    }
     await env.DB.prepare(
       'UPDATE case_builds SET status = ?, finalized_by = ?, finalized_at = ?, updated_by = ?, updated_at = ? WHERE id = ?')
       .bind('finalized', user.id, nowIso(), user.id, nowIso(), b.id).run();

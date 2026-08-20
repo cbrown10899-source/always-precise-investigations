@@ -1297,10 +1297,28 @@ section('Drafting and reviewing a daily report in the browser');
   ok('and there is a way to take the document with you',
      await page.locator('.btn', { hasText: 'Download draft' }).count() === 1);
 
-  await page.locator('.btn', { hasText: 'Submit report' }).click();
+  /* ITEM 4 (owner, 2026-08-19): an admin no longer submits to themselves —
+     their own draft offers Approve directly. The REVIEW cycle below is the
+     investigator->office handoff, so the field half arrives the way it really
+     does (the field's own route; the investigator's actual Submit CLICK is
+     exercised in the item-4 section on dana's case) and every office half
+     stays a real click on this screen. */
+  ok('an admin\'s own draft offers Approve directly',
+     await page.locator('[data-act="reportStatus"][data-to="approved"]').count() === 1);
+  ok('and no submit-to-myself button',
+     await page.locator('.btn', { hasText: 'Submit report' }).count() === 0);
+  const repId = await page.evaluate(() => WS_REPORT);
+  const fieldSubmit = () => page.evaluate(async (id) => {
+    await fetch(`/portal-api/cases/API-20260812-4002/reports/${id}/status`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'submitted' }) });
+    await reloadWorkspace();
+  }, repId);
+  await fieldSubmit();
   await page.waitForTimeout(600);
   let panel = await text(page, '#dlgBody');
-  ok('submitting moves it along', has(panel, 'Submitted'));
+  ok('a submission moves it along', has(panel, 'Submitted'));
   ok('an admin reviewing gets Approve', await page.locator('.btn', { hasText: 'Approve' }).count() === 1);
   ok('and Send back', await page.locator('.btn', { hasText: 'Send back' }).count() === 1);
 
@@ -1311,7 +1329,7 @@ section('Drafting and reviewing a daily report in the browser');
   ok('sending it back records the note', panel.includes('Add the vehicle description.'));
   ok('and it reads as needing revision', has(panel, 'Needs revision'));
 
-  await page.locator('.btn', { hasText: 'Submit report' }).click();
+  await fieldSubmit();
   await page.waitForTimeout(600);
   await page.locator('.btn', { hasText: 'Approve' }).click();
   await page.waitForTimeout(600);
@@ -10493,6 +10511,159 @@ section('An investigator is shown none of the firm\'s Dropbox');
   ok('and no dropbox.com address is anywhere on it',
      !(await page.locator('#dlgBody').innerHTML()).includes('dropbox.com'));
   await page.close();
+}
+
+/* ---- ITEM 4 (owner, 2026-08-19): the admin runs the whole report-to-package
+   chain themselves, with no approval ritual in the way — and the same screens
+   still hold the line for an investigator's work. Plus the mobile report fix,
+   asserted as NUMBERS measured at phone width, because every one of these was
+   measured broken at 375px before it was changed. */
+section('An admin ships their own report without an approval ritual');
+{
+  db.prepare(`INSERT INTO submissions (case_no, kind, status, client_name, subject_name, payload, created_at)
+              VALUES ('API-ITEM4-A', 'consumer', 'new', 'Direct Client', 'Watched Person', '{}', ?)`)
+    .run(new Date().toISOString());
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  // The admin works their own day, from the case screen's own controls' routes.
+  await page.evaluate(async () => {
+    const post = (u, b) => fetch('/portal-api' + u, {method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(b)});
+    await post('/cases/API-ITEM4-A/day/start', {day_date:'2026-08-17', start_time:'07:00'});
+    await post('/cases/API-ITEM4-A/activity', {at_date:'2026-08-17', at_time:'08:30', description:'Subject carried groceries.'});
+    await post('/cases/API-ITEM4-A/day/end', {end_time:'12:00'});
+  });
+  await rowFor(page, 'API-ITEM4-A').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Reports');
+  await page.locator('form[data-act="genReport"] button[type="submit"]').click();
+  await page.waitForTimeout(700);
+
+  /* The draft auto-opens. An admin signs off DIRECTLY — no submit-to-myself. */
+  ok('the admin is offered Approve on their own draft',
+     await page.locator('[data-act="reportStatus"][data-to="approved"]').count() === 1);
+  ok('and is not offered the investigator\'s handoff',
+     await page.locator('[data-act="reportStatus"][data-to="submitted"]').count() === 0);
+
+  /* But they do not even need it: straight to the package. */
+  await wsTab(page, 'Package');
+  await page.waitForTimeout(400);
+  const pre = await text(page, '#dlgBody');
+  ok('the package mini-row calls a shippable draft Ready, never Approved',
+     has(pre, 'Ready') && !has(pre.split('Start the package')[0], 'In review'), pre.slice(0, 300));
+  await page.locator('.btn', { hasText: 'Start the package' }).first().click();
+  await page.waitForTimeout(700);
+  ok('no gate demands an approval for the admin\'s own draft',
+     !has(await text(page, '#dlgBody'), 'must be approved'));
+  await page.locator('[data-act="pkgFinalize"]').click();
+  await page.waitForTimeout(900);
+  const done = await text(page, '#dlgBody');
+  ok('the package finalizes with no approve click anywhere', has(done, 'Package finalized'), done.slice(0, 300));
+  ok('and the real-file actions are all offered',
+     await page.locator('[data-act="pkgPdf"]').count() >= 1
+     && await page.locator('[data-act="pkgPdfDropbox"]').count() === 1
+     && await page.locator('[data-act="pkgPrint"]').count() === 1);
+
+  await wsTab(page, 'Reports');
+  ok('the report now reads Approved — finalize was the recorded sign-off',
+     has(await text(page, '#dlgBody'), 'Approved'));
+  await page.close();
+}
+
+section('An investigator\'s report still goes through the office');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await page.evaluate(async () => {
+    const post = (u, b) => fetch('/portal-api' + u, {method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(b)});
+    await post('/cases/API-20260812-4001/day/start', {day_date:'2026-08-17', start_time:'07:00'});
+    await post('/cases/API-20260812-4001/activity', {at_date:'2026-08-17', at_time:'09:00', description:'Departed residence.'});
+    await post('/cases/API-20260812-4001/day/end', {end_time:'11:00'});
+  });
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(450);
+  await wsTab(page, 'Reports');
+  if (await page.locator('form[data-act="genReport"]').count()) {
+    /* Pick HER day by its date — the spare list can also carry an admin's
+       unreported day on this shared fixture case, and generating against
+       that one is refused for an investigator. */
+    await page.evaluate(() => {
+      const sel = document.getElementById('r_day');
+      const opt = [...sel.options].find(o => o.textContent.includes('2026-08-17'));
+      if (opt) sel.value = opt.value;
+    });
+    await page.locator('form[data-act="genReport"] button[type="submit"]').click();
+    await page.waitForTimeout(700);
+  }
+  ok('the investigator is offered Submit, exactly as before',
+     await page.locator('[data-act="reportStatus"][data-to="submitted"]').count() === 1);
+  ok('and never Approve',
+     await page.locator('[data-act="reportStatus"][data-to="approved"]').count() === 0);
+  await page.locator('[data-act="reportStatus"][data-to="submitted"]').click();
+  await page.waitForTimeout(600);
+  ok('their submit still hands the report to the office',
+     has(await text(page, '#dlgBody'), 'Submitted'));
+  await page.close();
+}
+
+section('The report screen fits a phone — measured, not eyeballed');
+{
+  const ctx = await browser.newContext({ viewport: { width: 375, height: 667 } });
+  const page = await ctx.newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(800);
+  await page.evaluate(() => openCase('API-ITEM4-A', 'reports'));
+  await page.waitForTimeout(600);
+  // The finalized case from the section above still holds the open report.
+  if (!(await page.locator('.rpnav').count()) && await page.locator('.rcard').count()) {
+    await page.locator('.rcard').first().click();
+    await page.waitForTimeout(400);
+  }
+
+  /* THE PHONE PADDING FIX USED TO BE DEAD CODE: `.dlg{padding:16px}` sat in a
+     560px block ABOVE the base `.dlg{padding:22px}`, so the base rule won and
+     nobody noticed. Assert the COMPUTED value, so source order can never
+     silently kill it again. */
+  const pad = await page.evaluate(() =>
+    getComputedStyle(document.querySelector('.dlg')).paddingLeft);
+  ok('the case screen sheds its desktop padding on a phone (the dead-rule regression)',
+     pad === '12px', pad);
+
+  const nav = await page.evaluate(() => {
+    const el = document.querySelector('.rpnav');
+    const btns = [...el.querySelectorAll('button')].map(b => Math.round(b.getBoundingClientRect().height));
+    return { clipped: el.scrollWidth - el.clientWidth, heights: btns };
+  });
+  ok('every report sub-tab is on screen — nothing hidden behind a scroll with no affordance',
+     nav.clipped === 0, String(nav.clipped));
+  ok('and each is a real tap target',
+     nav.heights.length >= 5 && nav.heights.every(h => h >= 44), JSON.stringify(nav.heights));
+
+  const acts = await page.evaluate(() =>
+    [...document.querySelectorAll('.ractions .btn')].map(b => Math.round(b.getBoundingClientRect().height)));
+  ok('the action buttons are tap targets too', acts.every(h => h >= 44), JSON.stringify(acts));
+
+  if (await page.locator('[data-act="repView"][data-v="edit"]').count()) {
+    await page.locator('[data-act="repView"][data-v="edit"]').click();
+    await page.waitForTimeout(300);
+  }
+  const ed = await page.evaluate(() => {
+    const ta = document.getElementById('r_body');
+    return ta ? { font: parseFloat(getComputedStyle(ta).fontSize),
+                  share: ta.getBoundingClientRect().width / document.documentElement.clientWidth } : null;
+  });
+  ok('the report editor is 16px — under that, iOS zooms the page on focus',
+     ed && ed.font >= 16, JSON.stringify(ed));
+  ok('and spans the phone instead of a third of it (was 223px of 375)',
+     ed && ed.share >= 0.66, JSON.stringify(ed));
+  await page.close(); await ctx.close();
 }
 
 /* ------------------------------------------------------------------ report */

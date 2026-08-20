@@ -1059,8 +1059,17 @@
     .wspanel .two{grid-template-columns:1fr;}
     .tl-t{width:52px;}
     dialog{width:100%;max-width:100%;border-radius:0;margin:0;height:100%;max-height:100%;}
-    .dlg{padding:16px;}
   }
+  /* THE PHONE PADDING FIX LIVED ABOVE THE BASE RULE AND WAS DEAD.
+     `.dlg{padding:16px}` used to sit in the 560px block above — written
+     BEFORE the base `.dlg{padding:22px}` below it, same specificity, so the
+     base rule won and the phone collapse never applied. Measured at 375px:
+     the report editor was 223px wide — main(16) + .card(22) + .dlg(22) +
+     .quick(14) of padding a side is 148px of chrome on a 375px screen. This
+     block therefore lives AFTER every base rule it overrides (the bottom of
+     the stylesheet), and a test measures the computed padding rather than
+     trusting source order again. Scoped to the case screen; the portal-wide
+     pass is roadmap item 5, not this. */
   .casepage{max-width:980px;margin:0 auto;}
   .pagebar{margin-bottom:12px;}
   .xrev{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:.8rem;}
@@ -1101,6 +1110,23 @@
     dl.detail{grid-template-columns:1fr;gap:2px;}
     dl.detail dt{margin-top:8px;}
     th.hide,td.hide{display:none;}
+  }
+  /* Item 4's mobile report fix — every value here was MEASURED at 375px
+     before it was changed; the suite asserts the numbers, not the look. */
+  @media(max-width:560px){
+    .casepage .card{padding:14px;}
+    .dlg{padding:12px;}
+    .wspanel .quick{padding:10px;}
+    /* 13.76px told iOS to zoom the page the moment the report editor was
+       focused — anything under 16px does. The report is the longest text an
+       admin edits on a phone; it gets the full 16. */
+    .rbody{font-size:16px;}
+    /* Five sub-tabs overflowed by 307px with "Versions" fully hidden and no
+       affordance that more existed. Wrapping shows all five; 44px is the
+       same tap floor the field bars already enforce. */
+    .rpnav{flex-wrap:wrap;}
+    .rpnav button{min-height:44px;}
+    .ractions .btn{min-height:44px;}
   }
 </style>
 </head>
@@ -7854,8 +7880,16 @@ function reportOpenHtml(open, admin, badge){
       ${editable && REP_VIEW !== "edit"
         ? `<button class="btn sm ghost" data-act="repView" data-v="edit">Edit report</button>` : ""}
       <button class="btn sm ghost" data-act="repPrint">Download draft</button>
+      ${""/* SUBMIT IS A HANDOFF and an admin has nobody to hand off to
+             (owner, 2026-08-19): forcing draft -> submitted -> approved on
+             their own report was two clicks and a status that briefly claimed
+             the report was "with the office" while the office was the one
+             clicking. An admin signs off directly; an investigator still
+             submits, and only submits. */}
       ${["draft","needs_revision"].includes(open.status)
-        ? `<button class="btn sm" data-act="reportStatus" data-id="${open.id}" data-to="submitted">Submit report</button>` : ""}
+        ? (admin
+            ? `<button class="btn sm" data-act="reportStatus" data-id="${open.id}" data-to="approved">Approve report</button>`
+            : `<button class="btn sm" data-act="reportStatus" data-id="${open.id}" data-to="submitted">Submit report</button>`) : ""}
       ${admin && open.status === "submitted" ? `
         <button class="btn sm ghost" data-act="reportStatus" data-id="${open.id}" data-to="needs_revision">Send back</button>
         <button class="btn sm" data-act="reportStatus" data-id="${open.id}" data-to="approved">Approve</button>` : ""}
@@ -8698,7 +8732,14 @@ function packagePanel(){
                              && !String(e.content_type || "").startsWith("video/"));
   const eligible = e => e.classification === "client_deliverable";
   const act = (WS && WS.activity || []).length;
-  const rep = PKG.approved_report ? "done" : ((WS && WS.reports || []).length ? "part" : "none");
+  /* `approved_report` now means "a report the package may carry" — an admin's
+     own draft qualifies (see the Worker's latestShippableReport). The mark can
+     say done, but the WORD may not say "Approved" about a draft: a staff
+     screen must not assert a status the row does not hold. Read the actual
+     statuses for the label; keep the readiness for the mark. */
+  const repRows = (WS && WS.reports) || [];
+  const repApproved = repRows.some(r => ["approved", "delivered"].includes(r.status));
+  const rep = PKG.approved_report ? "done" : (repRows.length ? "part" : "none");
   const inv = (PKG.invoices || [])[0];
 
   /* The mini-dashboard: state blocks, each a door (UXSIMPLIFY P9/P14/P19). */
@@ -8707,7 +8748,8 @@ function packagePanel(){
       <button class="pkg-b ${act ? "done" : ""}" data-act="wsTab" data-tab="activity">
         <b>Activity</b><span class="pk-v">${act} entr${act === 1 ? "y" : "ies"}</span>${pkgMark(act ? "done" : "none")}</button>
       <button class="pkg-b ${rep === "done" ? "done" : rep === "part" ? "part" : ""}" data-act="wsTab" data-tab="reports">
-        <b>Report</b><span class="pk-v">${PKG.approved_report ? "Approved" : (WS && WS.reports || []).length ? "In review" : "None"}</span>${pkgMark(rep)}</button>
+        <b>Report</b><span class="pk-v">${repApproved ? "Approved"
+          : PKG.approved_report ? "Ready" : repRows.length ? "In review" : "None"}</span>${pkgMark(rep)}</button>
       <button class="pkg-b ${photos.some(eligible) ? "done" : photos.length ? "part" : ""}" data-act="wsTab" data-tab="evidence">
         <b>Photos</b><span class="pk-v">${photos.length}</span>${pkgMark(photos.some(eligible) ? "done" : photos.length ? "part" : "none")}</button>
       ${videos.length ? `<button class="pkg-b ${videos.some(eligible) ? "done" : "part"}" data-act="wsTab" data-tab="evidence">
@@ -12812,7 +12854,14 @@ document.addEventListener("click", ev => {
   else if(act === "pkgRemove"){ pkgApi(`/build/${PKG.build.id}/items/${el.dataset.id}/remove`); }
   else if(act === "pkgRepAdd"){ pkgApi(`/build/${PKG.build.id}/reports`, {report_id: Number(el.dataset.id)}); }
   else if(act === "pkgRepRemove"){ pkgApi(`/build/${PKG.build.id}/reports/${el.dataset.id}/remove`); }
-  else if(act === "pkgFinalize"){ pkgApi(`/build/${PKG.build.id}/finalize`); }
+  else if(act === "pkgFinalize"){
+    /* Finalize can change more than the build: it stamps the admin's own
+       still-draft reports approved (item 4). The package repaints from the
+       response, but the Reports tab draws from WS — reload it, or flipping
+       there right after shows "Draft" on a report the server just approved.
+       The stale-tab rule, again. */
+    pkgApi(`/build/${PKG.build.id}/finalize`).then(() => reloadWorkspace());
+  }
   else if(act === "pkgReopen"){ pkgApi(`/build/${PKG.build.id}/reopen`); }
   else if(act === "pkgDelivered"){ pkgApi(`/build/${PKG.build.id}/delivered`); }
   else if(act === "pkgPrint"){ pkgPrint(); }
