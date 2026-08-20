@@ -8017,24 +8017,31 @@ section('Timestamp video is reachable without opening a case');
      owner could not find it anywhere in the live portal. Asserted by ACT and as
      a pair: the count alone would pass on two copies of the same door. */
   const tools = await page.evaluate(() =>
-    [...document.querySelectorAll('.qtools .qtool')].map(b => b.dataset.act));
-  ok('the dashboard carries both quick tools',
-     tools.includes('vstOpen') && tools.includes('pstLaunch'), JSON.stringify(tools));
-  ok('and nothing else has crept into the row', tools.length === 2, JSON.stringify(tools));
+    [...document.querySelectorAll('.qtools .qtool')].map(b => b.dataset.act + ':' + (b.dataset.tab || '')));
+  ok('the dashboard carries both timestamp tools',
+     tools.some(t => t.startsWith('vstOpen')) && tools.some(t => t.startsWith('pstLaunch')),
+     JSON.stringify(tools));
+  /* UNIT 5 (owner) widened the row into the day's launcher, so the creep guard
+     re-pins to the NEW set — still exact, still by act, so a duplicate door or
+     a stray addition fails rather than accumulating. */
+  ok('and the row is exactly the day\'s six doors, no creep',
+     JSON.stringify(tools) === JSON.stringify(
+       ['pstLaunch:', 'vstOpen:', 'surveillance:', 'tab:newlead', 'tab:cases', 'tab:delivery']),
+     JSON.stringify(tools));
   ok('labelled as tools, not cards', has(await text(page, '.qtools'), 'Quick tools')
      && has(await text(page, '.qtools'), 'Timestamp video')
      && has(await text(page, '.qtools'), 'Timestamp photo'));
-  /* COMPACT, not a fifth equal-weight box: it must be shorter than a stat card
-     and must not have become one. */
+  /* COMPACT means dense per tool, not short overall — six doors are taller
+     than two were, and the owner asked for the six. What must not happen is a
+     TOOL swelling into a stat card, or the launcher adopting card chrome. */
   const size = await page.evaluate(() => {
     const q = document.querySelector('.qtools');
-    const card = document.querySelector('.stat');
-    return { q: Math.round(q.getBoundingClientRect().height),
-             card: card ? Math.round(card.getBoundingClientRect().height) : 0,
+    const tool = document.querySelector('.qtool');
+    return { tool: Math.round(tool.getBoundingClientRect().height),
              cards: q.querySelectorAll('.card, .stat').length };
   });
-  ok('it is a row rather than another dashboard card',
-     size.cards === 0 && (!size.card || size.q <= size.card), JSON.stringify(size));
+  ok('each tool stays a control, never a card',
+     size.cards === 0 && size.tool >= 44 && size.tool <= 52, JSON.stringify(size));
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(400);
@@ -10735,7 +10742,7 @@ section('The mobile header is a control, not a glyph');
     const doc = document.documentElement;
     const btns = [...document.querySelectorAll('.qtool')].map(x => {
       const r = x.getBoundingClientRect();
-      return { t: x.textContent.trim().slice(0, 20), h: Math.round(r.height),
+      return { t: x.textContent.trim(), h: Math.round(r.height),
                fits: r.right <= doc.clientWidth + 1 }; });
     return { overflowX: doc.scrollWidth - doc.clientWidth, btns };
   });
