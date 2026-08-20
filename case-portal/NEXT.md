@@ -20,7 +20,7 @@ item is finished.
 | 1 | Finish current Active Surveillance mobile and voice polish | **DONE — DEPLOYED** at `c333d3f` (#182). §13 photo/video commands, §8 retry/offline and server-side duplicate protection, §1/§16.1 compact status. Two device-only checks OPEN, below. |
 | 2 | Build Timestamp Photo | ✅ **DONE — LIVE VERIFIED** by the owner on 2026-08-19 at `b0304cb` (#188), portrait layout and Save to Dropbox included. Shipped over #183–#188. |
 | 3 | Visible Dropbox portal UI for Admin | ✅ **DONE — DEPLOYED** at `5baabd3` (#189). LIVE VERIFY **OPEN** for the owner |
-| 4 | Admin report workflow and mobile report fix | **NEXT** — not started. Resume instructions below |
+| 4 | Admin report workflow and mobile report fix | **IN FLIGHT** on `report-workflow` |
 | 5 | Full portal mobile / aesthetic UI cleanup | not started — **queued, do not begin**. Carries a specific brief, below |
 | 6 | **Legal / Law Firm intake** (third intake type) | not started — **queued, do not begin**. Added by the owner 2026-08-19; **reordered by them to sit after the UI work**. Full brief below |
 | 7 | Remaining Portal Ops productivity features | not started |

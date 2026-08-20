@@ -750,6 +750,50 @@ deliverable material with contiguous numbering and explains no gap. Tests
 assert structurally that no gate strip lives inside `#pkgdoc`, so the guard
 survives a rewording.
 
+## Reports: the review is for a handoff, and an admin has none
+
+**Owner, 2026-08-19:** *"For an Admin who is assembling and delivering the case
+themselves, remove redundant approval barriers... Keep approval/review
+requirements for non-admin/investigator roles where appropriate. Do not weaken
+role boundaries."*
+
+The rule, written once in `latestShippableReport`/`shippableReports`: a report
+may ride in a package when it is **approved or delivered, OR its author holds
+the admin role** — the review flow exists for the investigator→office handoff,
+and a report whose author IS the office has no handoff in it. Forcing the admin
+through draft → submitted → approved on their own words was ritual: two clicks
+and a status that briefly claimed the report was "with the office" while the
+office was the one clicking.
+
+**Finalize is the sign-off, and it is recorded as one.** Any still-draft report
+in a finalizing package passed the gates, so it is an admin's own; finalize
+stamps it `approved` with `status_by` = the finalizing admin and a
+`reports_approved` build event. The status column stays the single answer to
+"was this signed off" — nothing downstream learned a second vocabulary.
+
+**The boundary did not move.** An investigator's report still seeds nothing,
+still cannot be attached (*"approve it first"*), still gates finalize by name,
+and the investigator still cannot approve anything — `setReportStatus` is
+untouched. On a mixed case only the admin's own day seeds, and finalize never
+stamps an investigator's draft. Both sides are pinned from both suites. The
+page offers an admin **Approve report** directly on a draft; **Submit report**
+is the investigator's button now, because submitting to yourself is not a
+thing.
+
+The package mini-row says **Ready** — never "Approved" — about a shippable
+draft: a staff screen must not assert a status the row does not hold.
+
+**The mobile report fix was measured, not eyeballed** (375px): the report
+editor was 223px wide because four nested paddings ate 148px a side — and the
+phone rule that should have fixed `.dlg` was **dead code**, written above the
+base rule that overrode it. The working block now lives at the END of the
+stylesheet and the suite asserts the COMPUTED padding, so source order cannot
+silently kill it twice. With it: the editor is ≥16px (under 16, iOS zooms the
+page on focus), the five report sub-tabs wrap instead of hiding behind an
+unmarked scroll, and every control in the report screen meets the 44px tap
+floor the field bars already enforce. The portal-wide pass is item 5; this was
+deliberately scoped to the report screen.
+
 ## Invoices
 
 Money is arithmetic here, never a stored flag. Totals come from the lines and

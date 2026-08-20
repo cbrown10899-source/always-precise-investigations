@@ -2818,17 +2818,23 @@ section('Case Build: the package behind hard gates');
      (await call(env, '/cases/API-CB1/build', { cookie: inv })).status === 403
      && (await call(env, '/external-storage', { cookie: inv })).status === 403);
 
-  // The raw material: a worked day, an approved report, classified evidence.
-  await call(env, '/cases/API-CB1/day/start', { method: 'POST', cookie: admin,
+  /* The raw material: a worked day, a report, classified evidence. The day is
+     DANA'S on purpose (owner, 2026-08-19): an admin's own report no longer
+     waits on approval, so the approval gate this section pins is the one that
+     still exists — an investigator's report waiting on the office. */
+  await call(env, '/submissions/API-CB1/assign', { method: 'POST', cookie: admin,
+    body: { user_id: (await jsonOf(await call(env, '/users', { cookie: admin })))
+      .users.find(u => u.username === 'dana').id } });
+  await call(env, '/cases/API-CB1/day/start', { method: 'POST', cookie: inv,
     body: { day_date: '2026-08-13', start_time: '07:00' } });
-  await call(env, '/cases/API-CB1/activity', { method: 'POST', cookie: admin,
+  await call(env, '/cases/API-CB1/activity', { method: 'POST', cookie: inv,
     body: { at_date: '2026-08-13', at_time: '08:21', kind: 'activity',
             description: 'Subject arrived at ABC Fitness.' } });
-  await call(env, '/cases/API-CB1/day/end', { method: 'POST', cookie: admin, body: { end_time: '15:00' } });
-  const dayId = (await jsonOf(await call(env, '/cases/API-CB1/workspace', { cookie: admin }))).days[0].id;
-  const rep = await jsonOf(await call(env, '/cases/API-CB1/reports/generate', { method: 'POST', cookie: admin,
+  await call(env, '/cases/API-CB1/day/end', { method: 'POST', cookie: inv, body: { end_time: '15:00' } });
+  const dayId = (await jsonOf(await call(env, '/cases/API-CB1/workspace', { cookie: inv }))).days[0].id;
+  const rep = await jsonOf(await call(env, '/cases/API-CB1/reports/generate', { method: 'POST', cookie: inv,
     body: { day_id: dayId } }));
-  await call(env, `/cases/API-CB1/reports/${rep.id}/status`, { method: 'POST', cookie: admin, body: { status: 'submitted' } });
+  await call(env, `/cases/API-CB1/reports/${rep.id}/status`, { method: 'POST', cookie: inv, body: { status: 'submitted' } });
 
   const up = (file, extra = {}) => {
     const fd = new FormData();
@@ -2849,7 +2855,8 @@ section('Case Build: the package behind hard gates');
   const clip = await plantLegacyVideo(env, 'API-CB1', 'clip.mp4');
   const doc = (await jsonOf(await up(mk('summary.pdf', 200, 'application/pdf'), { classification: 'client_deliverable' }))).id;
 
-  // No approved report yet: the build opens, and the gate says exactly that.
+  // The investigator's report is not approved yet: the build opens, and the
+  // gate says exactly that.
   let st = await jsonOf(await call(env, '/cases/API-CB1/build', { method: 'POST', cookie: admin }));
   ok('a draft build opens', st.build.status === 'draft' && st.build.version === 1);
   ok('only one draft at a time',
@@ -2931,6 +2938,13 @@ section('Case Build: a package carries the whole investigation');
   const env = freshEnv();
   await bootstrapAdmin(env);
   const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  /* The investigation is DANA'S here for the reason the hard-gates section
+     says: approved-vs-not only still exists for an investigator's reports,
+     and this section is entirely about that line. */
+  const mdLink = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const mdTok = new URL(mdLink, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${mdTok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
 
   await ingest(env, { case_no: 'API-MD1', kind: 'claims', service: 'Insurance claim assignment',
                       carrier: 'Acme Mutual', claim_number: 'CLM-77', client_name: 'An Adjuster',
@@ -2938,16 +2952,20 @@ section('Case Build: a package carries the whole investigation');
                       date_of_loss: '2026-03-04',
                       objective: 'Establish activity level against the stated restrictions.' });
 
-  // Three worked days, each with its own approved report.
+  await call(env, '/submissions/API-MD1/assign', { method: 'POST', cookie: admin,
+    body: { user_id: (await jsonOf(await call(env, '/users', { cookie: admin })))
+      .users.find(u => u.username === 'dana').id } });
+
+  // Three worked days, each with its own report from the field.
   const repIds = [];
   for (const [d, s, e] of [['2026-08-10', '07:00', '15:00'],
                            ['2026-08-11', '06:30', '14:30'],
                            ['2026-08-12', '08:00', '16:00']]) {
-    await call(env, '/cases/API-MD1/day/start', { method: 'POST', cookie: admin,
+    await call(env, '/cases/API-MD1/day/start', { method: 'POST', cookie: inv,
       body: { day_date: d, start_time: s } });
-    await call(env, '/cases/API-MD1/activity', { method: 'POST', cookie: admin,
+    await call(env, '/cases/API-MD1/activity', { method: 'POST', cookie: inv,
       body: { at_date: d, at_time: '09:00', kind: 'activity', description: `Observation on ${d}.` } });
-    await call(env, '/cases/API-MD1/day/end', { method: 'POST', cookie: admin, body: { end_time: e } });
+    await call(env, '/cases/API-MD1/day/end', { method: 'POST', cookie: inv, body: { end_time: e } });
   }
   /* The workspace hands days back newest-first, which is right for a screen
      and wrong for building Day 1 / Day 2 / Day 3 — so sort here and let
@@ -2957,9 +2975,9 @@ section('Case Build: a package carries the whole investigation');
   ok('three days are on the case', days.length === 3);
   for (const day of days) {
     const r = await jsonOf(await call(env, '/cases/API-MD1/reports/generate', { method: 'POST',
-      cookie: admin, body: { day_id: day.id } }));
+      cookie: inv, body: { day_id: day.id } }));
     repIds.push(r.id);
-    await call(env, `/cases/API-MD1/reports/${r.id}/status`, { method: 'POST', cookie: admin,
+    await call(env, `/cases/API-MD1/reports/${r.id}/status`, { method: 'POST', cookie: inv,
       body: { status: 'submitted' } });
   }
   // Approve only the first two — the third stays out for now.
@@ -2979,7 +2997,7 @@ section('Case Build: a package carries the whole investigation');
   ok('and is not offered either, because it is not approved yet',
      (st.available_reports || []).length === 0);
   ok('the creation event says how many days it opened on',
-     st.events.some(e => e.action === 'created' && /2 approved reports/.test(e.detail || '')));
+     st.events.some(e => e.action === 'created' && /2 reports, 2026-08-10 to 2026-08-11/.test(e.detail || '')));
 
   ok('an unapproved day cannot be forced into the package',
      (await jsonOf(await call(env, `/build/${st.build.id}/reports`, { method: 'POST', cookie: admin,
@@ -5957,6 +5975,129 @@ section('The retainer a private case agreed is the retainer it keeps');
      (await call(env, '/sheets?case=API-SEL1', { cookie: inv })).status === 403);
 
   globalThis.fetch = realFetch;
+}
+
+/* ---- ITEM 4 (owner, 2026-08-19): "For an Admin who is assembling and
+   delivering the case themselves, remove redundant approval barriers." The
+   review flow exists for a HANDOFF; an admin's own report has none, so the
+   whole chain — draft, build, finalize, PDF — runs with no approve call.
+   And the boundary that still matters is pinned from both sides: an
+   investigator's report waits for the office exactly as before. */
+section('An admin\'s own report needs no approval ritual');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const tok = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const danaId = (await jsonOf(await call(env, '/users', { cookie: admin })))
+    .users.find(u => u.username === 'dana').id;
+
+  await ingest(env, { case_no: 'API-ADM1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+
+  // The admin works their own day and drafts their own report. No status calls.
+  await call(env, '/cases/API-ADM1/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-14', start_time: '07:00' } });
+  await call(env, '/cases/API-ADM1/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-08-14', at_time: '09:12', kind: 'activity', description: 'Subject mowed the lawn.' } });
+  await call(env, '/cases/API-ADM1/day/end', { method: 'POST', cookie: admin, body: { end_time: '15:00' } });
+  const dayId = (await jsonOf(await call(env, '/cases/API-ADM1/workspace', { cookie: admin }))).days[0].id;
+  const rep = await jsonOf(await call(env, '/cases/API-ADM1/reports/generate', { method: 'POST', cookie: admin,
+    body: { day_id: dayId } }));
+
+  // A case with NO reports says generate, not approve.
+  await ingest(env, { case_no: 'API-ADM0', service: 'Surveillance', client_name: 'C0', subject_name: 'S0' });
+  const bare = await jsonOf(await call(env, '/cases/API-ADM0/build', { method: 'POST', cookie: admin }));
+  ok('with no reports at all the gate says to generate one, not approve one',
+     bare.gates.some(g => g.includes('generate a daily report first')), JSON.stringify(bare.gates));
+
+  let st = await jsonOf(await call(env, '/cases/API-ADM1/build', { method: 'POST', cookie: admin }));
+  ok('opening a build seeds the admin\'s own draft without an approval step',
+     st.reports.length === 1 && st.reports[0].status === 'draft', JSON.stringify(st.reports));
+  ok('and no gate demands an approval for it',
+     !st.gates.some(g => /approv/i.test(g)), JSON.stringify(st.gates));
+
+  st = await jsonOf(await call(env, `/build/${st.build.id}/finalize`, { method: 'POST', cookie: admin }));
+  ok('the package finalizes with no approve call anywhere in the chain',
+     st.build && st.build.status === 'finalized', JSON.stringify(st.gates || st));
+
+  /* THE FINALIZE IS THE SIGN-OFF, and it is recorded as one — the status
+     column stays the single answer to "was this signed off". */
+  const stamped = await env.DB.prepare('SELECT status, status_by FROM case_reports WHERE id = ?')
+    .bind(rep.id).first();
+  ok('finalize stamped the admin\'s draft approved', stamped.status === 'approved');
+  ok('recorded against the finalizing admin, not nobody', stamped.status_by === 1);
+  ok('and the build event names the sign-off',
+     st.events.some(e => e.action === 'reports_approved' && /2026-08-14/.test(e.detail || '')),
+     JSON.stringify(st.events.map(e => e.action)));
+
+  /* ---- The other side of the line, on the same case shape ---- */
+  await ingest(env, { case_no: 'API-INV1', service: 'Surveillance', client_name: 'C2', subject_name: 'S2' });
+  await call(env, '/submissions/API-INV1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+  await call(env, '/cases/API-INV1/day/start', { method: 'POST', cookie: inv,
+    body: { day_date: '2026-08-14', start_time: '08:00' } });
+  await call(env, '/cases/API-INV1/activity', { method: 'POST', cookie: inv,
+    body: { at_date: '2026-08-14', at_time: '10:00', kind: 'activity', description: 'Departure noted.' } });
+  await call(env, '/cases/API-INV1/day/end', { method: 'POST', cookie: inv, body: { end_time: '12:00' } });
+  const iday = (await jsonOf(await call(env, '/cases/API-INV1/workspace', { cookie: inv }))).days[0].id;
+  const irep = await jsonOf(await call(env, '/cases/API-INV1/reports/generate', { method: 'POST', cookie: inv,
+    body: { day_id: iday } }));
+
+  let ist = await jsonOf(await call(env, '/cases/API-INV1/build', { method: 'POST', cookie: admin }));
+  ok('an investigator\'s draft does NOT seed into a build',
+     ist.reports.length === 0, JSON.stringify(ist.reports));
+  ok('cannot be attached around the review',
+     (await jsonOf(await call(env, `/build/${ist.build.id}/reports`, { method: 'POST', cookie: admin,
+       body: { report_id: irep.id } }))).error.includes('approve it first'));
+  const iblocked = await jsonOf(await call(env, `/build/${ist.build.id}/finalize`, { method: 'POST', cookie: admin }));
+  ok('and finalize still refuses, naming the missing approval',
+     iblocked.gates && iblocked.gates.some(g => /approved/.test(g)), JSON.stringify(iblocked.gates));
+  ok('finalize did not quietly stamp the investigator\'s report',
+     (await env.DB.prepare('SELECT status FROM case_reports WHERE id = ?').bind(irep.id).first())
+       .status === 'draft');
+  ok('the investigator still cannot approve their own report',
+     (await call(env, `/cases/API-INV1/reports/${irep.id}/status`, { method: 'POST', cookie: inv,
+       body: { status: 'approved' } })).status === 403);
+
+  // The review done properly still works end to end.
+  await call(env, `/cases/API-INV1/reports/${irep.id}/status`, { method: 'POST', cookie: inv,
+    body: { status: 'submitted' } });
+  await call(env, `/cases/API-INV1/reports/${irep.id}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'approved' } });
+  ist = await jsonOf(await call(env, `/build/${ist.build.id}/finalize`, { method: 'POST', cookie: admin }));
+  ok('reviewed and approved, the investigator\'s report finalizes as before',
+     ist.build && ist.build.status === 'finalized');
+
+  /* ---- Mixed: one case, one report from each side of the line ---- */
+  await ingest(env, { case_no: 'API-MIX1', service: 'Surveillance', client_name: 'C3', subject_name: 'S3' });
+  await call(env, '/submissions/API-MIX1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+  await call(env, '/cases/API-MIX1/day/start', { method: 'POST', cookie: inv,
+    body: { day_date: '2026-08-15', start_time: '07:00' } });
+  await call(env, '/cases/API-MIX1/day/end', { method: 'POST', cookie: inv, body: { end_time: '11:00' } });
+  await call(env, '/cases/API-MIX1/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-16', start_time: '07:00' } });
+  await call(env, '/cases/API-MIX1/day/end', { method: 'POST', cookie: admin, body: { end_time: '11:00' } });
+  const mdays = (await jsonOf(await call(env, '/cases/API-MIX1/workspace', { cookie: admin }))).days;
+  const dDay = mdays.find(d => d.day_date === '2026-08-15');
+  const aDay = mdays.find(d => d.day_date === '2026-08-16');
+  const dRep = await jsonOf(await call(env, '/cases/API-MIX1/reports/generate', { method: 'POST', cookie: admin,
+    body: { day_id: dDay.id } }));
+  await call(env, '/cases/API-MIX1/reports/generate', { method: 'POST', cookie: admin,
+    body: { day_id: aDay.id } });
+
+  const mst = await jsonOf(await call(env, '/cases/API-MIX1/build', { method: 'POST', cookie: admin }));
+  ok('on a mixed case only the admin\'s own day seeds',
+     mst.reports.length === 1 && mst.reports[0].report_date === '2026-08-16',
+     JSON.stringify(mst.reports));
+  ok('the investigator\'s draft gates nothing while it is not attached — but is not offered either',
+     !(mst.available_reports || []).some(r => r.id === dRep.id));
+  const mfin = await jsonOf(await call(env, `/build/${mst.build.id}/finalize`, { method: 'POST', cookie: admin }));
+  ok('the mixed case finalizes on the admin\'s day alone', mfin.build.status === 'finalized');
+  ok('and the investigator\'s untouched draft is still a draft',
+     (await env.DB.prepare('SELECT status FROM case_reports WHERE id = ?').bind(dRep.id).first())
+       .status === 'draft');
 }
 
 section('The daily report builder');
