@@ -12440,6 +12440,14 @@ section('Daily summary: deterministic sentences over the day\'s own facts');
     if (await cbtn.count()) { await cbtn.first().click(); await page.waitForTimeout(400); } }
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
+  /* Snapshot the WHOLE activity log before the builder is touched — the
+     container's real date can coincide with the fixture day, so other
+     sections' entries may share it and only before-vs-after is honest. */
+  const logBefore = await page.evaluate(async no => {
+    const ws = await (await fetch(`/portal-api/cases/${no}/workspace`,
+      { credentials: 'same-origin' })).json();
+    return JSON.stringify(ws.activity.map(a => [a.id, a.at_date, a.at_time, a.description]));
+  }, 'API-20260812-4001');
   await wsTab(page, 'Reports');
   await page.waitForTimeout(400);
   await page.locator('.rcard', { hasText: '2026-08-20' }).first().click();
@@ -12494,15 +12502,13 @@ section('Daily summary: deterministic sentences over the day\'s own facts');
   ok('the summary saves and says so', has(await text(page, '.dsb-wrap'), 'Saved'));
 
   /* THE LOG IS UNTOUCHED — the builder narrates it, never edits it. */
-  const log = await page.evaluate(async no => {
+  const logAfter = await page.evaluate(async no => {
     const ws = await (await fetch(`/portal-api/cases/${no}/workspace`,
       { credentials: 'same-origin' })).json();
-    return ws.activity.filter(a => a.at_date === '2026-08-20')
-      .map(a => [a.at_time, a.description]);
+    return JSON.stringify(ws.activity.map(a => [a.id, a.at_date, a.at_time, a.description]));
   }, 'API-20260812-4001');
   ok('every activity entry still reads exactly as logged',
-     JSON.stringify(log.sort()) === JSON.stringify([['09:14', 'Subject departed residence in white pickup.'],
-                                                    ['11:42', 'Subject returned to residence.']].sort()), JSON.stringify(log));
+     logAfter === logBefore, logAfter.slice(0, 200));
 }
 
 section('Daily summary: the writer\'s words survive everything but a deliberate rebuild');
@@ -12632,15 +12638,31 @@ section('Daily summary: the narrative rides the documents, clean of builder scaf
      rep.indexOf('surveillance was initiated at 8:03 AM') < rep.indexOf('CHRONOLOG')
        || !has(rep, 'CHRONOLOG'));
 
-  /* And the client package prints it under the day heading. */
+  /* And the client package prints it under the day heading. The shared
+     fixture case may already carry a FINALIZED package from earlier
+     sections, so this section makes its own draft version through the API —
+     POST /cases/:no/build opens a new version over a finalized one — and
+     attaches the day's report by id rather than hoping an offer button is
+     on screen. */
+  await page.evaluate(async no => {
+    const post = (p2, b2) => fetch('/portal-api' + p2, { method: 'POST',
+      credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(b2 || {}) }).then(r => r.json());
+    let st = await (await fetch(`/portal-api/cases/${no}/build`,
+      { credentials: 'same-origin' })).json();
+    if (!st.build || st.build.status !== 'draft') { await post(`/cases/${no}/build`); }
+    st = await (await fetch(`/portal-api/cases/${no}/build`,
+      { credentials: 'same-origin' })).json();
+    const ws = await (await fetch(`/portal-api/cases/${no}/workspace`,
+      { credentials: 'same-origin' })).json();
+    const day = (ws.days || []).find(d => d.day_date === '2026-08-20');
+    const rep = (ws.reports || []).find(r => r.day_id === day.id);
+    if (!(st.reports || []).some(r => r.id === rep.id)) {
+      await post(`/build/${st.build.id}/reports`, { report_id: rep.id });
+    }
+  }, 'API-20260812-4001');
   await wsTab(page, 'Package');
   await page.waitForTimeout(700);
-  if (await page.locator('[data-act="pkgStart"]').count()) {
-    await page.locator('[data-act="pkgStart"]').click();
-    await page.waitForTimeout(900);
-  }
-  const offer = page.locator('.btn', { hasText: 'Add to package' });
-  while (await offer.count()) { await offer.first().click(); await page.waitForTimeout(700); }
   const doc = await page.locator('#pkgdoc').innerText();
   ok('the package document carries the day\'s paragraph',
      has(doc, 'surveillance was initiated at 8:03 AM'), doc.slice(0, 300));
