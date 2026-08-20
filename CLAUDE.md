@@ -1081,6 +1081,85 @@ calls `api()` rather than `pkgApi()`: `pkgApi` swallows its own failure.
 
 **Adding this table means a manual `portal-setup.yml` dispatch after merge.**
 
+## The hash is taken where the bytes already pass
+
+Unit 11 (owner brief and derived decisions in `case-portal/EVIDENCE-INTEGRITY.md`).
+`evidence_integrity` is one additive table answering, per artifact: what file,
+whose case, who filed it, when it was captured / filed / generated, original or
+derivative of what, its SHA-256, where the authoritative copy lives, and
+whether the bytes still match. **No thumbnail, no copy, no blob column, no R2
+object, no automatic backfill.**
+
+**Every filing path hashes the buffer it was already holding** — the evidence
+upload, the timestamped photo and the filed report PDF all read
+`file.arrayBuffer()` before handing it to Dropbox, so the digest costs one pass
+over bytes already in memory and nothing is ever downloaded to compute it. The
+integrity record is written **after** the bytes are safe, and its failure never
+turns a stored file into an error: the response says `integrity: 'recorded'`
+or `'not_recorded'` with the reason, because both lies — a record for a file
+that failed, and a success that hides a failed record — are forbidden by the
+brief.
+
+**The timestamped video is the honest exception.** It reaches the Worker in
+8 MB session parts and is never whole there; Web Crypto has no incremental
+digest, so the generating device hashes the very blob it uploaded and sends the
+digest with `finish`. `hash_origin` records `worker` or `device` — the
+`photo_stamp.source` idea again: an integrity record whose origin is unstated
+is one nobody can weigh. A junk digest is refused by shape (`HEX64`); an absent
+one files the copy and leaves the record unwritten. **Never write a digest the
+Worker did not compute without recording that it did not compute it.**
+
+**Nothing reads bytes unasked.** Ordinary rendering — the workspace, the cards,
+the manifest — reads metadata only, and there is a test counting Dropbox calls
+to prove it. Exactly two actions re-read a file, both admin, both explicit,
+one file at a time: **Record integrity hash** (the per-file backfill; a
+historical file reads *Not yet recorded* until someone asks) and **Verify
+integrity**. Verify **writes nothing** — a stored "verified on the 3rd" would
+draw as a present-tense claim about bytes nobody has looked at since. Its
+answers are match / mismatch / **unavailable** — an unreadable file is never a
+pass and never a fail. Both actions are capped by `INTEGRITY_MAX_BYTES`
+(default: the per-file upload limit) so a legacy giant refuses rather than
+discovering Worker memory in production.
+
+**A re-record supersedes** (`superseded_at`, matched on the artifact), so
+integrity history survives the answer changing — and the response names the
+previous digest and whether it changed. A metadata edit (classification, note)
+touches no integrity row. Deleting evidence keeps every integrity row it ever
+had; Record then refuses (`deleted`) and Verify says unavailable. **There is no
+replace route in this portal** (Dropbox uploads are `add` + autorename), which
+is what makes "replacement must not rewrite history" structural.
+
+**Original/derivative is stated, never inferred.** Uploads are originals; the
+derivative markers come only from explicit relationships — the `photo_stamp`
+pairing (source = the original's id), the build (a filed report PDF's artifact
+is the **build**, because a report of the case is not evidence in it), and the
+video record (source `external`: the original clip never entered the portal).
+No filename comparison exists anywhere. `capture_at` is written only where an
+authoritative instant exists (the burned instant); the plain upload writes
+`filed_at` and leaves capture empty.
+
+**The wording is the boundary.** *Hash recorded / Not yet recorded / current
+bytes match the hash recorded by this portal* — never "verified" as a legal
+claim, and the manifest says so in print: *"an integrity record kept by this
+portal, not a third-party authentication."* This is not chain of custody and
+nothing may label it as one.
+
+**The manifest** (`GET /cases/:no/manifest`, admin-only) is composed from
+metadata in two statements, lists filed report PDFs and video copies **apart**
+from case evidence, carries no token or credential (asserted by grep of the
+payload), and prints through `#mandoc` — the existing print-region pattern, so
+the page still has exactly one `%PDF-1.` writer. The hash routes scope the
+evidence id to the case **in the same statement**, so wrong-case and
+never-existed answer byte-identically and the routes cannot probe another
+case's ids. `storage_ref` (the App Folder path) is admin-only on the way out;
+the field sees the hash, role and provenance for cases it holds, and no
+Verify/Record buttons.
+
+**Adding this table means a manual `portal-setup.yml` dispatch after merge.**
+Until then: uploads still succeed (`integrity_reason: 'not_set_up'`), the
+workspace sends `integrity: null` — unknown, which must not draw as "no file
+has a hash" — and the write routes 503 naming the workflow.
+
 ## The timeline is a view, and it needed no table
 
 Unit 10 (owner brief verbatim in `case-portal/TIMELINE.md`, derived decisions

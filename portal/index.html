@@ -1112,6 +1112,13 @@
     body.printing-timeline .tl2-go{visibility:hidden !important;}
     body.printing-timeline .tl2-file{border:0;background:none;padding:0;color:#333;}
     body.printing-timeline .tl2-i{break-inside:avoid;}
+    /* UNIT 11 — the evidence manifest prints the same way: the rendering on
+       screen IS the document, the browser's dialog saves the PDF, and nothing
+       is stored or uploaded by printing. */
+    body.printing-manifest *{visibility:hidden !important;}
+    body.printing-manifest #mandoc, body.printing-manifest #mandoc *{visibility:visible !important;}
+    body.printing-manifest #mandoc{position:absolute;left:0;top:0;width:100%;border:0;padding:0;}
+    body.printing-manifest .man-i{break-inside:avoid;}
   }
   @media(max-width:640px){.cal-cell{min-height:54px;} .cal-ev{font-size:.58rem;padding:1px 3px;}}
   .comprow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:2px 0 8px;}
@@ -1122,6 +1129,22 @@
   .tag.cap-sd{background:#dff2e5;color:#1a6b3c;} .tag.cap-va{background:#dcecf2;color:#1d5c6c;}
   .tag.cap-pa{background:#e3d7f5;color:#4a2f77;}
   .opt{font-weight:400;color:var(--muted);font-size:.78rem;}
+  /* UNIT 11 — the integrity block on an evidence card, and the manifest.
+     `.integ` is its own prefix (nothing else owns it) and the full digest
+     always breaks anywhere: sixty-four characters with no spaces is the
+     textbook horizontal overflow. */
+  .integ{margin-top:6px;padding:7px 9px;background:var(--panel2,#f6f7f9);border:1px solid var(--line);border-radius:8px;font-size:.8rem;}
+  .integ .ih{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-weight:600;}
+  .integ .hash{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;color:var(--muted);}
+  .integ .im{color:var(--muted);}
+  .integ details{margin-top:3px;} .integ summary{cursor:pointer;color:var(--muted);}
+  .iv-match{color:#1a6b3c;font-weight:600;} .iv-mismatch{color:#a02121;font-weight:600;}
+  .iv-un{color:#8a6d1d;font-weight:600;}
+  #mandoc{border:1px solid var(--line);border-radius:10px;padding:26px 28px;background:#fff;margin-top:14px;}
+  #mandoc h2{margin:0;}
+  .man-i{padding:9px 0;border-bottom:1px solid var(--line);}
+  .man-i .hash{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;font-size:.78rem;}
+  .man-m{color:#555;font-size:.8rem;}
   /* PAYMENTS.md §2/§14 — the send area explains the next step in body-size type,
      not the 0.78rem muted footnote it used to be. Desktop puts the button and
      the panel side by side; the wrap does the mobile stack with no breakpoint. */
@@ -1426,6 +1449,11 @@
     .tl2-dates input{width:100%;}
     .tl2-foot .btn{min-height:44px;}
     .tl2-go,.tl2-file{min-height:44px;display:inline-flex;align-items:center;}
+    /* UNIT 11 — integrity on a phone: the block spans the card, the buttons
+       meet the floor, and the digest wraps rather than widening anything. */
+    .integ .btn{min-height:44px;}
+    .integ .ih{row-gap:4px;}
+    #mandoc{padding:16px 12px;}
   }
 </style>
 </head>
@@ -7138,8 +7166,21 @@ async function vstDropboxSave(){
       paintVStamp();
     }
     if(!v.dbxCancel){
+      /* UNIT 11 — THE DEVICE HASHES WHAT THE DEVICE MADE. This blob never
+         exists in one piece anywhere else: the Worker sees it in 8 MB parts and
+         Web Crypto has no incremental digest, so the only honest SHA-256 of the
+         filed copy is computed HERE, from the very blob that was uploaded, and
+         sent with finish. If this browser cannot compute one (an old engine, a
+         blob too large to read back) the copy files exactly as before and the
+         record reads "not yet recorded" — a missing hash, never an invented
+         one. */
+      let sha = null;
+      try{
+        const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+        sha = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
+      }catch{}
       const r = await at("finish", {headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({session_id: session, offset})});
+        body: JSON.stringify({session_id: session, offset, ...(sha ? {sha256: sha} : {})})});
       const df = await r.json().catch(() => ({}));
       if(!r.ok) throw new Error(df.error || "Dropbox would not complete the upload.");
       v.dbxPath = df.path;
@@ -8575,6 +8616,9 @@ async function doLogout(){
 async function openCase(caseNo, tab){
   WS_CASE = caseNo; WS_TAB = tab || "overview"; WS_ERR = ""; SUBJ_FORM = null; ACT_MODAL = null; VIEW = "case";
   REP_VIEW = "preview"; REP_VERS = {}; EV_TAB = "all";
+  /* Unit 11: integrity answers and the manifest belong to the case they were
+     read on — carried to the next case they would state another file's facts. */
+  EV_VERIFY = {}; EV_IBUSY = 0; MAN = null; MAN_OPEN = false; MAN_ERR = ""; MAN_BUSY = false;
   /* THE RETAINER FORM BELONGS TO THE CASE IT WAS OPENED ON. All of its state is
      page-level, so without this an unfinished payment followed the admin to the
      next case: the form still open, still carrying the FIGURE they typed for
@@ -10229,8 +10273,161 @@ function vstPanelHtml(){
   </div>`;
 }
 
+/* UNIT 11 — EVIDENCE INTEGRITY on the page.
+
+   The page DRAWS the record and asks; every answer is the Worker's. Nothing
+   here computes a hash, fetches a byte or decides who may act — the buttons
+   are admin-only because the routes are, and the block renders for both roles
+   because the workspace already sends each role exactly what it may see. */
+let EV_VERIFY = {};   // evidence id -> the verify answer, transient until repaint asks again
+let EV_IBUSY = 0;     // evidence id currently being recorded/verified
+let MAN = null, MAN_ERR = "", MAN_OPEN = false, MAN_BUSY = false;
+
+function integRecFor(id){
+  const list = (WS && WS.integrity) || [];
+  return Array.isArray(list) ? list.find(r => r.artifact_kind === "evidence" && r.artifact_id === id) : null;
+}
+
+function integHtml(e){
+  const admin = ME.role === "admin";
+  /* Null means the TABLE has not arrived — unknown, which is not the same as
+     "not recorded", and the card must not claim either way. */
+  if(!WS || WS.integrity === null || WS.integrity === undefined) return "";
+  if(e.deleted_at) return "";
+  const r = integRecFor(e.id);
+  const v = EV_VERIFY[e.id];
+  const busy = EV_IBUSY === e.id;
+  const roleLine = r
+    ? (r.artifact_role === "derivative"
+        ? `Timestamped derivative${r.source_ref ? ` &middot; <span class="im">source: ${esc(r.source_ref)}</span>` : ""}`
+        : "Original")
+    : "";
+  const abbr = h => h ? `${h.slice(0, 4)}&hellip;${h.slice(-4)}` : "";
+  const verdict = !v ? "" :
+    v.status === "match" ? `<div class="iv-match">Current bytes match the recorded hash.</div>` :
+    v.status === "mismatch" ? `<div class="iv-mismatch">Current bytes do NOT match the recorded hash.</div>
+        <div class="hash">now: ${esc(v.current_sha256 || "")}</div>` :
+    v.status === "not_recorded" ? `<div class="im">No hash recorded yet — nothing to compare.</div>` :
+    `<div class="iv-un">Could not be checked right now${v.code === "too_large" ? " — the file is larger than this check can hold" : ""}. ${esc(v.message && v.message.includes("removed") ? "The file was removed from the case." : "")}</div>`;
+  return `<div class="integ" data-eid="${e.id}">
+      <div class="ih">Integrity
+        ${r && r.sha256 ? `<span class="tag rs-approved">Hash recorded</span>` : `<span class="tag rs-draft">Not yet recorded</span>`}
+      </div>
+      ${r ? `<div class="im">${roleLine}</div>
+        <div>SHA-256: <span class="hash">${abbr(r.sha256)}</span>
+          <button class="btn sm ghost" data-act="ihCopy" data-hash="${esc(r.sha256 || "")}">Copy</button></div>
+        <details><summary>Full hash</summary><div class="hash">${esc(r.sha256 || "")}</div></details>
+        <div class="im">Recorded ${when(r.recorded_at)}${r.recorded_by ? ` &middot; ${esc(r.recorded_by)}` : ""}
+          &middot; ${r.hash_origin === "device" ? "hashed on the generating device" : "hashed by the portal"}
+          &middot; ${r.storage_provider === "dropbox" ? "Dropbox" : r.storage_provider === "r2" ? "Cloudflare" : esc(r.storage_provider || "")}</div>`
+      : `<div class="im">No hash has been captured for this file yet.</div>`}
+      ${verdict}
+      ${admin ? `<div style="margin-top:5px">
+          ${r && r.sha256
+            ? `<button class="btn sm ghost" data-act="ihVerify" data-id="${e.id}" ${busy ? "disabled" : ""}>${busy ? "Checking&hellip;" : "Verify integrity"}</button>`
+            : `<button class="btn sm ghost" data-act="ihRecord" data-id="${e.id}" ${busy ? "disabled" : ""}>${busy ? "Reading&hellip;" : "Record integrity hash"}</button>`}
+        </div>` : ""}
+    </div>`;
+}
+
+async function ihRecord(id){
+  EV_IBUSY = id; delete EV_VERIFY[id]; paintCase();
+  try {
+    const r = await api(`/cases/${encodeURIComponent(WS_CASE)}/evidence/${id}/record-hash`, { method: "POST" });
+    /* The workspace copy is what every card draws from; splice the fresh record
+       in rather than reloading the whole case for one row. */
+    if(r.integrity && Array.isArray(WS.integrity)){
+      WS.integrity = WS.integrity.filter(x => !(x.artifact_kind === "evidence" && x.artifact_id === id));
+      WS.integrity.unshift(r.integrity);
+    }
+    if(r.re_recorded && r.changed){
+      EV_VERIFY[id] = { status: "mismatch", current_sha256: r.sha256,
+        message: "The bytes read now differ from the earlier record — both are kept." };
+    }
+  } catch(err){ WS_ERR = err.message || "The hash could not be recorded."; }
+  EV_IBUSY = 0; paintCase();
+}
+
+async function ihVerify(id){
+  EV_IBUSY = id; paintCase();
+  try { EV_VERIFY[id] = await api(`/cases/${encodeURIComponent(WS_CASE)}/evidence/${id}/verify`, { method: "POST" }); }
+  catch(err){ EV_VERIFY[id] = { status: "unavailable", message: err.message || "" }; }
+  EV_IBUSY = 0; paintCase();
+}
+
+/* ---- the manifest: fetched when asked, drawn from metadata, printable ---- */
+
+async function openManifest(){
+  MAN_OPEN = true; MAN_BUSY = true; MAN_ERR = ""; paintCase();
+  try { MAN = await api(`/cases/${encodeURIComponent(WS_CASE)}/manifest`); }
+  catch(err){ MAN = null; MAN_ERR = err.message || "The manifest could not be read."; }
+  MAN_BUSY = false; paintCase();
+}
+
+function manPrint(){
+  document.body.classList.add("printing-manifest");
+  window.print();
+  setTimeout(() => document.body.classList.remove("printing-manifest"), 400);
+}
+
+function manifestHtml(){
+  if(MAN_BUSY) return `<div class="empty">Reading the manifest&hellip;</div>`;
+  /* A failed read says so — it is never drawn as a case with no files. */
+  if(MAN_ERR) return `<div class="err">${esc(MAN_ERR)}</div>
+    <button class="btn sm ghost" data-act="manOpen">Try again</button>
+    <button class="btn sm ghost" data-act="manBack">Back to Case media</button>`;
+  if(!MAN) return "";
+  const cls = c => ({client_deliverable:"Client deliverable", internal_only:"Internal only",
+    do_not_use:"Do not use", needs_review:"Needs review", needs_redaction:"Needs redaction"})[c] || c || "";
+  const item = i => `<div class="man-i">
+      <div><b>#${i.n}</b> &middot; <b>${esc(i.filename || "")}</b>
+        ${i.deleted_at ? `<span class="tag rs-draft">removed — the record stays</span>` : ""}
+        <span class="tag ${i.artifact_role === "derivative" ? "rs-submitted" : "rs-draft"}">${i.artifact_role === "derivative" ? "Derivative" : i.artifact_role === "original" ? "Original" : "Not yet recorded"}</span>
+        <span class="tag">${esc(cls(i.classification))}</span></div>
+      <div class="man-m">${esc(i.content_type || "")}${i.byte_size ? ` &middot; ${i.byte_size.toLocaleString()} bytes` : ""}
+        ${i.uploaded_by ? ` &middot; ${esc(i.uploaded_by)}` : ""}
+        ${i.filed_at ? ` &middot; filed ${when(i.filed_at)}` : ""}
+        ${i.capture_at ? ` &middot; captured ${when(i.capture_at)}` : ""}
+        ${i.source_ref ? ` &middot; source: ${esc(i.source_ref)}` : ""}
+        &middot; ${i.storage_provider === "dropbox" ? "Dropbox" : "Cloudflare"}</div>
+      ${i.sha256 ? `<div class="hash">SHA-256 ${esc(i.sha256)}</div>`
+        : `<div class="man-m">Integrity: not yet recorded</div>`}
+    </div>`;
+  const other = o => `<div class="man-i">
+      <div><b>${esc(o.filename || "")}</b>
+        <span class="tag rs-submitted">${o.artifact_kind === "report_pdf" ? "Filed report PDF" : "Timestamped video copy"}</span></div>
+      <div class="man-m">${esc(o.content_type || "")}${o.byte_size ? ` &middot; ${o.byte_size.toLocaleString()} bytes` : ""}
+        ${o.source_ref ? ` &middot; source: ${esc(o.source_ref)}` : ""}
+        ${o.filed_at ? ` &middot; filed ${when(o.filed_at)}` : ""}
+        &middot; ${o.hash_origin === "device" ? "hashed on the generating device" : "hashed by the portal"}</div>
+      ${o.sha256 ? `<div class="hash">SHA-256 ${esc(o.sha256)}</div>` : ""}
+    </div>`;
+  return `
+    <div class="rc-h" style="margin:2px 0 6px"><b>Evidence manifest</b>
+      <button class="btn sm ghost" data-act="manBack">Back to Case media</button>
+      <button class="btn sm ghost" data-act="manPrint">Print / save as PDF</button>
+      <button class="btn sm ghost" data-act="manOpen">Re-read</button></div>
+    ${(MAN.missing_sources || []).length ? `<div class="note">Integrity records are not set up on this
+        database yet (run portal-setup once) &mdash; the files are listed without hashes.</div>` : ""}
+    <div id="mandoc">
+      <h2 style="font-size:1.05rem">Evidence Integrity Manifest &mdash; ${esc(MAN.case_no)}</h2>
+      <div class="man-m">${MAN.case && MAN.case.client ? `Client: ${esc(MAN.case.client)} &middot; ` : ""}${MAN.case && MAN.case.subject ? `Subject: ${esc(MAN.case.subject)} &middot; ` : ""}Generated ${when(MAN.generated_at)}</div>
+      <div class="man-m" style="margin:4px 0 8px">${MAN.counts.total} file(s) &middot; ${MAN.counts.recorded} with a recorded hash &middot; ${MAN.counts.not_recorded} not yet recorded${MAN.counts.removed ? ` &middot; ${MAN.counts.removed} removed` : ""}</div>
+      ${MAN.items.length ? MAN.items.map(item).join("") : `<div class="man-m">No files are stored on this case.</div>`}
+      ${MAN.other_artifacts && MAN.other_artifacts.length ? `
+        <h3 style="font-size:.92rem;margin:12px 0 2px">Filed report PDFs and timestamped video copies</h3>
+        ${MAN.other_artifacts.map(other).join("")}` : ""}
+      <div class="man-m" style="margin-top:10px">A recorded SHA-256 states that the portal read exactly
+        these bytes when the record was made. It is an integrity record kept by this portal, not a
+        third-party authentication.</div>
+    </div>`;
+}
+
 function evidencePanel(){
   const admin = ME.role === "admin";
+  /* The manifest is a VIEW over this same panel's records; opened, it takes the
+     panel's place with its own Back — no second screen to keep in step. */
+  if(MAN_OPEN && admin) return manifestHtml();
   const rows = (WS && WS.evidence) || [];
   const mb = b => b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB";
   const clsLabel = c => ({client_deliverable:"Client deliverable", internal_only:"Internal only",
@@ -10268,6 +10465,7 @@ function evidencePanel(){
         <div class="tl-m">${mb(e.size_bytes)} &middot; ${esc(e.uploaded_by || "")} &middot; ${when(e.uploaded_at)}</div>
         ${e.note ? `<div class="tl-n">${esc(e.note)}</div>` : ""}
         ${momentOf(e)}
+        ${integHtml(e)}
         ${""/* Offered to BOTH roles, like the upload it follows: the investigator
                who took the picture is the one standing in the field with it, and
                `caseFor` is the boundary that matters. `pstButton` is the one
@@ -10318,7 +10516,8 @@ function evidencePanel(){
     <!-- CASE MEDIA is what is already here, kept apart from the entry point
          above it: adding and looking at are two different jobs and were reading
          as one panel. -->
-    <div class="rc-h" style="margin:14px 0 6px"><b>Case media</b></div>
+    <div class="rc-h" style="margin:14px 0 6px"><b>Case media</b>
+      ${admin ? `<button class="btn sm ghost" data-act="manOpen">Evidence manifest</button>` : ""}</div>
     <div class="evtabs">${[["all","All"], ["photos","Photos"], ["video","Video"], ["docs","Documents"]]
       .map(([k, lbl]) => {
         const n = k === "all" ? rows.length : rows.filter(e => !e.deleted_at && kindOf(e) === k).length;
@@ -14881,6 +15080,17 @@ document.addEventListener("click", ev => {
   }
   else if(act === "invSaveLines"){ saveInvoiceLines(); }
   else if(act === "evDelete"){ deleteEvidenceRow(Number(el.dataset.id)); }
+  else if(act === "ihRecord"){ ihRecord(Number(el.dataset.id)); }
+  else if(act === "ihVerify"){ ihVerify(Number(el.dataset.id)); }
+  else if(act === "ihCopy"){
+    /* No repaint: the confirmation is the button's own word, and a repaint here
+       would fold the details view the reader may just have opened. */
+    navigator.clipboard && navigator.clipboard.writeText(el.dataset.hash || "");
+    el.textContent = "Copied"; setTimeout(() => { el.textContent = "Copy"; }, 1600);
+  }
+  else if(act === "manOpen"){ openManifest(); }
+  else if(act === "manBack"){ MAN_OPEN = false; MAN_ERR = ""; paintCase(); }
+  else if(act === "manPrint"){ manPrint(); }
   else if(act === "pkgStart"){ pkgApi(`/cases/${encodeURIComponent(WS_CASE)}/build`); }
   else if(act === "pkgAdd"){ pkgApi(`/build/${PKG.build.id}/items`, {evidence_id: Number(el.dataset.id)}); }
   else if(act === "pkgRemove"){ pkgApi(`/build/${PKG.build.id}/items/${el.dataset.id}/remove`); }
