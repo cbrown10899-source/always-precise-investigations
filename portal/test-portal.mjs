@@ -10823,6 +10823,127 @@ section('Recent activity rows are doors, and stacked records read on a phone');
   await page.close(); await ctx.close();
 }
 
+/* ---- UNIT 6: the LEGAL intake in the portal (LEGAL-INTAKE.md). What the
+   office sees and does; the Worker suite already pins the data rules. */
+section('Quick Legal Assignment: a phone call becomes a case');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.waitForTimeout(500);
+  await page.locator('.btn', { hasText: 'Intake a client' }).click();
+  await page.waitForTimeout(400);
+
+  const picker = await page.locator('#app').innerText();
+  ok('the third door is Legal / Law Firm', has(picker, 'Legal / Law Firm'));
+  ok('and it names the phone-call workflow', has(picker, 'pick up the papers'));
+  await page.locator('[data-act="nlKind"][data-k="legal"]').click();
+  await page.waitForTimeout(300);
+
+  ok('the quick form says choosing an arrangement is never a payment',
+     has(await page.locator('#app').innerText(), 'never a payment'));
+  await page.locator('#nl_firm').fill('Calloway Law');
+  await page.locator('#nl_atty').fill('M. Calloway');
+  await page.locator('#nl_email').fill('mc@callowaylaw.test');
+  await page.locator('#nl_client').fill('Estate of Byrd');
+  await page.locator('#nl_subject').fill('J. Q. Adverse');
+  await page.locator('#nl_asgtype').selectOption('Surveillance');
+  await page.locator('#nl_retainer').fill('2000');
+  await page.locator('#nl_arrangement').selectOption('check_pickup');
+  await page.locator('#nl_legal_deadline').fill('2026-09-01');
+  await page.locator('[data-act="nlSave"][data-open="1"]').click();
+  await page.waitForTimeout(900);
+
+  ok('the case opens', await page.evaluate(() => VIEW) === 'case');
+  const caseNo = await page.evaluate(() => WS_CASE);
+  ok('with the Legal tab on it', await page.evaluate(() =>
+    Boolean(WS && WS.legal && WS.legal.firm_name === 'Calloway Law')));
+  await wsTab(page, 'Legal');
+  const lp = await text(page, '#dlgBody');
+  ok('the panel leads with the firm', has(lp, 'Calloway Law'));
+  ok('check pickup reads as AWAITING PICKUP, not paid',
+     has(lp, 'Awaiting pickup') && has(lp, 'nothing marks it paid automatically'));
+  ok('and says recording money stays on Billing',
+     has(lp, 'cannot mark anything paid'));
+  /* The retainer the attorney quoted on the call went through the one writer. */
+  ok('the agreed retainer recorded through the existing route',
+     await page.evaluate(async () => {
+       const r = await fetch(`/portal-api/cases/${WS_CASE}/workspace`, {credentials:'same-origin'});
+       const d = await r.json();
+       return d.retainer && Number(d.retainer.retainer_amount) === 2000;
+     }) || await page.evaluate(async () => {
+       const r = await fetch(`/portal-api/submissions/${WS_CASE}`, {credentials:'same-origin'});
+       return (await r.json()) && true;
+     }));
+
+  // The panel edits with the /meta rules.
+  await page.locator('#lg_trial_date').fill('2026-11-20');
+  await page.locator('[data-act="legalSave"]').click();
+  await page.waitForTimeout(600);
+  ok('a save lands and says so', has(await text(page, '#dlgBody'), 'Saved'));
+  ok('the firm survived a save that did not mention it',
+     await page.evaluate(() => WS.legal.firm_name === 'Calloway Law'
+       && WS.legal.trial_date === '2026-11-20'));
+
+  // Back on the desk: the card is a LEGAL card.
+  await page.locator('[data-act="backToCases"]').click();
+  await page.waitForTimeout(300);
+  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.waitForTimeout(600);
+  const card = page.locator('.pcard', { hasText: 'Calloway Law' }).first();
+  const cardText = await card.innerText();
+  ok('the card is badged LEGAL', /legal/i.test(cardText), cardText.slice(0, 120));
+  ok("firm-led, with the attorney and the firm's client apart",
+     has(cardText, 'Calloway Law') && has(cardText, 'M. Calloway') && has(cardText, 'Estate of Byrd'));
+  ok('the assignment and deadline are on the card',
+     has(cardText, 'Surveillance') && has(cardText, '2026-09-01'));
+  ok('the arrangement shows as awaiting pickup', has(cardText, 'Awaiting pickup'));
+  ok('and no consumer payment-options button is offered on a legal lead',
+     await card.locator('[data-act="leadPayOpen"]').count() === 0);
+  await page.close();
+}
+
+section('A legal case shows an investigator the work, never the firm');
+{
+  db.prepare(`INSERT INTO submissions (case_no, kind, status, client_name, subject_name, payload, created_at)
+              VALUES ('API-LGL-B', 'consumer', 'new', 'Client of Record', 'Watched Party',
+                      '{"assignment":"legal","subject_name":"Watched Party","objective":"Locate the party.","firm_name":"Harmon & Boyle PLC","attorney_name":"R. Harmon","matter_number":"M-88"}', ?)`)
+    .run(new Date().toISOString());
+  db.prepare(`INSERT INTO legal_intake (case_no, firm_name, attorney_name, matter_number, payment_arrangement, created_at)
+              VALUES ('API-LGL-B', 'Harmon & Boyle PLC', 'R. Harmon', 'M-88', 'bill_ach', ?)`)
+    .run(new Date().toISOString());
+
+  const admin = await newPage();
+  await signIn(admin, 'trever', 'AdminPassword1x');
+  await admin.evaluate(async () => {
+    const users = await (await fetch('/portal-api/users', {credentials:'same-origin'})).json();
+    const dana = users.users.find(u => u.username === 'dana');
+    await fetch('/portal-api/submissions/API-LGL-B/assign', {method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({user_id: dana.id})});
+  });
+  await admin.close();
+
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await rowFor(page, 'API-LGL-B').click();
+  await page.waitForTimeout(500);
+  ok('no Legal tab exists for the investigator',
+     !has(await text(page, '.wstabs'), 'Legal') && await page.evaluate(() => !WS.legal));
+  /* Walk every section they have and assert the firm's identity is nowhere. */
+  let all = '';
+  for (const sec of await page.locator('.wsecs button').all()) {
+    await sec.click(); await page.waitForTimeout(200);
+    for (const t of await page.locator('.wstabs button').all()) {
+      await t.click(); await page.waitForTimeout(150);
+      all += await text(page, '#dlgBody');
+    }
+  }
+  ok('no firm, attorney or matter identity anywhere in their case',
+     !all.includes('Harmon') && !all.includes('M-88'), all.slice(0, 150));
+  ok('while the subject is theirs to work', all.includes('Watched Party'));
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();

@@ -307,6 +307,54 @@ one place unavailability is spelled out, and `FIELD_KEEP` carries only the
 FIELD-side ones — an investigator is told the address is not known yet, never
 whether the carrier's claim number exists.
 
+## The legal intake is the private pricing path wearing a firm's name
+
+Unit 6 (owner brief verbatim in `case-portal/LEGAL-INTAKE.md`, derived
+decisions listed there one per entry). The three intake businesses are
+**Private / Insurance / Legal**, and legal rests on two structural choices:
+
+**A legal case IS `kind='consumer'`.** The `kind` CHECK cannot widen
+idempotently, and it should not: consumer typing is what makes the pricing
+rule structural rather than synchronised — `agreedRetainer()`,
+`case_retainer`, the private sheet and the invoice retainer block all key off
+consumer, so Legal reflects Private pricing because it IS the private pricing
+path. The marker of record is `payload.assignment === 'legal'` on the
+submission's own row (`isLegalSub()`, the one reader — never inferred from a
+recipient, an address, or the table's presence); the `legal_intake` companion
+table carries the structured firm/attorney/paralegal/billing/matter detail,
+guarded through `missingTables()`, swept by `DEMO_SWEEP`.
+
+**Cash App and Venmo reach a law firm through no code path.**
+`SEND_CONTEXT.LEGAL` joins the model and `CONTEXT_TAKES_PAYMENT` stays
+`=== PRIVATE` — the same shape that protects carriers. A legal case takes the
+private SHEET (same figures, one source) in the LEGAL context; the payment
+block is refused on it by name, `/payment-options/email` refuses it in words,
+and the response's `send_context` states the case's real context (it briefly
+said "private" about a legal send until the suite caught it). The legal
+payment ARRANGEMENTS — BILL.com invoice/ACH, check pick-up, check by mail,
+existing billing — are a **request, never a payment**: they live on the legal
+row, `check_pickup` reads as *Awaiting pickup* everywhere, and nothing about
+them touches `retainer_payment`.
+
+**The firm is who is paying**, so an investigator is never sent it: no
+`WS.legal`, no `legal_*` list columns (stripped in `redactRow`), no Legal tab
+— while the LEGAL badge itself is a category fact like `kind` and survives.
+The subject still reaches the field.
+
+**Doors**: `?assignment=legal` is the public door (picker dropped, retitled
+"Legal Investigation Assignment"); bare `/intake/` offers all three; the
+private door refuses `legal` in `pickSvc` like it refuses `claims`. **Quick
+Legal Assignment** is `createManualIntake` with `kind:'legal'` — firm OR
+attorney is the one hard requirement, and the agreed retainer goes through the
+existing `/cases/:no/retainer` writer. `POST /cases/:no/legal` edits the panel
+under the `/meta` rules (absent unchanged, blank clears, resolved in the
+statement) and backfills the row for intakes that arrived before portal-setup.
+
+**Documents attach after acceptance** through the existing authenticated
+case-media upload — the public form grew no upload door, and says so.
+
+**Adding this table means a manual `portal-setup.yml` dispatch after merge.**
+
 ## Carrier rates are internal — and this file is public-adjacent
 
 The insurance rate strategy lives in `case-portal/PRICING.md`, with the

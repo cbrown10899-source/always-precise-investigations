@@ -1262,3 +1262,48 @@ CREATE TABLE IF NOT EXISTS photo_stamp (
 );
 CREATE INDEX IF NOT EXISTS idx_pstamp_case ON photo_stamp(case_no, id DESC);
 CREATE INDEX IF NOT EXISTS idx_pstamp_orig ON photo_stamp(original_id, id DESC);
+
+-- LEGAL / LAW FIRM intake (Unit 6, owner brief in case-portal/LEGAL-INTAKE.md).
+-- A COMPANION TABLE, not a third value in submissions.kind: that CHECK cannot
+-- widen idempotently (the build_custom reasoning), and keeping legal cases
+-- typed 'consumer' is what makes the pricing rule STRUCTURAL — the retainer
+-- selector, agreedRetainer() and the invoice retainer block all key off
+-- consumer, so Legal reflects Private pricing because it IS the private
+-- pricing path. The marker of record is payload.assignment='legal' on the
+-- submission row itself; this table carries the structured firm/matter detail.
+-- payment_arrangement is validated in the Worker, no CHECK (the
+-- retainer_payment.method precedent) — the four values are the owner's, and a
+-- fifth must not need a table rebuild.
+CREATE TABLE IF NOT EXISTS legal_intake (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no             TEXT    NOT NULL UNIQUE,
+  firm_name           TEXT,
+  firm_address        TEXT,
+  firm_phone          TEXT,
+  firm_email          TEXT,
+  attorney_name       TEXT,
+  attorney_email      TEXT,
+  attorney_phone      TEXT,
+  paralegal_name      TEXT,
+  paralegal_email     TEXT,
+  paralegal_phone     TEXT,
+  billing_name        TEXT,
+  billing_email       TEXT,
+  billing_phone       TEXT,
+  billing_reference   TEXT,
+  matter_number       TEXT,
+  court_case_number   TEXT,
+  court_jurisdiction  TEXT,
+  assignment_type     TEXT,
+  conflict_names      TEXT,
+  hearing_date        TEXT,
+  trial_date          TEXT,
+  deadline            TEXT,
+  other_date          TEXT,
+  other_date_label    TEXT,
+  payment_arrangement TEXT,
+  created_at          TEXT    NOT NULL,
+  updated_by          INTEGER REFERENCES users(id),
+  updated_at          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_legal_case ON legal_intake(case_no);

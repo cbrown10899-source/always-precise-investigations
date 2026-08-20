@@ -309,7 +309,13 @@ async function handleIngest(request, env) {
   // rather than trusted. Anything outside this alphabet is rejected outright.
   if (!CASE_NO_RE.test(caseNo)) return json({ error: 'case_no has an unexpected format' }, 400);
 
-  const kind = p.claim_number || p.carrier ? 'claims' : 'consumer';
+  /* UNIT 6 — a legal assignment arrives kind='consumer' (D1: the CHECK cannot
+     widen, and consumer is what makes the private pricing structural), marked
+     by its own payload. The marker is explicit from the form, never inferred:
+     a legal payload that also carried a carrier field must not silently file
+     as a claim. */
+  const legal = p.assignment === 'legal';
+  const kind = !legal && (p.claim_number || p.carrier) ? 'claims' : 'consumer';
   try {
     await env.DB.prepare(
       `INSERT INTO submissions
@@ -324,6 +330,14 @@ async function handleIngest(request, env) {
     // A retry from the browser must not surface as an error to the client.
     if (String(e).includes('UNIQUE')) return json({ ok: true, duplicate: true });
     throw e;
+  }
+  /* The structured legal row. GUARDED: schema.sql arrives by a manual
+     portal-setup dispatch, so this table can be absent on the live database.
+     The intake is NOT refused for that — the whole payload is already stored
+     on the submission row, so nothing is lost; the admin's first Save on the
+     Legal panel structures it once the table exists. */
+  if (legal && !(await missingTables(env)).includes('legal_intake')) {
+    try { await writeLegalRow(env, caseNo, p, null); } catch { /* payload holds it */ }
   }
   // The case is recorded; telling the office is a courtesy that cannot fail it.
   await notifyAdmins(env, 'intakes', caseNo);
@@ -654,7 +668,12 @@ const PAY_IDS = PAY_METHODS.map(m => m.id);
    `CONTEXT_TAKES_PAYMENT` is the whole payment boundary now: Cash App and Venmo
    may only ever be attached to a PRIVATE context. An insurance send has no code
    path that reaches them, rather than a check that has to keep being right. */
-const SEND_CONTEXT = { PRIVATE: 'private', INSURANCE: 'insurance' };
+/* UNIT 6 adds LEGAL (LEGAL-INTAKE.md D2). A legal send uses the PRIVATE
+   pricing product — same figures, structurally, because a legal case IS
+   kind='consumer' — but CONTEXT_TAKES_PAYMENT stays `=== PRIVATE`, so Cash App
+   and Venmo have no code path to a law firm, the same shape that already
+   protects carriers. */
+const SEND_CONTEXT = { PRIVATE: 'private', INSURANCE: 'insurance', LEGAL: 'legal' };
 
 /* Which context each sheet is. A table rather than a comparison so the mapping
    has one home, and so a new sheet has to declare itself rather than defaulting
@@ -673,6 +692,91 @@ const KIND_CONTEXT = { consumer: SEND_CONTEXT.PRIVATE, claims: SEND_CONTEXT.INSU
 const contextForSheet = sheetId => SHEET_CONTEXT[sheetId] || null;
 const contextForKind  = kind    => KIND_CONTEXT[kind] || null;
 
+/* The legal row's columns, once — the ingest writer, the admin editor and the
+   quick creator all draw from this list, so a field added here is added
+   everywhere at the same time. Column names only ever come from this constant,
+   never from a request. */
+const LEGAL_FIELDS = ['firm_name', 'firm_address', 'firm_phone', 'firm_email',
+  'attorney_name', 'attorney_email', 'attorney_phone',
+  'paralegal_name', 'paralegal_email', 'paralegal_phone',
+  'billing_name', 'billing_email', 'billing_phone', 'billing_reference',
+  'matter_number', 'court_case_number', 'court_jurisdiction',
+  'assignment_type', 'conflict_names',
+  'hearing_date', 'trial_date', 'deadline', 'other_date', 'other_date_label',
+  'payment_arrangement'];
+
+const cleanLegal = v => String(v == null ? '' : v)
+  .replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, 2000) || null;
+
+/** Insert the structured legal row from a payload-shaped object. Used by the
+    ingest and the quick creator; the EDIT route is deliberately a different
+    statement (absent-means-unchanged, per-field) because a form that posts
+    subsets must never replace-all. */
+async function writeLegalRow(env, caseNo, src, userId) {
+  const vals = LEGAL_FIELDS.map(f => {
+    let v = cleanLegal(src[f]);
+    if (f === 'payment_arrangement' && v && !LEGAL_ARRANGEMENTS[v]) v = null;
+    return v;
+  });
+  await env.DB.prepare(
+    `INSERT INTO legal_intake (case_no, ${LEGAL_FIELDS.join(', ')}, created_at, updated_by, updated_at)
+     VALUES (?, ${LEGAL_FIELDS.map(() => '?').join(', ')}, ?, ?, ?)
+     ON CONFLICT(case_no) DO NOTHING`)
+    .bind(caseNo, ...vals, nowIso(), userId, userId ? nowIso() : null).run();
+}
+
+/** The legal detail for a case, admin-only at the call sites. Falls back to
+    the submission payload when the row is absent (an intake that arrived
+    before portal-setup ran) so the panel is never blank about facts the
+    portal already holds — the fallback is read-only and says so. */
+async function legalFor(env, caseNo) {
+  if (!(await missingTables(env)).includes('legal_intake')) {
+    const row = await env.DB.prepare('SELECT * FROM legal_intake WHERE case_no = ?')
+      .bind(caseNo).first();
+    if (row) return { ...row, source: 'table' };
+  }
+  const sub = await env.DB.prepare('SELECT payload FROM submissions WHERE case_no = ?')
+    .bind(caseNo).first();
+  if (!sub || !isLegalSub(sub)) return null;
+  let p = {}; try { p = JSON.parse(sub.payload || '{}'); } catch { p = {}; }
+  const out = { case_no: caseNo, source: 'payload' };
+  for (const f of LEGAL_FIELDS) out[f] = cleanLegal(p[f]);
+  return out;
+}
+
+/* UNIT 6 — the one reader for "is this submission a legal assignment". The
+   marker is payload.assignment === 'legal', written by the ingest and the
+   admin creator into the submission's OWN row: a legal case is kind='consumer'
+   (D1 — the CHECK cannot widen, and consumer is what keeps the pricing
+   structural), so kind alone cannot answer this. Never inferred from a
+   recipient, an email address, or the legal_intake table's presence — the
+   table is detail, the payload is the record. */
+const isLegalSub = sub => {
+  if (!sub) return false;
+  try { return JSON.parse(sub.payload || '{}').assignment === 'legal'; }
+  catch { return false; }
+};
+/* Context for a CASE: the payload marker outranks the kind mapping. Callers
+   that only have a kind (no row) keep contextForKind — a reference that
+   resolves to nothing still sends, the pre-case rule. */
+const contextForSub = sub => !sub ? null : (isLegalSub(sub) ? SEND_CONTEXT.LEGAL : contextForKind(sub.kind));
+
+/* The owner's four legal payment arrangements — a REQUEST, never a payment
+   (D8): nothing here touches retainer_payment, and the wording the office
+   sees says "awaiting", not "paid". Validated here, no CHECK in the schema,
+   so a fifth arrangement never needs a table rebuild. */
+const LEGAL_ARRANGEMENTS = {
+  bill_ach:         'BILL.com invoice / ACH',
+  check_pickup:     'Retainer check — pick up at firm',
+  check_mail:       'Retainer check — by mail',
+  existing_billing: 'Existing billing arrangement',
+};
+/* Assignment categories (D4): one extensible list, stored as free text so
+   "Other / Custom" and future categories need no schema change. */
+const LEGAL_ASSIGNMENTS = ['Surveillance', 'Locate / Skip trace', 'Background investigation',
+  'Witness locate / interview', 'Domestic / custody investigation', 'Civil investigation',
+  'Evidence / documentation', 'Process / service support', 'Other / custom assignment'];
+
 /* The inverse: which product a context sends. Declared rather than derived with
    a ternary, because a ternary has to pick a side for anything it does not
    recognise and the wrong side here is the one carrying payment methods. This
@@ -681,8 +785,20 @@ const contextForKind  = kind    => KIND_CONTEXT[kind] || null;
 const CONTEXT_SHEET = {
   [SEND_CONTEXT.PRIVATE]:   'private_retainer',
   [SEND_CONTEXT.INSURANCE]: 'insurance_assignment',
+  /* The legal sheet IS the private product (D1/D2): one pricing source, so
+     there is no second copy to drift when the private figures move. */
+  [SEND_CONTEXT.LEGAL]:     'private_retainer',
 };
-const intakeForContext = ctx => SHEET_INTAKE[CONTEXT_SHEET[ctx]];
+/* The intake DOOR is per-context, not per-sheet: legal shares the private
+   SHEET but must never be sent the private FORM — the legal door retitles the
+   flow and asks a law office's questions. Declared per context so an unknown
+   context still fails closed. */
+const CONTEXT_INTAKE = {
+  [SEND_CONTEXT.PRIVATE]:   'private_retainer',
+  [SEND_CONTEXT.INSURANCE]: 'insurance_assignment',
+  [SEND_CONTEXT.LEGAL]:     'legal_assignment',
+};
+const intakeForContext = ctx => SHEET_INTAKE[CONTEXT_INTAKE[ctx]];
 
 /* The only rule payment options need. Everything that used to be spread across
    a sheet-id comparison and a recipient lookup is this one line. */
@@ -901,10 +1017,13 @@ Always Precise Investigations, LLC — Va DCJS #11-9159`;
    the payment-carrying side. */
 async function sendLeadIntake(request, env, user, caseNo) {
   const lead = await env.DB.prepare(
-    'SELECT case_no, kind, client_name FROM submissions WHERE case_no = ?').bind(caseNo).first();
+    'SELECT case_no, kind, client_name, payload FROM submissions WHERE case_no = ?').bind(caseNo).first();
   if (!lead) return json({ error: 'not found' }, 404);
 
-  const context = contextForKind(lead.kind);
+  /* The payload marker outranks the kind mapping (Unit 6): a legal lead is
+     kind='consumer' by design, and emailing it the PRIVATE form would ask a
+     law office a consumer's questions. */
+  const context = contextForSub(lead);
   const intake = intakeForContext(context);
   if (!context || !intake) {
     return json({ error: `${caseNo} does not say whether it is a private client or a claim `
@@ -1013,12 +1132,17 @@ async function sendPreCaseIntake(request, env, user) {
      resolves the context from its own table. It is not trusted as a
      classification of the recipient, and it cannot be: there is nothing an
      intake link carries that a payment method could ride on. */
-  const kind = body.kind === 'insurance' || body.kind === 'claims' ? 'claims'
-             : body.kind === 'private' || body.kind === 'consumer' ? 'consumer' : null;
-  const context = contextForKind(kind);
+  /* UNIT 6 — 'legal' is the third product, mapped straight to its context so
+     the LEGAL door is chosen; it never rides the kind mapping, because a legal
+     case's kind is 'consumer' and that mapping would hand out the private
+     form. */
+  const context = body.kind === 'legal' ? SEND_CONTEXT.LEGAL
+    : contextForKind(
+        body.kind === 'insurance' || body.kind === 'claims' ? 'claims'
+        : body.kind === 'private' || body.kind === 'consumer' ? 'consumer' : null);
   if (!context) {
-    return json({ error: 'Say which intake this is — Private Client or Insurance Assignment. '
-                       + 'The two forms are never interchangeable.' }, 400);
+    return json({ error: 'Say which intake this is — Private Client, Insurance Assignment or '
+                       + 'Legal / Law Firm. The forms are never interchangeable.' }, 400);
   }
   const name = String(body.name || '')
     .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 120);
@@ -1093,6 +1217,16 @@ async function emailSheet(request, env, user, id) {
      nothing about what is SENT changes — the subject line still carries
      whatever was typed. */
   let linkedCase = null;
+  /* The context this send actually happens in: the sheet's, until a resolved
+     case says otherwise — a LEGAL case takes the private sheet in the LEGAL
+     context, and the answer the office reads must say which (observable and
+     asserted, the SEND-CONTEXT rule). */
+  let sendCtx = contextForSheet(id);
+
+  /* Computed BEFORE the case lookup below, which now consults it: a legal
+     case must refuse the payment block at the same door the sheet check is. */
+  const includePayment = body.include_payment === true || body.include_payment === 1
+    || body.include_payment === '1';
 
   /* A sheet sent AGAINST a lead must match that lead (audit, 2026-08-14).
      The intake door has always been paired to the sheet server-side, but
@@ -1101,7 +1235,7 @@ async function emailSheet(request, env, user, id) {
      AND the consumer picker in front of an adjuster. The page picks correctly;
      the API did not care, and the API is the boundary. */
   if (caseNo) {
-    const lead = await env.DB.prepare('SELECT kind FROM submissions WHERE case_no = ?')
+    const lead = await env.DB.prepare('SELECT kind, payload FROM submissions WHERE case_no = ?')
       .bind(caseNo).first();
     if (lead) {
       /* The case is named in the BODY here, not the path, so the router's gate
@@ -1112,12 +1246,27 @@ async function emailSheet(request, env, user, id) {
       const refusal = await caseSendRefusal(env, caseNo);
       if (refusal) return refusal;
       linkedCase = caseNo;
-      const wanted = lead.kind === 'claims' ? 'insurance_assignment' : 'private_retainer';
-      if (id !== wanted) {
-        return json({ error: lead.kind === 'claims'
+      /* Per-case context (Unit 6): a LEGAL case takes the private sheet —
+         same product, same figures, D1 — so `wanted` maps through the context
+         table rather than a kind ternary. */
+      sendCtx = contextForSub(lead) || sendCtx;
+      const caseCtx = sendCtx;
+      const wanted = CONTEXT_SHEET[caseCtx];
+      if (wanted && id !== wanted) {
+        return json({ error: caseCtx === SEND_CONTEXT.INSURANCE
           ? `${caseNo} is a claim assignment — send it the Insurance Assignment Rates, never the consumer sheet.`
           : `${caseNo} is a private client — send it the Private Client Retainer, never the carrier sheet.`,
           expected_sheet: wanted }, 400);
+      }
+      /* THE PAYMENT HALF OF THE BOUNDARY. `sheetTakesPayment` answered when
+         the sheet id was enough; a legal case takes the private SHEET and must
+         still never take the payment block, so where a case resolves, its own
+         context is the gate. Cash App and Venmo reach a law firm through no
+         path. */
+      if (includePayment && !CONTEXT_TAKES_PAYMENT(caseCtx)) {
+        return json({ error: `${caseNo} is a legal assignment — payment instructions here are `
+          + `Cash App and Venmo, which are private-client methods. Law firms are billed by `
+          + `invoice or retainer check.`, code: 'legal_no_payment_block' }, 400);
       }
     }
   }
@@ -1147,8 +1296,6 @@ async function emailSheet(request, env, user, id) {
      `methods` is the admin's per-send selection. It can only ever narrow what
      the central configuration has enabled — paymentOptionsFor drops anything
      not enabled there, so the wizard cannot switch a method on. */
-  const includePayment = body.include_payment === true || body.include_payment === 1
-    || body.include_payment === '1';
   if (includePayment && !sheetTakesPayment(sheet.id)) {
     return json({ error: 'Payment options are private-client only and cannot be sent with the '
                        + 'Insurance Assignment Rates.' }, 400);
@@ -1235,7 +1382,7 @@ async function emailSheet(request, env, user, id) {
      of the send rather than echoed from the request, and note that sending
      instructions says nothing whatever about the retainer being paid. */
   return json({ ok: true, sent_to: to, sheet: sheet.id,
-    send_context: contextForSheet(sheet.id),
+    send_context: sendCtx,
     included: {
       rate_sheet: sheet.name,
       intake: includeIntake && SHEET_INTAKE[sheet.id] ? SHEET_INTAKE[sheet.id].label : null,
@@ -1311,7 +1458,7 @@ async function emailPaymentOptions(request, env, user) {
                             cannot confirm, because "I cannot find this" is not
                             evidence of "this is safe to send to". */
   if (caseNo) {
-    const lead = await env.DB.prepare('SELECT kind FROM submissions WHERE case_no = ?')
+    const lead = await env.DB.prepare('SELECT kind, payload FROM submissions WHERE case_no = ?')
       .bind(caseNo).first();
     /* A REFERENCE THAT MATCHES NOTHING DOES NOT BLOCK THE SEND (owner,
        2026-08-15 — PRE-CASE SENDS, a blocking workflow defect).
@@ -1335,9 +1482,17 @@ async function emailPaymentOptions(request, env, user) {
        against stored carrier contacts; it produced four defects in four review
        rounds and the owner removed it. A mistyped or absent reference now
        changes nothing about what may be sent — only what the subject says. */
-    if (lead && contextForKind(lead.kind) === SEND_CONTEXT.INSURANCE) {
+    if (lead && contextForSub(lead) === SEND_CONTEXT.INSURANCE) {
       return json({ error: `${caseNo} is a claim assignment. Cash App and Venmo are private-client `
                          + `payment methods and are never sent to a carrier or TPA.` }, 400);
+    }
+    /* UNIT 6 — refused by name, exactly like a claims case: these instructions
+       ARE Cash App and Venmo, and a law firm is billed by invoice or retainer
+       check. Requesting either of those is never a payment (D8) and is not
+       sent from here. */
+    if (lead && contextForSub(lead) === SEND_CONTEXT.LEGAL) {
+      return json({ error: `${caseNo} is a legal assignment. Cash App and Venmo are private-client `
+                         + `payment methods — law firms are billed by BILL.com invoice or retainer check.` }, 400);
     }
     // Past the refusal, so anything found here is a private lead: a real case.
     if (lead) {
@@ -1415,12 +1570,28 @@ async function emailPaymentOptions(request, env, user) {
    never force fake information to pass validation). */
 async function createManualIntake(request, env, user) {
   const body = await readJson(request);
-  const kind = body.kind === 'claims' ? 'claims' : body.kind === 'consumer' ? 'consumer' : null;
-  if (!kind) return json({ error: 'Pick Insurance/Commercial or Private Client first.' }, 400);
-  const who = String((kind === 'claims' ? (body.carrier || body.client_name) : body.client_name) || '').trim();
+  /* UNIT 6 — 'legal' is the third product here and the whole Quick Legal
+     Assignment path: the office types in what a phone call brought ("come by
+     and pick up the papers and the retainer") and fills the rest in later. It
+     stores as kind='consumer' with the payload marker, exactly like the public
+     legal door (D1), so pricing, retainer and every consumer read work on it
+     unchanged. */
+  const legal = body.kind === 'legal';
+  const kind = body.kind === 'claims' ? 'claims'
+             : (body.kind === 'consumer' || legal) ? 'consumer' : null;
+  if (!kind) return json({ error: 'Pick Insurance/Commercial, Private Client or Legal / Law Firm first.' }, 400);
+  const who = String((kind === 'claims' ? (body.carrier || body.client_name)
+                     : legal ? (body.firm_name || body.attorney_name)
+                     : body.client_name) || '').trim();
   if (!who) {
     return json({ error: kind === 'claims'
-      ? 'Name the carrier or the assigning contact.' : 'Name the client.' }, 400);
+      ? 'Name the carrier or the assigning contact.'
+      : legal ? 'Name the law firm (or the attorney, if the firm name is not to hand).'
+      : 'Name the client.' }, 400);
+  }
+  if (legal && body.payment_arrangement && !LEGAL_ARRANGEMENTS[String(body.payment_arrangement)]) {
+    return json({ error: 'Pick one of the four legal payment arrangements — BILL.com invoice/ACH, '
+      + 'check pick-up, check by mail, or an existing billing arrangement.' }, 400);
   }
 
   const fields = ['service', 'client_name', 'client_email', 'client_phone', 'client_address',
@@ -1430,6 +1601,17 @@ async function createManualIntake(request, env, user) {
     'objective', 'timeline', 'notes'];
   const payload = {};
   for (const f of fields) { const v = pick(body, f); if (v) payload[f] = v; }
+  if (legal) {
+    payload.assignment = 'legal';
+    for (const f of LEGAL_FIELDS) { const v = cleanLegal(body[f]); if (v) payload[f] = v; }
+    /* The attorney is the client-side contact of record when no separate
+       client contact was typed — the denormalised columns feed the case list
+       and the send flows, and a legal lead with an empty contact column would
+       be unreachable from every send door. */
+    if (!payload.client_name && payload.attorney_name) payload.client_name = payload.attorney_name;
+    if (!payload.client_email && payload.attorney_email) payload.client_email = payload.attorney_email;
+    if (!payload.client_phone && payload.attorney_phone) payload.client_phone = payload.attorney_phone;
+  }
   payload.manual_intake = true;
   payload.entered_by = user.display_name || user.username;
 
@@ -1443,12 +1625,18 @@ async function createManualIntake(request, env, user) {
            (case_no, kind, service, client_name, client_email, client_phone,
             subject_name, carrier, claim_number, payload, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .bind(caseNo, kind, payload.service || null,
+        .bind(caseNo, kind, payload.service || (legal ? 'Legal investigation assignment' : null),
           payload.client_name || null, payload.client_email || null, payload.client_phone || null,
           payload.subject_name || null, payload.carrier || null, payload.claim_number || null,
           JSON.stringify(payload), nowIso()).run();
+      /* The structured legal row, guarded like the public ingest's: the
+         payload above already holds every field, so a missing table costs
+         structure, never data. */
+      if (legal && !(await missingTables(env)).includes('legal_intake')) {
+        try { await writeLegalRow(env, caseNo, payload, user.id); } catch { /* payload holds it */ }
+      }
       await notifyAdmins(env, 'intakes', caseNo);
-      return json({ ok: true, case_no: caseNo }, 201);
+      return json({ ok: true, case_no: caseNo, legal }, 201);
     } catch (e) {
       if (!String(e).includes('UNIQUE')) throw e;
     }
@@ -1691,6 +1879,11 @@ async function hiddenCases(env) {
 const SHEET_INTAKE = {
   insurance_assignment: { label: 'Insurance Assignment Intake',
     url: 'https://alwayspreciseinvestigations.net/intake/?assignment=insurance' },
+  /* The legal door (Unit 6): fixes the path, drops the picker, retitles the
+     form "Legal Investigation Assignment". Not a sheet — a door; it rides this
+     table because this is where doors live. */
+  legal_assignment: { label: 'Legal Investigation Assignment',
+    url: 'https://alwayspreciseinvestigations.net/intake/?assignment=legal' },
   private_retainer: { label: 'Private Client Intake',
     // The private door (audit 2026-08-14): the picker without the carrier
     // path. A private client emailed this link is never offered a claim
@@ -2146,6 +2339,9 @@ function redactRow(row) {
      FIELD_KEEP and the client_* columns above. */
   const { carrier, claim_number, client_name, client_email, client_phone, lead_status,
           send_count, last_sent_at, retainer_received, pay_sent_at, pay_methods,
+          /* the firm IS the paying side (Unit 6) — the LEGAL category stays,
+             the identity goes */
+          legal_firm, legal_attorney, legal_assignment, legal_deadline, legal_arrangement,
           ...rest } = row;
   return rest;
 }
@@ -2194,6 +2390,19 @@ async function listSubmissions(request, env, user) {
      practice; the guard costs two lines and `missing` is already computed. */
   const haveRet = !missing.includes('case_retainer');
   const havePay = !missing.includes('payment_send');
+  /* UNIT 6 — the lead card's legal identity: firm-led, with the assignment,
+     the deadline and the arrangement beside it. Guarded like every table that
+     arrives by portal-setup, and STRIPPED by redactRow below — the firm is who
+     is paying, which an investigator is never shown. */
+  const haveLegal = !missing.includes('legal_intake');
+  const legalCols = haveLegal
+    ? `(SELECT li.firm_name FROM legal_intake li WHERE li.case_no = s.case_no) AS legal_firm,
+       (SELECT li.attorney_name FROM legal_intake li WHERE li.case_no = s.case_no) AS legal_attorney,
+       (SELECT li.assignment_type FROM legal_intake li WHERE li.case_no = s.case_no) AS legal_assignment,
+       (SELECT li.deadline FROM legal_intake li WHERE li.case_no = s.case_no) AS legal_deadline,
+       (SELECT li.payment_arrangement FROM legal_intake li WHERE li.case_no = s.case_no) AS legal_arrangement`
+    : `NULL AS legal_firm, NULL AS legal_attorney, NULL AS legal_assignment,
+       NULL AS legal_deadline, NULL AS legal_arrangement`;
   const retCol = haveRet
     ? '(SELECT cr.received FROM case_retainer cr WHERE cr.case_no = s.case_no) AS retainer_received'
     : 'NULL AS retainer_received';
@@ -2226,10 +2435,15 @@ async function listSubmissions(request, env, user) {
 
   const { results } = await env.DB.prepare(
     `SELECT s.case_no, s.kind, s.service, s.status, s.client_name, s.client_email, s.subject_name,
+            /* UNIT 6 — a CATEGORY fact like kind, never a firm detail: the badge
+               may say LEGAL to both roles, the firm's identity may not. */
+            CASE WHEN json_valid(s.payload)
+                  AND json_extract(s.payload, '$.assignment') = 'legal'
+                 THEN 1 ELSE 0 END AS legal,
             (SELECT COUNT(*) FROM send_log sl WHERE sl.case_no = s.case_no AND sl.ok = 1) AS send_count,
             (SELECT MAX(sent_at) FROM send_log sl WHERE sl.case_no = s.case_no AND sl.ok = 1) AS last_sent_at,
             s.carrier, s.claim_number, s.created_at, s.assigned_to, u.display_name AS assigned_name,
-            cs.stage, ls.status AS lead_status, ${retCol}, ${payCols}, ${archCol}, ${delCol}
+            cs.stage, ls.status AS lead_status, ${retCol}, ${payCols}, ${legalCols}, ${archCol}, ${delCol}
        FROM submissions s LEFT JOIN users u ON u.id = s.assigned_to
        LEFT JOIN case_status cs ON cs.case_no = s.case_no
        LEFT JOIN lead_status ls ON ls.case_no = s.case_no
@@ -3631,10 +3845,61 @@ async function caseWorkspace(env, user, caseNo) {
     evidence: evidence || [],
     video_stamps: videoStamps,
     photo_stamps: photoStamps,
+    /* UNIT 6 — the firm, the matter, the dates and the arrangement. ADMIN
+       ONLY: who is paying is exactly what an investigator is never sent, and
+       every one of these fields names the paying side. The subject fields the
+       field needs ride the ordinary payload allow-list, not this. */
+    legal: admin ? await legalFor(env, caseNo) : undefined,
     tasks: tasks || [],
     offers: offers || [],
     my_offer: myOffer || null,
   });
+}
+
+/* UNIT 6 — the Legal panel's writer. THE /meta RULES, deliberately: an absent
+   key means unchanged, a blank string clears, and the untouched fields are
+   resolved INSIDE the statement rather than read-then-written, so two admins
+   posting different subsets cannot interleave into a silent loss. The SET list
+   is built from LEGAL_FIELDS filtered to the keys the request actually
+   mentioned — column names come only from that constant, never from input.
+
+   It also BACKFILLS: a legal intake that arrived before portal-setup ran has
+   its facts in the payload but no row; the first Save writes the row from the
+   posted fields plus nothing else, and the fallback reader stops being needed
+   for that case. */
+async function setLegalDetail(request, env, user, caseNo) {
+  const sub = await env.DB.prepare('SELECT kind, payload FROM submissions WHERE case_no = ?')
+    .bind(caseNo).first();
+  if (!sub) return json({ error: 'not found' }, 404);
+  if (!isLegalSub(sub)) {
+    return json({ error: `${caseNo} is not a legal assignment — the Legal panel writes only to `
+      + `legal cases, and a private client or a carrier file has no firm record to hold.` }, 400);
+  }
+  if ((await missingTables(env)).includes('legal_intake')) {
+    return json({ error: 'The legal_intake table is not on this database yet. Run the '
+      + 'portal-setup workflow once and save again — nothing typed is lost meanwhile, the '
+      + 'intake payload still holds what the firm sent.', code: 'not_set_up' }, 503);
+  }
+  const body = await readJson(request);
+  const mentioned = LEGAL_FIELDS.filter(f => body[f] !== undefined);
+  if (!mentioned.length) return json({ error: 'Nothing to change.' }, 400);
+  const vals = {};
+  for (const f of mentioned) {
+    let v = cleanLegal(body[f]);
+    if (f === 'payment_arrangement' && v && !LEGAL_ARRANGEMENTS[v]) {
+      return json({ error: 'Pick one of the four legal payment arrangements.' }, 400);
+    }
+    vals[f] = v;
+  }
+  /* Ensure the row exists (the backfill), then update only what was named. */
+  await env.DB.prepare(
+    `INSERT INTO legal_intake (case_no, created_at) VALUES (?, ?)
+     ON CONFLICT(case_no) DO NOTHING`).bind(caseNo, nowIso()).run();
+  await env.DB.prepare(
+    `UPDATE legal_intake SET ${mentioned.map(f => `${f} = ?`).join(', ')},
+       updated_by = ?, updated_at = ? WHERE case_no = ?`)
+    .bind(...mentioned.map(f => vals[f]), user.id, nowIso(), caseNo).run();
+  return json({ ok: true, legal: await legalFor(env, caseNo) });
 }
 
 async function setCaseMeta(request, env, caseNo) {
@@ -6578,6 +6843,7 @@ const DEMO_SWEEP = [
 
   /* --- photo_stamp points at case_evidence TWICE, so it goes first --- */
   ['photo_stamp',           'DELETE FROM photo_stamp WHERE case_no LIKE ?'],
+  ['legal_intake',          'DELETE FROM legal_intake WHERE case_no LIKE ?'],
 
   /* --- everything else keyed by case_no --- */
   ['case_evidence',         'DELETE FROM case_evidence WHERE case_no LIKE ?'],
@@ -7204,7 +7470,7 @@ const EXPECTED_TABLES = [
   /* Every table added after this list was first written. Leaving one out makes
      /health report a clean schema on a database that then 503s on every
      workspace load — the check saying "fine" is worse than no check. */
-  'activity_removed', 'build_reports', 'build_summary', 'build_custom',
+  'activity_removed', 'build_reports', 'build_summary', 'build_custom', 'legal_intake',
   'case_day_pauses', 'lead_status', 'send_log', 'invoice_retainer',
   'payment_methods', 'payment_send', 'retainer_receipt', 'case_archive', 'case_deleted', 'notify_recipient', 'case_phone',
   'retainer_payment', 'retainer_payment_void', 'retainer_payment_token',
@@ -7639,6 +7905,12 @@ async function route(request, env) {
   if (m && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return sendLeadIntake(request, env, user, m[1]);
+  }
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/legal$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return setLegalDetail(request, env, user, m[1]);
   }
 
   if (p === '/intakes' && method === 'POST') {
