@@ -23,7 +23,7 @@ item is finished.
 | 4 | Admin report workflow and mobile report fix | ✅ **DONE — DEPLOYED** at `94b1f5b` (#190). LIVE VERIFY **OPEN** for the owner |
 | 5 | Full portal UI/mobile/dashboard modernization | ✅ **DONE — DEPLOYED** at `6446e3c` (#191). LIVE VERIFY **OPEN** for the owner |
 | 6 | **Legal / Law Firm intake** (third intake type) | ✅ **DONE — DEPLOYED** at `1b24467` (#192). LIVE VERIFY **OPEN** for the owner |
-| 7 | Repeat Client / Firm Profiles | 🔨 **IN FLIGHT** on `firm-profiles` — coded, worker suite 2081/0, full portal suite running |
+| 7 | Repeat Client / Firm Profiles | ✅ **DONE — DEPLOYED** at `860f8fb` (#193). LIVE VERIFY **OPEN** for the owner |
 | 8 | Global Case Search + advanced Needs Attention | not started |
 | 9 | Multiple Report Templates | not started |
 | 10 | Case Timeline | not started |
@@ -147,36 +147,53 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
 
-## 🔨 IN FLIGHT — item 7, Repeat Client / Firm Profiles (`firm-profiles`)
+## 📌 Unit 7 — what shipped (#193, `860f8fb`)
 
-The owner started it explicitly on 2026-08-20, which supersedes the Unit 6
-hold recorded below. Brief verbatim plus every derived decision in
+**Repeat Client / Firm Profiles.** Saved Clients & Firms — law firm, insurance
+organization, private client — so a repeat assignment starts prefilled instead
+of retyped. Owner brief verbatim plus every derived decision in
 `case-portal/PROFILES.md`; the summary is in CLAUDE.md under *"A profile is a
 default; a case is a snapshot"*.
 
-**Schema: four additive tables** — `profile`, `profile_contact`,
-`profile_phone`, `case_profile`. **A manual `portal-setup.yml` dispatch is owed
-after merge.** Until it runs the directory says so, the pickers do not offer,
-and the one write returns 503 naming the workflow.
+**The architecture in one sentence:** prefill copies profile values into the
+assignment FORM, `createManualIntake` writes the case from that BODY exactly as
+it always did, and no case read joins a profile — so "editing a firm cannot
+rewrite prior cases" is structural. The suite proves it by creating a case from
+a firm, renaming the firm, and reading both stored copies of the case back byte
+for byte.
 
-Two independent reviews audited the diff — one adversarially against the
-boundary claims, one line by line against the owner's brief. The boundaries
-held; twelve defects elsewhere were found and fixed, each with a test (see the
-commit at `4610487`). The two worth remembering are in CLAUDE.md: the case
-workspace was running the whole duplicate check on every open, and one search
+**Four additive tables** — `profile`, `profile_contact`, `profile_phone`,
+`case_profile` — guarded on every read, with only the case-scoped link in
+`DEMO_SWEEP`. No CHECK on `kind`. No merge routine exists anywhere: a possible
+match refuses the write and names what it matched. No figure lives on a
+profile. Admin-only at every door; the public ingest reads no profile table.
+
+**Two independent reviews audited the diff** (one adversarial against the
+boundary claims, one line-by-line against the brief), neither shown the
+other's work. The boundaries held; twelve defects elsewhere were fixed, each
+with a test. The two worth remembering are in CLAUDE.md: the case workspace was
+running the whole duplicate check on **every** admin open, and one search
 statement could bind more parameters than D1 allows — green in every test,
 broken only in production.
 
-State: worker suite **2128/0**, intake **236/0** (untouched), deploy guard
-**68/0**, the Unit 7 portal sections **70/0** in isolation, full portal suite
-running once for regression.
+**Schema: four tables — `portal-setup.yml` WAS dispatched after merge and
+succeeded** (run `32392845750`, against `860f8fb`). Both deploys green: site
+`32392794525`, portal Worker `32392794416`.
+
+**Suites at merge:** worker **2128/0**, portal **1938/0**, intake **236/0**
+(the public form is untouched by this unit), deploy guard **68/0**.
+
+**LIVE VERIFY (owner):** the Clients & Firms directory and the picker on a
+phone; starting a repeat assignment from a saved firm end to end; the duplicate
+warning's wording in front of a real near-duplicate; and `/portal-api/health`
+reporting no missing tables. The container has no outbound route, so the health
+check is a device check as always.
 
 ### (superseded) HOLD — item 7 waited for the owner's Unit 6 review
 
 The owner's instruction closing the Unit 6 brief: *"Do NOT begin Repeat
-Client / Firm Profiles until Unit 6 is merged, deployed and reviewed."* Unit 6
-deliberately stopped short of it — the quick form asks for the firm fresh each
-time, and reuse is that unit's whole subject.
+Client / Firm Profiles until Unit 6 is merged, deployed and reviewed."* The
+owner started item 7 explicitly on 2026-08-20, which superseded it.
 
 ## 📌 Unit 6 — what shipped (#192, `1b24467`)
 
@@ -378,6 +395,23 @@ node .github/test-deploy.mjs                    # expect 68 / 0
 
 Then the ordinary chain: PR → merge if green → pull master → deploy → live
 verify → **save point** → next unit (item 4, Admin report/mobile workflow fix).
+
+## 🚦 DEPLOYMENT — 2026-08-20, master `860f8fb` (#193) — Unit 7, Repeat Client / Firm Profiles
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/intake/` + `/portal/` | `860f8fb` | `860f8fb` | **DEPLOYED** — `deploy.yml` 32392794525 success |
+| `api-case-portal` | `860f8fb` | `860f8fb` | **DEPLOYED** — `deploy-portal.yml` 32392794416 success |
+| Schema (4 profile tables) | `860f8fb` | applied | **`portal-setup.yml` 32392845750 success** — dispatched at merge, nothing else owed |
+| Save point | — | — | `save/2026-08-20-1635-860f8fb`, the merge push's automatic firing |
+
+Tests at merge: worker **2128/0**, portal **1938/0**, intake **236/0** (the
+public form is untouched by this unit), deploy guard **68/0**. This container
+has no outbound route to the live site (curl returns 000), so "applied" is the
+workflow's success against the merge SHA plus the deployed Worker whose
+`EXPECTED_TABLES` names the four tables — `/portal-api/health` reporting
+`missing_tables: []` on the owner's device is the final confirmation, the same
+standard `legal_intake` and `photo_stamp` set.
 
 ## 🚦 DEPLOYMENT — 2026-08-20, master `1b24467` (#192) — Unit 6, the Legal / Law Firm intake
 
