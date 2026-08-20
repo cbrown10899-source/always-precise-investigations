@@ -24,7 +24,7 @@ item is finished.
 | 5 | Full portal UI/mobile/dashboard modernization | ✅ **DONE — DEPLOYED** at `6446e3c` (#191). LIVE VERIFY **OPEN** for the owner |
 | 6 | **Legal / Law Firm intake** (third intake type) | ✅ **DONE — DEPLOYED** at `1b24467` (#192). LIVE VERIFY **OPEN** for the owner |
 | 7 | Repeat Client / Firm Profiles | ✅ **DONE — DEPLOYED** at `860f8fb` (#193). LIVE VERIFY **OPEN** for the owner |
-| 8 | Global Case Search + advanced Needs Attention | not started |
+| 8 | Global Case Search + advanced Needs Attention | ✅ **DONE — DEPLOYED** at `8d28196` (#194). LIVE VERIFY **OPEN** for the owner |
 | 9 | Multiple Report Templates | not started |
 | 10 | Case Timeline | not started |
 | 11 | Evidence Integrity | not started |
@@ -146,6 +146,41 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Do not interrupt the current coding unit. Record this queue only"*, and
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
+
+## 📌 Unit 8 — what shipped (#194, `8d28196`)
+
+**Global Case Search + Advanced Needs Attention. No schema change** — both
+halves run on structured data the portal already held, so **no portal-setup
+dispatch was owed** and none was run.
+
+`GET /search`: case/claim/matter numbers, client and carrier, subject name,
+alias, address and phone, vehicle make/model/colour/plate, the firm and its
+people, the saved directory, the investigator by name. A phone typed four ways
+and a plate typed three all match (punctuation stripped in SQL by nested
+REPLACE, written once). **The role boundary is in the SQL**: case-scoped arms
+apply `s.assigned_to`, and the arms reading the paying side do not run for an
+investigator at all — asserted as a walk over seventeen fields against a case
+they are not on. A result says what matched and opens the case at the panel
+that matched. Search has a door for both roles.
+
+`GET /attention`: what, which case, why, where to go — intakes, reports owed,
+retainers and invoices, legal dates, packages, long-running days, quiet cases,
+authorization, storage. **No dismissal** (a row leaves because the thing was
+done), severity as a word, windows in one `ATTN` block (14 legal / 21 quiet /
+14h day).
+
+**The lesson worth keeping:** moving the queue's derivation from the browser to
+the Worker silently deleted the Unit 5 rule that a source which did not answer
+must never be drawn as a clear desk. `needsAttention` now returns
+`missing_sources` and the page draws a partial view naming them; the two old
+tests are re-pointed at the mechanism that can fail now rather than deleted.
+
+**Suites at merge:** worker **2221/0**, portal **1981/0**, intake **236/0**
+(untouched), deploy guard **68/0**.
+
+**LIVE VERIFY (owner):** the search box and results on a phone, the queue's
+filters and actions under a thumb, whether the alert wording reads right
+against a real desk, and Enter/arrows/Escape on a desktop keyboard.
 
 ## 📌 Unit 7 — what shipped (#193, `860f8fb`)
 
@@ -395,6 +430,18 @@ node .github/test-deploy.mjs                    # expect 68 / 0
 
 Then the ordinary chain: PR → merge if green → pull master → deploy → live
 verify → **save point** → next unit (item 4, Admin report/mobile workflow fix).
+
+## 🚦 DEPLOYMENT — 2026-08-20, master `8d28196` (#194) — Unit 8, Global Search + Needs Attention
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/intake/` + `/portal/` | `8d28196` | `8d28196` | **DEPLOYED** — `deploy.yml` 32402715911 success |
+| `api-case-portal` | `8d28196` | `8d28196` | **DEPLOYED** — `deploy-portal.yml` 32402715876 success |
+| Schema | — | — | **No change.** Nothing owed; portal-setup deliberately NOT run |
+| Save point | — | — | `save/2026-08-20-1821-8d28196`, the merge push's automatic firing |
+
+Tests at merge: worker **2221/0**, portal **1981/0**, intake **236/0**, deploy
+guard **68/0**.
 
 ## 🚦 DEPLOYMENT — 2026-08-20, master `860f8fb` (#193) — Unit 7, Repeat Client / Firm Profiles
 
