@@ -9099,18 +9099,7 @@ async function caseTimeline(env, user, caseNo, url) {
     }, a.created_at), a.id);
   }
 
-  for (const f of evidence) {
-    const video = String(f.content_type || '').startsWith('video/');
-    push(tlEvent(video ? 'video' : 'photo', tlAt(f.uploaded_at), {
-      title: f.filename,
-      detail: f.entry_id ? 'Filed against an activity entry' : '',
-      who: f.who || '',
-      status: f.deleted_at ? 'Removed' : '',
-      ...(f.deleted_at ? { removed: true } : {}),
-      classification: f.classification || '',
-      link: { tab: 'evidence', id: f.id },
-    }), f.id);
-  }
+  const stampedIds = new Set();
 
   /* The timestamped copies. Their EVENT time is the instant burned into the
      pixels — what the photograph or the footage says happened — and their
@@ -9130,6 +9119,7 @@ async function caseTimeline(env, user, caseNo, url) {
         ORDER BY p.id DESC LIMIT ?`)
       .bind(caseNo, LO, HI, TL.STAMPS).all()).results, TL.STAMPS, 'timestamped photographs');
     for (const s of stamps) {
+      if (s.stamped_id) stampedIds.add(s.stamped_id);
       push(tlEvent('photo_stamp', tlAt(s.taken_utc), {
         title: s.filename || 'Timestamped photograph',
         detail: 'Timestamped copy filed — taken time from '
@@ -9160,6 +9150,27 @@ async function caseTimeline(env, user, caseNo, url) {
         link: { tab: 'evidence' },
       }, s.generated_at), s.id);
     }
+  }
+
+  /* A DERIVATIVE IS NOT A SECOND FILING. A timestamped copy has its own
+     `case_evidence` row, so without this it would appear twice — once at the
+     moment burned into it and once at the moment it was written to Dropbox,
+     under the same filename, which is the flooding the brief warns about. The
+     stamp event is the one that says something, so the plain filing is
+     dropped for exactly those rows. The ORIGINAL is untouched and still shows
+     as its own filing, because it is a different file. */
+  for (const f of evidence) {
+    if (stampedIds.has(f.id)) continue;
+    const video = String(f.content_type || '').startsWith('video/');
+    push(tlEvent(video ? 'video' : 'photo', tlAt(f.uploaded_at), {
+      title: f.filename,
+      detail: f.entry_id ? 'Filed against an activity entry' : '',
+      who: f.who || '',
+      status: f.deleted_at ? 'Removed' : '',
+      ...(f.deleted_at ? { removed: true } : {}),
+      classification: f.classification || '',
+      link: { tab: 'evidence', id: f.id },
+    }), f.id);
   }
 
   /* ------------------------------------------------------------ 4. reports */

@@ -12456,6 +12456,35 @@ section('Case timeline — the chronology');
      withPhoto && (withPhoto.attached || []).some(a => a.filename === 'IMG_4021.jpg'));
   ok('and the entry that has nothing filed against it claims nothing',
      obs && !obs.attached);
+  /* A DERIVATIVE APPEARS ONCE, at the moment burned into it. */
+  {
+    const orig = await env.DB.prepare(
+      `INSERT INTO case_evidence (case_no, r2_key, filename, content_type, size_bytes,
+         classification, uploaded_at) VALUES (?, ?, 'DSC_9001.jpg', 'image/jpeg', 500,
+         'client_deliverable', ?)`)
+      .bind('API-TL-1', 'cases/API-TL-1/DSC_9001.jpg', new Date().toISOString()).run();
+    const copy = await env.DB.prepare(
+      `INSERT INTO case_evidence (case_no, r2_key, filename, content_type, size_bytes,
+         classification, uploaded_at) VALUES (?, ?, 'DSC_9001-timestamped.jpg', 'image/jpeg', 520,
+         'client_deliverable', ?)`)
+      .bind('API-TL-1', 'cases/API-TL-1/DSC_9001-ts.jpg', new Date().toISOString()).run();
+    await env.DB.prepare(
+      `INSERT INTO photo_stamp (case_no, original_id, stamped_id, taken_utc, tz, source,
+         generated_by, generated_at) VALUES (?, ?, ?, '2026-07-14T21:07:00.000Z',
+         'America/New_York', 'exif', 1, ?)`)
+      .bind('API-TL-1', orig.meta.last_row_id, copy.meta.last_row_id,
+            new Date().toISOString()).run();
+    const pair = await tlGet(env, admin, 'API-TL-1');
+    const named = (pair.events || []).filter(e => /DSC_9001-timestamped/.test(e.title || ''));
+    ok('a timestamped copy is on the timeline exactly once', named.length === 1,
+       JSON.stringify(named.map(e => e.type)));
+    ok('and it is the stamp event, at the instant burned into it',
+       named[0] && named[0].type === 'photo_stamp' && named[0].time === '17:07',
+       JSON.stringify(named[0]));
+    ok('while the original is still its own filing',
+       (pair.events || []).filter(e => e.title === 'DSC_9001.jpg').length === 1);
+  }
+
   ok('the evidence event links back to the media screen',
      (tlFind(tl, 'photo') || {}).link.tab === 'evidence'
      && tlFind(tl, 'photo').link.id === photoId);

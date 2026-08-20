@@ -1033,6 +1033,7 @@
   .tl2-dates .f{margin:0;}
   .tl2-dates input{font:inherit;border:1px solid var(--line);border-radius:8px;padding:7px 9px;}
   .tl2-note{font-size:.82rem;color:var(--muted);margin:0 0 8px;}
+  .tl2-wrap.busy .tl2-doc{opacity:.5;}
   .tl2-doc{min-width:0;}
   .tl2-ctx{border:1px solid var(--line);border-radius:10px;background:#fbfbf9;
     padding:11px 14px;margin:0 0 14px;display:flex;flex-wrap:wrap;gap:6px 22px;align-items:center;}
@@ -8941,6 +8942,7 @@ async function loadTimeline(force){
     TL_CAT = "all"; TL_RANGE = "all"; TL_FROM = ""; TL_TO = ""; TL_LIMIT = 0; }
   if(TL && !force) return;
   TL_BUSY = true;
+  if(TL) paintCase();          // show the re-read before waiting on it
   try{
     TL = await api("/cases/" + encodeURIComponent(WS_CASE) + "/timeline" + tlQuery());
     TL_ERR = "";
@@ -9091,6 +9093,10 @@ function timelinePanel(){
     <div class="actions"><button class="btn sm ghost" data-act="tlRetry">Try again</button></div>
   </div>`;
   if(!TL) return `<div class="empty">Reading the case&hellip;</div>`;
+  /* A RANGE OR ORDER CHANGE RE-READS. Without something on screen saying so,
+     the beat between the click and the answer reads as a control that did
+     nothing — which is how the office learns to press it twice. */
+  const busy = TL_BUSY;
 
   const rows = tlEvents();
   const shown = (TL.events || []).length;
@@ -9101,8 +9107,9 @@ function timelinePanel(){
     days[days.length - 1].list.push(e);
   }
 
-  return `<div class="tl2-wrap">
+  return `<div class="tl2-wrap${busy ? " busy" : ""}"${busy ? ' aria-busy="true"' : ""}>
     ${tlFiltersHtml()}
+    ${busy ? `<div class="tl2-note">Re-reading the case&hellip;</div>` : ""}
     ${TL.capped_sources && TL.capped_sources.length ? `<div class="note">
       This case has more than the timeline reads in one go &mdash;
       ${esc(TL.capped_sources.join(", "))} ${TL.capped_sources.length > 1 ? "were" : "was"}

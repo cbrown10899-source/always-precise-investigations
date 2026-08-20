@@ -12074,6 +12074,22 @@ section('The timeline filters, re-orders and links to the record');
   await page.waitForTimeout(700);
   ok('a date range is applied and said out loud',
      has(await text(page, '.tl2-wrap'), 'Showing'));
+  /* A RE-READ SAYS SO. Without it the beat between the click and the answer
+     reads as a control that did nothing — which is how a person learns to
+     press it twice. */
+  await page.route('**/portal-api/cases/*/timeline*', async r => {
+    await new Promise(res => setTimeout(res, 900)); r.continue();
+  });
+  await page.locator('.tl2-chips .lens', { hasText: 'All time' }).click();
+  await page.waitForTimeout(250);
+  ok('a re-read says it is re-reading rather than looking inert',
+     has(await text(page, '.tl2-wrap'), 'Re-reading'));
+  await page.waitForTimeout(1200);
+  ok('and says nothing of the sort once it is back',
+     !has(await text(page, '.tl2-wrap'), 'Re-reading'));
+  await page.unroute('**/portal-api/cases/*/timeline*');
+  await page.locator('.tl2-chips .lens', { hasText: 'Last 7 days' }).click();
+  await page.waitForTimeout(700);
   await page.locator('.tl2-chips .lens', { hasText: 'Dates' }).click();
   await page.waitForTimeout(300);
   ok('a custom range offers two date inputs',
