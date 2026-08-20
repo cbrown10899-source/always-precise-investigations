@@ -20,8 +20,8 @@ item is finished.
 | 1 | Finish current Active Surveillance mobile and voice polish | **DONE — DEPLOYED** at `c333d3f` (#182). §13 photo/video commands, §8 retry/offline and server-side duplicate protection, §1/§16.1 compact status. Two device-only checks OPEN, below. |
 | 2 | Build Timestamp Photo | ✅ **DONE — LIVE VERIFIED** by the owner on 2026-08-19 at `b0304cb` (#188), portrait layout and Save to Dropbox included. Shipped over #183–#188. |
 | 3 | Visible Dropbox portal UI for Admin | ✅ **DONE — DEPLOYED** at `5baabd3` (#189). LIVE VERIFY **OPEN** for the owner |
-| 4 | Admin report workflow and mobile report fix | **IN FLIGHT** on `report-workflow` |
-| 5 | Full portal mobile / aesthetic UI cleanup | not started — **queued, do not begin**. Carries a specific brief, below |
+| 4 | Admin report workflow and mobile report fix | ✅ **DONE — DEPLOYED** at `94b1f5b` (#190). LIVE VERIFY **OPEN** for the owner |
+| 5 | Full portal mobile / aesthetic UI cleanup | **NEXT** — not started. Carries a specific brief, below |
 | 6 | **Legal / Law Firm intake** (third intake type) | not started — **queued, do not begin**. Added by the owner 2026-08-19; **reordered by them to sit after the UI work**. Full brief below |
 | 7 | Remaining Portal Ops productivity features | not started |
 
@@ -125,7 +125,59 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
 
-## ▶️ RESUME HERE — item 4, Admin report workflow and mobile report fix
+## ▶️ RESUME HERE — item 5, full portal mobile / aesthetic UI cleanup
+
+**Nothing is in flight.** Items 1–4 are merged and deployed; no branch is
+half-done. A new session starts a new branch off master.
+
+| | |
+| --- | --- |
+| Master | **`94b1f5b`** (#190) — site deploy `32329926270` success, Worker deploy `32329926249` success |
+| Baselines | worker **1896/0**, portal **1826/0**, deploy guard **68/0** |
+| Queue position | item **5 of 7** — the hamburger brief below is part of it |
+| Then | item 6, Legal / Law Firm intake — brief verbatim in `LEGAL-INTAKE.md` |
+
+Item 5 already has measured ground to stand on from item 4: the case screen's
+phone padding block now lives at the END of the stylesheet (source order was
+how the last phone fix died), the 44px tap floor and the 16px input rule are
+asserted in the suite, and the portal-wide sweep — main/card padding, the
+hamburger brief, everything outside the report screen — is exactly what was
+deliberately left for this item.
+
+### Two save points per unit (owner, 2026-08-19)
+
+One when the unit deploys (the merge push fires `save-point.yml` on its own),
+and one **manual dispatch immediately before the next unit's first commit**.
+
+### Running the portal suite in this environment
+
+Results are only written at the end — a SIGKILL loses the whole run, and
+`nohup` does not survive the shell session. Use the harness-managed background
+task, budget ~20 minutes, never two Playwright runs at once (same port). The
+VST "playable copy still offers the preview" check is a known once-in-a-while
+flake in this container (media decode): if it fails ONCE alongside your own
+failures, rerun before believing it; twice in a row is real.
+
+## 📌 Item 4 — what shipped (#190, `94b1f5b`)
+
+The rule, written once (`latestShippableReport`/`shippableReports`): a report
+may ride in a package when approved/delivered **or its author holds the admin
+role** — review exists for the investigator→office handoff, and an admin's own
+report has none. **Finalize is the sign-off, recorded as one**: it stamps the
+admin's still-draft reports approved (`status_by` = the finalizing admin,
+`reports_approved` build event). The boundary did not move: investigators'
+reports still wait, investigators still cannot approve, mixed cases seed only
+the admin's own days. Page: **Approve report** directly on an admin's draft,
+"Submit report" is the investigator's; the mini-row says **Ready**, never
+"Approved", about a shippable draft; finalize reloads the workspace (stale-tab
+rule). Mobile: the dead `.dlg` phone rule is alive and asserted on COMPUTED
+padding; editor 223→267px and 13.76→16px; sub-tabs wrap; 44px floor.
+
+**LIVE VERIFY (owner):** the report chain end-to-end on the real portal, and
+the report screen on the actual iPhone — editor width, no zoom-on-focus, all
+five sub-tabs visible.
+
+## ⏸ superseded — the item-4 resume block this replaced
 
 **Nothing is in flight.** Master is clean, the Dropbox unit is merged and
 deployed, and no branch is half-done. A new session starts a new branch.
@@ -218,6 +270,22 @@ node .github/test-deploy.mjs                    # expect 68 / 0
 
 Then the ordinary chain: PR → merge if green → pull master → deploy → live
 verify → **save point** → next unit (item 4, Admin report/mobile workflow fix).
+
+## 🚦 DEPLOYMENT — 2026-08-20, master `94b1f5b` (#190) — admin report workflow, mobile report fix
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/portal/` | `94b1f5b` | `94b1f5b` | **DEPLOYED** — `deploy.yml` 32329926270 success |
+| `api-case-portal` | `94b1f5b` | `94b1f5b` | **DEPLOYED** — `deploy-portal.yml` 32329926249 success |
+| Save point | — | — | the merge push fires `save-point.yml`; tag listed below |
+| Schema | — | — | **none.** No portal-setup dispatch owed |
+
+Tests at merge: portal **1826/0**, worker **1896/0**, deploy guard **68/0**.
+
+**LIVE VERIFY is OPEN and is the owner's**: the report chain end-to-end on the
+real portal (draft → finalize with no approve click → PDF → Dropbox → print),
+and the report screen on the actual iPhone — editor width, no zoom-on-focus,
+all five sub-tabs visible.
 
 ## 🚦 DEPLOYMENT — 2026-08-19, master `5baabd3` (#189) — visible Dropbox Admin UI
 
