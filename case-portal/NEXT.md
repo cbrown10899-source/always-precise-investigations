@@ -23,7 +23,7 @@ item is finished.
 | 4 | Admin report workflow and mobile report fix | ✅ **DONE — DEPLOYED** at `94b1f5b` (#190). LIVE VERIFY **OPEN** for the owner |
 | 5 | Full portal UI/mobile/dashboard modernization | ✅ **DONE — DEPLOYED** at `6446e3c` (#191). LIVE VERIFY **OPEN** for the owner |
 | 6 | **Legal / Law Firm intake** (third intake type) | ✅ **DONE — DEPLOYED** at `1b24467` (#192). LIVE VERIFY **OPEN** for the owner |
-| 7 | Repeat Client / Firm Profiles | **NEXT** — do not begin until the owner reviews Unit 6 |
+| 7 | Repeat Client / Firm Profiles | 🔨 **IN FLIGHT** on `firm-profiles` — coded, worker suite 2081/0, full portal suite running |
 | 8 | Global Case Search + advanced Needs Attention | not started |
 | 9 | Multiple Report Templates | not started |
 | 10 | Case Timeline | not started |
@@ -147,7 +147,23 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
 
-## ⏸ HOLD — item 7 (Repeat Client / Firm Profiles) waits for the owner's Unit 6 review
+## 🔨 IN FLIGHT — item 7, Repeat Client / Firm Profiles (`firm-profiles`)
+
+The owner started it explicitly on 2026-08-20, which supersedes the Unit 6
+hold recorded below. Brief verbatim plus every derived decision in
+`case-portal/PROFILES.md`; the summary is in CLAUDE.md under *"A profile is a
+default; a case is a snapshot"*.
+
+**Schema: four additive tables** — `profile`, `profile_contact`,
+`profile_phone`, `case_profile`. **A manual `portal-setup.yml` dispatch is owed
+after merge.** Until it runs the directory says so, the pickers do not offer,
+and the one write returns 503 naming the workflow.
+
+State at the last push (`e3744b2`): worker suite **2081/0**, deploy guard
+**68/0**, the Unit 7 portal sections **44/0** run in isolation, and the full
+portal suite running once for regression.
+
+### (superseded) HOLD — item 7 waited for the owner's Unit 6 review
 
 The owner's instruction closing the Unit 6 brief: *"Do NOT begin Repeat
 Client / Firm Profiles until Unit 6 is merged, deployed and reviewed."* Unit 6
