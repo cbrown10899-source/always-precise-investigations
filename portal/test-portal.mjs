@@ -1276,7 +1276,8 @@ section('Drafting and reviewing a daily report in the browser');
   await page.locator('.rpnav button', { hasText: 'Chronology' }).click();
   await page.waitForTimeout(250);
   ok('Chronology is the timeline extract', has(await text(page, '#dlgBody'), '7:14 AM'));
-  await page.locator('.rpnav button', { hasText: 'Summary' }).click();
+  /* Exact, since Unit 12 added a "Daily summary" tab beside this one. */
+  await page.locator('.rpnav button', { hasText: /^Summary$/ }).click();
   await page.waitForTimeout(250);
   ok('Summary is the day', has(await text(page, '#dlgBody'), 'Hours'));
   await page.locator('.rpnav button', { hasText: 'Draft preview' }).click();
