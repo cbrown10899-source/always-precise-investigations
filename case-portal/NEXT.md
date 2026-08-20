@@ -27,11 +27,36 @@ item is finished.
 | 8 | Global Case Search + advanced Needs Attention | ✅ **DONE — DEPLOYED** at `8d28196` (#194). LIVE VERIFY **OPEN** for the owner |
 | 9 | Multiple Report Templates | ✅ **DONE — DEPLOYED** at `9979fca` (#195). LIVE VERIFY **OPEN** for the owner |
 | 10 | Case Timeline | ✅ **DONE — DEPLOYED** at `8d93a9e` (#196). LIVE VERIFY **OPEN** for the owner |
-| 11 | Evidence Integrity | not started |
-| 12 | Storage Health | not started |
-| 13 | Case Closeout | not started |
-| 14 | Client Delivery Center | not started |
-| 15 | Retention Controls | not started |
+| 11 | Evidence Integrity | **IN FLIGHT** |
+| 12 | **Report Daily Summary Builder** | not started — inserted by the owner 2026-08-20, mid-Unit-11 |
+| 13 | Storage Health | not started |
+| 14 | Case Closeout | not started |
+| 15 | Client Delivery Center | not started |
+| 16 | Retention Controls | not started |
+
+**Item 12 — REPORT DAILY SUMMARY BUILDER — was inserted by the owner on
+2026-08-20**, while Unit 11 was in flight, with the instruction *"Do not start
+this while the current major unit is in flight… Record it in NEXT.md in the
+correct roadmap position and continue the current unit unchanged."* Their
+placement rule was *"immediately after the current active unit and before later
+report-dependent delivery/closeout work"*, so it takes 12 and everything from
+Storage Health down moves one place. It is **recorded, not designed** — the same
+way items 3, 5 and 6 were — and the owner's brief is kept verbatim in
+**`case-portal/DAILY-SUMMARY.md`**, which must be read before any code is
+written for it.
+
+The parts most easily lost, in their words: it *"must use the existing report
+engine and templates. Do not create a second report system"*; the selected Unit
+9 template decides where the daily summaries appear; wording comes from
+**deterministic sentence templates, never a generated fact** — *"Do not send
+case facts to an LLM merely to generate the paragraph"*, and any later AI
+polishing *"must be a separate explicit owner decision"*; a missing value is
+**omitted rather than filled** (*"omit that clause rather than writing
+'registered to unknown'"*); the Activity Log stays authoritative and is
+**never altered by editing the narrative**; and a regeneration must **never
+silently overwrite a manually edited paragraph** — which is this project's
+`EDIT_DRAFT` rule arriving in a fourth place, so it will need collecting typed
+values before any repaint.
 
 **Items 7–15 were locked by the owner on 2026-08-20**, replacing the old
 "Remaining Portal Ops" catch-all. Unit 5's brief deliberately fences off two of
