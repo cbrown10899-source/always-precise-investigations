@@ -10907,7 +10907,7 @@ section('A legal case shows an investigator the work, never the firm');
 {
   db.prepare(`INSERT INTO submissions (case_no, kind, status, client_name, subject_name, payload, created_at)
               VALUES ('API-LGL-B', 'consumer', 'new', 'Client of Record', 'Watched Party',
-                      '{"assignment":"legal","firm_name":"Harmon & Boyle PLC","attorney_name":"R. Harmon","matter_number":"M-88"}', ?)`)
+                      '{"assignment":"legal","subject_name":"Watched Party","objective":"Locate the party.","firm_name":"Harmon & Boyle PLC","attorney_name":"R. Harmon","matter_number":"M-88"}', ?)`)
     .run(new Date().toISOString());
   db.prepare(`INSERT INTO legal_intake (case_no, firm_name, attorney_name, matter_number, payment_arrangement, created_at)
               VALUES ('API-LGL-B', 'Harmon & Boyle PLC', 'R. Harmon', 'M-88', 'bill_ach', ?)`)
