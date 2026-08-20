@@ -1081,6 +1081,41 @@ calls `api()` rather than `pkgApi()`: `pkgApi` swallows its own failure.
 
 **Adding this table means a manual `portal-setup.yml` dispatch after merge.**
 
+## The day writes its paragraph, and only a person writes the log
+
+Unit 12 (owner brief verbatim in `case-portal/DAILY-SUMMARY.md`, derived
+decisions D1–D11 listed there). The **Daily Summary Builder** is a sixth view
+on the report screen — a report already IS one day, so "select worked day" is
+the report list that exists, and per-day independence is the shape of the
+state rather than a rule.
+
+**Deterministic sentences, no inference, no LLM.** The `ds*` engine composes
+from recorded values and explicit picks: openings, a vehicle grammar
+("a 2022 Chevrolet Silverado bearing Virginia registration ABC-1234,
+registered to John Smith"), per-moment templates over the day's activity
+entries, quiet-period lines and a stated conclusion. **A missing value shapes
+the sentence** — no year prints no year, no owner prints no owner clause, and
+"registered to unknown" cannot be produced. The weekday is computed at UTC
+from the date itself, so no machine's zone shifts Thursday.
+
+**The paragraph is authored material stored per day** (`case_day_summary`,
+`day_id` PRIMARY KEY — narrative and selections in separate columns), a
+snapshot like every narrative here: later activity edits rewrite nothing, the
+builder flags the divergence and offers **Rebuild, which asks first**. Typing
+in the textarea claims it (`manual`); controls then collect but never rewrite
+the writer's words. Write authority mirrors `saveReport` exactly — admin
+always, the day's investigator until the day's report is with the office
+(409) — so the handoff boundary is inherited, and the paragraph reaches a
+package only inside a day section that passed the existing shippable gate.
+
+**Both documents print it, prose before chronology** — the day's own draft
+and the package's day section under all six Unit 9 templates — and the
+documents are asserted clean of builder scaffolding: no source chips, no
+brackets, no form control inside a print region. `buildState` carries it as
+`narrative` because `day_summary` already means the field day's own note.
+
+**Adding this table means a manual `portal-setup.yml` dispatch after merge.**
+
 ## The hash is taken where the bytes already pass
 
 Unit 11 (owner brief and derived decisions in `case-portal/EVIDENCE-INTEGRITY.md`).
