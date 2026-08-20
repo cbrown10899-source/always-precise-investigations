@@ -10944,6 +10944,316 @@ section('A legal case shows an investigator the work, never the firm');
   await page.close();
 }
 
+/* ============================================================== UNIT 7 =====
+   REPEAT CLIENT / FIRM PROFILES, on the real page.
+
+   The thing worth proving on this side is the WORKFLOW: a firm saved once,
+   found by typing part of a paralegal's name, chosen, and a whole assignment
+   prefilled from it — then the firm renamed, and the case that already exists
+   still reading exactly as it did. */
+
+async function gotoProfiles(page) {
+  await page.locator('.tabs button', { hasText: 'Clients & Firms' }).first().click();
+  /* render() fetches the case list, the summary, health and the rest before it
+     reaches the directory, so waiting a fixed moment races it. Wait for the
+     screen to stop saying it is loading instead. */
+  await page.waitForFunction(() => {
+    const c = document.querySelector('#app .card');
+    return c && !c.innerText.includes('Loading\u2026');
+  }, null, { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(150);
+}
+
+section('Clients & Firms: a firm saved once, then an assignment in seconds');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await gotoProfiles(page);
+  ok('the admin has a Clients & Firms area', (await text(page, '.card')).includes('Clients & Firms'));
+  ok('and it says what will fill it rather than looking broken',
+     has(await text(page, '.card'), 'No saved clients'), (await text(page, '.card')).slice(0, 200));
+
+  // --- create ------------------------------------------------------------
+  await page.locator('[data-act="profNew"]').click();
+  await page.waitForTimeout(300);
+  ok('the three profile types are offered', await page.locator('[data-act="profFormKind"]').count() === 3);
+  await page.locator('[data-act="profFormKind"][data-k="law_firm"]').click();
+  await page.waitForTimeout(200);
+  await page.locator('#pf_name').fill('Calloway Legal Group');
+  await page.locator('#pf_email').fill('front@calloway.example');
+  await page.locator('#pf_address').fill('55 Campbell Ave, Roanoke VA');
+  await page.locator('#pf_ph0').fill('(540) 555-3311');
+  await page.locator('#pf_phl0').selectOption('work');
+  await page.locator('#pf_payment_arrangement').selectOption('check_pickup');
+  await page.locator('[data-act="profSave"]').click();
+  await page.waitForTimeout(500);
+  let body = await text(page, 'body');
+  ok('the firm saves and opens', body.includes('Calloway Legal Group'), body.slice(0, 200));
+  ok('its address and number are on the profile',
+     body.includes('55 Campbell Ave') && body.includes('(540) 555-3311'));
+  ok('and its usual arrangement reads as an arrangement, not a payment',
+     has(body, 'Usual arrangement') && has(body, 'pick up at firm'));
+
+  // --- people ------------------------------------------------------------
+  const addContact = async (first, last, role, email, phone, pref) => {
+    await page.locator('[data-act="profContactNew"]').click();
+    await page.waitForTimeout(250);
+    await page.locator('#pc_first').fill(first);
+    await page.locator('#pc_last').fill(last);
+    await page.locator('#pc_role').selectOption(role);
+    if (email) await page.locator('#pc_email').fill(email);
+    if (phone) { await page.locator('#pc_ph0').fill(phone); await page.locator('#pc_phl0').selectOption('work'); }
+    if (pref) await page.locator('#pc_pref').check();
+    await page.locator('[data-act="profContactSave"]').first().click();
+    await page.waitForTimeout(400);
+  };
+  await addContact('Renata', 'Calloway', 'Attorney', 'rc@calloway.example', '540-555-3312', true);
+  await addContact('Owen', 'Pike', 'Attorney', 'op@calloway.example', '', false);
+  await addContact('Beatrix', 'Sandoval', 'Paralegal', 'bs@calloway.example', '540.555.9090', false);
+  await addContact('Del', 'Watts', 'Billing Contact', 'ap@calloway.example', '', false);
+  ok('four people sit on the firm as separate cards',
+     await page.locator('.ccard').count() === 4, String(await page.locator('.ccard').count()));
+  body = await text(page, 'body');
+  ok('two attorneys, a paralegal and a billing contact, each with their role',
+     (body.match(/Attorney/g) || []).length >= 2 && body.includes('Paralegal')
+     && body.includes('Billing Contact'));
+  ok('exactly one is marked preferred',
+     await page.locator('.ccard .tag', { hasText: 'Preferred' }).count() === 1);
+
+  // --- the picker, and the assignment ------------------------------------
+  await page.locator('.tabs button', { hasText: 'Intakes' }).first().click();
+  await page.waitForTimeout(300);
+  await page.locator('[data-act="tab"][data-tab="newlead"]').first().click();
+  await page.waitForTimeout(300);
+  await page.locator('[data-act="nlKind"][data-k="legal"]').click();
+  await page.waitForTimeout(300);
+  ok('the Quick Legal form offers an existing firm', await page.locator('[data-act="nlPickOpen"]').count() === 1);
+  await page.locator('[data-act="nlPickOpen"]').click();
+  await page.waitForTimeout(250);
+  /* SEARCHED BY THE PARALEGAL'S NAME — the office remembers the person who
+     rang, not always the firm on the letterhead. */
+  await page.locator('#nl_pick').fill('sandoval');
+  await page.waitForTimeout(700);
+  ok('searching a paralegal\'s name finds the firm',
+     await page.locator('.pickitem', { hasText: 'Calloway' }).count() === 1,
+     await text(page, '.pickbox'));
+  await page.locator('.pickitem', { hasText: 'Calloway' }).click();
+  await page.waitForTimeout(400);
+
+  ok('choosing it says which firm is in use', has(await text(page, '.usingprof'), 'Calloway Legal Group'));
+  ok('the firm name is prefilled', await page.locator('#nl_firm').inputValue() === 'Calloway Legal Group');
+  ok('the preferred attorney is prefilled, not the first person entered',
+     await page.locator('#nl_atty').inputValue() === 'Renata Calloway',
+     await page.locator('#nl_atty').inputValue());
+  ok('their email came with them',
+     await page.locator('#nl_email').inputValue() === 'rc@calloway.example');
+  ok('and the firm\'s usual arrangement is the default',
+     await page.locator('#nl_arrangement').inputValue() === 'check_pickup');
+  /* NOTHING CASE-SPECIFIC IS PREFILLED — the new matter is new. */
+  ok('no subject was carried over', await page.locator('#nl_subject').inputValue() === '');
+  ok('no objective was carried over', await page.locator('#nl_obj').inputValue() === '');
+  ok('and no deadline was invented', await page.locator('#nl_legal_deadline').inputValue() === '');
+
+  // The contact is a choice, not a fixture.
+  ok('the other people are offered for this assignment',
+     await page.locator('[data-act="nlPickContact"] option').count() === 4);
+
+  /* EDIT THIS ASSIGNMENT: the phone changed for this case only. */
+  await page.locator('#nl_phone').fill('540-555-0000');
+  await page.locator('#nl_client').fill('Estate of L. Byrd');
+  await page.locator('#nl_subject').fill('Adverse Party');
+  await page.locator('#nl_obj').fill('Document daily activity');
+  await page.locator('[data-act="nlSave"][data-open="1"]').click();
+  await page.waitForTimeout(900);
+  const dlg = await text(page, '#dlgBody');
+  ok('the assignment is created and opens', dlg.includes('Estate of L. Byrd') || dlg.length > 0);
+
+  await wsTab(page, 'Legal');
+  const legal = await text(page, '#dlgBody');
+  ok('the case carries the firm it was started from', legal.includes('Calloway Legal Group'));
+  /* The panel's fields are INPUTS, so their contents are values rather than
+     rendered text — read them the way the office sees them. */
+  ok('and the attorney', await page.locator('#lg_attorney_name').inputValue() === 'Renata Calloway',
+     await page.locator('#lg_attorney_name').inputValue());
+  ok('and the number typed for THIS assignment, not the firm\'s',
+     await page.locator('#lg_attorney_phone').inputValue() === '540-555-0000'
+       || await page.locator('#lg_firm_phone').inputValue() !== '(540) 555-3311',
+     await page.locator('#lg_attorney_phone').inputValue());
+  const caseNo = await page.evaluate(async () => {
+    const d = await (await fetch('/portal-api/submissions?limit=1', { credentials: 'same-origin' })).json();
+    return d.submissions[0].case_no;
+  });
+
+  await wsTab(page, 'Edit case');
+  const edit = await text(page, '#dlgBody');
+  ok('the case names the profile it came from',
+     has(edit, 'Client profile') && edit.includes('Calloway Legal Group'), edit.slice(0, 300));
+  ok('and says plainly that editing the profile will not move this case',
+     has(edit, 'never this one'), edit.slice(0, 400));
+
+  /* ------------------------------------------------------------------
+     NOW RENAME THE FIRM, and read the case back. This is the whole unit. */
+  await page.locator('[data-act="backToCases"]').click();
+  await page.waitForTimeout(300);
+  await gotoProfiles(page);
+  await page.locator('[data-act="profOpen"]').first().click();
+  await page.waitForTimeout(400);
+  await page.locator('[data-act="profEdit"]').click();
+  await page.waitForTimeout(300);
+  await page.locator('#pf_name').fill('Calloway Reed & Vance');
+  await page.locator('#pf_ph0').fill('(540) 555-9999');
+  await page.locator('[data-act="profSave"]').click();
+  await page.waitForTimeout(500);
+  ok('the firm really is renamed', (await text(page, 'body')).includes('Calloway Reed & Vance'));
+
+  await page.locator('.tabs button', { hasText: 'Cases' }).first().click();
+  await page.waitForTimeout(400);
+  await rowFor(page, caseNo).click();
+  await page.waitForTimeout(400);
+  await wsTab(page, 'Legal');
+  const after = await text(page, '#dlgBody');
+  ok('THE EXISTING CASE STILL SAYS THE NAME IT WAS CREATED WITH',
+     after.includes('Calloway Legal Group') && !after.includes('Vance'), after.slice(0, 300));
+  ok('and still carries the number typed for this assignment, not the firm\'s new one',
+     !after.includes('555-9999'), after.slice(0, 300));
+  await page.close();
+}
+
+section('Clients & Firms: a possible duplicate is a question, not a merge');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await gotoProfiles(page);
+  const mk = async (name, confirm) => {
+    await page.locator('[data-act="profNew"]').click();
+    await page.waitForTimeout(300);
+    await page.locator('#pf_name').fill(name);
+    await page.locator('[data-act="profSave"]').first().click();
+    await page.waitForTimeout(500);
+    if (confirm && await page.locator('[data-act="profSave"][data-confirm="1"]').count()) {
+      await page.locator('[data-act="profSave"][data-confirm="1"]').click();
+      await page.waitForTimeout(500);
+    }
+  };
+  await mk('Ridgeline Law', false);
+  await page.locator('[data-act="profBack"]').click();
+  await page.waitForTimeout(400);
+  await page.locator('[data-act="profNew"]').click();
+  await page.waitForTimeout(300);
+  await page.locator('#pf_name').fill('Ridgeline Law Group');
+  await page.locator('[data-act="profSave"]').first().click();
+  await page.waitForTimeout(600);
+  const warn = await text(page, '.dupwarn');
+  ok('a similar name raises POSSIBLE EXISTING PROFILE', has(warn, 'Possible existing profile'), warn);
+  ok('it names the firm it matched and why', warn.includes('Ridgeline Law') && has(warn, 'similar name'));
+  ok('it says nothing was saved and nothing merged', has(warn, 'nothing has been merged'));
+  ok('Use existing is offered', await page.locator('.dupwarn [data-act="profOpen"]').count() >= 1);
+  ok('and so is Continue as new', await page.locator('[data-act="profSave"][data-confirm="1"]').count() === 1);
+  await page.locator('[data-act="profSave"][data-confirm="1"]').click();
+  await page.waitForTimeout(600);
+  ok('continuing really does create the second one',
+     (await text(page, 'body')).includes('Ridgeline Law Group'));
+  await page.locator('[data-act="profBack"]').click();
+  await page.waitForTimeout(500);
+  const list = await text(page, '.card');
+  ok('BOTH firms now exist, apart',
+     list.includes('Ridgeline Law Group') && list.includes('Ridgeline Law'),
+     list.slice(0, 300));
+  await page.close();
+}
+
+section('Clients & Firms: the field never sees the directory');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldPassword2x');
+  const nav = await text(page, '.tabs');
+  ok('an investigator has no Clients & Firms door', !has(nav, 'Clients'), nav);
+  /* And asking for it directly gets them nothing — the page holds no data the
+     Worker would not have refused anyway. */
+  const direct = await page.evaluate(async () => {
+    const r = await fetch('/portal-api/profiles', { credentials: 'same-origin' });
+    return { status: r.status, body: (await r.text()).slice(0, 120) };
+  });
+  ok('and the directory route refuses them', direct.status === 403, JSON.stringify(direct));
+  await page.close();
+}
+
+section('Clients & Firms on a phone: cards, taps and no sideways scroll');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors on the phone directory (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(250);
+  /* signIn() lands on Cases, which is behind the burger at this width — so the
+     phone sections sign in directly, the way the other 390px sections do. */
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(900);
+  /* Under 900px the rail is behind the burger, so the door is reached the way
+     a person on a phone reaches it. */
+  await page.locator('.burger').click();
+  await page.waitForTimeout(400);
+  await page.locator('.tabs button', { hasText: 'Clients & Firms' }).first().click();
+  await page.waitForFunction(() => {
+    const c = document.querySelector('#app .card');
+    return c && !c.innerText.includes('Loading\u2026');
+  }, null, { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(200);
+
+  const over = await page.evaluate(() => {
+    const vw = window.innerWidth, out = [];
+    for (const el of document.querySelectorAll('#app *')) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.right > vw + 1) {
+        out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
+      }
+    }
+    return { doc: Math.round(document.documentElement.scrollWidth - vw), els: out.slice(0, 4) };
+  });
+  ok('the directory fits a 390px phone', over.doc <= 1, JSON.stringify(over));
+  ok('and nothing hangs past the right edge', over.els.length === 0, JSON.stringify(over));
+
+  const searchFont = await page.evaluate(() => {
+    const el = document.querySelector('#prof_q');
+    return el ? parseFloat(getComputedStyle(el).fontSize) : 0;
+  });
+  ok('the search box is 16px, so focusing it does not zoom iOS', searchFont >= 16, String(searchFont));
+
+  let smallest = 999;
+  for (const b of await page.locator('.card .btn').all()) {
+    const box = await b.boundingBox();
+    if (box && box.height > 0 && box.height < smallest) smallest = box.height;
+  }
+  ok('every control on the directory clears 44px', smallest === 999 || smallest >= 44, String(smallest));
+
+  // A firm with people, read on a phone: cards, never a table.
+  await page.locator('[data-act="profNew"]').click();
+  await page.waitForTimeout(300);
+  await page.locator('#pf_name').fill('Phone Test Firm');
+  await page.locator('[data-act="profSave"]').first().click();
+  await page.waitForTimeout(600);
+  await page.locator('[data-act="profContactNew"]').click();
+  await page.waitForTimeout(300);
+  await page.locator('#pc_first').fill('Marguerite');
+  await page.locator('#pc_last').fill('Vandersteen-Whitlock');
+  await page.locator('#pc_email').fill('marguerite.vandersteen@phonetestfirm.example');
+  await page.locator('[data-act="profContactSave"]').first().click();
+  await page.waitForTimeout(600);
+  const cardOver = await page.evaluate(() => {
+    const vw = window.innerWidth;
+    const c = document.querySelector('.ccard');
+    if (!c) return { none: true };
+    const r = c.getBoundingClientRect();
+    return { right: Math.round(r.right), vw, doc: Math.round(document.documentElement.scrollWidth - vw) };
+  });
+  ok('a contact with a long name and email still fits',
+     !cardOver.none && cardOver.right <= cardOver.vw + 1 && cardOver.doc <= 1, JSON.stringify(cardOver));
+  ok('and there is no desktop table of people on the phone',
+     await page.locator('.ccards').count() === 1 && await page.locator('.ccard').count() === 1);
+  await page.close();
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();

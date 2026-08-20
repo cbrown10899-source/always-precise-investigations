@@ -1178,7 +1178,44 @@
      focus treatment for every interactive control, never removed, and distinct
      from hover so a tab-through reads as a tab-through. */
   .btn:focus-visible,.qtool:focus-visible,.tabs button:focus-visible,
-  .lens:focus-visible,.evtab:focus-visible,.rpnav button:focus-visible,
+  /* ------------------------------------------ UNIT 7: clients & firms */
+  .profbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px;}
+  .profsearch{flex:1 1 260px;min-width:0;font:inherit;padding:9px 12px;border-radius:10px;
+    border:1px solid var(--line);}
+  .lenses{display:flex;gap:6px;flex-wrap:wrap;}
+  /* Contacts are CARDS, at every width — a firm's people are read as people,
+     and on a phone a table of them is unusable. */
+  .ccards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:10px;}
+  .ccard{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:#fff;
+    min-width:0;overflow-wrap:anywhere;}
+  .ccard.editing{background:#f7fafc;border-color:var(--teal);grid-column:1/-1;}
+  .cc-head{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+  .cc-role{font-size:.82rem;color:var(--muted);margin-top:2px;}
+  .cc-line{font-size:.85rem;margin-top:3px;}
+  .cc-acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}
+  .rowline{display:flex;justify-content:space-between;gap:12px;padding:7px 0;
+    border-bottom:1px solid var(--line);font-size:.9rem;}
+  .rowline span{color:var(--muted);}
+  .rowline:last-of-type{border-bottom:0;}
+  .clickrow{cursor:pointer;}
+  /* POSSIBLE EXISTING PROFILE. Amber, because it is a question rather than a
+     failure: nothing was saved and nothing was merged. */
+  .dupwarn{border:1px solid #e0b34a;background:#fdf7e8;border-radius:10px;padding:12px 14px;
+    margin:10px 0;font-size:.88rem;}
+  .duprow{display:flex;gap:10px;align-items:center;justify-content:space-between;
+    flex-wrap:wrap;padding:5px 0;}
+  .pickrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px;}
+  .pickbox{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:0 0 14px;
+    background:#f7fafc;}
+  .picklist{display:flex;flex-direction:column;gap:6px;margin:8px 0;}
+  .pickitem{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;text-align:left;font:inherit;
+    padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer;
+    min-height:44px;}
+  .pickitem:hover{border-color:var(--teal);}
+  .usingprof{border:1px solid var(--teal);background:#eef7f8;border-radius:12px;
+    padding:12px 14px;margin:0 0 14px;}
+  .sheet-card.on{border-color:var(--teal);background:#eef7f8;}
+  .lens:focus-visible,.pickitem:focus-visible,.evtab:focus-visible,.rpnav button:focus-visible,
   .top .burger:focus-visible,.navback:focus-visible,
   input:focus-visible,select:focus-visible,textarea:focus-visible{
     outline:2px solid var(--teal);outline-offset:2px;}
@@ -1206,6 +1243,15 @@
     input:not([type="checkbox"]):not([type="radio"]),select{min-height:44px;}
     .btn{min-height:44px;}
     .evtab,.lens{min-height:44px;}
+    /* UNIT 7 — the directory on a phone. The filter row stacks, the search box
+       is full width, and a contact is a card rather than a row: an admin takes
+       a call standing up and needs the number, not a table. */
+    .profbar{flex-direction:column;align-items:stretch;}
+    .profbar .lenses{overflow-x:auto;}
+    .ccards{grid-template-columns:1fr;}
+    .cc-acts .btn{min-height:44px;}
+    .duprow{flex-direction:column;align-items:flex-start;}
+    .pickitem{min-height:52px;}
   }
 </style>
 </head>
@@ -1330,6 +1376,24 @@ const LEAD_LABEL = {lead:"Lead", rate_sheet_sent:"Rate sheet sent", intake_sent:
   intake_received:"Intake received", contacted:"Contacted", more_info_requested:"More info requested",
   converted:"Converted to case", declined:"Declined", closed_lead:"Closed lead"};
 let LEAD_MSG = "";    // one-shot confirmation on the leads desk
+/* UNIT 7 — the client & firm directory. PROF_OK keeps "did not load" apart
+   from "genuinely empty", the distinction loadSends() was fixed to make: an
+   outage drawn as an empty directory reads as reassurance in the one screen
+   whose job is telling the office who they already work for. */
+let PROF = null, PROF_OK = false, PROF_ERR = "", PROF_SETUP = false;
+let PROF_Q = "", PROF_KIND = "", PROF_INACTIVE = false;
+let PROF_OPEN = null;      // {profile, matters, roles} — the open profile
+let PROF_FORM = null;      // the new/edit form: {mode, kind, v, matches, err}
+let PROF_CONTACT = null;   // the contact being added or edited
+let PROF_MSG = "";
+const PROF_KIND_LABEL = {law_firm: "Law firm", insurance_org: "Insurance / organization",
+  private_client: "Private client"};
+const PROF_ROLES = {
+  law_firm: ["Attorney", "Paralegal", "Legal Assistant", "Billing Contact", "Office Manager", "Other"],
+  insurance_org: ["Adjuster", "Claims Examiner", "SIU Contact", "Attorney", "Billing Contact", "Other"],
+  private_client: ["Primary contact", "Billing Contact", "Other"]};
+/* The labels are PHONE_LABELS_UI, already declared for the case's phone list.
+   One vocabulary, one declaration — a second copy is a thing to drift. */
 let INVOICES = null, INV_OPEN = null, INV_MSG = "", INV_WARN = [], INV_EVENTS = [], INV_SETTINGS = null,
     INV_FILTER = {status: "", type: "", q: ""};
 // The open case workspace: which case, which tab, its loaded data, last error.
@@ -1811,6 +1875,7 @@ function shell(inner){
         item("dashboard", "&#8962; Dashboard"),
         item("cases", "&#128193; Cases"),
         item("leads", "&#128234; Intakes"),
+        item("profiles", "&#127970; Clients &amp; Firms"),
         item("calendar", "&#128197; Calendar"))
       + group("Delivery &amp; Billing",
         item("delivery", "&#128230; Reports &amp; Packages"),
@@ -2839,6 +2904,591 @@ function leadsView(){
   </div>`;
 }
 
+/* ================================================== UNIT 7: CLIENTS & FIRMS
+
+   The directory of saved profiles, and the picker that makes a repeat
+   assignment a few taps. Everything here is a reusable DEFAULT: choosing a
+   profile fills the form in, the office edits the form, and the case is
+   created from the form. Editing a firm later cannot reach a case that
+   already exists — there is no code path from one to the other.
+
+   Admin only. The Worker refuses every route to an investigator; this page
+   simply never draws the door. */
+
+const profPhoneLine = list => (list || []).map(p =>
+  `${esc(p.number)}${p.label ? ` <span class="opt">${esc(p.label)}</span>` : ""}`).join(" &middot; ");
+const profWho = c => [c.first_name, c.last_name].filter(Boolean).join(" ");
+
+async function loadProfiles(){
+  PROF_ERR = "";
+  const qs = new URLSearchParams();
+  if(PROF_Q) qs.set("q", PROF_Q);
+  if(PROF_KIND) qs.set("kind", PROF_KIND);
+  if(PROF_INACTIVE) qs.set("inactive", "1");
+  try{
+    const d = await api("/profiles" + (qs.toString() ? "?" + qs : ""));
+    PROF = Array.isArray(d.profiles) ? d.profiles : [];
+    PROF_SETUP = !!d.not_set_up;
+    PROF_OK = true;
+  }catch(e){
+    /* NOT an empty list. A directory that says "no clients yet" when the
+       request failed is the reassuring direction of wrong. */
+    PROF = null; PROF_OK = false;
+    PROF_ERR = "The client directory could not be loaded — " + e.message;
+  }
+}
+
+function profilesView(){
+  if(PROF_OPEN) return profileDetailView();
+  if(PROF_FORM && PROF_FORM.mode === "new") return profileFormView();
+
+  const chip = (k, label) => `<button class="lens${PROF_KIND === k ? " on" : ""}"
+    data-act="profKind" data-k="${k}">${label}</button>`;
+  const body = !PROF_OK
+    ? (PROF_ERR
+        ? `<div class="err">${esc(PROF_ERR)}
+             <button class="btn sm ghost" data-act="profReload">Try again</button></div>`
+        : `<div class="empty">Loading&hellip;</div>`)
+    : PROF_SETUP
+    ? `<div class="empty"><b>Not set up yet.</b><br>The client profile tables are not on this
+         database. Run the <b>portal-setup</b> workflow once and this directory works —
+         nothing else in the portal is affected meanwhile.</div>`
+    : !PROF.length
+    ? (PROF_Q || PROF_KIND
+        ? `<div class="empty">Nothing matched that search. Clear it to see everyone.</div>`
+        : `<div class="empty"><b>No saved clients or firms yet.</b><br>Save one here, or from a
+             case you have already taken — then the next assignment from them starts prefilled.</div>`)
+    : `<div class="pkgcards">${PROF.map(profCard).join("")}</div>`;
+
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Clients &amp; Firms</h2>
+      ${PROF_OK && !PROF_SETUP ? `<span class="count">${PROF.length} profile${PROF.length === 1 ? "" : "s"}</span>` : ""}
+      <button class="btn sm" data-act="profNew" style="margin-left:auto">+ New profile</button></div>
+    ${PROF_MSG ? `<div class="note">${esc(PROF_MSG)}</div>` : ""}
+    <div class="profbar">
+      <input id="prof_q" class="profsearch" type="search" placeholder="Search a firm, a person, an email or a phone number"
+        value="${esc(PROF_Q)}" data-act-input="profSearch" autocomplete="off">
+      <div class="lenses">
+        ${chip("", "All")}${chip("law_firm", "Law firms")}${chip("insurance_org", "Insurance")}${chip("private_client", "Private")}
+      </div>
+      <label class="cap"><input type="checkbox" data-act="profInactive" ${PROF_INACTIVE ? "checked" : ""}>
+        <span>Include inactive</span></label>
+    </div>
+    ${body}
+  </div>`;
+}
+
+function profCard(p){
+  const preferred = (p.contacts || []).find(c => c.preferred) || (p.contacts || [])[0];
+  return `<div class="pcard">
+    <div class="pc-top"><div>
+      <span class="tag ${p.kind === "law_firm" ? "legaltag" : p.kind === "insurance_org" ? "claims" : "consumer"}"
+        >${esc(PROF_KIND_LABEL[p.kind] || p.kind)}</span>
+      ${p.active ? "" : `<span class="tag">Inactive</span>`}
+      <div style="font-weight:800;margin-top:5px">${esc(p.name)}</div>
+      ${p.address ? `<div style="font-size:.82rem;color:var(--muted)">${esc(p.address)}</div>` : ""}
+      ${p.email ? `<div style="font-size:.82rem">${esc(p.email)}</div>` : ""}
+      ${(p.phones || []).length ? `<div style="font-size:.82rem">${profPhoneLine(p.phones)}</div>` : ""}
+      ${preferred ? `<div style="font-size:.8rem;color:var(--muted);margin-top:3px">${
+        esc(profWho(preferred))}${preferred.role ? ` &middot; ${esc(preferred.role)}` : ""}${
+        (p.contacts || []).length > 1 ? ` <span class="opt">+${p.contacts.length - 1} more</span>` : ""}</div>` : ""}
+      ${p.case_count ? `<div style="font-size:.76rem;color:var(--muted);margin-top:4px">${
+        p.case_count} matter${p.case_count === 1 ? "" : "s"}</div>` : ""}
+    </div></div>
+    <div class="pc-next"><div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn sm ghost" data-act="profOpen" data-id="${p.id}">Open</button>
+      <button class="btn sm" data-act="profStart" data-id="${p.id}">New assignment &rarr;</button>
+    </div></div>
+  </div>`;
+}
+
+/* THE PROFILE ITSELF: the firm, its people, and the matters it is already on.
+   Recent matters are LINKS through the one relationship table — no case is
+   copied here, and the list is capped by the Worker. */
+function profileDetailView(){
+  const P = PROF_OPEN.profile, editing = PROF_FORM && PROF_FORM.mode === "edit";
+  const roles = PROF_ROLES[P.kind] || PROF_ROLES.law_firm;
+  const startLabel = P.kind === "law_firm" ? "New legal assignment"
+    : P.kind === "insurance_org" ? "New claim assignment" : "New private assignment";
+
+  return `<div class="pagebar">
+      <button class="btn sm ghost close" data-act="profBack">&larr; Clients &amp; Firms</button></div>
+    ${PROF_MSG ? `<div class="note">${esc(PROF_MSG)}</div>` : ""}
+    <div class="card">
+      <div class="bar">
+        <h2 style="margin:0">${esc(P.name)}</h2>
+        <span class="tag ${P.kind === "law_firm" ? "legaltag" : P.kind === "insurance_org" ? "claims" : "consumer"}"
+          >${esc(PROF_KIND_LABEL[P.kind] || P.kind)}</span>
+        ${P.active ? "" : `<span class="tag">Inactive</span>`}
+        <button class="btn sm" data-act="profStart" data-id="${P.id}" style="margin-left:auto">${startLabel} &rarr;</button>
+      </div>
+      ${editing ? profileFieldsHtml(PROF_FORM, P.kind) + `
+        <div class="actions">
+          <button class="btn" data-act="profSave" data-id="${P.id}">Save profile</button>
+          <button class="btn ghost" data-act="profCancel">Cancel</button>
+        </div>
+        ${PROF_FORM.err ? `<div class="err">${esc(PROF_FORM.err)}</div>` : ""}`
+      : `<div class="quick">
+          <div class="rowline"><span>Address</span><b>${esc(P.address || "—")}</b></div>
+          <div class="rowline"><span>Main email</span><b>${esc(P.email || "—")}</b></div>
+          <div class="rowline"><span>Main phone</span><b>${(P.phones || []).length ? profPhoneLine(P.phones) : "—"}</b></div>
+          ${P.billing_name || P.billing_email ? `<div class="rowline"><span>Billing</span><b>${
+            esc([P.billing_name, P.billing_email].filter(Boolean).join(" &middot; "))}</b></div>` : ""}
+          ${P.kind === "law_firm" ? `<div class="rowline"><span>Usual arrangement</span><b>${
+            esc(LEGAL_ARR_LABEL[P.payment_arrangement] || "—")}</b></div>` : ""}
+          ${P.notes ? `<div class="rowline"><span>Notes</span><b>${esc(P.notes)}</b></div>` : ""}
+          <div class="actions">
+            <button class="btn ghost" data-act="profEdit" data-id="${P.id}">Edit profile</button>
+            <button class="btn ghost" data-act="profActive" data-id="${P.id}" data-on="${P.active ? "0" : "1"}"
+              >${P.active ? "Set inactive" : "Set active"}</button>
+            <button class="btn ghost" data-act="profDelete" data-id="${P.id}">Delete</button>
+          </div>
+          <p class="hint">A profile is a set of DEFAULTS. Editing it changes what the next
+            assignment starts with and never touches a case that already exists &mdash; and
+            setting it inactive keeps every one of those cases exactly as it is.</p>
+        </div>`}
+    </div>
+
+    <div class="card">
+      <div class="bar"><h2 style="margin:0">People</h2>
+        <span class="count">${(P.contacts || []).length}</span>
+        ${PROF_CONTACT ? "" : `<button class="btn sm ghost" data-act="profContactNew" style="margin-left:auto">+ Add a contact</button>`}</div>
+      ${(P.contacts || []).length ? `<div class="ccards">${P.contacts.map(c =>
+        PROF_CONTACT && PROF_CONTACT.id === c.id ? contactFormHtml(P, roles)
+          : contactCardHtml(P, c)).join("")}</div>`
+        : `<div class="empty">Nobody on this profile yet. Add the attorney, adjuster or
+             contact you actually deal with and the next assignment starts with them.</div>`}
+      ${PROF_CONTACT && !PROF_CONTACT.id ? `<div class="ccards">${contactFormHtml(P, roles)}</div>` : ""}
+    </div>
+
+    <div class="card">
+      <div class="bar"><h2 style="margin:0">Recent matters</h2>
+        <span class="count">${(PROF_OPEN.matters || []).length}</span></div>
+      ${(PROF_OPEN.matters || []).length ? `<div class="stacktbl"><table><thead><tr>
+          <th>Case</th><th>Client</th><th class="hide">Type</th><th class="hide">Started</th></tr></thead>
+        <tbody>${PROF_OPEN.matters.map(m => `<tr data-act="openCase" data-case="${esc(m.case_no)}" class="clickrow">
+          <td data-l="Case"><span class="mono">${esc(m.case_no)}</span>${
+            m.archived ? ` <span class="tag">Archived</span>` : ""}</td>
+          <td data-l="Client">${esc(m.client_name || "—")}</td>
+          <td data-l="Type" class="hide">${esc(m.kind === "claims" ? "Insurance" : "Private")}</td>
+          <td data-l="Started" class="hide">${when(m.created_at)}</td></tr>`).join("")}</tbody></table></div>
+        <p class="hint">These are links to the cases themselves &mdash; nothing about them is
+          copied here, and each one keeps the details it was created with.</p>`
+        : `<div class="empty">No assignments started from this profile yet.</div>`}
+    </div>`;
+}
+
+function contactCardHtml(P, c){
+  return `<div class="ccard">
+    <div class="cc-head">
+      <b>${esc(profWho(c))}</b>
+      ${c.preferred ? `<span class="tag assigned">Preferred</span>` : ""}
+      ${c.active ? "" : `<span class="tag">Inactive</span>`}
+    </div>
+    ${c.role ? `<div class="cc-role">${esc(c.role)}</div>` : ""}
+    ${c.email ? `<div class="cc-line">${esc(c.email)}</div>` : ""}
+    ${(c.phones || []).length ? `<div class="cc-line">${profPhoneLine(c.phones)}</div>` : ""}
+    <div class="cc-acts">
+      <button class="btn sm ghost" data-act="profContactEdit" data-id="${c.id}">Edit</button>
+      ${c.preferred ? "" : `<button class="btn sm ghost" data-act="profContactPref" data-id="${c.id}">Make preferred</button>`}
+      <button class="btn sm ghost" data-act="profContactActive" data-id="${c.id}" data-on="${c.active ? "0" : "1"}"
+        >${c.active ? "Deactivate" : "Reactivate"}</button>
+      <button class="btn sm ghost" data-act="profContactRemove" data-id="${c.id}">Remove</button>
+    </div>
+  </div>`;
+}
+
+function contactFormHtml(P, roles){
+  const C = PROF_CONTACT || {};
+  const v = C.v || {};
+  const ph = (n, i) => `<div class="two">
+    <label class="f"><span>${n} <span class="opt">optional</span></span>
+      <input id="pc_ph${i}" value="${esc((v.phones && v.phones[i] && v.phones[i].number) || "")}"></label>
+    <label class="f"><span>Label</span>
+      <select id="pc_phl${i}">${["", ...PHONE_LABELS_UI].map(l =>
+        `<option value="${l}"${((v.phones && v.phones[i] && v.phones[i].label) || "") === l ? " selected" : ""}
+          >${l ? l[0].toUpperCase() + l.slice(1) : "—"}</option>`).join("")}</select></label>
+  </div>`;
+  return `<div class="ccard editing">
+    <div class="cc-head"><b>${C.id ? "Edit contact" : "New contact"}</b></div>
+    <div class="two">
+      <label class="f"><span>First name</span><input id="pc_first" value="${esc(v.first_name || "")}"></label>
+      <label class="f"><span>Last name</span><input id="pc_last" value="${esc(v.last_name || "")}"></label>
+    </div>
+    <div class="two">
+      <label class="f"><span>Role</span><select id="pc_role">${["", ...roles].map(r =>
+        `<option value="${esc(r)}"${(v.role || "") === r ? " selected" : ""}>${r || "Select…"}</option>`).join("")}</select></label>
+      <label class="f"><span>Email <span class="opt">optional</span></span><input id="pc_email" value="${esc(v.email || "")}"></label>
+    </div>
+    ${ph("Phone", 0)}
+    ${ph("Second phone", 1)}
+    <label class="cap"><input type="checkbox" id="pc_pref" ${v.preferred ? "checked" : ""}>
+      <span>The contact a new assignment starts with</span></label>
+    <div class="actions">
+      <button class="btn" data-act="profContactSave" data-id="${C.id || ""}">${C.id ? "Save contact" : "Add contact"}</button>
+      <button class="btn ghost" data-act="profContactCancel">Cancel</button>
+    </div>
+    ${C.err ? `<div class="err">${esc(C.err)}</div>` : ""}
+    ${(C.matches || []).length ? `<div class="dupwarn">
+      <b>Possible duplicate contact.</b>
+      ${C.matches.map(m => `<div>${esc([m.first_name, m.last_name].filter(Boolean).join(" "))}${
+        m.role ? ` &middot; ${esc(m.role)}` : ""} &mdash; same ${m.why.join(" and ")}</div>`).join("")}
+      <p class="hint">Two people at one firm really can share a name, so nothing is merged.
+        Add anyway keeps both.</p>
+      <button class="btn sm" data-act="profContactSave" data-id="${C.id || ""}" data-confirm="1">Add anyway</button>
+    </div>` : ""}
+  </div>`;
+}
+
+/* The new-profile form. It is one screen, not a wizard: the office is usually
+   copying a letterhead, and a second giant form is what the owner asked this
+   unit not to become. */
+function profileFormView(){
+  const F = PROF_FORM;
+  return `<div class="pagebar">
+      <button class="btn sm ghost close" data-act="profCancel">&larr; Clients &amp; Firms</button></div>
+    <div class="card">
+      <div class="bar"><h2 style="margin:0">New profile</h2></div>
+      <div class="quick">
+        <div class="sheet-grid" style="margin-bottom:10px">
+          ${Object.entries(PROF_KIND_LABEL).map(([k, label]) => `
+            <button class="sheet-card${F.kind === k ? " on" : ""}" data-act="profFormKind" data-k="${k}">
+              <div class="sheet-n">${label}</div>
+              <div class="sheet-s">${k === "law_firm" ? "A firm with attorneys, paralegals and a billing contact."
+                : k === "insurance_org" ? "A carrier, TPA or self-insured employer with adjusters."
+                : "A person who may come back with another case."}</div></button>`).join("")}
+        </div>
+        ${profileFieldsHtml(F, F.kind)}
+        <div class="actions">
+          <button class="btn" data-act="profSave">Save profile</button>
+          <button class="btn ghost" data-act="profCancel">Cancel</button>
+        </div>
+        ${F.err ? `<div class="err">${esc(F.err)}</div>` : ""}
+        ${(F.matches || []).length ? profDupHtml(F) : ""}
+        <p class="hint">Only a name is required. Everything else fills in as you learn it,
+          and nothing here sets a price &mdash; rates and retainers stay where they are.</p>
+      </div>
+    </div>`;
+}
+
+/* POSSIBLE EXISTING PROFILE. Two buttons, no third option, and the portal
+   never decides for itself: "Smith Law" and "Smith Law Group" may or may not
+   be the same firm, so it says so and lets the office answer. */
+function profDupHtml(F){
+  const why = w => w.map(x => ({name: "the same name", similar_name: "a similar name",
+    email: "the same email", contact_email: "the same email on a contact",
+    phone: "the same phone number", address: "the same address"}[x] || x)).join(" and ");
+  return `<div class="dupwarn">
+    <b>Possible existing profile.</b>
+    ${F.matches.map(m => `<div class="duprow">
+      <span>${esc(m.name)} <span class="opt">${esc(PROF_KIND_LABEL[m.kind] || m.kind)}${
+        m.active ? "" : " · inactive"}</span> &mdash; ${why(m.why)}</span>
+      <button class="btn sm ghost" data-act="profOpen" data-id="${m.id}">Use existing</button>
+    </div>`).join("")}
+    <p class="hint">Nothing has been saved and nothing has been merged. Open the existing one,
+      or continue as a new profile if they really are different.</p>
+    <button class="btn sm" data-act="profSave" data-confirm="1">Continue as new</button>
+  </div>`;
+}
+
+function profileFieldsHtml(F, kind){
+  const v = F.v || {};
+  const f = (k, label, opt) => `<label class="f"><span>${label}${
+    opt ? ` <span class="opt">optional</span>` : ""}</span>
+    <input id="pf_${k}" value="${esc(v[k] || "")}"></label>`;
+  const phone = i => `<div class="two">
+    <label class="f"><span>${i ? "Second number" : "Main phone"} <span class="opt">optional</span></span>
+      <input id="pf_ph${i}" value="${esc((v.phones && v.phones[i] && v.phones[i].number) || "")}"></label>
+    <label class="f"><span>Label</span>
+      <select id="pf_phl${i}">${["", ...PHONE_LABELS_UI].map(l =>
+        `<option value="${l}"${((v.phones && v.phones[i] && v.phones[i].label) || "") === l ? " selected" : ""}
+          >${l ? l[0].toUpperCase() + l.slice(1) : "—"}</option>`).join("")}</select></label>
+  </div>`;
+  return `<div class="quick">
+    ${f("name", kind === "private_client" ? "Client name" : kind === "insurance_org" ? "Carrier / organization" : "Firm name")}
+    <div class="two">${f("email", "Main email", true)}${f("address", "Address", true)}</div>
+    ${phone(0)}${phone(1)}
+    <div class="two">${f("billing_name", "Billing contact", true)}${f("billing_email", "Billing email", true)}</div>
+    ${kind === "law_firm" ? `<label class="f"><span>Usual payment arrangement
+      <span class="opt">a default for new assignments &mdash; never a payment</span></span>
+      <select id="pf_payment_arrangement"><option value="">Not set</option>
+        ${Object.entries(LEGAL_ARR_LABEL).map(([k2, l]) =>
+          `<option value="${k2}"${(v.payment_arrangement || "") === k2 ? " selected" : ""}>${l}</option>`).join("")}
+      </select></label>` : ""}
+    <label class="f"><span>Internal notes <span class="opt">optional &mdash; the office only</span></span>
+      <input id="pf_notes" value="${esc(v.notes || "")}"></label>
+  </div>`;
+}
+
+/* COLLECT BEFORE PAINT, always. Every paint rebuilds these inputs from state,
+   so a repaint that has not collected first silently reverts whatever was
+   typed and then saves the old value while reporting success — the bug
+   EDIT_DRAFT and the Dropbox folder save were both written to stop. */
+function profFormCollect(){
+  if(!PROF_FORM) return;
+  const g = id => { const el = $(id); return el ? el.value : undefined; };
+  const v = PROF_FORM.v || (PROF_FORM.v = {});
+  for(const k of ["name", "email", "address", "billing_name", "billing_email",
+    "payment_arrangement", "notes"]){
+    const got = g("pf_" + k);
+    if(got !== undefined) v[k] = got;
+  }
+  const phones = [];
+  for(let i = 0; i < 2; i++){
+    const n = g("pf_ph" + i);
+    if(n === undefined) continue;
+    phones[i] = {number: n, label: g("pf_phl" + i) || ""};
+  }
+  if(phones.length) v.phones = phones;
+}
+function profContactCollect(){
+  if(!PROF_CONTACT) return;
+  const g = id => { const el = $(id); return el ? el.value : undefined; };
+  const v = PROF_CONTACT.v || (PROF_CONTACT.v = {});
+  for(const [k, id] of [["first_name", "pc_first"], ["last_name", "pc_last"],
+    ["role", "pc_role"], ["email", "pc_email"]]){
+    const got = g(id);
+    if(got !== undefined) v[k] = got;
+  }
+  const pref = $("pc_pref");
+  if(pref) v.preferred = pref.checked;
+  const phones = [];
+  for(let i = 0; i < 2; i++){
+    const n = g("pc_ph" + i);
+    if(n === undefined) continue;
+    phones[i] = {number: n, label: g("pc_phl" + i) || ""};
+  }
+  if(phones.length) v.phones = phones;
+}
+
+const profPhonesOut = v => (v.phones || []).filter(p => p && String(p.number || "").trim())
+  .map(p => ({number: p.number, label: p.label || ""}));
+
+/* One request per pause in typing, not one per keystroke. The directory is a
+   cheap indexed read, but a search box that fires on every letter turns a
+   four-word firm name into twenty round trips. */
+let PROF_TIMER = null;
+function profSearchSoon(){
+  if(PROF_TIMER) clearTimeout(PROF_TIMER);
+  PROF_TIMER = setTimeout(() => { PROF_TIMER = null; loadProfiles().then(paint); }, 220);
+}
+
+/* THE CASE'S OWN VIEW OF ITS PROFILE. Three states: linked, matched-but-not-
+   linked, and neither — and the second offers the association as a button an
+   admin presses. Nothing here writes on its own, and nothing it shows changes
+   a single stored value on the case. */
+function caseProfileHtml(){
+  if(!WS || ME.role !== "admin") return "";
+  const P = WS.profile;
+  if(!P || P.not_set_up) return "";
+  if(P.link && P.profile){
+    return `<div class="card">
+      <div class="bar"><h2 style="margin:0">Client profile</h2></div>
+      <div class="quick">
+        <div class="rowline"><span>${esc(PROF_KIND_LABEL[P.profile.kind] || "Profile")}</span>
+          <b>${esc(P.profile.name)}${P.profile.active ? "" : " (inactive)"}</b></div>
+        ${P.contact ? `<div class="rowline"><span>Contact used</span>
+          <b>${esc(profWho(P.contact))}${P.contact.role ? ` &middot; ${esc(P.contact.role)}` : ""}</b></div>` : ""}
+        <div class="actions">
+          <button class="btn sm ghost" data-act="profOpenFromCase" data-id="${P.profile.id}">Open profile</button>
+          <button class="btn sm ghost" data-act="caseProfClear">Remove the link</button>
+        </div>
+        <p class="hint">This case keeps the details it was created with. Editing the profile
+          changes what the <b>next</b> assignment starts with, never this one.</p>
+      </div>
+    </div>`;
+  }
+  const sugg = P.suggested || [];
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Client profile</h2>
+      <span class="count">${sugg.length ? "Possible match" : "Not saved"}</span></div>
+    <div class="quick">
+      ${sugg.length ? `<div class="dupwarn">
+        <b>Possible existing profile.</b>
+        ${sugg.map(m => `<div class="duprow">
+          <span>${esc(m.name)} <span class="opt">${esc(PROF_KIND_LABEL[m.kind] || m.kind)}</span></span>
+          <button class="btn sm" data-act="caseProfLink" data-id="${m.id}">Use this profile</button>
+        </div>`).join("")}
+        <p class="hint">Nothing is merged either way: linking records that this case came from
+          them, and never writes what was submitted into their saved details.</p>
+        <button class="btn sm ghost" data-act="caseProfSave" data-confirm="1">Save as a separate new profile</button>
+      </div>`
+      : `<p class="note">No saved client or firm is linked to this case.</p>
+         <div class="actions">
+           <button class="btn sm" data-act="caseProfSave">Save as profile</button>
+         </div>
+         <p class="hint">Saving keeps the firm, the people and the numbers this case already
+           carries, so the next assignment from them starts filled in.</p>`}
+    </div>
+  </div>`;
+}
+
+async function profOpenId(id){
+  PROF_MSG = ""; PROF_FORM = null; PROF_CONTACT = null;
+  try{
+    PROF_OPEN = await api(`/profiles/${encodeURIComponent(id)}`);
+  }catch(e){ PROF_OPEN = null; PROF_ERR = e.message; }
+  paint();
+}
+
+async function profSave(confirmNew){
+  const editing = PROF_FORM && PROF_FORM.mode === "edit";
+  profFormCollect();
+  const F = PROF_FORM, v = F.v || {};
+  F.err = ""; F.matches = [];
+  const body = {name: v.name || "", email: v.email || "", address: v.address || "",
+    billing_name: v.billing_name || "", billing_email: v.billing_email || "",
+    notes: v.notes || "", phones: profPhonesOut(v)};
+  if((editing ? PROF_OPEN.profile.kind : F.kind) === "law_firm"){
+    body.payment_arrangement = v.payment_arrangement || "";
+  }
+  try{
+    if(editing){
+      const r = await api(`/profiles/${PROF_OPEN.profile.id}`, {method: "POST", body});
+      PROF_OPEN.profile = r.profile;
+      PROF_FORM = null; PROF_MSG = "Saved. Cases already created keep the details they were created with.";
+    }else{
+      body.kind = F.kind;
+      if(confirmNew) body.confirm_new = true;
+      const r = await api("/profiles", {method: "POST", body});
+      PROF_FORM = null; PROF_MSG = `${r.profile.name} saved.`;
+      await loadProfiles();
+      await profOpenId(r.profile.id);
+      return;
+    }
+  }catch(e){
+    /* The refusal carries what it matched, so the office is shown the firm it
+       might already have rather than a sentence about one. */
+    if(e.code === "possible_duplicate"){ F.matches = e.matches || []; }
+    else F.err = e.message;
+  }
+  paint();
+}
+
+async function profContactSave(id, confirmNew){
+  profContactCollect();
+  const C = PROF_CONTACT, v = C.v || {};
+  C.err = ""; C.matches = [];
+  const body = {first_name: v.first_name || "", last_name: v.last_name || "",
+    role: v.role || "", email: v.email || "", preferred: !!v.preferred,
+    phones: profPhonesOut(v)};
+  if(confirmNew) body.confirm_new = true;
+  const pid = PROF_OPEN.profile.id;
+  try{
+    const r = id
+      ? await api(`/profiles/${pid}/contacts/${id}`, {method: "POST", body})
+      : await api(`/profiles/${pid}/contacts`, {method: "POST", body});
+    PROF_OPEN.profile = r.profile; PROF_CONTACT = null;
+  }catch(e){
+    if(e.code === "possible_duplicate_contact"){ C.matches = e.matches || []; }
+    else C.err = e.message;
+  }
+  paint();
+}
+
+/* Starting an assignment from a profile: the one workflow this whole unit is
+   for. It opens the quick form already filled in, on the door that matches the
+   profile's type, with the preferred contact chosen and everything editable. */
+function profStart(p){
+  const kind = p.kind === "law_firm" ? "legal" : p.kind === "insurance_org" ? "claims" : "consumer";
+  const contact = (p.contacts || []).find(c => c.preferred && c.active)
+    || (p.contacts || []).find(c => c.active) || null;
+  NL = {kind, profile: p, profile_id: p.id, contact_id: contact ? contact.id : null, v: {}};
+  nlPrefill(p, contact);
+  PROF_OPEN = null; PROF_FORM = null; PROF_CONTACT = null;
+  TAB = "newlead";
+  paint();
+}
+
+/* PREFILL IS A COPY INTO THE FORM, and that is the whole architecture in one
+   function: from here on the values belong to the assignment. The office may
+   change any of them, and changing one changes this case and nothing else —
+   the saved profile is only written by the profile screens. */
+function nlPrefill(p, contact){
+  const v = NL.v || (NL.v = {});
+  const firstPhone = (p.phones || [])[0];
+  const contactPhone = contact && (contact.phones || [])[0];
+  const who = contact ? [contact.first_name, contact.last_name].filter(Boolean).join(" ") : "";
+  if(NL.kind === "legal"){
+    v.nl_firm = p.name;
+    v.nl_atty = who;
+    v.nl_email = (contact && contact.email) || p.email || "";
+    v.nl_phone = (contactPhone && contactPhone.number) || (firstPhone && firstPhone.number) || "";
+    if(p.payment_arrangement) v.nl_arrangement = p.payment_arrangement;
+  }else if(NL.kind === "claims"){
+    v.nl_carrier = p.name;
+    v.nl_client = who;
+    v.nl_email = (contact && contact.email) || p.email || "";
+    v.nl_phone = (contactPhone && contactPhone.number) || (firstPhone && firstPhone.number) || "";
+  }else{
+    v.nl_client = p.name;
+    v.nl_email = p.email || "";
+    v.nl_phone = (firstPhone && firstPhone.number) || "";
+  }
+  /* NOTHING CASE-SPECIFIC IS PREFILLED. Not a claim number, not a subject, not
+     an objective, not a matter number, not a deadline — those belong to the
+     new matter and the owner said so in as many words. */
+}
+
+/* The picker inside a quick intake form. It is a FOCUSED profile search, not
+   the global case search — that is Unit 8. No media, no Dropbox, one route. */
+async function nlPickSearch(q){
+  NL.pick = NL.pick || {};
+  NL.pick.q = q;
+  if(!q || q.length < 2){ NL.pick.results = null; paint(); return; }
+  const kind = NL.kind === "legal" ? "law_firm" : NL.kind === "claims" ? "insurance_org" : "private_client";
+  try{
+    const d = await api(`/profiles?kind=${kind}&q=${encodeURIComponent(q)}&limit=8`);
+    NL.pick.results = d.profiles || [];
+    NL.pick.not_set_up = !!d.not_set_up;
+  }catch(e){ NL.pick.results = []; NL.pick.err = e.message; }
+  paint();
+}
+
+function nlPickerHtml(){
+  const P = NL.pick || {};
+  if(NL.profile){
+    const c = (NL.profile.contacts || []).find(x => x.id === NL.contact_id);
+    return `<div class="usingprof">
+      <div><b>Using ${esc(NL.profile.name)}</b>${c ? ` &middot; ${esc(profWho(c))}` : ""}
+        <div class="hint" style="margin:2px 0 0">Everything below is filled in from the saved
+          profile and can be changed for this assignment. Changing it here does not change the
+          saved profile.</div></div>
+      ${(NL.profile.contacts || []).filter(c2 => c2.active).length > 1 ? `
+        <label class="f" style="margin:8px 0 0"><span>Contact for this assignment</span>
+          <select data-act="nlPickContact">${NL.profile.contacts.filter(c2 => c2.active).map(c2 =>
+            `<option value="${c2.id}"${c2.id === NL.contact_id ? " selected" : ""}>${
+              esc(profWho(c2))}${c2.role ? ` — ${esc(c2.role)}` : ""}</option>`).join("")}</select></label>` : ""}
+      <button class="btn sm ghost" data-act="nlPickClear">Start fresh instead</button>
+    </div>`;
+  }
+  if(!P.open){
+    return `<div class="pickrow">
+      <button class="btn sm ghost" data-act="nlPickOpen">&#128269; Use an existing ${
+        NL.kind === "legal" ? "firm" : NL.kind === "claims" ? "carrier" : "client"}</button>
+      <span class="hint">or just fill it in below</span>
+    </div>`;
+  }
+  return `<div class="pickbox">
+    <label class="f" style="margin:0"><span>Search saved ${
+      NL.kind === "legal" ? "firms" : NL.kind === "claims" ? "carriers" : "clients"}</span>
+      <input id="nl_pick" type="search" value="${esc(P.q || "")}" data-act-input="nlPickSearch"
+        placeholder="Name, person, email or phone" autocomplete="off"></label>
+    ${P.not_set_up ? `<p class="hint">Saved profiles are not set up on this database yet.</p>`
+      : P.results === null || P.results === undefined
+      ? `<p class="hint">Type two letters to search.</p>`
+      : !P.results.length ? `<p class="hint">Nothing saved matches that. Fill the form in below and
+          tick <b>Save as a reusable profile</b> to keep it for next time.</p>`
+      : `<div class="picklist">${P.results.map(p => `<button class="pickitem" data-act="nlPickChoose" data-id="${p.id}">
+          <b>${esc(p.name)}</b>
+          ${(p.contacts || []).length ? `<span class="opt">${esc(profWho(p.contacts[0]))}${
+            p.contacts[0].role ? " · " + esc(p.contacts[0].role) : ""}</span>` : ""}
+          ${p.email ? `<span class="opt">${esc(p.email)}</span>` : ""}
+        </button>`).join("")}</div>`}
+    <button class="btn sm ghost" data-act="nlPickClose">Cancel</button>
+  </div>`;
+}
+
 /* UIBUILD P17 — the office types in what a phone call brought. The first
    choice is who it is for; only the relevant questions follow, and nothing
    demands a placeholder — what is not known yet simply is not entered. */
@@ -2962,79 +3612,87 @@ function newLeadView(){
   }
   const claim = n.kind === "claims";
   const legal = n.kind === "legal";
+  /* UNIT 7 — every input below is drawn from NL.v, because choosing a profile
+     repaints this form. Without the draft, picking a firm after typing an
+     objective would silently throw the objective away and then submit the
+     empty one while reporting success. Anything that repaints calls
+     nlCollect() first. */
+  const V = n.v || (n.v = {});
+  const val = id => esc(V[id] || "");
+  const sel = (id, v2) => (V[id] || "") === v2 ? " selected" : "";
   return `<div class="card">
     <div class="bar"><h2 style="margin:0">${claim ? "New insurance / commercial lead"
       : legal ? "Quick Legal Assignment" : "New private client lead"}</h2>
       <button class="btn sm ghost" data-act="nlBack" style="margin-left:auto">&larr; Change type</button></div>
     <div class="quick">
+      ${nlPickerHtml()}
       ${legal ? `
         <p class="note">The phone-call workflow: an attorney says come by and pick up the papers.
           The firm and a contact are enough &mdash; everything else fills in later, and choosing a
           payment arrangement is never a payment.</p>
         <div class="two">
-          <label class="f"><span>Law firm</span><input id="nl_firm" placeholder="Firm or office name"></label>
-          <label class="f"><span>Attorney / contact</span><input id="nl_atty"></label>
+          <label class="f"><span>Law firm</span><input id="nl_firm" placeholder="Firm or office name" value="${val("nl_firm")}"></label>
+          <label class="f"><span>Attorney / contact</span><input id="nl_atty" value="${val("nl_atty")}"></label>
         </div>
         <div class="two">
-          <label class="f"><span>Contact email <span class="opt">optional</span></span><input id="nl_email"></label>
-          <label class="f"><span>Contact phone <span class="opt">optional</span></span><input id="nl_phone"></label>
+          <label class="f"><span>Contact email <span class="opt">optional</span></span><input id="nl_email" value="${val("nl_email")}"></label>
+          <label class="f"><span>Contact phone <span class="opt">optional</span></span><input id="nl_phone" value="${val("nl_phone")}"></label>
         </div>
         <div class="two">
-          <label class="f"><span>Firm's client <span class="opt">optional</span></span><input id="nl_client" placeholder="Who the firm represents"></label>
-          <label class="f"><span>Subject / opposing party <span class="opt">optional</span></span><input id="nl_subject"></label>
+          <label class="f"><span>Firm's client <span class="opt">optional</span></span><input id="nl_client" placeholder="Who the firm represents" value="${val("nl_client")}"></label>
+          <label class="f"><span>Subject / opposing party <span class="opt">optional</span></span><input id="nl_subject" value="${val("nl_subject")}"></label>
         </div>
         <div class="two">
           <label class="f"><span>Assignment</span>
             <select id="nl_asgtype"><option value="">Select&hellip;</option>
-              <option>Surveillance</option><option>Locate / Skip trace</option>
-              <option>Background investigation</option><option>Witness locate / interview</option>
-              <option>Domestic / custody investigation</option><option>Civil investigation</option>
-              <option>Evidence / documentation</option><option>Process / service support</option>
-              <option>Other / custom assignment</option></select></label>
+              ${["Surveillance", "Locate / Skip trace", "Background investigation",
+                 "Witness locate / interview", "Domestic / custody investigation", "Civil investigation",
+                 "Evidence / documentation", "Process / service support", "Other / custom assignment"]
+                .map(o => `<option${sel("nl_asgtype", o)}>${o}</option>`).join("")}</select></label>
           <label class="f"><span>Retainer amount <span class="opt">optional &mdash; recorded as agreed, never as paid</span></span>
-            <input id="nl_retainer" inputmode="decimal" placeholder="If one was agreed on the call"></label>
+            <input id="nl_retainer" inputmode="decimal" placeholder="If one was agreed on the call" value="${val("nl_retainer")}"></label>
         </div>
         <div class="two">
           <label class="f"><span>Payment arrangement <span class="opt">a request, never a payment</span></span>
             <select id="nl_arrangement"><option value="">Not discussed yet</option>
-              <option value="bill_ach">BILL.com invoice / ACH</option>
-              <option value="check_pickup">Retainer check &mdash; pick up at firm</option>
-              <option value="check_mail">Retainer check &mdash; by mail</option>
-              <option value="existing_billing">Existing billing arrangement</option></select></label>
-          <label class="f"><span>Deadline <span class="opt">optional</span></span><input id="nl_legal_deadline" type="date"></label>
+              ${Object.entries(LEGAL_ARR_LABEL).map(([k2, l]) =>
+                `<option value="${k2}"${sel("nl_arrangement", k2)}>${l}</option>`).join("")}</select></label>
+          <label class="f"><span>Deadline <span class="opt">optional</span></span><input id="nl_legal_deadline" type="date" value="${val("nl_legal_deadline")}"></label>
         </div>`
       : claim ? `
         <div class="two">
-          <label class="f"><span>Carrier / TPA</span><input id="nl_carrier" placeholder="e.g. Example Mutual Insurance"></label>
-          <label class="f"><span>Assigning contact</span><input id="nl_client" placeholder="Adjuster or counsel name"></label>
+          <label class="f"><span>Carrier / TPA</span><input id="nl_carrier" placeholder="e.g. Example Mutual Insurance" value="${val("nl_carrier")}"></label>
+          <label class="f"><span>Assigning contact</span><input id="nl_client" placeholder="Adjuster or counsel name" value="${val("nl_client")}"></label>
         </div>
         <div class="two">
-          <label class="f"><span>Contact email <span class="opt">optional</span></span><input id="nl_email"></label>
-          <label class="f"><span>Contact phone <span class="opt">optional</span></span><input id="nl_phone"></label>
+          <label class="f"><span>Contact email <span class="opt">optional</span></span><input id="nl_email" value="${val("nl_email")}"></label>
+          <label class="f"><span>Contact phone <span class="opt">optional</span></span><input id="nl_phone" value="${val("nl_phone")}"></label>
         </div>
         <div class="two">
-          <label class="f"><span>Claim number <span class="opt">optional</span></span><input id="nl_claim"></label>
-          <label class="f"><span>Policy number <span class="opt">optional</span></span><input id="nl_policy"></label>
+          <label class="f"><span>Claim number <span class="opt">optional</span></span><input id="nl_claim" value="${val("nl_claim")}"></label>
+          <label class="f"><span>Policy number <span class="opt">optional</span></span><input id="nl_policy" value="${val("nl_policy")}"></label>
         </div>
-        <label class="f"><span>Claimant <span class="opt">optional</span></span><input id="nl_subject"></label>`
+        <label class="f"><span>Claimant <span class="opt">optional</span></span><input id="nl_subject" value="${val("nl_subject")}"></label>`
       : `
         <div class="two">
-          <label class="f"><span>Client name</span><input id="nl_client"></label>
+          <label class="f"><span>Client name</span><input id="nl_client" value="${val("nl_client")}"></label>
           <label class="f"><span>Service <span class="opt">optional</span></span>
-            <select id="nl_service"><option>Surveillance</option><option>Child custody</option>
-              <option>Process serving</option><option>Other</option></select></label>
+            <select id="nl_service">${["Surveillance", "Child custody", "Process serving", "Other"]
+              .map(o => `<option${sel("nl_service", o)}>${o}</option>`).join("")}</select></label>
         </div>
         <div class="two">
-          <label class="f"><span>Client email <span class="opt">optional</span></span><input id="nl_email"></label>
-          <label class="f"><span>Client phone <span class="opt">optional</span></span><input id="nl_phone"></label>
+          <label class="f"><span>Client email <span class="opt">optional</span></span><input id="nl_email" value="${val("nl_email")}"></label>
+          <label class="f"><span>Client phone <span class="opt">optional</span></span><input id="nl_phone" value="${val("nl_phone")}"></label>
         </div>
-        <label class="f"><span>Subject <span class="opt">optional</span></span><input id="nl_subject"></label>`}
+        <label class="f"><span>Subject <span class="opt">optional</span></span><input id="nl_subject" value="${val("nl_subject")}"></label>`}
       <label class="f"><span>${claim ? "Scope / objective" : "Objective"} <span class="opt">optional</span></span>
-        <textarea id="nl_obj" rows="2"></textarea></label>
+        <textarea id="nl_obj" rows="2">${val("nl_obj")}</textarea></label>
       <div class="two">
-        <label class="f"><span>${claim ? "Deadline" : "Timeline"} <span class="opt">optional</span></span><input id="nl_deadline"></label>
-        <label class="f"><span>Notes <span class="opt">optional</span></span><input id="nl_notes"></label>
+        <label class="f"><span>${claim ? "Deadline" : "Timeline"} <span class="opt">optional</span></span><input id="nl_deadline" value="${val("nl_deadline")}"></label>
+        <label class="f"><span>Notes <span class="opt">optional</span></span><input id="nl_notes" value="${val("nl_notes")}"></label>
       </div>
+      ${n.profile ? "" : `<label class="cap"><input type="checkbox" id="nl_saveprof" ${n.saveProfile ? "checked" : ""}>
+        <span>Also save as a reusable profile, so the next assignment from them starts filled in</span></label>`}
       <div class="actions">
         <button class="btn ghost" type="button" data-act="nlSave" data-open="0">Save lead</button>
         <button class="btn" type="button" data-act="nlSave" data-open="1">Create case &rarr;</button>
@@ -7331,6 +7989,7 @@ function paint(){
     : TAB === "settings" ? settingsView()
     : TAB === "leads" ? leadsView()
     : TAB === "newlead" ? newLeadView()
+    : TAB === "profiles" ? profilesView()
     : TAB === "sheets" ? sheetsView()
     : TAB === "delivery" ? deliveryView()
     : TAB === "invoices" ? invoicesView()
@@ -7341,6 +8000,13 @@ function paint(){
     : casesView());
   const q = $("q");
   if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+  /* The directory and picker searches repaint on every keystroke, so the
+     cursor has to be handed back or typing lands one character at a time in a
+     box that keeps losing focus. Same treatment the case search already gets. */
+  for(const id of ["prof_q", "nl_pick"]){
+    const el = $(id);
+    if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  }
 }
 
 /* Loading the portal used to swallow every failure and paint an empty
@@ -7421,6 +8087,16 @@ async function render(){
     // directly above.
     if((TAB === "dashboard" || TAB === "delivery") && !COMPLETED) loadCompleted();
     if(TAB === "dashboard" && ME.role === "admin" && !RECENT && !RECENT_ERR) loadRecent();
+    /* The directory, landed on rather than only clicked into — the same rule,
+       and the same reason: a tab reached by reload must still fetch.
+
+       And it refetches EVERY time the list is what is being shown, not only
+       when it has never loaded. Guarding on "never loaded" left a stale list
+       behind: save a firm from a case, come back to the directory, and it
+       still showed the set fetched before the firm existed — the screen whose
+       whole job is answering "who do we already work for" quietly answering
+       it wrong. One indexed read, the same as the case list does. */
+    if(TAB === "profiles" && !PROF_OPEN && !PROF_FORM) await loadProfiles();
     // Same rule for who-is-out: landed on, not only clicked into.
     try{ OUT_NOW = await api("/active"); }catch(e){ OUT_NOW = null; }
   }
@@ -7495,6 +8171,9 @@ function sessionForget(){
   PAYCFG = null; PAY_DRAFT = {}; PAY_MSG = ""; PAY_ERR = false;
   SUMMARY = null; SHEETS = []; SHEET_MAIL = ""; OPEN_SHEET = null; SHEET_MSG = ""; SHEET_WIZ = null;
   NL = null; LEAD_SEND = null; LEAD_MSG = ""; PAY_SEND = null;
+  PROF = null; PROF_OK = false; PROF_ERR = ""; PROF_SETUP = false; PROF_MSG = "";
+  PROF_Q = ""; PROF_KIND = ""; PROF_INACTIVE = false;
+  PROF_OPEN = null; PROF_FORM = null; PROF_CONTACT = null;
   INTAKE_SEND = null; SEND_MSG = ""; SENDS = null; SENDS_ERR = "";
   INVOICES = null; INV_OPEN = null; INV_MSG = ""; INV_WARN = []; INV_EVENTS = [];
   INV_SETTINGS = null; INV_FILTER = {status: "", type: "", q: ""};
@@ -9859,7 +10538,7 @@ function caseBodyHtml(){
     : WS_TAB === "tasks"    ? tasksPanel()
     : WS_TAB === "auth"     ? authPanel(a, admin) + (admin ? authAdminForm() : "")
     : WS_TAB === "legal"    ? legalPanel()
-    : WS_TAB === "edit"     ? editCasePanel(s, a)
+    : WS_TAB === "edit"     ? editCasePanel(s, a) + caseProfileHtml()
     : WS_TAB === "assign"   ? assignPanel(s)
     : WS_TAB === "subject"  ? detailList(s, "subject") + caseDetailsPanel() + subjectsPanel(s)
     : WS_TAB === "details"  ? detailList(s, "overview")
@@ -12850,8 +13529,25 @@ async function sendLeadIntakeMail(caseNo){
 
 /* Manual intake (P17): one POST, then either straight into the case or back
    to the leads desk with the number in hand. */
+/* Read what is on screen into the draft. Called before every repaint of this
+   form — choosing a profile, changing the contact, opening the picker — for
+   the reason written above the form itself. */
+function nlCollect(){
+  if(!NL) return;
+  const v = NL.v || (NL.v = {});
+  for(const id of ["nl_firm", "nl_atty", "nl_email", "nl_phone", "nl_client", "nl_subject",
+    "nl_asgtype", "nl_retainer", "nl_arrangement", "nl_legal_deadline", "nl_carrier",
+    "nl_claim", "nl_policy", "nl_service", "nl_obj", "nl_deadline", "nl_notes"]){
+    const el = $(id);
+    if(el) v[id] = el.value;
+  }
+  const save = $("nl_saveprof");
+  if(save) NL.saveProfile = save.checked;
+}
+
 async function submitManualIntake(openAfter){
-  const g = id => { const el2 = $(id); return el2 ? el2.value : ""; };
+  nlCollect();
+  const g = id => (NL.v && NL.v[id] != null) ? NL.v[id] : "";
   const legal = NL.kind === "legal";
   const body = {
     kind: NL.kind,
@@ -12870,6 +13566,15 @@ async function submitManualIntake(openAfter){
       deadline: g("nl_legal_deadline"),
     });
   }
+  /* UNIT 7 — the profile this came from, recorded ALONGSIDE the case rather
+     than as part of it. Everything above is what the office actually has on
+     screen, prefilled or typed; the Worker never re-reads the profile. */
+  if(NL.profile_id){
+    body.profile_id = NL.profile_id;
+    if(NL.contact_id) body.profile_contact_id = NL.contact_id;
+  }else if(NL.saveProfile){
+    body.save_profile = true;
+  }
   const retainerAmt = legal ? String(g("nl_retainer") || "").replace(/[^0-9.]/g, "") : "";
   try{
     const r = await api("/intakes", {method: "POST", body});
@@ -12883,9 +13588,22 @@ async function submitManualIntake(openAfter){
         {method: "POST", body: { retainer_amount: Number(retainerAmt) }}); }
       catch(e){ LEAD_MSG = `Saved as ${r.case_no}, but the retainer did not record — ${e.message}`; }
     }
+    /* The tick is a convenience, and it says what it actually did. Where a
+       possible match exists it creates nothing and points at the deliberate
+       door — a convenience must not be the one path that walks past the
+       warning every other door stops at. */
+    let profMsg = "";
+    if(NL.saveProfile && !NL.profile_id){
+      profMsg = r.profile_saved ? " Saved as a reusable profile too."
+        : r.profile_reason === "possible_duplicate"
+          ? ` A similar profile already exists (${(r.matches || []).map(m => m.name).join(", ")}), so`
+            + ` none was created — open the case and use Save as profile to decide.`
+          : "";
+    }
     NL = null;
     if(openAfter){ await render(); return openCase(r.case_no); }
-    LEAD_MSG = LEAD_MSG || `Saved as ${r.case_no}. It waits under New until you accept it.`;
+    LEAD_MSG = LEAD_MSG
+      || `Saved as ${r.case_no}. It waits under New until you accept it.${profMsg}`;
     TAB = "leads";
     await render();
   }catch(e){ NL.err = e.message; paint(); }
@@ -12936,6 +13654,16 @@ document.addEventListener("click", ev => {
        admin-only in the Worker. Fetched on arrival for the same reason the
        dashboard refetches: a stale package stage is a wrong next step. */
     if(TAB === "delivery" && ME.role === "admin"){ PKGS = null; loadPackages(); loadCompleted(); }
+    /* UNIT 7 — the directory is fetched on ARRIVAL, like every other tab that
+       carries data. A tab click paints; only these lines fetch. Reading a
+       stale list is the failure that matters here: a firm saved from a case
+       would be missing from the very screen that answers "do we already have
+       them?", and the office would create a second one. */
+    if(TAB === "profiles" && ME.role === "admin"){
+      PROF_OPEN = null; PROF_FORM = null; PROF_CONTACT = null; PROF_MSG = "";
+      PROF_OK = false; PROF_ERR = "";
+      loadProfiles().then(paint);
+    }
     // Arriving at Settings is a fresh start: drafts are for recovering from a
     // refusal in front of you, not for surviving a trip around the portal.
     if(TAB === "settings" && ME.role === "admin"){
@@ -13469,10 +14197,159 @@ document.addEventListener("click", ev => {
     else { SHEET_WIZ.err = ""; SHEET_WIZ.step = s2; paint(); }
   }
   else if(act === "wizSend"){ wizSend(); }
-  else if(act === "nlKind"){ NL = {kind: el.dataset.k, err: ""}; paint(); }
-  else if(act === "nlBack"){ NL = {kind: null, err: ""}; paint(); }
+  else if(act === "nlKind"){ NL = {kind: el.dataset.k, err: "", v: {}}; paint(); }
+  else if(act === "nlBack"){ NL = {kind: null, err: "", v: {}}; paint(); }
   else if(act === "nlSave"){ submitManualIntake(el.dataset.open === "1"); }
+  /* ------------------------------------------------- UNIT 7: the picker */
+  else if(act === "nlPickOpen"){ nlCollect(); NL.pick = {open: true, q: ""}; paint(); }
+  else if(act === "nlPickClose"){ nlCollect(); NL.pick = null; paint(); }
+  else if(act === "nlPickChoose"){
+    nlCollect();
+    const p = ((NL.pick && NL.pick.results) || []).find(x => String(x.id) === el.dataset.id);
+    if(p){
+      const c = (p.contacts || []).find(x => x.preferred && x.active)
+        || (p.contacts || []).find(x => x.active) || null;
+      NL.profile = p; NL.profile_id = p.id; NL.contact_id = c ? c.id : null;
+      NL.pick = null;
+      nlPrefill(p, c);
+    }
+    paint();
+  }
+  else if(act === "nlPickClear"){
+    nlCollect();
+    /* Starting fresh clears the LINK and the values that came with it, and
+       leaves everything the office typed for this assignment alone. */
+    const keep = NL.v || {};
+    for(const k of ["nl_firm", "nl_atty", "nl_email", "nl_phone", "nl_carrier", "nl_client",
+      "nl_arrangement"]) delete keep[k];
+    NL.profile = null; NL.profile_id = null; NL.contact_id = null; NL.v = keep;
+    paint();
+  }
   else if(act === "legalSave"){ saveLegalPanel(); }
+  /* ------------------------------------------ UNIT 7: clients & firms */
+  else if(act === "profKind"){ PROF_KIND = el.dataset.k || ""; loadProfiles().then(paint); }
+  else if(act === "profInactive"){ PROF_INACTIVE = el.checked; loadProfiles().then(paint); }
+  else if(act === "profReload"){ PROF_OK = false; PROF_ERR = ""; loadProfiles().then(paint); }
+  else if(act === "profOpen"){ profOpenId(el.dataset.id); }
+  /* From inside a case the workspace is a whole page, so leaving it is the
+     first half of opening the directory — the same exit the Settings tab
+     needed after a suite run walked straight from a case into it. */
+  else if(act === "profOpenFromCase"){
+    VIEW = "list"; TAB = "profiles";
+    const id = el.dataset.id;
+    render().then(() => profOpenId(id));
+  }
+  else if(act === "profBack"){
+    PROF_OPEN = null; PROF_FORM = null; PROF_CONTACT = null; PROF_MSG = "";
+    loadProfiles().then(paint);
+  }
+  else if(act === "profNew"){
+    PROF_OPEN = null; PROF_MSG = "";
+    PROF_FORM = {mode: "new", kind: "law_firm", v: {}, matches: [], err: ""};
+    paint();
+  }
+  else if(act === "profFormKind"){
+    profFormCollect();
+    PROF_FORM.kind = el.dataset.k; PROF_FORM.matches = [];
+    paint();
+  }
+  else if(act === "profEdit"){
+    const P = PROF_OPEN.profile;
+    PROF_FORM = {mode: "edit", kind: P.kind, err: "", matches: [], v: {
+      name: P.name || "", email: P.email || "", address: P.address || "",
+      billing_name: P.billing_name || "", billing_email: P.billing_email || "",
+      payment_arrangement: P.payment_arrangement || "", notes: P.notes || "",
+      phones: (P.phones || []).map(x => ({number: x.number, label: x.label || ""})),
+    }};
+    paint();
+  }
+  else if(act === "profCancel"){
+    PROF_FORM = null;
+    if(!PROF_OPEN){ loadProfiles().then(paint); } else paint();
+  }
+  else if(act === "profSave"){ profSave(el.dataset.confirm === "1"); }
+  else if(act === "profActive"){
+    const on = el.dataset.on === "1";
+    api(`/profiles/${el.dataset.id}`, {method: "POST", body: {active: on}})
+      .then(r => { PROF_OPEN.profile = r.profile;
+        PROF_MSG = on ? "Active again." : "Set inactive. Every case it is on is unchanged."; })
+      .catch(e => { PROF_MSG = e.message; })
+      .then(paint);
+  }
+  else if(act === "profDelete"){
+    /* An explicit confirmation, and the Worker refuses outright when any case
+       has ever used it — so a client's history can never go with a profile. */
+    if(!confirm("Delete this profile? Cases it is already on are never touched — and if it is on any, "
+      + "the portal will refuse and offer Inactive instead.")) return;
+    api(`/profiles/${el.dataset.id}/delete`, {method: "POST"})
+      .then(() => { PROF_OPEN = null; PROF_MSG = "Profile deleted. No case was affected.";
+        return loadProfiles(); })
+      .catch(e => { PROF_MSG = e.message; })
+      .then(paint);
+  }
+  else if(act === "profStart"){
+    const p = (PROF_OPEN && PROF_OPEN.profile && String(PROF_OPEN.profile.id) === el.dataset.id)
+      ? PROF_OPEN.profile : (PROF || []).find(x => String(x.id) === el.dataset.id);
+    if(p && p.contacts) profStart(p);
+    else api(`/profiles/${el.dataset.id}`).then(d => profStart(d.profile)).catch(e => {
+      PROF_MSG = e.message; paint(); });
+  }
+  else if(act === "profContactNew"){ PROF_CONTACT = {id: null, v: {}, err: "", matches: []}; paint(); }
+  else if(act === "profContactEdit"){
+    const c = (PROF_OPEN.profile.contacts || []).find(x => String(x.id) === el.dataset.id);
+    PROF_CONTACT = {id: c.id, err: "", matches: [], v: {
+      first_name: c.first_name || "", last_name: c.last_name || "", role: c.role || "",
+      email: c.email || "", preferred: !!c.preferred,
+      phones: (c.phones || []).map(x => ({number: x.number, label: x.label || ""})),
+    }};
+    paint();
+  }
+  else if(act === "profContactCancel"){ PROF_CONTACT = null; paint(); }
+  else if(act === "profContactSave"){ profContactSave(el.dataset.id, el.dataset.confirm === "1"); }
+  else if(act === "profContactPref"){
+    api(`/profiles/${PROF_OPEN.profile.id}/contacts/${el.dataset.id}`,
+      {method: "POST", body: {preferred: true}})
+      .then(r => { PROF_OPEN.profile = r.profile; })
+      .catch(e => { PROF_MSG = e.message; }).then(paint);
+  }
+  else if(act === "profContactActive"){
+    api(`/profiles/${PROF_OPEN.profile.id}/contacts/${el.dataset.id}`,
+      {method: "POST", body: {active: el.dataset.on === "1"}})
+      .then(r => { PROF_OPEN.profile = r.profile; })
+      .catch(e => { PROF_MSG = e.message; }).then(paint);
+  }
+  else if(act === "profContactRemove"){
+    if(!confirm("Remove this contact from the profile? Cases they are already on keep everything "
+      + "they were created with.")) return;
+    api(`/profiles/${PROF_OPEN.profile.id}/contacts/${el.dataset.id}/remove`, {method: "POST"})
+      .then(r => { PROF_OPEN.profile = r.profile; PROF_MSG = "Contact removed. No case changed."; })
+      .catch(e => { PROF_MSG = e.message; }).then(paint);
+  }
+  /* On the case: link it, save it, or clear the link. All three are things an
+     admin presses; none of them happens on its own. */
+  else if(act === "caseProfLink"){
+    api(`/cases/${encodeURIComponent(WS_CASE)}/profile`, {method: "POST",
+      body: {profile_id: Number(el.dataset.id)}})
+      .then(r => { WS.profile = r.profile; WS_NOTICE = "Linked to the saved profile."; })
+      .catch(e => { WS_NOTICE = e.message; }).then(paintCase);
+  }
+  else if(act === "caseProfSave"){
+    api(`/cases/${encodeURIComponent(WS_CASE)}/profile`, {method: "POST",
+      body: {save_as_profile: true, confirm_new: el.dataset.confirm === "1"}})
+      .then(r => { WS.profile = r.profile; WS_NOTICE = "Saved as a reusable profile."; })
+      .catch(e => {
+        WS_NOTICE = e.code === "possible_duplicate"
+          ? "A similar profile already exists: " + (e.matches || []).map(m => m.name).join(", ")
+            + ". Use it below, or save anyway."
+          : e.message;
+        if(e.code === "possible_duplicate") WS.profile = {...(WS.profile || {}), suggested: e.matches || [], dup: true};
+      }).then(paintCase);
+  }
+  else if(act === "caseProfClear"){
+    api(`/cases/${encodeURIComponent(WS_CASE)}/profile`, {method: "POST", body: {clear: true}})
+      .then(r => { WS.profile = r.profile; WS_NOTICE = "Link removed. The case is unchanged."; })
+      .catch(e => { WS_NOTICE = e.message; }).then(paintCase);
+  }
   else if(act === "copyLink"){
     navigator.clipboard.writeText(LAST_LINK).then(() => { el.textContent = "Copied"; });
   }
@@ -13519,6 +14396,10 @@ document.addEventListener("submit", ev => {
 
 document.addEventListener("input", ev => {
   const din = ev.target.dataset ? ev.target.dataset.actInput : "";
+  /* UNIT 7 — the two searches. Both repaint, and both hand the cursor back in
+     paint() rather than here, because the box is rebuilt by that repaint. */
+  if(din === "profSearch"){ PROF_Q = ev.target.value; profSearchSoon(); return; }
+  if(din === "nlPickSearch" && NL){ nlCollect(); nlPickSearch(ev.target.value); return; }
   if(din === "svSearch" && SV){ SV.search = ev.target.value; paint();
     const q = $("sv_q"); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } return; }
   if(din === "svDirty" && SV){ SV.dirty = true; return; }
