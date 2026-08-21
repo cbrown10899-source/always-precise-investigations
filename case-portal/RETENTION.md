@@ -87,3 +87,10 @@ answered the seven stop items the same day. **Their decisions, verbatim:**
 - **D8 — Deferred, named:** any physical destruction (decision 2), retention
   clocks/policies (decision 3), Dropbox byte deletion (decision 6), the
   legacy R2 export (decision 4), two-person hold approval (decision 7).
+- **D9 — The archived write-gate passes the retention family** (`archive|
+  restore|retention|retention/schedule|retention/unschedule|hold|hold/release`),
+  because these are lifecycle bookkeeping of the same class as archive/restore
+  themselves: a hold must be placeable on a FINISHED case without un-finishing
+  it, and scheduling deletion on an archived case is the ordinary sequence.
+  **The deleted gate is untouched** — a deleted case refuses retention writes
+  and restore-first is the intended answer, both asserted.

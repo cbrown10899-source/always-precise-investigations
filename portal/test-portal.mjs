@@ -13340,6 +13340,227 @@ section('Delivery center on a phone: rows stack and the copy is reachable');
   await page.close();
 }
 
+section('Retention: five states as words, a hold that outranks, and an audit trail');
+{
+  await post('/ingest', {
+    case_no: 'API-RET-1', service: 'Surveillance',
+    client_name: 'Retention Client', subject_name: 'Retention Subject',
+    objective: 'Retention walk',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const page = await newPage();
+  page.on('dialog', d => d.accept());   // deleteCase confirms; the walk accepts
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-RET-1').click();
+  await page.waitForTimeout(500);
+  await wsTab(page, 'Billing & closing');
+  await page.waitForTimeout(700);
+
+  const panel = () => page.locator('.feebox', { hasText: 'Retention & legal hold' }).first();
+  ok('the retention panel sits beside the closing checklist', await panel().count() === 1);
+  let body = await panel().innerText();
+  /* .tag is text-transform:uppercase — rendered text needs /i. */
+  ok('an untouched case reads Active', /current state:\s*active/i.test(body.replace(/\n/g, ' ')), body.slice(0, 160));
+  ok('scheduling is explained as destroying nothing, on the panel, always',
+     /Scheduling deletion destroys nothing/.test(body) && /here or in Dropbox/.test(body));
+  ok('and the panel points at the archive and delete controls below rather than growing its own',
+     /keep their own controls below/.test(body));
+
+  /* Retain Until — set by hand, no clock. A FUTURE date first. */
+  await page.locator('#ret_until').fill('2030-01-01');
+  await page.locator('[data-act="retSaveUntil"]').click();
+  await page.waitForTimeout(600);
+  body = await panel().innerText();
+  ok('a future retain-until reads Retain Until, no review flag',
+     /retain until/i.test(body) && !/review due/i.test(body), body.slice(0, 200));
+
+  /* A PAST date becomes RETENTION REVIEW DUE — wording only, nothing acts. */
+  await page.locator('#ret_until').fill('2020-05-05');
+  await page.locator('[data-act="retSaveUntil"]').click();
+  await page.waitForTimeout(600);
+  body = await panel().innerText();
+  ok('a passed date reads RETENTION REVIEW DUE', /retention review due/i.test(body), body.slice(0, 260));
+  ok('and the banner says nothing happens on its own', /Nothing happens on its own/.test(body));
+
+  /* The hold. Reason is REQUIRED — the Worker's refusal, not a page copy. */
+  await page.locator('[data-act="retHoldPlace"]').click();
+  await page.waitForTimeout(500);
+  body = await panel().innerText();
+  ok('placing a hold with no reason is refused in words',
+     /A hold needs its reason/.test(body), body.slice(-200));
+  await page.locator('#ret_hold_reason').fill('Litigation notice from claimant counsel');
+  await page.locator('[data-act="retHoldPlace"]').click();
+  await page.waitForTimeout(600);
+  body = await panel().innerText();
+  ok('the hold banner carries the reason, who and when',
+     /Litigation notice from claimant counsel/.test(body) && /Trever/.test(body), body.slice(0, 400));
+  ok('and says what it blocks and what stays open',
+     /deleting the case, scheduling\s+deletion and removing evidence are refused/.test(body.replace(/\n/g, ' '))
+     && /billing, reports/i.test(body));
+
+  /* THE HOLD OUTRANKS: scheduling is refused by name… */
+  await page.locator('[data-act="retSchedule"]').click();
+  await page.waitForTimeout(500);
+  body = await panel().innerText();
+  ok('scheduling under a hold is refused naming the hold',
+     /scheduling deletion is blocked/.test(body), body.slice(-260));
+  /* …and so is Delete case, through the EXISTING control below. */
+  await page.locator('[data-act="deleteCase"]').click();
+  await page.waitForTimeout(600);
+  const delPanel = await page.locator('.feebox', { hasText: 'Delete case' }).first().innerText();
+  ok('deleting under a hold is refused at the existing control',
+     /legal hold/.test(delPanel), delPanel.slice(-220));
+  ok('and the case is still not deleted', !/Case deleted/.test(await page.locator('main').innerText()));
+
+  /* Release needs its reason too — decision 7 audits both directions. */
+  await page.locator('[data-act="retHoldRelease"]').click();
+  await page.waitForTimeout(500);
+  ok('releasing with no reason is refused in words',
+     /Releasing a hold needs its reason/.test(await panel().innerText()));
+  await page.locator('#ret_hold_release').fill('Matter settled; counsel released the preservation demand');
+  await page.locator('[data-act="retHoldRelease"]').click();
+  await page.waitForTimeout(600);
+  body = await panel().innerText();
+  ok('a released hold leaves the banner', !/Litigation notice from claimant counsel/.test(body));
+
+  /* Scheduling now records the INTENT and nothing else. */
+  await page.locator('[data-act="retSchedule"]').click();
+  await page.waitForTimeout(600);
+  body = await panel().innerText();
+  ok('the state reads Scheduled for Deletion', /scheduled for deletion/i.test(body), body.slice(0, 200));
+  ok('with a cancel beside it', await page.locator('[data-act="retUnschedule"]').count() === 1);
+  const rows = db.prepare('SELECT COUNT(*) AS n FROM case_evidence WHERE deleted_at IS NOT NULL').get();
+  ok('and scheduling deleted no file anywhere', Number(rows.n) === 0, String(rows.n));
+
+  /* The audit trail: actor, prior/new, reason — on screen when asked. */
+  await page.locator('[data-act="retHist"]').click();
+  await page.waitForTimeout(400);
+  const hist = await page.locator('.retev').innerText();
+  ok('the history lists the hold both ways with its reasons',
+     /Legal hold placed/.test(hist) && /Legal hold released/.test(hist)
+     && /Matter settled/.test(hist), hist.slice(0, 400));
+  ok('the retain-until changes carry prior → new',
+     /Retain-until set/.test(hist) && /2030-01-01/.test(hist) && /2020-05-05/.test(hist));
+  ok('every event names who', (hist.match(/Trever/g) || []).length >= 4, hist);
+
+  /* Cancel, then the ladder through the EXISTING archive/restore. */
+  await page.locator('[data-act="retUnschedule"]').click();
+  await page.waitForTimeout(600);
+  ok('cancelling returns the state to Retain Until',
+     /retain until/i.test((await panel().innerText()).split('\n').slice(0, 3).join(' ')));
+  await page.locator('[data-act="archiveCase"]').click();
+  await page.waitForTimeout(800);
+  ok('archiving reads Archived on the ladder — archived outranks retain-until',
+     /current state:\s*archived/i.test((await panel().innerText()).replace(/\n/g, ' ')));
+  await page.locator('[data-act="restoreCase"]').click();
+  await page.waitForTimeout(800);
+  ok('restoring returns Retain Until',
+     /current state:\s*retain until/i.test((await panel().innerText()).replace(/\n/g, ' ')));
+
+  /* Clear the date; Active again. */
+  await page.locator('[data-act="retClearUntil"]').click();
+  await page.waitForTimeout(600);
+  ok('clearing the date returns Active',
+     /current state:\s*active/i.test((await panel().innerText()).replace(/\n/g, ' ')));
+
+  /* Delete (no hold now): the audit state, said carefully, controls withdrawn. */
+  await page.locator('[data-act="deleteCase"]').click();
+  await page.waitForTimeout(800);
+  body = await panel().innerText();
+  ok('a deleted case reads Deleted / Destruction Recorded',
+     /deleted \/ destruction recorded/i.test(body), body.slice(0, 220));
+  ok('and the panel says the audit state destroyed nothing and authorizes nothing',
+     /does not mean any file was destroyed/.test(body) && /does not authorize destroying one/.test(body));
+  ok('the write controls are withdrawn while deleted',
+     await page.locator('#ret_until').count() === 0
+     && await page.locator('#ret_hold_reason').count() === 0
+     && /put the case back first/.test(body));
+  await page.locator('[data-act="undeleteCase"]').click();
+  await page.waitForTimeout(800);
+  ok('put back, the controls return', await page.locator('#ret_until').count() === 1);
+
+  /* A FAILED READ IS NAMED — never drawn as a case with no retention state. */
+  await page.route('**/portal-api/cases/*/retention', r => r.fulfill({ status: 500, body: '{}' }));
+  await page.evaluate(() => { RETC = {}; });
+  await wsTab(page, 'Overview');
+  await page.waitForTimeout(300);
+  await wsTab(page, 'Billing & closing');
+  await page.waitForTimeout(700);
+  body = await panel().innerText();
+  ok('a failed retention read says so', /could not be\s+read just now/.test(body.replace(/\n/g, ' ')), body.slice(0, 200));
+  ok('and offers Try again', await page.locator('[data-act="retRetry"]').count() === 1);
+  await page.unroute('**/portal-api/cases/*/retention');
+  await page.locator('[data-act="retRetry"]').click();
+  await page.waitForTimeout(700);
+  ok('Try again recovers the panel',
+     /current state:/i.test((await panel().innerText()).replace(/\n/g, ' ')));
+  await page.close();
+}
+
+section('Retention: the investigator has no door and the phone has no overflow');
+{
+  /* An investigator of this section's own, made server-side (the browser
+     invite flow is exercised elsewhere), and the case assigned to them —
+     the section carries its own fixtures so it runs alone or in the suite. */
+  await post('/ingest', {
+    case_no: 'API-RET-2', service: 'Surveillance',
+    client_name: 'Ret Client Two', subject_name: 'Ret Subject Two',
+    objective: 'Role walk',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const lr = await post('/auth/login', { username: 'trever', password: 'AdminPassword1x' });
+  const sc = lr.headers.getSetCookie ? lr.headers.getSetCookie()[0] : lr.headers.get('Set-Cookie');
+  const adminCookie = sc.split(';')[0];
+  const iv = await (await post('/invites',
+    { username: 'ret_inv', display_name: 'Ret Investigator', role: 'investigator' },
+    { Cookie: adminCookie })).json();
+  const tok = new URL(iv.url, 'https://x.test').searchParams.get('invite');
+  await post(`/invite/${tok}/accept`, { password: 'RetField2026x' });
+  const invId = db.prepare("SELECT id FROM users WHERE username = 'ret_inv'").get().id;
+  await post('/submissions/API-RET-2/assign', { user_id: invId }, { Cookie: adminCookie });
+
+  const page = await newPage();
+  await signIn(page, 'ret_inv', 'RetField2026x');
+  await rowFor(page, 'API-RET-2').click();
+  await page.waitForTimeout(600);
+  const whole = await page.locator('main').innerText();
+  ok('an investigator\'s case screen carries no retention panel',
+     !/Retention & legal hold/i.test(whole) && !/legal hold/i.test(whole), '');
+  await page.close();
+
+  /* The phone: the panel fits, the controls meet the floor, the date cannot zoom iOS. */
+  const phone = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  phone.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await phone.goto(SITE + '/portal/');
+  await phone.waitForTimeout(300);
+  await phone.locator('#u').fill('trever');
+  await phone.locator('#p').fill('AdminPassword1x');
+  await phone.locator('#loginBtn').click();
+  await phone.waitForTimeout(1400);
+  const burger = phone.locator('.burger');
+  if (await burger.isVisible()) { await burger.click(); await phone.waitForTimeout(300); }
+  await phone.locator('.side button, .tabs button', { hasText: 'Cases' }).first().click();
+  await phone.waitForTimeout(600);
+  await rowFor(phone, 'API-RET-1').click();
+  await phone.waitForTimeout(600);
+  await wsTab(phone, 'Billing & closing');
+  await phone.waitForTimeout(800);
+  const m = await phone.evaluate(() => {
+    const until = document.getElementById('ret_until');
+    const btn = document.querySelector('[data-act="retSchedule"], [data-act="retUnschedule"]');
+    const b = btn && btn.getBoundingClientRect();
+    return {
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      untilFont: until ? parseFloat(getComputedStyle(until).fontSize) : 0,
+      untilH: until ? until.getBoundingClientRect().height : 0,
+      btnH: b ? b.height : 0,
+    };
+  });
+  ok('390px: the retention panel adds no sideways scroll', m.overflow <= 0, String(m.overflow));
+  ok('390px: the date input is 16px so iOS does not zoom on focus', m.untilFont >= 16, String(m.untilFont));
+  ok('390px: the date input meets the 44px floor', m.untilH >= 44, String(m.untilH));
+  ok('390px: the schedule control meets the 44px floor', m.btnH >= 44, String(m.btnH));
+  await phone.close();
+}
+
 section('Evidence integrity: the card states the record and the office can act on it');
 {
   db.prepare(`INSERT INTO submissions (case_no, kind, status, client_name, subject_name, payload, created_at)
