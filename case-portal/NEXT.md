@@ -85,12 +85,13 @@ Document Templates (the mechanism is buildable; the templates are the firm's
 own case-setup defaults and language — owner content). Permissions stays
 untouched and marked missing.
 
-## Open, narrow — Unit 18
+## ✅ CLOSED — Unit 18's open question
 
-The draft rule excludes `draft`, matching the test `outstanding` already uses,
-so one document cannot give two answers. Whether **`ready`** — reviewed but not
-yet sent — also counts as "unsent" is **not decided**. It changes only which
-invoices draw the client-facing retainer down.
+**Owner, 2026-08-21:** *"Ready/Reviewed but not yet sent still counts as UNSENT
+and must NOT reduce the client-facing retainer."* The excluded set is
+`('void', 'draft', 'ready')` and the tests assert that ready leaves the
+retainer untouched while SENDING draws it down. Nothing else about the
+accounting moved.
 
 ## Regressions found and fixed inside the run
 
@@ -364,7 +365,7 @@ and is now durable policy rather than a pending question.
 
 | # | Decision | State |
 | --- | --- | --- |
-| 1 | Does an **unsent/draft invoice** draw down the client-facing retainer? | ✅ **LOCKED — NO.** *"UNSENT or DRAFT invoices MUST NOT reduce the client-facing retainer balance. Only finalized/issued billable work may affect the client-facing retainer figure."* Client-facing figures stay **Agreed retainer · Received · Applied/Earned · Outstanding/available**; a separate internal view of draft work is allowed, but the client-facing display must never imply draft work consumed the deposit. *"Do not silently change historical payment records. Do not treat creating a draft invoice as money earned. Do not mark anything paid merely because an invoice exists."* **Implemented in Unit 18.** Today's behaviour is the opposite — the sibling sum filters only `status != 'void'`, CLAUDE.md described it, and E2E-39 asserts it — so all three move together |
+| 1 | Does an **unsent/draft invoice** draw down the client-facing retainer? | ✅ **LOCKED — NO, AND `ready` IS UNSENT TOO** (owner, 2026-08-21). *"UNSENT or DRAFT invoices MUST NOT reduce the client-facing retainer balance. Only finalized/issued billable work may affect the client-facing retainer figure."* Client-facing figures stay **Agreed retainer · Received · Applied/Earned · Outstanding/available**; a separate internal view of draft work is allowed, but the client-facing display must never imply draft work consumed the deposit. *"Do not silently change historical payment records. Do not treat creating a draft invoice as money earned. Do not mark anything paid merely because an invoice exists."* **Implemented in Unit 18.** Today's behaviour is the opposite — the sibling sum filters only `status != 'void'`, CLAUDE.md described it, and E2E-39 asserts it — so all three move together |
 | 2 | Are **Cash App `$TreverB`** and **Venmo `@Trever-Brown-9`** the long-term accounts? | **Answered for now:** *"Keep current… Do not change payment accounts in this queue."* Long-term choice stays open |
 | 3 | The corrupted **PORTAL-OPS Permissions** requirement | **OWNER INPUT REQUIRED** — leave marked missing until re-sent. Do not invent it |
 | 4 | **Reassigned-investigator visibility** into a prior investigator's hours | ✅ **LOCKED — ADMIN-ONLY.** A reassigned investigator must not automatically see the previous investigator's *"worked hours, compensation details, billing detail, or other investigator-specific financial information"* — not through *"case-scoped reads, API responses, UI payloads, exports, reports, or hidden fields."* Admin sees all; the current investigator sees only their own where already authorized; **prior-investigator hours stay admin-only.** *"Do not create a new permission toggle unless the approved PORTAL-OPS Permissions specification later explicitly calls for one."* Recorded now as a durable authorization rule (CLAUDE.md, under the case portal); enforced when the permissions/security work is reached — **or immediately if an audit proves an active leak that can be fixed without disrupting Hotfix 17A** |

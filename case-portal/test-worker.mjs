@@ -6780,8 +6780,16 @@ section('Unit 18 — invoice payment integrity: recorded once, voidable, never r
   ok('the same draft is excluded from outstanding, so the two figures agree',
      typeof sum.outstanding === 'number');
   await call(env, `/invoices/${work.id}/status`, { method: 'POST', cookie: admin, body: { status: 'ready' } });
+  const asReady = await get(work.id);
+  /* READY IS STILL UNSENT (owner, 2026-08-21). Reviewed and waiting to go out
+     is not the same as the client having been shown it. */
+  ok('READY does not draw the retainer down either — it has not been sent',
+     asReady.retainer.applied === 0 && asReady.retainer.balance === 1500,
+     JSON.stringify([asReady.status, asReady.retainer.applied]));
+  await call(env, `/invoices/${work.id}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'sent_to_client' } });
   const issued = await get(work.id);
-  ok('ISSUING it is what draws the retainer down',
+  ok('SENDING it is what draws the retainer down',
      issued.retainer.applied === 600 && issued.retainer.balance === 900,
      JSON.stringify([issued.retainer.applied, issued.retainer.balance]));
   /* Voiding must release it again — the rule that already held. */
@@ -7276,8 +7284,13 @@ section('End to end: a private client, sheet to completed');
      asDraft39.retainer.applied === 0, JSON.stringify(asDraft39.retainer));
   await call(env, `/invoices/${work.id}/status`, { method: 'POST', cookie: admin,
     body: { status: 'ready' } });
+  const asReady39 = (await jsonOf(await call(env, `/invoices/${work.id}`, { cookie: admin }))).invoice;
+  ok('E2E-39: and READY is still unsent, so it is still untouched',
+     asReady39.retainer.applied === 0, JSON.stringify(asReady39.retainer));
+  await call(env, `/invoices/${work.id}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'sent_to_client' } });
   const after = (await jsonOf(await call(env, `/invoices/${work.id}`, { cookie: admin }))).invoice;
-  ok('E2E-39: ISSUED work draws it down, and only issued work does',
+  ok('E2E-39: SENT work draws it down, and only sent work does',
      after.retainer.applied === 600 && after.retainer.balance === 900);
   ok('E2E-39: so the client is never told they are past a retainer they still hold',
      after.retainer.balance > 0);
