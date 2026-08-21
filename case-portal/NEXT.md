@@ -31,7 +31,7 @@ item is finished.
 | 12 | Report Daily Summary Builder | ✅ **DONE — DEPLOYED** at `46ccad6` (#198). LIVE VERIFY **OPEN** for the owner |
 | 13 | Portal palette normalization | ✅ **DONE — LIVE VERIFIED** by the owner 2026-08-21, at `fcd3d38` (#199) |
 | 14 | Storage Health | ✅ **DONE — LIVE VERIFIED** by the owner 2026-08-21, at `96e994d` (#202) |
-| 15 | Case Closeout | not started |
+| 15 | Case Closeout | ✅ **DONE — DEPLOYED** at `2494716` (#203). LIVE VERIFY **OPEN** for the owner |
 | 16 | Client Delivery Center | not started |
 | 17 | Retention Controls | not started |
 
@@ -195,6 +195,34 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Do not interrupt the current coding unit. Record this queue only"*, and
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
+
+## 📌 Unit 15 — what shipped (#203, `2494716`)
+
+**Case Closeout — the record speaks beside each attestation.** Audit and
+derived decisions D1–D6 in `case-portal/CLOSEOUT.md` (no verbatim owner brief
+exists for this row; closeout was substantially built already). Detail in
+CLAUDE.md under *"The closeout checklist shows what the record can see, and
+still obeys the person"*.
+
+`GET /cases/:no/closeout` (admin-only) derives per-item facts from existing
+tables — running days, finished days without reports, reports not signed off,
+Needs-review files, a started-never-finalized package, unreviewed expenses,
+the computed invoice balance, an agreed-unreceived retainer — and the closing
+panel draws each beside its tick. **Facts inform, the attestation decides:**
+`closeCase` untouched, nothing blocks, facts worded as facts (asserted free of
+conclusion words), a clean case says nothing, a failed read says "could not be
+read" while the boxes keep working, fetched only when the panel is on screen.
+The read writes nothing (row-count asserted). Investigator 403, public 401.
+
+**No schema, no portal-setup dispatch.** Deploys green: site `32437272320`,
+portal Worker `32437272383`.
+
+**Suites at merge:** worker **2495/0**, portal **2322/0** (green on the first
+full run), intake **236/0** (untouched), deploy guard **68/0**.
+
+**LIVE VERIFY (owner):** open a real case's Billing & closing with work still
+outstanding — do the notes beside the ticks say what you know to be true, and
+does closing still obey you over them?
 
 ## 📌 Unit 14 — what shipped (#202, `96e994d`)
 
@@ -711,6 +739,18 @@ node .github/test-deploy.mjs                    # expect 68 / 0
 
 Then the ordinary chain: PR → merge if green → pull master → deploy → live
 verify → **save point** → next unit (item 4, Admin report/mobile workflow fix).
+
+## 🚦 DEPLOYMENT — 2026-08-21, master `2494716` (#203) — Unit 15, Case Closeout
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/intake/` + `/portal/` | `2494716` | `2494716` | **DEPLOYED** — `deploy.yml` 32437272320 success |
+| `api-case-portal` | `2494716` | `2494716` | **DEPLOYED** — `deploy-portal.yml` 32437272383 success |
+| Schema | — | — | **No change.** Nothing owed; portal-setup deliberately NOT run |
+| Save point | — | — | `save/2026-08-21-0142-2494716`, the merge push's automatic firing |
+
+Tests at merge: worker **2495/0**, portal **2322/0**, intake **236/0**, deploy
+guard **68/0**.
 
 ## 🚦 DEPLOYMENT — 2026-08-21, master `96e994d` (#202) — Unit 14, Storage Health
 
