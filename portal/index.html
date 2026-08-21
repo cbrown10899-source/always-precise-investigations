@@ -485,8 +485,17 @@
       flex-wrap:nowrap;
       align-items:stretch;gap:2px;padding:14px 10px;margin:0;background:var(--navy-2);border-radius:0;
       overflow-y:auto;z-index:40;}
+    /* A ROW NEVER CRUSHES; THE RAIL SCROLLS. The rail is a pinned flex column,
+       and flex children shrink by default — so once the list outgrew the
+       viewport, every row was squeezed to its min-height and a two-line label
+       ("Reports & Packages" measures 55px of text at this width) bled into
+       its neighbor. flex:none is the root fix: content height wins, and the
+       overflow-y already on the rail does the scrolling it was there for.
+       line-height is set because the page default (1.6) is paragraph spacing,
+       not control spacing, and a wrapped label read as two separate rows. */
     body.withnav .tabs button{text-align:left;color:#c9d6e4;background:transparent;border-radius:8px;
-      padding:9px 12px;font-weight:600;}
+      padding:9px 12px;font-weight:600;flex:none;min-height:44px;height:auto;
+      line-height:1.3;display:flex;align-items:center;}
     body.withnav .tabs button.on{background:var(--nav-on);color:#fff;}
     body.withnav .tabs button:hover{background:#1a3350;color:#fff;}
     /* .navfoot owns the pin to the bottom now; these two only describe
@@ -524,7 +533,8 @@
       flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:2px;background:var(--navy-2);z-index:60;
       padding:60px 12px max(14px, env(safe-area-inset-bottom));
       overflow-y:auto;box-shadow:6px 0 24px rgba(9,18,30,.35);}
-    body.withnav.navopen .tabs button{text-align:left;color:#c9d6e4;background:transparent;border-radius:8px;padding:11px 12px;}
+    body.withnav.navopen .tabs button{text-align:left;color:#c9d6e4;background:transparent;border-radius:8px;padding:11px 12px;
+      flex:none;min-height:44px;height:auto;line-height:1.3;display:flex;align-items:center;}
     body.withnav.navopen .tabs button.on{background:var(--nav-on);color:#fff;}
     body.withnav.navopen .tabs .side-intake{display:block;text-align:center;
       background:var(--gold);color:var(--navy-2);font-weight:800;border-radius:9px;padding:11px;text-decoration:none;
