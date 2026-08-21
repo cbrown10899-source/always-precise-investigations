@@ -135,6 +135,12 @@ async function fakeDropbox(url, init) {
     return new Response(JSON.stringify({ access_token: 'sl.FAKE', expires_in: 14400 }),
       { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
+  if (u.includes('/2/users/get_space_usage')) {
+    const used = [...DBX.files.values()].reduce((a, b) => a + (b.byteLength || b.length || 0), 0);
+    return new Response(JSON.stringify({ used: used + 5000000,
+      allocation: { '.tag': 'individual', allocated: 2147483648 } }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
   if (u.includes('/2/files/create_folder_batch')) {
     for (const f of JSON.parse(init.body).paths) DBX.folders.add(f);
     return new Response('{"entries":[]}', { status: 200 });
@@ -13542,6 +13548,96 @@ section('Daily summary: the guards a new table owes');
     { method: 'POST', cookie: admin, body: { narrative: 'x' } });
   ok('and the write refuses naming the workflow to run',
      res.status === 503 && /portal-setup/.test((await jsonOf(res)).error || ''), res.status);
+}
+
+section('Storage health: the whole picture, from metadata, and never a byte');
+{
+  const env = freshEnv();
+  DBX.reset();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-SH1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  await ingest(env, { case_no: 'API-SH2', service: 'Surveillance', client_name: 'C2', subject_name: 'S2' });
+
+  // Two Dropbox files on SH1, one on SH2; a LEGACY R2 photo and a legacy R2
+  // video planted directly (the only way one can exist since device-first).
+  const up = (no, name, n) => {
+    const fd = new FormData();
+    fd.append('file', new File([new Uint8Array(n).fill(7)], name, { type: 'image/jpeg' }));
+    return worker.fetch(new Request(API + `/cases/${no}/evidence`, {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  };
+  const a = await jsonOf(await up('API-SH1', 'a.jpg', 4000));
+  await up('API-SH1', 'b.jpg', 6000);
+  await up('API-SH2', 'c.jpg', 1000);
+  await env.DB.prepare(
+    `INSERT INTO case_evidence (case_no, r2_key, filename, content_type, size_bytes, classification, uploaded_by, uploaded_at)
+     VALUES ('API-SH1', 'legacy/p1', 'old.jpg', 'image/jpeg', 20000, 'client_deliverable', 1, '2026-07-01T00:00:00Z'),
+            ('API-SH1', 'legacy/v1', 'old.mp4', 'video/mp4', 50000, 'client_deliverable', 1, '2026-07-01T00:00:00Z')`).run();
+  // one deleted Dropbox row
+  const delId = a.id;
+  await call(env, `/cases/API-SH1/evidence/${delId}/delete`, { method: 'POST', cookie: admin, body: {} });
+
+  const res = await call(env, '/storage-health', { cookie: admin });
+  ok('the route answers an admin', res.status === 200, res.status);
+  const d = await jsonOf(res);
+
+  ok('Dropbox live is the two surviving uploads',
+     d.dropbox.live.count === 2 && d.dropbox.live.bytes === 7000, JSON.stringify(d.dropbox.live));
+  ok('the deleted Dropbox row is history, not storage', d.dropbox.deleted_rows === 1);
+  ok('legacy R2 is counted apart', d.cloudflare.live.count === 2 && d.cloudflare.live.bytes === 70000,
+     JSON.stringify(d.cloudflare.live));
+  ok('and the open-decision video inventory is named',
+     d.cloudflare.live_video.count === 1 && d.cloudflare.live_video.bytes === 50000);
+  ok('the meter itself is unchanged — Cloudflare bytes only',
+     d.cloudflare.bytes_used === 70000, String(d.cloudflare.bytes_used));
+  ok('the Dropbox account usage came from the provider, honestly',
+     d.dropbox.space && d.dropbox.space.used_bytes > 0 && d.dropbox.space.allocated_bytes === 2147483648,
+     JSON.stringify(d.dropbox.space));
+
+  // Integrity coverage: the two live Dropbox files were hashed at upload; the
+  // two legacy rows were not.
+  ok('integrity coverage counts live files with and without a record',
+     d.integrity && d.integrity.live_files === 4 && d.integrity.with_hash === 2
+       && d.integrity.not_yet_recorded === 2, JSON.stringify(d.integrity));
+
+  // Heaviest cases: SH1 (6000 dbx + 70000 r2) then SH2.
+  ok('the heaviest case leads, split by store',
+     d.top_cases[0] && d.top_cases[0].case_no === 'API-SH1'
+       && d.top_cases[0].dropbox_bytes === 6000 && d.top_cases[0].r2_bytes === 70000,
+     JSON.stringify(d.top_cases));
+  ok('and the list is bounded', d.top_cases.length <= 8);
+
+  // THE BOUNDARY: metadata only. The one external call is space usage — no
+  // download, no listing, no sharing.
+  const external = DBX.calls.filter(u => /get_space_usage|files\/download|files\/list|sharing/.test(u));
+  ok('the route made exactly one external call, and it was the space question',
+     external.length === 1 && /get_space_usage/.test(external[0]), JSON.stringify(external));
+
+  ok('an investigator is refused', await (async () => {
+    const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+    await call(env, `/invite/${new URL(link, 'https://x.test').searchParams.get('invite')}/accept`,
+      { method: 'POST', body: { password: 'FieldWork2026x' } });
+    const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+    return (await call(env, '/storage-health', { cookie: inv })).status;
+  })() === 403);
+  ok('and the public door does not exist',
+     (await call(env, '/storage-health', {})).status === 401);
+
+  // The space answer degrades to UNKNOWN, never to a guess.
+  DBX.down = true;
+  const d2 = await jsonOf(await call(env, '/storage-health', { cookie: admin }));
+  ok('an unreachable provider reads as unknown with the reason, not as zero',
+     d2.dropbox.space === null && typeof d2.dropbox.space_reason === 'string',
+     JSON.stringify({ space: d2.dropbox.space, why: d2.dropbox.space_reason }));
+  ok('while everything the database holds still answers',
+     d2.dropbox.live.count === 2 && d2.cloudflare.live.count === 2);
+  DBX.down = false;
+
+  // Nothing was written by any of this.
+  const wrote = await env.DB.prepare(
+    `SELECT (SELECT COUNT(*) FROM case_evidence) AS ev`).first();
+  ok('the route wrote nothing', wrote.ev === 5, JSON.stringify(wrote));
 }
 
 /* ------------------------------------------------------------------ report */

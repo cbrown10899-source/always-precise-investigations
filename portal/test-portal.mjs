@@ -13026,6 +13026,92 @@ section('The palette changed no behavior and broke no phone');
   ok('and no print rule paints navy over paper', !print.paintsNavy);
 }
 
+section('Storage health: the Settings panel answers where the bytes are');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Settings' }).click();
+  await page.waitForTimeout(900);
+
+  const panel = page.locator('.card', { hasText: 'Storage health' }).first();
+  ok('Settings carries the Storage health panel', await panel.count() === 1);
+  const body = await panel.innerText();
+  ok('the Cloudflare side reads with its percent of the free tier',
+     has(body, 'Cloudflare') && /% of the free tier/.test(body), body.slice(0, 200));
+  ok('the legacy-video open decision is stated in words, not hidden',
+     has(body, 'open decision nobody has made'));
+  ok('the Dropbox side reads', has(body, 'Dropbox (current case files)'));
+  /* The container has no route to Dropbox, so the honest state here is
+     UNKNOWN — asserted as the words, because unknown must never draw as
+     zero. If a future harness stubs the provider this arm flips to the
+     account line, which the worker suite already pins. */
+  ok('account usage is either known or honestly unknown',
+     has(body, 'used') || has(body, 'unknown, not zero'), body.slice(0, 400));
+  ok('integrity coverage is a sentence with numbers',
+     /\d+ of \d+ live file/.test(body) || has(body, 'integrity table has not arrived'));
+  ok('nothing here offers a sweep, an export or a delete',
+     !/sweep|export and remove now|delete legacy/i.test(await panel.innerText()));
+
+  /* A FAILED READ SAYS SO — never an empty store. */
+  await page.route('**/portal-api/storage-health', r =>
+    r.fulfill({ status: 500, body: '{}' }));
+  await page.locator('[data-act="shRefresh"]').click();
+  await page.waitForTimeout(600);
+  const failed = await page.locator('.card', { hasText: 'Storage health' }).first().innerText();
+  ok('a failed read is named and offers Try again',
+     has(failed, 'could not be read') && has(failed, 'not the same as nothing being stored'),
+     failed.slice(0, 200));
+  await page.unroute('**/portal-api/storage-health');
+  await page.locator('.card', { hasText: 'Storage health' })
+    .locator('[data-act="shRefresh"]').last().click();
+  await page.waitForTimeout(700);
+  ok('and Try again recovers',
+     has(await page.locator('.card', { hasText: 'Storage health' }).first().innerText(),
+         'Cloudflare'));
+
+  /* The heaviest-cases table links into the case, not to a file manager. */
+  const link = page.locator('.shtbl .linklike').first();
+  if (await link.count()) {
+    await link.click();
+    await page.waitForTimeout(600);
+    ok('a heavy case opens as the case itself',
+       await page.locator('.casepage').count() === 1);
+  }
+}
+
+section('Storage health stays off every other screen, and fits a phone');
+{
+  /* The space call and the aggregates run when an admin ASKS — the dashboard
+     and a case open must not fetch them. */
+  const page = await newPage();
+  const asked = [];
+  page.on('request', r => { if (r.url().includes('/portal-api/')) asked.push(r.url()); });
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(800);
+  ok('neither the dashboard nor a case asks the storage-health question',
+     !asked.some(u => u.includes('/storage-health')), JSON.stringify(asked.slice(-6)));
+
+  const phone = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  phone.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await phone.goto(SITE + '/portal/');
+  await phone.waitForTimeout(300);
+  await phone.locator('#u').fill('trever');
+  await phone.locator('#p').fill('AdminPassword1x');
+  await phone.locator('#loginBtn').click();
+  await phone.waitForTimeout(1400);
+  const burger = phone.locator('.burger');
+  if (await burger.isVisible()) { await burger.click(); await phone.waitForTimeout(300); }
+  await phone.locator('.side button, .tabs button', { hasText: 'Settings' }).first().click();
+  await phone.waitForTimeout(900);
+  const over = await phone.evaluate(() =>
+    document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  ok('390px: Settings with the storage panel has no sideways scroll', over <= 0, String(over));
+  const btn = await phone.locator('[data-act="shRefresh"]').first().boundingBox();
+  ok('390px: Refresh meets the 44px floor', !!btn && btn.height >= 44, JSON.stringify(btn));
+  await phone.close();
+}
+
 section('Evidence integrity: the card states the record and the office can act on it');
 {
   db.prepare(`INSERT INTO submissions (case_no, kind, status, client_name, subject_name, payload, created_at)

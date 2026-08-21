@@ -1422,6 +1422,11 @@
   .top .burger:focus-visible,.navback:focus-visible,
   input:focus-visible,select:focus-visible,textarea:focus-visible{
     outline:2px solid var(--teal);outline-offset:2px;}
+  /* UNIT 14 — storage health meter. .sh- prefix; token colors only. */
+  .shbar{height:8px;border-radius:4px;background:var(--panel);border:1px solid var(--line);overflow:hidden;margin-top:4px;}
+  .shfill{height:100%;border-radius:4px;}
+  .linklike{background:none;border:0;padding:0;font:inherit;color:var(--info-ink);text-decoration:underline;cursor:pointer;}
+
   /* UNIT 12 — daily summary builder, base rules. The phone overrides live in
      the media block BELOW this, at the end of the stylesheet, because source
      order has killed three rules in this file already. .dsb- is its own
@@ -1518,6 +1523,8 @@
     .dsb-actrow select,.dsb-actrow input{width:100%;}
     .dsb-act > label{min-height:44px;}
     .dsb-act input[type=checkbox]{width:22px;height:22px;}
+    /* UNIT 14 — the storage panel's refresh meets the floor. */
+    [data-act="shRefresh"]{min-height:44px;}
   }
 
 </style>
@@ -5443,8 +5450,95 @@ async function disconnectDropbox(){
   paint();
 }
 
+/* ------------------------------------------------ storage health (Unit 14)
+
+   The Settings panel that answers where the bytes are, from the one admin
+   route. Three states, per the standing rule: a failed read must never draw
+   as an empty store — the difference between "nothing is stored" and "the
+   meter could not be read" is the whole reason the failsafe exists. */
+let SH = { state: "never", data: null };
+async function loadStorageHealth(force){
+  if(SH.state === "loading") return;
+  if(SH.state === "ok" && !force) return;
+  SH.state = "loading"; paint();
+  /* api() THROWS on a failed status, and a thrown read must land in the
+     failed state — not in a stuck spinner with a page error behind it. */
+  try{
+    const res = await api("/storage-health");
+    SH = (res && res.cloudflare) ? { state: "ok", data: res } : { state: "failed", data: null };
+  }catch{ SH = { state: "failed", data: null }; }
+  paint();
+}
+function shBytes(b){
+  if(b == null) return "—";
+  if(b >= 1073741824) return (b / 1073741824).toFixed(2) + " GB";
+  if(b >= 1048576) return (b / 1048576).toFixed(1) + " MB";
+  return Math.max(1, Math.round(b / 1024)) + " KB";
+}
+function shMeter(pct, warn){
+  if(pct == null) return "";
+  const tone = pct >= (warn || 75) ? "background:var(--warn)" : "background:var(--teal)";
+  return `<div class="shbar"><div class="shfill" style="width:${Math.min(100, Math.max(0, pct))}%;${tone}"></div></div>`;
+}
+function storageHealthHtml(){
+  if(ME.role !== "admin") return "";
+  const head = `<div class="bar"><h2 style="margin:0">Storage health</h2>
+    <button class="btn sm ghost" data-act="shRefresh">Refresh</button></div>
+    <p class="note">Where the bytes are, from the records the portal already holds.
+      Nothing here reads a file or changes anything.</p>`;
+  if(SH.state === "never" || SH.state === "loading")
+    return `<div class="card">${head}<div class="empty">Reading the storage record&hellip;</div></div>`;
+  if(SH.state === "failed")
+    return `<div class="card">${head}
+      <div class="loaderr">The storage record could not be read just now. That is not the same as
+        nothing being stored. <button class="btn sm ghost" data-act="shRefresh">Try again</button></div></div>`;
+  const d = SH.data, cf = d.cloudflare, dbx = d.dropbox;
+  const integ = d.integrity;
+  const top = d.top_cases || [];
+  return `<div class="card">${head}
+    <h3 style="margin:8px 0 4px;font-size:1rem">Cloudflare (legacy files)</h3>
+    <div class="tl-m">${shBytes(cf.live.bytes)} in ${cf.live.count} file(s) &middot;
+      ${cf.percent_of_free}% of the free tier ${cf.percent_of_free >= cf.warn_at ? `<span class="tag new">over ${cf.warn_at}%</span>` : ""}</div>
+    ${shMeter(cf.percent_of_free, cf.warn_at)}
+    <div class="tl-m" style="margin-top:4px">Of that, video: <b>${shBytes(cf.live_video.bytes)}</b> in
+      ${cf.live_video.count} file(s) &mdash; whether to export and remove legacy video is
+      <b>an open decision nobody has made</b>; this screen informs it and does not perform it.</div>
+    <div class="tl-m">${cf.deleted_rows} removed file record(s) kept as history.</div>
+
+    <h3 style="margin:14px 0 4px;font-size:1rem">Dropbox (current case files)</h3>
+    <div class="tl-m">${shBytes(dbx.live.bytes)} in ${dbx.live.count} file(s) &middot;
+      ${dbx.video_copies_filed == null ? "" : `${dbx.video_copies_filed} timestamped video cop${dbx.video_copies_filed === 1 ? "y" : "ies"} filed &middot;`}
+      ${dbx.report_pdfs_filed} report PDF(s) filed</div>
+    ${dbx.space
+      ? `<div class="tl-m">Account: <b>${shBytes(dbx.space.used_bytes)}</b>${dbx.space.allocated_bytes ? ` of ${shBytes(dbx.space.allocated_bytes)}` : ""}
+          ${dbx.space.percent_used != null ? `(${dbx.space.percent_used}%)` : ""} used</div>
+        ${shMeter(dbx.space.percent_used, 75)}`
+      : `<div class="tl-m">Account usage could not be read just now
+          <span class="opt">(${esc(dbx.space_reason || "unknown")})</span> &mdash; unknown, not zero.</div>`}
+    <div class="tl-m">${dbx.deleted_rows} removed file record(s) kept as history.</div>
+
+    <h3 style="margin:14px 0 4px;font-size:1rem">Integrity coverage</h3>
+    ${integ
+      ? `<div class="tl-m">${integ.with_hash} of ${integ.live_files} live file(s) carry a recorded
+          SHA-256${integ.not_yet_recorded ? ` &middot; <b>${integ.not_yet_recorded}</b> not yet recorded
+          &mdash; each records from its own card, one file at a time` : " &mdash; every live file is covered"}.</div>`
+      : `<div class="tl-m">Unknown &mdash; the integrity table has not arrived on this database.</div>`}
+
+    ${top.length ? `<h3 style="margin:14px 0 4px;font-size:1rem">Heaviest cases</h3>
+      <table class="stacktbl shtbl"><thead><tr><th>Case</th><th>Files</th><th>Dropbox</th><th>Legacy</th></tr></thead>
+      <tbody>${top.map(t => `<tr>
+        <td data-l="Case"><button class="linklike" data-act="openCase" data-no="${esc(t.case_no)}">${esc(t.case_no)}</button></td>
+        <td data-l="Files">${t.files}</td>
+        <td data-l="Dropbox">${shBytes(t.dropbox_bytes)}</td>
+        <td data-l="Legacy">${shBytes(t.r2_bytes)}</td>
+      </tr>`).join("")}</tbody></table>` : ""}
+    <p class="hint">Read ${when(d.generated_at)}. The public health probe and the dashboard card
+      keep their jobs; this is where the numbers behind them live.</p>
+  </div>`;
+}
+
 function settingsView(){
-  return `${notifySettingsHtml()}${paymentSettingsHtml()}${dropboxSettingsHtml()}<div class="card">
+  return `${notifySettingsHtml()}${paymentSettingsHtml()}${dropboxSettingsHtml()}${storageHealthHtml()}<div class="card">
     <div class="bar"><h2 style="margin:0">Settings</h2></div>
     <h3 style="margin:6px 0 4px;font-size:1rem">Developer &amp; testing</h3>
     <p class="note">Working material for trying the portal out. None of it touches a real case.</p>
@@ -15318,6 +15412,7 @@ document.addEventListener("click", ev => {
       PAY_MSG = ""; PAY_ERR = false; PAY_DRAFT = {}; loadPaymentMethods();
       NOTIFY = null; NOTIFY_MSG = ""; NOTIFY_NEW = false; loadNotify();
       DBX = null; DBX_MSG = ""; DBX_SAVING = false; DBX_DRAFT = null; loadDropbox();
+      SH = { state: "never", data: null }; loadStorageHealth();
     }
     document.body.classList.remove("navopen");
     if(TAB === "myreports") api("/my/reports").then(d => { MY_REPORTS = d; paint(); }).catch(()=>{});
@@ -15443,7 +15538,8 @@ document.addEventListener("click", ev => {
   else if(act === "retUndo"){ recordRetainerPayment(false); }
   else if(act === "retVoid"){ voidRetainerPayment(el.dataset.id); }
   else if(act === "logout"){ doLogout(); }
-  else if(act === "openCase"){ openCase(el.dataset.case); }
+  else if(act === "openCase"){ openCase(el.dataset.case || el.dataset.no); }
+  else if(act === "shRefresh"){ loadStorageHealth(true); }
   else if(act === "saveCase"){ saveCase(el.dataset.case); }
   else if(act === "toggleActive"){ toggleActive(Number(el.dataset.id), Number(el.dataset.active)); }
   else if(act === "revokeInvite"){ revokeInvite(Number(el.dataset.id)); }

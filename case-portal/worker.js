@@ -6747,6 +6747,110 @@ async function evidenceUsage(env) {
   };
 }
 
+/* --------------------------------------------------- STORAGE HEALTH (Unit 14)
+
+   Designed from the audit in case-portal/STORAGE-HEALTH.md — no verbatim owner
+   brief exists, so read that file before changing this. One admin route that
+   answers, from METADATA ONLY, the storage questions nothing else answers:
+   where the bytes are (Dropbox vs legacy R2), what the open legacy-video
+   decision actually covers, how much of the firm's Dropbox is used, how much
+   of the live evidence carries no integrity record, and which cases weigh the
+   most. No byte is read, no folder is listed, nothing is written.
+
+   THE ONE EXTERNAL CALL is users/get_space_usage, only here, degrading to
+   null with a named reason — a guessed quota would be the meter lying in the
+   reassuring direction. */
+
+async function dropboxSpace(env) {
+  const token = await dropboxAccessToken(env);
+  if (!token) return { space: null, space_reason: 'dropbox_unreachable' };
+  try {
+    const res = await fetch('https://api.dropboxapi.com/2/users/get_space_usage', {
+      method: 'POST', headers: { Authorization: 'Bearer ' + token },
+    });
+    if (!res.ok) return { space: null, space_reason: 'dropbox_refused' };
+    const d = await res.json();
+    const alloc = d && d.allocation ? d.allocation.allocated : null;
+    if (!d || !Number.isFinite(d.used)) return { space: null, space_reason: 'unreadable_answer' };
+    return { space: { used_bytes: d.used,
+      allocated_bytes: Number.isFinite(alloc) ? alloc : null,
+      percent_used: Number.isFinite(alloc) && alloc > 0
+        ? Math.round((d.used / alloc) * 1000) / 10 : null } };
+  } catch { return { space: null, space_reason: 'dropbox_unreachable' }; }
+}
+
+const SH_TOP_CASES = 8;
+
+async function storageHealth(env) {
+  const like = DBX_KEY_PREFIX + '%';
+  /* Every arm is one aggregate statement over an indexed or full-scan-once
+     table — no per-case loop, no statement that grows with the data. */
+  const agg = async (where, binds = []) => {
+    const r = await env.DB.prepare(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(size_bytes), 0) AS b FROM case_evidence WHERE ${where}`)
+      .bind(...binds).first();
+    return { count: Number(r && r.n) || 0, bytes: Number(r && r.b) || 0 };
+  };
+  const dbxLive = await agg("deleted_at IS NULL AND r2_key LIKE ?", [like]);
+  const dbxGone = await agg("deleted_at IS NOT NULL AND r2_key LIKE ?", [like]);
+  const r2Live = await agg("deleted_at IS NULL AND r2_key NOT LIKE ?", [like]);
+  /* THE OPEN DECISION'S INVENTORY. Legacy video in R2 is untouched by policy
+     (owner, 2026-08-17) and whether to export and remove it is a decision
+     nobody has made — this screen informs that decision and must not perform
+     it. Nothing in this route writes. */
+  const r2Video = await agg(
+    "deleted_at IS NULL AND r2_key NOT LIKE ? AND content_type LIKE 'video/%'", [like]);
+  const r2Gone = await agg("deleted_at IS NOT NULL AND r2_key NOT LIKE ?", [like]);
+
+  /* Copies the portal filed elsewhere: timestamped video sent to the case
+     folder, and report PDFs. Metadata counts — the files live in Dropbox. */
+  const missing = await missingTables(env);
+  const vstCopies = missing.includes('video_stamp') ? null
+    : Number((await env.DB.prepare(
+        'SELECT COUNT(*) AS n FROM video_stamp WHERE dropbox_path IS NOT NULL').first() || {}).n) || 0;
+  const pdfFiled = Number((await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM build_events WHERE action = 'report_pdf_saved'`).first() || {}).n) || 0;
+
+  /* Integrity coverage: how much of the LIVE evidence has a live hash record.
+     Unknown (null) when the table has not arrived — unknown must not draw as
+     "nothing is recorded". */
+  let integrity = null;
+  if (!missing.includes('evidence_integrity')) {
+    const cov = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM case_evidence e
+        WHERE e.deleted_at IS NULL AND EXISTS (
+          SELECT 1 FROM evidence_integrity i
+           WHERE i.artifact_kind = 'evidence' AND i.artifact_id = e.id
+             AND i.superseded_at IS NULL AND i.sha256 IS NOT NULL)`).first();
+    const total = dbxLive.count + r2Live.count;
+    const withHash = Number(cov && cov.n) || 0;
+    integrity = { live_files: total, with_hash: withHash,
+                  not_yet_recorded: Math.max(0, total - withHash) };
+  }
+
+  /* The heaviest cases, one GROUP BY, bounded. Split by store so "move this
+     case" conversations start from facts. */
+  const { results: top } = await env.DB.prepare(
+    `SELECT case_no,
+            COALESCE(SUM(CASE WHEN r2_key LIKE ?1 THEN size_bytes END), 0) AS dropbox_bytes,
+            COALESCE(SUM(CASE WHEN r2_key NOT LIKE ?1 THEN size_bytes END), 0) AS r2_bytes,
+            COUNT(*) AS files
+       FROM case_evidence WHERE deleted_at IS NULL
+      GROUP BY case_no ORDER BY SUM(size_bytes) DESC LIMIT ?2`)
+    .bind(like, SH_TOP_CASES).all();
+
+  return {
+    cloudflare: { ...(await evidenceUsage(env)),
+      live: r2Live, live_video: r2Video, deleted_rows: r2Gone.count },
+    dropbox: { live: dbxLive, deleted_rows: dbxGone.count,
+      video_copies_filed: vstCopies, report_pdfs_filed: pdfFiled,
+      ...(await dropboxSpace(env)) },
+    integrity,
+    top_cases: top || [],
+    generated_at: nowIso(),
+  };
+}
+
 const EVIDENCE_CLASSES = ['client_deliverable', 'internal_only', 'do_not_use', 'needs_review', 'needs_redaction'];
 
 /* ------------------------------------------------------- EVIDENCE INTEGRITY
@@ -11434,6 +11538,12 @@ async function route(request, env) {
   if (p === '/storage' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return json({ storage: await evidenceUsage(env) });
+  }
+
+  m = null;
+  if (p === '/storage-health' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return json(await storageHealth(env));
   }
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/subjects$/);
