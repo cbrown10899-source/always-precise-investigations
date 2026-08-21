@@ -32,7 +32,7 @@ item is finished.
 | 13 | Portal palette normalization | ✅ **DONE — LIVE VERIFIED** by the owner 2026-08-21, at `fcd3d38` (#199) |
 | 14 | Storage Health | ✅ **DONE — LIVE VERIFIED** by the owner 2026-08-21, at `96e994d` (#202) |
 | 15 | Case Closeout | ✅ **DONE — LIVE VERIFIED** by the owner 2026-08-21, at `2494716` (#203) |
-| 16 | Client Delivery Center | not started |
+| 16 | Client Delivery Center | ✅ **DONE — DEPLOYED** at `883fd6d` (#204). LIVE VERIFY **OPEN** for the owner |
 | 17 | Retention Controls | not started |
 
 **Item 12 — REPORT DAILY SUMMARY BUILDER — was inserted by the owner on
@@ -195,6 +195,38 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Do not interrupt the current coding unit. Record this queue only"*, and
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
+
+## 📌 Unit 16 — what shipped (#204, `883fd6d`)
+
+**Client Delivery Center — what is ready to go out, and nothing sends.** The
+owner's spec is CASEBUILD.md's own "COMPLETED CASE / DELIVERY CENTER"
+paragraph; audit and derived decisions D1–D6 in
+`case-portal/DELIVERY-CENTER.md`; detail in CLAUDE.md under *"The delivery
+center says what went out, and sends nothing"*.
+
+`GET /delivery-center` (admin-only) leads the Reports & Packages desk with one
+row per package-bearing case: the newest build with stamps and names, contents
+by role, the filed-PDF fact, the video-link fact through the SAME
+classification-gated statement `/completed` uses, the invoice summary and the
+send count — bounded at 60, children via parent subqueries, nothing written.
+**Delivery status is derived, never stored** (Delivered / Ready to deliver /
+In preparation). **Copy delivery message** is client-safe composed text a
+person pastes into their own email — link line only when a link is actually
+offerable, invoice line only when one was sent, no rate, no internal wording
+(asserted). **No send button of any kind** — "Never auto-email evidence" is
+the owner's line, the desk says it, a test asserts it, and POST is 404.
+
+**No schema, no portal-setup dispatch.** Deploys green: site `32440542351`,
+portal Worker `32440542377`.
+
+**Suites at merge:** worker **2508/0**, portal **2332/0**, intake **236/0**
+(untouched), deploy guard **68/0**. Two suite-only hardenings rode along (a
+word-bounded client-safe filter; the preview section asserts its synchronous
+paint instead of racing the fixture's own error handler).
+
+**LIVE VERIFY (owner):** Reports & Packages on your devices — does the
+delivery row for a real case say what that client is actually owed, and does
+the copied message read the way you'd send it?
 
 ## 📌 Unit 15 — what shipped (#203, `2494716`)
 
@@ -738,6 +770,18 @@ node .github/test-deploy.mjs                    # expect 68 / 0
 
 Then the ordinary chain: PR → merge if green → pull master → deploy → live
 verify → **save point** → next unit (item 4, Admin report/mobile workflow fix).
+
+## 🚦 DEPLOYMENT — 2026-08-21, master `883fd6d` (#204) — Unit 16, Client Delivery Center
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/intake/` + `/portal/` | `883fd6d` | `883fd6d` | **DEPLOYED** — `deploy.yml` 32440542351 success |
+| `api-case-portal` | `883fd6d` | `883fd6d` | **DEPLOYED** — `deploy-portal.yml` 32440542377 success |
+| Schema | — | — | **No change.** Nothing owed; portal-setup deliberately NOT run |
+| Save point | — | — | `save/2026-08-21-0238-883fd6d`, the merge push's automatic firing |
+
+Tests at merge: worker **2508/0**, portal **2332/0**, intake **236/0**, deploy
+guard **68/0**.
 
 ## 🚦 DEPLOYMENT — 2026-08-21, master `2494716` (#203) — Unit 15, Case Closeout
 
