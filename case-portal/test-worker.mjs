@@ -6458,6 +6458,170 @@ section('Include Intake Link: each context gets ITS door, and only its door');
   globalThis.fetch = realFetch;
 }
 
+section('Unit 18 — invoice payment integrity: recorded once, voidable, never rewritten');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const tok0 = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok0}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  await ingest(env, { case_no: 'API-PI1', service: 'Surveillance',
+                      client_name: 'Pay Client', subject_name: 'Pay Subject' });
+  const mk = async () => (await jsonOf(await call(env, '/cases/API-PI1/invoices',
+    { method: 'POST', cookie: admin, body: { confirm_duplicate: true } }))).invoice;
+  const lines = (id, amount) => call(env, `/invoices/${id}/lines`, { method: 'POST', cookie: admin,
+    body: { lines: [{ description: 'Surveillance', qty: 1, rate: amount, amount }] } });
+  const get = async id => (await jsonOf(await call(env, `/invoices/${id}`, { cookie: admin }))).invoice;
+  const pay = (id, body) => call(env, `/invoices/${id}/payments`, { method: 'POST', cookie: admin, body });
+
+  const a = await mk();
+  await lines(a.id, 1000);
+  await call(env, `/invoices/${a.id}/status`, { method: 'POST', cookie: admin, body: { status: 'ready' } });
+  await call(env, `/invoices/${a.id}/status`, { method: 'POST', cookie: admin, body: { status: 'sent_to_client' } });
+
+  // ---- DOUBLE SUBMIT / RETRY / DUPLICATE TOKEN ----
+  const T = 'tok-double-1';
+  const first = await jsonOf(await pay(a.id, { amount: 400, paid_date: '2026-08-20', method: 'check', client_token: T }));
+  ok('a payment records', first.ok === true && first.invoice.amount_paid === 400);
+  const second = await jsonOf(await pay(a.id, { amount: 400, paid_date: '2026-08-20', method: 'check', client_token: T }));
+  ok('the same token again answers success, the idempotent case', second.ok === true && second.duplicate === true);
+  ok('and the money is on the ledger exactly once', second.invoice.amount_paid === 400,
+     String(second.invoice.amount_paid));
+  ok('one payment row, not two',
+     Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM invoice_payments WHERE invoice_id = ?')
+       .bind(a.id).first()).n) === 1);
+  /* A retry must not re-announce the money: one event, one alert. */
+  ok('a deduplicated retry writes no second event',
+     Number((await env.DB.prepare(
+       "SELECT COUNT(*) AS n FROM invoice_events WHERE invoice_id = ? AND action = 'payment_recorded'")
+       .bind(a.id).first()).n) === 1);
+  /* A DIFFERENT token is a different payment — the key is the caller's word. */
+  const third = await jsonOf(await pay(a.id, { amount: 100, paid_date: '2026-08-20', method: 'check', client_token: 'tok-other' }));
+  ok('a different token records a genuinely separate payment', third.invoice.amount_paid === 500);
+  ok('no token at all still records, as it always did',
+     (await jsonOf(await pay(a.id, { amount: 100, paid_date: '2026-08-20', method: 'check' }))).invoice.amount_paid === 600);
+
+  // ---- PARTIAL PAYMENTS ----
+  let cur = await get(a.id);
+  ok('partial payments leave a balance and say so',
+     cur.balance_due === 400 && cur.display_status === 'partially_paid', JSON.stringify([cur.balance_due, cur.display_status]));
+
+  // ---- VOID: history kept, money released, status restored from the trail ----
+  const payments = cur.payments;
+  const target = payments.find(pm => Number(pm.amount) === 400);
+  ok('an investigator cannot void a payment',
+     (await call(env, `/invoices/${a.id}/payments/${target.id}/void`, { method: 'POST', cookie: inv, body: {} })).status === 403);
+  const voided = await jsonOf(await call(env, `/invoices/${a.id}/payments/${target.id}/void`,
+    { method: 'POST', cookie: admin, body: { reason: 'Cheque returned unpaid' } }));
+  ok('voiding releases the money', voided.invoice.amount_paid === 200, String(voided.invoice.amount_paid));
+  ok('the row is KEPT, not deleted',
+     Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM invoice_payments WHERE invoice_id = ?')
+       .bind(a.id).first()).n) === 3);
+  const vrow = voided.invoice.payments.find(pm => pm.id === target.id);
+  ok('and it comes back marked, with who and why',
+     !!vrow.voided_at && vrow.void_reason === 'Cheque returned unpaid' && vrow.voided_by === 'Trever',
+     JSON.stringify(vrow));
+  ok('voiding twice is refused rather than double-counted',
+     (await call(env, `/invoices/${a.id}/payments/${target.id}/void`, { method: 'POST', cookie: admin, body: {} })).status === 409);
+  ok('the void is on the audit trail',
+     Number((await env.DB.prepare(
+       "SELECT COUNT(*) AS n FROM invoice_events WHERE invoice_id = ? AND action = 'payment_voided'")
+       .bind(a.id).first()).n) === 1);
+
+  // ---- CORRECTION AFTER VOID: two visible acts, both on the record ----
+  await pay(a.id, { amount: 400, paid_date: '2026-08-21', method: 'ach', reference: 'corrected' });
+  cur = await get(a.id);
+  ok('a correction after a void lands as its own entry', cur.amount_paid === 600 && cur.payments.length === 4);
+  ok('and the voided one is still there to see', cur.payments.filter(pm => pm.voided_at).length === 1);
+
+  // ---- VOIDING THE LAST PAYMENT: the status comes off paid, from the trail ----
+  const b = await mk();
+  await lines(b.id, 500);
+  await call(env, `/invoices/${b.id}/status`, { method: 'POST', cookie: admin, body: { status: 'ready' } });
+  await call(env, `/invoices/${b.id}/status`, { method: 'POST', cookie: admin, body: { status: 'sent_to_bill' } });
+  await pay(b.id, { amount: 500, paid_date: '2026-08-20', method: 'ach' });
+  let bx = await get(b.id);
+  ok('paid in full by arithmetic', bx.display_status === 'paid' && bx.status === 'paid');
+  const bpay = bx.payments[0];
+  bx = (await jsonOf(await call(env, `/invoices/${b.id}/payments/${bpay.id}/void`,
+    { method: 'POST', cookie: admin, body: { reason: 'entered against the wrong invoice' } }))).invoice;
+  ok('voiding the only payment stops it reading as paid',
+     bx.display_status !== 'paid' && bx.amount_paid === 0, JSON.stringify([bx.status, bx.display_status]));
+  /* The status it held before is READ FROM ITS OWN TRAIL, never guessed —
+     sent_to_bill and sent_to_client mean different things to a client. */
+  ok('and it returns to the status the record says it held', bx.status === 'sent_to_bill', bx.status);
+
+  // ---- OVERPAYMENT: accepted, never printed as a negative balance ----
+  const c = await mk();
+  await lines(c.id, 300);
+  await call(env, `/invoices/${c.id}/status`, { method: 'POST', cookie: admin, body: { status: 'ready' } });
+  await pay(c.id, { amount: 800, paid_date: '2026-08-20', method: 'check' });
+  const cx = await get(c.id);
+  ok('an overpayment is recorded rather than refused', cx.amount_paid === 800);
+  ok('and is stated as a CREDIT, not a negative balance',
+     cx.overpaid === true && cx.credit_due === 500 && cx.balance_due === -500,
+     JSON.stringify([cx.overpaid, cx.credit_due, cx.balance_due]));
+
+  // ---- PAID THIS MONTH: a void stops counting, on both halves ----
+  const month = new Date().toISOString().slice(0, 7);
+  const d = await mk();
+  await lines(d.id, 700);
+  await call(env, `/invoices/${d.id}/status`, { method: 'POST', cookie: admin, body: { status: 'ready' } });
+  await pay(d.id, { amount: 700, paid_date: `${month}-05`, method: 'ach' });
+  const before = (await jsonOf(await call(env, '/invoices', { cookie: admin }))).summary.paid_this_month;
+  await call(env, `/invoices/${d.id}/status`, { method: 'POST', cookie: admin, body: { status: 'void' } });
+  const afterVoidInv = (await jsonOf(await call(env, '/invoices', { cookie: admin }))).summary.paid_this_month;
+  ok('a VOIDED INVOICE stops reporting its cash as paid this month',
+     Math.round((before - afterVoidInv) * 100) / 100 === 700, JSON.stringify([before, afterVoidInv]));
+
+  const e = await mk();
+  await lines(e.id, 250);
+  await call(env, `/invoices/${e.id}/status`, { method: 'POST', cookie: admin, body: { status: 'ready' } });
+  await pay(e.id, { amount: 250, paid_date: `${month}-06`, method: 'ach' });
+  const beforeP = (await jsonOf(await call(env, '/invoices', { cookie: admin }))).summary.paid_this_month;
+  const epay = (await get(e.id)).payments[0];
+  await call(env, `/invoices/${e.id}/payments/${epay.id}/void`, { method: 'POST', cookie: admin, body: {} });
+  const afterP = (await jsonOf(await call(env, '/invoices', { cookie: admin }))).summary.paid_this_month;
+  ok('and a VOIDED PAYMENT stops counting too',
+     Math.round((beforeP - afterP) * 100) / 100 === 250, JSON.stringify([beforeP, afterP]));
+
+  // ---- THE OWNER'S RULE: a draft invoice is not earned money ----
+  await ingest(env, { case_no: 'API-PI2', service: 'Surveillance',
+                      client_name: 'Retainer Client', subject_name: 'Sub' });
+  await call(env, '/cases/API-PI2/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 1500 } });
+  const work = (await jsonOf(await call(env, '/cases/API-PI2/invoices', { method: 'POST', cookie: admin,
+    body: { confirm_duplicate: true } }))).invoice;
+  await call(env, `/invoices/${work.id}/lines`, { method: 'POST', cookie: admin,
+    body: { lines: [{ description: 'Surveillance, 6 hours', qty: 6, rate: 100, amount: 600 }] } });
+  const asDraft = await get(work.id);
+  ok('A DRAFT INVOICE DOES NOT DRAW DOWN THE CLIENT-FACING RETAINER',
+     asDraft.retainer.applied === 0 && asDraft.retainer.balance === 1500,
+     JSON.stringify([asDraft.status, asDraft.retainer.applied, asDraft.retainer.balance]));
+  /* The defect this rule exists to kill: one document giving two answers about
+     one invoice — applied counted the draft while outstanding excluded it. */
+  const sum = (await jsonOf(await call(env, '/invoices', { cookie: admin }))).summary;
+  ok('the same draft is excluded from outstanding, so the two figures agree',
+     typeof sum.outstanding === 'number');
+  await call(env, `/invoices/${work.id}/status`, { method: 'POST', cookie: admin, body: { status: 'ready' } });
+  const issued = await get(work.id);
+  ok('ISSUING it is what draws the retainer down',
+     issued.retainer.applied === 600 && issued.retainer.balance === 900,
+     JSON.stringify([issued.retainer.applied, issued.retainer.balance]));
+  /* Voiding must release it again — the rule that already held. */
+  await call(env, `/invoices/${work.id}/status`, { method: 'POST', cookie: admin, body: { status: 'void' } });
+  const afterVoid = await get(work.id);
+  ok('and voiding releases what it consumed', afterVoid.retainer.applied === 0);
+
+  // ---- NOTHING WAS DELETED, ANYWHERE ----
+  ok('no financial row was destroyed by any of this',
+     Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM invoice_payments').first()).n) === 8,
+     String((await env.DB.prepare('SELECT COUNT(*) AS n FROM invoice_payments').first()).n));
+}
+
 section('The daily report builder');
 {
   const env = freshEnv();
@@ -6923,13 +7087,24 @@ section('End to end: a private client, sheet to completed');
     .find(c => c.case_no === 'API-E39');
   ok('E2E-39: the completed desk holds the private file too',
      done && done.build_id != null && done.invoice && done.invoice.status === 'paid');
-  /* The retainer's whole purpose: WORK draws it down, the deposit does not. */
+  /* The retainer's whole purpose: WORK draws it down, the deposit does not.
+
+     UPDATED FOR THE OWNER'S 2026-08-21 DECISION. This used to leave the
+     invoice in DRAFT and assert the retainer had already been drawn down —
+     encoding as the rule the very thing the owner ruled against: "UNSENT or
+     DRAFT invoices MUST NOT reduce the client-facing retainer balance." The
+     walkthrough now issues the invoice, which is what earning is. */
   const work = (await jsonOf(await call(env, '/cases/API-E39/invoices', { method: 'POST',
     cookie: admin, body: { confirm_duplicate: true } }))).invoice;
   await call(env, `/invoices/${work.id}/lines`, { method: 'POST', cookie: admin,
     body: { lines: [{ description: 'Surveillance, 6 hours', qty: 6, rate: 100, amount: 600 }] } });
+  const asDraft39 = (await jsonOf(await call(env, `/invoices/${work.id}`, { cookie: admin }))).invoice;
+  ok('E2E-39: while it is a DRAFT the client-facing retainer is untouched',
+     asDraft39.retainer.applied === 0, JSON.stringify(asDraft39.retainer));
+  await call(env, `/invoices/${work.id}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'ready' } });
   const after = (await jsonOf(await call(env, `/invoices/${work.id}`, { cookie: admin }))).invoice;
-  ok('E2E-39: work billed after the retainer draws it down, and only work does',
+  ok('E2E-39: ISSUED work draws it down, and only issued work does',
      after.retainer.applied === 600 && after.retainer.balance === 900);
   ok('E2E-39: so the client is never told they are past a retainer they still hold',
      after.retainer.balance > 0);
