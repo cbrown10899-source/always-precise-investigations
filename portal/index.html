@@ -10323,10 +10323,13 @@ function reportOpenHtml(open, admin, badge){
         </div>`
     : REP_VIEW === "dsb" ? dsBuilderHtml(open, day, editable)
     : REP_VIEW === "chronology" ? (dayEntries.length
-        ? `<ol class="tl">${dayEntries.map(e => `<li class="tl-i">
+        ? `<ol class="tl">${dayEntries.map(e => `<li class="tl-i"${e.removed_at ? ` style="opacity:.5"` : ""}>
              <div class="tl-t">${esc(t12(e.at_time))}</div>
-             <div class="tl-b"><div class="tl-d">${esc(e.description)}</div>
-               ${e.location ? `<div class="tl-m">at ${esc(e.location)}</div>` : ""}</div></li>`).join("")}</ol>`
+             <div class="tl-b">
+               <div class="tl-d"${e.removed_at ? ` style="text-decoration:line-through"` : ""}>${esc(e.description)}</div>
+               ${e.location ? `<div class="tl-m">at ${esc(e.location)}</div>` : ""}
+               ${e.removed_at ? `<div class="tl-m">Removed ${when(e.removed_at)}${e.removed_by ? " by " + esc(e.removed_by) : ""} &mdash; not in the report or the package.</div>` : ""}
+             </div></li>`).join("")}</ol>`
         : `<div class="empty">No activity entries are attached to this report's day.</div>`)
     : REP_VIEW === "summary" ? (day
         ? `<dl class="detail">
@@ -11658,7 +11661,12 @@ function packagePanel(){
      state too: a package type without video owes no video. */
   const nPhoto = items.filter(i => i.role === "photo").length;
   const nVideo = items.filter(i => i.role === "video").length;
-  const nDoc = items.filter(i => i.role === "document").length;
+  /* THE WORKER WRITES `attachment` (Unit 19). This filtered for a role string
+     that `addEvidence` never produces — `photo`, `video` or `attachment` — so
+     the Documents count read 0 however many PDFs were in the package, and the
+     Evidence step read as undone on a document-only build. Both names are
+     accepted so an older row cannot fall out of the count. */
+  const nDoc = items.filter(i => i.role === "attachment" || i.role === "document").length;
   /* The effective package type — 'custom' is a marker beside the stored
      column, not a value in it (see build_custom in schema.sql). Custom owes
      no type-based judgement about video: the admin chose the contents. */
@@ -11741,6 +11749,7 @@ function packagePanel(){
       <div class="row"><span>${pkgMark("done")} Client package</span>
         <button class="btn sm" data-act="pkgPdf">Download PDF</button></div>
     </div>
+    ${daysPanel()}
     <div class="actions">
       ${""/* A REAL FILE IS THE PRIMARY ACTION (owner, 2026-08-18). Print stays,
              because printing to paper is still a thing an office does, but it
@@ -11793,10 +11802,17 @@ function daysPanel(){
         ? `<button class="btn sm ghost" data-act="pkgRepRemove" data-id="${r.id}">Remove</button>`
         : `<span style="color:var(--muted);font-size:.82rem">${esc(label(r.status))}</span>`}
     </div>`).join("");
-  const availRows = draft ? avail.map(r => `<div class="row">
+  /* A DAY APPROVED AFTER FINALIZE IS NOT INVISIBLE (Unit 19). This drew only
+     while the build was a draft, and `daysPanel` itself was only ever called
+     for a draft — so a day approved after the package was finalized appeared
+     nowhere, while the Completed desk counted it and reported more days than
+     the package held. It is named on a finalized build too, with the way to
+     act on it (Reopen) instead of an Add the finalized package must refuse. */
+  const availRows = avail.map(r => `<div class="row">
       <span style="color:var(--muted)">${esc(fmtDay(r.report_date))} &mdash; approved, not in the package</span>
-      <button class="btn sm" data-act="pkgRepAdd" data-id="${r.id}">Add day</button>
-    </div>`).join("") : "";
+      ${draft ? `<button class="btn sm" data-act="pkgRepAdd" data-id="${r.id}">Add day</button>`
+              : `<span style="color:var(--muted);font-size:.82rem">Reopen to include it</span>`}
+    </div>`).join("");
   const total = reps.reduce((n, r) => n + (Number(r.hours) || 0), 0);
   return `<div class="feebox" style="margin:10px 0">
     <div class="row"><span><b>Days in this package</b></span>
@@ -12083,8 +12099,14 @@ function pkgDocHtml(){
         <div style="font-size:.85rem;color:var(--muted)">Photo ${String(r.n).padStart(2, "0")}${r.time ? ` &middot; ${esc(r.time)}` : ""} &middot; ${esc(r.desc)}</div>
       </div>`).join("")}` : "",
     videos: () => videos.length ? `<h3${drawn ? rule : ""}>${H("videos")}</h3>
-      ${videos.map((r, i2) => `<div style="margin:0 0 10px">
-        <b>Video ${String(i2 + 1).padStart(2, "0")}</b>${r.time ? ` &middot; ${esc(r.time)}` : ""}
+      ${/* ONE EXHIBIT NUMBER PER EXHIBIT (Unit 19). This counted videos within
+            their own section while the Evidence index prints `r.n`, the
+            document-wide sequence — so "Video 01" in the section was "Video 03"
+            in the index whenever a photo or document preceded it. Photos always
+            used `r.n`; only video disagreed, and a document that numbers one
+            exhibit two ways is unusable as a reference. */""}
+      ${videos.map(r => `<div style="margin:0 0 10px">
+        <b>Video ${String(r.n).padStart(2, "0")}</b>${r.time ? ` &middot; ${esc(r.time)}` : ""}
         <div style="font-size:.9rem">${esc(r.desc)}</div>
       </div>`).join("")}
       <p style="font-size:.9rem"><b>VIDEO DELIVERY</b> &mdash; Selected video evidence is provided
