@@ -46,12 +46,13 @@ completed.
 
 | | |
 | --- | --- |
-| **Master** | **`5835cdf`** |
+| **Master** | **`73b7f5b`** |
 | **Working tree** | clean; nothing unpushed; no branch in flight |
 | **Background work** | none running |
-| **Suites at that SHA** | worker **2627/0** · portal **2423/0** · deploy guard **68/0** · intake **205/0** (untouched) |
-| **Schema owed** | **none** — the last two dispatches are applied and verified |
-| **Next unit** | **25 — Final security / authorization / regression pass** |
+| **Suites at that SHA** | worker **2649/0** · portal **2423/0** · deploy guard **68/0** · intake **236/0** (untouched by Unit 25; the 205 in the previous handoff was stale) |
+| **Schema owed** | **none** — Unit 25 added no table, no column and no migration |
+| **Deployed at that SHA** | `Deploy case-portal Worker` ✅ success · `Deploy site to Cloudflare Pages` ✅ success |
+| **Next unit** | **26 — Final master reconciliation + project closeout** (23 is above it and stays owner-blocked) |
 
 ## Shipped and deployed (do not rebuild)
 
@@ -66,11 +67,17 @@ completed.
 | **Ready-is-unsent retainer rule** | #212 | `59d00c8` | open |
 | **24** File Queue (REQUIRED unit) | #213 | `8988b29` | ✅ **owner visual check PASSED** |
 | **24** page-level rendering tests | #214 | `5835cdf` | tests only |
+| **25** Security / authorization / regression pass | #215 | `73b7f5b` | open — see below |
 
 ## What is left
 
 - **23 — Consolidated Live Verification Sweep.** Needs owner eyes. **Deferred
   where real cases or data are required; do not manufacture production data.**
+  **Unit 25 added two things to it, both machine-verified and neither
+  live-checked:** an investigator opening a case they were reassigned should
+  see their own days and expenses and none of the previous investigator's, and
+  the field view's "Day N" should still be the CASE's day number. Both are
+  pinned by the suite; what has not happened is a person looking at them.
 - **25 — Final security / authorization / regression pass.** ✅ **DONE.** The
   route table was walked mechanically and three defects were verified and
   fixed: a prior investigator's worked hours and expense claims reaching the
