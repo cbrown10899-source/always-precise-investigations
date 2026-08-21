@@ -46,10 +46,10 @@ completed.
 
 | | |
 | --- | --- |
-| **Master** | **`9beb0e8`** (Unit 28) |
+| **Master** | **`730141e`** (Units 30–31) |
 | **Working tree** | clean; nothing unpushed; no branch in flight |
 | **Background work** | none running |
-| **Suites at that SHA** | worker **2709/0** · portal **2436/0** · deploy guard **68/0** · intake **236/0** · visitor-alerts **47/0** |
+| **Suites at that SHA** | worker **2749/0** · portal **2452/0** · deploy guard **68/0** · intake **236/0** · visitor-alerts **47/0** |
 | **Schema owed** | **NONE.** `case_day_end` was applied by `portal-setup` run **32508101361** at `74629fe` — ✅ success, **including the admin-bootstrap step that failed at `46a06ad9`**, so the token race did not recur |
 | **Deployed** | at `74629fe`: `Deploy case-portal Worker` ✅ · `Deploy site to Cloudflare Pages` ✅ · `portal-setup` ✅ (run 32508101361). `Daily site health` ✅ run #22 |
 | **Closeout** | ✅ **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** — see `case-portal/FINAL-LEDGER.md` |
@@ -63,16 +63,16 @@ exactly.** Update it as the queue moves.
 
 | | |
 | --- | --- |
-| **Current unit** | 30/31 in flight; 28 and 29 shipped |
+| **Current unit** | ✅ **NONE — 28 through 33 are complete.** |
 | **Branch** | `claude/new-session-p6fktf` |
-| **Master** | `3df2037` (Unit 29) |
+| **Master** | `730141e` (Units 30–31) |
 | **Unit 28 — Legal pre-case access** | ✅ **SHIPPED** #221 at `9beb0e8`, both deploys green. LIVE VERIFY open |
 | **Unit 29 — Billing settings UI** | ✅ **SHIPPED** #222 at `3df2037` |
-| **Unit 30 — Case types UI** | CODED + worker-tested (2749/0); portal test written; **portal suite running**; not yet pushed |
-| **Unit 31 — Route cleanup** | CODED as DOCUMENTATION: `/pricing`, `/external-storage`, `/profiles/match` classified **INTERNAL / NO UI EXPECTED** and kept — the audit found all three are tested authorization boundaries, so **nothing was removed**. Boundary tests added |
-| **Unit 32 — Reachability re-audit** | Sweep run against corrected code; result below |
-| **Unit 33 — Final reconciliation** | not started |
-| **Exact next action** | read the portal run, then commit 30+31, PR, merge, verify deploys, then Unit 32 write-up and Unit 33 |
+| **Unit 30 — Case types UI** | ✅ **SHIPPED** #223 at `730141e` |
+| **Unit 31 — Route cleanup** | ✅ **SHIPPED** #223. DOCUMENTATION ONLY: `/pricing`, `/external-storage`, `/profiles/match` classified **INTERNAL / NO UI EXPECTED** and kept — the audit found all three are tested authorization boundaries, so **nothing was removed**. Boundary tests added |
+| **Unit 32 — Reachability re-audit** | ✅ **DONE.** No new BLOCKER/HIGH gap |
+| **Unit 33 — Final reconciliation** | ✅ **DONE** — every discrepancy reconciled in `FINAL-LEDGER.md` PART 6B |
+| **Exact next action** | none — the queue is complete. Owner visual verification of the Legal card, Invoice defaults and Case types remains open |
 
 **Unit 32's interim result:** every rate-sheet and intake door is reachable
 including Legal; all six Settings panels are reachable; and the only routes
@@ -185,6 +185,8 @@ CREATE A BRANCH. DO NOT DEPLOY. DO NOT START THE NEXT UNIT."*
 | 23 | Consolidated Live Verification Sweep | ⏸️ **LIVE VERIFICATION DEFERRED — REQUIRES REAL CASE/DATA** (owner, 2026-08-21). *Do not manufacture production data.* |
 | 24 | **Required** File Queue + portal aesthetic redesign | ✅ **DONE — DEPLOYED** at `8988b29` (#213), **visual check passed by the owner 2026-08-21**; page-level rendering tests followed |
 | 25 | Final security / authorization / regression pass | ✅ **DONE** — audit, three verified fixes, record in `case-portal/SECURITY-PASS.md`. No schema, no portal-setup dispatch |
+| 29–31 | Billing settings UI · Case types UI · Internal-route classification | ✅ **DONE — DEPLOYED** at `3df2037` (#222) and `730141e` (#223). Nothing was removed in 31: all three routes are tested boundaries |
+| 32–33 | Reachability re-audit · final correction reconciliation | ✅ **DONE.** No new BLOCKER/HIGH; `FINAL-LEDGER.md` PART 6B is the record |
 | 28 | **Legal pre-case access** (Production Truth BLOCKER) | ✅ **DONE — DEPLOYED** at `9beb0e8` (#221). Legal / Law Firm card on Rate Sheets, Send legal intake on Send to someone new, explicit send context. No third pricing source. LIVE VERIFY **OPEN** |
 | 27 | **Ended by Admin / Ended by [name]** (owner decision 4) | ✅ **DONE** — `case_day_end`, additive; authorization untouched; legacy days stay readable. **Owes a portal-setup dispatch** |
 | 26 | Final master reconciliation + project closeout | ✅ **DONE** — every durable requirement classified in `case-portal/FINAL-LEDGER.md`. No non-deferred approved requirement is missing |
