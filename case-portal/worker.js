@@ -3557,15 +3557,39 @@ const ALERT_PREVIEW_CASE = 'API-EXAMPLE-0001';
 
    The detail lives behind the sign-in, which is exactly where it already lives. */
 const ALERT_CHANNELS = ['sms', 'email'];
-function alertText(event, caseNo, channel) {
+/* WHICH BUSINESS THIS IS (Unit 20). The owner asked that an alert say Private,
+   Insurance or Legal, and INTAKE-OPS.md §1 asked for it before that. It is a
+   CATEGORY FACT, read from `submissions.kind` — a typed column with a CHECK —
+   plus the legal marker `isLegalSub` already owns. Reading it is not inference;
+   nothing is guessed from a name or an address, the rule the send context
+   fought for. Absent or unresolvable, the alert simply does not say. */
+const ALERT_CATEGORY = { claims: 'Insurance', consumer: 'Private' };
+async function alertCategory(env, caseNo) {
+  const clean = /^[A-Za-z0-9-]{3,64}$/.test(String(caseNo || '')) ? String(caseNo) : '';
+  if (!clean) return null;
+  try {
+    const sub = await env.DB.prepare('SELECT kind, payload FROM submissions WHERE case_no = ?')
+      .bind(clean).first();
+    if (!sub) return null;
+    if (isLegalSub(sub)) return 'Legal';
+    return ALERT_CATEGORY[sub.kind] || null;
+  } catch { return null; }
+}
+
+function alertText(event, caseNo, channel, category) {
   const found = ALERT_EVENTS.find(([id]) => id === event);
   if (!found) return null;
   if (channel === 'sms') {
-    // Deliberately ignores caseNo. Nothing about the case reaches this string.
+    /* Deliberately reads NEITHER caseNo NOR category. A text crosses a carrier
+       network and sits on a lock screen, so nothing about the case reaches this
+       string — not the reference, not which business it is. There is no path by
+       which case data can get here, which is stronger than filtering it out. */
     return `${found[1]}. Open the portal.`;
   }
   const clean = /^[A-Za-z0-9-]{3,64}$/.test(String(caseNo || '')) ? String(caseNo) : '';
-  return `${found[1]}${clean ? ` — case ${clean}` : ''}. Sign in to the portal for the detail.`;
+  const cat = ['Private', 'Insurance', 'Legal'].includes(category) ? category : '';
+  return `${found[1]}${cat ? ` — ${cat}` : ''}${clean ? `${cat ? ',' : ' —'} case ${clean}` : ''}`
+    + `. Sign in to the portal for the detail.`;
 }
 
 /* SEND AN ALERT TO WHOEVER ASKED FOR THAT ONE.
@@ -3620,8 +3644,12 @@ async function notifyAdmins(env, event, caseNo) {
 
     const label = (ALERT_EVENTS.find(([id]) => id === event) || [])[1] || 'Portal alert';
     const clean = /^[A-Za-z0-9-]{3,64}$/.test(String(caseNo || '')) ? String(caseNo) : '';
-    const text = alertText(event, clean, 'email');
-    const subject = `${label}${clean ? ` — case ${clean}` : ''}`;
+    /* Resolved HERE, at the one chokepoint, rather than passed by each caller —
+       the same reason the TEST- guard lives here. A seventh alert added later
+       says which business it is without anyone remembering to thread it. */
+    const category = await alertCategory(env, clean);
+    const text = alertText(event, clean, 'email', category);
+    const subject = `${label}${category ? ` — ${category}` : ''}${clean ? `${category ? ',' : ' —'} case ${clean}` : ''}`;
     const html = `<p style="font:15px/1.5 system-ui,sans-serif">${escHtml(text)}</p>`;
 
     let sent = 0;
@@ -3629,11 +3657,31 @@ async function notifyAdmins(env, event, caseNo) {
       const r = await sendMail(env, { to: addr, subject, text, html });
       if (r.sent) sent++;
     }
+    /* REACHING NOBODY IS A FAILURE, AND IT IS NO LONGER SILENT. */
+    if (!sent) await recordAlertFailure(env, event, clean, 'send_failed', to.length);
     return { sent, of: to.length };
   } catch {
     /* The event is the point; telling someone about it is not worth failing it. */
+    await recordAlertFailure(env, event, caseNo, 'error', 0);
     return { sent: 0, reason: 'error' };
   }
+}
+
+/* The minimum that makes a failed alert visible, and nothing more — no queue,
+   no retry, no redelivery (the owner deferred the status log by name). Written
+   best-effort: a failed record can never change what the caller was told, and
+   never turns a recorded intake or payment into an error. */
+async function recordAlertFailure(env, event, caseNo, reason, ofCount) {
+  try {
+    if ((await missingTables(env)).includes('alert_failure')) return;
+    const clean = /^[A-Za-z0-9-]{3,64}$/.test(String(caseNo || '')) ? String(caseNo) : null;
+    /* A TEST- case never alerts, so it never fails to alert either — keeping
+       fixtures out of the office's failure list the same way. */
+    if (clean && /^TEST-/i.test(clean)) return;
+    await env.DB.prepare(
+      `INSERT INTO alert_failure (event, case_no, reason, of_count, at) VALUES (?, ?, ?, ?, ?)`)
+      .bind(event, clean, reason, Number(ofCount) || 0, nowIso()).run();
+  } catch { /* never breaks the thing it describes */ }
 }
 
 /* WHAT CAN ACTUALLY BE DELIVERED TODAY, said plainly so the office is never
@@ -3723,12 +3771,26 @@ async function saveRecipient(request, env, user, id) {
                 alert_reports, alert_packages, alert_tasks, created_at, updated_at
            FROM notify_recipient WHERE id = ?`).bind(id).first()
     : row;
-  return json({ ok: true, delivery: alertDelivery(env), recipient: {
+  return json({ ok: true, delivery: alertDelivery(env), failures: await alertFailures(env), recipient: {
     id: saved.id, label: saved.label, email: saved.email || '', phone: saved.phone || '',
     enabled: Number(saved.enabled) === 1,
     alerts: Object.fromEntries(ALERT_IDS.map(k => [k, Number(saved['alert_' + k]) === 1])),
     created_at: saved.created_at, updated_at: saved.updated_at,
   } }, existing ? 200 : 201);
+}
+
+/* WHAT THE OFFICE CAN SEE ABOUT ALERTS THAT DID NOT ARRIVE. Admin-only, like
+   everything on this screen. Bounded, newest first, and it carries no client
+   detail — the event, the case reference, why, and when. A silent failure is
+   the same as no alerting at all, only more expensive (INTAKE-OPS.md §1). */
+async function alertFailures(env) {
+  try {
+    if ((await missingTables(env)).includes('alert_failure')) return { not_set_up: true, recent: [], count: 0 };
+    const { results } = await env.DB.prepare(
+      'SELECT event, case_no, reason, of_count, at FROM alert_failure ORDER BY id DESC LIMIT 20').all();
+    const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM alert_failure').first();
+    return { not_set_up: false, recent: results || [], count: Number((n || {}).n) || 0 };
+  } catch { return { not_set_up: false, recent: [], count: 0, unavailable: true }; }
 }
 
 function alertDelivery(env) {
@@ -9702,6 +9764,7 @@ const DEMO_SWEEP = [
   ['case_retention',        'DELETE FROM case_retention WHERE case_no LIKE ?'],
   ['legal_hold',            'DELETE FROM legal_hold WHERE case_no LIKE ?'],
   ['retention_event',       'DELETE FROM retention_event WHERE case_no LIKE ?'],
+  ['alert_failure',         'DELETE FROM alert_failure WHERE case_no LIKE ?'],
   /* --- the four that reference case_days, before case_days itself --- */
   ['case_day_summary',      'DELETE FROM case_day_summary WHERE case_no LIKE ?'],
   ['activity_log',          'DELETE FROM activity_log WHERE case_no LIKE ?'],
@@ -11155,7 +11218,7 @@ const EXPECTED_TABLES = [
   'case_day_pauses', 'lead_status', 'send_log', 'invoice_retainer',
   'payment_methods', 'payment_send', 'retainer_receipt', 'case_archive', 'case_deleted', 'notify_recipient', 'case_phone',
   'retainer_payment', 'retainer_payment_void', 'retainer_payment_token',
-  'invoice_payment_token', 'invoice_payment_void',
+  'invoice_payment_token', 'invoice_payment_void', 'alert_failure',
   'video_stamp', 'dropbox_auth', 'activity_source', 'activity_voice_event',
   'photo_stamp',
   'profile', 'profile_contact', 'profile_phone', 'case_profile',
@@ -12438,8 +12501,12 @@ async function route(request, env) {
     const outcome = await recordRetainerPayment(env, m[1], tok,
       { amount: amt, method: meth, paid_on: on, reference: clean(body.reference, 200) }, user.id);
     if (outcome === 'indeterminate') return json(INDETERMINATE_PAYMENT, 409);
-    /* The money is on the ledger; the alert says so and never how much. */
-    await notifyAdmins(env, 'payments', m[1]);
+    /* The money is on the ledger; the alert says so and never how much — and
+       says it ONCE (Unit 20). This fired on 'duplicate' too, so a double click
+       or a retry recorded one payment and sent two alerts: the ledger was
+       idempotent and the notification about it was not. Probed and recorded as
+       a defect on 2026-08-17, fixed here. */
+    if (outcome !== 'duplicate') await notifyAdmins(env, 'payments', m[1]);
     return json({ ok: true, authorization: await authorizationFor(env, m[1], true) });
   }
 
