@@ -12860,7 +12860,10 @@ section('Daily summary on a phone: one column, honest targets, nothing sideways'
   ok('field heights agree within a native-widget pixel',
      rhythm.hMin >= 43.5 && rhythm.hMax - rhythm.hMin <= 1.5,
      JSON.stringify([rhythm.hMin, rhythm.hMax]));
-  ok('the checkbox is a real 18px box', Math.abs(rhythm.cb - 18) <= 1, String(rhythm.cb));
+  /* 18px at desk, 22px under 560 — the phone block grows the thumb target on
+     purpose. What is asserted is that it is a REAL box, not the browser's
+     13px default. */
+  ok('the checkbox is a real box at this width', rhythm.cb >= 18 && rhythm.cb <= 23, String(rhythm.cb));
 }
 
 section('The palette lives in one place, and the page reads at every size');
