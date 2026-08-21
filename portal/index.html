@@ -1483,6 +1483,30 @@
     transition:top .12s;}
   .skiplink:focus{top:0;}
 
+  /* UNIT 24 — the file queue. The approved direction, built from the EXISTING
+     token layer: white surface, navy structure, teal informational, amber
+     waiting, green ready, grey completed. No new colour is introduced — every
+     value below is a Unit 13 token pair, which is what keeps the anti-drift
+     budget satisfied and the phone palette identical to the desktop's. */
+  .fqcards{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:10px;margin:12px 0;}
+  .fqcard{border:1px solid var(--line);border-radius:10px;background:#fff;padding:12px 14px;
+    text-align:left;cursor:pointer;min-height:64px;}
+  .fqcard b{display:block;font-size:1.5rem;line-height:1.1;}
+  .fqcard span{font-size:.8rem;color:var(--muted);}
+  .fqcard.on{outline:2px solid var(--teal);outline-offset:-2px;}
+  .fqcard.fqwait{border-color:var(--warn);background:var(--warn-bg);}
+  .fqcard.fqinfo{border-color:var(--info-line,var(--line));background:var(--info-bg-2);}
+  .fqcard.fqready{border-color:var(--ok-line);background:var(--ok-soft);}
+  .fqcard.fqdone{background:var(--panel);}
+  .tag.fqwait{background:var(--warn-bg);color:var(--warn);}
+  .tag.fqinfo{background:var(--info-bg-2);color:var(--info-ink);}
+  .tag.fqready{background:var(--ok-bg);color:var(--ok-ink);}
+  .tag.fqdone{background:var(--neutral-bg);color:var(--neutral-ink);}
+  .tag.fqhold{background:var(--bad-bg);color:var(--bad-ink);}
+  .tag.fqstamp{background:var(--media-bg,var(--panel));color:var(--media-ink,var(--muted));}
+  .fqtbl tr.fqon{background:var(--teal-wash);}
+  .fqdetail .doc-table td{font-size:.9rem;}
+
   /* UNIT 18 — a voided payment stays visible and stops being money. Struck
      through, muted, with its reason beside it; token colors only. */
   .tl-m{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;}
@@ -2231,6 +2255,7 @@ function shell(inner){
         item("profiles", "&#127970; Clients &amp; Firms"),
         item("calendar", "&#128197; Calendar"))
       + group("Delivery &amp; Billing",
+        item("filequeue", "&#128462; File queue"),
         item("delivery", "&#128230; Reports &amp; Packages"),
         item("sheets", "&#128179; Rate Sheets"),
         item("invoices", "&#129534; Billing"))
@@ -2244,6 +2269,7 @@ function shell(inner){
         item("search", "&#128269; Search"),
         item("cases", "&#128193; My assignments"),
         item("tasks", "&#9989; Tasks"),
+        item("filequeue", "&#128193; File queue"),
         item("today", "&#9728; Today"),
         item("calendar", "&#128197; Calendar"))
       + group("Delivery",
@@ -2989,6 +3015,149 @@ function auditView(){
         <td data-l="Change">${esc(e.what)}</td>
         <td data-l="Who">${esc(e.who || "—")}</td></tr>`).join("")}</tbody></table>`
       : `<div class="empty">Nothing has been changed yet on any case that is still in the working set.</div>`}
+  </div>`;
+}
+
+/* UNIT 24 — THE FILE QUEUE. One operational surface over files the portal
+   already holds: photographs, timestamped copies, video records, filed report
+   PDFs and documents. It is a READ — nothing here uploads, renames, moves or
+   deletes anything, and every action hands off to the screen that already owns
+   it.
+
+   THE STATES ARE THE PORTAL'S OWN. `classification` already carries five
+   values that mean what the approved mockup's columns mean, so no second
+   status vocabulary was invented to imitate a picture; Completed and Awaiting
+   verification are derived from a finalized package and an integrity record.
+
+   The palette is Unit 13's, unchanged: white surface, navy structure, teal for
+   information, amber for waiting, green for done, grey for finished — through
+   the existing token pairs, so nothing new was added to the colour layer. */
+let FQ = null, FQ_STATE_LOAD = "idle", FQ_PICK = null, FQ_FILTER = "";
+async function loadFileQueue(){
+  if(FQ_STATE_LOAD === "loading") return;
+  FQ_STATE_LOAD = "loading";
+  try{ FQ = await api("/file-queue"); FQ_STATE_LOAD = "ok"; }
+  catch{ FQ = null; FQ_STATE_LOAD = "failed"; }
+  paint();
+}
+
+const FQ_WORDS = {
+  awaiting_processing: ["Awaiting processing", "fqwait"],
+  awaiting_review:     ["Awaiting review", "fqwait"],
+  awaiting_verification:["Awaiting verification", "fqinfo"],
+  ready_to_file:       ["Ready to file", "fqready"],
+  completed:           ["Completed", "fqdone"],
+  held_back:           ["Held back", "fqhold"],
+};
+const FQ_KIND = { photo: "&#128247;", video: "&#127909;", report: "&#128196;", document: "&#128441;" };
+
+function fqBytes(n){
+  const b = Number(n) || 0;
+  if(b < 1024) return b + " B";
+  if(b < 1048576) return (b / 1024).toFixed(0) + " KB";
+  return (b / 1048576).toFixed(b < 10485760 ? 1 : 0) + " MB";
+}
+
+function fileQueueView(){
+  if(FQ_STATE_LOAD === "idle") setTimeout(loadFileQueue, 0);
+  if(FQ_STATE_LOAD === "failed"){
+    return `<div class="card"><div class="bar"><h2 style="margin:0">File queue</h2></div>
+      <div class="loaderr">The file queue could not be read just now &mdash; that is not the same
+        as there being no files. <button class="btn sm ghost" data-act="fqRetry">Try again</button></div></div>`;
+  }
+  if(!FQ) return `<div class="card"><div class="empty">Loading the file queue&hellip;</div></div>`;
+  const sum = FQ.summary || {};
+  const admin = ME.role === "admin";
+
+  /* Summary across the top — the mockup's shape, with REAL counts. A band
+     that would read zero for a state nobody uses is simply not drawn. */
+  const cards = [
+    ["awaiting_processing", sum.awaiting_processing],
+    ["awaiting_review", sum.awaiting_review],
+    ["awaiting_verification", sum.awaiting_verification],
+    ["ready_to_file", sum.ready_to_file],
+    ["completed", sum.completed],
+    ["held_back", sum.held_back],
+  ].filter(([, n]) => Number(n) > 0 || FQ_FILTER);
+
+  const files = (FQ.files || []).filter(f => !FQ_FILTER || f.state === FQ_FILTER);
+  const pick = FQ_PICK ? (FQ.files || []).find(f => f.id === FQ_PICK) : null;
+
+  const row = f => {
+    const [word, tone] = FQ_WORDS[f.state] || ["—", ""];
+    return `<tr class="${f.id === FQ_PICK ? "fqon" : ""}">
+      <td data-l="File"><button class="linklike" data-act="fqPick" data-id="${f.id}">${
+        FQ_KIND[f.kind] || ""} ${esc(f.filename)}</button>${
+        f.timestamped ? ` <span class="tag fqstamp">timestamped</span>` : ""}</td>
+      <td data-l="Case"><button class="linklike" data-act="openCase" data-case="${esc(f.case_no)}">${esc(f.case_no)}</button></td>
+      <td class="hide" data-l="Uploaded">${when(f.uploaded_at)}</td>
+      <td class="hide" data-l="Size">${fqBytes(f.size_bytes)}</td>
+      <td data-l="Status"><span class="tag ${tone}">${word}</span></td>
+    </tr>`;
+  };
+
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">File queue</h2>
+      <button class="btn sm ghost" data-act="fqRetry">Refresh</button></div>
+    <p class="note">Every file the portal holds for the cases you can see &mdash; photographs,
+      timestamped copies, video records, filed reports and documents. This is a view: nothing here
+      uploads, renames, moves or deletes anything, and each file opens on the case that owns it.</p>
+
+    <div class="fqcards">${cards.map(([st, n]) => {
+      const [word, tone] = FQ_WORDS[st];
+      return `<button class="fqcard ${tone}${FQ_FILTER === st ? " on" : ""}" data-act="fqFilter" data-s="${st}">
+        <b>${Number(n) || 0}</b><span>${word}</span></button>`;
+    }).join("")}</div>
+    ${FQ_FILTER ? `<div class="chip">${esc((FQ_WORDS[FQ_FILTER] || [""])[0])}
+      <button data-act="fqFilter" data-s="" aria-label="Clear filter">&times;</button></div>` : ""}
+
+    ${files.length ? `<table class="stacktbl fqtbl"><thead><tr>
+        <th>File</th><th>Case</th><th class="hide">Uploaded</th><th class="hide">Size</th><th>Status</th>
+      </tr></thead><tbody>${files.map(row).join("")}</tbody></table>`
+      : `<div class="empty">${FQ_FILTER ? "Nothing is in that state."
+          : "No files yet. Photographs and documents arrive from the field and from Case media."}</div>`}
+    ${FQ.capped ? `<p class="hint">Showing the most recent ${(FQ.files || []).length} files.</p>` : ""}
+
+    ${pick ? fqDetail(pick, admin) : ""}
+  </div>`;
+}
+
+/* The selected-file workspace: what the record actually holds about this file,
+   and the door to the screen that can change it. Real data only — a field the
+   portal does not have is simply absent rather than filled with a placeholder. */
+function fqDetail(f, admin){
+  const [word] = FQ_WORDS[f.state] || ["—"];
+  const rows = [
+    ["File name", f.filename],
+    ["Type", f.kind === "report" ? "Report PDF" : f.kind],
+    ["Case", f.case_no],
+    ...(admin && f.client_name ? [["Client", f.client_name]] : []),
+    ...(f.subject_name ? [["Subject", f.subject_name]] : []),
+    ["Uploaded", when(f.uploaded_at)],
+    ...(f.uploaded_by ? [["Uploaded by", f.uploaded_by]] : []),
+    ["Size", fqBytes(f.size_bytes)],
+    ["Status", word],
+    ["Classification", label(f.classification)],
+    ...(admin && f.stored ? [["Stored in", f.stored]] : []),
+  ];
+  return `<div class="feebox fqdetail" style="margin-top:14px">
+    <div class="row"><span><b>${esc(f.filename)}</b></span>
+      <button class="btn sm ghost" data-act="fqPick" data-id="">Close</button></div>
+    <table class="doc-table"><tbody>${rows.map(([k, v]) =>
+      `<tr><td style="width:38%"><b>${esc(k)}</b></td><td>${esc(String(v))}</td></tr>`).join("")}</tbody></table>
+    <div class="row" style="margin-top:8px"><span><b>Integrity</b></span>
+      <span>${f.integrity === null
+        ? `<span class="tag rs-draft">not recorded on this database yet</span>`
+        : f.integrity
+          ? `<span class="tag closed">hash recorded</span>`
+          : `<span class="tag new">not yet recorded</span>`}</span></div>
+    <p class="hint">An integrity record kept by this portal, not a third-party authentication.</p>
+    ${f.note ? `<div class="row"><span style="color:var(--muted);font-size:.85rem">${esc(f.note)}</span><span></span></div>` : ""}
+    <div class="actions" style="margin-top:10px">
+      <button class="btn sm" data-act="openCase" data-case="${esc(f.case_no)}">Open the case</button>
+    </div>
+    <p class="hint">Classifying, verifying, downloading and removing a file all stay on Case media,
+      where those actions already live &mdash; one writer each.</p>
   </div>`;
 }
 
@@ -8899,6 +9068,7 @@ function paint(){
     : TAB === "profiles" ? profilesView()
     : TAB === "search" ? searchView()
     : TAB === "tasks" ? tasksView()
+    : TAB === "filequeue" ? fileQueueView()
     : TAB === "audit" ? auditView()
     : TAB === "sheets" ? sheetsView()
     : TAB === "delivery" ? deliveryView()
@@ -16166,6 +16336,9 @@ document.addEventListener("click", ev => {
   else if(act === "logout"){ doLogout(); }
   else if(act === "openCase"){ openCase(el.dataset.case || el.dataset.no); }
   else if(act === "tasksRetry"){ TASKS_STATE = "idle"; TASKS = null; paint(); }
+  else if(act === "fqRetry"){ FQ_STATE_LOAD = "idle"; FQ = null; paint(); }
+  else if(act === "fqPick"){ FQ_PICK = el.dataset.id ? Number(el.dataset.id) : null; paint(); }
+  else if(act === "fqFilter"){ FQ_FILTER = el.dataset.s || ""; FQ_PICK = null; paint(); }
   else if(act === "auditRetry"){ AUDIT_STATE = "idle"; AUDIT = null; paint(); }
   else if(act === "shRefresh"){ loadStorageHealth(true); }
   else if(act === "dcRefresh"){ loadDeliveryCenter(true); }
