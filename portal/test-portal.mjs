@@ -12864,6 +12864,16 @@ section('Daily summary on a phone: one column, honest targets, nothing sideways'
      purpose. What is asserted is that it is a REAL box, not the browser's
      13px default. */
   ok('the checkbox is a real box at this width', rhythm.cb >= 18 && rhythm.cb <= 23, String(rhythm.cb));
+  /* A TIME IS FIVE CHARACTERS (owner, on the iPad): sized to its content,
+     never stretched into the field beside it, on any engine. */
+  const timeW = await page.evaluate(() => {
+    const t = document.getElementById('ds_time');
+    const cell = t.closest('.f');
+    return { w: t.getBoundingClientRect().width,
+      over: t.getBoundingClientRect().right - cell.getBoundingClientRect().right };
+  });
+  ok('the Started time input is content-sized', timeW.w >= 110 && timeW.w <= 160, JSON.stringify(timeW));
+  ok('and never exceeds its own cell', timeW.over <= 0.5, JSON.stringify(timeW));
 }
 
 section('The palette lives in one place, and the page reads at every size');

@@ -1457,6 +1457,12 @@
   .dsb-actrow{display:flex;gap:8px;flex-wrap:wrap;margin-left:27px;}
   .dsb-actrow select,.dsb-actrow input{font-size:.85rem;min-height:36px;}
   .dsb-wrap .rbody{margin-top:6px;}
+  /* A TIME IS FIVE CHARACTERS. Stretched to a full grid column, Safari's
+     native time widget draws a wide bezel that reads as colliding with the
+     field beside it (owner, on the iPad, 2026-08-21). Content-sized, with
+     min-width:0 so no engine's intrinsic widget can exceed its cell. */
+  .dsb-grid .f input,.dsb-grid .f select{width:100%;min-width:0;}
+  .dsb-grid .f input[type=time]{max-width:150px;}
   .dsb-chip{display:inline-block;font-size:.62rem;font-weight:700;letter-spacing:.06em;
     color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:1px 5px;
     vertical-align:middle;margin-left:4px;}
