@@ -31,7 +31,7 @@ item is finished.
 | 12 | Report Daily Summary Builder | ✅ **DONE — DEPLOYED** at `46ccad6` (#198). LIVE VERIFY **OPEN** for the owner |
 | 13 | Portal palette normalization | ✅ **DONE — LIVE VERIFIED** by the owner 2026-08-21, at `fcd3d38` (#199) |
 | 14 | Storage Health | ✅ **DONE — LIVE VERIFIED** by the owner 2026-08-21, at `96e994d` (#202) |
-| 15 | Case Closeout | ✅ **DONE — DEPLOYED** at `2494716` (#203). LIVE VERIFY **OPEN** for the owner |
+| 15 | Case Closeout | ✅ **DONE — LIVE VERIFIED** by the owner 2026-08-21, at `2494716` (#203) |
 | 16 | Client Delivery Center | not started |
 | 17 | Retention Controls | not started |
 
@@ -220,9 +220,8 @@ portal Worker `32437272383`.
 **Suites at merge:** worker **2495/0**, portal **2322/0** (green on the first
 full run), intake **236/0** (untouched), deploy guard **68/0**.
 
-**LIVE VERIFY (owner):** open a real case's Billing & closing with work still
-outstanding — do the notes beside the ticks say what you know to be true, and
-does closing still obey you over them?
+**LIVE VERIFIED by the owner, 2026-08-21** — marked complete in their own
+words.
 
 ## 📌 Unit 14 — what shipped (#202, `96e994d`)
 
