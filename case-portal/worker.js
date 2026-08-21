@@ -2249,6 +2249,144 @@ const daysBetween = (aIso, bIso) => {
    assigned to them, on cases that are theirs. Hidden cases are excluded
    through the existing helper, so a deleted or archived case cannot put work
    on someone's desk. */
+/* UNIT 24 — THE FILE QUEUE, one operational view over files that already
+   exist. An AGGREGATION, exactly as the brief requires: no new table, no
+   second copy of a file, no duplicate status vocabulary — and **no byte is
+   read and no Dropbox call is made**, which is Unit 14's rule and is what
+   keeps this screen cheap enough to open all day.
+
+   THE STATES ARE THE ONES THE PORTAL ALREADY HAS. `case_evidence.classification`
+   carries a CHECK with five values and they already mean what the mockup's
+   queue concepts mean, so nothing is invented to imitate a picture:
+
+     needs_review     → Awaiting review
+     needs_redaction  → Awaiting processing (work before it can go out)
+     client_deliverable, integrity not recorded → Awaiting verification
+     client_deliverable, in a finalized package → Completed
+     client_deliverable otherwise               → Ready to file
+     internal_only, do_not_use                  → Held back
+
+   "Completed" and "Awaiting verification" are the only derived ones, and both
+   are derived from records that already exist — a finalized build carrying the
+   file, and an integrity row for it. */
+const FILE_QUEUE_CAP = 200;
+const FQ_STATE = {
+  needs_review: 'awaiting_review',
+  needs_redaction: 'awaiting_processing',
+  internal_only: 'held_back',
+  do_not_use: 'held_back',
+};
+
+async function fileQueue(env, user) {
+  const missing = await missingTables(env);
+  const admin = user.role === 'admin';
+  const hidden = await hiddenCases(env);
+  const hasIntegrity = !missing.includes('evidence_integrity');
+  const hasStamp = !missing.includes('photo_stamp');
+
+  /* One bounded read for the files, scoped in the SQL for the field. */
+  const { results } = await env.DB.prepare(
+    `SELECT e.id, e.case_no, e.filename, e.content_type, e.size_bytes,
+            e.classification, e.uploaded_at, e.note, e.entry_id,
+            e.r2_key, u.display_name AS uploaded_by,
+            s.client_name, s.subject_name
+       FROM case_evidence e
+       JOIN submissions s ON s.case_no = e.case_no
+       LEFT JOIN users u ON u.id = e.uploaded_by
+      WHERE e.deleted_at IS NULL
+        AND (?1 = 1 OR s.assigned_to = ?2)
+      ORDER BY e.uploaded_at DESC, e.id DESC
+      LIMIT ?3`).bind(admin ? 1 : 0, user.id, FILE_QUEUE_CAP).all();
+
+  const rows = (results || []).filter(r => !hidden.has(r.case_no));
+  const ids = rows.map(r => r.id);
+  const inSet = ids.length ? ids.map(() => '?').join(',') : '0';
+
+  /* Which files have an integrity record, and which are a timestamped copy —
+     two small metadata reads over the ids already fetched, never per row. */
+  const integ = new Set();
+  if (hasIntegrity && ids.length) {
+    try {
+      const { results: ir } = await env.DB.prepare(
+        `SELECT artifact_id FROM evidence_integrity
+          WHERE artifact_kind = 'evidence' AND artifact_id IN (${inSet})
+            AND superseded_at IS NULL`).bind(...ids).all();
+      for (const r of ir || []) integ.add(r.artifact_id);
+    } catch { /* an absent column is not a reason to fail the screen */ }
+  }
+  const stamped = new Set();
+  if (hasStamp && ids.length) {
+    try {
+      const { results: sr } = await env.DB.prepare(
+        `SELECT stamped_id FROM photo_stamp
+          WHERE stamped_id IN (${inSet}) AND superseded_at IS NULL`).bind(...ids).all();
+      for (const r of sr || []) stamped.add(r.stamped_id);
+    } catch { /* older shape: the badge is simply not shown */ }
+  }
+  /* Files that have gone out in a finalized package. One statement. */
+  const shipped = new Set();
+  if (!missing.includes('build_items') && ids.length) {
+    try {
+      const { results: br } = await env.DB.prepare(
+        `SELECT DISTINCT bi.evidence_id FROM build_items bi
+           JOIN case_builds b ON b.id = bi.build_id
+          WHERE bi.evidence_id IN (${inSet}) AND b.finalized_at IS NOT NULL`).bind(...ids).all();
+      for (const r of br || []) shipped.add(r.evidence_id);
+    } catch { /* the state simply falls back to Ready to file */ }
+  }
+
+  const kindOf = (ct, name) => {
+    const t = String(ct || '');
+    if (t.startsWith('image/')) return 'photo';
+    if (t.startsWith('video/')) return 'video';
+    if (/\.pdf$/i.test(String(name || '')) || t === 'application/pdf') return 'report';
+    return 'document';
+  };
+
+  const files = rows.map(r => {
+    const cls = r.classification;
+    let state = FQ_STATE[cls] || null;
+    if (!state) {
+      state = shipped.has(r.id) ? 'completed'
+        : (hasIntegrity && !integ.has(r.id)) ? 'awaiting_verification'
+        : 'ready_to_file';
+    }
+    return {
+      id: r.id, case_no: r.case_no, filename: r.filename,
+      kind: kindOf(r.content_type, r.filename),
+      timestamped: stamped.has(r.id),
+      size_bytes: r.size_bytes, uploaded_at: r.uploaded_at,
+      uploaded_by: r.uploaded_by || null,
+      classification: cls, state,
+      /* Unknown is not the same as "no file has one" — Unit 11's rule. */
+      integrity: hasIntegrity ? integ.has(r.id) : null,
+      note: r.note || null, entry_id: r.entry_id || null,
+      subject_name: r.subject_name || null,
+      /* Who is PAYING is never sent to the field, here as everywhere. */
+      ...(admin ? { client_name: r.client_name || null } : {}),
+      /* The App Folder path is admin-only on the way out (Unit 11). */
+      ...(admin ? { stored: String(r.r2_key || '').startsWith('dropbox:') ? 'Dropbox' : 'Cloudflare' } : {}),
+    };
+  });
+
+  const count = st => files.filter(f => f.state === st).length;
+  return json({
+    files,
+    summary: {
+      total: files.length,
+      awaiting_processing: count('awaiting_processing'),
+      awaiting_review: count('awaiting_review'),
+      awaiting_verification: count('awaiting_verification'),
+      ready_to_file: count('ready_to_file'),
+      completed: count('completed'),
+      held_back: count('held_back'),
+    },
+    capped: rows.length >= FILE_QUEUE_CAP,
+    integrity_available: hasIntegrity,
+    generated_at: nowIso(),
+  });
+}
+
 async function taskBoard(env, user) {
   if ((await missingTables(env)).includes('case_tasks')) {
     return json({ today: [], upcoming: [], overdue: [], completed: [], not_set_up: true });
@@ -11727,6 +11865,7 @@ async function route(request, env) {
      recent-activity feed and the storage card it summarises. */
   if (p === '/attention' && method === 'GET') return needsAttention(env, user);
   if (p === '/tasks' && method === 'GET') return taskBoard(env, user);
+  if (p === '/file-queue' && method === 'GET') return fileQueue(env, user);
   if (p === '/audit' && method === 'GET') return auditTrail(request, env, user);
   if (p === '/recent-activity' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
