@@ -13891,6 +13891,184 @@ section('Delivery center: what is ready to go out, what has gone out, and nothin
      (await call(env, '/delivery-center', { method: 'POST', cookie: admin, body: {} })).status === 404);
 }
 
+section('Retention: five derived states, a review that is only words, and intent that destroys nothing');
+{
+  const env = freshEnv();
+  DBX.reset();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-RT1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+
+  let d = await jsonOf(await call(env, '/cases/API-RT1/retention', { cookie: admin }));
+  ok('an untouched case is Active', d.state === 'active' && !d.review_due && !d.hold, JSON.stringify(d.state));
+
+  // Retain Until — manual, and a passed date is WORDS ONLY.
+  await call(env, '/cases/API-RT1/retention', { method: 'POST', cookie: admin,
+    body: { retain_until: '2030-01-01' } });
+  d = await jsonOf(await call(env, '/cases/API-RT1/retention', { cookie: admin }));
+  ok('a future retain-until reads as Retain Until, not due',
+     d.state === 'retain_until' && d.retain_until === '2030-01-01' && d.review_due === false);
+  await call(env, '/cases/API-RT1/retention', { method: 'POST', cookie: admin,
+    body: { retain_until: '2020-01-01' } });
+  d = await jsonOf(await call(env, '/cases/API-RT1/retention', { cookie: admin }));
+  ok('a passed date becomes RETENTION REVIEW DUE and nothing else',
+     d.state === 'retain_until' && d.review_due === true);
+  const rows = await env.DB.prepare(
+    `SELECT (SELECT COUNT(*) FROM case_evidence) AS ev, (SELECT COUNT(*) FROM submissions) AS s`).first();
+  ok('— no row anywhere was touched by the date passing', rows.s === 1);
+  await call(env, '/cases/API-RT1/retention', { method: 'POST', cookie: admin,
+    body: { retain_until: '' } });
+  d = await jsonOf(await call(env, '/cases/API-RT1/retention', { cookie: admin }));
+  ok('a blank clears it back to Active — the /meta rule', d.state === 'active' && d.retain_until === null);
+
+  // Scheduling is a record of intent.
+  const before = await env.DB.prepare(
+    `SELECT (SELECT COUNT(*) FROM case_evidence) AS ev,
+            (SELECT COUNT(*) FROM case_reports) AS r,
+            (SELECT COUNT(*) FROM submissions) AS s`).first();
+  await call(env, '/cases/API-RT1/retention/schedule', { method: 'POST', cookie: admin, body: {} });
+  d = await jsonOf(await call(env, '/cases/API-RT1/retention', { cookie: admin }));
+  ok('scheduling reads as Scheduled for Deletion', d.state === 'scheduled' && d.scheduled_at);
+  const after = await env.DB.prepare(
+    `SELECT (SELECT COUNT(*) FROM case_evidence) AS ev,
+            (SELECT COUNT(*) FROM case_reports) AS r,
+            (SELECT COUNT(*) FROM submissions) AS s`).first();
+  ok('and destroyed NOTHING — every count identical',
+     JSON.stringify(before) === JSON.stringify(after));
+  ok('no Dropbox call happened for any of this',
+     !DBX.calls.some(u => /files\/delete|files\/download/.test(u)), JSON.stringify(DBX.calls.slice(-3)));
+  await call(env, '/cases/API-RT1/retention/unschedule', { method: 'POST', cookie: admin, body: {} });
+  d = await jsonOf(await call(env, '/cases/API-RT1/retention', { cookie: admin }));
+  ok('cancelling returns the ladder to Active', d.state === 'active');
+
+  // Archived and Deleted are the EXISTING tables, read into the ladder.
+  await call(env, '/cases/API-RT1/archive', { method: 'POST', cookie: admin, body: {} });
+  d = await jsonOf(await call(env, '/cases/API-RT1/retention', { cookie: admin }));
+  ok('archive reads as Archived through the existing marker', d.state === 'archived');
+  await call(env, '/cases/API-RT1/restore', { method: 'POST', cookie: admin, body: {} });
+}
+
+section('Retention: the hold outranks, exactly along the owner\'s line');
+{
+  const env = freshEnv();
+  DBX.reset();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-RT2', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  const fd = new FormData();
+  fd.append('file', new File([new Uint8Array(700).fill(4)], 'held.jpg', { type: 'image/jpeg' }));
+  const up = await jsonOf(await worker.fetch(new Request(API + '/cases/API-RT2/evidence', {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env));
+
+  ok('a hold without a reason is refused — the reason IS the audit record',
+     (await call(env, '/cases/API-RT2/hold', { method: 'POST', cookie: admin, body: {} })).status === 400);
+  await call(env, '/cases/API-RT2/hold', { method: 'POST', cookie: admin,
+    body: { reason: 'Litigation anticipated — Smith v. Doe' } });
+  let d = await jsonOf(await call(env, '/cases/API-RT2/retention', { cookie: admin }));
+  ok('the hold is on, with its reason and its actor',
+     d.hold && d.hold.reason.includes('Smith v. Doe') && d.hold.placed_by === 'Trever');
+
+  // BLOCKED: schedule, case delete, evidence removal — each 409 naming the hold.
+  const sch = await call(env, '/cases/API-RT2/retention/schedule', { method: 'POST', cookie: admin, body: {} });
+  ok('a hold blocks scheduling deletion',
+     sch.status === 409 && (await jsonOf(sch)).code === 'legal_hold');
+  const del = await call(env, '/cases/API-RT2/delete', { method: 'POST', cookie: admin, body: {} });
+  ok('a hold blocks deleting the case',
+     del.status === 409 && (await jsonOf(del)).code === 'legal_hold');
+  const evd = await call(env, `/cases/API-RT2/evidence/${up.id}/delete`, { method: 'POST', cookie: admin, body: {} });
+  ok('a hold blocks removing evidence',
+     evd.status === 409 && (await jsonOf(evd)).code === 'legal_hold');
+  ok('— and the file is still there',
+     !!(await env.DB.prepare('SELECT 1 AS x FROM case_evidence WHERE id = ? AND deleted_at IS NULL')
+       .bind(up.id).first()));
+
+  // ALLOWED under hold: archive, restore, invoicing, reads.
+  ok('a hold still allows archiving',
+     (await call(env, '/cases/API-RT2/archive', { method: 'POST', cookie: admin, body: {} })).status === 200);
+  ok('and the hold can be released and re-placed while archived — preservation does not require un-finishing the case',
+     (await call(env, '/cases/API-RT2/hold/release', { method: 'POST', cookie: admin,
+        body: { reason: 'test toggle' } })).status === 200
+     && (await call(env, '/cases/API-RT2/hold', { method: 'POST', cookie: admin,
+        body: { reason: 'Litigation anticipated — Smith v. Doe' } })).status === 200);
+  ok('and restoring',
+     (await call(env, '/cases/API-RT2/restore', { method: 'POST', cookie: admin, body: {} })).status === 200);
+  ok('and billing',
+     (await call(env, '/cases/API-RT2/invoices', { method: 'POST', cookie: admin, body: {} })).status === 201);
+  ok('and ordinary reads',
+     (await call(env, '/cases/API-RT2/workspace', { cookie: admin })).status === 200);
+
+  // Release needs a reason too; then delete works again.
+  ok('release without a reason is refused',
+     (await call(env, '/cases/API-RT2/hold/release', { method: 'POST', cookie: admin, body: {} })).status === 400);
+  await call(env, '/cases/API-RT2/hold/release', { method: 'POST', cookie: admin,
+    body: { reason: 'Matter settled; preservation obligation ended.' } });
+  d = await jsonOf(await call(env, '/cases/API-RT2/retention', { cookie: admin }));
+  ok('the hold is off', d.hold === null);
+  ok('and the blocked acts unblock',
+     (await call(env, `/cases/API-RT2/evidence/${up.id}/delete`, { method: 'POST', cookie: admin, body: {} })).status === 200);
+
+  // The audit trail: actor, moment, reason, prior/new — both directions.
+  const ev = d.events || [];
+  const placed = ev.find(e => e.action === 'hold_placed');
+  const released = ev.find(e => e.action === 'hold_released');
+  ok('placing was audited with actor, reason and new value',
+     placed && placed.who === 'Trever' && placed.reason.includes('Smith v. Doe')
+       && placed.new_value && placed.at);
+  ok('release was audited with the prior value and its own reason',
+     released && released.prior_value.includes('Smith v. Doe')
+       && released.reason.includes('settled'));
+
+  // Boundaries.
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  await call(env, `/invite/${new URL(link, 'https://x.test').searchParams.get('invite')}/accept`,
+    { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const invc = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  for (const [pth, mth] of [['/cases/API-RT2/retention', 'GET'], ['/cases/API-RT2/retention', 'POST'],
+    ['/cases/API-RT2/hold', 'POST'], ['/cases/API-RT2/retention/schedule', 'POST']]) {
+    ok(`an investigator is refused: ${mth} ${pth}`,
+       (await call(env, pth, { method: mth, cookie: invc, body: mth === 'POST' ? { reason: 'x' } : undefined })).status === 403);
+  }
+  ok('and the public door does not exist',
+     (await call(env, '/cases/API-RT2/retention', {})).status === 401);
+}
+
+section('Retention: the guards three new tables owe, and the deleted-case gate holds');
+{
+  const env = freshEnv();
+  const db = new DatabaseSync(':memory:');
+  db.exec(SCHEMA.replace(/CREATE TABLE IF NOT EXISTS case_retention[\s\S]*?\);/, '')
+                .replace(/CREATE TABLE IF NOT EXISTS legal_hold[\s\S]*?\);/, '')
+                .replace(/CREATE TABLE IF NOT EXISTS retention_event[\s\S]*?\);/, '')
+                .replace(/CREATE INDEX IF NOT EXISTS idx_retev_case[^;]*;/, ''));
+  env.DB = d1(db);
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-RT3', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  const d = await jsonOf(await call(env, '/cases/API-RT3/retention', { cookie: admin }));
+  ok('before portal-setup the read degrades and says so',
+     d.not_set_up === true && d.state === 'active', JSON.stringify({ n: d.not_set_up, s: d.state }));
+  const w = await call(env, '/cases/API-RT3/retention', { method: 'POST', cookie: admin,
+    body: { retain_until: '2030-01-01' } });
+  ok('and the write refuses naming the workflow',
+     w.status === 503 && /portal-setup/.test((await jsonOf(w)).error));
+  ok('deleting still works exactly as before the unit',
+     (await call(env, '/cases/API-RT3/delete', { method: 'POST', cookie: admin, body: {} })).status === 200);
+
+  // On a full schema: a DELETED case's retention routes are behind the
+  // existing tombstone gate — restore first is the intended answer.
+  const env2 = freshEnv();
+  await bootstrapAdmin(env2);
+  const admin2 = (await login(env2, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env2, { case_no: 'API-RT4', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  await call(env2, '/cases/API-RT4/delete', { method: 'POST', cookie: admin2, body: {} });
+  const held = await call(env2, '/cases/API-RT4/hold', { method: 'POST', cookie: admin2,
+    body: { reason: 'x' } });
+  ok('a deleted case refuses retention writes through the existing gate — restore first',
+     held.status === 409 && (await jsonOf(held)).case_deleted === true, held.status);
+  const rd = await jsonOf(await call(env2, '/cases/API-RT4/retention', { cookie: admin2 }));
+  ok('while the read stays open and the ladder says Deleted', rd.state === 'deleted');
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

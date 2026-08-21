@@ -1572,6 +1572,69 @@ first gate missed: accepting one assigns the investigator and moves the case's
 stage. `/offers/:id/*` and `/my/offers/:id/*` resolve through the gate like
 invoices and builds.
 
+## Retention is records and state; the hold outranks; nothing destroys anything
+
+Unit 17 (owner's seven decisions verbatim in `case-portal/RETENTION.md`,
+derived decisions D1–D9 there; the audit ran first and the owner answered its
+seven stop items). Five states — **Active / Retain Until / Archived /
+Scheduled for Deletion / Deleted / Destruction Recorded** — and every one is
+**derived, never stored as one value** (`retentionState()` in the Worker):
+Active is the absence of markers, Archived and Deleted are the tables that
+already existed, and the unit added only the retain-until fact, the scheduled
+INTENT, the hold, and the audit trail. Display precedence Deleted > Scheduled
+> Archived > Retain Until > Active; the page never re-derives the ladder —
+two writers of one vocabulary drift.
+
+**Nothing in this unit deletes a byte, and that is the owner's own line.**
+"Deleted / Destruction Recorded" is an **audit state only** — it does not mean
+files were destroyed and does not authorize destroying any, and the panel says
+so in those words. Scheduling deletion is a **record of intent**: no file
+removed here or in Dropbox, no clock started, nothing runs on its own — the
+permanent explanation sits beside the button because the owner asked for it in
+words. **No automatic retention clock exists**: an admin sets or clears Retain
+Until by hand, and a passed date becomes **RETENTION REVIEW DUE** — computed
+against today on every read like invoice `overdue`, wording only, never an
+action.
+
+**The legal hold outranks the ladder and is enforced AT THE WRITERS, in the
+Worker**: `/cases/:no/delete`, `/cases/:no/retention/schedule` and
+`deleteEvidence` each refuse 409 naming the hold. Archive, restore, undelete,
+billing, reports and every read are untouched — the owner's decision 5 draws
+exactly that line. A page hiding a button is not enforcement. **Reason is
+REQUIRED on place AND release** (decision 7 audits both directions); it is
+optional on retain-until and scheduling, where the trail still records
+who/when/prior/new — requiring prose for a date change trains people to type
+"x".
+
+**`retention_event` is the audit trail** — action, prior value, new value,
+reason, actor, timestamp, append-only, written **best-effort** so a failed
+audit row can never break the action it describes (the `storage_failure`
+rule). Every write route answers with the fresh read, so the panel repaints
+from the response.
+
+**The archived write-gate passes the retention family on purpose** (D9): a
+hold must be placeable on a finished case without un-finishing it, and
+scheduling deletion on an archived case is the ordinary sequence. **The
+deleted gate is untouched** — a deleted case refuses retention writes, the
+panel withdraws its controls and says "put the case back first", and reads
+stay open so the history is still visible. Restore-first is the intended
+answer, asserted from both suites.
+
+The panel lives beside the closing checklist (Billing & closing), reuses the
+**existing** archive/restore/delete controls below it — no second writer for
+an action that already has one — and keeps the three read-states apart: a
+failed read says so with Try again, never drawing as a case with no retention
+state. Page globals are `RTN_*` because `RET_*` already belongs to the
+retainer-payment family — the class-name contest, at the JS layer.
+
+Three additive tables (`case_retention`, `legal_hold`, `retention_event`), no
+CHECKs, guarded through `missingTables()`, in `EXPECTED_TABLES`, swept by
+`DEMO_SWEEP`. Deferred by name, with the owner: any physical destruction,
+retention clocks and policies, Dropbox byte deletion, the legacy R2 export,
+two-person hold approval.
+
+**Adding these tables means a manual `portal-setup.yml` dispatch after merge.**
+
 ## Who gets told — admin alert recipients
 
 `notify_recipient` is **one row per recipient**, so "multiple phone numbers" is

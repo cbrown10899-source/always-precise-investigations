@@ -1621,3 +1621,52 @@ CREATE TABLE IF NOT EXISTS storage_failure (
   user_id  INTEGER REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_stfail_at ON storage_failure(id DESC);
+
+/* ------------------------------------------------ RETENTION CONTROLS (Unit 17)
+
+   The owner's seven decisions are verbatim in case-portal/RETENTION.md; read
+   them before changing any of this. The five retention states are DERIVED —
+   Active is the absence of markers, Archived and Deleted are the tables that
+   already exist — so these three tables add only what the record lacked: the
+   manual retain-until date, the scheduled-for-deletion INTENT, the current
+   legal hold, and the prior/new/actor/reason audit trail.
+
+   NOTHING HERE DESTROYS ANYTHING. Scheduling deletion is a record of intent
+   (decision 2: no true purge; decision 6: no Dropbox byte deletion); the only
+   writer that removes bytes anywhere in this Worker remains the existing
+   per-file evidence delete, and a hold now blocks even that. */
+CREATE TABLE IF NOT EXISTS case_retention (
+  case_no        TEXT PRIMARY KEY,
+  retain_until   TEXT,               -- YYYY-MM-DD, set and cleared by hand (decision 3)
+  schedule_state TEXT,               -- null | 'scheduled' (worker-validated, no CHECK)
+  scheduled_by   INTEGER REFERENCES users(id),
+  scheduled_at   TEXT,
+  updated_by     INTEGER REFERENCES users(id),
+  updated_at     TEXT
+);
+
+/* THE CURRENT HOLD — one active per case; released_at null means active. The
+   HISTORY of holds lives in retention_event, so re-placing a hold does not
+   overwrite the record of the last one. */
+CREATE TABLE IF NOT EXISTS legal_hold (
+  case_no     TEXT PRIMARY KEY,
+  reason      TEXT    NOT NULL,
+  placed_by   INTEGER REFERENCES users(id),
+  placed_at   TEXT    NOT NULL,
+  released_by INTEGER REFERENCES users(id),
+  released_at TEXT
+);
+
+/* The audit record the Unit 17 audit found missing everywhere: prior value,
+   new value, actor, reason, moment — append-only, per case. */
+CREATE TABLE IF NOT EXISTS retention_event (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no     TEXT    NOT NULL,
+  action      TEXT    NOT NULL,      -- retain_until_set|retain_until_cleared|scheduled|unscheduled|hold_placed|hold_released
+  prior_value TEXT,
+  new_value   TEXT,
+  reason      TEXT,
+  user_id     INTEGER REFERENCES users(id),
+  at          TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_retev_case ON retention_event(case_no, id DESC);

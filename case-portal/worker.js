@@ -3785,6 +3785,194 @@ async function saveClosure(request, env, user, caseNo) {
   return json({ ok: true, checklist: out });
 }
 
+/* --------------------------------------------- retention controls (Unit 17)
+
+   The owner's seven decisions are verbatim in case-portal/RETENTION.md. The
+   five states are DERIVED, never stored as one value: Active is the absence
+   of markers, Archived and Deleted are the tables that already exist, and
+   these routes add only the retain-until fact, the scheduled-for-deletion
+   INTENT, the hold, and the prior/new/actor/reason audit trail.
+
+   THE HOLD IS ENFORCED AT THE WRITERS. /cases/:no/delete, the scheduling
+   route and deleteEvidence each refuse 409 naming the hold — a page hiding a
+   button is not enforcement. Archive, restore, undelete, billing, reports
+   and every read are untouched, exactly as decision 5 draws the line. */
+
+const RETENTION_NOT_SET_UP = 'The retention tables are not on this database yet. '
+  + 'Run the portal-setup workflow once and try again.';
+
+async function retentionMissing(env) {
+  const m = await missingTables(env);
+  return ['case_retention', 'legal_hold', 'retention_event'].filter(t => m.includes(t));
+}
+
+/** The active hold on a case, or null — the one question the write gates ask. */
+async function activeHold(env, caseNo) {
+  if ((await missingTables(env)).includes('legal_hold')) return null;
+  return env.DB.prepare(
+    'SELECT reason, placed_by, placed_at FROM legal_hold WHERE case_no = ? AND released_at IS NULL')
+    .bind(caseNo).first();
+}
+
+async function retentionEvent(env, caseNo, action, prior, next, reason, userId) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO retention_event (case_no, action, prior_value, new_value, reason, user_id, at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .bind(caseNo, action, prior ?? null, next ?? null, reason || null, userId, nowIso()).run();
+  } catch { /* the audit row must not break the action it describes */ }
+}
+
+async function retentionState(env, caseNo) {
+  const missing = await retentionMissing(env);
+  const ret = missing.includes('case_retention') ? null : await env.DB.prepare(
+    'SELECT retain_until, schedule_state, scheduled_at, updated_at FROM case_retention WHERE case_no = ?')
+    .bind(caseNo).first();
+  const holdRow = missing.includes('legal_hold') ? null : await env.DB.prepare(
+    `SELECT h.reason, h.placed_at, u.display_name AS placed_by
+       FROM legal_hold h LEFT JOIN users u ON u.id = h.placed_by
+      WHERE h.case_no = ? AND h.released_at IS NULL`).bind(caseNo).first();
+  const m2 = await missingTables(env);
+  const archived = m2.includes('case_archive') ? false : !!(await env.DB.prepare(
+    'SELECT 1 AS x FROM case_archive WHERE case_no = ?').bind(caseNo).first());
+  const deleted = m2.includes('case_deleted') ? false : !!(await env.DB.prepare(
+    'SELECT 1 AS x FROM case_deleted WHERE case_no = ?').bind(caseNo).first());
+
+  /* Display precedence: Deleted > Scheduled > Archived > Retain Until >
+     Active. REVIEW DUE is computed against today on every read (the invoice
+     `overdue` rule) — decision 3: a passed date changes only the wording. */
+  const today = nowIso().slice(0, 10);
+  const reviewDue = !!(ret && ret.retain_until && ret.retain_until < today);
+  const state = deleted ? 'deleted'
+    : (ret && ret.schedule_state === 'scheduled') ? 'scheduled'
+    : archived ? 'archived'
+    : (ret && ret.retain_until) ? 'retain_until'
+    : 'active';
+  return {
+    state, archived, deleted,
+    retain_until: (ret && ret.retain_until) || null,
+    review_due: reviewDue,
+    scheduled_at: (ret && ret.schedule_state === 'scheduled' && ret.scheduled_at) || null,
+    hold: holdRow ? { reason: holdRow.reason, placed_by: holdRow.placed_by,
+                      placed_at: holdRow.placed_at } : null,
+    not_set_up: (await retentionMissing(env)).length > 0,
+  };
+}
+
+async function retentionRead(env, user, caseNo) {
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  const state = await retentionState(env, caseNo);
+  let events = [];
+  if (!(await missingTables(env)).includes('retention_event')) {
+    const { results } = await env.DB.prepare(
+      `SELECT e.action, e.prior_value, e.new_value, e.reason, e.at, u.display_name AS who
+         FROM retention_event e LEFT JOIN users u ON u.id = e.user_id
+        WHERE e.case_no = ? ORDER BY e.id DESC LIMIT 30`).bind(caseNo).all();
+    events = results || [];
+  }
+  return json({ ...state, events, generated_at: nowIso() });
+}
+
+/* Retain Until: set or clear, by hand, no clock (decision 3). The /meta rule:
+   an absent field is unchanged; a blank clears. */
+async function retentionSave(request, env, user, caseNo) {
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  if ((await retentionMissing(env)).length) {
+    return json({ error: RETENTION_NOT_SET_UP, code: 'not_set_up' }, 503);
+  }
+  const body = await readJson(request);
+  if (body.retain_until === undefined) return json({ error: 'Nothing to change.' }, 400);
+  const raw = String(body.retain_until || '').trim();
+  if (raw && !/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return json({ error: 'The retain-until date must be a real date (YYYY-MM-DD).' }, 400);
+  }
+  const prior = await env.DB.prepare(
+    'SELECT retain_until FROM case_retention WHERE case_no = ?').bind(caseNo).first();
+  const now = nowIso();
+  await env.DB.prepare(
+    `INSERT INTO case_retention (case_no, retain_until, updated_by, updated_at)
+     VALUES (?1, ?2, ?3, ?4)
+     ON CONFLICT(case_no) DO UPDATE SET retain_until = ?2, updated_by = ?3, updated_at = ?4`)
+    .bind(caseNo, raw || null, user.id, now).run();
+  await retentionEvent(env, caseNo, raw ? 'retain_until_set' : 'retain_until_cleared',
+    (prior && prior.retain_until) || null, raw || null,
+    String(body.reason || '').trim().slice(0, 500) || null, user.id);
+  return retentionRead(env, user, caseNo);
+}
+
+/* Scheduling deletion is a RECORD OF INTENT (decision 2): it deletes nothing,
+   destroys nothing, starts no clock. A hold blocks it by name (decision 5);
+   an already-deleted case cannot be scheduled — the ladder has one direction. */
+async function retentionSchedule(request, env, user, caseNo, on) {
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  if ((await retentionMissing(env)).length) {
+    return json({ error: RETENTION_NOT_SET_UP, code: 'not_set_up' }, 503);
+  }
+  if (on) {
+    const hold = await activeHold(env, caseNo);
+    if (hold) {
+      return json({ error: 'This case is under a legal hold — scheduling deletion is blocked '
+        + 'until the hold is released.', code: 'legal_hold' }, 409);
+    }
+    const st = await retentionState(env, caseNo);
+    if (st.deleted) return json({ error: 'This case is already deleted. Restore it first.' }, 409);
+    if (st.state === 'scheduled') return json({ ok: true, already: true });
+  }
+  const body = await readJson(request);
+  const prior = await env.DB.prepare(
+    'SELECT schedule_state FROM case_retention WHERE case_no = ?').bind(caseNo).first();
+  const now = nowIso();
+  await env.DB.prepare(
+    `INSERT INTO case_retention (case_no, schedule_state, scheduled_by, scheduled_at, updated_by, updated_at)
+     VALUES (?1, ?2, ?3, ?4, ?3, ?4)
+     ON CONFLICT(case_no) DO UPDATE SET schedule_state = ?2,
+       scheduled_by = CASE WHEN ?2 IS NULL THEN scheduled_by ELSE ?3 END,
+       scheduled_at = CASE WHEN ?2 IS NULL THEN scheduled_at ELSE ?4 END,
+       updated_by = ?3, updated_at = ?4`)
+    .bind(caseNo, on ? 'scheduled' : null, user.id, now).run();
+  await retentionEvent(env, caseNo, on ? 'scheduled' : 'unscheduled',
+    (prior && prior.schedule_state) || null, on ? 'scheduled' : null,
+    String(body.reason || '').trim().slice(0, 500) || null, user.id);
+  return retentionRead(env, user, caseNo);
+}
+
+/* The hold. Reason is REQUIRED in both directions — decision 7 audits both. */
+async function holdWrite(request, env, user, caseNo, place) {
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  if ((await retentionMissing(env)).length) {
+    return json({ error: RETENTION_NOT_SET_UP, code: 'not_set_up' }, 503);
+  }
+  const body = await readJson(request);
+  const reason = String(body.reason || '').trim().slice(0, 500);
+  if (!reason) {
+    return json({ error: place ? 'A hold needs its reason — it is the audit record.'
+                               : 'Releasing a hold needs its reason — it is the audit record.' }, 400);
+  }
+  const current = await activeHold(env, caseNo);
+  const now = nowIso();
+  if (place) {
+    if (current) return json({ error: 'A legal hold is already on this case.', code: 'already_held' }, 409);
+    await env.DB.prepare(
+      `INSERT INTO legal_hold (case_no, reason, placed_by, placed_at, released_by, released_at)
+       VALUES (?1, ?2, ?3, ?4, NULL, NULL)
+       ON CONFLICT(case_no) DO UPDATE SET reason = ?2, placed_by = ?3, placed_at = ?4,
+         released_by = NULL, released_at = NULL`)
+      .bind(caseNo, reason, user.id, now).run();
+    await retentionEvent(env, caseNo, 'hold_placed', null, reason, reason, user.id);
+  } else {
+    if (!current) return json({ error: 'No legal hold is on this case.', code: 'not_held' }, 409);
+    await env.DB.prepare(
+      'UPDATE legal_hold SET released_by = ?, released_at = ? WHERE case_no = ? AND released_at IS NULL')
+      .bind(user.id, now, caseNo).run();
+    await retentionEvent(env, caseNo, 'hold_released', current.reason, null, reason, user.id);
+  }
+  return retentionRead(env, user, caseNo);
+}
+
 /* -------------------------------------------------- closeout facts (Unit 15)
 
    Designed from the audit in case-portal/CLOSEOUT.md — no verbatim owner
@@ -7615,6 +7803,14 @@ async function editEvidence(request, env, user, caseNo, eid) {
 async function deleteEvidence(env, user, caseNo, eid) {
   if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
   if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  /* THE HOLD OUTRANKS (Unit 17, decision 5): "evidence removal" is named in
+     the owner's own list of what a hold blocks. Metadata edits and every read
+     stay open; only the destructive act is refused, by name. */
+  const hold = await activeHold(env, caseNo);
+  if (hold) {
+    return json({ error: 'This case is under a legal hold — evidence cannot be removed until '
+      + 'the hold is released.', code: 'legal_hold' }, 409);
+  }
   const row = await env.DB.prepare(
     'SELECT r2_key, deleted_at FROM case_evidence WHERE id = ? AND case_no = ?').bind(eid, caseNo).first();
   if (!row) return json({ error: 'not found' }, 404);
@@ -9314,6 +9510,9 @@ const DEMO_SWEEP = [
   ['retainer_payment_void', 'DELETE FROM retainer_payment_void WHERE payment_id IN (SELECT id FROM retainer_payment WHERE case_no LIKE ?)'],
 
   ['storage_failure',       'DELETE FROM storage_failure WHERE case_no LIKE ?'],
+  ['case_retention',        'DELETE FROM case_retention WHERE case_no LIKE ?'],
+  ['legal_hold',            'DELETE FROM legal_hold WHERE case_no LIKE ?'],
+  ['retention_event',       'DELETE FROM retention_event WHERE case_no LIKE ?'],
   /* --- the four that reference case_days, before case_days itself --- */
   ['case_day_summary',      'DELETE FROM case_day_summary WHERE case_no LIKE ?'],
   ['activity_log',          'DELETE FROM activity_log WHERE case_no LIKE ?'],
@@ -10771,6 +10970,7 @@ const EXPECTED_TABLES = [
   'photo_stamp',
   'profile', 'profile_contact', 'profile_phone', 'case_profile',
   'build_template', 'evidence_integrity', 'case_day_summary', 'storage_failure',
+  'case_retention', 'legal_hold', 'retention_event',
 ];
 
 async function missingTables(env) {
@@ -10997,7 +11197,13 @@ async function route(request, env) {
        an error the office has to interpret. Archive and restore pass only when
        the case is NOT deleted — a deleted case is not archivable. */
     const isDeleteRoute  = /^\/cases\/[A-Za-z0-9-]{3,64}\/(?:un)?delete$/.test(p);
-    const isArchiveRoute = /^\/cases\/[A-Za-z0-9-]{3,64}\/(?:archive|restore)$/.test(p);
+    /* The retention family (Unit 17) is lifecycle bookkeeping of the same
+       class as archive/restore themselves: a hold must be placeable on a
+       FINISHED case without un-finishing it (decision 5 — the hold outranks),
+       and scheduling deletion on an archived case is the ordinary sequence.
+       The DELETED gate is untouched — a deleted case still refuses retention
+       writes, and restore-first is the intended answer there. */
+    const isArchiveRoute = /^\/cases\/[A-Za-z0-9-]{3,64}\/(?:archive|restore|retention|retention\/(?:schedule|unschedule)|hold|hold\/release)$/.test(p);
     if (subject) {
       const gone = await deletedOf(env, subject);
       if (gone && !isDeleteRoute) {
@@ -12060,6 +12266,18 @@ async function route(request, env) {
     return json({ ok: true, authorization: await authorizationFor(env, m[1], true) });
   }
 
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/retention$/);
+  if (m && method === 'GET') return retentionRead(env, user, m[1]);
+  if (m && method === 'POST') return retentionSave(request, env, user, m[1]);
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/retention\/(schedule|unschedule)$/);
+  if (m && method === 'POST') return retentionSchedule(request, env, user, m[1], m[2] === 'schedule');
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/hold$/);
+  if (m && method === 'POST') return holdWrite(request, env, user, m[1], true);
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/hold\/release$/);
+  if (m && method === 'POST') return holdWrite(request, env, user, m[1], false);
+
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/closeout$/);
   if (m && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
@@ -12244,6 +12462,13 @@ async function route(request, env) {
         running.investigator ? ` — ${running.investigator}'s, from ${running.day_date}` : ''
       }. End it before deleting, or the clock keeps going where nobody can see it `
         + 'and nobody can stop it.', open_day: true }, 409);
+    }
+    /* THE HOLD OUTRANKS (Unit 17, decision 5): a case under a legal hold
+       cannot be deleted until the hold is released, and the refusal names it. */
+    const hold = await activeHold(env, m[1]);
+    if (hold) {
+      return json({ error: 'This case is under a legal hold — deleting is blocked until the '
+        + 'hold is released.', code: 'legal_hold' }, 409);
     }
     const body = await readJson(request);
     const reason = String(body.reason == null ? '' : body.reason)

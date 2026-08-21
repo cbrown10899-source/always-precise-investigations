@@ -1473,6 +1473,14 @@
   .rvnarr{white-space:pre-line;font-size:.95rem;margin:0 0 12px;padding-bottom:10px;
     border-bottom:1px solid var(--line);}
 
+  /* UNIT 17 — retention & legal hold. Own names (the class-name-contest
+     rule); the hold banner is the warn token pair and nothing new. */
+  .holdbox{background:var(--warn-bg);border:1px solid var(--warn);border-radius:8px;
+    padding:10px 12px;margin-top:12px;}
+  .retev{margin:8px 0 0;padding-left:18px;font-size:.85rem;}
+  .retev li{margin:4px 0;}
+  .retev .who{color:var(--muted);margin-left:6px;}
+
   /* Item 4's mobile report fix — every value here was MEASURED at 375px
      before it was changed; the suite asserts the numbers, not the look. */
   @media(max-width:560px){
@@ -10904,6 +10912,7 @@ async function archiveCase(){
   WS_ERR = "";
   try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/archive`, {method:"POST", body:{}}); }
   catch(e){ WS_ERR = e.message; }
+  RETC[WS_CASE] = null;   // archived is a rung on the retention ladder — refetch it
   await reloadWorkspace();
 }
 
@@ -10911,6 +10920,7 @@ async function restoreCase(){
   WS_ERR = "";
   try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/restore`, {method:"POST", body:{}}); }
   catch(e){ WS_ERR = e.message; }
+  RETC[WS_CASE] = null;
   await reloadWorkspace();
 }
 
@@ -10956,6 +10966,7 @@ async function deleteCase(){
   WS_ERR = "";
   try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/delete`, {method:"POST", body:{}}); }
   catch(e){ WS_ERR = e.message; }
+  RETC[WS_CASE] = null;
   await reloadWorkspace();
 }
 
@@ -10963,7 +10974,150 @@ async function undeleteCase(){
   WS_ERR = "";
   try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/undelete`, {method:"POST", body:{}}); }
   catch(e){ WS_ERR = e.message; }
+  RETC[WS_CASE] = null;   // the ladder is the Worker's; refetch it
   await reloadWorkspace();
+}
+
+/* Unit 17 — RETENTION & LEGAL HOLD (the owner's seven decisions are verbatim
+   in case-portal/RETENTION.md; derived decisions D1–D9 there). The five
+   states are computed in the Worker with their precedence — this panel never
+   re-derives the ladder from the markers it can see locally, because two
+   writers of one vocabulary drift. Everything here is records and state:
+   scheduling deletion destroys nothing and the panel says so in words beside
+   the button; the hold is enforced in the Worker at the writers, so these
+   controls are the doors, never the gate. Archive, restore and delete keep
+   their own panels below — no second writer for an action that has one. */
+let RETC = {};        // case_no -> { load: 'loading'|'ok'|'failed', data }
+let RTN_MSG = "", RTN_ERR = false;
+let RTN_HIST = false; // audit history expanded? (a <details> would re-collapse on every repaint)
+/* What is typed survives the async repaints (the EDIT_DRAFT rule: loadCloseout
+   or a retention write resolving mid-sentence must not blank the reason box). */
+let RTN_DRAFT = {};
+
+async function loadRetention(caseNo){
+  const cur = RETC[caseNo];
+  if(cur && (cur.load === "loading" || cur.load === "ok")) return;
+  RETC[caseNo] = { load: "loading", data: null };
+  try{
+    const res = await api(`/cases/${encodeURIComponent(caseNo)}/retention`);
+    RETC[caseNo] = res && res.state ? { load: "ok", data: res } : { load: "failed", data: null };
+  }catch{ RETC[caseNo] = { load: "failed", data: null }; }
+  paintCase();
+}
+
+const RTN_STATE_WORDS = {
+  active: "Active", retain_until: "Retain Until", archived: "Archived",
+  scheduled: "Scheduled for Deletion", deleted: "Deleted / Destruction Recorded",
+};
+const RTN_STATE_TAG = {
+  active: "complete", retain_until: "assigned", archived: "on_hold",
+  scheduled: "new", deleted: "cancelled",
+};
+const RTN_EV_WORDS = {
+  retain_until_set: "Retain-until set", retain_until_cleared: "Retain-until cleared",
+  scheduled: "Scheduled for deletion", unscheduled: "Scheduled deletion cancelled",
+  hold_placed: "Legal hold placed", hold_released: "Legal hold released",
+};
+
+function retentionPanel(){
+  if(ME.role !== "admin" || !WS) return "";
+  if(!RETC[WS_CASE]) setTimeout(() => loadRetention(WS_CASE), 0);
+  const rc = RETC[WS_CASE] || { load: "loading" };
+  const open = body => `<div class="feebox" style="margin-top:14px">
+    <div class="row"><span><b>Retention &amp; legal hold</b></span><span></span></div>${body}</div>`;
+  if(rc.load === "loading") return open(`<p class="hint">Reading the retention record&hellip;</p>`);
+  /* Three states, kept apart: a failed read is never drawn as a case with no
+     retention state — the same rule the closing facts and the send history follow. */
+  if(rc.load === "failed") return open(`<div class="loaderr">The retention record could not be
+      read just now &mdash; not the same as the case having none.
+      <button class="btn sm ghost" data-act="retRetry">Try again</button></div>`);
+  const d = rc.data;
+  const dv = (id, fall) => RTN_DRAFT[id] !== undefined ? RTN_DRAFT[id] : fall;
+  const deleted = d.state === "deleted";
+  const events = d.events || [];
+
+  const stateLine = `<div class="row"><span>Current state:
+      <span class="tag ${RTN_STATE_TAG[d.state] || ""}">${esc(RTN_STATE_WORDS[d.state] || d.state)}</span>
+      ${d.hold ? `<span class="tag new">Legal hold</span>` : ""}
+      ${d.review_due ? `<span class="tag new">Retention review due</span>` : ""}</span><span></span></div>
+    ${deleted ? `<p class="hint">An audit state &mdash; it does not mean any file was destroyed,
+      and it does not authorize destroying one. Nothing on this case has been removed.</p>` : ""}
+    ${d.not_set_up ? `<p class="hint">The retention tables are not on the live database yet &mdash;
+      run the portal-setup workflow once. Until then, saving anything here will be refused.</p>` : ""}`;
+
+  /* The hold outranks the ladder and is drawn first. Reason is required in
+     BOTH directions — the Worker refuses without it; that message lands below. */
+  const holdHtml = d.hold
+    ? `<div class="holdbox"><b>Legal hold</b> &mdash; placed
+        ${d.hold.placed_by ? `by ${esc(d.hold.placed_by)} ` : ""}${when(d.hold.placed_at)}
+        <div style="margin-top:4px">${esc(d.hold.reason)}</div>
+        <p class="hint" style="margin:8px 0 0">While the hold stands, deleting the case, scheduling
+          deletion and removing evidence are refused. Archive, restore, billing, reports and
+          ordinary reading stay open.</p>
+        ${deleted ? "" : `<label class="f" style="margin:10px 0 8px"><span>Release the hold
+            <span class="opt">a reason is required &mdash; it is the audit record</span></span>
+          <input id="ret_hold_release" value="${esc(dv("ret_hold_release", ""))}" data-act-input="retDraft"
+            placeholder="Why the hold is being released"></label>
+        <button class="btn sm ghost" data-act="retHoldRelease">Release hold</button>`}</div>`
+    : deleted ? "" : `<label class="f" style="margin:12px 0 8px"><span>Place a legal hold
+          <span class="opt">a reason is required &mdash; it is the audit record</span></span>
+        <input id="ret_hold_reason" value="${esc(dv("ret_hold_reason", ""))}" data-act-input="retDraft"
+          placeholder="Why this case must be preserved"></label>
+      <button class="btn sm ghost" data-act="retHoldPlace">Place legal hold</button>
+      <p class="hint">A hold blocks deleting the case, scheduling deletion and removing evidence
+        until it is released. It does not touch archive, restore, billing or reports.</p>`;
+
+  /* Retain Until: set and cleared by hand — no clock runs (owner, decision 3). */
+  const untilHtml = deleted ? "" : `
+    <label class="f" style="margin:12px 0 8px"><span>Retain until
+        <span class="opt">set and cleared by hand &mdash; no clock runs, nothing auto-deletes</span></span>
+      <input id="ret_until" type="date" value="${esc(dv("ret_until", d.retain_until || ""))}"
+        data-act-input="retDraft" style="max-width:190px"></label>
+    <div><button class="btn sm ghost" data-act="retSaveUntil">Save date</button>
+      ${d.retain_until ? `<button class="btn sm ghost" data-act="retClearUntil">Clear date</button>` : ""}</div>
+    ${d.review_due ? `<div class="linkbox" style="margin-top:10px"><b>Retention review due.</b>
+      The retain-until date (${esc(d.retain_until)}) has passed. Nothing happens on its own &mdash;
+      review the case and set a new date, clear it, or move it along.</div>` : ""}`;
+
+  /* Scheduling is a RECORD OF INTENT. The explanation is permanent, not a
+     confirmation that vanishes — the owner asked for it in words on the panel. */
+  const schedHtml = deleted ? "" : d.state === "scheduled"
+    ? `<div class="row" style="margin-top:12px"><span><b>Scheduled for deletion</b>
+        ${d.scheduled_at ? ` &middot; ${when(d.scheduled_at)}` : ""}</span>
+        <button class="btn sm ghost" data-act="retUnschedule">Cancel scheduled deletion</button></div>`
+    : `<div class="row" style="margin-top:12px"><span><b>Schedule deletion</b></span>
+        <button class="btn sm ghost" data-act="retSchedule">Schedule deletion</button></div>`;
+  const schedNote = deleted ? "" : `<p class="hint">Scheduling deletion destroys nothing: no file is
+    deleted here or in Dropbox, no clock starts, and nothing runs on its own. It records the intent
+    &mdash; the state reads &ldquo;Scheduled for Deletion&rdquo; until someone acts deliberately or
+    cancels it, and a legal hold blocks it.</p>`;
+
+  const evHtml = events.length ? `<div style="margin-top:12px">
+      <button class="btn sm ghost" data-act="retHist">${RTN_HIST ? "Hide history" : `History (${events.length})`}</button>
+      ${RTN_HIST ? `<ul class="retev">${events.map(e => `<li><b>${esc(RTN_EV_WORDS[e.action] || e.action)}</b>
+          ${e.prior_value || e.new_value ? `<span>${esc(e.prior_value || "—")} &rarr; ${esc(e.new_value || "—")}</span>` : ""}
+          ${e.reason ? `&mdash; ${esc(e.reason)}` : ""}
+          <span class="who">${e.who ? esc(e.who) + " &middot; " : ""}${when(e.at)}</span></li>`).join("")}</ul>` : ""}
+    </div>` : "";
+
+  return open(`${stateLine}${holdHtml}${untilHtml}${schedHtml}${schedNote}
+    ${deleted ? `<p class="hint">Retention changes are refused while the case is deleted &mdash;
+      put the case back first (below), then set them.</p>` : ""}${evHtml}
+    <p class="hint">Archive, restore and delete keep their own controls below &mdash; this panel is
+      the state and the record.</p>
+    ${RTN_MSG ? `<div class="${RTN_ERR ? "err" : "linkbox"}">${esc(RTN_MSG)}</div>` : ""}`);
+}
+
+/* Every write route answers with the fresh read, so the panel repaints from
+   the response rather than refetching — and the draft it spent is cleared. */
+async function retWrite(path, body, spentIds){
+  RTN_MSG = ""; RTN_ERR = false;
+  try{
+    const res = await api(`/cases/${encodeURIComponent(WS_CASE)}${path}`, {method:"POST", body});
+    RETC[WS_CASE] = { load: "ok", data: res };
+    for(const id of (spentIds || [])) delete RTN_DRAFT[id];
+  }catch(e){ RTN_MSG = e.message; RTN_ERR = true; }
+  paintCase();
 }
 
 /* The other direction, through the route the status selector already uses.
@@ -13952,6 +14106,7 @@ function billingPanel(s, a){
           ? `<button class="btn sm ghost" data-act="createInvoiceAuth" data-case="${esc(WS_CASE)}">Create from ${s.kind === "claims" ? "authorization" : "retainer"}</button>` : ""}
       </div>
     ${closurePanel()}
+    ${retentionPanel()}
     ${archivePanel()}
     ${deletedPanel()}`;
 }
@@ -15834,6 +15989,25 @@ document.addEventListener("click", ev => {
   else if(act === "restoreCase"){ restoreCase(); }
   else if(act === "deleteCase"){ deleteCase(); }
   else if(act === "undeleteCase"){ undeleteCase(); }
+  else if(act === "retRetry"){ RETC[WS_CASE] = null; RTN_MSG = ""; RTN_ERR = false; paintCase(); }
+  else if(act === "retHist"){ RTN_HIST = !RTN_HIST; paintCase(); }
+  else if(act === "retSaveUntil"){
+    const el = $("ret_until");
+    retWrite("/retention", {retain_until: el ? el.value : ""}, ["ret_until"]);
+  }
+  else if(act === "retClearUntil"){ retWrite("/retention", {retain_until: ""}, ["ret_until"]); }
+  else if(act === "retSchedule"){ retWrite("/retention/schedule", {}); }
+  else if(act === "retUnschedule"){ retWrite("/retention/unschedule", {}); }
+  else if(act === "retHoldPlace"){
+    /* An empty reason goes to the Worker and comes back refused — the server
+       owns that wording, and a second copy here would drift. */
+    const el = $("ret_hold_reason");
+    retWrite("/hold", {reason: el ? el.value.trim() : ""}, ["ret_hold_reason"]);
+  }
+  else if(act === "retHoldRelease"){
+    const el = $("ret_hold_release");
+    retWrite("/hold/release", {reason: el ? el.value.trim() : ""}, ["ret_hold_release"]);
+  }
   else if(act === "invOpen"){ openInvoice(Number(el.dataset.id)); }
   else if(act === "invBack"){ INV_OPEN = null; INV_MSG = ""; loadInvoices(); }
   else if(act === "invStatus"){ setInvStatus(el.dataset.s); }
@@ -16434,6 +16608,9 @@ document.addEventListener("change", ev => {
 
 document.addEventListener("input", ev => {
   const din = ev.target.dataset ? ev.target.dataset.actInput : "";
+  /* Unit 17 — the reason boxes and the date survive async repaints (loadCloseout
+     resolving, a retention write returning) without the box being rebuilt mid-word. */
+  if(din === "retDraft"){ RTN_DRAFT[ev.target.id] = ev.target.value; return; }
   /* Typing IN the paragraph is the writer taking it over: the flag flips and
      nothing rewrites the box — no repaint here, the cursor is in it. */
   if(din === "dsText"){
