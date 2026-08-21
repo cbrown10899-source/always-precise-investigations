@@ -13400,16 +13400,25 @@ section('Unit 24 — the File Queue renders: real states, a working detail panel
   /* THE SUMMARY CARDS ARE CONTROLS, not decoration — clicking one filters. */
   const cards = await page.locator('.fqcard').count();
   ok('summary cards are drawn across the top', cards >= 3, String(cards));
+  /* Counts are asserted as PROPERTIES, not absolutes: other sections plant
+     evidence of their own, so "exactly one" is only true in isolation and
+     would make this section pass alone and fail in the suite — which is the
+     kind of test that teaches people to ignore a red run. */
+  const all = await page.locator('.fqtbl tbody tr').count();
   await page.locator('.fqcard', { hasText: 'Held back' }).first().click();
   await page.waitForTimeout(350);
-  const filtered = await page.locator('.fqtbl tbody tr').count();
-  ok('clicking a card filters the queue to that state', filtered === 1, String(filtered));
+  const shown = await page.locator('.fqtbl tbody tr').allInnerTexts();
+  ok('clicking a card filters the queue to that state',
+     shown.length > 0 && shown.length < all && shown.every(t => /Held back/i.test(t)),
+     JSON.stringify([all, shown.length]));
+  ok('and the filtered set still holds the file that belongs in it',
+     shown.some(t => /notes\.pdf/.test(t)), JSON.stringify(shown).slice(0, 200));
   ok('and the chip says which state is showing',
      /Held back/i.test(await page.locator('.chip').first().innerText()));
   await page.locator('.chip button').first().click();
   await page.waitForTimeout(350);
   ok('clearing the chip restores every file',
-     await page.locator('.fqtbl tbody tr').count() === 4);
+     await page.locator('.fqtbl tbody tr').count() === all, String(all));
 
   /* THE DETAIL PANEL OPENS AND CARRIES THE RECORD. */
   await page.locator('.fqtbl tbody tr', { hasText: 'clean.jpg' })
