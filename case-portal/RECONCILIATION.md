@@ -140,6 +140,48 @@ PORTAL-OPS Permissions specification that might call for one has never
 arrived. Enforced when the permissions/security work is reached, or sooner if
 an audit proves an active leak.
 
+## FINAL OWNER DECISIONS — LOCKED 2026-08-21, at project closeout
+
+**This report's own successor was Unit 26, and these five answers close the
+questions it raised.** Verbatim, and durable — none of them is a pending
+question any more. The full block, with what each means operationally, is in
+`NEXT.md` under **FINAL OWNER DECISIONS**; the classification is in
+`FINAL-LEDGER.md`.
+
+1. *"PORTAL-OPS Permissions remains missing and must not be invented. Rebuild
+   later from owner direction."* → **MISSING — SKIPPED by owner direction, not
+   a closeout blocker.** This closes the line above ("blocked on the owner")
+   and the OWNER-DECISIONS row: it stays marked missing, and **must not be
+   inferred, reconstructed or approximated** from the corrupted text. The
+   no-invented-permission-toggle rule beside it is unaffected and still holds.
+2. *"Saved Views remains a future optional operational improvement; do not
+   block closeout."* → **DEFERRED BY OWNER.** Its heading is still `[inferred]`
+   and its Billing item still corrupted; neither is to be guessed at.
+3. *"Case Templates / Document Templates may use a reusable mechanism later,
+   but owner supplies the actual firm content. Do not invent templates."* →
+   **DEFERRED BY OWNER.** The mechanism may come later; the content is the
+   firm's own and is never authored here.
+4. *"If Admin or another authorized user ends someone else's surveillance day,
+   the UI/history must clearly say Ended by Admin or Ended by [name]. Never
+   make it appear the original investigator ended it."* → **APPROVED
+   REQUIREMENT, NOT YET IMPLEMENTED.** This answers the 2026-08-16 non-blocking
+   finding *"whether the ended day should be marked somewhere as 'ended by the
+   office'"* — the answer is yes. Verified on master `5e1d063`: `case_days` has
+   no `ended_by` column and `endDay` writes none, so an office-ended day is
+   stored identically to a self-ended one. **It is the one open build item**,
+   deliberately not started.
+5. *"Keep current Cash App $TreverB and Venmo @Trever-Brown-9 for now.
+   Business-account migration remains a future owner decision."* → **DEFERRED
+   BY OWNER.** Supersedes the earlier "answered for now" wording; the handles
+   are unchanged and the migration stays a future decision.
+
+**Unit 17 and Unit 23 remain LIVE VERIFICATION DEFERRED** until suitable real
+case data exists — reaffirmed at closeout, with the standing instruction that
+no production case or data is manufactured for either.
+
+**The deferred list is unchanged and nothing on it was converted.** A deferred
+item is never turned into a completed one and never deleted from this record.
+
 ## Corrections to the record
 
 - **§38 / §39 are NOT stale.** The tracker says the full Insurance and Private
