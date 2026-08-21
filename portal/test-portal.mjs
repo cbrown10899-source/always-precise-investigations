@@ -13138,6 +13138,50 @@ section('The palette changed no behavior and broke no phone');
   ok('and no print rule paints navy over paper', !print.paintsNavy);
 }
 
+/* ------------------------------------------- invoice defaults (Unit 29)
+   The Production Truth Audit's "IMPLEMENTED BUT NOT EXPOSED": the route
+   existed and Settings had no panel. Reachability first — an admin must be
+   able to SEE it from normal navigation — then that it loads real values and
+   that a save round-trips. */
+section('Invoice defaults are on Settings, load, and save');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Settings' }).click();
+  await page.waitForTimeout(900);
+
+  const panel = page.locator('.card', { hasText: 'Invoice defaults' }).first();
+  ok('Settings carries an Invoice defaults panel', await panel.count() === 1);
+  const body = await panel.innerText();
+  ok('it names the fields the backend actually supports',
+     has(body, 'Invoice number prefix') && has(body, 'Default terms')
+       && has(body, 'Payment instructions') && has(body, 'Invoice footer'), body.slice(0, 300));
+  ok('it says these are defaults, never an override',
+     has(body, 'defaults, never an override') || has(body, 'keeps whatever was typed'),
+     body.slice(0, 300));
+  ok('and it promises no credential is stored here',
+     has(body, 'No payment credential is stored here'), body.slice(-260));
+
+  const prefix = page.locator('#bs_invoice_prefix');
+  ok('the prefix loads its current value', (await prefix.inputValue()).length > 0,
+     await prefix.inputValue());
+
+  /* An empty prefix is refused before it can reach the numbering scheme. */
+  await prefix.fill('');
+  await page.locator('.btn', { hasText: 'Save invoice defaults' }).click();
+  await page.waitForTimeout(400);
+  ok('an empty prefix is refused with a reason',
+     /cannot be empty/i.test(await panel.innerText()), (await panel.innerText()).slice(-260));
+
+  await prefix.fill('API-TEST');
+  await page.locator('.btn', { hasText: 'Save invoice defaults' }).click();
+  await page.waitForTimeout(700);
+  ok('a real save confirms', /Saved\./.test(await panel.innerText()), (await panel.innerText()).slice(-200));
+  ok('and the saved value is what is shown afterwards',
+     (await page.locator('#bs_invoice_prefix').inputValue()) === 'API-TEST',
+     await page.locator('#bs_invoice_prefix').inputValue());
+}
+
 section('Storage health: the Settings panel answers where the bytes are');
 {
   const page = await newPage();

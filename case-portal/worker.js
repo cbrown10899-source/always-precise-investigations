@@ -12938,6 +12938,20 @@ async function route(request, env) {
   if (p === '/billing-settings' && method === 'GET') return json({ settings: await billingSettings(env) });
   if (p === '/billing-settings' && method === 'POST') {
     const body = await readJson(request);
+    /* THE PREFIX IS THE ONE FIELD THAT IS NOT FREE TEXT (Unit 29). It is what
+       every invoice number starts with — `nextInvoiceNo` builds
+       `<prefix>-<year>-0001` and reads the sequence back from the LAST hyphen —
+       so an empty or exotic prefix does not make an ugly invoice, it makes a
+       numbering scheme that cannot be parsed. Checked HERE and not only in the
+       page, because the page is not the boundary. */
+    if (body.invoice_prefix !== undefined) {
+      const pre = String(body.invoice_prefix).trim();
+      if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,19}$/.test(pre)) {
+        return json({ error: 'The invoice number prefix must be 1–20 characters of letters, '
+          + 'numbers or hyphens, and cannot start with a hyphen or be empty.',
+          code: 'bad_prefix' }, 400);
+      }
+    }
     for (const k of Object.keys(BILLING_DEFAULTS)) {
       if (body[k] === undefined) continue;
       const v = String(body[k]).trim().slice(0, 1000);
