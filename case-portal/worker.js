@@ -6598,11 +6598,13 @@ function invoiceDisplayStatus(inv, money) {
   /* A PAID STATUS OUTLIVING ITS MONEY (Unit 18). Void the only payment on a
      paid invoice and the column still says `paid`, which the fall-through at
      the bottom would repeat to the office and the client. Money is arithmetic
-     here — with nothing received, neither payment status is true, so the
-     stored one is not echoed. Nothing is rewritten; the derivation is honest. */
+     here, so with nothing received neither payment status is true and the
+     stored one is not echoed. The void route puts the column back to the
+     status the invoice actually held before the payment moved it, read from
+     its own event trail; this is the guard for a row that never got there. */
   if (money.amount_paid <= 0 && (inv.status === 'paid' || inv.status === 'partially_paid')) {
     if (inv.due_date && inv.due_date < nowIso().slice(0, 10) && money.balance_due > 0) return 'overdue';
-    return 'sent_to_client';
+    return 'ready';
   }
   if (inv.due_date && inv.due_date < nowIso().slice(0, 10) && money.balance_due > 0
       && inv.status !== 'draft') return 'overdue';
@@ -7132,13 +7134,33 @@ async function voidInvoicePayment(request, env, user, invoiceId, paymentId) {
     `INSERT INTO invoice_payment_void (payment_id, reason, voided_by, voided_at)
      VALUES (?, ?, ?, ?)`).bind(paymentId, reason || null, user.id, nowIso()).run();
 
-  /* THE STORED STATUS IS LEFT ALONE, DELIBERATELY. Money here is arithmetic,
-     never a stored flag: `invoiceDisplayStatus` derives paid and partially
-     paid from what the payments now say, so voiding the last one stops the
-     invoice reading as paid without anything rewriting the column. Choosing a
-     status to put back would mean inventing which one it held before the
-     payment moved it — ready, sent to BILL or sent to client — and the record
-     does not say. */
+  /* THE STATUS GOES BACK TO WHAT THE RECORD SAYS IT WAS, never to a guess.
+     Voiding the last payment on a paid invoice must stop it reading as paid —
+     but which status it held before is not something to invent, because
+     `ready`, `sent_to_bill` and `sent_to_client` mean three different things
+     to a client. `invoice_events` already logs every transition as
+     `status_<value>`, so the answer is read from the invoice's own trail. With
+     money still on it the arithmetic decides, exactly as it always has. */
+  const inv = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(invoiceId).first();
+  const out = await invoiceWithMoney(env, inv);
+  if (inv.status !== 'draft' && inv.status !== 'void') {
+    let next = null;
+    if (out.amount_paid > 0) {
+      next = out.balance_due <= 0 ? 'paid' : 'partially_paid';
+    } else {
+      const prior = await env.DB.prepare(
+        `SELECT action FROM invoice_events
+          WHERE invoice_id = ? AND action LIKE 'status\\_%' ESCAPE '\\'
+            AND action NOT IN ('status_paid', 'status_partially_paid')
+          ORDER BY id DESC LIMIT 1`).bind(invoiceId).first();
+      next = prior ? String(prior.action).slice(7) : null;
+      if (!INVOICE_STATUSES.includes(next)) next = null;
+    }
+    if (next && next !== inv.status) {
+      await env.DB.prepare('UPDATE invoices SET status = ?, updated_by = ?, updated_at = ? WHERE id = ?')
+        .bind(next, user.id, nowIso(), invoiceId).run();
+    }
+  }
   await invoiceEvent(env, invoiceId, user, 'payment_voided',
     `payment ${paymentId}` + (reason ? ` — ${reason}` : ''));
   const after = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(invoiceId).first();
