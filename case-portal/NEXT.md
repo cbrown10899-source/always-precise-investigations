@@ -39,72 +39,78 @@ item is finished.
 
 # ⏱️ OVERNIGHT RESUME POINT — 2026-08-21
 
-**Verify repository and deployment state before trusting any line of this.**
+**Verify repository and deployment state before trusting any line of this.
+Never guess what completed during an interruption.**
 
 | Unit | State |
 | --- | --- |
 | **17A** Legal intake link routing | ✅ SHIPPED — #206, `61a00f0` |
 | **18** Invoice Payment Integrity | ✅ SHIPPED — #207, `c184a50`; `portal-setup` 32453171314 ✅ |
 | **19** Package + Report Accuracy | ✅ SHIPPED — #208, `1a047a8`; no schema |
-| **20** Intake Alert Completeness | ✅ SHIPPED — #209, `46a06ad`; **schema live, see below** |
-| **21** Accessibility + Voice §9 | **IN FLIGHT** — branch `accessibility-pass` |
-| 22 PORTAL-OPS gaps | not started |
+| **20** Intake Alert Completeness | ✅ SHIPPED — #209, `46a06ad`; schema live (see the setup-workflow note) |
+| **21** Accessibility + Voice §9 | **CODED, TESTING** — branch `accessibility-pass` |
+| **22** PORTAL-OPS gaps | **CODED (worker only)** — branch `portal-ops-gaps` |
 
-## ⚠️ FOR THE OWNER — portal-setup run 32456667718 shows RED, and the schema is fine
+## Unit 21 — where it stands
 
-The Unit 20 dispatch (`46a06ad`) **applied the schema correctly** and then failed
-on its LAST step. The evidence is in that run's own health probe, taken after
-the migration and after the Worker deployed from `46a06ad`:
+Branch `accessibility-pass`, base master `46a06ad`. Own section smoke **20/20**.
+The full portal run showed **3 failures, all one regression I introduced**: the
+new document `h1` sat ahead of the sign-in view's own `h1`, so
+`text(page,'h1')` read the wrong one — and `hidden` did not help, because a
+hidden element is still the FIRST one in document order. The heading now lives
+inside `shell()`, which renders only when signed in, so exactly one `h1` exists
+in either state. **That fix is committed and the full suite is re-running; read
+its result before merging.** No schema, so no dispatch owed.
+
+## Unit 22 — where it stands
+
+Branch `portal-ops-gaps` (split off cleanly after I first committed it onto the
+Unit 21 branch by mistake; `accessibility-pass` was reset and no longer carries
+it). **Worker side only** — `GET /tasks` and `GET /audit`, both composing
+tables that already exist, no new table, nothing written.
+
+**Still to do on it:** the two page views, the Quick Actions `+ NEW` control,
+tests, then the ship chain. Rebase onto master after Unit 21 merges.
+
+**Audited before building, and three of the six are NOT being invented:**
+
+| Phase | Decision |
+| --- | --- |
+| 4 Cross-case Tasks | **BUILT** (worker). Buckets TODAY/UPCOMING/OVERDUE/COMPLETED over `case_tasks`, role-scoped in the SQL, hidden cases excluded. It deliberately does **not** auto-surface: that is `/attention`'s job from Unit 8, and one entry of Phase 4's auto-surface list is TRUNCATED in the brief — re-implementing it would both duplicate a working feature and invent the missing item |
+| 6 Quick Actions + NEW | **TO BUILD** — only shortcuts that map to doors that already exist; the brief marks two of its items `[inferred]` and those are left out |
+| 14 Audit Trail | **BUILT** (worker). Admin-only, composed from seven existing sources; absent sources are NAMED rather than drawn as "nothing happened". Three of my seven arms had wrong column names and would have returned empty silently — caught by checking every one against `schema.sql` |
+| 9 Saved Views | **BLOCKED — OWNER.** PORTAL-OPS says the heading itself is `[inferred]` and the Billing item is corrupted. The feature's own name is a guess |
+| 12 Case Templates | **OWNER CONTENT.** The mechanism is buildable; the templates are the firm's own case-setup defaults and case-type list. Not invented |
+| 13 Document Templates | **OWNER CONTENT.** Same — authorization requests, communication and report language are the firm's words |
+
+## ⚠️ FOR THE OWNER — portal-setup run 32456667718 shows RED, schema is fine
+
+The Unit 20 dispatch applied the schema and then failed on its LAST step. That
+run's own health probe, after the migration and after the Worker deployed from
+`46a06ad`:
 
 ```
 {"ok":true,"configured":true,"email":true,"missing_tables":[],"storage_pct":0}
 ```
 
 `missing_tables: []` against a Worker whose `EXPECTED_TABLES` names
-`alert_failure`, so the table is on the live database.
+`alert_failure` — the table is live. **What failed** is the admin-bootstrap
+step: `POST /portal-api/setup` → `401 not authorised`, a `BOOTSTRAP_TOKEN`
+propagation race after the redeploy. Harmless here (the admin account already
+exists), unrelated to this unit, and **not touched autonomously because it is
+credential handling — a stop condition.** Worth a deliberate fix.
 
-**What failed:** the admin-bootstrap step, `POST /portal-api/setup` →
-`401 not authorised`. `BOOTSTRAP_TOKEN` is uploaded and the Worker is then
-redeployed, and the freshly deployed version did not see the secret in time.
-It is a **race in the workflow's own bootstrap step**, unrelated to this unit,
-and it is harmless here because the admin account already exists — nothing
-needed creating.
+## Deferred and preserved
 
-**Not touched autonomously**, because it is credential handling and that is a
-stop condition. Worth a deliberate fix (a red workflow nobody reads is the same
-as no workflow — this file's own lesson): either skip the setup call when an
-account already exists, or re-read the token after the deploy settles.
+SMS, alert status log, Intake Archive Part 2, invoice Write-Off, Case Health
+flag, physical destruction, retention clocks, Dropbox byte deletion, legacy R2
+export, two-person hold approval. **Unit 24 File Queue remains REQUIRED.**
 
-## Unit 21 in flight
+## Open, narrow (Unit 18)
 
-Base master `46a06ad`. CODED ✅ · section smoke **20/20** ✅ · full suites
-running · PUSHED ⬜ MERGED ⬜ DEPLOYED ⬜. **No schema — no dispatch owed.**
-
-**Measured first, then fixed.** A probe of the signed-in page found: one
-landmark (`main`) and no `nav`/`header`, **no `h1` at all**, **no live region**,
-no skip link, and one unlabelled input. All five are closed: `header`/`nav`
-landmarks, a visually-hidden `h1`, a real skip link that comes on screen when
-focused, `aria-label` on the case search, and a polite `role="status"` region
-fed by **one chokepoint** in `paint()` — reading what was rendered catches
-every message global (INV_MSG, RET_MSG, RTN_MSG and the rest) and any added
-later, and only announces when the text changes.
-
-**Voice §9's last unbuilt line** is built to the spec and no further: a short
-two-note tone at the moment an entry is filed. §9 calls the tone *optional* and
-forbids lengthy spoken responses, so there is **no speech synthesis** — a test
-asserts that.
-
-**Next action:** read the three suite results; if green, push → PR → merge →
-pull → verify deploys + save tag → ledger → **Unit 22**, then STOP before
-Unit 23.
-
-**Deferred and preserved:** SMS, alert status log, Intake Archive Part 2,
-invoice Write-Off, Case Health flag, physical destruction, retention clocks,
-Dropbox byte deletion, legacy R2 export, two-person hold approval. **Unit 24
-File Queue remains REQUIRED.**
-
-**Open, narrow (Unit 18):** the draft rule excludes `draft`, matching
-`outstanding`. Whether `ready` also counts as unsent is the owner's call.
+The draft rule excludes `draft`, matching the test `outstanding` already uses.
+Whether `ready` — reviewed, not yet sent — also counts as unsent is the
+owner's call.
 
 ---
 
