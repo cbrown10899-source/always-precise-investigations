@@ -3771,7 +3771,7 @@ async function saveRecipient(request, env, user, id) {
                 alert_reports, alert_packages, alert_tasks, created_at, updated_at
            FROM notify_recipient WHERE id = ?`).bind(id).first()
     : row;
-  return json({ ok: true, delivery: alertDelivery(env), failures: await alertFailures(env), recipient: {
+  return json({ ok: true, delivery: alertDelivery(env), recipient: {
     id: saved.id, label: saved.label, email: saved.email || '', phone: saved.phone || '',
     enabled: Number(saved.enabled) === 1,
     alerts: Object.fromEntries(ALERT_IDS.map(k => [k, Number(saved['alert_' + k]) === 1])),
@@ -12633,6 +12633,8 @@ async function route(request, env) {
               alert_reports, alert_packages, alert_tasks, created_at, updated_at
          FROM notify_recipient ORDER BY id`).all();
     return json({
+      /* Alerts that reached nobody — admin-only, bounded, no client detail. */
+      failures: await alertFailures(env),
       recipients: (results || []).map(r => ({
         id: r.id, label: r.label, email: r.email || '', phone: r.phone || '',
         enabled: Number(r.enabled) === 1,
