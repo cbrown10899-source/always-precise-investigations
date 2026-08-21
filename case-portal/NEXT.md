@@ -29,7 +29,7 @@ item is finished.
 | 10 | Case Timeline | ✅ **DONE — DEPLOYED** at `8d93a9e` (#196). LIVE VERIFY **OPEN** for the owner |
 | 11 | Evidence Integrity | ✅ **DONE — DEPLOYED** at `0c0c134` (#197). LIVE VERIFY **OPEN** for the owner |
 | 12 | Report Daily Summary Builder | ✅ **DONE — DEPLOYED** at `46ccad6` (#198). LIVE VERIFY **OPEN** for the owner |
-| 13 | **Portal palette normalization** | not started — queued by the owner 2026-08-20, mid-Unit-11 |
+| 13 | Portal palette normalization | ✅ **DONE — DEPLOYED** at `fcd3d38` (#199). LIVE VERIFY **OPEN** for the owner |
 | 14 | Storage Health | not started |
 | 15 | Case Closeout | not started |
 | 16 | Client Delivery Center | not started |
@@ -185,6 +185,33 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Do not interrupt the current coding unit. Record this queue only"*, and
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
+
+## 📌 Unit 13 — what shipped (#199, `fcd3d38`)
+
+**Portal palette normalization — one token layer, read off the page it was
+drawing.** The `:root` block in `portal/index.html` is THE palette now; 237
+drifted literal occurrences (205 distinct colors) swept into it. Detail in
+CLAUDE.md under *"One palette, read off the page it was already drawing"*;
+owner brief verbatim and derived decisions D1–D8 in `case-portal/PALETTE.md`.
+
+**The rules that outlive the unit:** `--field-*` is the dark field family and
+stays apart on purpose; semantic chips are token PAIRS changed together or not
+at all; and the anti-drift budget is a test — no non-white color more than
+twice outside `:root`. Two measured contrast fixes at the token (`--warn` →
+`#96600f`, `--disabled` off the 2.2:1 value) and one sanctioned drift repair:
+`.btn` is navy (`--navy-2`) per the owner's "Primary: dark navy", with
+`.btn.accent` keeping the teal fill.
+
+**No schema, no Worker change, no portal-setup owed** — `deploy-portal.yml`
+correctly did not fire (no Worker diff; its deployed `46ccad6` build is
+current). Site deploy green: `32431299910`.
+
+**Suites at merge:** portal **2266/0** (green on the first full run), deploy
+guard **68/0**, worker and intake untouched.
+
+**LIVE VERIFY (owner):** the portal on your own devices — does it read as one
+product? The navy primary buttons where teal used to be, the chips, the field
+view still bright in the dark, and print still ink-clean.
 
 ## 📌 Unit 12 — what shipped (#198, `46ccad6`)
 
@@ -637,6 +664,18 @@ node .github/test-deploy.mjs                    # expect 68 / 0
 
 Then the ordinary chain: PR → merge if green → pull master → deploy → live
 verify → **save point** → next unit (item 4, Admin report/mobile workflow fix).
+
+## 🚦 DEPLOYMENT — 2026-08-21, master `fcd3d38` (#199) — Unit 13, Portal Palette Normalization
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/intake/` + `/portal/` | `fcd3d38` | `fcd3d38` | **DEPLOYED** — `deploy.yml` 32431299910 success |
+| `api-case-portal` | `fcd3d38` | `46ccad6` | **No Worker diff** — `deploy-portal.yml` correctly did not fire; the deployed build is current |
+| Schema | — | — | **No change.** Nothing owed; portal-setup deliberately NOT run |
+| Save point | — | — | `save/2026-08-21-0005-fcd3d38`, the merge push's automatic firing |
+
+Tests at merge: portal **2266/0**, deploy guard **68/0**; worker and intake
+untouched by the diff.
 
 ## 🚦 DEPLOYMENT — 2026-08-20, master `46ccad6` (#198) — Unit 12, Report Daily Summary Builder
 
