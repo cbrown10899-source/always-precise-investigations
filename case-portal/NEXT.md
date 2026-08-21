@@ -29,7 +29,7 @@ item is finished.
 | 10 | Case Timeline | ✅ **DONE — DEPLOYED** at `8d93a9e` (#196). LIVE VERIFY **OPEN** for the owner |
 | 11 | Evidence Integrity | ✅ **DONE — DEPLOYED** at `0c0c134` (#197). LIVE VERIFY **OPEN** for the owner |
 | 12 | Report Daily Summary Builder | ✅ **DONE — DEPLOYED** at `46ccad6` (#198). LIVE VERIFY **OPEN** for the owner |
-| 13 | Portal palette normalization | ✅ **DONE — DEPLOYED** at `fcd3d38` (#199). LIVE VERIFY **OPEN** for the owner |
+| 13 | Portal palette normalization | ✅ **DONE — LIVE VERIFIED** by the owner 2026-08-21, at `fcd3d38` (#199) |
 | 14 | Storage Health | not started |
 | 15 | Case Closeout | not started |
 | 16 | Client Delivery Center | not started |
@@ -78,6 +78,16 @@ them: the dashboard's Needs Attention panel is the **lightweight version using
 data that already exists** (the rules/search engine is item 8), and surfacing
 an existing case-search entry point is fine but **the Global Search engine is
 item 8**. Report template selection is item 9.
+
+**Queue cadence changed by the owner, 2026-08-21** (with the Unit 14 start):
+*"Audit first, then continue the approved queue unless a stop condition is
+hit."* From item 14 on, units proceed serially WITHOUT waiting for a fresh
+per-unit brief — same ship chain per unit (branch → tests → PR → merge →
+deploy → save point → NEXT.md), same LIVE VERIFY left open. **Stop conditions
+that pause the queue for the owner:** a destructive or non-idempotent
+migration; a commercial, legal or pricing decision; anything that would
+contradict a recorded owner decision; a defect suggesting live-data damage;
+or a brief-level ambiguity two readings genuinely survive.
 
 **Save-point policy changed by the owner, 2026-08-20** (supersedes the
 two-per-unit rule): no save points for routine edits or ordinary commits; one
@@ -209,9 +219,8 @@ current). Site deploy green: `32431299910`.
 **Suites at merge:** portal **2266/0** (green on the first full run), deploy
 guard **68/0**, worker and intake untouched.
 
-**LIVE VERIFY (owner):** the portal on your own devices — does it read as one
-product? The navy primary buttons where teal used to be, the chips, the field
-view still bright in the dark, and print still ink-clean.
+**LIVE VERIFIED by the owner, 2026-08-21** — marked complete in their own
+words; the navy primary, the chips and the field view passed on their devices.
 
 ## 📌 Unit 12 — what shipped (#198, `46ccad6`)
 
