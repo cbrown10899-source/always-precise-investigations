@@ -1081,6 +1081,24 @@ calls `api()` rather than `pkgApi()`: `pkgApi` swallows its own failure.
 
 **Adding this table means a manual `portal-setup.yml` dispatch after merge.**
 
+## The closeout checklist shows what the record can see, and still obeys the person
+
+Unit 15 (audit and derived decisions in `case-portal/CLOSEOUT.md` — no
+verbatim owner brief exists; the audit is the design input). The eight
+attestations stay exactly what the owner made them: the only door to
+`closed`, human confirmations, nothing blocked by a fact. What was added is
+the honesty rule applied to that screen: `GET /cases/:no/closeout`
+(admin-only) derives per-item FACTS from tables that already exist — a
+running day, a finished day with no report, reports not signed off, files
+still Needs review, a started-never-finalized package, unreviewed expenses,
+the computed invoice balance, an agreed-unreceived retainer — and the panel
+draws each beside its tick. Facts are worded as facts ("1 invoice shows a
+balance of $450.00"), never conclusions; a case with nothing to say says
+nothing; `closeCase` is untouched and a tick over a contrary fact stands.
+Fetched only when the closing panel is on screen (the most-opened-screen
+lesson), three states kept apart — a failed read says "could not be read"
+and the boxes still work. No schema, no portal-setup dispatch.
+
 ## Storage health is a screen that answers, never a hand that acts
 
 Unit 14 (audit and derived decisions in `case-portal/STORAGE-HEALTH.md` — no

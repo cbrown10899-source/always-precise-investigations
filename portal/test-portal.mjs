@@ -13212,6 +13212,54 @@ for (const [label, w, h, drawer] of [['desktop', 1200, 700, false],
   await page.close();
 }
 
+section('Closeout: the checklist shows what the record can see, and still obeys the person');
+{
+  await post('/ingest', {
+    case_no: 'API-CLOSE-1', service: 'Surveillance',
+    client_name: 'Close Client', subject_name: 'Close Subject',
+    objective: 'Wrap-up test',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(async no => {
+    const post2 = (p2, b2) => fetch('/portal-api' + p2, { method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b2 || {}) }).then(r => r.json());
+    await post2(`/cases/${no}/day/start`, { day_date: '2026-08-19', start_time: '08:00' });
+    await post2(`/cases/${no}/day/end`, { end_time: '12:00' });
+  }, 'API-CLOSE-1');
+  await rowFor(page, 'API-CLOSE-1').click();
+  await page.waitForTimeout(500);
+  await wsTab(page, 'Billing & closing');
+  await page.waitForTimeout(700);
+
+  const panel = page.locator('form', { hasText: 'Close the case' }).first();
+  ok('the closing checklist is on screen', await panel.count() === 1);
+  await page.waitForTimeout(600);
+  const body = await panel.innerText();
+  ok('the record\'s note count leads the list',
+     /The record has a note on/.test(body), body.slice(0, 220));
+  /* .tag is text-transform:uppercase and innerText is RENDERED text — the
+     harness's own has() rule, applied here. */
+  ok('a finished day with no report is said beside its attestation',
+     /finished day has no report/i.test(body), body.slice(0, 400));
+  ok('and the screen says ticking over a note is the person\'s call',
+     /your call to make; nothing here blocks closing/.test(body));
+
+  /* A FAILED READ SAYS SO, and the boxes still work. */
+  await page.route('**/portal-api/cases/*/closeout', r => r.fulfill({ status: 500, body: '{}' }));
+  await page.evaluate(() => { CLOSEOUT = {}; });
+  await wsTab(page, 'Overview');
+  await page.waitForTimeout(300);
+  await wsTab(page, 'Billing & closing');
+  await page.waitForTimeout(700);
+  const failedBody = await page.locator('form', { hasText: 'Close the case' }).first().innerText();
+  ok('a failed facts read is named — the checklist does not pretend the record is clean',
+     /could not be read/.test(failedBody), failedBody.slice(0, 240));
+  ok('and the attestation boxes still work without it',
+     await page.locator('#cl_field_work').isEnabled());
+  await page.unroute('**/portal-api/cases/*/closeout');
+}
+
 section('Evidence integrity: the card states the record and the office can act on it');
 {
   db.prepare(`INSERT INTO submissions (case_no, kind, status, client_name, subject_name, payload, created_at)
