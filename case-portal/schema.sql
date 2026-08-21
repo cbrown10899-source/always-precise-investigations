@@ -1593,3 +1593,31 @@ CREATE TABLE IF NOT EXISTS case_day_summary (
   updated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_dsummary_case ON case_day_summary(case_no);
+
+/* ----------------------------------------------- STORAGE FAILURES (Unit 14)
+
+   The owner's brief names "failed uploads" as part of the storage-health
+   system, so a refused storage write leaves a ROW — until this table, a
+   refusal was reported only to the person holding the file at that moment,
+   and the office had no way to see a bad afternoon in the field.
+
+   FAILURES ONLY. A successful upload is its own record (the evidence row),
+   and success rows here would just be a second copy that drifts. The write is
+   BEST-EFFORT at the refusal site: a failed log write never changes what the
+   caller is told, and with this table absent every refusal answers exactly as
+   it did before — asserted, because a health feature that can break the thing
+   it watches is worse than none.
+
+   `reason` is the same code the caller was given (provider_not_configured,
+   dropbox_disconnected, dropbox_unreachable, dropbox_refused_upload …), so
+   the panel and the person who was refused read one vocabulary. */
+CREATE TABLE IF NOT EXISTS storage_failure (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  at       TEXT    NOT NULL,
+  kind     TEXT    NOT NULL,        -- evidence | photo_stamp | video_stamp | report_pdf
+  case_no  TEXT,
+  filename TEXT,
+  reason   TEXT    NOT NULL,
+  user_id  INTEGER REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_stfail_at ON storage_failure(id DESC);

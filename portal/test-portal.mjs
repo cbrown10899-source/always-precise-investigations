@@ -13036,6 +13036,13 @@ section('Storage health: the Settings panel answers where the bytes are');
   const panel = page.locator('.card', { hasText: 'Storage health' }).first();
   ok('Settings carries the Storage health panel', await panel.count() === 1);
   const body = await panel.innerText();
+  ok('safe-to-store is answered in words, yes or no with the reason',
+     /Safe to store right now:\s*(Yes|No)/i.test(body), body.slice(0, 160));
+  ok('the last successful upload is stated, or honestly absent',
+     has(body, 'last successful upload') || has(body, 'nothing has been uploaded yet'));
+  ok('failed uploads are a section with a real answer',
+     has(body, 'Failed uploads') && (has(body, 'None recorded') || /refused storage write/.test(body)
+       || has(body, 'failure log has not arrived')), body.slice(0, 400));
   ok('the Cloudflare side reads with its percent of the free tier',
      has(body, 'Cloudflare') && /% of the free tier/.test(body), body.slice(0, 200));
   ok('the legacy-video open decision is stated in words, not hidden',

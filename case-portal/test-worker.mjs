@@ -13640,6 +13640,98 @@ section('Storage health: the whole picture, from metadata, and never a byte');
   ok('the route wrote nothing', wrote.ev === 5, JSON.stringify(wrote));
 }
 
+section('Storage health: failures are recorded, successes are not, and the log cannot break the door');
+{
+  const env = freshEnv();
+  DBX.reset();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-SF1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+
+  const up = (name, n) => {
+    const fd = new FormData();
+    fd.append('file', new File([new Uint8Array(n).fill(9)], name, { type: 'image/jpeg' }));
+    return worker.fetch(new Request(API + '/cases/API-SF1/evidence', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  };
+  const failRows = async () => {
+    const r = await env.DB.prepare('SELECT * FROM storage_failure ORDER BY id').all();
+    return r.results || [];
+  };
+
+  // SUCCESS writes no failure row — and neither does the autorename duplicate,
+  // which is a success wearing a new name.
+  ok('a successful upload logs nothing', (await up('ok.jpg', 900)).status === 201
+     && (await failRows()).length === 0);
+  ok('a same-named upload succeeds by autorename and logs nothing',
+     (await up('ok.jpg', 900)).status === 201 && (await failRows()).length === 0);
+
+  // DISCONNECTED: the refusal is unchanged AND leaves a row.
+  DBX.down = true;
+  const refused = await up('field.jpg', 700);
+  ok('with Dropbox down the upload is refused exactly as before',
+     refused.status === 503 && (await jsonOf(refused)).code === 'dropbox_unreachable');
+  let rows = await failRows();
+  ok('and the refusal left one row with the same reason the caller was given',
+     rows.length === 1 && rows[0].kind === 'evidence' && rows[0].case_no === 'API-SF1'
+       && rows[0].filename === 'field.jpg' && rows[0].reason === 'dropbox_unreachable',
+     JSON.stringify(rows));
+  DBX.down = false;
+
+  // REFUSED WRITE (reachable, upload rejected): a different reason, recorded.
+  DBX.uploadFails = true;
+  await up('rejected.jpg', 700);
+  rows = await failRows();
+  ok('a rejected write records dropbox_refused_upload',
+     rows.length === 2 && rows[1].reason === 'dropbox_refused_upload', JSON.stringify(rows.map(r => r.reason)));
+  DBX.uploadFails = false;
+
+  // The health screen shows them, newest first, and the readiness answer.
+  const d = await jsonOf(await call(env, '/storage-health', { cookie: admin }));
+  ok('the panel data carries the failures, newest first',
+     d.failures && d.failures.total === 2 && d.failures.recent[0].reason === 'dropbox_refused_upload',
+     JSON.stringify(d.failures));
+  ok('safe-to-store answers YES when the door would accept',
+     d.readiness && d.readiness.ok === true, JSON.stringify(d.readiness));
+  ok('last successful upload is the newest Dropbox row',
+     typeof d.dropbox.last_upload_at === 'string', String(d.dropbox.last_upload_at));
+  DBX.down = true;
+  const d2 = await jsonOf(await call(env, '/storage-health', { cookie: admin }));
+  ok('and NO, with the reason named, when it would refuse',
+     d2.readiness && d2.readiness.ok === false && typeof d2.readiness.code === 'string',
+     JSON.stringify(d2.readiness));
+  DBX.down = false;
+
+  // NO CREDENTIAL LEAVES — the manifest's own rule applied here.
+  const raw = JSON.stringify(d) + JSON.stringify(d2);
+  ok('the payload carries no token, secret or refresh string',
+     !/token|secret|refresh|sl\./i.test(raw.replace(/"last_upload_at"/g, '')), 
+     (raw.match(/token|secret|refresh/i) || [''])[0]);
+
+  // THE LOG CANNOT BREAK THE DOOR: with the table absent, the refusal answers
+  // byte-identically and the panel says UNKNOWN, never "none ever failed".
+  const env2 = freshEnv();
+  const db2 = new DatabaseSync(':memory:');
+  db2.exec(SCHEMA.replace(/CREATE TABLE IF NOT EXISTS storage_failure[\s\S]*?\);/, '')
+                 .replace(/CREATE INDEX IF NOT EXISTS idx_stfail_at[^;]*;/, ''));
+  env2.DB = d1(db2);
+  await bootstrapAdmin(env2);
+  const admin2 = (await login(env2, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env2, { case_no: 'API-SF2', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  DBX.down = true;
+  const fd2 = new FormData();
+  fd2.append('file', new File([new Uint8Array(500).fill(3)], 'x.jpg', { type: 'image/jpeg' }));
+  const r2 = await worker.fetch(new Request(API + '/cases/API-SF2/evidence', {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin2 }, body: fd2 }), env2);
+  const body2 = await jsonOf(r2);
+  ok('with the log table absent the refusal is exactly what it always was',
+     r2.status === 503 && body2.code === 'dropbox_unreachable', JSON.stringify(body2));
+  DBX.down = false;
+  const dh2 = await jsonOf(await call(env2, '/storage-health', { cookie: admin2 }));
+  ok('and the panel reads UNKNOWN rather than "none ever failed"',
+     dh2.failures === null, JSON.stringify(dh2.failures));
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

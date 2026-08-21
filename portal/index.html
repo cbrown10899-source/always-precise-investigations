@@ -5495,7 +5495,13 @@ function storageHealthHtml(){
   const d = SH.data, cf = d.cloudflare, dbx = d.dropbox;
   const integ = d.integrity;
   const top = d.top_cases || [];
+  const rd = d.readiness || {};
+  const fails = d.failures;
   return `<div class="card">${head}
+    <div class="tl-m" style="margin-bottom:6px">Safe to store right now:
+      ${rd.ok ? `<span class="tag rs-approved">Yes &mdash; Dropbox is connected and answering</span>`
+              : `<span class="tag rs-needs_revision">No &mdash; ${esc(rd.code || "unknown")}</span>`}
+      ${dbx.last_upload_at ? `&middot; last successful upload ${when(dbx.last_upload_at)}` : "&middot; nothing has been uploaded yet"}</div>
     <h3 style="margin:8px 0 4px;font-size:1rem">Cloudflare (legacy files)</h3>
     <div class="tl-m">${shBytes(cf.live.bytes)} in ${cf.live.count} file(s) &middot;
       ${cf.percent_of_free}% of the free tier ${cf.percent_of_free >= cf.warn_at ? `<span class="tag new">over ${cf.warn_at}%</span>` : ""}</div>
@@ -5523,6 +5529,18 @@ function storageHealthHtml(){
           SHA-256${integ.not_yet_recorded ? ` &middot; <b>${integ.not_yet_recorded}</b> not yet recorded
           &mdash; each records from its own card, one file at a time` : " &mdash; every live file is covered"}.</div>`
       : `<div class="tl-m">Unknown &mdash; the integrity table has not arrived on this database.</div>`}
+
+    <h3 style="margin:14px 0 4px;font-size:1rem">Failed uploads</h3>
+    ${fails === null || fails === undefined
+      ? `<div class="tl-m">Unknown &mdash; the failure log has not arrived on this database.
+          Run the <b>portal-setup</b> workflow once.</div>`
+      : fails.total === 0
+      ? `<div class="tl-m">None recorded. A refusal is logged the moment it happens, so this
+          reading means no storage write has been refused since the log began.</div>`
+      : `<div class="tl-m"><b>${fails.total}</b> refused storage write(s) on record. Most recent:</div>
+        ${fails.recent.slice(0, 5).map(f => `<div class="tl-m">&bull; ${when(f.at)} &mdash;
+          ${esc(f.kind)}${f.case_no ? ` on ${esc(f.case_no)}` : ""}${f.filename ? ` (${esc(f.filename)})` : ""}
+          &mdash; <span class="tag rs-needs_revision">${esc(f.reason)}</span>${f.who ? ` &middot; ${esc(f.who)}` : ""}</div>`).join("")}`}
 
     ${top.length ? `<h3 style="margin:14px 0 4px;font-size:1rem">Heaviest cases</h3>
       <table class="stacktbl shtbl"><thead><tr><th>Case</th><th>Files</th><th>Dropbox</th><th>Legacy</th></tr></thead>

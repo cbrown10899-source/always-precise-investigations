@@ -6761,8 +6761,20 @@ async function evidenceUsage(env) {
    null with a named reason — a guessed quota would be the meter lying in the
    reassuring direction. */
 
-async function dropboxSpace(env) {
-  const token = await dropboxAccessToken(env);
+/* A refused storage write leaves a row — best-effort, and NEVER able to
+   change what the caller is told. The try/catch is the whole contract. */
+async function logStorageFailure(env, kind, caseNo, filename, reason, userId) {
+  try {
+    if ((await missingTables(env)).includes('storage_failure')) return;
+    await env.DB.prepare(
+      `INSERT INTO storage_failure (at, kind, case_no, filename, reason, user_id)
+       VALUES (?, ?, ?, ?, ?, ?)`)
+      .bind(nowIso(), kind, caseNo || null, filename || null, String(reason || 'unknown'),
+            userId || null).run();
+  } catch { /* the health record must not break the thing it watches */ }
+}
+
+async function dropboxSpace(env, token) {
   if (!token) return { space: null, space_reason: 'dropbox_unreachable' };
   try {
     const res = await fetch('https://api.dropboxapi.com/2/users/get_space_usage', {
@@ -6839,13 +6851,42 @@ async function storageHealth(env) {
       GROUP BY case_no ORDER BY SUM(size_bytes) DESC LIMIT ?2`)
     .bind(like, SH_TOP_CASES).all();
 
+  /* SAFE TO STORE, answered passively: the same three conditions every upload
+     door checks, plus one minted token shared with the space question — the
+     route asks Dropbox once, not once per fact. */
+  const problem = await dropboxStorageProblem(env);
+  const token = problem ? null : await dropboxAccessToken(env);
+  const readiness = problem ? { ok: false, code: problem }
+    : token ? { ok: true } : { ok: false, code: 'dropbox_unreachable' };
+
+  /* LAST SUCCESSFUL UPLOAD derives from the rows that exist — no new write,
+     nothing to drift. */
+  const lastUp = await env.DB.prepare(
+    `SELECT MAX(uploaded_at) AS at FROM case_evidence WHERE r2_key LIKE ?`).bind(like).first();
+
+  /* FAILED UPLOADS, the record the owner asked for. Unknown (null) when the
+     table has not arrived — unknown must not draw as "none ever failed". */
+  let failures = null;
+  if (!missing.includes('storage_failure')) {
+    const total = Number((await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM storage_failure').first() || {}).n) || 0;
+    const { results: recent } = await env.DB.prepare(
+      `SELECT f.at, f.kind, f.case_no, f.filename, f.reason, u.display_name AS who
+         FROM storage_failure f LEFT JOIN users u ON u.id = f.user_id
+        ORDER BY f.id DESC LIMIT 10`).all();
+    failures = { total, recent: recent || [] };
+  }
+
   return {
+    readiness,
     cloudflare: { ...(await evidenceUsage(env)),
       live: r2Live, live_video: r2Video, deleted_rows: r2Gone.count },
     dropbox: { live: dbxLive, deleted_rows: dbxGone.count,
       video_copies_filed: vstCopies, report_pdfs_filed: pdfFiled,
-      ...(await dropboxSpace(env)) },
+      last_upload_at: (lastUp && lastUp.at) || null,
+      ...(await dropboxSpace(env, token)) },
     integrity,
+    failures,
     top_cases: top || [],
     generated_at: nowIso(),
   };
@@ -7087,22 +7128,25 @@ async function uploadEvidence(request, env, user, caseNo) {
      than quietly written to R2: a fallback would split a case across two
      stores and nobody would find out until they went looking for the half that
      was not where they expected. */
+  const filename = String(file.name || 'file').replace(/[^A-Za-z0-9._ -]/g, '_').slice(0, 120) || 'file';
   const problem = await dropboxStorageProblem(env);
   if (problem === 'provider_not_configured') {
+    await logStorageFailure(env, 'evidence', caseNo, filename, problem, user.id);
     return json({ error: 'Dropbox is not set up on this Worker yet, and new case files are stored there. '
       + EXTERNAL_PROVIDERS.dropbox.note, code: problem }, 503);
   }
   if (problem) {
+    await logStorageFailure(env, 'evidence', caseNo, filename, problem, user.id);
     return json({ error: 'No Dropbox account is connected, and new case files are stored there. '
       + 'An admin can connect one from the portal, then try this upload again.', code: problem }, 503);
   }
   const dbxToken = await dropboxAccessToken(env);
   if (!dbxToken) {
+    await logStorageFailure(env, 'evidence', caseNo, filename, 'dropbox_unreachable', user.id);
     return json({ error: 'Dropbox could not be reached just now, so this file was not stored. '
       + 'Nothing was lost — try again in a moment.', code: 'dropbox_unreachable' }, 503);
   }
 
-  const filename = String(file.name || 'file').replace(/[^A-Za-z0-9._ -]/g, '_').slice(0, 120) || 'file';
   /* Owner's decision, 2026-08-14: the firm shoots its own footage and writes
      its own reports, so evidence should be usable in the report and the client
      package the moment it is uploaded rather than waiting behind a review it
@@ -7146,6 +7190,7 @@ async function uploadEvidence(request, env, user, caseNo) {
   /* NOTHING IS RECORDED UNTIL THE BYTES ARE SAFE. A row written before the
      upload succeeded is a case file the portal lists and cannot produce. */
   if (!meta) {
+    await logStorageFailure(env, 'evidence', caseNo, filename, 'dropbox_refused_upload', user.id);
     return json({ error: 'Dropbox refused the upload, so this file was not stored. '
       + 'Nothing was lost — try again in a moment.', code: 'dropbox_unreachable' }, 503);
   }
@@ -7272,6 +7317,7 @@ async function videoStampToDropbox(request, env, user, caseNo, stampId, step) {
   const meta = await dropboxSessionFinish(env, token, sid, offset,
     `/${caseNo}/Video/${dropboxStoredName(name)}`);
   if (!meta) {
+    await logStorageFailure(env, 'video_stamp', caseNo, name, 'dropbox_refused_upload', user.id);
     return json({ error: 'Dropbox would not complete the upload. The copy is still on this device.',
       code: 'dropbox_unreachable' }, 503);
   }
@@ -7372,6 +7418,7 @@ async function saveBuildPdf(request, env, user, buildId) {
 
   const token = await dropboxAccessToken(env);
   if (!token) {
+    await logStorageFailure(env, 'report_pdf', b.case_no, null, 'dropbox_unreachable', user.id);
     return json({ error: 'Dropbox could not be reached just now, so the report was not filed. '
       + 'Nothing was lost — download it or try again in a moment.', code: 'dropbox_unreachable' }, 503);
   }
@@ -7381,6 +7428,7 @@ async function saveBuildPdf(request, env, user, buildId) {
   const meta = await dropboxUpload(env, token,
     `/${b.case_no}/Reports/${dropboxStoredName(name)}`, buf);
   if (!meta) {
+    await logStorageFailure(env, 'report_pdf', b.case_no, name, 'dropbox_refused_upload', user.id);
     return json({ error: 'Dropbox refused the file, so the report was not filed. '
       + 'Nothing was lost — download it or try again in a moment.', code: 'dropbox_unreachable' }, 503);
   }
@@ -7995,6 +8043,7 @@ async function recordPhotoStamp(request, env, user, caseNo) {
   }
   const dbxToken = await dropboxAccessToken(env);
   if (!dbxToken) {
+    await logStorageFailure(env, 'photo_stamp', caseNo, original.filename, 'dropbox_unreachable', user.id);
     return json({ error: 'Dropbox could not be reached just now, so the copy was not stored. '
       + 'Nothing was lost — try again in a moment.', code: 'dropbox_unreachable' }, 503);
   }
@@ -8011,6 +8060,7 @@ async function recordPhotoStamp(request, env, user, caseNo) {
   /* NOTHING IS RECORDED UNTIL THE BYTES ARE SAFE — and nothing about the
      original has been touched at any point above or below this line. */
   if (!meta) {
+    await logStorageFailure(env, 'photo_stamp', caseNo, filename, 'dropbox_refused_upload', user.id);
     return json({ error: 'Dropbox refused the upload, so the copy was not stored. '
       + 'Nothing was lost — try again in a moment.', code: 'dropbox_unreachable' }, 503);
   }
@@ -9080,6 +9130,7 @@ const DEMO_SWEEP = [
   ['subject_vehicles',      'DELETE FROM subject_vehicles WHERE subject_id IN (SELECT id FROM case_subjects WHERE case_no LIKE ?)'],
   ['retainer_payment_void', 'DELETE FROM retainer_payment_void WHERE payment_id IN (SELECT id FROM retainer_payment WHERE case_no LIKE ?)'],
 
+  ['storage_failure',       'DELETE FROM storage_failure WHERE case_no LIKE ?'],
   /* --- the four that reference case_days, before case_days itself --- */
   ['case_day_summary',      'DELETE FROM case_day_summary WHERE case_no LIKE ?'],
   ['activity_log',          'DELETE FROM activity_log WHERE case_no LIKE ?'],
@@ -10536,7 +10587,7 @@ const EXPECTED_TABLES = [
   'video_stamp', 'dropbox_auth', 'activity_source', 'activity_voice_event',
   'photo_stamp',
   'profile', 'profile_contact', 'profile_phone', 'case_profile',
-  'build_template', 'evidence_integrity', 'case_day_summary',
+  'build_template', 'evidence_integrity', 'case_day_summary', 'storage_failure',
 ];
 
 async function missingTables(env) {
