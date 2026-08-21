@@ -4823,6 +4823,71 @@ section('A reassigned investigator keeps their own work, never the client');
  * The property under test is the one the owner stated: private, insurance and
  * legal are three separate choices, they stay separate, and legal works with
  * no case number at all. Each assertion carries its negative half. */
+/* ------------------------------------------ invoice defaults (Unit 29)
+ *
+ * The Production Truth Audit found GET/POST /billing-settings had existed with
+ * no way to reach them. The backend is unchanged apart from one validation:
+ * these tests pin what it already promised, plus the boundary the prefix needs.
+ * NO NEW BILLING POLICY — the seven keys are the seven BILLING_DEFAULTS. */
+section('Invoice defaults: admin reads and writes them, and the prefix is bounded');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  const read = await jsonOf(await call(env, '/billing-settings', { cookie: admin }));
+  ok('an admin reads the defaults', read.settings && typeof read.settings === 'object');
+  ok('and they are the seven the backend supports, no more',
+     ['company_name', 'company_line', 'invoice_prefix', 'terms_insurance', 'terms_private',
+      'payment_instructions', 'invoice_footer'].every(k => k in read.settings)
+     && Object.keys(read.settings).length === 7, JSON.stringify(Object.keys(read.settings)));
+  ok('none of them is a credential',
+     !/key|secret|token|password/i.test(JSON.stringify(Object.keys(read.settings))));
+
+  /* AUTHORIZATION — the field has no business here, read or write. */
+  ok('an investigator cannot read them',
+     (await call(env, '/billing-settings', { cookie: dana })).status === 403);
+  ok('and cannot write them',
+     (await call(env, '/billing-settings', { method: 'POST', cookie: dana,
+       body: { invoice_prefix: 'HACK' } })).status === 403);
+
+  /* PERSISTENCE — an edit survives a re-read, and an absent key is untouched. */
+  const saved = await jsonOf(await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { invoice_prefix: 'API-2026', terms_private: 'Due on receipt, please' } }));
+  ok('a save answers with the fresh settings', saved.ok === true
+     && saved.settings.invoice_prefix === 'API-2026', JSON.stringify(saved.settings.invoice_prefix));
+  const back = await jsonOf(await call(env, '/billing-settings', { cookie: admin }));
+  ok('and they persist', back.settings.invoice_prefix === 'API-2026'
+     && back.settings.terms_private === 'Due on receipt, please');
+  ok('a key that was not posted keeps its value',
+     back.settings.company_name === read.settings.company_name);
+
+  /* VALIDATION — the prefix is what every invoice number is built from. */
+  for (const [label, bad] of [['empty', ''], ['a leading hyphen', '-API'],
+                              ['a space', 'API INV'], ['too long', 'A'.repeat(21)]]) {
+    const r = await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+      body: { invoice_prefix: bad } });
+    ok(`the prefix rejects ${label}`, r.status === 400
+       && (await jsonOf(r)).code === 'bad_prefix', String(r.status));
+  }
+  const stillGood = await jsonOf(await call(env, '/billing-settings', { cookie: admin }));
+  ok('and a rejected save changed nothing', stillGood.settings.invoice_prefix === 'API-2026');
+
+  /* INVOICE GENERATION STILL WORKS, and uses the saved prefix. */
+  await ingest(env, { case_no: 'API-BS1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  const inv = await jsonOf(await call(env, '/cases/API-BS1/invoices', { method: 'POST', cookie: admin,
+    body: {} }));
+  ok('an invoice is still created after editing the defaults', inv.ok === true || !!inv.invoice,
+     JSON.stringify(inv).slice(0, 160));
+  const invNo = (inv.invoice && inv.invoice.invoice_no) || '';
+  ok('and its number starts from the saved prefix', invNo.startsWith('API-2026-'), invNo);
+}
+
 section('Legal can be sent before a case exists, and the three doors stay separate');
 {
   const realFetch = globalThis.fetch;
