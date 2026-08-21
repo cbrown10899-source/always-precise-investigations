@@ -850,9 +850,16 @@ const LEGAL_ARRANGEMENTS = {
   existing_billing: 'Existing billing arrangement',
 };
 /* Assignment categories (D4): one extensible list, stored as free text so
-   "Other / Custom" and future categories need no schema change. */
+   "Other / Custom" and future categories need no schema change.
+
+   THE COLUMN IS FREE TEXT AND THIS LIST VALIDATES NOTHING — which is what
+   makes the Unit 35 terminology change safe on the way in: a case that already
+   recorded 'Witness locate / interview' still saves, still reads back, and is
+   never rewritten. The page offers the current wording, keeps a superseded
+   value selectable, and shows it under its current label. Data untouched,
+   wording current. */
 const LEGAL_ASSIGNMENTS = ['Surveillance', 'Locate / Skip trace', 'Background investigation',
-  'Witness locate / interview', 'Domestic / custody investigation', 'Civil investigation',
+  'Witness locate', 'Domestic / custody investigation', 'Civil investigation',
   'Evidence / documentation', 'Process / service support', 'Other / custom assignment'];
 
 /* ---------------------------------------------- UNIT 7: client profiles

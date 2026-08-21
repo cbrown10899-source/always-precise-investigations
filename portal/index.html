@@ -2447,7 +2447,7 @@ function pkgCard(p){
   return `<div class="pcard">
     <div class="pc-top">
       <div>
-        <span class="tag ${p.kind === "claims" ? "claims" : "consumer"}">${esc(p.case_type || (p.kind === "claims" ? "Insurance" : "Private"))}</span>
+        <span class="tag ${p.kind === "claims" ? "claims" : "consumer"}">${esc(termLabel(p.case_type) || (p.kind === "claims" ? "Insurance" : "Private"))}</span>
         <div style="font-weight:800;margin-top:5px">${esc(p.client || "")}</div>
         <div style="font-size:.85rem;color:var(--muted)">${esc(p.subject || "")}</div>
         <div class="mono" style="font-size:.72rem;margin-top:3px">${esc(p.case_no)}</div>
@@ -3420,13 +3420,56 @@ function summaryCards(){
 
 /* The investigator's day, answered directly: am I out now, what is assigned
    to me, what do I owe. Everything here is already scoped by the Worker. */
+/* ---------------------------------------- terminology (Unit 35)
+
+   Owner decision, 2026-08-21: canvass / canvassing, interview / interviewing
+   and recorded statement(s) do not appear as VISIBLE WORDING anywhere — the
+   public site (Unit 34) and now the signed-in portal.
+
+   THIS IS A DISPLAY ALIAS AND NOTHING ELSE. The stored value is the record's
+   identity: `case_types.label` is what `case_meta.case_type_id` points at, and
+   `legal_intake.assignment_type` is free text a case already recorded. So
+   nothing here edits data, migrates a row, renames a category, or changes what
+   is submitted back — the KEY is the stored string, which stays exactly as it
+   is, and the VALUE is what a person reads.
+
+   Editing `schema.sql` instead would have been the wrong tool twice over: it
+   seeds with INSERT OR IGNORE, so a LIVE database keeps its existing rows and
+   the screen would not change at all, while a FRESH one would get new labels —
+   the fresh-versus-live divergence this project has already paid for once.
+
+   A term not in this map is returned unchanged, so an unknown or custom
+   category is never silently reworded. */
+const TERM_ALIAS = {
+  "Field Investigation / Canvass": "Field Investigation",
+  "Recorded Statement":           "Statement",
+  "Witness locate / interview":   "Witness locate",
+};
+const termLabel = v => TERM_ALIAS[String(v ?? "")] ?? v;
+
+/* The assignment categories offered TODAY. A case still holding a superseded
+   value keeps it — `assignOptions` puts it back on the list so opening the
+   panel cannot silently blank it, and it is submitted back unchanged while the
+   screen reads the current wording. */
+const ASSIGN_TYPES = ["Surveillance", "Locate / Skip trace", "Background investigation",
+  "Witness locate", "Domestic / custody investigation", "Civil investigation",
+  "Evidence / documentation", "Process / service support", "Other / custom assignment"];
+function assignOptions(current){
+  const list = ASSIGN_TYPES.slice();
+  const c = String(current || "");
+  if(c && !list.includes(c)) list.push(c);
+  return list;
+}
+
 /* Short labels the way a wall calendar wants them, derived from the case
    type so the list stays configuration-driven. */
 function calLabel(t, kind){
   const s = String(t || "");
   if(/surveillance/i.test(s)) return "SURV";
   if(/statement/i.test(s)) return "STATEMENT";
-  if(/canvass|field/i.test(s)) return "CANVASS";
+  /* The pattern still matches the legacy stored type; only the badge the
+     admin reads changed (Unit 35). */
+  if(/canvass|field/i.test(s)) return "FIELD";
   if(/custody/i.test(s)) return "CUSTODY";
   if(/infidelity|adultery/i.test(s)) return "INFIDELITY";
   if(/scene/i.test(s)) return "SCENE";
@@ -3497,7 +3540,7 @@ function todayView(){
   const pending = (OFFERS || []).filter(o => o.status === "offered");
   const offerCards = pending.length ? `<h3 class="tl-day">Offered to you — accept or decline</h3>
     <div class="rlist">${pending.map(o => `<div class="rcard" style="cursor:default">
-      <div class="rc-h"><b>${esc(o.case_type || "Investigation")}</b>
+      <div class="rc-h"><b>${esc(termLabel(o.case_type) || "Investigation")}</b>
         <span class="tag rs-submitted">Offered</span></div>
       <div class="tl-m">${o.investigation_date ? esc(fmtDay(o.investigation_date)) : "Date to be set"}${
         o.expected_hours ? ` · ${esc(o.expected_hours)} hours` : ""}${
@@ -4374,11 +4417,9 @@ function legalPanel(){
       ${f("court_jurisdiction", "Court / jurisdiction")}
       <div class="two">
         <label class="f"><span>Assignment type</span>
-          <select id="lg_assignment_type">${["", "Surveillance", "Locate / Skip trace",
-            "Background investigation", "Witness locate / interview", "Domestic / custody investigation",
-            "Civil investigation", "Evidence / documentation", "Process / service support",
-            "Other / custom assignment"].map(v =>
-            `<option value="${esc(v)}" ${v === (L.assignment_type || "") ? "selected" : ""}>${v || "Select…"}</option>`).join("")}
+          <select id="lg_assignment_type">${["", ...assignOptions(L.assignment_type)].map(v =>
+            `<option value="${esc(v)}" ${v === (L.assignment_type || "") ? "selected" : ""}>${
+              v ? esc(termLabel(v)) : "Select…"}</option>`).join("")}
           </select></label>
         ${f("conflict_names", "Conflict-check names")}
       </div>
@@ -4478,10 +4519,8 @@ function newLeadView(){
         <div class="two">
           <label class="f"><span>Assignment</span>
             <select id="nl_asgtype"><option value="">Select&hellip;</option>
-              ${["Surveillance", "Locate / Skip trace", "Background investigation",
-                 "Witness locate / interview", "Domestic / custody investigation", "Civil investigation",
-                 "Evidence / documentation", "Process / service support", "Other / custom assignment"]
-                .map(o => `<option${sel("nl_asgtype", o)}>${o}</option>`).join("")}</select></label>
+              ${assignOptions(val("nl_asgtype"))
+                .map(o => `<option value="${esc(o)}"${sel("nl_asgtype", o)}>${esc(termLabel(o))}</option>`).join("")}</select></label>
           <label class="f"><span>Retainer amount <span class="opt">optional &mdash; recorded as agreed, never as paid</span></span>
             <input id="nl_retainer" inputmode="decimal" placeholder="If one was agreed on the call" value="${val("nl_retainer")}"></label>
         </div>
@@ -6175,7 +6214,7 @@ function caseTypesHtml(){
   const side = s2 => (CTYPES || []).filter(t => t.side === s2);
   const col = (s2, label) => `<div><h3 style="margin:6px 0 4px;font-size:.95rem">${esc(label)}</h3>${
     side(s2).length
-      ? `<ul class="ctlist">${side(s2).map(t => `<li>${esc(t.label)}</li>`).join("")}</ul>`
+      ? `<ul class="ctlist">${side(s2).map(t => `<li>${esc(termLabel(t.label))}</li>`).join("")}</ul>`
       : `<p class="hint">None yet.</p>`}</div>`;
   return `<div class="card">${head}
     <p class="note">What a case can be called, and which side of the business it belongs to. A type
@@ -11278,7 +11317,7 @@ function editCasePanel(s, a){
       <label class="f"><span>Case type</span>
         <select id="ed_type"><option value="">&mdash;</option>${
           (WS && WS.case_types || []).map(t => `<option value="${t.id}"${
-            a.case_type_id === t.id ? " selected" : ""}>${esc(t.label)}</option>`).join("")}</select></label>
+            a.case_type_id === t.id ? " selected" : ""}>${esc(termLabel(t.label))}</option>`).join("")}</select></label>
       <label class="f"><span>Status</span><select id="ed_status">${STAGE_OPTS(s)}</select></label>
     </div>
     <div class="two">
@@ -12594,7 +12633,7 @@ function pkgDocHtml(){
   const infoRows = !ci ? [] : [
     ["Case number", WS_CASE],
     ["Prepared for", ci.carrier || ""],
-    ["Case type", ci.case_type || ci.service || ""],
+    ["Case type", termLabel(ci.case_type) || ci.service || ""],
     ["Subject", ci.subject_name || ""],
     ["Claim number", ci.claim_number || ""],
     ["Date of loss", ci.date_of_loss ? fmtDay(ci.date_of_loss) : ""],
