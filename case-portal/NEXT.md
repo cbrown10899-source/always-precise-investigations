@@ -39,48 +39,78 @@ item is finished.
 
 # ⏱️ OVERNIGHT RESUME POINT — 2026-08-21
 
-**Verify repository and deployment state before trusting any line of this;
-never guess what completed during an interruption.**
+**Verify repository and deployment state before trusting any line of this.
+Never guess what completed during an interruption.**
 
 | Unit | State |
 | --- | --- |
-| **17A** Legal intake link routing | ✅ SHIPPED — #206, master `61a00f0` |
-| **18** Invoice Payment Integrity | ✅ SHIPPED — #207, master `c184a50`; `portal-setup` 32453171314 ✅ |
-| **19** Package + Report Accuracy | ✅ SHIPPED — #208, master `1a047a8`; no schema |
-| **20** Intake Alert Completeness | **IN FLIGHT** — branch `intake-alert-completeness` |
-| 21 Accessibility + Voice §9 | not started |
-| 22 PORTAL-OPS gaps | not started |
+| **17A** Legal intake link routing | ✅ SHIPPED — #206, `61a00f0` |
+| **18** Invoice Payment Integrity | ✅ SHIPPED — #207, `c184a50`; `portal-setup` 32453171314 ✅ |
+| **19** Package + Report Accuracy | ✅ SHIPPED — #208, `1a047a8`; no schema |
+| **20** Intake Alert Completeness | ✅ SHIPPED — #209, `46a06ad`; schema live (see the setup-workflow note) |
+| **21** Accessibility + Voice §9 | **CODED, TESTING** — branch `accessibility-pass` |
+| **22** PORTAL-OPS gaps | **CODED (worker only)** — branch `portal-ops-gaps` |
 
-## Unit 20 in flight
+## Unit 21 — where it stands
 
-Base master `1a047a8`. CODED ✅ · worker **2598/0** ✅ · portal suite + deploy
-guard **running** · PUSHED ⬜ MERGED ⬜ DEPLOYED ⬜.
+Branch `accessibility-pass`, base master `46a06ad`. Own section smoke **20/20**.
+The full portal run showed **3 failures, all one regression I introduced**: the
+new document `h1` sat ahead of the sign-in view's own `h1`, so
+`text(page,'h1')` read the wrong one — and `hidden` did not help, because a
+hidden element is still the FIRST one in document order. The heading now lives
+inside `shell()`, which renders only when signed in, so exactly one `h1` exists
+in either state. **That fix is committed and the full suite is re-running; read
+its result before merging.** No schema, so no dispatch owed.
 
-**Schema changed — `alert_failure`. A manual `portal-setup.yml` dispatch is
-OWED after merge.**
+## Unit 22 — where it stands
 
-**Next action:** read the portal + deploy-guard results; if green, push → PR →
-squash merge → pull master → **dispatch `portal-setup.yml`** → verify runs +
-save tag → ledger → **Unit 21**.
+Branch `portal-ops-gaps` (split off cleanly after I first committed it onto the
+Unit 21 branch by mistake; `accessibility-pass` was reset and no longer carries
+it). **Worker side only** — `GET /tasks` and `GET /audit`, both composing
+tables that already exist, no new table, nothing written.
 
-**What Unit 20 changed:** `alertCategory()` reads `submissions.kind` plus the
-existing legal marker and the email alert now says **Private / Insurance /
-Legal** in both subject and body — resolved at the one chokepoint so a seventh
-alert added later inherits it. **SMS is untouched**: its branch reads neither
-the case number nor the category, which is stronger than filtering. The
-retainer payment route alerts only on `recorded`, so a deduplicated retry no
-longer sends a second email about one payment. `alert_failure` records a send
-that reached nobody (`send_failed` / `error`) best-effort, and Settings draws a
-card **only in the failing state**. No queue, no retry, no redelivery — the
-status log stays the owner's deferral and this is deliberately not it.
+**Still to do on it:** the two page views, the Quick Actions `+ NEW` control,
+tests, then the ship chain. Rebase onto master after Unit 21 merges.
 
-**Deferred and preserved:** SMS provider, alert status log, Intake Archive
-Part 2, invoice Write-Off, Case Health flag, physical destruction, retention
-clocks, Dropbox byte deletion, legacy R2 export, two-person hold approval.
-**Unit 24 File Queue remains REQUIRED.**
+**Audited before building, and three of the six are NOT being invented:**
 
-**Open, narrow (Unit 18):** the draft rule excludes `draft`, matching
-`outstanding`. Whether `ready` also counts as unsent is the owner's call.
+| Phase | Decision |
+| --- | --- |
+| 4 Cross-case Tasks | **BUILT** (worker). Buckets TODAY/UPCOMING/OVERDUE/COMPLETED over `case_tasks`, role-scoped in the SQL, hidden cases excluded. It deliberately does **not** auto-surface: that is `/attention`'s job from Unit 8, and one entry of Phase 4's auto-surface list is TRUNCATED in the brief — re-implementing it would both duplicate a working feature and invent the missing item |
+| 6 Quick Actions + NEW | **TO BUILD** — only shortcuts that map to doors that already exist; the brief marks two of its items `[inferred]` and those are left out |
+| 14 Audit Trail | **BUILT** (worker). Admin-only, composed from seven existing sources; absent sources are NAMED rather than drawn as "nothing happened". Three of my seven arms had wrong column names and would have returned empty silently — caught by checking every one against `schema.sql` |
+| 9 Saved Views | **BLOCKED — OWNER.** PORTAL-OPS says the heading itself is `[inferred]` and the Billing item is corrupted. The feature's own name is a guess |
+| 12 Case Templates | **OWNER CONTENT.** The mechanism is buildable; the templates are the firm's own case-setup defaults and case-type list. Not invented |
+| 13 Document Templates | **OWNER CONTENT.** Same — authorization requests, communication and report language are the firm's words |
+
+## ⚠️ FOR THE OWNER — portal-setup run 32456667718 shows RED, schema is fine
+
+The Unit 20 dispatch applied the schema and then failed on its LAST step. That
+run's own health probe, after the migration and after the Worker deployed from
+`46a06ad`:
+
+```
+{"ok":true,"configured":true,"email":true,"missing_tables":[],"storage_pct":0}
+```
+
+`missing_tables: []` against a Worker whose `EXPECTED_TABLES` names
+`alert_failure` — the table is live. **What failed** is the admin-bootstrap
+step: `POST /portal-api/setup` → `401 not authorised`, a `BOOTSTRAP_TOKEN`
+propagation race after the redeploy. Harmless here (the admin account already
+exists), unrelated to this unit, and **not touched autonomously because it is
+credential handling — a stop condition.** Worth a deliberate fix.
+
+## Deferred and preserved
+
+SMS, alert status log, Intake Archive Part 2, invoice Write-Off, Case Health
+flag, physical destruction, retention clocks, Dropbox byte deletion, legacy R2
+export, two-person hold approval. **Unit 24 File Queue remains REQUIRED.**
+
+## Open, narrow (Unit 18)
+
+The draft rule excludes `draft`, matching the test `outstanding` already uses.
+Whether `ready` — reviewed, not yet sent — also counts as unsent is the
+owner's call.
 
 ---
 

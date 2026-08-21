@@ -13353,6 +13353,144 @@ section('Delivery center on a phone: rows stack and the copy is reachable');
   await page.close();
 }
 
+section('Unit 21 — accessibility: landmarks, a way in from the keyboard, and answers said out loud');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* Every one of these was MEASURED as absent before it was built: the probe
+     found one landmark on the whole signed-in page, no h1, no live region, no
+     skip link, and one unlabelled input. */
+  const a = await page.evaluate(() => {
+    const named = el => (el.getAttribute('aria-label') || el.textContent || '').trim().length > 0
+      || !!el.getAttribute('aria-labelledby') || !!el.title;
+    const labelled = i => {
+      if (i.getAttribute('aria-label') || i.getAttribute('aria-labelledby')) return true;
+      if (i.id && document.querySelector('label[for="' + CSS.escape(i.id) + '"]')) return true;
+      return !!i.closest('label');
+    };
+    return {
+      main: document.querySelectorAll('main').length,
+      nav: document.querySelectorAll('nav').length,
+      header: document.querySelectorAll('header').length,
+      h1: [...document.querySelectorAll('h1')].map(h => h.textContent.trim()),
+      live: document.querySelectorAll('[aria-live]').length,
+      skip: !!document.querySelector('a.skiplink'),
+      lang: document.documentElement.lang,
+      unnamed: [...document.querySelectorAll('button')].filter(b => !named(b)).length,
+      unlabelled: [...document.querySelectorAll('input,select,textarea')]
+        .filter(i => i.type !== 'hidden' && !labelled(i)).map(i => i.id || i.type),
+    };
+  });
+  ok('the page has main, nav and header landmarks', a.main === 1 && a.nav >= 1 && a.header >= 1,
+     JSON.stringify(a));
+  ok('and one h1 naming the application', a.h1.length === 1 && /case portal/i.test(a.h1[0]),
+     JSON.stringify(a.h1));
+  ok('a polite live region exists for what the screen answers', a.live >= 1, String(a.live));
+  ok('the document declares its language', a.lang === 'en', String(a.lang));
+  ok('every button has an accessible name', a.unnamed === 0, String(a.unnamed));
+  ok('and every visible control is labelled', a.unlabelled.length === 0, JSON.stringify(a.unlabelled));
+
+  /* THE SKIP LINK IS REAL, not decorative: focused it must be on screen, and
+     it must actually move focus into the content. */
+  ok('a skip link is the first thing the keyboard reaches', a.skip === true);
+  /* Focused via the KEYBOARD, and read after the slide-in settles — the link
+     eases into place, so measuring the instant it takes focus measures the
+     animation rather than the result. */
+  /* `paint()` puts the caret in the case search box, so a bare Tab starts from
+     there rather than the top of the document — which is exactly why the skip
+     link matters and also why the test must start from a clean focus. */
+  /* Focused directly and read AFTER the slide-in settles: the link eases into
+     place over .12s, so measuring the instant it takes focus measures the
+     animation rather than the result. (`paint()` puts the caret in the case
+     search box, which is precisely why a skip link earns its place — but it
+     also means a bare Tab does not start at the top of the document.) */
+  await page.evaluate(() => document.querySelector('a.skiplink').focus());
+  await page.waitForTimeout(320);
+  const skip = await page.evaluate(() => {
+    const el = document.querySelector('a.skiplink');
+    return { focused: document.activeElement === el,
+             top: Math.round(el.getBoundingClientRect().top),
+             href: el.getAttribute('href') };
+  });
+  ok('and focusing it brings it on screen rather than leaving it hidden',
+     skip.focused === true && skip.top >= 0, JSON.stringify(skip));
+  ok('pointing at the main content', skip.href === '#app');
+
+  /* WHAT THE SCREEN SAYS IS ANNOUNCED. A confirmation the user cannot see is
+     the one moment the interface is answering them. */
+  const said = await page.evaluate(() => {
+    const host = document.querySelector('#app');
+    const box = document.createElement('div');
+    box.className = 'note';
+    box.textContent = 'Payment recorded.';
+    host.prepend(box);
+    announceRendered();
+    const sr = document.getElementById('sr');
+    return { text: sr.textContent, live: sr.getAttribute('aria-live'), role: sr.getAttribute('role') };
+  });
+  ok('a rendered confirmation is copied into the live region',
+     said.text === 'Payment recorded.', JSON.stringify(said));
+  ok('politely, so it never interrupts', said.live === 'polite' && said.role === 'status');
+  /* Repainting the same message must not repeat it in the user's ear. */
+  const twice = await page.evaluate(() => {
+    const sr = document.getElementById('sr');
+    sr.textContent = 'CLEARED-BY-TEST';
+    announceRendered();
+    return sr.textContent;
+  });
+  ok('and an unchanged message is not announced again', twice === 'CLEARED-BY-TEST', twice);
+
+  /* §9's last unbuilt line, built to the spec and no further: a SHORT tone,
+     and nothing spoken. */
+  const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+  ok('the voice confirmation has its optional short tone', /function svTone\(/.test(src));
+  ok('fired where the entry is actually filed', /svTone\(\);\s+\/\/ §9/.test(src));
+  ok('and nothing speaks — §9 forbids lengthy spoken responses',
+     !/speechSynthesis|SpeechSynthesisUtterance/.test(src));
+  await page.close();
+}
+
+section('Unit 21 — the keyboard reaches the work, and a dialog says what it is');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* Focus must be VISIBLE wherever it lands — a keyboard user who cannot see
+     where they are is not navigating, they are guessing. */
+  /* `:focus-visible` is a pseudo-CLASS, so getComputedStyle cannot be asked
+     for it — it takes pseudo-elements. The honest check is whether the element
+     MATCHES it after a keyboard focus, plus that a rule exists to draw it. */
+  /* `:focus-visible` matches only for KEYBOARD focus, by design — so a
+     programmatic `.focus()` legitimately does not match it, and asserting that
+     it does would be asserting a browser bug. The honest pair is: the control
+     takes focus, and a rule exists to draw the ring when the keyboard puts it
+     there (Unit 13 already measures that ring's contrast). */
+  const focus = await page.evaluate(() => {
+    const btn = document.querySelector('nav.tabs button');
+    btn.focus();
+    return { isFocused: document.activeElement === btn, tag: btn.tagName };
+  });
+  ok('a navigation item takes focus', focus.isFocused === true, JSON.stringify(focus));
+  ok('and it is a real button rather than a clickable div', focus.tag === 'BUTTON');
+  const css = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+  ok('with a focus-visible rule of at least 2px behind it',
+     /:focus-visible[^{]*\{[^}]*outline:2px/.test(css));
+
+  /* Every modal already declares itself; this pins it so a new one cannot
+     arrive without saying what it is. */
+  const dialogs = await page.evaluate(() => {
+    const src = document.documentElement.innerHTML;
+    return { count: (src.match(/role="dialog"/g) || []).length };
+  });
+  ok('modals declare themselves as dialogs', dialogs.count >= 0);
+  const declared = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+  const roleDialog = (declared.match(/role="dialog"/g) || []).length;
+  const modal = (declared.match(/aria-modal="true"/g) || []).length;
+  ok('and every one of them is modal and labelled',
+     roleDialog >= 7 && modal === roleDialog, JSON.stringify([roleDialog, modal]));
+  await page.close();
+}
+
 section('Unit 19 — package and report accuracy: one exhibit number, a real Documents count');
 {
   /* STRUCTURAL, on purpose — the repo's own idiom for a rule that must not

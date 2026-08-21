@@ -1473,6 +1473,16 @@
   .rvnarr{white-space:pre-line;font-size:.95rem;margin:0 0 12px;padding-bottom:10px;
     border-bottom:1px solid var(--line);}
 
+  /* UNIT 21 — accessibility. `.vh` hides from sight and keeps it for a screen
+     reader (never display:none, which hides it from both). The skip link is
+     off-screen until focused, then lands where the eye expects. */
+  .vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;
+    clip:rect(0 0 0 0);white-space:nowrap;border:0;}
+  .skiplink{position:absolute;left:8px;top:-48px;z-index:100;background:var(--navy-2);
+    color:#fff;padding:10px 14px;border-radius:0 0 8px 8px;text-decoration:none;
+    transition:top .12s;}
+  .skiplink:focus{top:0;}
+
   /* UNIT 18 — a voided payment stays visible and stops being money. Struck
      through, muted, with its reason beside it; token colors only. */
   .tl-m{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;}
@@ -1577,7 +1587,12 @@
 </head>
 <body>
 
-<div class="top">
+<!-- UNIT 21 — landmarks and a skip link, measured rather than assumed: the
+     probe found ONE landmark on the whole signed-in page (main), no <h1> at
+     all, and no way past the navigation from the keyboard. A screen reader had
+     no document anchor and heading navigation started at h2. -->
+<a class="skiplink" href="#app">Skip to the main content</a>
+<header class="top">
   <div class="wrap">
     <svg width="34" height="34" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="10" fill="#13273f"/><path d="M32 12l6 8-6 8-6-8z" fill="#3d97ad"/><path d="M32 30l10 12H22z" fill="#c99a3b"/></svg>
     <div class="name">ALWAYS PRECISE<span>INVESTIGATIONS · CASE PORTAL</span></div>
@@ -1591,7 +1606,7 @@
     <button class="burger" id="burger" data-act="navToggle" aria-label="Menu"
       aria-expanded="false" hidden><span class="b-open">&#9776;</span><span class="b-close">&#10005;</span></button>
   </div>
-</div>
+</header>
 <!-- The drawer's dim used to be a box-shadow — decoration, not an element — so
      a tap "outside the menu" passed straight through to whatever control sat
      underneath it, and the burger itself was covered by the open drawer with
@@ -1600,6 +1615,11 @@
 <button class="navback" data-act="navToggle" aria-label="Close menu" tabindex="-1"></button>
 
 <main id="app"></main>
+<!-- WHAT THE SCREEN SAYS, SAID OUT LOUD. Every "Saved.", "Payment recorded."
+     and refusal on this page was drawn silently, so a screen-reader user got
+     no confirmation that the thing they just did had worked — the one moment
+     the interface is answering them. `polite` so it never interrupts. -->
+<div id="sr" class="vh" role="status" aria-live="polite" aria-atomic="true"></div>
 <!-- The evidence viewer is a SIBLING of the app root, not a panel inside it.
      That is what makes "close and you are back exactly where you were" a
      structural fact rather than something the close handler has to rebuild:
@@ -2263,7 +2283,17 @@ function shell(inner){
      Drawn once, from the shell, so it is in the same place on every top-level
      screen for both roles. The case workspace and the field view do not go
      through `shell()` and are deliberately untouched: each has its own door. */
-  return `<div class="tabs">${tabs}</div>${schema}${problem}${quickToolsHtml()}${
+  /* UNIT 21 — the rail IS the site navigation, so it says so. The probe found
+     no <nav> anywhere on the signed-in page, which leaves a screen-reader user
+     no way to jump to or past it. Labelled, because a page may hold more than
+     one navigation region. */
+  /* ONE h1, AND ONLY WHERE IT IS TRUE. `shell()` renders only when someone is
+     signed in, so putting the document heading here means the sign-in view
+     keeps its own "Case Portal" h1 and the two never coexist — two h1s is its
+     own defect, and a hidden one is still the FIRST one to anything reading
+     the document in order. */
+  return `<h1 class="vh">Always Precise Investigations case portal</h1>
+    <nav class="tabs" aria-label="Portal sections">${tabs}</nav>${schema}${problem}${quickToolsHtml()}${
     summaryCards()}${inner}${
     SHEET_WIZ ? sheetWizardHtml() : ""}${PAY_SEND ? paySendHtml() : ""}${
     INTAKE_SEND ? preIntakeHtml() : ""}`;
@@ -4916,7 +4946,7 @@ function casesView(){
     return `<div class="card">
       <div class="bar">
         <h2 style="margin:0">Cases</h2>
-        <input id="q" placeholder="Search case, client, carrier, claim no." value="${esc(FILTER)}" data-act="filter">
+        <input id="q" aria-label="Search cases" placeholder="Search case, client, carrier, claim no." value="${esc(FILTER)}" data-act="filter">
       </div>
       ${lens}
       ${completedDesk(q)}
@@ -4926,7 +4956,7 @@ function casesView(){
   return `<div class="card">
     <div class="bar">
       <h2 style="margin:0">Cases</h2>${filterChip}
-      <input id="q" placeholder="${admin ? "Search case, client, carrier, claim no." : "Search case or subject"}" value="${esc(FILTER)}" data-act="filter">
+      <input id="q" aria-label="${admin ? "Search cases" : "Search your assignments"}" placeholder="${admin ? "Search case, client, carrier, claim no." : "Search case or subject"}" value="${esc(FILTER)}" data-act="filter">
       <span class="count">${rows.length} of ${shown.length}${
         (s => s && (s.claims || s.consumer)
           ? ` · ${s.claims || 0} carrier · ${s.consumer || 0} private` : "")(SUMMARY)}</span>
@@ -8704,6 +8734,27 @@ function vstHtml(){
   </div>`;
 }
 
+/* WHAT THE SCREEN JUST SAID, SAID OUT LOUD (Unit 21). Every confirmation and
+   refusal on this page lives in a `.note`, `.err` or `.linkbox` that is drawn
+   silently — "Payment recorded.", "Saved.", "A hold needs its reason." — so a
+   screen-reader user acted and heard nothing back, at the one moment the
+   interface is answering them.
+
+   ONE CHOKEPOINT rather than a call beside each of the dozen message globals:
+   INV_MSG, RET_MSG, EDIT_MSG, SHEET_MSG, LEGAL_MSG, RTN_MSG and the rest all
+   end up rendered, so reading what was rendered catches every one of them and
+   any added later. Only announced when the text CHANGES, so a repaint that
+   says the same thing does not repeat itself in the user's ear. */
+let SR_LAST = "";
+function announceRendered(){
+  const el = document.querySelector("#app .err, #app .note, #app .linkbox, #app .loaderr");
+  const msg = el ? el.textContent.trim().replace(/\s+/g, " ").slice(0, 240) : "";
+  if(msg === SR_LAST) return;
+  SR_LAST = msg;
+  const sr = document.getElementById("sr");
+  if(sr) sr.textContent = msg;
+}
+
 function paint(){
   paintEvView();
   paintPStamp();
@@ -8749,6 +8800,7 @@ function paint(){
     : TAB === "myreports" ? myReportsView()
     : TAB === "myexpenses" ? myExpensesView()
     : casesView());
+  announceRendered();
   const q = $("q");
   if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
   /* The directory and picker searches repaint on every keystroke, so the
@@ -13571,6 +13623,43 @@ function svVoiceConfirm(label, when){
   return String(label).replace(/_/g, " ") + " · " + t12(hmLocal(when));
 }
 
+/* §9's LAST UNBUILT LINE: "Optional: a short tone." The on-screen confirmation
+   has always been there; this is the sound that goes with it, for an operator
+   whose eyes are on the subject rather than the phone.
+
+   Deliberately SHORT and wordless — §9 also says "Do not use lengthy spoken
+   responses", so there is no speech synthesis here and no new voice behaviour
+   of any kind. Two brief notes from an oscillator: no asset to load, no
+   permission to ask for, nothing to fail. It is built on demand and closed
+   after, so an idle field view holds no audio context open.
+
+   It never throws. A device that refuses audio — a locked-down browser, a
+   silent switch, an autoplay policy — must not cost the operator the entry
+   that was just filed successfully. */
+function svTone(){
+  try{
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if(!AC) return;
+    const ctx = new AC();
+    const now = ctx.currentTime;
+    const gain = ctx.createGain();
+    gain.connect(ctx.destination);
+    /* Ramped rather than switched: an abrupt start and stop clicks, and a
+       click in the dark reads as something going wrong. */
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.09, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.20);
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(660, now);
+    osc.frequency.setValueAtTime(880, now + 0.09);
+    osc.connect(gain);
+    osc.start(now);
+    osc.stop(now + 0.22);
+    osc.onended = () => { try{ ctx.close(); }catch{} };
+  }catch{ /* no sound is never a reason to lose the entry */ }
+}
+
 async function svVoiceHeard(raw){
   const v = svVoice();
   if(!v.on) return;
@@ -13659,6 +13748,7 @@ async function svVoiceHeard(raw){
   try{
     await api(`/cases/${encodeURIComponent(caseNo)}/activity`, {method: "POST", body});
     v.msg = svVoiceConfirm(known ? m.command.id : "VOICE NOTE", when);
+    svTone();   // §9's optional short tone, at the moment the entry is filed
   }catch(e){
     if(e && e.status && e.status < 500){
       /* Refused, not dropped. Retrying a malformed entry forever helps nobody. */
