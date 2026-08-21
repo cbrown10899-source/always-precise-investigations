@@ -10373,25 +10373,26 @@ section('The preview is optional, never a gate');
                    sourceAudio: 'AAC, 1ch', frames: 1443, via: 'webcodecs' },
             savedHere: false, started: false, err: '', saveMsg: '' };
     paintVStamp();
-    return document.querySelector('.vst').innerText;
+    /* Counted INSIDE the same evaluate, before yielding to the event loop: the
+       fixture's stub blob is unplayable by construction, so the page's own
+       <video> error handler will eventually flip previewFailed and repaint —
+       which is correct product behavior and, under load, used to land before
+       a later locator count and fail this check spuriously. What this section
+       asserts is the SYNCHRONOUS paint for the state it just set. */
+    return { text: document.querySelector('.vst').innerText,
+             prev: document.querySelectorAll('.vst-prev').length };
   }, failed);
 
-  const ok1 = await done(false);
-  const prevCount = await page.locator('.vst-prev').count();
-  const prevDiag = await page.evaluate(() => ({
-    n: document.querySelectorAll('.vst-prev').length,
-    roots: document.querySelectorAll('#vstamp').length,
-    step: JSON.stringify(VST && VST.step),
-    failed: JSON.stringify(VST && VST.previewFailed),
-  }));
-  ok('a playable copy still offers the preview', prevCount === 1,
-     `locator=${prevCount} dom=${prevDiag.n} roots=${prevDiag.roots} step=${prevDiag.step} previewFailed=${prevDiag.failed}`);
+  const r1 = await done(false);
+  const ok1 = r1.text;
+  ok('a playable copy still offers the preview', r1.prev === 1, `prev=${r1.prev}`);
   ok('and says playing it back is optional', has(ok1, 'not required'), ok1.slice(0, 500));
 
   /* THE CASE THAT MATTERS: the page cannot play it, and that must not read as a
      failed generation. */
-  const ok2 = await done(true);
-  ok('a copy the page cannot play drops the player', await page.locator('.vst-prev').count() === 0);
+  const r2 = await done(true);
+  const ok2 = r2.text;
+  ok('a copy the page cannot play drops the player', r2.prev === 0, `prev=${r2.prev}`);
   ok('and says the copy is made regardless', has(ok2, 'The copy is made'), ok2.slice(0, 500));
   ok('naming the player, not the file', has(ok2, 'says nothing about the file'), ok2.slice(0, 500));
   /* THE ACTIONS ARE UNTOUCHED — that is the whole point. */
@@ -13299,8 +13300,9 @@ section('Delivery center: one row per client, a copied message, and never a send
   });
   ok('the delivery message names the case and its contents',
      msg && msg.includes('API-20260812-4001') && /final investigative report/.test(msg), msg);
+  /* \brate\b — "separate cover" is not a rate. */
   ok('and is client-safe by construction',
-     msg && !/internal|classif|rate|\$\d|do not use|needs review/i.test(msg), msg);
+     msg && !/internal|classif|\brate\b|\$\d|do not use|needs review/i.test(msg), msg);
   ok('with no link line when no link is offerable',
      !/delivery link/.test(msg), msg);
 
