@@ -1437,6 +1437,13 @@
      order has killed three rules in this file already. .dsb- is its own
      prefix, per the class-name-contest rule. */
   .dsb-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 12px;margin-top:6px;}
+  /* A TIME IS FIVE CHARACTERS. Stretched to a full grid column, Safari's
+     native time widget draws a wide bezel that reads as colliding with the
+     field beside it (owner, on the iPad, 2026-08-21). Sized to its content,
+     with the belt of min-width:0 so no engine's intrinsic widget can ever
+     exceed its cell. */
+  .dsb-grid .f input,.dsb-grid .f select{width:100%;min-width:0;}
+  .dsb-grid .f input[type=time]{max-width:150px;}
   .dsb-act{display:flex;flex-direction:column;gap:6px;padding:6px 4px;border-bottom:1px dashed var(--line);}
   .dsb-act > label{display:flex;gap:8px;align-items:flex-start;cursor:pointer;}
   .dsb-act input[type=checkbox]{margin-top:3px;flex:none;}
