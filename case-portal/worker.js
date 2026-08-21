@@ -2267,7 +2267,7 @@ async function taskBoard(env, user) {
       ORDER BY COALESCE(t.due_date, '9999-12-31'), t.id DESC
       LIMIT 300`).bind(admin ? 1 : 0, user.id).all();
 
-  const rows = (results || []).filter(r => !hidden.includes(r.case_no)).map(r => ({
+  const rows = (results || []).filter(r => !hidden.has(r.case_no)).map(r => ({
     id: r.id, case_no: r.case_no, task: r.task, due_date: r.due_date || null,
     priority: r.priority, status: r.status, done_at: r.done_at || null,
     assigned_name: r.assigned_name || null,
@@ -2367,7 +2367,7 @@ async function auditTrail(request, env, user) {
 
   /* A deleted or archived case is out of the working set, so it is out of this
      view too — the same rule every other cross-case read follows. */
-  const rows = out.filter(e => e.case_no && !hidden.includes(e.case_no))
+  const rows = out.filter(e => e.case_no && !hidden.has(e.case_no))
     .sort((a, b) => String(b.at).localeCompare(String(a.at)))
     .slice(0, 60);
   /* Named rather than implied: a source that has not arrived yet is not the
