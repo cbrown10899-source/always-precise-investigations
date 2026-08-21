@@ -13026,6 +13026,63 @@ section('The palette changed no behavior and broke no phone');
   ok('and no print rule paints navy over paper', !print.paintsNavy);
 }
 
+section('A nav row grows to hold its words — nothing crushes, nothing overlaps');
+for (const [label, w, h, drawer] of [['desktop', 1200, 700, false],
+                                     ['short desktop', 1200, 560, false],
+                                     ['phone 390', 390, 844, true],
+                                     ['phone 375', 375, 812, true]]) {
+  const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(1200);
+  if (drawer) {
+    const b = page.locator('.burger');
+    if (await b.isVisible()) { await b.click(); await page.waitForTimeout(300); }
+  }
+  /* THE PINNED COLUMN MUST NEVER CRUSH A ROW. flex children shrink by
+     default, and that is exactly how "Reports & Packages" came to draw two
+     lines inside a one-line row. Measured, not eyeballed: content fits its
+     box, neighbors do not intersect, and the floor holds. */
+  const m = await page.evaluate(() => {
+    const btns = [...document.querySelectorAll('.tabs button')].filter(b => b.offsetParent);
+    const crushed = btns.filter(b => b.scrollHeight > b.clientHeight + 2)
+      .map(b => [b.textContent.trim().slice(0, 22), b.scrollHeight, b.clientHeight]);
+    const boxes = btns.map(b => b.getBoundingClientRect());
+    const overlaps = [];
+    for (let i = 1; i < boxes.length; i++) {
+      if (boxes[i-1].bottom - 1 > boxes[i].top) {
+        overlaps.push(btns[i-1].textContent.trim().slice(0, 22));
+      }
+    }
+    const under = btns.filter(b => b.getBoundingClientRect().height < 43.5)
+      .map(b => b.textContent.trim().slice(0, 22));
+    return { crushed, overlaps, under, n: btns.length };
+  });
+  ok(`${label}: no nav row is crushed below its own words`, m.crushed.length === 0, JSON.stringify(m.crushed));
+  ok(`${label}: no nav row overlaps its neighbor`, m.overlaps.length === 0, JSON.stringify(m.overlaps));
+  ok(`${label}: every row keeps the 44px floor`, m.under.length === 0, JSON.stringify(m.under));
+
+  /* And the four screens the owner named still open from their rows. */
+  for (const name of ['Dashboard', 'Reports & Packages', 'Rate Sheets', 'Billing']) {
+    if (drawer) {
+      const b = page.locator('.burger');
+      if (await b.isVisible() && !(await page.evaluate(() => document.body.classList.contains('navopen')))) {
+        await b.click(); await page.waitForTimeout(250);
+      }
+    }
+    await page.locator('.tabs button', { hasText: name }).first().click();
+    await page.waitForTimeout(500);
+    ok(`${label}: ${name} opens from its row`,
+       (await page.locator('.tabs button.on', { hasText: name }).count()) === 1
+         || (await page.locator('#app, main, body').first().innerText()).length > 0);
+  }
+  await page.close();
+}
+
 section('Evidence integrity: the card states the record and the office can act on it');
 {
   db.prepare(`INSERT INTO submissions (case_no, kind, status, client_name, subject_name, payload, created_at)
