@@ -6569,11 +6569,24 @@ async function nextInvoiceNo(env) {
   return `${cfg.invoice_prefix}-${year}-${String((Number.isFinite(last) ? last : 0) + 1).padStart(4, '0')}`;
 }
 
+/* A VOIDED PAYMENT IS STILL A RECORD AND STOPS BEING MONEY (Unit 18). The
+   row is never deleted — `paidRows` is what every figure counts, and the full
+   list still travels so the office can see what was voided and by whom. One
+   place decides it, so no later reader can forget.
+
+   `overpaid` is derived rather than stored, like every other figure here: a
+   negative balance is a CREDIT, and calling it "Balance due -$500" on a
+   client's own invoice is the document contradicting itself. */
+const paidRows = payments => (payments || []).filter(pm => !pm.voided_at);
+
 function invoiceMoney(lines, adjustments, payments) {
   const subtotal = Math.round((lines || []).reduce((t, l) => t + Number(l.amount || 0), 0) * 100) / 100;
   const total = Math.round((subtotal + Number(adjustments || 0)) * 100) / 100;
-  const paid = Math.round((payments || []).reduce((t, pm) => t + Number(pm.amount || 0), 0) * 100) / 100;
-  return { subtotal, total, amount_paid: paid, balance_due: Math.round((total - paid) * 100) / 100 };
+  const paid = Math.round(paidRows(payments).reduce((t, pm) => t + Number(pm.amount || 0), 0) * 100) / 100;
+  const balance = Math.round((total - paid) * 100) / 100;
+  return { subtotal, total, amount_paid: paid, balance_due: balance,
+           /* Both are stated so no reader has to work it out from a sign. */
+           overpaid: balance < 0, credit_due: balance < 0 ? Math.abs(balance) : 0 };
 }
 
 /* Overdue is a fact about today, computed on read — never stored where it
@@ -6582,6 +6595,15 @@ function invoiceDisplayStatus(inv, money) {
   if (inv.status === 'void') return 'void';
   if (money.balance_due <= 0 && money.total > 0 && money.amount_paid > 0) return 'paid';
   if (money.amount_paid > 0 && money.balance_due > 0) return 'partially_paid';
+  /* A PAID STATUS OUTLIVING ITS MONEY (Unit 18). Void the only payment on a
+     paid invoice and the column still says `paid`, which the fall-through at
+     the bottom would repeat to the office and the client. Money is arithmetic
+     here — with nothing received, neither payment status is true, so the
+     stored one is not echoed. Nothing is rewritten; the derivation is honest. */
+  if (money.amount_paid <= 0 && (inv.status === 'paid' || inv.status === 'partially_paid')) {
+    if (inv.due_date && inv.due_date < nowIso().slice(0, 10) && money.balance_due > 0) return 'overdue';
+    return 'sent_to_client';
+  }
   if (inv.due_date && inv.due_date < nowIso().slice(0, 10) && money.balance_due > 0
       && inv.status !== 'draft') return 'overdue';
   return inv.status;
@@ -6599,8 +6621,19 @@ async function retainerBlock(env, inv) {
   const ret = await env.DB.prepare(
     'SELECT retainer_amount, received FROM case_retainer WHERE case_no = ?').bind(inv.case_no).first();
   const amount = ret && ret.retainer_amount != null ? Number(ret.retainer_amount) : PERSONAL.retainer;
+  /* A DRAFT INVOICE IS NOT EARNED MONEY (owner decision, 2026-08-21): "UNSENT
+     or DRAFT invoices MUST NOT reduce the client-facing retainer balance. Only
+     finalized/issued billable work may affect the client-facing retainer
+     figure."
+
+     This filtered only `status != 'void'`, so a draft nobody had issued drew
+     the retainer down on the client's own document — while `outstanding`
+     excluded that same draft from what the client owed. One document, two
+     answers about one invoice. The test is now the SAME one `outstanding`
+     already applies, so the two figures cannot disagree again. */
   const { results: sib } = await env.DB.prepare(
-    `SELECT i.id, i.adjustments FROM invoices i WHERE i.case_no = ? AND i.status != 'void'`)
+    `SELECT i.id, i.adjustments FROM invoices i
+      WHERE i.case_no = ? AND i.status != 'void' AND i.status != 'draft'`)
     .bind(inv.case_no).all();
   /* "Applied" is WORK billed against the deposit — so the invoice that bills
      the deposit itself is excluded (audit, 2026-08-14). Counting it made the
@@ -6634,10 +6667,20 @@ async function invoiceWithMoney(env, inv) {
   const { results: lines } = await env.DB.prepare(
     'SELECT id, sort, description, qty, rate, amount FROM invoice_lines WHERE invoice_id = ? ORDER BY sort, id')
     .bind(inv.id).all();
+  /* The void marker rides with the payment, so `paidRows` can do its job and
+     the page can strike the row through in the same pass. Guarded: the table
+     arrives by a manual portal-setup dispatch while the Worker deploys on
+     push, and a join against a missing table would take out every invoice
+     read — the `case_archive` lesson. Without it, nothing is voided yet, which
+     is exactly the truth on a database that has not run setup. */
+  const hasVoid = !(await missingTables(env)).includes('invoice_payment_void');
   const { results: payments } = await env.DB.prepare(
     `SELECT p.id, p.amount, p.paid_date, p.method, p.reference, p.provider,
             p.external_payment_id, p.notes, p.recorded_at, u.display_name AS recorded_by
+            ${hasVoid ? `, v.voided_at, v.reason AS void_reason, vu.display_name AS voided_by` : ''}
        FROM invoice_payments p LEFT JOIN users u ON u.id = p.recorded_by
+       ${hasVoid ? `LEFT JOIN invoice_payment_void v ON v.payment_id = p.id
+                    LEFT JOIN users vu ON vu.id = v.voided_by` : ''}
       WHERE p.invoice_id = ? ORDER BY p.paid_date, p.id`).bind(inv.id).all();
   const money = invoiceMoney(lines, inv.adjustments, payments);
   let refs = {};
@@ -6786,8 +6829,13 @@ async function listInvoices(request, env) {
     due_soon: live.filter(i => i.display_status !== 'paid' && i.status !== 'draft'
       && i.due_date && i.due_date >= today && i.due_date <= soonCut).length,
     overdue: live.filter(i => i.display_status === 'overdue').length,
-    paid_this_month: Math.round(full.reduce((t, i) => t + i.payments
-      .filter(pm => String(pm.paid_date || '').slice(0, 7) === month)
+    /* VOID MEANS VOID, ON BOTH HALVES (Unit 18). This reduced over `full`,
+       so a paid invoice that was later voided went on reporting its cash as
+       money taken this month — `live` was defined one line above and used by
+       every other figure here. A voided PAYMENT stops counting too, through
+       the same `voided_at` marker the balance uses. */
+    paid_this_month: Math.round(live.reduce((t, i) => t + i.payments
+      .filter(pm => !pm.voided_at && String(pm.paid_date || '').slice(0, 7) === month)
       .reduce((x, pm) => x + Number(pm.amount || 0), 0), 0) * 100) / 100,
     drafts: full.filter(i => i.status === 'draft').length,
   };
@@ -6977,14 +7025,60 @@ async function recordInvoicePayment(request, env, user, id) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json({ error: 'Date the payment (YYYY-MM-DD).' }, 400);
   const method = PAYMENT_METHODS.includes(String(body.method || '')) ? body.method : 'other';
   const provider = BILLING_PROVIDERS.includes(String(body.provider || '')) ? body.provider : 'manual';
-  await env.DB.prepare(
+  /* IDEMPOTENT, the retainer-payment pattern exactly (Unit 18). A double
+     click, a retried request or a dropped response used to record the money
+     twice, with no way to take one back — `invoice_payments` had INSERT and
+     SELECT and nothing else.
+
+     The payment goes in FIRST so `last_insert_rowid()` is the row the claim
+     points at, and the claim insert deliberately has NO `ON CONFLICT DO
+     NOTHING`: a repeat token must RAISE so the whole batch rolls back and the
+     second payment is never written. A claim therefore cannot exist without
+     the money behind it, which is the state the retainer version was rebuilt
+     to remove — so "already recorded" is PROVEN by following the claim
+     through to a payment row on THIS invoice, never guessed from an error
+     message. `token` is a global primary key, so the proof is scoped. */
+  const at = nowIso();
+  const insertPayment = env.DB.prepare(
     `INSERT INTO invoice_payments (invoice_id, amount, paid_date, method, reference, provider,
        external_payment_id, notes, recorded_by, recorded_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(id, Math.round(amount * 100) / 100, date, method,
           String(body.reference || '').trim().slice(0, 120) || null, provider,
           String(body.external_payment_id || '').trim().slice(0, 120) || null,
-          String(body.notes || '').trim().slice(0, 1000) || null, user.id, nowIso()).run();
+          String(body.notes || '').trim().slice(0, 1000) || null, user.id, at);
+
+  const token = String(body.client_token || '').trim().slice(0, 100);
+  const canClaim = token && !(await missingTables(env)).includes('invoice_payment_token');
+  let duplicate = false;
+  if (!canClaim) {
+    await insertPayment.run();
+  } else {
+    try {
+      await env.DB.batch([
+        insertPayment,
+        env.DB.prepare(
+          `INSERT INTO invoice_payment_token (token, invoice_id, payment_id, claimed_at)
+           VALUES (?, ?, last_insert_rowid(), ?)`).bind(token, id, at),
+      ]);
+    } catch {
+      /* The batch holds TWO inserts, so a payment failing its own constraint
+         rolls everything back and writes nothing — which is why the answer is
+         the LEDGER, not the error text. Money on file is the only proof. */
+      const paid = await env.DB.prepare(
+        `SELECT p.id FROM invoice_payment_token t
+           JOIN invoice_payments p ON p.id = t.payment_id
+          WHERE t.token = ? AND t.invoice_id = ?`).bind(token, id).first();
+      if (!paid) {
+        return json({ error: 'That payment could not be confirmed as recorded. Reload the '
+          + 'invoice and check its payments before entering it again.',
+          code: 'indeterminate_payment' }, 409);
+      }
+      /* Already recorded, and the money is provably there: a success from the
+         caller's side, which is the whole point of an idempotency key. */
+      duplicate = true;
+    }
+  }
 
   /* Payment status is arithmetic, never a claim: the stored status moves to
      paid only when the balance actually reaches zero. */
@@ -6992,11 +7086,62 @@ async function recordInvoicePayment(request, env, user, id) {
   const newStatus = out.balance_due <= 0 ? 'paid' : 'partially_paid';
   await env.DB.prepare('UPDATE invoices SET status = ?, updated_by = ?, updated_at = ? WHERE id = ?')
     .bind(newStatus, user.id, nowIso(), id).run();
-  await invoiceEvent(env, id, user, 'payment_recorded', `${amount} ${method}` + (newStatus === 'paid' ? ' — PAID IN FULL' : ''));
+  /* A DEDUPLICATED RETRY IS NOT AN EVENT AND NOT AN ALERT. The money was
+     recorded once, so the trail and the notification say so once — the same
+     defect the retainer route still carries, fixed here at the source rather
+     than by counting alerts downstream. */
+  if (!duplicate) {
+    await invoiceEvent(env, id, user, 'payment_recorded', `${amount} ${method}` + (newStatus === 'paid' ? ' — PAID IN FULL' : ''));
+  }
   const after = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
   /* The alert says a payment was recorded and never how much — the amount is
      commercial, and it is one sign-in away. */
-  await notifyAdmins(env, 'payments', after ? after.case_no : '');
+  if (!duplicate) await notifyAdmins(env, 'payments', after ? after.case_no : '');
+  return json({ ok: true, duplicate, invoice: await invoiceWithMoney(env, after) });
+}
+
+/* VOID A PAYMENT — a correction that keeps the history (Unit 18). Nothing is
+   deleted: the row stays, the marker says who voided it and why, every figure
+   stops counting it, and the page prints it struck through. That is the same
+   promise `activity_removed`, the invoice void and evidence `deleted_at`
+   already make — nothing the office does in this portal is unrecoverable in
+   it, and financial history least of all.
+
+   Correcting a payment is therefore void-then-record, two visible acts, rather
+   than an edit that silently rewrites what a client was told. */
+async function voidInvoicePayment(request, env, user, invoiceId, paymentId) {
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  if ((await missingTables(env)).includes('invoice_payment_void')) {
+    return json({ error: 'The payment-void table is not on this database yet. Run the '
+      + 'portal-setup workflow once and try again.', code: 'not_set_up' }, 503);
+  }
+  /* Scoped to the invoice IN THE SAME STATEMENT, so a wrong-invoice id and a
+     never-existed id answer identically and the route cannot probe. */
+  const pay = await env.DB.prepare(
+    'SELECT id FROM invoice_payments WHERE id = ? AND invoice_id = ?')
+    .bind(paymentId, invoiceId).first();
+  if (!pay) return json({ error: 'not found' }, 404);
+
+  const body = await readJson(request);
+  const reason = String(body.reason || '').trim().slice(0, 500);
+  const already = await env.DB.prepare(
+    'SELECT payment_id FROM invoice_payment_void WHERE payment_id = ?').bind(paymentId).first();
+  if (already) return json({ error: 'That payment is already voided.', code: 'already_void' }, 409);
+
+  await env.DB.prepare(
+    `INSERT INTO invoice_payment_void (payment_id, reason, voided_by, voided_at)
+     VALUES (?, ?, ?, ?)`).bind(paymentId, reason || null, user.id, nowIso()).run();
+
+  /* THE STORED STATUS IS LEFT ALONE, DELIBERATELY. Money here is arithmetic,
+     never a stored flag: `invoiceDisplayStatus` derives paid and partially
+     paid from what the payments now say, so voiding the last one stops the
+     invoice reading as paid without anything rewriting the column. Choosing a
+     status to put back would mean inventing which one it held before the
+     payment moved it — ready, sent to BILL or sent to client — and the record
+     does not say. */
+  await invoiceEvent(env, invoiceId, user, 'payment_voided',
+    `payment ${paymentId}` + (reason ? ` — ${reason}` : ''));
+  const after = await env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(invoiceId).first();
   return json({ ok: true, invoice: await invoiceWithMoney(env, after) });
 }
 
@@ -9520,6 +9665,10 @@ const DEMO_SWEEP = [
   ['build_template',        'DELETE FROM build_template WHERE build_id IN (SELECT id FROM case_builds WHERE case_no LIKE ?)'],
   ['external_files',        'DELETE FROM external_files WHERE evidence_id IN (SELECT id FROM case_evidence WHERE case_no LIKE ?)'],
   ['invoice_lines',         'DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE case_no LIKE ?)'],
+  /* Unit 18 — both point AT a payment, so they go before the payments they
+     guard, and each resolves through its own parent invoice. */
+  ['invoice_payment_void',  'DELETE FROM invoice_payment_void WHERE payment_id IN (SELECT p.id FROM invoice_payments p JOIN invoices i ON i.id = p.invoice_id WHERE i.case_no LIKE ?)'],
+  ['invoice_payment_token', 'DELETE FROM invoice_payment_token WHERE invoice_id IN (SELECT id FROM invoices WHERE case_no LIKE ?)'],
   ['invoice_payments',      'DELETE FROM invoice_payments WHERE invoice_id IN (SELECT id FROM invoices WHERE case_no LIKE ?)'],
   ['invoice_events',        'DELETE FROM invoice_events WHERE invoice_id IN (SELECT id FROM invoices WHERE case_no LIKE ?)'],
   ['invoice_retainer',      'DELETE FROM invoice_retainer WHERE invoice_id IN (SELECT id FROM invoices WHERE case_no LIKE ?)'],
@@ -10984,6 +11133,7 @@ const EXPECTED_TABLES = [
   'case_day_pauses', 'lead_status', 'send_log', 'invoice_retainer',
   'payment_methods', 'payment_send', 'retainer_receipt', 'case_archive', 'case_deleted', 'notify_recipient', 'case_phone',
   'retainer_payment', 'retainer_payment_void', 'retainer_payment_token',
+  'invoice_payment_token', 'invoice_payment_void',
   'video_stamp', 'dropbox_auth', 'activity_source', 'activity_voice_event',
   'photo_stamp',
   'profile', 'profile_contact', 'profile_phone', 'case_profile',
@@ -12069,6 +12219,10 @@ async function route(request, env) {
   if (m && method === 'POST') return setInvoiceBillRefs(request, env, user, parseInt(m[1], 10));
   m = p.match(/^\/invoices\/(\d{1,12})\/payments$/);
   if (m && method === 'POST') return recordInvoicePayment(request, env, user, parseInt(m[1], 10));
+  m = p.match(/^\/invoices\/(\d{1,12})\/payments\/(\d{1,12})\/void$/);
+  if (m && method === 'POST') {
+    return voidInvoicePayment(request, env, user, parseInt(m[1], 10), parseInt(m[2], 10));
+  }
   if (p === '/billing-settings' && method === 'GET') return json({ settings: await billingSettings(env) });
   if (p === '/billing-settings' && method === 'POST') {
     const body = await readJson(request);
