@@ -49,7 +49,7 @@ CREATE A BRANCH. DO NOT DEPLOY. DO NOT START THE NEXT UNIT."*
 
 | # | Unit | State |
 | --- | --- | --- |
-| **17A** | **HOTFIX — Legal intake link routing** | **CODED · TESTED (worker 2557/0, deploy guard 68/0) · PUSHED** — branch `legal-intake-door-hotfix`, commit `6663046`. Begun on the owner's *"Start with the Legal intake-link hotfix now"* (2026-08-21) before this documentation instruction arrived. **NOT merged, NOT deployed.** The full portal suite was still running when the queue was recorded; its result gates the merge |
+| **17A** | **HOTFIX — Legal intake link routing** | ✅ **DONE — DEPLOYED** at `61a00f0` (#206). LIVE VERIFY **OPEN** for the owner |
 | 18 | Invoice Payment Integrity | not started |
 | 19 | Package + Report Accuracy | not started |
 | 20 | Intake Alert Completeness | not started |
@@ -1081,6 +1081,27 @@ node .github/test-deploy.mjs                    # expect 68 / 0
 
 Then the ordinary chain: PR → merge if green → pull master → deploy → live
 verify → **save point** → next unit (item 4, Admin report/mobile workflow fix).
+
+## 🚦 DEPLOYMENT — 2026-08-21, master `61a00f0` (#206) — Hotfix 17A, Legal intake link routing
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/intake/` + `/portal/` | `61a00f0` | `61a00f0` | **DEPLOYED** — `deploy.yml` 32448892731 success |
+| `api-case-portal` | `61a00f0` | `61a00f0` | **DEPLOYED** — `deploy-portal.yml` 32448892724 success |
+| Schema | — | — | **No change.** Nothing owed; portal-setup deliberately NOT run |
+| Save point | — | — | `save/2026-08-21-0459-61a00f0`, the merge push's automatic firing |
+
+Tests at merge: worker **2557/0**, portal **2371/0**, deploy guard **68/0**.
+
+**What it fixed:** a Legal/Law Firm send with Include Intake Link emailed the
+firm `?assignment=private` — the door whose own `pickSvc` refuses `legal`.
+`emailSheet` keyed the bundled link off `SHEET_INTAKE[sheet.id]`, and a legal
+case's sheet id IS `private_retainer` because Legal shares the private sheet by
+design. The door now comes from the send CONTEXT, resolved once and passed
+down; `SHEET_INTAKE` has exactly one reader and a test fails if a second
+appears. The page names the door the same way. **Verified against a reverted
+worker: the two LEGAL assertions fail and the label reads "Private Client
+Intake."** Private and Insurance pass either way.
 
 ## 🚦 DEPLOYMENT — 2026-08-21, master `943d0f3` (#205) — Unit 17, Retention Controls
 
