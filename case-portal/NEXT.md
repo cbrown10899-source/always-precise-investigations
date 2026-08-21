@@ -46,10 +46,10 @@ completed.
 
 | | |
 | --- | --- |
-| **Master** | **`74629fe`** (Unit 27; the ledger commit lands above it) |
+| **Master** | **`9beb0e8`** (Unit 28) |
 | **Working tree** | clean; nothing unpushed; no branch in flight |
 | **Background work** | none running |
-| **Suites at that SHA** | worker **2677/0** · portal **2424/0** · deploy guard **68/0** · intake **236/0** · visitor-alerts **47/0** — all five re-run for Unit 27 |
+| **Suites at that SHA** | worker **2709/0** · portal **2436/0** · deploy guard **68/0** · intake **236/0** · visitor-alerts **47/0** |
 | **Schema owed** | **NONE.** `case_day_end` was applied by `portal-setup` run **32508101361** at `74629fe` — ✅ success, **including the admin-bootstrap step that failed at `46a06ad9`**, so the token race did not recur |
 | **Deployed** | at `74629fe`: `Deploy case-portal Worker` ✅ · `Deploy site to Cloudflare Pages` ✅ · `portal-setup` ✅ (run 32508101361). `Daily site health` ✅ run #22 |
 | **Closeout** | ✅ **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** — see `case-portal/FINAL-LEDGER.md` |
@@ -160,6 +160,7 @@ CREATE A BRANCH. DO NOT DEPLOY. DO NOT START THE NEXT UNIT."*
 | 23 | Consolidated Live Verification Sweep | ⏸️ **LIVE VERIFICATION DEFERRED — REQUIRES REAL CASE/DATA** (owner, 2026-08-21). *Do not manufacture production data.* |
 | 24 | **Required** File Queue + portal aesthetic redesign | ✅ **DONE — DEPLOYED** at `8988b29` (#213), **visual check passed by the owner 2026-08-21**; page-level rendering tests followed |
 | 25 | Final security / authorization / regression pass | ✅ **DONE** — audit, three verified fixes, record in `case-portal/SECURITY-PASS.md`. No schema, no portal-setup dispatch |
+| 28 | **Legal pre-case access** (Production Truth BLOCKER) | ✅ **DONE — DEPLOYED** at `9beb0e8` (#221). Legal / Law Firm card on Rate Sheets, Send legal intake on Send to someone new, explicit send context. No third pricing source. LIVE VERIFY **OPEN** |
 | 27 | **Ended by Admin / Ended by [name]** (owner decision 4) | ✅ **DONE** — `case_day_end`, additive; authorization untouched; legacy days stay readable. **Owes a portal-setup dispatch** |
 | 26 | Final master reconciliation + project closeout | ✅ **DONE** — every durable requirement classified in `case-portal/FINAL-LEDGER.md`. No non-deferred approved requirement is missing |
 
