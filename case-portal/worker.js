@@ -2232,6 +2232,151 @@ const daysBetween = (aIso, bIso) => {
   return Math.floor((b - a) / 86400000);
 };
 
+/* PORTAL-OPS PHASE 4 — TASKS & FOLLOW-UPS, cross-case (Unit 22).
+
+   `case_tasks` and `tasksPanel` already existed as a case tab; what was
+   missing was the view that answers "what is on my desk today" without opening
+   twenty cases. This is that read and nothing else — the same rows, bucketed.
+
+   IT DELIBERATELY DOES NOT AUTO-SURFACE. Phase 4's auto-surface list is
+   `/attention`'s job, shipped in Unit 8, and one item of that list is
+   TRUNCATED in the brief — so re-implementing it here would both duplicate a
+   working feature and invent the missing entry. The board carries the MANUAL
+   follow-ups; the exception list stays where it lives, and the page links the
+   two rather than merging them.
+
+   Role-scoped in the SQL, not by filtering after: an investigator sees tasks
+   assigned to them, on cases that are theirs. Hidden cases are excluded
+   through the existing helper, so a deleted or archived case cannot put work
+   on someone's desk. */
+async function taskBoard(env, user) {
+  if ((await missingTables(env)).includes('case_tasks')) {
+    return json({ today: [], upcoming: [], overdue: [], completed: [], not_set_up: true });
+  }
+  const admin = user.role === 'admin';
+  const hidden = await hiddenCases(env);
+  const today = nowIso().slice(0, 10);
+  const { results } = await env.DB.prepare(
+    `SELECT t.id, t.case_no, t.task, t.due_date, t.priority, t.status,
+            t.done_at, u.display_name AS assigned_name, t.assigned_to,
+            s.client_name, s.subject_name, s.assigned_to AS case_investigator
+       FROM case_tasks t
+       JOIN submissions s ON s.case_no = t.case_no
+       LEFT JOIN users u ON u.id = t.assigned_to
+      WHERE (?1 = 1 OR (s.assigned_to = ?2 AND (t.assigned_to IS NULL OR t.assigned_to = ?2)))
+      ORDER BY COALESCE(t.due_date, '9999-12-31'), t.id DESC
+      LIMIT 300`).bind(admin ? 1 : 0, user.id).all();
+
+  const rows = (results || []).filter(r => !hidden.includes(r.case_no)).map(r => ({
+    id: r.id, case_no: r.case_no, task: r.task, due_date: r.due_date || null,
+    priority: r.priority, status: r.status, done_at: r.done_at || null,
+    assigned_name: r.assigned_name || null,
+    /* Who the case is FOR is the client's identity, so an investigator is not
+       sent it — the FIELD_KEEP boundary, applied to this view too. */
+    ...(admin ? { client_name: r.client_name || null } : {}),
+    subject_name: r.subject_name || null,
+  }));
+  const open = rows.filter(r => r.status === 'open');
+  return json({
+    overdue:   open.filter(r => r.due_date && r.due_date < today),
+    today:     open.filter(r => r.due_date === today),
+    upcoming:  open.filter(r => !r.due_date || r.due_date > today),
+    completed: rows.filter(r => r.status !== 'open').slice(0, 40),
+    generated_at: nowIso(),
+  });
+}
+
+/* PORTAL-OPS PHASE 14 — THE AUDIT TRAIL, composed at read time (Unit 22).
+
+   "Who + what + when" over the changes the brief names: assignments, status,
+   authorization, retainer and payments, invoices, report versions, evidence
+   classification, package finalization and case closure. Every one of those
+   was already being recorded somewhere — this needed no new table and writes
+   nothing, the Unit 10 timeline's lesson one altitude up: the timeline answers
+   "what happened on this case", this answers "what did we change, lately".
+
+   ADMIN ONLY, by the brief's own line — "Investigators must not see admin-only
+   audit information" — and enforced by refusing the route rather than by
+   filtering rows out of an answer already fetched. */
+const AUDIT_CAP = 40;
+async function auditTrail(request, env, user) {
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  const missing = await missingTables(env);
+  const has = t => !missing.includes(t);
+  const hidden = await hiddenCases(env);
+  const out = [];
+  const q = async (table, sql, map) => {
+    if (!has(table)) return;
+    try {
+      const { results } = await env.DB.prepare(sql).bind(AUDIT_CAP).all();
+      for (const r of results || []) { const e = map(r); if (e && e.at) out.push(e); }
+    } catch { /* one unavailable source must not empty the whole trail */ }
+  };
+
+  await q('case_status',
+    `SELECT case_no, stage, set_at AS at, u.display_name AS who
+       FROM case_status LEFT JOIN users u ON u.id = set_by
+      ORDER BY set_at DESC LIMIT ?`,
+    r => ({ at: r.at, case_no: r.case_no, who: r.who, kind: 'status',
+            what: `Status set to ${r.stage}` }));
+
+  await q('invoice_events',
+    `SELECT e.at, e.action, e.detail, i.case_no, u.display_name AS who
+       FROM invoice_events e JOIN invoices i ON i.id = e.invoice_id
+       LEFT JOIN users u ON u.id = e.user_id
+      ORDER BY e.id DESC LIMIT ?`,
+    r => ({ at: r.at, case_no: r.case_no, who: r.who, kind: 'invoice',
+            what: `Invoice ${String(r.action).replace(/_/g, ' ')}` }));
+
+  await q('build_events',
+    `SELECT e.at, e.action, b.case_no, u.display_name AS who
+       FROM build_events e JOIN case_builds b ON b.id = e.build_id
+       LEFT JOIN users u ON u.id = e.user_id
+      ORDER BY e.id DESC LIMIT ?`,
+    r => ({ at: r.at, case_no: r.case_no, who: r.who, kind: 'package',
+            what: `Package ${String(r.action).replace(/_/g, ' ')}` }));
+
+  await q('retainer_payment',
+    `SELECT p.recorded_at AS at, p.case_no, u.display_name AS who
+       FROM retainer_payment p LEFT JOIN users u ON u.id = p.recorded_by
+      ORDER BY p.id DESC LIMIT ?`,
+    r => ({ at: r.at, case_no: r.case_no, who: r.who, kind: 'payment',
+            what: 'Retainer payment recorded' }));
+
+  await q('case_closure',
+    `SELECT c.closed_at AS at, c.case_no, u.display_name AS who
+       FROM case_closure c LEFT JOIN users u ON u.id = c.closed_by
+      WHERE c.closed_at IS NOT NULL ORDER BY c.closed_at DESC LIMIT ?`,
+    r => ({ at: r.at, case_no: r.case_no, who: r.who, kind: 'closure',
+            what: 'Case closed' }));
+
+  await q('retention_event',
+    `SELECT e.at, e.case_no, e.action, u.display_name AS who
+       FROM retention_event e LEFT JOIN users u ON u.id = e.user_id
+      ORDER BY e.id DESC LIMIT ?`,
+    r => ({ at: r.at, case_no: r.case_no, who: r.who, kind: 'retention',
+            what: String(r.action).replace(/_/g, ' ') }));
+
+  await q('report_versions',
+    `SELECT v.submitted_at AS at, r.case_no, u.display_name AS who
+       FROM report_versions v JOIN case_reports r ON r.id = v.report_id
+       LEFT JOIN users u ON u.id = v.submitted_by
+      ORDER BY v.id DESC LIMIT ?`,
+    r => ({ at: r.at, case_no: r.case_no, who: r.who, kind: 'report',
+            what: 'Report version saved' }));
+
+  /* A deleted or archived case is out of the working set, so it is out of this
+     view too — the same rule every other cross-case read follows. */
+  const rows = out.filter(e => e.case_no && !hidden.includes(e.case_no))
+    .sort((a, b) => String(b.at).localeCompare(String(a.at)))
+    .slice(0, 60);
+  /* Named rather than implied: a source that has not arrived yet is not the
+     same as nothing having happened. */
+  const absent = ['case_status', 'invoice_events', 'build_events', 'retainer_payment',
+                  'case_closure', 'retention_event', 'report_versions'].filter(t => !has(t));
+  return json({ entries: rows, missing_sources: absent, generated_at: nowIso() });
+}
+
 async function needsAttention(env, user) {
   /* ADMIN ONLY, like /recent-activity and the storage card it sits beside: this
      is the office's exception list across the whole book of work, and an
@@ -11569,6 +11714,8 @@ async function route(request, env) {
   /* And the exception list the office works from. Admin-only, like the
      recent-activity feed and the storage card it summarises. */
   if (p === '/attention' && method === 'GET') return needsAttention(env, user);
+  if (p === '/tasks' && method === 'GET') return taskBoard(env, user);
+  if (p === '/audit' && method === 'GET') return auditTrail(request, env, user);
   if (p === '/recent-activity' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return json({ activity: await recentActivity(env) });
