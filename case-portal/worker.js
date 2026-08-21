@@ -12110,10 +12110,22 @@ async function route(request, env) {
     return setStatus(request, env, user, m[1]);
   }
 
-  /* Internal rates. Admin-only and deliberately not reachable from the intake
-     form or any public page — carrier pricing is quoted per assignment, and a
-     negotiated rate is never advertised. `hours` and `rate` are optional and
-     produce a quote against the configured standard. */
+  /* INTERNAL / NO UI EXPECTED (classified in Unit 31, and deliberately kept).
+
+     The Production Truth Audit listed this among the routes with no page
+     caller. It is not dead: it is the internal rate card — `RATES`, the
+     package ladder and an optional quote — and its ABSENCE from the UI is the
+     feature. Carrier pricing is quoted per assignment and a negotiated rate is
+     never advertised, so exposing it merely because a route exists would be
+     the opposite of what PRICING.md asks for.
+
+     It is also a tested BOUNDARY rather than a curiosity: the worker suite
+     asserts 403 to an investigator and 401 unauthenticated, and the portal
+     suite asserts the page itself gets 403. Do not add a screen for it.
+
+     Internal rates. Admin-only and deliberately not reachable from the intake
+     form or any public page. `hours` and `rate` are optional and produce a
+     quote against the configured standard. */
   if (p === '/pricing' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     const q = new URL(request.url).searchParams;
@@ -12333,6 +12345,13 @@ async function route(request, env) {
   /* The possible-match check on its own, so the page can warn while the office
      is still typing rather than only when they press Save. It reads; it never
      writes, and it is the same function the refusal uses. */
+  /* INTERNAL / NO UI EXPECTED (Unit 31). The screen uses the per-case
+     `/cases/:no/profile-match` — the "Look for a match" button — so this
+     unscoped variant has no caller. Kept: it is part of the admin-only profile
+     boundary walk the suite performs (an investigator must be refused it), and
+     it is the pre-create duplicate check the directory would need if that
+     button ever moves. Deprecating it would mean removing a boundary
+     assertion. */
   if (p === '/profiles/match' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     if ((await profilesMissing(env)).length) return json({ matches: [], not_set_up: true });
@@ -12414,6 +12433,14 @@ async function route(request, env) {
     return outNow(env);
   }
 
+  /* INTERNAL / NO UI EXPECTED (Unit 31). Named by the Production Truth Audit
+     as a candidate for removal and KEPT after checking its callers: the
+     Dropbox card reads the richer `/dropbox/status`, but this route is the
+     generic provider-capability probe and it is exercised by three assertions,
+     one of which is an authorization boundary (an investigator gets 403
+     through the `/build/` prefix gate above). Removing it would delete a
+     passing boundary check to gain nothing. A route with tests and no screen
+     is internal, not dead. */
   if (p === '/external-storage' && method === 'GET') {
     return json({ providers: Object.fromEntries(Object.entries(EXTERNAL_PROVIDERS).map(([k, prov]) =>
       [k, { label: prov.label, configured: prov.configured(env), note: prov.note }])) });
@@ -13688,7 +13715,17 @@ async function route(request, env) {
   if (p === '/my/reports' && method === 'GET') return myReports(env, user);
   if (p === '/my/expenses' && method === 'GET') return myExpenses(env, user);
 
-  if (p === '/case-types' && method === 'GET') return json({ case_types: await listCaseTypes(env) });
+  /* ADMIN, LIKE THE POST BESIDE IT AND LIKE THE WORKSPACE ALREADY DECIDED
+     (Unit 30). `caseWorkspace` sends `case_types: admin ? … : []` — the field
+     is deliberately not given the catalogue — while this route handed it to
+     anyone signed in. Two answers to one question is what this codebase treats
+     as a defect, and nothing calls it from the field: the only page caller is
+     the admin-only Settings panel. A consistency fix, not a leak of client
+     data — a case type is a business category, not identity or money. */
+  if (p === '/case-types' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return json({ case_types: await listCaseTypes(env) });
+  }
   if (p === '/case-types' && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     const body = await readJson(request);

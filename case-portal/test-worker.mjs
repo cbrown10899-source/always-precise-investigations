@@ -4829,6 +4829,99 @@ section('A reassigned investigator keeps their own work, never the client');
  * no way to reach them. The backend is unchanged apart from one validation:
  * these tests pin what it already promised, plus the boundary the prefix needs.
  * NO NEW BILLING POLICY — the seven keys are the seven BILLING_DEFAULTS. */
+/* ------------------------------------------------- case types (Unit 30)
+   POST /case-types was real, validated and admin-gated with no UI. These pin
+   what the backend already promised — and that it has NO destructive path,
+   which is what makes "never rename or delete a type a case is using" a
+   property of the shape rather than a guard. */
+/* -------------------------------- routes that are internal on purpose (Unit 31)
+ *
+ * The Production Truth Audit found five routes with no page caller and I
+ * classified two of them wrongly on that evidence alone — "no UI reference"
+ * is not "dead code". Checking callers, tests and docs showed all three below
+ * are TESTED AUTHORIZATION BOUNDARIES, so none was removed.
+ *
+ * This section is the durable record of that classification: it asserts they
+ * are still there and still refuse the field, so a later cleanup pass has to
+ * delete a failing test rather than a quiet route. */
+section('Internal routes stay internal, and stay refused to the field');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  for (const p2 of ['/pricing', '/external-storage', '/profiles/match?name=x']) {
+    ok(`${p2} answers an admin`, (await call(env, p2, { cookie: admin })).status === 200, p2);
+    ok(`${p2} refuses an investigator`, (await call(env, p2, { cookie: dana })).status === 403, p2);
+    ok(`${p2} refuses a stranger`, (await call(env, p2)).status === 401, p2);
+  }
+  /* And the one that is genuinely superseded for DISPLAY is still the one the
+     card reads — /dropbox/status — so keeping the generic probe costs the
+     screen nothing. */
+  ok('the Dropbox card still has its own richer route',
+     (await call(env, '/dropbox/status', { cookie: admin })).status === 200);
+}
+
+section('Case types: an admin can list and add, and nothing can destroy one');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  const first = await jsonOf(await call(env, '/case-types', { cookie: admin }));
+  ok('an admin lists the case types', Array.isArray(first.case_types) && first.case_types.length > 0,
+     JSON.stringify(first).slice(0, 140));
+  ok('the seeded built-ins are there', first.case_types.some(t => t.side === 'private')
+     && first.case_types.some(t => t.side === 'insurance'));
+  const before = first.case_types.length;
+
+  ok('an investigator cannot list them',
+     (await call(env, '/case-types', { cookie: dana })).status === 403);
+  ok('and cannot create one',
+     (await call(env, '/case-types', { method: 'POST', cookie: dana,
+       body: { label: 'Nope', side: 'private' } })).status === 403);
+
+  const made = await call(env, '/case-types', { method: 'POST', cookie: admin,
+    body: { label: 'Workers compensation surveillance', side: 'insurance' } });
+  ok('an admin adds one', made.status === 201, String(made.status));
+  const after = (await jsonOf(made)).case_types;
+  ok('and the fresh list comes back with it', after.length === before + 1
+     && after.some(t => t.label === 'Workers compensation surveillance'), String(after.length));
+  ok('the built-ins are untouched by the addition',
+     first.case_types.every(t => after.some(a => a.label === t.label)));
+
+  const dup = await call(env, '/case-types', { method: 'POST', cookie: admin,
+    body: { label: 'Workers compensation surveillance', side: 'insurance' } });
+  ok('a duplicate is refused rather than silently made twice', dup.status === 409, String(dup.status));
+
+  for (const [label, body] of [['no name', { side: 'private' }],
+                               ['a blank name', { label: '   ', side: 'private' }],
+                               ['no side', { label: 'X' }],
+                               ['an invented side', { label: 'Y', side: 'legal' }]]) {
+    const r = await call(env, '/case-types', { method: 'POST', cookie: admin, body });
+    ok(`creating with ${label} is refused`, r.status === 400, String(r.status));
+  }
+
+  /* THE ABSENCE THAT MATTERS. There is no delete and no rename route, so a
+     type a case is already using cannot be changed underneath it — asserted
+     rather than assumed, because a later "tidy-up" adding one would be a
+     silent data change. */
+  for (const p2 of ['/case-types/1/delete', '/case-types/1', '/case-types/1/rename']) {
+    const r = await call(env, p2, { method: 'POST', cookie: admin, body: { label: 'Z' } });
+    ok(`there is no ${p2} route`, r.status === 404, `${p2} -> ${r.status}`);
+  }
+}
+
 section('Invoice defaults: admin reads and writes them, and the prefix is bounded');
 {
   const env = freshEnv();
