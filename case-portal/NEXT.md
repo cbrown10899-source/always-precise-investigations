@@ -100,6 +100,20 @@ website page and CTA. Not built in this run, by instruction.
    evidence and reports keep those words where the work legitimately uses them.
 
 Asserted against the staged bytes in `.github/test-deploy.mjs` (81 checks).
+Shipped as **Unit 34**, #225 at `405462f`, deploy green. **Live path:
+`/legal-investigations/`.** Visual LIVE VERIFY open for the owner.
+
+**Post-deploy sweep of the 40 published files** found four matches, all in
+`portal/index.html` — the signed-in staff app, `noindex` by meta AND by
+`X-Robots-Tag`, absent from robots.txt and the sitemap. They are internal
+case-type vocabulary (`/canvass|field/` in a label helper, and "Witness locate
+/ interview" twice in the ADMIN manual-intake category list), not public
+service copy. **Left alone deliberately** — those strings categorise existing
+cases, and the owner's instruction was explicit that internal case data is not
+to be edited to tidy a website. **One judgement call for the owner:** the
+PUBLIC intake's matching option is now "Witness locate", so the admin form
+offers a category the public site no longer advertises. Changing it would
+touch how existing cases are categorised, so it is recorded rather than done.
 
 ## Shipped and deployed (do not rebuild)
 
