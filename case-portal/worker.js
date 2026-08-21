@@ -4909,7 +4909,13 @@ async function caseWorkspace(env, user, caseNo) {
      exist — and a join against a missing table would take out the workspace,
      which is the most-used screen there is. Absent, an entry simply has no
      recorded source, which is what every entry made before this shipped is. */
-  const hasSource = !(await missingTables(env)).includes('activity_source');
+  /* ONE schema check for the whole workspace. This is the most-opened screen in
+     the portal (the Unit 7 lesson), and `missingTables` is a `sqlite_master`
+     scan every time it is called — it was already being called twice here, and
+     Unit 27's ending-actor read would have made three. Hoisted instead, so the
+     screen costs one. */
+  const missing = await missingTables(env);
+  const hasSource = !missing.includes('activity_source');
 
   /* Removed entries still come back, stamped — the page greys them out with a
      way to put one back, and the report skips them. Erasing the row outright
@@ -4968,6 +4974,30 @@ async function caseWorkspace(env, user, caseNo) {
   const daysTotal = admin ? (days || []).length
     : Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM case_days WHERE case_no = ?')
         .bind(caseNo).first() || {}).n || 0);
+
+  /* WHO ENDED EACH DAY (owner, 2026-08-21). One read for the case, decorated
+     onto the rows already fetched — no query per day.
+
+     BOTH ROLES. An investigator whose day the office ended is precisely the
+     person who most needs to be told, and it is not investigator-specific
+     financial information: no hours, no money, only who pressed End on a day
+     they can already see. Unit 25's scope means they only ever see their own
+     days here anyway.
+
+     `null` from `dayEndActors` means the table has not arrived, and that is
+     carried through as `ended_self: null` — UNKNOWN, which the page draws as
+     "not recorded". It must never draw as "the investigator ended it". */
+  const endActors = await dayEndActors(env, caseNo, missing);
+  for (const d of days || []) {
+    const rec = endActors ? endActors.get(d.id) : null;
+    // Only an ENDED day has an ending actor; a running one has nothing to say.
+    if (!d.end_time) { d.ended_self = null; d.ended_by_label = ''; continue; }
+    d.ended_self = rec ? rec.ended_by === d.investigator_id : null;
+    d.ended_by_name = rec ? (rec.ended_by_name || null) : null;
+    d.ended_by_role = rec ? rec.ended_role : null;
+    d.ended_by_at = rec ? rec.at : null;
+    d.ended_by_label = dayEndLabel(rec, d.investigator_id);
+  }
 
   // The day this caller currently has running, if any — what turns the button
   // into END INVESTIGATION DAY.
@@ -5047,7 +5077,7 @@ async function caseWorkspace(env, user, caseNo) {
      GUARDED: `schema.sql` arrives by a manual portal-setup dispatch while the
      Worker deploys on push, so between the two this table does not exist on the
      live database and a query against it would take out the whole workspace. */
-  const missingForStamps = await missingTables(env);
+  const missingForStamps = missing;   // the one check hoisted above
   const videoStamps = missingForStamps.includes('video_stamp')
     ? [] : await videoStampsFor(env, caseNo);
 
@@ -6487,10 +6517,89 @@ async function endDay(request, env, user, caseNo, opts) {
             summary = ?, ended_at = ? WHERE id = ?`)
     .bind(time, endMiles, hours, miles, String(body.summary || '').slice(0, 4000), nowIso(), day.id).run();
 
+  /* WHO ENDED IT (owner, 2026-08-21, at closeout): "Never make it appear the
+     original investigator ended it."
+
+     The actor is the CALLER, which is the only honest source — `user` is the
+     account that passed authorization to reach this line, and
+     `day.investigator_id` is whose day it is. The two differing IS the case
+     this record exists for, and the authorization that allows it is already
+     upstream: only `/day/end-other` sets `allowOthers`, and that branch of
+     `openDayForAction` requires `caseFor` AND the admin role before it will
+     resolve anyone else's session. Nothing here re-decides who may end a day;
+     it records who did.
+
+     Written after the day is safely ended, and it NEVER fails the day-end —
+     an investigator left holding a clock they cannot stop is the failure this
+     portal already refuses. But it is not swallowed either: the response says
+     `ended_by_recorded` with a reason, the Unit 11 rule, because the one thing
+     forbidden here is a day that READS as self-ended when it was not, and a
+     silently missing record is exactly that. Every read below treats an absent
+     record as UNKNOWN and says so, never as "the investigator ended it".
+
+     `ON CONFLICT DO NOTHING` keeps the FIRST actor. A day ends once — the
+     resolver requires `end_time IS NULL` — so this cannot normally fire; if it
+     ever did, the original presser is the truth. */
+  let endedRecorded = false;
+  let endedReason = null;
+  if ((await missingTables(env)).includes('case_day_end')) {
+    endedReason = 'not_set_up';
+  } else {
+    try {
+      await env.DB.prepare(
+        `INSERT INTO case_day_end (day_id, case_no, ended_by, ended_role, at)
+         VALUES (?, ?, ?, ?, ?) ON CONFLICT(day_id) DO NOTHING`)
+        .bind(day.id, caseNo, user.id, user.role, nowIso()).run();
+      endedRecorded = true;
+    } catch { endedReason = 'error'; }
+  }
+
   return json({ ok: true, day_id: day.id, hours, miles,
                 paused_hours: pausedHours,
                 span_hours: Math.round((span / 60) * 100) / 100,
+                /* Observable rather than believed, like every send context and
+                   integrity outcome in this Worker. */
+                ended_by_recorded: endedRecorded,
+                ...(endedRecorded ? {} : { ended_by_reason: endedReason }),
+                ended_self: user.id === day.investigator_id,
+                ended_by_label: dayEndLabel(
+                  { ended_by: user.id, ended_role: user.role, ended_by_name: user.display_name },
+                  day.investigator_id),
                 authorization: await authorizationFor(env, caseNo, user.role === 'admin') });
+}
+
+/* THE ONE WRITER OF THIS WORDING. The office screen, the field screen, the
+   timeline and the day-end response all read it from here — two renderings of
+   one fact drift, and the one that drifts is the one nobody is looking at
+   (the `paymentBlockText` rule).
+
+   Three answers, and the third is the point of the whole record:
+     - the day's own investigator ended it  -> '' , there is nothing to say
+     - somebody else ended it               -> who, and whether they were Admin
+     - no record                            -> said plainly as unknown, NEVER
+       as though the investigator ended it. Every day ended before this table
+       existed is in that third case, and stays readable. */
+function dayEndLabel(rec, investigatorId) {
+  if (!rec) return 'Ending actor not recorded';
+  if (rec.ended_by === investigatorId) return '';
+  const name = String(rec.ended_by_name || '').trim();
+  if (rec.ended_role === 'admin') return name ? `Ended by Admin — ${name}` : 'Ended by Admin';
+  return name ? `Ended by ${name}` : 'Ended by another authorized user';
+}
+
+/* The ending actor for one case's days. `null` — never an empty Map — when the
+   table has not arrived, so a caller can tell "not set up" from "no day has
+   one". One read per case, never per row. */
+async function dayEndActors(env, caseNo, missing) {
+  const m = missing || await missingTables(env);
+  if (m.includes('case_day_end')) return null;
+  const { results } = await env.DB.prepare(
+    `SELECT e.day_id, e.ended_by, e.ended_role, e.at, u.display_name AS ended_by_name
+       FROM case_day_end e LEFT JOIN users u ON u.id = e.ended_by
+      WHERE e.case_no = ?`).bind(caseNo).all();
+  const out = new Map();
+  for (const r of results || []) out.set(r.day_id, r);
+  return out;
 }
 
 /* ---- the activity log ---- */
@@ -10143,6 +10252,9 @@ const DEMO_SWEEP = [
   ['alert_failure',         'DELETE FROM alert_failure WHERE case_no LIKE ?'],
   /* --- the four that reference case_days, before case_days itself --- */
   ['case_day_summary',      'DELETE FROM case_day_summary WHERE case_no LIKE ?'],
+  /* Before `case_days`, like every other day child — it carries no foreign
+     key, but the ordering rule here is whose parent goes last. */
+  ['case_day_end',          'DELETE FROM case_day_end WHERE case_no LIKE ?'],
   ['activity_log',          'DELETE FROM activity_log WHERE case_no LIKE ?'],
   ['case_reports',          'DELETE FROM case_reports WHERE case_no LIKE ?'],
   ['case_expenses',         'DELETE FROM case_expenses WHERE case_no LIKE ?'],
@@ -10862,7 +10974,7 @@ async function caseTimeline(env, user, caseNo, url) {
      workspace and the calendar; an admin's timeline is unchanged. */
   const days = cap((await env.DB.prepare(
     `SELECT d.id, d.day_date, d.start_time, d.end_time, d.hours, d.miles, d.created_at,
-            d.ended_at, u.display_name AS who
+            d.ended_at, d.investigator_id, u.display_name AS who
        FROM case_days d LEFT JOIN users u ON u.id = d.investigator_id
       WHERE d.case_no = ? AND d.day_date >= ? AND d.day_date <= ?
         ${admin ? '' : 'AND d.investigator_id = ?'}
@@ -10870,6 +10982,13 @@ async function caseTimeline(env, user, caseNo, url) {
     .bind(...(admin ? [caseNo, LO_D, HI_D, TL.DAYS]
                     : [caseNo, LO_D, HI_D, user.id, TL.DAYS])).all()).results,
     TL.DAYS, 'investigation days');
+  /* WHO ENDED EACH DAY (owner, 2026-08-21). A chronology is where "the office
+     ended this one" is most likely to be read as "the investigator did", so
+     the label rides the day_end event. One read, decorated onto rows already
+     fetched. `who` stays the day's INVESTIGATOR — whose day it is — and the
+     ending actor is named in the detail, which is the honest shape: the event
+     is about their day, and the label says who closed it. */
+  const tlEndActors = await dayEndActors(env, caseNo, missing);
   for (const d of days) {
     push(tlEvent('day_start', tlLocal(d.day_date, d.start_time), {
       title: 'Investigation day started', who: d.who || '', link: { tab: 'field' },
@@ -10878,6 +10997,9 @@ async function caseTimeline(env, user, caseNo, url) {
       const bits = [];
       if (tlNum(d.hours) != null) bits.push(tlNum(d.hours) + ' hr');
       if (tlNum(d.miles) != null) bits.push(tlNum(d.miles) + ' mi');
+      const endedLabel = dayEndLabel(
+        tlEndActors ? tlEndActors.get(d.id) : null, d.investigator_id);
+      if (endedLabel) bits.push(endedLabel);
       push(tlEvent('day_end', tlLocal(d.day_date, d.end_time), {
         title: 'Investigation day ended', detail: bits.join(' · '),
         who: d.who || '', link: { tab: 'field' },
@@ -11607,7 +11729,7 @@ const EXPECTED_TABLES = [
   'photo_stamp',
   'profile', 'profile_contact', 'profile_phone', 'case_profile',
   'build_template', 'evidence_integrity', 'case_day_summary', 'storage_failure',
-  'case_retention', 'legal_hold', 'retention_event',
+  'case_retention', 'legal_hold', 'retention_event', 'case_day_end',
 ];
 
 async function missingTables(env) {

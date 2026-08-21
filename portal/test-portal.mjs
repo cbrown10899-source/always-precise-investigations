@@ -3879,6 +3879,16 @@ section('A finalized package still says when something has been held back');
      && !has(docText, 'do not use') && !has(docText, 'internal only'));
   ok('and the notice is not inside the printed region at all',
      await page.evaluate(() => !document.querySelector('#pkgdoc .pkg-miss')));
+
+  /* WHO ENDED THE DAY IS OPERATIONS, NOT EVIDENCE (owner, 2026-08-21, Unit 27):
+     the history must say it "without cluttering the client-facing report unless
+     appropriate". The office needs to know the desk closed a shift; a client
+     receiving the case package does not, and #pkgdoc is what leaves the
+     building. Asserted here rather than assumed from where the field was
+     added, because the next person to touch the day renderer will not
+     remember. */
+  ok('the client document never names who ended a shift',
+     !has(docText, 'Ended by') && !has(docText, 'Ending actor'), docText.slice(0, 300));
   ok('the gate strip that carries it is outside the printed region too',
      await page.evaluate(() => {
        const g = [...document.querySelectorAll('.pkg-miss')];

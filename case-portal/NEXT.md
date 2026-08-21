@@ -50,11 +50,11 @@ completed.
 | **Working tree** | clean; nothing unpushed; no branch in flight |
 | **Background work** | none running |
 | **Suites at that SHA** | worker **2649/0** · portal **2423/0** · deploy guard **68/0** · intake **236/0** · visitor-alerts **47/0** — all five re-run at closeout |
-| **Schema owed** | **none** — Unit 25 added no table, no column and no migration |
+| **Schema owed** | ⚠️ **ONE — `case_day_end` (Unit 27).** A manual `portal-setup.yml` dispatch is owed after merge. Until it runs, days end exactly as before and read as *Ending actor not recorded* |
 | **Deployed** | `Deploy case-portal Worker` ✅ at `73b7f5b` · `Deploy site to Cloudflare Pages` ✅ at `73b7f5b` and `a715782` · `Daily site health` ✅ run #22 |
 | **Closeout** | ✅ **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** — see `case-portal/FINAL-LEDGER.md` |
-| **Owner decisions** | ✅ five LOCKED at closeout, 2026-08-21 — see **FINAL OWNER DECISIONS** below. Four are deferrals or standing refusals; **decision 4 (Ended by Admin) is an approved requirement that is not yet built** and is the one open build item |
-| **Next unit** | **NONE — the build order is complete.** 26 closed the project; 23's live sweep is deferred to the owner, awaiting real case data. Do not start new features |
+| **Owner decisions** | ✅ five LOCKED at closeout, 2026-08-21 — see **FINAL OWNER DECISIONS** below. Four are deferrals or standing refusals; **decision 4 (Ended by Admin) is BUILT — Unit 27** |
+| **Next unit** | **NONE — the build order is complete.** 26 closed the project and 27 built the owner's last approved requirement; 23's live sweep is deferred, awaiting real case data. Do not start new features |
 
 ## Shipped and deployed (do not rebuild)
 
@@ -160,6 +160,7 @@ CREATE A BRANCH. DO NOT DEPLOY. DO NOT START THE NEXT UNIT."*
 | 23 | Consolidated Live Verification Sweep | ⏸️ **LIVE VERIFICATION DEFERRED — REQUIRES REAL CASE/DATA** (owner, 2026-08-21). *Do not manufacture production data.* |
 | 24 | **Required** File Queue + portal aesthetic redesign | ✅ **DONE — DEPLOYED** at `8988b29` (#213), **visual check passed by the owner 2026-08-21**; page-level rendering tests followed |
 | 25 | Final security / authorization / regression pass | ✅ **DONE** — audit, three verified fixes, record in `case-portal/SECURITY-PASS.md`. No schema, no portal-setup dispatch |
+| 27 | **Ended by Admin / Ended by [name]** (owner decision 4) | ✅ **DONE** — `case_day_end`, additive; authorization untouched; legacy days stay readable. **Owes a portal-setup dispatch** |
 | 26 | Final master reconciliation + project closeout | ✅ **DONE** — every durable requirement classified in `case-portal/FINAL-LEDGER.md`. No non-deferred approved requirement is missing |
 
 ## CONFIRMED COMPLETE — DO NOT REOPEN
@@ -407,7 +408,7 @@ nothing was built, deployed or started for them.
 | 1 | *"PORTAL-OPS Permissions remains missing and must not be invented. Rebuild later from owner direction."* | **MISSING — SKIPPED, by owner direction.** Stays marked missing. **Do not infer, reconstruct or approximate it** from the corrupted text or from any other phase. It is **not a closeout blocker**. The standing rule that no permission toggle may be invented for the reassigned-investigator rule (CLAUDE.md) continues to hold, and is unaffected by this |
 | 2 | *"Saved Views remains a future optional operational improvement; do not block closeout."* | **DEFERRED BY OWNER.** Optional, future, non-blocking. Its own heading is still `[inferred]` and its Billing item still corrupted; neither is to be guessed at |
 | 3 | *"Case Templates / Document Templates may use a reusable mechanism later, but owner supplies the actual firm content. Do not invent templates."* | **DEFERRED BY OWNER.** The mechanism may be built later; **the content is the firm's own** — case-setup defaults, communication and report language — and is never to be authored here. A mechanism without owner content does not ship |
-| 4 | *"If Admin or another authorized user ends someone else's surveillance day, the UI/history must clearly say Ended by Admin or Ended by [name]. Never make it appear the original investigator ended it."* | ✅ **APPROVED REQUIREMENT — NOT YET IMPLEMENTED.** See the block below: this is the one open build item |
+| 4 | *"If Admin or another authorized user ends someone else's surveillance day, the UI/history must clearly say Ended by Admin or Ended by [name]. Never make it appear the original investigator ended it."* | ✅ **BUILT — Unit 27.** `case_day_end`, one additive companion table. **Owes a manual `portal-setup.yml` dispatch after merge** |
 | 5 | *"Keep current Cash App $TreverB and Venmo @Trever-Brown-9 for now. Business-account migration remains a future owner decision."* | **DEFERRED BY OWNER.** Handles unchanged. The `FIRM` source comment still flags them as personal accounts to be swapped before client use; that note stays, because the migration is a future decision rather than a closed one |
 
 **Unit 17 (Retention) and Unit 23 (the consolidated sweep) stay LIVE
@@ -415,37 +416,47 @@ VERIFICATION DEFERRED until suitable real case data exists.** Reaffirmed by the
 owner at closeout. *No production case or data is to be manufactured for
 either.*
 
-### Decision 4 is the one open build item — approved, not started
+### Decision 4 — BUILT as Unit 27, the final closeout unit
 
-**It is not deferred and it is not done.** The owner instructed that no feature
-be started while these decisions were recorded, so it is written down here
-rather than built.
+**What it was:** `case_days` recorded `end_time`, `end_mileage`, `hours`,
+`miles`, `summary` and `ended_at` — and nothing about **who pressed End**. A day
+the office ended through `/cases/:no/day/end-other` was stored **identically** to
+one the investigator ended themselves, which is exactly what the decision
+forbids.
 
-**What the record does today**, verified against master `5e1d063` rather than
-assumed:
+**What was built.** `case_day_end` — one additive companion table, because
+`case_days` cannot gain a column while `schema.sql` is re-applied on every
+portal-setup run (`activity_removed`, `build_custom`, `build_template`,
+`case_day_summary`). It carries the day, the case, **who** ended it, **their
+role at that moment**, and **when**.
 
-- `case_days` has **no `ended_by` column** — the row carries `end_time`,
-  `end_mileage`, `hours`, `miles`, `summary`, `ended_at` and nothing about who
-  pressed End.
-- `endDay`'s `UPDATE case_days SET …` writes none of that either.
-- So a day ended by the office through `/cases/:no/day/end-other` is **stored
-  identically to one the investigator ended themselves.** The 2026-08-16
-  non-blocking finding said *"today only the hours distinguish it"*; that is
-  still exactly true.
+- **The actor is the caller**, written at the single `UPDATE case_days` that
+  ends a day. `user` is the account that passed authorization to reach it;
+  `day.investigator_id` is whose day it is; the two differing IS the case.
+- **Authorization is unchanged.** `openDayForAction` already required `caseFor`
+  and the admin role before it would resolve anyone else's session. Unit 27
+  re-decides nothing — it records who did it. Pinned by a test: an investigator
+  still cannot end another's day, and the day stays running when they try.
+- **`ended_role` is stored, never re-derived** — a demotion next month must not
+  rewrite what a day's history says. Pinned by a test that demotes the admin
+  and re-reads the day.
+- **Self-ended is NOT stored**: it is exactly `ended_by = investigator_id`, and
+  a second copy of a derivable fact is a second thing to drift.
+- **`dayEndLabel()` is the one writer of the wording** — the Days table, the
+  timeline and the day-end response all read it. *Nothing* for a self-ended day;
+  *Ended by Admin — Name* / *Ended by Name* for anyone else; **"Ending actor not
+  recorded"** where there is no record.
+- **A legacy day stays readable** and never reads as self-ended. Every day
+  ended before this shipped is in that third state.
+- **The record never costs the day.** A missing table or a failed write still
+  ends the day, and says so (`ended_by_recorded: false` with a reason) — because
+  a silently missing record is the forbidden appearance itself.
+- **The client never sees it.** A test asserts *"Ended by"* appears nowhere
+  inside `#pkgdoc`. The investigator DOES see it on their own day.
 
-**The requirement:** the UI and the history must say **Ended by Admin** or
-**Ended by [name]**, and must never let an office-ended day read as though the
-investigator ended it.
-
-**One implementation constraint, recorded because it already governs this repo
-and is easy to get wrong later:** `case_days` cannot simply gain a column.
-`schema.sql` is re-applied on every `portal-setup` run and `ALTER TABLE ADD
-COLUMN` is not idempotent — the same reasoning that produced `activity_removed`,
-`build_custom` and `build_template`. This wants a **companion table**, guarded
-through `missingTables()`, named in `EXPECTED_TABLES`, swept by `DEMO_SWEEP`,
-and it will owe a manual `portal-setup` dispatch after merge. That is the shape
-the constraint dictates, not a design — the design is the owner's when they ask
-for it.
+**Adding this table means a manual `portal-setup.yml` dispatch after merge.**
+Until it runs, days end exactly as before and read as *not recorded* — which is
+honest, and is asserted by its own section.
 
 
 **Item 12 — REPORT DAILY SUMMARY BUILDER — was inserted by the owner on
@@ -3671,6 +3682,12 @@ defect.
   invent. **Open question for the owner:** whether the ended day should be
   marked somewhere as "ended by the office" rather than reading like an ordinary
   close. Today only the hours distinguish it.
+
+  > ✅ **ANSWERED AND CLOSED — owner, 2026-08-21; built as Unit 27.** The answer
+  > is yes. `case_day_end` records who ended each day and their role at that
+  > moment, and the office's Days table, the timeline and the day-end
+  > confirmation all read one label from `dayEndLabel()`. It is no longer true
+  > that "only the hours distinguish it".
 
 - **The ordinary End's refusal names only one other session.** When an admin
   presses End on a case where several others are running, the refusal names the

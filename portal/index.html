@@ -10142,6 +10142,27 @@ function amCustomHtml(){
   </form>`;
 }
 
+/* WHO ENDED THE DAY — owner decision, 2026-08-21, at closeout. The wording is
+   the WORKER's (`ended_by_label`): the page never composes a second version of
+   it, because two renderings of one fact drift and the one that drifts is the
+   one nobody is looking at.
+
+   Three states, and the third is the whole point of the record:
+     - the day's own investigator ended it -> nothing to say, the ordinary case
+     - somebody else ended it              -> Ended by Admin - Name / Ended by Name
+     - no record                           -> said plainly, so the row can never
+       read as though the investigator ended it. Every day ended before this
+       shipped is in that third state, and stays perfectly readable.
+   A day still running has no ending actor at all. */
+function dayEndedByRow(d){
+  if(!d.end_time) return "";
+  const label = d.ended_by_label || "";
+  if(!label) return "";
+  // Unknown is drawn quieter than a named actor, never louder.
+  const unknown = d.ended_self === null || d.ended_self === undefined;
+  return `<tr><td colspan="4" class="tl-m"${unknown ? ` style="opacity:.75"` : ""}>${esc(label)}</td></tr>`;
+}
+
 function fieldPanel(){
   const open = WS && WS.open_day;
   const notice = WS_NOTICE ? `<div class="dayon"><b>${esc(WS_NOTICE)}</b>
@@ -10181,7 +10202,7 @@ function fieldPanel(){
         <td>${d.hours != null ? esc(d.hours) : "—"}</td>
         <td class="hide">${d.miles != null ? esc(d.miles) : "—"}</td>
         <td class="hide">${esc(d.investigator || "")}</td>
-      </tr>${d.summary ? `<tr><td colspan="4" class="tl-n">${esc(d.summary)}</td></tr>` : ""}`).join("")}
+      </tr>${dayEndedByRow(d)}${d.summary ? `<tr><td colspan="4" class="tl-n">${esc(d.summary)}</td></tr>` : ""}`).join("")}
       </tbody></table></div>`
       : `<div class="empty">No investigation days recorded yet.</div>`}`;
 }
@@ -15670,7 +15691,15 @@ async function endOtherAdminsDay(dayId, who){
     const r = await api(`/cases/${encodeURIComponent(WS_CASE)}/day/end-other`, {method:"POST", body:{
       end_time: new Date().toTimeString().slice(0, 5), day_id: dayId,
     }});
-    WS_NOTICE = `Their day was ended — ${r.hours} hours recorded to them.`;
+    /* SAY WHAT THE RECORD NOW SHOWS (owner, 2026-08-21). The hours are theirs;
+       the press was this admin's, and the day says so. If the record could NOT
+       be written the admin is told plainly — a day that quietly reads as
+       self-ended is the one outcome this decision forbids. */
+    WS_NOTICE = `Their day was ended — ${r.hours} hours recorded to them.`
+      + (r.ended_by_recorded === false
+          ? " The record of who ended it could NOT be written — the day will read as"
+            + " having no ending actor rather than as theirs."
+          : r.ended_by_label ? ` The day is marked "${r.ended_by_label}".` : "");
   }catch(e){ WS_ERR = e.message; }
   await reloadWorkspace();
 }

@@ -163,13 +163,20 @@ question any more. The full block, with what each means operationally, is in
    firm's own and is never authored here.
 4. *"If Admin or another authorized user ends someone else's surveillance day,
    the UI/history must clearly say Ended by Admin or Ended by [name]. Never
-   make it appear the original investigator ended it."* → **APPROVED
-   REQUIREMENT, NOT YET IMPLEMENTED.** This answers the 2026-08-16 non-blocking
-   finding *"whether the ended day should be marked somewhere as 'ended by the
-   office'"* — the answer is yes. Verified on master `5e1d063`: `case_days` has
-   no `ended_by` column and `endDay` writes none, so an office-ended day is
-   stored identically to a self-ended one. **It is the one open build item**,
-   deliberately not started.
+   make it appear the original investigator ended it."* → ✅ **BUILT — Unit 27.**
+   This answers the 2026-08-16 non-blocking finding *"whether the ended day
+   should be marked somewhere as 'ended by the office'"* — the answer is yes,
+   and that finding is now CLOSED. The gap was real and was verified on master
+   `5e1d063` before it was closed: `case_days` had no `ended_by` column and
+   `endDay` wrote none, so an office-ended day was stored identically to a
+   self-ended one. `case_day_end` is the additive companion table that records
+   who ended each day and their role at that moment; `dayEndLabel()` is the one
+   writer of the wording; a day with no record reads *"Ending actor not
+   recorded"* and never as self-ended, so every day ended before it shipped
+   stays readable. Authorization was not touched — `openDayForAction` already
+   required `caseFor` and the admin role, and a test pins that an investigator
+   still cannot end another's day. **Owes a manual `portal-setup.yml`
+   dispatch.**
 5. *"Keep current Cash App $TreverB and Venmo @Trever-Brown-9 for now.
    Business-account migration remains a future owner decision."* → **DEFERRED
    BY OWNER.** Supersedes the earlier "answered for now" wording; the handles

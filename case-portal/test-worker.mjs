@@ -4782,6 +4782,197 @@ section('A reassigned investigator keeps their own work, never the client');
  * timeline, and each carries a POSITIVE CONTROL first: every assertion here
  * would also pass against an empty payload, a renamed column, or a day that
  * never recorded its hours at all. */
+/* ----------------------------- who ended the investigation day (Unit 27)
+ *
+ * OWNER DECISION, 2026-08-21, at closeout: *"If Admin or another authorized
+ * user ends someone else's surveillance day, the UI/history must clearly say
+ * Ended by Admin or Ended by [name]. Never make it appear the original
+ * investigator ended it."*
+ *
+ * Four cases, because the requirement has four shapes and the fourth is the one
+ * a later change would break silently:
+ *   1. the investigator ends their own day   -> nothing claimed, nothing to say
+ *   2. an admin ends someone else's          -> Ended by Admin, and the name
+ *   3. another authorized user ends it       -> Ended by [name]
+ *   4. a day ended before this table existed -> readable, and NEVER read as
+ *      though the investigator ended it
+ *
+ * Every assertion carries the negative half too: the point is not only that the
+ * right name appears, it is that the WRONG one does not. */
+section('Who ended the day is recorded, and a day never reads as self-ended when it was not');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  for (const [u, n] of [['dana', 'Dana Field'], ['reed', 'Reed Cole']]) {
+    const link = (await jsonOf(await invite(env, admin,
+      { username: u, display_name: n, role: 'investigator' }))).url;
+    const token = new URL(link, 'https://x.test').searchParams.get('invite');
+    await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  }
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find(u => u.username === 'dana').id;
+  const adminId = users.users.find(u => u.username === 'trever').id;
+
+  await ingest(env, { case_no: 'API-END1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  await call(env, '/submissions/API-END1/assign',
+    { method: 'POST', cookie: admin, body: { user_id: danaId } });
+
+  // ---- 1. the investigator ends their own day.
+  await call(env, '/cases/API-END1/day/start', { method: 'POST', cookie: dana,
+    body: { day_date: '2026-08-12', start_time: '07:00' } });
+  const own = await jsonOf(await call(env, '/cases/API-END1/day/end', { method: 'POST', cookie: dana,
+    body: { end_time: '11:00' } }));
+  ok('a self-ended day records the actor', own.ended_by_recorded === true,
+     JSON.stringify({ r: own.ended_by_recorded, why: own.ended_by_reason }));
+  ok('and is marked as self-ended', own.ended_self === true);
+  ok('with nothing to say about it — the ordinary case claims nobody',
+     own.ended_by_label === '', JSON.stringify(own.ended_by_label));
+
+  // ---- 2. an ADMIN ends the investigator's day.
+  await call(env, '/cases/API-END1/day/start', { method: 'POST', cookie: dana,
+    body: { day_date: '2026-08-13', start_time: '08:00' } });
+  const byAdmin = await jsonOf(await call(env, '/cases/API-END1/day/end-other',
+    { method: 'POST', cookie: admin, body: { end_time: '10:00' } }));
+  ok('an admin ending someone else\'s day records it', byAdmin.ended_by_recorded === true);
+  ok('and it is NOT marked self-ended', byAdmin.ended_self === false);
+  ok('the label names Admin and the admin who pressed it',
+     /^Ended by Admin — /.test(byAdmin.ended_by_label || '')
+       && byAdmin.ended_by_label.includes('Trever'), byAdmin.ended_by_label);
+
+  /* THE HISTORY, which is what the requirement is actually about. */
+  const ws = await jsonOf(await call(env, '/cases/API-END1/workspace', { cookie: admin }));
+  const selfDay = ws.days.find(d => d.day_date === '2026-08-12');
+  const adminDay = ws.days.find(d => d.day_date === '2026-08-13');
+  ok('control: both days are on the case with their hours',
+     selfDay && adminDay && selfDay.hours === 4 && adminDay.hours === 2,
+     JSON.stringify(ws.days.map(d => [d.day_date, d.hours])));
+  ok('the self-ended day says nothing about who ended it',
+     selfDay.ended_self === true && selfDay.ended_by_label === '');
+  ok('the admin-ended day says Ended by Admin, with the name',
+     adminDay.ended_self === false && /Ended by Admin — /.test(adminDay.ended_by_label)
+       && adminDay.ended_by_label.includes('Trever'), adminDay.ended_by_label);
+  ok('and the admin-ended day never claims the investigator ended it',
+     !adminDay.ended_by_label.includes('Dana'), adminDay.ended_by_label);
+  ok('the day still belongs to the investigator who worked it, and names the actor apart',
+     adminDay.investigator === 'Dana Field' && adminDay.ended_by_name
+       && adminDay.ended_by_name !== 'Dana Field',
+     JSON.stringify({ worked: adminDay.investigator, ended: adminDay.ended_by_name }));
+
+  /* THE INVESTIGATOR IS TOLD. They are the person who most needs to know the
+     office closed their day, and Unit 25 scopes them to their own days. */
+  const dws = await jsonOf(await call(env, '/cases/API-END1/workspace', { cookie: dana }));
+  const dAdminDay = dws.days.find(d => d.day_date === '2026-08-13');
+  ok('the investigator sees that the office ended their day',
+     dAdminDay && dAdminDay.ended_self === false
+       && /Ended by Admin/.test(dAdminDay.ended_by_label), JSON.stringify(dAdminDay));
+
+  /* THE TIMELINE — the chronology is where this is most likely to be misread. */
+  const tl = await jsonOf(await call(env, '/cases/API-END1/timeline', { cookie: admin }));
+  const ends = (tl.events || []).filter(e => e.type === 'day_end');
+  ok('control: both day-end events are on the timeline', ends.length === 2, String(ends.length));
+  const tlAdminEnd = ends.find(e => /Ended by Admin/.test(e.detail || ''));
+  ok('the admin-ended day is named as such on the timeline',
+     !!tlAdminEnd && tlAdminEnd.detail.includes('Trever'), JSON.stringify(ends.map(e => e.detail)));
+  const tlSelfEnd = ends.find(e => !/Ended by/.test(e.detail || ''));
+  ok('and the self-ended one carries no such claim',
+     !!tlSelfEnd, JSON.stringify(ends.map(e => e.detail)));
+
+  // ---- 3. ANOTHER AUTHORIZED USER (a second admin, not the day's investigator).
+  const link2 = (await jsonOf(await invite(env, admin,
+    { username: 'bea', display_name: 'Bea Older', role: 'admin' }))).url;
+  const t2 = new URL(link2, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${t2}/accept`, { method: 'POST', body: { password: 'DeskWork2026x' } });
+  const bea = (await login(env, 'bea', 'DeskWork2026x')).cookie;
+  await call(env, '/cases/API-END1/day/start', { method: 'POST', cookie: dana,
+    body: { day_date: '2026-08-14', start_time: '09:00' } });
+  const byOther = await jsonOf(await call(env, '/cases/API-END1/day/end-other',
+    { method: 'POST', cookie: bea, body: { end_time: '10:00' } }));
+  ok('a different authorized user ending it is recorded as themselves',
+     byOther.ended_self === false && byOther.ended_by_label.includes('Bea Older'),
+     byOther.ended_by_label);
+  ok('and not as the first admin either',
+     !byOther.ended_by_label.includes('Trever'), byOther.ended_by_label);
+
+  /* AUTHORIZATION IS STILL THE WORKER'S. Recording an actor changed nothing
+     about who may BE one: an investigator cannot end another's day. */
+  await call(env, '/cases/API-END1/day/start', { method: 'POST', cookie: dana,
+    body: { day_date: '2026-08-15', start_time: '06:00' } });
+  const reed = (await login(env, 'reed', 'FieldWork2026x')).cookie;
+  const denied = await call(env, '/cases/API-END1/day/end-other', { method: 'POST', cookie: reed,
+    body: { end_time: '07:00' } });
+  ok('an investigator still cannot end anyone else\'s day', denied.status === 404 || denied.status === 403,
+     String(denied.status));
+  const stillOpen = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM case_days WHERE case_no = 'API-END1' AND end_time IS NULL").first();
+  ok('and the day they tried to end is still running', Number(stillOpen.n) === 1, JSON.stringify(stillOpen));
+
+  // ---- 4. A LEGACY DAY: ended before this table existed, so it has no record.
+  await env.DB.prepare('DELETE FROM case_day_end WHERE day_id = (SELECT id FROM case_days '
+    + "WHERE case_no = 'API-END1' AND day_date = '2026-08-12')").run();
+  const ws2 = await jsonOf(await call(env, '/cases/API-END1/workspace', { cookie: admin }));
+  const legacy = ws2.days.find(d => d.day_date === '2026-08-12');
+  ok('a day with no ending record is still fully readable',
+     legacy && legacy.hours === 4 && legacy.day_date === '2026-08-12', JSON.stringify(legacy));
+  ok('it does not claim to be self-ended', legacy.ended_self === null, JSON.stringify(legacy.ended_self));
+  ok('and it says so rather than naming the investigator',
+     legacy.ended_by_label === 'Ending actor not recorded'
+       && !legacy.ended_by_label.includes('Dana'), legacy.ended_by_label);
+
+  /* NOTHING ELSE ABOUT THE DAY MOVED. The requirement says preserve start/end
+     time, mileage, hours, summary and reports — asserted against the row. */
+  const row = await env.DB.prepare(
+    "SELECT * FROM case_days WHERE case_no = 'API-END1' AND day_date = '2026-08-13'").first();
+  ok('the ended day keeps its own times, hours and stamp',
+     row.start_time === '08:00' && row.end_time === '10:00' && row.hours === 2
+       && row.investigator_id === danaId && row.ended_at != null,
+     JSON.stringify(row));
+  const endRow = await env.DB.prepare(
+    'SELECT * FROM case_day_end WHERE day_id = ?').bind(row.id).first();
+  ok('and the audit row carries the actor, their role then, and when',
+     endRow.ended_by === adminId && endRow.ended_role === 'admin'
+       && endRow.case_no === 'API-END1' && /^\d{4}-\d{2}-\d{2}T/.test(endRow.at),
+     JSON.stringify(endRow));
+
+  /* THE ROLE IS THE ROLE AT THE TIME. Demoting the admin afterwards must not
+     rewrite what the day's history says happened. */
+  await env.DB.prepare("UPDATE users SET role = 'investigator' WHERE id = ?").bind(adminId).run();
+  const after = await jsonOf(await call(env, '/cases/API-END1/workspace', { cookie: dana }));
+  const stillAdmin = after.days.find(d => d.day_date === '2026-08-13');
+  ok('a later demotion does not rewrite the history',
+     /Ended by Admin — /.test(stillAdmin.ended_by_label), stillAdmin.ended_by_label);
+  await env.DB.prepare("UPDATE users SET role = 'admin' WHERE id = ?").bind(adminId).run();
+}
+
+/* Before the table arrives, a day must still END — the whole point of the
+   guard. An investigator holding a clock they cannot stop is the failure this
+   portal already refuses, so a missing table costs the RECORD, never the day.
+   And what it costs is stated: the response says so, and the history reads as
+   unknown rather than as self-ended. */
+section('Without the table the day still ends, and says the actor was not recorded');
+{
+  const env = freshEnv();
+  // The state between a Worker deploy and the manual portal-setup dispatch.
+  env.DB.prepare('DROP TABLE IF EXISTS case_day_end').run();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-END2', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  await call(env, '/cases/API-END2/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-12', start_time: '07:00' } });
+  const r = await call(env, '/cases/API-END2/day/end', { method: 'POST', cookie: admin,
+    body: { end_time: '11:00' } });
+  const body = await jsonOf(r);
+  ok('the day still ends', r.status === 200 && body.hours === 4, JSON.stringify(body));
+  ok('and the response says the actor was not recorded, with the reason',
+     body.ended_by_recorded === false && body.ended_by_reason === 'not_set_up',
+     JSON.stringify({ r: body.ended_by_recorded, why: body.ended_by_reason }));
+  const ws = await jsonOf(await call(env, '/cases/API-END2/workspace', { cookie: admin }));
+  ok('the history reads as unknown rather than as self-ended',
+     ws.days[0].ended_self === null && ws.days[0].ended_by_label === 'Ending actor not recorded',
+     JSON.stringify(ws.days[0]));
+}
+
 section('A reassigned investigator is never handed the prior one\'s hours');
 {
   const env = freshEnv();
