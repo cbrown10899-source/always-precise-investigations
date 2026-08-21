@@ -33,7 +33,7 @@ item is finished.
 | 14 | Storage Health | ✅ **DONE — LIVE VERIFIED** by the owner 2026-08-21, at `96e994d` (#202) |
 | 15 | Case Closeout | ✅ **DONE — LIVE VERIFIED** by the owner 2026-08-21, at `2494716` (#203) |
 | 16 | Client Delivery Center | ✅ **DONE — DEPLOYED** at `883fd6d` (#204). LIVE VERIFY **OPEN** for the owner |
-| 17 | Retention Controls | not started |
+| 17 | Retention Controls | ✅ **DONE — DEPLOYED** at `943d0f3` (#205). LIVE VERIFY **OPEN** for the owner |
 
 **Item 12 — REPORT DAILY SUMMARY BUILDER — was inserted by the owner on
 2026-08-20**, while Unit 11 was in flight, with the instruction *"Do not start
@@ -195,6 +195,58 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Do not interrupt the current coding unit. Record this queue only"*, and
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
+
+## 📌 Unit 17 — what shipped (#205, `943d0f3`)
+
+**Retention Controls — records and state; the hold outranks; nothing destroys
+anything.** The owner's seven decisions are verbatim in
+`case-portal/RETENTION.md` with derived decisions D1–D9; detail in CLAUDE.md
+under *"Retention is records and state; the hold outranks; nothing destroys
+anything"*. The audit ran first and the owner answered its seven stop items.
+
+**Five states, all DERIVED** (`retentionState()`): Active / Retain Until /
+Archived / Scheduled for Deletion / Deleted — Destruction Recorded, precedence
+Deleted > Scheduled > Archived > Retain Until > Active. Active is the absence
+of markers; Archived and Deleted are the tables that already existed. The page
+never re-derives the ladder.
+
+**Nothing here deletes a byte.** "Deleted / Destruction Recorded" is an audit
+state only — the panel says in those words that it does not mean a file was
+destroyed and does not authorize destroying one. Scheduling deletion is a
+record of INTENT: no file removed here or in Dropbox, no clock, nothing runs on
+its own, reversible with one Cancel, and the explanation is permanent beside
+the button rather than a confirmation that vanishes. **No retention clock
+exists**: Retain Until is set and cleared by hand, and a passed date becomes
+RETENTION REVIEW DUE — computed against today per read, wording only.
+
+**The hold is enforced AT THE WRITERS**: `/cases/:no/delete`,
+`/cases/:no/retention/schedule` and `deleteEvidence` each refuse 409 naming it.
+Archive, restore, undelete, billing, reporting and every read stay open
+(decision 5's own line). Reason REQUIRED to place and to release (decision 7
+audits both), optional on retain-until and scheduling where the trail still
+records who/when/prior/new. `retention_event` is append-only and written
+best-effort — a failed audit row can never break the action it describes.
+
+**Three additive tables** (`case_retention`, `legal_hold`, `retention_event`),
+no CHECKs, `missingTables()`-guarded, in `EXPECTED_TABLES`, swept by
+`DEMO_SWEEP`. The archived write-gate passes the retention family (D9); the
+deleted gate is untouched and restore-first is asserted from both suites. The
+panel sits beside the closing checklist and reuses the existing archive/
+restore/delete controls — no second writer.
+
+**Schema changed → `portal-setup.yml` dispatched after merge.**
+
+**Suites at merge:** worker **2544/0**, portal **2369/0**, deploy guard
+**68/0**, intake **205/0** (untouched).
+
+**Deferred by name, with the owner:** any physical destruction, retention
+clocks and policies, Dropbox byte deletion, the legacy R2 export, two-person
+hold approval.
+
+**LIVE VERIFY (owner):** Billing & closing on a real case — place a hold and
+confirm Delete case refuses it by name; set a past retain-until and confirm it
+reads RETENTION REVIEW DUE without anything happening; schedule deletion, read
+the explanation beside it, and cancel.
 
 ## 📌 Unit 16 — what shipped (#204, `883fd6d`)
 
@@ -770,6 +822,18 @@ node .github/test-deploy.mjs                    # expect 68 / 0
 
 Then the ordinary chain: PR → merge if green → pull master → deploy → live
 verify → **save point** → next unit (item 4, Admin report/mobile workflow fix).
+
+## 🚦 DEPLOYMENT — 2026-08-21, master `943d0f3` (#205) — Unit 17, Retention Controls
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/intake/` + `/portal/` | `943d0f3` | `943d0f3` | **DEPLOYED** — `deploy.yml` 32446446629 success |
+| `api-case-portal` | `943d0f3` | `943d0f3` | **DEPLOYED** — `deploy-portal.yml` 32446446602 success |
+| Schema | `943d0f3` | `943d0f3` | **APPLIED** — `portal-setup.yml` 32446454208 success; `case_retention`, `legal_hold`, `retention_event` are on the live database |
+| Save point | — | — | `save/2026-08-21-0418-943d0f3`, the merge push's automatic firing |
+
+Tests at merge: worker **2544/0**, portal **2369/0**, intake **205/0**, deploy
+guard **68/0**.
 
 ## 🚦 DEPLOYMENT — 2026-08-21, master `883fd6d` (#204) — Unit 16, Client Delivery Center
 
