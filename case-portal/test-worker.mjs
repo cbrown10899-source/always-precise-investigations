@@ -135,6 +135,12 @@ async function fakeDropbox(url, init) {
     return new Response(JSON.stringify({ access_token: 'sl.FAKE', expires_in: 14400 }),
       { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
+  if (u.includes('/2/users/get_space_usage')) {
+    const used = [...DBX.files.values()].reduce((a, b) => a + (b.byteLength || b.length || 0), 0);
+    return new Response(JSON.stringify({ used: used + 5000000,
+      allocation: { '.tag': 'individual', allocated: 2147483648 } }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
   if (u.includes('/2/files/create_folder_batch')) {
     for (const f of JSON.parse(init.body).paths) DBX.folders.add(f);
     return new Response('{"entries":[]}', { status: 200 });
@@ -13542,6 +13548,188 @@ section('Daily summary: the guards a new table owes');
     { method: 'POST', cookie: admin, body: { narrative: 'x' } });
   ok('and the write refuses naming the workflow to run',
      res.status === 503 && /portal-setup/.test((await jsonOf(res)).error || ''), res.status);
+}
+
+section('Storage health: the whole picture, from metadata, and never a byte');
+{
+  const env = freshEnv();
+  DBX.reset();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-SH1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  await ingest(env, { case_no: 'API-SH2', service: 'Surveillance', client_name: 'C2', subject_name: 'S2' });
+
+  // Two Dropbox files on SH1, one on SH2; a LEGACY R2 photo and a legacy R2
+  // video planted directly (the only way one can exist since device-first).
+  const up = (no, name, n) => {
+    const fd = new FormData();
+    fd.append('file', new File([new Uint8Array(n).fill(7)], name, { type: 'image/jpeg' }));
+    return worker.fetch(new Request(API + `/cases/${no}/evidence`, {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  };
+  const a = await jsonOf(await up('API-SH1', 'a.jpg', 4000));
+  await up('API-SH1', 'b.jpg', 6000);
+  await up('API-SH2', 'c.jpg', 1000);
+  await env.DB.prepare(
+    `INSERT INTO case_evidence (case_no, r2_key, filename, content_type, size_bytes, classification, uploaded_by, uploaded_at)
+     VALUES ('API-SH1', 'legacy/p1', 'old.jpg', 'image/jpeg', 20000, 'client_deliverable', 1, '2026-07-01T00:00:00Z'),
+            ('API-SH1', 'legacy/v1', 'old.mp4', 'video/mp4', 50000, 'client_deliverable', 1, '2026-07-01T00:00:00Z')`).run();
+  // one deleted Dropbox row
+  const delId = a.id;
+  await call(env, `/cases/API-SH1/evidence/${delId}/delete`, { method: 'POST', cookie: admin, body: {} });
+
+  const res = await call(env, '/storage-health', { cookie: admin });
+  ok('the route answers an admin', res.status === 200, res.status);
+  const d = await jsonOf(res);
+
+  ok('Dropbox live is the two surviving uploads',
+     d.dropbox.live.count === 2 && d.dropbox.live.bytes === 7000, JSON.stringify(d.dropbox.live));
+  ok('the deleted Dropbox row is history, not storage', d.dropbox.deleted_rows === 1);
+  ok('legacy R2 is counted apart', d.cloudflare.live.count === 2 && d.cloudflare.live.bytes === 70000,
+     JSON.stringify(d.cloudflare.live));
+  ok('and the open-decision video inventory is named',
+     d.cloudflare.live_video.count === 1 && d.cloudflare.live_video.bytes === 50000);
+  ok('the meter itself is unchanged — Cloudflare bytes only',
+     d.cloudflare.bytes_used === 70000, String(d.cloudflare.bytes_used));
+  ok('the Dropbox account usage came from the provider, honestly',
+     d.dropbox.space && d.dropbox.space.used_bytes > 0 && d.dropbox.space.allocated_bytes === 2147483648,
+     JSON.stringify(d.dropbox.space));
+
+  // Integrity coverage: the two live Dropbox files were hashed at upload; the
+  // two legacy rows were not.
+  ok('integrity coverage counts live files with and without a record',
+     d.integrity && d.integrity.live_files === 4 && d.integrity.with_hash === 2
+       && d.integrity.not_yet_recorded === 2, JSON.stringify(d.integrity));
+
+  // Heaviest cases: SH1 (6000 dbx + 70000 r2) then SH2.
+  ok('the heaviest case leads, split by store',
+     d.top_cases[0] && d.top_cases[0].case_no === 'API-SH1'
+       && d.top_cases[0].dropbox_bytes === 6000 && d.top_cases[0].r2_bytes === 70000,
+     JSON.stringify(d.top_cases));
+  ok('and the list is bounded', d.top_cases.length <= 8);
+
+  // THE BOUNDARY: metadata only. The one external call is space usage — no
+  // download, no listing, no sharing.
+  const external = DBX.calls.filter(u => /get_space_usage|files\/download|files\/list|sharing/.test(u));
+  ok('the route made exactly one external call, and it was the space question',
+     external.length === 1 && /get_space_usage/.test(external[0]), JSON.stringify(external));
+
+  ok('an investigator is refused', await (async () => {
+    const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+    await call(env, `/invite/${new URL(link, 'https://x.test').searchParams.get('invite')}/accept`,
+      { method: 'POST', body: { password: 'FieldWork2026x' } });
+    const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+    return (await call(env, '/storage-health', { cookie: inv })).status;
+  })() === 403);
+  ok('and the public door does not exist',
+     (await call(env, '/storage-health', {})).status === 401);
+
+  // The space answer degrades to UNKNOWN, never to a guess.
+  DBX.down = true;
+  const d2 = await jsonOf(await call(env, '/storage-health', { cookie: admin }));
+  ok('an unreachable provider reads as unknown with the reason, not as zero',
+     d2.dropbox.space === null && typeof d2.dropbox.space_reason === 'string',
+     JSON.stringify({ space: d2.dropbox.space, why: d2.dropbox.space_reason }));
+  ok('while everything the database holds still answers',
+     d2.dropbox.live.count === 2 && d2.cloudflare.live.count === 2);
+  DBX.down = false;
+
+  // Nothing was written by any of this.
+  const wrote = await env.DB.prepare(
+    `SELECT (SELECT COUNT(*) FROM case_evidence) AS ev`).first();
+  ok('the route wrote nothing', wrote.ev === 5, JSON.stringify(wrote));
+}
+
+section('Storage health: failures are recorded, successes are not, and the log cannot break the door');
+{
+  const env = freshEnv();
+  DBX.reset();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-SF1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+
+  const up = (name, n) => {
+    const fd = new FormData();
+    fd.append('file', new File([new Uint8Array(n).fill(9)], name, { type: 'image/jpeg' }));
+    return worker.fetch(new Request(API + '/cases/API-SF1/evidence', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  };
+  const failRows = async () => {
+    const r = await env.DB.prepare('SELECT * FROM storage_failure ORDER BY id').all();
+    return r.results || [];
+  };
+
+  // SUCCESS writes no failure row — and neither does the autorename duplicate,
+  // which is a success wearing a new name.
+  ok('a successful upload logs nothing', (await up('ok.jpg', 900)).status === 201
+     && (await failRows()).length === 0);
+  ok('a same-named upload succeeds by autorename and logs nothing',
+     (await up('ok.jpg', 900)).status === 201 && (await failRows()).length === 0);
+
+  // DISCONNECTED: the refusal is unchanged AND leaves a row.
+  DBX.down = true;
+  const refused = await up('field.jpg', 700);
+  ok('with Dropbox down the upload is refused exactly as before',
+     refused.status === 503 && (await jsonOf(refused)).code === 'dropbox_unreachable');
+  let rows = await failRows();
+  ok('and the refusal left one row with the same reason the caller was given',
+     rows.length === 1 && rows[0].kind === 'evidence' && rows[0].case_no === 'API-SF1'
+       && rows[0].filename === 'field.jpg' && rows[0].reason === 'dropbox_unreachable',
+     JSON.stringify(rows));
+  DBX.down = false;
+
+  // REFUSED WRITE (reachable, upload rejected): a different reason, recorded.
+  DBX.uploadFails = true;
+  await up('rejected.jpg', 700);
+  rows = await failRows();
+  ok('a rejected write records dropbox_refused_upload',
+     rows.length === 2 && rows[1].reason === 'dropbox_refused_upload', JSON.stringify(rows.map(r => r.reason)));
+  DBX.uploadFails = false;
+
+  // The health screen shows them, newest first, and the readiness answer.
+  const d = await jsonOf(await call(env, '/storage-health', { cookie: admin }));
+  ok('the panel data carries the failures, newest first',
+     d.failures && d.failures.total === 2 && d.failures.recent[0].reason === 'dropbox_refused_upload',
+     JSON.stringify(d.failures));
+  ok('safe-to-store answers YES when the door would accept',
+     d.readiness && d.readiness.ok === true, JSON.stringify(d.readiness));
+  ok('last successful upload is the newest Dropbox row',
+     typeof d.dropbox.last_upload_at === 'string', String(d.dropbox.last_upload_at));
+  DBX.down = true;
+  const d2 = await jsonOf(await call(env, '/storage-health', { cookie: admin }));
+  ok('and NO, with the reason named, when it would refuse',
+     d2.readiness && d2.readiness.ok === false && typeof d2.readiness.code === 'string',
+     JSON.stringify(d2.readiness));
+  DBX.down = false;
+
+  // NO CREDENTIAL LEAVES — the manifest's own rule applied here.
+  const raw = JSON.stringify(d) + JSON.stringify(d2);
+  ok('the payload carries no token, secret or refresh string',
+     !/token|secret|refresh|sl\./i.test(raw.replace(/"last_upload_at"/g, '')), 
+     (raw.match(/token|secret|refresh/i) || [''])[0]);
+
+  // THE LOG CANNOT BREAK THE DOOR: with the table absent, the refusal answers
+  // byte-identically and the panel says UNKNOWN, never "none ever failed".
+  const env2 = freshEnv();
+  const db2 = new DatabaseSync(':memory:');
+  db2.exec(SCHEMA.replace(/CREATE TABLE IF NOT EXISTS storage_failure[\s\S]*?\);/, '')
+                 .replace(/CREATE INDEX IF NOT EXISTS idx_stfail_at[^;]*;/, ''));
+  env2.DB = d1(db2);
+  await bootstrapAdmin(env2);
+  const admin2 = (await login(env2, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env2, { case_no: 'API-SF2', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+  DBX.down = true;
+  const fd2 = new FormData();
+  fd2.append('file', new File([new Uint8Array(500).fill(3)], 'x.jpg', { type: 'image/jpeg' }));
+  const r2 = await worker.fetch(new Request(API + '/cases/API-SF2/evidence', {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin2 }, body: fd2 }), env2);
+  const body2 = await jsonOf(r2);
+  ok('with the log table absent the refusal is exactly what it always was',
+     r2.status === 503 && body2.code === 'dropbox_unreachable', JSON.stringify(body2));
+  DBX.down = false;
+  const dh2 = await jsonOf(await call(env2, '/storage-health', { cookie: admin2 }));
+  ok('and the panel reads UNKNOWN rather than "none ever failed"',
+     dh2.failures === null, JSON.stringify(dh2.failures));
 }
 
 /* ------------------------------------------------------------------ report */

@@ -1081,6 +1081,39 @@ calls `api()` rather than `pkgApi()`: `pkgApi` swallows its own failure.
 
 **Adding this table means a manual `portal-setup.yml` dispatch after merge.**
 
+## Storage health is a screen that answers, never a hand that acts
+
+Unit 14 (audit and derived decisions in `case-portal/STORAGE-HEALTH.md` — no
+verbatim owner brief exists; the audit is the design input). `GET
+/storage-health` (admin-only) composes, from METADATA ONLY: the unchanged
+Cloudflare meter plus its legacy split (photos/video — the inventory behind
+the open legacy-video decision, stated in words on the panel); the
+Dropbox-side aggregates (live/deleted rows and bytes, timestamped copies and
+report PDFs filed); integrity coverage (guarded — unknown is not zero); the
+heaviest cases in one bounded GROUP BY; and the firm's Dropbox quota via
+`users/get_space_usage` — **the one external call, only in this route,
+degrading to null with a named reason**. No byte is read, no folder listed,
+nothing written; a test counts the external calls and another asserts the
+row counts unchanged.
+
+The Settings panel keeps the three states apart (a failed read says "not the
+same as nothing being stored" and offers Try again), names the open decision
+instead of hiding it, and offers **no sweep, export or delete** — actions are
+Retention Controls' (item 17). The owner's brief (arrived
+mid-unit, verbatim in `STORAGE-HEALTH.md`) added three things: **safe-to-store
+readiness** answered passively from the same three conditions the upload doors
+check; **last successful upload** derived from the rows that exist; and
+**failed uploads as a record** — `storage_failure`, one additive table written
+best-effort at the refusal sites, where a failed log write can never change
+what the caller is told and a success (autorename included) logs nothing.
+**That table means one manual `portal-setup.yml` dispatch after merge.** No
+new alerting: `site-health.yml` and the dashboard card keep their jobs; this
+is where the numbers behind them live. Known accepted risk, recorded in
+STORAGE-HEALTH.md D12: re-filing a report PDF creates `…v1-1.pdf` beside
+`…v1.pdf` (the shared upload helper is `add`+autorename on purpose); "one
+final report PDF" is deferred rather than put an overwrite mode one stray
+flag away from the evidence path.
+
 ## One palette, read off the page it was already drawing
 
 Unit 13 (owner brief verbatim in `case-portal/PALETTE.md`, derived decisions

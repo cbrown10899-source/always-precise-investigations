@@ -1432,23 +1432,37 @@
   .top .burger:focus-visible,.navback:focus-visible,
   input:focus-visible,select:focus-visible,textarea:focus-visible{
     outline:2px solid var(--teal);outline-offset:2px;}
+  /* UNIT 14 — storage health meter. .sh- prefix; token colors only. */
+  .shbar{height:8px;border-radius:4px;background:var(--panel);border:1px solid var(--line);overflow:hidden;margin-top:4px;}
+  .shfill{height:100%;border-radius:4px;}
+  .linklike{background:none;border:0;padding:0;font:inherit;color:var(--info-ink);text-decoration:underline;cursor:pointer;}
+
   /* UNIT 12 — daily summary builder, base rules. The phone overrides live in
      the media block BELOW this, at the end of the stylesheet, because source
      order has killed three rules in this file already. .dsb- is its own
-     prefix, per the class-name-contest rule. */
-  .dsb-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 12px;margin-top:6px;}
+     prefix, per the class-name-contest rule.
+
+     THE RHYTHM IS ONE SET OF NUMBERS (owner, 2026-08-21: "consistent row
+     gaps, field heights, label spacing, checkbox alignment"). Measured before
+     fixing: section gaps drifted 0–18px with three flush spots, controls in
+     one grid drew 41–45px tall, and the checkbox sat 9px down its row. Every
+     section header is .dsb-h at one margin; every control clears the same
+     44px; the checkbox is a fixed 18px box aligned to the label's first line. */
+  .dsb-h{margin:18px 0 8px;}
+  .dsb-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px 14px;margin:6px 0 4px;}
+  .dsb-grid .f input,.dsb-grid .f select{min-height:44px;}
+  .dsb-act{display:flex;flex-direction:column;gap:8px;padding:10px 4px;border-bottom:1px dashed var(--line);}
+  .dsb-act > label{display:flex;gap:9px;align-items:flex-start;cursor:pointer;line-height:1.45;}
+  .dsb-act input[type=checkbox]{width:18px;height:18px;margin-top:2px;flex:none;}
+  .dsb-actrow{display:flex;gap:8px;flex-wrap:wrap;margin-left:27px;}
+  .dsb-actrow select,.dsb-actrow input{font-size:.85rem;min-height:36px;}
+  .dsb-wrap .rbody{margin-top:6px;}
   /* A TIME IS FIVE CHARACTERS. Stretched to a full grid column, Safari's
      native time widget draws a wide bezel that reads as colliding with the
-     field beside it (owner, on the iPad, 2026-08-21). Sized to its content,
-     with the belt of min-width:0 so no engine's intrinsic widget can ever
-     exceed its cell. */
+     field beside it (owner, on the iPad, 2026-08-21). Content-sized, with
+     min-width:0 so no engine's intrinsic widget can exceed its cell. */
   .dsb-grid .f input,.dsb-grid .f select{width:100%;min-width:0;}
   .dsb-grid .f input[type=time]{max-width:150px;}
-  .dsb-act{display:flex;flex-direction:column;gap:6px;padding:6px 4px;border-bottom:1px dashed var(--line);}
-  .dsb-act > label{display:flex;gap:8px;align-items:flex-start;cursor:pointer;}
-  .dsb-act input[type=checkbox]{margin-top:3px;flex:none;}
-  .dsb-actrow{display:flex;gap:8px;flex-wrap:wrap;margin-left:26px;}
-  .dsb-actrow select,.dsb-actrow input{font-size:.85rem;}
   .dsb-chip{display:inline-block;font-size:.62rem;font-weight:700;letter-spacing:.06em;
     color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:1px 5px;
     vertical-align:middle;margin-left:4px;}
@@ -1535,6 +1549,8 @@
     .dsb-actrow select,.dsb-actrow input{width:100%;}
     .dsb-act > label{min-height:44px;}
     .dsb-act input[type=checkbox]{width:22px;height:22px;}
+    /* UNIT 14 — the storage panel's refresh meets the floor. */
+    [data-act="shRefresh"]{min-height:44px;}
   }
 
 </style>
@@ -5460,8 +5476,113 @@ async function disconnectDropbox(){
   paint();
 }
 
+/* ------------------------------------------------ storage health (Unit 14)
+
+   The Settings panel that answers where the bytes are, from the one admin
+   route. Three states, per the standing rule: a failed read must never draw
+   as an empty store — the difference between "nothing is stored" and "the
+   meter could not be read" is the whole reason the failsafe exists. */
+let SH = { state: "never", data: null };
+async function loadStorageHealth(force){
+  if(SH.state === "loading") return;
+  if(SH.state === "ok" && !force) return;
+  SH.state = "loading"; paint();
+  /* api() THROWS on a failed status, and a thrown read must land in the
+     failed state — not in a stuck spinner with a page error behind it. */
+  try{
+    const res = await api("/storage-health");
+    SH = (res && res.cloudflare) ? { state: "ok", data: res } : { state: "failed", data: null };
+  }catch{ SH = { state: "failed", data: null }; }
+  paint();
+}
+function shBytes(b){
+  if(b == null) return "—";
+  if(b >= 1073741824) return (b / 1073741824).toFixed(2) + " GB";
+  if(b >= 1048576) return (b / 1048576).toFixed(1) + " MB";
+  return Math.max(1, Math.round(b / 1024)) + " KB";
+}
+function shMeter(pct, warn){
+  if(pct == null) return "";
+  const tone = pct >= (warn || 75) ? "background:var(--warn)" : "background:var(--teal)";
+  return `<div class="shbar"><div class="shfill" style="width:${Math.min(100, Math.max(0, pct))}%;${tone}"></div></div>`;
+}
+function storageHealthHtml(){
+  if(ME.role !== "admin") return "";
+  const head = `<div class="bar"><h2 style="margin:0">Storage health</h2>
+    <button class="btn sm ghost" data-act="shRefresh">Refresh</button></div>
+    <p class="note">Where the bytes are, from the records the portal already holds.
+      Nothing here reads a file or changes anything.</p>`;
+  if(SH.state === "never" || SH.state === "loading")
+    return `<div class="card">${head}<div class="empty">Reading the storage record&hellip;</div></div>`;
+  if(SH.state === "failed")
+    return `<div class="card">${head}
+      <div class="loaderr">The storage record could not be read just now. That is not the same as
+        nothing being stored. <button class="btn sm ghost" data-act="shRefresh">Try again</button></div></div>`;
+  const d = SH.data, cf = d.cloudflare, dbx = d.dropbox;
+  const integ = d.integrity;
+  const top = d.top_cases || [];
+  const rd = d.readiness || {};
+  const fails = d.failures;
+  return `<div class="card">${head}
+    <div class="tl-m" style="margin-bottom:6px">Safe to store right now:
+      ${rd.ok ? `<span class="tag rs-approved">Yes &mdash; Dropbox is connected and answering</span>`
+              : `<span class="tag rs-needs_revision">No &mdash; ${esc(rd.code || "unknown")}</span>`}
+      ${dbx.last_upload_at ? `&middot; last successful upload ${when(dbx.last_upload_at)}` : "&middot; nothing has been uploaded yet"}</div>
+    <h3 style="margin:8px 0 4px;font-size:1rem">Cloudflare (legacy files)</h3>
+    <div class="tl-m">${shBytes(cf.live.bytes)} in ${cf.live.count} file(s) &middot;
+      ${cf.percent_of_free}% of the free tier ${cf.percent_of_free >= cf.warn_at ? `<span class="tag new">over ${cf.warn_at}%</span>` : ""}</div>
+    ${shMeter(cf.percent_of_free, cf.warn_at)}
+    <div class="tl-m" style="margin-top:4px">Of that, video: <b>${shBytes(cf.live_video.bytes)}</b> in
+      ${cf.live_video.count} file(s) &mdash; whether to export and remove legacy video is
+      <b>an open decision nobody has made</b>; this screen informs it and does not perform it.</div>
+    <div class="tl-m">${cf.deleted_rows} removed file record(s) kept as history.</div>
+
+    <h3 style="margin:14px 0 4px;font-size:1rem">Dropbox (current case files)</h3>
+    <div class="tl-m">${shBytes(dbx.live.bytes)} in ${dbx.live.count} file(s) &middot;
+      ${dbx.video_copies_filed == null ? "" : `${dbx.video_copies_filed} timestamped video cop${dbx.video_copies_filed === 1 ? "y" : "ies"} filed &middot;`}
+      ${dbx.report_pdfs_filed} report PDF(s) filed</div>
+    ${dbx.space
+      ? `<div class="tl-m">Account: <b>${shBytes(dbx.space.used_bytes)}</b>${dbx.space.allocated_bytes ? ` of ${shBytes(dbx.space.allocated_bytes)}` : ""}
+          ${dbx.space.percent_used != null ? `(${dbx.space.percent_used}%)` : ""} used</div>
+        ${shMeter(dbx.space.percent_used, 75)}`
+      : `<div class="tl-m">Account usage could not be read just now
+          <span class="opt">(${esc(dbx.space_reason || "unknown")})</span> &mdash; unknown, not zero.</div>`}
+    <div class="tl-m">${dbx.deleted_rows} removed file record(s) kept as history.</div>
+
+    <h3 style="margin:14px 0 4px;font-size:1rem">Integrity coverage</h3>
+    ${integ
+      ? `<div class="tl-m">${integ.with_hash} of ${integ.live_files} live file(s) carry a recorded
+          SHA-256${integ.not_yet_recorded ? ` &middot; <b>${integ.not_yet_recorded}</b> not yet recorded
+          &mdash; each records from its own card, one file at a time` : " &mdash; every live file is covered"}.</div>`
+      : `<div class="tl-m">Unknown &mdash; the integrity table has not arrived on this database.</div>`}
+
+    <h3 style="margin:14px 0 4px;font-size:1rem">Failed uploads</h3>
+    ${fails === null || fails === undefined
+      ? `<div class="tl-m">Unknown &mdash; the failure log has not arrived on this database.
+          Run the <b>portal-setup</b> workflow once.</div>`
+      : fails.total === 0
+      ? `<div class="tl-m">None recorded. A refusal is logged the moment it happens, so this
+          reading means no storage write has been refused since the log began.</div>`
+      : `<div class="tl-m"><b>${fails.total}</b> refused storage write(s) on record. Most recent:</div>
+        ${fails.recent.slice(0, 5).map(f => `<div class="tl-m">&bull; ${when(f.at)} &mdash;
+          ${esc(f.kind)}${f.case_no ? ` on ${esc(f.case_no)}` : ""}${f.filename ? ` (${esc(f.filename)})` : ""}
+          &mdash; <span class="tag rs-needs_revision">${esc(f.reason)}</span>${f.who ? ` &middot; ${esc(f.who)}` : ""}</div>`).join("")}`}
+
+    ${top.length ? `<h3 style="margin:14px 0 4px;font-size:1rem">Heaviest cases</h3>
+      <table class="stacktbl shtbl"><thead><tr><th>Case</th><th>Files</th><th>Dropbox</th><th>Legacy</th></tr></thead>
+      <tbody>${top.map(t => `<tr>
+        <td data-l="Case"><button class="linklike" data-act="openCase" data-no="${esc(t.case_no)}">${esc(t.case_no)}</button></td>
+        <td data-l="Files">${t.files}</td>
+        <td data-l="Dropbox">${shBytes(t.dropbox_bytes)}</td>
+        <td data-l="Legacy">${shBytes(t.r2_bytes)}</td>
+      </tr>`).join("")}</tbody></table>` : ""}
+    <p class="hint">Read ${when(d.generated_at)}. The public health probe and the dashboard card
+      keep their jobs; this is where the numbers behind them live.</p>
+  </div>`;
+}
+
 function settingsView(){
-  return `${notifySettingsHtml()}${paymentSettingsHtml()}${dropboxSettingsHtml()}<div class="card">
+  return `${notifySettingsHtml()}${paymentSettingsHtml()}${dropboxSettingsHtml()}${storageHealthHtml()}<div class="card">
     <div class="bar"><h2 style="margin:0">Settings</h2></div>
     <h3 style="margin:6px 0 4px;font-size:1rem">Developer &amp; testing</h3>
     <p class="note">Working material for trying the portal out. None of it touches a real case.</p>
@@ -9963,7 +10084,7 @@ function dsBuilderHtml(open, day, editable){
           placeholder="e.g. the subject's residence at 41 Cedar Ln" ${editable ? "" : "disabled"}></label>
     </div>
 
-    <div class="rc-h" style="margin-top:10px"><b>Vehicles observed</b></div>
+    <div class="rc-h dsb-h"><b>Vehicles observed</b></div>
     ${vehicles.length ? vehicles.map(veh).join("") : `<div class="tl-m">No vehicles are recorded on this case&rsquo;s subjects yet.</div>`}
     <div class="dsb-grid">
       <label class="f"><span>Where</span>
@@ -9980,11 +10101,11 @@ function dsBuilderHtml(open, day, editable){
         <span>No vehicles were observed <span class="opt">your confirmation, not a guess</span></span></label>
     </div>
 
-    <div class="rc-h" style="margin-top:10px"><b>The day&rsquo;s moments</b>
+    <div class="rc-h dsb-h"><b>The day&rsquo;s moments</b>
       <span class="opt">${entries.length} logged &mdash; pick what the narrative tells</span></div>
     ${entries.length ? entries.map(act).join("") : `<div class="tl-m">Nothing was logged on this day.</div>`}
 
-    <div class="dsb-grid" style="margin-top:10px">
+    <div class="dsb-grid">
       <label class="f"><span>Quiet period</span>
         <select id="ds_gap" data-act-change="dsCtl" data-day="${day.id}" ${editable ? "" : "disabled"}>
           <option value="">— not stated —</option>
@@ -10002,7 +10123,7 @@ function dsBuilderHtml(open, day, editable){
           data-day="${day.id}" placeholder="e.g. at the adjuster's request" ${editable ? "" : "disabled"}></label>` : ""}
     </div>
 
-    <div class="rc-h" style="margin-top:12px"><b>The paragraph</b>
+    <div class="rc-h dsb-h"><b>The paragraph</b>
       ${st.manual ? `<span class="tag rs-submitted">Yours &mdash; protected</span>` : `<span class="tag">Built from selections</span>`}</div>
     <textarea id="ds_text" rows="7" class="rbody" data-act-input="dsText" data-day="${day.id}"
       ${editable ? "" : "disabled"}>${esc(st.text)}</textarea>
@@ -15335,6 +15456,7 @@ document.addEventListener("click", ev => {
       PAY_MSG = ""; PAY_ERR = false; PAY_DRAFT = {}; loadPaymentMethods();
       NOTIFY = null; NOTIFY_MSG = ""; NOTIFY_NEW = false; loadNotify();
       DBX = null; DBX_MSG = ""; DBX_SAVING = false; DBX_DRAFT = null; loadDropbox();
+      SH = { state: "never", data: null }; loadStorageHealth();
     }
     document.body.classList.remove("navopen");
     if(TAB === "myreports") api("/my/reports").then(d => { MY_REPORTS = d; paint(); }).catch(()=>{});
@@ -15460,7 +15582,8 @@ document.addEventListener("click", ev => {
   else if(act === "retUndo"){ recordRetainerPayment(false); }
   else if(act === "retVoid"){ voidRetainerPayment(el.dataset.id); }
   else if(act === "logout"){ doLogout(); }
-  else if(act === "openCase"){ openCase(el.dataset.case); }
+  else if(act === "openCase"){ openCase(el.dataset.case || el.dataset.no); }
+  else if(act === "shRefresh"){ loadStorageHealth(true); }
   else if(act === "saveCase"){ saveCase(el.dataset.case); }
   else if(act === "toggleActive"){ toggleActive(Number(el.dataset.id), Number(el.dataset.active)); }
   else if(act === "revokeInvite"){ revokeInvite(Number(el.dataset.id)); }
