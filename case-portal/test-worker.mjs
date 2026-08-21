@@ -13811,6 +13811,86 @@ section('Closeout: the record speaks beside each attestation, and blocks nothing
   ok('the read writes nothing', before.n === after.n);
 }
 
+section('Delivery center: what is ready to go out, what has gone out, and nothing sends');
+{
+  const env = freshEnv();
+  DBX.reset();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  // Three cases in three states: delivered, ready-to-deliver, in preparation.
+  for (const no of ['API-DC1', 'API-DC2', 'API-DC3']) {
+    await ingest(env, { case_no: no, service: 'Surveillance', client_name: 'Client ' + no, subject_name: 'S' });
+    await call(env, `/cases/${no}/day/start`, { method: 'POST', cookie: admin,
+      body: { day_date: '2026-08-19', start_time: '08:00' } });
+    await call(env, `/cases/${no}/activity`, { method: 'POST', cookie: admin,
+      body: { at_date: '2026-08-19', at_time: '09:00', description: 'Observed.' } });
+    await call(env, `/cases/${no}/day/end`, { method: 'POST', cookie: admin, body: { end_time: '12:00' } });
+    const ws = await jsonOf(await call(env, `/cases/${no}/workspace`, { cookie: admin }));
+    const rep = await jsonOf(await call(env, `/cases/${no}/reports/generate`, { method: 'POST', cookie: admin,
+      body: { day_id: ws.days[0].id } }));
+    await call(env, `/cases/${no}/reports/${rep.id}/status`, { method: 'POST', cookie: admin,
+      body: { status: 'approved' } });
+    await call(env, `/cases/${no}/build`, { method: 'POST', cookie: admin, body: {} });
+  }
+  const finalizeOf = async no => {
+    const st = await jsonOf(await call(env, `/cases/${no}/build`, { cookie: admin }));
+    await call(env, `/build/${st.build.id}/package`, { method: 'POST', cookie: admin,
+      body: { package_type: 'report_only' } });
+    await call(env, `/build/${st.build.id}/finalize`, { method: 'POST', cookie: admin, body: {} });
+    return st.build.id;
+  };
+  const b1 = await finalizeOf('API-DC1');
+  await call(env, `/build/${b1}/delivered`, { method: 'POST', cookie: admin, body: {} });
+  await finalizeOf('API-DC2');
+  // API-DC3 stays a draft. And DC2 gets a sent invoice.
+  const inv = await jsonOf(await call(env, '/cases/API-DC2/invoices', { method: 'POST', cookie: admin, body: {} }));
+  await call(env, `/invoices/${inv.invoice.id}/lines`, { method: 'POST', cookie: admin,
+    body: { lines: [{ description: 'Work', qty: 1, amount: 500 }] } });
+  await call(env, `/invoices/${inv.invoice.id}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'ready' } });
+  await call(env, `/invoices/${inv.invoice.id}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'sent_to_client' } });
+
+  const res = await call(env, '/delivery-center', { cookie: admin });
+  ok('the center answers an admin', res.status === 200, res.status);
+  const d = await jsonOf(res);
+  const by = Object.fromEntries((d.cases || []).map(r => [r.case_no, r]));
+  ok('all three package-bearing cases appear', by['API-DC1'] && by['API-DC2'] && by['API-DC3']);
+  ok('a delivered package carries its stamp and its name',
+     by['API-DC1'].build.delivered_at && by['API-DC1'].build.delivered_by === 'Trever',
+     JSON.stringify(by['API-DC1'].build));
+  ok('a finalized-undelivered package is distinguishable',
+     by['API-DC2'].build.status === 'finalized' && !by['API-DC2'].build.delivered_at);
+  ok('a draft build reads as in preparation', by['API-DC3'].build.status === 'draft');
+  ok('contents count the package, not the case',
+     by['API-DC1'].contents.reports === 1 && by['API-DC1'].contents.photos === 0,
+     JSON.stringify(by['API-DC1'].contents));
+  ok('the sent invoice is a fact on its case',
+     by['API-DC2'].invoices.sent === 1 && by['API-DC1'].invoices.sent === 0);
+  ok('no delivery link is claimed where none exists',
+     by['API-DC1'].link_active === false && by['API-DC2'].link_active === false);
+  ok('and the list is bounded', (d.cases || []).length <= d.cap);
+
+  // Boundaries and writes.
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  await call(env, `/invite/${new URL(link, 'https://x.test').searchParams.get('invite')}/accept`,
+    { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const invc = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  ok('an investigator is refused — delivery is office work',
+     (await call(env, '/delivery-center', { cookie: invc })).status === 403);
+  ok('and the public door does not exist',
+     (await call(env, '/delivery-center', {})).status === 401);
+  const counts = await env.DB.prepare(
+    `SELECT (SELECT COUNT(*) FROM case_builds) AS b, (SELECT COUNT(*) FROM build_events) AS e`).first();
+  await call(env, '/delivery-center', { cookie: admin });
+  const counts2 = await env.DB.prepare(
+    `SELECT (SELECT COUNT(*) FROM case_builds) AS b, (SELECT COUNT(*) FROM build_events) AS e`).first();
+  ok('the center writes nothing', counts.b === counts2.b && counts.e === counts2.e);
+  ok('and no route under the center can send anything — there is no POST',
+     (await call(env, '/delivery-center', { method: 'POST', cookie: admin, body: {} })).status === 404);
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

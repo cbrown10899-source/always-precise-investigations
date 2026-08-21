@@ -1555,6 +1555,8 @@
     .dsb-act input[type=checkbox]{width:22px;height:22px;}
     /* UNIT 14 — the storage panel's refresh meets the floor. */
     [data-act="shRefresh"]{min-height:44px;}
+    /* UNIT 16 — the delivery center's controls meet it too. */
+    [data-act="dcCopy"],[data-act="dcRefresh"]{min-height:44px;}
   }
 
 </style>
@@ -5008,6 +5010,98 @@ function completedDesk(q){
    Both routes are admin-only in the Worker, which is why the investigator's
    rail does not carry this and why the role check below is a guard rather than
    the boundary. The boundary is in `worker.js`, as always. */
+/* ------------------------------------------- client delivery center (Unit 16)
+
+   The owner's CASEBUILD spec, built: one row per case answering what is ready
+   to go out and what has gone out. Delivery status is DERIVED from the stamps
+   case_builds already holds; the message is composed text a person copies —
+   the Center has NO send button of any kind, because "Never auto-email
+   evidence" is the owner's own line. */
+let DC = { state: "never", data: null };
+async function loadDeliveryCenter(force){
+  if(DC.state === "loading") return;
+  if(DC.state === "ok" && !force) return;
+  DC.state = "loading"; paint();
+  try{
+    const res = await api("/delivery-center");
+    DC = res && res.cases ? { state: "ok", data: res } : { state: "failed", data: null };
+  }catch{ DC = { state: "failed", data: null }; }
+  paint();
+}
+function dcStatus(row){
+  const b = row.build || {};
+  if(b.delivered_at) return { word: "Delivered", tone: "rs-approved",
+    detail: `${b.delivered_by || ""} · ${when(b.delivered_at)}` };
+  if(b.status === "finalized") return { word: "Ready to deliver", tone: "rs-submitted",
+    detail: b.finalized_at ? `finalized ${when(b.finalized_at)}` : "" };
+  return { word: "In preparation", tone: "rs-draft", detail: `draft v${b.version || 1}` };
+}
+/* The message a person pastes into their own email. Deterministic, and
+   CLIENT-SAFE BY CONSTRUCTION: counts and the case reference only — no rate,
+   no internal wording, no classification vocabulary, and the link line exists
+   only when a link is actually offerable. */
+function dcMessage(row){
+  const c = row.contents || {};
+  const parts = [];
+  if(c.reports) parts.push(`the final investigative report${c.reports > 1 ? ` covering ${c.reports} days` : ""}`);
+  if(c.photos) parts.push(`${c.photos} photograph${c.photos === 1 ? "" : "s"}`);
+  if(c.videos) parts.push(`${c.videos} video exhibit${c.videos === 1 ? "" : "s"}`);
+  if(c.attachments) parts.push(`${c.attachments} supporting document${c.attachments === 1 ? "" : "s"}`);
+  const what = parts.length
+    ? parts.length === 1 ? parts[0] : parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1]
+    : "your case package";
+  return `Your case package for ${row.case_no} is complete. It contains ${what}.`
+    + (row.link_active ? ` Video evidence is provided through a secure delivery link, sent separately.` : "")
+    + (row.invoices && row.invoices.sent ? ` The invoice for this matter has been sent under separate cover.` : "")
+    + ` Please confirm receipt, and contact our office with any questions.`;
+}
+async function dcCopy(caseNo){
+  const row = ((DC.data && DC.data.cases) || []).find(r => r.case_no === caseNo);
+  if(!row) return;
+  const text = dcMessage(row);
+  try{ await navigator.clipboard.writeText(text); DC.copied = caseNo; }
+  catch{ DC.copied = null; window.prompt("Copy the delivery message:", text); }
+  paint();
+  setTimeout(() => { if(DC.copied === caseNo){ DC.copied = null; paint(); } }, 2500);
+}
+function deliveryCenterHtml(){
+  const head = `<div class="bar"><h2 style="margin:0">Client delivery</h2>
+    <button class="btn sm ghost" data-act="dcRefresh">Refresh</button></div>`;
+  if(DC.state === "never" || DC.state === "loading")
+    return `<div class="card">${head}<div class="empty">Reading the delivery record&hellip;</div></div>`;
+  if(DC.state === "failed")
+    return `<div class="card">${head}
+      <div class="loaderr">The delivery record could not be read just now &mdash; not the same as
+        nothing being ready. <button class="btn sm ghost" data-act="dcRefresh">Try again</button></div></div>`;
+  const rows = (DC.data.cases || []);
+  return `<div class="card">${head}
+    <p class="note">What each client is due and what they have received. Nothing here sends
+      anything &mdash; the message is copied into your own email, and evidence is never
+      auto-emailed.</p>
+    ${rows.length ? `<table class="stacktbl dctbl"><thead><tr>
+      <th>Case</th><th>Client</th><th>Package</th><th>Contents</th><th>Link</th><th>Invoice</th><th>Status</th><th></th>
+    </tr></thead><tbody>${rows.map(r => {
+      const st = dcStatus(r);
+      const c = r.contents || {};
+      return `<tr>
+        <td data-l="Case"><button class="linklike" data-act="openCase" data-no="${esc(r.case_no)}">${esc(r.case_no)}</button></td>
+        <td data-l="Client">${esc(r.client_name || r.carrier || "")}</td>
+        <td data-l="Package">v${r.build.version || 1}${r.pdf_filed_at ? ` &middot; PDF filed` : ""}</td>
+        <td data-l="Contents">${c.reports || 0} rpt &middot; ${c.photos || 0} ph &middot; ${c.videos || 0} vid${c.attachments ? ` &middot; ${c.attachments} doc` : ""}</td>
+        <td data-l="Link">${r.link_active ? `<span class="tag rs-approved">Active</span>` : `<span class="tag">None</span>`}</td>
+        <td data-l="Invoice">${r.invoices && r.invoices.sent ? `<span class="tag rs-submitted">Sent</span>`
+          : r.invoices && r.invoices.total ? `<span class="tag rs-draft">Draft</span>` : `<span class="tag">None</span>`}</td>
+        <td data-l="Status"><span class="tag ${st.tone}">${st.word}</span>${st.detail ? `<div class="tl-m">${esc(st.detail)}</div>` : ""}</td>
+        <td data-l=""><button class="btn sm ghost" data-act="dcCopy" data-no="${esc(r.case_no)}">${DC.copied === r.case_no ? "Copied" : "Copy delivery message"}</button></td>
+      </tr>`;
+    }).join("")}</tbody></table>`
+    : `<div class="empty">No case has opened a client package yet. Packages start from a case&rsquo;s
+        Package tab, and every one that does will appear here.</div>`}
+    ${DC.data.cases && DC.data.cases.length >= (DC.data.cap || 60)
+      ? `<p class="hint">Showing the ${DC.data.cap} most recent — older delivered work is on the case itself.</p>` : ""}
+  </div>`;
+}
+
 function deliveryView(){
   if(ME.role !== "admin") return casesView();
   /* Three states kept apart, the way the case list keeps them: did not load,
@@ -5038,6 +5132,7 @@ function deliveryView(){
   </div>`;
 
   return `<div class="deliverystack">
+    ${deliveryCenterHtml()}
     ${band("Ready to build", `${ready.length} awaiting a package`, ready,
       `Nothing is waiting on a package. A case arrives here once its report is
        approved and no client package has been finalized yet.`)}
@@ -15476,7 +15571,8 @@ document.addEventListener("click", ev => {
     /* Reports & Packages reads the two routes it is assembled from, both
        admin-only in the Worker. Fetched on arrival for the same reason the
        dashboard refetches: a stale package stage is a wrong next step. */
-    if(TAB === "delivery" && ME.role === "admin"){ PKGS = null; loadPackages(); loadCompleted(); }
+    if(TAB === "delivery" && ME.role === "admin"){ PKGS = null; loadPackages(); loadCompleted();
+      DC = { state: "never", data: null }; loadDeliveryCenter(); }
     /* UNIT 7 — the directory is fetched on ARRIVAL, like every other tab that
        carries data. A tab click paints; only these lines fetch. Reading a
        stale list is the failure that matters here: a firm saved from a case
@@ -15621,6 +15717,8 @@ document.addEventListener("click", ev => {
   else if(act === "logout"){ doLogout(); }
   else if(act === "openCase"){ openCase(el.dataset.case || el.dataset.no); }
   else if(act === "shRefresh"){ loadStorageHealth(true); }
+  else if(act === "dcRefresh"){ loadDeliveryCenter(true); }
+  else if(act === "dcCopy"){ dcCopy(el.dataset.no); }
   else if(act === "saveCase"){ saveCase(el.dataset.case); }
   else if(act === "toggleActive"){ toggleActive(Number(el.dataset.id), Number(el.dataset.active)); }
   else if(act === "revokeInvite"){ revokeInvite(Number(el.dataset.id)); }

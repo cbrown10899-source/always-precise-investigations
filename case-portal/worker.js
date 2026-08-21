@@ -8826,6 +8826,86 @@ async function adminBuild(env, user, buildId) {
    has administratively closed it, and that is exactly when someone goes
    looking for the report. Cancelled is deliberately absent: a cancelled case
    has no deliverables to find. */
+/* ---------------------------------------------- delivery center (Unit 16)
+
+   The owner's spec is CASEBUILD.md's own paragraph — "CLIENT DELIVERY panel:
+   case, report ready, photos, videos, link active, invoice sent, delivery
+   status" — and the audit against it is in case-portal/DELIVERY-CENTER.md.
+   One bounded read over cases that have ever opened a package; children
+   resolve through parent subqueries; delivery status is DERIVED from stamps
+   case_builds already holds, never stored; and the video-link fact goes
+   through the same classification-gated shape /completed uses, because a
+   second looser copy of that rule is how evidence leaves by the back door. */
+
+const DELIVERY_CAP = 60;
+
+async function deliveryCenter(env) {
+  const missing = await missingTables(env);
+  const notArchived = missing.includes('case_archive') ? ''
+    : 'AND s.case_no NOT IN (SELECT case_no FROM case_archive)';
+  const notDeleted = missing.includes('case_deleted') ? ''
+    : 'AND s.case_no NOT IN (SELECT case_no FROM case_deleted)';
+  const { results } = await env.DB.prepare(
+    `SELECT s.case_no, s.kind, s.client_name, s.carrier,
+            b.id AS build_id, b.version, b.status AS build_status,
+            b.finalized_at, b.delivered_at,
+            uf.display_name AS finalized_by, ud.display_name AS delivered_by
+       FROM submissions s
+       JOIN case_builds b ON b.id = (
+         SELECT id FROM case_builds WHERE case_no = s.case_no
+          ORDER BY status = 'finalized' DESC, version DESC, id DESC LIMIT 1)
+       LEFT JOIN users uf ON uf.id = b.finalized_by
+       LEFT JOIN users ud ON ud.id = b.delivered_by
+      WHERE 1=1 ${notArchived} ${notDeleted}
+      ORDER BY COALESCE(b.delivered_at, b.finalized_at, '9999') DESC, b.id DESC
+      LIMIT ?`).bind(DELIVERY_CAP).all();
+
+  const out = [];
+  for (const r of (results || [])) {
+    const roleCounts = await env.DB.prepare(
+      `SELECT role, COUNT(*) AS n FROM build_items WHERE build_id = ? GROUP BY role`)
+      .bind(r.build_id).all();
+    const counts = Object.fromEntries((roleCounts.results || []).map(x => [x.role, x.n]));
+    const reports = Number(((await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM build_reports WHERE build_id = ?').bind(r.build_id).first()) || {}).n) || 0;
+    const pdf = await env.DB.prepare(
+      `SELECT at FROM build_events WHERE build_id = ? AND action = 'report_pdf_saved'
+        ORDER BY id DESC LIMIT 1`).bind(r.build_id).first();
+    /* The one link this desk may mention is the one /completed may hand out:
+       uploaded, unrevoked, client-deliverable, and STILL IN the finalized
+       package. Same statement shape, same reasons. */
+    const link = r.build_status !== 'finalized' ? null : await env.DB.prepare(
+      `SELECT x.id FROM external_files x
+         JOIN case_evidence e ON e.id = x.evidence_id
+        WHERE e.case_no = ? AND x.external_share_url IS NOT NULL
+          AND x.share_revoked_at IS NULL AND x.upload_status = 'uploaded'
+          AND e.deleted_at IS NULL AND e.classification = 'client_deliverable'
+          AND EXISTS (SELECT 1 FROM build_items bi
+                       WHERE bi.build_id = ? AND bi.evidence_id = x.evidence_id)
+        LIMIT 1`).bind(r.case_no, r.build_id).first();
+    const inv = await env.DB.prepare(
+      `SELECT COUNT(*) AS n,
+              SUM(CASE WHEN status IN ('sent_to_bill','sent_to_client','partially_paid','paid') THEN 1 ELSE 0 END) AS sent
+         FROM invoices WHERE case_no = ? AND status != 'void'`).bind(r.case_no).first();
+    const sends = missing.includes('send_log') ? null : await env.DB.prepare(
+      `SELECT COUNT(*) AS n, MAX(sent_at) AS last FROM send_log
+        WHERE case_no = ? AND ok = 1`).bind(r.case_no).first();
+    out.push({
+      case_no: r.case_no, kind: r.kind, client_name: r.client_name, carrier: r.carrier,
+      build: { version: r.version, status: r.build_status,
+        finalized_at: r.finalized_at, finalized_by: r.finalized_by,
+        delivered_at: r.delivered_at, delivered_by: r.delivered_by },
+      contents: { reports, photos: counts.photo || 0, videos: counts.video || 0,
+        attachments: counts.attachment || 0 },
+      pdf_filed_at: (pdf && pdf.at) || null,
+      link_active: !!link,
+      invoices: { total: Number(inv && inv.n) || 0, sent: Number(inv && inv.sent) || 0 },
+      sends: sends ? { total: Number(sends.n) || 0, last: sends.last || null } : null,
+    });
+  }
+  return { cases: out, cap: DELIVERY_CAP, generated_at: nowIso() };
+}
+
 async function completedCases(env) {
   /* THE COMPLETED DESK IS AN ORDINARY VIEW, so archived and deleted cases leave
      it too. "Leaves active views" would be a half-truth if a case the office
@@ -11114,6 +11194,11 @@ async function route(request, env) {
 
   // MASTER §31 — the office's view of finished work. Admin-only: the desk
   // carries invoices and client identity, neither of which reaches the field.
+  if (p === '/delivery-center' && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return json(await deliveryCenter(env));
+  }
+
   if (p === '/completed' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return completedCases(env);
