@@ -117,11 +117,24 @@ never converted to "completed" and never deleted from the record.**
 a suitable real case, and *no production case is to be manufactured for the
 test.*
 
-**The unsent-draft retainer question is unresolved and must stay that way.**
-This report classified it as an owner decision rather than a defect precisely
-because CLAUDE.md documents the current behaviour and a test asserts it; the
-owner then answered it once and asked for it to be held pending. Both are in
-`NEXT.md`. **Unit 18 must confirm before coding it.**
+**The unsent-draft retainer question is now ANSWERED** (owner, 2026-08-21, after
+this report classified it as a decision rather than a defect): *"UNSENT or DRAFT
+invoices MUST NOT reduce the client-facing retainer balance. Only
+finalized/issued billable work may affect the client-facing retainer figure."*
+So the finding above changes category — from "owner decision, not a defect" to
+**a defect with a decided answer**, owned by Unit 18. Three things move
+together, because all three currently state the old behaviour: the sibling sum
+in `worker.js`, the paragraph in CLAUDE.md, and the E2E-39 assertion.
+
+**Reassigned-investigator visibility is also answered** and recorded as a
+durable authorization rule in CLAUDE.md: a reassigned investigator must not
+automatically see the prior investigator's hours, compensation or billing
+detail through any surface — case-scoped reads, API responses, UI payloads,
+exports, reports or hidden fields. Admin sees all; an investigator sees only
+their own. **No permission toggle is to be invented for it**, since the
+PORTAL-OPS Permissions specification that might call for one has never
+arrived. Enforced when the permissions/security work is reached, or sooner if
+an audit proves an active leak.
 
 ## Corrections to the record
 

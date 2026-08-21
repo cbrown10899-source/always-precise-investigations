@@ -282,17 +282,16 @@ multiple-provider/storage work · any destructive evidence cleanup.
 
 ## OWNER DECISIONS — still required
 
-**⚠️ Conflict to resolve first.** The owner answered decisions 1 and 4 in the
-queue-approval message of 2026-08-21, then asked in the durable-queue message
-the same day for both to be held pending. Both readings are recorded; **the
-answer is not assumed either way.**
+**Decisions 1 and 4 were LOCKED by the owner on 2026-08-21**, resolving the
+conflict this table previously recorded. Their wording is kept verbatim below
+and is now durable policy rather than a pending question.
 
 | # | Decision | State |
 | --- | --- | --- |
-| 1 | Does an **unsent/draft invoice** draw down the client-facing retainer? | **CONFLICTED.** Answered: *"Unsent/draft work must NOT reduce the client-facing retainer remaining. Only finalized/issued billable work should affect that client-facing figure."* Then: *"Keep it explicitly pending unless the owner answers it before Unit 18 implementation."* **Confirm before Unit 18 codes it.** Today's behaviour: drafts DO draw it down (`worker.js` sibling query is `status != 'void'`), CLAUDE.md documents that, and E2E-39 asserts it |
-| 2 | Are **Cash App `$TreverB`** and **Venmo `@Trever-Brown-9`** the long-term accounts, or replaced with business accounts later? | **Answered for now:** *"Keep current… Do not change payment accounts in this queue."* Long-term choice stays open |
+| 1 | Does an **unsent/draft invoice** draw down the client-facing retainer? | ✅ **LOCKED — NO.** *"UNSENT or DRAFT invoices MUST NOT reduce the client-facing retainer balance. Only finalized/issued billable work may affect the client-facing retainer figure."* Client-facing figures stay **Agreed retainer · Received · Applied/Earned · Outstanding/available**; a separate internal view of draft work is allowed, but the client-facing display must never imply draft work consumed the deposit. *"Do not silently change historical payment records. Do not treat creating a draft invoice as money earned. Do not mark anything paid merely because an invoice exists."* **Implemented in Unit 18.** Today's behaviour is the opposite — the sibling sum filters only `status != 'void'`, CLAUDE.md described it, and E2E-39 asserts it — so all three move together |
+| 2 | Are **Cash App `$TreverB`** and **Venmo `@Trever-Brown-9`** the long-term accounts? | **Answered for now:** *"Keep current… Do not change payment accounts in this queue."* Long-term choice stays open |
 | 3 | The corrupted **PORTAL-OPS Permissions** requirement | **OWNER INPUT REQUIRED** — leave marked missing until re-sent. Do not invent it |
-| 4 | **Reassigned-investigator visibility** into a prior investigator's hours | **CONFLICTED.** Answered: *"Reassigned investigators must not automatically see another investigator's hours. Keep prior-investigator hours Admin-only unless explicit permission is added later."* Then: *"Keep this as an explicit owner decision before any permissions unit modifies it."* Standing principle either way: admin sees full commercial detail, investigators see only what they operationally need, client rates and margins stay protected |
+| 4 | **Reassigned-investigator visibility** into a prior investigator's hours | ✅ **LOCKED — ADMIN-ONLY.** A reassigned investigator must not automatically see the previous investigator's *"worked hours, compensation details, billing detail, or other investigator-specific financial information"* — not through *"case-scoped reads, API responses, UI payloads, exports, reports, or hidden fields."* Admin sees all; the current investigator sees only their own where already authorized; **prior-investigator hours stay admin-only.** *"Do not create a new permission toggle unless the approved PORTAL-OPS Permissions specification later explicitly calls for one."* Recorded now as a durable authorization rule (CLAUDE.md, under the case portal); enforced when the permissions/security work is reached — **or immediately if an audit proves an active leak that can be fixed without disrupting Hotfix 17A** |
 | 5 | **Homepage section/order** | **Answered and closed:** *"Keep the current homepage section order. Do not reopen homepage structure now."* |
 
 **Item 12 — REPORT DAILY SUMMARY BUILDER — was inserted by the owner on
