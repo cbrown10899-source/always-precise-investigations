@@ -61,3 +61,79 @@ metadata the database already holds, in one place, for an admin.
 - **D7 — Deferred, named:** any storage ACTION (export, sweep, migrate) —
   Retention Controls is item 17 and owns policy; a stored history/trend; any
   per-file listing UI (the owner explicitly did not want a file manager).
+
+
+---
+
+## THE OWNER'S BRIEF — arrived 2026-08-21, mid-unit, verbatim
+
+The audit-derived build above was already coded when the owner's own Unit 14
+brief landed. It is the spec of record from here on; where it names something
+the derived design lacked, the delta below adds it. It also supersedes the
+"continue the queue" cadence for this unit: **stop after Unit 14.**
+
+> UNIT 14 STORAGE HEALTH ONLY.
+>
+> Audit current storage first. Then implement and verify the approved
+> storage-health system: Dropbox connection/health, last successful upload,
+> failed uploads, safe storage status, and clear error states. Do not expose
+> credentials or secrets.
+>
+> Enforce the approved storage rules: Dropbox is the permanent file storage
+> for timestamped photos/videos, reports, and case images; do not add D1/R2
+> permanent file storage. Keep originals untouched. Avoid duplicate permanent
+> copies. Keep one final report PDF where practical. Store metadata, hashes,
+> and references instead of unnecessary derivatives.
+>
+> Retention or deletion controls must be Admin-only. Never automatically
+> delete or overwrite evidence. Do not add a paid provider, SMS, new storage
+> service, or anything that can create an unapproved usage charge.
+>
+> Test disconnected Dropbox, failed upload, successful upload, duplicate
+> handling, existing photo/video timestamp flows, report/package flows,
+> mobile behavior, and existing portal regressions.
+>
+> Do not redesign the portal or build the File Queue mockup in this unit.
+>
+> Run the existing full tests. Fix only Unit 14 regressions. Push, merge,
+> deploy, and live verify using the normal workflow if green.
+>
+> When complete, report exactly what changed, tests run, deployment SHA, live
+> verification, storage impact, and any remaining risks.
+>
+> STOP before destructive migration, evidence deletion/overwrite, credential
+> changes, new paid services, or an owner policy decision.
+>
+> Do not start Unit 15. Stop and report Unit 14 complete.
+
+## THE DELTA the brief adds to the derived build
+
+- **D8 — Failed uploads become a RECORD, because the owner asked for one.**
+  Until now a refused upload was deliberately not logged (Unit 10 recorded
+  that absence). The brief names "failed uploads" as part of the system, so
+  `storage_failure` is one additive table — kind, case, filename, reason,
+  who, when — written BEST-EFFORT at the moments a storage write is refused:
+  the evidence upload, the timestamped photo, the timestamped-video steps and
+  the report PDF. A failed log write never changes the caller's response
+  (test: with the table absent, every refusal answers byte-identically), and
+  a SUCCESSFUL write logs nothing — including the autorename path, which is a
+  success. Guarded, in `EXPECTED_TABLES`, swept by `DEMO_SWEEP`. **This makes
+  the unit owe one `portal-setup.yml` dispatch after merge.**
+- **D9 — "Safe storage status" is the passive readiness answer**: the route
+  reports `readiness` — would an upload be accepted right now — from the same
+  three conditions the upload doors check (`provider configured`, `account
+  connected`, `token mintable`), with the code named when the answer is no.
+  One token mint shared with the space call, not a second.
+- **D10 — "Last successful upload" derives from the rows that exist**
+  (MAX `uploaded_at` over Dropbox-backed evidence) — no new write, nothing to
+  drift.
+- **D11 — No credential leaves.** The payload is asserted free of token,
+  secret and refresh strings, the manifest's own rule applied here.
+- **D12 — Duplicate report PDFs are reported as a REMAINING RISK, not
+  changed.** Re-filing a report PDF today creates `…v1-1.pdf` beside
+  `…v1.pdf` (Dropbox `add` + autorename — the deliberate never-overwrite
+  posture of the shared upload helper). "Keep one final report PDF where
+  practical" reads as wanting one; making the PDF save overwrite would put an
+  overwrite mode on the helper that also writes EVIDENCE, one stray flag from
+  the exact failure the posture exists to prevent. Deferred with its
+  reasoning; the integrity record already supersedes correctly on re-filing.
