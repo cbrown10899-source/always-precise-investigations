@@ -30,7 +30,7 @@ item is finished.
 | 11 | Evidence Integrity | ✅ **DONE — DEPLOYED** at `0c0c134` (#197). LIVE VERIFY **OPEN** for the owner |
 | 12 | Report Daily Summary Builder | ✅ **DONE — DEPLOYED** at `46ccad6` (#198). LIVE VERIFY **OPEN** for the owner |
 | 13 | Portal palette normalization | ✅ **DONE — LIVE VERIFIED** by the owner 2026-08-21, at `fcd3d38` (#199) |
-| 14 | Storage Health | ✅ **DONE — DEPLOYED** at `96e994d` (#202). LIVE VERIFY **OPEN** for the owner |
+| 14 | Storage Health | ✅ **DONE — LIVE VERIFIED** by the owner 2026-08-21, at `96e994d` (#202) |
 | 15 | Case Closeout | not started |
 | 16 | Client Delivery Center | not started |
 | 17 | Retention Controls | not started |
@@ -231,9 +231,8 @@ and succeeded** (run `32435478065`, against `96e994d`). Deploys green: site
 `…v1.pdf` — deferred rather than adding an overwrite mode to the helper that
 also writes evidence.
 
-**LIVE VERIFY (owner):** Settings → Storage health on your devices — the
-safe-to-store line, the failure list after a real refusal, the quota bar,
-and that the numbers square with your own Dropbox.
+**LIVE VERIFIED by the owner, 2026-08-21** — marked complete in their own
+words.
 
 ## 📌 Unit 13 — what shipped (#199, `fcd3d38`)
 
