@@ -114,6 +114,36 @@ accounting moved.
 
 ---
 
+## 📌 Unit 24 — what shipped (#213, `8988b29`)
+
+**The File Queue — one operational view over files that already exist.** The
+required unit, built to the approved mockup direction as an AGGREGATION: no new
+table, no second copy of a file, no duplicate status vocabulary.
+
+**The states are the portal's own.** `case_evidence.classification` already
+carries five CHECKed values meaning what the mockup's columns mean —
+needs_review → Awaiting review, needs_redaction → Awaiting processing,
+internal_only/do_not_use → Held back. Only two are derived, both from records
+that already exist: **Completed** from a finalized package carrying the file,
+**Awaiting verification** from the absence of an integrity row.
+
+**It reads no bytes and makes no Dropbox call** (Unit 14's rule), and it writes
+nothing: classifying, verifying, downloading and removing all stay on Case
+media, one writer each. The role boundary is in the SQL — the field never sees
+the client name or where the bytes live — hidden cases take their files with
+them, and a removed file leaves the queue while staying on the record.
+
+**Every colour is an existing Unit 13 token pair**, so the anti-drift budget
+still passes and the phone palette matches the desktop's.
+
+**Suites:** worker **2627/0** · portal **2422/0** · deploy guard **68/0**. No
+schema, no portal-setup dispatch.
+
+**Owner visual check PASSED 2026-08-21.** The page-level rendering tests the
+first PR openly listed as missing followed immediately: 19 checks over the
+drawn states, the summary cards as working filters, the detail panel, the
+failed-read state, and the 390px floors.
+
 # 🔒 DURABLE MASTER UNIT QUEUE — owner, 2026-08-21
 
 **Recorded so it cannot be lost between sessions.** Items 1–17 above are
@@ -133,7 +163,7 @@ CREATE A BRANCH. DO NOT DEPLOY. DO NOT START THE NEXT UNIT."*
 | 21 | Accessibility + Voice audible-tone completion | ✅ **DONE — DEPLOYED** at `27243af` (#210). LIVE VERIFY **OPEN** |
 | 22 | PORTAL-OPS remaining gaps | ✅ **DONE — DEPLOYED** at `a7bfe6e` (#211). Saved Views / Case Templates / Document Templates **NOT built — owner input**. LIVE VERIFY **OPEN** |
 | 23 | Consolidated Live Verification Sweep | not started |
-| 24 | **Required** File Queue + portal aesthetic redesign | not started |
+| 24 | **Required** File Queue + portal aesthetic redesign | ✅ **DONE — DEPLOYED** at `8988b29` (#213), **visual check passed by the owner 2026-08-21**; page-level rendering tests followed |
 | 25 | Final security / authorization / regression pass | not started |
 | 26 | Final master reconciliation + project closeout | not started |
 

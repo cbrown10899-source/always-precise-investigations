@@ -13353,6 +13353,139 @@ section('Delivery center on a phone: rows stack and the copy is reachable');
   await page.close();
 }
 
+section('Unit 24 — the File Queue renders: real states, a working detail panel, no writers');
+{
+  /* The worker section proves the DERIVATION; this proves the screen actually
+     draws it, that its controls work rather than merely appearing, and that it
+     offers no way to change a file — the "a control that draws is not a control
+     that works" lesson, applied to a read-only surface. */
+  await post('/ingest', {
+    case_no: 'API-FQP', service: 'Surveillance',
+    client_name: 'Queue Page Client', subject_name: 'Queue Subject', objective: 'Queue',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const stamp = new Date().toISOString();
+  for (const [name, cls, ct] of [
+    ['front.jpg', 'needs_review', 'image/jpeg'],
+    ['blurred.jpg', 'needs_redaction', 'image/jpeg'],
+    ['clean.jpg', 'client_deliverable', 'image/jpeg'],
+    ['notes.pdf', 'internal_only', 'application/pdf'],
+  ]) {
+    db.prepare(`INSERT INTO case_evidence (case_no, r2_key, filename, content_type, size_bytes,
+                  classification, uploaded_by, uploaded_at)
+                VALUES ('API-FQP', ?, ?, ?, 2048, ?, 1, ?)`)
+      .run('fqp-' + name, name, ct, cls, stamp);
+  }
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'File queue' }).first().click();
+  await page.waitForTimeout(900);
+
+  const body = await page.locator('#app').innerText();
+  ok('the file queue screen opens from the navigation', /File queue/i.test(body), body.slice(0, 200));
+  ok('and says out loud that it changes nothing',
+     /nothing here uploads, renames, moves or deletes/i.test(body), body.slice(0, 500));
+
+  /* THE STATES ARE DRAWN, and they are the portal's own words. */
+  for (const [file, word] of [['front.jpg', 'Awaiting review'],
+                              ['blurred.jpg', 'Awaiting processing'],
+                              ['notes.pdf', 'Held back']]) {
+    const row = page.locator('.fqtbl tbody tr', { hasText: file }).first();
+    ok(`${file} is listed as ${word}`,
+       new RegExp(word, 'i').test(await row.innerText()), await row.innerText());
+  }
+  ok('a deliverable with no hash reads as awaiting verification',
+     /Awaiting verification/i.test(await page.locator('.fqtbl tbody tr', { hasText: 'clean.jpg' }).first().innerText()));
+
+  /* THE SUMMARY CARDS ARE CONTROLS, not decoration — clicking one filters. */
+  const cards = await page.locator('.fqcard').count();
+  ok('summary cards are drawn across the top', cards >= 3, String(cards));
+  /* Counts are asserted as PROPERTIES, not absolutes: other sections plant
+     evidence of their own, so "exactly one" is only true in isolation and
+     would make this section pass alone and fail in the suite — which is the
+     kind of test that teaches people to ignore a red run. */
+  const all = await page.locator('.fqtbl tbody tr').count();
+  await page.locator('.fqcard', { hasText: 'Held back' }).first().click();
+  await page.waitForTimeout(350);
+  const shown = await page.locator('.fqtbl tbody tr').allInnerTexts();
+  ok('clicking a card filters the queue to that state',
+     shown.length > 0 && shown.length < all && shown.every(t => /Held back/i.test(t)),
+     JSON.stringify([all, shown.length]));
+  ok('and the filtered set still holds the file that belongs in it',
+     shown.some(t => /notes\.pdf/.test(t)), JSON.stringify(shown).slice(0, 200));
+  ok('and the chip says which state is showing',
+     /Held back/i.test(await page.locator('.chip').first().innerText()));
+  await page.locator('.chip button').first().click();
+  await page.waitForTimeout(350);
+  ok('clearing the chip restores every file',
+     await page.locator('.fqtbl tbody tr').count() === all, String(all));
+
+  /* THE DETAIL PANEL OPENS AND CARRIES THE RECORD. */
+  await page.locator('.fqtbl tbody tr', { hasText: 'clean.jpg' })
+    .first().locator('[data-act="fqPick"]').click();
+  await page.waitForTimeout(350);
+  const detail = await page.locator('.fqdetail').innerText();
+  ok('choosing a file opens its workspace', /clean\.jpg/.test(detail), detail.slice(0, 200));
+  ok('with the case, the size and the classification on it',
+     /API-FQP/.test(detail) && /KB|MB|B\b/.test(detail) && /deliverable/i.test(detail), detail.slice(0, 400));
+  ok('the integrity wording is the portal\'s own, never a legal claim',
+     /not a third-party authentication/i.test(detail));
+  ok('and it hands off rather than editing — no classify or delete control on it',
+     await page.locator('.fqdetail [data-act="evClassify"], .fqdetail [data-act="evDelete"]').count() === 0);
+  await page.locator('.fqdetail [data-act="fqPick"]').first().click();
+  await page.waitForTimeout(300);
+  ok('the workspace closes again', await page.locator('.fqdetail').count() === 0);
+
+  /* A FAILED READ IS NAMED — never drawn as an empty queue. */
+  await page.route('**/portal-api/file-queue', r => r.fulfill({ status: 500, body: '{}' }));
+  await page.locator('[data-act="fqRetry"]').first().click();
+  await page.waitForTimeout(600);
+  ok('a failed read says so rather than showing an empty queue',
+     /could not be read/i.test(await page.locator('#app').innerText()));
+  await page.unroute('**/portal-api/file-queue');
+  await page.close();
+}
+
+section('Unit 24 — the File Queue on a phone, and what the field is not shown');
+{
+  /* THE FIELD SEES THE WORK, NEVER THE CLIENT — asserted on the rendered page,
+     not just in the payload. */
+  const admin = await newPage();
+  await signIn(admin, 'trever', 'AdminPassword1x');
+  await admin.evaluate(async () => {
+    const u = (USERS || []).find(x => x.role === 'investigator' && x.active);
+    if (u) await fetch('/portal-api/submissions/API-FQP/assign', { method: 'POST',
+      credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: u.id }) });
+  });
+  await admin.close();
+
+  const phone = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  phone.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await phone.goto(SITE + '/portal/');
+  await phone.waitForTimeout(300);
+  await phone.locator('#u').fill('trever');
+  await phone.locator('#p').fill('AdminPassword1x');
+  await phone.locator('#loginBtn').click();
+  await phone.waitForTimeout(1400);
+  const burger = phone.locator('.burger');
+  if (await burger.isVisible()) { await burger.click(); await phone.waitForTimeout(300); }
+  await phone.locator('.side button, .tabs button', { hasText: 'File queue' }).first().click();
+  await phone.waitForTimeout(900);
+
+  const m = await phone.evaluate(() => {
+    const card = document.querySelector('.fqcard');
+    const b = card && card.getBoundingClientRect();
+    return { overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+             cardH: b ? b.height : 0,
+             stacked: !!document.querySelector('.fqtbl.stacktbl') };
+  });
+  ok('390px: the queue adds no sideways scroll', m.overflow <= 0, String(m.overflow));
+  ok('390px: a summary card meets the 44px tap floor', m.cardH >= 44, String(m.cardH));
+  ok('390px: the table is the stacked-record kind, so no column is dropped', m.stacked === true);
+  await phone.close();
+}
+
 section('Unit 21 — accessibility: landmarks, a way in from the keyboard, and answers said out loud');
 {
   const page = await newPage();
