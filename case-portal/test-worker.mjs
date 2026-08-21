@@ -5529,11 +5529,27 @@ section('Every send works before a case exists, and still works after one does')
        !pairing.test(src), (src.match(pairing) || [''])[0]);
     ok('the context-to-intake mapping is a declared table',
        src.includes('const CONTEXT_SHEET = {') && src.includes('intakeForContext'));
-    // Two call sites — the lead-card send and the pre-case send. The definition
-    // is `intakeForContext = ctx =>`, so it does not match this pattern.
-    ok('and both intake senders derive it from the context',
-       (src.match(/intakeForContext\(/g) || []).length === 2,
+    /* THREE call sites — the lead-card send, the pre-case send, and the rate
+       sheet's Include Intake Link. The definition is `intakeForContext = ctx =>`,
+       so it does not match this pattern.
+
+       The third arrived as the 2026-08-21 hotfix. It was already a sender; it
+       simply derived its door from `SHEET_INTAKE[sheet.id]` instead, which
+       sends a law firm the private form because a legal case takes the private
+       SHEET on purpose. Counting senders would not have caught that — the
+       assertion below is the one that would, and it is the real guard now. */
+    ok('and all three intake senders derive it from the context',
+       (src.match(/intakeForContext\(/g) || []).length === 3,
        String((src.match(/intakeForContext\(/g) || []).length));
+    /* THE DOOR TABLE HAS EXACTLY ONE READER. Any other `SHEET_INTAKE[...]`
+       lookup is a second way to choose a door, and a second way is how the
+       sheet-keyed one survived: the rule was written down, obeyed twice, and
+       broken in the third place. Keyed off anything but the context, Legal is
+       always the case that breaks — it is the one whose sheet and door differ. */
+    const readers = (src.match(/SHEET_INTAKE\[/g) || []).length;
+    ok('the door table is read in exactly one place — intakeForContext',
+       readers === 1 && /const intakeForContext = ctx => SHEET_INTAKE\[/.test(src),
+       String(readers));
     /* Codex design review, 2026-08-15: every caller gated on the context before
        reaching `paymentOptionsFor`, so nothing could get through — but the
        safety lived in call-site convention rather than in the function handing
@@ -6342,6 +6358,103 @@ section('Legal intake: private pricing structurally, private payments never');
   ok('a private case still takes the private sheet in the PRIVATE context',
      privSend.ok === true && privSend.send_context === 'private', JSON.stringify(privSend).slice(0, 200));
   ok('every send in this section really left through the stand-in', mailTo.length >= 4, String(mailTo.length));
+  globalThis.fetch = realFetch;
+}
+
+section('Include Intake Link: each context gets ITS door, and only its door');
+{
+  /* HOTFIX 2026-08-21. `emailSheet` picked the bundled door with
+     `SHEET_INTAKE[sheet.id]`, and a LEGAL case takes the private SHEET by
+     design — so a law firm was emailed `?assignment=private`, the door whose
+     own picker refuses `legal`. The door is paired to the CONTEXT now.
+
+     The three are tested separately and each is asserted BOTH ways: its own
+     door present, and neither of the other two anywhere in either MIME part.
+     A test that only checks the right link is there passes just as happily
+     when a second, wrong one is there beside it. */
+  const realFetch = globalThis.fetch;
+  let lastBody = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      lastBody = JSON.parse(init.body);
+      return new Response('{"id":"re_door"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  const DOORS = { private: '/intake/?assignment=private',
+                  insurance: '/intake/?assignment=insurance',
+                  legal: '/intake/?assignment=legal' };
+  /* Both parts carry the wanted door; neither part carries either other one.
+     Counting `/intake/` occurrences against the wanted door's own count is
+     what catches a stray bare link riding along. */
+  const onlyDoor = (want) => {
+    const parts = [lastBody.html, lastBody.text];
+    const wantUrl = DOORS[want];
+    const others = Object.entries(DOORS).filter(([k]) => k !== want).map(([, v]) => v);
+    return parts.every(p => p.includes(wantUrl) && others.every(o => !p.includes(o))
+      && (p.match(/\/intake\//g) || []).length ===
+         (p.match(new RegExp(wantUrl.replace(/[?]/g, '\\?'), 'g')) || []).length);
+  };
+
+  // ---- PRIVATE: a private case, the private sheet, the private door ----
+  await ingest(env, { case_no: 'API-DOOR-P', client_name: 'Ada Private',
+    service: 'Surveillance', objective: 'Doors' });
+  const p = await jsonOf(await call(env, '/sheets/private_retainer/email', { method: 'POST',
+    cookie: admin, body: { to: 'ada@example.test', case_no: 'API-DOOR-P', include_intake: true } }));
+  ok('PRIVATE: the send succeeds in the private context',
+     p.ok === true && p.send_context === 'private', JSON.stringify(p.send_context));
+  ok('PRIVATE: the private door rides it, and no other door does', onlyDoor('private'));
+  ok('PRIVATE: the response names the door it actually sent',
+     p.included.intake === 'Private Client Intake', String(p.included.intake));
+
+  // ---- INSURANCE: a claim assignment, the carrier sheet, the carrier door ----
+  await ingest(env, { case_no: 'API-DOOR-I', assignment: 'insurance',
+    service: 'Insurance claim assignment', carrier: 'Blue Ridge Mutual',
+    claim_number: 'BRM-1', client_name: 'Blue Ridge Mutual', objective: 'Doors' });
+  const i = await jsonOf(await call(env, '/sheets/insurance_assignment/email', { method: 'POST',
+    cookie: admin, body: { to: 'adj@carrier.test', case_no: 'API-DOOR-I', include_intake: true } }));
+  ok('INSURANCE: the send succeeds in the insurance context',
+     i.ok === true && i.send_context === 'insurance', JSON.stringify(i.send_context));
+  ok('INSURANCE: the carrier door rides it, and no other door does', onlyDoor('insurance'));
+  ok('INSURANCE: the response names the door it actually sent',
+     i.included.intake === 'Insurance Assignment Intake', String(i.included.intake));
+
+  // ---- LEGAL: the private SHEET, the LEGAL door — the whole point ----
+  await ingest(env, { case_no: 'API-DOOR-L', assignment: 'legal',
+    service: 'Legal investigation assignment', firm_name: 'Harmon & Boyle PLC',
+    attorney_name: 'R. Harmon', attorney_email: 'rharmon@example.test',
+    objective: 'Doors' });
+  const l = await jsonOf(await call(env, '/sheets/private_retainer/email', { method: 'POST',
+    cookie: admin, body: { to: 'rharmon@example.test', case_no: 'API-DOOR-L', include_intake: true } }));
+  ok('LEGAL: the send succeeds and states the legal context',
+     l.ok === true && l.send_context === 'legal', JSON.stringify(l.send_context));
+  ok('LEGAL: the LEGAL door rides it — never the private form a firm cannot use',
+     onlyDoor('legal'));
+  ok('LEGAL: the response names the door it actually sent',
+     l.included.intake === 'Legal Investigation Assignment', String(l.included.intake));
+  /* The sheet is still the private PRODUCT — the fix moved the door, not the
+     pricing. If this ever fails, someone has given Legal a second rate source. */
+  ok('LEGAL: and the sheet sent is still the private product, one pricing source',
+     l.sheet === 'private_retainer', String(l.sheet));
+
+  /* A pre-case send has no case to read, so the context is the sheet's own —
+     the door must still be that sheet's, not whatever the last send used. */
+  const pre = await jsonOf(await call(env, '/sheets/private_retainer/email', { method: 'POST',
+    cookie: admin, body: { to: 'someone@example.test', include_intake: true } }));
+  ok('PRE-CASE: with no case at all, the private sheet still pairs the private door',
+     pre.ok === true && onlyDoor('private'));
+
+  /* And not asking for one sends none — the flag still means what it says. */
+  await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'ada@example.test', case_no: 'API-DOOR-P' } });
+  ok('no intake is bundled when none was asked for',
+     !lastBody.html.includes('/intake/') && !lastBody.text.includes('/intake/'));
+
   globalThis.fetch = realFetch;
 }
 

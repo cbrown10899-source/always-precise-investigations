@@ -10940,6 +10940,19 @@ section('Quick Legal Assignment: a phone call becomes a case');
   ok('the arrangement shows as awaiting pickup', has(cardText, 'Awaiting pickup'));
   ok('and no consumer payment-options button is offered on a legal lead',
      await card.locator('[data-act="leadPayOpen"]').count() === 0);
+
+  /* HOTFIX 2026-08-21 — the wizard must NAME the door it will actually send.
+     A legal case takes the private SHEET and the LEGAL door, so labelling the
+     intake off the sheet id said "Private Client Intake" over a send carrying
+     `?assignment=legal`. A screen that misnames what it is about to email is
+     the same defect as emailing the wrong thing, one step earlier. */
+  await card.locator('[data-act="leadSheet"]').first().click();
+  await page.waitForTimeout(600);
+  const wiz = await page.locator('#app').innerText();
+  ok('the send wizard names the LEGAL door on a legal case',
+     /Legal Investigation Assignment/.test(wiz), wiz.slice(0, 400));
+  ok('and never calls it the private intake',
+     !/Private Client Intake/.test(wiz), wiz.slice(0, 400));
   await page.close();
 }
 

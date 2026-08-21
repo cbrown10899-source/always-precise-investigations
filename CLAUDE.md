@@ -258,9 +258,28 @@ did not arrive via the insurance pages. There is a test that fails if a bare
 **`/intake/?assignment=private` is the mirror door** — what the private rate
 sheet emails. The service step stays (a private client still chooses between
 surveillance and process serving) but the carrier path is not offered, and
-`pickSvc` refuses it even called directly. `SHEET_INTAKE` in the Worker pairs
-each sheet to its door server-side; the page only ever says *whether* to
-include a link, never which one.
+`pickSvc` refuses it even called directly. The Worker picks the door
+server-side; the page only ever says *whether* to include a link, never which
+one.
+
+**The door is paired to the send CONTEXT, never to the sheet** (hotfix,
+2026-08-21). The sheet is the PRODUCT and the door is the FORM, and Legal is
+where those part company: a legal case takes the **private sheet** by design
+(one pricing source) and the **legal door**. `emailSheet` keyed its bundled
+link off `SHEET_INTAKE[sheet.id]`, so Include Intake Link emailed a law firm
+`?assignment=private` — the door whose own `pickSvc` refuses `legal`, so the
+recipient could not have used it even if they tried. The rule was already
+written above `CONTEXT_INTAKE` and already obeyed by `sendLeadIntake` and
+`sendPreCaseIntake`; this was the third reader, keyed off the wrong thing.
+
+`SHEET_INTAKE` now has **exactly one reader** — `intakeForContext` — and a
+test fails if a second appears. That is the guard that matters: counting
+senders would not have caught this, because the broken one WAS deriving a
+door, just from the wrong key. `emailSheet` resolves the door once and passes
+it down, so the email body, the URL and the response label cannot disagree.
+**The page names the door the same way**: a legal case's send wizard reads
+*Legal Investigation Assignment*, because a screen that misnames what it is
+about to email is the same defect one step earlier.
 
 Known limit: the consumer step markup still sits in the shared file's `<script>`,
 so it is in View Source even though no carrier-facing screen renders it. The
