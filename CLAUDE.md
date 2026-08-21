@@ -1081,6 +1081,28 @@ calls `api()` rather than `pkgApi()`: `pkgApi` swallows its own failure.
 
 **Adding this table means a manual `portal-setup.yml` dispatch after merge.**
 
+## The delivery center says what went out, and sends nothing
+
+Unit 16 (the owner's own spec is CASEBUILD.md's "COMPLETED CASE / DELIVERY
+CENTER" paragraph; audit and derived decisions D1–D6 in
+`case-portal/DELIVERY-CENTER.md`). `GET /delivery-center` (admin-only) is one
+bounded read over cases that have ever opened a package: the newest build with
+its stamps and names, contents by role, the filed-PDF fact, the video-link
+fact through the SAME classification-gated statement `/completed` uses (never
+a looser second copy of that rule), the invoice summary and the send count.
+Delivery status is DERIVED — Delivered / Ready to deliver / In preparation —
+never stored, because `case_builds` already holds the truth.
+
+**Copy delivery message** is composed text a person pastes into their own
+email: counts and the case reference, the link line only when a link is
+actually offerable, the invoice line only when one was sent — no rate, no
+internal wording, no classification vocabulary (asserted). **The Center has no
+send button of any kind** — "Never auto-email evidence" is the owner's own
+line, the desk says it out loud, and a test asserts no send/email control
+exists on it. Mark delivered stays where it was, on the package panel.
+
+No schema, no portal-setup dispatch.
+
 ## The closeout checklist shows what the record can see, and still obeys the person
 
 Unit 15 (audit and derived decisions in `case-portal/CLOSEOUT.md` — no

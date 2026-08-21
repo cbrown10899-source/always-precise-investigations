@@ -10373,25 +10373,26 @@ section('The preview is optional, never a gate');
                    sourceAudio: 'AAC, 1ch', frames: 1443, via: 'webcodecs' },
             savedHere: false, started: false, err: '', saveMsg: '' };
     paintVStamp();
-    return document.querySelector('.vst').innerText;
+    /* Counted INSIDE the same evaluate, before yielding to the event loop: the
+       fixture's stub blob is unplayable by construction, so the page's own
+       <video> error handler will eventually flip previewFailed and repaint —
+       which is correct product behavior and, under load, used to land before
+       a later locator count and fail this check spuriously. What this section
+       asserts is the SYNCHRONOUS paint for the state it just set. */
+    return { text: document.querySelector('.vst').innerText,
+             prev: document.querySelectorAll('.vst-prev').length };
   }, failed);
 
-  const ok1 = await done(false);
-  const prevCount = await page.locator('.vst-prev').count();
-  const prevDiag = await page.evaluate(() => ({
-    n: document.querySelectorAll('.vst-prev').length,
-    roots: document.querySelectorAll('#vstamp').length,
-    step: JSON.stringify(VST && VST.step),
-    failed: JSON.stringify(VST && VST.previewFailed),
-  }));
-  ok('a playable copy still offers the preview', prevCount === 1,
-     `locator=${prevCount} dom=${prevDiag.n} roots=${prevDiag.roots} step=${prevDiag.step} previewFailed=${prevDiag.failed}`);
+  const r1 = await done(false);
+  const ok1 = r1.text;
+  ok('a playable copy still offers the preview', r1.prev === 1, `prev=${r1.prev}`);
   ok('and says playing it back is optional', has(ok1, 'not required'), ok1.slice(0, 500));
 
   /* THE CASE THAT MATTERS: the page cannot play it, and that must not read as a
      failed generation. */
-  const ok2 = await done(true);
-  ok('a copy the page cannot play drops the player', await page.locator('.vst-prev').count() === 0);
+  const r2 = await done(true);
+  const ok2 = r2.text;
+  ok('a copy the page cannot play drops the player', r2.prev === 0, `prev=${r2.prev}`);
   ok('and says the copy is made regardless', has(ok2, 'The copy is made'), ok2.slice(0, 500));
   ok('naming the player, not the file', has(ok2, 'says nothing about the file'), ok2.slice(0, 500));
   /* THE ACTIONS ARE UNTOUCHED — that is the whole point. */
@@ -13258,6 +13259,85 @@ section('Closeout: the checklist shows what the record can see, and still obeys 
   ok('and the attestation boxes still work without it',
      await page.locator('#cl_field_work').isEnabled());
   await page.unroute('**/portal-api/cases/*/closeout');
+}
+
+section('Delivery center: one row per client, a copied message, and never a send');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* A finalized package to stand in the row. */
+  await page.evaluate(async no => {
+    const post = (p2, b2) => fetch('/portal-api' + p2, { method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b2 || {}) }).then(r => r.json());
+    const ws = await (await fetch(`/portal-api/cases/${no}/workspace`, { credentials: 'same-origin' })).json();
+    let day = (ws.days || []).find(d => d.day_date === '2026-08-20');
+    let rep = (ws.reports || []).find(r => day && r.day_id === day.id);
+    if (rep && rep.status !== 'approved') await post(`/cases/${no}/reports/${rep.id}/status`, { status: 'approved' });
+    let st = await (await fetch(`/portal-api/cases/${no}/build`, { credentials: 'same-origin' })).json();
+    if (!st.build || st.build.status !== 'draft') { await post(`/cases/${no}/build`); }
+    st = await (await fetch(`/portal-api/cases/${no}/build`, { credentials: 'same-origin' })).json();
+    if (rep && !(st.reports || []).some(r2 => r2.id === rep.id)) {
+      await post(`/build/${st.build.id}/reports`, { report_id: rep.id });
+    }
+    await post(`/build/${st.build.id}/package`, { package_type: 'report_only' });
+    await post(`/build/${st.build.id}/finalize`, {});
+  }, 'API-20260812-4001');
+  await page.locator('.tabs button', { hasText: 'Reports & Packages' }).click();
+  await page.waitForTimeout(1000);
+
+  const card = page.locator('.card', { hasText: 'Client delivery' }).first();
+  ok('the delivery center leads the desk', await card.count() === 1);
+  const body = await card.innerText();
+  ok('a finalized case reads Ready to deliver', /Ready to deliver/i.test(body), body.slice(0, 300));
+  ok('the desk says out loud that it never sends',
+     /Nothing here sends anything/.test(body) && /never\s+auto-emailed/.test(body.replace(/\n/g, ' ')));
+  ok('and no control on it is a send', await card.locator('button', { hasText: /send|email/i }).count() === 0);
+
+  /* The message: composed, client-safe, copied. */
+  const msg = await page.evaluate(() => {
+    const row = (DC.data.cases || []).find(r => r.case_no === 'API-20260812-4001');
+    return row ? dcMessage(row) : null;
+  });
+  ok('the delivery message names the case and its contents',
+     msg && msg.includes('API-20260812-4001') && /final investigative report/.test(msg), msg);
+  /* \brate\b — "separate cover" is not a rate. */
+  ok('and is client-safe by construction',
+     msg && !/internal|classif|\brate\b|\$\d|do not use|needs review/i.test(msg), msg);
+  ok('with no link line when no link is offerable',
+     !/delivery link/.test(msg), msg);
+
+  /* A failed read says so. */
+  await page.route('**/portal-api/delivery-center', r => r.fulfill({ status: 500, body: '{}' }));
+  await page.locator('[data-act="dcRefresh"]').first().click();
+  await page.waitForTimeout(600);
+  ok('a failed read is named, not an empty desk',
+     /could not be read/.test(await page.locator('.card', { hasText: 'Client delivery' }).first().innerText()));
+  await page.unroute('**/portal-api/delivery-center');
+}
+
+section('Delivery center on a phone: rows stack and the copy is reachable');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(300);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(1400);
+  const burger = page.locator('.burger');
+  if (await burger.isVisible()) { await burger.click(); await page.waitForTimeout(300); }
+  await page.locator('.side button, .tabs button', { hasText: 'Reports & Packages' }).first().click();
+  await page.waitForTimeout(1000);
+  const over = await page.evaluate(() =>
+    document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  ok('390px: the desk has no sideways scroll', over <= 0, String(over));
+  const btn = page.locator('[data-act="dcCopy"]').first();
+  if (await btn.count()) {
+    const box = await btn.boundingBox();
+    ok('390px: Copy delivery message meets the floor', !!box && box.height >= 44, JSON.stringify(box));
+  }
+  await page.close();
 }
 
 section('Evidence integrity: the card states the record and the office can act on it');
