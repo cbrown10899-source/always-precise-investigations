@@ -37,112 +37,77 @@ item is finished.
 
 ---
 
-# 🌙 OVERNIGHT RUN — 2026-08-21, complete through Unit 22
+# 👋 START HERE — session handoff, 2026-08-21
 
-Master **`a7bfe6e`**. Stopped before Unit 23 as instructed (owner eyes needed).
-**Unit 24 File Queue remains REQUIRED and is not dropped.**
+**A fresh session begins at this block.** Everything below it is the durable
+queue; everything here is where the work actually stands. **Verify repository
+and deployment state before trusting any line of it** — never guess what
+completed.
 
-| Unit | Coded | Tested | Pushed | Merged | Deployed | Live verify |
-| --- | --- | --- | --- | --- | --- | --- |
-| **17A** Legal intake link routing | ✅ | ✅ | ✅ | #206 | `61a00f0` ✅ | OWNER |
-| **18** Invoice Payment Integrity | ✅ | ✅ | ✅ | #207 | `c184a50` ✅ + schema ✅ | OWNER |
-| **19** Package + Report Accuracy | ✅ | ✅ | ✅ | #208 | `1a047a8` ✅ | OWNER |
-| **20** Intake Alert Completeness | ✅ | ✅ | ✅ | #209 | `46a06ad` ✅ + schema ✅ | OWNER |
-| **21** Accessibility + Voice §9 | ✅ | ✅ | ✅ | #210 | `27243af` ✅ | OWNER |
-| **22** PORTAL-OPS gaps | ✅ | ✅ | ✅ | #211 | `a7bfe6e` ✅ | OWNER |
+| | |
+| --- | --- |
+| **Master** | **`5835cdf`** |
+| **Working tree** | clean; nothing unpushed; no branch in flight |
+| **Background work** | none running |
+| **Suites at that SHA** | worker **2627/0** · portal **2423/0** · deploy guard **68/0** · intake **205/0** (untouched) |
+| **Schema owed** | **none** — the last two dispatches are applied and verified |
+| **Next unit** | **25 — Final security / authorization / regression pass** |
 
-**Suites at the last merge:** worker **2610/0** · portal **2403/0** · deploy
-guard **68/0** · intake **205/0** (untouched).
+## Shipped and deployed (do not rebuild)
 
-**Save points:** `save/2026-08-21-0459-61a00f0`, `…-0815-27243af`,
-`…-0857-a7bfe6e` and the rest, one per merge.
+| Unit | PR | Master | Live verified |
+| --- | --- | --- | --- |
+| **17A** Legal intake link routing | #206 | `61a00f0` | open |
+| **18** Invoice Payment Integrity | #207 | `c184a50` | open |
+| **19** Package + Report Accuracy | #208 | `1a047a8` | open |
+| **20** Intake Alert Completeness | #209 | `46a06ad` | open |
+| **21** Accessibility + Voice §9 | #210 | `27243af` | open |
+| **22** PORTAL-OPS gaps | #211 | `a7bfe6e` | open |
+| **Ready-is-unsent retainer rule** | #212 | `59d00c8` | open |
+| **24** File Queue (REQUIRED unit) | #213 | `8988b29` | ✅ **owner visual check PASSED** |
+| **24** page-level rendering tests | #214 | `5835cdf` | tests only |
 
-**Schema dispatched twice and verified:** `invoice_payment_token` /
-`invoice_payment_void` (run 32453171314 ✅) and `alert_failure` (schema applied
-in run 32456667718 — see the note below).
+## What is left
 
-## ⚠️ Two things for the owner
+- **23 — Consolidated Live Verification Sweep.** Needs owner eyes. **Deferred
+  where real cases or data are required; do not manufacture production data.**
+- **25 — Final security / authorization / regression pass.** The next thing to
+  build. No destructive production migration for it.
+- **26 — Final master reconciliation + project closeout.** The project is not
+  complete while any non-deferred approved requirement is missing.
 
-**1. portal-setup run 32456667718 shows RED and the schema is fine.** That
-run's own health probe, taken after the migration and after the Worker deployed
-from `46a06ad`:
+## Still needing the owner — carry these forward
 
-```
-{"ok":true,"configured":true,"email":true,"missing_tables":[],"storage_pct":0}
-```
+1. **PORTAL-OPS Permissions** — arrived corrupted, never re-sent. Do not invent
+   it; it stays marked missing.
+2. **Saved Views / Case Templates / Document Templates** — Saved Views' own
+   heading is `[inferred]`; the two template phases are the firm's own content
+   (case-setup defaults, communication and report language). Mechanism is
+   buildable, the content is not ours to write.
+3. **`portal-setup` bootstrap-token race.** Run 32456667718 shows RED while the
+   schema applied correctly — that run's own health probe returned
+   `missing_tables: []`. The failure is the final admin-bootstrap step
+   (`401 not authorised`, a token propagation race after the redeploy).
+   **Untouched deliberately: credential handling is a stop condition.**
 
-`missing_tables: []` against a Worker whose `EXPECTED_TABLES` names
-`alert_failure` — the table is live. **What failed** was the LAST step, the
-admin bootstrap: `POST /portal-api/setup` → `401 not authorised`, a
-`BOOTSTRAP_TOKEN` propagation race after the redeploy. Harmless (the admin
-account already exists) and unrelated to the unit. **Not touched autonomously
-— credential handling is a stop condition.** Worth a deliberate fix, because a
-red workflow nobody reads is the same as no workflow.
+## Deferred and preserved — never silently deleted
 
-**2. Three PORTAL-OPS phases were deliberately NOT built.** Saved Views (its
-own heading is `[inferred]`, the Billing item corrupted), Case Templates and
-Document Templates (the mechanism is buildable; the templates are the firm's
-own case-setup defaults and language — owner content). Permissions stays
-untouched and marked missing.
+SMS delivery and provider · the queued/sent/failed/retried alert status log ·
+Intake Archive / Sample Cleanup Part 2 · invoice Write-Off · PORTAL-OPS Case
+Health flag · physical evidence destruction · automatic retention clocks ·
+automatic purge · Dropbox byte deletion · the legacy R2 export decision ·
+two-person legal-hold approval.
 
-## ✅ CLOSED — Unit 18's open question
+## Owner decisions now locked (do not re-litigate)
 
-**Owner, 2026-08-21:** *"Ready/Reviewed but not yet sent still counts as UNSENT
-and must NOT reduce the client-facing retainer."* The excluded set is
-`('void', 'draft', 'ready')` and the tests assert that ready leaves the
-retainer untouched while SENDING draws it down. Nothing else about the
-accounting moved.
-
-## Regressions found and fixed inside the run
-
-- The Unit 21 heading sat ahead of the sign-in view's `h1` and broke three
-  tests; `hidden` did not help, because a hidden element is still the first in
-  document order. It moved into `shell()`.
-- Three of the audit trail's seven arms had wrong column names and would have
-  returned empty silently. Caught by checking every arm against `schema.sql`;
-  a test now asserts no source is silently missing.
-- `hiddenCases()` returns a **Set** — `.includes` was silently wrong.
-- The quick-tools row has a creep guard asserting six doors; I added two and
-  the guard caught it. **The guard was right** and the additions were reverted.
-- Unit 22 was first committed onto the Unit 21 branch by mistake; split cleanly
-  onto `portal-ops-gaps` and cherry-picked after Unit 21 merged.
-
-## Next step
-
-**Unit 23 — Consolidated Live Verification Sweep**, which needs the owner. Then
-**Unit 24 — File Queue + portal aesthetic redesign (REQUIRED)**, 25 and 26.
+- **Draft AND ready invoices do not reduce the client-facing retainer.**
+  Excluded set `('void','draft','ready')`, written once.
+- **A reassigned investigator never sees a prior investigator's hours or
+  money.** Admin-only, enforced in the Worker, no permission toggle invented.
+- Cash App `$TreverB` / Venmo `@Trever-Brown-9` kept for now.
+- Homepage section order unchanged.
 
 ---
-
-## 📌 Unit 24 — what shipped (#213, `8988b29`)
-
-**The File Queue — one operational view over files that already exist.** The
-required unit, built to the approved mockup direction as an AGGREGATION: no new
-table, no second copy of a file, no duplicate status vocabulary.
-
-**The states are the portal's own.** `case_evidence.classification` already
-carries five CHECKed values meaning what the mockup's columns mean —
-needs_review → Awaiting review, needs_redaction → Awaiting processing,
-internal_only/do_not_use → Held back. Only two are derived, both from records
-that already exist: **Completed** from a finalized package carrying the file,
-**Awaiting verification** from the absence of an integrity row.
-
-**It reads no bytes and makes no Dropbox call** (Unit 14's rule), and it writes
-nothing: classifying, verifying, downloading and removing all stay on Case
-media, one writer each. The role boundary is in the SQL — the field never sees
-the client name or where the bytes live — hidden cases take their files with
-them, and a removed file leaves the queue while staying on the record.
-
-**Every colour is an existing Unit 13 token pair**, so the anti-drift budget
-still passes and the phone palette matches the desktop's.
-
-**Suites:** worker **2627/0** · portal **2422/0** · deploy guard **68/0**. No
-schema, no portal-setup dispatch.
-
-**Owner visual check PASSED 2026-08-21.** The page-level rendering tests the
-first PR openly listed as missing followed immediately: 19 checks over the
-drawn states, the summary cards as working filters, the detail panel, the
-failed-read state, and the 390px floors.
 
 # 🔒 DURABLE MASTER UNIT QUEUE — owner, 2026-08-21
 
