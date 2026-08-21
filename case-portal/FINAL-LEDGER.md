@@ -249,6 +249,46 @@ success, **including the admin-bootstrap step that failed at `46a06ad9`**, so
 the known token race did not recur. `case_day_end` is on the live database and
 no schema is owed.
 
+## PART 6B — PRODUCTION TRUTH CORRECTIONS (Units 28–33, 2026-08-21)
+
+The owner opened the portal and found the Legal Rate Sheet missing. That one
+observation invalidated the method this ledger had used until then — a feature
+was being called complete on the strength of code, routes, tables and old
+reconciliation notes. The Production Truth Audit re-checked every claimed
+feature from an Admin's point of view across five layers: **code exists · API
+works · UI visible · normal navigation reaches it · the action works.**
+
+**Every original discrepancy, reconciled:**
+
+| # | Finding | Now |
+| --- | --- | --- |
+| 1 | Legal rate sheet unreachable except from an existing Legal lead | ✅ **FIXED — Unit 28** (#221, `9beb0e8`). Legal / Law Firm card on Rate Sheets; explicit send context; no third pricing source |
+| 2 | "Send legal intake" button missing | ✅ **FIXED — Unit 28** |
+| 3 | `preIntakeHtml` label knew only two kinds | ✅ **FIXED — Unit 28**, and the handler's kind ternary with it — it collapsed everything not-insurance into private |
+| 4 | `/billing-settings` had no UI | ✅ **FIXED — Unit 29** (#222, `3df2037`). Settings → Invoice defaults |
+| 5 | `POST /case-types` had no UI | ✅ **FIXED — Unit 30** (#223, `730141e`). Settings → Case types |
+| 6 | `/pricing` unreferenced | ✅ **INTENTIONALLY INTERNAL — Unit 31.** Documented at the route; its absence from the UI IS the feature |
+| 7 | `/external-storage` — I classified it "MISSING (dead route)" | ✅ **INTENTIONALLY INTERNAL — Unit 31.** **My classification was wrong**: it is a tested authorization boundary. Nothing removed |
+| 8 | `/profiles/match` unreferenced | ✅ **INTENTIONALLY INTERNAL — Unit 31.** Part of the admin-only profile boundary walk |
+| 9 | No public Legal entry on the website | ⛔ **OWNER DECISION REQUIRED — not implemented**, by instruction |
+
+**The lesson this pass paid for, in both directions.** "A route exists so the
+feature is done" put the Legal sheet out of reach for months. "No UI reference
+so the route is dead" nearly deleted three passing boundary checks. Neither
+absence nor presence of a UI link is evidence on its own; callers, tests and
+docs are.
+
+**Unit 32 — reachability re-audit against the corrected code.** Every
+rate-sheet and intake door reachable including Legal; all six Settings panels
+reachable (payment methods, notifications, Dropbox, storage health, invoice
+defaults, case types); every admin sidebar item resolves to a real view; and
+the only routes without a page caller are the three documented as internal on
+purpose. **No new BLOCKER or HIGH gap found.**
+
+**Suites after the correction queue:** worker **2749/0** (2649 at closeout),
+portal **2452/0** (2423), deploy guard **68/0**, intake **236/0**,
+visitor-alerts **47/0**.
+
 ## PART 7 — master and deployment state
 
 | | |

@@ -140,6 +140,32 @@ PORTAL-OPS Permissions specification that might call for one has never
 arrived. Enforced when the permissions/security work is reached, or sooner if
 an audit proves an active leak.
 
+## PRODUCTION TRUTH AUDIT AND CORRECTIONS — 2026-08-21, Units 28–33
+
+**The owner opened the portal and the Legal Rate Sheet was not there.** That
+one observation invalidated the method every reconciliation in this file had
+used: a feature was being called complete on the strength of code, routes,
+tables and earlier notes. A route is not a door.
+
+The audit re-checked every claimed feature across five layers — code exists,
+API works, UI visible, normal navigation reaches it, the action works — and
+found nine discrepancies. All are now closed or classified; the full table is
+in `FINAL-LEDGER.md` PART 6B.
+
+**Shipped:** Unit 28 Legal pre-case access (#221) · Unit 29 invoice defaults
+(#222) · Unit 30 case types (#223) · Unit 31 internal-route classification
+(#223).
+
+**Nothing was removed in Unit 31, and that corrects the audit that ordered it.**
+`/pricing`, `/external-storage` and `/profiles/match` all turned out to be
+TESTED AUTHORIZATION BOUNDARIES. I had classified `/external-storage` as a dead
+route on the strength of "no page reference" — the same error as "a route
+exists so the feature is done", pointing the other way. Neither the presence
+nor the absence of a UI link is evidence on its own.
+
+**Still open by the owner's instruction:** a public Legal / Law Firm website
+page and CTA. Recorded, not built.
+
 ## FINAL OWNER DECISIONS — LOCKED 2026-08-21, at project closeout
 
 **This report's own successor was Unit 26, and these five answers close the
