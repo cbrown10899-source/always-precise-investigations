@@ -151,7 +151,7 @@ subject. `LIVE VERIFIED` means a person looked at it on the live system.
 | 24 | **File Queue** (REQUIRED) + aesthetic redesign | #213 / #214 | `8988b29` / `5835cdf` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ **owner visual check PASSED, 2026-08-21** |
 | 25 | Security / authorization / regression pass | #215 | `73b7f5b` | ✅ | ✅ | ✅ | ✅ | ✅ | ⏸️ deferred |
 | 26 | Final reconciliation + closeout | #217 | `5e1d063` | ✅ | ✅ | ✅ | ✅ | ✅ | n/a — documentation |
-| 27 | **Ended by Admin / Ended by [name]** (owner decision 4) | #219 | see below | ✅ | ✅ | ✅ | ✅ | ✅ | ⏸️ **deferred — requires a real case**, and a `portal-setup` dispatch |
+| 27 | **Ended by Admin / Ended by [name]** (owner decision 4) | #219 | `74629fe` | ✅ | ✅ | ✅ | ✅ | ✅ | ⏸️ **deferred — requires a real case with two people on it** |
 
 **Five units carry an owner's own LIVE VERIFIED**: Timestamp Photo, Palette,
 Storage Health, Case Closeout, and the File Queue's visual check.
@@ -244,15 +244,17 @@ the case, who ended it, **their role at that moment**, and when.
 with no record, a demotion after the fact, and the before-dispatch state where
 the table does not exist and the day must still end.
 
-**`portal-setup.yml` dispatch owed after merge.** Until it runs, days end
-exactly as before and read as *not recorded* — asserted by its own section.
+**The `portal-setup.yml` dispatch RAN** — run **32508101361** at `74629fe`, ✅
+success, **including the admin-bootstrap step that failed at `46a06ad9`**, so
+the known token race did not recur. `case_day_end` is on the live database and
+no schema is owed.
 
 ## PART 7 — master and deployment state
 
 | | |
 | --- | --- |
-| **Master** | `a715782` — working tree clean, nothing unpushed |
-| **Schema owed** | **NONE.** The last schema-bearing unit was 20 (`alert_failure`); Units 21–25 added no table |
+| **Master** | `74629fe` — working tree clean, nothing unpushed |
+| **Schema owed** | **NONE.** Unit 27 added `case_day_end` and its dispatch has run (32508101361, ✅ at `74629fe`) |
 | **`portal-setup` run 32456667718** | Verified step by step, not relayed: step 8 **"Apply the schema" SUCCESS**, step 11 Worker deploy success, step 12 route answering, step 13 **"Create the first admin" FAILURE** (the known bootstrap-token race), step 14 **"Destroy the bootstrap token" SUCCESS**. The red run is a bootstrap-only failure on a portal that already has its admin, with no credential left live. **Untouched deliberately — credential handling is a stop condition** |
 | **`Deploy case-portal Worker`** | ✅ success at `73b7f5b` |
 | **`Deploy site to Cloudflare Pages`** | ✅ success at `73b7f5b` and `a715782` |
@@ -267,8 +269,8 @@ domain.
 
 | Suite | Result |
 | --- | --- |
-| `case-portal/test-worker.mjs` | **2649 / 0** |
-| `portal/test-portal.mjs` | **2423 / 0** |
+| `case-portal/test-worker.mjs` | **2677 / 0** |
+| `portal/test-portal.mjs` | **2424 / 0** |
 | `.github/test-deploy.mjs` | **68 / 0** |
 | `intake/test-intake.mjs` | **236 / 0** |
 | `visitor-alerts/test-worker.mjs` | **47 / 0** |
