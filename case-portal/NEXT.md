@@ -46,12 +46,12 @@ completed.
 
 | | |
 | --- | --- |
-| **Master** | **`a715782`** (Unit 26's own merge lands above it) |
+| **Master** | **`74629fe`** (Unit 27; the ledger commit lands above it) |
 | **Working tree** | clean; nothing unpushed; no branch in flight |
 | **Background work** | none running |
-| **Suites at that SHA** | worker **2649/0** · portal **2423/0** · deploy guard **68/0** · intake **236/0** · visitor-alerts **47/0** — all five re-run at closeout |
-| **Schema owed** | ⚠️ **ONE — `case_day_end` (Unit 27).** A manual `portal-setup.yml` dispatch is owed after merge. Until it runs, days end exactly as before and read as *Ending actor not recorded* |
-| **Deployed** | `Deploy case-portal Worker` ✅ at `73b7f5b` · `Deploy site to Cloudflare Pages` ✅ at `73b7f5b` and `a715782` · `Daily site health` ✅ run #22 |
+| **Suites at that SHA** | worker **2677/0** · portal **2424/0** · deploy guard **68/0** · intake **236/0** · visitor-alerts **47/0** — all five re-run for Unit 27 |
+| **Schema owed** | **NONE.** `case_day_end` was applied by `portal-setup` run **32508101361** at `74629fe` — ✅ success, **including the admin-bootstrap step that failed at `46a06ad9`**, so the token race did not recur |
+| **Deployed** | at `74629fe`: `Deploy case-portal Worker` ✅ · `Deploy site to Cloudflare Pages` ✅ · `portal-setup` ✅ (run 32508101361). `Daily site health` ✅ run #22 |
 | **Closeout** | ✅ **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** — see `case-portal/FINAL-LEDGER.md` |
 | **Owner decisions** | ✅ five LOCKED at closeout, 2026-08-21 — see **FINAL OWNER DECISIONS** below. Four are deferrals or standing refusals; **decision 4 (Ended by Admin) is BUILT — Unit 27** |
 | **Next unit** | **NONE — the build order is complete.** 26 closed the project and 27 built the owner's last approved requirement; 23's live sweep is deferred, awaiting real case data. Do not start new features |

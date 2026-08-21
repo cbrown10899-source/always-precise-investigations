@@ -175,8 +175,10 @@ question any more. The full block, with what each means operationally, is in
    recorded"* and never as self-ended, so every day ended before it shipped
    stays readable. Authorization was not touched — `openDayForAction` already
    required `caseFor` and the admin role, and a test pins that an investigator
-   still cannot end another's day. **Owes a manual `portal-setup.yml`
-   dispatch.**
+   still cannot end another's day. **The `portal-setup.yml` dispatch has RUN** —
+   run 32508101361 at `74629fe`, ✅ success, including the admin-bootstrap step
+   that failed at `46a06ad9`. `case_day_end` is on the live database and no
+   schema is owed.
 5. *"Keep current Cash App $TreverB and Venmo @Trever-Brown-9 for now.
    Business-account migration remains a future owner decision."* → **DEFERRED
    BY OWNER.** Supersedes the earlier "answered for now" wording; the handles
