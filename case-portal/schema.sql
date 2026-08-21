@@ -1670,3 +1670,35 @@ CREATE TABLE IF NOT EXISTS retention_event (
   at          TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_retev_case ON retention_event(case_no, id DESC);
+
+/* ---------------------------------------------- invoice payments (Unit 18)
+
+   Two companion tables, the retainer-payment pattern exactly: `case_evidence`
+   could not gain a column and neither can `invoice_payments`, because
+   schema.sql is re-applied on every portal-setup run and ALTER TABLE is not
+   idempotent. The same reasoning that produced `retainer_payment_token` and
+   `retainer_payment_void`, one subsystem later. */
+
+/* The idempotency claim. `token` is the PRIMARY KEY and deliberately has no
+   ON CONFLICT clause at its insert site: a repeat token must RAISE so the
+   transaction rolls back and the payment is not written twice. `payment_id` is
+   filled by the same batch that writes the payment, so a claim never exists
+   without the money it guards — the state the retainer version was rebuilt to
+   remove. */
+CREATE TABLE IF NOT EXISTS invoice_payment_token (
+  token      TEXT PRIMARY KEY,
+  invoice_id INTEGER NOT NULL,
+  payment_id INTEGER,
+  claimed_at TEXT    NOT NULL
+);
+
+/* A void is a MARKER, never a delete: the payment row stays, the audit trail
+   stays, and every sum simply stops counting it. Financial history is not
+   rewritten in this portal — the same promise `activity_removed`, the invoice
+   void and evidence `deleted_at` already make. */
+CREATE TABLE IF NOT EXISTS invoice_payment_void (
+  payment_id INTEGER PRIMARY KEY,
+  reason     TEXT,
+  voided_by  INTEGER REFERENCES users(id),
+  voided_at  TEXT    NOT NULL
+);
