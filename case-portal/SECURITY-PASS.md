@@ -214,7 +214,7 @@ Run in full at the end of the unit, on the same tree that was pushed:
 | Suite | Before | After |
 | --- | --- | --- |
 | `case-portal/test-worker.mjs` | 2627 / 0 | **2649 / 0** |
-| `portal/test-portal.mjs` | 2423 / 0 | **PORTAL_AFTER** |
+| `portal/test-portal.mjs` | 2423 / 0 | **2423 / 0** |
 | `.github/test-deploy.mjs` | 68 / 0 | **68 / 0** |
 | `intake/test-intake.mjs` | 205 / 0 | untouched by this unit |
 

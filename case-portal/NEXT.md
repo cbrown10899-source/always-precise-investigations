@@ -71,8 +71,15 @@ completed.
 
 - **23 — Consolidated Live Verification Sweep.** Needs owner eyes. **Deferred
   where real cases or data are required; do not manufacture production data.**
-- **25 — Final security / authorization / regression pass.** The next thing to
-  build. No destructive production migration for it.
+- **25 — Final security / authorization / regression pass.** ✅ **DONE.** The
+  route table was walked mechanically and three defects were verified and
+  fixed: a prior investigator's worked hours and expense claims reaching the
+  current one through `caseWorkspace` and `caseTimeline` (the owner's locked
+  decision of 2026-08-21, which CLAUDE.md said would be enforced when this work
+  was reached), and evidence being served back inline as whatever content type
+  the uploader declared. `case-portal/SECURITY-PASS.md` is the record — what
+  was walked, what was found sound and on what evidence, and eight derived
+  decisions. No schema, no migration, no `portal-setup` dispatch.
 - **26 — Final master reconciliation + project closeout.** The project is not
   complete while any non-deferred approved requirement is missing.
 
@@ -129,7 +136,7 @@ CREATE A BRANCH. DO NOT DEPLOY. DO NOT START THE NEXT UNIT."*
 | 22 | PORTAL-OPS remaining gaps | ✅ **DONE — DEPLOYED** at `a7bfe6e` (#211). Saved Views / Case Templates / Document Templates **NOT built — owner input**. LIVE VERIFY **OPEN** |
 | 23 | Consolidated Live Verification Sweep | not started |
 | 24 | **Required** File Queue + portal aesthetic redesign | ✅ **DONE — DEPLOYED** at `8988b29` (#213), **visual check passed by the owner 2026-08-21**; page-level rendering tests followed |
-| 25 | Final security / authorization / regression pass | not started |
+| 25 | Final security / authorization / regression pass | ✅ **DONE** — audit, three verified fixes, record in `case-portal/SECURITY-PASS.md`. No schema, no portal-setup dispatch |
 | 26 | Final master reconciliation + project closeout | not started |
 
 ## CONFIRMED COMPLETE — DO NOT REOPEN
