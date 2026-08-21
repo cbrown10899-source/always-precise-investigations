@@ -39,45 +39,69 @@ item is finished.
 
 # ⏱️ OVERNIGHT RESUME POINT — 2026-08-21
 
-**Verify repository and deployment state before trusting any line of this;
-never guess what completed during an interruption.**
+**Verify repository and deployment state before trusting any line of this.**
 
 | Unit | State |
 | --- | --- |
-| **17A** Legal intake link routing | ✅ SHIPPED — #206, master `61a00f0` |
-| **18** Invoice Payment Integrity | ✅ SHIPPED — #207, master `c184a50`; `portal-setup` 32453171314 ✅ |
-| **19** Package + Report Accuracy | ✅ SHIPPED — #208, master `1a047a8`; no schema |
-| **20** Intake Alert Completeness | **IN FLIGHT** — branch `intake-alert-completeness` |
-| 21 Accessibility + Voice §9 | not started |
+| **17A** Legal intake link routing | ✅ SHIPPED — #206, `61a00f0` |
+| **18** Invoice Payment Integrity | ✅ SHIPPED — #207, `c184a50`; `portal-setup` 32453171314 ✅ |
+| **19** Package + Report Accuracy | ✅ SHIPPED — #208, `1a047a8`; no schema |
+| **20** Intake Alert Completeness | ✅ SHIPPED — #209, `46a06ad`; **schema live, see below** |
+| **21** Accessibility + Voice §9 | **IN FLIGHT** — branch `accessibility-pass` |
 | 22 PORTAL-OPS gaps | not started |
 
-## Unit 20 in flight
+## ⚠️ FOR THE OWNER — portal-setup run 32456667718 shows RED, and the schema is fine
 
-Base master `1a047a8`. CODED ✅ · worker **2598/0** ✅ · portal suite + deploy
-guard **running** · PUSHED ⬜ MERGED ⬜ DEPLOYED ⬜.
+The Unit 20 dispatch (`46a06ad`) **applied the schema correctly** and then failed
+on its LAST step. The evidence is in that run's own health probe, taken after
+the migration and after the Worker deployed from `46a06ad`:
 
-**Schema changed — `alert_failure`. A manual `portal-setup.yml` dispatch is
-OWED after merge.**
+```
+{"ok":true,"configured":true,"email":true,"missing_tables":[],"storage_pct":0}
+```
 
-**Next action:** read the portal + deploy-guard results; if green, push → PR →
-squash merge → pull master → **dispatch `portal-setup.yml`** → verify runs +
-save tag → ledger → **Unit 21**.
+`missing_tables: []` against a Worker whose `EXPECTED_TABLES` names
+`alert_failure`, so the table is on the live database.
 
-**What Unit 20 changed:** `alertCategory()` reads `submissions.kind` plus the
-existing legal marker and the email alert now says **Private / Insurance /
-Legal** in both subject and body — resolved at the one chokepoint so a seventh
-alert added later inherits it. **SMS is untouched**: its branch reads neither
-the case number nor the category, which is stronger than filtering. The
-retainer payment route alerts only on `recorded`, so a deduplicated retry no
-longer sends a second email about one payment. `alert_failure` records a send
-that reached nobody (`send_failed` / `error`) best-effort, and Settings draws a
-card **only in the failing state**. No queue, no retry, no redelivery — the
-status log stays the owner's deferral and this is deliberately not it.
+**What failed:** the admin-bootstrap step, `POST /portal-api/setup` →
+`401 not authorised`. `BOOTSTRAP_TOKEN` is uploaded and the Worker is then
+redeployed, and the freshly deployed version did not see the secret in time.
+It is a **race in the workflow's own bootstrap step**, unrelated to this unit,
+and it is harmless here because the admin account already exists — nothing
+needed creating.
 
-**Deferred and preserved:** SMS provider, alert status log, Intake Archive
-Part 2, invoice Write-Off, Case Health flag, physical destruction, retention
-clocks, Dropbox byte deletion, legacy R2 export, two-person hold approval.
-**Unit 24 File Queue remains REQUIRED.**
+**Not touched autonomously**, because it is credential handling and that is a
+stop condition. Worth a deliberate fix (a red workflow nobody reads is the same
+as no workflow — this file's own lesson): either skip the setup call when an
+account already exists, or re-read the token after the deploy settles.
+
+## Unit 21 in flight
+
+Base master `46a06ad`. CODED ✅ · section smoke **20/20** ✅ · full suites
+running · PUSHED ⬜ MERGED ⬜ DEPLOYED ⬜. **No schema — no dispatch owed.**
+
+**Measured first, then fixed.** A probe of the signed-in page found: one
+landmark (`main`) and no `nav`/`header`, **no `h1` at all**, **no live region**,
+no skip link, and one unlabelled input. All five are closed: `header`/`nav`
+landmarks, a visually-hidden `h1`, a real skip link that comes on screen when
+focused, `aria-label` on the case search, and a polite `role="status"` region
+fed by **one chokepoint** in `paint()` — reading what was rendered catches
+every message global (INV_MSG, RET_MSG, RTN_MSG and the rest) and any added
+later, and only announces when the text changes.
+
+**Voice §9's last unbuilt line** is built to the spec and no further: a short
+two-note tone at the moment an entry is filed. §9 calls the tone *optional* and
+forbids lengthy spoken responses, so there is **no speech synthesis** — a test
+asserts that.
+
+**Next action:** read the three suite results; if green, push → PR → merge →
+pull → verify deploys + save tag → ledger → **Unit 22**, then STOP before
+Unit 23.
+
+**Deferred and preserved:** SMS, alert status log, Intake Archive Part 2,
+invoice Write-Off, Case Health flag, physical destruction, retention clocks,
+Dropbox byte deletion, legacy R2 export, two-person hold approval. **Unit 24
+File Queue remains REQUIRED.**
 
 **Open, narrow (Unit 18):** the draft rule excludes `draft`, matching
 `outstanding`. Whether `ready` also counts as unsent is the owner's call.
