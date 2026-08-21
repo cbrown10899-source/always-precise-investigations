@@ -4931,11 +4931,43 @@ async function caseWorkspace(env, user, caseNo) {
       ORDER BY a.at_date DESC, a.at_time DESC, a.id DESC
       LIMIT 500`).bind(caseNo).all();
 
+  /* A PRIOR INVESTIGATOR'S HOURS ARE ADMIN-ONLY (owner, 2026-08-21, locked).
+     A reassigned investigator must not see the previous one's "worked hours,
+     compensation details, billing detail, or other investigator-specific
+     financial information" through "case-scoped reads, API responses, UI
+     payloads, exports, reports, or hidden fields" — and this is the
+     case-scoped read. `hours`, `miles` and the two mileage readings are the
+     figures a day is PAID from, so reassigning a case handed the new
+     investigator the old one's timesheet.
+
+     Scoped IN THE SQL, not by dropping fields from the payload afterwards:
+     the row never leaves the database, so there is nothing to redact and
+     nothing sitting in a network tab. `/calendar` already scopes its own day
+     query exactly this way, and `saveDaySummary`, `generateReport` and
+     `saveReport` already answer "that day belongs to another investigator" on
+     the WRITE side — this read was the way round all four.
+
+     The case's TOTAL hours against its authorization are a different thing and
+     deliberately stay: `authorizationFor` is the cap the field is working to,
+     not what anybody was paid. */
   const { results: days } = await env.DB.prepare(
     `SELECT d.id, d.day_date, d.start_time, d.end_time, d.start_mileage, d.end_mileage,
             d.hours, d.miles, d.summary, u.display_name AS investigator, d.investigator_id
        FROM case_days d LEFT JOIN users u ON u.id = d.investigator_id
-      WHERE d.case_no = ? ORDER BY d.day_date DESC, d.id DESC LIMIT 100`).bind(caseNo).all();
+      WHERE d.case_no = ? ${admin ? '' : 'AND d.investigator_id = ?'}
+      ORDER BY d.day_date DESC, d.id DESC LIMIT 100`)
+    .bind(...(admin ? [caseNo] : [caseNo, user.id])).all();
+
+  /* THE CASE'S DAY COUNT, which is not a timesheet. With the list scoped, the
+     field view's "Day 4" would read "Day 1" for an investigator who took the
+     case over — a staff screen asserting something untrue about the case,
+     which is the defect this project keeps closing. A count carries no hours,
+     no mileage, no name and no money, so it is not what the rule protects.
+     Read only when the list WAS scoped: an admin already holds every row, and
+     this is the most-opened screen in the portal. */
+  const daysTotal = admin ? (days || []).length
+    : Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM case_days WHERE case_no = ?')
+        .bind(caseNo).first() || {}).n || 0);
 
   // The day this caller currently has running, if any — what turns the button
   // into END INVESTIGATION DAY.
@@ -4958,12 +4990,19 @@ async function caseWorkspace(env, user, caseNo) {
        FROM case_reports r LEFT JOIN users u ON u.id = r.investigator_id
       WHERE r.case_no = ? ORDER BY r.report_date DESC, r.id DESC LIMIT 100`).bind(caseNo).all();
 
+  /* THE SAME LOCKED RULE, and this is the half that names money outright:
+     `amount`, `reimbursable` and `billable` are one investigator's claim
+     against the firm. `/my/expenses` is already `WHERE investigator_id = ?`
+     and every expense WRITE route is admin-only — this read was the way round
+     both, on the most-opened screen in the portal. */
   const { results: expenses } = await env.DB.prepare(
     `SELECT e.id, e.expense_date, e.category, e.amount, e.miles, e.description,
             e.reimbursable, e.billable, e.internal, e.reviewed_at, e.edited_at,
             e.investigator_id, u.display_name AS investigator
        FROM case_expenses e LEFT JOIN users u ON u.id = e.investigator_id
-      WHERE e.case_no = ? ORDER BY e.expense_date DESC, e.id DESC LIMIT 200`).bind(caseNo).all();
+      WHERE e.case_no = ? ${admin ? '' : 'AND e.investigator_id = ?'}
+      ORDER BY e.expense_date DESC, e.id DESC LIMIT 200`)
+    .bind(...(admin ? [caseNo] : [caseNo, user.id])).all();
 
   // Visibility is enforced HERE: an admin-only note never leaves the Worker
   // for anyone else. The page renders what arrives; it decides nothing.
@@ -5137,6 +5176,7 @@ async function caseWorkspace(env, user, caseNo) {
     case_types: admin ? await listCaseTypes(env) : [],
     activity: activity || [],
     days: days || [],
+    days_total: daysTotal,
     open_day: openDay || null,
     reports: reports || [],
     expenses: expenses || [],
@@ -8290,15 +8330,56 @@ async function saveBuildPdf(request, env, user, buildId) {
                 ...(integ.ok ? {} : { integrity_reason: integ.reason }) });
 }
 
+/* WHAT MAY BE RENDERED IN A BROWSER IS AN ALLOW-LIST, and it is a security
+   boundary rather than a display preference.
+
+   `case_evidence.content_type` is whatever the uploading browser put in the
+   multipart part — it is CALLER-CONTROLLED, and nothing on the way in checks
+   it (only `video/*` is refused, and for a storage reason). This route answers
+   on the portal's OWN origin: the Worker is mounted at
+   `alwayspreciseinvestigations.net/portal-api/*` and the page is at
+   `/portal/`, deliberately, so a session cookie is sent. Served `inline` as
+   `text/html` or `image/svg+xml`, an uploaded file is therefore a script
+   running inside the portal with the viewing admin's session — an
+   investigator account escalating to admin actions by uploading a file and
+   waiting for the office to open it. The cookie is HttpOnly, which stops it
+   being read and stops nothing else.
+
+   So a type that is not on this list is served as opaque bytes with
+   `attachment`, which renders nowhere. An ALLOW-list for the `FIELD_KEEP`
+   reason: a content type nobody has considered yet is refused inline by
+   default, where a block-list would ship the next one. `image/svg+xml` is
+   named out because it is the one image type that is a document with script
+   in it — an `<img>` tag will not run it, following the link will.
+
+   The `<img src>` galleries and the package document are unaffected: a browser
+   ignores `Content-Disposition` on a subresource, and every type they draw is
+   on the list. `X-Content-Type-Options: nosniff` is set on every response the
+   Worker makes, so a declared type is also the served one.
+
+   NO Content-Security-Policy is set here on purpose. `default-src 'none'` or
+   `sandbox` would be a second belt, but both can stop a browser's built-in PDF
+   viewer, and a filed report that will not open is a real workflow broken for
+   a defence the allow-list has already made. */
+function inlineSafeType(contentType) {
+  const t = String(contentType || '').toLowerCase().split(';')[0].trim();
+  if (!t) return null;
+  if (t === 'image/svg+xml' || t === 'image/svg') return null;
+  if (t.startsWith('image/') || t.startsWith('video/') || t.startsWith('audio/')) return t;
+  if (t === 'application/pdf' || t === 'text/plain') return t;
+  return null;
+}
+
 async function serveEvidence(env, user, caseNo, eid) {
   if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
   const row = await env.DB.prepare(
     'SELECT r2_key, filename, content_type, deleted_at FROM case_evidence WHERE id = ? AND case_no = ?')
     .bind(eid, caseNo).first();
   if (!row || row.deleted_at) return json({ error: 'not found' }, 404);
+  const safe = inlineSafeType(row.content_type);
   const headers = {
-    'Content-Type': row.content_type || 'application/octet-stream',
-    'Content-Disposition': `inline; filename="${row.filename.replace(/"/g, '')}"`,
+    'Content-Type': safe || 'application/octet-stream',
+    'Content-Disposition': `${safe ? 'inline' : 'attachment'}; filename="${row.filename.replace(/"/g, '')}"`,
     'Cache-Control': 'private, no-store',
   };
 
@@ -10774,13 +10855,21 @@ async function caseTimeline(env, user, caseNo, url) {
   }
 
   /* ------------------------------------------------------- 2. investigation */
+  /* THE LOCKED HOURS RULE REACHES HERE TOO. The day_end event prints
+     "8 hr · 62 mi" beside the investigator's name, which is the same timesheet
+     the workspace read was handing over — a chronology is an export of the
+     case, and the owner's line names exports. Scoped in the SQL like the
+     workspace and the calendar; an admin's timeline is unchanged. */
   const days = cap((await env.DB.prepare(
     `SELECT d.id, d.day_date, d.start_time, d.end_time, d.hours, d.miles, d.created_at,
             d.ended_at, u.display_name AS who
        FROM case_days d LEFT JOIN users u ON u.id = d.investigator_id
       WHERE d.case_no = ? AND d.day_date >= ? AND d.day_date <= ?
+        ${admin ? '' : 'AND d.investigator_id = ?'}
       ORDER BY d.day_date DESC, d.id DESC LIMIT ?`)
-    .bind(caseNo, LO_D, HI_D, TL.DAYS).all()).results, TL.DAYS, 'investigation days');
+    .bind(...(admin ? [caseNo, LO_D, HI_D, TL.DAYS]
+                    : [caseNo, LO_D, HI_D, user.id, TL.DAYS])).all()).results,
+    TL.DAYS, 'investigation days');
   for (const d of days) {
     push(tlEvent('day_start', tlLocal(d.day_date, d.start_time), {
       title: 'Investigation day started', who: d.who || '', link: { tab: 'field' },

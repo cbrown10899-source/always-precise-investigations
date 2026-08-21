@@ -13302,6 +13302,9 @@ function svLauncher(){
 function svHomeScreen(){
   const open = WS && WS.open_day;
   const days = (WS && WS.days) || [];
+  /* The Worker's count of every day on the case. Falls back to the rows we
+     hold, so an older response still draws a number rather than "Day NaN". */
+  const dayNo = (WS && typeof WS.days_total === "number") ? WS.days_total : days.length;
   const acts = (WS && WS.activity) || [];
   const a = (WS && WS.authorization) || {};
   const last = acts[0];
@@ -13313,7 +13316,11 @@ function svHomeScreen(){
     const { date: today, time: now } = stampNow();
     return `<div class="sv-body">
       ${note}
-      <div class="sv-day">Day ${days.length + 1}</div>
+      ${/* The CASE's day number, not this investigator's. `days` is scoped to
+            the caller's own days now (a prior investigator's hours are
+            admin-only), so counting it here would tell someone taking a case
+            over that they are on Day 1 of a case already three days in. */""}
+      <div class="sv-day">Day ${dayNo + 1}</div>
       <div class="sv-timer">--:--:--</div>
       <div class="sv-since">No investigation day running.</div>
       <div class="sv-card">
@@ -13358,7 +13365,7 @@ function svHomeScreen(){
         <span class="sv-timer${svPaused() ? " paused" : ""}" id="svTimer">${
           ms == null ? "--:--:--" : svClock(ms)}</span>
       </div>
-      <div class="sv-st-sub">Day ${days.length} &middot; ${svPaused()
+      <div class="sv-st-sub">Day ${dayNo} &middot; ${svPaused()
         ? "not billed while stopped"
         : `since ${esc(t12(open.start_time))}`} &middot; ${esc(fmtDay(open.day_date))}${
         open.start_mileage != null ? ` &middot; ${esc(open.start_mileage)} mi` : ""}</div>

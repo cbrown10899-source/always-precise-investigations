@@ -2798,6 +2798,72 @@ section('Evidence: stored privately, metered, and capped inside the free plan');
      (await bare.DB.prepare('SELECT COUNT(*) AS n FROM case_evidence').first()).n === 0);
 }
 
+/* -------------------- what an evidence file may be rendered AS (Unit 25)
+ *
+ * `case_evidence.content_type` is the uploading browser's own multipart
+ * declaration — CALLER-CONTROLLED, and nothing on the way in inspects it
+ * (only `video/*` is refused, and for a storage reason). The byte route
+ * answers on the portal's OWN origin: the Worker is mounted at
+ * `/portal-api/*` on the same host as `/portal/`, deliberately, so a session
+ * cookie is sent with the request. Served `inline` as `text/html` or
+ * `image/svg+xml`, an uploaded file is therefore SCRIPT RUNNING INSIDE THE
+ * PORTAL with the viewing admin's session — an investigator account
+ * escalating to admin actions by uploading a file and waiting for the office
+ * to open it. HttpOnly stops the cookie being read and stops nothing else.
+ *
+ * `serveEvidence` answers with an allow-list, so what is asserted here is the
+ * DECLARED TYPE and not the bytes: identical bytes go up three ways, and only
+ * the declaration decides how they come back. Its own case, so the evidence
+ * accounting in the section above is left exactly as it was. */
+section('An uploaded file is never served back as something that can run');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-XS1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+
+  const mk = (name, type) => new File([new Uint8Array(64).fill(65)], name, { type });
+  const up = async (name, type) => jsonOf(await worker.fetch(new Request(
+    API + '/cases/API-XS1/evidence',
+    { method: 'POST', headers: { Origin: ORIGIN, Cookie: admin },
+      body: (() => { const fd = new FormData(); fd.append('file', mk(name, type)); return fd; })() }), env));
+  const serve = async (id) => {
+    const r = await call(env, `/cases/API-XS1/evidence/${id}/file`, { cookie: admin });
+    return { status: r.status, type: r.headers.get('content-type'),
+             disp: String(r.headers.get('content-disposition') || '') };
+  };
+
+  const jpeg = await serve((await up('shot.jpg', 'image/jpeg')).id);
+  ok('control: a photograph still comes back inline, as itself',
+     jpeg.status === 200 && jpeg.type === 'image/jpeg' && jpeg.disp.startsWith('inline'),
+     JSON.stringify(jpeg));
+  const pdf = await serve((await up('report.pdf', 'application/pdf')).id);
+  ok('control: and a PDF still opens in the viewer rather than downloading',
+     pdf.type === 'application/pdf' && pdf.disp.startsWith('inline'), JSON.stringify(pdf));
+
+  const html = await serve((await up('note.html', 'text/html')).id);
+  ok('an uploaded text/html is never served back as HTML',
+     html.type === 'application/octet-stream', html.type);
+  ok('and it arrives as a download rather than as a page',
+     html.disp.startsWith('attachment'), html.disp);
+
+  const svg = await serve((await up('logo.svg', 'image/svg+xml')).id);
+  ok('image/svg+xml is named out of the list — it is the one image that is a document',
+     svg.type === 'application/octet-stream' && svg.disp.startsWith('attachment'),
+     JSON.stringify(svg));
+
+  /* THE LIST IS AN ALLOW-LIST, so a type nobody has considered is refused
+     inline by DEFAULT — the FIELD_KEEP reason. A block-list would ship the
+     next one. */
+  const odd = await serve((await up('thing.xhtml', 'application/xhtml+xml')).id);
+  ok('a type nobody has thought about is refused inline by default',
+     odd.type === 'application/octet-stream' && odd.disp.startsWith('attachment'),
+     JSON.stringify(odd));
+
+  ok('the file keeps its real name whichever way it is served',
+     html.disp.includes('note.html') && jpeg.disp.includes('shot.jpg'), html.disp);
+}
+
 section('Case Build: the package behind hard gates');
 {
   const fakeR2 = () => {
@@ -4695,6 +4761,113 @@ section('A reassigned investigator keeps their own work, never the client');
   ok('but is sent no more of the client than the last one was',
      CLIENT.every(v => !reedBlob.includes(v)),
      CLIENT.filter(v => reedBlob.includes(v)).join(', '));
+}
+
+/* ------------------ what a reassigned investigator must NOT be handed
+ *
+ * OWNER DECISION, 2026-08-21, LOCKED — and Unit 25 is where it is enforced.
+ * A reassigned investigator must not automatically see the previous
+ * investigator's "worked hours, compensation details, billing detail, or other
+ * investigator-specific financial information", and not "through case-scoped
+ * reads, API responses, UI payloads, exports, reports, or hidden fields."
+ * Admin sees every investigator's; the current investigator sees only their
+ * own; a prior investigator's hours stay admin-only. No permission toggle is
+ * invented, because the same decision forbids one.
+ *
+ * The section above pins the OTHER direction — Dana keeps her own filed work
+ * after she is taken off the case. This one pins what Reed is handed when he
+ * is put on it: his own day and his own expense, and nothing of hers.
+ *
+ * Both figure-carrying case-scoped reads are walked, the workspace and the
+ * timeline, and each carries a POSITIVE CONTROL first: every assertion here
+ * would also pass against an empty payload, a renamed column, or a day that
+ * never recorded its hours at all. */
+section('A reassigned investigator is never handed the prior one\'s hours');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  for (const [u, n] of [['dana', 'Dana Field'], ['reed', 'Reed Cole']]) {
+    const link = (await jsonOf(await invite(env, admin,
+      { username: u, display_name: n, role: 'investigator' }))).url;
+    const token = new URL(link, 'https://x.test').searchParams.get('invite');
+    await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  }
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const reed = (await login(env, 'reed', 'FieldWork2026x')).cookie;
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const danaId = users.users.find(u => u.username === 'dana').id;
+  const reedId = users.users.find(u => u.username === 'reed').id;
+
+  await ingest(env, { case_no: 'API-RH1', service: 'Surveillance',
+                      client_name: 'Quiet Mutual Claims', subject_name: 'Pat Coleman' });
+  await call(env, '/submissions/API-RH1/assign',
+    { method: 'POST', cookie: admin, body: { user_id: danaId } });
+
+  // Dana works a full day with mileage and files the expense she is owed.
+  await call(env, '/cases/API-RH1/day/start', { method: 'POST', cookie: dana,
+    body: { day_date: '2026-08-12', start_time: '07:00', start_mileage: 1000 } });
+  await call(env, '/cases/API-RH1/day/end', { method: 'POST', cookie: dana,
+    body: { end_time: '15:00', end_mileage: 1062, summary: 'Dana watched the house.' } });
+  await call(env, '/cases/API-RH1/expenses', { method: 'POST', cookie: dana,
+    body: { expense_date: '2026-08-12', category: 'parking', amount: 987.65,
+            description: 'Dana parking' } });
+
+  // The case moves to Reed, who works a shorter day of his own on it.
+  await call(env, '/submissions/API-RH1/assign',
+    { method: 'POST', cookie: admin, body: { user_id: reedId } });
+  await call(env, '/cases/API-RH1/day/start', { method: 'POST', cookie: reed,
+    body: { day_date: '2026-08-14', start_time: '09:00', start_mileage: 200 } });
+  await call(env, '/cases/API-RH1/day/end', { method: 'POST', cookie: reed,
+    body: { end_time: '11:00', end_mileage: 209 } });
+
+  const adminWs = await jsonOf(await call(env, '/cases/API-RH1/workspace', { cookie: admin }));
+  ok('control: an admin is sent every investigator\'s day on the case',
+     adminWs.days.length === 2 && adminWs.days.some(d => d.hours === 8)
+       && adminWs.days.some(d => d.hours === 2),
+     JSON.stringify(adminWs.days.map(d => d.hours)));
+  ok('control: and the expense one of them is owed',
+     adminWs.expenses.length === 1 && Number(adminWs.expenses[0].amount) === 987.65,
+     JSON.stringify(adminWs.expenses));
+
+  const reedWs = await jsonOf(await call(env, '/cases/API-RH1/workspace', { cookie: reed }));
+  ok('the new investigator can open the case they were given',
+     reedWs.case_no === 'API-RH1');
+  ok('their own day is there, hours and mileage and all',
+     reedWs.days.length === 1 && reedWs.days[0].hours === 2
+       && reedWs.days[0].investigator_id === reedId,
+     JSON.stringify(reedWs.days));
+  ok('the prior investigator\'s day is not in the payload at all',
+     !reedWs.days.some(d => d.investigator_id === danaId));
+  ok('and the prior investigator\'s expense is not either',
+     reedWs.expenses.length === 0, JSON.stringify(reedWs.expenses));
+  const reedBlob = JSON.stringify(reedWs);
+  for (const [what, value] of [['the hours worked', '"hours":8'],
+                               ['the closing mileage', '1062'],
+                               ['the day\'s own summary', 'Dana watched the house'],
+                               ['the expense amount', '987.65'],
+                               ['the expense description', 'Dana parking']]) {
+    ok(`${what} reaches them nowhere in the workspace payload`, !reedBlob.includes(value));
+  }
+
+  /* THE TIMELINE IS AN EXPORT OF THE SAME CASE, and the owner's line names
+     exports. Its day_end event prints "8 hr · 62 mi" beside a name. */
+  const adminTl = JSON.stringify(await jsonOf(
+    await call(env, '/cases/API-RH1/timeline', { cookie: admin })));
+  ok('control: the admin timeline prints both days\' figures',
+     adminTl.includes('8 hr') && adminTl.includes('2 hr'));
+  const reedTl = JSON.stringify(await jsonOf(
+    await call(env, '/cases/API-RH1/timeline', { cookie: reed })));
+  ok('the investigator timeline keeps their own day', reedTl.includes('2 hr'));
+  ok('and prints nothing of the prior investigator\'s day',
+     !reedTl.includes('8 hr') && !reedTl.includes('62 mi') && !reedTl.includes('Dana Field'),
+     reedTl.slice(0, 400));
+
+  /* And none of this took anything away from Dana — the section above is the
+     other half of the same decision. */
+  const danaOwn = await jsonOf(await call(env, '/my/expenses', { cookie: dana }));
+  ok('the prior investigator still has their own expense on their own desk',
+     danaOwn.expenses.some(e => e.case_no === 'API-RH1' && Number(e.amount) === 987.65));
 }
 
 /* PAYMENTS.md, owner 2026-08-14 — the private-client payment configuration.

@@ -915,6 +915,26 @@ corrupted and has never been re-sent, so anything resembling it would be
 invented. Enforce this the way `FIELD_KEEP` is enforced: in the Worker, by not
 running the read, never by a page declining to draw it.
 
+**Enforced in Unit 25** (`case-portal/SECURITY-PASS.md`), where the audit found
+the leak the rule anticipated. Three case-scoped reads returned it: the
+workspace's `days` (hours, mileage, the day's summary and a name), the
+workspace's `expenses` (amount, reimbursable, billable), and the timeline's
+investigation arm ("8 hr · 62 mi" beside a name). The **write** side already
+refused it in four places — `/calendar`, `/my/expenses`, `saveDaySummary`,
+`generateReport`/`saveReport` — so the read side was the way round all of them.
+All three are scoped **in the SQL** now, for a non-admin only; nothing was
+stripped from a payload, because a stripped payload is a decision somebody has
+to repeat every time a column is added.
+
+**The case's TOTAL hours against its authorization deliberately stay.**
+`authorizationFor` sums the whole case, and an investigator must be told the cap
+they are working to. What the rule protects is *whose* hours; an aggregate names
+nobody, and the money beside it (`authorized_budget`) was already admin-only.
+`caseWorkspace` also sends **`days_total`** so the field view's "Day 4" is still
+the case's day number — a scoped list would have drawn "Day 1" on a case three
+days in, which is a staff screen asserting something untrue. A count is not a
+timesheet, and it is only read for the role whose list was scoped.
+
 **Accounts exist only by invitation.** There is no public sign-up and no route
 that creates an account directly — an admin issues a one-time link and the
 invitee chooses their own password. Do not add a create-account endpoint.
@@ -929,6 +949,23 @@ Things that are load-bearing:
   session cookie set by a `workers.dev` hostname is cross-site and never sent
   back — Safari blocks third-party cookies outright. Moving it off the domain
   silently breaks every sign-in.
+- **An uploaded file is served back only as something that cannot run.**
+  `case_evidence.content_type` is the uploading browser's own multipart
+  declaration — caller-controlled — and `serveEvidence` answers on the portal's
+  OWN origin, where the session cookie is sent. Served `inline` as `text/html`
+  or `image/svg+xml`, an upload would be script running inside the portal with
+  the viewing admin's session; `HttpOnly` stops the cookie being read and stops
+  nothing else. `inlineSafeType()` is an **allow-list** — images minus SVG,
+  audio, video, PDF, plain text — and anything else comes back
+  `application/octet-stream` with `Content-Disposition: attachment`, which
+  renders nowhere. An allow-list for the `FIELD_KEEP` reason: a type nobody has
+  considered is refused inline by default. `image/svg+xml` is named out because
+  it is the one image type that is a document with script in it — an `<img>`
+  will not run it, following the gallery's link will. Galleries and the package
+  document are unaffected: a browser ignores `Content-Disposition` on a
+  subresource. There is deliberately **no CSP** on that route: `sandbox` or
+  `default-src 'none'` can break the browser's PDF viewer, and the allow-list
+  has already decided what may render (`SECURITY-PASS.md` D6).
 - **Case numbers are untrusted.** They come from a public form and are rendered
   in an admin's browser, so ingest pins them to `[A-Za-z0-9-]{3,64}` and the
   page passes them through `data-` attributes read by a delegated listener —
