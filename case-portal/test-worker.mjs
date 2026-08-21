@@ -6458,6 +6458,92 @@ section('Include Intake Link: each context gets ITS door, and only its door');
   globalThis.fetch = realFetch;
 }
 
+section('Unit 24 — the file queue: real states, no new store, no byte read');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const tkq = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tkq}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const danaId = (await env.DB.prepare("SELECT id FROM users WHERE username = 'dana'").first()).id;
+
+  await ingest(env, { case_no: 'API-FQ1', service: 'Surveillance', client_name: 'Queue Client', subject_name: 'Q1' });
+  await ingest(env, { case_no: 'API-FQ2', service: 'Surveillance', client_name: 'Other Client', subject_name: 'Q2' });
+  await call(env, '/submissions/API-FQ1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+
+  /* Files planted directly, because what is under test is the READ — the
+     upload doors have their own sections and reaching Dropbox is not this
+     screen's business. Each row carries a different classification, which is
+     what the queue's states are derived from. */
+  const put = (no, name, cls, ct) => env.DB.prepare(
+    `INSERT INTO case_evidence (case_no, r2_key, filename, content_type, size_bytes,
+       classification, uploaded_by, uploaded_at)
+     VALUES (?, ?, ?, ?, ?, ?, 1, ?)`)
+    .bind(no, `k-${no}-${name}`, name, ct, 2048, cls, nowIsoTest()).run();
+  function nowIsoTest(){ return new Date().toISOString(); }
+  await put('API-FQ1', 'a.jpg', 'needs_review', 'image/jpeg');
+  await put('API-FQ1', 'b.jpg', 'needs_redaction', 'image/jpeg');
+  await put('API-FQ1', 'c.jpg', 'client_deliverable', 'image/jpeg');
+  await put('API-FQ1', 'd.pdf', 'internal_only', 'application/pdf');
+  await put('API-FQ2', 'e.jpg', 'client_deliverable', 'image/jpeg');
+
+  const q = await jsonOf(await call(env, '/file-queue', { cookie: admin }));
+  ok('the queue lists every live file the admin can see', q.files.length === 5, String(q.files.length));
+  const by = n => q.files.find(f => f.filename === n);
+  /* THE STATES ARE THE PORTAL'S OWN — nothing invented to match a mockup. */
+  ok('needs_review reads as Awaiting review', by('a.jpg').state === 'awaiting_review');
+  ok('needs_redaction reads as Awaiting processing', by('b.jpg').state === 'awaiting_processing');
+  ok('internal_only reads as Held back', by('d.pdf').state === 'held_back');
+  ok('a deliverable with no integrity record reads as Awaiting verification',
+     by('c.jpg').state === 'awaiting_verification', by('c.jpg').state);
+  ok('a PDF is typed as a report and a JPEG as a photo',
+     by('d.pdf').kind === 'report' && by('a.jpg').kind === 'photo');
+  ok('the summary counts what the list holds',
+     q.summary.total === 5 && q.summary.held_back === 1 && q.summary.awaiting_review === 1,
+     JSON.stringify(q.summary));
+
+  /* Recording integrity moves it on, with no second status vocabulary. */
+  await env.DB.prepare(
+    `INSERT INTO evidence_integrity (case_no, artifact_kind, artifact_id, filename, byte_size,
+       sha256, hash_origin, artifact_role, recorded_at)
+     VALUES ('API-FQ1', 'evidence', ?, 'c.jpg', 2048, ?, 'worker', 'original', ?)`)
+    .bind(by('c.jpg').id, 'a'.repeat(64), new Date().toISOString()).run();
+  const q2 = await jsonOf(await call(env, '/file-queue', { cookie: admin }));
+  ok('once a hash is recorded the file is Ready to file',
+     q2.files.find(f => f.filename === 'c.jpg').state === 'ready_to_file');
+
+  /* THE ROLE BOUNDARY IS IN THE SQL, and the client is never sent to the field. */
+  const mine = await jsonOf(await call(env, '/file-queue', { cookie: inv }));
+  ok('an investigator sees only files on cases that are theirs',
+     mine.files.length === 4 && mine.files.every(f => f.case_no === 'API-FQ1'),
+     JSON.stringify(mine.files.map(f => f.case_no)));
+  ok('and is never sent the client name or where the bytes live',
+     mine.files.every(f => !('client_name' in f) && !('stored' in f)),
+     JSON.stringify(mine.files[0]));
+  ok('while an admin gets both', q2.files.every(f => 'stored' in f) && q2.files.some(f => f.client_name));
+
+  /* A hidden case takes its files with it. */
+  await call(env, '/cases/API-FQ2/delete', { method: 'POST', cookie: admin, body: {} });
+  const q3 = await jsonOf(await call(env, '/file-queue', { cookie: admin }));
+  ok('a deleted case drops its files off the queue',
+     !q3.files.some(f => f.case_no === 'API-FQ2'), String(q3.files.length));
+
+  /* A removed file is gone from the queue but not from the record. */
+  await env.DB.prepare("UPDATE case_evidence SET deleted_at = ? WHERE filename = 'a.jpg'")
+    .bind(new Date().toISOString()).run();
+  const q4 = await jsonOf(await call(env, '/file-queue', { cookie: admin }));
+  ok('a removed file leaves the queue', !q4.files.some(f => f.filename === 'a.jpg'));
+  ok('and its row is still on the record',
+     Number((await env.DB.prepare("SELECT COUNT(*) AS n FROM case_evidence WHERE filename = 'a.jpg'").first()).n) === 1);
+
+  /* THE WHOLE POINT: this is an aggregation. Nothing was stored to build it. */
+  ok('the queue introduced no table of its own',
+     Number((await env.DB.prepare(
+       "SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name LIKE '%file_queue%'").first()).n) === 0);
+}
+
 section('Unit 22 — the task board and the audit trail: composed, scoped, never invented');
 {
   const env = freshEnv();
