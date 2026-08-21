@@ -1606,7 +1606,12 @@
     <button class="burger" id="burger" data-act="navToggle" aria-label="Menu"
       aria-expanded="false" hidden><span class="b-open">&#9776;</span><span class="b-close">&#10005;</span></button>
   </div>
-  <h1 class="vh">Always Precise Investigations case portal</h1>
+  <!-- ONE h1 ON THE PAGE, IN EITHER STATE. Signed out, the sign-in view owns
+       the heading ("Case Portal"); signed in, that view is gone and this is
+       the document's name. Shown and hidden beside #who, so the two never
+       exist at once — two h1s is its own accessibility defect, and the suite
+       reads `h1` to know which screen it is on. -->
+  <h1 class="vh" id="apph1" hidden>Always Precise Investigations case portal</h1>
 </header>
 <!-- The drawer's dim used to be a box-shadow — decoration, not an element — so
      a tap "outside the menu" passed straight through to whatever control sat
@@ -8755,12 +8760,14 @@ function paint(){
   paintPStamp();
   paintVStamp();
   if(!ME){ app.innerHTML = loginView(); $("who").hidden = true;
+    if($("apph1")) $("apph1").hidden = true;
     document.body.classList.remove("withnav", "navopen");
     if($("burger")) $("burger").hidden = true;
     return; }
   document.body.classList.add("withnav");
   if($("burger")) $("burger").hidden = false;
   $("who").hidden = false;
+  if($("apph1")) $("apph1").hidden = false;
   $("who").innerHTML = `<b>${esc(ME.display_name || ME.username)}</b>${ME.role === "admin" ? "Admin" : "Investigator"}
     <button data-act="logout">Sign out</button>`;
   // Active Surveillance takes the whole screen — it is a field view, not a
