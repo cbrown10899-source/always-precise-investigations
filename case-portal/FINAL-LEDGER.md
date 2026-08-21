@@ -192,20 +192,45 @@ approval · `nextInvoiceNo` past 9999 · removed days re-seeding at finalize
 - **PORTAL-OPS phase 10's notification bell.** Superseded by design — Unit 8
   refuses a dismissal mechanic on principle.
 
-### OWNER DECISION REQUIRED
-1. **PORTAL-OPS Permissions** — arrived corrupted, never re-sent. Marked
-   missing; deliberately not invented. No permission toggle has been created.
-2. **PORTAL-OPS Saved Views** — its own heading is `[inferred]`, its Billing
-   item corrupted.
-3. **PORTAL-OPS Case Templates and Document Templates** — the mechanism is
-   buildable; the templates are the firm's own case-setup defaults and
-   communication language, which are not ours to write.
-4. **Ending someone else's session** — whether a day the office ended should be
-   marked as *ended by the office* rather than reading like an ordinary close.
-   Today only the hours distinguish it.
-5. **Cash App `$TreverB` / Venmo `@Trever-Brown-9`** — kept for now; the
-   long-term account choice stays open. The source comment still flags them as
-   personal accounts to be swapped for business accounts before client use.
+### OWNER DECISION REQUIRED — **ALL FIVE ANSWERED AND LOCKED, 2026-08-21**
+
+The five open questions this ledger raised were answered by the owner at
+closeout. Their wording is verbatim; the full block lives in `NEXT.md` under
+**FINAL OWNER DECISIONS**. **None remains a pending question**, and four of the
+five resolve to a deferral or a standing refusal rather than work.
+
+| # | Decision | New classification |
+| --- | --- | --- |
+| 1 | *"PORTAL-OPS Permissions remains missing and must not be invented. Rebuild later from owner direction."* | **MISSING — SKIPPED**, by owner direction. Explicitly **not a closeout blocker** |
+| 2 | *"Saved Views remains a future optional operational improvement; do not block closeout."* | **DEFERRED BY OWNER** |
+| 3 | *"Case Templates / Document Templates may use a reusable mechanism later, but owner supplies the actual firm content. Do not invent templates."* | **DEFERRED BY OWNER** — mechanism later, content always the firm's |
+| 4 | *"If Admin or another authorized user ends someone else's surveillance day, the UI/history must clearly say Ended by Admin or Ended by [name]. Never make it appear the original investigator ended it."* | ⚠️ **APPROVED REQUIREMENT — NOT YET IMPLEMENTED.** See below |
+| 5 | *"Keep current Cash App $TreverB and Venmo @Trever-Brown-9 for now. Business-account migration remains a future owner decision."* | **DEFERRED BY OWNER** — handles unchanged |
+
+**Unit 17 and Unit 23 stay LIVE VERIFICATION DEFERRED** until suitable real
+case data exists, reaffirmed by the owner at closeout. No production data is to
+be manufactured for either.
+
+### APPROVED — NOT YET IMPLEMENTED (the one open build item)
+
+**Decision 4 — "Ended by Admin".** This category did not exist when the ledger
+was first written, because at closeout nothing was in it. Decision 4 is neither
+deferred nor done, so it is named in a category of its own rather than filed
+under one that would misdescribe it.
+
+**What the record does today**, verified against master `5e1d063`:
+`case_days` carries `end_time`, `end_mileage`, `hours`, `miles`, `summary` and
+`ended_at` — and **no `ended_by` column**. `endDay`'s `UPDATE` writes none
+either. So a day ended by the office through `/cases/:no/day/end-other` is
+stored **identically** to one the investigator ended themselves, which is what
+the owner's decision forbids. The 2026-08-16 finding's *"today only the hours
+distinguish it"* is still exactly true.
+
+**Not started**, per the owner's instruction that no feature begin while these
+decisions were recorded. The constraint that will govern it is recorded in
+`NEXT.md`: `case_days` cannot gain a column idempotently, so this wants a
+companion table under the existing rules — the shape the constraint dictates,
+not a design. The design is the owner's when they ask for it.
 
 ## PART 7 — master and deployment state
 
@@ -243,4 +268,20 @@ reconciled — the same failure mode this project has now recorded four times
 (*"a findings table nobody reconciles is the same as a red workflow nobody
 reads"*). It is corrected in place rather than left to mislead the next reader.
 
-**No non-deferred approved requirement is missing.**
+## PART 10 — the closeout statement, kept accurate
+
+**At closeout (`5e1d063`), no non-deferred approved requirement was missing**,
+and **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** stands for the build as
+delivered: 26 units CODED · TESTED · PUSHED · MERGED · DEPLOYED, five of them
+carrying the owner's own LIVE VERIFIED.
+
+**One requirement has been approved since**, and this document does not pretend
+otherwise: the owner's decision 4 of 2026-08-21 — *Ended by Admin / Ended by
+[name]* — is approved, is not deferred, and is **not yet built**. It is the
+single open build item, recorded above and in `NEXT.md`, and was deliberately
+not started because the owner instructed that these decisions be recorded
+without beginning new work.
+
+Everything else that remains open is open **by the owner's choice**: the
+deferred list, the two live-verification sweeps awaiting real case data, and
+the four decisions above that resolve to a deferral or a standing refusal.

@@ -53,6 +53,7 @@ completed.
 | **Schema owed** | **none** — Unit 25 added no table, no column and no migration |
 | **Deployed** | `Deploy case-portal Worker` ✅ at `73b7f5b` · `Deploy site to Cloudflare Pages` ✅ at `73b7f5b` and `a715782` · `Daily site health` ✅ run #22 |
 | **Closeout** | ✅ **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** — see `case-portal/FINAL-LEDGER.md` |
+| **Owner decisions** | ✅ five LOCKED at closeout, 2026-08-21 — see **FINAL OWNER DECISIONS** below. Four are deferrals or standing refusals; **decision 4 (Ended by Admin) is an approved requirement that is not yet built** and is the one open build item |
 | **Next unit** | **NONE — the build order is complete.** 26 closed the project; 23's live sweep is deferred to the owner, awaiting real case data. Do not start new features |
 
 ## Shipped and deployed (do not rebuild)
@@ -100,12 +101,19 @@ completed.
 
 ## Still needing the owner — carry these forward
 
-1. **PORTAL-OPS Permissions** — arrived corrupted, never re-sent. Do not invent
-   it; it stays marked missing.
+**Items 1 and 2 were ANSWERED AND LOCKED by the owner on 2026-08-21 at
+closeout** — full wording in **FINAL OWNER DECISIONS** below and in
+`FINAL-LEDGER.md`. They are kept here so the shape of each stays visible.
+
+1. **PORTAL-OPS Permissions** — arrived corrupted, never re-sent. ✅ **ANSWERED:
+   it remains missing and must not be invented; rebuild later from owner
+   direction.** Not a closeout blocker.
 2. **Saved Views / Case Templates / Document Templates** — Saved Views' own
    heading is `[inferred]`; the two template phases are the firm's own content
-   (case-setup defaults, communication and report language). Mechanism is
-   buildable, the content is not ours to write.
+   (case-setup defaults, communication and report language). ✅ **ANSWERED:
+   Saved Views is a future optional improvement and does not block closeout; the
+   template phases may reuse a mechanism later, but the owner supplies the
+   content — do not invent templates.**
 3. **`portal-setup` bootstrap-token race.** Run 32456667718 shows RED while the
    schema applied correctly — that run's own health probe returned
    `missing_tables: []`. The failure is the final admin-bootstrap step
@@ -383,10 +391,62 @@ and is now durable policy rather than a pending question.
 | # | Decision | State |
 | --- | --- | --- |
 | 1 | Does an **unsent/draft invoice** draw down the client-facing retainer? | ✅ **LOCKED — NO, AND `ready` IS UNSENT TOO** (owner, 2026-08-21). *"UNSENT or DRAFT invoices MUST NOT reduce the client-facing retainer balance. Only finalized/issued billable work may affect the client-facing retainer figure."* Client-facing figures stay **Agreed retainer · Received · Applied/Earned · Outstanding/available**; a separate internal view of draft work is allowed, but the client-facing display must never imply draft work consumed the deposit. *"Do not silently change historical payment records. Do not treat creating a draft invoice as money earned. Do not mark anything paid merely because an invoice exists."* **Implemented in Unit 18.** Today's behaviour is the opposite — the sibling sum filters only `status != 'void'`, CLAUDE.md described it, and E2E-39 asserts it — so all three move together |
-| 2 | Are **Cash App `$TreverB`** and **Venmo `@Trever-Brown-9`** the long-term accounts? | **Answered for now:** *"Keep current… Do not change payment accounts in this queue."* Long-term choice stays open |
-| 3 | The corrupted **PORTAL-OPS Permissions** requirement | **OWNER INPUT REQUIRED** — leave marked missing until re-sent. Do not invent it |
+| 2 | Are **Cash App `$TreverB`** and **Venmo `@Trever-Brown-9`** the long-term accounts? | ✅ **FINAL — KEEP CURRENT** (owner, 2026-08-21, closeout). *"Keep current Cash App $TreverB and Venmo @Trever-Brown-9 for now. Business-account migration remains a future owner decision."* See FINAL OWNER DECISIONS below |
+| 3 | The corrupted **PORTAL-OPS Permissions** requirement | ✅ **FINAL — REMAINS MISSING, MUST NOT BE INVENTED** (owner, 2026-08-21, closeout). *"PORTAL-OPS Permissions remains missing and must not be invented. Rebuild later from owner direction."* Not a closeout blocker. See FINAL OWNER DECISIONS below |
 | 4 | **Reassigned-investigator visibility** into a prior investigator's hours | ✅ **LOCKED — ADMIN-ONLY.** A reassigned investigator must not automatically see the previous investigator's *"worked hours, compensation details, billing detail, or other investigator-specific financial information"* — not through *"case-scoped reads, API responses, UI payloads, exports, reports, or hidden fields."* Admin sees all; the current investigator sees only their own where already authorized; **prior-investigator hours stay admin-only.** *"Do not create a new permission toggle unless the approved PORTAL-OPS Permissions specification later explicitly calls for one."* Recorded now as a durable authorization rule (CLAUDE.md, under the case portal); enforced when the permissions/security work is reached — **or immediately if an audit proves an active leak that can be fixed without disrupting Hotfix 17A** |
 | 5 | **Homepage section/order** | **Answered and closed:** *"Keep the current homepage section order. Do not reopen homepage structure now."* |
+
+## 🔒 FINAL OWNER DECISIONS — LOCKED 2026-08-21, at closeout
+
+**Recorded verbatim. These answer the five open questions Unit 26's ledger
+raised and are durable policy, not pending questions.** Documentation only —
+nothing was built, deployed or started for them.
+
+| # | Decision, in the owner's words | What it means here |
+| --- | --- | --- |
+| 1 | *"PORTAL-OPS Permissions remains missing and must not be invented. Rebuild later from owner direction."* | **MISSING — SKIPPED, by owner direction.** Stays marked missing. **Do not infer, reconstruct or approximate it** from the corrupted text or from any other phase. It is **not a closeout blocker**. The standing rule that no permission toggle may be invented for the reassigned-investigator rule (CLAUDE.md) continues to hold, and is unaffected by this |
+| 2 | *"Saved Views remains a future optional operational improvement; do not block closeout."* | **DEFERRED BY OWNER.** Optional, future, non-blocking. Its own heading is still `[inferred]` and its Billing item still corrupted; neither is to be guessed at |
+| 3 | *"Case Templates / Document Templates may use a reusable mechanism later, but owner supplies the actual firm content. Do not invent templates."* | **DEFERRED BY OWNER.** The mechanism may be built later; **the content is the firm's own** — case-setup defaults, communication and report language — and is never to be authored here. A mechanism without owner content does not ship |
+| 4 | *"If Admin or another authorized user ends someone else's surveillance day, the UI/history must clearly say Ended by Admin or Ended by [name]. Never make it appear the original investigator ended it."* | ✅ **APPROVED REQUIREMENT — NOT YET IMPLEMENTED.** See the block below: this is the one open build item |
+| 5 | *"Keep current Cash App $TreverB and Venmo @Trever-Brown-9 for now. Business-account migration remains a future owner decision."* | **DEFERRED BY OWNER.** Handles unchanged. The `FIRM` source comment still flags them as personal accounts to be swapped before client use; that note stays, because the migration is a future decision rather than a closed one |
+
+**Unit 17 (Retention) and Unit 23 (the consolidated sweep) stay LIVE
+VERIFICATION DEFERRED until suitable real case data exists.** Reaffirmed by the
+owner at closeout. *No production case or data is to be manufactured for
+either.*
+
+### Decision 4 is the one open build item — approved, not started
+
+**It is not deferred and it is not done.** The owner instructed that no feature
+be started while these decisions were recorded, so it is written down here
+rather than built.
+
+**What the record does today**, verified against master `5e1d063` rather than
+assumed:
+
+- `case_days` has **no `ended_by` column** — the row carries `end_time`,
+  `end_mileage`, `hours`, `miles`, `summary`, `ended_at` and nothing about who
+  pressed End.
+- `endDay`'s `UPDATE case_days SET …` writes none of that either.
+- So a day ended by the office through `/cases/:no/day/end-other` is **stored
+  identically to one the investigator ended themselves.** The 2026-08-16
+  non-blocking finding said *"today only the hours distinguish it"*; that is
+  still exactly true.
+
+**The requirement:** the UI and the history must say **Ended by Admin** or
+**Ended by [name]**, and must never let an office-ended day read as though the
+investigator ended it.
+
+**One implementation constraint, recorded because it already governs this repo
+and is easy to get wrong later:** `case_days` cannot simply gain a column.
+`schema.sql` is re-applied on every `portal-setup` run and `ALTER TABLE ADD
+COLUMN` is not idempotent — the same reasoning that produced `activity_removed`,
+`build_custom` and `build_template`. This wants a **companion table**, guarded
+through `missingTables()`, named in `EXPECTED_TABLES`, swept by `DEMO_SWEEP`,
+and it will owe a manual `portal-setup` dispatch after merge. That is the shape
+the constraint dictates, not a design — the design is the owner's when they ask
+for it.
+
 
 **Item 12 — REPORT DAILY SUMMARY BUILDER — was inserted by the owner on
 2026-08-20**, while Unit 11 was in flight, with the instruction *"Do not start
