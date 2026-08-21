@@ -1582,6 +1582,41 @@ CREATE INDEX IF NOT EXISTS idx_eint_art  ON evidence_integrity(artifact_kind, ar
    NOTHING HERE DUPLICATES THE ACTIVITY LOG. The log stays the authoritative
    source record; this is downstream authored material, the same relationship
    `case_reports.body` already has to it. */
+/* WHO ENDED THE INVESTIGATION DAY — owner decision, 2026-08-21, at closeout.
+
+   "If Admin or another authorized user ends someone else's surveillance day,
+   the UI/history must clearly say Ended by Admin or Ended by [name]. Never
+   make it appear the original investigator ended it."
+
+   A COMPANION TABLE rather than columns on `case_days`: schema.sql is
+   re-applied on every portal-setup run and ALTER TABLE ADD COLUMN is not
+   idempotent — editing the table in place would leave a FRESH database with
+   the column while the LIVE one, created before the edit, still lacked it. The
+   same reasoning produced `activity_removed`, `build_custom`, `build_template`
+   and `case_day_summary`.
+
+   `ended_role` is the actor's role AT THE MOMENT THEY ENDED IT, stored rather
+   than re-derived from `users` later: an account demoted next month must not
+   retroactively rewrite what a day's history says happened. That is
+   `photo_stamp.source` and `evidence_integrity.hash_origin` again — a record
+   whose provenance is re-derived later is one nobody can weigh.
+
+   WHETHER THE DAY WAS SELF-ENDED IS DELIBERATELY NOT STORED. It is exactly
+   `ended_by = case_days.investigator_id`, and a second copy of a derivable
+   fact is a second thing that can drift.
+
+   `case_no` is carried like `case_day_summary` carries it — it is what makes
+   the DEMO_SWEEP drift guard cover this table automatically, since that guard
+   derives its list from the schema's own `case_no` columns. */
+CREATE TABLE IF NOT EXISTS case_day_end (
+  day_id     INTEGER PRIMARY KEY,     -- one end per day; a day ends once
+  case_no    TEXT    NOT NULL,
+  ended_by   INTEGER NOT NULL REFERENCES users(id),
+  ended_role TEXT    NOT NULL,        -- 'admin' | 'investigator', as it was then
+  at         TEXT    NOT NULL         -- server instant of the press
+);
+CREATE INDEX IF NOT EXISTS idx_day_end_case ON case_day_end(case_no);
+
 CREATE TABLE IF NOT EXISTS case_day_summary (
   day_id     INTEGER PRIMARY KEY,     -- the investigation day this narrates
   case_no    TEXT    NOT NULL,

@@ -150,7 +150,8 @@ subject. `LIVE VERIFIED` means a person looked at it on the live system.
 | 23 | Consolidated Live Verification Sweep | — | — | n/a | n/a | n/a | n/a | n/a | ⏸️ **DEFERRED — REQUIRES REAL CASE/DATA** (owner, 2026-08-21) |
 | 24 | **File Queue** (REQUIRED) + aesthetic redesign | #213 / #214 | `8988b29` / `5835cdf` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ **owner visual check PASSED, 2026-08-21** |
 | 25 | Security / authorization / regression pass | #215 | `73b7f5b` | ✅ | ✅ | ✅ | ✅ | ✅ | ⏸️ deferred |
-| 26 | Final reconciliation + closeout | #217 | this | ✅ | ✅ | ✅ | ✅ | ✅ | n/a — documentation |
+| 26 | Final reconciliation + closeout | #217 | `5e1d063` | ✅ | ✅ | ✅ | ✅ | ✅ | n/a — documentation |
+| 27 | **Ended by Admin / Ended by [name]** (owner decision 4) | #219 | see below | ✅ | ✅ | ✅ | ✅ | ✅ | ⏸️ **deferred — requires a real case**, and a `portal-setup` dispatch |
 
 **Five units carry an owner's own LIVE VERIFIED**: Timestamp Photo, Palette,
 Storage Health, Case Closeout, and the File Queue's visual check.
@@ -204,33 +205,47 @@ five resolve to a deferral or a standing refusal rather than work.
 | 1 | *"PORTAL-OPS Permissions remains missing and must not be invented. Rebuild later from owner direction."* | **MISSING — SKIPPED**, by owner direction. Explicitly **not a closeout blocker** |
 | 2 | *"Saved Views remains a future optional operational improvement; do not block closeout."* | **DEFERRED BY OWNER** |
 | 3 | *"Case Templates / Document Templates may use a reusable mechanism later, but owner supplies the actual firm content. Do not invent templates."* | **DEFERRED BY OWNER** — mechanism later, content always the firm's |
-| 4 | *"If Admin or another authorized user ends someone else's surveillance day, the UI/history must clearly say Ended by Admin or Ended by [name]. Never make it appear the original investigator ended it."* | ⚠️ **APPROVED REQUIREMENT — NOT YET IMPLEMENTED.** See below |
+| 4 | *"If Admin or another authorized user ends someone else's surveillance day, the UI/history must clearly say Ended by Admin or Ended by [name]. Never make it appear the original investigator ended it."* | ✅ **BUILT — Unit 27.** See below |
 | 5 | *"Keep current Cash App $TreverB and Venmo @Trever-Brown-9 for now. Business-account migration remains a future owner decision."* | **DEFERRED BY OWNER** — handles unchanged |
 
 **Unit 17 and Unit 23 stay LIVE VERIFICATION DEFERRED** until suitable real
 case data exists, reaffirmed by the owner at closeout. No production data is to
 be manufactured for either.
 
-### APPROVED — NOT YET IMPLEMENTED (the one open build item)
+### The one open build item is now CLOSED — Unit 27
 
-**Decision 4 — "Ended by Admin".** This category did not exist when the ledger
-was first written, because at closeout nothing was in it. Decision 4 is neither
-deferred nor done, so it is named in a category of its own rather than filed
-under one that would misdescribe it.
+**Decision 4 was the only requirement approved after closeout and not yet
+built. It is built.**
 
-**What the record does today**, verified against master `5e1d063`:
-`case_days` carries `end_time`, `end_mileage`, `hours`, `miles`, `summary` and
-`ended_at` — and **no `ended_by` column**. `endDay`'s `UPDATE` writes none
-either. So a day ended by the office through `/cases/:no/day/end-other` is
-stored **identically** to one the investigator ended themselves, which is what
-the owner's decision forbids. The 2026-08-16 finding's *"today only the hours
-distinguish it"* is still exactly true.
+**What the record did before**, verified at the time: `case_days` carried
+`end_time`, `end_mileage`, `hours`, `miles`, `summary` and `ended_at` — and no
+`ended_by`. A day the office ended through `/cases/:no/day/end-other` was stored
+**identically** to one the investigator ended themselves.
 
-**Not started**, per the owner's instruction that no feature begin while these
-decisions were recorded. The constraint that will govern it is recorded in
-`NEXT.md`: `case_days` cannot gain a column idempotently, so this wants a
-companion table under the existing rules — the shape the constraint dictates,
-not a design. The design is the owner's when they ask for it.
+**What Unit 27 added:** `case_day_end`, one additive companion table (the
+`activity_removed` / `build_custom` rule — `case_days` cannot gain a column
+while `schema.sql` is re-applied on every portal-setup run). It records the day,
+the case, who ended it, **their role at that moment**, and when.
+
+| Requirement | How it is met |
+| --- | --- |
+| Investigator ends their own day → recorded as the actor | written at the single `UPDATE case_days`, from the authenticated caller |
+| Admin ends it → *Ended by Admin* / the Admin name | `dayEndLabel()`, the one writer of the wording |
+| Another authorized user → *Ended by [name]* | same label, non-admin branch |
+| **Never appear as the investigator when it was not** | a day with no record reads *"Ending actor not recorded"* — never as self-ended. Asserted from both directions: the right name appears **and** the wrong one does not |
+| Preserve start/end time, mileage, hours, summary, reports, Active Surveillance | nothing else touched; asserted against the stored row |
+| No historical record overwritten | additive table only; `ON CONFLICT DO NOTHING` keeps the first actor |
+| Additive schema only | one table, one index |
+| Server-side authorization | unchanged — `openDayForAction` already required `caseFor` + admin before resolving anyone else's session. Unit 27 records, it does not re-decide. Pinned: an investigator still cannot end another's day |
+| Audit actor and timestamp | `ended_by`, `ended_role`, `at` |
+| Shown where the history needs it, not in the client document | office Days table, the timeline, the day-end confirmation. A test asserts *"Ended by"* appears nowhere inside `#pkgdoc` |
+
+**Tested:** self-ended, admin-ended, another-authorized-user-ended, a legacy day
+with no record, a demotion after the fact, and the before-dispatch state where
+the table does not exist and the day must still end.
+
+**`portal-setup.yml` dispatch owed after merge.** Until it runs, days end
+exactly as before and read as *not recorded* — asserted by its own section.
 
 ## PART 7 — master and deployment state
 
@@ -275,12 +290,14 @@ and **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** stands for the build as
 delivered: 26 units CODED · TESTED · PUSHED · MERGED · DEPLOYED, five of them
 carrying the owner's own LIVE VERIFIED.
 
-**One requirement has been approved since**, and this document does not pretend
-otherwise: the owner's decision 4 of 2026-08-21 — *Ended by Admin / Ended by
-[name]* — is approved, is not deferred, and is **not yet built**. It is the
-single open build item, recorded above and in `NEXT.md`, and was deliberately
-not started because the owner instructed that these decisions be recorded
-without beginning new work.
+**The one requirement approved after closeout is now built.** The owner's
+decision 4 of 2026-08-21 — *Ended by Admin / Ended by [name]* — shipped as
+**Unit 27**: CODED · TESTED · PUSHED · MERGED · DEPLOYED. It owes a manual
+`portal-setup.yml` dispatch, and its LIVE VERIFIED stays open because seeing it
+work means a real case with two people on it.
+
+So the statement holds again without qualification: **no non-deferred approved
+requirement is missing.**
 
 Everything else that remains open is open **by the owner's choice**: the
 deferred list, the two live-verification sweeps awaiting real case data, and

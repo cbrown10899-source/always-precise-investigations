@@ -2266,6 +2266,50 @@ action rather than parse a sentence. The field panel shows "X has a day running�
 starting your own below runs alongside theirs" — because two admins on one case
 is the ordinary situation, and ending someone else's is the unusual one.
 
+**And the day says who ended it** (owner, 2026-08-21, at closeout — Unit 27):
+*"If Admin or another authorized user ends someone else's surveillance day, the
+UI/history must clearly say Ended by Admin or Ended by [name]. Never make it
+appear the original investigator ended it."*
+
+`case_day_end` is one additive companion table — `case_days` cannot gain a
+column while `schema.sql` is re-applied on every portal-setup run, the
+`activity_removed` reasoning again. It records the day, the case, **who** ended
+it, **their role at that moment** and **when**. The actor is the CALLER, which
+is the only honest source: `user` is the account that passed authorization to
+reach the write, and `day.investigator_id` is whose day it is. **Nothing here
+re-decides who may end a day** — `openDayForAction` already requires `caseFor`
+and the admin role before it will resolve anyone else's session, and that is
+untouched.
+
+**`ended_role` is stored, not re-derived.** An account demoted next month must
+not retroactively rewrite what a day's history says happened — the
+`photo_stamp.source` and `hash_origin` rule. **Whether it was self-ended is NOT
+stored**, because it is exactly `ended_by = investigator_id` and a second copy
+of a derivable fact is a second thing to drift.
+
+**`dayEndLabel()` is the one writer of the wording**, read by the office's Days
+table, the timeline and the day-end response alike. Three answers, and the
+third is the point: a day its own investigator ended says **nothing**; a day
+someone else ended names them (*Ended by Admin — Name*, or *Ended by Name*);
+and a day with **no record** reads *"Ending actor not recorded"* — never as
+though the investigator ended it. Every day ended before this shipped is in
+that third state and stays readable.
+
+**The record never costs the day.** An investigator holding a clock they cannot
+stop is the failure this portal already refuses, so a failed or absent write
+still ends the day — and says so, `ended_by_recorded: false` with a reason, the
+Unit 11 rule. A silently missing record is exactly the forbidden appearance, so
+it is reported rather than swallowed.
+
+**The client never sees it.** Who closed a shift is operations, not evidence;
+a test asserts *"Ended by"* appears nowhere inside `#pkgdoc`. The investigator
+DOES see it on their own day — they are the person who most needs to know the
+office closed it, and it carries no hours or money, so Unit 25's rule is
+untouched.
+
+**Adding this table means a manual `portal-setup.yml` dispatch after merge.**
+Until it runs, days end exactly as before and read as *not recorded*.
+
 **The phone's bottom bars must clear the screen edge.** Both the case section
 bar and the field bar are `position:fixed; bottom:0`, and both used to sit
 flush against it. `env(safe-area-inset-bottom)` reports **zero** on iOS unless
