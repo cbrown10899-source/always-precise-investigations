@@ -1081,6 +1081,29 @@ calls `api()` rather than `pkgApi()`: `pkgApi` swallows its own failure.
 
 **Adding this table means a manual `portal-setup.yml` dispatch after merge.**
 
+## One palette, read off the page it was already drawing
+
+Unit 13 (owner brief verbatim in `case-portal/PALETTE.md`, derived decisions
+D1–D8 there). The `:root` block in `portal/index.html` is **the** palette:
+navy structure, teal accent/selection/focus, rare gold emphasis, light
+surfaces, restrained semantic pairs — every token value read off the live
+page, not invented. 237 drifted literal occurrences were swept into it.
+
+Three rules outlive the unit:
+
+- **`--field-*` is the field family and it is dark on purpose** — Active
+  Surveillance and the timestamp tools are used one-handed in the dark. Do
+  not "normalize" a field control to office styling; the separate names exist
+  so that mistake announces itself.
+- **Semantic chips are token PAIRS** (`--ok-bg`/`--ok-ink` and siblings).
+  Change both halves or neither; the suite asserts the computed pair. `--warn`
+  is `#96600f` because the prettier `#a86a12` measured 3.98:1 on its own tint
+  — do not lighten it back without re-measuring.
+- **The anti-drift budget is a test:** no non-white color may appear more than
+  twice outside `:root`. A third use means the color is a family and belongs
+  in the token layer. `.btn` is navy (`--navy-2`, the owner's "Primary: dark
+  navy"); `.btn.accent` is the teal fill; do not reintroduce a teal default.
+
 ## The day writes its paragraph, and only a person writes the log
 
 Unit 12 (owner brief verbatim in `case-portal/DAILY-SUMMARY.md`, derived
