@@ -13353,6 +13353,102 @@ section('Delivery center on a phone: rows stack and the copy is reachable');
   await page.close();
 }
 
+section('Unit 19 — package and report accuracy: one exhibit number, a real Documents count');
+{
+  /* STRUCTURAL, on purpose — the repo's own idiom for a rule that must not
+     come back (one `%PDF-1.` writer, `FIELD_KEEP` written once). Rendering a
+     package holding a document, a photo AND a video needs a planted legacy
+     video row and a finalized build; what actually broke was the ARITHMETIC,
+     and the arithmetic is one expression in each place. */
+  const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+
+  /* The Videos section numbered within its own list while the Evidence index
+     printed the document-wide sequence, so one exhibit had two numbers
+     whenever anything preceded a video — which is always, since the Worker
+     sorts attachments and photos ahead of it. */
+  ok('the videos section prints the document-wide exhibit number',
+     /<b>Video \$\{String\(r\.n\)/.test(src));
+  ok('and no per-section counter survives beside it',
+     !/Video \$\{String\(i2 \+ 1\)/.test(src));
+  ok('photos already used that sequence and still do',
+     /Photo \$\{String\(r\.n\)/.test(src));
+
+  /* `addEvidence` writes photo | video | attachment. Filtering for `document`
+     counted nothing, so Documents read 0 with a PDF in the package and the
+     Evidence step read undone on a document-only build. */
+  ok('the Documents count matches the role the Worker actually writes',
+     /role === "attachment" \|\| i\.role === "document"/.test(src));
+  const worker = fs.readFileSync(path.join(ROOT, 'case-portal/worker.js'), 'utf8');
+  ok('and that role is the one addEvidence stores',
+     /'video' : 'attachment'/.test(worker));
+
+  /* A day approved after the package was finalized used to appear nowhere,
+     while the Completed desk counted it — two desks, two answers. */
+  ok('the days panel is drawn on a finalized package too',
+     (src.match(/\$\{daysPanel\(\)\}/g) || []).length === 2,
+     String((src.match(/\$\{daysPanel\(\)\}/g) || []).length));
+  ok('and a late-approved day says how to include it rather than offering a refused Add',
+     /Reopen to include it/.test(src));
+}
+
+section('Unit 19 — a removed entry is shown as removed on the report Chronology');
+{
+  await post('/ingest', {
+    case_no: 'API-U19', service: 'Surveillance',
+    client_name: 'Accuracy Client', subject_name: 'Accuracy Subject', objective: 'Accuracy',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const page = await newPage();
+  page.on('dialog', d => d.accept());
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* A day, two entries, one of them removed — all through the routes that
+     already exist, so this is the real shape rather than a planted row. */
+  const ids = await page.evaluate(async no => {
+    const post2 = (p2, b2) => fetch('/portal-api' + p2, { method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b2 || {}) }).then(r => r.json());
+    await post2(`/cases/${no}/day/start`, { day_date: '2026-08-18', start_time: '08:00' });
+    await post2(`/cases/${no}/activity`, { description: 'Subject left the residence',
+      at_date: '2026-08-18', at_time: '08:30' });
+    await post2(`/cases/${no}/activity`, { description: 'Entered under a different name',
+      at_date: '2026-08-18', at_time: '09:05' });
+    await post2(`/cases/${no}/day/end`, { end_time: '12:00' });
+    const ws = await (await fetch(`/portal-api/cases/${no}/workspace`, { credentials: 'same-origin' })).json();
+    const wrong = (ws.activity || []).find(e => /different name/.test(e.description));
+    if (wrong) await post2(`/cases/${no}/activity/${wrong.id}/delete`, { reason: 'logged on the wrong case' });
+    const day = (ws.days || [])[0];
+    const rep = day ? await post2(`/cases/${no}/reports/generate`, { day_id: day.id }) : null;
+    return { removed: !!wrong, day: day ? day.id : null,
+             report: rep && rep.report ? rep.report.id : (rep && rep.id) || null,
+             acts: (ws.activity || []).length };
+  }, 'API-U19');
+  ok('the fixture built a day, two entries, one removed and a report',
+     ids.report != null && ids.removed === true && ids.acts === 2, JSON.stringify(ids));
+
+  await rowFor(page, 'API-U19').click();
+  await page.waitForTimeout(600);
+  await wsTab(page, 'Reports');
+  await page.waitForTimeout(700);
+  /* Open the report itself, then its Chronology view — the report screen
+     renders into #dlgBody, the way the P11 section already drives it. */
+  const card = page.locator('[data-act="openReport"]').first();
+  if (await card.count()) { await card.click(); await page.waitForTimeout(500); }
+  await page.locator('.rpnav button', { hasText: /^Chronology$/ }).first().click();
+  await page.waitForTimeout(400);
+  const body = await page.locator('#dlgBody').innerText();
+  ok('the removed entry is still SHOWN on the chronology, not silently dropped',
+     /different name/i.test(body), body.slice(0, 400));
+  ok('and it is marked as removed, with when',
+     /Removed/.test(body), body.slice(0, 400));
+  ok('the entry that stands is unmarked', /left the residence/i.test(body));
+  /* Struck through, the way the activity log already draws one — checked
+     computed, because a class that has no rule behind it draws nothing. */
+  const struck = await page.evaluate(() => {
+    const el = [...document.querySelectorAll('.tl-d')].find(d => /different name/i.test(d.textContent));
+    return el ? getComputedStyle(el).textDecorationLine : null;
+  });
+  ok('and the wording is struck through in the document view', struck === 'line-through', String(struck));
+  await page.close();
+}
+
 section('Retention: five states as words, a hold that outranks, and an audit trail');
 {
   await post('/ingest', {
