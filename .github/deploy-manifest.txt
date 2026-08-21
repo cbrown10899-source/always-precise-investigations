@@ -54,6 +54,7 @@ assets/review3.webp
 # --- service pages -----------------------------------------------------------
 insurance-investigations/index.html
 insurance-investigations/vendor-information/index.html
+legal-investigations/index.html
 infidelity-investigations/index.html
 child-custody-investigations/index.html
 

@@ -143,10 +143,11 @@ const FIRM = {
 };
 /* ============ NO PRICES ON THIS PAGE ============
    This is a public page, and the firm does not publish quotes — not for private
-   clients and not for carriers. A rate is sent to someone who has asked for
-   one, from the portal, as one of the two rate sheets in case-portal/worker.js:
-   the retainer sheet for a private client and the block ladder for a
-   carrier.
+   clients and not for carriers. A rate is sent privately, by the office, to
+   someone who has asked for one. Nothing about how that is done belongs in
+   this file — this page ships to the public, comments included, and an
+   internal filename in View Source is a pointer for anyone who looks
+   (owner decision, 2026-08-21: pricing is never published here).
 
    So the intake collects the case and nothing else. It does not quote, it does
    not total, and it does not take a payment. The office sends the sheet, and
@@ -157,9 +158,9 @@ const FIRM = {
 
 /* Carrier surveillance authorization presets. HOURS, NEVER A RATE — this page
    is public and carrier pricing is quoted per assignment. The 8-hour day is the
-   billing minimum and 24 hours is the usual initial authorization; the internal
-   rate that goes with them lives in case-portal/worker.js, which is not
-   deployed to the public site. */
+   billing minimum and 24 hours is the usual initial authorization. The internal
+   rate that goes with them is held privately in the portal and is deliberately
+   not named here, filename included: this file is public. */
 const AUTH_PRESETS = [
   { id:"a8",     label:"8 hours — 1 day",   desc:"A single day of coverage. Our minimum surveillance day." },
   { id:"a16",    label:"16 hours — 2 days", desc:"Two days, typically split to compare different days of the week." },
@@ -206,7 +207,7 @@ const CARRIER_ONLY = /^(insurance|carrier|claims)$/i
   .test(new URLSearchParams(location.search).get("assignment") || "");
 
 /* And ?assignment=private is the other door (audit, 2026-08-14): the link the
-   PRIVATE rate sheet emails. A private client still chooses between
+   office emails a private client. They still choose between
    surveillance and process serving, so the picker stays — it just no longer
    offers them an insurance claim assignment they were never going to file.
    Bare /intake/ is unchanged and still offers all three. */
@@ -457,7 +458,7 @@ function view(step){
         <option>Surveillance</option>
         <option>Locate / Skip trace</option>
         <option>Background investigation</option>
-        <option>Witness locate / interview</option>
+        <option>Witness locate</option>
         <option>Domestic / custody investigation</option>
         <option>Civil investigation</option>
         <option>Evidence / documentation</option>
@@ -548,7 +549,7 @@ function view(step){
       : `<label class="f"><span>Relationship to you</span><input type="text" data-k="s_rel" placeholder="e.g. spouse, tenant, employee, defendant"></label>`}
     <label class="f"><span>Documents or photos</span>
       <input type="file" id="files" multiple onchange="pickFiles(this)" style="font-size:.9rem;padding:8px 0;border:0;">
-      <span class="hint" id="filenote">${isClaims()?"Attach the claim file, recorded statement, ISO report or a photo of the claimant.":"Attach court papers or a photo of the subject if you have them."}</span></label>
+      <span class="hint" id="filenote">${isClaims()?"Attach the claim file, ISO report or a photo of the claimant.":"Attach court papers or a photo of the subject if you have them."}</span></label>
     ${navButtons()}
   </div>`;
 
