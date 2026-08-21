@@ -1,3 +1,107 @@
+# MASTER RECONCILIATION — 2026-08-21, master `2f96b23` (INTERNAL)
+
+Ordered by the owner after Unit 17 shipped: *"Run a MASTER REQUIREMENTS
+RECONCILIATION before creating Unit 18… Do not assume the numbered unit list
+contains every requirement."* Read-only: no code, no branches, no deploys.
+
+**Sources read in full:** CLAUDE.md, NEXT.md, this file, MASTER-HANDOFF.md
+(§1–§43), WORK-ORDER.md, HANDOFF.md, PAYMENTS.md, INVOICING.md, INTAKE-OPS.md,
+SURVEILLANCE-VOICE.md, PORTAL-OPS.md, UXSIMPLIFY.md, WORKFLOW-SIMPLIFICATION.md,
+LEGAL-INTAKE.md, RATESHEETS.md, PROFILES.md, plus every 📌 unit report.
+
+**How a verdict was reached:** every load-bearing claim was traced to a route,
+a table, a test or a workflow run — the standard this file was written to
+enforce. Four parallel readers produced the claims; the ones that decide the
+queue were then re-verified by hand and are marked *(verified directly)*.
+
+## The 2026-08-14 findings tables below are STALE in four rows
+
+Re-verified against today's code. `A backward status transition reopens a paid
+invoice` and `That same revert erases a live receivable` are marked OPEN in the
+INVOICING table while **this same file records both FIXED at HIGH #3**;
+`setInvoiceStatus` refuses `draft` and `ready` once any payment exists
+(`worker.js` ~6897-6904, pinned by *"An invoice with money against it cannot be
+put back to draft"*). The two SURVEILLANCE HIGH rows are stale the same way —
+recorded FIXED and VERIFIED above, still marked OPEN below. When the PACKAGING
+HIGH rows were updated to ✅, these four were missed. **They are corrected in
+place below.** A findings table nobody reconciles is the same failure mode as a
+red workflow nobody reads.
+
+## What is genuinely still open from those tables
+
+Nine findings survive verification. Ranked by whether a person actually hits
+them:
+
+| Finding | Reaches | Evidence |
+| --- | --- | --- |
+| An overpayment is accepted and **cannot be reversed** | the client's document | No ceiling (`worker.js:6957` checks only `> 0`); `invoice_payments` has INSERT and SELECT **only** — no void, no reversal route exists (verified directly); `#invdoc` prints `usd(i.balance_due)` raw at `portal/index.html:14487`, so an overpaid invoice reads **"Balance due $-500"** while the retainer block one row below handles negatives with `Math.abs` |
+| Unsent **drafts** draw down the retainer | the client's document | `worker.js:6584-6586` sums siblings `WHERE status != 'void'`, including drafts, while `outstanding` excludes them (`:6766`). **This is what CLAUDE.md documents** ("every live invoice") and E2E-39 asserts it deliberately — so it is an owner decision, not a defect (verified directly) |
+| Chronology shows **removed** entries unmarked | the office | `portal/index.html:10292` lacks the `!e.removed_at` filter the timeline (`:9571`), field view (`:13857`) and summary builder (`:10016`) all have |
+| A day approved **after finalize** is invisible, while `/completed` counts it | the office | `daysPanel()` only runs for a draft build (`:11741`); the Worker already sends `available_reports` for a finalized one (`worker.js:8916-8919`) and it is never drawn. `/completed` counts approved reports, `/delivery-center` counts `build_reports` — the two desks disagree |
+| **Video exhibit numbers** contradict each other in one document | the client | Section prints `Video ${i2+1}` (`:12071`), index prints `Video ${r.n}` from a global sequence (`:12079`); photos use `r.n`, so only video diverges |
+| **Documents always reads 0** | the office | Page filters `role === "document"`, the Worker writes `'attachment'` (`worker.js:11722`) |
+| Void invoices report cash in **Paid this month** | the office | `worker.js:6771` reduces over `full`, not `live` |
+| Removed days come back at finalize | API only | `worker.js:11753-11766` re-seeds when zero are attached; the page cannot remove the last day |
+| `nextInvoiceNo` wedges past 9999 | 10,000 invoices/year | Lexicographic TEXT ordering on a `NOT NULL UNIQUE` column |
+
+`case_builds.report_id` pointing outside `build_reports` is **FIXED** — the
+remove route repoints it (`worker.js:11613-11621`, pinned by *"and the primary
+report moves to one still in the package"*).
+
+## Requirements the numbered queue does not contain
+
+Found by reading the handoffs rather than the queue, as instructed:
+
+- **Real Intake Alerts** (INTAKE-OPS §1) — PARTIAL. Wired at both intakes,
+  `TEST-` guarded, email delivering. Two requirements unmet and not deferred:
+  the alert never says **Private or Insurance** (`alertText(event, caseNo,
+  channel)` takes no category — verified directly), and a **failed send is
+  invisible** (`notifyAdmins`'s catch returns `{sent:0,reason:'error'}` and all
+  eight callers discard it — verified directly). SMS and the queued/sent/failed
+  status log are **owner-deferred** by name.
+- **Invoice payment idempotency** — MISSING, and undeferred. `recordInvoicePayment`
+  takes no token and `invoice_payments` carries no unique index, while the
+  retainer path has both a token table and a void route (verified directly).
+- **A deduplicated retainer payment still alerts twice** — `worker.js:12244-12248`
+  notifies on `'duplicate'` as well as `'recorded'` (verified directly). Money
+  is idempotent; the notification about it is not.
+- **`include_intake` sends a law firm the PRIVATE door** — `emailSheet` builds
+  the bundled link from `SHEET_INTAKE[sheet.id]`, and a legal case's sheet id
+  IS `private_retainer` (`worker.js:1350`, `:1451`, `:2584` — verified
+  directly). `intakeForContext()` exists three lines above and the other two
+  intake routes use it; the comment at `worker.js:855-858` states the very rule
+  being broken. Untested: no test pairs `include_intake:true` with a legal case.
+- **PORTAL-OPS phases never built**: cross-case Tasks view (4), Quick Actions
+  +NEW (6), Saved Views (9), Case Templates (12), Document Templates (13),
+  Audit Trail screen (14). Phase 11's Case Health flag is **owner-deferred**;
+  Phase 10's notification bell is **superseded by design** (Unit 8 refuses a
+  dismissal mechanic on principle). PORTAL-OPS item 10 (Permissions) is
+  **corrupted and never re-sent — blocked on the owner.**
+- **File Queue layout** — recorded, explicitly unbuilt, never queued.
+- **Accessibility** — no dedicated pass has ever run. Real coverage exists
+  (WCAG contrast on 15 token pairs, focus-visible, colour-never-alone, 37
+  `aria-` attributes) but no keyboard-path or screen-reader walk.
+- **Voice §9 audible confirmation tone** — the only unbuilt line of
+  SURVEILLANCE-VOICE; on-screen confirmation ships.
+
+## Corrections to the record
+
+- **§38 / §39 are NOT stale.** The tracker says the full Insurance and Private
+  walkthroughs were "done 2026-08-14" and never re-run. They are living tests —
+  `End to end: a carrier assignment, sheet to completed` and `End to end: a
+  private client, sheet to completed` — 24 tagged assertions running on every
+  suite invocation, green at 2544/0 (verified directly).
+- **RECONCILIATION §Q ("Dropbox NOT IMPLEMENTED") is stale** — true on
+  2026-08-14, superseded by #172/#174/#189. The delivered shape is
+  device-first by the owner's 2026-08-17 decision, so §14's "create share link"
+  was deliberately never built; a test asserts no sharing call exists.
+- **UXSIMPLIFY.md's ledger says "not started" for all five phases** — stale;
+  UIBUILD.md superseded it the same day and reports all eight phases done.
+- **INTAKE-OPS.md's header says "Neither is coded"** — stale for §1 (alerts are
+  substantially built), still true for §2 (archive).
+
+---
+
 # MASTER RECONCILIATION REPORT — 2026-08-14 (INTERNAL)
 
 Ordered by the owner via the ChatGPT audit prompt, after screenshots suggested
@@ -371,8 +475,8 @@ items** — they are labelled as claims, which is what they are, not as noise.
 | Area | Finding | Severity | Reviewer's evidence | Status |
 | --- | --- | --- | --- | --- |
 | INVOICING | The retainer invoice consumes the retainer it bills. | HIGH | `retainerBlock` sums every line on every non-void invoice as applied, and `createInvoice` puts the retainer itself on an invoice as a line, so the deposit counts as work. A second invoice then prints "Beyond the retainer" to the client when money remains. `worker.js` `retainerBlock` ~2186; `createInvoice` ~2322. | **FIXED — PR #69 (`c60a584`), re-verified on master.** `retainerBlock` skips any invoice carrying an `invoice_retainer` row (`worker.js` ~2214-2229), so the deposit is never counted as work against itself |
-| INVOICING | A backward status transition reopens a paid invoice. | HIGH | `setInvoiceStatus` guards `sent_to_bill` and `sent_to_client` but `draft` has no guard, so a paid invoice can be set back to draft, its lines rewritten and adjustments applied, bypassing the locked check. `worker.js` ~2454-2489. | OPEN |
-| INVOICING | That same revert erases a live receivable. | HIGH | `outstanding`, `drafts` and the dashboard Outstanding SQL all filter on the STORED status, so one write hides real money while `balance_due` stays honest. `worker.js` ~2349, ~2357, ~3063. | OPEN |
+| INVOICING | A backward status transition reopens a paid invoice. | HIGH | `setInvoiceStatus` guards `sent_to_bill` and `sent_to_client` but `draft` has no guard, so a paid invoice can be set back to draft, its lines rewritten and adjustments applied, bypassing the locked check. `worker.js` ~2454-2489. | **FIXED — see HIGH #3 above; re-verified 2026-08-21.** `setInvoiceStatus` refuses `draft` and `ready` once any payment exists (`worker.js` ~6897-6904), pinned by *"An invoice with money against it cannot be put back to draft"* |
+| INVOICING | That same revert erases a live receivable. | HIGH | `outstanding`, `drafts` and the dashboard Outstanding SQL all filter on the STORED status, so one write hides real money while `balance_due` stays honest. `worker.js` ~2349, ~2357, ~3063. | **FIXED as worded — see HIGH #3; re-verified 2026-08-21.** The revert it names is refused. An *unpaid* sent invoice can still be returned to draft, which is the intended meaning of un-issuing one |
 | INVOICING | Create from retainer ignores the case's own retainer amount. | MEDIUM | Binds the hard-coded `PERSONAL.retainer` while `retainerBlock` reads `case_retainer.retainer_amount`; a $2,500 case retainer bills $1,500. `worker.js` ~2326 vs ~2185. | **FIXED — PR #69 (`c60a584`), re-verified on master.** `createInvoice` reads `case_retainer.retainer_amount` and falls back to `PERSONAL.retainer` only when the case has none (`worker.js` ~2357-2373) |
 | INVOICING | Unsent drafts draw down the retainer on a client's document. | MEDIUM | `retainerBlock` filters only `status != void`; drafts are excluded from outstanding everywhere else. `worker.js` ~2187. | OPEN |
 | INVOICING | An overpayment is accepted and cannot be reversed. | MEDIUM | No ceiling on payment amount, no negative correcting entry allowed, document prints a negative balance without `Math.abs`. `worker.js` ~2516; `portal/index.html` ~4478. | OPEN |
@@ -387,8 +491,8 @@ items** — they are labelled as claims, which is what they are, not as noise.
 | PACKAGING | Video exhibit numbers contradict each other inside one document. | LOW | Section numbers `i2+1`, index numbers `r.n`. `portal/index.html` ~3229 vs ~3237. | OPEN |
 | PACKAGING | Documents always reads 0. | LOW | Page filters `role === 'document'`; the Worker writes `'attachment'`. `portal/index.html` ~3002. | OPEN |
 | PACKAGING | A day approved after finalize is invisible, while `/completed` counts it. | LOW | `completedView` renders neither `daysPanel` nor the gate strip. | OPEN |
-| SURVEILLANCE | An open pause is closed at server now, not at the day's recorded end time, so a day can be recorded as 0 hours. | HIGH | `span` is wall-clock minutes between typed start and end; the open pause closes at `nowIso()` and its real elapsed is subtracted. Pause at noon, end the day at 20:00 with an honest 12:00 end time, and `Math.max(0, …)` floors a real 4-hour day to zero. `worker.js` ~1747-1766. | OPEN — HIGHEST of the surveillance findings. |
-| SURVEILLANCE | Reassigning a case strands a running day and its open pause permanently. | HIGH | `pause`/`resume`/`end` are scoped to both `caseFor` and `investigator_id = user.id`, so after a reassign nobody — not even an admin — can close the day. It stays in Out Now forever. `myActiveDay` also has no `assigned_to` filter, so the old investigator keeps being offered it and lands in a permanently loading screen. `worker.js` ~1693-1734, ~1020, ~3081. | OPEN |
+| SURVEILLANCE | An open pause is closed at server now, not at the day's recorded end time, so a day can be recorded as 0 hours. | HIGH | `span` is wall-clock minutes between typed start and end; the open pause closes at `nowIso()` and its real elapsed is subtracted. Pause at noon, end the day at 20:00 with an honest 12:00 end time, and `Math.max(0, …)` floors a real 4-hour day to zero. `worker.js` ~1747-1766. | **FIXED — recorded above and re-verified 2026-08-21.** The stale OPEN here was a bookkeeping miss |
+| SURVEILLANCE | Reassigning a case strands a running day and its open pause permanently. | HIGH | `pause`/`resume`/`end` are scoped to both `caseFor` and `investigator_id = user.id`, so after a reassign nobody — not even an admin — can close the day. It stays in Out Now forever. `myActiveDay` also has no `assigned_to` filter, so the old investigator keeps being offered it and lands in a permanently loading screen. `worker.js` ~1693-1734, ~1020, ~3081. | **FIXED — recorded above (the `end-other` recovery route) and re-verified 2026-08-21** |
 | SURVEILLANCE | Two of the three clock screens ignore the pause the server sends them. | MEDIUM | `svLauncher` (the PWA start URL) shows unpaused elapsed and says "Day running" while paused; the admin Out Now board shows raw wall-clock. `portal/index.html` ~3652-3659, ~1118-1133. | OPEN |
 | SURVEILLANCE | Every SV date is UTC while every SV time is local, so evening work is filed a day late. | MEDIUM | `toISOString().slice(0,10)` vs `toTimeString().slice(0,5)`. After 20:00 EDT the date is tomorrow. Affects `case_days.day_date`, `case_reports.report_date` and timeline ordering. `portal/index.html` ~3690-3691, ~5006, ~5009 and repo-wide. | ✅ FIXED 2026-08-14 — true at all eleven page sites, all of them a date a human means by "today". `ymdLocal()` beside `fmtDay()`, which already guarded the return trip. Tested in two real timezones (UTC+14 / UTC-11) that bracket the clock, with a counter asserting at least one genuinely drifted so a green run cannot mean "nothing was tested". Portal 699 → 713. The Worker's date arithmetic, the visitor-alerts day buckets and intake's case NUMBER were examined and deliberately left on UTC. |
 | SURVEILLANCE | `start_time` and `end_time` are never sanity-checked against the server's own clock. | MEDIUM | A day created seconds ago can be closed with an end time giving 23.98 h, flowing into authorization and invoicing. Mileage has a monotonicity check; time has none. | OPEN |
