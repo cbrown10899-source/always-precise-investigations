@@ -1344,10 +1344,25 @@ async function emailSheet(request, env, user, id) {
   const retainer = await retainerForSend(env, caseNo, body.retainer_amount);
   const sheet = sheetById(id, retainer);
 
-  // The Options step (UIBUILD P18): include the sheet's own intake, or not.
-  // Which intake is never the caller's choice — SHEET_INTAKE pairs it.
+  /* The Options step (UIBUILD P18): include the intake, or not. Which intake
+     is never the caller's choice.
+
+     IT IS PAIRED TO THE CONTEXT, NOT TO THE SHEET (hotfix, 2026-08-21). The
+     sheet is the PRODUCT and the door is the FORM, and Legal is exactly where
+     those two part company: a legal case takes the private SHEET by design
+     (D1/D2 — one pricing source) while its door is `?assignment=legal`. Keyed
+     off `sheet.id`, a law firm was emailed the private door — the one whose
+     `pickSvc` refuses `legal`, so the recipient could not have used it. The
+     rule was already written down four lines above `CONTEXT_INTAKE` and
+     already obeyed by `sendLeadIntake` and `sendPreCaseIntake`; this was the
+     third reader, keyed off the wrong thing.
+
+     Resolved ONCE here and passed down, so the body, the URL and the response
+     label cannot disagree — three derivations of one answer is three chances
+     to drift, which is how this one survived. */
   const includeIntake = body.include_intake === true || body.include_intake === 1 || body.include_intake === '1';
-  const intakeUrl = includeIntake && SHEET_INTAKE[sheet.id] ? SHEET_INTAKE[sheet.id].url : null;
+  const intakeDoor = includeIntake ? (intakeForContext(sendCtx) || null) : null;
+  const intakeUrl = intakeDoor ? intakeDoor.url : null;
 
   /* Payment instructions ride only with the PRIVATE sheet (PAYMENTS.md).
      Asking for them on the carrier sheet is REFUSED rather than quietly
@@ -1405,7 +1420,7 @@ async function emailSheet(request, env, user, id) {
         + 'before including payment instructions.' }, 400);
   }
 
-  const { text, html } = sheetEmail(sheet, note, includeIntake, payment, retainer);
+  const { text, html } = sheetEmail(sheet, note, intakeDoor, payment, retainer);
   const subject = caseNo
     ? `${sheet.name} — Always Precise Investigations (case ${caseNo})`
     : `${sheet.name} — Always Precise Investigations`;
@@ -1448,7 +1463,7 @@ async function emailSheet(request, env, user, id) {
     send_context: sendCtx,
     included: {
       rate_sheet: sheet.name,
-      intake: includeIntake && SHEET_INTAKE[sheet.id] ? SHEET_INTAKE[sheet.id].label : null,
+      intake: intakeDoor ? intakeDoor.label : null,
       payment_methods: payment.map(x => ({ id: x.id, label: x.label })),
     } });
 }
@@ -2580,8 +2595,11 @@ function paymentBlockHtml(pay, retainer) {
   </div>`;
 }
 
-function sheetEmail(sheet, note, includeIntake, pay, retainer) {
-  const intake = includeIntake ? SHEET_INTAKE[sheet.id] : null;
+/* `intake` is the DOOR the caller already resolved from the send context — not
+   a flag to re-derive one from. It used to take a boolean and look the door up
+   by `sheet.id`, which is what sent a law firm the private form: the legal
+   context shares the private sheet on purpose. One resolution, passed in. */
+function sheetEmail(sheet, note, intake, pay, retainer) {
   /* Belt and braces on the boundary: even called wrongly, the carrier sheet
      cannot carry a consumer payment handle. */
   const payment = (sheetTakesPayment(sheet.id) && Array.isArray(pay)) ? pay : [];

@@ -4441,8 +4441,12 @@ async function wizSheetLoad(){
 function sheetWizardHtml(){
   const w = SHEET_WIZ;
   const sheet = w.sheetData || SHEETS.find(s => s.id === w.sheet) || {};
-  const intakeLabel = w.sheet === "insurance_assignment"
-    ? "Insurance Assignment Intake" : "Private Client Intake";
+  /* The door is named from the CONTEXT, the way the Worker chooses it — a
+     legal case takes the private sheet and the legal door, so `w.sheet` alone
+     labels it wrongly. Same table, same order, one screen. */
+  const intakeLabel = w.legal ? "Legal Investigation Assignment"
+    : w.sheet === "insurance_assignment" ? "Insurance Assignment Intake"
+    : "Private Client Intake";
   /* The include-intake choice lives on the FIRST screen (owner, 2026-08-14).
      It used to be a second step called Options, which meant it existed and
      was tested and the owner still never saw it — a control you must click
@@ -4790,7 +4794,11 @@ function recentStripHtml(){
    gets the wizard's own neutral wording and no payment line, so a future third
    sheet costs a missing detail rather than either naming the wrong intake or
    offering payment instructions to a carrier. */
-function sheetIncludables(sheetId){
+function sheetIncludables(sheetId, legal){
+  /* A legal case takes the private sheet in the LEGAL context: its door is the
+     legal one and its payment block is refused by the Worker, so neither line
+     may be copied from the private answer. */
+  if(legal) return ["Legal Investigation Assignment Form"];
   if(sheetId === "private_retainer") return ["Private Client Intake Form", "Payment Options"];
   if(sheetId === "insurance_assignment") return ["Insurance Assignment Intake Form"];
   return ["The matching intake form"];
@@ -10516,6 +10524,7 @@ function sendsPanel(){
   const sends = (WS && WS.sends) || [];
   if(!sends.length) return "";
   const doorName = d => !d ? "" : /assignment=insurance/.test(d) ? "Insurance Assignment Intake"
+    : /assignment=legal/.test(d) ? "Legal Investigation Assignment"
     : /assignment=private/.test(d) ? "Private Client Intake" : "Client Intake";
   return `<div class="feebox" style="margin-bottom:12px">
     <div class="row"><span><b>Sent from the portal</b></span>
@@ -16226,7 +16235,13 @@ document.addEventListener("click", ev => {
      pre-filled, and a successful send stamps the lead server-side. */
   else if(act === "leadSheet"){
     const c = CASES.find(x => x.case_no === el.dataset.case) || {};
+    /* `legal` is carried so the wizard can NAME the door it will actually
+       send (hotfix, 2026-08-21). A legal case takes the private SHEET and the
+       LEGAL door, so the sheet id alone cannot label the intake — it said
+       "Private Client Intake Form" over a send that carries
+       `?assignment=legal`. It is the row's own category fact, not a guess. */
     SHEET_WIZ = {sheet: el.dataset.kind === "claims" ? "insurance_assignment" : "private_retainer",
+                 legal: !!c.legal,
                  step: 1, to: c.client_email || "", caseNo: el.dataset.case, note: "",
                  include: true, pay: true, payMethods: [], err: "", fromLead: true,
                  retainer: null, retainerPick: String(RETAINER_PRESETS[0]),

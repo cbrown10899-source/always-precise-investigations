@@ -33,7 +33,266 @@ item is finished.
 | 14 | Storage Health | ✅ **DONE — LIVE VERIFIED** by the owner 2026-08-21, at `96e994d` (#202) |
 | 15 | Case Closeout | ✅ **DONE — LIVE VERIFIED** by the owner 2026-08-21, at `2494716` (#203) |
 | 16 | Client Delivery Center | ✅ **DONE — DEPLOYED** at `883fd6d` (#204). LIVE VERIFY **OPEN** for the owner |
-| 17 | Retention Controls | ✅ **DONE — DEPLOYED** at `943d0f3` (#205). LIVE VERIFY **OPEN** for the owner |
+| 17 | Retention Controls | ✅ **DONE — DEPLOYED** at `943d0f3` (#205). LIVE VERIFY **DEFERRED — requires a real case** (owner, 2026-08-21) |
+
+---
+
+# 🔒 DURABLE MASTER UNIT QUEUE — owner, 2026-08-21
+
+**Recorded so it cannot be lost between sessions.** Items 1–17 above are
+history and stay as they are. Everything below is the remaining project, in
+order. **Nothing here jumps ahead of anything above it.** The owner's
+instruction with this queue was documentation only: *"DO NOT CODE. DO NOT
+CREATE A BRANCH. DO NOT DEPLOY. DO NOT START THE NEXT UNIT."*
+
+## Active order
+
+| # | Unit | State |
+| --- | --- | --- |
+| **17A** | **HOTFIX — Legal intake link routing** | **CODED · TESTED (worker 2557/0, deploy guard 68/0) · PUSHED** — branch `legal-intake-door-hotfix`, commit `6663046`. Begun on the owner's *"Start with the Legal intake-link hotfix now"* (2026-08-21) before this documentation instruction arrived. **NOT merged, NOT deployed.** The full portal suite was still running when the queue was recorded; its result gates the merge |
+| 18 | Invoice Payment Integrity | not started |
+| 19 | Package + Report Accuracy | not started |
+| 20 | Intake Alert Completeness | not started |
+| 21 | Accessibility + Voice audible-tone completion | not started |
+| 22 | PORTAL-OPS remaining gaps | not started |
+| 23 | Consolidated Live Verification Sweep | not started |
+| 24 | **Required** File Queue + portal aesthetic redesign | not started |
+| 25 | Final security / authorization / regression pass | not started |
+| 26 | Final master reconciliation + project closeout | not started |
+
+## CONFIRMED COMPLETE — DO NOT REOPEN
+
+Owner-confirmed or reconciliation-confirmed. **Do not reopen unless current
+master directly contradicts the completed status.**
+
+- Timestamp Photo · Portal Palette Normalization · Storage Health · Case Closeout
+- Private retainer-payment idempotency
+- **Private custom-retainer carry-through** — $1,500 / $2,000 / $3,000 / Custom,
+  the agreed retainer preserved through intake and payment, RECEIVED /
+  OUTSTANDING, additive partial payments
+- **Active Surveillance final completeness** — mobile workflow, voice workflow,
+  activity timeline, daily/end-day workflow, reporting integration
+- **Unit 17 Retention Controls — CODED, TESTED, PUSHED, MERGED, DEPLOYED.**
+  **LIVE VERIFIED is DEFERRED until the owner has a suitable real case.**
+  *Do not manufacture a production case solely for this test.*
+
+## IMPLEMENTED BUT NOT LIVE VERIFIED
+
+Machine-verified and deployed. **Do not rebuild any of these unless a
+regression is found.** They are swept together in **Unit 23**, never reopened
+as development units:
+
+Dropbox Portal UI · Admin Report Workflow · Portal UI Modernization · Legal /
+Law Firm Intake · Legal Rate Sheet · Legal firm profiles · Legal billing
+workflow · Global Search · Needs Attention · Report Templates · Case Timeline ·
+Evidence Integrity · Daily Summary · Client Delivery Center · Retention Controls
+
+## HOTFIX 17A — Legal intake link routing
+
+A Legal/Law Firm send using **Include Intake Link** could bundle the **Private**
+intake door, which that picker refuses for Legal. Required: Private sends
+Private, Insurance sends Insurance, Legal sends Legal, **never cross-routed**.
+**Test all three intake types separately.** Do not rebuild the already-shipped
+Legal intake/rate-sheet architecture. **This comes before Unit 18.**
+
+## UNIT 18 — Invoice Payment Integrity
+
+Every verified invoice-payment finding, together: idempotency so a
+double-submit never records money twice · reversible payment
+correction/void · **immutable, auditable payment history** — a prior payment
+stays visible as voided/corrected, never silently erased · accurate balances
+after correction · safe overpayment handling · a client-facing balance that is
+never misleading · accurate invoice print/output, including the known overlap
+where an overpaid balance prints as `Balance due $-500` · **void invoices must
+stop counting their money as Paid This Month** · reuse the existing
+retainer-payment idempotency pattern where it fits · **no destructive deletion
+of financial history.**
+
+**OWNER DECISION PENDING — does an UNSENT/DRAFT invoice draw down the
+client-facing retainer?** See the decisions section below: the owner answered
+this on 2026-08-21 and then asked for it to be held pending. **Do not invent
+the policy; confirm before implementing.**
+
+## UNIT 19 — Package + Report Accuracy
+
+Removed activity entries represented correctly in the Report Chronology ·
+entries restored with **Put It Back** rendering correctly · a day approved after
+finalization must not be invisible while the Completed desk counts it · video
+exhibit numbering internally consistent within one document · the Documents
+count reflecting real documents rather than always reading 0 · package/report
+counts agreeing with the artifacts actually included · **Evidence Integrity,
+report version history and final package behaviour all preserved** · verify
+Print Preview / Save PDF · verify mobile report readability, no horizontal
+overflow, and no screen chrome inside printable documents.
+
+## UNIT 20 — Intake Alert Completeness
+
+Alerts identify the intake type — **Private / Insurance / Legal** where
+applicable · one real intake = one notification · a deduplicated or retried
+intake raises no duplicate alert · **the retainer-payment dedup must stop
+alerting twice** · failed delivery becomes visible to an admin **without
+exposing client information** · test/sample/demo/fixture records raise no
+production alert · alerts fire only after the production commit ·
+configurable admin destinations · email capability preserved.
+
+**SMS stays DEFERRED** — do not choose or wire a provider. If the alert-status
+log is still owner-deferred, keep it deferred and keep it **distinct** from the
+minimum admin-visible failure state this unit does require.
+
+## UNIT 21 — Accessibility + Interaction Pass
+
+Keyboard navigation · logical focus order · visible focus states ·
+screen-reader labels and announcements for meaningful state changes · semantic
+headings and form controls · accessible error and status messaging · no
+colour-only status meaning · sufficient contrast · mobile tap-target sizing ·
+accessible dialogs and modals · responsive layouts with no horizontal
+overflow · the critical admin and investigator workflows · final desktop and
+phone verification.
+
+Also reconciles **SURVEILLANCE-VOICE.md §9**: the audible-tone requirement is
+the one unbuilt line of the voice spec. **Implement it only to the existing
+approved spec — invent no new voice behaviour.**
+
+## UNIT 22 — PORTAL-OPS Remaining Gaps
+
+Never built: **cross-case Tasks view · Quick Actions + NEW · Saved Views ·
+Case Templates · Document Templates · Audit Trail screen.**
+
+**Audit master immediately before implementing** so existing equivalents are
+reused rather than duplicated. **Do not build a wall of equal KPI cards.**
+Preserve the operating model: clear Needs Attention, an obvious Next Step,
+useful global search, compact operational hierarchy.
+
+**OWNER INPUT REQUIRED — PORTAL-OPS PERMISSIONS.** That requirement arrived
+corrupted and was never re-sent. **Do not invent it.**
+
+## UNIT 23 — Consolidated Live Verification Sweep
+
+After 18–22 deploy, produce **one owner-friendly checklist** covering every
+implemented-but-unverified item: the fifteen listed above plus Invoice Payment
+Integrity, Package + Report Accuracy, Intake Alert Completeness,
+Accessibility, the PORTAL-OPS additions, and the full Insurance and Private
+workflows.
+
+**Do not ask the owner to create fake production cases.** Mark each check
+**LIVE VERIFIED** or **LIVE VERIFICATION DEFERRED — REQUIRES REAL CASE/DATA**.
+
+## UNIT 24 — File Queue + Portal Aesthetic Redesign — **REQUIRED**
+
+**THIS IS A REQUIRED FUTURE UNIT. IT MUST NOT BE DROPPED AS "OPTIONAL
+POLISH."** The owner explicitly approved the File Queue visual direction, and
+**the project may not be declared aesthetically complete until it is
+addressed.**
+
+*Design direction:* permanent dark/navy sidebar · clean white working canvas ·
+restrained gold accents · teal/green completion cues · compact professional
+hierarchy · consistent typography and spacing · no overlapping navigation
+labels · multi-line sidebar labels auto-fitting cleanly · responsive iPhone
+layout · large mobile tap targets · no horizontal overflow · consistent buttons
+and status chips · breadcrumbs/contextual navigation · one obvious Next Step
+where useful.
+
+*The File Queue* represents **existing real data** — photos, timestamped
+photos, videos, timestamped videos, reports/PDFs, documents, supporting
+evidence — with queue concepts such as Awaiting Processing / Awaiting Review /
+Awaiting Verification / Ready to File / Completed. **Use existing real workflow
+states where equivalent; do not invent duplicate states to copy the mockup.**
+Fields: file name, type, case/reference, uploaded date and time, status,
+actions, size, case association, uploader, integrity/checksum data.
+
+*The selected-file workspace* shows file information, metadata, a preview where
+safe, activity/queue history, current status, next step, notes, case
+assignment and evidence-integrity information — **from real portal data, never
+mockup data.** Prefer an **aggregation/read model over duplicate storage**; do
+not rebuild backend workflows unnecessarily.
+
+The pass also normalizes spacing across sidebar navigation, the Daily
+Summary/report builder, cards, tables, labels, inputs, checkboxes and help
+text, on desktop and mobile.
+
+**Visual principles to preserve:** navy sidebar, white cards and work areas,
+gold highlight, teal completion cues, clean spacing, compact hierarchy, large
+mobile controls, the dark field-friendly Active Surveillance interface, visual
+evidence where helpful, useful progress indicators, mobile navigation where
+appropriate. **Never copy from a mockup:** fake names, cases, dates or file
+counts, mockup typos, or decorative buttons that do nothing. **Every production
+button must have a real function.**
+
+## UNIT 25 — Final Security / Authorization / Regression Pass
+
+Admin and investigator authorization · client/commercial-data redaction · case,
+report and evidence access · retention controls · payment controls · legal
+hold · archive/restore · public intake routes · storage health · Dropbox
+integration · secret and token exposure · destructive endpoints · responsive
+behaviour · accessibility regressions · printable documents · mobile
+workflows. **No destructive production migration merely for this pass.**
+
+## UNIT 26 — Final Master Reconciliation + Project Closeout
+
+Compare **every durable owner requirement** against master and live state
+again, classifying each as COMPLETE + LIVE VERIFIED / IMPLEMENTED BUT LIVE
+VERIFICATION DEFERRED / DEFERRED BY OWNER / MISSING — SKIPPED / OWNER DECISION
+REQUIRED. Produce the final ledger showing CODED · TESTED · PUSHED · MERGED ·
+DEPLOYED · LIVE VERIFIED or DEFERRED for every meaningful unit.
+
+**The project is not complete while any non-deferred approved requirement is
+still missing.**
+
+## The two end-to-end workflow verifications (inside Unit 23)
+
+**Insurance** — public site → insurance rate sheet → insurance intake → admin
+review → case creation/assignment → Active Surveillance if applicable →
+activity/report → evidence → package → invoice/BILL handoff → delivery →
+closeout → retention.
+
+**Private** — public site → private rate sheet → agreed retainer → private
+intake → payment instructions → Record Payment → partial payments → case →
+fieldwork → report/evidence → package → billing → delivery → closeout →
+retention.
+
+**Do not rebuild working functionality merely to satisfy a verification.**
+Private payment methods stay exactly as approved: **Cash App, Venmo, Check,
+Cash, ACH/BILL.** Credit Card and Other remain removed. **Sending payment
+instructions never marks payment received.**
+
+## Legal / Law Firm workflow — do not lose, do not rebuild
+
+The architecture exists. The finished project must preserve and live-verify:
+the third intake type **LEGAL / LAW FIRM** · the Legal rate sheet ·
+firm/attorney/paralegal profile support · Clients & Firms reuse for repeat
+firms · repeat case history · preferred retainer and billing details where
+implemented · case objective · deadline and court-date information where
+supported · supporting document upload · **correct Legal intake link routing**
+(Hotfix 17A) · the Legal billing workflow · BILL/manual invoice handoff where
+approved · retainer check pick-up at the firm's office where approved. **Do not
+show the private Cash App/Venmo presentation in Legal unless explicitly
+approved.**
+
+## DEFERRED / PARKED — preserve, never silently delete
+
+Not part of the active build unless the owner reactivates them. **A deferred
+item is never converted to "completed" and never removed from this record:**
+
+physical evidence destruction · automatic retention clocks · automatic purge ·
+Dropbox byte deletion · the legacy R2 export/migration decision · two-person
+legal-hold approval · SMS delivery and provider · Intake Archive / Sample
+Cleanup Part 2 · invoice Write-Off · the PORTAL-OPS Case Health flag · any
+separate alert-status-log work marked deferred · any deferred
+multiple-provider/storage work · any destructive evidence cleanup.
+
+## OWNER DECISIONS — still required
+
+**Decisions 1 and 4 were LOCKED by the owner on 2026-08-21**, resolving the
+conflict this table previously recorded. Their wording is kept verbatim below
+and is now durable policy rather than a pending question.
+
+| # | Decision | State |
+| --- | --- | --- |
+| 1 | Does an **unsent/draft invoice** draw down the client-facing retainer? | ✅ **LOCKED — NO.** *"UNSENT or DRAFT invoices MUST NOT reduce the client-facing retainer balance. Only finalized/issued billable work may affect the client-facing retainer figure."* Client-facing figures stay **Agreed retainer · Received · Applied/Earned · Outstanding/available**; a separate internal view of draft work is allowed, but the client-facing display must never imply draft work consumed the deposit. *"Do not silently change historical payment records. Do not treat creating a draft invoice as money earned. Do not mark anything paid merely because an invoice exists."* **Implemented in Unit 18.** Today's behaviour is the opposite — the sibling sum filters only `status != 'void'`, CLAUDE.md described it, and E2E-39 asserts it — so all three move together |
+| 2 | Are **Cash App `$TreverB`** and **Venmo `@Trever-Brown-9`** the long-term accounts? | **Answered for now:** *"Keep current… Do not change payment accounts in this queue."* Long-term choice stays open |
+| 3 | The corrupted **PORTAL-OPS Permissions** requirement | **OWNER INPUT REQUIRED** — leave marked missing until re-sent. Do not invent it |
+| 4 | **Reassigned-investigator visibility** into a prior investigator's hours | ✅ **LOCKED — ADMIN-ONLY.** A reassigned investigator must not automatically see the previous investigator's *"worked hours, compensation details, billing detail, or other investigator-specific financial information"* — not through *"case-scoped reads, API responses, UI payloads, exports, reports, or hidden fields."* Admin sees all; the current investigator sees only their own where already authorized; **prior-investigator hours stay admin-only.** *"Do not create a new permission toggle unless the approved PORTAL-OPS Permissions specification later explicitly calls for one."* Recorded now as a durable authorization rule (CLAUDE.md, under the case portal); enforced when the permissions/security work is reached — **or immediately if an audit proves an active leak that can be fixed without disrupting Hotfix 17A** |
+| 5 | **Homepage section/order** | **Answered and closed:** *"Keep the current homepage section order. Do not reopen homepage structure now."* |
 
 **Item 12 — REPORT DAILY SUMMARY BUILDER — was inserted by the owner on
 2026-08-20**, while Unit 11 was in flight, with the instruction *"Do not start

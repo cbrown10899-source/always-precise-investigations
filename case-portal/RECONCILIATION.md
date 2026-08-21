@@ -84,6 +84,58 @@ Found by reading the handoffs rather than the queue, as instructed:
 - **Voice §9 audible confirmation tone** — the only unbuilt line of
   SURVEILLANCE-VOICE; on-screen confirmation ships.
 
+## OUTCOME — the queue this reconciliation produced (owner, 2026-08-21)
+
+The owner approved this reconciliation and recorded a durable master unit
+queue. **The queue itself lives in `NEXT.md` under "DURABLE MASTER UNIT
+QUEUE"** — that is the file a fresh session reads, and it is the copy to keep
+current. Recorded here so the findings below can be traced to what was decided
+about them:
+
+| Finding in this report | Where it went |
+| --- | --- |
+| `include_intake` sends a law firm the private door | **HOTFIX 17A**, ahead of Unit 18 |
+| Invoice payment idempotency; overpayment accepted and irreversible; `Balance due $-500`; void invoices in Paid this month | **Unit 18 — Invoice Payment Integrity** |
+| Removed entries unmarked in Chronology; day approved after finalize; video exhibit numbering; Documents reads 0 | **Unit 19 — Package + Report Accuracy** |
+| Alert never says Private/Insurance/Legal; failed sends invisible; deduplicated retainer payment alerts twice | **Unit 20 — Intake Alert Completeness** |
+| No accessibility pass has ever run; Voice §9 audible tone unbuilt | **Unit 21** |
+| Six PORTAL-OPS phases never built | **Unit 22** |
+| Everything IMPLEMENTED BUT NOT LIVE VERIFIED | **Unit 23 — one consolidated sweep**, never reopened as development units |
+| File Queue layout, recorded and unbuilt | **Unit 24 — REQUIRED**, explicitly not droppable as optional polish |
+| The role-boundary and authorization surface | **Unit 25** |
+| This document's own successor | **Unit 26 — final reconciliation and closeout ledger** |
+
+**Findings deliberately NOT queued**, because the owner keeps them deferred:
+`nextInvoiceNo` past 9999 and the API-only "removed days come back at
+finalize" remain recorded but unscheduled; SMS, the alert-status log, Intake
+Archive Part 2, invoice Write-Off, the Case Health flag, physical destruction,
+retention clocks, Dropbox byte deletion, the legacy R2 export and two-person
+hold approval all stay on the parked list in `NEXT.md`. **A deferred item is
+never converted to "completed" and never deleted from the record.**
+
+**Unit 17's LIVE VERIFIED is DEFERRED**, not open: the owner will verify it on
+a suitable real case, and *no production case is to be manufactured for the
+test.*
+
+**The unsent-draft retainer question is now ANSWERED** (owner, 2026-08-21, after
+this report classified it as a decision rather than a defect): *"UNSENT or DRAFT
+invoices MUST NOT reduce the client-facing retainer balance. Only
+finalized/issued billable work may affect the client-facing retainer figure."*
+So the finding above changes category — from "owner decision, not a defect" to
+**a defect with a decided answer**, owned by Unit 18. Three things move
+together, because all three currently state the old behaviour: the sibling sum
+in `worker.js`, the paragraph in CLAUDE.md, and the E2E-39 assertion.
+
+**Reassigned-investigator visibility is also answered** and recorded as a
+durable authorization rule in CLAUDE.md: a reassigned investigator must not
+automatically see the prior investigator's hours, compensation or billing
+detail through any surface — case-scoped reads, API responses, UI payloads,
+exports, reports or hidden fields. Admin sees all; an investigator sees only
+their own. **No permission toggle is to be invented for it**, since the
+PORTAL-OPS Permissions specification that might call for one has never
+arrived. Enforced when the permissions/security work is reached, or sooner if
+an audit proves an active leak.
+
 ## Corrections to the record
 
 - **§38 / §39 are NOT stale.** The tracker says the full Insurance and Private

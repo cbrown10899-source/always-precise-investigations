@@ -258,9 +258,28 @@ did not arrive via the insurance pages. There is a test that fails if a bare
 **`/intake/?assignment=private` is the mirror door** — what the private rate
 sheet emails. The service step stays (a private client still chooses between
 surveillance and process serving) but the carrier path is not offered, and
-`pickSvc` refuses it even called directly. `SHEET_INTAKE` in the Worker pairs
-each sheet to its door server-side; the page only ever says *whether* to
-include a link, never which one.
+`pickSvc` refuses it even called directly. The Worker picks the door
+server-side; the page only ever says *whether* to include a link, never which
+one.
+
+**The door is paired to the send CONTEXT, never to the sheet** (hotfix,
+2026-08-21). The sheet is the PRODUCT and the door is the FORM, and Legal is
+where those part company: a legal case takes the **private sheet** by design
+(one pricing source) and the **legal door**. `emailSheet` keyed its bundled
+link off `SHEET_INTAKE[sheet.id]`, so Include Intake Link emailed a law firm
+`?assignment=private` — the door whose own `pickSvc` refuses `legal`, so the
+recipient could not have used it even if they tried. The rule was already
+written above `CONTEXT_INTAKE` and already obeyed by `sendLeadIntake` and
+`sendPreCaseIntake`; this was the third reader, keyed off the wrong thing.
+
+`SHEET_INTAKE` now has **exactly one reader** — `intakeForContext` — and a
+test fails if a second appears. That is the guard that matters: counting
+senders would not have caught this, because the broken one WAS deriving a
+door, just from the wrong key. `emailSheet` resolves the door once and passes
+it down, so the email body, the URL and the response label cannot disagree.
+**The page names the door the same way**: a legal case's send wizard reads
+*Legal Investigation Assignment*, because a screen that misnames what it is
+about to email is the same defect one step earlier.
 
 Known limit: the consumer step markup still sits in the shared file's `<script>`,
 so it is in View Source even though no carrier-facing screen renders it. The
@@ -878,6 +897,24 @@ the example went (2026-08-16) the copy lost its only consumer. A stale
 duplicate of a security boundary is worse than no duplicate, so a test fails if
 `FIELD_KEEP` reappears in the page.
 
+**An investigator is never shown another investigator's hours or money**
+(owner decision, 2026-08-21 — a durable authorization rule). Reassigning a
+case must not hand the new investigator the previous one's worked hours,
+compensation, billing detail or any other investigator-specific financial
+information, **through case-scoped reads, API responses, UI payloads, exports,
+reports or hidden fields.** The default is fixed:
+
+- **Admin** sees every investigator's hours and financial detail.
+- **The current investigator** sees only their own operational and
+  compensation information, where already authorized.
+- **A prior investigator's hours stay admin-only.**
+
+**Do not add a permission toggle for this** unless the approved PORTAL-OPS
+Permissions specification later calls for one — that specification arrived
+corrupted and has never been re-sent, so anything resembling it would be
+invented. Enforce this the way `FIELD_KEEP` is enforced: in the Worker, by not
+running the read, never by a page declining to draw it.
+
 **Accounts exist only by invitation.** There is no public sign-up and no route
 that creates an account directly — an admin issues a one-time link and the
 invitee chooses their own password. Do not add a create-account endpoint.
@@ -1385,12 +1422,29 @@ and **`overdue` is computed against today** so it cannot go stale, is never
 shown on a draft, and never on a void.
 
 The same rule now covers the private retainer. **Amount applied is summed
-across every live invoice on the case**, not just the one on screen —
-otherwise a second invoice reads as though the first never happened — and
-voiding one releases what it consumed. Additional authorization is
+across live invoices on the case**, not just the one on screen — otherwise a
+second invoice reads as though the first never happened — and voiding one
+releases what it consumed. Additional authorization is
 `case_meta.authorized_budget`, and only when it is genuinely above the
 retainer. A negative balance is not an error: it prints as "Beyond the
 retainer", which is when the office most needs to see it.
+
+**A DRAFT INVOICE IS NOT EARNED MONEY** (owner decision, 2026-08-21). *"UNSENT
+or DRAFT invoices MUST NOT reduce the client-facing retainer balance. Only
+finalized/issued billable work may affect the client-facing retainer figure."*
+The sibling sum above once filtered only `status != 'void'`, so a draft nobody
+had issued drew the retainer down on the client's own document — while
+`outstanding` excluded that same draft from what the client owed. One document,
+two answers about the same invoice.
+
+The client-facing figures stay **Agreed retainer · Received · Applied/Earned ·
+Outstanding (or available)**, and none of them may imply that work the client
+has never been shown has already consumed their deposit. Keeping a separate
+internal view of draft work is fine; **the client-facing display is what the
+rule governs.** Creating a draft is not earning, and an invoice existing marks
+nothing paid. Historical payment records are never rewritten to satisfy this —
+the figure is derived, so correcting the derivation is the whole change.
+Implemented in Unit 18.
 
 Sent to BILL is not paid. BILL collects; the portal stays the operational
 record, and nothing about a case depends on BILL existing.
