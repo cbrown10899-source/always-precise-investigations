@@ -42,45 +42,50 @@ item is finished.
 **Read this first if a session was interrupted. Verify repository and
 deployment state before trusting any line of it; never guess what completed.**
 
+## Unit 18 — Invoice Payment Integrity ✅ SHIPPED
+
+`CODED · TESTED · PUSHED · MERGED · DEPLOYED` — PR **#207**, master
+**`c184a50`**. `deploy-portal.yml` 32453160095 ✅ · **`portal-setup.yml`
+32453171314 ✅** (both new tables are on the live database). Suites at merge:
+worker **2586/0**, portal **2371/0**, deploy guard **68/0**. **LIVE VERIFY open
+for the owner.**
+
+## Unit 19 — Package + Report Accuracy — IN FLIGHT
+
 | Field | Value |
 | --- | --- |
-| Current unit | **Unit 18 — Invoice Payment Integrity** |
-| Branch | `invoice-payment-integrity` |
-| Base | master `0663629` (Hotfix 17A deployed at `61a00f0`) |
-| CODED | ✅ worker, schema, page, tests |
-| TESTED | worker **2586/0** ✅ · deploy guard running · **portal suite running** |
-| PUSHED | ⬜ not yet |
-| MERGED | ⬜ |
-| DEPLOYED | ⬜ |
-| Working tree | committed at each step; no uncommitted work expected |
-| **Schema changed** | **YES — `invoice_payment_token`, `invoice_payment_void`. A manual `portal-setup.yml` dispatch is OWED after merge.** |
+| Branch | `package-report-accuracy` |
+| Base | master `c184a50` |
+| CODED | ✅ four fixes + tests |
+| TESTED | section smokes green (7 + 5); **full suites running** |
+| PUSHED / MERGED / DEPLOYED | ⬜ ⬜ ⬜ |
+| Schema | **unchanged — no portal-setup dispatch owed** |
 
-**Next action:** read the portal suite result; if green, push → PR → squash
-merge → pull master → **dispatch `portal-setup.yml`** → verify three runs +
-save tag → ledger → Unit 19.
+**Next action:** read the three suite results; if green, push → PR → squash
+merge → pull master → verify deploys + save tag → ledger → **Unit 20**.
 
-**What Unit 18 changed:** `invoiceMoney` counts only non-voided payments via
-`paidRows` and states `overpaid`/`credit_due`; `invoiceWithMoney` joins the
-void marker (guarded through `missingTables`); `recordInvoicePayment` takes a
-`client_token` and claims it in the same batch as the payment, answering
-`duplicate` when the money is provably already there and writing no second
-event or alert; `POST /invoices/:id/payments/:pid/void` marks a payment voided
-without deleting it and restores the invoice's prior status **read from its own
-`invoice_events` trail**, never guessed; `paid_this_month` reduces over `live`
-rather than `full` and skips voided payments; the retainer sibling sum excludes
-`draft`. The page mints one idempotency token per entry, offers Void, prints a
-voided payment struck through with who and why, and the client document says
-**Credit due** instead of `Balance due $-500`.
+**What Unit 19 changed** (all four verified against live code first): the
+report **Chronology** shows a removed entry struck through and says when and by
+whom, instead of dropping it silently while the timeline, field view and
+summary builder all marked it; the package document's **Videos section prints
+the document-wide exhibit number** (`r.n`) so one exhibit stops having two
+numbers — the Evidence index always used it and photos already did, only video
+counted within its own list; the **Documents count** accepts `attachment`, the
+role `addEvidence` actually writes, having filtered for a `document` role the
+Worker never produces (so it read 0 with a PDF in the package); and
+`daysPanel()` is now drawn on a **finalized** build too, naming a day approved
+after finalize with *"Reopen to include it"* rather than leaving it invisible
+while the Completed desk counted it.
 
-**Deliberate test change:** E2E-39 asserted the OLD draft behaviour — it now
-checks a draft leaves the retainer untouched and that issuing is what draws it
-down.
+**Remaining queue:** 20 Intake Alert Completeness · 21 Accessibility + Voice §9
+· 22 PORTAL-OPS gaps. **Stop before Unit 23** (owner eyes). **Unit 24 File
+Queue remains REQUIRED and must not be dropped.**
 
-**Open, narrow, not blocking:** the owner's rule says "UNSENT or DRAFT". This
-implementation excludes `draft`, matching the test `outstanding` already uses so
-one document cannot give two answers. Whether `ready` (reviewed, not yet sent)
-also counts as unsent is **not decided** — flag it for the owner rather than
-widening it unilaterally.
+**Open, narrow, not blocking (Unit 18):** the owner's rule says "UNSENT or
+DRAFT". The implementation excludes `draft`, matching the test `outstanding`
+already uses so one document cannot give two answers. Whether `ready`
+(reviewed, not yet sent) also counts as unsent is **not decided** — for the
+owner, not to be widened unilaterally.
 
 ---
 
