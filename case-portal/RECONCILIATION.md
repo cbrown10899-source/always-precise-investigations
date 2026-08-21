@@ -140,6 +140,26 @@ PORTAL-OPS Permissions specification that might call for one has never
 arrived. Enforced when the permissions/security work is reached, or sooner if
 an audit proves an active leak.
 
+
+## 🔒 OWNER DECISIONS — 2026-08-21, public site (Unit 34)
+
+1. **Public Legal / Law Firm page — APPROVED and BUILT.**
+   `/legal-investigations/`, in the established navy/white/gold/teal system,
+   aimed at attorneys, paralegals and legal departments. CTAs: *Submit an
+   Assignment* → `/intake/?assignment=legal`, and *Contact Investigations*.
+   **A legal visitor is never routed through the private-client intake.**
+2. **NO PRICING PUBLIC — decision CHANGED.** Private, Insurance and Legal:
+   no rate sheets, retainers or dollar figures anywhere public, including
+   navigation, sitemap, structured data and View Source pointers. The internal
+   Rate Sheets system and the admin private-send flows are untouched.
+3. **Canvassing, interviewing and recorded statements removed** from all public
+   copy, metadata and structured data, Insurance FAQ included. Replaced with
+   activity documentation and factual investigative reporting — services the
+   firm already provides. **Nothing internal was deleted:** case notes,
+   evidence and reports keep those words where the work legitimately uses them.
+
+Asserted against the staged bytes in `.github/test-deploy.mjs` (81 checks).
+
 ## PRODUCTION TRUTH AUDIT AND CORRECTIONS — 2026-08-21, Units 28–33
 
 **The owner opened the portal and the Legal Rate Sheet was not there.** That

@@ -839,7 +839,7 @@ section('The legal door — /intake/?assignment=legal');
   await set(page, 'lm_client', 'Estate of L. Byrd');
   await set(page, 'lm_matter', 'M-2211');
   await set(page, 'lm_court', 'Roanoke County Circuit Court');
-  await page.locator('[data-k="lm_type"]').selectOption('Witness locate / interview');
+  await page.locator('[data-k="lm_type"]').selectOption('Witness locate');
   await set(page, 'lm_deadline', '2026-09-15');
   const matterStep = await page.locator('.card').innerText();
   ok('the dates say no deadline is invented from another date',

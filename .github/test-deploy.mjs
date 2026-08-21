@@ -329,6 +329,90 @@ section('The manifest describes the site honestly');
      skipped.length > files.length, `${skipped.length} skipped vs ${files.length} published`);
 }
 
+/* ============================ UNIT 34 — WHAT THE PUBLIC ACTUALLY READS
+ *
+ * The owner's decisions of 2026-08-21: a public Legal / Law Firm page exists,
+ * rate sheets and pricing are NEVER public, and three service claims come off
+ * the public site entirely.
+ *
+ * Asserted against the STAGED BYTES rather than the repo, because the staged
+ * set is what reaches the internet — a page fixed in the repo but not in the
+ * manifest is not fixed, and a page removed from the manifest cannot be
+ * checked by reading the repo. Comments count: they ship in View Source. */
+{
+  const site = path.join(tmp, '_site');
+  /* Its own walker returning ABSOLUTE paths — the one above is block-scoped
+     and returns paths relative to the site root. */
+  const walkAbs = d => fs.readdirSync(d).flatMap(e => {
+    const full = path.join(d, e);
+    return fs.statSync(full).isDirectory() ? walkAbs(full) : [full];
+  });
+  const all = walkAbs(site);
+  const html = all.filter(f => f.endsWith('.html'));
+  const readAll = f => fs.readFileSync(f, 'utf8');
+  /* The two apps are signed-in staff tools, not public marketing copy, and
+     the portal legitimately contains case vocabulary. The public site is
+     everything else. */
+  const publicPages = html.filter(f => !/[\\/](portal|watch)[\\/]/.test(f));
+
+  ok('the Legal / Law Firm page is published', all.some(f => /legal-investigations[\\/]index\.html$/.test(f)),
+     'legal-investigations/index.html is not in the staged site');
+  const legal = readAll(html.find(f => /legal-investigations[\\/]index\.html$/.test(f)));
+  ok('it routes its CTA to the LEGAL intake', legal.includes('/intake/?assignment=legal'));
+  ok('and never to the private or carrier door',
+     !legal.includes('assignment=private') && !legal.includes('assignment=insurance'));
+  ok('it names itself for law firms', /Law Firm/i.test(legal) && /attorney/i.test(legal));
+  ok('the homepage offers a Legal door',
+     readAll(path.join(site, 'index.html')).includes('/legal-investigations/'));
+
+  /* --- NO PUBLIC PRICING, on any of the three sides --- */
+  const money = [];
+  for (const f of publicPages) {
+    const t = readAll(f);
+    const hits = t.match(/\$\s?[0-9][0-9,]*/g);
+    if (hits) money.push(`${path.relative(site, f)}: ${hits.slice(0, 4).join(' ')}`);
+  }
+  ok('no public page shows a dollar figure', money.length === 0, money.join(' | '));
+
+  const pricingWords = [];
+  for (const f of publicPages) {
+    const t = readAll(f);
+    for (const w of ['rate sheet', 'rate-sheet', 'pricing sheet', 'view rates', 'our rates', 'price list']) {
+      if (t.toLowerCase().includes(w)) pricingWords.push(`${path.relative(site, f)}: ${w}`);
+    }
+  }
+  ok('no public page advertises a rate sheet or price list', pricingWords.length === 0,
+     pricingWords.join(' | '));
+  ok('the sitemap carries no rate-sheet or pricing URL',
+     !/rate|pricing|sheet/i.test(readAll(path.join(site, 'sitemap.xml'))));
+  ok('and the Legal page IS in the sitemap, since it is meant to be indexed',
+     readAll(path.join(site, 'sitemap.xml')).includes('/legal-investigations/'));
+  /* The internal rate system must not even be POINTED AT from public source. */
+  const pointers = publicPages
+    .filter(f => /case-portal/.test(readAll(f)))
+    .map(f => path.relative(site, f));
+  ok('no public page names the internal rate system in its source', pointers.length === 0,
+     pointers.join(' | '));
+
+  /* --- THE THREE REMOVED SERVICE CLAIMS --- */
+  const banned = ['canvass', 'canvassing', 'interview', 'interviewing',
+                  'recorded statement', 'recorded statements'];
+  const found = [];
+  for (const f of publicPages) {
+    const t = readAll(f).toLowerCase();
+    for (const w of banned) if (t.includes(w)) found.push(`${path.relative(site, f)}: ${w}`);
+  }
+  ok('no public page carries canvassing, interviewing or recorded-statement wording',
+     found.length === 0, found.join(' | '));
+
+  /* The Insurance FAQ specifically — the owner named it. */
+  const ins = readAll(html.find(f => /insurance-investigations[\\/]index\.html$/.test(f)));
+  ok('the Insurance page and its FAQ are clean of those claims',
+     !/canvass|interview|recorded statement/i.test(ins));
+  ok('and it still describes what we do present publicly',
+     /surveillance/i.test(ins) && /documentation/i.test(ins) && /reporting/i.test(ins));
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(results.join('\n'));
 console.log(`\n${passed} passed, ${failed} failed`);

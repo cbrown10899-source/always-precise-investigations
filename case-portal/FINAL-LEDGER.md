@@ -289,6 +289,26 @@ purpose. **No new BLOCKER or HIGH gap found.**
 portal **2452/0** (2423), deploy guard **68/0**, intake **236/0**,
 visitor-alerts **47/0**.
 
+
+## 🔒 OWNER DECISIONS — 2026-08-21, public site (Unit 34)
+
+1. **Public Legal / Law Firm page — APPROVED and BUILT.**
+   `/legal-investigations/`, in the established navy/white/gold/teal system,
+   aimed at attorneys, paralegals and legal departments. CTAs: *Submit an
+   Assignment* → `/intake/?assignment=legal`, and *Contact Investigations*.
+   **A legal visitor is never routed through the private-client intake.**
+2. **NO PRICING PUBLIC — decision CHANGED.** Private, Insurance and Legal:
+   no rate sheets, retainers or dollar figures anywhere public, including
+   navigation, sitemap, structured data and View Source pointers. The internal
+   Rate Sheets system and the admin private-send flows are untouched.
+3. **Canvassing, interviewing and recorded statements removed** from all public
+   copy, metadata and structured data, Insurance FAQ included. Replaced with
+   activity documentation and factual investigative reporting — services the
+   firm already provides. **Nothing internal was deleted:** case notes,
+   evidence and reports keep those words where the work legitimately uses them.
+
+Asserted against the staged bytes in `.github/test-deploy.mjs` (81 checks).
+
 ## PART 7 — master and deployment state
 
 | | |

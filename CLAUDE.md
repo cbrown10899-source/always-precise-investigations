@@ -228,6 +228,49 @@ Secure Assignment Intake its copy describes — the carrier path issues a reques
 number immediately, exactly as promised there. `_redirects` also maps the older
 `/insurance-investigations/submit/` URL to `/intake/`.
 
+## The public site says less than the portal knows
+
+**Three owner decisions of 2026-08-21, and they govern the public site only.**
+
+**1 — There is a public Legal / Law Firm page** (`legal-investigations/`),
+aimed at attorneys, paralegals and legal departments, in the established visual
+system. Its CTAs are **Submit an Assignment** and **Contact Investigations**,
+and the assignment CTA goes to **`/intake/?assignment=legal`** — the legal door.
+**A legal visitor is never routed through the private-client intake.** It is in
+the homepage nav, the homepage services grid, the insurance page nav and the
+sitemap, because it is meant to be indexed.
+
+**2 — NO PRICING IS PUBLIC, on any of the three sides.** Private, Insurance and
+Legal alike: no rate sheet, no retainer figure, no dollar amount, no "view
+rates" link, nothing in the sitemap or structured data. The internal Rate
+Sheets system is unchanged and an admin still sends the right sheet privately —
+that is the whole point of it living in the portal. **The public source must
+not even POINT at the internal system**: an internal filename in a comment is a
+pointer for anyone who reads View Source, so `case-portal/…` was taken out of
+`intake/index.html`'s comments and a test now fails if it returns.
+
+**3 — Canvassing, interviewing and recorded statements are not offered
+publicly.** Removed from copy, headings, service cards, meta descriptions,
+Open Graph, Twitter cards, JSON-LD offer catalogues and the Insurance FAQ —
+including the FAQ's structured-data twin, which is the copy that drifts when
+only the visible text is edited. The Insurance page now presents **activity
+documentation** and **factual investigative reporting** in their place, which
+are things the firm already does; no new service was invented.
+
+**This is a PUBLIC-PRESENTATION rule and nothing more.** Case notes, evidence
+records, reports and portal functionality keep those words wherever the work
+legitimately uses them — an investigator's note that says "interview" is case
+data, not a marketing claim, and deleting it would be destroying the record to
+tidy a website.
+
+**All of it is asserted against the STAGED BYTES**, in
+`.github/test-deploy.mjs`, not against the repo — a page fixed in the repo but
+absent from `deploy-manifest.txt` is not fixed, and comments ship in View
+Source. The two signed-in apps (`portal/`, `watch/`) are excluded from the copy
+sweep: they are staff tools holding real case vocabulary, not public marketing.
+**Adding a public page means adding it to the manifest**, or it never
+publishes.
+
 ## Contact and intake
 
 Both forms (homepage and `intake/`) post to Web3Forms. The access key lives in
