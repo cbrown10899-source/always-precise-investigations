@@ -13117,6 +13117,7 @@ section('Storage health stays off every other screen, and fits a phone');
   const btn = await phone.locator('[data-act="shRefresh"]').first().boundingBox();
   ok('390px: Refresh meets the 44px floor', !!btn && btn.height >= 44, JSON.stringify(btn));
   await phone.close();
+}
 
 section('A nav row grows to hold its words — nothing crushes, nothing overlaps');
 for (const [label, w, h, drawer] of [['desktop', 1200, 700, false],
