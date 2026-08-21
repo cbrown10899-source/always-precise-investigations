@@ -13143,6 +13143,46 @@ section('The palette changed no behavior and broke no phone');
    existed and Settings had no panel. Reachability first — an admin must be
    able to SEE it from normal navigation — then that it loads real values and
    that a save round-trips. */
+/* ------------------------------------------------- case types (Unit 30) */
+section('Case types are on Settings, list, and add');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Settings' }).click();
+  await page.waitForTimeout(900);
+
+  const panel = page.locator('.card', { hasText: 'Case types' }).first();
+  ok('Settings carries a Case types panel', await panel.count() === 1);
+  const body = await panel.innerText();
+  ok('it lists both sides of the business',
+     has(body, 'Private') && has(body, 'Insurance'), body.slice(0, 240));
+  ok('the seeded types are shown rather than an empty box',
+     (await panel.locator('.ctlist li').count()) > 0,
+     String(await panel.locator('.ctlist li').count()));
+  ok('it says a type cannot be renamed or removed from here',
+     has(body, 'cannot be renamed or removed'), body.slice(-260));
+
+  const before = await panel.locator('.ctlist li').count();
+  await page.locator('#ct_label').fill('Portal test type');
+  await page.locator('#ct_side').selectOption('private');
+  await page.locator('.btn', { hasText: 'Add case type' }).click();
+  await page.waitForTimeout(700);
+  ok('adding one confirms by name',
+     /Added — Portal test type/.test(await panel.innerText()),
+     (await panel.innerText()).slice(-200));
+  ok('and it appears in the list', await panel.locator('.ctlist li').count() === before + 1,
+     `${before} -> ${await panel.locator('.ctlist li').count()}`);
+  ok('the form clears so the next one starts empty',
+     (await page.locator('#ct_label').inputValue()) === '');
+
+  /* A duplicate is refused, and says so rather than adding it twice. */
+  await page.locator('#ct_label').fill('Portal test type');
+  await page.locator('.btn', { hasText: 'Add case type' }).click();
+  await page.waitForTimeout(700);
+  ok('a duplicate is refused in words',
+     /already exists/i.test(await panel.innerText()), (await panel.innerText()).slice(-200));
+}
+
 section('Invoice defaults are on Settings, load, and save');
 {
   const page = await newPage();

@@ -56,6 +56,31 @@ completed.
 | **Owner decisions** | ✅ five LOCKED at closeout, 2026-08-21 — see **FINAL OWNER DECISIONS** below. Four are deferrals or standing refusals; **decision 4 (Ended by Admin) is BUILT — Unit 27** |
 | **Next unit** | **NONE — the build order is complete.** 26 closed the project and 27 built the owner's last approved requirement; 23's live sweep is deferred, awaiting real case data. Do not start new features |
 
+## 🔄 RESUME POINT — Production Truth Correction Queue (Units 28–33)
+
+**Written per the owner's guardrail so an interrupted session can resume
+exactly.** Update it as the queue moves.
+
+| | |
+| --- | --- |
+| **Current unit** | 30/31 in flight; 28 and 29 shipped |
+| **Branch** | `claude/new-session-p6fktf` |
+| **Master** | `3df2037` (Unit 29) |
+| **Unit 28 — Legal pre-case access** | ✅ **SHIPPED** #221 at `9beb0e8`, both deploys green. LIVE VERIFY open |
+| **Unit 29 — Billing settings UI** | ✅ **SHIPPED** #222 at `3df2037` |
+| **Unit 30 — Case types UI** | CODED + worker-tested (2749/0); portal test written; **portal suite running**; not yet pushed |
+| **Unit 31 — Route cleanup** | CODED as DOCUMENTATION: `/pricing`, `/external-storage`, `/profiles/match` classified **INTERNAL / NO UI EXPECTED** and kept — the audit found all three are tested authorization boundaries, so **nothing was removed**. Boundary tests added |
+| **Unit 32 — Reachability re-audit** | Sweep run against corrected code; result below |
+| **Unit 33 — Final reconciliation** | not started |
+| **Exact next action** | read the portal run, then commit 30+31, PR, merge, verify deploys, then Unit 32 write-up and Unit 33 |
+
+**Unit 32's interim result:** every rate-sheet and intake door is reachable
+including Legal; all six Settings panels are reachable; and the only routes
+without a page caller are the three now documented as internal on purpose.
+
+**Owner decision recorded and NOT implemented:** a public Legal / Law Firm
+website page and CTA. Not built in this run, by instruction.
+
 ## Shipped and deployed (do not rebuild)
 
 | Unit | PR | Master | Live verified |
