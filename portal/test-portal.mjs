@@ -13422,14 +13422,21 @@ section('Retention: five states as words, a hold that outranks, and an audit tra
   body = await panel().innerText();
   ok('a released hold leaves the banner', !/Litigation notice from claimant counsel/.test(body));
 
-  /* Scheduling now records the INTENT and nothing else. */
+  /* Scheduling now records the INTENT and nothing else. Earlier sections
+     legitimately soft-delete evidence of their own, so the assertion is
+     before-vs-after around the click, never a global zero. */
+  const evState = () => db.prepare(
+    'SELECT COUNT(*) AS all_rows, COUNT(deleted_at) AS marked FROM case_evidence').get();
+  const evBefore = evState();
   await page.locator('[data-act="retSchedule"]').click();
   await page.waitForTimeout(600);
   body = await panel().innerText();
   ok('the state reads Scheduled for Deletion', /scheduled for deletion/i.test(body), body.slice(0, 200));
   ok('with a cancel beside it', await page.locator('[data-act="retUnschedule"]').count() === 1);
-  const rows = db.prepare('SELECT COUNT(*) AS n FROM case_evidence WHERE deleted_at IS NOT NULL').get();
-  ok('and scheduling deleted no file anywhere', Number(rows.n) === 0, String(rows.n));
+  const evAfter = evState();
+  ok('and scheduling deleted no file anywhere',
+     evAfter.all_rows === evBefore.all_rows && evAfter.marked === evBefore.marked,
+     JSON.stringify({ before: evBefore, after: evAfter }));
 
   /* The audit trail: actor, prior/new, reason — on screen when asked. */
   await page.locator('[data-act="retHist"]').click();
