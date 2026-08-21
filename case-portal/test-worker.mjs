@@ -13732,6 +13732,85 @@ section('Storage health: failures are recorded, successes are not, and the log c
      dh2.failures === null, JSON.stringify(dh2.failures));
 }
 
+section('Closeout: the record speaks beside each attestation, and blocks nothing');
+{
+  const env = freshEnv();
+  DBX.reset();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-CO1', service: 'Surveillance', client_name: 'C', subject_name: 'S' });
+
+  // A case mid-work: a running day, a finished day with no report, a file in
+  // Needs review, an undecided expense, an invoice with a balance, an agreed
+  // retainer not received.
+  await call(env, '/cases/API-CO1/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-19', start_time: '08:00' } });
+  await call(env, '/cases/API-CO1/day/end', { method: 'POST', cookie: admin, body: { end_time: '12:00' } });
+  await call(env, '/cases/API-CO1/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-20', start_time: '13:00' } });
+  const fd = new FormData();
+  fd.append('file', new File([new Uint8Array(600).fill(2)], 'r.jpg', { type: 'image/jpeg' }));
+  fd.append('classification', 'needs_review');
+  await worker.fetch(new Request(API + '/cases/API-CO1/evidence', {
+    method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  await call(env, '/cases/API-CO1/expenses', { method: 'POST', cookie: admin,
+    body: { expense_date: '2026-08-19', category: 'parking', description: 'Garage', amount: 12 } });
+  await call(env, '/cases/API-CO1/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 1500 } });
+  const inv = await jsonOf(await call(env, '/cases/API-CO1/invoices', { method: 'POST', cookie: admin,
+    body: {} }));
+  await call(env, `/invoices/${inv.invoice.id}/lines`, { method: 'POST', cookie: admin,
+    body: { lines: [{ description: 'Block', qty: 1, amount: 450 }] } });
+
+  const res = await call(env, '/cases/API-CO1/closeout', { cookie: admin });
+  ok('the closeout read answers an admin', res.status === 200, res.status);
+  const d = await jsonOf(res);
+  const f = d.facts || {};
+  ok('a running day is stated', /1 day is still running/.test((f.field_work || {}).note || ''), JSON.stringify(f.field_work));
+  ok('a finished day with no report is stated',
+     /finished day has no report/.test((f.report || {}).note || ''), JSON.stringify(f.report));
+  ok('days without activity entries are stated',
+     /have no activity entries|has no activity entries/.test((f.activity_logs || {}).note || ''),
+     JSON.stringify(f.activity_logs));
+  ok('a Needs review file is stated', /Needs review/.test((f.evidence || {}).note || ''));
+  ok('an unreviewed expense is stated', /1 expense is not yet reviewed/.test((f.expenses || {}).note || ''));
+  ok('the invoice balance is arithmetic, in dollars',
+     /balance of \$450\.00/.test((f.billing || {}).note || ''), JSON.stringify(f.billing));
+  ok('and the unreceived retainer rides the same line',
+     /retainer is not recorded as received/.test((f.billing || {}).note || ''));
+  ok('facts are FACTS — no conclusion words',
+     !JSON.stringify(f).match(/not done|incomplete|must|should/i), JSON.stringify(f).slice(0, 200));
+
+  // NOTHING BLOCKS: tick everything and close, facts and all.
+  const ticks = {};
+  for (const k of ['field_work','activity_logs','evidence','report','admin_review','deliverables','expenses','billing']) ticks[k] = true;
+  await call(env, '/cases/API-CO1/day/end', { method: 'POST', cookie: admin, body: { end_time: '17:00' } });
+  await call(env, '/cases/API-CO1/closure', { method: 'POST', cookie: admin, body: { checklist: ticks } });
+  const closed = await call(env, '/cases/API-CO1/close', { method: 'POST', cookie: admin, body: {} });
+  ok('the attestation still decides — closing succeeds over standing facts',
+     closed.status === 200 && (await jsonOf(closed)).status === 'closed', closed.status);
+
+  // A clean case says nothing rather than inventing a problem.
+  await ingest(env, { case_no: 'API-CO2', service: 'Surveillance', client_name: 'C2', subject_name: 'S2' });
+  const clean = await jsonOf(await call(env, '/cases/API-CO2/closeout', { cookie: admin }));
+  ok('a case with nothing to say says nothing',
+     Object.keys(clean.facts || {}).length === 0, JSON.stringify(clean.facts));
+
+  // Boundaries.
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  await call(env, `/invite/${new URL(link, 'https://x.test').searchParams.get('invite')}/accept`,
+    { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const invc = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  ok('an investigator is refused — closing is office work',
+     (await call(env, '/cases/API-CO1/closeout', { cookie: invc })).status === 403);
+  ok('and the public door does not exist',
+     (await call(env, '/cases/API-CO1/closeout', {})).status === 401);
+  const before = await env.DB.prepare('SELECT COUNT(*) AS n FROM case_closure').first();
+  await call(env, '/cases/API-CO2/closeout', { cookie: admin });
+  const after = await env.DB.prepare('SELECT COUNT(*) AS n FROM case_closure').first();
+  ok('the read writes nothing', before.n === after.n);
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

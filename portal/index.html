@@ -1432,6 +1432,10 @@
   .top .burger:focus-visible,.navback:focus-visible,
   input:focus-visible,select:focus-visible,textarea:focus-visible{
     outline:2px solid var(--teal);outline-offset:2px;}
+  /* UNIT 15 — the closeout fact beside its attestation. Inline, wrapping,
+     never the reason a row scrolls. */
+  .coFact{margin-left:6px;font-weight:600;white-space:normal;}
+
   /* UNIT 14 — storage health meter. .sh- prefix; token colors only. */
   .shbar{height:8px;border-radius:4px;background:var(--panel);border:1px solid var(--line);overflow:hidden;margin-top:4px;}
   .shfill{height:100%;border-radius:4px;}
@@ -10678,6 +10682,30 @@ function STAGE_OPTS(s){
   return list.map(v => `<option value="${v}" ${v === cur ? "selected" : ""}>${esc(label(v))}</option>`).join("");
 }
 
+/* Unit 15 — what the record can SEE beside each attestation. Fetched only
+   when the closing panel is on screen (never on every case open — the Unit 7
+   most-opened-screen lesson), three states kept apart: a failed read draws as
+   "could not be read", never as a case with nothing to say. */
+let CLOSEOUT = {};   // case_no -> { state, facts }
+async function loadCloseout(caseNo){
+  const cur = CLOSEOUT[caseNo];
+  if(cur && (cur.state === "loading" || cur.state === "ok")) return;
+  CLOSEOUT[caseNo] = { state: "loading", facts: null };
+  try{
+    const res = await api(`/cases/${encodeURIComponent(caseNo)}/closeout`);
+    CLOSEOUT[caseNo] = res && res.facts
+      ? { state: "ok", facts: res.facts } : { state: "failed", facts: null };
+  }catch{ CLOSEOUT[caseNo] = { state: "failed", facts: null }; }
+  paintCase();
+}
+function closeoutChip(k){
+  const co = CLOSEOUT[WS_CASE];
+  if(!co || co.state === "loading") return "";
+  if(co.state === "failed") return "";
+  const f = co.facts && co.facts[k];
+  return f ? `<span class="tag new coFact">${esc(f.note)}</span>` : "";
+}
+
 /* The closing checklist: eight attestations, the only door to closed. */
 function closurePanel(){
   if(ME.role !== "admin" || !WS || !WS.closure) return "";
@@ -10705,10 +10733,19 @@ function closurePanel(){
     </div>`;
   }
   const done = c.items.filter(([k]) => c.checklist[k]).length;
+  if(!CLOSEOUT[WS_CASE]) setTimeout(() => loadCloseout(WS_CASE), 0);
+  const co = CLOSEOUT[WS_CASE] || { state: "loading" };
+  const nFacts = co.state === "ok" ? Object.keys(co.facts || {}).length : 0;
   return `<form class="quick" data-act="saveClosure" style="margin-top:14px">
     <h3 style="margin:0 0 8px;font-size:1rem">Close the case <span class="opt">${done}/${c.items.length} confirmed</span></h3>
+    ${co.state === "failed" ? `<p class="hint">What the record shows beside each line could not be read
+      just now &mdash; the boxes still work; you are confirming without it.</p>`
+      : co.state === "ok" && nFacts ? `<p class="hint">The record has a note on
+      <b>${nFacts}</b> of these &mdash; read them before confirming. Ticking over a note is
+      your call to make; nothing here blocks closing.</p>` : ""}
     ${c.items.map(([k, l]) => `
-      <label class="cap"><input type="checkbox" id="cl_${k}" ${c.checklist[k] ? "checked" : ""}><span>${esc(l)}</span></label>`).join("")}
+      <label class="cap"><input type="checkbox" id="cl_${k}" ${c.checklist[k] ? "checked" : ""}><span>${esc(l)}
+        ${closeoutChip(k)}</span></label>`).join("")}
     <div style="margin-top:10px">
       <button class="btn ghost sm" type="submit">Save checklist</button>
       <button class="btn sm" type="button" data-act="closeCase">Close the case</button>

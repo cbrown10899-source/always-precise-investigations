@@ -3785,6 +3785,109 @@ async function saveClosure(request, env, user, caseNo) {
   return json({ ok: true, checklist: out });
 }
 
+/* -------------------------------------------------- closeout facts (Unit 15)
+
+   Designed from the audit in case-portal/CLOSEOUT.md — no verbatim owner
+   brief exists; read that file first. The checklist stays exactly what the
+   owner made it: eight ATTESTATIONS, the only door to closed. What this adds
+   is the honesty rule the rest of the portal already follows — a staff screen
+   must not stay silent about something it can see. Each fact is derived at
+   read time from tables that already exist, is worded as a FACT rather than a
+   conclusion ("1 invoice shows a balance", never "billing is not done"), and
+   BLOCKS NOTHING: closeCase is untouched, and a tick over a contrary fact
+   stands because attestation means the human looked and decided. The screen's
+   job is to make sure they saw. */
+
+async function closeoutFacts(env, caseNo) {
+  const n = async (sql, ...binds) =>
+    Number(((await env.DB.prepare(sql).bind(...binds).first()) || {}).n) || 0;
+  const facts = {};
+  const say = (k, note) => { facts[k] = { note }; };
+  const plural = (x, one, many) => x === 1 ? one : many;
+
+  const openDays = await n(
+    'SELECT COUNT(*) AS n FROM case_days WHERE case_no = ? AND end_time IS NULL', caseNo);
+  if (openDays) say('field_work', `${openDays} ${plural(openDays, 'day is', 'days are')} still running`);
+
+  const quietDays = await n(
+    `SELECT COUNT(*) AS n FROM case_days d
+      WHERE d.case_no = ? AND NOT EXISTS (
+        SELECT 1 FROM activity_log a WHERE a.day_id = d.id
+          AND NOT EXISTS (SELECT 1 FROM activity_removed r WHERE r.entry_id = a.id))`, caseNo);
+  if (quietDays) say('activity_logs',
+    `${quietDays} ${plural(quietDays, 'day has', 'days have')} no activity entries`);
+
+  const noReport = await n(
+    `SELECT COUNT(*) AS n FROM case_days d
+      WHERE d.case_no = ? AND d.end_time IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM case_reports r WHERE r.day_id = d.id)`, caseNo);
+  const notShippable = await n(
+    `SELECT COUNT(*) AS n FROM case_reports r LEFT JOIN users u ON u.id = r.investigator_id
+      WHERE r.case_no = ? AND r.status NOT IN ('approved', 'delivered') AND u.role != 'admin'`, caseNo);
+  {
+    const bits = [];
+    if (noReport) bits.push(`${noReport} finished ${plural(noReport, 'day has', 'days have')} no report`);
+    if (notShippable) bits.push(`${notShippable} ${plural(notShippable, 'report is', 'reports are')} not signed off`);
+    if (bits.length) say('report', bits.join('; '));
+  }
+
+  const awaiting = await n(
+    `SELECT COUNT(*) AS n FROM case_reports WHERE case_no = ? AND status = 'submitted'`, caseNo);
+  if (awaiting) say('admin_review',
+    `${awaiting} ${plural(awaiting, 'report is', 'reports are')} submitted and waiting on review`);
+
+  const review = await n(
+    `SELECT COUNT(*) AS n FROM case_evidence
+      WHERE case_no = ? AND deleted_at IS NULL AND classification = 'needs_review'`, caseNo);
+  if (review) say('evidence',
+    `${review} ${plural(review, 'file is', 'files are')} still marked Needs review`);
+
+  /* Deliverables: a package that was never finalized is stated; a case that
+     never opened one says nothing — plenty of cases deliver nothing and a
+     warning would be an invented problem. */
+  const builds = await env.DB.prepare(
+    `SELECT status, COUNT(*) AS n FROM case_builds WHERE case_no = ? GROUP BY status`)
+    .bind(caseNo).all();
+  const byStatus = Object.fromEntries((builds.results || []).map(r => [r.status, r.n]));
+  if ((byStatus.draft || 0) > 0 && !(byStatus.finalized > 0)) {
+    say('deliverables', 'a package was started and never finalized');
+  }
+
+  const undecided = await n(
+    `SELECT COUNT(*) AS n FROM case_expenses
+      WHERE case_no = ? AND (reimbursable IS NULL OR billable IS NULL)`, caseNo);
+  if (undecided) say('expenses',
+    `${undecided} ${plural(undecided, 'expense is', 'expenses are')} not yet reviewed`);
+
+  /* Billing: the balance is arithmetic, computed the way the invoices screen
+     computes it — lines plus adjustments minus payments, per live invoice. */
+  const { results: invs } = await env.DB.prepare(
+    `SELECT id, adjustments FROM invoices WHERE case_no = ? AND status != 'void'`).bind(caseNo).all();
+  let owed = 0;
+  for (const inv of (invs || [])) {
+    const { results: lines } = await env.DB.prepare(
+      'SELECT amount FROM invoice_lines WHERE invoice_id = ?').bind(inv.id).all();
+    const { results: pays } = await env.DB.prepare(
+      'SELECT amount FROM invoice_payments WHERE invoice_id = ?').bind(inv.id).all();
+    const money = invoiceMoney(lines || [], inv.adjustments, pays || []);
+    if (money.balance_due > 0) owed = Math.round((owed + money.balance_due) * 100) / 100;
+  }
+  const bits = [];
+  if (owed > 0) bits.push(`invoices show a balance of $${owed.toFixed(2)}`);
+  const sub = await env.DB.prepare(
+    'SELECT kind FROM submissions WHERE case_no = ?').bind(caseNo).first();
+  if (sub && sub.kind === 'consumer') {
+    const ret = await env.DB.prepare(
+      'SELECT retainer_amount, received FROM case_retainer WHERE case_no = ?').bind(caseNo).first();
+    if (ret && Number(ret.retainer_amount) > 0 && !ret.received) {
+      bits.push('the agreed retainer is not recorded as received');
+    }
+  }
+  if (bits.length) say('billing', bits.join('; '));
+
+  return facts;
+}
+
 async function closeCase(env, user, caseNo) {
   const sub = await env.DB.prepare('SELECT status FROM submissions WHERE case_no = ?').bind(caseNo).first();
   if (!sub) return json({ error: 'not found' }, 404);
@@ -11870,6 +11973,13 @@ async function route(request, env) {
        VALUES (?1, ?2, ?3, ?4) ON CONFLICT(payment_id) DO NOTHING`)
       .bind(row.id, String(body.reason || '').slice(0, 200), user.id, nowIso()).run();
     return json({ ok: true, authorization: await authorizationFor(env, m[1], true) });
+  }
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/closeout$/);
+  if (m && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if (!(await caseFor(env, user, m[1]))) return json({ error: 'not found' }, 404);
+    return json({ facts: await closeoutFacts(env, m[1]), generated_at: nowIso() });
   }
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/closure$/);
