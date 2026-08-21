@@ -1702,3 +1702,24 @@ CREATE TABLE IF NOT EXISTS invoice_payment_void (
   voided_by  INTEGER REFERENCES users(id),
   voided_at  TEXT    NOT NULL
 );
+
+/* -------------------------------------------------- alert failures (Unit 20)
+
+   THE MINIMUM THAT MAKES A FAILED ALERT NON-SILENT, and deliberately not more.
+   INTAKE-OPS.md §1 asks for a queued/sent/failed/retried status log; the owner
+   deferred that by name ("Do NOT invent a retry system or retry policy"), and
+   this is not it: there is no queue, no attempt model, no retry and no
+   redelivery. It records only that a send did not reach anyone, so an admin can
+   see it rather than believing the office was told.
+
+   Written best-effort at the one chokepoint — a failed row can never change
+   what the caller was told, the `storage_failure` rule. */
+CREATE TABLE IF NOT EXISTS alert_failure (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  event    TEXT    NOT NULL,     -- intakes|payments|reports|packages|tasks
+  case_no  TEXT,                 -- admin-only surface; null on a pre-case send
+  reason   TEXT    NOT NULL,     -- not_configured|no_recipients|send_failed|error|not_set_up
+  of_count INTEGER NOT NULL DEFAULT 0,
+  at       TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_alertfail ON alert_failure(id DESC);

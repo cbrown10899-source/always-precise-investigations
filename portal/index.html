@@ -5272,6 +5272,7 @@ function notifySettingsHtml(){
   const evs = (NOTIFY && NOTIFY.events) || [];
   const rows = (NOTIFY && NOTIFY.recipients) || [];
   const del = (NOTIFY && NOTIFY.delivery) || {};
+  const fails = (NOTIFY && NOTIFY.failures) || {};
   /* Three states kept apart, the same rule the send history follows: never
      loaded, loaded and genuinely empty, and failed. Only the middle one may say
      nobody is set up. */
@@ -5307,6 +5308,23 @@ function notifySettingsHtml(){
         : `No email provider is configured either, so nothing is sent on either channel yet.`
       }</span><span></span></div>
     </div>
+
+    ${/* A FAILED ALERT IS NOT SILENT (Unit 20). The card exists ONLY in the
+          failing state — a panel that always says "fine" stops being read, the
+          rule the Dropbox needs-attention card already follows. It carries the
+          event, the reference, why and when, and no client detail. There is no
+          retry and no redelivery here: the queued/sent/failed/retried status
+          log is the owner's own deferral and this is deliberately not it. */""}
+    ${fails.recent && fails.recent.length ? `<div class="loaderr" style="margin:0 0 12px">
+      <b>${fails.count} alert${fails.count === 1 ? "" : "s"} did not reach anyone.</b>
+      <div style="margin-top:6px">${fails.recent.slice(0, 6).map(f => `<div style="font-size:.85rem">
+        ${esc(label(f.event))}${f.case_no ? ` &middot; ${esc(f.case_no)}` : ""} &middot;
+        ${esc(f.reason === "send_failed" ? "the provider did not accept it" : "an error while sending")}
+        &middot; ${when(f.at)}</div>`).join("")}</div>
+      <p class="hint" style="margin:8px 0 0">Nothing is resent automatically. What the alert was
+        about already happened and is on the case &mdash; this only says the message did not
+        arrive.</p>
+    </div>` : ""}
 
     ${body}
 

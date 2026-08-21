@@ -6458,6 +6458,108 @@ section('Include Intake Link: each context gets ITS door, and only its door');
   globalThis.fetch = realFetch;
 }
 
+section('Unit 20 — intake alerts: which business, once only, and never silent');
+{
+  const realFetch = globalThis.fetch;
+  let mails = [];
+  let failNext = false;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      if (failNext) return new Response('{"message":"refused"}', { status: 422 });
+      mails.push(JSON.parse(init.body));
+      return new Response('{"id":"re_ok"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await call(env, '/notify-recipients', { method: 'POST', cookie: admin,
+    body: { label: 'Desk', email: 'desk@firm.test', enabled: true,
+            alerts: { intakes: true, payments: true, reports: true,
+                      packages: true, tasks: true } } });
+
+  // ---- WHICH BUSINESS: Private, Insurance, Legal, each said by name ----
+  mails = [];
+  await ingest(env, { case_no: 'API-AL-P', service: 'Surveillance',
+                      client_name: 'Priv Client', subject_name: 'S' });
+  ok('a PRIVATE intake alert says Private',
+     mails.length === 1 && /Private/.test(mails[0].subject) && /Private/.test(mails[0].text),
+     JSON.stringify(mails.map(m => m.subject)));
+
+  mails = [];
+  await ingest(env, { case_no: 'API-AL-I', assignment: 'insurance', carrier: 'Blue Ridge Mutual',
+                      claim_number: 'BR-1', client_name: 'Blue Ridge Mutual', subject_name: 'S' });
+  ok('an INSURANCE intake alert says Insurance',
+     mails.length === 1 && /Insurance/.test(mails[0].subject), JSON.stringify(mails.map(m => m.subject)));
+
+  mails = [];
+  await ingest(env, { case_no: 'API-AL-L', assignment: 'legal',
+                      service: 'Legal investigation assignment', firm_name: 'Harmon & Boyle PLC',
+                      attorney_name: 'R. Harmon', subject_name: 'S' });
+  ok('a LEGAL intake alert says Legal / Law Firm by name',
+     mails.length === 1 && /Legal/.test(mails[0].subject), JSON.stringify(mails.map(m => m.subject)));
+  /* The category is a CATEGORY, never client detail — the standing rule. */
+  ok('and still carries no client, firm, subject or claim detail',
+     !/Harmon|Blue Ridge|Priv Client|BR-1/.test(mails[0].subject + mails[0].text),
+     mails[0].subject + ' | ' + mails[0].text);
+
+  // ---- SMS IS UNCHANGED: no case number AND no category ----
+  const prev = await jsonOf(await call(env, '/notify-recipients', { cookie: admin }));
+  const smsAll = (prev.events || []).map(e => e.preview_sms).join(' | ');
+  ok('the SMS wording still says nothing about the case at all',
+     smsAll.length > 0 && !/API-|Private|Insurance|Legal/.test(smsAll), smsAll);
+
+  // ---- ONCE ONLY: a deduplicated retainer payment does not alert twice ----
+  await ingest(env, { case_no: 'API-AL-D', service: 'Surveillance',
+                      client_name: 'Dedup Client', subject_name: 'S' });
+  mails = [];
+  const T = 'alert-dedup-token';
+  await call(env, '/cases/API-AL-D/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 500, method: 'check', paid_on: '2026-08-20', client_token: T } });
+  const afterFirst = mails.length;
+  await call(env, '/cases/API-AL-D/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 500, method: 'check', paid_on: '2026-08-20', client_token: T } });
+  ok('one payment, ONE alert — the retry is deduplicated on both',
+     afterFirst === 1 && mails.length === 1, JSON.stringify([afterFirst, mails.length]));
+  ok('and the money really was recorded once',
+     Number((await env.DB.prepare(
+       "SELECT COUNT(*) AS n FROM retainer_payment WHERE case_no = 'API-AL-D'").first()).n) === 1);
+
+  // ---- NEVER SILENT: a refused send is recorded and readable ----
+  failNext = true;
+  await ingest(env, { case_no: 'API-AL-F', service: 'Surveillance',
+                      client_name: 'Fail Client', subject_name: 'S' });
+  failNext = false;
+  const failRows = await env.DB.prepare(
+    "SELECT event, case_no, reason FROM alert_failure ORDER BY id DESC LIMIT 1").first();
+  ok('a send that reached nobody is RECORDED, not swallowed',
+     failRows && failRows.event === 'intakes' && failRows.case_no === 'API-AL-F'
+     && failRows.reason === 'send_failed', JSON.stringify(failRows));
+  const seen = await jsonOf(await call(env, '/notify-recipients', { cookie: admin }));
+  ok('and an admin can see it on the alerts screen',
+     seen.failures && seen.failures.count >= 1 && seen.failures.recent.length >= 1,
+     JSON.stringify(seen.failures && seen.failures.count));
+  ok('the failure record carries no client detail',
+     !/Fail Client/.test(JSON.stringify(seen.failures)));
+  /* THE INTAKE ITSELF STILL LANDED. An alert is a courtesy about something
+     that already happened; a provider outage must never cost the case. */
+  ok('the intake the alert was about is on the record regardless',
+     !!(await env.DB.prepare("SELECT case_no FROM submissions WHERE case_no = 'API-AL-F'").first()));
+
+  // ---- A TEST CASE NEVER ALERTS, SO IT NEVER FAILS TO ALERT EITHER ----
+  const before = Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM alert_failure').first()).n);
+  mails = [];
+  await call(env, '/demo-case', { method: 'POST', cookie: admin, body: {} });
+  ok('a TEST- case raises no alert and no failure row',
+     mails.length === 0
+     && Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM alert_failure').first()).n) === before,
+     String(mails.length));
+
+  globalThis.fetch = realFetch;
+}
+
 section('Unit 18 — invoice payment integrity: recorded once, voidable, never rewritten');
 {
   const env = freshEnv();
