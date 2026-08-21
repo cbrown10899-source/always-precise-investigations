@@ -1437,6 +1437,18 @@ had issued drew the retainer down on the client's own document — while
 `outstanding` excluded that same draft from what the client owed. One document,
 two answers about the same invoice.
 
+**AND `ready` COUNTS AS UNSENT** (owner, 2026-08-21, closing the question the
+first implementation left open): *"Ready/Reviewed but not yet sent still counts
+as UNSENT and must NOT reduce the client-facing retainer."* Reviewed and
+waiting to go out is not the same as the client having been shown it. The
+excluded set is `('void', 'draft', 'ready')`, written once.
+
+This deliberately does **not** match `outstanding`, which excludes only drafts:
+a ready invoice IS a receivable the office is owed, and is not yet money the
+client has been told about. Those two figures answer different questions and
+are allowed to differ. What is forbidden is one DOCUMENT giving two answers
+about the same invoice.
+
 The client-facing figures stay **Agreed retainer · Received · Applied/Earned ·
 Outstanding (or available)**, and none of them may imply that work the client
 has never been shown has already consumed their deposit. Keeping a separate

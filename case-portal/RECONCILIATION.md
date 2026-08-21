@@ -117,6 +117,10 @@ never converted to "completed" and never deleted from the record.**
 a suitable real case, and *no production case is to be manufactured for the
 test.*
 
+**Fully answered as of 2026-08-21: `ready` is unsent too** — *"Ready/Reviewed
+but not yet sent still counts as UNSENT and must NOT reduce the client-facing
+retainer."* Shipped with the excluded set `('void','draft','ready')`.
+
 **The unsent-draft retainer question is now ANSWERED** (owner, 2026-08-21, after
 this report classified it as a decision rather than a defect): *"UNSENT or DRAFT
 invoices MUST NOT reduce the client-facing retainer balance. Only

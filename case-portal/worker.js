@@ -6838,11 +6838,23 @@ async function retainerBlock(env, inv) {
      This filtered only `status != 'void'`, so a draft nobody had issued drew
      the retainer down on the client's own document — while `outstanding`
      excluded that same draft from what the client owed. One document, two
-     answers about one invoice. The test is now the SAME one `outstanding`
-     already applies, so the two figures cannot disagree again. */
+     answers about one invoice.
+
+     AND `ready` IS UNSENT TOO (owner, 2026-08-21, closing the question this
+     unit left open): "Ready/Reviewed but not yet sent still counts as UNSENT
+     and must NOT reduce the client-facing retainer." Ready means reviewed and
+     waiting to go out — the client has not been shown it, so it has not
+     consumed their deposit. `UNSENT_STATUSES` is the one place that list
+     lives, so the rule cannot be half-applied by a later reader.
+
+     Note this deliberately does NOT match `outstanding`, which excludes only
+     drafts: a ready invoice IS a receivable the office is owed, and is not
+     yet money the client has been told about. The two answer different
+     questions and are allowed to differ — what is forbidden is one DOCUMENT
+     giving two answers about the same invoice. */
   const { results: sib } = await env.DB.prepare(
     `SELECT i.id, i.adjustments FROM invoices i
-      WHERE i.case_no = ? AND i.status != 'void' AND i.status != 'draft'`)
+      WHERE i.case_no = ? AND i.status NOT IN ('void', 'draft', 'ready')`)
     .bind(inv.case_no).all();
   /* "Applied" is WORK billed against the deposit — so the invoice that bills
      the deposit itself is excluded (audit, 2026-08-14). Counting it made the
