@@ -46,13 +46,14 @@ completed.
 
 | | |
 | --- | --- |
-| **Master** | **`73b7f5b`** |
+| **Master** | **`a715782`** (Unit 26's own merge lands above it) |
 | **Working tree** | clean; nothing unpushed; no branch in flight |
 | **Background work** | none running |
-| **Suites at that SHA** | worker **2649/0** · portal **2423/0** · deploy guard **68/0** · intake **236/0** (untouched by Unit 25; the 205 in the previous handoff was stale) |
+| **Suites at that SHA** | worker **2649/0** · portal **2423/0** · deploy guard **68/0** · intake **236/0** · visitor-alerts **47/0** — all five re-run at closeout |
 | **Schema owed** | **none** — Unit 25 added no table, no column and no migration |
-| **Deployed at that SHA** | `Deploy case-portal Worker` ✅ success · `Deploy site to Cloudflare Pages` ✅ success |
-| **Next unit** | **26 — Final master reconciliation + project closeout** (23 is above it and stays owner-blocked) |
+| **Deployed** | `Deploy case-portal Worker` ✅ at `73b7f5b` · `Deploy site to Cloudflare Pages` ✅ at `73b7f5b` and `a715782` · `Daily site health` ✅ run #22 |
+| **Closeout** | ✅ **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** — see `case-portal/FINAL-LEDGER.md` |
+| **Next unit** | **NONE — the build order is complete.** 26 closed the project; 23's live sweep is deferred to the owner, awaiting real case data. Do not start new features |
 
 ## Shipped and deployed (do not rebuild)
 
@@ -71,13 +72,14 @@ completed.
 
 ## What is left
 
-- **23 — Consolidated Live Verification Sweep.** Needs owner eyes. **Deferred
-  where real cases or data are required; do not manufacture production data.**
-  **Unit 25 added two things to it, both machine-verified and neither
+- **23 — Consolidated Live Verification Sweep.** ⏸️ **LIVE VERIFICATION
+  DEFERRED — REQUIRES REAL CASE/DATA** (owner, 2026-08-21). The owner does not
+  have suitable real case data now, and **no production data is to be
+  manufactured for it.** Carried forward, never converted to complete.
+  **Unit 25 added two items to it, both machine-verified and neither
   live-checked:** an investigator opening a case they were reassigned should
   see their own days and expenses and none of the previous investigator's, and
-  the field view's "Day N" should still be the CASE's day number. Both are
-  pinned by the suite; what has not happened is a person looking at them.
+  the field view's "Day N" should still be the CASE's day number.
 - **25 — Final security / authorization / regression pass.** ✅ **DONE.** The
   route table was walked mechanically and three defects were verified and
   fixed: a prior investigator's worked hours and expense claims reaching the
@@ -87,8 +89,14 @@ completed.
   the uploader declared. `case-portal/SECURITY-PASS.md` is the record — what
   was walked, what was found sound and on what evidence, and eight derived
   decisions. No schema, no migration, no `portal-setup` dispatch.
-- **26 — Final master reconciliation + project closeout.** The project is not
-  complete while any non-deferred approved requirement is missing.
+- **26 — Final master reconciliation + project closeout.** ✅ **DONE.** Every
+  durable owner requirement was compared against master and live state and
+  classified in **`case-portal/FINAL-LEDGER.md`**: MASTER-HANDOFF §0–§43, the
+  nine findings RECONCILIATION.md carried, the requirements the numbered queue
+  did not contain, the three business workflows, and the full unit ledger with
+  CODED / TESTED / PUSHED / MERGED / DEPLOYED / LIVE VERIFIED per unit. Nothing
+  deferred was converted to complete. **No non-deferred approved requirement is
+  missing.**
 
 ## Still needing the owner — carry these forward
 
@@ -141,10 +149,10 @@ CREATE A BRANCH. DO NOT DEPLOY. DO NOT START THE NEXT UNIT."*
 | 20 | Intake Alert Completeness | ✅ **DONE — DEPLOYED** at `46a06ad` (#209); schema applied. LIVE VERIFY **OPEN** |
 | 21 | Accessibility + Voice audible-tone completion | ✅ **DONE — DEPLOYED** at `27243af` (#210). LIVE VERIFY **OPEN** |
 | 22 | PORTAL-OPS remaining gaps | ✅ **DONE — DEPLOYED** at `a7bfe6e` (#211). Saved Views / Case Templates / Document Templates **NOT built — owner input**. LIVE VERIFY **OPEN** |
-| 23 | Consolidated Live Verification Sweep | not started |
+| 23 | Consolidated Live Verification Sweep | ⏸️ **LIVE VERIFICATION DEFERRED — REQUIRES REAL CASE/DATA** (owner, 2026-08-21). *Do not manufacture production data.* |
 | 24 | **Required** File Queue + portal aesthetic redesign | ✅ **DONE — DEPLOYED** at `8988b29` (#213), **visual check passed by the owner 2026-08-21**; page-level rendering tests followed |
 | 25 | Final security / authorization / regression pass | ✅ **DONE** — audit, three verified fixes, record in `case-portal/SECURITY-PASS.md`. No schema, no portal-setup dispatch |
-| 26 | Final master reconciliation + project closeout | not started |
+| 26 | Final master reconciliation + project closeout | ✅ **DONE** — every durable requirement classified in `case-portal/FINAL-LEDGER.md`. No non-deferred approved requirement is missing |
 
 ## CONFIRMED COMPLETE — DO NOT REOPEN
 
@@ -1925,6 +1933,19 @@ evidence log: an in-flight lock plus a six-second same-command window, with a
 failed POST clearing the guard so a genuine retry is not mistaken for a
 duplicate. **The offline/retry half is NOT built** and needs a server-side
 event key.
+
+> **SUPERSEDED — corrected by Unit 26's reconciliation, 2026-08-21.** The
+> sentence above was true of #177/#178 and is now stale: **#182 (`c333d3f`)
+> finished both halves.** `activity_voice_event` is in `schema.sql`, guarded
+> through `missingTables()`, named in `EXPECTED_TABLES` and swept by
+> `DEMO_SWEEP`; the page holds an in-memory queue and says *"No connection —
+> held on this phone and it will send itself"*; `event_id` is named once and
+> kept across every retry, so a second arrival returns the entry that already
+> exists. `SURVEILLANCE-VOICE.md:452` records it complete. The one stated limit
+> is that the held queue does not survive the page being closed — a
+> data-boundary decision nobody has taken, recorded rather than discovered.
+> Left in place with this note rather than rewritten: a unit report is a record
+> of what was true when it was written.
 
 **How it is tested without a microphone:** the ENGINE is stubbed and everything
 else is real — the real registry, the real activity API, the real database. The
