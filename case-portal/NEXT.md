@@ -30,7 +30,7 @@ item is finished.
 | 11 | Evidence Integrity | ✅ **DONE — DEPLOYED** at `0c0c134` (#197). LIVE VERIFY **OPEN** for the owner |
 | 12 | Report Daily Summary Builder | ✅ **DONE — DEPLOYED** at `46ccad6` (#198). LIVE VERIFY **OPEN** for the owner |
 | 13 | Portal palette normalization | ✅ **DONE — LIVE VERIFIED** by the owner 2026-08-21, at `fcd3d38` (#199) |
-| 14 | Storage Health | not started |
+| 14 | Storage Health | ✅ **DONE — DEPLOYED** at `96e994d` (#202). LIVE VERIFY **OPEN** for the owner |
 | 15 | Case Closeout | not started |
 | 16 | Client Delivery Center | not started |
 | 17 | Retention Controls | not started |
@@ -195,6 +195,45 @@ Both queue updates were recorded **mid-unit on the owner's instruction** —
 *"Do not interrupt the current coding unit. Record this queue only"*, and
 *"Queue update only. Do not interrupt Timestamp Photo."* They therefore travel
 with whatever branch is in flight rather than as a separate merge.
+
+## 📌 Unit 14 — what shipped (#202, `96e994d`)
+
+**Storage Health — a screen that answers, never a hand that acts.** The
+owner's brief arrived mid-unit and is verbatim, with the audit and derived
+decisions D1–D12, in `case-portal/STORAGE-HEALTH.md`; detail in CLAUDE.md
+under *"Storage health is a screen that answers, never a hand that acts"*.
+
+`GET /storage-health` (admin) + a Settings panel answer from METADATA ONLY:
+safe-to-store readiness (the upload doors' own three conditions, passively,
+code named when no); last successful upload (derived); **failed uploads as
+the record the owner commissioned** — `storage_failure`, written best-effort
+at the four refusal sites, where a failed log write never changes the
+caller's answer, a success (autorename included) logs nothing, and with the
+table absent every refusal answers byte-identically; bytes split Dropbox vs
+legacy R2, live vs removed; the open legacy-video decision's inventory,
+named in words as a decision the screen informs and does not perform; the
+firm's Dropbox quota (`users/get_space_usage` — the ONE external call, only
+in this route, null with a reason on failure); integrity coverage where
+unknown is not zero; heaviest cases in one bounded GROUP BY. No credential
+in the payload (asserted); the panel offers no sweep, export or delete.
+
+**Also folded in transit:** the two mid-unit live patches (#200 nav rows,
+#201 content-sized time input) and the Daily Summary spacing rhythm.
+
+**Schema: `storage_failure` — `portal-setup.yml` WAS dispatched after merge
+and succeeded** (run `32435478065`, against `96e994d`). Deploys green: site
+`32435467906`, portal Worker `32435467857`.
+
+**Suites at merge:** worker **2481/0**, portal **2316/0**, intake **236/0**
+(untouched), deploy guard **68/0**.
+
+**Accepted risk (D12):** re-filing a report PDF creates `…v1-1.pdf` beside
+`…v1.pdf` — deferred rather than adding an overwrite mode to the helper that
+also writes evidence.
+
+**LIVE VERIFY (owner):** Settings → Storage health on your devices — the
+safe-to-store line, the failure list after a real refusal, the quota bar,
+and that the numbers square with your own Dropbox.
 
 ## 📌 Unit 13 — what shipped (#199, `fcd3d38`)
 
@@ -673,6 +712,24 @@ node .github/test-deploy.mjs                    # expect 68 / 0
 
 Then the ordinary chain: PR → merge if green → pull master → deploy → live
 verify → **save point** → next unit (item 4, Admin report/mobile workflow fix).
+
+## 🚦 DEPLOYMENT — 2026-08-21, master `96e994d` (#202) — Unit 14, Storage Health
+
+| Component | Master | Deployed | Status |
+| --- | --- | --- | --- |
+| Site + `/intake/` + `/portal/` | `96e994d` | `96e994d` | **DEPLOYED** — `deploy.yml` 32435467906 success |
+| `api-case-portal` | `96e994d` | `96e994d` | **DEPLOYED** — `deploy-portal.yml` 32435467857 success |
+| Schema (`storage_failure`) | `96e994d` | applied | **`portal-setup.yml` 32435478065 success** — dispatched at merge, nothing else owed |
+| Save point | — | — | `save/2026-08-21-0112-96e994d`, the merge push's automatic firing |
+
+Mid-unit master patches, each deployed on merge: #200 (nav rows, save
+`save/2026-08-21-0034-23cc727`) and #201 (time input, deploy `32434273264`).
+
+Tests at merge: worker **2481/0**, portal **2316/0**, intake **236/0**, deploy
+guard **68/0**. The container has no outbound route to the live domain, so
+"applied" is the workflow's success against the merge SHA plus the deployed
+Worker whose `EXPECTED_TABLES` names the table — `/portal-api/health` on the
+owner's device is the final confirmation, the standing standard.
 
 ## 🚦 DEPLOYMENT — 2026-08-21, master `fcd3d38` (#199) — Unit 13, Portal Palette Normalization
 
