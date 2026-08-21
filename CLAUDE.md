@@ -369,6 +369,50 @@ one place unavailability is spelled out, and `FIELD_KEEP` carries only the
 FIELD-side ones — an investigator is told the address is not known yet, never
 whether the carrier's claim number exists.
 
+**And a label now says which it is** (Unit 36, owner rule 2026-08-21): every
+genuinely optional field reads *Label (optional)*, on the public intake's three
+paths and on the Admin forms that use the same fields — Quick intake, Edit case,
+the Legal panel, and the saved Clients & Firms forms.
+
+**Requiredness was read off the validation, not off the form.** The public
+ingest validates exactly one thing — `case_no`, which the page mints and nobody
+types — because the portal write is fire-and-forget so a Worker outage can never
+cost the firm a client. That makes `validate()` in `intake/index.html` the
+firm's own requiredness rule and therefore the thing the labels have to agree
+with. The suite compares the two BEHAVIOURALLY rather than against a
+hand-written table: it fills only the fields whose label does NOT say
+"(optional)" and submits, on each of the three doors. A table would have been a
+third place to get it wrong.
+
+**There are three markers, because requiredness has three shapes.** `REQ`/`REQL`
+for a field that blocks on its own; `OPT`/`OPTL` for one the form accepts blank;
+and a **pair** marker for the four places where neither of two fields is
+required alone and neither is optional — phone/email, the firm's client or its
+matter number, the claimant's name or the claim number, the carrier or the
+assigning contact, the firm or the attorney, a contact's first or last name.
+Calling either half "(optional)" would be untrue and calling either half
+required would be untrue the other way, so the pair says what it actually is. A
+**select with no empty option** is none of the three: it cannot be left blank
+and it cannot be omitted, so it carries no marker (Status, and the phone Label
+picker's siblings). Each marker has ONE writer per page.
+
+Three things this found, which is the point of auditing rather than assuming:
+
+- **The objective was required and said nothing** — the one field `validate()`
+  refuses an empty form over carried no marker at all, on every path.
+- **`<span class="opt">optional</span>` in the public form was a class-name
+  contest.** `.opt` there is the big service-picker card — `display:block`,
+  1.5px border, 14px padding, `cursor:pointer` — so the marker inside a label
+  rendered as a **602×53 bordered box that looked clickable**, measured on the
+  Legal step. It is `.optn` now, and the suite asserts inline text with no
+  border at 1200/768/390/320. Same contest CLAUDE.md already records for
+  `.qgrid`, `.dlg` and the burger rule.
+- **The Admin private lead's Service picker had no empty option**, so a lead
+  nobody had been asked the service about was filed as *Surveillance* — the
+  record asserting something the office was never told, under a label that
+  already said "(optional)". The picker opens on *Not decided yet* now; the
+  code was made to match the label rather than the other way round.
+
 ## The legal intake is the private pricing path wearing a firm's name
 
 Unit 6 (owner brief verbatim in `case-portal/LEGAL-INTAKE.md`, derived

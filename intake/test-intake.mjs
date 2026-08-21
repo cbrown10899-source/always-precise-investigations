@@ -965,6 +965,328 @@ section('The homepage leads with the two client paths');
        .every(t => src.includes(`<h3>${t}</h3>`)));
 }
 
+
+/* ==================================================================
+   OPTIONAL / REQUIRED FIELD LABELS (owner rule, 2026-08-21)
+
+   "Every field that is genuinely optional must visibly say (optional) in its
+   field label ... audit requiredness from the actual server-side validation
+   first. Do not guess from the current UI."
+
+   THE SERVER-SIDE ANSWER FOR THIS FORM IS THE POINT OF THESE TESTS.
+   `handleIngest` validates exactly one thing — `case_no`, which the page mints
+   and no person types — because the portal write is fire-and-forget so a Worker
+   outage can never cost the firm a client. So every field a person fills in is
+   optional to the Worker, and `validate()` in the page IS the firm's own
+   requiredness rule. That makes `validate()` the thing the labels must agree
+   with, and these tests compare the two BEHAVIOURALLY rather than against a
+   second hand-written table: a table would just be a third place to get it
+   wrong.
+
+   Three markers, because requiredness has three shapes and only two of them
+   are a yes/no. A field with no marker at all fails here. */
+
+section('Field labels say what validate() actually enforces');
+{
+  const MARK_OPT  = /\(optional\)/;
+  const MARK_REQ  = /\*/;
+  const MARK_PAIR = /\((?:phone or email|client name or matter number|claimant name or claim number)[^)]*\)/;
+
+  /* The first `> span` of a label is the label; a `.hint` sibling inside the
+     same label is help text, not the marker. */
+  const labels = page => page.evaluate(() => [...document.querySelectorAll('label.f')].map(l => {
+    const sp = l.querySelector(':scope > span');
+    const ctl = l.querySelector('input, select, textarea');
+    return { text: sp ? sp.textContent.replace(/\s+/g, ' ').trim() : '',
+             key: ctl ? (ctl.getAttribute('data-k') || ctl.id || '') : '' };
+  }));
+
+  const seen = [];
+  async function auditStep(page, tag) {
+    for (const l of await labels(page)) {
+      seen.push(`${tag}/${l.key}`);
+      const marks = [MARK_REQ.test(l.text), MARK_OPT.test(l.text), MARK_PAIR.test(l.text)]
+        .filter(Boolean).length;
+      ok(`${tag}: "${l.text}" carries exactly one requiredness marker`, marks === 1, l.text);
+      ok(`${tag}: "${l.text}" does not say optional twice`,
+         (l.text.match(/optional/gi) || []).length <= 1, l.text);
+    }
+  }
+
+  /* ---- the legal door ---- */
+  {
+    const page = await newPage();
+    await page.goto(BASE + '?assignment=legal');
+    await page.waitForTimeout(120);
+    await auditStep(page, 'legal:info');
+    await set(page, 'c_name', 'P Aralegal'); await set(page, 'c_email', 'p@firm.example');
+    await advance(page);
+    await auditStep(page, 'legal:firm');
+    await set(page, 'lf_firm', 'Smith Law'); await set(page, 'lf_atty', 'J Smith');
+    await advance(page);
+    await auditStep(page, 'legal:matter');
+    await set(page, 'lm_client', 'Client X');
+    await advance(page);
+    await auditStep(page, 'legal:subject');
+    await advance(page);
+    await auditStep(page, 'legal:objective');
+    await set(page, 'o_goal', 'Locate the witness.');
+    await advance(page);
+    await auditStep(page, 'legal:agreement');
+    await page.close();
+  }
+
+  /* ---- the carrier door, including the billing step past the agreement ---- */
+  {
+    const page = await newPage();
+    await page.goto(BASE + '?assignment=insurance');
+    await page.waitForTimeout(120);
+    await auditStep(page, 'ins:info');
+    await set(page, 'c_name', 'A Djuster'); await set(page, 'c_email', 'a@carrier.example');
+    await advance(page);
+    await auditStep(page, 'ins:claim');
+    await set(page, 'k_carrier', 'Example Mutual');
+    await advance(page);
+    await auditStep(page, 'ins:subject');
+    await set(page, 's_name', 'C Laimant');
+    await advance(page);
+    await auditStep(page, 'ins:objective');
+    await set(page, 'o_goal', 'Activity against stated restrictions.');
+    await advance(page);
+    await auditStep(page, 'ins:authorization');
+    /* The custom box only exists once Custom is chosen, and it IS required
+       then — so it is audited in the state where it can be seen. */
+    await page.locator('#opt-auth-custom').click();
+    await page.waitForTimeout(100);
+    const custom = (await labels(page)).find(l => l.key === 'z_custom');
+    ok('the custom authorization box is marked required, because it is',
+       !!custom && MARK_REQ.test(custom.text) && !MARK_OPT.test(custom.text),
+       custom ? custom.text : 'absent');
+    await page.locator('#opt-auth-a24').click();
+    await page.waitForTimeout(100);
+    await advance(page);
+    await auditStep(page, 'ins:agreement');
+    await page.locator('[data-k="a_consent"]').check();
+    await set(page, 'a_typed', 'A Djuster');
+    await sign(page);
+    await advance(page);
+    await auditStep(page, 'ins:billing');
+    await page.close();
+  }
+
+  /* ---- the private door ---- */
+  {
+    const page = await newPage();
+    await page.goto(BASE + '?assignment=private');
+    await page.waitForTimeout(120);
+    await auditStep(page, 'priv:info');
+    await set(page, 'c_name', 'J Client'); await set(page, 'c_phone', '4345550111');
+    await advance(page);
+    await page.locator('#opt-process').click(); await page.waitForTimeout(80);
+    await advance(page);
+    await auditStep(page, 'priv:subject');
+    await advance(page);
+    await auditStep(page, 'priv:objective');
+    await page.close();
+  }
+
+  ok('the audit actually walked the form rather than finding nothing',
+     seen.length > 60, `${seen.length} labels`);
+  ok('and it covered all three doors',
+     ['legal:', 'ins:', 'priv:'].every(p => seen.some(s => s.startsWith(p))));
+}
+
+/* THE CLAIM THE LABELS MAKE, TESTED AS A CLAIM. Fill ONLY the fields whose
+   label does NOT say "(optional)" and submit. If any (optional) label is a
+   lie, the form refuses and this fails — which is a stronger check than
+   comparing the markup against a list, because the list would be mine. */
+section('Every field marked (optional) really can be left blank');
+{
+  for (const door of ['legal', 'insurance', 'private']) {
+    submitted = null; stored = null;
+    const page = await newPage();
+    await page.goto(BASE + '?assignment=' + door);
+    await page.waitForTimeout(120);
+
+    // info — one contact method is a pair, so one of the two is filled.
+    await set(page, 'c_name', 'Only Required');
+    await set(page, 'c_email', 'only@required.example');
+    await advance(page);
+    if (door === 'private') { await page.locator('#opt-surveillance').click(); await page.waitForTimeout(80); await advance(page); }
+    if (door === 'legal') {
+      await set(page, 'lf_firm', 'Required Firm'); await set(page, 'lf_atty', 'Required Attorney');
+      await advance(page);
+      await set(page, 'lm_client', 'Required Client');       // one half of the pair
+      await advance(page);
+    }
+    if (door === 'insurance') {
+      await set(page, 'k_carrier', 'Required Carrier');
+      await advance(page);
+      await set(page, 's_name', 'Required Claimant');        // one half of the pair
+      await advance(page);
+    } else {
+      await advance(page);                                   // subject step, nothing required
+    }
+    await set(page, 'o_goal', 'One line is all that is required.');
+    await advance(page);
+    if (door === 'insurance') {
+      await page.locator('#opt-auth-a24').click(); await page.waitForTimeout(80);
+      await advance(page);
+    }
+    ok(`${door}: filling only the non-optional fields reaches the agreement`,
+       /Agreement|Assignment terms/.test(await heading(page)), await heading(page));
+    await page.locator('[data-k="a_consent"]').check();
+    await set(page, 'a_typed', 'Only Required');
+    await sign(page);
+    await advance(page);
+    if (door === 'insurance') await advance(page);            // billing step: nothing on it is required
+    await page.waitForTimeout(500);
+    ok(`${door}: and it submits — nothing marked (optional) was actually needed`,
+       !!stored, JSON.stringify(await heading(page)));
+    await page.close();
+  }
+}
+
+/* AND THE OTHER DIRECTION: a marker that says required has to BE required,
+   or the marker is decoration. Each of these is blanked on a form that is
+   otherwise complete for that step. */
+section('Every field marked * really does block the step');
+{
+  const page = await newPage();
+  await page.goto(BASE + '?assignment=legal');
+  await page.waitForTimeout(120);
+  await advance(page);
+  ok('the name blocks the contact step', /full name/i.test(await err(page)), await err(page));
+  await set(page, 'c_name', 'P Aralegal');
+  await advance(page);
+  ok('and so does having neither phone nor email — the pair is real',
+     /phone number or email/i.test(await err(page)), await err(page));
+  await set(page, 'c_email', 'p@firm.example');
+  await advance(page);
+
+  await advance(page);
+  ok('the law firm blocks the firm step', /law firm/i.test(await err(page)), await err(page));
+  await set(page, 'lf_firm', 'Smith Law');
+  await advance(page);
+  ok('and so does the attorney', /attorney/i.test(await err(page)), await err(page));
+  await set(page, 'lf_atty', 'J Smith');
+  await advance(page);
+
+  await advance(page);
+  ok('neither half of the client/matter pair alone is optional',
+     /matter number/i.test(await err(page)), await err(page));
+  await set(page, 'lm_matter', 'M-1');           // the OTHER half satisfies it
+  await advance(page);
+  ok('and either half satisfies it', (await heading(page)).includes('Subject'), await heading(page));
+  await advance(page);
+  await advance(page);
+  ok('the objective blocks the objective step — the * this unit added',
+     /documented/i.test(await err(page)), await err(page));
+  await page.close();
+}
+
+/* THE MARKER IS A MARKER, NOT A CARD. `.opt` in this file is the big
+   service-picker card — display:block, 1.5px border, 14px padding,
+   cursor:pointer — and `<span class="opt">optional</span>` inside a label
+   inherited all of it: measured at 602x53 with a pointer cursor on the firm
+   step, a clickable-looking box in the middle of a field label. That is the
+   class-name contest CLAUDE.md records for .qgrid, .dlg and the burger rule.
+   The marker has its own class now, and this is what stops it drifting back. */
+section('The optional marker draws as text, at every width');
+{
+  for (const width of [1200, 768, 390, 320]) {
+    const ctx = await browser.newContext({ viewport: { width, height: 900 } });
+    const page = await ctx.newPage();
+    await page.route('**api.web3forms.com/**', r => r.fulfill({ status: 200, body: '{}' }));
+    await page.route('**/portal-api/ingest', r => r.fulfill({ status: 200, body: '{}' }));
+    await page.goto(BASE + '?assignment=legal');
+    await page.waitForTimeout(150);
+    const m = await page.evaluate(() => {
+      const sp = document.querySelector('label.f > span .optn');
+      if (!sp) return null;
+      const cs = getComputedStyle(sp), lab = sp.parentElement;
+      const r = sp.getBoundingClientRect(), lr = lab.getBoundingClientRect();
+      return { display: cs.display, border: parseFloat(cs.borderTopWidth),
+               pad: parseFloat(cs.paddingTop), cursor: cs.cursor,
+               size: parseFloat(cs.fontSize), weight: cs.fontWeight,
+               labelSize: parseFloat(getComputedStyle(lab).fontSize),
+               labelWeight: getComputedStyle(lab).fontWeight,
+               sameLine: Math.abs(r.top - lr.top) < 6 };
+    });
+    ok(`${width}px: the marker is inline text, not a bordered box`,
+       m && m.display === 'inline' && m.border === 0 && m.pad === 0, JSON.stringify(m));
+    ok(`${width}px: it is not styled as something to click`,
+       m && m.cursor !== 'pointer', JSON.stringify(m));
+    ok(`${width}px: it sits on the label's own line, lighter and smaller than it`,
+       m && m.sameLine && m.size < m.labelSize && Number(m.weight) < Number(m.labelWeight),
+       JSON.stringify(m));
+    await ctx.close();
+  }
+}
+
+/* Consistency across widths is the owner's own line. The same fields must
+   carry the same markers on a phone as on a desktop — a marker that a
+   media query drops is a marker nobody on a phone ever sees. */
+section('Desktop and mobile show the same markers');
+{
+  const read = async width => {
+    const ctx = await browser.newContext({ viewport: { width, height: 900 } });
+    const page = await ctx.newPage();
+    await page.route('**api.web3forms.com/**', r => r.fulfill({ status: 200, body: '{}' }));
+    await page.route('**/portal-api/ingest', r => r.fulfill({ status: 200, body: '{}' }));
+    await page.goto(BASE + '?assignment=insurance');
+    await page.waitForTimeout(150);
+    const out = [];
+    for (const step of ['info', 'claim']) {
+      out.push(...await page.evaluate(() => [...document.querySelectorAll('label.f')].map(l => {
+        const sp = l.querySelector(':scope > span');
+        const ctl = l.querySelector('input, select, textarea');
+        const t = sp ? sp.textContent.replace(/\s+/g, ' ').trim() : '';
+        const vis = sp ? getComputedStyle(sp.querySelector('.optn, .req') || sp).display : '';
+        return `${ctl ? (ctl.getAttribute('data-k') || '') : ''}=${
+          /\(optional\)/.test(t) ? 'opt' : /\*/.test(t) ? 'req' : /\(/.test(t) ? 'pair' : 'NONE'}/${vis}`;
+      })));
+      if (step === 'info') {
+        await page.locator('[data-k="c_name"]').fill('A'); await page.locator('[data-k="c_email"]').fill('a@b.co');
+        await page.locator('.btn.primary').click(); await page.waitForTimeout(150);
+      }
+    }
+    await ctx.close();
+    return out;
+  };
+  const wide = await read(1200), narrow = await read(390);
+  ok('the same fields carry the same markers at 1200px and 390px',
+     JSON.stringify(wide) === JSON.stringify(narrow),
+     `${JSON.stringify(wide)}\n${JSON.stringify(narrow)}`);
+  ok('and none of them is unmarked at either width',
+     !wide.some(x => x.includes('=NONE')) && !narrow.some(x => x.includes('=NONE')),
+     JSON.stringify(wide.filter(x => x.includes('=NONE'))));
+}
+
+/* One writer for the wording. Five places in this file used to spell the
+   marker by hand, in three different phrasings; the suite would then be
+   asserting on whichever one it happened to reach. */
+section('The markers have one writer');
+{
+  const src = fs.readFileSync(path.join(ROOT, 'intake', 'index.html'), 'utf8');
+  /* The constants themselves and the comment that explains them are the one
+     place the words are allowed to appear. Everything else is markup. */
+  const body = src.replace(/\/\*[\s\S]*?\*\//g, '')
+                  .replace(/const (REQ|OPT|PAIR|ONE_[A-Z]+)\b[^\n]*\n/g, '');
+  ok('no hand-written required marker outside the constant',
+     !/<b class="req">\*<\/b>/.test(body), (body.match(/<b class="req">[^<]*<\/b>/) || [''])[0]);
+  ok('no hand-written "(optional)" outside the constant',
+     (body.match(/\(optional\)/g) || []).length === 0,
+     JSON.stringify((body.match(/.{0,40}\(optional\).{0,20}/g) || []).slice(0, 3)));
+  /* Read off the comment-stripped source: the CSS comment beside `.optn`
+     quotes the broken markup on purpose, and that quote is the explanation,
+     not a use. */
+  const markup = src.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok('the label marker class is not the service-picker card class',
+     !/<span class="opt">/.test(markup),
+     (markup.match(/.{0,60}<span class="opt">/) || [''])[0]);
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();

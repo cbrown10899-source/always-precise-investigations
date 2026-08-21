@@ -364,3 +364,55 @@ requirement is missing.**
 Everything else that remains open is open **by the owner's choice**: the
 deferred list, the two live-verification sweeps awaiting real case data, and
 the four decisions above that resolve to a deferral or a standing refusal.
+
+
+## PART 11 — Unit 36, the optional-field labels
+
+**Owner rule, 2026-08-21:** *"Across every intake form and intake-related Admin
+form, every field that is genuinely optional must visibly say (optional) in its
+field label. Audit requiredness from the actual server-side validation/schema
+first. Do not guess from the current UI."*
+
+| | |
+| --- | --- |
+| **Scope** | Public intake (Private / Insurance / Legal), Admin Quick intake (three doors), Edit case, the Legal panel, and the saved Clients & Firms forms |
+| **State** | CODED · TESTED · PUSHED · MERGED · DEPLOYED |
+| **Schema** | none — no `portal-setup` dispatch |
+| **LIVE VERIFIED** | **OPEN** — visual, for the owner |
+
+**The audit ran first and it decided the design.** `handleIngest` validates
+exactly one field, `case_no`, which the page mints and no person types — the
+portal write is fire-and-forget so a Worker outage can never cost the firm a
+client. That makes `validate()` in `intake/index.html` the firm's own
+requiredness rule, so the tests compare the labels against it by BEHAVIOUR:
+fill only the fields whose label does not say "(optional)", submit, assert it
+goes through — on each of the three doors. On the Admin side the authorities
+are `createManualIntake`, `editCase`, `setLegalDetail`, `createProfile` and
+`addProfileContact`, and the suite POSTs against them.
+
+**Three markers, because requiredness has three shapes.** Required; optional;
+and *one of these two*, which covers six pairs — phone/email, the firm's client
+or its matter number, the claimant's name or the claim number, the carrier or
+the assigning contact, the firm or the attorney, a contact's first or last
+name. Calling either half of a pair "(optional)" would be untrue and calling
+either half required would be untrue the other way. A select with no empty
+option is none of the three and carries no marker.
+
+**Three defects found, which is why the audit was asked for:**
+
+1. **The objective carried no marker at all** — the single field an otherwise
+   empty form is refused over, on every path.
+2. **The public form's optional marker was a class-name contest.** `.opt` there
+   is the service-picker CARD, so `<span class="opt">optional</span>` inside a
+   label drew as a **602×53 bordered box with `cursor:pointer`** — measured on
+   the Legal step. `.optn` now, asserted as inline text at 1200/768/390/320.
+3. **The Admin private lead's Service picker had no empty option**, so a lead
+   nobody had been asked the service about was stored as *Surveillance*, under
+   a label that already said optional. The picker opens on *Not decided yet*.
+
+**Reported, not decided:** defect 3 changes what a private quick-intake lead
+stores when the dropdown is untouched — a service before, nothing now. Honest,
+but a behaviour change, and one line reverts it.
+
+**Ambiguity found: none.** Every field resolved to exactly one of the three
+shapes from the code that validates it.

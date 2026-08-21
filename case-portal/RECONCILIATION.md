@@ -666,3 +666,18 @@ report versions, no evidence overwritten during build or print, Custom unable
 to ship held-back material, and no internal pricing on any client-facing
 surface. The findings already fixed are recorded in the git history at
 commit 4d53dc2.
+
+
+## Unit 36 — the optional-field label audit (2026-08-21)
+
+Requiredness was read from the validators, not from the forms. Three findings,
+all fixed and all asserted:
+
+| Where | Finding | Severity | State |
+| --- | --- | --- | --- |
+| INTAKE | The objective — the one field an otherwise empty form is refused over — carried no requiredness marker on any of the three paths. | MEDIUM | ✅ FIXED — `${REQ}`, asserted from the error path on all three doors |
+| INTAKE | `<span class="opt">optional</span>` inherited the service-picker CARD styling: `display:block`, 1.5px border, 14px padding, `cursor:pointer`. **Measured 602×53 on the Legal step** — a clickable-looking box in the middle of a field label. The fourth source-order/class-name contest on record after `.qgrid`, `.dlg` and the burger base rule. | MEDIUM | ✅ FIXED — renamed `.optn`; the suite asserts inline text with zero border and a non-pointer cursor at 1200/768/390/320 |
+| PORTAL | The Admin private-lead **Service** picker had no empty option, so a lead nobody was asked the service about was filed as *Surveillance* — the record asserting something the office was never told — under a label that already read "optional". | LOW | ✅ FIXED — opens on *Not decided yet*; reported to the owner as a storage-behaviour change |
+
+Nothing else was found: every field on the five validators resolved to exactly
+one of required / optional / one-of-two, so no field is reported as ambiguous.

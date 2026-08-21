@@ -14358,6 +14358,219 @@ section('Evidence integrity on a phone: the hash wraps, the buttons reach the fl
   await page.close();
 }
 
+
+/* ==================================================================
+   OPTIONAL / REQUIRED FIELD LABELS ON THE ADMIN INTAKE FORMS
+   (owner rule, 2026-08-21 — "audit requiredness from the actual server-side
+   validation/schema first. Do not guess from the current UI.")
+
+   So the requiredness these labels claim is checked against the Worker by
+   POSTING, not against a second list written here. Four surfaces use the
+   intake fields: Quick intake (three doors), Edit case, the Legal panel and
+   the saved Clients & Firms forms.
+
+   Three markers, because requiredness has three shapes:
+     *          createManualIntake / createProfile refuse the save without it.
+     (optional) the Worker accepts the save with it blank.
+     (a or b)   neither alone is required and neither is optional — the Worker
+                wants ONE of the two.
+   A select with no empty option is none of the three: it cannot be left blank
+   and it cannot be omitted, so it carries no marker. Status and the case-type
+   picker on a case that has one are the two of those. */
+
+section('Admin intake labels say what the Worker actually enforces');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const MARK_OPT  = /\(optional\)/;
+  const MARK_REQ  = /\*/;
+  const MARK_PAIR = /\((?:carrier or assigning contact|firm or attorney|first or last name)[^)]*\)/;
+
+  const labels = () => page.evaluate(sel => [...document.querySelectorAll(sel + ' label.f')].map(l => {
+    const sp = l.querySelector(':scope > span');
+    const ctl = l.querySelector('input, select, textarea');
+    const empties = ctl && ctl.tagName === 'SELECT'
+      ? [...ctl.options].some(o => o.value === '') : true;
+    return { text: sp ? sp.textContent.replace(/\s+/g, ' ').trim() : '',
+             key: ctl ? (ctl.id || ctl.getAttribute('data-k') || '') : '',
+             canBeBlank: empties };
+  }), '#app');
+
+  let audited = 0;
+  async function audit(tag) {
+    for (const l of await labels()) {
+      /* A select with no empty option cannot be left blank — it is neither
+         optional nor a field you can fail to complete, so it is exempt and
+         the exemption is narrow enough to state. */
+      if (!l.canBeBlank && !MARK_REQ.test(l.text) && !MARK_OPT.test(l.text)) continue;
+      audited++;
+      const marks = [MARK_REQ.test(l.text), MARK_OPT.test(l.text), MARK_PAIR.test(l.text)]
+        .filter(Boolean).length;
+      ok(`${tag}: "${l.text}" carries exactly one requiredness marker`, marks === 1, l.text);
+      ok(`${tag}: "${l.text}" does not say optional twice`,
+         (l.text.match(/optional/gi) || []).length <= 1, l.text);
+    }
+  }
+
+  for (const kind of ['claims', 'consumer', 'legal']) {
+    await page.locator('[data-act="tab"][data-tab="newlead"]').first().click();
+    await page.waitForTimeout(500);
+    await page.locator(`[data-act="nlKind"][data-k="${kind}"]`).click();
+    await page.waitForTimeout(350);
+    await audit('quick:' + kind);
+  }
+  ok('the audit walked the three quick-intake doors rather than finding nothing',
+     audited > 20, `${audited} labels`);
+
+  /* Clients & Firms — the saved defaults that prefill an assignment, so the
+     same fields under a different door. */
+  await page.locator('[data-act="tab"][data-tab="profiles"]').first().click();
+  await page.waitForTimeout(600);
+  await page.locator('[data-act="profNew"]').first().click();
+  await page.waitForTimeout(400);
+  await page.locator('[data-act="profFormKind"][data-k="law_firm"]').click();
+  await page.waitForTimeout(300);
+  ok('the new-profile form drew', (await labels()).length > 5, String((await labels()).length));
+  await audit('profile:law_firm');
+  await page.close();
+}
+
+/* THE CLAIMS THE LABELS MAKE, PUT TO THE WORKER. A pair marker says neither
+   half is required alone and neither is optional; that is three assertions,
+   and the third (neither = refused) is the one a wrong label would pass. */
+section('The Worker agrees with the pair markers on quick intake');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const tryLead = (kind, body) => page.evaluate(async ([k, b]) => {
+    const r = await fetch('/portal-api/intakes', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: k, ...b }),
+    });
+    return { status: r.status, body: await r.json() };
+  }, [kind, body]);
+
+  const carrierOnly = await tryLead('claims', { carrier: 'Label Test Mutual' });
+  ok('claims: the carrier alone is accepted', carrierOnly.status === 201, JSON.stringify(carrierOnly));
+  const contactOnly = await tryLead('claims', { client_name: 'Label Test Adjuster' });
+  ok('claims: the assigning contact alone is accepted', contactOnly.status === 201, JSON.stringify(contactOnly));
+  const neitherClaim = await tryLead('claims', { objective: 'nothing identifying' });
+  ok('claims: neither is refused — so neither is "(optional)"',
+     neitherClaim.status === 400, JSON.stringify(neitherClaim));
+
+  const firmOnly = await tryLead('legal', { firm_name: 'Label Test Law' });
+  ok('legal: the firm alone is accepted', firmOnly.status === 201, JSON.stringify(firmOnly));
+  const attyOnly = await tryLead('legal', { attorney_name: 'Label Test Attorney' });
+  ok('legal: the attorney alone is accepted', attyOnly.status === 201, JSON.stringify(attyOnly));
+  const neitherLegal = await tryLead('legal', { objective: 'nothing identifying' });
+  ok('legal: neither is refused', neitherLegal.status === 400, JSON.stringify(neitherLegal));
+
+  /* And the one plain-required field on these forms really is required. */
+  const noClient = await tryLead('consumer', { objective: 'no name at all' });
+  ok('private: the client name is refused when blank — the * is real',
+     noClient.status === 400, JSON.stringify(noClient));
+
+  /* THE OTHER HALF OF THE CLAIM: everything marked (optional) really can be
+     left out. This posts a lead carrying ONLY the required half of each pair
+     and nothing else at all. */
+  const bare = await tryLead('legal', { firm_name: 'Label Test Bare Firm' });
+  ok('legal: a lead with nothing but the firm is created',
+     bare.status === 201 && bare.body.ok, JSON.stringify(bare));
+  await page.close();
+}
+
+section('Edit case and the Legal panel mark their fields too');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('[data-act="tab"][data-tab="newlead"]').first().click();
+  await page.waitForTimeout(500);
+  await page.locator('[data-act="nlKind"][data-k="legal"]').click();
+  await page.waitForTimeout(300);
+  await page.locator('#nl_firm').fill('Marker Test Law');
+  await page.locator('#nl_atty').fill('R. Marker');
+  await page.locator('[data-act="nlSave"][data-open="1"]').click();
+  await page.waitForTimeout(1100);
+  ok('the fixture case opened', await page.evaluate(() => VIEW) === 'case');
+
+  const MARK_OPT = /\(optional\)/, MARK_REQ = /\*/;
+  const panelLabels = sel => page.evaluate(s => {
+    const card = [...document.querySelectorAll('.card')]
+      .find(c => (c.querySelector('h2') || {}).textContent === s);
+    if (!card) return null;
+    return [...card.querySelectorAll('label.f')].map(l => {
+      const sp = l.querySelector(':scope > span');
+      const ctl = l.querySelector('input, select, textarea');
+      const blank = ctl && ctl.tagName === 'SELECT'
+        ? [...ctl.options].some(o => o.value === '') : true;
+      return { text: sp ? sp.textContent.replace(/\s+/g, ' ').trim() : '',
+               key: ctl ? ctl.id : '', canBeBlank: blank };
+    });
+  }, sel);
+
+  await wsTab(page, 'Legal');
+  await page.waitForTimeout(500);
+  const legal = await panelLabels('Legal assignment');
+  ok('the Legal panel drew its fields', legal && legal.length > 15,
+     legal ? String(legal.length) : 'panel not found');
+  const legalBare = (legal || []).filter(l => l.canBeBlank && !MARK_OPT.test(l.text));
+  ok('every field on the Legal panel says it can be left blank — because every one can',
+     legalBare.length === 0, JSON.stringify(legalBare.map(l => l.text)));
+
+  await wsTab(page, 'Edit case');
+  await page.waitForTimeout(500);
+  const edit = await panelLabels('Edit case');
+  ok('the Edit case panel drew its fields', edit && edit.length > 4,
+     edit ? String(edit.length) : 'panel not found');
+  const editBare = (edit || []).filter(l => l.canBeBlank
+    && !MARK_OPT.test(l.text) && !MARK_REQ.test(l.text));
+  ok('and nothing on it is left unmarked',
+     editBare.length === 0, JSON.stringify(editBare.map(l => l.text)));
+
+  /* An extra phone row is one of the fields the owner named by hand, and it
+     is drawn by a helper — so the marker has to ride the helper or the second
+     number arrives unmarked. */
+  await page.locator('[data-act="edAddPhone"]').first().click();
+  await page.waitForTimeout(300);
+  const withRow = await panelLabels('Edit case');
+  const rows = withRow.filter(l => /^(Phone|Also)\b/.test(l.text));
+  ok('an added phone row carries the marker like the first one',
+     rows.length >= 2 && rows.every(l => MARK_OPT.test(l.text)),
+     JSON.stringify(rows.map(l => l.text)));
+  await page.close();
+}
+
+/* One writer for the wording, the rule this file already applies to
+   dayEndLabel and termLabel. Five hand-written spellings of "optional" is
+   five chances for one of them to say something the Worker does not do. */
+section('The admin markers have one writer');
+{
+  const src = fs.readFileSync(path.join(ROOT, 'portal', 'index.html'), 'utf8');
+  const body = src.replace(/\/\*[\s\S]*?\*\//g, '')
+                  .replace(/const (REQL|OPTL|PAIRL|ONE_[A-Z]+)\b[^\n]*\n/g, '');
+  ok('no hand-written required marker outside the constant',
+     !/<b class="req">\*<\/b>/.test(body), (body.match(/.{0,50}<b class="req">/) || [''])[0]);
+  ok('the required marker has a colour rule, so it is not invisible',
+     /\n\s*\.req\{color:/.test(src));
+  /* Scoped to the seven functions that draw the intake forms — elsewhere in
+     this file `.opt` is a general muted annotation (a phone label, a handle,
+     "firm default") and not a requiredness marker at all. */
+  const fns = ['function newLeadView(', 'function nlPickerHtml(', 'function editCasePanel(',
+               'function phoneRowsHtml(', 'function legalPanel(',
+               'function profileFieldsHtml(', 'function contactFormHtml('];
+  const bare = [];
+  for (const fn of fns) {
+    const i = src.indexOf(fn);
+    if (i < 0) { bare.push(fn + ' — not found'); continue; }
+    const chunk = src.slice(i, src.indexOf('\n}\n', i));
+    if (/<span class="opt">\(optional\)<\/span>/.test(chunk)) bare.push(fn);
+  }
+  ok('no intake form spells the optional marker by hand', bare.length === 0, bare.join(' | '));
+}
+
 await browser.close();
 server.close();
 

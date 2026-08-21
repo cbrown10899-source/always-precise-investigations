@@ -45,7 +45,7 @@
   .lead{color:var(--muted);font-size:.92rem;margin-bottom:18px;}
   label.f{display:block;margin-bottom:14px;}
   label.f > span{display:block;font-size:.85rem;font-weight:600;margin-bottom:5px;}
-  label.f > span .req{color:var(--bad);}
+  .req{color:var(--bad);}
   input[type=text],input[type=tel],input[type=email],select,textarea{
     width:100%;font-size:16px;font-family:inherit;color:var(--ink);background:#fff;
     border:1px solid var(--line);border-radius:8px;padding:11px 12px;}
@@ -56,6 +56,14 @@
   @media(max-width:520px){.two{grid-template-columns:1fr;}}
 
   .opt{display:block;border:1.5px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:10px;cursor:pointer;transition:border-color .15s,background .15s;}
+  /* THE FIELD-LABEL MARKERS. `.optn` is deliberately NOT `.opt`: that name is
+     the big service-picker card above, so `<span class="opt">optional</span>`
+     inside a label rendered as a 602x53 bordered box with cursor:pointer — a
+     clickable-looking card in the middle of a field label. Measured on the
+     Legal step before this was renamed. Same class-name contest CLAUDE.md
+     records for .qgrid, .dlg and the burger rule; a marker class gets its own
+     name. */
+  .optn{font-weight:400;color:var(--muted);font-size:.78rem;letter-spacing:0;text-transform:none;}
   .substep{margin:18px 0 6px;font-size:.9rem;color:#12305a;letter-spacing:.02em;}
   .opt:hover{border-color:var(--teal-2);}
   .opt.sel{border-color:var(--teal-2);background:#f0f8fa;}
@@ -223,6 +231,35 @@ const LEGAL_ONLY = /^legal$/i
   .test(new URLSearchParams(location.search).get("assignment") || "");
 
 const S = { step:0, svc:CARRIER_ONLY ? "claims" : LEGAL_ONLY ? "legal" : null, sig:null, files:[] };
+
+/* ============ Required / optional markers ============
+
+   ONE WRITER FOR THE WORDING, so a label cannot say something the form does
+   not enforce. Three markers, because requiredness here has three shapes and
+   only two of them are a yes/no:
+
+     REQ   the field blocks the step on its own — validate() names it.
+     OPT   the step submits with it blank. The word is "(optional)" in full,
+           because a bare "optional" beside a label reads as part of the label.
+     pair  neither of two fields is required alone and neither is optional —
+           validate() wants ONE of them (phone/email, client/matter number,
+           claimant name/claim number). Marking either "(optional)" would be
+           untrue, and marking either required would be untrue the other way,
+           so the pair says what it actually is.
+
+   The public ingest validates only case_no — deliberately, so a Worker outage
+   can never cost the firm a client — which makes validate() below the real
+   gate and therefore the thing these markers have to agree with. The suite
+   compares the two by filling ONLY the unmarked fields and submitting.
+
+   Nothing here is decoration: a field with no marker at all is a bug the
+   suite fails on. */
+const REQ  = ' <b class="req">*</b>';
+const OPT  = ' <span class="optn">(optional)</span>';
+const PAIR = t => ` <span class="optn">(${t})</span>`;
+const ONE_CONTACT = PAIR('phone or email &mdash; give us one');
+const ONE_MATTER  = PAIR('client name or matter number &mdash; give us one');
+const ONE_FILEID  = PAIR('claimant name or claim number &mdash; give us one');
 // A carrier assignment collects claim details and ends in invoicing, so the
 // claims path has its own step list; surveillance adds a step to choose how
 // much coverage to buy. All three share the first two steps, which is what
@@ -348,10 +385,10 @@ function view(step){
     <h2>Assigning contact</h2>
     <p class="lead">Who is assigning this file, and how we reach you about it.
       Send us what you know now &mdash; anything you don't have yet can be provided later.</p>
-    <label class="f"><span>Full name <b class="req">*</b></span><input type="text" data-k="c_name" autocomplete="name"></label>
+    <label class="f"><span>Full name${REQ}</span><input type="text" data-k="c_name" autocomplete="name"></label>
     <div class="two">
-      <label class="f"><span>Title</span><input type="text" data-k="c_title" placeholder="e.g. Claims Adjuster, SIU Investigator"></label>
-      <label class="f"><span>Organization type</span>
+      <label class="f"><span>Title${OPT}</span><input type="text" data-k="c_title" placeholder="e.g. Claims Adjuster, SIU Investigator"></label>
+      <label class="f"><span>Organization type${OPT}</span>
         <select data-k="c_orgtype">
           <option value="">Select…</option>
           <option>Insurance carrier</option>
@@ -363,8 +400,8 @@ function view(step){
           <option>Other</option></select></label>
     </div>
     <div class="two">
-      <label class="f"><span>Direct phone</span><input type="tel" data-k="c_phone" autocomplete="tel"></label>
-      <label class="f"><span>Email</span><input type="email" data-k="c_email" autocomplete="email"></label>
+      <label class="f"><span>Direct phone${ONE_CONTACT}</span><input type="tel" data-k="c_phone" autocomplete="tel"></label>
+      <label class="f"><span>Email${ONE_CONTACT}</span><input type="email" data-k="c_email" autocomplete="email"></label>
     </div>
     <p class="hint" style="margin-top:-6px;">Give us at least one — phone or email. A request number is issued the moment this is submitted.</p>
     ${navButtons()}
@@ -373,14 +410,14 @@ function view(step){
     <h2>Your information</h2>
     <p class="lead">Tell us how to reach you. Everything you share is confidential.
       Send us what you know now &mdash; anything you don't have yet can be provided later.</p>
-    <label class="f"><span>Full name <b class="req">*</b></span><input type="text" data-k="c_name" autocomplete="name"></label>
+    <label class="f"><span>Full name${REQ}</span><input type="text" data-k="c_name" autocomplete="name"></label>
     <div class="two">
-      <label class="f"><span>Phone</span><input type="tel" data-k="c_phone" autocomplete="tel"></label>
-      <label class="f"><span>Email</span><input type="email" data-k="c_email" autocomplete="email"></label>
+      <label class="f"><span>Phone${ONE_CONTACT}</span><input type="tel" data-k="c_phone" autocomplete="tel"></label>
+      <label class="f"><span>Email${ONE_CONTACT}</span><input type="email" data-k="c_email" autocomplete="email"></label>
     </div>
     <p class="hint" style="margin-top:-6px;margin-bottom:12px;">Give us at least one — phone or email.</p>
-    <label class="f"><span>Mailing address</span><input type="text" data-k="c_addr" autocomplete="street-address" placeholder="Street, City, VA, ZIP"></label>
-    <label class="f"><span>Best time to reach you</span><input type="text" data-k="c_best" placeholder="e.g. weekday evenings"></label>
+    <label class="f"><span>Mailing address${OPT}</span><input type="text" data-k="c_addr" autocomplete="street-address" placeholder="Street, City, VA, ZIP"></label>
+    <label class="f"><span>Best time to reach you${OPT}</span><input type="text" data-k="c_best" placeholder="e.g. weekday evenings"></label>
     ${navButtons()}
   </div>`;
 
@@ -411,32 +448,32 @@ function view(step){
     <p class="lead">Who is assigning this work and who we coordinate with. An attorney or a
       paralegal can complete this &mdash; whoever is filling it in, we only need the people who
       actually exist on this file.</p>
-    <label class="f"><span>Law firm <b class="req">*</b></span><input type="text" data-k="lf_firm" autocomplete="organization" placeholder="Firm or office name"></label>
+    <label class="f"><span>Law firm${REQ}</span><input type="text" data-k="lf_firm" autocomplete="organization" placeholder="Firm or office name"></label>
     <div class="two">
-      <label class="f"><span>Office phone</span><input type="tel" data-k="lf_firm_phone"></label>
-      <label class="f"><span>Office email</span><input type="email" data-k="lf_firm_email"></label>
+      <label class="f"><span>Office phone${OPT}</span><input type="tel" data-k="lf_firm_phone"></label>
+      <label class="f"><span>Office email${OPT}</span><input type="email" data-k="lf_firm_email"></label>
     </div>
-    <label class="f"><span>Office address</span><input type="text" data-k="lf_firm_addr" autocomplete="street-address"></label>
-    <h3 class="substep">Assigning attorney <b class="req">*</b></h3>
-    <label class="f"><span>Attorney name <b class="req">*</b></span><input type="text" data-k="lf_atty"></label>
+    <label class="f"><span>Office address${OPT}</span><input type="text" data-k="lf_firm_addr" autocomplete="street-address"></label>
+    <h3 class="substep">Assigning attorney${REQ}</h3>
+    <label class="f"><span>Attorney name${REQ}</span><input type="text" data-k="lf_atty"></label>
     <div class="two">
-      <label class="f"><span>Attorney email</span><input type="email" data-k="lf_atty_email"></label>
-      <label class="f"><span>Attorney phone</span><input type="tel" data-k="lf_atty_phone"></label>
+      <label class="f"><span>Attorney email${OPT}</span><input type="email" data-k="lf_atty_email"></label>
+      <label class="f"><span>Attorney phone${OPT}</span><input type="tel" data-k="lf_atty_phone"></label>
     </div>
-    <h3 class="substep">Paralegal / legal assistant <span class="opt">if one is on this file</span></h3>
+    <h3 class="substep">Paralegal / legal assistant <span class="optn">if one is on this file</span></h3>
     <div class="two">
-      <label class="f"><span>Name</span><input type="text" data-k="lf_para"></label>
-      <label class="f"><span>Email</span><input type="email" data-k="lf_para_email"></label>
+      <label class="f"><span>Name${OPT}</span><input type="text" data-k="lf_para"></label>
+      <label class="f"><span>Email${OPT}</span><input type="email" data-k="lf_para_email"></label>
     </div>
-    <label class="f"><span>Phone</span><input type="tel" data-k="lf_para_phone"></label>
-    <h3 class="substep">Billing contact <span class="opt">if different</span></h3>
+    <label class="f"><span>Phone${OPT}</span><input type="tel" data-k="lf_para_phone"></label>
+    <h3 class="substep">Billing contact <span class="optn">if different</span></h3>
     <div class="two">
-      <label class="f"><span>Name</span><input type="text" data-k="lf_bill"></label>
-      <label class="f"><span>Email</span><input type="email" data-k="lf_bill_email"></label>
+      <label class="f"><span>Name${OPT}</span><input type="text" data-k="lf_bill"></label>
+      <label class="f"><span>Email${OPT}</span><input type="email" data-k="lf_bill_email"></label>
     </div>
     <div class="two">
-      <label class="f"><span>Phone</span><input type="tel" data-k="lf_bill_phone"></label>
-      <label class="f"><span>Billing / matter reference</span><input type="text" data-k="lf_bill_ref" placeholder="If your office bills against one"></label>
+      <label class="f"><span>Phone${OPT}</span><input type="tel" data-k="lf_bill_phone"></label>
+      <label class="f"><span>Billing / matter reference${OPT}</span><input type="text" data-k="lf_bill_ref" placeholder="If your office bills against one"></label>
     </div>
     ${navButtons()}
   </div>`;
@@ -445,14 +482,14 @@ function view(step){
     <h2>The matter</h2>
     <p class="lead">Enough to open the file and run a conflict check. Anything not to hand can
       follow later &mdash; nothing here holds up the assignment.</p>
-    <label class="f"><span>Your client <b class="req">*</b> <span class="opt">or give the matter number below</span></span>
+    <label class="f"><span>Your client${ONE_MATTER}</span>
       <input type="text" data-k="lm_client" placeholder="Who the firm represents"></label>
     <div class="two">
-      <label class="f"><span>Firm matter number</span><input type="text" data-k="lm_matter"></label>
-      <label class="f"><span>Court case number</span><input type="text" data-k="lm_court_no"></label>
+      <label class="f"><span>Firm matter number${ONE_MATTER}</span><input type="text" data-k="lm_matter"></label>
+      <label class="f"><span>Court case number${OPT}</span><input type="text" data-k="lm_court_no"></label>
     </div>
-    <label class="f"><span>Court / jurisdiction</span><input type="text" data-k="lm_court" placeholder="e.g. Roanoke County Circuit Court"></label>
-    <label class="f"><span>Assignment type</span>
+    <label class="f"><span>Court / jurisdiction${OPT}</span><input type="text" data-k="lm_court" placeholder="e.g. Roanoke County Circuit Court"></label>
+    <label class="f"><span>Assignment type${OPT}</span>
       <select data-k="lm_type">
         <option value="">Select&hellip;</option>
         <option>Surveillance</option>
@@ -465,20 +502,20 @@ function view(step){
         <option>Process / service support</option>
         <option>Other / custom assignment</option>
       </select></label>
-    <label class="f"><span>Other names for the conflict check <span class="opt">optional</span></span>
+    <label class="f"><span>Other names for the conflict check${OPT}</span>
       <input type="text" data-k="lm_conflicts" placeholder="Other parties or entities to check, comma-separated"></label>
-    <h3 class="substep">Dates that matter <span class="opt">only what is known &mdash; we never invent a deadline from another date</span></h3>
+    <h3 class="substep">Dates that matter <span class="optn">only what is known &mdash; we never invent a deadline from another date</span></h3>
     <div class="two">
-      <label class="f"><span>Investigation deadline</span><input type="date" data-k="lm_deadline"></label>
-      <label class="f"><span>Hearing date</span><input type="date" data-k="lm_hearing"></label>
+      <label class="f"><span>Investigation deadline${OPT}</span><input type="date" data-k="lm_deadline"></label>
+      <label class="f"><span>Hearing date${OPT}</span><input type="date" data-k="lm_hearing"></label>
     </div>
     <div class="two">
-      <label class="f"><span>Trial date</span><input type="date" data-k="lm_trial"></label>
-      <label class="f"><span>Other important date</span><input type="date" data-k="lm_other"></label>
+      <label class="f"><span>Trial date${OPT}</span><input type="date" data-k="lm_trial"></label>
+      <label class="f"><span>Other important date${OPT}</span><input type="date" data-k="lm_other"></label>
     </div>
-    <label class="f"><span>What is the other date <span class="opt">if you gave one</span></span>
+    <label class="f"><span>What is the other date${OPT}</span>
       <input type="text" data-k="lm_other_label" placeholder="e.g. mediation, discovery cutoff"></label>
-    <label class="f"><span>Special instructions <span class="opt">optional</span></span>
+    <label class="f"><span>Special instructions${OPT}</span>
       <textarea data-k="lm_instructions" rows="3" placeholder="Anything the investigator must know or must not do"></textarea></label>
     <p class="hint">Supporting documents &mdash; pleadings, orders, photos, prior reports &mdash; are
       exchanged once the assignment is accepted, through the office. Nothing needs to be attached
@@ -489,14 +526,14 @@ function view(step){
   if(step==="claim") return `<div class="card">
     <h2>Claim details</h2>
     <p class="lead">Enough to open the file and match our report to yours.</p>
-    <label class="f"><span>Carrier / TPA / employer <b class="req">*</b></span><input type="text" data-k="k_carrier" autocomplete="organization" placeholder="Company assigning the file"></label>
+    <label class="f"><span>Carrier / TPA / employer${REQ}</span><input type="text" data-k="k_carrier" autocomplete="organization" placeholder="Company assigning the file"></label>
     <div class="two">
-      <label class="f"><span>Claim number</span><input type="text" data-k="k_claimno"></label>
-      <label class="f"><span>Policy number</span><input type="text" data-k="k_policy"></label>
+      <label class="f"><span>Claim number${OPT}</span><input type="text" data-k="k_claimno"></label>
+      <label class="f"><span>Policy number${OPT}</span><input type="text" data-k="k_policy"></label>
     </div>
     ${naBox("k_claimno", "Claim number not available at this time — it never holds up an urgent assignment")}
     <div class="two">
-      <label class="f"><span>Claim type</span>
+      <label class="f"><span>Claim type${OPT}</span>
         <select data-k="k_type">
           <option value="">Select…</option>
           <option>Workers' compensation</option>
@@ -506,7 +543,7 @@ function view(step){
           <option>Disability</option>
           <option>Other</option>
         </select></label>
-      <label class="f"><span>Date of loss</span>
+      <label class="f"><span>Date of loss${OPT}</span>
         <select data-k="k_dol_mode" onchange="capture();render()" style="margin-bottom:6px">
           <option>Exact date</option>
           <option>Approximate date</option>
@@ -515,14 +552,14 @@ function view(step){
         ${val.k_dol_mode === "Unknown" ? "" : `<input type="text" data-k="k_dol" placeholder="${val.k_dol_mode === "Approximate date" ? "e.g. spring 2026, or around March" : "MM/DD/YYYY"}">`}
       </label>
     </div>
-    <label class="f"><span>Adjuster / assigning contact</span><input type="text" data-k="k_adjuster"></label>
+    <label class="f"><span>Adjuster / assigning contact${OPT}</span><input type="text" data-k="k_adjuster"></label>
     <div class="two">
-      <label class="f"><span>Adjuster email</span><input type="email" data-k="k_adj_email" autocomplete="email"></label>
-      <label class="f"><span>Adjuster phone</span><input type="tel" data-k="k_adj_phone" autocomplete="tel"></label>
+      <label class="f"><span>Adjuster email${OPT}</span><input type="email" data-k="k_adj_email" autocomplete="email"></label>
+      <label class="f"><span>Adjuster phone${OPT}</span><input type="tel" data-k="k_adj_phone" autocomplete="tel"></label>
     </div>
-    <label class="f"><span>Defense counsel <span class="hint" style="font-weight:400">(if the file is in litigation)</span></span><input type="text" data-k="k_counsel" placeholder="Firm and attorney"></label>
-    <label class="f"><span>Billing reference / PO</span><input type="text" data-k="k_po" placeholder="If your billing requires one"></label>
-    <label class="f"><span>Prior surveillance on this claim?</span>
+    <label class="f"><span>Defense counsel${OPT}</span><input type="text" data-k="k_counsel" placeholder="Firm and attorney, if the file is in litigation"></label>
+    <label class="f"><span>Billing reference / PO${OPT}</span><input type="text" data-k="k_po" placeholder="If your billing requires one"></label>
+    <label class="f"><span>Prior surveillance on this claim?${OPT}</span>
       <select data-k="k_prior">
         <option value="">Select…</option>
         <option>None</option>
@@ -539,15 +576,15 @@ function view(step){
     <p class="lead">${isClaims()
       ? "Who we are going out on. Addresses and vehicles are what make or break a first day in the field."
       : "Who or what should we look into? Share whatever you know — more detail helps."}</p>
-    <label class="f"><span>${isClaims()?"Claimant's name":"Subject's name"}${isClaims()?' <b class="req">*</b>':""}</span><input type="text" data-k="s_name"></label>
-    <label class="f"><span>Known address or location</span><input type="text" data-k="s_addr" placeholder="Full or partial — a general area helps, e.g. Forest, Virginia area"></label>
+    <label class="f"><span>${isClaims()?"Claimant's name":"Subject's name"}${isClaims()?ONE_FILEID:OPT}</span><input type="text" data-k="s_name"></label>
+    <label class="f"><span>Known address or location${OPT}</span><input type="text" data-k="s_addr" placeholder="Full or partial — a general area helps, e.g. Forest, Virginia area"></label>
     ${naBox("s_addr", "Exact address not available yet")}
-    <label class="f"><span>Vehicle / physical description</span><input type="text" data-k="s_desc" placeholder="Whatever you know — even &quot;white SUV&quot; helps"></label>
+    <label class="f"><span>Vehicle / physical description${OPT}</span><input type="text" data-k="s_desc" placeholder="Whatever you know — even &quot;white SUV&quot; helps"></label>
     ${naBox("s_desc", "Vehicle information not available yet")}
     ${isClaims()
-      ? `<label class="f"><span>Alleged injury &amp; stated restrictions</span><textarea data-k="s_rel" placeholder="Reported injury, work status, and any restrictions in the file…"></textarea></label>`
-      : `<label class="f"><span>Relationship to you</span><input type="text" data-k="s_rel" placeholder="e.g. spouse, tenant, employee, defendant"></label>`}
-    <label class="f"><span>Documents or photos</span>
+      ? `<label class="f"><span>Alleged injury &amp; stated restrictions${OPT}</span><textarea data-k="s_rel" placeholder="Reported injury, work status, and any restrictions in the file…"></textarea></label>`
+      : `<label class="f"><span>Relationship to you${OPT}</span><input type="text" data-k="s_rel" placeholder="e.g. spouse, tenant, employee, defendant"></label>`}
+    <label class="f"><span>Documents or photos${OPT}</span>
       <input type="file" id="files" multiple onchange="pickFiles(this)" style="font-size:.9rem;padding:8px 0;border:0;">
       <span class="hint" id="filenote">${isClaims()?"Attach the claim file, ISO report or a photo of the claimant.":"Attach court papers or a photo of the subject if you have them."}</span></label>
     ${navButtons()}
@@ -558,9 +595,9 @@ function view(step){
     <p class="lead">${isClaims()
       ? "What does this file need to answer, and by when?"
       : "What outcome are you hoping for, and how soon?"}</p>
-    <label class="f"><span>${isClaims()?"What does the file need to establish?":"What do you want to find out or accomplish?"}</span><textarea data-k="o_goal" placeholder="${isClaims()?"e.g. activity level versus stated restrictions, employment verification, scene documentation…":"Describe the situation and the result you need…"}"></textarea></label>
-    <label class="f"><span>${isClaims()?"Deadline":"Timeline / urgency"}</span><input type="text" data-k="o_time" placeholder="${isClaims()?"e.g. hearing 9/12, report needed by 9/1":"e.g. before a court date on 8/15, ASAP, flexible"}"></label>
-    <label class="f"><span>Anything else we should know</span><textarea data-k="o_notes" placeholder="Optional"></textarea></label>
+    <label class="f"><span>${isClaims()?"What does the file need to establish?":"What do you want to find out or accomplish?"}${REQ}</span><textarea data-k="o_goal" placeholder="${isClaims()?"e.g. activity level versus stated restrictions, employment verification, scene documentation…":"Describe the situation and the result you need…"}"></textarea></label>
+    <label class="f"><span>${isClaims()?"Deadline":"Timeline / urgency"}${OPT}</span><input type="text" data-k="o_time" placeholder="${isClaims()?"e.g. hearing 9/12, report needed by 9/1":"e.g. before a court date on 8/15, ASAP, flexible"}"></label>
+    <label class="f"><span>Anything else we should know${OPT}</span><textarea data-k="o_notes" placeholder="e.g. prior attempts, safety concerns, people to avoid"></textarea></label>
     ${navButtons()}
   </div>`;
 
@@ -574,17 +611,17 @@ function view(step){
     <p class="lead">What are we authorized to do, and when. Final rates and authorization
       are confirmed before the assignment is accepted.</p>
 
-    <div style="font-size:.85rem;font-weight:600;margin-bottom:6px;">Authorized hours</div>
+    <div style="font-size:.85rem;font-weight:600;margin-bottom:6px;">Authorized hours${REQ}</div>
     ${AUTH_PRESETS.map(a => `
       <label class="opt ${val.z_auth===a.id?"sel":""}" id="opt-auth-${a.id}" onclick="pickAuth('${a.id}')">
         <input type="radio" name="auth" ${val.z_auth===a.id?"checked":""}><b>${a.label}</b>
         <div class="desc">${a.desc}</div>
       </label>`).join("")}
-    ${val.z_auth==="custom"?`<label class="f"><span>Custom authorization</span><input type="text" data-k="z_custom" placeholder="e.g. 12 hours, or 4 hours per day across 5 days"></label>`:""}
+    ${val.z_auth==="custom"?`<label class="f"><span>Custom authorization${REQ}</span><input type="text" data-k="z_custom" placeholder="e.g. 12 hours, or 4 hours per day across 5 days"></label>`:""}
 
     <div class="two">
-      <label class="f"><span>Not-to-exceed amount</span><input type="text" data-k="z_nte" placeholder="Optional — a cap we will not pass without approval"></label>
-      <label class="f"><span>Requested start</span>
+      <label class="f"><span>Not-to-exceed amount${OPT}</span><input type="text" data-k="z_nte" placeholder="A cap we will not pass without approval"></label>
+      <label class="f"><span>Requested start${OPT}</span>
         <select data-k="z_start_mode" onchange="capture();render()" style="margin-bottom:6px">
           <option>Specific date</option>
           <option>As soon as available</option>
@@ -595,25 +632,25 @@ function view(step){
       </label>
     </div>
     <div class="two">
-      <label class="f"><span>Permitted days</span><input type="text" data-k="z_days" placeholder="e.g. weekdays only, or any day"></label>
-      <label class="f"><span>Permitted times</span><input type="text" data-k="z_times" placeholder="e.g. 0600–1400, or investigator's discretion"></label>
+      <label class="f"><span>Permitted days${OPT}</span><input type="text" data-k="z_days" placeholder="e.g. weekdays only, or any day"></label>
+      <label class="f"><span>Permitted times${OPT}</span><input type="text" data-k="z_times" placeholder="e.g. 0600–1400, or investigator's discretion"></label>
     </div>
     <div class="two">
-      <label class="f"><span>Weekend authorization</span>
+      <label class="f"><span>Weekend authorization${OPT}</span>
         <select data-k="z_weekend">
           <option value="">Select…</option>
           <option>Yes — weekends authorized</option>
           <option>No — weekdays only</option>
           <option>Call first</option></select></label>
-      <label class="f"><span>Priority</span>
+      <label class="f"><span>Priority${OPT}</span>
         <select data-k="z_priority">
           <option value="">Select…</option>
           <option>Routine</option>
           <option>Expedited</option>
           <option>Rush — needed immediately</option></select></label>
     </div>
-    <label class="f"><span>Geographic limitations</span><input type="text" data-k="z_geo" placeholder="e.g. within 50 miles of Roanoke; call before travelling further"></label>
-    <label class="f"><span>Special billing instructions</span><textarea data-k="z_billing" placeholder="Optional — required references, invoicing portal, expense pre-approval…"></textarea></label>
+    <label class="f"><span>Geographic limitations${OPT}</span><input type="text" data-k="z_geo" placeholder="e.g. within 50 miles of Roanoke; call before travelling further"></label>
+    <label class="f"><span>Special billing instructions${OPT}</span><textarea data-k="z_billing" placeholder="References your invoicing needs, portal, expense pre-approval…"></textarea></label>
     <p class="hint"><b>No additional fees.</b> The rate we confirm is the rate you are invoiced &mdash;
       mileage, travel time, tolls, parking, database and record fees and report writing are all
       included. An assignment outside our service area has its travel quoted before we accept it,
@@ -646,7 +683,7 @@ function view(step){
        payment. Nothing here is Cash App or Venmo, and choosing one records
        nothing as paid anywhere. */
     const arrangement = !isLegal() ? "" : `
-      <h3 class="substep">Retainer arrangement</h3>
+      <h3 class="substep">Retainer arrangement${OPT}</h3>
       <p class="hint">How your office prefers to handle the retainer. Choosing one here arranges
         it &mdash; nothing is collected on this form, and nothing is marked paid by choosing.</p>
       ${[["bill_ach","BILL.com invoice / ACH","We invoice the firm electronically."],
@@ -708,9 +745,9 @@ function view(step){
       </div>
       <label class="chk"><input type="checkbox" data-k="a_consent"><span>${isClaims()
         ? `I am authorized to assign this claim on behalf of the party named above, and I authorize ${FIRM.name} to proceed on the terms stated.`
-        : `I have read and agree to the terms above, I affirm a lawful purpose, and I authorize ${FIRM.name} to proceed.`}</span></label>
-      <label class="f"><span>Type your full legal name <b class="req">*</b></span><input type="text" data-k="a_typed" placeholder="Your full legal name"></label>
-      <div style="font-size:.85rem;font-weight:600;margin-bottom:6px;">Signature <b class="req">*</b></div>
+        : `I have read and agree to the terms above, I affirm a lawful purpose, and I authorize ${FIRM.name} to proceed.`}${REQ}</span></label>
+      <label class="f"><span>Type your full legal name${REQ}</span><input type="text" data-k="a_typed" placeholder="Your full legal name"></label>
+      <div style="font-size:.85rem;font-weight:600;margin-bottom:6px;">Signature${REQ}</div>
       <div class="sigwrap">
         <button type="button" class="sigclear" onclick="clearSig()">Clear</button>
         <canvas id="sig"></canvas>
@@ -729,9 +766,9 @@ function view(step){
       ${val.k_po?`<div class="row"><span>Billing reference / PO</span><span>${esc(val.k_po)}</span></div>`:""}
       <div class="row due"><span>Due at assignment</span><span>Nothing — invoiced</span></div>
     </div>
-    <label class="f"><span>Send invoices to</span><input type="email" data-k="b_email" placeholder="Accounts payable or billing email"></label>
+    <label class="f"><span>Send invoices to${OPT}</span><input type="email" data-k="b_email" placeholder="Accounts payable or billing email"></label>
     ${naBox("b_email", "Billing contact to follow — invoicing details can come later")}
-    <label class="f"><span>Billing notes</span><textarea data-k="b_notes" placeholder="Portal, invoicing requirements, required references…"></textarea></label>
+    <label class="f"><span>Billing notes${OPT}</span><textarea data-k="b_notes" placeholder="Portal, invoicing requirements, required references…"></textarea></label>
     <p class="hint">We confirm the rate and any estimated hours in writing before going out. Questions on rates? Call ${FIRM.phone}.</p>
     ${navButtons("Submit assignment")}
   </div>`;

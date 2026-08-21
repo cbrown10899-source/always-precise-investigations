@@ -1186,6 +1186,11 @@
   .tag.cap-sd{background:var(--ok-bg);color:var(--ok-ink);} .tag.cap-va{background:var(--info-bg-2);color:var(--info-ink);}
   .tag.cap-pa{background:var(--media-bg);color:var(--media-ink);}
   .opt{font-weight:400;color:var(--muted);font-size:.78rem;}
+  /* The required marker beside a field label. The intake form has carried
+     this convention since it was written; the portal had the class name in
+     its markup nowhere and no rule for it, so a required field looked
+     exactly like an unmarked one. */
+  .req{color:var(--bad);}
   /* UNIT 11 — the integrity block on an evidence card, and the manifest.
      `.integ` is its own prefix (nothing else owns it) and the full digest
      always breaks anywhere: sixty-four characters with no spaces is the
@@ -3942,9 +3947,9 @@ function contactFormHtml(P, roles){
   const C = PROF_CONTACT || {};
   const v = C.v || {};
   const ph = (n, i) => `<div class="two">
-    <label class="f"><span>${n} <span class="opt">optional</span></span>
+    <label class="f"><span>${n}${OPTL}</span>
       <input id="pc_ph${i}" value="${esc((v.phones && v.phones[i] && v.phones[i].number) || "")}"></label>
-    <label class="f"><span>Label</span>
+    <label class="f"><span>Label${OPTL}</span>
       <select id="pc_phl${i}">${["", ...PHONE_LABELS_UI].map(l =>
         `<option value="${l}"${((v.phones && v.phones[i] && v.phones[i].label) || "") === l ? " selected" : ""}
           >${l ? l[0].toUpperCase() + l.slice(1) : "—"}</option>`).join("")}</select></label>
@@ -3952,13 +3957,13 @@ function contactFormHtml(P, roles){
   return `<div class="ccard editing">
     <div class="cc-head"><b>${C.id ? "Edit contact" : "New contact"}</b></div>
     <div class="two">
-      <label class="f"><span>First name</span><input id="pc_first" value="${esc(v.first_name || "")}"></label>
-      <label class="f"><span>Last name</span><input id="pc_last" value="${esc(v.last_name || "")}"></label>
+      <label class="f"><span>First name${ONE_NAME}</span><input id="pc_first" value="${esc(v.first_name || "")}"></label>
+      <label class="f"><span>Last name${ONE_NAME}</span><input id="pc_last" value="${esc(v.last_name || "")}"></label>
     </div>
     <div class="two">
-      <label class="f"><span>Role</span><select id="pc_role">${["", ...roles].map(r =>
+      <label class="f"><span>Role${OPTL}</span><select id="pc_role">${["", ...roles].map(r =>
         `<option value="${esc(r)}"${(v.role || "") === r ? " selected" : ""}>${r || "Select…"}</option>`).join("")}</select></label>
-      <label class="f"><span>Email <span class="opt">optional</span></span><input id="pc_email" value="${esc(v.email || "")}"></label>
+      <label class="f"><span>Email${OPTL}</span><input id="pc_email" value="${esc(v.email || "")}"></label>
     </div>
     ${ph("Phone", 0)}
     ${ph("Second phone", 1)}
@@ -4033,13 +4038,12 @@ function profDupHtml(F){
 
 function profileFieldsHtml(F, kind){
   const v = F.v || {};
-  const f = (k, label, opt) => `<label class="f"><span>${label}${
-    opt ? ` <span class="opt">optional</span>` : ""}</span>
+  const f = (k, label, opt) => `<label class="f"><span>${label}${opt ? OPTL : REQL}</span>
     <input id="pf_${k}" value="${esc(v[k] || "")}"></label>`;
   const phone = i => `<div class="two">
-    <label class="f"><span>${i ? "Second number" : "Main phone"} <span class="opt">optional</span></span>
+    <label class="f"><span>${i ? "Second number" : "Main phone"}${OPTL}</span>
       <input id="pf_ph${i}" value="${esc((v.phones && v.phones[i] && v.phones[i].number) || "")}"></label>
-    <label class="f"><span>Label</span>
+    <label class="f"><span>Label${OPTL}</span>
       <select id="pf_phl${i}">${["", ...PHONE_LABELS_UI].map(l =>
         `<option value="${l}"${((v.phones && v.phones[i] && v.phones[i].label) || "") === l ? " selected" : ""}
           >${l ? l[0].toUpperCase() + l.slice(1) : "—"}</option>`).join("")}</select></label>
@@ -4050,12 +4054,12 @@ function profileFieldsHtml(F, kind){
     ${phone(0)}${phone(1)}
     <div class="two">${f("billing_name", "Billing contact", true)}${f("billing_email", "Billing email", true)}</div>
     ${kind === "law_firm" ? `<label class="f"><span>Usual payment arrangement
-      <span class="opt">a default for new assignments &mdash; never a payment</span></span>
+      <span class="opt">(optional) &mdash; a default for new assignments, never a payment</span></span>
       <select id="pf_payment_arrangement"><option value="">Not set</option>
         ${Object.entries(LEGAL_ARR_LABEL).map(([k2, l]) =>
           `<option value="${k2}"${(v.payment_arrangement || "") === k2 ? " selected" : ""}>${l}</option>`).join("")}
       </select></label>` : ""}
-    <label class="f"><span>Internal notes <span class="opt">optional &mdash; the office only</span></span>
+    <label class="f"><span>Internal notes <span class="opt">(optional) &mdash; the office only</span></span>
       <input id="pf_notes" value="${esc(v.notes || "")}"></label>
   </div>`;
 }
@@ -4323,14 +4327,14 @@ function nlPickerHtml(){
       ${NL.kind === "legal" && (NL.profile.contacts || []).some(c2 => c2.active
           && /paralegal|assistant/i.test(c2.role || "")) ? `
         <label class="f" style="margin:8px 0 0"><span>Paralegal / assistant
-          <span class="opt">optional</span></span>
+         ${OPTL}</span>
           <select id="nl_pickpara" data-act-change="nlPickPara"><option value="">None on this matter</option>${
             NL.profile.contacts.filter(c2 => c2.active && /paralegal|assistant/i.test(c2.role || ""))
               .map(c2 => `<option value="${c2.id}"${c2.id === NL.paralegal_id ? " selected" : ""}
                 >${esc(profWho(c2))}</option>`).join("")}</select></label>` : ""}
       ${NL.kind === "legal" && (NL.profile.contacts || []).some(c2 => c2.active
           && /billing/i.test(c2.role || "")) ? `
-        <label class="f" style="margin:8px 0 0"><span>Billing contact <span class="opt">optional</span></span>
+        <label class="f" style="margin:8px 0 0"><span>Billing contact${OPTL}</span>
           <select id="nl_pickbill" data-act-change="nlPickBill"><option value="">The firm's usual</option>${
             NL.profile.contacts.filter(c2 => c2.active && /billing/i.test(c2.role || ""))
               .map(c2 => `<option value="${c2.id}"${c2.id === NL.billing_id ? " selected" : ""}
@@ -4386,7 +4390,11 @@ const LEGAL_ARR_LABEL = { bill_ach: "BILL.com invoice / ACH",
 function legalPanel(){
   const L = WS && WS.legal;
   if(!L) return "";
-  const f = (k, label, type) => `<label class="f"><span>${label}</span>
+  /* Every field on this panel is optional: setLegalDetail takes the fields
+     the form names and leaves the rest alone, so a blank is the office saying
+     "we do not have this" and never a refusal. The marker rides the one helper
+     that draws them, so a field added later cannot arrive unmarked. */
+  const f = (k, label, type) => `<label class="f"><span>${label}${OPTL}</span>
     <input id="lg_${k}" ${type ? `type="${type}"` : ""} value="${esc(L[k] || "")}"></label>`;
   const arrState = L.payment_arrangement === "check_pickup"
     ? `<div class="ex-note"><b>Awaiting pickup.</b> The firm asked us to collect the retainer
@@ -4416,7 +4424,7 @@ function legalPanel(){
       <div class="two">${f("matter_number", "Firm matter number")}${f("court_case_number", "Court case number")}</div>
       ${f("court_jurisdiction", "Court / jurisdiction")}
       <div class="two">
-        <label class="f"><span>Assignment type</span>
+        <label class="f"><span>Assignment type${OPTL}</span>
           <select id="lg_assignment_type">${["", ...assignOptions(L.assignment_type)].map(v =>
             `<option value="${esc(v)}" ${v === (L.assignment_type || "") ? "selected" : ""}>${
               v ? esc(termLabel(v)) : "Select…"}</option>`).join("")}
@@ -4426,7 +4434,7 @@ function legalPanel(){
       <div class="two">${f("deadline", "Investigation deadline", "date")}${f("hearing_date", "Hearing date", "date")}</div>
       <div class="two">${f("trial_date", "Trial date", "date")}${f("other_date", "Other date", "date")}</div>
       ${f("other_date_label", "What the other date is")}
-      <label class="f"><span>Payment arrangement <span class="opt">a request, never a payment</span></span>
+      <label class="f"><span>Payment arrangement <span class="opt">(optional) &mdash; a request, never a payment</span></span>
         <select id="lg_payment_arrangement">
           <option value="">Not set</option>
           ${Object.entries(LEGAL_ARR_LABEL).map(([v, l]) =>
@@ -4457,6 +4465,35 @@ async function saveLegalPanel(){
   }catch(e){ LEGAL_MSG = e.message; }
   paintCase();
 }
+
+/* ============ Required / optional field markers ============
+
+   The intake forms below (Quick intake, Edit case, the Legal panel and the
+   saved Clients & Firms forms) say in the LABEL whether a field can be left
+   blank, and what they say is read off the Worker's own validation rather
+   than off what the form happens to do.
+
+   Three markers, because requiredness has three shapes here and only two of
+   them are a yes/no:
+
+     REQL   the Worker refuses the save without it.
+     OPTL   the Worker accepts the save with it blank. "(optional)" in full —
+            a bare "optional" beside a label reads as part of the label.
+     PAIRL  neither of two fields is required alone and neither is optional:
+            createManualIntake wants the carrier OR the assigning contact, the
+            firm OR the attorney; addProfileContact wants a first OR a last
+            name. Calling either one "(optional)" would be untrue, and calling
+            either one required would be untrue the other way.
+
+   A select with no empty option is none of the three — it cannot be left
+   blank and it cannot be omitted — so it carries no marker. Status and the
+   phone Label picker are the two of those. */
+const REQL  = ' <b class="req">*</b>';
+const OPTL  = ' <span class="opt">(optional)</span>';
+const PAIRL = t => ` <span class="opt">(${t})</span>`;
+const ONE_ASSIGNOR = PAIRL("carrier or assigning contact &mdash; one of the two");
+const ONE_FIRM     = PAIRL("firm or attorney &mdash; one of the two");
+const ONE_NAME     = PAIRL("first or last name &mdash; one of the two");
 
 function newLeadView(){
   const n = NL || {};
@@ -4505,63 +4542,64 @@ function newLeadView(){
           The firm and a contact are enough &mdash; everything else fills in later, and choosing a
           payment arrangement is never a payment.</p>
         <div class="two">
-          <label class="f"><span>Law firm</span><input id="nl_firm" placeholder="Firm or office name" value="${val("nl_firm")}"></label>
-          <label class="f"><span>Attorney / contact</span><input id="nl_atty" value="${val("nl_atty")}"></label>
+          <label class="f"><span>Law firm${ONE_FIRM}</span><input id="nl_firm" placeholder="Firm or office name" value="${val("nl_firm")}"></label>
+          <label class="f"><span>Attorney / contact${ONE_FIRM}</span><input id="nl_atty" value="${val("nl_atty")}"></label>
         </div>
         <div class="two">
-          <label class="f"><span>Contact email <span class="opt">optional</span></span><input id="nl_email" value="${val("nl_email")}"></label>
-          <label class="f"><span>Contact phone <span class="opt">optional</span></span><input id="nl_phone" value="${val("nl_phone")}"></label>
+          <label class="f"><span>Contact email${OPTL}</span><input id="nl_email" value="${val("nl_email")}"></label>
+          <label class="f"><span>Contact phone${OPTL}</span><input id="nl_phone" value="${val("nl_phone")}"></label>
         </div>
         <div class="two">
-          <label class="f"><span>Firm's client <span class="opt">optional</span></span><input id="nl_client" placeholder="Who the firm represents" value="${val("nl_client")}"></label>
-          <label class="f"><span>Subject / opposing party <span class="opt">optional</span></span><input id="nl_subject" value="${val("nl_subject")}"></label>
+          <label class="f"><span>Firm's client${OPTL}</span><input id="nl_client" placeholder="Who the firm represents" value="${val("nl_client")}"></label>
+          <label class="f"><span>Subject / opposing party${OPTL}</span><input id="nl_subject" value="${val("nl_subject")}"></label>
         </div>
         <div class="two">
-          <label class="f"><span>Assignment</span>
+          <label class="f"><span>Assignment${OPTL}</span>
             <select id="nl_asgtype"><option value="">Select&hellip;</option>
               ${assignOptions(val("nl_asgtype"))
                 .map(o => `<option value="${esc(o)}"${sel("nl_asgtype", o)}>${esc(termLabel(o))}</option>`).join("")}</select></label>
-          <label class="f"><span>Retainer amount <span class="opt">optional &mdash; recorded as agreed, never as paid</span></span>
+          <label class="f"><span>Retainer amount <span class="opt">(optional) &mdash; recorded as agreed, never as paid</span></span>
             <input id="nl_retainer" inputmode="decimal" placeholder="If one was agreed on the call" value="${val("nl_retainer")}"></label>
         </div>
         <div class="two">
-          <label class="f"><span>Payment arrangement <span class="opt">a request, never a payment</span></span>
+          <label class="f"><span>Payment arrangement <span class="opt">(optional) &mdash; a request, never a payment</span></span>
             <select id="nl_arrangement"><option value="">Not discussed yet</option>
               ${Object.entries(LEGAL_ARR_LABEL).map(([k2, l]) =>
                 `<option value="${k2}"${sel("nl_arrangement", k2)}>${l}</option>`).join("")}</select></label>
-          <label class="f"><span>Deadline <span class="opt">optional</span></span><input id="nl_legal_deadline" type="date" value="${val("nl_legal_deadline")}"></label>
+          <label class="f"><span>Deadline${OPTL}</span><input id="nl_legal_deadline" type="date" value="${val("nl_legal_deadline")}"></label>
         </div>`
       : claim ? `
         <div class="two">
-          <label class="f"><span>Carrier / TPA</span><input id="nl_carrier" placeholder="e.g. Example Mutual Insurance" value="${val("nl_carrier")}"></label>
-          <label class="f"><span>Assigning contact</span><input id="nl_client" placeholder="Adjuster or counsel name" value="${val("nl_client")}"></label>
+          <label class="f"><span>Carrier / TPA${ONE_ASSIGNOR}</span><input id="nl_carrier" placeholder="e.g. Example Mutual Insurance" value="${val("nl_carrier")}"></label>
+          <label class="f"><span>Assigning contact${ONE_ASSIGNOR}</span><input id="nl_client" placeholder="Adjuster or counsel name" value="${val("nl_client")}"></label>
         </div>
         <div class="two">
-          <label class="f"><span>Contact email <span class="opt">optional</span></span><input id="nl_email" value="${val("nl_email")}"></label>
-          <label class="f"><span>Contact phone <span class="opt">optional</span></span><input id="nl_phone" value="${val("nl_phone")}"></label>
+          <label class="f"><span>Contact email${OPTL}</span><input id="nl_email" value="${val("nl_email")}"></label>
+          <label class="f"><span>Contact phone${OPTL}</span><input id="nl_phone" value="${val("nl_phone")}"></label>
         </div>
         <div class="two">
-          <label class="f"><span>Claim number <span class="opt">optional</span></span><input id="nl_claim" value="${val("nl_claim")}"></label>
-          <label class="f"><span>Policy number <span class="opt">optional</span></span><input id="nl_policy" value="${val("nl_policy")}"></label>
+          <label class="f"><span>Claim number${OPTL}</span><input id="nl_claim" value="${val("nl_claim")}"></label>
+          <label class="f"><span>Policy number${OPTL}</span><input id="nl_policy" value="${val("nl_policy")}"></label>
         </div>
-        <label class="f"><span>Claimant <span class="opt">optional</span></span><input id="nl_subject" value="${val("nl_subject")}"></label>`
+        <label class="f"><span>Claimant${OPTL}</span><input id="nl_subject" value="${val("nl_subject")}"></label>`
       : `
         <div class="two">
-          <label class="f"><span>Client name</span><input id="nl_client" value="${val("nl_client")}"></label>
-          <label class="f"><span>Service <span class="opt">optional</span></span>
-            <select id="nl_service">${["Surveillance", "Child custody", "Process serving", "Other"]
+          <label class="f"><span>Client name${REQL}</span><input id="nl_client" value="${val("nl_client")}"></label>
+          <label class="f"><span>Service${OPTL}</span>
+            <select id="nl_service"><option value="">Not decided yet</option>${
+              ["Surveillance", "Child custody", "Process serving", "Other"]
               .map(o => `<option${sel("nl_service", o)}>${o}</option>`).join("")}</select></label>
         </div>
         <div class="two">
-          <label class="f"><span>Client email <span class="opt">optional</span></span><input id="nl_email" value="${val("nl_email")}"></label>
-          <label class="f"><span>Client phone <span class="opt">optional</span></span><input id="nl_phone" value="${val("nl_phone")}"></label>
+          <label class="f"><span>Client email${OPTL}</span><input id="nl_email" value="${val("nl_email")}"></label>
+          <label class="f"><span>Client phone${OPTL}</span><input id="nl_phone" value="${val("nl_phone")}"></label>
         </div>
-        <label class="f"><span>Subject <span class="opt">optional</span></span><input id="nl_subject" value="${val("nl_subject")}"></label>`}
-      <label class="f"><span>${claim ? "Scope / objective" : "Objective"} <span class="opt">optional</span></span>
+        <label class="f"><span>Subject${OPTL}</span><input id="nl_subject" value="${val("nl_subject")}"></label>`}
+      <label class="f"><span>${claim ? "Scope / objective" : "Objective"}${OPTL}</span>
         <textarea id="nl_obj" rows="2">${val("nl_obj")}</textarea></label>
       <div class="two">
-        <label class="f"><span>${claim ? "Deadline" : "Timeline"} <span class="opt">optional</span></span><input id="nl_deadline" value="${val("nl_deadline")}"></label>
-        <label class="f"><span>Notes <span class="opt">optional</span></span><input id="nl_notes" value="${val("nl_notes")}"></label>
+        <label class="f"><span>${claim ? "Deadline" : "Timeline"}${OPTL}</span><input id="nl_deadline" value="${val("nl_deadline")}"></label>
+        <label class="f"><span>Notes${OPTL}</span><input id="nl_notes" value="${val("nl_notes")}"></label>
       </div>
       ${n.profile ? "" : `<label class="cap"><input type="checkbox" id="nl_saveprof" ${n.saveProfile ? "checked" : ""}>
         <span>Also save as a reusable profile, so the next assignment from them starts filled in</span></label>`}
@@ -4831,9 +4869,9 @@ function sheetWizardHtml(){
       <label class="f"><span>Send it to</span>
         <input id="wiz_to" type="email" value="${esc(w.to)}" placeholder="name@example.com"></label>
       <div class="two">
-        <label class="f"><span>Case number <span class="opt">optional — subject line</span></span>
+        <label class="f"><span>Case number <span class="opt">(optional) — subject line</span></span>
           <input id="wiz_case" value="${esc(w.caseNo)}"></label>
-        <label class="f"><span>Add a line <span class="opt">optional</span></span>
+        <label class="f"><span>Add a line <span class="opt">(optional)</span></span>
           <input id="wiz_note" value="${esc(w.note)}" placeholder="e.g. As discussed this morning."></label>
       </div>
       <label class="cap" style="display:flex"><input type="checkbox" id="wiz_inc" ${w.include ? "checked" : ""}>
@@ -4910,12 +4948,12 @@ function paySendHtml(){
       <label class="f"><span>Send it to</span>
         <input id="ps_to" type="email" value="${esc(q.to)}" placeholder="name@example.com"></label>
       <div class="two">
-        <label class="f"><span>Their name <span class="opt">optional — greets the email</span></span>
+        <label class="f"><span>Their name <span class="opt">(optional) — greets the email</span></span>
           <input id="ps_name" value="${esc(q.name)}"></label>
-        <label class="f"><span>Case reference <span class="opt">optional — subject line</span></span>
+        <label class="f"><span>Case reference <span class="opt">(optional) — subject line</span></span>
           <input id="ps_case" value="${esc(q.caseNo)}"></label>
       </div>
-      <label class="f"><span>Add a line <span class="opt">optional</span></span>
+      <label class="f"><span>Add a line <span class="opt">(optional)</span></span>
         <input id="ps_note" value="${esc(q.note)}" placeholder="e.g. As discussed this morning."></label>
       <div class="feebox" style="margin:10px 0">
         <div class="row"><span><b>Payment methods</b></span></div>
@@ -5045,7 +5083,7 @@ function preIntakeHtml(){
         <button class="amx" data-act="preIntakeClose" aria-label="Close">&times;</button></div>
       <label class="f"><span>Send it to</span>
         <input id="pi_to" type="email" value="${esc(q.to)}" placeholder="name@example.com"></label>
-      <label class="f"><span>Their name <span class="opt">optional &mdash; greets the email</span></span>
+      <label class="f"><span>Their name <span class="opt">(optional) &mdash; greets the email</span></span>
         <input id="pi_name" value="${esc(q.name)}"></label>
       <p class="hint">They receive the <b>${esc(label)}</b> and nothing else. No case is created,
         and no rate or payment information is included.</p>
@@ -5602,7 +5640,7 @@ function paymentSettingsHtml(){
       <p class="hint">The link is never built from the handle. A Venmo handle is written with an
         @ and its web address is not &mdash; guessing one from the other sends a client somewhere
         that is not yours. Paste the address from the app.</p>
-      <label class="f"><span>Instructions <span class="opt">optional</span></span>
+      <label class="f"><span>Instructions <span class="opt">(optional)</span></span>
         <input id="pm_note_${esc(m.id)}" value="${esc(val("instructions"))}"
           placeholder="e.g. Include your case number in the note"></label>
       <div class="actions">
@@ -5751,9 +5789,9 @@ function notifyFormHtml(r, evs){
     <label class="f"><span>Who is this</span>
       <input id="nt_label" value="${esc(v.label)}" placeholder="e.g. Owner mobile"></label>
     <div class="two">
-      <label class="f"><span>Phone <span class="opt">optional</span></span>
+      <label class="f"><span>Phone <span class="opt">(optional)</span></span>
         <input id="nt_phone" inputmode="tel" value="${esc(v.phone)}"></label>
-      <label class="f"><span>Email <span class="opt">optional</span></span>
+      <label class="f"><span>Email <span class="opt">(optional)</span></span>
         <input id="nt_email" type="email" value="${esc(v.email)}"></label>
     </div>
     <p class="hint">One of the two is enough. Both is fine.</p>
@@ -9743,13 +9781,13 @@ function retainerFormHtml(r){
     <label class="f"><span>Amount received</span>
       <input id="ret_amt" inputmode="decimal" placeholder="${esc(String(r.amount))}"
         value="${esc(RET_DRAFT.amt || "")}"></label>
-    <label class="f"><span>Payment method <span class="opt">optional</span></span>
+    <label class="f"><span>Payment method <span class="opt">(optional)</span></span>
       <select id="ret_method"><option value="">&mdash;</option>${RETAINER_METHOD_OPTIONS
         .map(([v, l]) => `<option value="${v}"${RET_DRAFT.meth === v ? " selected" : ""}>${l}</option>`).join("")}</select></label>
     <div class="two">
       <label class="f"><span>Payment date <span class="opt">when the client paid</span></span>
         <input id="ret_date" type="date" value="${esc(RET_DRAFT.date || "")}"></label>
-      <label class="f"><span>Reference <span class="opt">optional</span></span>
+      <label class="f"><span>Reference <span class="opt">(optional)</span></span>
         <input id="ret_ref" placeholder="e.g. cheque 1041, or the app's note"
           value="${esc(RET_DRAFT.ref || "")}"></label>
     </div>
@@ -10269,21 +10307,21 @@ function amComposeHtml(){
     </div>`}
     ${isArrival ? `
     <div class="two">
-      <label class="f"><span>Vehicles present <span class="opt">optional</span></span>
+      <label class="f"><span>Vehicles present <span class="opt">(optional)</span></span>
         <input id="qa_vp" placeholder="e.g. Subject&#39;s white GMC Sierra in the driveway" data-act-input="amArrival"></label>
-      <label class="f"><span>View <span class="opt">optional</span></span>
+      <label class="f"><span>View <span class="opt">(optional)</span></span>
         <select id="qa_view" data-act-input="amArrival">
           <option value="">Not specified</option>
           ${ARRIVAL_VIEW.map(o => `<option value="${o[0]}">${esc(o[1])}</option>`).join("")}
         </select></label>
     </div>
     <div class="two">
-      <label class="f"><span>Position <span class="opt">optional</span></span>
+      <label class="f"><span>Position <span class="opt">(optional)</span></span>
         <select id="qa_place" data-act-input="amArrival">
           <option value="">Not specified</option>
           ${ARRIVAL_PLACE.map(o => `<option value="${o[0]}">${esc(o[1])}</option>`).join("")}
         </select></label>
-      <label class="f"><span>Position detail <span class="opt">optional</span></span>
+      <label class="f"><span>Position detail <span class="opt">(optional)</span></span>
         <input id="qa_pos" placeholder="e.g. with a clear view of the front door" data-act-input="amArrival"></label>
     </div>` : ""}
     <label class="f"><span>${m.edit ? "What happened" : "The line <span class=\"opt\">edit freely</span>"}</span>
@@ -10296,9 +10334,9 @@ function amComposeHtml(){
     <details class="amfold" ${m.edit && (pre.location || pre.vehicle || pre.internal_note) ? "open" : ""}>
       <summary>More details</summary>
       <div class="two" style="margin-top:8px">
-        <label class="f"><span>Location <span class="opt">optional</span></span>
+        <label class="f"><span>Location <span class="opt">(optional)</span></span>
           <input id="qa_loc" value="${esc(pre.location || "")}" placeholder="e.g. 2214 Old Forest Rd"></label>
-        <label class="f"><span>Vehicle <span class="opt">optional</span></span>
+        <label class="f"><span>Vehicle <span class="opt">(optional)</span></span>
           <input id="qa_veh" value="${esc(pre.vehicle || "")}" placeholder="e.g. White GMC Sierra XKT-2209"></label>
       </div>
       <label class="f"><span>Internal note <span class="opt">never client-facing</span></span>
@@ -10365,12 +10403,12 @@ function amCustomHtml(){
       <p class="hint">Tick what was captured at this moment — it goes on the timeline and into the
         report line. Files attach from the Evidence panel.</p>
       <div class="two">
-        <label class="f"><span>Location ${QKIND === "location" ? "" : `<span class="opt">optional</span>`}</span>
+        <label class="f"><span>Location ${QKIND === "location" ? "" : `<span class="opt">(optional)</span>`}</span>
           <input id="a_loc" placeholder="e.g. 2214 Old Forest Rd"></label>
-        <label class="f"><span>Vehicle ${QKIND === "vehicle" ? "" : `<span class="opt">optional</span>`}</span>
+        <label class="f"><span>Vehicle ${QKIND === "vehicle" ? "" : `<span class="opt">(optional)</span>`}</span>
           <input id="a_veh" placeholder="e.g. White GMC Sierra XKT-2209"></label>
       </div>
-      <label class="f"><span>Internal note <span class="opt">optional, never client-facing</span></span><input id="a_note"></label>`}
+      <label class="f"><span>Internal note <span class="opt">(optional) &mdash; never client-facing</span></span><input id="a_note"></label>`}
     <button class="btn" type="submit">${
       QKIND === "mileage" ? "Record mileage" : QKIND === "expense" ? "Record expense" : "Add to the log"}</button>
     ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
@@ -10413,9 +10451,9 @@ function fieldPanel(){
              open.start_mileage != null ? ` &middot; started at ${esc(open.start_mileage)} miles` : ""}.</div>
            <div class="two">
              <label class="f"><span>End time</span><input id="d_end" type="time" value="${now}"></label>
-             <label class="f"><span>Ending mileage <span class="opt">optional</span></span><input id="d_emiles" inputmode="decimal"></label>
+             <label class="f"><span>Ending mileage <span class="opt">(optional)</span></span><input id="d_emiles" inputmode="decimal"></label>
            </div>
-           <label class="f"><span>Summary of the day <span class="opt">optional</span></span>
+           <label class="f"><span>Summary of the day <span class="opt">(optional)</span></span>
              <textarea id="d_sum" rows="3" placeholder="What the day established, in your own words."></textarea></label>
            <button class="btn danger" type="submit">End investigation day</button>
            ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
@@ -10425,7 +10463,7 @@ function fieldPanel(){
              <label class="f"><span>Date</span><input id="d_date" type="date" value="${today}"></label>
              <label class="f"><span>Start time</span><input id="d_start" type="time" value="${now}"></label>
            </div>
-           <label class="f"><span>Beginning mileage <span class="opt">optional</span></span><input id="d_smiles" inputmode="decimal"></label>
+           <label class="f"><span>Beginning mileage <span class="opt">(optional)</span></span><input id="d_smiles" inputmode="decimal"></label>
            <button class="btn" type="submit">Start investigation</button>
            ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
          </form>`}
@@ -11012,7 +11050,7 @@ function reportOpenHtml(open, admin, badge){
         ? `<button class="btn sm" data-act="reportStatus" data-id="${open.id}" data-to="delivered">Mark delivered</button>` : ""}
     </div>
     ${admin && open.status === "submitted"
-      ? `<label class="f" style="margin-top:10px"><span>Note back to the investigator <span class="opt">optional</span></span>
+      ? `<label class="f" style="margin-top:10px"><span>Note back to the investigator <span class="opt">(optional)</span></span>
            <input id="r_note" placeholder="What needs changing"></label>` : ""}
     ${!admin && open.status === "submitted"
       ? `<p class="hint">With the office for review. The submitted text is preserved under Versions.</p>` : ""}
@@ -11177,12 +11215,12 @@ function commsPanel(){
       </div>
       <div class="two">
         <label class="f"><span>Date</span><input id="c_date" type="date" value="${today}"></label>
-        <label class="f"><span>Time <span class="opt">optional</span></span><input id="c_time" type="time"></label>
+        <label class="f"><span>Time <span class="opt">(optional)</span></span><input id="c_time" type="time"></label>
       </div>
       <label class="f"><span>What was said</span><textarea id="c_sum" rows="3"
         placeholder="e.g. Adjuster approved a second day; written confirmation to follow by email."></textarea></label>
       <div class="two">
-        <label class="f"><span>Follow up by <span class="opt">optional</span></span><input id="c_fup" type="date"></label>
+        <label class="f"><span>Follow up by <span class="opt">(optional)</span></span><input id="c_fup" type="date"></label>
         <label class="f"><span>Who can see it</span>
           <select id="c_vis">
             <option value="admin">Admins only</option>
@@ -11267,9 +11305,9 @@ function edCollect(){
 function phoneRowsHtml(prefix, list){
   const rows = (list && list.length ? list : [{ number: "", label: "" }]);
   return rows.map((p, i) => `<div class="two" style="align-items:end">
-      <label class="f"><span>${i === 0 ? "Phone" : "Also"} <span class="opt">optional</span></span>
+      <label class="f"><span>${i === 0 ? "Phone" : "Also"}${OPTL}</span>
         <input id="${prefix}_num_${i}" inputmode="tel" value="${esc(p.number || "")}"></label>
-      <label class="f"><span>Label</span>
+      <label class="f"><span>Label${OPTL}</span>
         <select id="${prefix}_lab_${i}"><option value="">&mdash;</option>${
           PHONE_LABELS_UI.map(l => `<option value="${l}"${
             (p.label || "") === l ? " selected" : ""}>${l}</option>`).join("")}</select></label>
@@ -11295,16 +11333,16 @@ function editCasePanel(s, a){
       in every email already sent.</p>
 
     <h3 style="margin:14px 0 4px;font-size:1rem">${claim ? "Carrier contact" : "Client"}</h3>
-    <label class="f"><span>Name</span>
+    <label class="f"><span>Name${OPTL}</span>
       <input id="ed_client" value="${esc(pick("client", p.client_name || s.client_name))}"></label>
-    <label class="f"><span>Email <span class="opt">optional</span></span>
+    <label class="f"><span>Email${OPTL}</span>
       <input id="ed_email" type="email" value="${esc(pick("email", p.client_email || s.client_email))}"></label>
     ${phoneRowsHtml("edc", clientList)}
 
     <h3 style="margin:14px 0 4px;font-size:1rem">${claim ? "Claimant" : "Subject"}</h3>
-    <label class="f"><span>Name</span>
+    <label class="f"><span>Name${OPTL}</span>
       <input id="ed_subject" value="${esc(pick("subject", p.subject_name || s.subject_name))}"></label>
-    <label class="f"><span>Address <span class="opt">optional</span></span>
+    <label class="f"><span>Address${OPTL}</span>
       <input id="ed_address" value="${esc(pick("address", p.subject_address))}"></label>
     ${subjects.length ? subjects.map(sub => `
       <div style="border-top:1px dashed #cfe6ec;margin-top:8px;padding-top:8px">
@@ -11314,19 +11352,19 @@ function editCasePanel(s, a){
 
     <h3 style="margin:14px 0 4px;font-size:1rem">Case</h3>
     <div class="two">
-      <label class="f"><span>Case type</span>
+      <label class="f"><span>Case type${OPTL}</span>
         <select id="ed_type"><option value="">&mdash;</option>${
           (WS && WS.case_types || []).map(t => `<option value="${t.id}"${
             a.case_type_id === t.id ? " selected" : ""}>${esc(termLabel(t.label))}</option>`).join("")}</select></label>
       <label class="f"><span>Status</span><select id="ed_status">${STAGE_OPTS(s)}</select></label>
     </div>
     <div class="two">
-      <label class="f"><span>${claim ? "Claim number" : "Reference"} <span class="opt">optional</span></span>
+      <label class="f"><span>${claim ? "Claim number" : "Reference"}${OPTL}</span>
         <input id="ed_claim" value="${esc(pick("claim", p.claim_number || s.claim_number))}"></label>
-      ${a.retainer ? `<label class="f"><span>Agreed retainer</span>
+      ${a.retainer ? `<label class="f"><span>Agreed retainer${OPTL}</span>
         <input id="ed_retainer" inputmode="decimal" value="${esc(pick("retainer", String(a.retainer.amount)))}"></label>` : ""}
     </div>
-    <label class="f"><span>Investigator <span class="opt">optional &mdash; a case may stay unassigned</span></span>
+    <label class="f"><span>Investigator <span class="opt">(optional) &mdash; a case may stay unassigned</span></span>
       <select id="ed_asg"><option value="">&mdash; unassigned &mdash;</option>${
         USERS.filter(u => u.active).map(u => `<option value="${u.id}"${
           u.id === s.assigned_to ? " selected" : ""}>${esc(u.display_name || u.username)}</option>`).join("")}</select></label>
@@ -12038,7 +12076,7 @@ function evidencePanel(){
         ${admin ? `<label class="f"><span>Classification</span>
           <select id="ev_class">${["needs_review","client_deliverable","internal_only","needs_redaction","do_not_use"]
             .map(c => `<option value="${c}">${clsLabel(c)}</option>`).join("")}</select></label>` : ""}
-        <label class="f"><span>Note <span class="opt">optional</span></span>
+        <label class="f"><span>Note <span class="opt">(optional)</span></span>
           <input id="ev_note" placeholder="e.g. Subject loading lumber, clip 2 of 3."></label>
       </div>
       <label class="f"><span>Attach to <span class="opt">a subject's photo, or the activity moment a clip documents</span></span>
@@ -12427,7 +12465,7 @@ function daysPanel(){
     ${availRows}
   </div>
   ${reps.length > 1 && draft ? `<label class="f"><span>Combined summary
-    <span class="opt">optional &mdash; opens the multi-day report</span></span>
+    <span class="opt">(optional) &mdash; opens the multi-day report</span></span>
     <textarea data-act="pkgSummary" rows="4" placeholder="One paragraph covering the investigation as a whole. The dates, days, hours and exhibit counts below are filled in for you.">${esc(PKG.summary || "")}</textarea></label>` : ""}`;
 }
 
@@ -13120,7 +13158,7 @@ function tasksPanel(){
           <select id="t_who"><option value="">The office</option>
             ${USERS.filter(u => u.active).map(u =>
               `<option value="${u.id}">${esc(u.display_name || u.username)}</option>`).join("")}</select></label>
-        <label class="f"><span>Due <span class="opt">optional</span></span><input id="t_due" type="date"></label>
+        <label class="f"><span>Due <span class="opt">(optional)</span></span><input id="t_due" type="date"></label>
       </div>
       <label class="f"><span>Priority</span>
         <select id="t_pri">${[["normal","Normal"],["high","High"],["urgent","Urgent"],["low","Low"]]
@@ -15309,7 +15347,7 @@ function invoiceDetailView(){
       <div class="two">
         <label class="f"><span>Method</span><select id="ip_method">${["ach","check","card","wire","other"]
           .map(v => `<option value="${v}">${v.toUpperCase()}</option>`).join("")}</select></label>
-        <label class="f"><span>Reference <span class="opt">optional</span></span><input id="ip_ref"></label>
+        <label class="f"><span>Reference <span class="opt">(optional)</span></span><input id="ip_ref"></label>
       </div>
       <button class="btn sm" type="submit">Record payment</button>
     </form>` : ""}` : ""}
