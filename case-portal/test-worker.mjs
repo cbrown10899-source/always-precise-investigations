@@ -960,7 +960,21 @@ section('Rate sheets and the emailed quote');
   const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
 
   const d = await jsonOf(await call(env, '/sheets', { cookie: admin }));
-  ok('exactly two sheets exist', d.sheets.length === 2);
+  /* THREE CARDS, TWO PRICING PRODUCTS (Unit 28). The Legal card is the private
+     retainer product in the LEGAL context — the owner's "do NOT create a third
+     independent pricing source" is asserted here as a property, not trusted:
+     count the cards, then count the DISTINCT sheet ids behind them. */
+  ok('three rate-sheet cards are offered', d.sheets.length === 3,
+     JSON.stringify(d.sheets.map(s => s.key)));
+  ok('but there are still only two pricing products behind them',
+     new Set(d.sheets.map(s => s.id)).size === 2,
+     JSON.stringify([...new Set(d.sheets.map(s => s.id))]));
+  const legalCard = d.sheets.find(s => s.key === 'legal');
+  ok('the legal card IS the private retainer product, one pricing source',
+     legalCard && legalCard.id === 'private_retainer'
+       && legalCard.context === 'legal', JSON.stringify(legalCard && legalCard.id));
+  ok('and it names itself Legal / Law Firm',
+     /Legal \/ Law Firm/.test(legalCard.selector_label), legalCard.selector_label);
 
   /* TWO SEPARATE PRODUCTS (RATESHEETS.md): retainer+hourly vs
      package/authorization. Separate ids, separate types, separate copy. */
@@ -4799,6 +4813,145 @@ section('A reassigned investigator keeps their own work, never the client');
  *
  * Every assertion carries the negative half too: the point is not only that the
  * right name appears, it is that the WRONG one does not. */
+/* --------------------------- LEGAL BEFORE THERE IS A CASE (Unit 28)
+ *
+ * The Production Truth Audit found the gap: a law firm that was not already a
+ * lead could be sent NOTHING legal. The rate sheet's context came only from a
+ * resolved case, and the pre-case intake door — which the Worker has supported
+ * since Unit 6 — had no button.
+ *
+ * The property under test is the one the owner stated: private, insurance and
+ * legal are three separate choices, they stay separate, and legal works with
+ * no case number at all. Each assertion carries its negative half. */
+section('Legal can be sent before a case exists, and the three doors stay separate');
+{
+  const realFetch = globalThis.fetch;
+  let last = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) { last = JSON.parse(init.body); return new Response('{"id":"re_1"}', { status: 200 }); }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  const sheetSend = (sheet, body) => call(env, `/sheets/${sheet}/email`,
+    { method: 'POST', cookie: admin, body });
+  const blob = () => JSON.stringify(last);
+
+  /* ---- the three CARDS, and only two products behind them ---- */
+  const cards = (await jsonOf(await call(env, '/sheets', { cookie: admin }))).sheets;
+  ok('the screen offers private, insurance and legal',
+     ['private', 'insurance', 'legal'].every(k => cards.some(c => c.key === k)),
+     JSON.stringify(cards.map(c => c.key)));
+  const legalCard = cards.find(c => c.key === 'legal');
+  const privCard = cards.find(c => c.key === 'private');
+  ok('the legal card carries the private product and the legal context',
+     legalCard.id === 'private_retainer' && legalCard.context === 'legal');
+  ok('and identical pricing lines to the private card — one source',
+     JSON.stringify(legalCard.lines) === JSON.stringify(privCard.lines));
+  ok('the legal card names the approved billing arrangements',
+     /BILL\.com/.test(legalCard.closing) && /pick-up/.test(legalCard.closing)
+       && /check by mail/.test(legalCard.closing), legalCard.closing);
+  ok('and carries no private payment language',
+     !/Cash App/i.test(JSON.stringify(legalCard)) && !/Venmo/i.test(JSON.stringify(legalCard)));
+  ok('nor does the insurance card',
+     !/Cash App/i.test(JSON.stringify(cards.find(c => c.key === 'insurance')))
+       && !/Venmo/i.test(JSON.stringify(cards.find(c => c.key === 'insurance'))));
+
+  /* ---- PRIVATE pre-case: private sheet, private door ---- */
+  last = null;
+  const pv = await jsonOf(await sheetSend('private_retainer',
+    { to: 'jane@example.com', name: 'Jane', include_intake: true, send_context: 'private' }));
+  ok('a private pre-case send goes out with no case number',
+     pv.ok === true && pv.send_context === 'private', JSON.stringify(pv).slice(0, 160));
+  ok('and carries the PRIVATE door',
+     blob().includes('assignment=private') && !blob().includes('assignment=legal'));
+
+  /* ---- INSURANCE pre-case ---- */
+  last = null;
+  const ins = await jsonOf(await sheetSend('insurance_assignment',
+    { to: 'adj@carrier.example', name: 'Adjuster', include_intake: true, send_context: 'insurance' }));
+  ok('an insurance pre-case send goes out', ins.ok === true && ins.send_context === 'insurance');
+  ok('and carries the INSURANCE door',
+     blob().includes('assignment=insurance') && !blob().includes('assignment=legal'));
+  ok('with no private payment language anywhere in it',
+     !/Cash App/i.test(blob()) && !/Venmo/i.test(blob()));
+
+  /* ---- LEGAL pre-case: THE POINT OF THE UNIT. No case number at all. ---- */
+  last = null;
+  const lg = await jsonOf(await sheetSend('private_retainer',
+    { to: 'rharmon@firm.example', name: 'R. Harmon', include_intake: true, send_context: 'legal' }));
+  ok('a LEGAL sheet sends with no case number at all',
+     lg.ok === true, JSON.stringify(lg).slice(0, 200));
+  ok('and the answer says the context it actually went in',
+     lg.send_context === 'legal', String(lg.send_context));
+  ok('the bundled intake link is the LEGAL door',
+     blob().includes('assignment=legal'), blob().slice(0, 200));
+  ok('never the private door it used to send',
+     !blob().includes('assignment=private'));
+  ok('and the email carries no Cash App or Venmo',
+     !/Cash App/i.test(blob()) && !/Venmo/i.test(blob()));
+  ok('the legal send names the firm-billing arrangements instead',
+     /BILL\.com/.test(blob()) || /retainer check/i.test(blob()), blob().slice(0, 300));
+
+  /* ---- the payment block is refused on a legal PRE-CASE send.
+     This is the half that used to be unreachable: the refusal lived inside the
+     case lookup, so with no case there was nothing to refuse it. ---- */
+  const payLegal = await sheetSend('private_retainer',
+    { to: 'rharmon@firm.example', send_context: 'legal', include_payment: true, methods: ['cash_app'] });
+  ok('payment options are refused on a legal send even with NO case',
+     payLegal.status === 400 && (await jsonOf(payLegal)).code === 'legal_no_payment_block',
+     String(payLegal.status));
+
+  /* ---- and a declared context is checked against the sheet ---- */
+  const bad = await sheetSend('insurance_assignment',
+    { to: 'x@y.example', send_context: 'legal' });
+  ok('the carrier sheet cannot be sent as a legal assignment',
+     bad.status === 400 && (await jsonOf(bad)).code === 'context_not_allowed', String(bad.status));
+
+  /* ---- pre-case INTAKE, all three kinds ---- */
+  for (const [kind, door] of [['private', 'assignment=private'], ['insurance', 'assignment=insurance'],
+                              ['legal', 'assignment=legal']]) {
+    last = null;
+    const r = await jsonOf(await call(env, '/intake-link/email', { method: 'POST', cookie: admin,
+      body: { to: `x${kind}@example.com`, name: 'X', kind } }));
+    ok(`the ${kind} pre-case intake sends and names itself`, r.ok === true, JSON.stringify(r).slice(0, 140));
+    ok(`the ${kind} pre-case intake carries its own door`, blob().includes(door), blob().slice(0, 160));
+  }
+  last = null;
+  await call(env, '/intake-link/email', { method: 'POST', cookie: admin,
+    body: { to: 'firm@example.com', name: 'Firm', kind: 'legal' } });
+  ok('the legal intake is never the private form',
+     !blob().includes('assignment=private') && blob().includes('assignment=legal'));
+
+  /* ---- AND THE EXISTING LEAD-CARD FLOW IS UNCHANGED: no declared context,
+     the case decides, exactly as before Unit 28. ---- */
+  await ingest(env, { case_no: 'API-L28', service: 'Surveillance', assignment: 'legal',
+                      client_name: 'Estate of R', firm_name: 'Harmon & Boyd',
+                      attorney_name: 'R. Harmon', client_email: 'rharmon@firm.example' });
+  last = null;
+  const fromLead = await jsonOf(await sheetSend('private_retainer',
+    { to: 'rharmon@firm.example', case_no: 'API-L28', include_intake: true }));
+  ok('a legal LEAD send still works with no declared context',
+     fromLead.ok === true && fromLead.send_context === 'legal',
+     JSON.stringify(fromLead).slice(0, 160));
+  ok('and still pairs the legal door from the case alone',
+     blob().includes('assignment=legal') && !blob().includes('assignment=private'));
+
+  /* A resolved case OUTRANKS a declared context — a declaration can never talk
+     a real case out of what it is. */
+  const lie = await sheetSend('private_retainer',
+    { to: 'rharmon@firm.example', case_no: 'API-L28', send_context: 'private',
+      include_payment: true, methods: ['cash_app'] });
+  ok('declaring "private" on a real legal case does not buy the payment block',
+     lie.status === 400 && (await jsonOf(lie)).code === 'legal_no_payment_block', String(lie.status));
+
+  globalThis.fetch = realFetch;
+}
+
 section('Who ended the day is recorded, and a day never reads as self-ended when it was not');
 {
   const env = freshEnv();
@@ -6630,8 +6783,14 @@ section('Legal intake: private pricing structurally, private payments never');
   // ---- sends: the sheet is the private product; the payment block never rides ----
   const sheets = (await jsonOf(await call(env, '/sheets', { cookie: admin }))).sheets;
   const priv = sheets.find(x => x.id === 'private_retainer');
+  /* STILL NO THIRD PRICING PRODUCT (the Unit 6 rule, kept exactly). Unit 28
+     added a third CARD — Legal / Law Firm — but it is the private retainer
+     product in the LEGAL context, so what this asserts is the thing that
+     matters: the number of distinct pricing products behind the cards. */
   ok('the sheet catalogue is unchanged — no third pricing product',
-     sheets.length === 2 && priv && sheets.some(x => x.id === 'insurance_assignment'));
+     new Set(sheets.map(x => x.id)).size === 2
+       && priv && sheets.some(x => x.id === 'insurance_assignment'),
+     JSON.stringify([...new Set(sheets.map(x => x.id))]));
 
   const sent = await jsonOf(await call(env, `/sheets/private_retainer/email`, { method: 'POST', cookie: admin,
     body: { to: 'tboyd@example.com', name: 'T. Boyd', case_no: 'API-LGL1' } }));

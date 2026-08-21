@@ -4751,7 +4751,12 @@ async function wizSheetLoad(){
 
 function sheetWizardHtml(){
   const w = SHEET_WIZ;
-  const sheet = w.sheetData || SHEETS.find(s => s.id === w.sheet) || {};
+  /* Two cards share the private product, so the LEGAL wizard must find the
+     legal card — matching on id alone would draw the private card's label and
+     closing over a legal send (Unit 28). */
+  const sheet = w.sheetData
+    || SHEETS.find(s => s.id === w.sheet && (w.legal ? s.key === "legal" : s.key !== "legal"))
+    || SHEETS.find(s => s.id === w.sheet) || {};
   /* The door is named from the CONTEXT, the way the Worker chooses it — a
      legal case takes the private sheet and the legal door, so `w.sheet` alone
      labels it wrongly. Same table, same order, one screen. */
@@ -4955,10 +4960,15 @@ function preCaseSendsHtml(){
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn sm ghost" data-act="preIntake" data-kind="private">Send private intake</button>
       <button class="btn sm ghost" data-act="preIntake" data-kind="insurance">Send insurance intake</button>
+      ${/* UNIT 28. `/intake-link/email` has accepted kind:'legal' since Unit 6 —
+           the door existed and nothing on screen opened it, so a law firm that
+           was not already a lead could not be sent the legal form at all. */""}
+      <button class="btn sm ghost" data-act="preIntake" data-kind="legal">Send legal intake</button>
       <button class="btn sm ghost" data-act="prePay">Send payment options</button>
     </div>
-    <p class="hint" style="margin-top:8px">The two intakes are separate forms and are never
-      interchangeable. Payment options are private-client only and are never offered to a carrier.</p>
+    <p class="hint" style="margin-top:8px">The three intakes are separate forms and are never
+      interchangeable. Payment options are private-client only and are never offered to a carrier
+      or a law firm.</p>
     ${SEND_MSG ? `<div class="ok" style="margin-top:8px">${esc(SEND_MSG)}</div>` : ""}
   </div>`;
 }
@@ -4969,7 +4979,12 @@ function preCaseSendsHtml(){
    and a picker here would be one more way to send a carrier the consumer door. */
 function preIntakeHtml(){
   const q = INTAKE_SEND;
-  const label = q.kind === "insurance" ? "Insurance Assignment Intake" : "Private Client Intake";
+  /* NAMED FROM THE KIND, ALL THREE OF THEM. The ternary knew two, so a legal
+     send would have announced itself as the Private Client Intake — the label
+     saying one thing while `?assignment=legal` went out (Unit 28). */
+  const label = q.kind === "insurance" ? "Insurance Assignment Intake"
+              : q.kind === "legal" ? "Legal Investigation Assignment Form"
+              : "Private Client Intake";
   return `<div class="amwrap" data-act="preIntakeClose">
     <div class="amsheet" data-act="amNoop" role="dialog" aria-modal="true" aria-label="Send an intake form">
       <div class="amhead"><b>Send &mdash; ${esc(label)}</b>
@@ -5117,17 +5132,20 @@ function sheetIncludables(sheetId, legal){
 
 function sheetsView(){
   if(!SHEETS.length) return `<div class="card"><div class="empty">Loading rate sheets…</div></div>`;
-  const open = SHEETS.find(s => s.id === OPEN_SHEET);
+  /* KEYED BY `key`, NOT BY SHEET ID (Unit 28). Private and Legal are the same
+     PRODUCT in two contexts, so two cards carry `id: "private_retainer"` —
+     finding by id would open the private card whenever Legal was pressed. */
+  const open = SHEETS.find(s => s.key === OPEN_SHEET);
   return `<div class="card">
     <div class="bar"><h2 style="margin:0">Rate sheets</h2></div>
     <p class="note">Nothing here appears on the website. Open a sheet to read exactly what the
       client will receive, then send it to them.</p>
     <div class="sheet-grid">
-      ${SHEETS.map(s => `<button class="sheet-card${s.id === OPEN_SHEET ? " on" : ""}" data-act="openSheet" data-sheet="${esc(s.id)}">
+      ${SHEETS.map(s => `<button class="sheet-card${s.key === OPEN_SHEET ? " on" : ""}" data-act="openSheet" data-sheet="${esc(s.key)}">
         <div class="sheet-n">${esc(s.selector_label || s.name)}</div>
         <div class="sheet-a">${esc(s.audience)}</div>
         <div class="sheet-s">${esc(s.summary)}</div>
-        <div class="sheet-go">${s.id === OPEN_SHEET ? "Showing below" : "Open and send"}</div>
+        <div class="sheet-go">${s.key === OPEN_SHEET ? "Showing below" : "Open and send"}</div>
       </button>`).join("")}
     </div>
   </div>
@@ -5144,11 +5162,12 @@ function sheetsView(){
     </div>
     <div class="rs-close"><b>${esc(open.closing_title)}</b><p>${esc(open.closing)}</p></div>
     <div class="sendcta">
-      <button class="btn" data-act="shWiz" data-sheet="${esc(open.id)}">Send this sheet &rarr;</button>
+      <button class="btn" data-act="shWiz" data-sheet="${esc(open.id)}"
+        data-context="${esc(open.context || "")}">Send this sheet &rarr;</button>
       <div class="nextstep">
         <b>Next step</b>
         Choose what to include with this email:
-        <ul>${sheetIncludables(open.id).map(x => `<li>${esc(x)}</li>`).join("")}</ul>
+        <ul>${sheetIncludables(open.id, open.context === "legal").map(x => `<li>${esc(x)}</li>`).join("")}</ul>
       </div>
     </div>
     ${SHEET_MSG ? `<div class="note" style="margin-top:4px">${esc(SHEET_MSG)}</div>` : ""}
@@ -16017,10 +16036,18 @@ async function wizSend(){
   /* Only the private sheet may carry payment, and only what was ticked. The
      Worker decides this too, from the sheet id — sending the flag here for a
      carrier sheet would be refused rather than obeyed. */
-  const paying = w.sheet === "private_retainer" && w.pay && (w.payMethods || []).length;
+  /* AND NEVER ON A LEGAL SEND. Legal takes the private SHEET, so the sheet id
+     alone would have said yes — the context is what decides, here and in the
+     Worker, which refuses it by name either way (Unit 28). */
+  const paying = w.sheet === "private_retainer" && !w.legal
+    && w.pay && (w.payMethods || []).length;
   try{
     const r = await api(`/sheets/${encodeURIComponent(w.sheet)}/email`,
       {method:"POST", body:{to: w.to, note: w.note, case_no: w.caseNo, include_intake: w.include,
+        /* Declared only where the screen actually chose a context — a send
+           from a lead card leaves it out and the case decides, exactly as
+           before. */
+        ...(w.context ? {send_context: w.context} : {}),
         /* Only ever sent when there was nowhere to store it. The Worker
            ignores it outright if the case has a figure of its own, so this
            cannot overwrite what the office agreed. */
@@ -16721,8 +16748,15 @@ document.addEventListener("click", ev => {
     SHEET_MSG = ""; SHEET_WIZ = null; paint();
   }
   else if(act === "shWiz"){
-    SHEET_WIZ = {sheet: el.dataset.sheet, step: 1, to: "", caseNo: "", note: "", include: true,
-                 pay: true, payMethods: [], err: "",
+    /* THE CONTEXT THE CARD WAS OPENED IN (Unit 28). A law firm with no case yet
+       has nothing for the Worker's lookup to find, so the send declares what it
+       is; the Worker checks it against the sheet and a real case still wins.
+       `legal` also drives the labels, so the wizard names the door it will
+       actually send. */
+    const ctx = el.dataset.context || "";
+    SHEET_WIZ = {sheet: el.dataset.sheet, context: ctx, legal: ctx === "legal",
+                 step: 1, to: "", caseNo: "", note: "", include: true,
+                 pay: ctx !== "legal", payMethods: [], err: "",
                  retainer: null, retainerPick: String(RETAINER_PRESETS[0]),
                  retainerCustom: "", retainerTouched: false};
     SHEET_MSG = ""; wizPaymentLoad(); paint();
@@ -16778,8 +16812,15 @@ document.addEventListener("click", ev => {
      from the Rate sheets view, which has no case context by nature, so nothing
      here is prefilled from a lead and nothing needs to be. */
   else if(act === "preIntake"){
-    INTAKE_SEND = {kind: el.dataset.kind === "insurance" ? "insurance" : "private",
-                   to: "", name: "", err: "", busy: false};
+    /* AN ALLOW-LIST, NOT A TERNARY (Unit 28). This collapsed everything that
+       was not "insurance" into "private", so the new Legal button would have
+       sent a law firm the private form while the dialog said Legal — the same
+       shape of defect as the label beside it. A kind nobody has declared falls
+       back to private, which is the safe end: it is the form with no carrier
+       and no firm in it. */
+    const KINDS = ["private", "insurance", "legal"];
+    const kind = KINDS.includes(el.dataset.kind) ? el.dataset.kind : "private";
+    INTAKE_SEND = {kind, to: "", name: "", err: "", busy: false};
     SEND_MSG = ""; paint();
     const inp = $("pi_to"); if(inp) inp.focus();
   }

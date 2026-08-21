@@ -610,6 +610,65 @@ function rateSheets(retainer) {
 
 function sheetById(id, retainer) { return rateSheets(retainer).find(s => s.id === id) || null; }
 
+/* THE THREE CARDS ON THE RATE SHEETS SCREEN ARE THREE CONTEXTS, NOT THREE
+   PRICE LISTS (Unit 28; owner: "Do NOT create a third independent pricing
+   source").
+
+   `rateSheets()` above stays the ONLY place a figure is set. This is a thin
+   presentation layer over it: the Legal card IS the private retainer product —
+   the same lines, the same numbers, resolved by the same `agreedRetainer()` —
+   wearing the label a law firm should see and carrying the LEGAL context.
+   Change a price in `rateSheets()` and all three cards move together, because
+   there is nothing here that could fall out of step with it.
+
+   `key` is the CARD's identity (what the screen opens); `id` is the SHEET
+   PRODUCT that is actually sent. They differ for legal on purpose, and that
+   difference IS the architecture: the sheet is the product, and the context
+   decides the intake door and whether payment instructions may ride along. */
+/* The card a send should be WRITTEN from: the one whose product and context
+   both match. Falls back to the product itself, so an unknown context still
+   produces the ordinary sheet rather than nothing. */
+function sheetForContext(sheetId, ctx, retainer) {
+  const cards = sheetCards(retainer);
+  return cards.find(c => c.id === sheetId && c.context === ctx)
+      || cards.find(c => c.id === sheetId)
+      || sheetById(sheetId, retainer);
+}
+
+function sheetCards(retainer) {
+  const sheets = rateSheets(retainer);
+  const by = id => sheets.find(s => s.id === id);
+  const priv = by('private_retainer');
+  const ins = by('insurance_assignment');
+  const cards = [];
+  if (priv) cards.push({ ...priv, key: 'private', context: SEND_CONTEXT.PRIVATE });
+  if (ins) cards.push({ ...ins, key: 'insurance', context: SEND_CONTEXT.INSURANCE });
+  if (priv) {
+    cards.push({
+      ...priv,
+      key: 'legal',
+      context: SEND_CONTEXT.LEGAL,
+      /* NAMED FOR WHO RECEIVES IT. The figures are the private client's; the
+         label, the audience and the closing are a law firm's. */
+      selector_label: `Legal / Law Firm — ${priv.name}`,
+      audience: 'Law firms, attorneys and paralegals',
+      closing_title: 'Billed to the firm. No surprise billing.',
+      /* THE APPROVED LEGAL ARRANGEMENTS AND NOTHING ELSE. Cash App and Venmo
+         are private-client methods and reach a law firm through no path —
+         `CONTEXT_TAKES_PAYMENT` refuses the payment block on this context, and
+         this sentence is what stands in its place. The four arrangements are
+         the ones already on the legal case panel; no new billing policy is
+         invented here. */
+      closing: 'Work begins once the retainer and required authorization are received. '
+             + 'Law firms are billed by invoice — BILL.com invoice or ACH, check by mail, '
+             + 'or a retainer check held for pick-up at the firm\u2019s office — and an '
+             + 'existing billing arrangement is honoured where one is on file. Rates and '
+             + 'authorization are confirmed in writing before investigative work begins.',
+    });
+  }
+  return cards;
+}
+
 /* ---- Private-client payment methods (PAYMENTS.md, owner 2026-08-14) ----
 
    PRIVATE CLIENT ONLY. Cash App and Venmo may appear on the private retainer
@@ -691,6 +750,25 @@ const KIND_CONTEXT = { consumer: SEND_CONTEXT.PRIVATE, claims: SEND_CONTEXT.INSU
 
 const contextForSheet = sheetId => SHEET_CONTEXT[sheetId] || null;
 const contextForKind  = kind    => KIND_CONTEXT[kind] || null;
+
+/* WHICH CONTEXTS A SHEET MAY BE SENT IN (Unit 28).
+
+   `SHEET_CONTEXT` above is a sheet's DEFAULT context. This is the wider
+   question the pre-case work needed: a legal client takes the PRIVATE SHEET —
+   same product, same figures, one pricing source (Unit 6 D1) — in the LEGAL
+   context. So `private_retainer` may carry two contexts and the carrier sheet
+   may carry exactly one.
+
+   A table rather than a comparison, for the reason SHEET_CONTEXT is one: a new
+   sheet has to declare what it may be, and anything undeclared fails closed.
+   THIS IS A BOUNDARY: it is what stops a caller asking for the carrier sheet
+   "in the legal context" and getting a document no law firm should receive. */
+const SHEET_CONTEXTS_ALLOWED = {
+  private_retainer:     [SEND_CONTEXT.PRIVATE, SEND_CONTEXT.LEGAL],
+  insurance_assignment: [SEND_CONTEXT.INSURANCE],
+};
+const sheetAllowsContext = (sheetId, ctx) =>
+  (SHEET_CONTEXTS_ALLOWED[sheetId] || []).includes(ctx);
 
 /* The legal row's columns, once — the ingest writer, the admin editor and the
    quick creator all draw from this list, so a field added here is added
@@ -1286,6 +1364,31 @@ async function emailSheet(request, env, user, id) {
      asserted, the SEND-CONTEXT rule). */
   let sendCtx = contextForSheet(id);
 
+  /* AN EXPLICITLY DECLARED CONTEXT (Unit 28). A law firm that is not on the
+     desk yet has no case for the lookup below to find, so before this there
+     was no way to send them anything in the LEGAL context — the sheet's own
+     default won, and the private door went out. The Rate Sheets screen now
+     names the context it opened, exactly as `/intake-link/email` already
+     takes an explicit `kind`.
+
+     IT IS CHECKED AGAINST THE SHEET, not trusted. `SHEET_CONTEXTS_ALLOWED` is
+     what stops "the carrier sheet, in the legal context" — a document no law
+     firm should receive — and anything undeclared fails closed.
+
+     A RESOLVED CASE STILL WINS. This only decides the context where there is
+     no case to say otherwise; the block below overwrites it from the case's
+     own record, so a declared context can never talk a real case out of what
+     it is. */
+  const askedCtx = String(body.send_context || '').trim().toLowerCase();
+  if (askedCtx) {
+    if (!Object.values(SEND_CONTEXT).includes(askedCtx) || !sheetAllowsContext(id, askedCtx)) {
+      return json({ error: `That rate sheet cannot be sent as a ${askedCtx || 'blank'} `
+        + 'assignment. Private and Legal share the retainer sheet; the carrier sheet is '
+        + 'insurance only.', code: 'context_not_allowed' }, 400);
+    }
+    sendCtx = askedCtx;
+  }
+
   /* Computed BEFORE the case lookup below, which now consults it: a legal
      case must refuse the payment block at the same door the sheet check is. */
   const includePayment = body.include_payment === true || body.include_payment === 1
@@ -1321,17 +1424,26 @@ async function emailSheet(request, env, user, id) {
           : `${caseNo} is a private client — send it the Private Client Retainer, never the carrier sheet.`,
           expected_sheet: wanted }, 400);
       }
-      /* THE PAYMENT HALF OF THE BOUNDARY. `sheetTakesPayment` answered when
-         the sheet id was enough; a legal case takes the private SHEET and must
-         still never take the payment block, so where a case resolves, its own
-         context is the gate. Cash App and Venmo reach a law firm through no
-         path. */
-      if (includePayment && !CONTEXT_TAKES_PAYMENT(caseCtx)) {
-        return json({ error: `${caseNo} is a legal assignment — payment instructions here are `
-          + `Cash App and Venmo, which are private-client methods. Law firms are billed by `
-          + `invoice or retainer check.`, code: 'legal_no_payment_block' }, 400);
-      }
     }
+  }
+
+  /* THE PAYMENT HALF OF THE BOUNDARY, AND IT IS ONE CHECK (Unit 28 moved it
+     here). It used to live inside the `if (lead)` block above, which was
+     correct only while a legal send was impossible without a case: the moment
+     the context could be declared for a PRE-CASE send, that placement would
+     have let Cash App and Venmo ride out to a law firm that simply was not on
+     the desk yet — the exact thing the whole model exists to prevent.
+
+     So it is asked of the RESOLVED context, whether that came from the sheet,
+     from an explicit declaration, or from the case. One writer, one rule: Cash
+     App and Venmo can only ever attach to a private context. The case is named
+     when there is one, because a refusal that says which case is easier to act
+     on than one that does not. */
+  if (includePayment && !CONTEXT_TAKES_PAYMENT(sendCtx)) {
+    const who = linkedCase ? `${linkedCase} is a legal assignment` : 'This is a legal assignment';
+    return json({ error: `${who} — payment instructions here are Cash App and Venmo, which are `
+      + `private-client methods. Law firms are billed by invoice or retainer check.`,
+      code: 'legal_no_payment_block' }, 400);
   }
 
   if (!(await withinRateLimit(env, 'mail'))) {
@@ -1342,7 +1454,13 @@ async function emailSheet(request, env, user, id) {
   // or, on a pre-case send where there is no case to read, the figure the
   // admin agreed on screen. A stored figure always wins; see retainerForSend.
   const retainer = await retainerForSend(env, caseNo, body.retainer_amount);
-  const sheet = sheetById(id, retainer);
+  /* THE DOCUMENT IS BUILT FOR THE CONTEXT, NOT JUST THE PRODUCT (Unit 28).
+     `sheetById` returns the raw product, so a legal send emailed the PRIVATE
+     card's audience and closing — "Private surveillance, domestic and family
+     investigations" — to a law firm, while the screen showed the legal card.
+     The figures are identical either way; what differs is who it says it is
+     for, which is the owner's "must clearly identify LEGAL / LAW FIRM". */
+  const sheet = sheetForContext(id, sendCtx, retainer);
 
   /* The Options step (UIBUILD P18): include the intake, or not. Which intake
      is never the caller's choice.
@@ -12028,7 +12146,7 @@ async function route(request, env) {
        the same helper the send uses — the preview and the email must resolve
        identically or the screen lies about what will go out. */
     const retainer = await retainerForSend(env, caseNo, url.searchParams.get('retainer'));
-    return json({ sheets: rateSheets(retainer),
+    return json({ sheets: sheetCards(retainer),
                   retainer,
                   email_configured: Boolean(env.RESEND_API_KEY) });
   }

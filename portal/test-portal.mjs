@@ -869,7 +869,59 @@ section('Rate sheets');
   ok('it names its audience', has(card, 'carriers, TPAs'));
   ok('the page says none of it is on the website', has(card, 'Nothing here appears on the website'));
 
-  await page.locator('.sheet-card', { hasText: '$1,500 Retainer' }).click();
+  /* UNIT 28 — LEGAL IS ON THIS SCREEN. The Production Truth Audit found it was
+     not: a law firm could only be sent a sheet from an existing lead card, so
+     a firm that was not on the desk yet could be sent nothing at all. These
+     assertions are REACHABILITY — the owner's test is that they can see it and
+     press it, not that a route exists. */
+  ok('the legal product is offered beside the other two',
+     has(card, 'Legal / Law Firm'), card.slice(0, 400));
+  ok('it names its audience', has(card, 'Law firms, attorneys and paralegals'));
+  ok('three cards are on the screen, not two',
+     await page.locator('.sheet-card').count() === 3,
+     String(await page.locator('.sheet-card').count()));
+
+  await page.locator('.sheet-card', { hasText: 'Legal / Law Firm' }).click();
+  await page.waitForTimeout(300);
+  const lg = await page.locator('.card').nth(1).innerText();
+  ok('the legal sheet opens', has(lg, 'Legal / Law Firm') || has(lg, '$1,500'), lg.slice(0, 200));
+  ok('it carries the SAME figures as the private sheet — one pricing source',
+     lg.includes('$1,500') && lg.includes('$100/hr'), lg.slice(0, 200));
+  ok('it names the approved firm-billing arrangements',
+     has(lg, 'BILL.com') && has(lg, 'pick-up'), lg.slice(0, 400));
+  ok('and shows NO private payment language',
+     !has(lg, 'Cash App') && !has(lg, 'Venmo'), lg.slice(0, 400));
+  ok('its next-step names the legal form, never the private one',
+     has(await text(page, '.nextstep'), 'Legal Investigation Assignment Form')
+       && !has(await text(page, '.nextstep'), 'Private Client Intake'),
+     await text(page, '.nextstep'));
+  ok('and it has its own send door', await page.locator('.btn', { hasText: 'Send this sheet' }).count() === 1);
+
+  /* SEND TO SOMEONE NEW — the pre-case doors, all three of them. Located by
+     the BUTTON rather than by card text: `.card` matches the sheet grid first,
+     and reading the wrong card is how a reachability test passes vacuously. */
+  const preBtns = await page.locator('.btn', { hasText: 'Send legal intake' }).count();
+  ok('a legal intake can be sent to someone who is not on the desk', preBtns === 1,
+     String(preBtns));
+  ok('and the other two pre-case doors are still their own separate choices',
+     await page.locator('.btn', { hasText: 'Send private intake' }).count() === 1
+       && await page.locator('.btn', { hasText: 'Send insurance intake' }).count() === 1);
+  await page.locator('.btn', { hasText: 'Send legal intake' }).click();
+  await page.waitForTimeout(250);
+  const dlg = await text(page, '.amsheet');
+  ok('and the dialog names the LEGAL form, never the Private Client Intake',
+     has(dlg, 'Legal Investigation Assignment Form') && !has(dlg, 'Private Client Intake'), dlg.slice(0, 300));
+  await page.locator('.amx').click();
+  await page.waitForTimeout(200);
+  /* Close the LEGAL card rather than opening the private one: `openSheet`
+     TOGGLES, so opening private here and letting the original assertions open
+     it again would shut it, and the block below would find no sheet at all. */
+  await page.locator('.sheet-card', { hasText: 'Legal / Law Firm' }).click();
+  await page.waitForTimeout(250);
+
+  /* NAMED, not matched on the figure: Private and Legal are the same product
+     at the same price, so '$1,500 Retainer' matches both cards (Unit 28). */
+  await page.locator('.sheet-card', { hasText: 'Private Client — $1,500' }).click();
   await page.waitForTimeout(300);
   const sheet = await page.locator('.card').nth(1).innerText();
   ok('the retainer sheet states the retainer', sheet.includes('$1,500'));
@@ -1621,7 +1673,7 @@ section('The private send wizard offers payment options; the carrier one never d
   await page.waitForTimeout(300);
 
   // The private sheet.
-  await page.locator('.sheet-card', { hasText: 'Retainer' }).first().click();
+  await page.locator('.sheet-card', { hasText: 'Private Client — ' }).click();
   await page.waitForTimeout(400);
   await page.locator('.btn', { hasText: 'Send this sheet' }).click();
   await page.waitForTimeout(900);
@@ -1681,7 +1733,7 @@ section('A private retainer is chosen before the sheet goes, and never reset by 
   await page.waitForTimeout(300);
 
   // The private side.
-  await page.locator('.sheet-card', { hasText: 'Retainer' }).first().click();
+  await page.locator('.sheet-card', { hasText: 'Private Client — ' }).click();
   await page.waitForTimeout(400);
   await page.locator('.btn', { hasText: 'Send this sheet' }).click();
   await page.waitForTimeout(900);
@@ -1873,7 +1925,7 @@ section('An unmatched case reference does not block Preview');
   await signIn(page, 'trever', 'AdminPassword1x');
   await page.locator('.tabs button', { hasText: 'Rate Sheets' }).click();
   await page.waitForTimeout(500);
-  await page.locator('.sheet-card', { hasText: 'Retainer' }).first().click();
+  await page.locator('.sheet-card', { hasText: 'Private Client — ' }).click();
   await page.waitForTimeout(400);
   await page.locator('.btn', { hasText: 'Send this sheet' }).click();
   await page.waitForTimeout(900);
