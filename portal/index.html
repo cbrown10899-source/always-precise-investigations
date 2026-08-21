@@ -1473,6 +1473,12 @@
   .rvnarr{white-space:pre-line;font-size:.95rem;margin:0 0 12px;padding-bottom:10px;
     border-bottom:1px solid var(--line);}
 
+  /* UNIT 18 — a voided payment stays visible and stops being money. Struck
+     through, muted, with its reason beside it; token colors only. */
+  .tl-m{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;}
+  .pmvoid > span{text-decoration:line-through;color:var(--muted);}
+  .pmvnote{font-style:normal;font-size:.8rem;color:var(--muted);}
+
   /* UNIT 17 — retention & legal hold. Own names (the class-name-contest
      rule); the hold banner is the warn token pair and nothing new. */
   .holdbox{background:var(--warn-bg);border:1px solid var(--warn);border-radius:8px;
@@ -14493,7 +14499,15 @@ function invoiceDocHtml(i){
     ${i.adjustments ? `<div style="text-align:right;font-size:.92rem">Adjustments: ${usd(i.adjustments)}</div>` : ""}
     ${i.amount_paid ? `<div style="text-align:right;font-size:.95rem">Invoice total ${usd(i.total)}
         &middot; Payments received ${usd(i.amount_paid)}</div>` : ""}
-    <div class="doc-due">${i.amount_paid ? "Balance due" : "Total due"} <b>${usd(i.balance_due)}</b></div>
+    <!-- An overpayment is a CREDIT, not a negative balance (Unit 18): this
+         printed "Balance due $-500" on the client's own invoice, while the
+         retainer block below already handled a negative with Math.abs and its
+         own wording. One document must not contradict itself about one sum. -->
+    <div class="doc-due">${i.overpaid
+      ? `Credit due <b>${usd(i.credit_due)}</b>`
+      : `${i.amount_paid ? "Balance due" : "Total due"} <b>${usd(i.balance_due)}</b>`}</div>
+    ${i.overpaid ? `<div style="text-align:right;font-size:.9rem;color:var(--muted)">Payments received
+      exceed the invoice total. Nothing further is due.</div>` : ""}
     ${ret ? `<table class="doc-table" style="margin-top:12px"><tbody>
       <tr><td style="width:60%"><b>Retainer held</b></td><td class="n">${usd(ret.amount)}${
         ret.received ? "" : " <span style='color:var(--muted);font-size:.85rem'>(not yet received)</span>"}</td></tr>
@@ -14605,9 +14619,17 @@ function invoiceDetailView(){
     </form>
 
     <h3 style="margin:16px 0 8px;font-size:1rem">Payments</h3>
-    ${(i.payments || []).length ? i.payments.map(pm => `<div class="tl-m">${usd(pm.amount)} &middot; ${esc(fmtDay(pm.paid_date))}
-        &middot; ${esc(pm.method)}${pm.reference ? ` &middot; ${esc(pm.reference)}` : ""}${pm.provider !== "manual" ? ` &middot; via ${esc(pm.provider)}` : ""}</div>`).join("")
+    ${(i.payments || []).length ? i.payments.map(pm => `<div class="tl-m${pm.voided_at ? " pmvoid" : ""}">
+        <span>${usd(pm.amount)} &middot; ${esc(fmtDay(pm.paid_date))}
+        &middot; ${esc(pm.method)}${pm.reference ? ` &middot; ${esc(pm.reference)}` : ""}${pm.provider !== "manual" ? ` &middot; via ${esc(pm.provider)}` : ""}</span>
+        ${pm.voided_at
+          ? `<em class="pmvnote">Voided${pm.voided_by ? ` by ${esc(pm.voided_by)}` : ""} ${when(pm.voided_at)}${pm.void_reason ? ` &mdash; ${esc(pm.void_reason)}` : ""}</em>`
+          : (i.status !== "void" ? `<button class="btn sm ghost" data-act="invPayVoid" data-pid="${pm.id}">Void</button>` : "")}
+      </div>`).join("")
       : `<p class="hint">Nothing recorded yet.</p>`}
+    ${(i.payments || []).some(pm => pm.voided_at) ? `<p class="hint">A voided payment stays on the
+      record, struck through &mdash; nothing here deletes financial history. Correcting one is a
+      void and then a fresh entry, so both acts are visible.</p>` : ""}
     ${i.status !== "void" ? `<form class="quick" data-act="invPay" style="margin-top:8px">
       <div class="two">
         <label class="f"><span>Amount</span><input id="ip_amt" inputmode="decimal"></label>
@@ -14709,15 +14731,40 @@ async function saveInvBill(){
   paint();
 }
 
+/* The idempotency key for THIS entry, minted once and kept until the payment
+   is accepted — the RET_TOKEN pattern. A double click, a retry after a dropped
+   response or a flaky connection all carry the same token, so the Worker
+   records the money once and answers success both times. It is cleared only on
+   success, because a failed attempt must be retryable under the same key. */
+let INVPAY_TOKEN = "";
 async function recordInvPayment(){
   INV_MSG = "";
+  const id = INV_OPEN.id;
+  INVPAY_TOKEN = INVPAY_TOKEN || `inv${id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   try{
-    const d = await api(`/invoices/${INV_OPEN.id}/payments`, {method: "POST", body: {
+    const d = await api(`/invoices/${id}/payments`, {method: "POST", body: {
       amount: $("ip_amt").value, paid_date: $("ip_date").value,
-      method: $("ip_method").value, reference: $("ip_ref").value }});
-    INV_OPEN = d.invoice; INV_MSG = d.invoice.status === "paid" ? "Paid in full." : "Payment recorded.";
+      method: $("ip_method").value, reference: $("ip_ref").value,
+      client_token: INVPAY_TOKEN }});
+    INVPAY_TOKEN = "";
+    INV_OPEN = d.invoice;
+    INV_MSG = d.duplicate ? "Already recorded — this payment was entered once."
+      : d.invoice.display_status === "paid" ? "Paid in full." : "Payment recorded.";
   }catch(e){ INV_MSG = e.message; }
-  await openInvoice(INV_OPEN.id);
+  await openInvoice(id);
+}
+
+async function voidInvPayment(pid){
+  if(!confirm("Void this payment?\n\nThe entry stays on the record, struck through, and stops "
+    + "counting toward what has been paid. Nothing is deleted.")) return;
+  const reason = prompt("Why is it being voided? (optional)", "") || "";
+  INV_MSG = "";
+  const id = INV_OPEN.id;
+  try{
+    const d = await api(`/invoices/${id}/payments/${pid}/void`, {method: "POST", body: {reason}});
+    INV_OPEN = d.invoice; INV_MSG = "Payment voided. It stays on the record, marked.";
+  }catch(e){ INV_MSG = e.message; }
+  await openInvoice(id);
 }
 
 function copyInvoiceDetails(){
@@ -16021,6 +16068,7 @@ document.addEventListener("click", ev => {
   else if(act === "invBack"){ INV_OPEN = null; INV_MSG = ""; loadInvoices(); }
   else if(act === "invStatus"){ setInvStatus(el.dataset.s); }
   else if(act === "invCopy"){ copyInvoiceDetails(); }
+  else if(act === "invPayVoid"){ voidInvPayment(Number(el.dataset.pid)); }
   else if(act === "invPrint"){
     document.body.classList.add("printing-invoice");
     window.print();
