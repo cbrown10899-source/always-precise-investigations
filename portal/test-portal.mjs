@@ -13144,6 +13144,60 @@ section('The palette changed no behavior and broke no phone');
    able to SEE it from normal navigation — then that it loads real values and
    that a save round-trips. */
 /* ------------------------------------------------- case types (Unit 30) */
+/* ================================ terminology in the Admin UI (Unit 35)
+ *
+ * Owner decision, 2026-08-21: canvass / canvassing, interview / interviewing
+ * and recorded statement(s) are not visible wording anywhere — the public site
+ * (Unit 34) and now the signed-in portal.
+ *
+ * The pair of properties is the whole point, and neither is worth much alone:
+ *   1. the RENDERED Admin UI carries none of those terms, and
+ *   2. a case that already stored one is still readable, still selected, and
+ *      still submits its stored value back unchanged.
+ * A rename that broke (2) would be a data edit wearing a label change. */
+section('The Admin UI carries none of the retired terms, and old records still read');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const BANNED = /canvass|canvassing|interview|interviewing|recorded statements?/i;
+  /* Every top-level screen an admin can reach, read as RENDERED TEXT — what a
+     person actually sees, not the source behind it. */
+  const screens = ['Dashboard', 'Search', 'Cases', 'Tasks', 'Intakes', 'Clients & Firms',
+                   'Calendar', 'File queue', 'Reports & Packages', 'Rate Sheets', 'Billing',
+                   'Staff', 'Audit trail', 'Settings'];
+  const dirty = [];
+  for (const label of screens) {
+    const tab = page.locator('.tabs button', { hasText: label });
+    if (await tab.count() === 0) continue;
+    await tab.first().click();
+    await page.waitForTimeout(650);
+    const shown = await page.evaluate(() => document.body.innerText);
+    if (BANNED.test(shown)) dirty.push(`${label}: ${(shown.match(BANNED) || [])[0]}`);
+  }
+  ok('no admin screen renders a retired term', dirty.length === 0, dirty.join(' | '));
+
+  /* The two dropdowns the owner named, read as OPTION LABELS — a select's
+     options are visible wording even before it is opened. */
+  /* The intake door is a NAV item, not a button on the Intakes screen — the
+     same selector every other test in this file uses to reach it. */
+  await page.locator('[data-act="tab"][data-tab="newlead"]').first().click();
+  await page.waitForTimeout(700);
+  /* The assignment category belongs to the LEGAL door of the quick intake —
+     the picker chooses which form renders, so the select does not exist until
+     that door is taken. */
+  await page.locator('[data-act="nlKind"][data-k="legal"]').click();
+  await page.waitForTimeout(400);
+  const opts = await page.evaluate(() =>
+    [...document.querySelectorAll('#nl_asgtype option')].map(o => o.textContent));
+  ok('control: the manual intake really does offer a category list', opts.length > 3,
+     JSON.stringify(opts));
+  ok('it offers Witness locate, not the retired wording',
+     opts.includes('Witness locate')
+       && !opts.some(o => /canvass|interview|recorded statement/i.test(o)),
+     JSON.stringify(opts));
+}
+
 section('Case types are on Settings, list, and add');
 {
   const page = await newPage();

@@ -4844,6 +4844,54 @@ section('A reassigned investigator keeps their own work, never the client');
  * This section is the durable record of that classification: it asserts they
  * are still there and still refuse the field, so a later cleanup pass has to
  * delete a failing test rather than a quiet route. */
+/* ---------------------------- retired terminology, live data (Unit 35)
+ *
+ * The owner's wording change is a DISPLAY decision. The half that could go
+ * wrong is the data: a case that already recorded a superseded category must
+ * still save, still read back, and never be rewritten. `assignment_type` is
+ * free text and validates against nothing, which is exactly what makes that
+ * safe — asserted here rather than assumed. */
+section('A case holding retired wording keeps its stored value untouched');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-TRM1', service: 'Surveillance', assignment: 'legal',
+                      client_name: 'Estate of R', firm_name: 'Harmon & Boyd' });
+
+  const LEGACY = 'Witness locate / interview';
+  const saved = await call(env, '/cases/API-TRM1/legal', { method: 'POST', cookie: admin,
+    body: { assignment_type: LEGACY } });
+  ok('a legacy category still saves', saved.status === 200, String(saved.status));
+  const back = await jsonOf(await call(env, '/cases/API-TRM1/workspace', { cookie: admin }));
+  ok('and reads back BYTE FOR BYTE — no silent rename',
+     back.legal && back.legal.assignment_type === LEGACY,
+     JSON.stringify(back.legal && back.legal.assignment_type));
+
+  const current = await call(env, '/cases/API-TRM1/legal', { method: 'POST', cookie: admin,
+    body: { assignment_type: 'Witness locate' } });
+  ok('and the current wording saves too', current.status === 200, String(current.status));
+  const back2 = await jsonOf(await call(env, '/cases/API-TRM1/workspace', { cookie: admin }));
+  ok('storing the new value stores exactly that',
+     back2.legal.assignment_type === 'Witness locate', back2.legal.assignment_type);
+
+  /* THE SEEDED CASE TYPES ARE NOT RENAMED IN THE DATABASE. Their labels are
+     row identity — case_meta.case_type_id points at them — so the rename is a
+     display alias in the page and the rows stay exactly as seeded. */
+  const types = (await jsonOf(await call(env, '/case-types', { cookie: admin }))).case_types;
+  ok('the seeded rows keep their stored labels',
+     types.some(t => t.label === 'Field Investigation / Canvass')
+       && types.some(t => t.label === 'Recorded Statement'),
+     JSON.stringify(types.map(t => t.label)));
+  /* And the Worker sends the STORED label, unaliased — the rewording lives in
+     the page, so nothing server-side has to know about it. Asserted against
+     the payload the case screen actually receives. */
+  const ws = await jsonOf(await call(env, '/cases/API-TRM1/workspace', { cookie: admin }));
+  ok('the Worker sends stored labels, not display aliases',
+     (ws.case_types || []).some(t => t.label === 'Field Investigation / Canvass'),
+     JSON.stringify((ws.case_types || []).map(t => t.label)));
+}
+
 section('Internal routes stay internal, and stay refused to the field');
 {
   const env = freshEnv();
