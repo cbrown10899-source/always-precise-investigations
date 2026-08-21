@@ -12838,6 +12838,29 @@ section('Daily summary on a phone: one column, honest targets, nothing sideways'
   });
   ok('the builder fills its panel and no more', wrap.w <= wrap.p + 1,
      JSON.stringify(wrap));
+
+  /* THE RHYTHM IS ONE SET OF NUMBERS (owner, 2026-08-21) — computed, since
+     source order has silently killed rules here before. Every section header
+     clears the same air, every control in the grids draws the same height
+     within a native-widget pixel, and the checkbox is a real box on the
+     label's first line. */
+  const rhythm = await page.evaluate(() => {
+    const heads = [...document.querySelectorAll('.dsb-wrap .dsb-h')]
+      .map(el => getComputedStyle(el).marginTop);
+    const hs = [...document.querySelectorAll('.dsb-grid .f input, .dsb-grid .f select')]
+      .map(el => el.getBoundingClientRect().height);
+    const cb = document.querySelector('.dsb-act input[type=checkbox]');
+    const grids = [...document.querySelectorAll('.dsb-wrap .dsb-grid')]
+      .map(el => getComputedStyle(el).marginTop);
+    return { heads: [...new Set(heads)], hMin: Math.min(...hs), hMax: Math.max(...hs),
+      cb: cb ? cb.getBoundingClientRect().width : 0, grids: [...new Set(grids)] };
+  });
+  ok('every section header clears the same air', rhythm.heads.length === 1, JSON.stringify(rhythm.heads));
+  ok('every grid opens with the same margin', rhythm.grids.length === 1, JSON.stringify(rhythm.grids));
+  ok('field heights agree within a native-widget pixel',
+     rhythm.hMin >= 43.5 && rhythm.hMax - rhythm.hMin <= 1.5,
+     JSON.stringify([rhythm.hMin, rhythm.hMax]));
+  ok('the checkbox is a real 18px box', Math.abs(rhythm.cb - 18) <= 1, String(rhythm.cb));
 }
 
 section('The palette lives in one place, and the page reads at every size');

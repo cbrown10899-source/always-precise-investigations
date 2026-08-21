@@ -1440,13 +1440,23 @@
   /* UNIT 12 — daily summary builder, base rules. The phone overrides live in
      the media block BELOW this, at the end of the stylesheet, because source
      order has killed three rules in this file already. .dsb- is its own
-     prefix, per the class-name-contest rule. */
-  .dsb-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 12px;margin-top:6px;}
-  .dsb-act{display:flex;flex-direction:column;gap:6px;padding:6px 4px;border-bottom:1px dashed var(--line);}
-  .dsb-act > label{display:flex;gap:8px;align-items:flex-start;cursor:pointer;}
-  .dsb-act input[type=checkbox]{margin-top:3px;flex:none;}
-  .dsb-actrow{display:flex;gap:8px;flex-wrap:wrap;margin-left:26px;}
-  .dsb-actrow select,.dsb-actrow input{font-size:.85rem;}
+     prefix, per the class-name-contest rule.
+
+     THE RHYTHM IS ONE SET OF NUMBERS (owner, 2026-08-21: "consistent row
+     gaps, field heights, label spacing, checkbox alignment"). Measured before
+     fixing: section gaps drifted 0–18px with three flush spots, controls in
+     one grid drew 41–45px tall, and the checkbox sat 9px down its row. Every
+     section header is .dsb-h at one margin; every control clears the same
+     44px; the checkbox is a fixed 18px box aligned to the label's first line. */
+  .dsb-h{margin:18px 0 8px;}
+  .dsb-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px 14px;margin:6px 0 4px;}
+  .dsb-grid .f input,.dsb-grid .f select{min-height:44px;}
+  .dsb-act{display:flex;flex-direction:column;gap:8px;padding:10px 4px;border-bottom:1px dashed var(--line);}
+  .dsb-act > label{display:flex;gap:9px;align-items:flex-start;cursor:pointer;line-height:1.45;}
+  .dsb-act input[type=checkbox]{width:18px;height:18px;margin-top:2px;flex:none;}
+  .dsb-actrow{display:flex;gap:8px;flex-wrap:wrap;margin-left:27px;}
+  .dsb-actrow select,.dsb-actrow input{font-size:.85rem;min-height:36px;}
+  .dsb-wrap .rbody{margin-top:6px;}
   .dsb-chip{display:inline-block;font-size:.62rem;font-weight:700;letter-spacing:.06em;
     color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:1px 5px;
     vertical-align:middle;margin-left:4px;}
@@ -10068,7 +10078,7 @@ function dsBuilderHtml(open, day, editable){
           placeholder="e.g. the subject's residence at 41 Cedar Ln" ${editable ? "" : "disabled"}></label>
     </div>
 
-    <div class="rc-h" style="margin-top:10px"><b>Vehicles observed</b></div>
+    <div class="rc-h dsb-h"><b>Vehicles observed</b></div>
     ${vehicles.length ? vehicles.map(veh).join("") : `<div class="tl-m">No vehicles are recorded on this case&rsquo;s subjects yet.</div>`}
     <div class="dsb-grid">
       <label class="f"><span>Where</span>
@@ -10085,11 +10095,11 @@ function dsBuilderHtml(open, day, editable){
         <span>No vehicles were observed <span class="opt">your confirmation, not a guess</span></span></label>
     </div>
 
-    <div class="rc-h" style="margin-top:10px"><b>The day&rsquo;s moments</b>
+    <div class="rc-h dsb-h"><b>The day&rsquo;s moments</b>
       <span class="opt">${entries.length} logged &mdash; pick what the narrative tells</span></div>
     ${entries.length ? entries.map(act).join("") : `<div class="tl-m">Nothing was logged on this day.</div>`}
 
-    <div class="dsb-grid" style="margin-top:10px">
+    <div class="dsb-grid">
       <label class="f"><span>Quiet period</span>
         <select id="ds_gap" data-act-change="dsCtl" data-day="${day.id}" ${editable ? "" : "disabled"}>
           <option value="">— not stated —</option>
@@ -10107,7 +10117,7 @@ function dsBuilderHtml(open, day, editable){
           data-day="${day.id}" placeholder="e.g. at the adjuster's request" ${editable ? "" : "disabled"}></label>` : ""}
     </div>
 
-    <div class="rc-h" style="margin-top:12px"><b>The paragraph</b>
+    <div class="rc-h dsb-h"><b>The paragraph</b>
       ${st.manual ? `<span class="tag rs-submitted">Yours &mdash; protected</span>` : `<span class="tag">Built from selections</span>`}</div>
     <textarea id="ds_text" rows="7" class="rbody" data-act-input="dsText" data-day="${day.id}"
       ${editable ? "" : "disabled"}>${esc(st.text)}</textarea>
