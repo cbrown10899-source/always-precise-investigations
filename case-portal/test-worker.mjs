@@ -6458,6 +6458,77 @@ section('Include Intake Link: each context gets ITS door, and only its door');
   globalThis.fetch = realFetch;
 }
 
+section('Unit 22 — the task board and the audit trail: composed, scoped, never invented');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const tk = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tk}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const danaId = (await env.DB.prepare("SELECT id FROM users WHERE username = 'dana'").first()).id;
+
+  await ingest(env, { case_no: 'API-T1', service: 'Surveillance', client_name: 'Mine Client', subject_name: 'S1' });
+  await ingest(env, { case_no: 'API-T2', service: 'Surveillance', client_name: 'Other Client', subject_name: 'S2' });
+  await call(env, '/submissions/API-T1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+
+  const today = new Date().toISOString().slice(0, 10);
+  const past = '2020-01-01', future = '2999-01-01';
+  const mk = (no, task, due) => call(env, `/cases/${no}/tasks`, { method: 'POST', cookie: admin,
+    body: { task, due_date: due } });
+  await mk('API-T1', 'Serve the papers', past);
+  await mk('API-T1', 'Call the client back', today);
+  await mk('API-T1', 'Book the follow-up day', future);
+  await mk('API-T2', 'Chase the carrier', today);
+
+  const board = await jsonOf(await call(env, '/tasks', { cookie: admin }));
+  ok('the board buckets by date', board.overdue.length === 1 && board.today.length === 2
+     && board.upcoming.length === 1, JSON.stringify([board.overdue.length, board.today.length, board.upcoming.length]));
+  ok('an overdue task names its case', board.overdue[0].case_no === 'API-T1');
+
+  /* THE ROLE BOUNDARY IS IN THE SQL. Dana is on API-T1 only. */
+  const mine = await jsonOf(await call(env, '/tasks', { cookie: inv }));
+  const all = [...mine.overdue, ...mine.today, ...mine.upcoming].map(t => t.case_no);
+  ok('an investigator sees only tasks on cases that are theirs',
+     all.length === 3 && all.every(c => c === 'API-T1'), JSON.stringify(all));
+  ok('and is never sent the client name — the FIELD_KEEP boundary holds here too',
+     [...mine.overdue, ...mine.today].every(t => !('client_name' in t)),
+     JSON.stringify(mine.today[0]));
+  ok('while an admin does see it', board.today.some(t => t.client_name));
+
+  /* A hidden case cannot put work on anyone's desk. */
+  await call(env, '/cases/API-T2/delete', { method: 'POST', cookie: admin, body: {} });
+  const after = await jsonOf(await call(env, '/tasks', { cookie: admin }));
+  ok('a deleted case drops off the board entirely',
+     ![...after.overdue, ...after.today, ...after.upcoming].some(t => t.case_no === 'API-T2'));
+  await call(env, '/cases/API-T2/undelete', { method: 'POST', cookie: admin, body: {} });
+
+  // ---- THE AUDIT TRAIL ----
+  ok('an investigator cannot read the audit trail at all',
+     (await call(env, '/audit', { cookie: inv })).status === 403);
+  await call(env, '/submissions/API-T1/status', { method: 'POST', cookie: admin, body: { status: 'in_progress' } });
+  const trail = await jsonOf(await call(env, '/audit', { cookie: admin }));
+  ok('the trail carries who, what and when',
+     trail.entries.length >= 1 && trail.entries.every(e => e.at && e.what && e.case_no),
+     JSON.stringify(trail.entries[0]));
+  ok('a status change is on it', trail.entries.some(e => e.kind === 'status' && e.case_no === 'API-T1'),
+     JSON.stringify(trail.entries.map(e => e.kind)));
+  ok('named to a person', trail.entries.some(e => e.who === 'Trever'));
+  /* Every arm must actually RUN — a wrong column name would return nothing and
+     look identical to "nothing happened", which is the failure this checks. */
+  ok('and no source is silently missing on a fully set-up database',
+     Array.isArray(trail.missing_sources) && trail.missing_sources.length === 0,
+     JSON.stringify(trail.missing_sources));
+  /* Money moving shows up too, from a different table. */
+  await call(env, '/cases/API-T1/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 250, method: 'check', paid_on: today } });
+  const trail2 = await jsonOf(await call(env, '/audit', { cookie: admin }));
+  ok('a recorded payment reaches the trail from its own table',
+     trail2.entries.some(e => e.kind === 'payment' && e.case_no === 'API-T1'),
+     JSON.stringify(trail2.entries.map(e => e.kind)));
+}
+
 section('Unit 20 — intake alerts: which business, once only, and never silent');
 {
   const realFetch = globalThis.fetch;

@@ -1454,6 +1454,79 @@ owner's own status list agrees. When it is wanted it goes in as a side table —
 `invoices.status` carries a CHECK constraint, and see the `custom` note above
 for why that is not something to edit in place.
 
+## Alerts say which business, once, and never silently
+
+Unit 20. `alertCategory()` reads `submissions.kind` — a typed column with a
+CHECK — plus the legal marker, so an email alert says **Private / Insurance /
+Legal**. That is the record stating what it is, not inference from a name or an
+address. It resolves at the ONE chokepoint inside `notifyAdmins`, so a seventh
+alert added later inherits it.
+
+**SMS is untouched and stays that way**: its branch reads neither the case
+number nor the category. No path, rather than a filter.
+
+**A deduplicated retry is not a second event.** The retainer route alerted on
+`duplicate` as well as `recorded`, so one payment sent two emails. Both money
+routes now alert once.
+
+**`alert_failure` records a send that reached nobody**, best-effort, and
+Settings draws a card ONLY in the failing state — a panel that always says
+"fine" stops being read. It is **not** the queued/sent/failed/retried status
+log, which stays the owner's deferral: no queue, no retry, no redelivery, and
+the card says nothing is resent automatically. `no_recipients` and
+`not_configured` are configuration facts the same card already reports, not
+failures. A `TEST-` case raises no alert, so it raises no failure row.
+
+## Accessibility was measured, then fixed
+
+Unit 21. A probe of the signed-in page found ONE landmark, **no `h1` at all**,
+**no live region**, no skip link and one unlabelled control. All five are
+closed.
+
+**Announcements come from one chokepoint.** Every confirmation lives in a
+`.note`, `.err` or `.linkbox`, so `announceRendered()` reads what was RENDERED
+after each paint rather than being called beside each of the dozen message
+globals — it catches every one and any added later, and only speaks when the
+text changes.
+
+**There is exactly one `h1`, and it lives in `shell()`.** Putting it in the
+static header broke three tests: the new heading sat ahead of the sign-in
+view's own, and marking it `hidden` did not help — **a hidden element is still
+the first one in document order**. `shell()` renders only when signed in, so
+the two never coexist.
+
+**Voice §9's tone is built to the spec and no further**: short, wordless, on
+demand, closed after, and it never throws. §9 calls it optional and forbids
+lengthy spoken responses, so there is no speech synthesis and a test asserts
+none appears.
+
+## The task board and the audit trail are views, not new records
+
+Unit 22. `GET /tasks` buckets the SAME `case_tasks` rows the case tab already
+writes into Overdue / Today / Upcoming / Completed. **It deliberately does not
+auto-surface**: that is `/attention`'s job from Unit 8, and one entry of
+PORTAL-OPS Phase 4's auto-surface list is TRUNCATED in the brief — building it
+here would duplicate a working feature and invent the missing item. The board
+links to the exception list rather than absorbing it.
+
+`GET /audit` (admin-only, by the brief's own line) composes who/what/when from
+seven tables that already existed — status, invoices, packages, payments,
+closure, retention, report versions. No new table, nothing written, the Unit 10
+timeline's lesson one altitude up. **Three of its seven arms had wrong column
+names and would have returned empty silently**; every one is now checked
+against `schema.sql`, and a test asserts `missing_sources` is empty on a
+fully set-up database — because a wrong column and a quiet week look identical.
+
+Both apply the role boundary **in the SQL** and exclude hidden cases through
+`hiddenCases()`, which returns a **Set** — use `.has`, not `.includes`.
+
+**Three PORTAL-OPS phases were deliberately NOT built**: Saved Views (its own
+heading is `[inferred]` and the Billing item is corrupted), Case Templates and
+Document Templates (the mechanism is buildable, but the templates are the
+firm's own case-setup defaults and language — owner content, not a mechanical
+gap). Quick Actions was already satisfied by `quickToolsHtml()`; adding to that
+row tripped its own creep guard, and **the guard was right**.
+
 ## Editing a case
 
 **The case number is read-only and is never read from the edit body.** It is on

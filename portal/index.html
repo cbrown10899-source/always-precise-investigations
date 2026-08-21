@@ -2226,6 +2226,7 @@ function shell(inner){
         item("dashboard", "&#8962; Dashboard"),
         item("search", "&#128269; Search"),
         item("cases", "&#128193; Cases"),
+        item("tasks", "&#9989; Tasks"),
         item("leads", "&#128234; Intakes"),
         item("profiles", "&#127970; Clients &amp; Firms"),
         item("calendar", "&#128197; Calendar"))
@@ -2235,12 +2236,14 @@ function shell(inner){
         item("invoices", "&#129534; Billing"))
       + group("Team &amp; System",
         item("staff", "&#128101; Staff"),
+        item("audit", "&#128220; Audit trail"),
         item("settings", "&#9881; Settings"))
     : group("Operations",
         /* The field gets the same door. What it FINDS is decided in the
            Worker, scoped to their own cases — not by leaving the door out. */
         item("search", "&#128269; Search"),
         item("cases", "&#128193; My assignments"),
+        item("tasks", "&#9989; Tasks"),
         item("today", "&#9728; Today"),
         item("calendar", "&#128197; Calendar"))
       + group("Delivery",
@@ -2883,6 +2886,109 @@ function searchCardHtml(){
     <div class="bar"><h2 style="margin:0">Search</h2>
       <span class="count">Cases, people, firms, vehicles</span></div>
     ${searchPanelHtml()}
+  </div>`;
+}
+
+/* PORTAL-OPS PHASE 4 — the cross-case task board (Unit 22). Four buckets over
+   the SAME `case_tasks` rows the case tab already writes; nothing new is
+   stored and nothing is auto-surfaced here. Every row carries ONE direct next
+   action — the case it belongs to — which is the brief's own rule.
+
+   The exception list stays where it lives: `/attention` (Unit 8) answers "what
+   is going wrong", this answers "what did we say we would do". The board links
+   to it rather than absorbing it, because two screens deriving the same
+   exceptions is how they start disagreeing. */
+let TASKS = null, TASKS_STATE = "idle";
+async function loadTasks(){
+  if(TASKS_STATE === "loading") return;
+  TASKS_STATE = "loading";
+  try{ TASKS = await api("/tasks"); TASKS_STATE = "ok"; }
+  catch{ TASKS = null; TASKS_STATE = "failed"; }
+  paint();
+}
+
+function tasksView(){
+  if(TASKS_STATE === "idle") setTimeout(loadTasks, 0);
+  if(TASKS_STATE === "failed"){
+    return `<div class="card"><div class="bar"><h2 style="margin:0">Tasks &amp; follow-ups</h2></div>
+      <div class="loaderr">The task list could not be read just now &mdash; that is not the same
+        as having nothing to do. <button class="btn sm ghost" data-act="tasksRetry">Try again</button></div></div>`;
+  }
+  if(!TASKS) return `<div class="card"><div class="empty">Loading tasks&hellip;</div></div>`;
+  const admin = ME.role === "admin";
+  const row = t => `<div class="row">
+      <span><b>${esc(t.task)}</b>
+        <span style="color:var(--muted);font-size:.85rem">${esc(t.case_no)}${
+          admin && t.client_name ? " · " + esc(t.client_name) : ""}${
+          t.assigned_name ? " · " + esc(t.assigned_name) : ""}${
+          t.due_date ? " · due " + esc(fmtDay(t.due_date)) : " · no date"}</span>
+        ${t.priority === "high" || t.priority === "urgent"
+          ? `<span class="tag new">${esc(t.priority)}</span>` : ""}</span>
+      <button class="btn sm ghost" data-act="openCase" data-case="${esc(t.case_no)}">Open case</button>
+    </div>`;
+  const band = (title, rows, note) => `<div class="feebox" style="margin-bottom:12px">
+      <div class="row"><span><b>${title}</b></span>
+        <span style="color:var(--muted);font-size:.82rem">${rows.length}</span></div>
+      ${rows.length ? rows.map(row).join("")
+        : `<div class="row"><span style="color:var(--muted);font-size:.85rem">${note}</span><span></span></div>`}
+    </div>`;
+  const done = TASKS.completed || [];
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Tasks &amp; follow-ups</h2>
+      <button class="btn sm ghost" data-act="tasksRetry">Refresh</button></div>
+    <p class="note">What the office said it would do, across every case. Deadlines the RECORD
+      raises &mdash; an intake nobody accepted, a report due, money outstanding &mdash; are on
+      <button class="linklike" data-act="tab" data-tab="dashboard">Needs attention</button>,
+      which is where they are derived; nothing is duplicated here.</p>
+    ${band("Overdue", TASKS.overdue || [], "Nothing is overdue.")}
+    ${band("Today", TASKS.today || [], "Nothing is due today.")}
+    ${band("Upcoming", TASKS.upcoming || [], "Nothing is scheduled.")}
+    ${done.length ? `<details><summary>Recently completed (${done.length})</summary>
+      <div style="margin-top:8px">${done.map(row).join("")}</div></details>` : ""}
+  </div>`;
+}
+
+/* PORTAL-OPS PHASE 14 — the audit trail (Unit 22). Admin-only, read-only,
+   composed in the Worker from records that already existed. Who, what, when —
+   and a source that has not arrived yet is NAMED rather than drawn as a quiet
+   week, the rule every composed view here follows. */
+let AUDIT = null, AUDIT_STATE = "idle";
+async function loadAudit(){
+  if(AUDIT_STATE === "loading") return;
+  AUDIT_STATE = "loading";
+  try{ AUDIT = await api("/audit"); AUDIT_STATE = "ok"; }
+  catch{ AUDIT = null; AUDIT_STATE = "failed"; }
+  paint();
+}
+
+function auditView(){
+  if(ME.role !== "admin") return `<div class="card"><div class="empty">Not available.</div></div>`;
+  if(AUDIT_STATE === "idle") setTimeout(loadAudit, 0);
+  if(AUDIT_STATE === "failed"){
+    return `<div class="card"><div class="bar"><h2 style="margin:0">Audit trail</h2></div>
+      <div class="loaderr">The audit trail could not be read just now &mdash; that is not the same
+        as nothing having been changed.
+        <button class="btn sm ghost" data-act="auditRetry">Try again</button></div></div>`;
+  }
+  if(!AUDIT) return `<div class="card"><div class="empty">Loading the audit trail&hellip;</div></div>`;
+  const rows = AUDIT.entries || [];
+  const gone = AUDIT.missing_sources || [];
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Audit trail</h2>
+      <button class="btn sm ghost" data-act="auditRetry">Refresh</button></div>
+    <p class="note">Meaningful changes across every case &mdash; who, what and when. Composed from
+      the records the portal already keeps; nothing here is a second copy of anything.</p>
+    ${gone.length ? `<div class="loaderr" style="margin-bottom:10px">Some sources are not on this
+      database yet, so this list is incomplete rather than short:
+      <span class="mono">${esc(gone.join(", "))}</span>.</div>` : ""}
+    ${rows.length ? `<table class="stacktbl"><thead><tr>
+        <th>When</th><th>Case</th><th>Change</th><th>Who</th></tr></thead>
+      <tbody>${rows.map(e => `<tr>
+        <td data-l="When">${when(e.at)}</td>
+        <td data-l="Case"><button class="linklike" data-act="openCase" data-case="${esc(e.case_no)}">${esc(e.case_no)}</button></td>
+        <td data-l="Change">${esc(e.what)}</td>
+        <td data-l="Who">${esc(e.who || "—")}</td></tr>`).join("")}</tbody></table>`
+      : `<div class="empty">Nothing has been changed yet on any case that is still in the working set.</div>`}
   </div>`;
 }
 
@@ -8792,6 +8898,8 @@ function paint(){
     : TAB === "newlead" ? newLeadView()
     : TAB === "profiles" ? profilesView()
     : TAB === "search" ? searchView()
+    : TAB === "tasks" ? tasksView()
+    : TAB === "audit" ? auditView()
     : TAB === "sheets" ? sheetsView()
     : TAB === "delivery" ? deliveryView()
     : TAB === "invoices" ? invoicesView()
@@ -16057,6 +16165,8 @@ document.addEventListener("click", ev => {
   else if(act === "retVoid"){ voidRetainerPayment(el.dataset.id); }
   else if(act === "logout"){ doLogout(); }
   else if(act === "openCase"){ openCase(el.dataset.case || el.dataset.no); }
+  else if(act === "tasksRetry"){ TASKS_STATE = "idle"; TASKS = null; paint(); }
+  else if(act === "auditRetry"){ AUDIT_STATE = "idle"; AUDIT = null; paint(); }
   else if(act === "shRefresh"){ loadStorageHealth(true); }
   else if(act === "dcRefresh"){ loadDeliveryCenter(true); }
   else if(act === "dcCopy"){ dcCopy(el.dataset.no); }
