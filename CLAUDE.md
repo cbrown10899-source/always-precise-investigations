@@ -283,6 +283,76 @@ sweep: they are staff tools holding real case vocabulary, not public marketing.
 **Adding a public page means adding it to the manifest**, or it never
 publishes.
 
+## The homepage offers three doors, as cards
+
+Unit 40 (owner-approved direction, 2026-08-22). The hero carried two links —
+an insurance assignment and a private investigation. **Legal has been a public
+page since Unit 37A and had no door on the front page at all**, so a law firm
+arriving at the homepage had to find the nav.
+
+Three equal cards now, in the owner's order, each an anchor onto its own
+intake door:
+
+| Card | Door |
+| --- | --- |
+| Submit an Insurance Assignment | `/intake/?assignment=insurance` |
+| Submit a Legal Assignment | `/intake/?assignment=legal` |
+| Request a Private Investigation | `/intake/?assignment=private` |
+
+**Legal is never routed through the private door**, and that is structural
+rather than a preference: `pickSvc` on the private door refuses `legal`, so
+the wrong link would be a dead end as well as the wrong door.
+
+**One anchor wraps the whole card** — one tab stop, one destination.
+*Get Started* is a styled span, not a button: a button inside a link is
+invalid nesting and would give each card two tab stops for one place to go.
+It is `aria-hidden`, so the accessible name stays the sentence the title
+already says; the icon is `aria-hidden` too. **Nothing on the card depends on
+an image loading** — the meaning is in the title, and the dark overlay that
+makes the text readable is a separate layer above the art, so the contrast
+holds whether or not the art is there.
+
+**The artwork is local and it is ONE PROPERTY PER CARD.** The asset audit
+found no photography to reuse — `banner1.webp` is already the hero background
+and the rest of `assets/` is the logo and three review screenshots — so three
+motifs are authored here as SVG, under 1 KB each with no external reference.
+Nothing is hotlinked. Each card names its art through a single `--cta-art`
+custom property, so replacing a motif with an optimized WebP is that one
+`url()` plus its line in `deploy-manifest.txt`, and **the sizing, the overlay
+and the text do not move**. The manifest names the three files one by one,
+like everything else in it, so a photo swap is a deliberate line change in
+both places.
+
+**The layout is a grid of `1fr`**, which is what makes "consistent height and
+width" a property of the layout rather than three numbers kept in step by
+hand. It steps twice on the way down — three across, two at 900px, one at
+640px. A single jump to a column wastes an iPad; a single jump to three-across
+squeezes the titles. The one-column track is **`minmax(0,1fr)`, not `1fr`**: a
+grid track's default minimum is its content, which is how a long title pushes
+a card past the screen edge and starts the page scrolling sideways.
+
+**The phone block sits at the END of the stylesheet**, after the earlier
+`max-width:640px` rule it would otherwise be overridden by. Same trap as
+`.qgrid`, `.dlg`, the burger base rule and `.opt` — the fifth source-order
+casualty this project has recorded, and the first outside the portal.
+
+Focus is **gold**, because the ring has to survive a dark card that already
+has teal on it. Hover lift is disabled under `prefers-reduced-motion`.
+
+**A pre-existing 320px overflow is NOT this unit's** and was left alone: the
+*Call for a Free Consultation* button below the hero pushes the document 15px
+past a 320px viewport, measured before Unit 40 and 5px after it. The card
+tests therefore assert that **no card** crosses the edge at 320, and check the
+document only from 360 up. Fixing that button is a separate change nobody has
+asked for.
+
+**What Unit 40 did not touch:** the hero headline and copy, the navigation,
+the disclaimer bar, the logo, the section below the hero, the Legal page,
+every intake code path, and Contact Us / Call (434) 907-0975 / the 5-star and
+DCJS line, which stay below the cards. No price, rate or rate-sheet reference
+is introduced — the public-pricing rule above governs these cards like
+everything else, and the tests assert it over the new markup.
+
 ## Contact and intake
 
 Both forms (homepage and `intake/`) post to Web3Forms. The access key lives in
