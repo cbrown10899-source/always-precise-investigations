@@ -191,7 +191,6 @@
     background:linear-gradient(180deg,rgba(19,35,60,.62),rgba(12,22,38,.88));}
   .cta-body{position:relative;display:flex;flex-direction:column;align-items:flex-start;
     gap:10px;padding:22px 20px;width:100%;}
-  .cta-icon{width:34px;height:34px;fill:var(--teal-2);color:var(--teal-2);flex:none;}
   .cta-title{font-family:Georgia,'Times New Roman',serif;font-size:1.34rem;line-height:1.3;
     font-weight:700;color:var(--white);}
   /* THE LABEL SIZE IS A CONTRAST DECISION, not a typographic one, and it was
@@ -328,20 +327,15 @@ padding:11px 22px;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;f
        stays the sentence a screen reader should hear.
 
        The artwork is decorative and lives in CSS. Nothing here depends on an
-       image loading — the icon is aria-hidden, the title carries the meaning,
-       and the overlay that makes the text readable sits above the art whether
-       or not the art is there. -->
+       image loading — the title carries the meaning, and the overlay that
+       makes the text readable sits above the art whether or not the art is
+       there. There is deliberately NO ICON: the card art says what the card
+       is, and an icon over a photograph of the same thing was saying it
+       twice (owner, 2026-08-22). -->
   <ul class="cta-cards">
     <li><a class="cta-card cta-ins" href="/intake/?assignment=insurance">
       <span class="cta-art" aria-hidden="true"></span>
       <span class="cta-body">
-        <svg class="cta-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"
-          fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M5.2 10.4 6.9 6.6A2.2 2.2 0 0 1 8.9 5.3h6.2a2.2 2.2 0 0 1 2 1.3l1.7 3.8"/>
-          <rect x="2.6" y="10.4" width="18.8" height="4.9" rx="1.5"/>
-          <circle cx="7.2" cy="16.6" r="1.9" fill="currentColor" stroke="none"/>
-          <circle cx="16.8" cy="16.6" r="1.9" fill="currentColor" stroke="none"/>
-        </svg>
         <span class="cta-title">Submit an Insurance Assignment</span>
         <span class="cta-go" aria-hidden="true">Get Started</span>
       </span>
@@ -349,11 +343,6 @@ padding:11px 22px;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;f
     <li><a class="cta-card cta-leg" href="/intake/?assignment=legal">
       <span class="cta-art" aria-hidden="true"></span>
       <span class="cta-body">
-        <svg class="cta-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M12 3v16M7 19h10M5 7h14M5 7l-2.5 5h5zM19 7l2.5 5h-5z" fill="none"
-            stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
-          <circle cx="12" cy="5" r="1.6"/>
-        </svg>
         <span class="cta-title">Submit a Legal Assignment</span>
         <span class="cta-go" aria-hidden="true">Get Started</span>
       </span>
@@ -361,10 +350,6 @@ padding:11px 22px;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;f
     <li><a class="cta-card cta-pri" href="/intake/?assignment=private">
       <span class="cta-art" aria-hidden="true"></span>
       <span class="cta-body">
-        <svg class="cta-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <circle cx="10.5" cy="10.5" r="6.2" fill="none" stroke="currentColor" stroke-width="1.7"/>
-          <path d="M15.2 15.2L21 21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
-        </svg>
         <span class="cta-title">Request a Private Investigation</span>
         <span class="cta-go" aria-hidden="true">Get Started</span>
       </span>
