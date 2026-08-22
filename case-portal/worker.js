@@ -5419,7 +5419,7 @@ async function caseWorkspace(env, user, caseNo) {
      already gets and the reason nothing in this portal is unrecoverable in it.
      Filtering here would have made "put it back" unreachable from the only
      screen that knows the row exists. */
-  const removedSet = await contentRemovedSet(env, caseNo);
+  const removedSet = await contentRemovedSet(env, caseNo, missing);
   const mark = (kind, rows) => (rows || []).map(r =>
     removedSet.has(`${kind}:${r.id}`) ? { ...r, removed: true } : r);
 
@@ -5480,7 +5480,7 @@ async function caseWorkspace(env, user, caseNo) {
        the summary is report prose, and the investigator who writes the day's
        report writes its paragraph under the same rules. */
     day_summaries: missingForStamps.includes('case_day_summary') ? null
-      : await daySummariesFor(env, caseNo),
+      : await daySummariesFor(env, caseNo, removedSet),
     integrity,
     /* UNIT 6 — the firm, the matter, the dates and the arrangement. ADMIN
        ONLY: who is paying is exactly what an investigator is never sent, and
@@ -7093,8 +7093,12 @@ const CONTENT_SPEC = {
    an EMPTY set when the table has not arrived, because portal-setup is a
    manual dispatch and a case list that 500s is worse than one that shows a row
    somebody meant to remove. */
-async function contentRemovedSet(env, caseNo) {
-  const missing = await missingTables(env);
+async function contentRemovedSet(env, caseNo, missingKnown) {
+  /* `missingKnown` is the caller's already-hoisted schema check. `caseWorkspace`
+     does one `sqlite_master` scan for the whole screen and says so in its own
+     comment — this took a second one until it was given the answer. The Unit 7
+     lesson, on the most-opened screen in the portal. */
+  const missing = missingKnown || await missingTables(env);
   if (missing.includes('case_content_removed')) return new Set();
   const { results } = await env.DB.prepare(
     'SELECT kind, ref_id FROM case_content_removed WHERE case_no = ?').bind(caseNo).all();
@@ -11291,7 +11295,7 @@ const DS_CONFIG_MAX = 30000;
 const DSUMMARY_NOT_SET_UP = 'The daily summary table is not on this database yet. '
   + 'Run the portal-setup workflow once and try again.';
 
-async function daySummariesFor(env, caseNo) {
+async function daySummariesFor(env, caseNo, removedKnown) {
   const { results } = await env.DB.prepare(
     `SELECT s.day_id, s.narrative, s.config, s.updated_at, s.created_at,
             u.display_name AS updated_by
@@ -11301,7 +11305,7 @@ async function daySummariesFor(env, caseNo) {
      authored prose and the office may want it back; dropping it here would
      make "put it back" unreachable from the only screen that knows it exists.
      Every reader that ships a summary into a document checks the flag. */
-  const removed = await contentRemovedSet(env, caseNo);
+  const removed = removedKnown || await contentRemovedSet(env, caseNo);
   return (results || []).map(r =>
     removed.has(`day_summary:${r.day_id}`) ? { ...r, removed: true } : r);
 }

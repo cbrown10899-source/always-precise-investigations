@@ -206,7 +206,23 @@ touch how existing cases are categorised, so it is recorded rather than done.
   door's own accessible page name and the legal page's cache-rule parity. The
   regression tests are written from that boundary and control-checked: with the
   fallback disabled the suite reports ten failures.
-- **39 — Case content Delete / Restore controls.** 🔵 **REQUIRED, after 38.**
+- **39 — Case content Delete / Restore controls.** 🟡 **IN FLIGHT** (started
+  2026-08-22 on the owner's go-ahead after Unit 38's visual review passed).
+  **The audit found the brief resting on something untrue**, which reshaped the
+  unit: `deleteEvidence` was not a tombstone — it called `dropboxDelete`, or
+  `EVIDENCE.delete` for legacy R2, and only then wrote `deleted_at`. The row
+  survived and the file did not, which is also why no evidence Restore had ever
+  been written. So removal destroys nothing now, and the storage meter learned
+  to tell a pre-Unit-39 removal (bytes really gone) from a post-Unit-39 one
+  (file still there) so the free-plan failsafe cannot under-report. **Deleting
+  evidence no longer frees storage** — recorded as an accepted cost.
+  Two additive tables (`case_content_removed` state, `case_content_event`
+  trail), **so a manual `portal-setup.yml` dispatch is owed after merge.**
+  Activity, Remove-from-Package and phone removal were already built and got
+  tests rather than code. Detail and derived decisions A1–A7 in
+  `CASE-CONTENT-DELETE.md`; findings in `RECONCILIATION.md`.
+  The original queue entry follows.
+- **39 (as queued).** 🔵 **REQUIRED, after 38.**
   Owner brief verbatim in `case-portal/CASE-CONTENT-DELETE.md`. **This is a
   PRODUCTION unit and the owner says so in the first line** — Admin must be
   able to remove incorrectly entered or no-longer-needed information from
