@@ -1418,6 +1418,42 @@
   .tmpl-s{font-size:.83rem;color:var(--muted);margin-top:2px;}
   .tmpl-sug{font-size:.74rem;color:var(--teal);margin-top:4px;font-weight:700;}
 
+  /* --------------------------------- UNIT 39: removing case content */
+  /* The confirmation reads as a statement of facts, not a warning poster: the
+     facts come from the record and the reassuring line is as prominent as the
+     destructive one, because both are true and only one of them is usually
+     believed. */
+  .rmbody{padding:14px 16px;}
+  .rmwhat{margin:0 0 10px;font-size:1.02rem;}
+  .rmfacts{margin:0 0 12px;padding-left:18px;display:flex;flex-direction:column;gap:4px;}
+  .rmfacts li{font-size:.9rem;color:var(--ink);}
+  /* A TOKEN PAIR, both halves or neither — Unit 13's rule. This is the
+     reassuring half of the confirmation and it is deliberately the same green
+     the portal uses for "this went well", because "the record is kept" is good
+     news and the dialog should not read as though everything in it is a
+     warning. */
+  .rmsafe{margin:0 0 12px;font-size:.88rem;
+    background:var(--ok-bg);color:var(--ok-ink);border:1px solid var(--ok-line);
+    border-radius:8px;padding:8px 10px;}
+  .amfoot{display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;
+    border-top:1px solid var(--line);}
+  .amfoot .btn{min-height:44px;}
+  /* A removed row stays on screen, struck through, with its way back — the
+     treatment `activity_removed` already had, now shared by eight more kinds. */
+  .rmgone{opacity:.55;}
+  .rmgone .rmname{text-decoration:line-through;}
+  .rmnote{font-size:.8rem;color:var(--muted);}
+  /* SOURCE DATA CHANGED. Gold rather than red: the package is not broken and
+     nothing was lost — it is out of date, and the difference matters to
+     somebody deciding whether to panic. */
+  .pkgstale{border:1px solid var(--gold-line);border-left:4px solid var(--gold);
+    border-radius:10px;padding:10px 12px;margin:0 0 12px;
+    background:var(--gold-bg);color:var(--gold-ink);}
+  .pkgstale b{display:block;letter-spacing:.04em;font-size:.82rem;}
+  .pkgstale ul{margin:6px 0 6px;padding-left:18px;}
+  .pkgstale li{font-size:.86rem;}
+  .optn{font-weight:400;color:var(--muted);}
+
   /* ------------------------------------- UNIT 8: search & attention */
   /* CONTAINED ON A DESKTOP (owner, 2026-08-22). It had no maximum, so it ran
      the full width of the card — a search box the width of a monitor. The
@@ -10418,6 +10454,18 @@ function activityPanel(){
             <div class="tl-m">Removed ${when(e.removed_at)}${e.removed_by ? " by " + esc(e.removed_by) : ""}
               &mdash; kept on the record, left out of the report
               <button class="tl-edit" data-act="actRestore" data-id="${e.id}">Put it back</button></div>
+          </div></li>` : e.removed_with_day ? `<li class="tl-i" style="opacity:.5">
+          <!-- UNIT 39 — the entry was NOT removed; its day was. It says that
+               rather than borrowing the removed-entry wording, because "Removed
+               by Corey" about something nobody removed is a staff screen
+               asserting an untruth. Putting the day back brings it straight
+               back with no second action. -->
+          <div class="tl-t">${esc(t12(e.at_time))}</div>
+          <div class="tl-b">
+            <div class="tl-d">${esc(e.description)}</div>
+            <div class="tl-m">On an investigation day the office removed &mdash; left out of the
+              summary and the report until the day is put back
+              <button class="tl-edit" data-act="wsTab" data-tab="field">Days on this case</button></div>
           </div></li>` : `<li class="tl-i">
           <div class="tl-t">${esc(t12(e.at_time))}</div>
           <div class="tl-b">
@@ -10442,6 +10490,109 @@ function activityPanel(){
           </div></li>`).join("")}
       </ol>`).join("")
       : `<div class="empty">Nothing logged on this case yet. + Add activity starts the story.</div>`}`;
+}
+
+/* ============ REMOVING CASE CONTENT (Unit 39) ============
+
+   Owner: "For destructive-looking actions: require confirmation, name the
+   exact item being removed, say whether the action is recoverable, say
+   whether source evidence/file bytes remain preserved."
+
+   ONE DIALOG FOR EVERY KIND, and it does not compose a word of that itself —
+   `GET /cases/:no/content/:kind/:id/preflight` returns the facts and the
+   dialog prints them. A confirmation that names the wrong thing is the whole
+   failure mode here, and a second place that words it is a second place to get
+   it wrong: the same one-writer rule `dayEndLabel` and `intakeForContext`
+   already follow.
+
+   IT FETCHES BEFORE IT ASKS. The counts on a day — entries, files, whether a
+   summary exists, whether it is already in a package — are read from the
+   record at the moment of asking, never carried along from whatever the
+   screen happened to have loaded. */
+let RM = null;
+
+function rmOpen(kind, id, restore){
+  RM = { kind, id, restore: !!restore, busy: true, err: "", data: null };
+  paint();
+  api(`/cases/${encodeURIComponent(WS_CASE)}/content/${kind}/${id}/preflight`)
+    .then(d => { if(RM && RM.id === id && RM.kind === kind){ RM.data = d; RM.busy = false; paint(); } })
+    /* THREE STATES, NOT TWO. A preflight that could not be read must not draw
+       as a record with nothing to say about it — the rule this file applies to
+       every panel that reads. */
+    .catch(e => { if(RM){ RM.err = e.message; RM.busy = false; paint(); } });
+}
+
+async function rmGo(){
+  if(!RM || RM.busy) return;
+  RM.busy = true; RM.err = ""; paint();
+  const verb = RM.restore ? "restore" : "remove";
+  try{
+    const reason = ($("rm_why") && $("rm_why").value.trim()) || "";
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/content/${RM.kind}/${RM.id}/${verb}`,
+      { method: "POST", body: { reason } });
+    RM = null;
+    await loadWorkspace(WS_CASE);
+    paint();
+  }catch(e){ RM.busy = false; RM.err = e.message; paint(); }
+}
+
+function rmHtml(){
+  if(!RM) return "";
+  const d = RM.data;
+  const put = RM.restore;
+  const what = (d && d.what) || "record";
+  const name = d && d.label ? ` — ${esc(d.label)}` : "";
+  const blocked = d && d.blocks && d.blocks.length;
+  return `<div class="amwrap" data-act="rmClose">
+    <div class="amsheet" data-act="amNoop" role="dialog" aria-modal="true"
+      aria-label="${put ? "Put this back" : "Remove this from the case"}">
+      <div class="amhead">
+        <b>${put ? "Put this back" : "Remove this " + esc(what)}</b>
+        <button class="amx" data-act="rmClose" aria-label="Close">&times;</button>
+      </div>
+      <div class="rmbody">
+        <p class="rmwhat"><b>${esc(what)}${name}</b></p>
+        ${RM.busy && !d ? `<div class="empty">Reading the record&hellip;</div>` : ""}
+        ${RM.err ? `<div class="err">${esc(RM.err)}</div>` : ""}
+        ${d && !put ? `
+          ${blocked ? `<div class="err">${d.blocks.map(b => esc(b)).join("<br>")}</div>` : ""}
+          ${d.facts && d.facts.length
+            ? `<ul class="rmfacts">${d.facts.map(f => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
+          <p class="rmsafe">It leaves the working case and stops counting toward reports,
+            packages and totals. <b>The record is kept</b> and one press puts it back.</p>
+          ${d.kind === "evidence"
+            ? `<p class="rmsafe"><b>The file itself is not deleted.</b> Nothing is removed from
+                 Dropbox or from storage &mdash; only this case stops carrying it.</p>` : ""}
+          <label class="f"><span>Why${OPTN}</span>
+            <input id="rm_why" type="text" maxlength="200" placeholder="Entered on the wrong case"></label>
+        ` : ""}
+        ${d && put ? `
+          <p class="rmsafe">It comes back exactly where it was, with its own date and time.</p>
+          <label class="f"><span>Why${OPTN}</span>
+            <input id="rm_why" type="text" maxlength="200"></label>
+        ` : ""}
+      </div>
+      <div class="amfoot">
+        <button class="btn ghost" data-act="rmClose">Cancel</button>
+        ${d && !blocked ? `<button class="btn ${put ? "accent" : "danger"}" data-act="rmGo"${
+          RM.busy ? " disabled" : ""}>${RM.busy ? "Working&hellip;"
+            : put ? "Put it back" : "Remove from case"}</button>` : ""}
+      </div>
+    </div>
+  </div>`;
+}
+
+/* The button itself, so every row asks the same way. Edit sits beside it
+   wherever the row already had one — the owner's "Edit / Delete", not a menu
+   three deep. */
+const OPTN = ' <span class="optn">(optional)</span>';
+function rmBtn(kind, id, removed, cls){
+  const k = `${kind}`;
+  return removed
+    ? `<button class="${cls || "btn sm ghost"}" data-act="rmOpen" data-kind="${k}" data-id="${id}"
+         data-put="1">Put it back</button>`
+    : `<button class="${cls || "btn sm ghost"} danger" data-act="rmOpen" data-kind="${k}"
+         data-id="${id}">Delete</button>`;
 }
 
 /* --------------------------- the Add Activity sheet (UIBUILD P8/P9) */
@@ -10644,6 +10795,10 @@ function dayEndedByRow(d){
 }
 
 function fieldPanel(){
+  /* Removing an investigation day is the owner's "Admin-only for consequential
+     deletion" — the Worker refuses it for anyone else, and this is why the
+     column only draws for the office. */
+  const admin = ME.role === "admin";
   const open = WS && WS.open_day;
   const notice = WS_NOTICE ? `<div class="dayon"><b>${esc(WS_NOTICE)}</b>
       <button class="btn sm" data-act="wsTab" data-tab="reports" style="margin-left:8px">Draft the daily report</button>
@@ -10676,13 +10831,20 @@ function fieldPanel(){
          </form>`}
     <h3 style="margin:18px 0 6px;font-size:1rem">Days on this case</h3>
     ${days.length ? `<div style="overflow-x:auto"><table>
-      <thead><tr><th>Date</th><th>Hours</th><th class="hide">Miles</th><th class="hide">Investigator</th></tr></thead>
-      <tbody>${days.map(d => `<tr>
-        <td>${esc(fmtDay(d.day_date))}<div class="tl-m">${esc(t12(d.start_time))}${d.end_time ? "–" + esc(t12(d.end_time)) : " · running"}</div></td>
-        <td>${d.hours != null ? esc(d.hours) : "—"}</td>
-        <td class="hide">${d.miles != null ? esc(d.miles) : "—"}</td>
-        <td class="hide">${esc(d.investigator || "")}</td>
-      </tr>${dayEndedByRow(d)}${d.summary ? `<tr><td colspan="4" class="tl-n">${esc(d.summary)}</td></tr>` : ""}`).join("")}
+      <thead><tr><th>Date</th><th>Hours</th><th class="hide">Miles</th><th class="hide">Investigator</th>${
+        admin ? "<th></th>" : ""}</tr></thead>
+      <tbody>${days.map(d => `<tr${d.removed ? ' class="rmgone"' : ""}>
+        <td data-l="Date" class="rmname">${esc(fmtDay(d.day_date))}<div class="tl-m">${esc(t12(d.start_time))}${d.end_time ? "–" + esc(t12(d.end_time)) : " · running"}</div></td>
+        <td data-l="Hours">${d.hours != null ? esc(d.hours) : "—"}</td>
+        <td data-l="Miles" class="hide">${d.miles != null ? esc(d.miles) : "—"}</td>
+        <td data-l="Investigator" class="hide">${esc(d.investigator || "")}</td>
+        ${admin ? `<td data-l="">${d.removed
+            ? `<span class="rmnote">removed</span> ${rmBtn("day", d.id, true, "tl-edit")}`
+            /* A RUNNING DAY IS NOT OFFERED. The Worker refuses it by name and
+               says why; the row simply does not put the button in front of
+               somebody whose next press would be refused. */
+            : d.end_time ? rmBtn("day", d.id, false, "tl-edit") : ""}</td>` : ""}
+      </tr>${dayEndedByRow(d)}${d.summary ? `<tr><td colspan="${admin ? 5 : 4}" class="tl-n">${esc(d.summary)}</td></tr>` : ""}`).join("")}
       </tbody></table></div>`
       : `<div class="empty">No investigation days recorded yet.</div>`}`;
 }
@@ -10876,7 +11038,11 @@ function dsVehicleList(){
   return ((WS && WS.subjects) || []).flatMap(sj => sj.vehicles || []);
 }
 function dsDayEntries(dayId){
-  return ((WS && WS.activity) || []).filter(e => e.day_id === dayId && !e.removed_at)
+  /* UNIT 39 — an entry removed on its own, and an entry on a day the office
+     removed, are both out of the paragraph. `removed_with_day` is a separate
+     flag rather than a borrowed `removed_at` because nobody removed the entry
+     and a screen must not say they did. */
+  return ((WS && WS.activity) || []).filter(e => e.day_id === dayId && !e.removed_at && !e.removed_with_day)
     .slice().sort((a, b) => (a.at_time < b.at_time ? -1 : a.at_time > b.at_time ? 1
       : a.id - b.id));
 }
@@ -11007,6 +11173,18 @@ function dsBuilderHtml(open, day, editable){
   const entries = dsDayEntries(day.id);
   const vehicles = dsVehicleList();
   const saved = dsSavedFor(day.id);
+  /* UNIT 39 — DELETE SUMMARY IS NOT DELETE DAY ACTIVITY, and the screen says
+     so in those words rather than leaving it to be inferred from which button
+     somebody pressed. The paragraph is authored prose, so it is removed the
+     way everything else here is: kept on the record, one press back. */
+  if(saved && saved.removed){
+    return `<div class="note"><b>This day's summary was removed.</b><br>
+      The ${entries.length} activity ${entries.length === 1 ? "entry" : "entries"} on this day
+      ${entries.length === 1 ? "is" : "are"} untouched &mdash; only the written paragraph was taken out,
+      and it is kept on the record.
+      <div class="actions" style="margin-top:10px">
+        ${rmBtn("day_summary", day.id, true, "btn sm")}</div></div>`;
+  }
   const veh = v => `<label class="dsb-act"><input type="checkbox" id="ds_veh_${v.id}" data-act-change="dsCtl"
       data-day="${day.id}" ${ (sel.vehicles || []).includes(v.id) ? "checked" : "" } ${editable ? "" : "disabled"}>
     <span>${esc(dsVehiclePhrase(v))}${v.registered_owner ? ` <span class="opt">reg. ${esc(v.registered_owner)}</span>` : ""}
@@ -11101,7 +11279,9 @@ function dsBuilderHtml(open, day, editable){
       box the moment it became yours. <b>Rebuild</b> replaces it from the selections, and asks first.</p>` : ""}
     <div class="ractions">
       ${editable ? `<button class="btn sm" data-act="dsSave" data-day="${day.id}">Save summary</button>
-      <button class="btn sm ghost" data-act="dsRebuild" data-day="${day.id}">Rebuild from selections</button>` :
+      <button class="btn sm ghost" data-act="dsRebuild" data-day="${day.id}">Rebuild from selections</button>
+      ${saved ? `<button class="btn sm ghost danger" data-act="rmOpen" data-kind="day_summary"
+        data-id="${day.id}">Delete summary</button>` : ""}` :
       `<span class="tl-m">This day&rsquo;s report is with the office, so its summary is read-only for you.</span>`}
     </div>
     ${st.err ? `<div class="err">${esc(st.err)}</div>` : ""}
@@ -11362,10 +11542,10 @@ function expensesPanel(){
     </form>
 
     ${list.length ? `<div style="overflow-x:auto"><table>
-      <thead><tr><th>Date</th><th>Category</th><th>Amount</th><th class="hide">Miles</th><th>Status</th></tr></thead>
-      <tbody>${list.map(e => `<tr>
-        <td>${esc(fmtDay(e.expense_date))}<div class="tl-m">${esc(e.investigator || "")}${e.edited_at ? " · edited" : ""}</div></td>
-        <td>${esc(label(e.category) || e.category)}<div class="tl-m">${esc(e.description)}</div></td>
+      <thead><tr><th>Date</th><th>Category</th><th>Amount</th><th class="hide">Miles</th><th>Status</th><th></th></tr></thead>
+      <tbody>${list.map(e => `<tr${e.removed ? ' class="rmgone"' : ""}>
+        <td data-l="Date">${esc(fmtDay(e.expense_date))}<div class="tl-m">${esc(e.investigator || "")}${e.edited_at ? " · edited" : ""}</div></td>
+        <td data-l="Category" class="rmname">${esc(label(e.category) || e.category)}<div class="tl-m">${esc(e.description)}</div></td>
         <td>${money(e.amount) || "—"}</td>
         <td class="hide">${e.miles != null ? esc(e.miles) : "—"}</td>
         <td>${e.reviewed_at
@@ -11381,9 +11561,16 @@ function expensesPanel(){
                  <button class="btn sm" data-act="reviewExpense" data-id="${e.id}">Save</button>
                </div>`
             : '<span class="tag new">Awaiting review</span>'}</td>
+        <td data-l="">${e.removed
+            ? `<span class="rmnote">removed</span> ${rmBtn("expense", e.id, true, "tl-edit")}`
+            /* THE OFFICE'S REVIEW IS WHERE THIS STOPS BEING THE CLAIMANT'S TO
+               WITHDRAW. The Worker refuses it either way; the button simply
+               does not offer what would be refused. */
+            : (admin || (e.investigator_id === ME.id && !e.reviewed_at))
+            ? rmBtn("expense", e.id, false, "tl-edit") : ""}</td>
       </tr>`).join("")}
       <tr><td><b>Total claimed</b></td><td></td><td><b>${money(totals.amt)}</b></td>
-          <td class="hide"><b>${totals.mi || ""}</b></td><td></td></tr>
+          <td class="hide"><b>${totals.mi || ""}</b></td><td></td><td></td></tr>
       </tbody></table></div>`
       : `<div class="empty">No expenses recorded on this case.</div>`}`;
 }
@@ -11418,11 +11605,13 @@ function notesPanel(){
         client-facing record. Nothing is ever sent automatically.</p>` : ""}
       ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
     </form>
-    ${notes.length ? notes.map(n => `<div class="notecard">
+    ${notes.length ? notes.map(n => `<div class="notecard${n.removed ? " rmgone" : ""}">
         <div class="rc-h"><span class="tag">${esc(label(n.note_type) || n.note_type)}</span>
           <span class="tag ${n.visibility === "admin" ? "nv-admin" : n.visibility === "client_eligible" ? "nv-client" : "nv-team"}">${esc(visLabel(n.visibility))}</span></div>
-        <div class="notebody">${esc(n.body)}</div>
-        <div class="tl-m">${esc(n.author || "")} &middot; ${when(n.created_at)}${n.edited_at ? " · edited" : ""}</div>
+        <div class="notebody rmname">${esc(n.body)}</div>
+        <div class="tl-m">${esc(n.author || "")} &middot; ${when(n.created_at)}${n.edited_at ? " · edited" : ""}
+          ${n.removed ? `<span class="rmnote">&mdash; removed from the case, kept on the record</span>` : ""}
+          ${admin || n.author_id === ME.id ? rmBtn("note", n.id, n.removed, "tl-edit") : ""}</div>
       </div>`).join("")
       : `<div class="empty">No notes on this case yet.</div>`}`;
 }
@@ -11499,13 +11688,15 @@ function commsPanel(){
     </form>`;
 
   return `${composer}${sendsPanel()}
-    ${comms.length ? comms.map(c => `<div class="notecard">
+    ${comms.length ? comms.map(c => `<div class="notecard${c.removed ? " rmgone" : ""}">
         <div class="rc-h"><span class="tag">${esc(typeLabel(c.comm_type))}</span>
           ${c.person ? `<b style="font-size:.9rem">${esc(c.person)}</b>` : ""}
           ${admin ? `<span class="tag ${c.visibility === "admin" ? "nv-admin" : c.visibility === "client_eligible" ? "nv-client" : "nv-team"}">${esc(visLabel(c.visibility))}</span>` : ""}</div>
-        <div class="notebody">${esc(c.summary)}</div>
+        <div class="notebody rmname">${esc(c.summary)}</div>
         <div class="tl-m">${esc(fmtDay(c.at_date))}${c.at_time ? ` &middot; ${esc(t12(c.at_time))}` : ""}${
-          c.follow_up_date ? ` &middot; <b>follow up ${esc(fmtDay(c.follow_up_date))}</b>` : ""} &middot; ${esc(c.author || "")}</div>
+          c.follow_up_date ? ` &middot; <b>follow up ${esc(fmtDay(c.follow_up_date))}</b>` : ""} &middot; ${esc(c.author || "")}
+          ${c.removed ? `<span class="rmnote">&mdash; removed from the case, kept on the record</span>` : ""}
+          ${admin ? rmBtn("comm", c.id, c.removed, "tl-edit") : ""}</div>
       </div>`).join("")
       : `<div class="empty">${admin ? "No communications logged on this case yet."
           : "Nothing shared with you on this case yet."}</div>`}`;
@@ -12294,8 +12485,10 @@ function evidencePanel(){
   const card = e => e.deleted_at
     ? `<div class="evcard" style="opacity:.55">
         <div class="evtile">&#128465;</div>
-        <div class="rc-h" style="margin-top:6px"><b>${esc(e.filename)}</b><span class="tag rs-draft">deleted</span></div>
-        <div class="tl-m">${mb(e.size_bytes)} &middot; removed ${when(e.deleted_at)} &mdash; the record stays</div>
+        <div class="rc-h" style="margin-top:6px"><b>${esc(e.filename)}</b><span class="tag rs-draft">removed</span></div>
+        <div class="tl-m">${mb(e.size_bytes)} &middot; removed ${when(e.deleted_at)}
+          &mdash; the file itself was not deleted
+          ${admin ? rmBtn("evidence", e.id, true, "tl-edit") : ""}</div>
       </div>`
     : `<div class="evcard">
         ${kindOf(e) === "photos"
@@ -12320,7 +12513,7 @@ function evidencePanel(){
             ${["needs_review","client_deliverable","internal_only","needs_redaction","do_not_use"]
               .map(c => `<option value="${c}" ${c === e.classification ? "selected" : ""}>${clsLabel(c)}</option>`).join("")}
           </select>
-          <button class="btn sm ghost" data-act="evDelete" data-id="${e.id}">Delete</button></div>` : ""}
+          ${rmBtn("evidence", e.id, false, "btn sm ghost")}</div>` : ""}
       </div>`;
 
   return `
@@ -12404,13 +12597,12 @@ async function setEvidenceClass(id, cls){
   await reloadWorkspace();
 }
 
-async function deleteEvidenceRow(id){
-  WS_ERR = "";
-  try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/evidence/${id}/delete`, {method:"POST", body:{}}); }
-  catch(e){ WS_ERR = e.message; }
-  await reloadWorkspace();
-}
-
+/* `deleteEvidenceRow` and its `evDelete` action came out in Unit 39. Removing
+   a file now goes through the one confirmation every removable record uses, so
+   an unconfirmed second door to the same act would be exactly the duplicate
+   entry point the owner's own rule forbids — and a handler nothing renders is
+   a trap for the next person who greps for it. The route it called is
+   unchanged and still the one `rmGo` reaches. */
 
 /* The Case Package (CASEBUILD.md + UXSIMPLIFY P9/P13/P16/P17). One screen
    that says what is done, what is missing, and finalizes the client package
@@ -12513,7 +12705,7 @@ function packagePanel(){
     </div>`;
 
   if(!b){
-    return `${blocks}
+    return `${stale}${blocks}
       <p class="hint">The package pulls the approved report and the client-deliverable
         photos, video and documents into one deliverable, behind hard gates.</p>
       <button class="btn" data-act="pkgStart">Start the package build</button>
@@ -12529,6 +12721,23 @@ function packagePanel(){
      the one screen that ships it. The gates are not suppressed any more; only
      the wording changes, because "to finish this package" is the wrong sentence
      for something already finished. */
+  /* SOURCE DATA CHANGED — REBUILD REQUIRED (Unit 39).
+
+     Beside the gate strip rather than inside it, because they answer different
+     questions: the gates say something in the package is no longer clear to
+     ship, this says the CASE moved underneath a package that is already out.
+     The Worker derives it from the trail against `finalized_at` and hands over
+     the list; the page prints it and composes nothing, so what an admin reads
+     is what the record says changed.
+
+     OUTSIDE `#pkgdoc`, like `pkgWithheldNote()`. The print stylesheet makes
+     only that region visible, and a client's document must not carry a notice
+     about the office's own bookkeeping. */
+  const stale = PKG.stale && PKG.stale.stale ? `
+    <div class="pkgstale" role="status"><b>${esc(PKG.stale.label)}</b>
+      <ul>${PKG.stale.changes.map(c => `<li>${esc(c)}</li>`).join("")}</ul>
+      <div class="rmnote">${esc(PKG.stale.note)}</div></div>` : "";
+
   const missing = !PKG.gates.length ? "" : b.status !== "finalized" ? `
     <div class="pkg-miss"><b>To finish this package</b>
       <ul>${PKG.gates.map(g => `<li>${esc(g)}</li>`).join("")}</ul></div>` : `
@@ -12667,7 +12876,7 @@ function packagePanel(){
       <button class="btn ghost" data-act="pkgReopen">Reopen and rebuild</button>
     </div>`;
 
-  return `${blocks}${stepsRail}${missing}${pkgWithheldNote()}
+  return `${blocks}${stepsRail}${stale}${missing}${pkgWithheldNote()}
     ${b.status === "draft" ? `
       ${contents}${delivery}
       ${daysPanel()}
@@ -13435,8 +13644,8 @@ function tasksPanel(){
 
   const row = t => {
     const overdue = t.status === "open" && t.due_date && t.due_date < today;
-    return `<div class="rcard" style="cursor:default${t.status !== "open" ? ";opacity:.65" : ""}">
-      <div class="rc-h"><b>${esc(t.task)}</b>${priTag(t.priority)}
+    return `<div class="rcard${t.removed ? " rmgone" : ""}" style="cursor:default${t.status !== "open" ? ";opacity:.65" : ""}">
+      <div class="rc-h"><b class="rmname">${esc(t.task)}</b>${priTag(t.priority)}
         ${t.status === "open"
           ? `<button class="btn sm" data-act="taskStatus" data-id="${t.id}" data-s="done">Done</button>
              ${admin ? `<button class="btn sm ghost" data-act="taskStatus" data-id="${t.id}" data-s="cancelled">Cancel</button>` : ""}`
@@ -13444,7 +13653,9 @@ function tasksPanel(){
              ${admin ? `<button class="btn sm ghost" data-act="taskStatus" data-id="${t.id}" data-s="open">Reopen</button>` : ""}`}</div>
       <div class="tl-m">${t.assignee ? esc(t.assignee) : "The office"}${
         t.due_date ? ` &middot; due ${esc(fmtDay(t.due_date))}` : ""}${
-        overdue ? ` &middot; <b style="color:#a33">overdue</b>` : ""}</div>
+        overdue ? ` &middot; <b style="color:#a33">overdue</b>` : ""}
+        ${t.removed ? `<span class="rmnote">&mdash; removed from the case, kept on the record</span>` : ""}
+        ${admin ? rmBtn("task", t.id, t.removed, "tl-edit") : ""}</div>
     </div>`;
   };
 
@@ -13549,6 +13760,10 @@ function caseBodyHtml(){
          rendered inside. It lives here so the action row's + Add activity
          works from every tab, which is what a primary action has to do. */""}
     ${ACT_MODAL ? actModalHtml() : ""}
+    <!-- Rendered here rather than inside a panel for the reason Unit 38 moved
+         the activity sheet here: the Delete buttons draw on several tabs, and
+         a dialog that lives in one of them does nothing on the others. -->
+    ${RM ? rmHtml() : ""}
     ${/* THE PHONE BAR. Activity and Summary are IN it, never under More —
          the owner's own line. + Add is the middle key because it is the one
          thing someone does standing up. */""}
@@ -15390,16 +15605,19 @@ function subjectsPanel(s){
 
   const vehLine = v => `<div class="tl-m">${esc([v.year, v.color, v.make, v.model].filter(Boolean).join(" "))}${
       v.plate ? ` &mdash; ${esc(v.plate)}${v.plate_state ? " (" + esc(v.plate_state) + ")" : ""}` : ""}
-      <button class="btn sm ghost" data-act="vehEdit" data-sid="${v.subject_id}" data-vid="${v.id}">Edit</button></div>
+      <button class="btn sm ghost" data-act="vehEdit" data-sid="${v.subject_id}" data-vid="${v.id}">Edit</button>
+      ${ME.role === "admin" ? rmBtn("vehicle", v.id, v.removed) : ""}</div>
     ${v.registered_owner ? `<div class="tl-n">Registered to ${esc(v.registered_owner)}</div>` : ""}
     ${v.notes ? `<div class="tl-n">${esc(v.notes)}</div>` : ""}`;
 
   const card = sub => {
     const editing = SUBJ_FORM && SUBJ_FORM.mode === "edit" && SUBJ_FORM.id === sub.id;
-    return `<div class="rcard" style="cursor:default">
-      <div class="rc-h"><b>${esc(sub.name)}</b>${sub.alias ? ` <span class="tl-m">&ldquo;${esc(sub.alias)}&rdquo;</span>` : ""}
+    return `<div class="rcard${sub.removed ? " rmgone" : ""}" style="cursor:default">
+      <div class="rc-h"><b class="rmname">${esc(sub.name)}</b>${sub.alias ? ` <span class="tl-m">&ldquo;${esc(sub.alias)}&rdquo;</span>` : ""}
+        ${sub.removed ? `<span class="rmnote">removed from the case, kept on the record</span>` : ""}
         ${!SUBJ_FORM ? `<button class="btn sm ghost" data-act="subjEdit" data-id="${sub.id}">Edit</button>
-        <button class="btn sm ghost" data-act="vehAdd" data-sid="${sub.id}">Add vehicle</button>` : ""}</div>
+        <button class="btn sm ghost" data-act="vehAdd" data-sid="${sub.id}">Add vehicle</button>
+        ${ME.role === "admin" ? rmBtn("subject", sub.id, sub.removed) : ""}` : ""}</div>
       ${editing ? subjForm(sub, sub.id) : `<dl class="detail">
         ${fr("Date of birth", sub.dob)}${fr("Height", sub.height)}${fr("Weight", sub.weight)}
         ${fr("Hair", sub.hair)}${fr("Descriptors", sub.descriptors)}${fr("Addresses", sub.addresses)}
@@ -17127,6 +17345,13 @@ document.addEventListener("click", ev => {
       removeActivityEntry(Number(el.dataset.id));
   }
   else if(act === "actRestore"){ restoreActivityEntry(Number(el.dataset.id)); }
+  /* UNIT 39 — one pair of actions for every removable kind. The kind rides on
+     the button rather than being inferred from which panel drew it: a control
+     that works out what it is from its surroundings is the class of bug this
+     file has already paid for three times. */
+  else if(act === "rmOpen"){ rmOpen(el.dataset.kind, Number(el.dataset.id), el.dataset.put === "1"); }
+  else if(act === "rmClose"){ RM = null; paint(); }
+  else if(act === "rmGo"){ rmGo(); }
   else if(act === "subjNew"){ SUBJ_FORM = {mode:"new", pre:{}}; WS_ERR = ""; paintCase(); }
   else if(act === "subjFromIntake"){
     const p = (WS && WS.submission && WS.submission.payload) || {};
@@ -17183,7 +17408,6 @@ document.addEventListener("click", ev => {
     INV_OPEN.lines = lines; paint();
   }
   else if(act === "invSaveLines"){ saveInvoiceLines(); }
-  else if(act === "evDelete"){ deleteEvidenceRow(Number(el.dataset.id)); }
   else if(act === "ihRecord"){ ihRecord(Number(el.dataset.id)); }
   else if(act === "ihVerify"){ ihVerify(Number(el.dataset.id)); }
   else if(act === "ihCopy"){

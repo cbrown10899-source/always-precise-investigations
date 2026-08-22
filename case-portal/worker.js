@@ -4970,8 +4970,23 @@ async function authorizationFor(env, caseNo, forAdmin) {
        FROM case_meta m LEFT JOIN case_types t ON t.id = m.case_type_id
       WHERE m.case_no = ?`).bind(caseNo).first();
 
+  /* A REMOVED DAY DOES NOT SPEND THE AUTHORIZATION (Unit 39). The cap is what
+     the carrier or the client agreed to pay for; a day the office has taken
+     out of the working case is not work being charged for, so counting its
+     hours would draw an investigator toward a limit with time that no longer
+     belongs to the case. Written as a NOT EXISTS rather than a load-and-filter
+     so the sum stays one statement — and guarded, because the table arrives by
+     a manual portal-setup dispatch and an authorization read that 500s would
+     take the field view with it.
+
+     PUTTING THE DAY BACK RESTORES THE HOURS, with no second write, because
+     nothing here is stored. */
+  const dayGate = (await missingTables(env)).includes('case_content_removed') ? '' :
+    `AND NOT EXISTS (SELECT 1 FROM case_content_removed r
+       WHERE r.kind = 'day' AND r.ref_id = case_days.id)`;
   const used = await env.DB.prepare(
-    'SELECT COALESCE(SUM(hours), 0) AS h, COALESCE(SUM(miles), 0) AS m FROM case_days WHERE case_no = ?')
+    `SELECT COALESCE(SUM(hours), 0) AS h, COALESCE(SUM(miles), 0) AS m
+       FROM case_days WHERE case_no = ? ${dayGate}`)
     .bind(caseNo).first();
   const hoursUsed = Math.round((Number(used && used.h) || 0) * 100) / 100;
 
@@ -5255,8 +5270,12 @@ async function caseWorkspace(env, user, caseNo) {
   // Visibility is enforced HERE: an admin-only note never leaves the Worker
   // for anyone else. The page renders what arrives; it decides nothing.
   const { results: notes } = await env.DB.prepare(
+    /* `author_id` rides along for Unit 39: a note is removable by its author
+       or by the office, and the page cannot draw that button without knowing
+       whose it is. It is an internal user id on a case the caller can already
+       open, not client data. */
     `SELECT n.id, n.note_type, n.visibility, n.body, n.created_at, n.edited_at,
-            u.display_name AS author
+            n.author_id, u.display_name AS author
        FROM case_notes n LEFT JOIN users u ON u.id = n.author_id
       WHERE n.case_no = ? ${admin ? '' : "AND n.visibility != 'admin'"}
       ORDER BY n.id DESC LIMIT 200`).bind(caseNo).all();
