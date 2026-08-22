@@ -2693,11 +2693,21 @@ section('Evidence: stored privately, metered, and capped inside the free plan');
 
   ok('an investigator cannot delete evidence',
      (await call(env, `/cases/API-EV1/evidence/${first.id}/delete`, { method: 'POST', cookie: dana })).status === 403);
+  ok('nor restore it — both halves of the act are the office’s',
+     (await call(env, `/cases/API-EV1/evidence/${first.id}/restore`, { method: 'POST', cookie: dana })).status === 403);
   const del = await jsonOf(await call(env, `/cases/API-EV1/evidence/${first.id}/delete`,
     { method: 'POST', cookie: admin }));
   ok('an admin delete leaves the R2 meter where it was', del.usage.bytes_used === 0);
-  ok('and the file is truly gone from Dropbox',
-     !DBX.paths().some((f) => f.startsWith('/API-EV1/Photos/clip1-')), DBX.paths().join(' '));
+  /* UNIT 39 REVERSED THIS ASSERTION, deliberately and on the owner's own
+     instruction: "Do NOT physically delete Dropbox bytes in this unit ... Do
+     NOT overwrite originals ... support Restore where existing architecture
+     permits". It used to read "and the file is truly gone from Dropbox", and
+     that was exactly why there was no Restore to write — there was nothing
+     left to put back. The file stays; the case stops carrying it. */
+  ok('the file is NOT deleted from Dropbox — the bytes are preserved',
+     DBX.paths().some((f) => f.startsWith('/API-EV1/Photos/clip1-')), DBX.paths().join(' '));
+  ok('and the response says so rather than leaving it to be assumed',
+     del.file_preserved === true, JSON.stringify(del));
   ok('but the record of it stays, stamped',
      (await env.DB.prepare('SELECT deleted_at, deleted_by FROM case_evidence WHERE id = ?')
        .bind(first.id).first()).deleted_at != null);
@@ -3747,9 +3757,15 @@ section('Removing test cases: nothing is left behind, in any table');
     const ddl = DDL.get(table) || '';
     const cols = bare.prepare(`PRAGMA table_info(${table})`).all();
     const names = Object.keys(given), vals = Object.values(given);
+    /* AN INTEGER PRIMARY KEY IS ONLY A ROWID WHEN IT IS THE WHOLE KEY.
+       `PRAGMA table_info` reports `pk` as a 1-based position, so a composite
+       key marks every one of its columns — and skipping them as "SQLite will
+       fill this in" is how `case_content_removed(kind, ref_id)` arrived and
+       failed NOT NULL on ref_id. Count the key first. */
+    const pkCols = cols.filter(c => c.pk).length;
     for (const c of cols) {
       if (names.includes(c.name)) continue;
-      if (c.pk && /INTEGER/i.test(c.type)) continue;
+      if (c.pk && pkCols === 1 && /INTEGER/i.test(c.type)) continue;
       if (!c.notnull || c.dflt_value !== null) continue;
       const check = ddl.match(new RegExp(`${c.name}[^,]*?CHECK\\s*\\(\\s*${c.name}\\s+IN\\s*\\(\\s*'([^']+)'`, 'i'));
       const fk = ddl.match(new RegExp(`^\\s*${c.name}\\s[^,]*?REFERENCES\\s+(\\w+)\\s*\\((\\w+)\\)`, 'im'));
@@ -10733,22 +10749,43 @@ section('Dropbox storage — where a new case file goes');
      (await env.DB.prepare('SELECT COUNT(*) AS n FROM case_evidence').first()).n === 2);
   ok('and neither fell back to R2', env.EVIDENCE._store.size === 0);
 
-  /* A DELETE THAT DID NOT REACH DROPBOX SAYS SO. The tombstone still goes
-     down — an admin has to be able to remove something — but they are told the
-     file may still be sitting in the folder, which is the one thing they would
-     otherwise assume was handled. */
+  /* UNIT 39 — REMOVING A FILE FROM THE CASE NO LONGER CALLS DROPBOX AT ALL.
+
+     This block used to test the failure handling of that call: a delete
+     Dropbox refused was reported as `dropbox_file_remains` so an admin knew
+     the file might still be in the folder. There is no such call any more, so
+     there is no such failure — the file ALWAYS remains, by design, and the
+     response says `file_preserved` instead of a warning.
+
+     The control is Dropbox itself: `deleteFails` is left ON for the whole
+     block. Under the old code that produced a warning flag; under this one it
+     changes nothing, because nothing asks Dropbox to delete anything. */
   DBX.deleteFails = true;
-  const half = await jsonOf(await call(env, `/cases/API-DBX1/evidence/${doc.id}/delete`,
+  const before = DBX.inFolder('Photos').length;
+  const gone = await jsonOf(await call(env, `/cases/API-DBX1/evidence/${doc.id}/delete`,
     { method: 'POST', cookie: admin }));
-  DBX.deleteFails = false;
-  ok('a delete Dropbox refused is reported, not swallowed', half.dropbox_file_remains === true);
+  ok('removing a file never asks Dropbox to delete it', gone.dropbox_file_remains === undefined,
+     JSON.stringify(gone));
+  ok('and says the bytes were kept', gone.file_preserved === true);
   ok('and the record is still stamped removed',
      (await env.DB.prepare('SELECT deleted_at FROM case_evidence WHERE id = ?')
        .bind(doc.id).first()).deleted_at != null);
   const clean = await jsonOf(await call(env, `/cases/API-DBX1/evidence/${photo.id}/delete`,
     { method: 'POST', cookie: admin }));
-  ok('a delete that did reach Dropbox says nothing extra', clean.dropbox_file_remains === undefined);
-  ok('and the file is gone from the folder', DBX.inFolder('Photos').length === 0);
+  ok('a second removal behaves identically', clean.file_preserved === true);
+  DBX.deleteFails = false;
+  ok('and the folder still holds every file it held before',
+     DBX.inFolder('Photos').length === before, `${DBX.inFolder('Photos').length} vs ${before}`);
+
+  /* AND THAT IS WHAT MAKES RESTORE REAL. */
+  const back = await call(env, `/cases/API-DBX1/evidence/${photo.id}/restore`,
+    { method: 'POST', cookie: admin });
+  ok('an admin can put a removed file back', back.status === 200);
+  ok('and the row is live again',
+     (await env.DB.prepare('SELECT deleted_at FROM case_evidence WHERE id = ?')
+       .bind(photo.id).first()).deleted_at === null);
+  /* The role boundary on restore is asserted where an investigator cookie
+     exists — this block only ever signs in the office. */
 }
 
 /* ------------------------------- the final report as a real file, filed
@@ -11846,9 +11883,24 @@ section('Dropbox — secrets only, and no file migration yet');
      !/\/dropbox\/(files|list|move|migrate)/.test(src));
   ok('nothing reads an R2 object in order to write it to Dropbox',
      !/EVIDENCE\.get\([\s\S]{0,800}dropboxUpload\(/.test(src));
-  ok('and R2 objects are deleted only where they always were — one file, or a TEST- sweep',
-     (src.match(/EVIDENCE\.delete\(/g) || []).length === 2,
+  /* UNIT 39 TOOK THE OTHER ONE OUT. Removing a file from a case used to delete
+     its R2 object; it does not any more, so the only `EVIDENCE.delete` left in
+     the build is the `TEST-` sweep, whose whole promise is that a demo case is
+     removed cleanly and whose bytes are disposable by construction.
+
+     COUNTED RATHER THAN DESCRIBED, because "no bytes are destroyed" is the
+     confirmation the owner asked for and a sentence in a comment cannot give
+     it. The same count for Dropbox is below. */
+  ok('R2 objects are deleted in exactly one place — the TEST- sweep',
+     (src.match(/EVIDENCE\.delete\(/g) || []).length === 1,
      String((src.match(/EVIDENCE\.delete\(/g) || []).length));
+  ok('and Dropbox objects in exactly one — the same sweep',
+     (src.match(/await dropboxDelete\(/g) || []).length === 1,
+     String((src.match(/await dropboxDelete\(/g) || []).length));
+  /* The sweep is `TEST-` only, and that is the thing to pin: the prefix is
+     written into the statement rather than computed, so this reads it. */
+  ok('which is scoped to TEST- cases by a literal, not by a variable',
+     /const DEMO_LIKE = 'TEST-%'/.test(src));
 
   const env = freshEnv();
   await bootstrapAdmin(env);
