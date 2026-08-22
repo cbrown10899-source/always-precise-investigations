@@ -9504,8 +9504,11 @@ const srActed = () => { SR_ACTED = true; };
    These two ARE the navigation vocabulary of this page: the shell rail and the
    case tab row. A third door added later and missed costs ONE spurious
    announcement, not a wrong one; the failure is bounded and quiet, which is
-   why a short list is acceptable here and is not acceptable for the deleted-case
-   gate or `FIELD_KEEP`. */
+   why a short list is acceptable here and would not be for a security
+   boundary such as the deleted-case gate or the Worker's redaction allow-list.
+   (Named in words, not by identifier: the suite greps this file for that
+   constant, because a stale copy of a security boundary in the page is worse
+   than no copy.) */
 const SR_NAV_ACTS = ["tab", "wsTab"];
 
 /* Which screen this is. Not a route — the SHELL tab, the case tab, or the

@@ -15516,15 +15516,30 @@ section('Control: the quiet test can see the defect it was written for');
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  /* Put the old unconditional behaviour back — announce on any change,
-     including the change caused by arriving somewhere new. srScreen is a
-     top-level declaration in a classic script, so it IS a global binding and
-     reassigning it changes what announceRendered calls. Returning a constant
-     makes every paint look like the same screen, which is exactly what the
-     function did before this fix. */
+  /* PUT THE WHOLE PRE-FIX FUNCTION BACK, verbatim, rather than disabling one
+     of its guards.
+
+     The first version of this control patched `srScreen()` to a constant. That
+     stopped reproducing the defect the moment a nav press began forcing the
+     arrival branch on its own — two mechanisms now hold this, and defeating
+     one leaves the other doing the job. A control that quietly stops
+     reproducing is worse than no control: it goes green and says nothing.
+
+     `announceRendered` is a top-level declaration in a classic script, so it
+     IS a global binding and reassigning it changes what paint() calls. This is
+     Unit 21's original body, with its own `last` because SR_LAST is script
+     scoped and out of reach. */
   await page.evaluate(() => {
-    window.__realSrScreen = srScreen;
-    window.srScreen = () => 'always-the-same-screen';
+    window.__realAnnounce = announceRendered;
+    let last = '';
+    window.announceRendered = function () {
+      const el = document.querySelector('#app .err, #app .note, #app .linkbox, #app .loaderr');
+      const msg = el ? el.textContent.trim().replace(/\s+/g, ' ').slice(0, 240) : '';
+      if (msg === last) return;
+      last = msg;
+      const sr = document.getElementById('sr');
+      if (sr) sr.textContent = msg;
+    };
   });
   await page.locator('.tabs button[data-tab="cases"]').first().click();
   await page.waitForTimeout(500);
@@ -15538,10 +15553,10 @@ section('Control: the quiet test can see the defect it was written for');
   await wsTab(page, 'Edit case');
   await page.waitForTimeout(900);
   const leaked = await srText(page);
-  ok('with the screen check disabled, arriving at a tab DOES read its text aloud',
+  ok('with the pre-fix announcer restored, arriving at a tab DOES read its text aloud',
      Boolean(leaked) && leaked.length > 0, JSON.stringify(leaked));
 
-  await page.evaluate(() => { window.srScreen = window.__realSrScreen; });
+  await page.evaluate(() => { window.announceRendered = window.__realAnnounce; });
   await wsTab(page, 'Comm log');
   await page.waitForTimeout(700);
   await wsTab(page, 'Edit case');
