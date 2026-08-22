@@ -642,9 +642,42 @@ page** — the honest split between what each catches.
 | Merge SHA | **`79da2b8`** |
 | Site deploy | `Deploy site to Cloudflare Pages` run **32583655929** ✅ |
 | Worker deploy | `Deploy case-portal Worker` run **32583656010** ✅ |
-| Schema | **two additive tables.** `portal-setup.yml` run **32583766475** — **RED, and the schema still applied**: step 8 *Apply the schema* ✅, and the run fails only on step 13 *Create the first admin* with `401 not authorised`, the pre-existing bootstrap-token race already recorded in `NEXT.md`. Step 14 destroyed the bootstrap token ✅, so no credential is left behind. **NOT independently verified** — `/portal-api/health` is unreachable from the build container (the proxy refuses the domain), so `missing_tables: []` is inferred from the step's own success, not observed |
+| Schema | ✅ **CONFIRMED PRESENT ON PRODUCTION** — `harden-check` run 32584685117, *"every table this build expects is on the database"*. `portal-setup.yml` run **32583766475** — **RED, and the schema still applied**: step 8 *Apply the schema* ✅, and the run fails only on step 13 *Create the first admin* with `401 not authorised`, the pre-existing bootstrap-token race already recorded in `NEXT.md`. Step 14 destroyed the bootstrap token ✅, so no credential is left behind. It was **not** verifiable from the build container (the network policy refuses the domain), so it was verified from a GitHub runner instead — see the confirmation above |
 | Suites | worker **2870/0** · portal **2690/0** · deploy guard **86/0** · intake **467/0** · visitor-alerts **47/0** |
 | LIVE VERIFIED | **OPEN** — the owner's visual review, as the brief asks |
+
+### ✅ SCHEMA CONFIRMED ON PRODUCTION — 2026-08-22
+
+`harden-check.yml` run **32584685117** at `5dbf3d2`, **22 passed, 0 failed**,
+probing the live domain from a GitHub runner:
+
+```
+PASS  the Worker answers at /portal-api/ on the site's own domain
+PASS  the D1 binding and INGEST_KEY are both set
+PASS  every table this build expects is on the database
+```
+
+**Why that line settles it, with no inference left over:** the Worker computing
+`missing_tables` is the Unit 39 Worker (deploy run 32583656010 at `79da2b8`),
+so its `EXPECTED_TABLES` already contains `case_content_removed` and
+`case_content_event`. `/health` returns `EXPECTED_TABLES` minus what
+`sqlite_master` actually holds. The live probe found that list **empty, with
+the key present** — so both Unit 39 tables exist on the production D1.
+
+**`portal-setup` run 32583766475 is therefore recorded as SCHEMA APPLIED /
+BOOTSTRAP-ONLY FAILURE.** Per the owner's decision 3 it is **not rerun** and no
+credential or bootstrap/admin-token handling is changed.
+
+### The check that made this answerable
+
+`verify.sh` fetched `/portal-api/health` and read only `configured`. Its schema
+test was a 401-on-login — which proves `users` exists and says nothing about
+any table added since. It reports `missing_tables` now, from the response it
+was already holding, at no extra request. **An absent key reports UNKNOWN, not
+clean**, because a Worker too old to send the field would otherwise match an
+empty-array test and report a healthy schema in the reassuring direction.
+
+### Superseded — what was open before that run
 
 ### The one thing for the owner to confirm
 
