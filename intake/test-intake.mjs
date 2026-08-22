@@ -1626,7 +1626,7 @@ section('Unit 40 — contrast, focus, and what the hero kept');
      RESOLVED to our own assets path; the SOURCE proves it was written
      relative, which is the half that would catch a hotlink. */
   ok('the artwork resolves to this site\'s own assets path',
-     /\/assets\/card-[a-z]+\.svg"\)$/.test(look.art), look.art.slice(0, 90));
+     /\/assets\/card-[a-z]+\.(webp|jpg|png|svg)"\)$/.test(look.art), look.art.slice(0, 90));
   const cssSrc = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const artUrls = [...cssSrc.matchAll(/--cta-art:\s*url\('([^']+)'\)/g)].map(m => m[1]);
   ok('and every card names a RELATIVE local asset, never an external host',
@@ -1676,34 +1676,51 @@ section('Unit 40 — contrast, focus, and what the hero kept');
      every later accessible-name assertion reading "". The measurement has to
      destroy the thing it measures, so it gets a page nothing else uses. */
   const { ctx: cx4, page: p4 } = await homePage(1280);
-  const backdrop = await p4.evaluate(() => {
-    const el = document.querySelector('.cta-title');
-    const r = el.getBoundingClientRect();
-    return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
-  });
-  await p4.addStyleTag({ content: '.cta-title,.cta-go,.cta-icon{visibility:hidden!important;}' });
-  const strip = (await p4.screenshot({ clip: { x: backdrop.x, y: backdrop.y,
-                                              width: backdrop.w, height: backdrop.h } })).toString('base64');
-  const worst = await p4.evaluate(async b64 => {
-    const img = new Image();
-    await new Promise(res => { img.onload = res; img.src = 'data:image/png;base64,' + b64; });
-    const c = document.createElement('canvas');
-    c.width = img.width; c.height = img.height;
-    c.getContext('2d').drawImage(img, 0, 0);
-    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-    const lum = (r, g, b) => {
-      const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
-      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
-    };
-    let hi = -1, at = null;
-    for (let i = 0; i < d.length; i += 4) {
-      const L = lum(d[i], d[i + 1], d[i + 2]);
-      if (L > hi) { hi = L; at = [d[i], d[i + 1], d[i + 2]]; }
-    }
-    return { ratio: 1.05 / (hi + 0.05), pixel: at };
-  }, strip);
-  ok('white title text clears 4.5:1 against even the LIGHTEST pixel behind it',
-     worst.ratio >= 4.5, `${worst.ratio.toFixed(2)}:1 at rgb(${worst.pixel})`);
+  /* EVERY CARD, not just the first. Each carries a DIFFERENT photograph now,
+     so one measurement says nothing about the other two — and the brightest
+     of the three is the one that decides whether the overlay is dark enough. */
+  for (const door of ['insurance', 'legal', 'private']) {
+    const sel = `.cta-card[href="/intake/?assignment=${door}"]`;
+    const box = await p4.evaluate(s => {
+      const r = document.querySelector(s + ' .cta-title').getBoundingClientRect();
+      return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
+    }, sel);
+    await p4.addStyleTag({ content: '.cta-title,.cta-go{visibility:hidden!important;}' });
+    const strip = (await p4.screenshot({ clip: { x: box.x, y: box.y, width: box.w, height: box.h } })).toString('base64');
+    const worst = await p4.evaluate(async b64 => {
+      const img = new Image();
+      await new Promise(res => { img.onload = res; img.src = 'data:image/png;base64,' + b64; });
+      const c = document.createElement('canvas');
+      c.width = img.width; c.height = img.height;
+      c.getContext('2d').drawImage(img, 0, 0);
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      const lum = (r, g, b) => {
+        const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+      };
+      let hi = -1, at = null;
+      for (let i = 0; i < d.length; i += 4) {
+        const L = lum(d[i], d[i + 1], d[i + 2]);
+        if (L > hi) { hi = L; at = [d[i], d[i + 1], d[i + 2]]; }
+      }
+      return { ratio: 1.05 / (hi + 0.05), pixel: at };
+    }, strip);
+    ok(`the ${door} title clears 4.5:1 against the LIGHTEST pixel behind it`,
+       worst.ratio >= 4.5, `${worst.ratio.toFixed(2)}:1 at rgb(${worst.pixel})`);
+    /* The hidden text has to come back before the next card is measured — and
+       it cannot, because addStyleTag accumulates. So this page is reloaded, and
+       that is cheaper than the alternative: reading a card whose neighbours are
+       still hidden would measure a DIFFERENT layout from the one that ships. */
+    await p4.reload({ waitUntil: 'networkidle' });
+  }
+  /* THE OVERLAY IS NEUTRAL, and that is asserted rather than left to a comment.
+     It was navy and tinted every photograph blue; the owner asked for it not to
+     (2026-08-22). A navy overlay would put a blue channel well above the red. */
+  const ov = await p4.evaluate(() => getComputedStyle(document.querySelector('.cta-art'), '::after').backgroundImage);
+  const ovStops = [...ov.matchAll(/rgba?\((\d+),\s*(\d+),\s*(\d+)/g)].map(m => m.slice(1, 4).map(Number));
+  ok('the overlay is a neutral dark, not a navy tint',
+     ovStops.length >= 2 && ovStops.every(([r, g, b]) => b - r <= 8 && b - g <= 8),
+     JSON.stringify(ovStops));
   await cx4.close();
 
   /* KEYBOARD. Focus must land on each card and be visibly marked. */
