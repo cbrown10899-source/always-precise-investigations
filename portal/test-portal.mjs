@@ -332,19 +332,25 @@ async function wsVisitAll(page, read) {
    everything else behind More. This walks the same way a person does: look for
    the tab, and if it is not on the row, open More and take it from there. */
 async function wsTab(page, name) {
-  const onRow = () => page.locator('.wsnav button', { hasText: name });
-  const inMore = () => page.locator('.wsmorelist button', { hasText: name });
-  if (await onRow().count()) {
-    await onRow().first().click();
+  /* Resolve the LABEL to its tab key first and click by key. Matching nav
+     buttons by their words is what a person does, but Playwright's hasText is
+     a substring match, so "Subject" also matches "Subject vehicles" and the
+     More button when it carried a name. The key is exact. */
+  const key = await page.evaluate(
+    n => ([...wsPrimary(), ...wsMore()].find(t => t[1] === n) || [])[0] || null, name);
+  if (!key) throw new Error(`no case tab labelled "${name}"`);
+  const onRow = page.locator(`.wsnav button[data-tab="${key}"]`);
+  if (await onRow.count()) {
+    await onRow.first().click();
     await page.waitForTimeout(250);
     return;
   }
-  const more = page.locator('[data-act="wsMore"]');
-  if (await more.count()) {
-    await more.first().click();
+  const more = page.locator('[data-act="wsMore"]').first();
+  if (await more.count() && !(await page.locator('.wsmorelist').count())) {
+    await more.click();
     await page.waitForTimeout(200);
   }
-  await inMore().first().click();
+  await page.locator(`.wsmorelist button[data-tab="${key}"]`).first().click();
   await page.waitForTimeout(250);
 }
 // The activity form lives in the Add Activity sheet (UIBUILD P8); the free
@@ -410,7 +416,7 @@ section('Admin case list');
   ok('the injury and restrictions are shown', subj.includes('Lumbar strain'));
   /* Unit 38 — one row of six, not four sections over seventeen tabs. */
   ok('the case opens on a one-level workspace',
-     (await page.locator('.wsnav button').allInnerTexts()).filter(t => !/More/.test(t)).length === 6,
+     await page.locator('.wsnav button[data-act="wsTab"]').count() === 6,
      JSON.stringify(await page.locator('.wsnav button').allInnerTexts()));
   ok('and Daily Summary is on it, not three levels down',
      await page.locator('.wsnav button', { hasText: 'Daily Summary' }).count() === 1);

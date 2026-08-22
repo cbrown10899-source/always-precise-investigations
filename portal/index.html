@@ -13446,9 +13446,15 @@ function caseBodyHtml(){
     <div class="wstabs wsnav">${primary.map(([k, lbl]) =>
       `<button class="${WS_TAB === k ? "on" : ""}" data-act="wsTab" data-tab="${k}"${
         WS_TAB === k ? ' aria-current="page"' : ""}>${esc(lbl)}</button>`).join("")}
+      ${/* THE MORE BUTTON ALWAYS SAYS MORE. It briefly showed the current
+           tab's name instead, which reads well and is ambiguous: a control
+           labelled "Subject" that opens a menu is not a Subject button, and
+           anything matching nav buttons by their words — a test, a screen
+           reader, a person — has to guess. It carries `.on` when the tab you
+           are on lives inside it, and the menu marks which. */""}
       ${more.length ? `<button class="${inMore ? "on" : ""} wsmore" data-act="wsMore"
-        aria-haspopup="true" aria-expanded="${WS_MORE ? "true" : "false"}">${
-        inMore ? esc(wsTabLabel(WS_TAB)) : "More"} &#9662;</button>` : ""}</div>
+        aria-haspopup="true" aria-expanded="${WS_MORE ? "true" : "false"}"${
+        inMore ? ` title="${esc(wsTabLabel(WS_TAB))}"` : ""}>More &#9662;</button>` : ""}</div>
     ${WS_MORE && more.length ? `<div class="wsmorelist" role="menu">${more.map(([k, lbl]) =>
       `<button role="menuitem" class="${WS_TAB === k ? "on" : ""}" data-act="wsTab" data-tab="${k}">${esc(lbl)}</button>`).join("")}</div>` : ""}
     <div class="wspanel">${panel}</div>
