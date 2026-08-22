@@ -9452,13 +9452,59 @@ function focusRestore(){
   try { el.setSelectionRange(el.value.length, el.value.length); } catch(e){ }
 }
 
+/* ARRIVING SOMEWHERE IS NOT AN ANNOUNCEMENT (owner, 2026-08-22).
+
+   The chokepoint above reads whatever `.note`, `.err`, `.linkbox` or
+   `.loaderr` the screen rendered. On this page `.note` is TWO things: a
+   message the office just caused ("Payment recorded."), and static
+   explanatory prose that is simply part of a panel ("No saved client or firm
+   is linked to this case."). Reading what was rendered cannot tell them apart,
+   so opening a tab would read a paragraph aloud.
+
+   THE FIX DOES NOT CLASSIFY THE TEXT. Deciding "this sentence looks like a
+   confirmation" is the inference this project refuses everywhere else — the
+   `recipientIsCarrier` mistake in a different costume. It uses a fact the page
+   already holds instead: WHICH SCREEN IT IS ON.
+
+   Arriving at a screen adopts whatever is on it as the baseline and says
+   nothing. After that, on that same screen, the text can only change because
+   of something the user did — so that change IS announced. No render site
+   needed a class, an attribute, or a second call.
+
+   KNOWN LIMIT, stated rather than papered over: an action that both produces a
+   message AND lands the user on a different screen is adopted silently. The
+   owner's rule is that arrival is quiet, and that case is arrival. */
 let SR_LAST = "";
+let SR_SCREEN = null;
+
+/* Which screen this is. Not a route — the SHELL tab, the case tab, or the
+   field view — because that is the granularity a person experiences as
+   "I went somewhere else". */
+function srScreen(){
+  if(!ME) return "signin";
+  if(SV) return "sv:" + (SV.tab || "") + ":" + (WS_CASE || "");
+  if(VIEW === "case" && WS_CASE) return "case:" + WS_CASE + ":" + WS_TAB;
+  return "tab:" + TAB;
+}
+
 function announceRendered(){
   const el = document.querySelector("#app .err, #app .note, #app .linkbox, #app .loaderr");
   const msg = el ? el.textContent.trim().replace(/\s+/g, " ").slice(0, 240) : "";
+  const sr = document.getElementById("sr");
+  const here = srScreen();
+
+  if(here !== SR_SCREEN){
+    /* Arrival. Take the baseline without speaking it, and CLEAR the region — an
+       announcement from the screen just left must not sit there to be read as
+       though it belonged to this one. Clearing a live region announces
+       nothing. */
+    SR_SCREEN = here;
+    SR_LAST = msg;
+    if(sr) sr.textContent = "";
+    return;
+  }
   if(msg === SR_LAST) return;
   SR_LAST = msg;
-  const sr = document.getElementById("sr");
   if(sr) sr.textContent = msg;
 }
 
@@ -9490,6 +9536,13 @@ function paint(){
       <div class="pagebar"><button class="btn sm ghost close" data-act="backToCases">&larr; Back to Cases</button></div>
       <div class="card"><div class="dlg" id="dlgBody">${caseBodyHtml()}</div></div>
     </div>`;
+    /* UNIT 21'S CHOKEPOINT REACHES THIS SCREEN AT LAST. This branch returned
+       before the `announceRendered()` below, so every confirmation and refusal
+       inside a case was drawn silently for a screen-reader user — on the
+       most-opened screen in the portal. It was safe to add only once arrival
+       stopped being an announcement; before that it would have read a panel's
+       explanatory prose aloud on every case tab. */
+    announceRendered();
     // Typing in the sheet's search repaints; hand the cursor straight back —
     // but only to whoever had it, which is what stops opening a case from
     // raising the keyboard.
