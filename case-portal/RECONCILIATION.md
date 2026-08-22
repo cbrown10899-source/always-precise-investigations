@@ -1113,3 +1113,26 @@ Both are **a regex asserting a SHAPE where a PROPERTY was meant**, the same
 mistake as Unit 40's homepage door checks.
 
 **Required build queue: still EMPTY.**
+
+## SESSION CLOSEOUT, 2026-08-22 (second)
+
+Documentation only. Master **`371d335`**, tree clean and in sync. Site deployed
+at the closeout SHA (run **32606081807**); the Worker build at `79da2b8` is
+current because `worker.js` and `schema.sql` are byte-identical since. Schema
+confirmed on production by `harden-check` **32584685117**.
+
+Suites: worker **2870/0** · portal **2707/0** · deploy guard **86/0** · intake
+**548/0** · visitor-alerts **47/0**. The guard was re-run at the closeout SHA;
+the other four were confirmed to still apply by `git diff` over exactly the
+paths each reads — not assumed.
+
+**REQUIRED BUILD QUEUE: EMPTY.** Units 40 and 40A–40F shipped this session on
+owner direction and are ✅ **LIVE VERIFIED** — *"They are live i have
+verified."* **The homepage and its three card images are FINAL.**
+
+**Preserved deliberately, and not to be reopened as work:** real-case-only LIVE
+VERIFY items (open, not failed — no production data is to be manufactured for
+them), Unit 21A's visual check, and the deferred-by-owner list. Completed work
+stays complete.
+
+Full closeout record in `FINAL-LEDGER.md` PART 19.
