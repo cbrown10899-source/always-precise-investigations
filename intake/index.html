@@ -283,6 +283,40 @@ function steps(){
 }
 function isClaims(){ return S.svc==="claims"; }
 function isLegal(){ return S.svc==="legal"; }
+
+/* WHAT THIS PAGE CALLS ITSELF, in one place (Unit 37A).
+
+   The three doors are three products and each names itself: a carrier gets
+   "Secure Assignment Intake", a law firm gets "Legal Investigation Assignment",
+   a private client gets "Client Intake". That name has to reach a screen
+   reader as well as the eye, and it did not: the visually-hidden <h1> is the
+   page's identity to assistive technology, and the legal door fell through to
+   the private branch's, so it announced itself as CLIENT INTAKE — the
+   private-client name, on the one door whose whole purpose (owner decision 1,
+   2026-08-21) is that a legal visitor is never routed through the
+   private-client intake. The browser tab and the masthead were already right;
+   only the heading was wrong, which is why nobody looking at the screen saw it.
+
+   Derived from the SERVICE rather than the door, so the bare /intake/ — where
+   a visitor picks Legal from the picker — renames itself too. */
+function pageName(){
+  return isClaims() ? "Secure Assignment Intake"
+       : isLegal()  ? FEES.legal.label
+       : "Client Intake";
+}
+/* The masthead line beside it, same rule, same one writer. */
+function pageKind(){
+  return isClaims() ? "INVESTIGATIONS · ASSIGNMENT INTAKE"
+       : isLegal()  ? "INVESTIGATIONS · LEGAL ASSIGNMENT"
+       : "INVESTIGATIONS · CLIENT INTAKE";
+}
+/* Applied on every paint, because the service can be chosen mid-flow on the
+   bare door and a page that renames its heading while its tab still says
+   something else is the same defect one layer along. */
+function applyPageName(){
+  document.title = pageName() + " — Always Precise Investigations";
+  const k = $("m-kind"); if(k) k.textContent = pageKind();
+}
 const app = document.getElementById("app");
 const $ = id => document.getElementById(id);
 
@@ -334,14 +368,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("caseno").textContent = CASE_NO;
   $("m-phone").textContent = FIRM.phone; $("m-phone").href = "tel:" + FIRM.tel;
   $("m-lic").textContent = "Va DCJS #" + FIRM.license;
-  if(CARRIER_ONLY){
-    $("m-kind").textContent = "INVESTIGATIONS · ASSIGNMENT INTAKE";
-    document.title = "Secure Assignment Intake — Always Precise Investigations";
-  }
-  if(LEGAL_ONLY){
-    $("m-kind").textContent = "INVESTIGATIONS · LEGAL ASSIGNMENT";
-    document.title = "Legal Investigation Assignment — Always Precise Investigations";
-  }
+  applyPageName();
   render();
 });
 
@@ -360,6 +387,7 @@ function paintProgress(){
 }
 function render(){
   const step = steps()[S.step];
+  applyPageName();
   paintProgress();
   app.innerHTML = view(step);
   restore();
@@ -381,7 +409,7 @@ function view(step){
      address and "best time to reach you" are consumer questions that read as
      amateur on an assignment form. */
   if(step==="info") return isClaims() ? `<div class="card">
-    <h1 class="sr-page-title">Secure Assignment Intake</h1>
+    <h1 class="sr-page-title">${pageName()}</h1>
     <h2>Assigning contact</h2>
     <p class="lead">Who is assigning this file, and how we reach you about it.
       Send us what you know now &mdash; anything you don't have yet can be provided later.</p>
@@ -406,7 +434,7 @@ function view(step){
     <p class="hint" style="margin-top:-6px;">Give us at least one — phone or email. A request number is issued the moment this is submitted.</p>
     ${navButtons()}
   </div>` : `<div class="card">
-    <h1 class="sr-page-title">Client Intake</h1>
+    <h1 class="sr-page-title">${pageName()}</h1>
     <h2>Your information</h2>
     <p class="lead">Tell us how to reach you. Everything you share is confidential.
       Send us what you know now &mdash; anything you don't have yet can be provided later.</p>

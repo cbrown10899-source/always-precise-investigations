@@ -273,3 +273,107 @@ production credential:
 `NEXT.md`.
 
 **MISSING** — nothing beyond the finding above.
+
+
+---
+
+# UNIT 37A — the three findings, fixed
+
+**Shipped after the audit, in the order the owner set: 37A before Unit 38.**
+
+## 1 — HIGH: Search finds the subject the intake gave us
+
+`globalSearch` gained one fallback block, after the structured arms and
+deliberately behind them:
+
+- an arm over **`submissions.subject_name`**, and
+- an arm over **`json_extract(s.payload, '$.subject_address')`**, guarded by
+  `json_valid`.
+
+Both are scoped exactly like the structured subject arms — `mine` for an
+investigator, `notDeleted`, `SEARCH_ARM_CAP` — because the subject is fieldwork
+rather than the paying side and `redactRow` already sends `subject_name` to an
+investigator while withholding the client.
+
+**The structured table stays the preferred source.** `structuredSubject` is a
+Set of every case the `case_subjects` arms answered for; the fallback skips
+exactly those. So a curated case returns **one** result and it is the rich one
+— alias, phone, the subject's own id — while an un-curated case returns the
+fallback row, marked `from_intake: true`. The result points at the case's
+Subject tab either way and is titled with the person's name, not the case
+number.
+
+**Cost, stated rather than implied.** `subject_name` is a substring `LIKE` no
+index can serve, exactly like the client-name and carrier arms beside it. The
+address is read from the JSON payload — where the intake puts it and where the
+case screen already reads it from — and `CASE_COLS` already performs one
+`json_extract` per row on *every* arm in this function, so this is a second of
+the same order and no new class of work. Both are bounded by `SEARCH_ARM_CAP`,
+and no statement grows with the customer's data (Unit 7's rule).
+
+**No schema change.** The audit's condition — *"no schema change unless audit
+proves absolutely necessary"* — was not met: both values already exist on rows
+the search already reads.
+
+**Tests, written from the boundary that had never been crossed** (28 new
+checks): a case created exactly as the public form delivers one, with a control
+assertion that the ingest really does create no `case_subjects` row; found by
+case number and client name; found by intake subject name and by intake subject
+address, each reporting *why*; a subject nobody has still found nothing; then a
+structured subject added, and the same searches returning **exactly one** result
+apiece, the structured one, with the alias and phone now findable too; two
+different cases sharing a subject returning two results, one structured and one
+`from_intake`; a deleted case still absent. Then the role boundary on its own
+un-curated fixtures: an investigator finds the subject and address of their own
+case and **neither** on a case they are not on, and the result carries no
+client, carrier or claim number.
+
+**Control-checked.** With the fallback disabled the suite reports **10
+failures**, naming exactly those assertions.
+
+## 2 — MEDIUM: each door announces its own name
+
+`pageName()` and `pageKind()` are the one writer, and both `<h1
+class="sr-page-title">` sites plus `document.title` and the masthead read them.
+Keyed off the **service**, not the door, so bare `/intake/` renames itself when
+a visitor picks Legal from the picker — a heading saying one thing while the tab
+says another is the same defect one layer along.
+
+Verified per door **independently**, because two of the three were already
+correct and a check that looked at only one would have passed: Private → *Client
+Intake*, Insurance → *Secure Assignment Intake*, Legal → *Legal Investigation
+Assignment*, each with its tab and masthead agreeing, exactly one accessible
+page name, and that name still visually hidden. Plus the bare door renaming
+itself on each of the three picks and holding after advancing a step.
+
+## 3 — LOW: `_headers` parity for the legal page
+
+`/legal-investigations/*` gained the same `Cache-Control: public, max-age=3600`
+its four sibling public content routes carry. **Nothing about authentication or
+security changed** — the `/*` block is byte-identical, and the guard asserts it
+still carries every security header, that `/portal/*` and `/watch/*` are still
+`no-store` and `noindex`, and that no public content route was handed
+`no-store` or `noindex` by accident.
+
+Asserted against the **staged** `_headers`, because a rule fixed in the repo and
+absent from the deploy is not fixed. **Control-checked**: removing the stanza
+fails three assertions.
+
+## Suites
+
+| Suite | Before | After |
+| --- | --- | --- |
+| `case-portal/test-worker.mjs` | 2755 | **2783 / 0** |
+| `intake/test-intake.mjs` | 445 | **467 / 0** |
+| `.github/test-deploy.mjs` | 81 | **86 / 0** |
+| `visitor-alerts/test-worker.mjs` | 47 | **47 / 0** |
+| `portal/test-portal.mjs` | 2558 | see the queue record |
+
+## Not fixed, and why — reported rather than silently widened
+
+The same structural gap exists for the **vehicle** arms: `subject_vehicles`
+hangs off `case_subjects`, so an un-curated case's vehicle description — which
+the intake stores as free text in `payload.subject_description` — is not
+searchable either. The owner's 37A instruction named the subject's **name and
+address**, and that is exactly what was built. This is recorded as an
+observation for the owner to schedule or decline, not folded in silently.

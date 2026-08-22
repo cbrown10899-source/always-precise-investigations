@@ -54,7 +54,7 @@ completed.
 | **Deployed** | at `b34ccda`: `Deploy site to Cloudflare Pages` ✅ **run 32540154210**. The Worker was untouched by Unit 36, so `deploy-portal.yml` correctly did not fire. LIVE byte-check not possible from this container — the proxy refuses the domain (403), as recorded |
 | **Closeout** | ✅ **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** — see `case-portal/FINAL-LEDGER.md` |
 | **Owner decisions** | ✅ five LOCKED at closeout, 2026-08-21 — see **FINAL OWNER DECISIONS** below. Four are deferrals or standing refusals; **decision 4 (Ended by Admin) is BUILT — Unit 27** |
-| **Next unit** | **UNIT 37A — the HIGH from the Round 2 audit**: global Search cannot find a case by its subject's name, because the subject arm reads `case_subjects` and the public intake writes `submissions.subject_name`. Then **UNIT 38 — Case Workspace Simplification**. Unit 37 (the audit) is DONE and did **not** pass; its result and the exact correction queue are in `case-portal/PRODUCTION-TRUTH-2.md` |
+| **Next unit** | **UNIT 38 — Case Workspace Simplification** (owner brief verbatim in `case-portal/CASE-WORKSPACE.md`), carrying Activity oldest-to-newest ordering and simplified Activity / Daily Summary access. Unit 37 (the audit) did **not** pass and **37A fixed all three of its findings** — record in `case-portal/PRODUCTION-TRUTH-2.md` |
 
 ## 🔄 RESUME POINT — Production Truth Correction Queue (Units 28–33)
 
@@ -193,16 +193,20 @@ touch how existing cases are categorised, so it is recorded rather than done.
   pass.** One HIGH finding, two lesser ones, full result and the exact
   correction queue in `case-portal/PRODUCTION-TRUTH-2.md`. Nothing in the
   repository was changed to run it.
-- **37A — HOTFIX: Search finds a case by its subject.** 🔴 **REQUIRED, and it
-  comes before Unit 38** — the owner's queue rule allows a verified HIGH to
+- **37A — HOTFIX: all three Round 2 findings.** ✅ **DONE.** Was 🔴 REQUIRED and
+  came before Unit 38 — the owner's queue rule allows a verified HIGH to
   jump the order. `GET /search`'s subject arm reads the `case_subjects`
   companion table; the public intake writes `submissions.subject_name` and
   creates no companion row. So a case that arrived the ordinary way is not
   findable by the subject's or claimant's name, and the miss draws as "no such
   case". Reproduced end to end. Every suite is green over it because the search
   test adds a structured subject row before searching — no test crossed the
-  boundary between what the intake writes and what the search reads.
-- **38 — Case Workspace Simplification.** 🔵 **REQUIRED, after 37A.** Owner brief verbatim
+  boundary between what the intake writes and what the search reads. **Fixed**
+  with an intake fallback the structured table still outranks, plus the legal
+  door's own accessible page name and the legal page's cache-rule parity. The
+  regression tests are written from that boundary and control-checked: with the
+  fallback disabled the suite reports ten failures.
+- **38 — Case Workspace Simplification.** 🔵 **REQUIRED — NEXT.** Owner brief verbatim
   in `case-portal/CASE-WORKSPACE.md`. Three things are durable required work
   inside it and must not be dropped or split out:
   **(a)** the simplified desktop and mobile case workspace,
@@ -295,8 +299,8 @@ CREATE A BRANCH. DO NOT DEPLOY. DO NOT START THE NEXT UNIT."*
 | 35 | Retired terminology leaves the Admin UI | ✅ **DONE — DEPLOYED** at `c691518` (#227). No stored value changed |
 | 36 | Optional-field labelling, audited off the validators | ✅ **DONE — DEPLOYED** at `b34ccda` (#228), Pages run 32540154210. LIVE VERIFY **OPEN** |
 | **37** | **Final Production Truth Audit — Round 2** | ✅ **DONE — NOT PASSED.** One HIGH, two lesser. Result and correction queue in `case-portal/PRODUCTION-TRUTH-2.md`. No repository file was changed to run it |
-| **37A** | **HOTFIX — Search finds a case by its subject** (the HIGH) | 🔴 **REQUIRED, AND IT COMES FIRST.** `GET /search`'s subject arm reads `case_subjects`; the public intake writes `submissions.subject_name` and creates no such row — so an un-curated case is not findable by the subject's or claimant's name, and the miss reads as "no such case". Exact queue in `PRODUCTION-TRUTH-2.md`. No schema |
-| **38** | **Case Workspace Simplification** (the owner's message calls it "Unit 34" — that number is taken; see below) | 🔵 **REQUIRED — after 37A.** Owner brief verbatim in `case-portal/CASE-WORKSPACE.md`. Carries **Activity oldest-to-newest ordering** and **simplified Activity / Daily Summary access** inside it, by the owner's instruction — not separate units |
+| **37A** | **HOTFIX — all three Round 2 findings** | ✅ **DONE.** HIGH: the search gained an intake fallback over `submissions.subject_name` and the payload address, scoped like the structured arms, with `case_subjects` kept as the preferred source so a curated case returns once. MEDIUM: `pageName()`/`pageKind()` give each door its own accessible name. LOW: `/legal-investigations/*` gained its siblings' cache rule, security untouched. **No schema.** Detail in `PRODUCTION-TRUTH-2.md` |
+| **38** | **Case Workspace Simplification** (the owner's message calls it "Unit 34" — that number is taken; see below) | 🔵 **REQUIRED — NEXT.** Owner brief verbatim in `case-portal/CASE-WORKSPACE.md`. Carries **Activity oldest-to-newest ordering** and **simplified Activity / Daily Summary access** inside it, by the owner's instruction — not separate units |
 
 ## CONFIRMED COMPLETE — DO NOT REOPEN
 

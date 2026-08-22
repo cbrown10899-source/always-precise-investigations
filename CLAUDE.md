@@ -263,6 +263,18 @@ legitimately uses them — an investigator's note that says "interview" is case
 data, not a marketing claim, and deleting it would be destroying the record to
 tidy a website.
 
+**Each door announces its own name, to a screen reader too** (Unit 37A). The
+visually-hidden `<h1>` is the page's identity to assistive technology, and the
+legal door fell through to the private branch's and announced **"Client
+Intake"** — the private-client name, on the door whose whole purpose is that a
+legal visitor is never routed through the private-client intake. The browser tab
+and the masthead were already right, which is exactly why nobody looking at the
+screen ever saw it. `pageName()` and `pageKind()` are the one writer now, keyed
+off the SERVICE rather than the door so the bare `/intake/` renames itself when
+a visitor picks Legal from the picker. The suite checks all three doors
+independently — two of the three were already correct, so a check that looked at
+only one would have passed.
+
 **All of it is asserted against the STAGED BYTES**, in
 `.github/test-deploy.mjs`, not against the repo — a page fixed in the repo but
 absent from `deploy-manifest.txt` is not fixed, and comments ship in View
@@ -836,6 +848,30 @@ The page keeps the Unit 5 queue card, its one-row-per-case rule and its refusal
 to draw a failed read as a clear desk; only the data source moved. Search has a
 door for **both** roles — an investigator has no dashboard, and what they find
 is decided in the Worker rather than by leaving the door out.
+
+**The subject the INTAKE gave us is a source too** (Unit 37A, the Production
+Truth Round 2 HIGH). The subject arms read `case_subjects` — a companion table
+an admin fills in on the Subject panel — and **the public intake writes none of
+it**: it writes the denormalised `submissions.subject_name` and puts the address
+in the payload. So until someone curated a case by hand, the claimant's own name
+found nothing, and "no results" reads as "we have no such case" — the
+reassuring direction, on the default shape of every case that arrives through
+the form.
+
+**The structured table stays the preferred source.** It runs first, every case
+it answers for is remembered, and the intake fallback stands down on exactly
+those — so a curated case comes back once, richly (alias, phone, the subject's
+own id), never twice. The fallback is scoped exactly like the arms above it:
+`mine` for an investigator, `notDeleted`, the same per-arm cap. The subject is
+fieldwork rather than the paying side, so both roles search it.
+
+**Every suite was green over it, and that is the lesson.** The search fixtures
+ingest a case and then immediately add a structured subject before searching —
+so nothing ever crossed the boundary between what the intake WRITES and what
+the search READS. The tests were right about what they tested. Same shape as
+the `client_token` column that never reached the live database. The regression
+tests are written from that boundary now: a case exactly as the form delivers
+one, searched before anything is curated, and again afterwards.
 
 **A caution this unit paid for:** removing the three helpers the old
 client-side derivation left behind, I cut back to the wrong comment boundary

@@ -1287,6 +1287,87 @@ section('The markers have one writer');
      (markup.match(/.{0,60}<span class="opt">/) || [''])[0]);
 }
 
+
+/* ==================================================================
+   UNIT 37A — EACH DOOR ANNOUNCES ITSELF (Production Truth Round 2, MEDIUM)
+
+   The visually-hidden <h1> is the page's identity to a screen reader, and the
+   legal door used to fall through to the private branch's and announce
+   "Client Intake" — the private-client name, on the door whose whole purpose
+   is that a legal visitor is never routed through the private-client intake.
+   The browser tab and the masthead were already right, which is exactly why
+   nobody looking at the screen ever saw it.
+
+   Verified per door, independently, because two of the three were already
+   correct and a check that only looked at one of them would have passed. */
+
+section('Each intake door announces its own name');
+{
+  const EXPECT = {
+    private:   { name: 'Client Intake',                  kind: 'INVESTIGATIONS · CLIENT INTAKE' },
+    insurance: { name: 'Secure Assignment Intake',       kind: 'INVESTIGATIONS · ASSIGNMENT INTAKE' },
+    legal:     { name: 'Legal Investigation Assignment', kind: 'INVESTIGATIONS · LEGAL ASSIGNMENT' },
+  };
+  for (const [door, want] of Object.entries(EXPECT)) {
+    const page = await newPage();
+    await page.goto(BASE + '?assignment=' + door);
+    await page.waitForTimeout(150);
+    const got = await page.evaluate(() => ({
+      h1: (document.querySelector('.sr-page-title') || {}).textContent,
+      title: document.title,
+      kind: (document.getElementById('m-kind') || {}).textContent,
+      h1count: document.querySelectorAll('.sr-page-title').length,
+      hidden: (() => { const e = document.querySelector('.sr-page-title'); if (!e) return null;
+        const r = e.getBoundingClientRect(); return r.width <= 2 && r.height <= 2; })(),
+    }));
+    ok(`${door}: the accessible page name is "${want.name}"`, got.h1 === want.name, JSON.stringify(got));
+    ok(`${door}: the browser tab agrees with it`, (got.title || '').startsWith(want.name), got.title);
+    ok(`${door}: the masthead agrees with it`, got.kind === want.kind, got.kind);
+    ok(`${door}: there is exactly one accessible page name`, got.h1count === 1, String(got.h1count));
+    ok(`${door}: and it stays visually hidden`, got.hidden === true, JSON.stringify(got));
+    await page.close();
+  }
+
+  /* The bare door has no fixed product, so it renames itself when one is
+     chosen — a heading that said one thing while the tab said another would
+     be the same defect one layer along. */
+  const page = await newPage();
+  await page.goto(BASE);
+  await page.waitForTimeout(150);
+  ok('the bare door opens as the client intake',
+     (await page.evaluate(() => document.querySelector('.sr-page-title').textContent)) === 'Client Intake');
+  await set(page, 'c_name', 'A Person');
+  await set(page, 'c_email', 'a@example.test');
+  await advance(page);
+  for (const [id, want] of [['#opt-legal', 'Legal Investigation Assignment'],
+                            ['#opt-claims', 'Secure Assignment Intake'],
+                            ['#opt-surveillance', 'Client Intake']]) {
+    await page.locator(id).click();
+    await page.waitForTimeout(120);
+    const t = await page.title();
+    const k = await page.locator('#m-kind').innerText();
+    ok(`choosing ${id} renames the page to "${want}"`, t.startsWith(want), `${t} / ${k}`);
+  }
+  /* And the name survives the next step, where the h1 is drawn again. */
+  await page.locator('#opt-legal').click();
+  await page.waitForTimeout(120);
+  await advance(page);
+  ok('and it holds after advancing', (await page.title()).startsWith('Legal Investigation Assignment'),
+     await page.title());
+  await page.close();
+
+  /* One writer, so the three names cannot drift apart. */
+  const src = fs.readFileSync(path.join(ROOT, 'intake', 'index.html'), 'utf8');
+  const body = src.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok('the accessible name has one writer',
+     (body.match(/sr-page-title">\$\{pageName\(\)\}/g) || []).length === 2
+       && !/sr-page-title">[A-Za-z]/.test(body),
+     (body.match(/sr-page-title">[^<]*/g) || []).join(' | '));
+  ok('and document.title is set from it in one place',
+     (body.match(/document\.title\s*=/g) || []).length === 1,
+     String((body.match(/document\.title\s*=/g) || []).length));
+}
+
 /* ------------------------------------------------------------------ report */
 
 await browser.close();

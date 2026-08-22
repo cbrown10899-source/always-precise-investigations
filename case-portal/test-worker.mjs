@@ -13249,6 +13249,183 @@ section('Global search: an investigator cannot find a case that is not theirs');
      (await call(env, '/attention', { cookie: dana })).status === 403);
 }
 
+/* ======================================================================
+   UNIT 37A — THE SUBJECT AS THE INTAKE GAVE THEM.
+
+   Production Truth Round 2 found `/search` unable to find a case by its
+   subject's or claimant's name until an admin had created a `case_subjects`
+   row by hand — which the public intake never does. The miss returned "no
+   results", which reads as "we have no such case".
+
+   Every suite was green over it because the search fixtures ingest a case and
+   then immediately add a structured subject before searching. The tests were
+   right about what they tested; NOTHING CROSSED THE BOUNDARY between what the
+   intake writes and what the search reads. So these tests are written from
+   that boundary: a case exactly as the public form delivers one, searched
+   before anything has been curated, and then again afterwards.
+   ====================================================================== */
+
+section('Search finds the subject the intake gave us, before anyone curates it');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  /* EXACTLY WHAT THE PUBLIC FORM DELIVERS: denormalised columns plus the
+     payload. No `case_subjects` row, because the ingest writes none. */
+  await ingest(env, {
+    case_no: 'API-RAW-0001', service: 'Surveillance',
+    client_name: 'Marguerite Ashbourne', client_email: 'ma@example.com',
+    subject_name: 'Ottoline Verakis', subject_address: '9 Kestrel Row, Bedford VA',
+  });
+  const subjects = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM case_subjects WHERE case_no = 'API-RAW-0001'").first();
+  ok('control: the ingest really does create no structured subject',
+     Number(subjects.n) === 0, JSON.stringify(subjects));
+
+  const find = async q => (await jsonOf(await call(env,
+    `/search?q=${encodeURIComponent(q)}`, { cookie: admin }))).results || [];
+  const hits = async q => (await find(q)).filter(r => r.case_no === 'API-RAW-0001');
+  const why = async q => (await hits(q)).flatMap(r => r.matched || []);
+
+  ok('the case number still finds it', (await hits('API-RAW-0001')).length === 1);
+  ok('the client name still finds it', (await hits('Ashbourne')).length === 1);
+
+  /* THE FIX. Both of these returned nothing before Unit 37A. */
+  ok('the SUBJECT NAME from the intake finds it', (await hits('Verakis')).length === 1,
+     JSON.stringify(await find('Verakis')));
+  ok('and says that is why', (await why('Verakis')).includes('subject name'),
+     JSON.stringify(await why('Verakis')));
+  ok('a partial subject name finds it too', (await hits('ottol')).length === 1);
+  ok('the SUBJECT ADDRESS from the intake finds it', (await hits('Kestrel Row')).length === 1,
+     JSON.stringify(await find('Kestrel Row')));
+  ok('and says that is why', (await why('Kestrel Row')).includes('address'),
+     JSON.stringify(await why('Kestrel Row')));
+  ok('the result points at the case, on the subject tab',
+     (await hits('Verakis')).every(r => r.dest && r.dest.case_no === 'API-RAW-0001'
+       && r.dest.tab === 'subject'), JSON.stringify(await hits('Verakis')));
+  ok('and names the subject rather than the case number',
+     (await hits('Verakis')).every(r => r.title === 'Ottoline Verakis'),
+     JSON.stringify(await hits('Verakis')));
+
+  /* A NAME NOBODY HAS STILL FINDS NOTHING — the arm has to be a search, not a
+     match-anything. */
+  ok('a subject nobody has is still not found', (await hits('Quillfeather')).length === 0);
+
+  /* ---- AND THEN SOMEONE CURATES IT. The structured table is the preferred
+     source, so the richer row wins and the case must not appear twice. ---- */
+  const made = await call(env, '/cases/API-RAW-0001/subjects', { method: 'POST', cookie: admin,
+    body: { name: 'Ottoline Verakis', alias: 'Otto',
+            addresses: '9 Kestrel Row, Bedford VA', phone: '540-555-7788' } });
+  ok('a structured subject can be added', made.status === 201 || made.status === 200,
+     String(made.status));
+
+  ok('the subject name STILL finds it — exactly once, not twice',
+     (await hits('Verakis')).length === 1, JSON.stringify(await find('Verakis')));
+  ok('and the structured row is the one returned, not the intake fallback',
+     (await hits('Verakis')).every(r => !r.from_intake && r.alias === 'Otto'),
+     JSON.stringify(await hits('Verakis')));
+  ok('the address STILL finds it exactly once',
+     (await hits('Kestrel Row')).length === 1, JSON.stringify(await find('Kestrel Row')));
+  ok('the alias — which only the structured row has — now finds it',
+     (await hits('Otto')).length === 1);
+  ok('and so does the structured phone', (await hits('5405557788')).length === 1);
+
+  /* A SECOND CASE WHOSE SUBJECT IS ONLY IN THE INTAKE, alongside the curated
+     one, so the fallback and the structured arm answer in the same request. */
+  await ingest(env, { case_no: 'API-RAW-0002', service: 'Surveillance',
+    client_name: 'Other Client', subject_name: 'Ottoline Verakis',
+    subject_address: '9 Kestrel Row, Bedford VA' });
+  const both = await find('Verakis');
+  ok('two different cases with the same subject are two results',
+     both.filter(r => r.case_no === 'API-RAW-0001').length === 1
+     && both.filter(r => r.case_no === 'API-RAW-0002').length === 1,
+     JSON.stringify(both.map(r => [r.case_no, r.from_intake || false])));
+  ok('the curated one comes back structured and the raw one from the intake',
+     both.find(r => r.case_no === 'API-RAW-0001' && !r.from_intake)
+     && both.find(r => r.case_no === 'API-RAW-0002' && r.from_intake === true),
+     JSON.stringify(both.map(r => [r.case_no, !!r.from_intake])));
+
+  /* AN ADDRESS WITH NO NAME BESIDE IT. The intake asks for both and requires
+     neither, so the address arm can match a case whose subject_name is null —
+     which must draw as the case rather than as an empty row. */
+  await ingest(env, { case_no: 'API-RAW-0003', service: 'Surveillance',
+    client_name: 'Nameless Subject Client', subject_address: '3 Wren Alley, Salem VA' });
+  const nameless = (await find('Wren Alley')).filter(r => r.case_no === 'API-RAW-0003');
+  ok('an address with no subject name still finds the case', nameless.length === 1,
+     JSON.stringify(await find('Wren Alley')));
+  ok('and the row carries a title rather than an empty one',
+     nameless.every(r => typeof r.title === 'string' && r.title.length > 0),
+     JSON.stringify(nameless));
+
+  /* A CASE THE OFFICE DELETED HAS LEFT EVERY VIEW, INCLUDING THIS ONE. */
+  await call(env, '/cases/API-RAW-0002/delete', { method: 'POST', cookie: admin,
+    body: { reason: 'audit fixture' } });
+  ok('a deleted case is not found through the intake fallback either',
+     (await find('Verakis')).every(r => r.case_no !== 'API-RAW-0002'),
+     JSON.stringify(await find('Verakis')));
+}
+
+section('The intake subject fallback obeys the role boundary');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana Field', role: 'investigator' }))).url;
+  const token = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const danaId = (await env.DB.prepare("SELECT id FROM users WHERE username = 'dana'").first()).id;
+
+  /* Dana's own case, and one she is not on. NEITHER is curated — that is the
+     whole point: the fallback is the only arm that can see them, so it is the
+     arm the boundary has to hold on. */
+  await ingest(env, { case_no: 'API-RAWMINE-0001', service: 'Surveillance',
+    client_name: 'Her Client', subject_name: 'Wystan Merrow',
+    subject_address: '4 Alder Court, Roanoke VA' });
+  await call(env, '/submissions/API-RAWMINE-0001/assign', { method: 'POST', cookie: admin,
+    body: { user_id: danaId } });
+  await ingest(env, { case_no: 'API-RAWTHEIRS-0001', service: 'Surveillance',
+    client_name: 'Not Her Client', subject_name: 'Perpetua Danecroft',
+    subject_address: '77 Hidden Lane, Danville VA' });
+
+  const danaFind = async q => (await jsonOf(await call(env,
+    `/search?q=${encodeURIComponent(q)}`, { cookie: dana }))).results || [];
+  const adminFind = async q => (await jsonOf(await call(env,
+    `/search?q=${encodeURIComponent(q)}`, { cookie: admin }))).results || [];
+
+  ok('the admin finds both un-curated subjects',
+     (await adminFind('Merrow')).some(r => r.case_no === 'API-RAWMINE-0001')
+     && (await adminFind('Danecroft')).some(r => r.case_no === 'API-RAWTHEIRS-0001'));
+
+  ok('an investigator finds the subject of their OWN un-curated case',
+     (await danaFind('Merrow')).some(r => r.case_no === 'API-RAWMINE-0001'),
+     JSON.stringify(await danaFind('Merrow')));
+  ok('and its address', (await danaFind('Alder Court')).some(r => r.case_no === 'API-RAWMINE-0001'));
+
+  /* THE LEAK THE FALLBACK COULD HAVE OPENED. */
+  ok('an investigator does NOT find the subject of a case they are not on',
+     (await danaFind('Danecroft')).every(r => r.case_no !== 'API-RAWTHEIRS-0001'),
+     JSON.stringify(await danaFind('Danecroft')));
+  ok('nor its address',
+     (await danaFind('Hidden Lane')).every(r => r.case_no !== 'API-RAWTHEIRS-0001'),
+     JSON.stringify(await danaFind('Hidden Lane')));
+  ok('nor that case by its client, which is the paying side',
+     (await danaFind('Not Her Client')).every(r => r.case_no !== 'API-RAWTHEIRS-0001'));
+
+  /* AND THE FALLBACK CARRIES NO PAYING-SIDE FIELD OUT WITH IT. `redactRow`
+     keeps the client off an investigator's case list; a search result must not
+     be the way round it. */
+  const mine = (await danaFind('Merrow'))[0] || {};
+  ok('an investigator result names no client, carrier or claim number',
+     !JSON.stringify(mine).includes('Her Client') && mine.claim_number == null,
+     JSON.stringify(mine));
+
+  ok('a signed-out caller still cannot search at all',
+     (await call(env, '/search?q=Merrow')).status === 401);
+}
+
 section('Needs attention: every alert is something that is actually true');
 {
   const env = freshEnv();

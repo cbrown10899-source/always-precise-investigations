@@ -2201,7 +2201,13 @@ async function globalSearch(request, env, user) {
     }
   }
 
-  // ---- the subject. Fieldwork, so BOTH roles, scoped to their own cases. --
+  /* ---- the subject. Fieldwork, so BOTH roles, scoped to their own cases. --
+
+     THE STRUCTURED TABLE IS THE PREFERRED SOURCE and it runs first. Every case
+     it answers for is remembered here, and the intake fallback below stands
+     down on exactly those — so a curated case yields the richer subject row
+     and never a second, thinner copy of itself. */
+  const structuredSubject = new Set();
   if (have('case_subjects')) {
     for (const [col, label] of [['sub.name', 'subject name'], ['sub.alias', 'alias'],
       ['sub.addresses', 'address']]) {
@@ -2210,6 +2216,7 @@ async function globalSearch(request, env, user) {
            ${CASE_FROM} JOIN case_subjects sub ON sub.case_no = s.case_no
           WHERE LOWER(${col}) LIKE ? ${mine} ${notDeleted}
           ORDER BY s.created_at DESC LIMIT ${SEARCH_ARM_CAP}`, [like, ...meBind])) {
+        structuredSubject.add(r.case_no);
         add(`subject:${r.subject_id}`, {
           ...caseRow(r), type: 'subject',
           title: r.sub_name, subtitle: r.case_no,
@@ -2225,11 +2232,69 @@ async function globalSearch(request, env, user) {
           WHERE sub.phone IS NOT NULL AND ${SQL_PHONE('sub.phone')} LIKE ?
             ${mine} ${notDeleted} ORDER BY s.created_at DESC LIMIT ${SEARCH_ARM_CAP}`,
         [`%${digits}`, ...meBind])) {
+        structuredSubject.add(r.case_no);
         add(`subject:${r.subject_id}`, {
           ...caseRow(r), type: 'subject', title: r.sub_name, subtitle: r.case_no,
           dest: { view: 'case', case_no: r.case_no, tab: 'subject' },
         }, 'subject phone');
       }
+    }
+  }
+
+  /* ---- THE SUBJECT AS THE INTAKE GAVE THEM (Unit 37A, the Round 2 HIGH).
+
+     `case_subjects` is a companion table an admin fills in on the Subject
+     panel. THE PUBLIC INTAKE DOES NOT WRITE IT — it writes the denormalised
+     `submissions.subject_name` and puts the address in the payload. So until
+     someone curated a case by hand, the arms above had nothing to read and the
+     claimant's own name found nothing: "no results", which reads as "we have
+     no such case". That is the reassuring direction, and it was the default
+     shape of every case that arrived through the form.
+
+     This is the fallback, and it is deliberately a FALLBACK: `structuredSubject`
+     holds every case the arms above already answered for, so a curated case is
+     never returned twice — once richly and once thinly. The structured row
+     wins because it has the alias, the phone and the subject's own id.
+
+     Scoped exactly like the structured arms: `mine` for an investigator,
+     `notDeleted`, and the same per-arm cap. The subject is fieldwork rather
+     than the paying side — `redactRow` sends `subject_name` to an investigator
+     and withholds the client — so both roles search it, and an investigator
+     still sees only cases they hold.
+
+     COST, stated rather than implied: `subject_name` is a substring LIKE that
+     no index can serve, exactly like the client-name and carrier arms beside
+     it. The address is read out of the JSON payload, which is where the intake
+     puts it and where the case screen already reads it from; `CASE_COLS`
+     already does one `json_extract` per row on every arm in this function, so
+     this adds a second of the same order and no new class of work. Both are
+     bounded by SEARCH_ARM_CAP and neither statement grows with the data. */
+  {
+    /* The ADDRESS arm can match a case that has an address and no name yet —
+       the intake asks for both and requires neither — so the title falls back
+       to the case number rather than drawing an empty row. */
+    const intakeRow = r => ({
+      ...caseRow(r), type: 'subject',
+      title: r.subject_name || r.case_no, subtitle: r.case_no,
+      from_intake: true,
+      dest: { view: 'case', case_no: r.case_no, tab: 'subject' },
+    });
+    for (const r of await run(
+      `SELECT ${CASE_COLS} ${CASE_FROM}
+        WHERE s.subject_name IS NOT NULL AND LOWER(s.subject_name) LIKE ?
+          ${mine} ${notDeleted}
+        ORDER BY s.created_at DESC LIMIT ${SEARCH_ARM_CAP}`, [like, ...meBind])) {
+      if (structuredSubject.has(r.case_no)) continue;
+      add(`subject:intake:${r.case_no}`, intakeRow(r), 'subject name');
+    }
+    for (const r of await run(
+      `SELECT ${CASE_COLS} ${CASE_FROM}
+        WHERE json_valid(s.payload)
+          AND LOWER(json_extract(s.payload, '$.subject_address')) LIKE ?
+          ${mine} ${notDeleted}
+        ORDER BY s.created_at DESC LIMIT ${SEARCH_ARM_CAP}`, [like, ...meBind])) {
+      if (structuredSubject.has(r.case_no)) continue;
+      add(`subject:intake:${r.case_no}`, intakeRow(r), 'address');
     }
   }
 

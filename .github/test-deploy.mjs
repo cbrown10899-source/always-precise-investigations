@@ -413,6 +413,48 @@ section('The manifest describes the site honestly');
      /surveillance/i.test(ins) && /documentation/i.test(ins) && /reporting/i.test(ins));
 }
 
+/* UNIT 37A — every public content route gets the same header treatment.
+
+   `/legal-investigations/*` was the one sibling with no cache rule, so it fell
+   through to `/*` — which carries every security header but sets no
+   Cache-Control at all. That is a consistency gap rather than a defect, and
+   this is what stops the NEXT public page shipping with the same one. Asserted
+   against the STAGED `_headers`, because a rule fixed in the repo and absent
+   from the deploy is not fixed. */
+{
+  /* `site` and `readAll` are scoped to the block above, so this one reads the
+     staged tree for itself rather than reaching into another block's locals. */
+  const staged = path.join(tmp, '_site');
+  const headers = fs.readFileSync(path.join(staged, '_headers'), 'utf8');
+  const routes = ['private-investigator', 'infidelity-investigations',
+                  'child-custody-investigations', 'insurance-investigations',
+                  'legal-investigations'];
+  const missing = routes.filter(r => !new RegExp(`^/${r}/\\*\\s*$`, 'm').test(headers));
+  ok('every public content route has its own header stanza', missing.length === 0, missing.join(', '));
+
+  const cached = routes.filter(r => {
+    const m = headers.match(new RegExp(`^/${r}/\\*\\s*\\n((?:  .*\\n)+)`, 'm'));
+    return m && /Cache-Control:\s*public, max-age=3600/.test(m[1]);
+  });
+  ok('and every one of them takes the same public cache policy',
+     cached.length === routes.length, `cached: ${cached.join(', ')}`);
+
+  /* The security block is the thing that must NOT have moved. */
+  ok('the wildcard block still carries every security header',
+     ['X-Content-Type-Options: nosniff', 'X-Frame-Options: DENY',
+      'Strict-Transport-Security:', 'Content-Security-Policy:',
+      'Cross-Origin-Opener-Policy: same-origin', '! Access-Control-Allow-Origin']
+       .every(h => headers.includes(h)));
+  ok('and the two signed-in apps are still no-store and noindex',
+     /\/portal\/\*\s*\n(?:  .*\n)*?  Cache-Control: no-store/.test(headers)
+     && /\/watch\/\*\s*\n(?:  .*\n)*?  X-Robots-Tag: noindex/.test(headers));
+  ok('no public content route was given no-store or noindex by accident',
+     routes.every(r => {
+       const m = headers.match(new RegExp(`^/${r}/\\*\\s*\\n((?:  .*\\n)+)`, 'm'));
+       return m && !/no-store|noindex/.test(m[1]);
+     }));
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(results.join('\n'));
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -32,6 +32,13 @@
   Cache-Control: public, max-age=3600
 /insurance-investigations/*
   Cache-Control: public, max-age=3600
+# The Legal page is an ordinary public content route like the four above it and
+# takes the same caching. It was the one sibling without a rule (Unit 37A), so
+# it fell through to /* — which carries every security header but sets no
+# Cache-Control at all. Nothing about authentication or security changes here:
+# the /* block still applies to this path exactly as it did.
+/legal-investigations/*
+  Cache-Control: public, max-age=3600
 /assets/*
   Cache-Control: public, max-age=604800
 
