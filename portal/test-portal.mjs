@@ -14947,6 +14947,14 @@ async function focusedNow(page) {
 /* The nav rail is behind the burger under 900px, so a section is reached the
    way a person reaches it rather than by calling the handler. */
 async function goTab(page, key) {
+  /* THE CASE PAGE IS NOT INSIDE shell(), so it carries no `.tabs` rail at all
+     — the way back is its own Back to Cases button. Walking straight from an
+     open case to another section would sit waiting for a nav that is not on
+     that screen. */
+  if (await page.locator('.casepage').count()) {
+    await page.locator('[data-act="backToCases"]').first().click();
+    await page.waitForTimeout(700);
+  }
   const burger = page.locator('.burger');
   if (await burger.count() && await burger.first().isVisible()) {
     if (!(await page.evaluate(() => document.body.classList.contains('navopen')))) {
@@ -15012,8 +15020,12 @@ for (const [label, width, height] of [['phone', 390, 844], ['tablet', 820, 1100]
        the cursor and the characters land in order. */
     await goTab(page, 'search');
     await page.locator('#gsearch').click();
-    await page.locator('#gsearch').pressSequentially('smith', { delay: 60 });
-    await page.waitForTimeout(500);
+    /* SLOWER THAN THE DEBOUNCE ON PURPOSE. srchSoon() waits 220ms, so typing
+       at 60ms between keys never repaints and the test would pass on a page
+       where the restore was deleted. At 300ms every keystroke runs the search
+       and rebuilds the box the cursor is in, which is the thing being tested. */
+    await page.locator('#gsearch').pressSequentially('smith', { delay: 300 });
+    await page.waitForTimeout(700);
     const typed = await page.evaluate(() => {
       const el = document.getElementById('gsearch');
       return el ? { v: el.value, focused: document.activeElement === el,
@@ -15026,7 +15038,8 @@ for (const [label, width, height] of [['phone', 390, 844], ['tablet', 820, 1100]
 
     await goTab(page, 'cases');
     await page.locator('#q').click();
-    await page.locator('#q').pressSequentially('API', { delay: 60 });
+    // This one repaints SYNCHRONOUSLY on every keystroke — no debounce to clear.
+    await page.locator('#q').pressSequentially('API', { delay: 120 });
     await page.waitForTimeout(400);
     const filt = await page.evaluate(() => {
       const el = document.getElementById('q');
@@ -15039,8 +15052,9 @@ for (const [label, width, height] of [['phone', 390, 844], ['tablet', 820, 1100]
     const pq = page.locator('#prof_q');
     if (await pq.count()) {
       await pq.click();
-      await pq.pressSequentially('law', { delay: 60 });
-      await page.waitForTimeout(500);
+      // Past profSearchSoon's 220ms debounce, for the reason above.
+      await pq.pressSequentially('law', { delay: 300 });
+      await page.waitForTimeout(700);
       const dir = await page.evaluate(() => {
         const el = document.getElementById('prof_q');
         return el ? { v: el.value, focused: document.activeElement === el } : null;
@@ -15073,6 +15087,39 @@ for (const [label, width, height] of [['phone', 390, 844], ['tablet', 820, 1100]
 
     await ctx.close();
   }
+}
+
+/* THE CONTROL. An assertion that nothing is focused passes just as happily on
+   a page where focus never worked, so it has to be shown failing on the defect
+   it was written for. `focusRestore` is a top-level function declaration in a
+   classic script, so it IS a global binding — reassigning it changes what
+   paint() calls, and putting the ORIGINAL unconditional behaviour back is a
+   faithful reproduction of what the owner reported rather than an imitation
+   of it. */
+section('Control: the keyboard test can actually see the defect');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => {
+    window.__realRestore = focusRestore;
+    window.focusRestore = function () {
+      for (const id of ['q', 'prof_q', 'nl_pick', 'gsearch']) {
+        const el = document.getElementById(id);
+        if (el) { el.focus(); try { el.setSelectionRange(el.value.length, el.value.length); } catch (e) { } }
+      }
+    };
+  });
+  await goTab(page, 'cases');
+  const broken = await focusedNow(page);
+  ok('with the old unconditional restore put back, arriving at Cases DOES focus the search box',
+     broken.typing === true && broken.id === 'q', JSON.stringify(broken));
+
+  await page.evaluate(() => { window.focusRestore = window.__realRestore; });
+  await goTab(page, 'search');
+  await goTab(page, 'cases');
+  const fixed = await focusedNow(page);
+  ok('and with the real one restored it does not', fixed.typing === false, JSON.stringify(fixed));
+  await page.close();
 }
 
 section('The focus rule is an allow-list, and dialogs are exempt from it');

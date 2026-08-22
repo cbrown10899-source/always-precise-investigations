@@ -241,6 +241,17 @@ touch how existing cases are categorised, so it is recorded rather than done.
   public-site unit, so this is 38 and the alias is recorded in the brief file.
   **The goal is NOT to remove functionality** — the brief carries a DO NOT
   REMOVE FUNCTIONALITY list and twenty numbered tests.
+  **(d)** the owner's mobile/tablet UX addendum of 2026-08-22, added to this
+  unit by their own instruction (*"Ship with the current UI/UX unit if safe"*)
+  and recorded verbatim at the end of `CASE-WORKSPACE.md`: **navigating to a
+  section must not automatically focus a text field or open the on-screen
+  keyboard**, across Search, Cases, Intakes, Clients & Firms, File Queue,
+  Reports & Packages, Rate Sheets, Billing, Settings and the Case Workspace;
+  dialogs may still focus after the user explicitly opens them; plus a
+  **contained desktop Search field**, full width on mobile, presentation only.
+  The audit found **no `autofocus` attribute anywhere in the page** — the
+  keyboard was raised by `paint()` restoring the caret unconditionally on every
+  repaint.
 - **26 — Final master reconciliation + project closeout.** ✅ **DONE.** Every
   durable owner requirement was compared against master and live state and
   classified in **`case-portal/FINAL-LEDGER.md`**: MASTER-HANDOFF §0–§43, the
@@ -249,6 +260,23 @@ touch how existing cases are categorised, so it is recorded rather than done.
   CODED / TESTED / PUSHED / MERGED / DEPLOYED / LIVE VERIFIED per unit. Nothing
   deferred was converted to complete. **No non-deferred approved requirement is
   missing.**
+
+## 🔵 QUEUED — reported by Unit 38, deferred to the owner rather than fixed
+
+**`announceRendered()` never runs on the case page.** Unit 21's chokepoint is
+the whole design — *"reading what was rendered catches every one of them and
+any added later"* — and `paint()`'s case branch returns before that call, so
+every confirmation and refusal inside a case is drawn silently for a
+screen-reader user, on the most-opened screen in the portal.
+
+**Pre-existing, not a Unit 38 regression** — the same early return is on
+`master` from when the workspace became a full page — so the owner's test 20
+("accessibility *remains* sound") is satisfied either way. It is one line and
+it was deliberately not taken: `.note` on this codebase is often **static
+explanatory prose** rather than a message, so switching it on would read
+paragraphs aloud on arrival at a case tab. Whether that is an improvement is a
+judgement about how the office actually works, not a mechanical fix. Detail in
+`RECONCILIATION.md`.
 
 ## Still needing the owner — carry these forward
 

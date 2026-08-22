@@ -768,3 +768,38 @@ currently-deliverable evidence and NAMES what it withheld, and that printing
 re-reads the package first. Whether that is the equivalent mechanism, or
 whether a distinct stale marker is wanted, is the first question the unit has
 to answer from the code rather than from the brief.
+
+
+## Unit 38 — what the rebuild of the case screen found, and what was left alone
+
+**Found and fixed inside the unit**, because the unit's own tests named them:
+
+| Finding | Why it counts as Unit 38's |
+| --- | --- |
+| The case page had **no `h1` at all** | Test 20a asserts exactly one `h1` on the signed-in page and measured **0**. `shell()` holds the portal's single heading and the case page bypasses `shell()` entirely, so the most-opened screen in the portal was headingless |
+| `+ Add activity` **drew on every tab and worked on one** | The sheet was rendered inside `activityPanel()`; the button is in `caseActionsHtml()`, which draws on every screen of the case. A control that draws is not a control that works |
+| Overview, Report and Billing were **reachable from nothing under 640px** | The desktop row is `display:none` there and those three are not in the thumb bar. A phone-only hole no desktop assertion could see |
+| **Four** lists indexed the front of the activity array | The oldest-first flip made `slice(0, n)` return the oldest entries under a heading that says "recent". The fourth was found by reading the heading, not the code |
+| `LIMIT 500` was about to keep the **wrong end** | Flipping the ORDER BY alone would have dropped this morning's work and kept 2019's. The read is a DESC-ordered LIMIT wrapped in a subquery that re-sorts ASC |
+
+**Found and deliberately NOT fixed inside the unit** — recorded here so the
+decision is the owner's rather than a silence:
+
+**`announceRendered()` never runs on the case page.** Unit 21's whole design is
+one chokepoint — *"reading what was rendered catches every one of them and any
+added later"* — and `paint()`'s case branch `return`s before that call. So every
+confirmation and refusal inside a case is drawn silently for a screen-reader
+user, on the most-used screen in the portal.
+
+It is **pre-existing**, not a Unit 38 regression: the same early return is on
+`master`, from when the workspace became a full page. The owner's test 20 asks
+that accessibility *remains* sound, and it does — this was never sound there.
+
+It is one line and it is tempting, and that is exactly why it is being reported
+instead. Two things make it more than a one-liner: `.note` on this codebase is
+often **static explanatory prose** rather than a message (the profile panel's
+"No saved client or firm is linked to this case", and a dozen like it), so
+switching it on would start reading paragraphs aloud on arrival at a case tab —
+and whether that is an improvement is a judgement about how the office's
+screen-reader users actually work, not a mechanical fix. **Queued for the owner
+to decide, not slipped into a navigation unit.**
