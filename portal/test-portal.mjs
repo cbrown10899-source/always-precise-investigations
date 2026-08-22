@@ -3535,9 +3535,9 @@ section('Record payment is reachable from the case overview');
   /* Deliberately NO wsTab() call between opening the case and finding the
      control. A test that navigated first would pass just as well before this
      change, and would be proving nothing. */
-  const summary = await text(page, '.ovcard');
+  const summary = await text(page, '.wspanel');
   ok('the case opens on a summary carrying the retainer and the balance',
-     has(summary, 'Retainer') && has(summary, 'Balance'), summary.slice(0, 200));
+     has(summary, 'Retainer') && has(summary, 'Balance'), summary.slice(0, 300));
   ok('and Record payment is right there, with no tab to find first',
      await page.locator('.ovcard [data-act="retOpen"]').count() === 1);
   ok('offered once, not duplicated onto the page',
@@ -3562,7 +3562,7 @@ section('Record payment is reachable from the case overview');
   await page.locator('[data-act="retSave"]').click();
   await page.waitForTimeout(900);
   ok('recording it from the overview is confirmed there',
-     has(await text(page, '.ovcard'), 'Payment recorded'), (await text(page, '.ovcard')).slice(0, 200));
+     has(await text(page, '.wspanel'), 'Payment recorded'), (await text(page, '.wspanel')).slice(0, 300));
   ok('and the form closes behind it',
      await page.locator('.ovcard #ret_amt').count() === 0);
 
@@ -3591,7 +3591,7 @@ section('Record payment is reachable from the case overview');
   ok('a claim assignment offers no Record payment on its overview',
      await page.locator('[data-act="retOpen"]').count() === 0);
   ok('and shows authorization rather than a retainer',
-     has(await text(page, '.ovcard'), 'Authoriz'), (await text(page, '.ovcard')).slice(0, 200));
+     has(await text(page, '.wspanel'), 'Authoriz'), (await text(page, '.wspanel')).slice(0, 300));
   await page.close();
 }
 {
@@ -4091,12 +4091,18 @@ section('The case page: four sections, one obvious next step');
   ok('and where the case stands', await page.locator('.caseheader .tag').count() >= 2);
 
   const body = await text(page, '#dlgBody');
-  ok('the overview leads with the case summary', has(body, 'Case summary'));
-  ok('the summary carries the authorization', has(body, 'Authorized'));
+  /* Unit 38 — the overview is four blocks in the owner's own order, and it
+     LEADS with the answer to "what now" rather than with a summary card. */
+  const heads = (await page.locator('.ovcard h3').allInnerTexts()).map(h => h.trim().toUpperCase());
+  ok('the overview leads with Next step',
+     JSON.stringify(heads) === JSON.stringify(['NEXT STEP', 'TODAY', 'RECENT ACTIVITY', 'CASE STATUS']),
+     JSON.stringify(heads));
+  ok('case status carries the authorization', has(body, 'Authorized'));
   ok('the package progress speaks percent', /\d+%/.test(body));
   ok('one next step is computed', has(body, 'Next step'));
   ok('recent activity is on the overview', has(body, 'Recent activity'));
-  ok('the evidence picture is on the overview', has(body, 'Evidence overview'));
+  ok('and the evidence is reachable from Today',
+     await page.locator('.ovcard [data-act="wsTab"][data-tab="evidence"]').count() >= 1);
 
   // P22: the module lines route. The Report line lands on the Reports panel.
   await page.locator('.ov-mods button', { hasText: 'Report' }).first().click();
