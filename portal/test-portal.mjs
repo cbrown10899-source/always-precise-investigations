@@ -345,18 +345,22 @@ async function wsTab(page, name) {
   const key = await page.evaluate(
     n => ([...wsPrimary(), ...wsMore()].find(t => t[1] === n) || [])[0] || null, name);
   if (!key) throw new Error(`no case tab labelled "${name}"`);
-  const onRow = page.locator(`.wsnav button[data-tab="${key}"]`);
-  if (await onRow.count()) {
-    await onRow.first().click();
+  /* Take whichever door is VISIBLE at this width, the way a person would: the
+     desktop row, then the thumb bar, then More. Counting elements is not
+     enough — the row is in the DOM on a phone and hidden by CSS. */
+  for (const sel of [`.wsnav button[data-tab="${key}"]`, `.wsbar button[data-tab="${key}"]`]) {
+    const door = page.locator(`${sel}:visible`);
+    if (await door.count()) {
+      await door.first().click();
+      await page.waitForTimeout(250);
+      return;
+    }
+  }
+  if (!(await page.locator('.wsmorelist:visible').count())) {
+    await page.locator('[data-act="wsMore"]:visible').first().click();
     await page.waitForTimeout(250);
-    return;
   }
-  const more = page.locator('[data-act="wsMore"]').first();
-  if (await more.count() && !(await page.locator('.wsmorelist').count())) {
-    await more.click();
-    await page.waitForTimeout(200);
-  }
-  await page.locator(`.wsmorelist button[data-tab="${key}"]`).first().click();
+  await page.locator(`.wsmorelist button[data-tab="${key}"]:visible`).first().click();
   await page.waitForTimeout(250);
 }
 // The activity form lives in the Add Activity sheet (UIBUILD P8); the free
@@ -14644,6 +14648,252 @@ section('The admin markers have one writer');
     if (/<span class="opt">\(optional\)<\/span>/.test(chunk)) bare.push(fn);
   }
   ok('no intake form spells the optional marker by hand', bare.length === 0, bare.join(' | '));
+}
+
+
+/* ======================================================================
+   UNIT 38 — THE TWENTY THE OWNER NUMBERED.
+
+   Their brief lists twenty page-level and navigation properties. Each is
+   asserted below under its own number, so a later reader can check the list
+   against the tests without reading either in full. Ordering (their five) is
+   pinned in the Worker suite, where the source is; what is pinned here is
+   what the PAGE does with it.
+   ====================================================================== */
+
+section('Unit 38 — the case workspace, the twenty named properties');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('[data-act="tab"][data-tab="cases"]').first().click();
+  await page.waitForTimeout(600);
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(800);
+  const caseNo = await page.evaluate(() => WS_CASE);
+
+  /* 1. Opening a case exposes Activity directly. */
+  const row = await page.locator('.wsnav button[data-act="wsTab"]').allInnerTexts();
+  ok('1. opening a case exposes Activity on the row itself',
+     await page.locator('.wsnav button[data-tab="activity"]').count() === 1, JSON.stringify(row));
+
+  /* 2. Daily Summary is directly reachable from the case. */
+  ok('2. Daily Summary is on the row too, not three levels down',
+     await page.locator('.wsnav button[data-tab="daily"]').count() === 1, JSON.stringify(row));
+
+  /* 3 + 4. Activity and Daily Summary default to the case already open —
+     nobody is asked which case, twice. */
+  await page.locator('.wsnav button[data-tab="activity"]').click();
+  await page.waitForTimeout(500);
+  ok('3. Activity opens on the case already open',
+     (await page.evaluate(() => WS_CASE)) === caseNo && (await wsOpenTab(page)) === 'activity');
+  ok('3b. and asks for no second case choice',
+     await page.locator('.wspanel select[id*="case"], .wspanel [data-act="pickCase"]').count() === 0);
+  await page.locator('.wsnav button[data-tab="daily"]').click();
+  await page.waitForTimeout(600);
+  ok('4. Daily Summary opens on the same case',
+     (await page.evaluate(() => WS_CASE)) === caseNo && (await wsOpenTab(page)) === 'daily');
+  ok('4b. and asks for no second case choice',
+     await page.locator('.wspanel select[id*="case"], .wspanel [data-act="pickCase"]').count() === 0);
+
+  /* 5. The current/open day is the one selected, and it says which it is. */
+  const dsText = await text(page, '.wspanel');
+  const dayFacts = await page.evaluate(() => {
+    const c = wsCurrentDay();
+    return { has: !!c.day, open: c.open, label: c.label, no: c.day ? wsDayNo(c.day) : null };
+  });
+  ok('5. the day on screen is the running one, or the latest, and is labelled',
+     dayFacts.has
+       ? (has(dsText, `Day ${dayFacts.no}`)
+          && has(dsText, dayFacts.open ? 'running now' : 'most recent day'))
+       : has(dsText, 'No investigation day yet'),
+     `${JSON.stringify(dayFacts)} :: ${dsText.replace(/\s+/g, ' ').slice(0, 160)}`);
+
+  /* 6. + Add Activity works — one visible door, and it opens the composer. */
+  ok('6a. exactly one Add activity door is visible',
+     await page.locator('[data-act="actOpen"]:visible').count() === 1,
+     String(await page.locator('[data-act="actOpen"]:visible').count()));
+  await openComposer(page);
+  ok('6b. + Add Activity opens the composer', await page.locator('#a_desc').count() === 1);
+  await page.locator('#a_time').fill('11:11');
+  await page.locator('#a_desc').fill('Unit 38 check entry.');
+  await page.locator('.btn', { hasText: 'Add to the log' }).click();
+  await page.waitForTimeout(700);
+  ok('6c. and the entry lands in the log',
+     has(await text(page, '#dlgBody'), 'Unit 38 check entry.'));
+
+  /* 7 + 8. Evidence and Report open on the selected case. */
+  await page.locator('.wsnav button[data-tab="evidence"]').click();
+  await page.waitForTimeout(600);
+  ok('7. Evidence opens the selected case',
+     (await wsOpenTab(page)) === 'evidence' && (await page.evaluate(() => WS_CASE)) === caseNo);
+  await page.locator('.wsnav button[data-tab="reports"]').click();
+  await page.waitForTimeout(600);
+  ok('8. Report opens the selected case',
+     (await wsOpenTab(page)) === 'reports' && (await page.evaluate(() => WS_CASE)) === caseNo);
+
+  /* 9. Admin Billing is still reachable. */
+  ok('9. an admin still has Billing on the row',
+     await page.locator('.wsnav button[data-tab="billing"]').count() === 1);
+  await page.locator('.wsnav button[data-tab="billing"]').click();
+  await page.waitForTimeout(700);
+  ok('9b. and it opens', (await wsOpenTab(page)) === 'billing');
+
+  /* 11. Every desktop tab works — the row and the More list both route. */
+  const tabs = await wsAllTabs(page);
+  const broken = [];
+  for (const t of tabs) {
+    await wsTab(page, t.label);
+    if ((await wsOpenTab(page)) !== t.key) broken.push(`${t.label}->${await wsOpenTab(page)}`);
+  }
+  ok('11. every workspace tab routes to its own panel', broken.length === 0, broken.join(', '));
+  ok('11b. and the walk covered the whole nav, row and More', tabs.length >= 15, String(tabs.length));
+
+  /* 15. Existing deep links do not break — every key the old sections used
+         still routes, because the keys never changed. */
+  const legacy = ['overview', 'details', 'subject', 'field', 'activity', 'timeline',
+                  'reports', 'evidence', 'package', 'edit', 'assign', 'auth',
+                  'expenses', 'notes', 'comms', 'tasks', 'billing'];
+  const dead = [];
+  for (const k of legacy) {
+    await page.evaluate(key => { WS_TAB = key; WS_MORE = false; paintCase(); }, k);
+    await page.waitForTimeout(160);
+    const drew = (await text(page, '.wspanel')).trim().length;
+    if ((await wsOpenTab(page)) !== k || drew < 5) dead.push(k);
+  }
+  ok('15. every pre-Unit-38 tab key still routes and draws', dead.length === 0, dead.join(', '));
+
+  /* 19. File Queue is a cross-case tool and did not move into the case. */
+  ok('19a. File queue is not a case tab', !tabs.some(t => /file queue/i.test(t.label)),
+     JSON.stringify(tabs.map(t => t.label)));
+  await page.locator('[data-act="backToCases"]').first().click();
+  await page.waitForTimeout(500);
+  ok('19b. and it is still its own door in the main nav',
+     await page.locator('[data-act="tab"][data-tab="filequeue"]').count() >= 1);
+
+  /* 20. Accessibility: one h1, the current tab marked, focusable controls. */
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(700);
+  ok('20a. there is exactly one h1 on the signed-in page',
+     await page.locator('h1').count() === 1, String(await page.locator('h1').count()));
+  ok('20b. the tab you are on is marked for a screen reader',
+     await page.locator('.wsnav button[aria-current="page"]').count() === 1);
+  ok('20c. the More control announces that it opens a menu',
+     await page.locator('[data-act="wsMore"][aria-haspopup="true"]').first().count() === 1);
+  const expanded = async () => page.locator('[data-act="wsMore"]').first().getAttribute('aria-expanded');
+  ok('20d. and says whether it is open', (await expanded()) === 'false');
+  await page.locator('.wsnav [data-act="wsMore"]').click();
+  await page.waitForTimeout(300);
+  ok('20e. which changes when it is', (await expanded()) === 'true');
+  ok('20f. the menu is a menu', await page.locator('.wsmorelist[role="menu"]').count() === 1);
+  await page.close();
+}
+
+section('Unit 38 — the field-first case view on a phone');
+{
+  for (const width of [375, 390, 430]) {
+    const ctx = await browser.newContext({ viewport: { width, height: 844 } });
+    const page = await ctx.newPage();
+    page.on('pageerror', e => ok(`no page errors at ${width}px (${e.message})`, false));
+    await page.goto(SITE + '/portal/');
+    await page.waitForTimeout(300);
+    await page.locator('#u').fill('trever');
+    await page.locator('#p').fill('AdminPassword1x');
+    await page.locator('#loginBtn').click();
+    await page.waitForTimeout(900);
+    if (await page.locator('.burger').count()) {
+      await page.locator('.burger').click(); await page.waitForTimeout(300);
+    }
+    await page.locator('.tabs button', { hasText: 'Cases' }).first().click();
+    await page.waitForTimeout(700);
+    await rowFor(page, 'API-20260812-4002').click();
+    await page.waitForTimeout(800);
+
+    /* 12. The mobile field layout works at each width. */
+    const bar = await page.evaluate(() => {
+      const b = document.querySelector('.casepage .wsbar');
+      if (!b) return null;
+      const cs = getComputedStyle(b);
+      const btns = [...b.querySelectorAll('button')];
+      return { display: cs.display, position: cs.position, n: btns.length,
+               labels: btns.map(x => x.textContent.replace(/\s+/g, ' ').trim()),
+               minH: Math.min(...btns.map(x => Math.round(x.getBoundingClientRect().height))),
+               bottom: Math.round(Math.min(...btns.map(x => window.innerHeight - x.getBoundingClientRect().bottom))) };
+    });
+    ok(`12. ${width}px: the field bar is the case navigation`,
+       bar && bar.display === 'flex' && bar.position === 'fixed' && bar.n === 5, JSON.stringify(bar));
+    ok(`12b. ${width}px: every key clears Apple's 44px floor`, bar && bar.minH >= 44,
+       bar ? `${bar.minH}px` : 'no bar');
+    ok(`12c. ${width}px: and stands clear of the home indicator`, bar && bar.bottom >= 12,
+       bar ? `${bar.bottom}px` : 'no bar');
+
+    /* 13. No horizontal overflow. */
+    const of = await page.evaluate(() =>
+      document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    ok(`13. ${width}px: the case page does not scroll sideways`, of <= 0, String(of));
+
+    /* 14. Activity and Summary are never under More. */
+    ok(`14. ${width}px: Activity and Summary are IN the bar`,
+       bar && bar.labels.some(l => /Activity/.test(l)) && bar.labels.some(l => /Summary/.test(l)),
+       JSON.stringify(bar && bar.labels));
+    await page.locator('.wsbar [data-act="wsMore"]').click();
+    await page.waitForTimeout(350);
+    const moreLabels = await page.locator('.wsmorelist button').allInnerTexts();
+    ok(`14b. ${width}px: and NEITHER is inside More`,
+       !moreLabels.some(l => /^(Activity|Daily Summary)$/.test(l.trim())), JSON.stringify(moreLabels));
+    /* THE PHONE HOLE THIS UNIT NEARLY SHIPPED: the desktop row is hidden here,
+       so anything the thumb bar does not carry has to be in More or it has no
+       door at all. */
+    ok(`14c. ${width}px: More carries Overview, Report and Billing`,
+       ['Overview', 'Report', 'Billing'].every(l => moreLabels.some(x => x.trim() === l)),
+       JSON.stringify(moreLabels));
+    const reach = await page.evaluate(() => {
+      const vis = sel => [...document.querySelectorAll(sel)].filter(b => b.offsetParent !== null)
+        .map(b => b.dataset.tab).filter(Boolean);
+      const seen = new Set([...vis('.wsbar button'), ...vis('.wsnav button'), ...vis('.wsmorelist button')]);
+      return [...wsPrimary(), ...wsMore()].map(t => t[0]).filter(k => !seen.has(k));
+    });
+    ok(`14d. ${width}px: every tab has a door somewhere`, reach.length === 0, JSON.stringify(reach));
+
+    /* 10 (phone half) — the desktop row is not a second navigation. */
+    ok(`${width}px: the desktop row is hidden, so a phone has one navigation`,
+       (await page.evaluate(() => getComputedStyle(document.querySelector('.wsnav')).display)) === 'none');
+
+    /* 6 on a phone: the add key is under the thumb and works. */
+    await page.locator('.wsbar .wsbar-add').click();
+    await page.waitForTimeout(500);
+    ok(`${width}px: the add key opens the composer`, await page.locator('#a_desc').count() === 1);
+    await ctx.close();
+  }
+}
+
+section('Unit 38 — the investigator keeps their boundary');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(800);
+
+  /* 10. Investigator financial restrictions remain intact. */
+  const tabs = await wsAllTabs(page);
+  const labels = tabs.map(t => t.label).join(' ');
+  ok('10a. no Billing tab anywhere in their workspace', !/Billing/i.test(labels), labels);
+  ok('10b. nor Package, Edit case or Assignment',
+     !/Package|Edit case|Assignment/i.test(labels), labels);
+  let seen = '';
+  for (const t of await wsVisitAll(page, p2 => text(p2, '#dlgBody'))) seen += ' ' + t.text;
+  ok('10c. and no panel they CAN open shows a rate, retainer or invoice total',
+     !/Retainer|Invoice total|Rate sheet/i.test(seen), (seen.match(/Retainer|Invoice total|Rate sheet/i) || [''])[0]);
+  ok('10d. the walk really walked their whole nav', tabs.length >= 8, String(tabs.length));
+
+  /* 16 + 17. Active Surveillance and the Daily Summary builder still work. */
+  ok('16a. Active Surveillance is still one press from the case',
+     await page.locator('[data-act="svEnter"]').count() >= 1);
+  await page.locator('.wsnav button[data-tab="daily"]').click();
+  await page.waitForTimeout(700);
+  const ds = await text(page, '.wspanel');
+  ok('17. the Daily Summary builder is intact for them too',
+     has(ds, 'Daily Summary'), ds.replace(/\s+/g, ' ').slice(0, 160));
+  await page.close();
 }
 
 await browser.close();

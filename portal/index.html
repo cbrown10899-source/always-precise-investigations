@@ -658,6 +658,9 @@
   .wsmorelist button{font:inherit;font-size:.85rem;background:#fff;border:1px solid var(--line);
     border-radius:8px;color:var(--ink);padding:8px 12px;min-height:44px;cursor:pointer;}
   .wsmorelist button.on{background:var(--navy-2);border-color:var(--navy-2);color:#fff;}
+  /* On a desktop these are already on the row a few pixels above, so they are
+     not repeated in the menu. */
+  .wsmorelist .more-primary{display:none;}
   .wsmorelist button:hover{border-color:var(--teal-2);}
 
   /* THE PRIMARY ACTIONS, directly under the header. The owner's line: the most
@@ -713,6 +716,9 @@
        live under More there — except Activity, Summary and Evidence, which are
        in the bar. Overview and Report are reachable from the More list. */
     .casepage .wsnav{display:none;}
+    /* The row is hidden here, so More is the only door to the tabs the thumb
+       bar does not carry. Activity and Summary are never among them. */
+    .casepage .wsmorelist .more-primary{display:inline-block;}
     .casepage .wsmorelist{margin-top:0;}
     .casepage{padding-bottom:100px;}
     .addact{bottom:96px;}
@@ -9725,6 +9731,11 @@ function wsSectionFor(tab){
 
    `wsSections()` above is untouched and still the source for More, so a tab
    added there arrives in this nav rather than disappearing from it. */
+/* The three the thumb bar carries. Named once: the More list works out what
+   it has to cover on a phone by subtracting these, so the bar and the menu
+   cannot drift into either duplicating a door or losing one. */
+const WS_BAR_TABS = ["activity", "daily", "evidence"];
+
 function wsPrimary(){
   const admin = ME.role === "admin";
   const t = [["overview", "Overview"], ["activity", "Activity"], ["daily", "Daily Summary"],
@@ -13465,7 +13476,10 @@ function caseBodyHtml(){
       ${more.length ? `<button class="${inMore ? "on" : ""} wsmore" data-act="wsMore"
         aria-haspopup="true" aria-expanded="${WS_MORE ? "true" : "false"}"${
         inMore ? ` title="${esc(wsTabLabel(WS_TAB))}"` : ""}>More &#9662;</button>` : ""}</div>
-    ${WS_MORE && more.length ? `<div class="wsmorelist" role="menu">${more.map(([k, lbl]) =>
+    ${WS_MORE ? `<div class="wsmorelist" role="menu">${
+      primary.filter(([k]) => !WS_BAR_TABS.includes(k)).map(([k, lbl]) =>
+        `<button role="menuitem" class="more-primary${WS_TAB === k ? " on" : ""}" data-act="wsTab" data-tab="${k}">${esc(lbl)}</button>`).join("")
+      }${more.map(([k, lbl]) =>
       `<button role="menuitem" class="${WS_TAB === k ? "on" : ""}" data-act="wsTab" data-tab="${k}">${esc(lbl)}</button>`).join("")}</div>` : ""}
     <div class="wspanel">${panel}</div>
     ${/* THE PHONE BAR. Activity and Summary are IN it, never under More —
