@@ -376,7 +376,7 @@ first. Do not guess from the current UI."*
 | | |
 | --- | --- |
 | **Scope** | Public intake (Private / Insurance / Legal), Admin Quick intake (three doors), Edit case, the Legal panel, and the saved Clients & Firms forms |
-| **State** | CODED · TESTED · PUSHED · MERGED · DEPLOYED |
+| **State** | CODED · TESTED · PUSHED · MERGED · DEPLOYED — #228 at `b34ccda`, Pages run 32540154210 ✅ |
 | **Schema** | none — no `portal-setup` dispatch |
 | **LIVE VERIFIED** | **OPEN** — visual, for the owner |
 

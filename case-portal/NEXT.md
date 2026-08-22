@@ -46,15 +46,15 @@ completed.
 
 | | |
 | --- | --- |
-| **Master** | **`730141e`** (Units 30–31) |
+| **Master** | **`b34ccda`** (Unit 36 — optional-field labelling, #228) |
 | **Working tree** | clean; nothing unpushed; no branch in flight |
 | **Background work** | none running |
-| **Suites at that SHA** | worker **2749/0** · portal **2452/0** · deploy guard **68/0** · intake **236/0** · visitor-alerts **47/0** |
+| **Suites at that SHA** | worker **2755/0** · portal **2558/0** · deploy guard **81/0** · intake **445/0** · visitor-alerts **47/0** |
 | **Schema owed** | **NONE.** `case_day_end` was applied by `portal-setup` run **32508101361** at `74629fe` — ✅ success, **including the admin-bootstrap step that failed at `46a06ad9`**, so the token race did not recur |
-| **Deployed** | at `74629fe`: `Deploy case-portal Worker` ✅ · `Deploy site to Cloudflare Pages` ✅ · `portal-setup` ✅ (run 32508101361). `Daily site health` ✅ run #22 |
+| **Deployed** | at `b34ccda`: `Deploy site to Cloudflare Pages` ✅ **run 32540154210**. The Worker was untouched by Unit 36, so `deploy-portal.yml` correctly did not fire. LIVE byte-check not possible from this container — the proxy refuses the domain (403), as recorded |
 | **Closeout** | ✅ **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** — see `case-portal/FINAL-LEDGER.md` |
 | **Owner decisions** | ✅ five LOCKED at closeout, 2026-08-21 — see **FINAL OWNER DECISIONS** below. Four are deferrals or standing refusals; **decision 4 (Ended by Admin) is BUILT — Unit 27** |
-| **Next unit** | **Unit 36 — optional-field labelling — IN FLIGHT** (see below). Two owner requests remain unstarted after it: the **Final Production Truth Audit Round 2** (audit-only), and a **Case Workspace Simplification + Activity Ordering** unit the owner numbered 34 — a COLLISION with the shipped public-site unit, so it needs renumbering (37) before it starts |
+| **Next unit** | **Unit 36 SHIPPED** (`b34ccda`, #228). Two owner requests remain unstarted: the **Final Production Truth Audit Round 2** (audit-only), and a **Case Workspace Simplification + Activity Ordering** unit the owner numbered 34 — a COLLISION with the shipped public-site unit, so it needs renumbering (37) before it starts |
 
 ## 🔄 RESUME POINT — Production Truth Correction Queue (Units 28–33)
 
@@ -112,9 +112,10 @@ Three defects the audit surfaced, all fixed:
    filed as *Surveillance* without anyone being asked — under a label that
    already said optional. It opens on *Not decided yet* now.
 
-**Shipped:** see the handoff table above for the SHA. Suites: intake **445/0**
-(was 236), portal, worker **2755/0**, deploy guard **81/0**, visitor **47/0**.
-No schema, **no portal-setup dispatch**.
+**Shipped:** #228 at **`b34ccda`**, `Deploy site to Cloudflare Pages` run
+32540154210 ✅. Suites: intake **445/0** (was 236) · portal **2558/0** (was
+2455) · worker **2755/0** · deploy guard **81/0** · visitor **47/0**.
+No schema, **no portal-setup dispatch**. Visual LIVE VERIFY open for the owner.
 
 **Reported to the owner rather than decided:** the Service-picker change alters
 what a private quick-intake lead stores when nobody touches the dropdown (a
