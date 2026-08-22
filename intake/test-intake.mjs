@@ -1456,12 +1456,24 @@ section('Unit 40 — three cards, three doors');
      which the assertion above already proves. This pins the mechanism. */
   const decorative = await page.evaluate(() => ({
     art: [...document.querySelectorAll('.cta-art')].every(n => n.getAttribute('aria-hidden') === 'true'),
-    icons: [...document.querySelectorAll('.cta-icon')].every(n => n.getAttribute('aria-hidden') === 'true'),
+    artCount: document.querySelectorAll('.cta-art').length,
+    icons: document.querySelectorAll('.cta-icon').length,
+    iconCss: null,
     inImg: document.querySelectorAll('.cta-cards img').length,
   }));
-  ok('the artwork and icons are marked decorative', decorative.art && decorative.icons,
-     JSON.stringify(decorative));
+  /* COUNTED, not `.every()`. The icons were removed on the owner's decision of
+     2026-08-22, and `[].every()` is TRUE — so the old assertion would have gone
+     on passing over a card that had lost its art as well. It asserts the count
+     it expects in both directions now. */
+  ok('the artwork is marked decorative, on all three cards',
+     decorative.art && decorative.artCount === 3, JSON.stringify(decorative));
   ok('and no meaning is carried by an <img> in a card', decorative.inImg === 0);
+  /* NO ICON, by owner decision: the card art says what the card is, and an icon
+     over a photograph of the same thing said it twice. Asserted so a later
+     unit does not quietly put one back. */
+  ok('no card carries an icon', decorative.icons === 0, String(decorative.icons));
+  ok('and no dead .cta-icon rule is left behind in the stylesheet',
+     !fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8').includes('.cta-icon'));
 
   /* ONE TAB STOP PER CARD — a button nested in a link would give two, for one
      destination. */
