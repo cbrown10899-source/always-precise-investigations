@@ -175,20 +175,41 @@
     border:1px solid var(--line);background:var(--navy-2);
     transition:transform .16s ease, border-color .16s ease, box-shadow .16s ease;}
   /* THE ART IS ONE CUSTOM PROPERTY PER CARD, and that is the whole swap.
-     These are locally authored motifs, not photographs — the brief asked for
-     the implementation to be structured so optimized local WebP/JPG can take
-     their place WITHOUT changing the layout, and this is what that means:
-     replace the url() below, add the file to the deploy manifest, change
-     nothing else. The overlay, the sizing and the text all stay as they are. */
-  .cta-ins{--cta-art:url('assets/card-insurance.svg');}
-  .cta-leg{--cta-art:url('assets/card-legal.svg');}
-  .cta-pri{--cta-art:url('assets/card-private.svg');}
+     Unit 40 shipped with three locally authored SVG motifs as placeholders and
+     was built so photographs could replace them WITHOUT the layout moving. On
+     2026-08-22 that is exactly what happened: three owner-supplied photographs
+     went in, and the change was these three url()s, three lines in the deploy
+     manifest, and nothing else. The sizing, the grid, the text and the tests
+     did not move. Keep it that way — a per-card background-position or a
+     bespoke height for one card would end that property. */
+  .cta-ins{--cta-art:url('assets/card-insurance.webp');}
+  .cta-leg{--cta-art:url('assets/card-legal.webp');}
+  .cta-pri{--cta-art:url('assets/card-private.webp');}
   .cta-art{position:absolute;inset:0;background:var(--cta-art) center/cover no-repeat;}
   /* THE DARK OVERLAY IS A SEPARATE LAYER, above the art and below the text, so
      the contrast the text relies on does not depend on which image is behind
-     it — including no image at all. */
+     it — including no image at all.
+
+     IT IS NEUTRAL, NOT NAVY, and that was measured rather than chosen. The
+     first version was rgba(19,35,60,.62)/rgba(12,22,38,.88) and it tinted every
+     photograph blue whatever the photograph looked like (owner, 2026-08-22:
+     the cards should "not be so blue hued"). Neutral black at the SAME alpha
+     is darker than navy, so going neutral both removed the cast and bought
+     contrast headroom — which then paid for lightening it as well.
+
+     Measured, white title against the LIGHTEST pixel behind it, on the two
+     photographs that existed at the time:
+
+       navy    .62/.88   5.87 / 6.07   the blue cast
+       neutral .58/.86   6.58 / 6.78   no cast, same darkness
+       neutral .50/.82   5.16 / 5.25   <- this one
+       neutral .46/.80   4.53 / 4.66   clears 4.5 by 0.03 — too thin
+
+     .46/.80 was rejected on purpose: a later photograph one shade brighter
+     would put it under AA, and the failure would be invisible. Do not lighten
+     this without re-running the measurement over ALL THREE cards. */
   .cta-art::after{content:"";position:absolute;inset:0;
-    background:linear-gradient(180deg,rgba(19,35,60,.62),rgba(12,22,38,.88));}
+    background:linear-gradient(180deg,rgba(6,8,11,.50),rgba(4,6,9,.82));}
   .cta-body{position:relative;display:flex;flex-direction:column;align-items:flex-start;
     gap:10px;padding:22px 20px;width:100%;}
   .cta-title{font-family:Georgia,'Times New Roman',serif;font-size:1.34rem;line-height:1.3;

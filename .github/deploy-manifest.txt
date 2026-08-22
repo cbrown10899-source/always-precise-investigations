@@ -51,11 +51,14 @@ assets/review1.webp
 assets/review2.webp
 assets/review3.webp
 # Unit 40 — the hero CTA card artwork. Named one by one like everything above,
-# so replacing a motif with a photograph is a deliberate line change here as
-# well as in the CSS.
-assets/card-insurance.svg
-assets/card-legal.svg
-assets/card-private.svg
+# so replacing one is a deliberate line change here as well as in the CSS.
+# These were SVG placeholder motifs until 2026-08-22; they are owner-supplied
+# photographs now, and the swap was exactly these three lines plus three
+# url()s. The stager FAILS on a listed path that does not exist, so a rename
+# is caught at build time rather than by someone finding a blank card.
+assets/card-insurance.webp
+assets/card-legal.webp
+assets/card-private.webp
 
 # --- service pages -----------------------------------------------------------
 insurance-investigations/index.html
