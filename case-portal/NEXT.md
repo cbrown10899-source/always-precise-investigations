@@ -459,7 +459,7 @@ run 32604959775 ✅. intake **542/0**, deploy **86/0**. LIVE VERIFY **OPEN**.
 
 | Card | File | Size |
 | --- | --- | --- |
-| Insurance | `card-insurance.webp` | 64 KB |
+| Insurance | `card-insurance.webp` | 74 KB |
 | Legal | `card-legal.webp` | 52 KB |
 | Private | `card-private.webp` | 74 KB |
 
