@@ -1596,6 +1596,55 @@ section('Unit 40 — contrast, focus, and what the hero kept');
   ok('and a focus-visible ring is defined for them',
      /\.cta-card:focus-visible\{[^}]*outline:\s*3px/.test(rule));
 
+  /* THE ACCESSIBLE NAME, computed by the BROWSER rather than inferred from the
+     markup. The brief asks for proper accessible text that does not rely on
+     the background image for meaning, and the only honest way to check that is
+     to ask the accessibility tree what it reports. `aria-hidden` on the art,
+     the icon and "Get Started" is the mechanism; this is the outcome.
+
+     EQUALITY, not inclusion, and that is the half that does the work. Run as a
+     control with `aria-hidden` stripped from the "Get Started" span, the name
+     becomes "Submit an Insurance Assignment Get Started" — so an inclusion
+     check would still have passed. `children` stays 0 either way: a link's
+     descendant text contributes to its NAME rather than appearing as a child,
+     so that clause guards a different regression (a nested control), not this
+     one. Both were measured; neither was assumed. */
+  for (const [door, name] of [['insurance', 'Submit an Insurance Assignment'],
+                              ['legal',     'Submit a Legal Assignment'],
+                              ['private',   'Request a Private Investigation']]) {
+    const h = await page.locator(`.cta-card[href="/intake/?assignment=${door}"]`).elementHandle();
+    const snap = await page.accessibility.snapshot({ root: h });
+    ok(`the ${door} card announces itself as a link named exactly its title`,
+       snap && snap.role === 'link' && snap.name === name && (snap.children || []).length === 0,
+       JSON.stringify(snap));
+  }
+
+  /* ONE TAB STOP PER CARD, in the owner's order. A "Get Started" <button>
+     inside the <a> would have been invalid nesting AND given each card two
+     stops for one destination; this is the assertion that would fail if
+     someone made it a real button later. Tabbing is done for real rather than
+     counting focusables, because that is what a keyboard user does. */
+  const stops = [];
+  await page.evaluate(() => (document.activeElement || document.body).blur());
+  for (let i = 0; i < 40 && stops.length < 4; i++) {
+    await page.keyboard.press('Tab');
+    const f = await page.evaluate(() => {
+      const a = document.activeElement;
+      if (!a || !a.classList || !a.classList.contains('cta-card')) return null;
+      return { href: a.getAttribute('href'), ring: getComputedStyle(a).outlineWidth + ' ' + getComputedStyle(a).outlineColor };
+    });
+    if (f) stops.push(f); else if (stops.length) break;
+  }
+  ok('tabbing reaches each card exactly once, Insurance then Legal then Private',
+     stops.length === 3 && stops.map(s => s.href).join('|') ===
+     '/intake/?assignment=insurance|/intake/?assignment=legal|/intake/?assignment=private',
+     JSON.stringify(stops.map(s => s.href)));
+  /* THE RING IS GOLD, not the teal it sits beside — measured on the focused
+     element, because a rule that exists is not a rule that applies. */
+  ok('and the ring that appears is the 3px gold one',
+     stops.length === 3 && stops.every(s => s.ring === '3px rgb(230, 181, 74)'),
+     JSON.stringify(stops.map(s => s.ring)));
+
   /* WHAT THE BRIEF SAID NOT TO TOUCH. */
   const kept = await page.evaluate(() => ({
     h1: (document.querySelector('.hero h1') || {}).textContent || '',
