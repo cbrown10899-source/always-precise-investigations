@@ -887,7 +887,7 @@ from Unit 40** — stay locked.
 
 ---
 
-## PART 18 — UNITS 40A and 40B, the cards get photographs, 2026-08-22
+## PART 18 — UNITS 40A–40F, the cards get photographs, 2026-08-22
 
 Both arrived as owner direction during Unit 40's visual review.
 
@@ -895,9 +895,13 @@ Both arrived as owner direction during Unit 40's visual review.
 | --- | --- |
 | **40A — no icons** | PR **#245** at `9756e59`, site deploy run **32604481612** ✅. intake 539/0 |
 | **40B — three photographs, neutral overlay** | PR **#246** at `7d1f7e4`, site deploy run **32604959775** ✅. intake **542/0**, deploy guard **86/0** |
+| **40C — insurance gets its own setting** | PR **#248** at `154f98f`, run **32605298442** ✅. The first insurance photo was a suburban street, and so is the private one — they read as a pair. Replaced with a commercial yard |
+| **40D — the van is the subject** | PR **#249** at `fe464f6`, run **32605491582** ✅. Owner reported "not the van image" about an image that WAS the van image: it sat in the left third, behind the headline. Mirrored, like the legal card |
+| **40E — Get Started centred and low** | PR **#250** at `3bc855f`, run **32605653071** ✅. `align-self:center`; `margin-top:auto` already held it low. intake **547/0** |
+| **40F — the art is cache-busted** | PR **#251** at `5819540`, run **32605892675** ✅. intake **548/0** |
 | **Worker** | untouched by both — `portal/`, `case-portal/` and `visitor-alerts/` confirmed absent from the staged diff |
 | **Schema** | none. No `portal-setup` dispatch owed |
-| **LIVE VERIFIED** | **OPEN** on 40B — owner visual check |
+| **LIVE VERIFIED** | ✅ **owner, 2026-08-22** — *"They are live i have verified"*, confirmed on the live site after the cache fix |
 
 ### Unit 40's central claim was tested, and it held
 
@@ -936,3 +940,36 @@ The first private image put its subject in the bottom third — cropped on a
 phone, and where the overlay is heaviest — so the card drew an empty sky. The
 rule that came out of it is recorded in `CLAUDE.md`: **a replacement image
 needs its subject in the central 60% of the frame.**
+
+### The defect that took an owner report to find
+
+`_headers` caches `/assets/*` for **seven days**, and Units 40B–40D replaced
+the same three filenames **in place at stable URLs** — `card-insurance.webp`
+was three different photographs at one URL inside an hour. `index.html` is
+`no-cache`, so the markup updated while the browser went on serving the FIRST
+image it had cached.
+
+**A stale asset behind fresh markup is indistinguishable from a deploy that
+never ran.** Seven green deploys and the owner was still right that the site
+had not changed. Every `--cta-art` carries `?v=` now, a test fails if one loses
+it, and `CLAUDE.md` says to bump it whenever one of those files changes.
+
+Worth keeping beyond this unit: **"is it deployed" and "is the visitor seeing
+it" are different questions**, and every check in this repo answered only the
+first.
+
+### Four assertions that had stopped asserting
+
+Counting 40A's and 40B's, this unit found four dead checks — all green, none
+testing anything:
+
+| Assertion | Why it was dead |
+| --- | --- |
+| icons are decorative | `[].every()` is TRUE on an empty list |
+| the title clears 4.5:1 | measured only the FIRST of three different photographs |
+| the art is a local path | required `\.svg` on an architecture built to accept WebP |
+| the art resolves locally | anchored on the extension being LAST — failed on its own `?v=` fix |
+
+The last two are the same mistake: **a regex asserting a SHAPE where a
+PROPERTY was meant.** The homepage door checks earlier in Unit 40 were the
+first instance; these are the second and third.

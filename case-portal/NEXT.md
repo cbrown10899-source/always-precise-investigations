@@ -46,7 +46,7 @@ completed.
 
 | | |
 | --- | --- |
-| **Master** | **`7d1f7e4`** (Unit 40B, #246) |
+| **Master** | **`5819540`** (Unit 40F, #251) |
 | **Working tree** | clean; nothing unpushed; no branch in flight |
 | **Background work** | none running |
 | **Suites at that SHA** | worker **2870/0** · portal **2707/0** · deploy guard **86/0** · intake **537/0** · visitor-alerts **47/0**. All five run this session. Intake and the deploy guard were run on the final Unit 40 tree; worker, portal and visitor were run during it and `case-portal/**` and `portal/**` are byte-identical between `001d354` and `e7b9117`, so those three results carry |
@@ -55,7 +55,7 @@ completed.
 | **Closeout** | ✅ **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** — see `case-portal/FINAL-LEDGER.md` |
 | **Owner decisions** | ✅ five LOCKED at closeout, 2026-08-21 — see **FINAL OWNER DECISIONS** below. Four are deferrals or standing refusals; **decision 4 (Ended by Admin) is BUILT — Unit 27** |
 | **Next unit** | **NONE — the durable queue is empty of required work.** Units 17A–39, 21A and **40** are shipped; 38, 39 and **40** are LIVE VERIFIED by the owner (2026-08-22), **21A has LIVE VERIFY open**. What remains is Unit 23's live-verification sweep (deferred — needs a real case) and the deferred-by-owner list. **Do not start anything without the owner.** |
-| **Nothing open for the owner** | The one question Unit 40 raised was answered the same day and is LOCKED below: the global teal stays unchanged and the card-button treatment is approved as implemented. Units **40A** (no icons) and **40B** (three photographs, neutral overlay) shipped the same day on owner direction — **LIVE VERIFY OPEN** on 40B |
+| **Nothing open for the owner** | The one question Unit 40 raised was answered the same day and is LOCKED below: the global teal stays unchanged and the card-button treatment is approved as implemented. Units **40A–40F** shipped the same day on owner direction — icons off, three photographs, a neutral overlay, the insurance setting, the mirrored van, the centred button and the cache fix. ✅ **LIVE VERIFIED by the owner, 2026-08-22** |
 
 ## 🔄 RESUME POINT — Production Truth Correction Queue (Units 28–33)
 
@@ -455,7 +455,17 @@ off; the dead `.cta-icon` rule went too. **#245 at `9756e59`**, deploy run
 32604481612 ✅. intake 539/0.
 
 **40B — three photographs and a neutral overlay. #246 at `7d1f7e4`**, deploy
-run 32604959775 ✅. intake **542/0**, deploy **86/0**. LIVE VERIFY **OPEN**.
+run 32604959775 ✅. intake **542/0**, deploy **86/0**.
+
+**40C** #248 `154f98f` — insurance gets a commercial yard, so it stops being a
+second suburban street. **40D** #249 `fe464f6` — the van mirrored, because it
+sat in the left third behind the headline and the owner reported the card as
+"not the van image" when it was. **40E** #250 `3bc855f` — Get Started centred
+and still low. **40F** #251 `5819540` — `?v=` on the art, because
+`/assets/*` is cached for seven days and the files were replaced in place.
+
+✅ **LIVE VERIFIED by the owner, 2026-08-22** — *"They are live i have
+verified."*
 
 | Card | File | Size |
 | --- | --- | --- |
