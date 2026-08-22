@@ -13456,13 +13456,16 @@ function caseBodyHtml(){
          the owner's own line. + Add is the middle key because it is the one
          thing someone does standing up. */""}
     <div class="wsbar">
-      <button class="${WS_TAB === "activity" ? "on" : ""}" data-act="wsTab" data-tab="activity">
+      <button class="${WS_TAB === "activity" ? "on" : ""}" data-act="wsTab" data-tab="activity"${
+        WS_TAB === "activity" ? ' aria-current="page"' : ""}>
         <span class="sec-i" aria-hidden="true">&#9998;</span><span>Activity</span></button>
-      <button class="${WS_TAB === "daily" ? "on" : ""}" data-act="wsTab" data-tab="daily">
+      <button class="${WS_TAB === "daily" ? "on" : ""}" data-act="wsTab" data-tab="daily"${
+        WS_TAB === "daily" ? ' aria-current="page"' : ""}>
         <span class="sec-i" aria-hidden="true">&#128221;</span><span>Summary</span></button>
       <button class="wsbar-add" data-act="actOpen">
         <span class="sec-i" aria-hidden="true">&#10133;</span><span>Add</span></button>
-      <button class="${WS_TAB === "evidence" ? "on" : ""}" data-act="wsTab" data-tab="evidence">
+      <button class="${WS_TAB === "evidence" ? "on" : ""}" data-act="wsTab" data-tab="evidence"${
+        WS_TAB === "evidence" ? ' aria-current="page"' : ""}>
         <span class="sec-i" aria-hidden="true">&#128247;</span><span>Evidence</span></button>
       <button class="${WS_MORE ? "on" : ""}" data-act="wsMore"
         aria-haspopup="true" aria-expanded="${WS_MORE ? "true" : "false"}">

@@ -311,6 +311,23 @@ const earlierToday = (mins) => {
 // inside four sections now (UIBUILD P6) — when the wanted sub-tab is not in
 // the visible row, walk the section bar until it shows, the way a person
 // hunting for it would.
+/* UNIT 38 — every tab this role can reach on a case, row plus More. The
+   boundary walks below use it, so "no panel anywhere shows money" keeps
+   meaning ANYWHERE rather than "in the four sections that used to exist". */
+async function wsAllTabs(page) {
+  return page.evaluate(() => [...wsPrimary(), ...wsMore()].map(t => ({ key: t[0], label: t[1] })));
+}
+/* Visit every one of them and collect what each drew. */
+async function wsVisitAll(page, read) {
+  const out = [];
+  for (const t of await wsAllTabs(page)) {
+    await page.evaluate(k => { WS_TAB = k; WS_MORE = false; paintCase(); }, t.key);
+    await page.waitForTimeout(220);
+    out.push({ tab: t.label, text: await read(page) });
+  }
+  return out;
+}
+
 /* UNIT 38 — the case workspace is one level deep now. Six tabs in a row, and
    everything else behind More. This walks the same way a person does: look for
    the tab, and if it is not on the row, open More and take it from there. */
@@ -391,7 +408,12 @@ section('Admin case list');
   const subj = await text(page, '#dlgBody');
   ok('the claimant is labelled as a claimant', subj.includes('Claimant'));
   ok('the injury and restrictions are shown', subj.includes('Lumbar strain'));
-  ok('the case opens on a workspace with four sections', await page.locator('.wsecs button').count() === 4);
+  /* Unit 38 — one row of six, not four sections over seventeen tabs. */
+  ok('the case opens on a one-level workspace',
+     (await page.locator('.wsnav button').allInnerTexts()).filter(t => !/More/.test(t)).length === 6,
+     JSON.stringify(await page.locator('.wsnav button').allInnerTexts()));
+  ok('and Daily Summary is on it, not three levels down',
+     await page.locator('.wsnav button', { hasText: 'Daily Summary' }).count() === 1);
   await wsTab(page, 'Assignment');
   ok('an admin sees the assignment controls', await page.locator('#asg').count() === 1);
   await page.close();
@@ -472,10 +494,11 @@ section('Investigator scope');
   await wsTab(page, 'Subject');
   const isubj = await text(page, '#dlgBody');
   ok('the investigator gets the injury and restrictions', isubj.includes('Lumbar strain'));
-  const isecs = await text(page, '.wsecs');
-  ok('the investigator navigates their own four sections',
-     has(isecs, 'Assignment') && has(isecs, 'Activity') && has(isecs, 'Case media') && has(isecs, 'Report'));
-  ok('nothing administrative is offered as a section', !has(isecs, 'Admin'));
+  const inav = await page.locator('.wsnav button').allInnerTexts();
+  ok('the investigator gets the same one-level workspace',
+     ['Overview', 'Activity', 'Daily Summary', 'Evidence', 'Report']
+       .every(t => inav.some(x => x.trim() === t)), JSON.stringify(inav));
+  ok('and no Billing tab on it', !inav.some(t => /Billing/i.test(t)), JSON.stringify(inav));
   await wsTab(page, 'Activity log');
   ok('the investigator has an Activity log tab', await page.locator('.wstabs button', { hasText: 'Activity log' }).count() === 1);
   ok('the investigator has a Field work tab', await page.locator('.wstabs button', { hasText: 'Field work' }).count() === 1);
@@ -772,7 +795,8 @@ section('Adding a test case from the portal');
   // It behaves like a real case, which is the whole point of having one.
   await page.locator('tbody tr', { hasText: 'TEST-' }).first().click();
   await page.waitForTimeout(500);
-  ok('it opens a full workspace', await page.locator('.wsecs button').count() === 4);
+  ok('it opens a full workspace', await page.locator('.wsnav button').count() >= 6,
+     String(await page.locator('.wsnav button').count()));
   await wsTab(page, 'Authorization');
   const auth = await text(page, '#dlgBody');
   ok('it arrives with hours to work against', auth.includes('24 hours'));
@@ -1185,9 +1209,9 @@ section('The case workspace in the browser');
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(450);
 
-  const secbar = await text(page, '.wsecs');
-  for (const t of ['Overview', 'Fieldwork', 'Report & Media', 'Admin']) {
-    ok(`the workspace navigates by section: ${t}`, has(secbar, t), secbar);
+  const navbar = await text(page, '.wsnav');
+  for (const t of ['Overview', 'Activity', 'Daily Summary', 'Evidence', 'Report', 'Billing']) {
+    ok(`the workspace navigates in one row: ${t}`, has(navbar, t), navbar);
   }
   // Every panel is still reachable behind its section.
   for (const t of ['Subject', 'Activity log', 'Field work', 'Authorization', 'Assignment']) {
@@ -1414,9 +1438,9 @@ section('An investigator gets the same field tools, without the money');
   await signIn(page, 'dana', 'FieldWork2026x');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(450);
-  const fsecs = await text(page, '.wsecs');
-  ok('they get their own sections', has(fsecs, 'Activity') && has(fsecs, 'Case media') && has(fsecs, 'Report'));
-  ok('they do not get the Admin section', !has(fsecs, 'Admin'));
+  const fnav = await text(page, '.wsnav');
+  ok('they get their own row', has(fnav, 'Activity') && has(fnav, 'Evidence') && has(fnav, 'Report'));
+  ok('they do not get Billing on it', !has(fnav, 'Billing'));
 
   await wsTab(page, 'Field work');
   ok('they get field work', has(await text(page, '.wstabs button.on'), 'Field work'));
@@ -4092,14 +4116,11 @@ section('The case page: four sections, one obvious next step');
 
   // Walk every section an investigator has; no sub-tab anywhere is money.
   const seen = [];
-  for (const sec of await page.locator('.wsecs button').all()) {
-    await sec.click();
-    await page.waitForTimeout(180);
-    seen.push(await text(page, '.wstabs'));
-  }
+  for (const t of await wsAllTabs(page)) seen.push(t.label);
   const everything = seen.join(' ');
-  ok('no section hides a Billing panel', !has(everything, 'Billing'));
-  ok('no section hides a Package panel', !has(everything, 'Package'));
+  ok('nothing anywhere in their nav is a Billing panel', !has(everything, 'Billing'), everything);
+  ok('nothing anywhere in their nav is a Package panel', !has(everything, 'Package'), everything);
+  ok('and the walk really walked something', seen.length >= 8, String(seen.length));
   ok('no section hides an Assignment panel', !has(everything, 'Assignment'));
   await page.close();
 }
@@ -4288,13 +4309,13 @@ section('The field case home, on a desk and in a hand');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
   ok('the section bar is the bottom navigation on a phone',
-     (await page.evaluate(() => getComputedStyle(document.querySelector('.wsecs')).position)) === 'fixed');
-  const box = await page.locator('.wsecs').boundingBox();
+     (await page.evaluate(() => getComputedStyle(document.querySelector('.wsbar')).position)) === 'fixed');
+  const box = await page.locator('.wsbar').boundingBox();
   ok('and it sits at the bottom of the hand', box && box.y > 600, JSON.stringify(box));
-  ok('with thumb-size words', has(await text(page, '.wsecs'), 'Home'));
-  await page.locator('.wsecs button', { hasText: 'Case media' }).click();
-  await page.waitForTimeout(350);
-  ok('the bottom bar navigates', has(await text(page, '.wstabs button.on'), 'Case media'));
+  ok('with thumb-size words', has(await text(page, '.wsbar'), 'Activity'));
+  await page.locator('.wsbar button', { hasText: 'Evidence' }).click();
+  await page.waitForTimeout(400);
+  ok('the bottom bar navigates', (await page.evaluate(() => WS_TAB)) === 'evidence');
   await page.close();
 }
 
@@ -6453,13 +6474,21 @@ section('The phone bottom bar can be seen and hit');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(700);
 
-  const bar = page.locator('.casepage .wsecs');
+  const bar = page.locator('.casepage .wsbar');
   ok('the bottom bar is there on a phone', await bar.isVisible());
 
   const box = await bar.boundingBox();
-  const btns = page.locator('.casepage .wsecs button');
+  const btns = page.locator('.casepage .wsbar button');
   const n = await btns.count();
-  ok('it carries the four sections', n === 4);
+  /* Unit 38 — Activity, Summary, + Add, Evidence, More. */
+  ok('it carries the five field keys', n === 5, String(n));
+  const barText = await text(page, '.casepage .wsbar');
+  ok('Activity and Summary are IN the bar, never under More',
+     has(barText, 'Activity') && has(barText, 'Summary'), barText);
+  ok('and the middle key is the one you press standing up',
+     await page.locator('.casepage .wsbar .wsbar-add').count() === 1);
+  ok('the desktop row is not a second navigation on a phone',
+     (await page.evaluate(() => getComputedStyle(document.querySelector('.wsnav')).display)) === 'none');
 
   let shortest = 1e9, lowestTop = 0;
   for (let i = 0; i < n; i++) {
@@ -6478,16 +6507,15 @@ section('The phone bottom bar can be seen and hit');
   ok('and the bar itself reaches the edge, so nothing shows through beneath it',
      Math.round(box.y + box.height) >= 844);
 
-  ok('each section has an icon, not just a word in small caps',
-     await page.locator('.casepage .wsecs .sec-i').count() === 4);
-  ok('the section you are on is marked for a screen reader too',
-     await page.locator('.casepage .wsecs button[aria-current="page"]').count() === 1);
+  ok('each key has an icon, not just a word in small caps',
+     await page.locator('.casepage .wsbar .sec-i').count() === 5);
 
   // Tapping still works — visibility changes must not break the routing.
-  await btns.nth(1).click();
+  await btns.nth(0).click();
   await page.waitForTimeout(600);
-  ok('tapping a section switches to it',
-     has(await text(page, '.casepage .wsecs button.on'), 'Field'));
+  ok('tapping a key switches to it', (await page.evaluate(() => WS_TAB)) === 'activity');
+  ok('and the one you are on is marked for a screen reader too',
+     await page.locator('.casepage .wsbar button[aria-current="page"]').count() === 1);
   await page.close();
 }
 
@@ -11058,13 +11086,7 @@ section('A legal case shows an investigator the work, never the firm');
      !has(await text(page, '.wstabs'), 'Legal') && await page.evaluate(() => !WS.legal));
   /* Walk every section they have and assert the firm's identity is nowhere. */
   let all = '';
-  for (const sec of await page.locator('.wsecs button').all()) {
-    await sec.click(); await page.waitForTimeout(200);
-    for (const t of await page.locator('.wstabs button').all()) {
-      await t.click(); await page.waitForTimeout(150);
-      all += await text(page, '#dlgBody');
-    }
-  }
+  for (const seen of await wsVisitAll(page, p2 => text(p2, '#dlgBody'))) all += seen.text;
   ok('no firm, attorney or matter identity anywhere in their case',
      !all.includes('Harmon') && !all.includes('M-88'), all.slice(0, 150));
   ok('while the subject is theirs to work', all.includes('Watched Party'));
