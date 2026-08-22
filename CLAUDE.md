@@ -348,6 +348,17 @@ the setting says which business the card is for, and the swap cost one
 `url()`. If a card is ever re-shot, check it against the OTHER two rather than
 on its own.
 
+**TWO OF THE THREE ARE MIRRORED, and for the same reason.** A photograph whose
+subject sits in the LEFT third loses it: that is where the headline goes and
+where the crop bites first, so the card draws the background and buries the
+thing the picture is of. The legal scales and the insurance van both landed
+there, and both were flipped horizontally rather than re-generated — nothing is
+lost, there is no readable text to reverse, and contrast improved slightly in
+both cases (legal 6.64→7.17, insurance 5.54→5.62). **Check a new image for
+this before accepting it**: the subject belongs centre or right. The owner
+reported the van card as "not the van image" while it WAS the van image —
+which is the symptom of exactly this, and the reason it is written down.
+
 **A replacement image needs its subject in the CENTRAL 60% of the frame.** The
 card is three different shapes and crops different axes at each — full width
 and the middle 79% of height on a phone, the middle 79% of width and full
