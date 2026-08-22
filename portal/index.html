@@ -9452,13 +9452,98 @@ function focusRestore(){
   try { el.setSelectionRange(el.value.length, el.value.length); } catch(e){ }
 }
 
+/* ARRIVING SOMEWHERE IS NOT AN ANNOUNCEMENT (owner, 2026-08-22).
+
+   The chokepoint above reads whatever `.note`, `.err`, `.linkbox` or
+   `.loaderr` the screen rendered. On this page `.note` is TWO things: a
+   message the office just caused ("Payment recorded."), and static
+   explanatory prose that is simply part of a panel ("No saved client or firm
+   is linked to this case."). Reading what was rendered cannot tell them apart,
+   so opening a tab would read a paragraph aloud.
+
+   THE FIX DOES NOT CLASSIFY THE TEXT. Deciding "this sentence looks like a
+   confirmation" is the inference this project refuses everywhere else — the
+   `recipientIsCarrier` mistake in a different costume. It uses a fact the page
+   already holds instead: WHICH SCREEN IT IS ON.
+
+   Arriving at a screen adopts whatever is on it as the baseline and says
+   nothing. After that, on that same screen, the text can only change because
+   of something the user did — so that change IS announced. No render site
+   needed a class, an attribute, or a second call.
+
+   KNOWN LIMIT, stated rather than papered over: an action that both produces a
+   message AND lands the user on a different screen is adopted silently. The
+   owner's rule is that arrival is quiet, and that case is arrival. */
 let SR_LAST = "";
+let SR_SCREEN = null;
+/* AND A SCREEN DOES NOT FINISH ARRIVING IN ONE PAINT.
+
+   The screen check alone was not enough, and the suite caught it: Tasks, the
+   Audit trail and the File queue each paint TWICE — once on arrival while
+   their data is still in flight, and again when it lands and the panel draws
+   its explanatory paragraph. The second paint is the same screen with changed
+   text, so it read the paragraph aloud.
+
+   So "the same screen" is not the test. "The user did something" is, which is
+   the owner's wording anyway. This is set by the delegated listeners — the one
+   place every click, submit, change and keystroke on this page passes through
+   — and CLEARED on arrival, so pressing a nav item cannot count as the action
+   that licenses its own destination to speak. */
+let SR_ACTED = false;
+const srActed = () => { SR_ACTED = true; };
+
+/* NAVIGATION IS NOT AN ACTION ON THE DESTINATION, and pressing the tab you are
+   already on is still arrival at it. The screen STRING does not change there,
+   so the arrival branch would not fire — and `invoices` and `calendar` reload
+   on that press, repainting with their panel's prose where a loading state had
+   been. Same screen, changed text, flag set by the press: announced.
+
+   Forcing the next paint down the arrival branch says what is true — you
+   arrived — without the announcer having to know which acts navigate.
+
+   These two ARE the navigation vocabulary of this page: the shell rail and the
+   case tab row. A third door added later and missed costs ONE spurious
+   announcement, not a wrong one; the failure is bounded and quiet, which is
+   why a short list is acceptable here and would not be for a security
+   boundary such as the deleted-case gate or the Worker's redaction allow-list.
+   (Named in words, not by identifier: the suite greps this file for that
+   constant, because a stale copy of a security boundary in the page is worse
+   than no copy.) */
+const SR_NAV_ACTS = ["tab", "wsTab"];
+
+/* Which screen this is. Not a route — the SHELL tab, the case tab, or the
+   field view — because that is the granularity a person experiences as
+   "I went somewhere else". */
+function srScreen(){
+  if(!ME) return "signin";
+  if(SV) return "sv:" + (SV.tab || "") + ":" + (WS_CASE || "");
+  if(VIEW === "case" && WS_CASE) return "case:" + WS_CASE + ":" + WS_TAB;
+  return "tab:" + TAB;
+}
+
 function announceRendered(){
   const el = document.querySelector("#app .err, #app .note, #app .linkbox, #app .loaderr");
   const msg = el ? el.textContent.trim().replace(/\s+/g, " ").slice(0, 240) : "";
+  const sr = document.getElementById("sr");
+  const here = srScreen();
+
+  if(here !== SR_SCREEN){
+    /* Arrival. Take the baseline without speaking it, and CLEAR the region — an
+       announcement from the screen just left must not sit there to be read as
+       though it belonged to this one. Clearing a live region announces
+       nothing. The press that brought us here does not count as an action ON
+       here, so the flag resets with it. */
+    SR_SCREEN = here;
+    SR_LAST = msg;
+    SR_ACTED = false;
+    if(sr) sr.textContent = "";
+    return;
+  }
+  /* Still arriving: a panel whose data landed after the first paint is not
+     somebody being answered. Adopt it and stay quiet. */
+  if(!SR_ACTED){ SR_LAST = msg; return; }
   if(msg === SR_LAST) return;
   SR_LAST = msg;
-  const sr = document.getElementById("sr");
   if(sr) sr.textContent = msg;
 }
 
@@ -9490,6 +9575,13 @@ function paint(){
       <div class="pagebar"><button class="btn sm ghost close" data-act="backToCases">&larr; Back to Cases</button></div>
       <div class="card"><div class="dlg" id="dlgBody">${caseBodyHtml()}</div></div>
     </div>`;
+    /* UNIT 21'S CHOKEPOINT REACHES THIS SCREEN AT LAST. This branch returned
+       before the `announceRendered()` below, so every confirmation and refusal
+       inside a case was drawn silently for a screen-reader user — on the
+       most-opened screen in the portal. It was safe to add only once arrival
+       stopped being an announcement; before that it would have read a panel's
+       explanatory prose aloud on every case tab. */
+    announceRendered();
     // Typing in the sheet's search repaints; hand the cursor straight back —
     // but only to whoever had it, which is what stops opening a case from
     // raising the keyboard.
@@ -17066,6 +17158,8 @@ document.addEventListener("click", ev => {
   const el = ev.target.closest("[data-act]");
   if(!el) return;
   const act = el.dataset.act;
+  if(SR_NAV_ACTS.includes(act)) SR_SCREEN = null;   // arrive, do not announce
+  else srActed();
   if(act === "backToCases"){ VIEW = "list"; render(); }
   else if(act === "navToggle"){
     const open = document.body.classList.toggle("navopen");
@@ -17968,6 +18062,7 @@ document.addEventListener("click", ev => {
 document.addEventListener("submit", ev => {
   const el = ev.target.closest("[data-act]");
   if(!el) return;
+  srActed();
   ev.preventDefault();
   const a = el.dataset.act;
   if(a === "login") doLogin();
@@ -18002,6 +18097,7 @@ document.addEventListener("submit", ev => {
    the Timestamp Video quick tool taught at a different layer. */
 document.addEventListener("change", ev => {
   const act = ev.target.dataset ? ev.target.dataset.actChange : "";
+  if(act) srActed();
   /* The daily summary's controls: capture-then-recompose, per day. */
   if(act === "dsCtl"){ dsCtl(parseInt(ev.target.dataset.day, 10)); return; }
   if(!act || !NL) return;
@@ -18027,6 +18123,7 @@ document.addEventListener("change", ev => {
 
 document.addEventListener("input", ev => {
   const din = ev.target.dataset ? ev.target.dataset.actInput : "";
+  if(din) srActed();
   /* Unit 17 — the reason boxes and the date survive async repaints (loadCloseout
      resolving, a retention write returning) without the box being rebuilt mid-word. */
   if(din === "retDraft"){ RTN_DRAFT[ev.target.id] = ev.target.value; return; }

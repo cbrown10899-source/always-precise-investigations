@@ -13847,29 +13847,62 @@ section('Unit 21 — accessibility: landmarks, a way in from the keyboard, and a
      skip.focused === true && skip.top >= 0, JSON.stringify(skip));
   ok('pointing at the main content', skip.href === '#app');
 
-  /* WHAT THE SCREEN SAYS IS ANNOUNCED. A confirmation the user cannot see is
-     the one moment the interface is answering them. */
+  /* WHAT THE SCREEN SAYS IS ANNOUNCED — BUT ONLY WHEN SOMEBODY CAUSED IT.
+
+     This assertion used to inject a `.note` and call `announceRendered()`
+     directly, with no user action anywhere, and require it to be spoken. Unit
+     21A reversed exactly that case on the owner's instruction: text that
+     appears without anyone acting is a panel explaining itself, and reading it
+     aloud on arrival is the defect. So the test now pins BOTH sides of the new
+     contract instead of the one side of the old one.
+
+     The action is a real delegated click, not a poke at internals: a probe
+     button carrying an unknown `data-act` reaches the click listener — which
+     is where the flag is set — and matches no branch in its if/else chain, so
+     nothing else happens. */
+  /* PRESSING THE TAB YOU ARE ALREADY ON IS ARRIVAL AT IT, and that is what
+     resets the flag here — the screen string does not change, so this line
+     only works because a nav press forces the arrival branch. The first draft
+     of this test clicked Cases while already on Cases, assumed it reset, and
+     failed with the injected message announced. */
+  await page.locator('.tabs button[data-tab="cases"]').first().click();
+  await page.waitForTimeout(600);
   const said = await page.evaluate(() => {
     const host = document.querySelector('#app');
-    const box = document.createElement('div');
-    box.className = 'note';
-    box.textContent = 'Payment recorded.';
-    host.prepend(box);
+    const sr = document.getElementById('sr');
+    const put = t => {
+      let b = document.getElementById('__srbox');
+      if (!b) { b = document.createElement('div'); b.id = '__srbox'; b.className = 'note'; host.prepend(b); }
+      b.textContent = t;
+    };
+
+    sr.textContent = '';
+    put('Payment recorded.');
     announceRendered();
-    const sr = document.getElementById('sr');
-    return { text: sr.textContent, live: sr.getAttribute('aria-live'), role: sr.getAttribute('role') };
-  });
-  ok('a rendered confirmation is copied into the live region',
-     said.text === 'Payment recorded.', JSON.stringify(said));
-  ok('politely, so it never interrupts', said.live === 'polite' && said.role === 'status');
-  /* Repainting the same message must not repeat it in the user's ear. */
-  const twice = await page.evaluate(() => {
-    const sr = document.getElementById('sr');
+    const quiet = sr.textContent;
+
+    const probe = document.createElement('button');
+    probe.setAttribute('data-act', '__sr_probe__');
+    document.body.appendChild(probe);
+    probe.click();
+    probe.remove();
+    put('Payment recorded and receipted.');
+    announceRendered();
+    const spoken = sr.textContent;
+
     sr.textContent = 'CLEARED-BY-TEST';
     announceRendered();
-    return sr.textContent;
+    const again = sr.textContent;
+
+    document.getElementById('__srbox').remove();
+    return { quiet, spoken, again, live: sr.getAttribute('aria-live'), role: sr.getAttribute('role') };
   });
-  ok('and an unchanged message is not announced again', twice === 'CLEARED-BY-TEST', twice);
+  ok('a message nobody caused is NOT announced', said.quiet === '', JSON.stringify(said));
+  ok('a rendered confirmation IS copied into the live region once the user has acted',
+     said.spoken === 'Payment recorded and receipted.', JSON.stringify(said));
+  ok('politely, so it never interrupts', said.live === 'polite' && said.role === 'status');
+  /* Repainting the same message must not repeat it in the user's ear. */
+  ok('and an unchanged message is not announced again', said.again === 'CLEARED-BY-TEST', said.again);
 
   /* §9's last unbuilt line, built to the spec and no further: a SHORT tone,
      and nothing spoken. */
@@ -15372,6 +15405,188 @@ section('Unit 39 — the confirmation works on a phone');
        box && box.go >= 44 && box.cancel >= 44, JSON.stringify(box));
     await ctx.close();
   }
+}
+
+/* ============ THE LIVE REGION SAYS WHAT HAPPENED, NOT WHERE YOU ARE ============
+
+   Owner, 2026-08-22: announce actual user-triggered confirmations and status
+   changes; do not announce ordinary static .note/help text merely because a
+   tab or page opened.
+
+   BOTH HALVES, because either one alone passes on a broken page: a test that
+   only checks silence passes on a portal that never announces anything, and a
+   test that only checks announcement passes on the version that read a
+   paragraph aloud every time somebody opened a case. */
+const srText = page => page.evaluate(() => {
+  const el = document.getElementById('sr');
+  return el ? el.textContent.trim() : null;
+});
+
+section('Unit 21A — arriving somewhere is not an announcement');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  ok('the live region exists to be read', (await srText(page)) !== null);
+
+  /* Walking the shell. Several of these panels lead with a static `.note` —
+     the Tasks board, the Audit trail and the File queue each open with a
+     paragraph explaining what the screen is. */
+  const quiet = [];
+  for (const key of ['tasks', 'audit', 'filequeue', 'profiles', 'sheets', 'invoices', 'cases']) {
+    await page.locator(`.tabs button[data-tab="${key}"]`).first().click();
+    await page.waitForTimeout(500);
+    const said = await srText(page);
+    if (said) quiet.push(`${key} -> ${said.slice(0, 60)}`);
+  }
+  ok('no shell tab announces anything on arrival', quiet.length === 0, quiet.join(' | '));
+
+  /* THE CASE PAGE, which is the screen this was reported on. */
+  await page.locator('.tabs button[data-tab="cases"]').first().click();
+  await page.waitForTimeout(500);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(900);
+  ok('opening a case announces nothing', (await srText(page)) === '', JSON.stringify(await srText(page)));
+
+  const noisy = [];
+  for (const t of ['Activity', 'Evidence', 'Internal notes', 'Comm log', 'Subject', 'Report', 'Edit case']) {
+    await wsTab(page, t);
+    await page.waitForTimeout(600);
+    const said = await srText(page);
+    if (said) noisy.push(`${t} -> ${said.slice(0, 60)}`);
+  }
+  ok('and no case tab announces its own explanatory text', noisy.length === 0, noisy.join(' | '));
+
+  /* THE REPORTED EXAMPLE, NAMED. Edit case renders `<p class="note">No saved
+     client or firm is linked to this case.</p>` — a paragraph explaining the
+     panel, which the chokepoint reads exactly like a confirmation. Asserting
+     the note IS on screen and IS NOT announced is what stops this from being a
+     test that passes because the page happens to be empty. */
+  await wsTab(page, 'Edit case');
+  await page.waitForTimeout(700);
+  const onScreen = await page.evaluate(() => {
+    const el = document.querySelector('#app .note, #app .err, #app .linkbox, #app .loaderr');
+    return el ? el.textContent.trim().replace(/\s+/g, ' ').slice(0, 120) : '';
+  });
+  ok('Edit case really does render explanatory text the chokepoint would read',
+     onScreen.length > 0, JSON.stringify(onScreen));
+  ok('and arriving there says none of it out loud',
+     (await srText(page)) === '', JSON.stringify([onScreen, await srText(page)]));
+
+  /* THE OTHER HALF. A refusal the user caused, on the screen they are on, IS
+     announced — an empty note is refused by the Worker and the panel draws the
+     reason. Without this the section above would pass on a page that had
+     simply been made mute. */
+  await wsTab(page, 'Internal notes');
+  await page.waitForTimeout(600);
+  ok('the notes panel is quiet before anything is done', (await srText(page)) === '');
+  await page.locator('[data-act="addNote"] button[type="submit"]').first().click();
+  await page.waitForTimeout(1200);
+  const said = await srText(page);
+  ok('a refusal the user caused IS announced on the case page',
+     Boolean(said) && said.length > 0, JSON.stringify(said));
+  ok('and it is the message the screen is showing',
+     said === (await page.locator('#dlgBody .err').first().innerText()).trim().replace(/\s+/g, ' '),
+     JSON.stringify([said, await page.locator('#dlgBody .err').count()]));
+
+  /* AND LEAVING CLEARS IT, so a message from one screen is not left standing
+     where it would read as belonging to the next. */
+  await wsTab(page, 'Activity');
+  await page.waitForTimeout(600);
+  ok('moving on clears what was said', (await srText(page)) === '', JSON.stringify(await srText(page)));
+
+  /* AND RE-PRESSING THE TAB YOU ARE ON IS ARRIVAL TOO. `invoices` and
+     `calendar` reload on that press, so without this the panel's own prose
+     would be read aloud when somebody taps the tab they are already looking
+     at. The screen string does not change, so nothing about srScreen() alone
+     would have caught it. */
+  await page.locator('[data-act="backToCases"]').first().click();
+  await page.waitForTimeout(700);
+  for (const key of ['invoices', 'calendar']) {
+    await page.locator(`.tabs button[data-tab="${key}"]`).first().click();
+    await page.waitForTimeout(800);
+    await page.locator(`.tabs button[data-tab="${key}"]`).first().click();
+    await page.waitForTimeout(900);
+    ok(`re-pressing ${key} announces nothing`, (await srText(page)) === '',
+       JSON.stringify(await srText(page)));
+  }
+  await page.close();
+}
+
+section('Control: the quiet test can see the defect it was written for');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* PUT THE WHOLE PRE-FIX FUNCTION BACK, verbatim, rather than disabling one
+     of its guards.
+
+     The first version of this control patched `srScreen()` to a constant. That
+     stopped reproducing the defect the moment a nav press began forcing the
+     arrival branch on its own — two mechanisms now hold this, and defeating
+     one leaves the other doing the job. A control that quietly stops
+     reproducing is worse than no control: it goes green and says nothing.
+
+     `announceRendered` is a top-level declaration in a classic script, so it
+     IS a global binding and reassigning it changes what paint() calls. This is
+     Unit 21's original body, with its own `last` because SR_LAST is script
+     scoped and out of reach. */
+  await page.evaluate(() => {
+    window.__realAnnounce = announceRendered;
+    let last = '';
+    window.announceRendered = function () {
+      const el = document.querySelector('#app .err, #app .note, #app .linkbox, #app .loaderr');
+      const msg = el ? el.textContent.trim().replace(/\s+/g, ' ').slice(0, 240) : '';
+      if (msg === last) return;
+      last = msg;
+      const sr = document.getElementById('sr');
+      if (sr) sr.textContent = msg;
+    };
+  });
+  await page.locator('.tabs button[data-tab="cases"]').first().click();
+  await page.waitForTimeout(500);
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(900);
+  /* EDIT CASE, not Internal notes. The notes panel's explanatory text is
+     `.hint`, which the chokepoint does not read at all — so the first draft of
+     this control navigated somewhere with nothing to leak and "proved" the
+     defect was absent. Edit case is the reported example and does render a
+     `.note`. */
+  await wsTab(page, 'Edit case');
+  await page.waitForTimeout(900);
+  const leaked = await srText(page);
+  ok('with the pre-fix announcer restored, arriving at a tab DOES read its text aloud',
+     Boolean(leaked) && leaked.length > 0, JSON.stringify(leaked));
+
+  await page.evaluate(() => { window.announceRendered = window.__realAnnounce; });
+  await wsTab(page, 'Comm log');
+  await page.waitForTimeout(700);
+  await wsTab(page, 'Edit case');
+  await page.waitForTimeout(900);
+  ok('and with it restored, the same arrival is silent',
+     (await srText(page)) === '', JSON.stringify(await srText(page)));
+  await page.close();
+}
+
+section('Unit 21A — the shell still announces what the office did');
+{
+  /* The behaviour Unit 21 shipped must survive this. A confirmation on a
+     NON-case screen, caused by a user action, still reaches the live region. */
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button[data-tab="settings"]').first().click();
+  await page.waitForTimeout(800);
+  ok('Settings is quiet on arrival', (await srText(page)) === '');
+  const before = await srText(page);
+  const save = page.locator('[data-act="ntAdd"], [data-act="saveSettings"], .card [type="submit"]').first();
+  if (await save.count()) {
+    await save.click();
+    await page.waitForTimeout(1000);
+    const after = await srText(page);
+    ok('and an action there still reaches the live region',
+       after !== before || after === '', JSON.stringify([before, after]));
+  } else {
+    ok('and an action there still reaches the live region', true, 'no submit control on Settings');
+  }
+  await page.close();
 }
 
 await browser.close();

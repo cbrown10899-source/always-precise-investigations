@@ -692,3 +692,37 @@ recorded red-but-applied for Unit 27.
 routes will answer **503 naming the workflow** rather than failing quietly, and
 re-dispatching `portal-setup.yml` is safe and idempotent — it will go red on
 the same step and apply the schema again regardless.
+
+---
+
+## PART 15 — Unit 21A, the case-page live region
+
+**Owner decision, 2026-08-22**, on the finding Unit 39 reported rather than
+fixed: *"announce actual user-triggered confirmations/status changes; do not
+announce ordinary static .note/help text on page/tab arrival."*
+
+`paint()`'s case branch returned before Unit 21's chokepoint, so every
+confirmation and refusal inside a case was silent for a screen-reader user. The
+one-line call was the trap: `.note` carries both messages and panel prose, so
+adding it would have read *"No saved client or firm is linked to this case"*
+aloud on every visit to Edit case.
+
+**No text is classified.** `srScreen()` names the screen and `SR_ACTED` records
+whether the user has done anything on it. Arrival adopts the baseline silently
+and clears the region; a change after a real action is announced. `SR_ACTED`
+is set at the four delegated listeners and cleared on arrival, so a nav press
+cannot license its own destination.
+
+**The suite rejected the first version.** `srScreen()` alone let Tasks, the
+Audit trail and the File queue announce their explanatory paragraphs, because
+each paints twice — once on arrival, once when its data lands. Only a real run
+could have shown that.
+
+**Known limit:** an action that both produces a message and lands the user on a
+different screen is adopted silently.
+
+| | |
+| --- | --- |
+| Schema | **none** — no `portal-setup` dispatch |
+| Visual behaviour | unchanged |
+| Unit 38 focus behaviour | unchanged |

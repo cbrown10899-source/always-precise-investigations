@@ -353,7 +353,21 @@ already holding, and treats an ABSENT key as *unknown* rather than clean.
 `harden-check.yml` dispatches it; run **32584685117** confirmed the two Unit 39
 tables are on the production database.
 
-## 🔵 QUEUED — reported by Unit 38, deferred to the owner rather than fixed
+## ✅ CLOSED — Unit 21A, the case-page live region (owner decision, 2026-08-22)
+
+The item below was reported by Unit 38 and left to the owner. **They decided
+it: fix it.** Shipped as Unit 21A — `srScreen()` plus `SR_ACTED` in
+`portal/index.html`, so the case page announces what the user caused and stays
+silent on arrival. Detail in `CLAUDE.md` (*Accessibility was measured, then
+fixed* → Unit 21A) and `RECONCILIATION.md`.
+
+**The first version was wrong and the suite caught it** — Tasks, Audit and File
+queue each paint twice, so the screen check alone read their explanatory
+paragraphs aloud. "The user did something" is the test, not "the same screen".
+
+The original report follows, kept for its reasoning.
+
+## 🔵 WAS QUEUED — reported by Unit 38, now fixed as Unit 21A
 
 **`announceRendered()` never runs on the case page.** Unit 21's chokepoint is
 the whole design — *"reading what was rendered catches every one of them and
