@@ -54,7 +54,7 @@ completed.
 | **Deployed** | at `f2f49d4`: `Deploy site to Cloudflare Pages` ✅ **run 32557961911** and `Deploy case-portal Worker` ✅ **run 32557961914** — Unit 38 touched both. LIVE byte-check not possible from this container — the proxy refuses the domain (403), as recorded |
 | **Closeout** | ✅ **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** — see `case-portal/FINAL-LEDGER.md` |
 | **Owner decisions** | ✅ five LOCKED at closeout, 2026-08-21 — see **FINAL OWNER DECISIONS** below. Four are deferrals or standing refusals; **decision 4 (Ended by Admin) is BUILT — Unit 27** |
-| **Next unit** | **UNIT 39 — Case content Delete / Restore controls** (owner brief verbatim in `case-portal/CASE-CONTENT-DELETE.md`). **UNIT 38 IS SHIPPED** — #232 at `f2f49d4`, both deploys green, visual LIVE VERIFY open for the owner; the owner's own instruction is to stop after it for that review. Historical row below kept for its detail: **UNIT 38 — Case Workspace Simplification** (owner brief verbatim in `case-portal/CASE-WORKSPACE.md`), carrying Activity oldest-to-newest ordering and simplified Activity / Daily Summary access. Then **UNIT 39 — Case content Delete / Restore controls** (owner brief verbatim in `case-portal/CASE-CONTENT-DELETE.md`), a PRODUCTION unit covering activity, days, daily summaries, evidence, package contents and an audit of other user-entered records. Unit 37 (the audit) did **not** pass and **37A fixed all three of its findings** — record in `case-portal/PRODUCTION-TRUTH-2.md` |
+| **Next unit** | **NONE — the durable queue is empty of required work.** Units 17A–39 are shipped; 38 and 39 are both LIVE VERIFIED by the owner (2026-08-22). What remains is Unit 23's live-verification sweep (deferred — needs a real case) and the deferred-by-owner list. **Do not start anything without the owner.** |
 
 ## 🔄 RESUME POINT — Production Truth Correction Queue (Units 28–33)
 
@@ -206,7 +206,8 @@ touch how existing cases are categorised, so it is recorded rather than done.
   door's own accessible page name and the legal page's cache-rule parity. The
   regression tests are written from that boundary and control-checked: with the
   fallback disabled the suite reports ten failures.
-- **39 — Case content Delete / Restore controls.** ✅ **DONE — DEPLOYED** at
+- **39 — Case content Delete / Restore controls.** ✅ **DONE — LIVE VERIFIED**
+  by the owner on 2026-08-22. Deployed at
   `79da2b8` (#234), site run 32583655929 and Worker run 32583656010 both ✅,
   **Schema ✅ CONFIRMED PRESENT ON PRODUCTION** by `harden-check` run
   **32584685117** (22 passed, 0 failed): *"every table this build expects is on
@@ -235,7 +236,7 @@ touch how existing cases are categorised, so it is recorded rather than done.
   tests rather than code. Detail and derived decisions A1–A7 in
   `CASE-CONTENT-DELETE.md`; findings in `RECONCILIATION.md`.
   The original queue entry follows.
-- **39 (as queued).** 🔵 **REQUIRED, after 38.**
+- **39 (as queued) — the original brief text, kept for its detail.** ✅ Shipped and LIVE VERIFIED; this entry is history, not a queue item.
   Owner brief verbatim in `case-portal/CASE-CONTENT-DELETE.md`. **This is a
   PRODUCTION unit and the owner says so in the first line** — Admin must be
   able to remove incorrectly entered or no-longer-needed information from
@@ -256,7 +257,8 @@ touch how existing cases are categorised, so it is recorded rather than done.
   actor and timestamp preserved, reason preserved where consequential, and a
   finalized report whose source changed must say **SOURCE DATA CHANGED —
   REBUILD REQUIRED** rather than quietly looking current.
-- **38 — Case Workspace Simplification.** ✅ **DONE — DEPLOYED** at `f2f49d4`
+- **38 — Case Workspace Simplification.** ✅ **DONE — LIVE VERIFIED** by the
+  owner on 2026-08-22. Deployed at `f2f49d4`
   (#232), site run 32557961911 and Worker run 32557961914 both ✅. No schema,
   **no `portal-setup` dispatch owed.** Visual **LIVE VERIFY OPEN** for the
   owner, and the owner's instruction is to stop here for it. All twenty named
@@ -297,6 +299,33 @@ touch how existing cases are categorised, so it is recorded rather than done.
   CODED / TESTED / PUSHED / MERGED / DEPLOYED / LIVE VERIFIED per unit. Nothing
   deferred was converted to complete. **No non-deferred approved requirement is
   missing.**
+
+## ✅ RECONCILE, 2026-08-22 — the required queue is empty
+
+Run on the owner's instruction after Unit 39's visual review passed. Every
+open-state marker in this file was scanned, not just the queue table, and each
+was checked against the code rather than against memory.
+
+**Units 17A–39 are all shipped.** 38 and 39 are LIVE VERIFIED by the owner
+(2026-08-22); the rest are deployed with owner visual verification open, which
+is the owner's to close and not development work.
+
+**Three stale states were corrected rather than left to mislead a later
+session:**
+
+1. The master-queue rows still read **38 IN FLIGHT** and **39 REQUIRED**.
+2. **OWNER WORKFLOW SIMPLIFICATION was headed QUEUED and is entirely
+   shipped** — all five parts, absorbed into later units, and never referenced
+   in `FINAL-LEDGER.md`, so nothing had ever closed it. Each part was verified
+   against the code; §1 is even annotated in `portal/index.html` with the
+   requirement it satisfies. **This is the one that mattered:** a block reading
+   QUEUED is how a later session rebuilds something that already exists.
+3. The Codex send-context findings 2 and 3 were headed **🔴 OPEN** while their
+   own summary said the owner *"chose this knowingly after four rounds"*. They
+   are decided and accepted, not pending. The optional way back — a typed
+   `recipient_kind` — remains unstarted and owner-gated.
+
+**Nothing was found that is required, approved and unbuilt.**
 
 ## 🔒 OWNER DECISIONS — 2026-08-22, Unit 39 (LOCKED)
 
@@ -412,8 +441,8 @@ CREATE A BRANCH. DO NOT DEPLOY. DO NOT START THE NEXT UNIT."*
 | 36 | Optional-field labelling, audited off the validators | ✅ **DONE — DEPLOYED** at `b34ccda` (#228), Pages run 32540154210. LIVE VERIFY **OPEN** |
 | **37** | **Final Production Truth Audit — Round 2** | ✅ **DONE — NOT PASSED.** One HIGH, two lesser. Result and correction queue in `case-portal/PRODUCTION-TRUTH-2.md`. No repository file was changed to run it |
 | **37A** | **HOTFIX — all three Round 2 findings** | ✅ **DONE.** HIGH: the search gained an intake fallback over `submissions.subject_name` and the payload address, scoped like the structured arms, with `case_subjects` kept as the preferred source so a curated case returns once. MEDIUM: `pageName()`/`pageKind()` give each door its own accessible name. LOW: `/legal-investigations/*` gained its siblings' cache rule, security untouched. **No schema.** Detail in `PRODUCTION-TRUTH-2.md` |
-| **38** | **Case Workspace Simplification** (the owner's message calls it "Unit 34" — that number is taken; see below) | 🟡 **IN FLIGHT.** Owner brief verbatim in `case-portal/CASE-WORKSPACE.md`. Carries **Activity oldest-to-newest ordering** and **simplified Activity / Daily Summary access** inside it, by the owner's instruction — not separate units |
-| **39** | **Case content Delete / Restore controls** | 🔵 **REQUIRED — after 38.** Owner brief verbatim in `case-portal/CASE-CONTENT-DELETE.md`. **A PRODUCTION unit, not test-cleanup**: Admin needs an obvious way to remove wrongly entered information from REAL cases. Six areas — activity, investigation days, daily summaries, evidence, package contents, and an audit of other user-entered records. **No Dropbox byte deletion, no evidence overwrite, no silent hard delete**; Remove from Package is never Delete from Case; a report whose source changed says so rather than looking current |
+| **38** | **Case Workspace Simplification** (the owner's message calls it "Unit 34" — that number is taken; see below) | ✅ **DONE — LIVE VERIFIED** by the owner 2026-08-22, at `f2f49d4` (#232). Owner brief verbatim in `case-portal/CASE-WORKSPACE.md`. Carried **Activity oldest-to-newest ordering** and **simplified Activity / Daily Summary access** inside it, by the owner's instruction — not separate units |
+| **39** | **Case content Delete / Restore controls** | ✅ **DONE — LIVE VERIFIED** by the owner 2026-08-22, at `79da2b8` (#234); schema confirmed on production by `harden-check` run 32584685117. Owner brief verbatim in `case-portal/CASE-CONTENT-DELETE.md`. **A PRODUCTION unit, not test-cleanup**: Admin needs an obvious way to remove wrongly entered information from REAL cases. Six areas — activity, investigation days, daily summaries, evidence, package contents, and an audit of other user-entered records. **No Dropbox byte deletion, no evidence overwrite, no silent hard delete**; Remove from Package is never Delete from Case; a report whose source changed says so rather than looking current |
 
 ## CONFIRMED COMPLETE — DO NOT REOPEN
 
@@ -4908,7 +4937,12 @@ finding. A reference mistyped so badly it matches no row no longer trips the
 claims check, because there is nothing to check against. The owner weighed that
 against a workflow that could not send at all and chose this.
 
-## 🔴 OPEN FINDINGS — Codex DESIGN review of the send-context refactor (2026-08-15)
+## ⚖️ CODEX DESIGN REVIEW of the send-context refactor (2026-08-15) — ALL RESOLVED
+
+**Re-headed on the 2026-08-22 reconcile.** Two findings were fixed; findings 2
+and 3 were **decided by the owner and accepted**, not left pending — the
+summary below has said so in words since it was written, while the state
+column still read "OPEN". Nothing in this table is queued work.
 
 Run on the owner's instruction to *"review the DESIGN, not only the patch"*,
 against `164fa1c`. **Recorded here rather than fixed, on the owner's
@@ -4919,8 +4953,8 @@ the standing rule for a reviewer's report.
 | # | Finding | Codex's confidence | State |
 | --- | --- | --- | --- |
 | 1 | `paymentOptionsFor()` accepted no context, so the payment boundary rested on **call-site convention** rather than on the function handing out the methods. No exploit today; a fifth caller would have inherited nothing and looked correct | design weakness, no current exploit | ✅ **FIXED** before the instruction landed — the gate is in the function and fails closed on the `null` an omitted argument supplies. Two source-level guards assert it |
-| 2 | **A real protection was lost.** An authenticated admin who omits or mistypes `case_no` can send Cash App/Venmo to an address already stored as a carrier contact. The old `recipientIsCarrier` blocked that; the new pairing refuses only when the reference actually resolves to a claims row | confirmed | 🔴 **OPEN — owner decision.** This is the deliberate consequence of removing recipient inference. Requires admin auth; not externally exploitable |
-| 3 | **Separation is weaker operationally, equal structurally.** The formal invariant (an insurance sheet can never contain payment) is unchanged. The broader goal — *a carrier never receives consumer payment instructions* — is weaker, because a route-labelled PRIVATE send with an absent or unresolved reference can now reach a known carrier email | confirmed | 🔴 **OPEN — same decision** |
+| 2 | **A real protection was lost.** An authenticated admin who omits or mistypes `case_no` can send Cash App/Venmo to an address already stored as a carrier contact. The old `recipientIsCarrier` blocked that; the new pairing refuses only when the reference actually resolves to a claims row | confirmed | ⚖️ **OWNER-DECIDED AND ACCEPTED**, not pending work. The owner chose this knowingly after four rounds; the deliberate consequence of removing recipient inference. Requires admin auth; not externally exploitable. The way back — a typed `recipient_kind` — is **unstarted and not to be started without the owner** |
+| 3 | **Separation is weaker operationally, equal structurally.** The formal invariant (an insurance sheet can never contain payment) is unchanged. The broader goal — *a carrier never receives consumer payment instructions* — is weaker, because a route-labelled PRIVATE send with an absent or unresolved reference can now reach a known carrier email | confirmed | ⚖️ **OWNER-DECIDED AND ACCEPTED — same decision.** Not pending work |
 | 4 | `/intake-link/email` and `/sheets/:id/email` take the product from the request, so an admin chooses it rather than the server deriving it independently | confirmed, not a payment issue | 🟡 **OPEN, judged acceptable** — neither route can reach a payment method by that choice, both are admin-only, and the alternative is the recipient inference the owner removed |
 | 5 | The case-backed intake send bypassed `contextForKind` / `send_context` entirely | confirmed | ✅ **FIXED** — that was the separate stop-gate finding; the route is inside the model and fails closed on an unrecognised kind |
 
@@ -4934,7 +4968,25 @@ repo migration rules."* A `recipient_kind` written when a contact is first
 recorded would restore the protection as a typed fact rather than a guess.
 **Not built, not started, and not to be started without the owner.**
 
-## 📥 QUEUED — OWNER WORKFLOW SIMPLIFICATION (2026-08-15)
+## ✅ SHIPPED — OWNER WORKFLOW SIMPLIFICATION (queued 2026-08-15, closed 2026-08-22)
+
+**This block said QUEUED until the 2026-08-22 reconcile, and every one of its
+five parts had already shipped inside later units.** It was never referenced in
+`FINAL-LEDGER.md`, so nothing had closed it — and a block reading QUEUED is
+exactly how a later session rebuilds something that already exists. Checked
+against the code rather than against memory:
+
+| § | Part | Where it shipped |
+| --- | --- | --- |
+| 1 | Record Payment easy to reach | Four doors in `portal/index.html`, one of which carries the comment *"§1 — Make Record Payment easy to reach"* |
+| 2 | Archive, and admin-only delete as a tombstone | `case_archive` and `case_deleted`, both documented in `CLAUDE.md` under *Case lifecycle*; Unit 39 widened the same model to eight more record types |
+| 3 | Claim reference optional, assignment not required | Unit 36 audited requiredness off the validators — the claimant name **or** the claim number is the pair, and no route requires `assigned_to` |
+| 4 | Both admin accounts see identical data | Admins are unscoped in the SQL; the role boundary is investigator-side only |
+| 5 | Two admins in Active Surveillance on one case | `openDayForAction`'s `allowOthers`, `/day/end-other`, and the per-session pause index — `CLAUDE.md` records the design |
+
+**Nothing here is outstanding.** The original text follows unchanged.
+
+### The block as it was queued
 
 Recorded verbatim in **`WORKFLOW-SIMPLIFICATION.md`** next to this file, on
 arrival, before any of it was built. **Queued behind the current unit on the

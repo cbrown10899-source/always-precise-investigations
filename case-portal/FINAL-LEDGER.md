@@ -565,7 +565,7 @@ behind the burger.
 | Worker deploy | `Deploy case-portal Worker` run **32557961914** ✅ |
 | Schema | **none** — no `portal-setup` dispatch owed |
 | Suites | worker **2796/0** · portal **2660/0** · deploy guard **86/0** · intake **467/0** · visitor-alerts **47/0** |
-| LIVE VERIFIED | **OPEN** — the owner's visual review, as the brief asks |
+| LIVE VERIFIED | ✅ **YES — the owner's visual review passed, 2026-08-22** |
 
 ### One thing this unit reported instead of fixing
 
@@ -644,7 +644,7 @@ page** — the honest split between what each catches.
 | Worker deploy | `Deploy case-portal Worker` run **32583656010** ✅ |
 | Schema | ✅ **CONFIRMED PRESENT ON PRODUCTION** — `harden-check` run 32584685117, *"every table this build expects is on the database"*. `portal-setup.yml` run **32583766475** — **RED, and the schema still applied**: step 8 *Apply the schema* ✅, and the run fails only on step 13 *Create the first admin* with `401 not authorised`, the pre-existing bootstrap-token race already recorded in `NEXT.md`. Step 14 destroyed the bootstrap token ✅, so no credential is left behind. It was **not** verifiable from the build container (the network policy refuses the domain), so it was verified from a GitHub runner instead — see the confirmation above |
 | Suites | worker **2870/0** · portal **2690/0** · deploy guard **86/0** · intake **467/0** · visitor-alerts **47/0** |
-| LIVE VERIFIED | **OPEN** — the owner's visual review, as the brief asks |
+| LIVE VERIFIED | ✅ **YES — the owner's visual review passed, 2026-08-22** |
 
 ### ✅ SCHEMA CONFIRMED ON PRODUCTION — 2026-08-22
 
