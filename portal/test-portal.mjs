@@ -7180,8 +7180,14 @@ section('The case header status chip is a 44px target without becoming a button'
   /* Semantics untouched: it is still the door to the status control. */
   await page.locator('.ch-right .tag').first().click();
   await page.waitForTimeout(700);
+  /* Unit 38 — this passed on the word "Assignment" appearing as a TAB LABEL,
+     and that tab lives inside a closed More menu now. The panel itself never
+     carried the word, so the assertion was reading the navigation rather than
+     the destination. WS_TAB is the destination. */
   ok('tapping it still opens the Assignment panel, unchanged',
-     has(await text(page, 'body'), 'Assignment'));
+     (await wsOpenTab(page)) === 'assign'
+     && await page.locator('#asg').count() === 1,
+     await wsOpenTab(page));
   await page.close();
 }
 
