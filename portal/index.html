@@ -737,6 +737,14 @@
   .ov-mods li:last-child button{border-bottom:0;}
   .ov-ring{display:flex;justify-content:center;margin-bottom:4px;}
   .ov-next{background:var(--gold-soft);border:1px solid #e3d3ae;}
+  /* Unit 38 — the admin overview LEADS with Next step, so the same block runs
+     the width of the panel and reads as a band rather than one card of five.
+     Same class, same .nx, same button: only the layout differs. */
+  .ov-band{display:flex;align-items:center;gap:16px;margin-bottom:14px;}
+  .ov-band h3{margin:0;flex:none;}
+  .ov-band .nx{margin:0;flex:1;}
+  .ov-band .btn{flex:none;min-height:44px;}
+  @media(max-width:560px){ .ov-band{flex-wrap:wrap;gap:8px;} .ov-band .nx{flex:1 1 100%;} }
   .ov-next .nx{font-size:1.02rem;font-weight:800;color:var(--navy-2);margin:2px 0 10px;}
   .ov-recent{margin:0;padding:0;list-style:none;}
   .ov-recent li{display:flex;gap:10px;font-size:.86rem;padding:5px 0;border-bottom:1px solid var(--line);}
@@ -13600,8 +13608,9 @@ function overviewPanel(s, a){
          field view findable after the owner could not reach it from an iPad,
          so it stays as the contextual shortcut the owner's own rule allows
          beside the action row's primary. */""}
-    <div class="ovnext">
-      <div><small>Next step</small><b>${esc(next.label)}</b></div>
+    <div class="ovcard ov-next ov-band">
+      <h3>Next step</h3>
+      <div class="nx">${esc(next.label)}</div>
       <button class="btn" data-act="wsTab" data-tab="${next.tab}">Go &rarr;</button>
     </div>
 

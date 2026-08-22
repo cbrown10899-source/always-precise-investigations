@@ -3038,7 +3038,9 @@ section('Assignment is reachable from the overview, and stays secondary');
   await page.waitForTimeout(500);
 
   /* No wsTab() call: the point is that it is reachable from where a case opens. */
-  const card = await text(page, '.ovcard');
+  /* Unit 38 — the overview is four blocks now and the investigator sits on
+     Case status, so this reads the panel rather than whichever card is first. */
+  const card = await text(page, '.wspanel');
   ok('the overview still names the investigator', has(card, 'Investigator'), card.slice(0, 300));
   const link = page.locator('.ovcard [data-act="wsTab"][data-tab="assign"]');
   ok('and offers a way to act on it without hunting', await link.count() === 1);
