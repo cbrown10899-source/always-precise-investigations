@@ -1879,6 +1879,50 @@ after each paint rather than being called beside each of the dozen message
 globals — it catches every one and any added later, and only speaks when the
 text changes.
 
+### Unit 21A — it says what happened, not where you are
+
+**The chokepoint could not reach the case page**, because `paint()`'s case
+branch returns before it. So every confirmation and refusal inside a case was
+silent for a screen-reader user, on the most-opened screen in the portal —
+reported at the end of Unit 38 and fixed on the owner's instruction of
+2026-08-22: *announce actual user-triggered confirmations; do not announce
+static `.note`/help text merely because a tab or page opened.*
+
+**The one-line call was the trap.** `.note` on this page is two different
+things — a message the office just caused, and prose explaining a panel — so
+simply calling `announceRendered()` from the case branch would have read
+*"No saved client or firm is linked to this case"* aloud on every visit to Edit
+case.
+
+**It does not classify the text.** Deciding "this sentence looks like a
+confirmation" is the `recipientIsCarrier` mistake in a different costume. Two
+facts the page already holds decide it instead:
+
+- **`srScreen()`** — the shell tab, the case tab or the field view. Arriving
+  adopts whatever is rendered as the baseline, says nothing, and CLEARS the
+  region so a message from the screen just left is not read as belonging to
+  this one.
+- **`SR_ACTED`** — set by the four delegated listeners, the single place every
+  click, submit, change and keystroke passes through, and **cleared on
+  arrival**, so pressing a nav item cannot license its own destination to
+  speak.
+
+**The second one exists because a screen does not finish arriving in one
+paint.** Tasks, the Audit trail and the File queue each paint twice — once
+while their data is in flight, once when it lands and draws their explanatory
+paragraph. Same screen, changed text: the screen check alone read all three
+aloud, and the suite named them. "The user did something" is the real test.
+
+**Known limit, stated:** an action that both produces a message and lands the
+user on a different screen is adopted silently. Arrival is quiet by the owner's
+rule, and that case is arrival.
+
+**The old Unit 21 assertion asserted the opposite** and was rewritten rather
+than deleted: it injected a `.note` with nobody having acted and required it to
+be spoken. It now pins both sides, and reaches the flag through a real
+delegated click — a probe button with an unknown `data-act`, which the
+listener sees and no branch matches.
+
 **There is exactly one `h1`, and it lives in `shell()`.** Putting it in the
 static header broke three tests: the new heading sat ahead of the sign-in
 view's own, and marking it `hidden` did not help — **a hidden element is still

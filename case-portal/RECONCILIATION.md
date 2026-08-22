@@ -905,3 +905,58 @@ present means both new tables are on the production D1.
 policy refuses the domain outright (`CONNECT tunnel failed, response 403`).
 That is policy rather than a misconfiguration, and the answer was to move the
 probe to where it can run — not to weaken TLS or route around the proxy.
+
+
+## Unit 21A — the accessibility gap Unit 39 reported, closed 2026-08-22
+
+Unit 39 found that `announceRendered()` never runs on the case page and
+**deliberately did not fix it**, because the obvious one-line call was wrong:
+`.note` on this page carries both a message the office just caused and prose
+explaining a panel, so adding the call would have read *"No saved client or
+firm is linked to this case"* aloud on every visit to Edit case. The owner
+decided it on 2026-08-22 and set the requirement precisely — announce
+user-triggered confirmations, stay quiet on arrival.
+
+**The fix classifies nothing.** Judging a sentence to be a confirmation is the
+`recipientIsCarrier` inference in a different costume, and it would fail
+silently the first time somebody wrote a `<div class="note">` for prose. Two
+facts the page already holds decide it: `srScreen()` (which screen this is) and
+`SR_ACTED` (whether the user has done anything on it).
+
+### The first version was wrong, and the suite is what said so
+
+`srScreen()` alone shipped in the first commit and the portal suite failed it
+immediately — not on the case page, which worked, but on the shell:
+
+```
+FAIL  no shell tab announces anything on arrival —
+  tasks -> What the office said it would do, across every case…
+  audit -> Meaningful changes across every case — who, what and when…
+  filequeue -> Every file the portal holds for the cases you can see…
+```
+
+**A screen does not finish arriving in one paint.** Those three each paint
+twice: once on arrival while their data is in flight, once when it lands and
+the panel draws its paragraph. Same screen, changed text — announced. The
+premise "same screen ⇒ the user caused it" was simply false for any panel that
+loads asynchronously, and only a real run could have shown that.
+
+`SR_ACTED` replaced the premise with the owner's own wording. It is set at the
+four delegated listeners and cleared on arrival, so the two rules compose: a
+late-landing panel is adopted silently because nobody acted, and a nav press
+cannot license its own destination.
+
+### Two test defects found in the same round, both recorded
+
+**The control went somewhere with nothing to leak.** It disabled the screen
+check and navigated to Internal notes — whose explanatory text is `.hint`,
+which the chokepoint does not read at all. It would have reported the defect
+absent. It targets **Edit case** now, the reported example, which does render a
+`.note`.
+
+**The existing Unit 21 assertion asserted the opposite of the new rule.** It
+injected a `.note` with no user action anywhere and required it to be spoken —
+exactly the case the owner asked to silence. Rewritten rather than deleted, it
+now pins both sides, and reaches the flag through a real delegated click (a
+probe button carrying an unknown `data-act`, which the listener sees and no
+branch matches) rather than by poking at internals.

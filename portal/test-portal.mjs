@@ -13847,29 +13847,57 @@ section('Unit 21 — accessibility: landmarks, a way in from the keyboard, and a
      skip.focused === true && skip.top >= 0, JSON.stringify(skip));
   ok('pointing at the main content', skip.href === '#app');
 
-  /* WHAT THE SCREEN SAYS IS ANNOUNCED. A confirmation the user cannot see is
-     the one moment the interface is answering them. */
+  /* WHAT THE SCREEN SAYS IS ANNOUNCED — BUT ONLY WHEN SOMEBODY CAUSED IT.
+
+     This assertion used to inject a `.note` and call `announceRendered()`
+     directly, with no user action anywhere, and require it to be spoken. Unit
+     21A reversed exactly that case on the owner's instruction: text that
+     appears without anyone acting is a panel explaining itself, and reading it
+     aloud on arrival is the defect. So the test now pins BOTH sides of the new
+     contract instead of the one side of the old one.
+
+     The action is a real delegated click, not a poke at internals: a probe
+     button carrying an unknown `data-act` reaches the click listener — which
+     is where the flag is set — and matches no branch in its if/else chain, so
+     nothing else happens. */
+  await page.locator('.tabs button[data-tab="cases"]').first().click();
+  await page.waitForTimeout(600);   // arrival resets the acted flag
   const said = await page.evaluate(() => {
     const host = document.querySelector('#app');
-    const box = document.createElement('div');
-    box.className = 'note';
-    box.textContent = 'Payment recorded.';
-    host.prepend(box);
+    const sr = document.getElementById('sr');
+    const put = t => {
+      let b = document.getElementById('__srbox');
+      if (!b) { b = document.createElement('div'); b.id = '__srbox'; b.className = 'note'; host.prepend(b); }
+      b.textContent = t;
+    };
+
+    sr.textContent = '';
+    put('Payment recorded.');
     announceRendered();
-    const sr = document.getElementById('sr');
-    return { text: sr.textContent, live: sr.getAttribute('aria-live'), role: sr.getAttribute('role') };
-  });
-  ok('a rendered confirmation is copied into the live region',
-     said.text === 'Payment recorded.', JSON.stringify(said));
-  ok('politely, so it never interrupts', said.live === 'polite' && said.role === 'status');
-  /* Repainting the same message must not repeat it in the user's ear. */
-  const twice = await page.evaluate(() => {
-    const sr = document.getElementById('sr');
+    const quiet = sr.textContent;
+
+    const probe = document.createElement('button');
+    probe.setAttribute('data-act', '__sr_probe__');
+    document.body.appendChild(probe);
+    probe.click();
+    probe.remove();
+    put('Payment recorded and receipted.');
+    announceRendered();
+    const spoken = sr.textContent;
+
     sr.textContent = 'CLEARED-BY-TEST';
     announceRendered();
-    return sr.textContent;
+    const again = sr.textContent;
+
+    document.getElementById('__srbox').remove();
+    return { quiet, spoken, again, live: sr.getAttribute('aria-live'), role: sr.getAttribute('role') };
   });
-  ok('and an unchanged message is not announced again', twice === 'CLEARED-BY-TEST', twice);
+  ok('a message nobody caused is NOT announced', said.quiet === '', JSON.stringify(said));
+  ok('a rendered confirmation IS copied into the live region once the user has acted',
+     said.spoken === 'Payment recorded and receipted.', JSON.stringify(said));
+  ok('politely, so it never interrupts', said.live === 'polite' && said.role === 'status');
+  /* Repainting the same message must not repeat it in the user's ear. */
+  ok('and an unchanged message is not announced again', said.again === 'CLEARED-BY-TEST', said.again);
 
   /* §9's last unbuilt line, built to the spec and no further: a SHORT tone,
      and nothing spoken. */
