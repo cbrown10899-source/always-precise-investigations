@@ -54,7 +54,7 @@ completed.
 | **Deployed** | at `74629fe`: `Deploy case-portal Worker` ✅ · `Deploy site to Cloudflare Pages` ✅ · `portal-setup` ✅ (run 32508101361). `Daily site health` ✅ run #22 |
 | **Closeout** | ✅ **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** — see `case-portal/FINAL-LEDGER.md` |
 | **Owner decisions** | ✅ five LOCKED at closeout, 2026-08-21 — see **FINAL OWNER DECISIONS** below. Four are deferrals or standing refusals; **decision 4 (Ended by Admin) is BUILT — Unit 27** |
-| **Next unit** | **NONE — the build order is complete.** 26 closed the project and 27 built the owner's last approved requirement; 23's live sweep is deferred, awaiting real case data. Do not start new features |
+| **Next unit** | **Unit 36 — optional-field labelling — IN FLIGHT** (see below). Two owner requests remain unstarted after it: the **Final Production Truth Audit Round 2** (audit-only), and a **Case Workspace Simplification + Activity Ordering** unit the owner numbered 34 — a COLLISION with the shipped public-site unit, so it needs renumbering (37) before it starts |
 
 ## 🔄 RESUME POINT — Production Truth Correction Queue (Units 28–33)
 
@@ -80,6 +80,45 @@ without a page caller are the three now documented as internal on purpose.
 
 **Owner decision recorded and NOT implemented:** a public Legal / Law Firm
 website page and CTA. Not built in this run, by instruction.
+
+
+## 📋 UNIT 36 — optional-field labelling (owner rule, 2026-08-21)
+
+*"Every field that is genuinely optional must visibly say (optional) in its
+field label. Audit requiredness from the actual server-side validation/schema
+first. Do not guess from the current UI."*
+
+**The audit came first and it changed the design.** `handleIngest` validates
+exactly one thing — `case_no`, which the page mints — because the portal write
+is fire-and-forget so a Worker outage cannot cost the firm a client. So on the
+public form `validate()` IS the firm's requiredness rule, and the labels are
+checked against it BEHAVIOURALLY: fill only the non-optional fields, submit,
+assert it goes through. On the Admin side `createManualIntake`, `editCase`,
+`setLegalDetail`, `createProfile` and `addProfileContact` are the authorities
+and the suite POSTs against them.
+
+**Three markers, because requiredness has three shapes** — required, optional,
+and *one of these two* (six pairs across the two surfaces). A select with no
+empty option is none of the three and carries no marker.
+
+Three defects the audit surfaced, all fixed:
+
+1. **The objective** — the one field an empty form is refused over — carried no
+   marker on any path.
+2. **`<span class="opt">optional</span>` on the public form** inherited the
+   service-picker CARD styling: a 602×53 bordered box with `cursor:pointer` in
+   the middle of a field label, measured on the Legal step. Renamed `.optn`.
+3. **The Admin private lead's Service picker had no empty option**, so a lead
+   filed as *Surveillance* without anyone being asked — under a label that
+   already said optional. It opens on *Not decided yet* now.
+
+**Shipped:** see the handoff table above for the SHA. Suites: intake **445/0**
+(was 236), portal, worker **2755/0**, deploy guard **81/0**, visitor **47/0**.
+No schema, **no portal-setup dispatch**.
+
+**Reported to the owner rather than decided:** the Service-picker change alters
+what a private quick-intake lead stores when nobody touches the dropdown (a
+service, previously; nothing, now). One line reverts it.
 
 
 ## 🔒 OWNER DECISIONS — 2026-08-21, public site (Unit 34)
