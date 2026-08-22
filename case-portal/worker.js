@@ -5496,12 +5496,12 @@ async function caseWorkspace(env, user, caseNo) {
     tasks: mark('task', tasks),
     offers: offers || [],
     my_offer: myOffer || null,
-    /* UNIT 39. The whole removed set for the case, so the page can strike a
-       row through and offer to put it back rather than making it vanish — the
-       `activity_removed` treatment the owner already accepted, applied to the
-       records that had no way out at all. An EMPTY array when the table has
-       not arrived is correct: nothing has been removed yet. */
-    content_removed: [...removedSet],
+    /* THE REMOVED SET IS NOT SENT. It was, briefly: the whole `kind:ref_id`
+       list, so the page could decide what to strike through. Nothing read it —
+       every row already carries its own `removed` flag from `mark()` — so it
+       was a list of record ids riding to an investigator's browser for no
+       reason at all. `FIELD_KEEP`'s rule is that a field the page declines to
+       draw is still sitting in the network tab; the answer is not to send it. */
   });
 }
 

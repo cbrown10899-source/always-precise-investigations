@@ -3802,9 +3802,24 @@ section('Evidence in the browser');
        .locator('.tl-counts').count() >= 1);
   await wsTab(page, 'Evidence');
 
-  await page.locator('[data-act="evDelete"]').first().click();
-  await page.waitForTimeout(600);
-  ok('a delete keeps the record on screen', has(await text(page, '#dlgBody'), 'the record stays'));
+  /* UNIT 39 — removing a file goes through the one confirmation every removable
+     record uses, so the direct `evDelete` button this used to click no longer
+     exists. The assertion it was making is stronger now and is made in two
+     places: the confirmation says the file itself is not deleted BEFORE the
+     act, and the card says so afterwards. */
+  await page.locator('[data-act="rmOpen"][data-kind="evidence"]').first().click();
+  await page.waitForTimeout(800);
+  const evAsk = await text(page, '.amsheet');
+  ok('removing a file asks first, and says the file is not deleted',
+     has(evAsk, 'The file itself is not deleted'), evAsk.replace(/\s+/g, ' ').slice(0, 240));
+  ok('and names what it is about to remove', has(evAsk, 'Remove this file'), evAsk.slice(0, 120));
+  await page.locator('[data-act="rmGo"]').click();
+  await page.waitForTimeout(1200);
+  ok('a delete keeps the record on screen',
+     has(await text(page, '#dlgBody'), 'the file itself was not deleted'),
+     (await text(page, '#dlgBody')).replace(/\s+/g, ' ').slice(0, 240));
+  ok('and offers to put it back', await page.locator(
+     '[data-act="rmOpen"][data-kind="evidence"][data-put="1"]').count() >= 1);
 
   await page.locator('.close').click();
   await page.waitForTimeout(400);
@@ -7237,8 +7252,11 @@ section('Evidence opens in one in-portal viewer, and never leaves the app');
   const viewerFn = src.slice(viewerAt, src.indexOf('\n}\n', viewerAt) + 3);
   ok('the viewer function was found, so the check has something to read',
      viewerFn.length > 200 && viewerFn.includes('evClose'), String(viewerFn.length));
+  /* `rmOpen` joins the list in Unit 39. `evDelete` no longer exists anywhere,
+     so naming only it would have made this guard pass by describing a control
+     that is gone — an absence test has to name the control that IS there. */
   ok('and it offers no download, delete, classify or edit control',
-     !/data-act="(evDelete|evClass|evUpload|download)"/i.test(viewerFn)
+     !/data-act="(evDelete|rmOpen|evClass|evUpload|download)"/i.test(viewerFn)
      && !/\bdownload\b/i.test(viewerFn), viewerFn.slice(0, 200));
 
   const page = await newPage();
@@ -13705,8 +13723,11 @@ section('Unit 24 — the File Queue renders: real states, a working detail panel
      /API-FQP/.test(detail) && /KB|MB|B\b/.test(detail) && /deliverable/i.test(detail), detail.slice(0, 400));
   ok('the integrity wording is the portal\'s own, never a legal claim',
      /not a third-party authentication/i.test(detail));
+  /* Unit 39 renamed the delete control; the File Queue must still carry
+     neither. Naming the retired action alone would have made this vacuous. */
   ok('and it hands off rather than editing — no classify or delete control on it',
-     await page.locator('.fqdetail [data-act="evClassify"], .fqdetail [data-act="evDelete"]').count() === 0);
+     await page.locator('.fqdetail [data-act="evClassify"], .fqdetail [data-act="evDelete"], '
+       + '.fqdetail [data-act="rmOpen"]').count() === 0);
   await page.locator('.fqdetail [data-act="fqPick"]').first().click();
   await page.waitForTimeout(300);
   ok('the workspace closes again', await page.locator('.fqdetail').count() === 0);

@@ -1440,6 +1440,11 @@
   .amfoot .btn{min-height:44px;}
   /* A removed row stays on screen, struck through, with its way back — the
      treatment `activity_removed` already had, now shared by eight more kinds. */
+  /* `.tl-edit` is the small inline action used inside a log line, and Unit 39
+     puts Delete there as well as on `.btn`. Without this the destructive tone
+     applied to one and not the other — the same control reading two ways
+     depending on which panel drew it. */
+  .tl-edit.danger{color:var(--bad);}
   .rmgone{opacity:.55;}
   .rmgone .rmname{text-decoration:line-through;}
   .rmnote{font-size:.8rem;color:var(--muted);}
@@ -10531,7 +10536,10 @@ async function rmGo(){
     await api(`/cases/${encodeURIComponent(WS_CASE)}/content/${RM.kind}/${RM.id}/${verb}`,
       { method: "POST", body: { reason } });
     RM = null;
-    await loadWorkspace(WS_CASE);
+    /* `reloadWorkspace`, not `loadWorkspace` — the latter does not exist. Every
+       panel repaints from WS, so the fresh read is what makes the struck-through
+       row and its way back appear without the screen being told about them. */
+    await reloadWorkspace();
     paint();
   }catch(e){ RM.busy = false; RM.err = e.message; paint(); }
 }
@@ -10791,7 +10799,12 @@ function dayEndedByRow(d){
   if(!label) return "";
   // Unknown is drawn quieter than a named actor, never louder.
   const unknown = d.ended_self === null || d.ended_self === undefined;
-  return `<tr><td colspan="4" class="tl-m"${unknown ? ` style="opacity:.75"` : ""}>${esc(label)}</td></tr>`;
+  /* THE SPAN HAS TO MATCH THE TABLE IT IS IN. Unit 39 gave the office a fifth
+     column for Delete, and a hard-coded 4 would have left this line stopping
+     short of the row above it — the kind of thing that looks like a rendering
+     glitch and is really two numbers that stopped agreeing. */
+  const cols = ME.role === "admin" ? 5 : 4;
+  return `<tr><td colspan="${cols}" class="tl-m"${unknown ? ` style="opacity:.75"` : ""}>${esc(label)}</td></tr>`;
 }
 
 function fieldPanel(){
