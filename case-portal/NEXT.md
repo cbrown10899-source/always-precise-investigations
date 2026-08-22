@@ -46,15 +46,16 @@ completed.
 
 | | |
 | --- | --- |
-| **Master** | **`c8b52a8`** (closeout record, #240) |
+| **Master** | **`e7b9117`** (Unit 40, #242) |
 | **Working tree** | clean; nothing unpushed; no branch in flight |
 | **Background work** | none running |
-| **Suites at that SHA** | worker **2870/0** · portal **2707/0** · deploy guard **86/0** · intake **467/0** · visitor-alerts **47/0**. Worker, deploy guard and visitor were re-run at `c8b52a8`; portal and intake were measured at `d0b98b1` and still hold, because everything since is markdown neither suite reads |
+| **Suites at that SHA** | worker **2870/0** · portal **2707/0** · deploy guard **86/0** · intake **537/0** · visitor-alerts **47/0**. All five run this session. Intake and the deploy guard were run on the final Unit 40 tree; worker, portal and visitor were run during it and `case-portal/**` and `portal/**` are byte-identical between `001d354` and `e7b9117`, so those three results carry |
 | **Schema owed** | **NONE.** `case_day_end` was applied by `portal-setup` run **32508101361** at `74629fe` — ✅ success, **including the admin-bootstrap step that failed at `46a06ad9`**, so the token race did not recur |
-| **Deployed** | **Site:** `Deploy site to Cloudflare Pages` ✅ **run 32595545919** at `c8b52a8` — the closeout SHA itself. **Worker:** `Deploy case-portal Worker` ✅ **run 32583656010** at `79da2b8`, and **that build is current**: `case-portal/worker.js` and `schema.sql` are byte-identical between `79da2b8` and `c8b52a8`, so nothing since needed a Worker deploy. Schema confirmed present on production by `harden-check` run **32584685117**. A LIVE byte-check is not possible from this container — the network policy refuses the domain with a 403 on CONNECT — which is why `verify.sh` runs from a GitHub runner |
+| **Deployed** | **Site:** `Deploy site to Cloudflare Pages` ✅ **run 32598263366** at `e7b9117` — the Unit 40 SHA itself. **Worker:** `Deploy case-portal Worker` ✅ **run 32583656010** at `79da2b8`, and **that build is current**: `case-portal/worker.js` and `schema.sql` are byte-identical between `79da2b8` and `c8b52a8`, so nothing since needed a Worker deploy. Schema confirmed present on production by `harden-check` run **32584685117**. A LIVE byte-check is not possible from this container — the network policy refuses the domain with a 403 on CONNECT — which is why `verify.sh` runs from a GitHub runner |
 | **Closeout** | ✅ **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** — see `case-portal/FINAL-LEDGER.md` |
 | **Owner decisions** | ✅ five LOCKED at closeout, 2026-08-21 — see **FINAL OWNER DECISIONS** below. Four are deferrals or standing refusals; **decision 4 (Ended by Admin) is BUILT — Unit 27** |
-| **Next unit** | **NONE — the durable queue is empty of required work.** Units 17A–39 are shipped; 38 and 39 are both LIVE VERIFIED by the owner (2026-08-22). What remains is Unit 23's live-verification sweep (deferred — needs a real case) and the deferred-by-owner list. **Do not start anything without the owner.** |
+| **Next unit** | **NONE — the durable queue is empty of required work.** Units 17A–39, 21A and **40** are shipped; 38 and 39 are LIVE VERIFIED by the owner (2026-08-22), **21A and 40 have LIVE VERIFY open**. What remains is Unit 23's live-verification sweep (deferred — needs a real case) and the deferred-by-owner list. **Do not start anything without the owner.** |
+| **Open for the owner (Unit 40)** | `--teal` with white text is **3.37:1** site-wide — every button on the public site. Below 18.66px bold it does not clear WCAG AA. Darkening it is a palette change touching every button and is the owner's call. Candidates measured: `#33808f` 4.54:1, `#2f7788` 5.10:1, or `--navy` text on the existing teal 4.67:1 with no new colour. **Not queued work** — a decision |
 
 ## 🔄 RESUME POINT — Production Truth Correction Queue (Units 28–33)
 
@@ -364,9 +365,13 @@ Run on the owner's instruction after Unit 39's visual review passed. Every
 open-state marker in this file was scanned, not just the queue table, and each
 was checked against the code rather than against memory.
 
-**Units 17A–39 are all shipped.** 38 and 39 are LIVE VERIFIED by the owner
-(2026-08-22); the rest are deployed with owner visual verification open, which
-is the owner's to close and not development work.
+**Units 17A–39 are all shipped**, and so are the two that arrived after this
+reconcile ran — **21A** (case-page live region) and **40** (homepage CTA
+redesign), both on new owner instructions rather than off the queue. 38 and 39
+are LIVE VERIFIED by the owner (2026-08-22); the rest are deployed with owner
+visual verification open, which is the owner's to close and not development
+work. **The required queue is still empty:** 21A and 40 were owner-initiated
+briefs, delivered and closed, not items this file was carrying.
 
 **Three stale states were corrected rather than left to mislead a later
 session:**
@@ -384,6 +389,60 @@ session:**
    `recipient_kind` — remains unstarted and owner-gated.
 
 **Nothing was found that is required, approved and unbuilt.**
+
+## ✅ SHIPPED — Unit 40, the homepage CTA redesign (owner-approved, 2026-08-22)
+
+**A public-site unit, not a portal one.** The hero carried two links —
+insurance and private. Legal has had a public page since Unit 37A and had **no
+door on the front page at all**, so a law firm arriving at the homepage had to
+find the nav.
+
+Three equal cards now, each an anchor onto its own intake door, asserted by
+CLICKING each one and reading the page it lands on rather than by matching an
+href:
+
+| Card | Door | Lands on |
+| --- | --- | --- |
+| Submit an Insurance Assignment | `/intake/?assignment=insurance` | Secure Assignment Intake |
+| Submit a Legal Assignment | `/intake/?assignment=legal` | Legal Investigation Assignment |
+| Request a Private Investigation | `/intake/?assignment=private` | Client Intake |
+
+**Shipped:** #242 at **`e7b9117`**, site deploy run **32598263366** ✅. No
+schema, no `portal-setup` dispatch. The Worker was untouched, so
+`deploy-portal.yml` correctly did not fire. Suites: intake **537/0** · deploy
+**86/0** · worker **2870/0** · portal **2707/0** · visitor **47/0**.
+LIVE VERIFY **OPEN**.
+
+Design detail is in `CLAUDE.md` under *The homepage offers three doors, as
+cards*. What is worth carrying here is what measuring found that reading would
+not have:
+
+1. **The insurance icon was a blob.** A filled car body with two filled circles
+   for wheels; at the 34px it draws at, the body swallowed the wheels. Stroked
+   now, like the other two. Found by screenshotting the page.
+2. **The 320px overflow was HALVED, not left alone.** Both trees were served and
+   rendered side by side: master overflowed 15px and its widest element was the
+   old hero *Submit an Insurance Assignment* button — the one these cards
+   replaced. The branch overflows 5px, from a *Call for a Free Consultation*
+   `tel:` link elsewhere, byte-identical on both trees. The first draft of the
+   note had this backwards and said the cards merely tolerated a pre-existing
+   defect.
+3. **The Get Started label failed WCAG AA.** White on `--teal` is 3.37:1; AA
+   wants 4.5:1 for normal text and 3:1 for large, where large starts at 18.66px
+   for bold. The label was 15.2px — just under the line that makes 3.37:1
+   acceptable. It is 18.88px now, so the rule that applies is the one it
+   passes, **without inventing a teal the site does not use**.
+4. **A measurement destroyed what it measured.** Sampling the painted backdrop
+   behind the titles hides the text with `visibility:hidden`, which also removes
+   those elements from the **accessibility tree** — so on the shared page every
+   later accessible-name assertion read `""`. It runs on its own page now.
+
+**Open for the owner, deliberately not fixed:** `--teal` with white text is
+3.37:1 **site-wide** — the nav call button, the section CTA, the buttons these
+cards replaced. Darkening it touches every button on the public site and is a
+palette decision, not a hero redesign's. Measured candidates: `#33808f`
+4.54:1, `#2f7788` 5.10:1, `--navy` on the existing teal 4.67:1. **This is a
+decision, not queued work.**
 
 ## 🔒 OWNER DECISIONS — 2026-08-22, Unit 39 (LOCKED)
 

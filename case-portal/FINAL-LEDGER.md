@@ -805,3 +805,74 @@ same shape was then found across roughly nine hundred lines of pre-queue
 handoffs. Nothing was deleted — several record *why* a decision went the way it
 did — but the region is banner-marked as archaeology and the eleven most
 misleading rows are mapped to where each actually landed.
+
+---
+
+## PART 17 — UNIT 40, the homepage CTA redesign, 2026-08-22
+
+**A new owner brief, not a queue item.** Approved direction: replace the hero's
+two assignment buttons with three equal image-style cards — Insurance, Legal,
+Private — each routed to its own intake door, with the public-pricing rule and
+the accessibility requirements intact.
+
+| | Verified how |
+| --- | --- |
+| **Master `e7b9117`** | `git log`; save point `save/2026-08-22-2059-e7b9117` cut automatically |
+| **Shipped** | PR **#242**, squash-merged |
+| **Site deployed** | `Deploy site to Cloudflare Pages` run **32598263366** at `e7b9117` — ✅ success, on the Unit 40 SHA itself |
+| **Worker** | untouched. `git diff 001d354..e7b9117` names seven files and none is in `case-portal/` or `visitor-alerts/`, so `deploy-portal.yml` and `deploy-worker.yml` correctly did not fire |
+| **Schema** | none. No `portal-setup` dispatch owed |
+| **Suites** | intake **537/0** · deploy guard **86/0** · worker **2870/0** · portal **2707/0** · visitor-alerts **47/0** |
+| **Routing** | asserted by CLICKING each card and reading the page it lands on — Secure Assignment Intake / Legal Investigation Assignment / Client Intake — not by matching an href |
+| **LIVE VERIFIED** | **OPEN** — owner visual check |
+
+### The requirement each half of the brief made, and where it is met
+
+| Brief | Met by |
+| --- | --- |
+| Three equal cards, consistent height and width | a `repeat(3,1fr)` grid, so equality is the layout's property; equal heights asserted |
+| Background visual + dark overlay + icon + large title + teal Get Started | `--cta-art` per card, `.cta-art::after` gradient, three stroked icons, 21.44px serif title, `--teal` fill |
+| Insurance → Insurance intake, Legal → `?assignment=legal`, Private → Private intake | three anchors, asserted end to end by click-through |
+| **Do not route Legal through Private** | its own assertion, stated as the rule rather than as a heading comparison; `pickSvc` also refuses `legal` on the private door |
+| No public pricing | asserted on the homepage **and on every door a card opens** |
+| Keep Contact Us / Call / 5-star + DCJS below the cards | asserted present and wired |
+| Mobile stacks Insurance/Legal/Private, no horizontal scrolling | one column at 640px in source order; no card crosses the edge at 390/360/320 |
+| Real accessible link, proper accessible text, not reliant on the image | `role=link` with `name` equal to the title, read from the **browser's accessibility tree** |
+| Visible keyboard focus | one tab stop per card, ring measured as `3px rgb(230, 181, 74)` on the focused element |
+| Sufficient contrast | **computed**, with the WCAG bar chosen from the rendered size and weight; the title's backdrop sampled from painted pixels |
+| Audit local assets first, no hotlinking, structured for a WebP swap | no reusable photography exists (`banner1.webp` is the hero background; the rest is the logo and three review screenshots), so three local SVG motifs, each named by one `--cta-art` property |
+
+### What measuring found that reading would not have
+
+1. **The insurance icon was a blob** — a filled car body whose two filled wheels
+   disappeared into it at the 34px it actually renders at. Stroked now.
+2. **The 320px overflow was halved, not tolerated.** Master overflowed 15px and
+   its widest element was the old hero button these cards replaced; the branch
+   overflows 5px from an untouched `tel:` link. The first draft of this note had
+   it backwards.
+3. **The Get Started label failed WCAG AA** at 15.2px bold — 3.37:1 against a
+   4.5:1 bar. Sized to 18.88px it is large text at a 3:1 bar, which it clears,
+   and no new colour was invented.
+4. **The accessible-name assertion's own comment was wrong**, caught by a
+   control: with `aria-hidden` stripped the name grows but `children` stays 0,
+   so name **equality** is the clause that works and an inclusion check would
+   have passed through the defect.
+5. **A measurement destroyed what it measured** — `visibility:hidden` for pixel
+   sampling also removes elements from the accessibility tree, so it left every
+   later name assertion reading `""`. It has its own page now.
+
+### One decision left with the owner
+
+**`--teal` with white text is 3.37:1 across the whole public site** — the nav
+call button, the section CTA, the hero buttons Unit 40 replaced. Below 18.66px
+bold, none of them clears AA. Darkening `--teal` touches every button on the
+site and is a palette decision, not a hero redesign's. Measured candidates:
+`#33808f` 4.54:1, `#2f7788` 5.10:1, or `--navy` text on the existing teal at
+4.67:1 with no new colour. **Recorded, not queued.**
+
+### Standing rules, unchanged by this unit
+
+No completed unit is to be rebuilt. Real-case-only LIVE VERIFY items stay OPEN,
+not failed. Deferred-by-owner items stay deferred, not queued. The owner
+decisions — five from the 2026-08-21 closeout and three from Unit 39 — stay
+locked.

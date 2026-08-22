@@ -1011,3 +1011,41 @@ stays complete; the archaeology banner in `NEXT.md` marks the region whose
 status markers are stale by design.
 
 Full closeout record in `FINAL-LEDGER.md` PART 16.
+
+## UNIT 40 — the homepage CTA redesign, 2026-08-22
+
+A **new owner brief** delivered after the closeout above, not an item this file
+was carrying. Master **`e7b9117`** (#242), site deploy run **32598263366** ✅ on
+that SHA. No schema, no `portal-setup` dispatch, Worker untouched.
+
+Suites: intake **537/0** · deploy guard **86/0** · worker **2870/0** · portal
+**2707/0** · visitor-alerts **47/0**.
+
+Three equal hero cards, each on its own intake door, **verified by clicking
+each card and reading the page it lands on** — Secure Assignment Intake, Legal
+Investigation Assignment, Client Intake — rather than by matching an href. A
+legal visitor reaching the private door is asserted as its own rule.
+
+**Four defects were found by measuring what reading had already approved**, and
+they belong in this file because that is the standard it exists to enforce:
+
+| Found | By |
+| --- | --- |
+| The insurance icon read as a rounded blob — a filled body swallowing its own wheels at 34px | screenshotting the rendered page |
+| The note about the 320px overflow had the culprit AND the direction wrong: the cards HALVED it (15px → 5px) by replacing the widest element on the page | serving master's tree and the branch side by side |
+| The *Get Started* label failed WCAG AA — 3.37:1 at 15.2px bold against a 4.5:1 bar | computing the ratio and reading the size off the rendered element |
+| The accessible-name assertion's own comment was wrong about how it catches the defect | running the control with `aria-hidden` stripped |
+
+The third is the one worth carrying: **"the title is white" is not a contrast
+check.** The bar depends on the rendered size and weight, so both have to be
+measured, and the fix was to size the label above the 18.66px bold large-text
+line rather than to invent a teal the site does not already use.
+
+**Left with the owner, not fixed here:** `--teal` with white text is **3.37:1
+site-wide** — every button on the public site. Darkening it is a palette
+decision touching every button, not a hero redesign's. Candidates measured:
+`#33808f` 4.54:1, `#2f7788` 5.10:1, `--navy` on the existing teal 4.67:1.
+
+**Required build queue: still EMPTY.** LIVE VERIFY for Unit 40 is OPEN.
+
+Full record in `FINAL-LEDGER.md` PART 17.
