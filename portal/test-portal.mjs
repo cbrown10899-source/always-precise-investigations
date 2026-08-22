@@ -13860,8 +13860,13 @@ section('Unit 21 — accessibility: landmarks, a way in from the keyboard, and a
      button carrying an unknown `data-act` reaches the click listener — which
      is where the flag is set — and matches no branch in its if/else chain, so
      nothing else happens. */
+  /* PRESSING THE TAB YOU ARE ALREADY ON IS ARRIVAL AT IT, and that is what
+     resets the flag here — the screen string does not change, so this line
+     only works because a nav press forces the arrival branch. The first draft
+     of this test clicked Cases while already on Cases, assumed it reset, and
+     failed with the injected message announced. */
   await page.locator('.tabs button[data-tab="cases"]').first().click();
-  await page.waitForTimeout(600);   // arrival resets the acted flag
+  await page.waitForTimeout(600);
   const said = await page.evaluate(() => {
     const host = document.querySelector('#app');
     const sr = document.getElementById('sr');
@@ -15488,6 +15493,22 @@ section('Unit 21A — arriving somewhere is not an announcement');
   await wsTab(page, 'Activity');
   await page.waitForTimeout(600);
   ok('moving on clears what was said', (await srText(page)) === '', JSON.stringify(await srText(page)));
+
+  /* AND RE-PRESSING THE TAB YOU ARE ON IS ARRIVAL TOO. `invoices` and
+     `calendar` reload on that press, so without this the panel's own prose
+     would be read aloud when somebody taps the tab they are already looking
+     at. The screen string does not change, so nothing about srScreen() alone
+     would have caught it. */
+  await page.locator('[data-act="backToCases"]').first().click();
+  await page.waitForTimeout(700);
+  for (const key of ['invoices', 'calendar']) {
+    await page.locator(`.tabs button[data-tab="${key}"]`).first().click();
+    await page.waitForTimeout(800);
+    await page.locator(`.tabs button[data-tab="${key}"]`).first().click();
+    await page.waitForTimeout(900);
+    ok(`re-pressing ${key} announces nothing`, (await srText(page)) === '',
+       JSON.stringify(await srText(page)));
+  }
   await page.close();
 }
 

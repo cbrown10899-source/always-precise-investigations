@@ -9492,6 +9492,22 @@ let SR_SCREEN = null;
 let SR_ACTED = false;
 const srActed = () => { SR_ACTED = true; };
 
+/* NAVIGATION IS NOT AN ACTION ON THE DESTINATION, and pressing the tab you are
+   already on is still arrival at it. The screen STRING does not change there,
+   so the arrival branch would not fire — and `invoices` and `calendar` reload
+   on that press, repainting with their panel's prose where a loading state had
+   been. Same screen, changed text, flag set by the press: announced.
+
+   Forcing the next paint down the arrival branch says what is true — you
+   arrived — without the announcer having to know which acts navigate.
+
+   These two ARE the navigation vocabulary of this page: the shell rail and the
+   case tab row. A third door added later and missed costs ONE spurious
+   announcement, not a wrong one; the failure is bounded and quiet, which is
+   why a short list is acceptable here and is not acceptable for the deleted-case
+   gate or `FIELD_KEEP`. */
+const SR_NAV_ACTS = ["tab", "wsTab"];
+
 /* Which screen this is. Not a route — the SHELL tab, the case tab, or the
    field view — because that is the granularity a person experiences as
    "I went somewhere else". */
@@ -17138,8 +17154,9 @@ document.addEventListener("keydown", ev => {
 document.addEventListener("click", ev => {
   const el = ev.target.closest("[data-act]");
   if(!el) return;
-  srActed();
   const act = el.dataset.act;
+  if(SR_NAV_ACTS.includes(act)) SR_SCREEN = null;   // arrive, do not announce
+  else srActed();
   if(act === "backToCases"){ VIEW = "list"; render(); }
   else if(act === "navToggle"){
     const open = document.body.classList.toggle("navopen");
