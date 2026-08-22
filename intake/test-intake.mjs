@@ -1623,6 +1623,77 @@ section('Unit 40 — contrast, focus, and what the hero kept');
   ok('and Get Started is the site teal on white', look.goColor === 'rgb(255, 255, 255)'
      && look.goBg === 'rgb(61, 151, 173)', JSON.stringify(look));
 
+  /* CONTRAST, COMPUTED — the brief asks for sufficient contrast and "the title
+     is white" is not that. WCAG AA is 4.5:1 for normal text and 3:1 for large,
+     where large means >=24px, or >=18.66px when bold. So the SIZE decides which
+     bar applies and both have to be read off the rendered element.
+
+     This matters here for a specific reason worth keeping: white on --teal is
+     3.37:1 — the site's own button colour, on every button it has — which
+     clears the large bar and fails the normal one. The label is sized above
+     18.66px deliberately so the rule that applies is the one it passes. If
+     someone shrinks it back, THIS is the test that fails, and it fails naming
+     the ratio rather than the pixel size. */
+  const wcag = await page.evaluate(() => {
+    const lum = ([r, g, b]) => {
+      const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+    };
+    const rgb = s => s.match(/\d+/g).slice(0, 3).map(Number);
+    const go = document.querySelector('.cta-go'), cs = getComputedStyle(go);
+    const fg = rgb(cs.color), bg = rgb(cs.backgroundColor);
+    const L = [lum(fg), lum(bg)];
+    const size = parseFloat(cs.fontSize), weight = Number(cs.fontWeight);
+    const large = size >= 24 || (size >= 18.66 && weight >= 700);
+    return { ratio: (Math.max(...L) + 0.05) / (Math.min(...L) + 0.05),
+             size, weight, large, need: large ? 3 : 4.5 };
+  });
+  ok('the Get Started label meets WCAG AA for the size it is drawn at',
+     wcag.ratio >= wcag.need,
+     `${wcag.ratio.toFixed(2)}:1 needs ${wcag.need}:1 at ${wcag.size}px/${wcag.weight}`);
+
+  /* THE TITLE'S BACKDROP IS PAINTED, NOT DECLARED — a gradient over an image,
+     which no computed style can answer. So the pixels are read: hide the text,
+     photograph the strip it occupied, and take the LIGHTEST pixel in it, since
+     that is the one white text has the least contrast against. Sampling an
+     average would hide a bright spot in the artwork, which is the whole failure
+     mode a dark overlay exists to prevent. */
+  /* ON ITS OWN PAGE, and that is not tidiness. Hiding the text to photograph
+     what is behind it uses `visibility:hidden`, which also removes those
+     elements from the ACCESSIBILITY TREE — so doing it on the shared page left
+     every later accessible-name assertion reading "". The measurement has to
+     destroy the thing it measures, so it gets a page nothing else uses. */
+  const { ctx: cx4, page: p4 } = await homePage(1280);
+  const backdrop = await p4.evaluate(() => {
+    const el = document.querySelector('.cta-title');
+    const r = el.getBoundingClientRect();
+    return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
+  });
+  await p4.addStyleTag({ content: '.cta-title,.cta-go,.cta-icon{visibility:hidden!important;}' });
+  const strip = (await p4.screenshot({ clip: { x: backdrop.x, y: backdrop.y,
+                                              width: backdrop.w, height: backdrop.h } })).toString('base64');
+  const worst = await p4.evaluate(async b64 => {
+    const img = new Image();
+    await new Promise(res => { img.onload = res; img.src = 'data:image/png;base64,' + b64; });
+    const c = document.createElement('canvas');
+    c.width = img.width; c.height = img.height;
+    c.getContext('2d').drawImage(img, 0, 0);
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    const lum = (r, g, b) => {
+      const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+    };
+    let hi = -1, at = null;
+    for (let i = 0; i < d.length; i += 4) {
+      const L = lum(d[i], d[i + 1], d[i + 2]);
+      if (L > hi) { hi = L; at = [d[i], d[i + 1], d[i + 2]]; }
+    }
+    return { ratio: 1.05 / (hi + 0.05), pixel: at };
+  }, strip);
+  ok('white title text clears 4.5:1 against even the LIGHTEST pixel behind it',
+     worst.ratio >= 4.5, `${worst.ratio.toFixed(2)}:1 at rgb(${worst.pixel})`);
+  await cx4.close();
+
   /* KEYBOARD. Focus must land on each card and be visibly marked. */
   const focus = await page.evaluate(() => {
     const out = [];

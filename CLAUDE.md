@@ -339,6 +339,40 @@ casualty this project has recorded, and the first outside the portal.
 Focus is **gold**, because the ring has to survive a dark card that already
 has teal on it. Hover lift is disabled under `prefers-reduced-motion`.
 
+**The label size is a CONTRAST decision, and it is measured.** White on
+`--teal` is **3.37:1** — computed, and it is the site's own button colour on
+every button the page has. WCAG AA wants 4.5:1 for normal text and 3:1 for
+large, where large means ≥24px or **≥18.66px when bold**. At the 15.2px the
+*Get Started* label started as it was under that line and therefore under AA;
+it is 18.88px now, so the rule that applies is the one it passes — **without
+inventing a teal this site does not already use**, which the owner's
+"restrained navy/teal/gold" rules out. The title moved with it so the
+hierarchy is unchanged, and the phone override keeps the label above 18.66px
+for the same reason. The test names the ratio rather than the pixel size, so
+shrinking the label fails with the reason rather than with a number nobody can
+interpret.
+
+**The titles were checked against PAINTED PIXELS, not declared colour.** The
+backdrop is a gradient over an image and no computed style can answer what is
+behind the text, so the suite hides the text, photographs the strip it
+occupied and takes the **lightest** pixel in it — the one white text has least
+contrast against. Averaging would hide exactly the bright spot in the artwork
+that a dark overlay exists to prevent. Measured: 15.8–16.1:1 average,
+10.8–13.3:1 at the worst pixel on the three cards. That measurement has to
+destroy what it measures (`visibility:hidden` also removes an element from the
+accessibility tree), so **it runs on its own page** — done on the shared one it
+left every later accessible-name assertion reading `""`.
+
+**Open, and NOT this unit's to decide: `--teal` with white text is 3.37:1
+site-wide.** Every button on the public site — the nav call button, the
+section CTA, the old hero buttons these cards replaced — is that pair at that
+ratio, and below 18.66px bold none of them clears AA. Darkening `--teal` is a
+palette change touching every button on the site and belongs to the owner, not
+to a hero redesign. `#33808f` would clear 4.54:1 and `#2f7788` 5.10:1 if it is
+ever wanted; `--navy` text on the existing teal is 4.67:1 and needs no new
+colour at all. Recorded here rather than fixed by making one control differ
+from the rest.
+
 **The 320px overflow was HALVED, not caused.** Both numbers were measured —
 master's tree and this one, served and rendered side by side. Before Unit 40 a
 320px viewport overflowed by **15px**, and the widest thing on the page was the
