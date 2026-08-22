@@ -1089,3 +1089,27 @@ the bar by 0.03.
 **Required build queue: still EMPTY.** LIVE VERIFY for 40B is OPEN.
 
 Full record in `FINAL-LEDGER.md` PART 18.
+
+## UNITS 40C–40F, and the one that needed an owner report — 2026-08-22
+
+`154f98f` (#248), `fe464f6` (#249), `3bc855f` (#250), `5819540` (#251), all
+deployed. intake **548/0**, deploy **86/0**. ✅ **LIVE VERIFIED by the owner.**
+
+**The finding this file exists for:** `_headers` caches `/assets/*` for seven
+days and Units 40B–40D replaced three filenames **in place at stable URLs**.
+`index.html` is `no-cache`, so the markup updated while the browser served the
+first cached photograph. **Seven green deploys, and the owner was right that
+the site had not changed.**
+
+A stale asset behind fresh markup is indistinguishable from a deploy that never
+ran — and every verification in this repo answered *"is it deployed"* rather
+than *"is the visitor seeing it"*. Those are different questions. `?v=` on
+every art URL, a test that fails without it, and the rule in `CLAUDE.md`.
+
+**Two more dead assertions**, bringing this unit's total to four: the art-path
+check required `\.svg` on an architecture built for WebP, and the rendered-URL
+check anchored on the extension being LAST — so it failed on its own `?v=` fix.
+Both are **a regex asserting a SHAPE where a PROPERTY was meant**, the same
+mistake as Unit 40's homepage door checks.
+
+**Required build queue: still EMPTY.**
