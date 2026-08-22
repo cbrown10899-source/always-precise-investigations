@@ -283,6 +283,114 @@ sweep: they are staff tools holding real case vocabulary, not public marketing.
 **Adding a public page means adding it to the manifest**, or it never
 publishes.
 
+## The homepage offers three doors, as cards
+
+Unit 40 (owner-approved direction, 2026-08-22). The hero carried two links —
+an insurance assignment and a private investigation. **Legal has been a public
+page since Unit 37A and had no door on the front page at all**, so a law firm
+arriving at the homepage had to find the nav.
+
+Three equal cards now, in the owner's order, each an anchor onto its own
+intake door:
+
+| Card | Door |
+| --- | --- |
+| Submit an Insurance Assignment | `/intake/?assignment=insurance` |
+| Submit a Legal Assignment | `/intake/?assignment=legal` |
+| Request a Private Investigation | `/intake/?assignment=private` |
+
+**Legal is never routed through the private door**, and that is structural
+rather than a preference: `pickSvc` on the private door refuses `legal`, so
+the wrong link would be a dead end as well as the wrong door.
+
+**One anchor wraps the whole card** — one tab stop, one destination.
+*Get Started* is a styled span, not a button: a button inside a link is
+invalid nesting and would give each card two tab stops for one place to go.
+It is `aria-hidden`, so the accessible name stays the sentence the title
+already says; the icon is `aria-hidden` too. **Nothing on the card depends on
+an image loading** — the meaning is in the title, and the dark overlay that
+makes the text readable is a separate layer above the art, so the contrast
+holds whether or not the art is there.
+
+**The artwork is local and it is ONE PROPERTY PER CARD.** The asset audit
+found no photography to reuse — `banner1.webp` is already the hero background
+and the rest of `assets/` is the logo and three review screenshots — so three
+motifs are authored here as SVG, under 1 KB each with no external reference.
+Nothing is hotlinked. Each card names its art through a single `--cta-art`
+custom property, so replacing a motif with an optimized WebP is that one
+`url()` plus its line in `deploy-manifest.txt`, and **the sizing, the overlay
+and the text do not move**. The manifest names the three files one by one,
+like everything else in it, so a photo swap is a deliberate line change in
+both places.
+
+**The layout is a grid of `1fr`**, which is what makes "consistent height and
+width" a property of the layout rather than three numbers kept in step by
+hand. It steps twice on the way down — three across, two at 900px, one at
+640px. A single jump to a column wastes an iPad; a single jump to three-across
+squeezes the titles. The one-column track is **`minmax(0,1fr)`, not `1fr`**: a
+grid track's default minimum is its content, which is how a long title pushes
+a card past the screen edge and starts the page scrolling sideways.
+
+**The phone block sits at the END of the stylesheet**, after the earlier
+`max-width:640px` rule it would otherwise be overridden by. Same trap as
+`.qgrid`, `.dlg`, the burger base rule and `.opt` — the fifth source-order
+casualty this project has recorded, and the first outside the portal.
+
+Focus is **gold**, because the ring has to survive a dark card that already
+has teal on it. Hover lift is disabled under `prefers-reduced-motion`.
+
+**The label size is a CONTRAST decision, and it is measured.** White on
+`--teal` is **3.37:1** — computed, and it is the site's own button colour on
+every button the page has. WCAG AA wants 4.5:1 for normal text and 3:1 for
+large, where large means ≥24px or **≥18.66px when bold**. At the 15.2px the
+*Get Started* label started as it was under that line and therefore under AA;
+it is 18.88px now, so the rule that applies is the one it passes — **without
+inventing a teal this site does not already use**, which the owner's
+"restrained navy/teal/gold" rules out. The title moved with it so the
+hierarchy is unchanged, and the phone override keeps the label above 18.66px
+for the same reason. The test names the ratio rather than the pixel size, so
+shrinking the label fails with the reason rather than with a number nobody can
+interpret.
+
+**The titles were checked against PAINTED PIXELS, not declared colour.** The
+backdrop is a gradient over an image and no computed style can answer what is
+behind the text, so the suite hides the text, photographs the strip it
+occupied and takes the **lightest** pixel in it — the one white text has least
+contrast against. Averaging would hide exactly the bright spot in the artwork
+that a dark overlay exists to prevent. Measured: 15.8–16.1:1 average,
+10.8–13.3:1 at the worst pixel on the three cards. That measurement has to
+destroy what it measures (`visibility:hidden` also removes an element from the
+accessibility tree), so **it runs on its own page** — done on the shared one it
+left every later accessible-name assertion reading `""`.
+
+**Open, and NOT this unit's to decide: `--teal` with white text is 3.37:1
+site-wide.** Every button on the public site — the nav call button, the
+section CTA, the old hero buttons these cards replaced — is that pair at that
+ratio, and below 18.66px bold none of them clears AA. Darkening `--teal` is a
+palette change touching every button on the site and belongs to the owner, not
+to a hero redesign. `#33808f` would clear 4.54:1 and `#2f7788` 5.10:1 if it is
+ever wanted; `--navy` text on the existing teal is 4.67:1 and needs no new
+colour at all. Recorded here rather than fixed by making one control differ
+from the rest.
+
+**The 320px overflow was HALVED, not caused.** Both numbers were measured —
+master's tree and this one, served and rendered side by side. Before Unit 40 a
+320px viewport overflowed by **15px**, and the widest thing on the page was the
+old hero *Submit an Insurance Assignment* button, which the cards replaced.
+After, it is **5px**, from a *Call for a Free Consultation* `tel:` link
+elsewhere on the page that is byte-identical on both trees and sits in a
+section this brief forbids redesigning. So the card tests assert what this unit
+owns — **no card** crosses the edge at 320 — and check the document only from
+360 up, where the page is genuinely clean. Fixing that last button is a
+separate change nobody has asked for.
+
+**What Unit 40 did not touch:** the hero headline and copy, the navigation,
+the disclaimer bar, the logo, the section below the hero, the Legal page,
+every intake code path, and Contact Us / Call (434) 907-0975 / the 5-star and
+DCJS line, which stay below the cards. No price, rate or rate-sheet reference
+is introduced — the public-pricing rule above governs these cards like
+everything else, and the tests assert it over the new markup.
+
 ## Contact and intake
 
 Both forms (homepage and `intake/`) post to Web3Forms. The access key lives in

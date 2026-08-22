@@ -163,6 +163,66 @@
   button.call-btn{border:0;cursor:pointer;font-family:'Segoe UI',Arial,sans-serif;font-size:1rem;}
   .btn-outline{background:transparent;border:1.5px solid var(--teal);color:#fff;font-family:'Segoe UI',Arial,sans-serif;font-weight:700;text-decoration:none;padding:13px 26px;border-radius:5px;display:inline-block;cursor:pointer;transition:background .15s;}
   .btn-outline:hover{background:rgba(61,151,173,.18);}
+  /* ---------------------------------------- UNIT 40: the hero CTA cards */
+  /* THREE EQUAL CARDS, one row on a desktop and one column on a phone. The
+     grid is `1fr` per card rather than fixed widths, so "consistent height and
+     width" is a property of the layout rather than three numbers kept in step
+     by hand. */
+  .cta-cards{list-style:none;margin:34px auto 30px;padding:0;max-width:1020px;
+    display:grid;grid-template-columns:repeat(3,1fr);gap:18px;text-align:left;}
+  .cta-card{position:relative;display:flex;min-height:236px;border-radius:12px;
+    overflow:hidden;text-decoration:none;color:var(--white);
+    border:1px solid var(--line);background:var(--navy-2);
+    transition:transform .16s ease, border-color .16s ease, box-shadow .16s ease;}
+  /* THE ART IS ONE CUSTOM PROPERTY PER CARD, and that is the whole swap.
+     These are locally authored motifs, not photographs — the brief asked for
+     the implementation to be structured so optimized local WebP/JPG can take
+     their place WITHOUT changing the layout, and this is what that means:
+     replace the url() below, add the file to the deploy manifest, change
+     nothing else. The overlay, the sizing and the text all stay as they are. */
+  .cta-ins{--cta-art:url('assets/card-insurance.svg');}
+  .cta-leg{--cta-art:url('assets/card-legal.svg');}
+  .cta-pri{--cta-art:url('assets/card-private.svg');}
+  .cta-art{position:absolute;inset:0;background:var(--cta-art) center/cover no-repeat;}
+  /* THE DARK OVERLAY IS A SEPARATE LAYER, above the art and below the text, so
+     the contrast the text relies on does not depend on which image is behind
+     it — including no image at all. */
+  .cta-art::after{content:"";position:absolute;inset:0;
+    background:linear-gradient(180deg,rgba(19,35,60,.62),rgba(12,22,38,.88));}
+  .cta-body{position:relative;display:flex;flex-direction:column;align-items:flex-start;
+    gap:10px;padding:22px 20px;width:100%;}
+  .cta-icon{width:34px;height:34px;fill:var(--teal-2);color:var(--teal-2);flex:none;}
+  .cta-title{font-family:Georgia,'Times New Roman',serif;font-size:1.34rem;line-height:1.3;
+    font-weight:700;color:var(--white);}
+  /* THE LABEL SIZE IS A CONTRAST DECISION, not a typographic one, and it was
+     measured. White on --teal is 3.37:1 — the site's own button colour, on
+     every button it has — which clears WCAG AA for LARGE text (3:1) and does
+     not clear it for normal text (4.5:1). Large, for bold, starts at 18.66px.
+     At the .95rem this began as, 15.2px, the label was below that line and
+     therefore below AA. It is 1.18rem = 18.88px now, so the rule that applies
+     is the one it passes — WITHOUT inventing a teal this site does not
+     already use, which the brief's "restrained navy/teal/gold" rules out.
+     The title moved with it so the hierarchy is unchanged.
+
+     The 3.37:1 itself is site-wide and NOT this unit's to change: --teal on
+     white is every button on the page. It is reported to the owner rather
+     than fixed here by darkening one control out of step with the rest. */
+  .cta-go{margin-top:auto;background:var(--teal);color:var(--white);
+    font-family:'Segoe UI',Arial,sans-serif;font-weight:700;font-size:1.18rem;
+    letter-spacing:.03em;padding:10px 20px;border-radius:5px;
+    transition:background .15s;}
+  .cta-card:hover{transform:translateY(-2px);border-color:var(--teal);
+    box-shadow:0 10px 26px rgba(6,14,26,.45);}
+  .cta-card:hover .cta-go{background:var(--teal-2);}
+  /* VISIBLE FOCUS, and it has to survive a dark card — gold on navy rather
+     than the teal it sits next to. */
+  .cta-card:focus-visible{outline:3px solid var(--gold);outline-offset:3px;
+    border-color:var(--gold);}
+  @media (prefers-reduced-motion:reduce){
+    .cta-card,.cta-go{transition:none;}
+    .cta-card:hover{transform:none;}
+  }
+
   .hero .btn-row{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;}
   .hero .btn-row .call-btn,.hero .btn-row .btn-outline{font-size:1.1rem;padding:14px 28px;}
 
@@ -198,6 +258,38 @@ text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;font-size:14px;colo
 .gbtn{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:6px;
 padding:11px 22px;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;font-size:15px}
 .gbtn:hover{border-color:var(--teal)}
+
+  /* ------------------------- UNIT 40: the CTA cards on a narrower screen.
+     AT THE END OF THE STYLESHEET, deliberately. This file has one earlier
+     `max-width:640px` block, and a rule written above the base it overrides is
+     dead — a source-order casualty this project has recorded four times in the
+     portal. These sit after everything they override.
+
+     TWO STEPS, NOT ONE. Three cards side by side stop being readable well
+     before a phone: at tablet widths they go to two, and only then to one. A
+     single jump straight to a column wastes an iPad, and a single jump to
+     three-across squeezes the titles. */
+  @media (max-width:900px){
+    .cta-cards{grid-template-columns:repeat(2,1fr);max-width:680px;}
+  }
+  @media (max-width:640px){
+    /* ONE COLUMN, in the owner's order — Insurance, Legal, Private — which is
+       the source order, so nothing here reorders anything. `minmax(0,1fr)`
+       rather than `1fr`: a grid track's default minimum is its content, which
+       is how a long title pushes a card wider than the screen and starts the
+       page scrolling sideways. */
+    .cta-cards{grid-template-columns:minmax(0,1fr);max-width:420px;gap:14px;}
+    /* Shorter, because a phone shows them stacked and three tall cards is a lot
+       of scrolling before the contact controls below them. */
+    .cta-card{min-height:186px;}
+    .cta-body{padding:18px 16px;}
+    /* 1.2rem = 19.2px, still above the 18.66px bold large-text line the
+       contrast decision above depends on. Shrinking this below it would put
+       the label back under the 4.5:1 rule it cannot meet. */
+    .cta-title{font-size:1.2rem;}
+    /* Apple's 44px floor, on the part of the card that reads as the button. */
+    .cta-go{width:100%;text-align:center;min-height:44px;line-height:24px;}
+  }
 </style>
 </head>
 <body>
@@ -223,13 +315,61 @@ padding:11px 22px;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;f
   <div class="tag">Serving ALL of Virginia since 2014</div>
   <h1>Surveillance &amp; Investigation Services for Insurance, Legal and Private Clients</h1>
   <p>Licensed, insured, and discreet. When you need the truth — documented, professional, and ready when it matters — Always Precise Investigations delivers results.</p>
-  <!-- The two client paths (MASTER §29). Each lands on its own door of the
-       secure intake: a carrier is never shown the consumer picker, and a
-       private client is never offered carrier work. -->
-  <div class="btn-row">
-    <a class="call-btn" href="/intake/?assignment=insurance">Submit an Insurance Assignment</a>
-    <a class="call-btn" href="/intake/?assignment=private">Request a Private Investigation</a>
-  </div>
+  <!-- THE THREE CLIENT PATHS (Unit 40, owner-approved direction). Each lands on
+       its OWN door of the secure intake: a carrier is never shown the consumer
+       picker, a private client is never offered carrier work, and a law firm is
+       never routed through the private door — `pickSvc` refuses `legal` there,
+       so a mis-route would be a dead end as well as wrong.
+
+       ONE ANCHOR PER CARD, wrapping the whole card. "Get Started" is a styled
+       span, not a button: a button inside a link is invalid nesting and would
+       give every card two tab stops for one destination. It is aria-hidden
+       because the title already says what the card does, so the accessible name
+       stays the sentence a screen reader should hear.
+
+       The artwork is decorative and lives in CSS. Nothing here depends on an
+       image loading — the icon is aria-hidden, the title carries the meaning,
+       and the overlay that makes the text readable sits above the art whether
+       or not the art is there. -->
+  <ul class="cta-cards">
+    <li><a class="cta-card cta-ins" href="/intake/?assignment=insurance">
+      <span class="cta-art" aria-hidden="true"></span>
+      <span class="cta-body">
+        <svg class="cta-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"
+          fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5.2 10.4 6.9 6.6A2.2 2.2 0 0 1 8.9 5.3h6.2a2.2 2.2 0 0 1 2 1.3l1.7 3.8"/>
+          <rect x="2.6" y="10.4" width="18.8" height="4.9" rx="1.5"/>
+          <circle cx="7.2" cy="16.6" r="1.9" fill="currentColor" stroke="none"/>
+          <circle cx="16.8" cy="16.6" r="1.9" fill="currentColor" stroke="none"/>
+        </svg>
+        <span class="cta-title">Submit an Insurance Assignment</span>
+        <span class="cta-go" aria-hidden="true">Get Started</span>
+      </span>
+    </a></li>
+    <li><a class="cta-card cta-leg" href="/intake/?assignment=legal">
+      <span class="cta-art" aria-hidden="true"></span>
+      <span class="cta-body">
+        <svg class="cta-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M12 3v16M7 19h10M5 7h14M5 7l-2.5 5h5zM19 7l2.5 5h-5z" fill="none"
+            stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="12" cy="5" r="1.6"/>
+        </svg>
+        <span class="cta-title">Submit a Legal Assignment</span>
+        <span class="cta-go" aria-hidden="true">Get Started</span>
+      </span>
+    </a></li>
+    <li><a class="cta-card cta-pri" href="/intake/?assignment=private">
+      <span class="cta-art" aria-hidden="true"></span>
+      <span class="cta-body">
+        <svg class="cta-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <circle cx="10.5" cy="10.5" r="6.2" fill="none" stroke="currentColor" stroke-width="1.7"/>
+          <path d="M15.2 15.2L21 21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+        <span class="cta-title">Request a Private Investigation</span>
+        <span class="cta-go" aria-hidden="true">Get Started</span>
+      </span>
+    </a></li>
+  </ul>
   <div class="btn-row">
     <button class="btn-outline" onclick="openContact()">Contact Us</button>
     <a class="btn-outline" href="tel:+14349070975">Call (434) 907-0975</a>

@@ -50,6 +50,12 @@ assets/logo-lockup.svg
 assets/review1.webp
 assets/review2.webp
 assets/review3.webp
+# Unit 40 — the hero CTA card artwork. Named one by one like everything above,
+# so replacing a motif with a photograph is a deliberate line change here as
+# well as in the CSS.
+assets/card-insurance.svg
+assets/card-legal.svg
+assets/card-private.svg
 
 # --- service pages -----------------------------------------------------------
 insurance-investigations/index.html
