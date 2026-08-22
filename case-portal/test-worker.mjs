@@ -15711,6 +15711,375 @@ section('Retention: the guards three new tables owe, and the deleted-case gate h
   ok('while the read stays open and the ladder says Deleted', rd.state === 'deleted');
 }
 
+/* ============ UNIT 39 — REMOVING CASE CONTENT, AND PUTTING IT BACK ============
+
+   The owner's own test list, worked through. The half that lives in the data
+   layer is here; the controls and confirmations are in the portal suite.
+
+   ONE FIXTURE FOR THE WHOLE SECTION, because most of these questions are about
+   how the pieces interact — a day with entries under it, a summary over those
+   entries, evidence attached to one of them, and a package built on top. */
+section('Unit 39 — a day, its entries, its summary and its files');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  let r = await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' });
+  const tok = new URL((await jsonOf(r)).url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const dana = users.users.find(u => u.username === 'dana');
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  await ingest(env, { case_no: 'API-RM1', client_name: 'Remove Me Ltd', subject_name: 'Pat Subject' });
+  await call(env, '/submissions/API-RM1/assign', { method: 'POST', cookie: admin, body: { user_id: dana.id } });
+
+  // A day with three entries, filed out of order so the chronology is a real test.
+  await call(env, '/cases/API-RM1/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-20', start_time: '08:00' } });
+  const mk = async (time, what) => jsonOf(await call(env, '/cases/API-RM1/activity',
+    { method: 'POST', cookie: admin, body: { at_date: '2026-08-20', at_time: time, kind: 'observation', description: what } }));
+  const a2 = await mk('11:00', 'second thing');
+  const a1 = await mk('09:00', 'first thing');
+  const a3 = await mk('15:00', 'third thing');
+  await call(env, '/cases/API-RM1/day/end', { method: 'POST', cookie: admin,
+    body: { end_time: '17:00', hours: 9, summary: 'a day' } });
+
+  let ws = await jsonOf(await call(env, '/cases/API-RM1/workspace', { cookie: admin }));
+  const dayId = ws.days[0].id;
+  const order = () => ws.activity.filter(e => !e.removed_at && !e.removed_with_day).map(e => e.description);
+  ok('the day reads oldest first, as Unit 38 left it',
+     order().join('|') === 'first thing|second thing|third thing', order().join('|'));
+
+  /* --- 1 + 2 + 5: delete an entry, restore it, and it comes back in place --- */
+  ok('an entry can be removed', (await call(env, `/cases/API-RM1/activity/${a2.id}/delete`,
+     { method: 'POST', cookie: admin, body: { reason: 'typed on the wrong case' } })).status === 200);
+  ws = await jsonOf(await call(env, '/cases/API-RM1/workspace', { cookie: admin }));
+  ok('and drops out of the working chronology',
+     order().join('|') === 'first thing|third thing', order().join('|'));
+  ok('while the row itself is still there, stamped',
+     ws.activity.find(e => e.id === a2.id).removed_at != null);
+  ok('an entry can be put back', (await call(env, `/cases/API-RM1/activity/${a2.id}/restore`,
+     { method: 'POST', cookie: admin })).status === 200);
+  ws = await jsonOf(await call(env, '/cases/API-RM1/workspace', { cookie: admin }));
+  /* THE POINT OF THIS ONE: not that it came back, but that it came back in the
+     MIDDLE. A restore that appended would satisfy "restore works" and break the
+     owner's chronology rule at the same time. */
+  ok('and returns to its true position, not to the end',
+     order().join('|') === 'first thing|second thing|third thing', order().join('|'));
+
+  /* --- 4: a removed entry never reaches a new report's chronology --- */
+  await call(env, `/cases/API-RM1/activity/${a3.id}/delete`, { method: 'POST', cookie: admin, body: {} });
+  const rep = await jsonOf(await call(env, '/cases/API-RM1/reports/generate',
+    { method: 'POST', cookie: admin, body: { day_id: dayId } }));
+  /* THE DRAFTER ANSWERS WITH A COUNT, not the prose, so the count is the
+     assertion: three entries exist on this day and the report carries two. */
+  ok('a report drafted afterwards carries two of the three entries',
+     rep.entries === 2, JSON.stringify(rep));
+  const repBody = (await env.DB.prepare('SELECT body FROM case_reports WHERE id = ?')
+    .bind(rep.id).first()).body || '';
+  ok('the removed one is not in its chronology', !/third thing/.test(repBody), repBody.slice(0, 160));
+  ok('and the two that remain are',
+     /first thing/.test(repBody) && /second thing/.test(repBody), repBody.slice(0, 160));
+  await call(env, `/cases/API-RM1/activity/${a3.id}/restore`, { method: 'POST', cookie: admin });
+
+  /* --- 6: the summary goes; the activity underneath it does not --- */
+  await call(env, `/cases/API-RM1/days/${dayId}/summary`, { method: 'POST', cookie: admin,
+    body: { narrative: 'On the morning of 20 August...', config: {} } });
+  ws = await jsonOf(await call(env, '/cases/API-RM1/workspace', { cookie: admin }));
+  ok('a written summary is stored', (ws.day_summaries || []).some(d => d.day_id === dayId));
+
+  const pre = await jsonOf(await call(env, `/cases/API-RM1/content/day_summary/${dayId}/preflight`, { cookie: admin }));
+  ok('its confirmation says only the paragraph goes',
+     pre.facts.some(f => /only the written paragraph/i.test(f)), JSON.stringify(pre.facts));
+  ok('and names the entries it is NOT touching',
+     pre.facts.some(f => /activity entries on this day are not touched/i.test(f)), JSON.stringify(pre.facts));
+
+  ok('the summary can be removed',
+     (await call(env, `/cases/API-RM1/content/day_summary/${dayId}/remove`,
+       { method: 'POST', cookie: admin, body: { reason: 'wrong day' } })).status === 200);
+  ws = await jsonOf(await call(env, '/cases/API-RM1/workspace', { cookie: admin }));
+  ok('and is marked removed rather than dropped, so it can come back',
+     (ws.day_summaries || []).find(d => d.day_id === dayId).removed === true);
+  /* THE ASSERTION THE OWNER ASKED FOR IN WORDS: "Delete Summary != Delete Day
+     Activity." Counted, not described. */
+  ok('DELETING THE SUMMARY DELETED NO ACTIVITY',
+     ws.activity.filter(e => e.day_id === dayId && !e.removed_at).length === 3,
+     String(ws.activity.filter(e => e.day_id === dayId && !e.removed_at).length));
+  await call(env, `/cases/API-RM1/content/day_summary/${dayId}/restore`, { method: 'POST', cookie: admin });
+  ws = await jsonOf(await call(env, '/cases/API-RM1/workspace', { cookie: admin }));
+  ok('and the paragraph comes back with its words intact',
+     /On the morning of 20 August/.test((ws.day_summaries || []).find(d => d.day_id === dayId).narrative));
+
+  /* --- 8 + 9: the day's confirmation states facts read from the record --- */
+  const dpre = await jsonOf(await call(env, `/cases/API-RM1/content/day/${dayId}/preflight`, { cookie: admin }));
+  ok('the day confirmation names the day number and date',
+     dpre.facts.some(f => /^Day 1 — 2026-08-20$/.test(f)), JSON.stringify(dpre.facts));
+  ok('and counts the entries under it', dpre.entries === 3, String(dpre.entries));
+  ok('and says what happens to attached files', dpre.facts.some(f => /No photographs or files/i.test(f)),
+     JSON.stringify(dpre.facts));
+  ok('and whether a summary exists', dpre.has_summary === true);
+  ok('and whether a report was drafted from it', dpre.report && dpre.report.id === rep.id);
+  ok('and it is recoverable', dpre.recoverable === true);
+
+  /* --- 7: a day with nothing on it, and a running day refused --- */
+  await call(env, '/cases/API-RM1/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-21', start_time: '08:00' } });
+  ws = await jsonOf(await call(env, '/cases/API-RM1/workspace', { cookie: admin }));
+  const runningId = ws.open_day.id;
+  const rpre = await jsonOf(await call(env, `/cases/API-RM1/content/day/${runningId}/preflight`, { cookie: admin }));
+  ok('a running day says so and blocks its own removal',
+     rpre.running === true && rpre.blocks.some(b => /still running/i.test(b)), JSON.stringify(rpre.blocks));
+  const refused = await call(env, `/cases/API-RM1/content/day/${runningId}/remove`,
+    { method: 'POST', cookie: admin, body: {} });
+  ok('and the Worker refuses it, not just the page',
+     refused.status === 409 && (await jsonOf(refused)).code === 'day_running', refused.status);
+  await call(env, '/cases/API-RM1/day/end', { method: 'POST', cookie: admin,
+    body: { end_time: '09:00', hours: 1 } });
+  ok('an empty day, once ended, removes cleanly',
+     (await call(env, `/cases/API-RM1/content/day/${runningId}/remove`,
+       { method: 'POST', cookie: admin, body: {} })).status === 200);
+
+  /* --- removing a day takes its case-work out of active use, and no further --- */
+  const beforeHours = (await jsonOf(await call(env, '/cases/API-RM1/workspace', { cookie: admin }))).authorization.hours_used;
+  await call(env, `/cases/API-RM1/content/day/${dayId}/remove`, { method: 'POST', cookie: admin, body: { reason: 'duplicate day' } });
+  ws = await jsonOf(await call(env, '/cases/API-RM1/workspace', { cookie: admin }));
+  ok('a removed day is marked, not dropped from the list',
+     ws.days.find(d => d.id === dayId).removed === true);
+  ok('its entries are marked as going with it',
+     ws.activity.filter(e => e.day_id === dayId).every(e => e.removed_with_day === true));
+  /* AND NOT AS "REMOVED", which nobody did to them. */
+  ok('but NOT as removed by anyone — nobody removed those entries',
+     ws.activity.filter(e => e.day_id === dayId).every(e => !e.removed_at));
+  ok('its hours stop spending the authorization',
+     ws.authorization.hours_used < beforeHours, `${ws.authorization.hours_used} vs ${beforeHours}`);
+  ok('and a report cannot be drafted from it',
+     (await call(env, '/cases/API-RM1/reports/generate', { method: 'POST', cookie: admin,
+       body: { day_id: dayId } })).status === 409);
+  await call(env, `/cases/API-RM1/content/day/${dayId}/restore`, { method: 'POST', cookie: admin, body: {} });
+  ws = await jsonOf(await call(env, '/cases/API-RM1/workspace', { cookie: admin }));
+  ok('putting the day back restores the hours with no second write',
+     ws.authorization.hours_used === beforeHours, String(ws.authorization.hours_used));
+  ok('and its entries are ordinary again',
+     ws.activity.filter(e => e.day_id === dayId).every(e => !e.removed_with_day));
+
+  /* --- 20: the trail survives the state being cleared --- */
+  const trail = await env.DB.prepare(
+    `SELECT kind, action FROM case_content_event WHERE case_no = 'API-RM1' ORDER BY id`).all();
+  const acts = (trail.results || []).map(t => `${t.kind}:${t.action}`);
+  ok('every removal AND every restore is on the trail',
+     acts.includes('day:removed') && acts.includes('day:restored')
+     && acts.includes('day_summary:removed') && acts.includes('day_summary:restored'), acts.join(' '));
+  ok('and the reason travels with it',
+     (await env.DB.prepare(`SELECT reason FROM case_content_event
+        WHERE case_no = 'API-RM1' AND kind = 'day' AND action = 'removed'`).first()).reason === 'duplicate day');
+
+  /* --- 16 + 17: who may do this --- */
+  ok('an investigator cannot remove an investigation day',
+     (await call(env, `/cases/API-RM1/content/day/${dayId}/remove`,
+       { method: 'POST', cookie: inv, body: {} })).status === 403);
+  /* A REAL SUBJECT ON THIS CASE, because a missing row answers 404 to admin
+     and investigator alike and would have made this assertion vacuous. */
+  const rmSubj = await jsonOf(await call(env, '/cases/API-RM1/subjects',
+    { method: 'POST', cookie: admin, body: { name: 'Pat Subject' } }));
+  ok('nor a subject that really is on the case',
+     rmSubj.id != null && (await call(env, `/cases/API-RM1/content/subject/${rmSubj.id}/remove`,
+       { method: 'POST', cookie: inv, body: {} })).status === 403, String(rmSubj.id));
+  ok('and none of it reaches a case they are not on',
+     (await call(env, '/cases/API-NOPE/content/day/1/preflight', { cookie: inv })).status === 404);
+}
+
+section('Unit 39 — Remove from Package is not Delete from Case');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-RM3', client_name: 'Package Case' });
+
+  await call(env, '/cases/API-RM3/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-20', start_time: '08:00' } });
+  await call(env, '/cases/API-RM3/activity', { method: 'POST', cookie: admin,
+    body: { at_date: '2026-08-20', at_time: '09:00', kind: 'observation', description: 'watched' } });
+  await call(env, '/cases/API-RM3/day/end', { method: 'POST', cookie: admin,
+    body: { end_time: '17:00', hours: 9 } });
+  const dayId = (await jsonOf(await call(env, '/cases/API-RM3/workspace', { cookie: admin }))).days[0].id;
+  const rep = await jsonOf(await call(env, '/cases/API-RM3/reports/generate',
+    { method: 'POST', cookie: admin, body: { day_id: dayId } }));
+
+  const up = (file, extra = {}) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    for (const [k, v] of Object.entries(extra)) fd.append(k, v);
+    return worker.fetch(new Request(API + '/cases/API-RM3/evidence', {
+      method: 'POST', headers: { Origin: ORIGIN, Cookie: admin }, body: fd }), env);
+  };
+  const mk = (name, bytes, type) => new File([new Uint8Array(bytes).fill(65)], name, { type });
+  const keep = (await jsonOf(await up(mk('keep.jpg', 300, 'image/jpeg'), { classification: 'client_deliverable' }))).id;
+  const oops = (await jsonOf(await up(mk('oops.jpg', 300, 'image/jpeg'), { classification: 'client_deliverable' }))).id;
+
+  let st = await jsonOf(await call(env, '/cases/API-RM3/build', { method: 'POST', cookie: admin }));
+  const bid = st.build.id;
+  await call(env, `/build/${bid}/items`, { method: 'POST', cookie: admin, body: { evidence_id: keep } });
+  const added = await jsonOf(await call(env, `/build/${bid}/items`, { method: 'POST', cookie: admin,
+    body: { evidence_id: oops } }));
+  st = await jsonOf(await call(env, '/cases/API-RM3/build', { cookie: admin }));
+  ok('two files are in the package', st.items.length === 2, String(st.items.length));
+
+  /* --- 13: REMOVE FROM PACKAGE LEAVES THE CASE RECORD ALONE --- */
+  const itemId = st.items.find(i => i.evidence_id === oops).id;
+  ok('an item can be taken out of the package',
+     (await call(env, `/build/${bid}/items/${itemId}/remove`, { method: 'POST', cookie: admin })).status === 200,
+     String(added.id));
+  st = await jsonOf(await call(env, '/cases/API-RM3/build', { cookie: admin }));
+  ok('the package now carries one', st.items.length === 1, String(st.items.length));
+  /* THE WHOLE POINT OF THE OWNER'S DISTINCTION, asserted rather than assumed:
+     the file is still on the case, still undeleted, still selectable again. */
+  ok('and the FILE IS STILL ON THE CASE, not deleted',
+     st.evidence.some(e => e.id === oops), st.evidence.map(e => e.id).join(','));
+  ok('with no tombstone on it',
+     (await env.DB.prepare('SELECT deleted_at FROM case_evidence WHERE id = ?').bind(oops).first()).deleted_at === null);
+
+  /* --- 14: DELETE FROM CASE DOES change the package --- */
+  await call(env, `/build/${bid}/items`, { method: 'POST', cookie: admin, body: { evidence_id: oops } });
+  st = await jsonOf(await call(env, '/cases/API-RM3/build', { cookie: admin }));
+  ok('it can be put back in the package', st.items.length === 2);
+  await call(env, `/cases/API-RM3/content/evidence/${oops}/remove`, { method: 'POST', cookie: admin,
+    body: { reason: 'wrong case' } });
+  st = await jsonOf(await call(env, '/cases/API-RM3/build', { cookie: admin }));
+  ok('deleting it FROM THE CASE drops it out of the package’s file list',
+     !st.evidence.some(e => e.id === oops), st.evidence.map(e => e.id).join(','));
+  ok('and finalize names it rather than shipping around it',
+     st.gates.some(g => /deleted/i.test(g)), JSON.stringify(st.gates));
+
+  /* --- 15: A FINALIZED PACKAGE SAYS ITS SOURCE MOVED --- */
+  const itemGone = st.items.find(i => i.evidence_id === oops);
+  if (itemGone) await call(env, `/build/${bid}/items/${itemGone.id}/remove`, { method: 'POST', cookie: admin });
+  await call(env, `/cases/API-RM3/reports/${rep.id}/status`, { method: 'POST', cookie: admin, body: { status: 'approved' } });
+  const fin = await call(env, `/build/${bid}/finalize`, { method: 'POST', cookie: admin });
+  st = await jsonOf(await call(env, '/cases/API-RM3/build', { cookie: admin }));
+  ok('the package finalizes', st.build.status === 'finalized', `${fin.status} ${st.build.status}`);
+  ok('and is NOT stale the moment it is finished', st.stale === null, JSON.stringify(st.stale));
+
+  await call(env, `/cases/API-RM3/content/evidence/${keep}/remove`, { method: 'POST', cookie: admin, body: {} });
+  st = await jsonOf(await call(env, '/cases/API-RM3/build', { cookie: admin }));
+  ok('removing a file it carries makes it stale', st.stale && st.stale.stale === true, JSON.stringify(st.stale));
+  ok('in the owner’s own words',
+     Boolean(st.stale) && st.stale.label === 'SOURCE DATA CHANGED — REBUILD REQUIRED', JSON.stringify(st.stale));
+  ok('naming what changed rather than just raising an alarm',
+     Boolean(st.stale) && st.stale.changes.some(c => /file/i.test(c)), JSON.stringify(st.stale));
+  /* THE REASSURING HALF IS ALSO TRUE AND IS ALSO SAID. */
+  ok('and saying the finished document was not rewritten',
+     Boolean(st.stale) && /not rewritten/i.test(st.stale.note), JSON.stringify(st.stale));
+
+  /* PUTTING IT BACK IS A CHANGE TOO. A package that quietly GAINED an exhibit
+     after being sent is the same defect wearing the opposite sign. */
+  await call(env, `/cases/API-RM3/content/evidence/${keep}/restore`, { method: 'POST', cookie: admin, body: {} });
+  st = await jsonOf(await call(env, '/cases/API-RM3/build', { cookie: admin }));
+  ok('and putting it back is ALSO a change the package must declare',
+     st.stale && st.stale.changes.some(c => /put back/i.test(c)), JSON.stringify(st.stale));
+
+  /* --- 12: THE BYTES ARE STILL THERE THROUGHOUT ---
+     Against DROPBOX, not R2: `freshEnv()` carries a connected Dropbox and no
+     EVIDENCE bucket, because since 2026-08-18 that is where a new file goes.
+     Written against R2 first, which threw rather than passing quietly — the
+     useful direction for a mistake in a test about bytes surviving. */
+  /* The stored name carries Dropbox's autorename suffix — `keep-810ed0.jpg`,
+     not `keep.jpg` — so the match is on the stem. */
+  ok('every byte survived all of that — the file is still in the folder',
+     DBX.paths().some(f => /\/API-RM3\/Photos\/keep-/.test(f)), DBX.paths().join(' '));
+  ok('and so is the one that was removed from the case',
+     DBX.paths().some(f => /\/API-RM3\/Photos\/oops-/.test(f)), DBX.paths().join(' '));
+}
+
+section('Unit 39 — the other records that could be created and never removed');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const r = await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' });
+  const tok = new URL((await jsonOf(r)).url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const users = await jsonOf(await call(env, '/users', { cookie: admin }));
+  const dana = users.users.find(u => u.username === 'dana');
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  await ingest(env, { case_no: 'API-RM2', client_name: 'Second Case' });
+  await call(env, '/submissions/API-RM2/assign', { method: 'POST', cookie: admin, body: { user_id: dana.id } });
+
+  const mine = await jsonOf(await call(env, '/cases/API-RM2/notes', { method: 'POST', cookie: inv,
+    body: { note_type: 'investigator', body: 'my own note' } }));
+  const theirs = await jsonOf(await call(env, '/cases/API-RM2/notes', { method: 'POST', cookie: admin,
+    body: { note_type: 'admin', body: 'the office note', visibility: 'team' } }));
+  const comm = await jsonOf(await call(env, '/cases/API-RM2/comms', { method: 'POST', cookie: admin,
+    body: { comm_type: 'phone', at_date: '2026-08-20', person: 'Client', summary: 'called' } }));
+  const task = await jsonOf(await call(env, '/cases/API-RM2/tasks', { method: 'POST', cookie: admin,
+    body: { task: 'chase the adjuster', priority: 'normal' } }));
+  const subj = await jsonOf(await call(env, '/cases/API-RM2/subjects', { method: 'POST', cookie: admin,
+    body: { name: 'Typo Person' } }));
+
+  const idOf = o => o.id != null ? o.id : (o.subject && o.subject.id);
+  const nid = idOf(mine), tid = idOf(theirs), cid = idOf(comm), kid = idOf(task), sid = idOf(subj);
+
+  ok('an investigator can remove their OWN note',
+     (await call(env, `/cases/API-RM2/content/note/${nid}/remove`,
+       { method: 'POST', cookie: inv, body: {} })).status === 200, String(nid));
+  ok('but not somebody else’s',
+     (await call(env, `/cases/API-RM2/content/note/${tid}/remove`,
+       { method: 'POST', cookie: inv, body: {} })).status === 403, String(tid));
+  ok('the office can remove either', (await call(env, `/cases/API-RM2/content/note/${tid}/remove`,
+     { method: 'POST', cookie: admin, body: {} })).status === 200);
+  const commInv = await call(env, `/cases/API-RM2/content/comm/${cid}/remove`, { method: 'POST', cookie: inv, body: {} });
+  const commAdm = await call(env, `/cases/API-RM2/content/comm/${cid}/remove`, { method: 'POST', cookie: admin, body: {} });
+  ok('a comm log entry is the office’s alone',
+     commInv.status === 403 && commAdm.status === 200, `${cid} inv=${commInv.status} adm=${commAdm.status}`);
+  /* THE FIXTURE HAS TO BE REAL FOR THE BOUNDARY TO MEAN ANYTHING. An id that
+     does not exist answers 404 for everybody, which would have passed a
+     carelessly written 403 test and proved nothing. */
+  ok('and the fixture that boundary was measured on actually exists', cid != null, String(cid));
+  ok('so is a task', (await call(env, `/cases/API-RM2/content/task/${kid}/remove`,
+     { method: 'POST', cookie: admin, body: {} })).status === 200);
+  ok('and a subject', (await call(env, `/cases/API-RM2/content/subject/${sid}/remove`,
+     { method: 'POST', cookie: admin, body: {} })).status === 200);
+
+  const ws = await jsonOf(await call(env, '/cases/API-RM2/workspace', { cookie: admin }));
+  ok('all of them are MARKED removed, and every row still exists',
+     ws.notes.length === 2 && ws.notes.every(n => n.removed)
+     && ws.comms.every(c => c.removed) && ws.tasks.every(t => t.removed)
+     && ws.subjects.every(x => x.removed),
+     JSON.stringify({ n: ws.notes.length, c: ws.comms.length, t: ws.tasks.length, s: ws.subjects.length }));
+
+  /* MONEY THE OFFICE HAS ALREADY LOOKED AT IS NOT THE CLAIMANT'S TO WITHDRAW —
+     the owner's "no billing/history destruction", at the one place an
+     investigator could otherwise have reached it. */
+  const x = await jsonOf(await call(env, '/cases/API-RM2/expenses', { method: 'POST', cookie: inv,
+    body: { expense_date: '2026-08-20', category: 'mileage', amount: 12.5, description: 'fuel' } }));
+  const xid = idOf(x);
+  ok('an investigator can withdraw their own unreviewed expense',
+     (await call(env, `/cases/API-RM2/content/expense/${xid}/remove`,
+       { method: 'POST', cookie: inv, body: {} })).status === 200, String(xid));
+  await call(env, `/cases/API-RM2/content/expense/${xid}/restore`, { method: 'POST', cookie: inv, body: {} });
+  await call(env, `/cases/API-RM2/expenses/${xid}/review`, { method: 'POST', cookie: admin,
+    body: { reimbursable: true, billable: false, internal: false } });
+  ok('but not once the office has reviewed it',
+     (await call(env, `/cases/API-RM2/content/expense/${xid}/remove`,
+       { method: 'POST', cookie: inv, body: {} })).status === 403);
+  ok('while the office still can',
+     (await call(env, `/cases/API-RM2/content/expense/${xid}/remove`,
+       { method: 'POST', cookie: admin, body: {} })).status === 200);
+
+  /* A kind nobody has declared is refused rather than silently written. */
+  ok('an invented kind is refused',
+     (await call(env, `/cases/API-RM2/content/invoice/1/remove`,
+       { method: 'POST', cookie: admin, body: {} })).status === 400);
+  /* AND THE ROUTE INHERITS THE DELETED-CASE GATE without a check of its own —
+     the chokepoint that exists so a per-route list cannot be forgotten. */
+  await call(env, '/cases/API-RM2/delete', { method: 'POST', cookie: admin, body: { reason: 'x' } });
+  const gated = await call(env, `/cases/API-RM2/content/note/${nid}/restore`,
+    { method: 'POST', cookie: admin, body: {} });
+  ok('a deleted case refuses content removal through the router chokepoint',
+     gated.status === 409 && (await jsonOf(gated)).case_deleted === true, String(gated.status));
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

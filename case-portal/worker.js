@@ -10372,7 +10372,11 @@ async function buildState(env, caseNo) {
    remove-then-restore look like nothing ever happened, and the document in
    between is the one somebody may have sent. */
 async function buildStaleness(env, caseNo, build) {
-  if (!build || build.status !== 'final' || !build.finalized_at) return null;
+  /* 'finalized', not 'final' — the value the CHECK on case_builds.status
+     actually allows. Written the other way first, which made this whole
+     function return null on every package there is; the test that put a real
+     package into the finalized state is what caught it. */
+  if (!build || build.status !== 'finalized' || !build.finalized_at) return null;
   const at = build.finalized_at;
   const missing = await missingTables(env);
   const since = [];
