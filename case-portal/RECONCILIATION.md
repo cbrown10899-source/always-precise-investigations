@@ -681,3 +681,23 @@ all fixed and all asserted:
 
 Nothing else was found: every field on the five validators resolved to exactly
 one of required / optional / one-of-two, so no field is reported as ambiguous.
+
+
+## Queue state at 2026-08-22, before Units 37–38 were added
+
+Checked under the owner's queue-safety instruction, against master `f8ae853`:
+
+| Question | Answer |
+| --- | --- |
+| What is complete? | Locked order 1–17, hotfix 17A, Units 18–22, 24–36 |
+| What is in progress? | Nothing — Unit 36 shipped at `b34ccda` and is recorded |
+| What is queued ahead of the new work? | Nothing. Unit 23 is open but is live-verification only |
+| What is deferred by owner? | The deferred list in `NEXT.md`, unchanged |
+| What needs live verification only? | Unit 23's sweep and every LIVE VERIFY OPEN row |
+
+So the two new units are the highest-priority unfinished work, and they were
+**added** to the durable queue rather than replacing anything. Nothing was
+skipped, renumbered, overwritten or silently dropped; the only edit to an
+existing row was a stale "owes a portal-setup dispatch" note on Unit 27, whose
+dispatch had already run (32508101361) and which the session header had
+already recorded correctly.

@@ -416,3 +416,64 @@ but a behaviour change, and one line reverts it.
 
 **Ambiguity found: none.** Every field resolved to exactly one of the three
 shapes from the code that validates it.
+
+
+## PART 12 — the queue is open again, and the closeout statement says so
+
+**Owner instruction, 2026-08-22:** *"Do not call the project complete while any
+required queued item remains."*
+
+Two units were added to the durable queue on that date. **They are REQUIRED, not
+deferred**, so the closeout statement in PART 10 no longer stands unqualified.
+It is not withdrawn — it was true of the build as delivered at `5e1d063`, and
+Units 27 and 34–36 were each reconciled into it as they shipped — but the
+project is **not complete** while 37 and 38 are open.
+
+| # | Unit | Brief | State |
+| --- | --- | --- | --- |
+| **37** | Final Production Truth Audit — Round 2 | `PRODUCTION-TRUTH-2.md` (owner verbatim) | 🔵 REQUIRED — next. **Changes no files.** |
+| **38** | Case Workspace Simplification | `CASE-WORKSPACE.md` (owner verbatim) | 🔵 REQUIRED |
+
+**Unit 38 carries three named requirements** and none may be split out, dropped
+or quietly satisfied by an existing feature:
+
+1. the simplified desktop and mobile Case Workspace;
+2. **Activity oldest-to-newest ordering** — Activity tab, Active Surveillance
+   timeline, Daily Summary source, report chronology, any selected-day list.
+   The dashboard's Recent Activity widget stays newest-first, by the owner's
+   own carve-out;
+3. **simplified Activity / Daily Summary access** — on mobile, neither may ever
+   sit under **More**.
+
+**On the numbering.** The owner's message labels the workspace unit "Unit 34".
+That number is the shipped public-site unit (#225, `405462f`), recorded in PART
+6B. Nothing was renumbered — 34 keeps its meaning and the new unit takes the
+next free number, 38, with the owner's own label preserved at the top of
+`CASE-WORKSPACE.md`.
+
+**What was verified before adding them**, per the owner's queue-safety
+instruction:
+
+- **Complete:** locked order 1–17, hotfix 17A, Units 18–22 and 24–36. None
+  reopened, none renumbered, none replaced.
+- **In progress:** nothing. Unit 36 shipped at `b34ccda` and is recorded.
+- **Queued ahead:** nothing. Unit 23 is the only other open Active-order row and
+  it is live-verification only.
+- **Deferred by owner:** unchanged and untouched — PORTAL-OPS Permissions
+  (must not be invented), Saved Views, Case and Document Templates, Case Health
+  flag, SMS provider and the alert status log, Intake Archive / Sample Cleanup
+  Part 2, invoice Write-Off, physical destruction, retention clocks, automatic
+  purge, Dropbox byte deletion, the legacy R2 export decision, two-person
+  legal-hold approval, removed-days-at-finalize, `nextInvoiceNo` past 9999, the
+  business-account payment migration, and the `portal-setup` bootstrap-token
+  race (credential handling is a stop condition).
+- **Live verification only:** Unit 23's sweep, and the LIVE VERIFY OPEN rows —
+  17A, 18, 19, 20, 21, 22, 27, 28, 34, 36 and the IMPLEMENTED BUT NOT LIVE
+  VERIFIED block. Deferred by the owner pending real case data; **no production
+  data is to be manufactured for any of it.**
+
+**One stale line corrected rather than left to mislead:** the Active-order row
+for Unit 27 said it *"owes a portal-setup dispatch"*. That dispatch was run —
+`portal-setup` 32508101361 at `74629fe`, successful including the
+admin-bootstrap step — and the session-handoff header has said so since. The
+row now agrees with the header. No schema is owed.

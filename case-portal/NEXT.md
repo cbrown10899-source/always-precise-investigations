@@ -54,7 +54,7 @@ completed.
 | **Deployed** | at `b34ccda`: `Deploy site to Cloudflare Pages` ✅ **run 32540154210**. The Worker was untouched by Unit 36, so `deploy-portal.yml` correctly did not fire. LIVE byte-check not possible from this container — the proxy refuses the domain (403), as recorded |
 | **Closeout** | ✅ **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** — see `case-portal/FINAL-LEDGER.md` |
 | **Owner decisions** | ✅ five LOCKED at closeout, 2026-08-21 — see **FINAL OWNER DECISIONS** below. Four are deferrals or standing refusals; **decision 4 (Ended by Admin) is BUILT — Unit 27** |
-| **Next unit** | **Unit 36 SHIPPED** (`b34ccda`, #228). Two owner requests remain unstarted: the **Final Production Truth Audit Round 2** (audit-only), and a **Case Workspace Simplification + Activity Ordering** unit the owner numbered 34 — a COLLISION with the shipped public-site unit, so it needs renumbering (37) before it starts |
+| **Next unit** | **UNIT 37 — Final Production Truth Audit, Round 2** (audit only, changes no files). Then **UNIT 38 — Case Workspace Simplification**. Both are recorded in the DURABLE MASTER UNIT QUEUE with the owner's briefs verbatim in `case-portal/PRODUCTION-TRUTH-2.md` and `case-portal/CASE-WORKSPACE.md` |
 
 ## 🔄 RESUME POINT — Production Truth Correction Queue (Units 28–33)
 
@@ -189,6 +189,28 @@ touch how existing cases are categorised, so it is recorded rather than done.
   the uploader declared. `case-portal/SECURITY-PASS.md` is the record — what
   was walked, what was found sound and on what evidence, and eight derived
   decisions. No schema, no migration, no `portal-setup` dispatch.
+- **37 — Final Production Truth Audit, Round 2.** 🔵 **REQUIRED, and the next
+  thing to do.** Owner brief verbatim in `case-portal/PRODUCTION-TRUTH-2.md`.
+  Re-walks the deployed system as a real user across roughly thirty named
+  surfaces, classifying each as LIVE + REACHABLE + WORKING / VISIBLE BUT BROKEN
+  / IMPLEMENTED BUT NOT EXPOSED / PARTIAL / MISSING / DEFERRED / REQUIRES REAL
+  CASE/DATA. **It changes no files.** A BLOCKER or HIGH finding stops it and
+  produces the exact correction queue; otherwise it reports FINAL PRODUCTION
+  TRUTH AUDIT PASSED and lists only the live-verification and deferred items.
+- **38 — Case Workspace Simplification.** 🔵 **REQUIRED.** Owner brief verbatim
+  in `case-portal/CASE-WORKSPACE.md`. Three things are durable required work
+  inside it and must not be dropped or split out:
+  **(a)** the simplified desktop and mobile case workspace,
+  **(b)** **Activity oldest-to-newest ordering** across the Activity tab, the
+  Active Surveillance timeline, the Daily Summary source, the report chronology
+  and any selected-day list — the dashboard's Recent Activity widget stays
+  newest-first by the owner's own carve-out, and
+  **(c)** **simplified Activity / Daily Summary access**, which on mobile means
+  neither may ever sit under **More**.
+  The owner's own numbering says "Unit 34"; that number belongs to the shipped
+  public-site unit, so this is 38 and the alias is recorded in the brief file.
+  **The goal is NOT to remove functionality** — the brief carries a DO NOT
+  REMOVE FUNCTIONALITY list and twenty numbered tests.
 - **26 — Final master reconciliation + project closeout.** ✅ **DONE.** Every
   durable owner requirement was compared against master and live state and
   classified in **`case-portal/FINAL-LEDGER.md`**: MASTER-HANDOFF §0–§43, the
@@ -262,8 +284,13 @@ CREATE A BRANCH. DO NOT DEPLOY. DO NOT START THE NEXT UNIT."*
 | 29–31 | Billing settings UI · Case types UI · Internal-route classification | ✅ **DONE — DEPLOYED** at `3df2037` (#222) and `730141e` (#223). Nothing was removed in 31: all three routes are tested boundaries |
 | 32–33 | Reachability re-audit · final correction reconciliation | ✅ **DONE.** No new BLOCKER/HIGH; `FINAL-LEDGER.md` PART 6B is the record |
 | 28 | **Legal pre-case access** (Production Truth BLOCKER) | ✅ **DONE — DEPLOYED** at `9beb0e8` (#221). Legal / Law Firm card on Rate Sheets, Send legal intake on Send to someone new, explicit send context. No third pricing source. LIVE VERIFY **OPEN** |
-| 27 | **Ended by Admin / Ended by [name]** (owner decision 4) | ✅ **DONE** — `case_day_end`, additive; authorization untouched; legacy days stay readable. **Owes a portal-setup dispatch** |
+| 27 | **Ended by Admin / Ended by [name]** (owner decision 4) | ✅ **DONE** — `case_day_end`, additive; authorization untouched; legacy days stay readable. **The dispatch it owed was run**: `portal-setup` 32508101361 at `74629fe`, ✅ including the admin-bootstrap step. The header table is the authority; this line said "owes" until 2026-08-22 |
 | 26 | Final master reconciliation + project closeout | ✅ **DONE** — every durable requirement classified in `case-portal/FINAL-LEDGER.md`. No non-deferred approved requirement is missing |
+| 34 | Public Legal page · no public pricing · three service claims removed | ✅ **DONE — DEPLOYED** at `405462f` (#225). LIVE VERIFY **OPEN** |
+| 35 | Retired terminology leaves the Admin UI | ✅ **DONE — DEPLOYED** at `c691518` (#227). No stored value changed |
+| 36 | Optional-field labelling, audited off the validators | ✅ **DONE — DEPLOYED** at `b34ccda` (#228), Pages run 32540154210. LIVE VERIFY **OPEN** |
+| **37** | **Final Production Truth Audit — Round 2** | 🔵 **REQUIRED — NEXT.** Owner brief verbatim in `case-portal/PRODUCTION-TRUTH-2.md`. **Audit only: changes no files.** Stop condition: any BLOCKER or HIGH ends it with a correction queue |
+| **38** | **Case Workspace Simplification** (the owner's message calls it "Unit 34" — that number is taken; see below) | 🔵 **REQUIRED.** Owner brief verbatim in `case-portal/CASE-WORKSPACE.md`. Carries **Activity oldest-to-newest ordering** and **simplified Activity / Daily Summary access** inside it, by the owner's instruction — not separate units |
 
 ## CONFIRMED COMPLETE — DO NOT REOPEN
 
