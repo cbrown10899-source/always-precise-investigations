@@ -1251,7 +1251,9 @@ section('The case workspace in the browser');
   await page.waitForTimeout(500);
   log = await text(page, '#dlgBody');
   ok('a second entry joins it', log.includes('Subject arrived at ABC Fitness.'));
-  ok('the newest entry reads first', log.indexOf('8:17 AM') < log.indexOf('7:14 AM'));
+  /* Unit 38 — the log is a narrative, so it reads OLDEST first. */
+  ok('the log reads oldest first', log.indexOf('7:14 AM') < log.indexOf('8:17 AM'),
+     `7:14 at ${log.indexOf('7:14 AM')}, 8:17 at ${log.indexOf('8:17 AM')}`);
 
   await openComposer(page);
   await page.locator('#a_desc').fill('');
@@ -5378,7 +5380,10 @@ section('Voice mode: explicit, looping, and never filing what it is unsure of');
   /* §3 + §9 — a recognized command becomes a REAL entry, and confirms briefly. */
   await say('no change at residence');
   ok('the command files a real activity entry', (await entries()) === before + 1);
-  const filed = await page.evaluate(() => (WS.activity[0] || {}));
+  /* THE ENTRY JUST FILED IS AT THE END. WS.activity is chronological and
+     oldest-first since Unit 38, so "the one I just spoke" is the last element
+     rather than the first — these six reads used to index from the front. */
+  const filed = await page.evaluate(() => (WS.activity[WS.activity.length - 1] || {}));
   ok('with the standardized wording, not the transcript',
      filed.description === 'No change observed at the residence.', filed.description);
   ok('marked as captured by voice, with the command that made it',
@@ -5407,7 +5412,7 @@ section('Voice mode: explicit, looping, and never filing what it is unsure of');
   await say('Mobile, lost visual');
   ok('an ambiguous phrase is saved rather than thrown away', (await entries()) === n2 + 1,
      `${n2} -> ${await entries()}`);
-  const amb = await page.evaluate(() => (WS.activity[0] || {}));
+  const amb = await page.evaluate(() => (WS.activity[WS.activity.length - 1] || {}));
   ok('in the words that were actually spoken', amb.description === 'lost visual', amb.description);
   /* THE PART OF §7 THAT STILL HOLDS, and the part that mattered: NO_CHANGE and
      CHANGE_POSITION are opposite facts about the same minute. An uncertain
@@ -5424,7 +5429,7 @@ section('Voice mode: explicit, looping, and never filing what it is unsure of');
   await say('Mobile, the grey van came back and parked across the street');
   ok('an unrecognised observation is saved in the investigator’s own words',
      (await entries()) === n3 + 1, `${n3} -> ${await entries()}`);
-  const free = await page.evaluate(() => (WS.activity[0] || {}));
+  const free = await page.evaluate(() => (WS.activity[WS.activity.length - 1] || {}));
   ok('with the wake word stripped off the front',
      free.description === 'the grey van came back and parked across the street',
      free.description);
@@ -5440,8 +5445,8 @@ section('Voice mode: explicit, looping, and never filing what it is unsure of');
   await say('Mobile, note the subject left in a grey van');
   ok('a dictated note is saved too', (await entries()) === n4 + 1);
   ok('without the word that asked for it',
-     (await page.evaluate(() => WS.activity[0].description)) === 'the subject left in a grey van',
-     await page.evaluate(() => WS.activity[0].description));
+     (await page.evaluate(() => WS.activity[WS.activity.length - 1].description)) === 'the subject left in a grey van',
+     await page.evaluate(() => WS.activity[WS.activity.length - 1].description));
 
   /* §8 still holds for free speech, which has no command id to key on. */
   const n5 = await entries();
@@ -5737,8 +5742,8 @@ section('Voice §13 and §8: prepare the camera, claim nothing, lose nothing');
   ok('when the signal returns the held entry sends itself',
      (await entries()) === n1 + 1, `${n1} -> ${await entries()}`);
   ok('in the words that were spoken',
-     (await page.evaluate(() => WS.activity[0].description)) === 'the grey van came back',
-     await page.evaluate(() => WS.activity[0].description));
+     (await page.evaluate(() => WS.activity[WS.activity.length - 1].description)) === 'the grey van came back',
+     await page.evaluate(() => WS.activity[WS.activity.length - 1].description));
   ok('and the waiting notice is gone', !has(await panel(), 'held on this phone'));
 
   /* THE RETRY CARRIES THE SAME NAME, which is what stops a lost response
