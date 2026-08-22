@@ -2223,7 +2223,7 @@ section('Quick lines: search, favorites, one tap');
   await page.waitForTimeout(450);
   await wsTab(page, 'Activity');
 
-  await page.locator('[data-act="actOpen"]').click();
+  await page.locator('[data-act="actOpen"]:visible').first().click();
   await page.waitForTimeout(300);
   ok('the sheet opens on Quick', has(await text(page, '.amtab.on'), 'Quick'));
   const cats = await text(page, '.amcats');
@@ -2265,7 +2265,7 @@ section('Quick lines: search, favorites, one tap');
   ok('the sheet closed on success', await page.locator('.amsheet').count() === 0);
 
   // NO CHANGE is one tap: no compose step, straight to the log (P9).
-  await page.locator('[data-act="actOpen"]').click();
+  await page.locator('[data-act="actOpen"]:visible').first().click();
   await page.waitForTimeout(300);
   await page.locator('.amcat', { hasText: 'No activity' }).click();
   await page.waitForTimeout(250);
@@ -2275,7 +2275,7 @@ section('Quick lines: search, favorites, one tap');
   ok('with no compose step in between', await page.locator('.amsheet').count() === 0);
 
   // The arrival template generates the sentence from the extras.
-  await page.locator('[data-act="actOpen"]').click();
+  await page.locator('[data-act="actOpen"]:visible').first().click();
   await page.waitForTimeout(300);
   await page.locator('.amcat', { hasText: 'Arrival' }).click();
   await page.waitForTimeout(250);
@@ -3781,7 +3781,7 @@ section('Evidence in the browser');
 
   // The quick-entry fold links an already-uploaded file to the new moment (P9).
   await wsTab(page, 'Activity');
-  await page.locator('[data-act="actOpen"]').click();
+  await page.locator('[data-act="actOpen"]:visible').first().click();
   await page.waitForTimeout(300);
   await page.locator('.ampick', { hasText: 'Established stationary surveillance position.' }).click();
   await page.waitForTimeout(300);
