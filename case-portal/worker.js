@@ -5110,22 +5110,50 @@ async function caseWorkspace(env, user, caseNo) {
   /* Removed entries still come back, stamped — the page greys them out with a
      way to put one back, and the report skips them. Erasing the row outright
      is what this deliberately does not do. */
+  /* CHRONOLOGICAL, OLDEST FIRST (owner, 2026-08-22, Unit 38). A case's activity
+     is a narrative — Day 1 before Day 2, 08:15 before 09:40 — and it was
+     arriving newest-first, so the log, the field timeline and the REPORT
+     chronology all read backwards while the Daily Summary builder sorted
+     ascending for itself. One case, two answers about the same day.
+
+     This is the single source all of them read, so the order is fixed once
+     here rather than in each consumer. The row id is the tie-break and it is
+     load-bearing: two entries recorded in the same minute must not swap places
+     between requests, and the id is the only stable thing about them that
+     already exists. Nothing about a stored timestamp changes — only which end
+     the list starts at.
+
+     The DASHBOARD's Recent activity is a different question and stays
+     newest-first: it reads /recent-activity, not this. The page asks the same
+     question in three places through newestActivity(), never by indexing this
+     array from whichever end happens to be right.
+
+     THE CAP IS STILL TAKEN FROM THE NEWEST END. Ordering ascending and then
+     LIMIT 500 would keep the OLDEST five hundred entries and drop the work
+     someone did this morning, on the one screen they are standing in front of.
+     The inner query takes the newest 500 exactly as it always did; the outer
+     one only decides which end the caller reads them from.
+
+     Keep the comment out here: this SQL is a template literal and a backtick
+     inside it ends the string. */
   const { results: activity } = await env.DB.prepare(
-    `SELECT a.id, a.day_id, a.at_date, a.at_time, a.kind, a.description, a.location,
-            a.vehicle, a.internal_note, a.edited_at, u.display_name AS investigator,
-            COALESCE(m.subject_documented, 0) AS subject_documented,
-            COALESCE(m.video_acquired, 0) AS video_acquired,
-            COALESCE(m.photo_acquired, 0) AS photo_acquired,
-            r.removed_at, ru.display_name AS removed_by
-            ${hasSource ? ', s.source, s.command_id' : ''}
-       FROM activity_log a LEFT JOIN users u ON u.id = a.investigator_id
-       LEFT JOIN activity_media m ON m.entry_id = a.id
-       LEFT JOIN activity_removed r ON r.entry_id = a.id
-       LEFT JOIN users ru ON ru.id = r.removed_by
-       ${hasSource ? 'LEFT JOIN activity_source s ON s.entry_id = a.id' : ''}
-      WHERE a.case_no = ?
-      ORDER BY a.at_date DESC, a.at_time DESC, a.id DESC
-      LIMIT 500`).bind(caseNo).all();
+    `SELECT * FROM (
+       SELECT a.id, a.day_id, a.at_date, a.at_time, a.kind, a.description, a.location,
+              a.vehicle, a.internal_note, a.edited_at, u.display_name AS investigator,
+              COALESCE(m.subject_documented, 0) AS subject_documented,
+              COALESCE(m.video_acquired, 0) AS video_acquired,
+              COALESCE(m.photo_acquired, 0) AS photo_acquired,
+              r.removed_at, ru.display_name AS removed_by
+              ${hasSource ? ', s.source, s.command_id' : ''}
+         FROM activity_log a LEFT JOIN users u ON u.id = a.investigator_id
+         LEFT JOIN activity_media m ON m.entry_id = a.id
+         LEFT JOIN activity_removed r ON r.entry_id = a.id
+         LEFT JOIN users ru ON ru.id = r.removed_by
+         ${hasSource ? 'LEFT JOIN activity_source s ON s.entry_id = a.id' : ''}
+        WHERE a.case_no = ?
+        ORDER BY a.at_date DESC, a.at_time DESC, a.id DESC
+        LIMIT 500
+     ) ORDER BY at_date ASC, at_time ASC, id ASC`).bind(caseNo).all();
 
   /* A PRIOR INVESTIGATOR'S HOURS ARE ADMIN-ONLY (owner, 2026-08-21, locked).
      A reassigned investigator must not see the previous one's "worked hours,

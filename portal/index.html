@@ -10175,6 +10175,17 @@ function tlGo(tab, id, kind){
   paintCase();
 }
 
+/* WS.activity is CHRONOLOGICAL, OLDEST FIRST (Unit 38) — that is what a case
+   log, a field timeline and a report chronology all have to read like. A few
+   places want the opposite question, "what happened most recently", and they
+   ask it here rather than by indexing the array from whichever end happens to
+   be right this month. Newest first, because that is what a "recent" list
+   means. */
+function newestActivity(n){
+  const a = (WS && WS.activity) || [];
+  return a.slice(Math.max(0, a.length - n)).reverse();
+}
+
 function activityPanel(){
   const a = (WS && WS.activity) || [];
   const open = WS && WS.open_day;
@@ -12085,7 +12096,7 @@ function evidencePanel(){
           ${((WS && WS.subjects) || []).length ? `<optgroup label="Subjects">
             ${WS.subjects.map(sj => `<option value="s:${sj.id}">${esc(sj.name)}</option>`).join("")}</optgroup>` : ""}
           ${((WS && WS.activity) || []).length ? `<optgroup label="Recent activity">
-            ${WS.activity.slice(0, 8).map(a => `<option value="e:${a.id}">${esc(t12(a.at_time))} — ${esc(String(a.description || "").slice(0, 48))}</option>`).join("")}</optgroup>` : ""}
+            ${newestActivity(8).map(a => `<option value="e:${a.id}">${esc(t12(a.at_time))} — ${esc(String(a.description || "").slice(0, 48))}</option>`).join("")}</optgroup>` : ""}
         </select></label>
       <button class="btn" type="submit">Upload picture or document</button>
       <p class="hint">The free-plan failsafe is on: uploads stop before storage could ever bill.
@@ -13327,7 +13338,7 @@ function overviewPanel(s, a){
   const next = pkgNextStep(shape);
   const mark = st => st === "done" ? "&#10003;" : st === "part" ? "&#9685;" : "&#9675;";
   const assignee = s.assigned_to ? USERS.find(u => u.id === s.assigned_to) : null;
-  const acts = ((WS && WS.activity) || []).slice(0, 5);
+  const acts = newestActivity(5);
   const docs = ((WS && WS.evidence) || []).filter(e => !e.deleted_at).length - shape.photos - shape.videos;
   const row = (k, v) => v == null || v === "" ? "" : `<div class="ov-row"><span>${esc(k)}</span><b>${esc(v)}</b></div>`;
   return `
@@ -13601,7 +13612,8 @@ function svHomeScreen(){
   const dayNo = (WS && typeof WS.days_total === "number") ? WS.days_total : days.length;
   const acts = (WS && WS.activity) || [];
   const a = (WS && WS.authorization) || {};
-  const last = acts[0];
+  /* The list is oldest-first, so the latest entry is at the END of it. */
+  const last = acts[acts.length - 1];
   const note = (SV.err ? `<div class="sv-err">${esc(SV.err)}</div>` : "")
              + (SV.ok ? `<div class="sv-ok">${esc(SV.ok)}</div>` : "");
 
