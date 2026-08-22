@@ -10378,8 +10378,7 @@ function activityPanel(){
                 <button class="tl-edit" style="color:#a6392f" data-act="actDelete" data-id="${e.id}">Delete</button>` : ""}</div>
           </div></li>`).join("")}
       </ol>`).join("")
-      : `<div class="empty">Nothing logged on this case yet. + Add activity starts the story.</div>`}
-    ${ACT_MODAL ? actModalHtml() : ""}`;
+      : `<div class="empty">Nothing logged on this case yet. + Add activity starts the story.</div>`}`;
 }
 
 /* --------------------------- the Add Activity sheet (UIBUILD P8/P9) */
@@ -13482,6 +13481,11 @@ function caseBodyHtml(){
       }${more.map(([k, lbl]) =>
       `<button role="menuitem" class="${WS_TAB === k ? "on" : ""}" data-act="wsTab" data-tab="${k}">${esc(lbl)}</button>`).join("")}</div>` : ""}
     <div class="wspanel">${panel}</div>
+    ${/* The Add Activity sheet is `position:fixed; inset:0` — an overlay over
+         the whole page, not a part of the Activity panel it used to be
+         rendered inside. It lives here so the action row's + Add activity
+         works from every tab, which is what a primary action has to do. */""}
+    ${ACT_MODAL ? actModalHtml() : ""}
     ${/* THE PHONE BAR. Activity and Summary are IN it, never under More —
          the owner's own line. + Add is the middle key because it is the one
          thing someone does standing up. */""}
