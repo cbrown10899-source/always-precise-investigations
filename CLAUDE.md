@@ -332,12 +332,21 @@ layout moving. On 2026-08-22 the owner supplied three, and that is exactly what
 it cost: **three `url()`s and three lines in `deploy-manifest.txt`.** Heights
 stayed 236/236/236 and titles 645/645/645.
 
-`card-insurance.webp` (64 KB), `card-legal.webp` (52 KB) and
+`card-insurance.webp` (74 KB), `card-legal.webp` (52 KB) and
 `card-private.webp` (74 KB) — 960×640, the source's own 3:2 rather than a 16:9
 crop, because the card's tallest shape is 1.40:1 and cropping to 16:9 would
 throw away height the tablet actually uses. Nothing is hotlinked. **Keep the
 one-property rule**: a per-card `background-position`, or a bespoke height for
 one card, would end the property that makes a future swap free.
+
+**THE THREE SUBJECTS ARE DELIBERATELY DIFFERENT SETTINGS.** The first
+insurance photograph was a suburban street at dusk with a parked car — and so
+is the private one, two cards away in the same row, so they read as a pair
+rather than as three doors. It was replaced with a **commercial yard**: a work
+van, warehouse bays, a wet apron at dusk. Claims work is not only residential,
+the setting says which business the card is for, and the swap cost one
+`url()`. If a card is ever re-shot, check it against the OTHER two rather than
+on its own.
 
 **A replacement image needs its subject in the CENTRAL 60% of the frame.** The
 card is three different shapes and crops different axes at each — full width
