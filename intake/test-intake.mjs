@@ -1542,6 +1542,21 @@ section('Unit 40 — the layout at three widths');
   ok('in three distinct columns', new Set(desk.lefts).size === 3, JSON.stringify(desk.lefts));
   ok('at equal widths', new Set(desk.widths).size === 1, JSON.stringify(desk.widths));
   ok('and equal heights', new Set(desk.heights).size === 1, JSON.stringify(desk.heights));
+  /* GET STARTED IS CENTRED AND LOW (owner, 2026-08-22). Measured as the
+     difference between its left and right gaps inside the card, because that
+     is what "centred" means and it survives the card changing width. `low` is
+     the gap from the card's foot being small and EQUAL across the three — the
+     button is placed by `margin-top:auto`, so an unequal gap would mean one
+     card's content had grown into it. */
+  const go = await page.evaluate(() => [...document.querySelectorAll('.cta-card')].map(c => {
+    const cr = c.getBoundingClientRect(), g = c.querySelector('.cta-go').getBoundingClientRect();
+    return { off: Math.round(((g.left - cr.left) - (cr.right - g.right)) * 10) / 10,
+             foot: Math.round(cr.bottom - g.bottom) };
+  }));
+  ok('Get Started is horizontally centred on every card',
+     go.every(g => Math.abs(g.off) <= 1), JSON.stringify(go.map(g => g.off)));
+  ok('and sits low, the same distance off the foot on all three',
+     new Set(go.map(g => g.foot)).size === 1 && go[0].foot <= 32, JSON.stringify(go.map(g => g.foot)));
   ok('with no horizontal overflow', desk.doc <= 0, String(desk.doc));
   await ctx.close();
 
@@ -1583,6 +1598,17 @@ section('Unit 40 — the layout at three widths');
        than silently absorbed into a passing test. */
     ok(`${w}px: no card crosses the viewport edge`, m.widest <= m.vw + 1, JSON.stringify(m));
     if (w >= 360) ok(`${w}px: and the page does not scroll sideways`, m.doc <= 0, String(m.doc));
+    /* Under 640px the button is width:100%, so "centred" is the label inside a
+       full-width box rather than the box inside the card. Both readings are
+       checked: the box has no side bias, and the text is centred in it. */
+    const goN = await p2.evaluate(() => [...document.querySelectorAll('.cta-card')].map(c => {
+      const cr = c.getBoundingClientRect(), g = c.querySelector('.cta-go');
+      const r = g.getBoundingClientRect();
+      return { off: Math.round(((r.left - cr.left) - (cr.right - r.right)) * 10) / 10,
+               align: getComputedStyle(g).textAlign };
+    }));
+    ok(`${w}px: Get Started is centred, box and label alike`,
+       goN.every(g => Math.abs(g.off) <= 1 && g.align === 'center'), JSON.stringify(goN));
     ok(`${w}px: the Get Started target clears Apple's 44px floor`,
        m.go.every(h => h >= 44), JSON.stringify(m.go));
     await c2.close();

@@ -227,7 +227,13 @@
      The 3.37:1 itself is site-wide and NOT this unit's to change: --teal on
      white is every button on the page. It is reported to the owner rather
      than fixed here by darkening one control out of step with the rest. */
-  .cta-go{margin-top:auto;background:var(--teal);color:var(--white);
+  /* CENTRED, and still low. `margin-top:auto` is what keeps it at the foot of
+     the card; `align-self:center` is what centres it. They are different axes:
+     .cta-body is a flex COLUMN with align-items:flex-start, so the button is
+     shrink-wrapped to its label and the horizontal one is the CROSS axis.
+     text-align would do nothing here — the box is already only as wide as its
+     text. Owner, 2026-08-22. */
+  .cta-go{margin-top:auto;align-self:center;background:var(--teal);color:var(--white);
     font-family:'Segoe UI',Arial,sans-serif;font-weight:700;font-size:1.18rem;
     letter-spacing:.03em;padding:10px 20px;border-radius:5px;
     transition:background .15s;}
