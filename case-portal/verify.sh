@@ -38,6 +38,35 @@ else
     bad "the D1 binding and INGEST_KEY are both set" \
         "health says configured:false — check database_id in wrangler.toml and 'wrangler secret put INGEST_KEY'."
   fi
+
+  # 2b. EVERY TABLE THIS BUILD EXPECTS IS ACTUALLY THERE.
+  #
+  #     `/health` has always returned `missing_tables` for exactly this reason —
+  #     schema.sql arrives by a MANUAL portal-setup dispatch while the Worker
+  #     deploys on push, so between the two a table can be absent and every
+  #     route that touches it answers 503. Nothing was reading the field. This
+  #     probe fetched it, checked `configured`, and threw the rest away.
+  #
+  #     It costs no extra request: $HEALTH is already in hand.
+  #
+  #     THE ABSENT KEY IS NOT AN EMPTY LIST. A Worker old enough not to send
+  #     `missing_tables` at all would match an empty-array test and report a
+  #     clean schema — the reassuring direction, which is the one this must
+  #     never fail in. So the key's presence is checked first.
+  if ! printf '%s' "$HEALTH" | grep -q '"missing_tables"'; then
+    bad "every table this build expects is on the database" \
+        "health did not report missing_tables at all — this Worker predates the check, so the schema state is unknown rather than clean."
+  else
+    MISSING=$(printf '%s' "$HEALTH" \
+      | sed -n 's/.*"missing_tables":\[\([^]]*\)\].*/\1/p' \
+      | tr -d '"' | tr ',' ' ' | tr -s ' ' | sed 's/^ *//; s/ *$//')
+    if [ -z "$MISSING" ]; then
+      ok "every table this build expects is on the database"
+    else
+      bad "every table this build expects is on the database" \
+          "missing: $MISSING — run the portal-setup workflow (Actions → Set up the case portal → Run workflow). It is idempotent."
+    fi
+  fi
 fi
 
 # 3. The database really has its tables. A missing schema shows up as a 500

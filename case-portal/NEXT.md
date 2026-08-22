@@ -295,6 +295,30 @@ touch how existing cases are categorised, so it is recorded rather than done.
   deferred was converted to complete. **No non-deferred approved requirement is
   missing.**
 
+## 🔒 OWNER DECISIONS — 2026-08-22, Unit 39 (LOCKED)
+
+Verbatim in `case-portal/CASE-CONTENT-DELETE.md`. Three, and all three are
+standing rules rather than one-off answers:
+
+1. **Preserved deleted evidence keeps counting toward storage.** *"If the
+   Dropbox/file bytes still exist, storage reporting must remain truthful. Do
+   not pretend Delete from Case frees storage."* The marker-aware sum in
+   `evidenceUsage` is the rule now, not an accommodation.
+2. **The legal hold keeps its full reach.** *"While a Legal Hold is active,
+   refuse all case-content removals covered by Unit 39. Restore remains
+   allowed. Do not narrow this protection."* Unit 39's widening of Unit 17
+   decision 5 is confirmed rather than overturned.
+3. **Credentials and bootstrap/admin-token handling are not to be changed**
+   merely because `portal-setup` went red after the schema applied. Item 3
+   further down still describes that race; it remains a stop condition.
+
+**And the verification it prompted:** the live domain is unreachable from the
+build container (the network policy refuses `CONNECT` with 403), so the schema
+was verified from a GitHub runner instead. `case-portal/verify.sh` already
+fetched `/portal-api/health` and read only `configured` — it reports
+`missing_tables` now, from the response it was already holding, and treats an
+ABSENT key as *unknown* rather than clean. `harden-check.yml` dispatches it.
+
 ## 🔵 QUEUED — reported by Unit 38, deferred to the owner rather than fixed
 
 **`announceRendered()` never runs on the case page.** Unit 21's chokepoint is
