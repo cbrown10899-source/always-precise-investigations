@@ -46,15 +46,15 @@ completed.
 
 | | |
 | --- | --- |
-| **Master** | **`b34ccda`** (Unit 36 — optional-field labelling, #228) |
+| **Master** | **`f2f49d4`** (Unit 38 — case workspace simplification, #232) |
 | **Working tree** | clean; nothing unpushed; no branch in flight |
 | **Background work** | none running |
-| **Suites at that SHA** | worker **2755/0** · portal **2558/0** · deploy guard **81/0** · intake **445/0** · visitor-alerts **47/0** |
+| **Suites at that SHA** | worker **2796/0** · portal **2660/0** · deploy guard **86/0** · intake **467/0** · visitor-alerts **47/0** |
 | **Schema owed** | **NONE.** `case_day_end` was applied by `portal-setup` run **32508101361** at `74629fe` — ✅ success, **including the admin-bootstrap step that failed at `46a06ad9`**, so the token race did not recur |
-| **Deployed** | at `b34ccda`: `Deploy site to Cloudflare Pages` ✅ **run 32540154210**. The Worker was untouched by Unit 36, so `deploy-portal.yml` correctly did not fire. LIVE byte-check not possible from this container — the proxy refuses the domain (403), as recorded |
+| **Deployed** | at `f2f49d4`: `Deploy site to Cloudflare Pages` ✅ **run 32557961911** and `Deploy case-portal Worker` ✅ **run 32557961914** — Unit 38 touched both. LIVE byte-check not possible from this container — the proxy refuses the domain (403), as recorded |
 | **Closeout** | ✅ **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** — see `case-portal/FINAL-LEDGER.md` |
 | **Owner decisions** | ✅ five LOCKED at closeout, 2026-08-21 — see **FINAL OWNER DECISIONS** below. Four are deferrals or standing refusals; **decision 4 (Ended by Admin) is BUILT — Unit 27** |
-| **Next unit** | **UNIT 38 — Case Workspace Simplification — IN FLIGHT** (owner brief verbatim in `case-portal/CASE-WORKSPACE.md`), carrying Activity oldest-to-newest ordering and simplified Activity / Daily Summary access. Then **UNIT 39 — Case content Delete / Restore controls** (owner brief verbatim in `case-portal/CASE-CONTENT-DELETE.md`), a PRODUCTION unit covering activity, days, daily summaries, evidence, package contents and an audit of other user-entered records. Unit 37 (the audit) did **not** pass and **37A fixed all three of its findings** — record in `case-portal/PRODUCTION-TRUTH-2.md` |
+| **Next unit** | **UNIT 39 — Case content Delete / Restore controls** (owner brief verbatim in `case-portal/CASE-CONTENT-DELETE.md`). **UNIT 38 IS SHIPPED** — #232 at `f2f49d4`, both deploys green, visual LIVE VERIFY open for the owner; the owner's own instruction is to stop after it for that review. Historical row below kept for its detail: **UNIT 38 — Case Workspace Simplification** (owner brief verbatim in `case-portal/CASE-WORKSPACE.md`), carrying Activity oldest-to-newest ordering and simplified Activity / Daily Summary access. Then **UNIT 39 — Case content Delete / Restore controls** (owner brief verbatim in `case-portal/CASE-CONTENT-DELETE.md`), a PRODUCTION unit covering activity, days, daily summaries, evidence, package contents and an audit of other user-entered records. Unit 37 (the audit) did **not** pass and **37A fixed all three of its findings** — record in `case-portal/PRODUCTION-TRUTH-2.md` |
 
 ## 🔄 RESUME POINT — Production Truth Correction Queue (Units 28–33)
 
@@ -227,7 +227,15 @@ touch how existing cases are categorised, so it is recorded rather than done.
   actor and timestamp preserved, reason preserved where consequential, and a
   finalized report whose source changed must say **SOURCE DATA CHANGED —
   REBUILD REQUIRED** rather than quietly looking current.
-- **38 — Case Workspace Simplification.** 🟡 **IN FLIGHT.** Owner brief verbatim
+- **38 — Case Workspace Simplification.** ✅ **DONE — DEPLOYED** at `f2f49d4`
+  (#232), site run 32557961911 and Worker run 32557961914 both ✅. No schema,
+  **no `portal-setup` dispatch owed.** Visual **LIVE VERIFY OPEN** for the
+  owner, and the owner's instruction is to stop here for it. All twenty named
+  tests pass, plus a phone section at 375/390/430px and a focus section at
+  390/820/1200px carrying a control that puts the old behaviour back and shows
+  the assertion failing on it. Full record in `FINAL-LEDGER.md` PART 13; the
+  five defects rebuilding the screen surfaced, and the one deferred to the
+  owner, are in `RECONCILIATION.md`. Owner brief verbatim
   in `case-portal/CASE-WORKSPACE.md`. Three things are durable required work
   inside it and must not be dropped or split out:
   **(a)** the simplified desktop and mobile case workspace,
