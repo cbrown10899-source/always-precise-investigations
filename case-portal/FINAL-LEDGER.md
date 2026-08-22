@@ -754,3 +754,54 @@ until a second mechanism began holding the same property, after which it went
 green **while proving nothing** — a false reassurance in exactly the place the
 confidence was coming from. It restores Unit 21's entire pre-fix function now,
 verbatim, so it cannot be defeated by a guard added later.
+
+---
+
+## PART 16 — SESSION CLOSEOUT, 2026-08-22
+
+**Documentation only. Nothing was coded, branched or deployed to produce this
+part.** Every line below was verified rather than carried forward.
+
+| | Verified how |
+| --- | --- |
+| **Master `c8b52a8`** | `git log` |
+| **Working tree clean, in sync** | `git status`, `git log origin/master..HEAD` empty |
+| **Site deployed** | `Deploy site to Cloudflare Pages` run **32595545919** at `c8b52a8` — the closeout SHA itself |
+| **Worker deployed and current** | run **32583656010** at `79da2b8`; `git diff 79da2b8..c8b52a8 -- case-portal/worker.js case-portal/schema.sql` is EMPTY, so no later commit needed a Worker deploy |
+| **Schema present on production** | `harden-check` run **32584685117** — *"every table this build expects is on the database"* |
+| **Suites** | worker **2870/0**, deploy guard **86/0**, visitor-alerts **47/0** re-run at `c8b52a8`; portal **2707/0** and intake **467/0** measured at `d0b98b1`, and still valid because every commit since is markdown that neither suite reads |
+| **REQUIRED BUILD QUEUE EMPTY** | every open-state marker in `NEXT.md` scanned twice this session, each candidate checked against the code |
+
+### The three units shipped this session
+
+| Unit | PR | SHA | Deploys | Schema | LIVE VERIFIED |
+| --- | --- | --- | --- | --- | --- |
+| **38** Case Workspace Simplification | #232 | `f2f49d4` | site 32557961911 · Worker 32557961914 | none | ✅ owner, 2026-08-22 |
+| **39** Case content Delete / Restore | #234 | `79da2b8` | site 32583655929 · Worker 32583656010 | two tables, applied and confirmed | ✅ owner, 2026-08-22 |
+| **21A** Case-page live region | #239 | `d0b98b1` | site 32595336098 · Worker correctly not fired | none | **OPEN** — owner visual check |
+
+### What must not happen next session
+
+**No completed unit is to be rebuilt.** Locked order 1–17, hotfix 17A, Units
+18–22, 24–39 and 21A are complete and stay complete.
+
+**Real-case-only LIVE VERIFY items are OPEN, not failed** — Unit 23's sweep,
+Unit 17 Retention, and the IMPLEMENTED BUT NOT LIVE VERIFIED block. Deployed
+and machine-verified, waiting only on the owner having a real case. **No
+production data is to be manufactured for any of them.**
+
+**Deferred-by-owner items are DEFERRED, not queued.** The list in `NEXT.md` is
+unchanged and none of it is work to pick up.
+
+**Owner decisions stay locked** — the five from the 2026-08-21 closeout and the
+three from Unit 39.
+
+### The one lesson this session paid for twice
+
+**A stale status marker is not documentation debt — it is an instruction to
+rebuild something that already works.** OWNER WORKFLOW SIMPLIFICATION read
+`QUEUED` while all five parts had shipped and nothing had ever closed it; the
+same shape was then found across roughly nine hundred lines of pre-queue
+handoffs. Nothing was deleted — several record *why* a decision went the way it
+did — but the region is banner-marked as archaeology and the eleven most
+misleading rows are mapped to where each actually landed.
