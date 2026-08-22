@@ -973,3 +973,67 @@ testing anything:
 The last two are the same mistake: **a regex asserting a SHAPE where a
 PROPERTY was meant.** The homepage door checks earlier in Unit 40 were the
 first instance; these are the second and third.
+
+---
+
+## PART 19 — SESSION CLOSEOUT, 2026-08-22 (second)
+
+**Documentation only. Nothing was coded, branched or deployed to produce this
+part.** Every line verified rather than carried forward.
+
+| | Verified how |
+| --- | --- |
+| **Master `371d335`** | `git rev-parse HEAD` |
+| **Working tree clean, in sync** | `git status` empty; `origin/master..HEAD` and `HEAD..origin/master` both empty |
+| **Site deployed** | `Deploy site to Cloudflare Pages` run **32606081807** at `371d335` — the closeout SHA itself |
+| **Worker deployed and current** | run **32583656010** at `79da2b8`; `git diff 79da2b8..371d335 -- case-portal/worker.js case-portal/schema.sql` is EMPTY, so no later commit needed a Worker deploy |
+| **Schema present on production** | `harden-check` run **32584685117** |
+| **Suites** | worker **2870/0** · portal **2707/0** · deploy guard **86/0** · intake **548/0** · visitor-alerts **47/0**. The guard was re-run at `371d335`; the other four were checked to still apply by `git diff` over exactly the paths each suite reads |
+| **REQUIRED BUILD QUEUE EMPTY** | every open-state marker in `NEXT.md` scanned; nothing required, approved and unbuilt |
+| **HOMEPAGE LIVE VERIFIED** | owner, 2026-08-22 — *"They are live i have verified."* The three card images and the homepage are FINAL |
+
+### The homepage card series, complete
+
+| Unit | PR | SHA | Deploy |
+| --- | --- | --- | --- |
+| **40** three doors as cards | #242 | `e7b9117` | 32598263366 ✅ |
+| **40A** icons off | #245 | `9756e59` | 32604481612 ✅ |
+| **40B** three photographs, neutral overlay | #246 | `7d1f7e4` | 32604959775 ✅ |
+| **40C** insurance gets its own setting | #248 | `154f98f` | 32605298442 ✅ |
+| **40D** the van is the subject | #249 | `fe464f6` | 32605491582 ✅ |
+| **40E** Get Started centred and low | #250 | `3bc855f` | 32605653071 ✅ |
+| **40F** the art is cache-busted | #251 | `5819540` | 32605892675 ✅ |
+
+**Do not change the homepage or the three card images.** They are owner-approved
+and live-verified. A future unit wanting to touch them needs the owner.
+
+### What must not happen next session
+
+**No completed unit is to be rebuilt.** Locked order 1–17, hotfix 17A, Units
+18–22, 24–39, 21A, 40 and 40A–40F are complete and stay complete.
+
+**Real-case-only LIVE VERIFY items are OPEN, not failed** — Unit 23's sweep,
+Unit 17 Retention, and the IMPLEMENTED BUT NOT LIVE VERIFIED block. Deployed
+and machine-verified, waiting only on a real case. **No production data is to
+be manufactured for any of them.** Unit 21A's visual check is also open, and is
+the owner's to close.
+
+**Deferred-by-owner items stay deferred, not queued.** The list in `NEXT.md` is
+unchanged and none of it is work to pick up.
+
+**Owner decisions stay locked** — five from the 2026-08-21 closeout, three from
+Unit 39, one from Unit 40 (`--teal` unchanged, the card-button treatment
+approved as implemented).
+
+### The two lessons this session paid for
+
+**"Is it deployed" and "is the visitor seeing it" are different questions.**
+Seven green deploys, and the owner was still right that the site had not
+changed: `/assets/*` is cached for seven days and the filenames were reused.
+Every verification in this repo answered only the first question. `?v=` and its
+guard test are the fix; the distinction is the lesson.
+
+**Four assertions had stopped asserting**, found by changing the thing each was
+supposed to guard rather than by reading them. Three of the four were one
+mistake — **a regex pinning a SHAPE where a PROPERTY was meant.** A green suite
+over a dead assertion is the failure `RECONCILIATION.md` exists to catch.
