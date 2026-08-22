@@ -1508,15 +1508,24 @@ section('Unit 40 — the layout at three widths');
        m.order.join('|') === '/intake/?assignment=insurance|/intake/?assignment=legal|/intake/?assignment=private',
        m.order.join('|'));
     /* THE CARDS' OWN EDGE, not the whole document, and the difference matters.
-       At 320px this page ALREADY overflowed by 15px before Unit 40 — measured
-       against the committed homepage — from a "Call for a Free Consultation"
-       button in a section this brief forbids redesigning. These cards reduced
-       that to 5px; they did not cause it and may not fix it.
+       At 320px this page ALREADY overflowed before Unit 40, and BOTH numbers
+       were measured rather than assumed — master's tree and this one, served
+       and rendered side by side:
 
-       So the assertion is what this unit owns: no card crosses the viewport
-       edge. The document-level check runs at 390px, where the page is genuinely
-       clean, and the residue is reported to the owner rather than silently
-       absorbed into a passing test. */
+         master  320px  scrollWidth 335  overflow 15px  widest: a.call-btn
+                        "Submit an Insurance Assignment"   <- the OLD hero button
+         branch  320px  scrollWidth 325  overflow  5px  widest: a.call-btn
+                        "Call for a Free Consultation"     <- untouched, elsewhere
+
+       So the cards did not cause it — they HALVED it, by replacing the button
+       that was the widest thing on the page. The 5px that remains is a `tel:`
+       link in a section this brief forbids redesigning, identical on both
+       trees.
+
+       The assertion is therefore what this unit owns: no card crosses the
+       viewport edge. The document-level check runs from 360px up, where the
+       page is genuinely clean, and the residue is reported to the owner rather
+       than silently absorbed into a passing test. */
     ok(`${w}px: no card crosses the viewport edge`, m.widest <= m.vw + 1, JSON.stringify(m));
     if (w >= 360) ok(`${w}px: and the page does not scroll sideways`, m.doc <= 0, String(m.doc));
     ok(`${w}px: the Get Started target clears Apple's 44px floor`,

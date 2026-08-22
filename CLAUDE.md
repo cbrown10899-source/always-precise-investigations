@@ -339,12 +339,16 @@ casualty this project has recorded, and the first outside the portal.
 Focus is **gold**, because the ring has to survive a dark card that already
 has teal on it. Hover lift is disabled under `prefers-reduced-motion`.
 
-**A pre-existing 320px overflow is NOT this unit's** and was left alone: the
-*Call for a Free Consultation* button below the hero pushes the document 15px
-past a 320px viewport, measured before Unit 40 and 5px after it. The card
-tests therefore assert that **no card** crosses the edge at 320, and check the
-document only from 360 up. Fixing that button is a separate change nobody has
-asked for.
+**The 320px overflow was HALVED, not caused.** Both numbers were measured —
+master's tree and this one, served and rendered side by side. Before Unit 40 a
+320px viewport overflowed by **15px**, and the widest thing on the page was the
+old hero *Submit an Insurance Assignment* button, which the cards replaced.
+After, it is **5px**, from a *Call for a Free Consultation* `tel:` link
+elsewhere on the page that is byte-identical on both trees and sits in a
+section this brief forbids redesigning. So the card tests assert what this unit
+owns — **no card** crosses the edge at 320 — and check the document only from
+360 up, where the page is genuinely clean. Fixing that last button is a
+separate change nobody has asked for.
 
 **What Unit 40 did not touch:** the hero headline and copy, the navigation,
 the disclaimer bar, the logo, the section below the hero, the Legal page,
