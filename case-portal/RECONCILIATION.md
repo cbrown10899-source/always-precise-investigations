@@ -726,3 +726,45 @@ all fourteen portal nav surfaces, the three Settings panels, all three rate-shee
 cards including Legal, all three pre-case send doors, the three field tools for
 both roles, the case workspace and its four sections, and the investigator role
 boundary. Detail in `case-portal/PRODUCTION-TRUTH-2.md`.
+
+
+## Queue state at 2026-08-22, when Unit 39 was added
+
+Checked under the owner's queue-safety instruction, with **Unit 38's portal
+suite actively running and deliberately not interrupted**:
+
+| Question | Answer |
+| --- | --- |
+| What is complete? | Locked order 1–17, hotfix 17A, Units 18–22, 24–37, 37A |
+| What is in progress? | **Unit 38 — Case Workspace Simplification**, on branch, suite in flight |
+| What is queued ahead of the new work? | Only Unit 38 |
+| What is deferred by owner? | The deferred list in `NEXT.md`, unchanged |
+| What needs live verification only? | Unit 23's sweep and every LIVE VERIFY OPEN row |
+
+**Unit 39 — Case content Delete / Restore controls** was therefore inserted at
+the next free position, after 38, displacing nothing. Owner brief verbatim in
+`case-portal/CASE-CONTENT-DELETE.md`.
+
+**It is a PRODUCTION unit and the owner opens by saying so** — *"This is NOT
+test-cleanup only ... Admin must have a quick, obvious way to remove
+incorrectly entered or no-longer-needed information from BOTH test cases AND
+REAL PRODUCTION CASES."* That distinction matters here because `POST
+/demo-case/clear` and `DEMO_SWEEP` already remove `TEST-` cases cleanly, and a
+reader skimming for "delete" would find them and think the work was done.
+
+**The tombstone model it must reuse already exists** — `case_deleted`,
+`activity_removed`, `case_archive`, `case_evidence.deleted_at` — and so does
+the rule they were built to serve: *nothing the office does in the portal is
+unrecoverable in the portal*. This unit widens who can reach that model and
+where the controls appear; it does not change what happens to bytes. The
+owner's limits say the same thing in their own words: no physical Dropbox
+deletion, no evidence overwrite, no silent hard deletion.
+
+**One thing to check rather than assume when it starts:** the brief asks that
+a finalized report or package whose source data changed shows *SOURCE DATA
+CHANGED — REBUILD REQUIRED*, "or use the existing equivalent mechanism".
+`CASEBUILD.md` already records that the package document renders only
+currently-deliverable evidence and NAMES what it withheld, and that printing
+re-reads the package first. Whether that is the equivalent mechanism, or
+whether a distinct stale marker is wanted, is the first question the unit has
+to answer from the code rather than from the brief.
