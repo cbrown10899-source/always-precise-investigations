@@ -1652,11 +1652,18 @@ section('Unit 40 — contrast, focus, and what the hero kept');
      RESOLVED to our own assets path; the SOURCE proves it was written
      relative, which is the half that would catch a hotlink. */
   ok('the artwork resolves to this site\'s own assets path',
-     /\/assets\/card-[a-z]+\.(webp|jpg|png|svg)"\)$/.test(look.art), look.art.slice(0, 90));
+     /\/assets\/card-[a-z]+\.(webp|jpg|png|svg)(\?v=\d+)?"\)$/.test(look.art), look.art.slice(0, 90));
   const cssSrc = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const artUrls = [...cssSrc.matchAll(/--cta-art:\s*url\('([^']+)'\)/g)].map(m => m[1]);
   ok('and every card names a RELATIVE local asset, never an external host',
      artUrls.length === 3 && artUrls.every(u => /^assets\/card-/.test(u)), JSON.stringify(artUrls));
+  /* EVERY art URL CARRIES A VERSION TOKEN. `_headers` caches /assets/* for
+     seven days and these files are replaced in place, so without one a
+     returning visitor keeps the previous photograph behind current markup —
+     which is indistinguishable from a deploy that never happened, and was
+     reported as exactly that on 2026-08-22. */
+  ok('and each carries a cache-busting version token',
+     artUrls.every(u => /\?v=\d+$/.test(u)), JSON.stringify(artUrls));
   ok('the title is white', look.titleColor === 'rgb(255, 255, 255)', look.titleColor);
   ok('and Get Started is the site teal on white', look.goColor === 'rgb(255, 255, 255)'
      && look.goBg === 'rgb(61, 151, 173)', JSON.stringify(look));

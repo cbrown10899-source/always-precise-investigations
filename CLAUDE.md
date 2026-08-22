@@ -348,6 +348,18 @@ the setting says which business the card is for, and the swap cost one
 `url()`. If a card is ever re-shot, check it against the OTHER two rather than
 on its own.
 
+**EVERY `--cta-art` URL CARRIES `?v=`, AND IT IS REQUIRED.** `_headers`
+caches `/assets/*` for **seven days**, and these three files are replaced IN
+PLACE at stable URLs — `card-insurance.webp` was three different photographs
+at one URL inside an hour on 2026-08-22. The owner reported the site as not
+updating and was right about the symptom: every deploy was green,
+`index.html` is `no-cache` so the markup was current, and the browser went on
+serving the FIRST image it had cached. **A stale asset behind fresh markup is
+indistinguishable from a deploy that never ran** — which is why it cost a
+round to find. Bump the number whenever one of those files changes; a test
+fails if any of the three loses its token. Renaming the file would work too,
+and costs a manifest line as well, which is why the query string won.
+
 **TWO OF THE THREE ARE MIRRORED, and for the same reason.** A photograph whose
 subject sits in the LEFT third loses it: that is where the headline goes and
 where the crop bites first, so the card draws the background and buries the
