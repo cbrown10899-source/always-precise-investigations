@@ -311,17 +311,24 @@ const earlierToday = (mins) => {
 // inside four sections now (UIBUILD P6) — when the wanted sub-tab is not in
 // the visible row, walk the section bar until it shows, the way a person
 // hunting for it would.
+/* UNIT 38 — the case workspace is one level deep now. Six tabs in a row, and
+   everything else behind More. This walks the same way a person does: look for
+   the tab, and if it is not on the row, open More and take it from there. */
 async function wsTab(page, name) {
-  const tab = () => page.locator('.wstabs button', { hasText: name });
-  if (!(await tab().count())) {
-    for (const sec of await page.locator('.wsecs button').all()) {
-      await sec.click();
-      await page.waitForTimeout(180);
-      if (await tab().count()) break;
-    }
+  const onRow = () => page.locator('.wsnav button', { hasText: name });
+  const inMore = () => page.locator('.wsmorelist button', { hasText: name });
+  if (await onRow().count()) {
+    await onRow().first().click();
+    await page.waitForTimeout(250);
+    return;
   }
-  await tab().click();
-  await page.waitForTimeout(200);
+  const more = page.locator('[data-act="wsMore"]');
+  if (await more.count()) {
+    await more.first().click();
+    await page.waitForTimeout(200);
+  }
+  await inMore().first().click();
+  await page.waitForTimeout(250);
 }
 // The activity form lives in the Add Activity sheet (UIBUILD P8); the free
 // composer is its Custom tab.

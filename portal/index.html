@@ -640,46 +640,83 @@
      min-height and not a font or padding change. */
   .ch-right .btn{min-height:44px;}
   .ch-line{font-size:.8rem;color:var(--muted);}
-  .wsecs{display:flex;gap:6px;overflow-x:auto;margin:0 0 10px;-webkit-overflow-scrolling:touch;}
-  .wsecs button{flex:none;font:inherit;font-size:.76rem;font-weight:800;letter-spacing:.05em;
-    text-transform:uppercase;background:var(--panel);border:1px solid var(--line);border-radius:9px;
-    color:var(--muted);padding:8px 14px;cursor:pointer;white-space:nowrap;}
-  .wsecs button.on{background:var(--navy-2);border-color:var(--navy-2);color:#fff;}
-  .wsecs .sec-s{display:none;}
-  .wsecs .sec-i{display:none;}
-  /* UIBUILD P15 — on a phone the section bar is the bottom navigation:
-     fixed under the thumb, short labels, the add button pinned above it. */
+  /* ============ THE CASE WORKSPACE NAV (Unit 38) ============
+
+     One row of tabs, not a section bar over a tab bar. `.wsecs` is gone from
+     the case page — its markup went with it — and `.wsnav` is a distinct name
+     rather than a reuse, because this file has killed three rules by
+     source-order collision already (.qgrid, .dlg, the burger base rule).
+
+     Quieter by whitespace and weight rather than by more borders, which is the
+     owner's own visual direction: one hairline under the row, a teal underline
+     on the current tab, and nothing boxed. */
+  .wsnav{display:flex;gap:2px;align-items:center;flex-wrap:wrap;margin:0 0 14px;}
+  .wsnav button{min-height:44px;}
+  .wsnav .wsmore{margin-left:auto;color:var(--muted);}
+  .wsmorelist{display:flex;flex-wrap:wrap;gap:6px;margin:-6px 0 14px;padding:10px 12px;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;}
+  .wsmorelist button{font:inherit;font-size:.85rem;background:#fff;border:1px solid var(--line);
+    border-radius:8px;color:var(--ink);padding:8px 12px;min-height:44px;cursor:pointer;}
+  .wsmorelist button.on{background:var(--navy-2);border-color:var(--navy-2);color:#fff;}
+  .wsmorelist button:hover{border-color:var(--teal-2);}
+
+  /* THE PRIMARY ACTIONS, directly under the header. The owner's line: the most
+     common field actions are never buried behind More. */
+  .caseacts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px;}
+  .caseacts .btn{min-height:44px;}
+  .caseacts .addact{position:static;box-shadow:none;}
+
+  /* THE DAILY SUMMARY HEAD — day, date and state, so nobody has to guess which
+     day is on screen. */
+  .dayhead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;
+    padding:12px 14px;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;margin-bottom:12px;}
+  .dayhead-d{font-size:.86rem;color:var(--muted);margin-top:2px;}
+  .dayhead-r{text-align:right;}
+
+  /* The phone bar is hidden on a desktop; it is the case page's whole
+     navigation below 640px. */
+  .wsbar{display:none;}
   @media(max-width:640px){
-    /* The bottom bar is the ONLY navigation a phone has on a case, so it has
-       to announce itself. The owner could not see it or hit it (2026-08-14),
-       and it got three things wrong at once: it sat 6px off the screen edge,
-       its targets were about 33px tall — under Apple's 44px minimum — and it
-       was four small-caps words with nothing to recognise at a glance.
+    /* THE BOTTOM BAR IS THE ONLY NAVIGATION A PHONE HAS ON A CASE, so it has
+       to announce itself. It got three things wrong at once once before
+       (2026-08-14): it sat 6px off the screen edge, its targets were about
+       33px tall — under Apple's 44px minimum — and it was four small-caps
+       words with nothing to recognise at a glance.
 
        `max(14px, env(...))` is the load-bearing bit. Without
-       `viewport-fit=cover` iOS reports a safe-area inset of ZERO, so the old
-       calc() added nothing and the buttons pressed against the bottom edge,
-       where the home indicator lives and a thumb cannot land cleanly. The
-       max() guarantees real clearance whether or not the browser reports an
-       inset, and needs no change to the viewport meta. */
-    .casepage .wsecs{position:fixed;left:0;right:0;bottom:0;z-index:65;background:var(--navy-2);
-      margin:0;padding:6px 6px max(14px,env(safe-area-inset-bottom));gap:4px;
-      justify-content:space-around;border-radius:0;border-top:1px solid #2f5580;
+       `viewport-fit=cover` iOS reports a safe-area inset of ZERO, so a calc()
+       adds nothing and the buttons press against the bottom edge, where the
+       home indicator lives and a thumb cannot land cleanly. The max()
+       guarantees real clearance whether or not the browser reports an inset,
+       and needs no change to the viewport meta.
+
+       Unit 38 changed WHAT is in the bar, not how it sits: Activity, Summary,
+       Add, Evidence, More. Activity and Summary are here and never under
+       More — the owner's own line. */
+    .casepage .wsbar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:65;
+      background:var(--navy-2);margin:0;padding:6px 6px max(14px,env(safe-area-inset-bottom));
+      gap:4px;justify-content:space-around;border-top:1px solid #2f5580;
       box-shadow:0 -6px 18px rgba(9,18,30,.34);}
-    .casepage .wsecs button{flex:1;background:transparent;border:0;color:#dbe9f7;
+    .casepage .wsbar button{flex:1;background:transparent;border:0;color:#dbe9f7;
       border-radius:10px;padding:6px 2px;text-align:center;min-height:52px;position:relative;
       display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
-      font-size:.68rem;letter-spacing:.03em;}
-    .casepage .wsecs button .sec-i{display:block;font-size:1.3rem;line-height:1;}
-    .casepage .wsecs button.on{background:var(--nav-on);color:#fff;}
+      font:inherit;font-size:.68rem;letter-spacing:.03em;cursor:pointer;}
+    .casepage .wsbar button .sec-i{display:block;font-size:1.3rem;line-height:1;}
+    .casepage .wsbar button.on{background:var(--nav-on);color:#fff;}
     /* "You are here" has to survive a glance in a car at dusk, so it is a gold
        cap rather than a slightly different navy. */
-    .casepage .wsecs button.on::before{content:"";position:absolute;top:-6px;left:24%;right:24%;
+    .casepage .wsbar button.on::before{content:"";position:absolute;top:-6px;left:24%;right:24%;
       height:3px;border-radius:0 0 3px 3px;background:var(--gold);}
-    .casepage .wsecs .sec-l{display:none;}
-    .casepage .wsecs .sec-s{display:inline;}
+    .casepage .wsbar .wsbar-add{color:var(--gold);}
+    /* The desktop tab row would be a second navigation on a phone, so the six
+       live under More there — except Activity, Summary and Evidence, which are
+       in the bar. Overview and Report are reachable from the More list. */
+    .casepage .wsnav{display:none;}
+    .casepage .wsmorelist{margin-top:0;}
     .casepage{padding-bottom:100px;}
     .addact{bottom:96px;}
+    .caseacts .btn{flex:1 1 auto;}
   }
   .ovgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:14px;}
   .ovcard{background:#fff;border:1px solid var(--line);border-radius:12px;padding:13px 15px;}
@@ -1793,6 +1830,10 @@ let INVOICES = null, INV_OPEN = null, INV_MSG = "", INV_WARN = [], INV_EVENTS = 
     INV_FILTER = {status: "", type: "", q: ""};
 // The open case workspace: which case, which tab, its loaded data, last error.
 let WS = null, WS_CASE = null, WS_TAB = "overview", WS_ERR = "", WS_REPORT = null;
+/* Unit 38 — whether the case workspace's More menu is open. Closed on every
+   case open and on every tab choice, so it can never be left hanging over the
+   panel someone just asked for. */
+let WS_MORE = false;
 /* Active Surveillance Mode. SV is the whole of its state: which screen, the
    pending quick entry, the voice transcript awaiting review. The CASE data it
    draws is WS — the same workspace every other screen reads, because this is a
@@ -9538,7 +9579,7 @@ function sessionForget(){
   INVOICES = null; INV_OPEN = null; INV_MSG = ""; INV_WARN = []; INV_EVENTS = [];
   INV_SETTINGS = null; INV_FILTER = {status: "", type: "", q: ""};
   retainerReset(); RET_CASE = null;
-  WS = null; WS_CASE = null; WS_TAB = "overview"; WS_ERR = ""; WS_REPORT = null;
+  WS = null; WS_CASE = null; WS_TAB = "overview"; WS_ERR = ""; WS_REPORT = null; WS_MORE = false;
   WS_NOTICE = ""; ACT_MODAL = null; REP_VIEW = "preview"; REP_VERS = {}; EV_TAB = "all";
   VIEW = "list"; SV = null; SV_SKEW = 0; svTickStop();
   document.body.classList.remove("surv");
@@ -9560,6 +9601,7 @@ async function doLogout(){
    feature that is not there. */
 async function openCase(caseNo, tab){
   WS_CASE = caseNo; WS_TAB = tab || "overview"; WS_ERR = ""; SUBJ_FORM = null; ACT_MODAL = null; VIEW = "case";
+  WS_MORE = false;
   REP_VIEW = "preview"; REP_VERS = {}; EV_TAB = "all";
   /* Unit 11: integrity answers and the manifest belong to the case they were
      read on — carried to the next case they would state another file's facts. */
@@ -9657,6 +9699,77 @@ function wsSections(){
 function wsSectionFor(tab){
   const secs = wsSections();
   return secs.find(s => s[2].some(t => t[0] === tab)) || secs[0];
+}
+
+/* ============ THE CASE WORKSPACE IS ONE LEVEL DEEP (Unit 38) ============
+
+   Owner, 2026-08-22: "The portal has become too busy when doing actual case
+   work. Activity, Daily Summary, Evidence and Report must be much easier to
+   reach ... Do not make the user return to the main portal navigation."
+
+   It was two levels — four sections over seventeen tabs — and the Daily
+   Summary was THREE: Report & Media, then Reports, then its sixth sub-view.
+   The six below are one row, and every one of the other tabs is still there,
+   under More, with its key unchanged so a bookmarked ?tab= keeps working.
+
+   `wsSections()` above is untouched and still the source for More, so a tab
+   added there arrives in this nav rather than disappearing from it. */
+function wsPrimary(){
+  const admin = ME.role === "admin";
+  const t = [["overview", "Overview"], ["activity", "Activity"], ["daily", "Daily Summary"],
+             ["evidence", "Evidence"], ["reports", "Report"]];
+  /* Billing is the office's. An investigator's workspace carries no rate
+     sheet, no retention administration and no firm management — the owner's
+     role rule, and the same boundary the Worker already enforces. */
+  if(admin) t.push(["billing", "Billing"]);
+  return t;
+}
+/* Everything the six do not carry, in the order the sections had it, filtered
+   to the tabs this role could already reach. Derived from wsSections() rather
+   than listed again: two lists of tabs is one list that goes stale. */
+function wsMore(){
+  const primary = new Set(wsPrimary().map(t => t[0]));
+  const seen = new Set();
+  const out = [];
+  for(const [, , tabs] of wsSections()){
+    for(const [k, lbl] of tabs){
+      if(primary.has(k) || seen.has(k)) continue;
+      seen.add(k); out.push([k, lbl]);
+    }
+  }
+  /* Package belongs to the office and hangs off Report; it is in the admin
+     sections already, so it arrives here for an admin and not for the field. */
+  return out;
+}
+function wsTabLabel(tab){
+  const all = [...wsPrimary(), ...wsMore()];
+  return (all.find(t => t[0] === tab) || [tab, tab])[1];
+}
+
+/* WHICH DAY THE CASE IS ON, answered once (owner: "Prefer the actual
+   current/open investigation day. If no day is open: show the latest relevant
+   day with a clear label. Never silently show the wrong day.")
+
+   WS.days arrives newest-first from the Worker, so [0] is the latest. The
+   label is returned with it, because a screen that shows Day 3 without saying
+   whether it is running is the silent wrong day the owner named. */
+function wsCurrentDay(){
+  const open = (WS && WS.open_day) || null;
+  const days = (WS && WS.days) || [];
+  if(open){
+    const full = days.find(d => d.id === open.id) || open;
+    return { day: full, open: true, label: "running now" };
+  }
+  if(days.length) return { day: days[0], open: false, label: "most recent day" };
+  return { day: null, open: false, label: "no day yet" };
+}
+/* The case's own day NUMBER, not the position in a scoped list — Unit 25's
+   rule, which is why the Worker sends days_total. */
+function wsDayNo(day){
+  const days = (WS && WS.days) || [];
+  const total = (WS && typeof WS.days_total === "number") ? WS.days_total : days.length;
+  const i = days.findIndex(d => d.id === (day && day.id));
+  return i < 0 ? total : total - i;
 }
 
 function authPanel(a, admin){
@@ -10911,6 +11024,63 @@ function dsBuilderHtml(open, day, editable){
     ${st.err ? `<div class="err">${esc(st.err)}</div>` : ""}
     ${st.okmsg ? `<div class="note">${esc(st.okmsg)}</div>` : ""}
   </div>`;
+}
+
+/* ============ DAILY SUMMARY, ONE CLICK FROM THE CASE (Unit 38) ============
+
+   The builder itself is unchanged — dsBuilderHtml reads a DAY and an editable
+   flag and nothing else, which is what makes this possible without touching
+   it. What was missing was a door: it lived as the sixth sub-view of an open
+   report inside the Reports tab, so reaching it meant choosing a section, then
+   a tab, then a report, then a view.
+
+   Write authority mirrors saveReport exactly, as Unit 12 set it: an admin
+   always, the day's investigator until that day's report is with the office. */
+function dailyPanel(){
+  const admin = ME.role === "admin";
+  const cur = wsCurrentDay();
+  const day = cur.day;
+  /* A PANEL THAT DRAWS NOTHING STILL HAS TO SAY WHAT IT IS. The head is
+     rendered in every state, so "Daily Summary" is on screen whether or not
+     there is a day to narrate. */
+  if(!day){
+    return `<div class="dayhead">
+        <div><b>Daily Summary</b><div class="dayhead-d">No investigation day yet</div></div>
+        <div class="dayhead-r"><span class="tag">Not started</span></div>
+      </div>
+      <div class="empty"><b>Nothing to narrate yet.</b><br>
+      A daily summary is written about a day, so there is nothing to write until one has run.
+      <div class="actions" style="justify-content:center;margin-top:10px">
+        <button class="btn" data-act="wsTab" data-tab="field">Start an investigation day</button>
+      </div></div>`;
+  }
+  const report = ((WS && WS.reports) || []).find(r => r.day_id === day.id);
+  /* The day's own investigator keeps the pen until the report is with the
+     office; the office always has it. */
+  const editable = admin || !report || ["draft", "needs_revision"].includes(report.status);
+  const saved = dsSavedFor(day.id);
+  const entries = dsDayEntries(day.id);
+  const state = saved && String(saved.narrative || "").trim()
+    ? (report && ["approved", "delivered"].includes(report.status) ? "Complete" : "Draft")
+    : "Not started";
+  return `
+    <div class="dayhead">
+      <div>
+        <b>Daily Summary</b>
+        <div class="dayhead-d">Day ${wsDayNo(day)} &mdash; ${esc(fmtDay(day.day_date))}</div>
+      </div>
+      <div class="dayhead-r">
+        <span class="tag ${state === "Complete" ? "done" : state === "Draft" ? "part" : ""}">${state}</span>
+        <div class="tl-m">${cur.open ? "This day is running now" : "The most recent day on this case"}</div>
+      </div>
+    </div>
+    <p class="hint">${entries.length
+      ? `${entries.length} activity entr${entries.length === 1 ? "y" : "ies"} on this day are available to the builder below.`
+      : "Nothing has been logged on this day yet — the builder has no moments to draw on."}
+      ${((WS && WS.days) || []).length > 1
+        ? ` Another day's summary is written from its own report on the <button class="lnk" data-act="wsTab" data-tab="reports">Report</button> tab.`
+        : ""}</p>
+    ${dsBuilderHtml(report || null, day, editable)}`;
 }
 
 function reportsPanel(){
@@ -13246,6 +13416,7 @@ function caseBodyHtml(){
 
   const panel =
       WS_TAB === "activity" ? activityPanel()
+    : WS_TAB === "daily"    ? dailyPanel()
     : WS_TAB === "field"    ? fieldPanel()
     : WS_TAB === "timeline" ? timelinePanel()
     : WS_TAB === "reports"  ? reportsPanel()
@@ -13266,16 +13437,53 @@ function caseBodyHtml(){
     :                         fieldHomeHtml() + myOfferBox() + detailList(s, "overview")
                               + (a.authorized_hours != null ? authPanel(a, admin) : "");
 
-  const sec = wsSectionFor(WS_TAB);
+  const primary = wsPrimary();
+  const more = wsMore();
+  const inMore = more.some(t => t[0] === WS_TAB);
   return `
     ${caseHeader(s, a, admin)}
-    <div class="wsecs">${wsSections().map(([k, lbl, _tabs, short, icon]) =>
-      `<button class="${sec[0] === k ? "on" : ""}" data-act="wsSec" data-sec="${k}"${
-        sec[0] === k ? ' aria-current="page"' : ""}><span class="sec-i" aria-hidden="true">${
-        icon || ""}</span><span class="sec-l">${esc(lbl)}</span><span class="sec-s">${esc(short || lbl)}</span></button>`).join("")}</div>
-    <div class="wstabs">${sec[2].map(([k, lbl]) =>
-      `<button class="${WS_TAB === k ? "on" : ""}" data-act="wsTab" data-tab="${k}">${esc(lbl)}</button>`).join("")}</div>
-    <div class="wspanel">${panel}</div>`;
+    ${caseActionsHtml()}
+    <div class="wstabs wsnav">${primary.map(([k, lbl]) =>
+      `<button class="${WS_TAB === k ? "on" : ""}" data-act="wsTab" data-tab="${k}"${
+        WS_TAB === k ? ' aria-current="page"' : ""}>${esc(lbl)}</button>`).join("")}
+      ${more.length ? `<button class="${inMore ? "on" : ""} wsmore" data-act="wsMore"
+        aria-haspopup="true" aria-expanded="${WS_MORE ? "true" : "false"}">${
+        inMore ? esc(wsTabLabel(WS_TAB)) : "More"} &#9662;</button>` : ""}</div>
+    ${WS_MORE && more.length ? `<div class="wsmorelist" role="menu">${more.map(([k, lbl]) =>
+      `<button role="menuitem" class="${WS_TAB === k ? "on" : ""}" data-act="wsTab" data-tab="${k}">${esc(lbl)}</button>`).join("")}</div>` : ""}
+    <div class="wspanel">${panel}</div>
+    ${/* THE PHONE BAR. Activity and Summary are IN it, never under More —
+         the owner's own line. + Add is the middle key because it is the one
+         thing someone does standing up. */""}
+    <div class="wsbar">
+      <button class="${WS_TAB === "activity" ? "on" : ""}" data-act="wsTab" data-tab="activity">
+        <span class="sec-i" aria-hidden="true">&#9998;</span><span>Activity</span></button>
+      <button class="${WS_TAB === "daily" ? "on" : ""}" data-act="wsTab" data-tab="daily">
+        <span class="sec-i" aria-hidden="true">&#128221;</span><span>Summary</span></button>
+      <button class="wsbar-add" data-act="actOpen">
+        <span class="sec-i" aria-hidden="true">&#10133;</span><span>Add</span></button>
+      <button class="${WS_TAB === "evidence" ? "on" : ""}" data-act="wsTab" data-tab="evidence">
+        <span class="sec-i" aria-hidden="true">&#128247;</span><span>Evidence</span></button>
+      <button class="${WS_MORE ? "on" : ""}" data-act="wsMore"
+        aria-haspopup="true" aria-expanded="${WS_MORE ? "true" : "false"}">
+        <span class="sec-i" aria-hidden="true">&#8943;</span><span>More</span></button>
+    </div>`;
+}
+
+/* THE ACTIONS SOMEONE ACTUALLY DOES ON A CASE (Unit 38). Owner: "the most
+   common field actions should never be buried behind More menus." One row,
+   directly under the header, above the tabs — so the answer to "what now" is
+   on the screen rather than two clicks into it. */
+function caseActionsHtml(){
+  const cur = wsCurrentDay();
+  return `<div class="caseacts">
+    <button class="btn addact" data-act="actOpen">+ Add activity</button>
+    <button class="btn sm ghost" data-act="wsTab" data-tab="daily">Daily summary</button>
+    ${cur.open
+      ? `<button class="btn sm ghost" data-act="wsTab" data-tab="field">End day</button>
+         <button class="btn sm ghost sv-resume" data-act="svEnter" data-case="${esc(WS_CASE)}">Resume surveillance</button>`
+      : `<button class="btn sm ghost" data-act="wsTab" data-tab="field">Start a day</button>`}
+  </div>`;
 }
 
 /* UIBUILD P5 — the case header. Identity on the left, state on the right.
@@ -16723,14 +16931,21 @@ document.addEventListener("click", ev => {
   else if(act === "addDemo"){ addDemoCase(); }
   else if(act === "clearDemo"){ clearDemoCases(); }
   else if(act === "wsTab"){ if(WS_TAB !== el.dataset.tab){ WS_NOTICE = ""; ACT_MODAL = null; }
-    WS_TAB = el.dataset.tab; WS_ERR = "";
+    WS_TAB = el.dataset.tab; WS_ERR = ""; WS_MORE = false;
     if(WS_TAB === "package"){ PKG = null; loadPackage(); }
     else if(WS_TAB === "timeline"){ paintCase(); loadTimeline(); } else paintCase(); }
+  /* Unit 38 — the More menu. A toggle and nothing else: choosing anything in
+     it goes through wsTab, which closes it. */
+  else if(act === "wsMore"){ WS_MORE = !WS_MORE; paintCase(); }
+  /* The section bar is gone (Unit 38) and nothing renders data-act="wsSec"
+     any more, but the handler stays: `wsSections()` is still the source
+     `wsMore()` derives from, and an old bookmark or a stale tab that fires
+     this should still land somewhere real rather than doing nothing. It opens
+     the section's first panel exactly as it always did. */
   else if(act === "wsSec"){
-    // A section opens on its first panel; WS_TAB stays the only routing state.
     const sec = wsSections().find(x => x[0] === el.dataset.sec);
     if(sec){ if(WS_TAB !== sec[2][0][0]){ WS_NOTICE = ""; ACT_MODAL = null; }
-      WS_TAB = sec[2][0][0]; WS_ERR = "";
+      WS_TAB = sec[2][0][0]; WS_ERR = ""; WS_MORE = false;
       if(WS_TAB === "package"){ PKG = null; loadPackage(); }
       else if(WS_TAB === "timeline"){ paintCase(); loadTimeline(); } else paintCase(); } }
   /* UNIT 10 — the timeline. Each of these either repaints what is already
