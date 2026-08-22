@@ -15226,10 +15226,15 @@ section('Unit 39 — Delete sits beside the row, on a real case');
   await page.waitForTimeout(700);
   const seed = await seedRemovable(page, 'API-20260812-4002');
   ok('the fixture day exists', seed.dayId != null, JSON.stringify(seed));
-  await page.reload();
-  await page.waitForTimeout(900);
+  /* BACK OUT AND IN, not page.reload(). A reload lands an admin on the
+     Dashboard — signIn() is what clicks through to Cases — so the case list
+     the next line looks for is not on screen at all. Going back through the
+     case page's own Back button repaints from a fresh workspace read, which is
+     the thing this actually needs. */
+  await page.locator('[data-act="backToCases"]').first().click();
+  await page.waitForTimeout(700);
   await rowFor(page, 'API-20260812-4002').click();
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(900);
 
   /* --- the day, on Field work --- */
   await wsTab(page, 'Field work');
