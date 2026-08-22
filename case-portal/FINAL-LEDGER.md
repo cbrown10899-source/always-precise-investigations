@@ -479,3 +479,100 @@ for Unit 27 said it *"owes a portal-setup dispatch"*. That dispatch was run —
 `portal-setup` 32508101361 at `74629fe`, successful including the
 admin-bootstrap step — and the session-handoff header has said so since. The
 row now agrees with the header. No schema is owed.
+
+---
+
+## PART 13 — Unit 38, the case workspace simplification
+
+**Owner brief verbatim in `case-portal/CASE-WORKSPACE.md`**, including the
+mobile/tablet UX addendum the owner attached to this unit on 2026-08-22
+(*"Ship with the current UI/UX unit if safe"*). The owner's own label is
+"UNIT 34"; that number belongs to the shipped public-site unit, so the alias is
+recorded in the brief file and nothing was renumbered.
+
+### The path, before and after
+
+| | Before | After |
+| --- | --- | --- |
+| Activity | Case → Fieldwork → Activity log | Case → **Activity** |
+| Daily Summary | Case → Report & Media → Reports → its sixth sub-view | Case → **Daily Summary** |
+| Evidence | Case → Report & Media → Case media | Case → **Evidence** |
+| Report | Case → Report & Media → Reports | Case → **Report** |
+| Everything else | four sections over seventeen tabs | one row of six, the rest under **More**, every key unchanged |
+
+**No functionality was removed** and no route broke: a tab that existed still
+exists under its own key, and the suite walks every pre-Unit-38 key and asserts
+each still routes and draws.
+
+### Desktop
+
+One compact tab row under the case header — Overview, Activity, Daily Summary,
+Evidence, Report, and Billing for an admin — with **More** carrying the rest.
+`wsMore()` is derived from `wsSections()` by subtraction, so a tab added there
+arrives in this navigation instead of disappearing from the page. The primary
+case actions sit above it: **+ Add activity**, **Daily summary**, **End day /
+Start a day**, and **Resume surveillance** when a day is running.
+
+### Mobile
+
+A fixed thumb bar carries **Activity · Summary · + Add · Evidence · More** —
+`WS_BAR_TABS` names the three so the bar and the menu cannot drift. Activity
+and Summary are never under More, which the suite asserts by name at 375, 390
+and 430px, along with the 44px tap floor and the home-indicator clearance.
+Overview, Report and Billing render inside More at those widths through
+`.more-primary`, which closed a hole where the desktop row is `display:none`
+and those three were reachable from nothing at all.
+
+### Investigator
+
+No Billing tab, no Package, no Edit case, no Assignment — asserted across their
+whole navigation, and no panel they can open shows a rate, a retainer or an
+invoice total. Active Surveillance and the Daily Summary builder are intact for
+them. The boundary is the Worker's, unchanged.
+
+### Admin
+
+Billing stays on the row and opens. Everything administrative that was in the
+four sections is in More.
+
+### Activity ordering
+
+`caseWorkspace` returns activity **oldest first**, so the log, the Daily Summary
+source, the report chronology and the package all read in the order the day
+happened. **The cap still takes the newest end** — a DESC-ordered `LIMIT 500`
+wrapped in a subquery that re-sorts ascending, because flipping the ORDER BY
+alone would have kept the oldest five hundred entries and dropped this
+morning's work.
+
+### The mobile/tablet UX addendum
+
+Navigating to a section no longer focuses a text field or raises the on-screen
+keyboard. There is **no `autofocus` attribute anywhere in the page** — the
+audit looked; `paint()` was restoring the caret unconditionally on every
+repaint. `focusCapture()` / `focusRestore()` hand it back only to whoever had
+it, `FOCUS_KEEP` is the allow-list, and dialogs are exempt by the owner's own
+words. The Search field gained a 640px desktop maximum released below 900px —
+a number read off this page, since 900 is already where the nav rail goes
+behind the burger.
+
+### Ship record
+
+| | |
+| --- | --- |
+| PR | **#232** |
+| Merge SHA | **`f2f49d4`** |
+| Site deploy | `Deploy site to Cloudflare Pages` run **32557961911** ✅ |
+| Worker deploy | `Deploy case-portal Worker` run **32557961914** ✅ |
+| Schema | **none** — no `portal-setup` dispatch owed |
+| Suites | worker **2796/0** · portal **2660/0** · deploy guard **86/0** · intake **467/0** · visitor-alerts **47/0** |
+| LIVE VERIFIED | **OPEN** — the owner's visual review, as the brief asks |
+
+### One thing this unit reported instead of fixing
+
+`announceRendered()` never runs on the case page, so a confirmation inside a
+case is drawn silently for a screen-reader user. **Pre-existing** — the same
+early return is on `master` from when the workspace became a full page — so the
+brief's test 20 ("accessibility *remains* sound") is satisfied either way. It
+is one line, and that is why it was reported: `.note` here is often static
+explanatory prose, so switching it on would read paragraphs aloud on arrival at
+a case tab. Queued in `NEXT.md`, reasoning in `RECONCILIATION.md`.
