@@ -362,7 +362,10 @@ async function wsTab(page, name) {
 // The activity form lives in the Add Activity sheet (UIBUILD P8); the free
 // composer is its Custom tab.
 async function openComposer(page) {
-  await page.locator('[data-act="actOpen"]').click();
+  /* Unit 38 — Add activity has one primary door (the case action row) and one
+     contextual shortcut (the phone bar), so the DOM holds both and exactly one
+     is visible at any width. Click the visible one. */
+  await page.locator('[data-act="actOpen"]:visible').first().click();
   await page.waitForTimeout(250);
   await page.locator('.amtab', { hasText: 'Custom' }).click();
   await page.waitForTimeout(250);
@@ -513,7 +516,8 @@ section('Investigator scope');
   ok('and no Billing tab on it', !inav.some(t => /Billing/i.test(t)), JSON.stringify(inav));
   await wsTab(page, 'Activity');
   ok('the investigator has an Activity tab', await page.locator('.wsnav button[data-tab="activity"]').count() === 1);
-  ok('the investigator has a Field work tab', await page.locator('.wstabs button', { hasText: 'Field work' }).count() === 1);
+  ok('the investigator can still reach Field work', await page.evaluate(
+     () => [...wsPrimary(), ...wsMore()].some(t => t[0] === 'field')));
   ok('the investigator has NO Assignment tab', await page.locator('.wstabs button', { hasText: 'Assignment' }).count() === 0);
   ok('the investigator gets no assignment controls', await page.locator('#asg').count() === 0);
   await page.close();

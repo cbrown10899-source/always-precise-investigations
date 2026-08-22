@@ -717,6 +717,9 @@
     .casepage{padding-bottom:100px;}
     .addact{bottom:96px;}
     .caseacts .btn{flex:1 1 auto;}
+    /* DUPLICATE ENTRY POINT CLEANUP. + Add is in the thumb bar on a phone, so
+       the action row's copy stands down: one obvious way in at any width. */
+    .caseacts .addact{display:none;}
   }
   .ovgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:14px;}
   .ovcard{background:#fff;border:1px solid var(--line);border-radius:12px;padding:13px 15px;}
@@ -10322,7 +10325,6 @@ function activityPanel(){
          is what totals the hours and mileage.
          <button class="btn sm ghost" data-act="wsTab" data-tab="field" style="margin-left:8px">Start a day</button></div>`}
 
-    <div class="ambar"><button class="btn addact" data-act="actOpen">+ Add activity</button></div>
 
     ${a.length ? Object.keys(byDay).map(d => `
       <div class="tl-day">${esc(fmtDay(d))}</div>
