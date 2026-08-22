@@ -1058,6 +1058,13 @@ rows are excluded from the meter either way. **Deleting evidence no longer
 frees storage** — that lever is gone, and getting it back would be the purge
 this file already records as a different feature nobody has asked for.
 
+**OWNER DECISION, 2026-08-22 — LOCKED:** *"Keep preserved deleted evidence
+counting toward storage. If the Dropbox/file bytes still exist, storage
+reporting must remain truthful. Do not pretend Delete from Case frees
+storage."* So the marker-aware sum is the rule, not a temporary accommodation:
+a meter that under-reports to make a button feel more powerful is the failsafe
+lying in the one direction it must never lie in.
+
 **One tombstone table, not seven.** `case_content_removed` is keyed
 `(kind, ref_id)` across day, day_summary, note, comm, expense, subject,
 vehicle, task and evidence. `activity_removed` and `case_evidence.deleted_at`
@@ -1114,8 +1121,14 @@ with no second write because nothing is stored.
 **A legal hold refuses every removal here and allows every restore.** Unit 17's
 decision 5 named evidence removal; this is that act applied to eight more
 record types, so the refusal follows the act rather than the one route that
-existed then. That widening is recorded in `CASE-CONTENT-DELETE.md` A7 for the
-owner to overturn.
+existed then.
+
+**OWNER DECISION, 2026-08-22 — LOCKED:** *"Keep the current Legal Hold
+behavior: while a Legal Hold is active, refuse all case-content removals
+covered by Unit 39. Restore remains allowed. Do not narrow this protection."*
+The widening was offered for overturning and was confirmed instead. **Do not
+narrow it** — a future unit adding a tenth removable kind inherits the refusal
+through `removeContent`, which is where it belongs.
 
 **Intentionally still non-deletable:** invoices, lines and payments (void is
 the instrument), reports, send and alert history, retainer receipts, build

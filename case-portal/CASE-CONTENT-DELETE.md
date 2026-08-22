@@ -377,3 +377,63 @@ same act applied to eight more record types, so the refusal follows the act
 rather than stopping at the one route that existed when the decision was
 written. That is a widening of a hold's reach and is recorded here for the
 owner to overturn if it is not wanted.
+
+---
+
+# OWNER DECISIONS ON UNIT 39 — 2026-08-22, LOCKED
+
+Recorded verbatim. A1–A7 above stand as written; where a decision below
+answers one of them, the decision governs.
+
+```
+UNIT 39 OWNER DECISIONS
+
+1. Keep preserved deleted evidence counting toward storage. If the Dropbox/file bytes still exist, storage reporting must remain truthful. Do not pretend Delete from Case frees storage.
+
+2. Keep the current Legal Hold behavior: while a Legal Hold is active, refuse all case-content removals covered by Unit 39. Restore remains allowed. Do not narrow this protection.
+
+3. Do not change credentials or bootstrap/admin-token handling merely because portal-setup showed red after schema application.
+```
+
+## What each one settles
+
+**1 answers A2.** The marker-aware storage sum is now the rule rather than an
+accommodation. A meter that stops counting bytes which are still on the account
+would be the free-plan failsafe lying in the one direction it must never lie
+in, and "Delete from Case frees space" would be a screen asserting something
+untrue. **Deleting evidence does not free storage and must not be made to look
+as though it does.**
+
+**2 answers A7.** The widening was offered for overturning and was confirmed
+instead. A legal hold refuses every removal this unit covers and allows every
+restore. **Do not narrow it.** A tenth removable kind added later inherits the
+refusal through `removeContent`, which is the single place it is enforced.
+
+**3 settles the red `portal-setup` run.** The failure is the bootstrap-token
+race already recorded in `NEXT.md` item 3 — the admin exists, the workflow has
+no branch for the 401 that produces, and it exits 1 *after* the schema is in.
+Credential handling remains a stop condition and is not to be touched because
+a run went red for that reason.
+
+## The verification this prompted, and what it changed
+
+The owner asked for the schema to be verified through the existing health
+mechanism. **It could not be verified from the build container** — the
+environment's network policy refuses the domain outright (`CONNECT tunnel
+failed, response 403`), which is policy rather than a misconfiguration.
+
+`case-portal/verify.sh` is the existing live probe and runs from a GitHub
+runner through `harden-check.yml`, which is manually dispatchable. It already
+fetched `/portal-api/health` — and read only `configured`, throwing
+`missing_tables` away. Its schema check was a 401-on-login, which proves
+`users` exists and says nothing about any table added since.
+
+So `verify.sh` now reports `missing_tables` from the response it was already
+holding. No extra request, and it closes the gap this moment exposed:
+`/health` has always carried the field precisely so a half-applied schema
+announces itself, and nothing was reading it.
+
+**The absent key is not an empty list.** A Worker old enough not to send
+`missing_tables` would match an empty-array test and report a clean schema —
+the reassuring direction. The key's presence is checked first and its absence
+reports the schema state as *unknown*, never as clean.
