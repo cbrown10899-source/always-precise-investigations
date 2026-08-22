@@ -1472,6 +1472,49 @@ section('Unit 40 — three cards, three doors');
   await ctx.close();
 }
 
+section('Unit 40 — each card actually opens the door it names');
+{
+  /* THE BRIEF'S OWN TEST LINE, end to end: click the card a person would click
+     and read the page it lands on. Everything above this asserts the HREF,
+     which is a claim about a string; this asserts the OUTCOME, which is what
+     "do not route Legal through Private" is actually about. The two doors are
+     told apart by the heading the page gives itself — Unit 37A's `pageName()`,
+     which is the one writer of that name and is keyed off the service.
+
+     The dollar check rides along deliberately: the public-pricing rule has to
+     hold down the whole path a card opens, not merely on the homepage. */
+  for (const [label, url, heading] of [
+        ['Submit an Insurance Assignment', '/intake/?assignment=insurance', 'Secure Assignment Intake'],
+        ['Submit a Legal Assignment',      '/intake/?assignment=legal',     'Legal Investigation Assignment'],
+        ['Request a Private Investigation','/intake/?assignment=private',   'Client Intake']]) {
+    const { ctx, page } = await homePage(1280);
+    await page.getByRole('link', { name: label, exact: true }).click();
+    await page.waitForLoadState('networkidle');
+    const landed = await page.evaluate(() => ({
+      url: location.pathname + location.search,
+      title: document.title,
+      h1: ((document.querySelector('h1') || {}).textContent || '').trim(),
+      dollars: (document.body.innerText.match(/\$\s?\d[\d,]*/g) || []).slice(0, 3),
+    }));
+    ok(`"${label}" lands on ${url}`, landed.url === url, JSON.stringify(landed));
+    ok(`  and the page names itself "${heading}"`,
+       landed.h1 === heading && landed.title.startsWith(heading), JSON.stringify(landed));
+    ok('  with no price anywhere on the door it opened',
+       landed.dollars.length === 0, JSON.stringify(landed.dollars));
+    await ctx.close();
+  }
+  /* AND THE ONE THAT MATTERS MOST: the legal card must not reach the private
+     door's name. Stated as its own assertion so a regression reads as the rule
+     it broke rather than as a heading mismatch. */
+  const { ctx, page } = await homePage(1280);
+  await page.getByRole('link', { name: 'Submit a Legal Assignment', exact: true }).click();
+  await page.waitForLoadState('networkidle');
+  const legal = await page.evaluate(() => ((document.querySelector('h1') || {}).textContent || '').trim());
+  ok('a legal visitor is never routed through the private-client intake',
+     legal !== 'Client Intake' && legal !== 'Secure Assignment Intake', legal);
+  await ctx.close();
+}
+
 section('Unit 40 — the layout at three widths');
 {
   /* DESKTOP: one balanced row. Measured, not assumed — three cards on one row
