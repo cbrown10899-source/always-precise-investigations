@@ -576,3 +576,86 @@ brief's test 20 ("accessibility *remains* sound") is satisfied either way. It
 is one line, and that is why it was reported: `.note` here is often static
 explanatory prose, so switching it on would read paragraphs aloud on arrival at
 a case tab. Queued in `NEXT.md`, reasoning in `RECONCILIATION.md`.
+
+---
+
+## PART 14 — Unit 39, removing case content and putting it back
+
+**Owner brief verbatim in `case-portal/CASE-CONTENT-DELETE.md`**, with the
+audit and derived decisions A1–A7 appended there. Started on the owner's
+go-ahead after Unit 38's visual review passed.
+
+### The audit found the brief resting on something untrue
+
+The brief asks to reuse *"the existing evidence-deletion/tombstone model"* and,
+separately, forbids deleting Dropbox bytes. **Both could not be followed:**
+`deleteEvidence` destroyed the file — `dropboxDelete`, or `EVIDENCE.delete` for
+a legacy R2 row — and only then wrote `deleted_at`. That is also why no
+evidence Restore had ever existed: there was nothing left to put back.
+
+**Removal destroys nothing now.** `dropboxDelete` and `EVIDENCE.delete` have
+exactly one caller each — the `TEST-` sweep — and a test COUNTS them, because
+"no bytes are destroyed" is a confirmation the owner asked for and a comment
+cannot give. Control-checked: putting the destruction back fails four tests.
+
+### Which records gained Delete, and who may use it
+
+| Record | Who | Restore |
+| --- | --- | --- |
+| Activity entry | admin, or its own investigator | already existed |
+| Investigation day | admin | ✅ |
+| Daily summary | admin, or the day's investigator until the report is with the office | ✅ |
+| Evidence / case media | admin | ✅ **new** |
+| Note | admin, or its author | ✅ |
+| Comm log entry, subject, vehicle, task | admin | ✅ |
+| Expense | admin, or its own investigator **while unreviewed** | ✅ |
+
+**Remove from Package stays a different act from Delete from Case**, asserted
+apart. **Intentionally non-deletable:** invoices, lines and payments (void is
+the instrument), reports, send and alert history, retainer receipts, build
+events, and the retention and hold trail.
+
+### Two consequences recorded rather than buried
+
+**Deleting evidence no longer frees storage.** The lever is gone; recovering it
+would be a purge, which the owner has said is not wanted.
+
+**A legal hold now refuses every removal in this unit** and allows every
+restore — a widening of Unit 17 decision 5, which named only evidence.
+Recorded in `CASE-CONTENT-DELETE.md` A7 to overturn if unwanted.
+
+### Five defects found on the way
+
+`buildStaleness` guarded on `'final'` where the CHECK allows `'finalized'`, so
+it returned null for every package that has ever existed; `rmGo` called a
+function that does not exist; `dayEndedByRow`'s colspan stopped matching its
+table; the workspace shipped `content_removed`, which nothing read, to
+investigators; and the stale banner was rendered by an early return above its
+own `const`. **Four came from reading the diff; the last only from running the
+page** — the honest split between what each catches.
+
+### Ship record
+
+| | |
+| --- | --- |
+| PR | **#234** |
+| Merge SHA | **`79da2b8`** |
+| Site deploy | `Deploy site to Cloudflare Pages` run **32583655929** ✅ |
+| Worker deploy | `Deploy case-portal Worker` run **32583656010** ✅ |
+| Schema | **two additive tables.** `portal-setup.yml` run **32583766475** — **RED, and the schema still applied**: step 8 *Apply the schema* ✅, and the run fails only on step 13 *Create the first admin* with `401 not authorised`, the pre-existing bootstrap-token race already recorded in `NEXT.md`. Step 14 destroyed the bootstrap token ✅, so no credential is left behind. **NOT independently verified** — `/portal-api/health` is unreachable from the build container (the proxy refuses the domain), so `missing_tables: []` is inferred from the step's own success, not observed |
+| Suites | worker **2870/0** · portal **2690/0** · deploy guard **86/0** · intake **467/0** · visitor-alerts **47/0** |
+| LIVE VERIFIED | **OPEN** — the owner's visual review, as the brief asks |
+
+### The one thing for the owner to confirm
+
+`portal-setup` is red for a reason that has nothing to do with this unit — the
+admin account already exists and the workflow has no branch for the 401 that
+produces, so it exits 1 after the schema is already in. The same run is
+recorded red-but-applied for Unit 27.
+
+**A one-line check settles it:** open the portal's Settings, or fetch
+`/portal-api/health` and look at `missing_tables`. If
+`case_content_removed` or `case_content_event` appears there, the removal
+routes will answer **503 naming the workflow** rather than failing quietly, and
+re-dispatching `portal-setup.yml` is safe and idempotent — it will go red on
+the same step and apply the schema again regardless.

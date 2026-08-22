@@ -46,10 +46,10 @@ completed.
 
 | | |
 | --- | --- |
-| **Master** | **`f2f49d4`** (Unit 38 — case workspace simplification, #232) |
+| **Master** | **`79da2b8`** (Unit 39 — case content delete/restore, #234) |
 | **Working tree** | clean; nothing unpushed; no branch in flight |
 | **Background work** | none running |
-| **Suites at that SHA** | worker **2796/0** · portal **2660/0** · deploy guard **86/0** · intake **467/0** · visitor-alerts **47/0** |
+| **Suites at that SHA** | worker **2870/0** · portal **2690/0** · deploy guard **86/0** · intake **467/0** · visitor-alerts **47/0** |
 | **Schema owed** | **NONE.** `case_day_end` was applied by `portal-setup` run **32508101361** at `74629fe` — ✅ success, **including the admin-bootstrap step that failed at `46a06ad9`**, so the token race did not recur |
 | **Deployed** | at `f2f49d4`: `Deploy site to Cloudflare Pages` ✅ **run 32557961911** and `Deploy case-portal Worker` ✅ **run 32557961914** — Unit 38 touched both. LIVE byte-check not possible from this container — the proxy refuses the domain (403), as recorded |
 | **Closeout** | ✅ **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** — see `case-portal/FINAL-LEDGER.md` |
@@ -206,7 +206,17 @@ touch how existing cases are categorised, so it is recorded rather than done.
   door's own accessible page name and the legal page's cache-rule parity. The
   regression tests are written from that boundary and control-checked: with the
   fallback disabled the suite reports ten failures.
-- **39 — Case content Delete / Restore controls.** 🟡 **IN FLIGHT** (started
+- **39 — Case content Delete / Restore controls.** ✅ **DONE — DEPLOYED** at
+  `79da2b8` (#234), site run 32583655929 and Worker run 32583656010 both ✅,
+  `portal-setup.yml` run **32583766475** dispatched for the two new tables —
+  **RED but the schema applied**: step 8 *Apply the schema* succeeded and the
+  run fails only on step 13 *Create the first admin* (`401 not authorised`),
+  which is the bootstrap-token race in item 3 below and has nothing to do with
+  this unit. The bootstrap token was destroyed. **`missing_tables` was not
+  observed** — the live domain is unreachable from the build container — so
+  that is inferred from the step, not verified. Visual **LIVE VERIFY OPEN**,
+  and the owner's instruction is to stop here for it. Record in
+  `FINAL-LEDGER.md` PART 14. Detail below as it was written in flight (started
   2026-08-22 on the owner's go-ahead after Unit 38's visual review passed).
   **The audit found the brief resting on something untrue**, which reshaped the
   unit: `deleteEvidence` was not a tombstone — it called `dropboxDelete`, or
