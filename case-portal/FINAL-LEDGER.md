@@ -884,3 +884,55 @@ No completed unit is to be rebuilt. Real-case-only LIVE VERIFY items stay OPEN,
 not failed. Deferred-by-owner items stay deferred, not queued. The owner
 decisions — five from the 2026-08-21 closeout, three from Unit 39 and **one
 from Unit 40** — stay locked.
+
+---
+
+## PART 18 — UNITS 40A and 40B, the cards get photographs, 2026-08-22
+
+Both arrived as owner direction during Unit 40's visual review.
+
+| | Verified how |
+| --- | --- |
+| **40A — no icons** | PR **#245** at `9756e59`, site deploy run **32604481612** ✅. intake 539/0 |
+| **40B — three photographs, neutral overlay** | PR **#246** at `7d1f7e4`, site deploy run **32604959775** ✅. intake **542/0**, deploy guard **86/0** |
+| **Worker** | untouched by both — `portal/`, `case-portal/` and `visitor-alerts/` confirmed absent from the staged diff |
+| **Schema** | none. No `portal-setup` dispatch owed |
+| **LIVE VERIFIED** | **OPEN** on 40B — owner visual check |
+
+### Unit 40's central claim was tested, and it held
+
+Unit 40 was built so photographs could replace its placeholder motifs *without
+the layout moving*. Three owner-supplied images went in and the change was
+**three `url()`s and three manifest lines**. Heights 236/236/236, titles
+645/645/645, grid untouched. The property is now proven rather than asserted —
+and `CLAUDE.md` records what would end it: a per-card `background-position` or
+a bespoke height for one card.
+
+### The blue was the overlay, not the photographs
+
+Owner: the cards should *"not be so blue hued."* The cast came from
+`rgba(19,35,60,.62)`→`rgba(12,22,38,.88)` laid over all three. **Neutral black
+at the same alpha is darker than navy**, so going neutral removed the cast and
+bought contrast headroom, which then paid for lightening it. `.50/.82` ships at
+5.16 / 5.25 against a 4.5 bar. `.46/.80` was rejected at 4.53 / 4.66 — it
+clears by 0.03, and one brighter photograph later it would fail silently.
+
+### Three assertions that had stopped asserting
+
+The unit's real yield, and all the same shape:
+
+| Assertion | Why it was dead |
+| --- | --- |
+| icons are decorative | `[].every()` is TRUE — passed while testing nothing, and would have passed on a card that lost its **artwork** |
+| the title clears 4.5:1 | read the FIRST `.cta-title` only; with three different photographs the brightest card decides, and it was not necessarily the one measured |
+| the art is a local path | required `\.svg`, so it would have failed on the WebP the architecture was designed to accept |
+
+All three now assert in both directions, and the overlay's neutrality is pinned
+by shape rather than by comment.
+
+### Two images were rejected rather than accepted
+
+The first private image put its subject in the bottom third — cropped on a
+phone, and where the overlay is heaviest — so the card drew an empty sky. The
+rule that came out of it is recorded in `CLAUDE.md`: **a replacement image
+needs its subject in the central 60% of the frame.**

@@ -46,7 +46,7 @@ completed.
 
 | | |
 | --- | --- |
-| **Master** | **`e7b9117`** (Unit 40, #242) |
+| **Master** | **`7d1f7e4`** (Unit 40B, #246) |
 | **Working tree** | clean; nothing unpushed; no branch in flight |
 | **Background work** | none running |
 | **Suites at that SHA** | worker **2870/0** · portal **2707/0** · deploy guard **86/0** · intake **537/0** · visitor-alerts **47/0**. All five run this session. Intake and the deploy guard were run on the final Unit 40 tree; worker, portal and visitor were run during it and `case-portal/**` and `portal/**` are byte-identical between `001d354` and `e7b9117`, so those three results carry |
@@ -55,7 +55,7 @@ completed.
 | **Closeout** | ✅ **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** — see `case-portal/FINAL-LEDGER.md` |
 | **Owner decisions** | ✅ five LOCKED at closeout, 2026-08-21 — see **FINAL OWNER DECISIONS** below. Four are deferrals or standing refusals; **decision 4 (Ended by Admin) is BUILT — Unit 27** |
 | **Next unit** | **NONE — the durable queue is empty of required work.** Units 17A–39, 21A and **40** are shipped; 38, 39 and **40** are LIVE VERIFIED by the owner (2026-08-22), **21A has LIVE VERIFY open**. What remains is Unit 23's live-verification sweep (deferred — needs a real case) and the deferred-by-owner list. **Do not start anything without the owner.** |
-| **Nothing open for the owner** | The one question Unit 40 raised was answered the same day and is LOCKED below: the global teal stays unchanged and the card-button treatment is approved as implemented |
+| **Nothing open for the owner** | The one question Unit 40 raised was answered the same day and is LOCKED below: the global teal stays unchanged and the card-button treatment is approved as implemented. Units **40A** (no icons) and **40B** (three photographs, neutral overlay) shipped the same day on owner direction — **LIVE VERIFY OPEN** on 40B |
 
 ## 🔄 RESUME POINT — Production Truth Correction Queue (Units 28–33)
 
@@ -443,6 +443,53 @@ button, the section CTA, the buttons these cards replaced. It was put to the
 owner with measured alternatives rather than fixed by making one control differ
 from the rest, and they chose to keep the palette. **The sizing is therefore
 the approved mechanism, not a stopgap.**
+
+## ✅ SHIPPED — Units 40A and 40B, the cards get photographs (2026-08-22)
+
+Both on owner direction during the Unit 40 visual review, not off the queue.
+
+**40A — no icons.** *"Take the blue scale off, it's not needed."* The legal
+photograph has brass scales in it and the teal icon sat on top of them.
+Removing one left the other two pushing their titles down, so all three came
+off; the dead `.cta-icon` rule went too. **#245 at `9756e59`**, deploy run
+32604481612 ✅. intake 539/0.
+
+**40B — three photographs and a neutral overlay. #246 at `7d1f7e4`**, deploy
+run 32604959775 ✅. intake **542/0**, deploy **86/0**. LIVE VERIFY **OPEN**.
+
+| Card | File | Size |
+| --- | --- | --- |
+| Insurance | `card-insurance.webp` | 64 KB |
+| Legal | `card-legal.webp` | 52 KB |
+| Private | `card-private.webp` | 74 KB |
+
+**Unit 40's central claim was tested and held.** It was built so photographs
+could replace the placeholder motifs *without the layout moving*, and that is
+exactly what the swap cost: three `url()`s and three manifest lines. Heights
+stayed 236/236/236, titles 645/645/645.
+
+**The blue was the OVERLAY, not the images** — owner: the cards should *"not
+be so blue hued"*. Neutral black at the same alpha is darker than navy, so
+going neutral removed the cast and bought headroom, which paid for lightening
+it as well. `.50/.82` measures 5.16 and 5.25 against a 4.5 bar; `.46/.80` was
+rejected because it clears by 0.03 and one brighter photograph later it would
+not. Table and reasoning in `CLAUDE.md`.
+
+**Three test defects this unit found, all the same shape — an assertion that
+had stopped asserting:**
+
+1. The icon check was `[].every()`, TRUE on an empty list, so it passed while
+   testing nothing — and would equally have passed on a card that lost its art.
+2. The contrast check read the FIRST `.cta-title` only. Fine with one shared
+   motif; worthless with three different photographs, since the brightest card
+   is the one that decides and was not necessarily the one measured.
+3. The art-path check required `\.svg`, which would have failed on a WebP the
+   architecture was explicitly designed to accept.
+
+**Two owner images were rejected and re-generated rather than accepted**: the
+first private image put its subject in the bottom third, which is both cropped
+on a phone and where the overlay is heaviest, so the card drew an empty sky.
+A replacement image needs its subject in the **central 60%** of the frame.
 
 ## 🔒 OWNER DECISION — 2026-08-22, Unit 40 (LOCKED)
 

@@ -1057,3 +1057,35 @@ question is closed.
 owner, 2026-08-22.
 
 Full record in `FINAL-LEDGER.md` PART 17.
+
+## UNITS 40A / 40B — the cards get photographs, 2026-08-22
+
+Owner direction during Unit 40's visual review. **40A** #245 at `9756e59`
+(deploy 32604481612 ✅), **40B** #246 at `7d1f7e4` (deploy 32604959775 ✅).
+intake **542/0**, deploy **86/0**. No schema, Worker untouched.
+
+**Unit 40's central claim was tested and held**: three owner photographs
+replaced the placeholder motifs for the cost of three `url()`s and three
+manifest lines, with heights and title positions unmoved.
+
+**Three assertions had stopped asserting**, which is why this belongs in this
+file:
+
+| Assertion | Why it was dead |
+| --- | --- |
+| icons are decorative | `[].every()` is TRUE on an empty list — it passed while testing nothing, and would have passed on a card that lost its **artwork** |
+| the title clears 4.5:1 | measured the FIRST card only; with three different photographs the brightest one decides, and it was not necessarily the one measured |
+| the art is a local path | required `\.svg`, and would have failed on the WebP the architecture existed to accept |
+
+A green suite over a dead assertion is the failure this file exists to catch,
+and all three were found by *changing the thing they were supposed to guard*
+rather than by reading them.
+
+**Also recorded:** the blue cast was the overlay rather than the images, and
+neutral black at the same alpha is darker than navy — so removing the tint
+improved contrast rather than costing it. `.46/.80` was rejected for clearing
+the bar by 0.03.
+
+**Required build queue: still EMPTY.** LIVE VERIFY for 40B is OPEN.
+
+Full record in `FINAL-LEDGER.md` PART 18.

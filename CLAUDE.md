@@ -307,21 +307,44 @@ the wrong link would be a dead end as well as the wrong door.
 *Get Started* is a styled span, not a button: a button inside a link is
 invalid nesting and would give each card two tab stops for one place to go.
 It is `aria-hidden`, so the accessible name stays the sentence the title
-already says; the icon is `aria-hidden` too. **Nothing on the card depends on
-an image loading** — the meaning is in the title, and the dark overlay that
-makes the text readable is a separate layer above the art, so the contrast
-holds whether or not the art is there.
+already says. **Nothing on the card depends on an image loading** — the
+meaning is in the title, and the dark overlay that makes the text readable is
+a separate layer above the art, so the contrast holds whether or not the art
+is there.
 
-**The artwork is local and it is ONE PROPERTY PER CARD.** The asset audit
-found no photography to reuse — `banner1.webp` is already the hero background
-and the rest of `assets/` is the logo and three review screenshots — so three
-motifs are authored here as SVG, under 1 KB each with no external reference.
-Nothing is hotlinked. Each card names its art through a single `--cta-art`
-custom property, so replacing a motif with an optimized WebP is that one
-`url()` plus its line in `deploy-manifest.txt`, and **the sizing, the overlay
-and the text do not move**. The manifest names the three files one by one,
-like everything else in it, so a photo swap is a deliberate line change in
-both places.
+**There is NO ICON, and that is an owner decision** (2026-08-22, Unit 40A):
+*"Take the blue scale off, it's not needed."* The legal photograph has brass
+scales in it and the teal scales icon sat on top of them — the card saying the
+same thing twice in two visual languages. Removing one left the other two
+pushing their titles down while the legal title floated to the top, so all
+three came off; titles sit at the same pixel again. The `.cta-icon` rule went
+with them and **a test fails if the selector reappears in the file at all**.
+The old assertion here used `[].every()`, which is TRUE on an empty list, so it
+went on passing while testing nothing — it counts now, and would equally have
+caught a card that lost its artwork.
+
+**The artwork is local and it is ONE PROPERTY PER CARD — and the swap has now
+been PROVEN, not just claimed.** Unit 40 shipped with three SVG motifs because
+the asset audit found no photography to reuse (`banner1.webp` is already the
+hero background; the rest of `assets/` is the logo and three review
+screenshots), and it was built so photographs could replace them without the
+layout moving. On 2026-08-22 the owner supplied three, and that is exactly what
+it cost: **three `url()`s and three lines in `deploy-manifest.txt`.** Heights
+stayed 236/236/236 and titles 645/645/645.
+
+`card-insurance.webp` (64 KB), `card-legal.webp` (52 KB) and
+`card-private.webp` (74 KB) — 960×640, the source's own 3:2 rather than a 16:9
+crop, because the card's tallest shape is 1.40:1 and cropping to 16:9 would
+throw away height the tablet actually uses. Nothing is hotlinked. **Keep the
+one-property rule**: a per-card `background-position`, or a bespoke height for
+one card, would end the property that makes a future swap free.
+
+**A replacement image needs its subject in the CENTRAL 60% of the frame.** The
+card is three different shapes and crops different axes at each — full width
+and the middle 79% of height on a phone, the middle 79% of width and full
+height on a tablet and desktop. The first private image was rejected for
+exactly this: its subject sat in the bottom third, which is both cropped on a
+phone and where the overlay is heaviest, so the card drew an empty sky.
 
 **The layout is a grid of `1fr`**, which is what makes "consistent height and
 width" a property of the layout rather than three numbers kept in step by
@@ -362,6 +385,31 @@ that a dark overlay exists to prevent. Measured: 15.8–16.1:1 average,
 destroy what it measures (`visibility:hidden` also removes an element from the
 accessibility tree), so **it runs on its own page** — done on the shared one it
 left every later accessible-name assertion reading `""`.
+
+**THE OVERLAY IS NEUTRAL, NOT NAVY, and that was measured** (Unit 40B, owner:
+the cards should *"not be so blue hued"*). It was
+`rgba(19,35,60,.62)`→`rgba(12,22,38,.88)` and it tinted every photograph blue
+whatever the photograph looked like — the cast was the overlay, never the
+images. The finding worth keeping is that **neutral black at the SAME alpha is
+DARKER than navy**, so going neutral removed the cast *and* bought contrast
+headroom, which then paid for lightening it too:
+
+| overlay | legal | private |
+| --- | --- | --- |
+| navy `.62/.88` | 5.87:1 | 6.07:1 |
+| neutral `.58/.86` | 6.58:1 | 6.78:1 |
+| **neutral `.50/.82`** | **5.16:1** | **5.25:1** |
+| neutral `.46/.80` | 4.53:1 | 4.66:1 |
+
+`.46/.80` was **rejected on purpose**: it clears 4.5 by 0.03, so one brighter
+photograph later it would fail with nothing on screen to say so. The CSS
+carries this table beside the rule. **Do not lighten it without re-running the
+measurement over all three cards** — and the measurement is per-card now,
+because the brightest of the three is the one that decides, and it is not
+necessarily the one a single-card test would have looked at. A second
+assertion pins the overlay as neutral by shape (every gradient stop's blue
+channel within 8 of its red and green), so a navy tint cannot come back
+quietly.
 
 **OWNER DECISION, 2026-08-22 — LOCKED: `--teal` stays exactly as it is.**
 *"Keep the current global teal unchanged. The Unit 40 card-button
