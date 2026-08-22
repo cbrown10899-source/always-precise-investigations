@@ -15481,8 +15481,13 @@ section('Control: the quiet test can see the defect it was written for');
   await page.waitForTimeout(500);
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(900);
-  await wsTab(page, 'Internal notes');
-  await page.waitForTimeout(700);
+  /* EDIT CASE, not Internal notes. The notes panel's explanatory text is
+     `.hint`, which the chokepoint does not read at all — so the first draft of
+     this control navigated somewhere with nothing to leak and "proved" the
+     defect was absent. Edit case is the reported example and does render a
+     `.note`. */
+  await wsTab(page, 'Edit case');
+  await page.waitForTimeout(900);
   const leaked = await srText(page);
   ok('with the screen check disabled, arriving at a tab DOES read its text aloud',
      Boolean(leaked) && leaked.length > 0, JSON.stringify(leaked));
@@ -15490,8 +15495,8 @@ section('Control: the quiet test can see the defect it was written for');
   await page.evaluate(() => { window.srScreen = window.__realSrScreen; });
   await wsTab(page, 'Comm log');
   await page.waitForTimeout(700);
-  await wsTab(page, 'Internal notes');
-  await page.waitForTimeout(700);
+  await wsTab(page, 'Edit case');
+  await page.waitForTimeout(900);
   ok('and with it restored, the same arrival is silent',
      (await srText(page)) === '', JSON.stringify(await srText(page)));
   await page.close();

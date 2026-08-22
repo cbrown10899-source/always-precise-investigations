@@ -9476,6 +9476,21 @@ function focusRestore(){
    owner's rule is that arrival is quiet, and that case is arrival. */
 let SR_LAST = "";
 let SR_SCREEN = null;
+/* AND A SCREEN DOES NOT FINISH ARRIVING IN ONE PAINT.
+
+   The screen check alone was not enough, and the suite caught it: Tasks, the
+   Audit trail and the File queue each paint TWICE — once on arrival while
+   their data is still in flight, and again when it lands and the panel draws
+   its explanatory paragraph. The second paint is the same screen with changed
+   text, so it read the paragraph aloud.
+
+   So "the same screen" is not the test. "The user did something" is, which is
+   the owner's wording anyway. This is set by the delegated listeners — the one
+   place every click, submit, change and keystroke on this page passes through
+   — and CLEARED on arrival, so pressing a nav item cannot count as the action
+   that licenses its own destination to speak. */
+let SR_ACTED = false;
+const srActed = () => { SR_ACTED = true; };
 
 /* Which screen this is. Not a route — the SHELL tab, the case tab, or the
    field view — because that is the granularity a person experiences as
@@ -9497,12 +9512,17 @@ function announceRendered(){
     /* Arrival. Take the baseline without speaking it, and CLEAR the region — an
        announcement from the screen just left must not sit there to be read as
        though it belonged to this one. Clearing a live region announces
-       nothing. */
+       nothing. The press that brought us here does not count as an action ON
+       here, so the flag resets with it. */
     SR_SCREEN = here;
     SR_LAST = msg;
+    SR_ACTED = false;
     if(sr) sr.textContent = "";
     return;
   }
+  /* Still arriving: a panel whose data landed after the first paint is not
+     somebody being answered. Adopt it and stay quiet. */
+  if(!SR_ACTED){ SR_LAST = msg; return; }
   if(msg === SR_LAST) return;
   SR_LAST = msg;
   if(sr) sr.textContent = msg;
@@ -17118,6 +17138,7 @@ document.addEventListener("keydown", ev => {
 document.addEventListener("click", ev => {
   const el = ev.target.closest("[data-act]");
   if(!el) return;
+  srActed();
   const act = el.dataset.act;
   if(act === "backToCases"){ VIEW = "list"; render(); }
   else if(act === "navToggle"){
@@ -18021,6 +18042,7 @@ document.addEventListener("click", ev => {
 document.addEventListener("submit", ev => {
   const el = ev.target.closest("[data-act]");
   if(!el) return;
+  srActed();
   ev.preventDefault();
   const a = el.dataset.act;
   if(a === "login") doLogin();
@@ -18055,6 +18077,7 @@ document.addEventListener("submit", ev => {
    the Timestamp Video quick tool taught at a different layer. */
 document.addEventListener("change", ev => {
   const act = ev.target.dataset ? ev.target.dataset.actChange : "";
+  if(act) srActed();
   /* The daily summary's controls: capture-then-recompose, per day. */
   if(act === "dsCtl"){ dsCtl(parseInt(ev.target.dataset.day, 10)); return; }
   if(!act || !NL) return;
@@ -18080,6 +18103,7 @@ document.addEventListener("change", ev => {
 
 document.addEventListener("input", ev => {
   const din = ev.target.dataset ? ev.target.dataset.actInput : "";
+  if(din) srActed();
   /* Unit 17 — the reason boxes and the date survive async repaints (loadCloseout
      resolving, a retention write returning) without the box being rebuilt mid-word. */
   if(din === "retDraft"){ RTN_DRAFT[ev.target.id] = ev.target.value; return; }
