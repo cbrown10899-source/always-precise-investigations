@@ -4970,8 +4970,23 @@ async function authorizationFor(env, caseNo, forAdmin) {
        FROM case_meta m LEFT JOIN case_types t ON t.id = m.case_type_id
       WHERE m.case_no = ?`).bind(caseNo).first();
 
+  /* A REMOVED DAY DOES NOT SPEND THE AUTHORIZATION (Unit 39). The cap is what
+     the carrier or the client agreed to pay for; a day the office has taken
+     out of the working case is not work being charged for, so counting its
+     hours would draw an investigator toward a limit with time that no longer
+     belongs to the case. Written as a NOT EXISTS rather than a load-and-filter
+     so the sum stays one statement — and guarded, because the table arrives by
+     a manual portal-setup dispatch and an authorization read that 500s would
+     take the field view with it.
+
+     PUTTING THE DAY BACK RESTORES THE HOURS, with no second write, because
+     nothing here is stored. */
+  const dayGate = (await missingTables(env)).includes('case_content_removed') ? '' :
+    `AND NOT EXISTS (SELECT 1 FROM case_content_removed r
+       WHERE r.kind = 'day' AND r.ref_id = case_days.id)`;
   const used = await env.DB.prepare(
-    'SELECT COALESCE(SUM(hours), 0) AS h, COALESCE(SUM(miles), 0) AS m FROM case_days WHERE case_no = ?')
+    `SELECT COALESCE(SUM(hours), 0) AS h, COALESCE(SUM(miles), 0) AS m
+       FROM case_days WHERE case_no = ? ${dayGate}`)
     .bind(caseNo).first();
   const hoursUsed = Math.round((Number(used && used.h) || 0) * 100) / 100;
 
@@ -5255,8 +5270,12 @@ async function caseWorkspace(env, user, caseNo) {
   // Visibility is enforced HERE: an admin-only note never leaves the Worker
   // for anyone else. The page renders what arrives; it decides nothing.
   const { results: notes } = await env.DB.prepare(
+    /* `author_id` rides along for Unit 39: a note is removable by its author
+       or by the office, and the page cannot draw that button without knowing
+       whose it is. It is an internal user id on a case the caller can already
+       open, not client data. */
     `SELECT n.id, n.note_type, n.visibility, n.body, n.created_at, n.edited_at,
-            u.display_name AS author
+            n.author_id, u.display_name AS author
        FROM case_notes n LEFT JOIN users u ON u.id = n.author_id
       WHERE n.case_no = ? ${admin ? '' : "AND n.visibility != 'admin'"}
       ORDER BY n.id DESC LIMIT 200`).bind(caseNo).all();
@@ -5394,8 +5413,18 @@ async function caseWorkspace(env, user, caseNo) {
             v.registered_owner, v.notes
        FROM subject_vehicles v JOIN case_subjects s ON s.id = v.subject_id
       WHERE s.case_no = ? ORDER BY v.id LIMIT 200`).bind(caseNo).all();
+  /* UNIT 39 — what the office has removed from this case's working set. One
+     read, one Set, and a marker rather than a filter: a removed row is drawn
+     struck through with a way back, which is the treatment `activity_removed`
+     already gets and the reason nothing in this portal is unrecoverable in it.
+     Filtering here would have made "put it back" unreachable from the only
+     screen that knows the row exists. */
+  const removedSet = await contentRemovedSet(env, caseNo, missing);
+  const mark = (kind, rows) => (rows || []).map(r =>
+    removedSet.has(`${kind}:${r.id}`) ? { ...r, removed: true } : r);
+
   const subjects = (subjectRows || []).map(s => ({
-    ...s, vehicles: (vehicleRows || []).filter(v => v.subject_id === s.id),
+    ...s, vehicles: mark('vehicle', (vehicleRows || []).filter(v => v.subject_id === s.id)),
   }));
 
   return json({
@@ -5420,16 +5449,27 @@ async function caseWorkspace(env, user, caseNo) {
     details,
     detail_set: detailSet,
     detail_fields: detailFields,
-    subjects,
+    subjects: mark('subject', subjects),
     case_types: admin ? await listCaseTypes(env) : [],
-    activity: activity || [],
-    days: days || [],
+    /* AN ENTRY ON A REMOVED DAY GOES WITH THE DAY — out of the Daily Summary
+       source and out of the report chronology, because the owner's own option
+       is "Remove day and its case-work records from active use".
+
+       IT IS A SEPARATE FLAG, NOT `removed_at`. Writing the day's removal
+       instant onto the entry would draw it as "Removed by Corey at 14:02",
+       which is a staff screen asserting something that did not happen: nobody
+       removed that entry. It says what is true — the entry is on a day that
+       was removed — and comes back the moment the day does, with no second
+       write to undo. */
+    activity: (activity || []).map(a =>
+      removedSet.has(`day:${a.day_id}`) ? { ...a, removed_with_day: true } : a),
+    days: mark('day', days),
     days_total: daysTotal,
     open_day: openDay || null,
     reports: reports || [],
-    expenses: expenses || [],
-    notes: notes || [],
-    comms: comms || [],
+    expenses: mark('expense', expenses),
+    notes: mark('note', notes),
+    comms: mark('comm', comms),
     evidence: evidence || [],
     video_stamps: videoStamps,
     photo_stamps: photoStamps,
@@ -5440,7 +5480,7 @@ async function caseWorkspace(env, user, caseNo) {
        the summary is report prose, and the investigator who writes the day's
        report writes its paragraph under the same rules. */
     day_summaries: missingForStamps.includes('case_day_summary') ? null
-      : await daySummariesFor(env, caseNo),
+      : await daySummariesFor(env, caseNo, removedSet),
     integrity,
     /* UNIT 6 — the firm, the matter, the dates and the arrangement. ADMIN
        ONLY: who is paying is exactly what an investigator is never sent, and
@@ -5453,9 +5493,15 @@ async function caseWorkspace(env, user, caseNo) {
        paying side. An investigator gets no key at all, so the field does not
        reach their browser to be read out of the network tab. */
     profile: admin ? await caseProfileFor(env, caseNo) : undefined,
-    tasks: tasks || [],
+    tasks: mark('task', tasks),
     offers: offers || [],
     my_offer: myOffer || null,
+    /* THE REMOVED SET IS NOT SENT. It was, briefly: the whole `kind:ref_id`
+       list, so the page could decide what to strike through. Nothing read it —
+       every row already carries its own `removed` flag from `mark()` — so it
+       was a list of record ids riding to an investigator's browser for no
+       reason at all. `FIELD_KEEP`'s rule is that a field the page declines to
+       draw is still sitting in the network tab; the answer is not to send it. */
   });
 }
 
@@ -6960,6 +7006,359 @@ async function restoreActivity(env, user, caseNo, id) {
   return json({ ok: true, id });
 }
 
+/* ================= CASE CONTENT REMOVAL (Unit 39) =================
+
+   Owner: "Admin must have a quick, obvious way to remove incorrectly entered
+   or no-longer-needed information from BOTH test cases AND REAL PRODUCTION
+   CASES ... Today too much case/package information can only be edited and
+   then sits permanently in the working case."
+
+   ACTIVITY AND EVIDENCE ALREADY HAD A WAY OUT — `activity_removed` and
+   `case_evidence.deleted_at`. Everything else did not, and the shape here is
+   theirs: the record stays, a marker says it is out of the working case, and
+   putting it back is one press. Nothing in this unit destroys a row.
+
+   ONE TABLE KEYED BY (kind, ref_id) rather than seven companion tables. Seven
+   would be seven guards to remember, seven DEMO_SWEEP lines and seven places
+   for one rule to drift. The two that already exist keep their own shape,
+   because rewriting them is a migration schema.sql cannot do idempotently.
+
+   THE ALLOW-LIST IS HERE, NOT IN THE SCHEMA. `kind` carries no CHECK for the
+   reason Unit 7 wrote down: a CHECK edited in place leaves a fresh database
+   accepting a value the live one still refuses. So the Worker validates, and
+   an eighth kind is an ordinary edit to this constant.
+
+   AUTHORITY MIRRORS THE EXISTING EDIT RULE, which is the owner's own line —
+   "investigators may only delete items they are already authorized to
+   edit/remove under existing role rules". Each entry below says whose it is,
+   and `contentTarget` resolves the row and the permission in one place so a
+   new kind cannot arrive with the check forgotten. Where removal is
+   consequential the entry is admin-only even though the EDIT is not: the
+   owner's other line, "Admin-only for consequential deletion", is a ceiling
+   the edit rule sits under, not a contradiction of it. */
+const CONTENT_KINDS = ['day', 'day_summary', 'note', 'comm', 'expense',
+                       'subject', 'vehicle', 'task', 'evidence'];
+
+/* Every row is scoped to the case IN THE SAME STATEMENT — the Unit 11 rule, so
+   a wrong-case id and an id that never existed answer identically and these
+   routes cannot be used to probe another case's ids. `subject_vehicles` has no
+   case_no of its own, so it is scoped through its subject. */
+const CONTENT_SPEC = {
+  day: {
+    what: 'investigation day', admin: true,
+    sql: 'SELECT id, day_date AS label, investigator_id, end_time FROM case_days WHERE id = ? AND case_no = ?',
+  },
+  day_summary: {
+    what: 'daily summary',
+    sql: 'SELECT day_id AS id, day_id FROM case_day_summary WHERE day_id = ? AND case_no = ?',
+  },
+  note: {
+    what: 'note',
+    sql: 'SELECT id, author_id, note_type AS label FROM case_notes WHERE id = ? AND case_no = ?',
+  },
+  comm: {
+    what: 'comm log entry', admin: true,
+    sql: 'SELECT id, person AS label FROM case_comms WHERE id = ? AND case_no = ?',
+  },
+  expense: {
+    what: 'expense',
+    sql: 'SELECT id, investigator_id, reviewed_at, description AS label FROM case_expenses WHERE id = ? AND case_no = ?',
+  },
+  subject: {
+    what: 'subject', admin: true,
+    sql: 'SELECT id, name AS label FROM case_subjects WHERE id = ? AND case_no = ?',
+  },
+  vehicle: {
+    what: 'vehicle', admin: true,
+    sql: `SELECT v.id, v.plate AS label FROM subject_vehicles v
+            JOIN case_subjects s ON s.id = v.subject_id
+           WHERE v.id = ? AND s.case_no = ?`,
+  },
+  task: {
+    what: 'task', admin: true,
+    sql: 'SELECT id, task AS label FROM case_tasks WHERE id = ? AND case_no = ?',
+  },
+  /* Evidence is here for the TRAIL and for the storage meter's preserve
+     marker; its removed/restored STATE stays in its own columns, where every
+     existing reader already looks. Two answers to "is this deleted?" would be
+     one answer too many. */
+  evidence: {
+    what: 'file', admin: true,
+    sql: 'SELECT id, filename AS label FROM case_evidence WHERE id = ? AND case_no = ?',
+  },
+};
+
+/* The removed set for a case, as `kind:ref_id` strings. One read, one Set —
+   `.has`, never `.includes`, the mistake Unit 22 already paid for. Degrades to
+   an EMPTY set when the table has not arrived, because portal-setup is a
+   manual dispatch and a case list that 500s is worse than one that shows a row
+   somebody meant to remove. */
+async function contentRemovedSet(env, caseNo, missingKnown) {
+  /* `missingKnown` is the caller's already-hoisted schema check. `caseWorkspace`
+     does one `sqlite_master` scan for the whole screen and says so in its own
+     comment — this took a second one until it was given the answer. The Unit 7
+     lesson, on the most-opened screen in the portal. */
+  const missing = missingKnown || await missingTables(env);
+  if (missing.includes('case_content_removed')) return new Set();
+  const { results } = await env.DB.prepare(
+    'SELECT kind, ref_id FROM case_content_removed WHERE case_no = ?').bind(caseNo).all();
+  return new Set((results || []).map(r => `${r.kind}:${r.ref_id}`));
+}
+
+/* Written best-effort: a failed trail row can never change what the caller is
+   told, and never turns a completed removal into an error. The
+   `storage_failure` and `retention_event` rule. */
+async function logContentEvent(env, caseNo, kind, refId, action, actor, reason) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO case_content_event (kind, ref_id, case_no, action, reason, actor, at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .bind(kind, refId, caseNo, action, reason || null, actor, nowIso()).run();
+    return true;
+  } catch { return false; }
+}
+
+/* Resolve the row, the permission and the wording in ONE place. Returns either
+   `{ row, spec }` or a Response to hand straight back. */
+async function contentTarget(env, user, caseNo, kind, refId) {
+  const spec = CONTENT_SPEC[kind];
+  if (!spec) return { res: json({ error: 'Not something this portal removes.' }, 400) };
+  if (!(await caseFor(env, user, caseNo))) return { res: json({ error: 'not found' }, 404) };
+
+  const missing = await missingTables(env);
+  if (missing.includes('case_content_removed') || missing.includes('case_content_event')) {
+    return { res: json({ error: 'Removal is not set up on this database yet — run the '
+      + 'portal-setup workflow.', code: 'not_set_up' }, 503) };
+  }
+
+  const row = await env.DB.prepare(spec.sql).bind(refId, caseNo).first();
+  if (!row) return { res: json({ error: 'not found' }, 404) };
+
+  const admin = user.role === 'admin';
+  if (spec.admin && !admin) return { res: json({ error: ADMIN_ONLY }, 403) };
+
+  /* The two that are not admin-only are the two whose EDIT rule is already
+     "yours, or the office's". Said here rather than at each call site so a new
+     kind cannot arrive with the check in only one of the two directions. */
+  if (!admin) {
+    if (kind === 'note' && row.author_id !== user.id) {
+      return { res: json({ error: 'That note is somebody else’s.' }, 403) };
+    }
+    if (kind === 'expense') {
+      if (row.investigator_id !== user.id) {
+        return { res: json({ error: 'That expense belongs to another investigator.' }, 403) };
+      }
+      /* REVIEWED MONEY IS THE OFFICE'S. The owner's limit is "no
+         billing/history destruction"; once the office has reviewed a claim,
+         withdrawing it is their decision, not the claimant's. */
+      if (row.reviewed_at) {
+        return { res: json({ error: 'The office has already reviewed that expense — ask them to remove it.' }, 403) };
+      }
+    }
+    if (kind === 'day_summary') {
+      /* saveDaySummary's own rule, inherited rather than restated: the day's
+         investigator holds the pen until the report is with the office. */
+      const day = await env.DB.prepare(
+        'SELECT investigator_id FROM case_days WHERE id = ? AND case_no = ?').bind(refId, caseNo).first();
+      if (!day || day.investigator_id !== user.id) {
+        return { res: json({ error: 'That day belongs to another investigator.' }, 403) };
+      }
+      const rep = await env.DB.prepare(
+        'SELECT status FROM case_reports WHERE day_id = ? AND case_no = ?').bind(refId, caseNo).first();
+      if (rep && !['draft', 'needs_revision'].includes(rep.status)) {
+        return { res: json({ error: 'That day’s report is with the office — they can remove the summary.' }, 409) };
+      }
+    }
+  }
+  return { row, spec };
+}
+
+/* The one writer of the marker, and the one writer of the trail beside it. */
+async function markContentRemoved(env, user, caseNo, kind, refId, reason) {
+  const now = nowIso();
+  await env.DB.prepare(
+    `INSERT INTO case_content_removed (kind, ref_id, case_no, removed_by, removed_at, reason)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+     ON CONFLICT(kind, ref_id) DO UPDATE SET removed_by = ?4, removed_at = ?5, reason = ?6`)
+    .bind(kind, refId, caseNo, user.id, now, reason || null).run();
+  const logged = await logContentEvent(env, caseNo, kind, refId, 'removed', user.id, reason);
+  return { at: now, logged };
+}
+
+async function clearContentRemoved(env, user, caseNo, kind, refId, reason) {
+  await env.DB.prepare('DELETE FROM case_content_removed WHERE kind = ? AND ref_id = ?')
+    .bind(kind, refId).run();
+  const logged = await logContentEvent(env, caseNo, kind, refId, 'restored', user.id, reason);
+  return { logged };
+}
+
+/* WHAT REMOVING THIS WOULD MEAN, before anybody presses anything.
+
+   The owner asked for the day's confirmation to name the date and day number,
+   the entry count, the evidence count, whether a summary exists and whether
+   the day is already in a report or package. Those are FACTS READ FROM THE
+   RECORD, never a prediction: the same discipline as Unit 15's closeout, where
+   the panel states what the tables can see and the person still decides.
+
+   It is one route for every kind, because a confirmation that names the wrong
+   thing is the failure mode here and one writer of the wording cannot. */
+async function contentPreflight(env, user, caseNo, kind, refId) {
+  const t = await contentTarget(env, user, caseNo, kind, refId);
+  if (t.res) return t.res;
+  const out = { kind, id: refId, what: t.spec.what, label: t.row.label || null,
+                removed: false, facts: [], blocks: [] };
+
+  const rm = await env.DB.prepare(
+    'SELECT removed_at FROM case_content_removed WHERE kind = ? AND ref_id = ?')
+    .bind(kind, refId).first();
+  out.removed = Boolean(rm);
+
+  const hold = await activeHold(env, caseNo);
+  if (hold) out.blocks.push('This case is under a legal hold — nothing can be removed until it is released.');
+
+  if (kind === 'day') {
+    const day = await env.DB.prepare(
+      'SELECT id, day_date, end_time FROM case_days WHERE id = ? AND case_no = ?').bind(refId, caseNo).first();
+    /* THE CASE'S OWN DAY NUMBER, not a position in a scoped list — Unit 25's
+       rule. Counted by date order across the whole case. */
+    const n = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM case_days
+        WHERE case_no = ? AND (day_date < ? OR (day_date = ? AND id <= ?))`)
+      .bind(caseNo, day.day_date, day.day_date, refId).first();
+    out.day_no = Number(n && n.n) || 1;
+    out.day_date = day.day_date;
+    out.running = !day.end_time;
+    if (out.running) {
+      out.blocks.push('This day is still running. End it first — an investigator '
+        + 'with a clock nobody can see is exactly what removing it would create.');
+    }
+
+    const ent = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM activity_log a
+        WHERE a.day_id = ? AND a.case_no = ?
+          AND NOT EXISTS (SELECT 1 FROM activity_removed r WHERE r.entry_id = a.id)`)
+      .bind(refId, caseNo).first();
+    const ev = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM case_evidence e
+         JOIN activity_log a ON a.id = e.entry_id
+        WHERE a.day_id = ? AND e.case_no = ? AND e.deleted_at IS NULL`)
+      .bind(refId, caseNo).first();
+    const sum = await env.DB.prepare(
+      'SELECT day_id FROM case_day_summary WHERE day_id = ? AND case_no = ?').bind(refId, caseNo).first();
+    const rep = await env.DB.prepare(
+      'SELECT id, status FROM case_reports WHERE day_id = ? AND case_no = ?').bind(refId, caseNo).first();
+    let inPkg = null;
+    if (rep) {
+      inPkg = await env.DB.prepare(
+        `SELECT b.id, b.status FROM build_reports br
+           JOIN case_builds b ON b.id = br.build_id
+          WHERE br.report_id = ? ORDER BY b.id DESC LIMIT 1`).bind(rep.id).first();
+    }
+    out.entries = Number(ent && ent.n) || 0;
+    out.evidence = Number(ev && ev.n) || 0;
+    out.has_summary = Boolean(sum);
+    out.report = rep ? { id: rep.id, status: rep.status } : null;
+    out.in_package = inPkg ? { id: inPkg.id, status: inPkg.status } : null;
+
+    out.facts.push(`Day ${out.day_no} — ${day.day_date}`);
+    out.facts.push(out.entries === 1 ? '1 activity entry' : `${out.entries} activity entries`);
+    /* THE EVIDENCE COUNT IS SAID WITH WHAT HAPPENS TO IT. The owner's line is
+       "Do not silently destroy child evidence", and the honest half of that is
+       saying out loud that it is not being touched. */
+    out.facts.push(out.evidence === 0
+      ? 'No photographs or files are attached to this day'
+      : `${out.evidence} file${out.evidence === 1 ? '' : 's'} attached — ${
+          out.evidence === 1 ? 'it stays' : 'they stay'} in Case media, untouched`);
+    out.facts.push(out.has_summary ? 'A daily summary is written for this day'
+                                   : 'No daily summary has been written');
+    if (out.in_package) {
+      out.facts.push(`This day is in package #${out.in_package.id}${
+        out.in_package.status === 'final' ? ', which is finalized' : ''} — the package will be marked as needing a rebuild`);
+    } else if (out.report) {
+      out.facts.push(`A report exists for this day (${out.report.status})`);
+    }
+  }
+
+  if (kind === 'day_summary') {
+    const ent = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM activity_log a
+        WHERE a.day_id = ? AND a.case_no = ?
+          AND NOT EXISTS (SELECT 1 FROM activity_removed r WHERE r.entry_id = a.id)`)
+      .bind(refId, caseNo).first();
+    out.entries = Number(ent && ent.n) || 0;
+    /* THE DISTINCTION THE OWNER ASKED FOR, IN WORDS, on the screen where it
+       matters: "Delete Summary != Delete Day Activity." */
+    out.facts.push('Only the written paragraph is removed');
+    out.facts.push(out.entries === 1
+      ? 'The 1 activity entry on this day is not touched'
+      : `The ${out.entries} activity entries on this day are not touched`);
+  }
+
+  if (kind === 'evidence') {
+    const e = await env.DB.prepare(
+      'SELECT filename, r2_key, deleted_at FROM case_evidence WHERE id = ? AND case_no = ?')
+      .bind(refId, caseNo).first();
+    out.removed = Boolean(e && e.deleted_at);
+    out.facts.push('The file itself is not deleted — it stays where it is stored');
+    out.facts.push('It leaves Case media, the File Queue and every package count');
+    const inPkg = await env.DB.prepare(
+      `SELECT b.id, b.status FROM build_items i JOIN case_builds b ON b.id = i.build_id
+        WHERE i.evidence_id = ? ORDER BY b.id DESC LIMIT 1`).bind(refId).first();
+    if (inPkg) {
+      out.in_package = { id: inPkg.id, status: inPkg.status };
+      out.facts.push(`It is in package #${inPkg.id} — that package will be marked as needing a rebuild`);
+    }
+  }
+
+  out.recoverable = true;
+  return json(out);
+}
+
+async function removeContent(request, env, user, caseNo, kind, refId) {
+  const t = await contentTarget(env, user, caseNo, kind, refId);
+  if (t.res) return t.res;
+
+  /* THE HOLD OUTRANKS. Unit 17's decision 5 named evidence removal by name;
+     this unit is that same act applied to eight more record types, so the
+     refusal follows it rather than stopping at the one route that existed when
+     the decision was written. Restores are deliberately NOT refused — putting
+     something back is not what a hold guards against. */
+  const hold = await activeHold(env, caseNo);
+  if (hold) {
+    return json({ error: 'This case is under a legal hold — nothing can be removed until '
+      + 'the hold is released.', code: 'legal_hold' }, 409);
+  }
+
+  const body = await readJson(request).catch(() => ({}));
+  const reason = String((body && body.reason) || '').trim().slice(0, 500) || null;
+
+  if (kind === 'day' && !t.row.end_time) {
+    return json({ error: 'That day is still running — end it first.', code: 'day_running' }, 409);
+  }
+
+  /* EVIDENCE KEEPS ITS STATE WHERE IT ALWAYS WAS. Every existing reader — the
+     workspace, the gallery, the meter, the package gate, the File Queue —
+     already looks at `deleted_at`, so a second answer to the same question
+     would be one too many. What this adds is the trail and the preserve
+     marker. */
+  if (kind === 'evidence') return deleteEvidence(env, user, caseNo, refId, reason);
+
+  const { at, logged } = await markContentRemoved(env, user, caseNo, kind, refId, reason);
+  return json({ ok: true, kind, id: refId, removed_at: at,
+                what: t.spec.what, audit_recorded: logged,
+                ...(logged ? {} : { audit_reason: 'trail write failed' }) });
+}
+
+async function restoreContentRoute(request, env, user, caseNo, kind, refId) {
+  const t = await contentTarget(env, user, caseNo, kind, refId);
+  if (t.res) return t.res;
+  const body = await readJson(request).catch(() => ({}));
+  const reason = String((body && body.reason) || '').trim().slice(0, 500) || null;
+  if (kind === 'evidence') return restoreEvidence(env, user, caseNo, refId, reason);
+  const { logged } = await clearContentRemoved(env, user, caseNo, kind, refId, reason);
+  return json({ ok: true, kind, id: refId, what: t.spec.what, audit_recorded: logged });
+}
+
 /* Edits are stamped, never silent. */
 async function editActivity(request, env, user, caseNo, id) {
   if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
@@ -7928,9 +8327,28 @@ async function evidenceUsage(env) {
      operations. Left in, a folder full of photographs that never touched
      Cloudflare would drive the storage card toward a limit it cannot reach and
      eventually refuse uploads for space that was never being used. */
+  /* A REMOVED FILE STILL WEIGHS WHAT IT WEIGHS (Unit 39). Removing evidence
+     used to delete the object, so `deleted_at IS NULL` and "still on the
+     account" meant the same thing. They do not any more: the owner's limit is
+     that no bytes are destroyed, so a legacy R2 file that has been removed
+     from the case is still sitting in the bucket the free tier is measuring.
+     Not counting it would be the failsafe under-reporting, which is the one
+     direction it must never fail in.
+
+     THE MARKER IS WHAT TELLS THE TWO ERAS APART. A row removed BEFORE Unit 39
+     had its object deleted at the time, so its bytes really are gone and
+     counting them would over-report by exactly as much. A row removed after
+     has a `case_content_removed` marker and its file is still there. So the
+     condition is "not removed, OR removed and preserved" — and it degrades to
+     the old behaviour when the table has not arrived, which is correct,
+     because before it arrives nothing has been preserved. */
+  const keepsBytes = (await missingTables(env)).includes('case_content_removed')
+    ? 'deleted_at IS NULL'
+    : `(deleted_at IS NULL OR EXISTS (SELECT 1 FROM case_content_removed m
+         WHERE m.kind = 'evidence' AND m.ref_id = case_evidence.id))`;
   const row = await env.DB.prepare(
     `SELECT COALESCE(SUM(size_bytes), 0) AS b FROM case_evidence
-      WHERE deleted_at IS NULL AND r2_key NOT LIKE '${DBX_KEY_PREFIX}%'`).first();
+      WHERE ${keepsBytes} AND r2_key NOT LIKE '${DBX_KEY_PREFIX}%'`).first();
   const up = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM case_evidence
       WHERE uploaded_at LIKE ? AND r2_key NOT LIKE '${DBX_KEY_PREFIX}%'`)
@@ -8750,7 +9168,35 @@ async function editEvidence(request, env, user, caseNo, eid) {
   return json({ ok: true });
 }
 
-async function deleteEvidence(env, user, caseNo, eid) {
+/* REMOVING A FILE FROM THE CASE NO LONGER DESTROYS IT (Unit 39).
+
+   THIS USED TO DELETE THE BYTES. `dropboxDelete` for a Dropbox-backed row,
+   `env.EVIDENCE.delete` for a legacy R2 one, and only then the tombstone — so
+   the row survived and the file did not, which is why there was no Restore to
+   write: there was nothing left to put back.
+
+   The owner's Unit 39 limits are explicit — "Do NOT physically delete Dropbox
+   bytes in this unit", "Do NOT overwrite originals", "support Restore where
+   existing architecture permits" — and the brief asks for a confirmation that
+   no evidence bytes are physically destroyed. That could not be given while
+   this function was the thing destroying them. So it stops.
+
+   WHAT THE STORAGE METER NEEDS FROM THIS. `evidenceUsage` counts
+   `deleted_at IS NULL` over rows that are NOT Dropbox-backed, so a legacy R2
+   file that is tombstoned but still present would stop counting while its
+   bytes stayed on the account — the free-plan failsafe under-reporting, which
+   is the one direction it must never fail in. The `case_content_removed`
+   marker written here is what tells the two eras apart: a row deleted BEFORE
+   this change has no marker and its bytes really are gone; a row deleted from
+   here on has one and its bytes are still there. The meter reads that.
+
+   Dropbox-backed rows — everything uploaded since 2026-08-18 — are excluded
+   from the meter either way, so preserving them costs the failsafe nothing.
+
+   `Clear test cases` still removes Dropbox objects for `TEST-` cases. That is
+   deliberate, pre-existing, and scoped to disposable data; it is not this
+   route and is not changed here. */
+async function deleteEvidence(env, user, caseNo, eid, reason) {
   if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
   if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
   /* THE HOLD OUTRANKS (Unit 17, decision 5): "evidence removal" is named in
@@ -8764,25 +9210,61 @@ async function deleteEvidence(env, user, caseNo, eid) {
   const row = await env.DB.prepare(
     'SELECT r2_key, deleted_at FROM case_evidence WHERE id = ? AND case_no = ?').bind(eid, caseNo).first();
   if (!row) return json({ error: 'not found' }, 404);
-  if (row.deleted_at) return json({ ok: true });
+  if (row.deleted_at) return json({ ok: true, already: true });
 
-  /* The file goes from whichever store holds it. A Dropbox delete that fails
-     is REPORTED rather than swallowed: the tombstone still goes down, because
-     an admin must be able to remove something from the case, but they are told
-     the file may still be sitting in the folder — the one thing they would
-     have assumed was handled. */
-  let remains = false;
-  if (isDropboxKey(row.r2_key)) {
-    const token = await dropboxAccessToken(env);
-    remains = !(token && await dropboxDelete(env, token, dropboxPathFromKey(row.r2_key)));
-  } else if (env.EVIDENCE) {
-    await env.EVIDENCE.delete(row.r2_key);
-  }
-  // The object goes; the record of it stays, with who removed it and when.
+  // The record of the removal, with who and when. The file stays where it is.
   await env.DB.prepare('UPDATE case_evidence SET deleted_by = ?, deleted_at = ? WHERE id = ?')
     .bind(user.id, nowIso(), eid).run();
+
+  /* The marker AND the trail. The marker is the meter's; the trail is the
+     history's, and it matters most here because a restore CLEARS the columns
+     above — without it, putting a file back would erase the fact that it was
+     ever removed. Both are best-effort and neither can turn a completed
+     removal into an error. */
+  let recorded = false;
+  try {
+    const missing = await missingTables(env);
+    if (!missing.includes('case_content_removed')) {
+      await markContentRemoved(env, user, caseNo, 'evidence', eid, reason || null);
+      recorded = true;
+    }
+  } catch { recorded = false; }
+
   return json({ ok: true, usage: await evidenceUsage(env),
-                ...(remains ? { dropbox_file_remains: true } : {}) });
+                file_preserved: true, audit_recorded: recorded,
+                ...(recorded ? {} : { audit_reason: 'not_set_up' }) });
+}
+
+/* PUTTING ONE BACK. Only possible because the bytes were never destroyed —
+   and only offered where they genuinely still exist, which is why a file
+   removed BEFORE Unit 39 is refused by name rather than restored into a
+   gallery entry that would 404 when somebody opened it. The absence of the
+   marker is what says the old code deleted the object. */
+async function restoreEvidence(env, user, caseNo, eid, reason) {
+  if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  const row = await env.DB.prepare(
+    'SELECT id, filename, deleted_at FROM case_evidence WHERE id = ? AND case_no = ?')
+    .bind(eid, caseNo).first();
+  if (!row) return json({ error: 'not found' }, 404);
+  if (!row.deleted_at) return json({ ok: true, already: true });
+
+  const marker = await env.DB.prepare(
+    `SELECT ref_id FROM case_content_removed WHERE kind = 'evidence' AND ref_id = ?`)
+    .bind(eid).first();
+  if (!marker) {
+    return json({ error: 'This file was removed before the portal began keeping the original — '
+      + 'its bytes were deleted from storage at the time, so the record can be read but the '
+      + 'file cannot be put back.', code: 'bytes_gone' }, 409);
+  }
+
+  await env.DB.prepare('UPDATE case_evidence SET deleted_by = NULL, deleted_at = NULL WHERE id = ?')
+    .bind(eid).run();
+  await env.DB.prepare(`DELETE FROM case_content_removed WHERE kind = 'evidence' AND ref_id = ?`)
+    .bind(eid).run();
+  const logged = await logContentEvent(env, caseNo, 'evidence', eid, 'restored', user.id, reason);
+  return json({ ok: true, id: eid, filename: row.filename,
+                usage: await evidenceUsage(env), audit_recorded: logged });
 }
 
 /* ------------------------------------------------- integrity on demand
@@ -9795,7 +10277,14 @@ async function buildState(env, caseNo) {
                              JOIN case_reports r ON r.id = br.report_id
                             WHERE br.build_id = ? AND r.day_id IS NOT NULL)`)
         .bind(build.id).all();
-      const dsBy = new Map((dsRows || []).map(r => [r.day_id, r.narrative]));
+      /* UNIT 39 — a summary the office has removed does not print. The row
+         still exists and is still restorable; the client document simply
+         stops carrying a paragraph somebody struck out. Same shape as the
+         removed-entry caption rule above it. */
+      const dsGone = await contentRemovedSet(env, caseNo);
+      const dsBy = new Map((dsRows || [])
+        .filter(r => !dsGone.has(`day_summary:${r.day_id}`))
+        .map(r => [r.day_id, r.narrative]));
       for (const r of reports) {
         const n = r.day_id != null ? dsBy.get(r.day_id) : null;
         if (n && String(n).trim()) r.narrative = n;
@@ -9863,7 +10352,89 @@ async function buildState(env, caseNo) {
     }
   }
 
-  /* Approved days not in the package — the admin adds a later day without
+  /* WHAT CHANGED UNDER A FINISHED PACKAGE.
+
+   The owner: "If deleting something changes an already-generated
+   report/package, do not leave the old document looking current. Show a clear
+   state such as SOURCE DATA CHANGED — REBUILD REQUIRED ... Do not silently
+   rewrite a finalized historical report."
+
+   BOTH HALVES MATTER AND THEY PULL AGAINST EACH OTHER. The document must not
+   be rewritten, and it must not lie about being current. So nothing here
+   touches the build: it reads the instants that already exist and answers
+   whether any of them lands after the package was finalized.
+
+   THE SOURCES ARE THE THREE THINGS THAT CAN LEAVE A CASE — content removals
+   and restores (Unit 39's own trail), evidence deletions, and activity
+   removals. A RESTORE COUNTS TOO: putting a photograph back after finalizing
+   changes what the package would contain just as surely as taking one out,
+   and a package that quietly gained an exhibit is the same defect wearing the
+   opposite sign.
+
+   `case_content_event` is the trail rather than `case_content_removed`,
+   because the marker is deleted by a restore — reading state would make a
+   remove-then-restore look like nothing ever happened, and the document in
+   between is the one somebody may have sent. */
+async function buildStaleness(env, caseNo, build) {
+  /* 'finalized', not 'final' — the value the CHECK on case_builds.status
+     actually allows. Written the other way first, which made this whole
+     function return null on every package there is; the test that put a real
+     package into the finalized state is what caught it. */
+  if (!build || build.status !== 'finalized' || !build.finalized_at) return null;
+  const at = build.finalized_at;
+  const missing = await missingTables(env);
+  const since = [];
+
+  const ev = await env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM case_evidence WHERE case_no = ? AND deleted_at > ?')
+    .bind(caseNo, at).first();
+  if (Number(ev && ev.n) > 0) since.push(Number(ev.n) === 1 ? 'a file was removed from the case'
+    : `${ev.n} files were removed from the case`);
+
+  if (!missing.includes('activity_removed')) {
+    const ar = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM activity_removed r
+         JOIN activity_log a ON a.id = r.entry_id
+        WHERE a.case_no = ? AND r.removed_at > ?`).bind(caseNo, at).first();
+    if (Number(ar && ar.n) > 0) since.push(Number(ar.n) === 1 ? 'an activity entry was removed'
+      : `${ar.n} activity entries were removed`);
+  }
+
+  if (!missing.includes('case_content_event')) {
+    const { results } = await env.DB.prepare(
+      `SELECT kind, action, COUNT(*) AS n FROM case_content_event
+        WHERE case_no = ? AND at > ? GROUP BY kind, action`).bind(caseNo, at).all();
+    const WORD = { day: 'investigation day', day_summary: 'daily summary', evidence: 'file',
+                   note: 'note', comm: 'comm log entry', expense: 'expense',
+                   subject: 'subject', vehicle: 'vehicle', task: 'task' };
+    for (const r of results || []) {
+      /* Evidence removals are already counted above from `deleted_at`, which
+         is the state every other reader uses; counting the trail as well would
+         say "2 files removed" about one file. Restores are NOT double-counted,
+         because a restore clears `deleted_at` and leaves nothing for the query
+         above to find — so they are named here and only here. */
+      if (r.kind === 'evidence' && r.action === 'removed') continue;
+      const what = WORD[r.kind] || r.kind;
+      const verb = r.action === 'restored' ? 'put back' : 'removed';
+      since.push(Number(r.n) === 1 ? `a ${what} was ${verb}` : `${r.n} ${what}s were ${verb}`);
+    }
+  }
+
+  if (!since.length) return null;
+  return {
+    stale: true,
+    label: 'SOURCE DATA CHANGED — REBUILD REQUIRED',
+    finalized_at: at,
+    /* WHAT changed, in the office's words, because "this is stale" without a
+       reason is an alarm somebody learns to click past. */
+    changes: since,
+    /* Said out loud, because the owner's other limit is the reassuring half:
+       the finished document was not touched. */
+    note: 'The finalized package was not rewritten. Reopen it to rebuild with the case as it stands now.',
+  };
+}
+
+/* Approved days not in the package — the admin adds a later day without
      rebuilding, and sees at a glance that one is missing. */
   const inPkg = new Set(reports.map(r => r.id));
   const available = (await shippableReports(env, caseNo)).filter(r => !inPkg.has(r.id));
@@ -9871,6 +10442,16 @@ async function buildState(env, caseNo) {
   return {
     invoices: caseInvoices || [],
     build: build || null,
+    /* UNIT 39 — SOURCE DATA CHANGED, REBUILD REQUIRED. Derived at read time,
+       never stored: the owner's rule is that a document whose source moved
+       must not go on looking current, and a stored flag is a second answer to
+       a question the timestamps already answer. Invoice `overdue` and the
+       retention ladder are the same shape.
+
+       Only a FINALIZED build can be stale. One that is still open is being
+       assembled — its contents changing is the point of it — and marking that
+       "needs a rebuild" would be an alarm about somebody doing their job. */
+    stale: await buildStaleness(env, caseNo, build),
     report: report ? { id: report.id, report_date: report.report_date, status: report.status,
                        body: report.body } : null,
     reports,
@@ -10468,6 +11049,12 @@ const DEMO_SWEEP = [
   ['legal_hold',            'DELETE FROM legal_hold WHERE case_no LIKE ?'],
   ['retention_event',       'DELETE FROM retention_event WHERE case_no LIKE ?'],
   ['alert_failure',         'DELETE FROM alert_failure WHERE case_no LIKE ?'],
+  /* UNIT 39. Both carry their own case_no and neither carries a foreign key —
+     `ref_id` is deliberately not one, because the table is keyed by (kind,
+     ref_id) across eight different parents. So they need no ordering against
+     anything; they are here with the other case_no-keyed rows. */
+  ['case_content_removed',  'DELETE FROM case_content_removed WHERE case_no LIKE ?'],
+  ['case_content_event',    'DELETE FROM case_content_event WHERE case_no LIKE ?'],
   /* --- the four that reference case_days, before case_days itself --- */
   ['case_day_summary',      'DELETE FROM case_day_summary WHERE case_no LIKE ?'],
   /* Before `case_days`, like every other day child — it carries no foreign
@@ -10658,6 +11245,16 @@ async function generateReport(request, env, user, caseNo) {
   const existing = await env.DB.prepare('SELECT id FROM case_reports WHERE day_id = ?').bind(dayId).first();
   if (existing) return json({ error: 'A report already exists for that day.', id: existing.id }, 409);
 
+  /* UNIT 39 — a removed day does not get reported on. Refused at the writer
+     rather than filtered at the reader: a report drafted from a day the office
+     has taken out of the working case would be a document asserting work that
+     the record says is not part of this case any more. Putting the day back is
+     one press, and then this works exactly as it did. */
+  if ((await contentRemovedSet(env, caseNo)).has(`day:${dayId}`)) {
+    return json({ error: 'That investigation day has been removed from the case. Put it back '
+      + 'first if you want to report on it.', code: 'day_removed' }, 409);
+  }
+
   // A removed entry never reaches the report. The row still exists; the
   // chronology simply does not carry it.
   const { results } = await env.DB.prepare(
@@ -10698,13 +11295,19 @@ const DS_CONFIG_MAX = 30000;
 const DSUMMARY_NOT_SET_UP = 'The daily summary table is not on this database yet. '
   + 'Run the portal-setup workflow once and try again.';
 
-async function daySummariesFor(env, caseNo) {
+async function daySummariesFor(env, caseNo, removedKnown) {
   const { results } = await env.DB.prepare(
     `SELECT s.day_id, s.narrative, s.config, s.updated_at, s.created_at,
             u.display_name AS updated_by
        FROM case_day_summary s LEFT JOIN users u ON u.id = COALESCE(s.updated_by, s.created_by)
       WHERE s.case_no = ? ORDER BY s.day_id LIMIT 100`).bind(caseNo).all();
-  return results || [];
+  /* UNIT 39 — a removed summary is MARKED, not dropped. The paragraph is
+     authored prose and the office may want it back; dropping it here would
+     make "put it back" unreachable from the only screen that knows it exists.
+     Every reader that ships a summary into a document checks the flag. */
+  const removed = removedKnown || await contentRemovedSet(env, caseNo);
+  return (results || []).map(r =>
+    removed.has(`day_summary:${r.day_id}`) ? { ...r, removed: true } : r);
 }
 
 /* WHO MAY WRITE A DAY'S SUMMARY IS WHO MAY WRITE THAT DAY'S REPORT — the
@@ -11948,6 +12551,7 @@ const EXPECTED_TABLES = [
   'profile', 'profile_contact', 'profile_phone', 'case_profile',
   'build_template', 'evidence_integrity', 'case_day_summary', 'storage_failure',
   'case_retention', 'legal_hold', 'retention_event', 'case_day_end',
+  'case_content_removed', 'case_content_event',
 ];
 
 async function missingTables(env) {
@@ -12376,6 +12980,21 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/activity\/(\d{1,12})\/restore$/);
   if (m && method === 'POST') return restoreActivity(env, user, m[1], parseInt(m[2], 10));
+
+  /* UNIT 39 — one door for every removable record, keyed by kind. Under
+     `/cases/:no/`, so the router's deleted-case chokepoint below already
+     refuses every one of them on a tombstoned case without a per-route check:
+     the trap `caseSendRefusal()` was written for. The preflight is a GET and
+     deliberately stays open on a deleted case, for the same reason its reads
+     do — an admin has to be able to see what a record is before deciding. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/content\/([a-z_]{3,20})\/(\d{1,12})\/preflight$/);
+  if (m && method === 'GET') return contentPreflight(env, user, m[1], m[2], parseInt(m[3], 10));
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/content\/([a-z_]{3,20})\/(\d{1,12})\/remove$/);
+  if (m && method === 'POST') return removeContent(request, env, user, m[1], m[2], parseInt(m[3], 10));
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/content\/([a-z_]{3,20})\/(\d{1,12})\/restore$/);
+  if (m && method === 'POST') return restoreContentRoute(request, env, user, m[1], m[2], parseInt(m[3], 10));
 
 
 
@@ -12858,6 +13477,9 @@ async function route(request, env) {
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/evidence\/(\d{1,12})$/);
   if (m && method === 'POST') return editEvidence(request, env, user, m[1], parseInt(m[2], 10));
+
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/evidence\/(\d{1,12})\/restore$/);
+  if (m && method === 'POST') return restoreEvidence(env, user, m[1], parseInt(m[2], 10), null);
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/evidence\/(\d{1,12})\/delete$/);
   if (m && method === 'POST') return deleteEvidence(env, user, m[1], parseInt(m[2], 10));

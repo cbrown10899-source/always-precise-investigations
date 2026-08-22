@@ -3802,9 +3802,24 @@ section('Evidence in the browser');
        .locator('.tl-counts').count() >= 1);
   await wsTab(page, 'Evidence');
 
-  await page.locator('[data-act="evDelete"]').first().click();
-  await page.waitForTimeout(600);
-  ok('a delete keeps the record on screen', has(await text(page, '#dlgBody'), 'the record stays'));
+  /* UNIT 39 — removing a file goes through the one confirmation every removable
+     record uses, so the direct `evDelete` button this used to click no longer
+     exists. The assertion it was making is stronger now and is made in two
+     places: the confirmation says the file itself is not deleted BEFORE the
+     act, and the card says so afterwards. */
+  await page.locator('[data-act="rmOpen"][data-kind="evidence"]').first().click();
+  await page.waitForTimeout(800);
+  const evAsk = await text(page, '.amsheet');
+  ok('removing a file asks first, and says the file is not deleted',
+     has(evAsk, 'The file itself is not deleted'), evAsk.replace(/\s+/g, ' ').slice(0, 240));
+  ok('and names what it is about to remove', has(evAsk, 'Remove this file'), evAsk.slice(0, 120));
+  await page.locator('[data-act="rmGo"]').click();
+  await page.waitForTimeout(1200);
+  ok('a delete keeps the record on screen',
+     has(await text(page, '#dlgBody'), 'the file itself was not deleted'),
+     (await text(page, '#dlgBody')).replace(/\s+/g, ' ').slice(0, 240));
+  ok('and offers to put it back', await page.locator(
+     '[data-act="rmOpen"][data-kind="evidence"][data-put="1"]').count() >= 1);
 
   await page.locator('.close').click();
   await page.waitForTimeout(400);
@@ -7237,8 +7252,11 @@ section('Evidence opens in one in-portal viewer, and never leaves the app');
   const viewerFn = src.slice(viewerAt, src.indexOf('\n}\n', viewerAt) + 3);
   ok('the viewer function was found, so the check has something to read',
      viewerFn.length > 200 && viewerFn.includes('evClose'), String(viewerFn.length));
+  /* `rmOpen` joins the list in Unit 39. `evDelete` no longer exists anywhere,
+     so naming only it would have made this guard pass by describing a control
+     that is gone — an absence test has to name the control that IS there. */
   ok('and it offers no download, delete, classify or edit control',
-     !/data-act="(evDelete|evClass|evUpload|download)"/i.test(viewerFn)
+     !/data-act="(evDelete|rmOpen|evClass|evUpload|download)"/i.test(viewerFn)
      && !/\bdownload\b/i.test(viewerFn), viewerFn.slice(0, 200));
 
   const page = await newPage();
@@ -13705,8 +13723,11 @@ section('Unit 24 — the File Queue renders: real states, a working detail panel
      /API-FQP/.test(detail) && /KB|MB|B\b/.test(detail) && /deliverable/i.test(detail), detail.slice(0, 400));
   ok('the integrity wording is the portal\'s own, never a legal claim',
      /not a third-party authentication/i.test(detail));
+  /* Unit 39 renamed the delete control; the File Queue must still carry
+     neither. Naming the retired action alone would have made this vacuous. */
   ok('and it hands off rather than editing — no classify or delete control on it',
-     await page.locator('.fqdetail [data-act="evClassify"], .fqdetail [data-act="evDelete"]').count() === 0);
+     await page.locator('.fqdetail [data-act="evClassify"], .fqdetail [data-act="evDelete"], '
+       + '.fqdetail [data-act="rmOpen"]').count() === 0);
   await page.locator('.fqdetail [data-act="fqPick"]').first().click();
   await page.waitForTimeout(300);
   ok('the workspace closes again', await page.locator('.fqdetail').count() === 0);
@@ -15168,6 +15189,190 @@ section('The focus rule is an allow-list, and dialogs are exempt from it');
   await page.close();
 }
 
+
+/* ============ UNIT 39 — THE CONTROLS, AND WHAT THEY SAY ============
+
+   The data-layer half is in the worker suite. This is the half the owner will
+   actually look at: is Delete beside the row rather than three menus deep,
+   does the confirmation name the exact thing, does it say what is recoverable
+   and whether the file survives, and does it work on a phone.
+
+   ONE FIXTURE, seeded through the API the way the rest of this suite seeds
+   its own, so the case is a REAL one — which is also the owner's requirement
+   18, that a real case uses the same controls as a test case. */
+async function seedRemovable(page, no) {
+  return page.evaluate(async caseNo => {
+    const post = (u, b) => fetch('/portal-api' + u, { method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}) }).then(r => r.json());
+    await post(`/cases/${caseNo}/day/start`, { day_date: '2026-08-19', start_time: '07:30' });
+    await post(`/cases/${caseNo}/activity`, { at_date: '2026-08-19', at_time: '08:10',
+      kind: 'observation', description: 'Subject left the residence.' });
+    await post(`/cases/${caseNo}/activity`, { at_date: '2026-08-19', at_time: '12:40',
+      kind: 'observation', description: 'Subject returned.' });
+    await post(`/cases/${caseNo}/day/end`, { end_time: '16:00', hours: 8.5 });
+    await post(`/cases/${caseNo}/notes`, { note_type: 'admin', body: 'Typed on the wrong case.' });
+    const ws = await (await fetch(`/portal-api/cases/${caseNo}/workspace`,
+      { credentials: 'same-origin' })).json();
+    const day = (ws.days || []).find(d => d.day_date === '2026-08-19');
+    return { dayId: day ? day.id : null, days: (ws.days || []).length };
+  }, no);
+}
+
+section('Unit 39 — Delete sits beside the row, on a real case');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(700);
+  const seed = await seedRemovable(page, 'API-20260812-4002');
+  ok('the fixture day exists', seed.dayId != null, JSON.stringify(seed));
+  /* BACK OUT AND IN, not page.reload(). A reload lands an admin on the
+     Dashboard — signIn() is what clicks through to Cases — so the case list
+     the next line looks for is not on screen at all. Going back through the
+     case page's own Back button repaints from a fresh workspace read, which is
+     the thing this actually needs. */
+  await page.locator('[data-act="backToCases"]').first().click();
+  await page.waitForTimeout(700);
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(900);
+
+  /* --- the day, on Field work --- */
+  await wsTab(page, 'Field work');
+  await page.waitForTimeout(600);
+  const dayBtn = page.locator(`[data-act="rmOpen"][data-kind="day"][data-id="${seed.dayId}"]`);
+  ok('an ended investigation day carries a Delete beside it', await dayBtn.count() === 1);
+  /* NOT BURIED: it is in the row itself, not behind a menu the owner named. */
+  ok('and it is in the row, not behind More',
+     await page.locator(`tbody [data-act="rmOpen"][data-kind="day"]`).count() >= 1);
+
+  await dayBtn.first().click();
+  await page.waitForTimeout(800);
+  const dlg = await text(page, '.amsheet');
+  ok('the confirmation names what is being removed', has(dlg, 'investigation day'), dlg.slice(0, 120));
+  ok('and names the day by number and date', /Day \d+ — 2026-08-19/.test(dlg), dlg.slice(0, 300));
+  ok('and counts the entries under it', has(dlg, '2 activity entries'), dlg.slice(0, 300));
+  ok('and says what happens to attached files',
+     /No photographs or files are attached/i.test(dlg), dlg.slice(0, 400));
+  /* THE OWNER ASKED FOR BOTH HALVES: what goes, and what is kept. */
+  ok('and says the record is kept and one press puts it back',
+     has(dlg, 'The record is kept'), dlg.slice(0, 500));
+
+  /* --- Cancel really cancels --- */
+  await page.locator('.amfoot [data-act="rmClose"]').click();
+  await page.waitForTimeout(500);
+  ok('Cancel closes it', await page.locator('.amsheet').count() === 0);
+  ok('and nothing was removed',
+     await page.locator(`[data-act="rmOpen"][data-kind="day"][data-put="1"]`).count() === 0);
+
+  /* --- and confirming does --- */
+  await dayBtn.first().click();
+  await page.waitForTimeout(800);
+  await page.locator('[data-act="rmGo"]').click();
+  await page.waitForTimeout(1400);
+  ok('confirming removes the day', await page.locator('tr.rmgone').count() >= 1);
+  ok('and the row offers to put it back',
+     await page.locator(`[data-act="rmOpen"][data-kind="day"][data-put="1"]`).count() === 1);
+
+  /* --- the entries say what actually happened to them --- */
+  await wsTab(page, 'Activity');
+  await page.waitForTimeout(700);
+  const log = await text(page, '.wspanel');
+  ok('an entry on a removed day says the DAY was removed',
+     has(log, 'On an investigation day the office removed'), log.replace(/\s+/g, ' ').slice(0, 300));
+  /* AND NOT that somebody removed the entry, which nobody did. */
+  ok('and never claims somebody removed the entry itself',
+     !/Removed .* by /i.test(log), log.replace(/\s+/g, ' ').slice(0, 300));
+
+  /* --- put it back --- */
+  await wsTab(page, 'Field work');
+  await page.waitForTimeout(600);
+  await page.locator(`[data-act="rmOpen"][data-kind="day"][data-put="1"]`).first().click();
+  await page.waitForTimeout(800);
+  const back = await text(page, '.amsheet');
+  ok('the restore confirmation says it returns where it was',
+     has(back, 'comes back exactly where it was'), back.slice(0, 200));
+  await page.locator('[data-act="rmGo"]').click();
+  await page.waitForTimeout(1400);
+  ok('and the day is ordinary again', await page.locator('tr.rmgone').count() === 0);
+
+  /* --- a note, on its own panel --- */
+  await wsTab(page, 'Internal notes');
+  await page.waitForTimeout(700);
+  ok('a note carries Delete beside it',
+     await page.locator('[data-act="rmOpen"][data-kind="note"]').count() >= 1);
+  await page.close();
+}
+
+section('Unit 39 — the investigator is offered only what they may do');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(800);
+  const tabs = await wsAllTabs(page);
+  let seen = '';
+  for (const t of await wsVisitAll(page, p2 => p2.evaluate(() =>
+    [...document.querySelectorAll('[data-act="rmOpen"]')].map(b => b.dataset.kind).join(',')))) {
+    seen += ',' + t.text;
+  }
+  const kinds = new Set(seen.split(',').filter(Boolean));
+  /* THE CONSEQUENTIAL KINDS ARE THE OFFICE'S — the owner's "Admin-only for
+     consequential deletion". The Worker refuses them anyway; this is that
+     boundary reaching the screen, so the field is not offered a button whose
+     only outcome is a refusal. */
+  ok('no day, subject, vehicle, comm or task Delete anywhere in their workspace',
+     !['day', 'subject', 'vehicle', 'comm', 'task', 'evidence'].some(k => kinds.has(k)),
+     [...kinds].join(' ') || 'none');
+  ok('the walk really covered their nav', tabs.length >= 8, String(tabs.length));
+  await page.close();
+}
+
+section('Unit 39 — the confirmation works on a phone');
+{
+  for (const width of [390, 430]) {
+    const ctx = await browser.newContext({ viewport: { width, height: 844 } });
+    const page = await ctx.newPage();
+    page.on('pageerror', e => ok(`no page errors at ${width}px (${e.message})`, false));
+    await page.goto(SITE + '/portal/');
+    await page.waitForTimeout(300);
+    await page.locator('#u').fill('trever');
+    await page.locator('#p').fill('AdminPassword1x');
+    await page.locator('#loginBtn').click();
+    await page.waitForTimeout(900);
+    if (await page.locator('.burger').count() && await page.locator('.burger').first().isVisible()) {
+      await page.locator('.burger').click(); await page.waitForTimeout(300);
+    }
+    await page.locator('.tabs button[data-tab="cases"]').first().click();
+    await page.waitForTimeout(700);
+    await rowFor(page, 'API-20260812-4002').click();
+    await page.waitForTimeout(900);
+    await wsTab(page, 'Internal notes');
+    await page.waitForTimeout(700);
+    const btn = page.locator('[data-act="rmOpen"][data-kind="note"]').first();
+    ok(`${width}px: the note's Delete is on screen`, await btn.count() === 1);
+    await btn.click();
+    await page.waitForTimeout(900);
+    const box = await page.evaluate(() => {
+      const el = document.querySelector('.amsheet');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      const go = document.querySelector('[data-act="rmGo"]');
+      const cancel = document.querySelector('.amfoot [data-act="rmClose"]');
+      return { left: Math.round(r.left), right: Math.round(r.right), vw: window.innerWidth,
+               doc: Math.round(document.documentElement.scrollWidth - window.innerWidth),
+               go: go ? Math.round(go.getBoundingClientRect().height) : 0,
+               cancel: cancel ? Math.round(cancel.getBoundingClientRect().height) : 0 };
+    });
+    ok(`${width}px: the dialog fits the screen`,
+       box && box.left >= 0 && box.right <= box.vw + 1, JSON.stringify(box));
+    /* 19 + 20 on the owner's list: usable on a phone, and nothing scrolls
+       sideways because of it. */
+    ok(`${width}px: no horizontal overflow with it open`, box && box.doc <= 0, JSON.stringify(box));
+    ok(`${width}px: both buttons clear Apple's 44px floor`,
+       box && box.go >= 44 && box.cancel >= 44, JSON.stringify(box));
+    await ctx.close();
+  }
+}
 
 await browser.close();
 server.close();

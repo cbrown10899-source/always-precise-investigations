@@ -803,3 +803,71 @@ switching it on would start reading paragraphs aloud on arrival at a case tab �
 and whether that is an improvement is a judgement about how the office's
 screen-reader users actually work, not a mechanical fix. **Queued for the owner
 to decide, not slipped into a navigation unit.**
+
+
+## Unit 39 — the audit found the brief resting on something untrue
+
+The owner's brief says to reuse *"the existing evidence-deletion/tombstone
+model"* and, separately, *"Do NOT physically delete Dropbox bytes in this
+unit."* **Both could not be followed, because the existing model was not a
+tombstone.**
+
+`deleteEvidence` called `dropboxDelete` against `/2/files/delete_v2` — or
+`env.EVIDENCE.delete` for a legacy R2 row — and only then wrote `deleted_at`.
+The row survived; the file did not. It is also the reason no evidence Restore
+had ever been written anywhere in the portal: there was nothing left to put
+back, so the route would have been a lie.
+
+**So the unit changed what removal does rather than reusing what was there.**
+Nothing in the case-content controls destroys a byte now, and the confirmation
+the owner asked for is a counted assertion rather than a sentence:
+`dropboxDelete` and `EVIDENCE.delete` have exactly one caller each, the `TEST-`
+sweep, and a test fails if a second appears.
+
+**One cost is stated rather than buried:** deleting evidence used to free space
+against the free-tier cap. It does not any more. Getting that back would be a
+purge, which this file already records as a different feature with a different
+name that the owner has said is not wanted.
+
+**And one failsafe had to learn the difference.** The storage meter sums
+`deleted_at IS NULL` over non-Dropbox rows, so a preserved legacy R2 file would
+have stopped counting while its bytes sat in the bucket — the free-plan
+failsafe under-reporting, which is the one direction it must never fail in. The
+`case_content_removed` marker separates the eras: no marker means the old code
+deleted the object and the bytes really are gone; a marker means the file is
+still there. Counting either era the other way would have been wrong by exactly
+the size of the file.
+
+### What was already done, and was left alone
+
+Activity delete/restore, its exclusion from the Daily Summary source and the
+report chronology, `Remove from Package`, and phone-number removal were all
+**already built**. Unit 39 added tests to them rather than code. A requirement
+that is already met is met; restating it in new code would have been the
+duplicate-feature mistake this project has a rule against.
+
+### The bug this unit's own tests caught
+
+`buildStaleness` guarded on `build.status !== 'final'` while the CHECK on
+`case_builds.status` allows `'finalized'`. The whole function therefore returned
+null for every package that has ever existed — the derivation correct, the
+plumbing correct, and one word making it dead code that reads perfectly. The
+test that put a real package into the finalized state is what found it, and
+nothing short of that would have.
+
+### Three test-side mistakes, recorded rather than quietly fixed
+
+A `config` posted as a string where the Worker wants an object; a `comm_type`
+of `call`, which is not in `COMM_TYPES`; and a subject id of `1` on a case with
+no subjects. The last is the instructive one: a row that does not exist answers
+**404 to everybody**, so the assertion "an investigator gets 403" would have
+passed while proving nothing at all. The fixture is real now, and the test
+asserts that it is.
+
+### One widening recorded for the owner to overturn
+
+A legal hold now refuses **every** removal in this unit and allows every
+restore. Unit 17's decision 5 named evidence removal specifically; this unit is
+that same act applied to eight more record types, so the refusal follows the
+act rather than stopping at the one route that existed when the decision was
+written. If that is not wanted, it is one condition in `removeContent`.

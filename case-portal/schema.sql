@@ -1758,3 +1758,63 @@ CREATE TABLE IF NOT EXISTS alert_failure (
   at       TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_alertfail ON alert_failure(id DESC);
+
+/* ------------------------------- case content removal (Unit 39)
+
+   ONE TOMBSTONE TABLE FOR THE RECORDS THAT HAD NO WAY OUT. Activity already
+   had `activity_removed` and evidence already had `case_evidence.deleted_at`;
+   everything else in a case — the investigation day itself, the day's written
+   summary, an internal note, a comm-log line, an expense, a subject, a
+   vehicle, a task — could be created and then sat in the working case for
+   ever. That is the owner's own description of the problem this closes.
+
+   ONE TABLE RATHER THAN SEVEN, keyed by (kind, ref_id), because seven
+   near-identical companion tables is seven places for the same rule to drift
+   and seven guards to remember. The two that already exist keep their own
+   shape: rewriting them would be a migration this schema cannot do
+   idempotently, and they work.
+
+   `kind` CARRIES NO CHECK, deliberately — Unit 7's rule, learned from
+   `submissions.kind`, which could not widen for Legal and cost a payload
+   marker instead. `schema.sql` is re-applied on every portal-setup run, so a
+   CHECK edited in place would leave a FRESH database accepting a new kind
+   while the LIVE one still refused it: a divergence that passes every test and
+   fails only in production. An eighth kind must be an ordinary Worker edit.
+
+   THIS IS STATE, NOT HISTORY. Restoring deletes the row, which is what makes
+   "is it removed?" one indexed lookup rather than a max-by-time scan — so the
+   trail lives beside it in `case_content_event`, and history survives the
+   answer changing. Unit 17's `case_retention` + `retention_event` shape. */
+CREATE TABLE IF NOT EXISTS case_content_removed (
+  kind       TEXT    NOT NULL,   -- day|day_summary|note|comm|expense|subject|vehicle|task|evidence
+  ref_id     INTEGER NOT NULL,   -- the row's own id, in ITS table
+  case_no    TEXT    NOT NULL,
+  removed_by INTEGER REFERENCES users(id),
+  removed_at TEXT    NOT NULL,
+  reason     TEXT,
+  PRIMARY KEY (kind, ref_id)
+);
+CREATE INDEX IF NOT EXISTS idx_content_removed_case ON case_content_removed(case_no, kind);
+
+/* THE TRAIL, APPEND-ONLY. Every removal and every restore, with who and when,
+   so an audit survives a record being put back — and so evidence, whose state
+   lives in its own columns and is CLEARED by a restore, still has a history.
+
+   `kind='evidence'` rows here serve a second purpose the storage meter needs:
+   their presence is what says the bytes were PRESERVED rather than destroyed.
+   Evidence deleted before Unit 39 had its file removed from Dropbox or R2 at
+   the moment of deletion, so those bytes are genuinely gone; evidence deleted
+   from Unit 39 onward keeps its file. The meter has to tell those apart or it
+   reports the wrong number in one direction or the other. */
+CREATE TABLE IF NOT EXISTS case_content_event (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind    TEXT    NOT NULL,
+  ref_id  INTEGER NOT NULL,
+  case_no TEXT    NOT NULL,
+  action  TEXT    NOT NULL,      -- removed|restored
+  reason  TEXT,
+  actor   INTEGER REFERENCES users(id),
+  at      TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_content_event_case ON case_content_event(case_no, id DESC);
+CREATE INDEX IF NOT EXISTS idx_content_event_ref ON case_content_event(kind, ref_id, id DESC);

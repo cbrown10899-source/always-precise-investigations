@@ -1031,6 +1031,99 @@ off this page rather than invented** — it is already where the nav rail goes
 behind the burger, so an iPad in portrait gets the whole width. Presentation
 only: no query, no route, no search behaviour changed.
 
+## Removing case content — and the day removal stopped destroying files
+
+Unit 39 (owner brief verbatim in `case-portal/CASE-CONTENT-DELETE.md`, audit
+and derived decisions A1–A7 there). Owner: *"Admin must have a quick, obvious
+way to remove incorrectly entered or no-longer-needed information from BOTH
+test cases AND REAL PRODUCTION CASES."*
+
+**The brief rested on a premise the code did not support, and that reshaped the
+unit.** It says to reuse "the existing evidence-deletion/tombstone model" and
+also that no Dropbox bytes may be deleted. **The existing model was not a
+tombstone:** `deleteEvidence` called `dropboxDelete`, or `EVIDENCE.delete` for a
+legacy R2 row, and only then wrote `deleted_at`. The row survived, the file did
+not — which is also why no evidence Restore had ever been written. **Removal
+destroys nothing now**, and `dropboxDelete` and `EVIDENCE.delete` have exactly
+one caller each, the `TEST-` sweep. A test COUNTS them, because "no bytes are
+destroyed" is a promise a comment cannot keep.
+
+**The meter had to learn the two eras apart.** It sums `deleted_at IS NULL`
+over non-Dropbox rows, so a preserved legacy R2 file would have stopped
+counting while its bytes sat in the bucket — the free-plan failsafe
+under-reporting, the one direction it must never fail in. A row removed BEFORE
+Unit 39 has no `case_content_removed` marker and its bytes really are gone;
+one removed after has a marker and its file is still there. Dropbox-backed
+rows are excluded from the meter either way. **Deleting evidence no longer
+frees storage** — that lever is gone, and getting it back would be the purge
+this file already records as a different feature nobody has asked for.
+
+**One tombstone table, not seven.** `case_content_removed` is keyed
+`(kind, ref_id)` across day, day_summary, note, comm, expense, subject,
+vehicle, task and evidence. `activity_removed` and `case_evidence.deleted_at`
+keep their own shape — rewriting them is a migration `schema.sql` cannot do
+idempotently. **`kind` carries no CHECK** (Unit 7's rule); the allow-list is in
+the Worker, so a tenth kind is an ordinary edit. `case_content_event` is the
+append-only trail beside it, and it earns its place on evidence: a restore
+CLEARS the columns that would otherwise be the only history.
+
+**Authority mirrors the existing edit rule**, which is the owner's own line,
+with "admin-only for consequential deletion" as a ceiling above it. A note is
+its author's or the office's; an expense is its investigator's **while
+unreviewed**, because reviewed money is the office's; a day summary inherits
+`saveDaySummary`'s handoff rule rather than restating it; days, subjects,
+vehicles, comm entries, tasks and evidence are admin-only. `contentTarget`
+resolves the row and the permission in one place, so a new kind cannot arrive
+with the check forgotten.
+
+**A removed row stays on screen, struck through, with its way back** — the
+treatment `activity_removed` already had. Filtering would have made "put it
+back" unreachable from the only screen that knows the row exists.
+
+**Two screens say something true that a borrowed word would have made false.**
+An activity entry on a removed day carries `removed_with_day`, not
+`removed_at`, and reads *"on an investigation day the office removed"* — writing
+the day's instant onto the entry would have drawn *"Removed by Corey at 14:02"*
+about something nobody removed. And a removed daily summary says the entries
+underneath it are untouched, in those words, because *Delete Summary is not
+Delete Day Activity* is only useful if the screen says which one this is.
+
+**The confirmation reads the record, and composes nothing.**
+`GET /cases/:no/content/:kind/:id/preflight` returns the facts — a day's number
+and date, its entry count, its file count and what happens to those files,
+whether a summary exists, whether it is already in a package — and the dialog
+prints them. One writer, for the reason `dayEndLabel` has one: a confirmation
+that names the wrong thing is the whole failure mode here. A running day is
+refused **in the Worker**, not merely hidden.
+
+**Staleness is derived, never stored.** A finalized package compares
+`finalized_at` against the trail, evidence deletions and activity removals, and
+draws *SOURCE DATA CHANGED — REBUILD REQUIRED* beside the gate strip — gold, not
+red, because it is out of date rather than broken — and **outside `#pkgdoc`**,
+so no client document carries the office's bookkeeping. **A restore counts as a
+change too:** a package that quietly gained an exhibit after being sent is the
+same defect wearing the opposite sign. This unit's own bug was here —
+`buildStaleness` guarded on `'final'` while the CHECK allows `'finalized'`, so
+it returned null for every package there is. The derivation was right and one
+word made it dead code.
+
+**A removed day stops spending the authorization**, resolved inside the `SUM`
+rather than by loading and filtering, and putting it back restores the hours
+with no second write because nothing is stored.
+
+**A legal hold refuses every removal here and allows every restore.** Unit 17's
+decision 5 named evidence removal; this is that act applied to eight more
+record types, so the refusal follows the act rather than the one route that
+existed then. That widening is recorded in `CASE-CONTENT-DELETE.md` A7 for the
+owner to overturn.
+
+**Intentionally still non-deletable:** invoices, lines and payments (void is
+the instrument), reports, send and alert history, retainer receipts, build
+events, and the retention and hold trail. Money, a record of something actually
+sent, or an audit row — the owner's own limits name all three.
+
+**Adding these tables means a manual `portal-setup.yml` dispatch after merge.**
+
 ## Test cases, and removing them completely
 
 `POST /demo-case` writes a **real** row prefixed `TEST-`, so the portal can be
