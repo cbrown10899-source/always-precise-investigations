@@ -208,13 +208,16 @@ touch how existing cases are categorised, so it is recorded rather than done.
   fallback disabled the suite reports ten failures.
 - **39 — Case content Delete / Restore controls.** ✅ **DONE — DEPLOYED** at
   `79da2b8` (#234), site run 32583655929 and Worker run 32583656010 both ✅,
-  `portal-setup.yml` run **32583766475** dispatched for the two new tables —
-  **RED but the schema applied**: step 8 *Apply the schema* succeeded and the
-  run fails only on step 13 *Create the first admin* (`401 not authorised`),
-  which is the bootstrap-token race in item 3 below and has nothing to do with
-  this unit. The bootstrap token was destroyed. **`missing_tables` was not
-  observed** — the live domain is unreachable from the build container — so
-  that is inferred from the step, not verified. Visual **LIVE VERIFY OPEN**,
+  **Schema ✅ CONFIRMED PRESENT ON PRODUCTION** by `harden-check` run
+  **32584685117** (22 passed, 0 failed): *"every table this build expects is on
+  the database"*. The Worker computing `missing_tables` is the Unit 39 Worker,
+  so an empty list with the key present means `case_content_removed` and
+  `case_content_event` are both there.
+  `portal-setup.yml` run **32583766475** is recorded as **SCHEMA APPLIED /
+  BOOTSTRAP-ONLY FAILURE**: step 8 *Apply the schema* succeeded and the run
+  fails only on step 13 *Create the first admin* (`401 not authorised`), the
+  bootstrap-token race in item 3 below. The bootstrap token was destroyed.
+  **Not rerun, and no credential handling touched** — owner decision 3. Visual **LIVE VERIFY OPEN**,
   and the owner's instruction is to stop here for it. Record in
   `FINAL-LEDGER.md` PART 14. Detail below as it was written in flight (started
   2026-08-22 on the owner's go-ahead after Unit 38's visual review passed).
@@ -312,12 +315,14 @@ standing rules rather than one-off answers:
    merely because `portal-setup` went red after the schema applied. Item 3
    further down still describes that race; it remains a stop condition.
 
-**And the verification it prompted:** the live domain is unreachable from the
-build container (the network policy refuses `CONNECT` with 403), so the schema
-was verified from a GitHub runner instead. `case-portal/verify.sh` already
-fetched `/portal-api/health` and read only `configured` — it reports
-`missing_tables` now, from the response it was already holding, and treats an
-ABSENT key as *unknown* rather than clean. `harden-check.yml` dispatches it.
+**And the verification it prompted — DONE, and it passed.** The live domain is
+unreachable from the build container (the network policy refuses `CONNECT`
+with 403), so the schema was verified from a GitHub runner instead.
+`case-portal/verify.sh` already fetched `/portal-api/health` and read only
+`configured` — it reports `missing_tables` now, from the response it was
+already holding, and treats an ABSENT key as *unknown* rather than clean.
+`harden-check.yml` dispatches it; run **32584685117** confirmed the two Unit 39
+tables are on the production database.
 
 ## 🔵 QUEUED — reported by Unit 38, deferred to the owner rather than fixed
 

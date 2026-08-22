@@ -871,3 +871,37 @@ restore. Unit 17's decision 5 named evidence removal specifically; this unit is
 that same act applied to eight more record types, so the refusal follows the
 act rather than stopping at the one route that existed when the decision was
 written. If that is not wanted, it is one condition in `removeContent`.
+
+
+## The schema verification that closed Unit 39 — 2026-08-22
+
+The owner asked for the Unit 39 tables to be confirmed present on production
+through the existing health mechanism. **The mechanism existed and was not
+being read.**
+
+`/portal-api/health` has always returned `missing_tables` for exactly this
+situation: `schema.sql` arrives by a manual `portal-setup` dispatch while the
+Worker deploys on push, so between the two a table can be absent and every
+route touching it answers 503. `case-portal/verify.sh` — the live probe that
+`harden-check.yml` runs from a GitHub runner — **fetched that response and
+read only `configured`**, discarding the field. Its schema test was a
+401-on-login, which proves `users` exists and says nothing about any table
+added since it was written.
+
+So the field is read now, out of the response already in hand. **An absent key
+reports UNKNOWN rather than clean** — a Worker too old to send
+`missing_tables` would otherwise match an empty-array test and announce a
+healthy schema, which is the reassuring direction and the one this must never
+fail in. The parser was tested against five response shapes before it shipped:
+empty array, one table, two tables, key absent, and whitespace inside the
+array.
+
+**Result:** run 32584685117, 22 passed, 0 failed —
+*"PASS every table this build expects is on the database"*. The Worker
+computing that list is the Unit 39 Worker, so an empty list with the key
+present means both new tables are on the production D1.
+
+**The build container could not have answered this.** The environment's network
+policy refuses the domain outright (`CONNECT tunnel failed, response 403`).
+That is policy rather than a misconfiguration, and the answer was to move the
+probe to where it can run — not to weaken TLS or route around the proxy.
