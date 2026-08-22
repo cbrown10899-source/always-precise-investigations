@@ -723,6 +723,34 @@ different screen is adopted silently.
 
 | | |
 | --- | --- |
+| PR | **#239** |
+| Merge SHA | **`d0b98b1`** |
+| Site deploy | `Deploy site to Cloudflare Pages` run **32595336098** ✅ |
+| Worker deploy | correctly did **not** fire — `case-portal/worker.js` was untouched |
 | Schema | **none** — no `portal-setup` dispatch |
+| Suites | worker **2870/0** · portal **2707/0** · deploy guard **86/0** · intake **467/0** · visitor-alerts **47/0** |
 | Visual behaviour | unchanged |
 | Unit 38 focus behaviour | unchanged |
+| LIVE VERIFIED | **OPEN** — the owner's check |
+
+### Two defects the suite found that reading the diff did not
+
+**A screen does not finish arriving in one paint.** `srScreen()` alone shipped
+first, and Tasks, the Audit trail and the File queue each failed — they paint
+twice, once while data is in flight and once when it lands and draws their
+explanatory paragraph. Same screen, changed text. The premise "same screen ⇒
+the user caused it" is false for any asynchronously loading panel, and only a
+real run could have shown it. `SR_ACTED` replaced the premise with the owner's
+own wording.
+
+**Re-pressing the tab you are already on is arrival at it.** The screen string
+does not change there, and `invoices` and `calendar` reload on that press — so
+tapping the tab you are already looking at would have read its prose aloud.
+
+### And the control that stopped controlling
+
+The control patched `srScreen()` to a constant. That reproduced the defect
+until a second mechanism began holding the same property, after which it went
+green **while proving nothing** — a false reassurance in exactly the place the
+confidence was coming from. It restores Unit 21's entire pre-fix function now,
+verbatim, so it cannot be defeated by a guard added later.

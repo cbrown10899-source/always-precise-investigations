@@ -960,3 +960,33 @@ exactly the case the owner asked to silence. Rewritten rather than deleted, it
 now pins both sides, and reaches the flag through a real delegated click (a
 probe button carrying an unknown `data-act`, which the listener sees and no
 branch matches) rather than by poking at internals.
+
+## Reconcile, 2026-08-22 (second pass, after Unit 21A)
+
+Unit 21A shipped, and the required queue was re-scanned. **Still empty of
+required, approved, unbuilt work.**
+
+**One more instance of the same trap was closed.** The first pass caught OWNER
+WORKFLOW SIMPLIFICATION reading `QUEUED` while all five parts had shipped. This
+pass found the rest of the file has the same shape: roughly nine hundred lines
+of handoffs, audits and recommendation tables from sessions predating the
+durable master queue, several still reading `NOT CODED`, `QUEUED` or
+`NOT started` for work that has since shipped.
+
+They were **not deleted** — several record *why* a decision went the way it
+did, which outlives the status line beside it. A banner now marks the whole
+region as archaeology rather than queue, and names the eleven rows most likely
+to mislead with where each actually landed. Every one was checked against the
+code, not against memory.
+
+**Two of those eleven were checked for the first time in this pass:** the
+custom private retainer selector (`RETAINER_PRESETS` — the four presets are on
+the private send wizard, which is where the owner's order put them) and the
+lead-card retainer actions (`leadPayOpen` and `leadIntake` are both on the
+private lead card). The second is recorded honestly as *"whether the owner
+wants more there is a question for them, not an unbuilt approved
+requirement"* — it is not claimed complete against a spec nobody has restated.
+
+**The lesson worth keeping:** a stale status marker is not harmless
+documentation debt. It is an instruction to a future session to rebuild
+something that already works, and it reads exactly like real queue.

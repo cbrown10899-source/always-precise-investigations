@@ -361,9 +361,16 @@ it: fix it.** Shipped as Unit 21A — `srScreen()` plus `SR_ACTED` in
 silent on arrival. Detail in `CLAUDE.md` (*Accessibility was measured, then
 fixed* → Unit 21A) and `RECONCILIATION.md`.
 
+**Shipped:** #239 at **`d0b98b1`**, site deploy run 32595336098 ✅. No schema.
+The Worker was untouched, so `deploy-portal.yml` correctly did not fire.
+Suites: worker 2870/0 · portal **2707/0** · deploy 86/0 · intake 467/0 ·
+visitor 47/0. LIVE VERIFY **OPEN**.
+
 **The first version was wrong and the suite caught it** — Tasks, Audit and File
 queue each paint twice, so the screen check alone read their explanatory
 paragraphs aloud. "The user did something" is the test, not "the same screen".
+A second round found that re-pressing the tab you are already on is arrival
+too, which `invoices` and `calendar` exposed by reloading on that press.
 
 The original report follows, kept for its reasoning.
 
@@ -3553,6 +3560,44 @@ not exist on the live database. **That dispatch was run and is green at
 the list degrades to `{stamps: [], not_set_up: true}`, the workspace carries an
 empty array, and the write returns 503 naming the workflow. Tested by dropping
 the table.
+
+---
+
+# ⛔ EVERYTHING BELOW THIS LINE IS SESSION ARCHAEOLOGY, NOT A QUEUE
+
+**Marked on the 2026-08-22 reconcile.** These blocks are handoffs, audits and
+recommendation tables from sessions that predate the DURABLE MASTER UNIT QUEUE
+above. They are kept for their reasoning — several record *why* a decision went
+the way it did, which is worth more than the status line beside it.
+
+**They are not the queue and their status markers are stale.** Any row reading
+`NOT CODED`, `QUEUED`, `NOT started` or `🔴` below has since shipped or is on
+the deferred-by-owner list. The DURABLE MASTER UNIT QUEUE and
+`FINAL-LEDGER.md` are the authority.
+
+This banner exists because the same trap was live one reconcile ago: OWNER
+WORKFLOW SIMPLIFICATION read `QUEUED` while all five parts had shipped, and
+nothing had ever closed it. **A block reading QUEUED is how a later session
+rebuilds something that already works.**
+
+Checked against the code on 2026-08-22, the specific rows most likely to
+mislead:
+
+| Row, as it reads below | Where it actually landed |
+| --- | --- |
+| Surveillance video timestamp / burn-in — *queued by the owner* | Shipped — Timestamp Video, locked order item 1; `VIDEO-TIMESTAMP.md` |
+| Lead-card Send Payment Options — *NOT CODED* | Shipped — `leadPayOpen` on the private lead card |
+| Standalone Payment Options dialog — *NOT CODED* | Shipped — `POST /payment-options/email` |
+| NEXT STEP helper block — *NOT CODED* | Shipped — Unit 38's Overview leads with NEXT STEP |
+| Real intake alerts — *NOT CODED* | Shipped — Unit 20 |
+| Intake archive / sample cleanup part 2 — *has never arrived* | **Deferred by owner**, and still is |
+| Portal Ops Phase 1 onward — *NOT CODED* | Shipped — Unit 22; three phases deliberately not built, owner content |
+| Active Surveillance voice-command mode — *NOT CODED* | Shipped — locked order item 1 |
+| Custom private retainer selector — *NOT CODED* | Shipped — `RETAINER_PRESETS` ($1,500 / $2,000 / $3,000 / Custom) on the private send wizard |
+| Recommended mobile PRs — *NOT started* | Superseded — the Active Surveillance mobile polish shipped as locked order item 1 |
+| Retainer Pending lead/intake actions — *PARTIAL* | The lead card now carries **Send intake** and **Send payment options**; whether the owner wants more there is a question for them, not an unbuilt approved requirement |
+
+---
 
 ## 🖥️ OWNER UI ADDENDUM, 2026-08-17 — Timestamp Video is a first-class door
 
