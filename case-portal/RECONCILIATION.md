@@ -701,3 +701,28 @@ skipped, renumbered, overwritten or silently dropped; the only edit to an
 existing row was a stale "owes a portal-setup dispatch" note on Unit 27, whose
 dispatch had already run (32508101361) and which the session header had
 already recorded correctly.
+
+
+## Production Truth Audit Round 2 — the one HIGH (2026-08-22, master `ee39cb2`)
+
+| Where | Finding | Severity | State |
+| --- | --- | --- | --- |
+| SEARCH | `GET /search`'s subject arm reads **`case_subjects`**, the companion table an admin fills in on the Subject panel. The **public intake writes `submissions.subject_name`** and creates no companion row, and `subject_name` is in no `WHERE` clause — only in the display columns. So a case that arrived the ordinary way is **not findable by the subject's or claimant's name or address**, and the miss returns "no results", which reads as "we have no such case". Reproduced end to end against the real Worker: findable by case number and client name, NOT by subject name or address, and findable by subject name the moment a `case_subjects` row is added by hand. | **HIGH** | 🔴 OPEN — **Unit 37A**, queued ahead of Unit 38 |
+| INTAKE | `/intake/?assignment=legal` identifies itself correctly in the browser tab (*Legal Investigation Assignment*) and the masthead (*INVESTIGATIONS · LEGAL ASSIGNMENT*), but its visually-hidden `<h1 class="sr-page-title">` is the private branch's and reads **"Client Intake"** — so a screen-reader user on the legal door hears the private-client name. The carrier door sets its own. Nothing is mis-routed. | MEDIUM | 🟡 OPEN — one line, in 37A |
+| DEPLOY | `_headers` carries `Cache-Control: public, max-age=3600` for the four sibling public content routes and **none for `/legal-investigations/*`**, which therefore falls through to `/*` (security headers apply, no explicit caching). | LOW | 🟡 OPEN — one stanza, in 37A |
+
+**Why every suite was green over the HIGH.** The search test ingests a case and
+then **immediately adds a structured `case_subjects` row** before searching, so
+it only ever searched a curated case. The test was right about what it tested;
+**no test crossed the boundary between what the intake writes and what the
+search reads.** That is the same shape as the `client_token` column that never
+reached the live database, and it is exactly what a production-truth audit is
+for.
+
+**Everything else classified LIVE + REACHABLE + WORKING** — all three public
+doors, all three intake forms (87 labels, each with exactly one requiredness
+marker, zero page errors), no public pricing, no rendered retired terminology,
+all fourteen portal nav surfaces, the three Settings panels, all three rate-sheet
+cards including Legal, all three pre-case send doors, the three field tools for
+both roles, the case workspace and its four sections, and the investigator role
+boundary. Detail in `case-portal/PRODUCTION-TRUTH-2.md`.

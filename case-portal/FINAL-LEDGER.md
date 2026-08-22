@@ -431,8 +431,9 @@ project is **not complete** while 37 and 38 are open.
 
 | # | Unit | Brief | State |
 | --- | --- | --- | --- |
-| **37** | Final Production Truth Audit — Round 2 | `PRODUCTION-TRUTH-2.md` (owner verbatim) | 🔵 REQUIRED — next. **Changes no files.** |
-| **38** | Case Workspace Simplification | `CASE-WORKSPACE.md` (owner verbatim) | 🔵 REQUIRED |
+| **37** | Final Production Truth Audit — Round 2 | `PRODUCTION-TRUTH-2.md` (owner verbatim + result) | ✅ **DONE — NOT PASSED.** One HIGH, two lesser. No repository file changed to run it |
+| **37A** | HOTFIX — Search finds a case by its subject | `PRODUCTION-TRUTH-2.md` correction queue | 🔴 **REQUIRED, ahead of 38** |
+| **38** | Case Workspace Simplification | `CASE-WORKSPACE.md` (owner verbatim) | 🔵 REQUIRED — after 37A |
 
 **Unit 38 carries three named requirements** and none may be split out, dropped
 or quietly satisfied by an existing feature:
