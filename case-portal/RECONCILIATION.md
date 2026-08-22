@@ -990,3 +990,24 @@ requirement"* — it is not claimed complete against a spec nobody has restated.
 **The lesson worth keeping:** a stale status marker is not harmless
 documentation debt. It is an instruction to a future session to rebuild
 something that already works, and it reads exactly like real queue.
+
+## SESSION CLOSEOUT, 2026-08-22
+
+Documentation only. Master `c8b52a8`, tree clean and in sync. Site deployed at
+the closeout SHA (run 32595545919); the Worker build at `79da2b8` is current
+because `worker.js` and `schema.sql` are byte-identical since. Schema confirmed
+on production by `harden-check` 32584685117.
+
+Suites: worker **2870/0** · portal **2707/0** · deploy guard **86/0** · intake
+**467/0** · visitor-alerts **47/0**.
+
+**Required build queue: EMPTY.** Units 38, 39 and 21A shipped this session; 38
+and 39 are owner LIVE VERIFIED, 21A's visual check is open.
+
+**Preserved deliberately, and not to be reopened as work:** real-case-only LIVE
+VERIFY items (open, not failed — and no production data is to be manufactured
+for them) and the deferred-by-owner list (deferred, not queued). Completed work
+stays complete; the archaeology banner in `NEXT.md` marks the region whose
+status markers are stale by design.
+
+Full closeout record in `FINAL-LEDGER.md` PART 16.

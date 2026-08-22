@@ -46,12 +46,12 @@ completed.
 
 | | |
 | --- | --- |
-| **Master** | **`79da2b8`** (Unit 39 — case content delete/restore, #234) |
+| **Master** | **`c8b52a8`** (closeout record, #240) |
 | **Working tree** | clean; nothing unpushed; no branch in flight |
 | **Background work** | none running |
-| **Suites at that SHA** | worker **2870/0** · portal **2690/0** · deploy guard **86/0** · intake **467/0** · visitor-alerts **47/0** |
+| **Suites at that SHA** | worker **2870/0** · portal **2707/0** · deploy guard **86/0** · intake **467/0** · visitor-alerts **47/0**. Worker, deploy guard and visitor were re-run at `c8b52a8`; portal and intake were measured at `d0b98b1` and still hold, because everything since is markdown neither suite reads |
 | **Schema owed** | **NONE.** `case_day_end` was applied by `portal-setup` run **32508101361** at `74629fe` — ✅ success, **including the admin-bootstrap step that failed at `46a06ad9`**, so the token race did not recur |
-| **Deployed** | at `f2f49d4`: `Deploy site to Cloudflare Pages` ✅ **run 32557961911** and `Deploy case-portal Worker` ✅ **run 32557961914** — Unit 38 touched both. LIVE byte-check not possible from this container — the proxy refuses the domain (403), as recorded |
+| **Deployed** | **Site:** `Deploy site to Cloudflare Pages` ✅ **run 32595545919** at `c8b52a8` — the closeout SHA itself. **Worker:** `Deploy case-portal Worker` ✅ **run 32583656010** at `79da2b8`, and **that build is current**: `case-portal/worker.js` and `schema.sql` are byte-identical between `79da2b8` and `c8b52a8`, so nothing since needed a Worker deploy. Schema confirmed present on production by `harden-check` run **32584685117**. A LIVE byte-check is not possible from this container — the network policy refuses the domain with a 403 on CONNECT — which is why `verify.sh` runs from a GitHub runner |
 | **Closeout** | ✅ **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** — see `case-portal/FINAL-LEDGER.md` |
 | **Owner decisions** | ✅ five LOCKED at closeout, 2026-08-21 — see **FINAL OWNER DECISIONS** below. Four are deferrals or standing refusals; **decision 4 (Ended by Admin) is BUILT — Unit 27** |
 | **Next unit** | **NONE — the durable queue is empty of required work.** Units 17A–39 are shipped; 38 and 39 are both LIVE VERIFIED by the owner (2026-08-22). What remains is Unit 23's live-verification sweep (deferred — needs a real case) and the deferred-by-owner list. **Do not start anything without the owner.** |
@@ -299,6 +299,64 @@ touch how existing cases are categorised, so it is recorded rather than done.
   CODED / TESTED / PUSHED / MERGED / DEPLOYED / LIVE VERIFIED per unit. Nothing
   deferred was converted to complete. **No non-deferred approved requirement is
   missing.**
+
+# 🏁 SESSION CLOSEOUT — 2026-08-22
+
+**Read this first. It is the resume point for a fresh session.**
+
+| | |
+| --- | --- |
+| **Master** | **`c8b52a8`** |
+| **Working tree** | clean, in sync with `origin/master`, no branch in flight, no background work |
+| **Site** | ✅ deployed at the closeout SHA — run **32595545919** |
+| **Worker** | ✅ run **32583656010** at `79da2b8`, and **current** — `worker.js` and `schema.sql` unchanged since |
+| **Schema** | ✅ present on production, confirmed by `harden-check` run **32584685117** |
+| **Suites** | worker **2870/0** · portal **2707/0** · deploy guard **86/0** · intake **467/0** · visitor-alerts **47/0** |
+| **REQUIRED BUILD QUEUE** | ✅ **EMPTY** |
+
+## The three units this session shipped
+
+| Unit | PR | SHA | State |
+| --- | --- | --- | --- |
+| **38** Case Workspace Simplification | #232 | `f2f49d4` | ✅ DONE — **LIVE VERIFIED** by the owner |
+| **39** Case content Delete / Restore | #234 | `79da2b8` | ✅ DONE — **LIVE VERIFIED** by the owner |
+| **21A** Case-page live region | #239 | `d0b98b1` | ✅ DONE — deployed; **LIVE VERIFY OPEN** (owner visual check, not real-case-gated) |
+
+## What a fresh session must NOT do
+
+**Do not rebuild any completed unit.** Locked order 1–17, hotfix 17A, and
+Units 18–22, 24–39 and 21A are complete. Everything marked complete in this
+file, in `FINAL-LEDGER.md` and in `RECONCILIATION.md` **stays complete**. If a
+status line anywhere appears to contradict that, the DURABLE MASTER UNIT QUEUE
+and `FINAL-LEDGER.md` are the authority — and note the archaeology banner
+further down: roughly nine hundred lines below it are pre-queue handoffs whose
+status markers are stale by design and are **not** a queue.
+
+**Real-case-only LIVE VERIFY items are OPEN, not failed.** Unit 23's
+consolidated sweep, Unit 17 Retention's live check, and everything in the
+IMPLEMENTED BUT NOT LIVE VERIFIED block are waiting on the owner having a
+suitable real case. They are machine-verified and deployed. **No production
+data is to be manufactured for any of them**, and none of them is a defect.
+
+**Deferred-by-owner items are DEFERRED, not queued.** SMS provider and the
+alert status log · Intake Archive / Sample Cleanup Part 2 · invoice Write-Off ·
+PORTAL-OPS Permissions (arrived corrupted, must not be invented) · Saved Views ·
+Case and Document Templates (the firm's own content) · PORTAL-OPS Case Health
+flag · physical destruction · retention clocks · automatic purge · Dropbox byte
+deletion · the legacy R2 export decision · two-person legal-hold approval ·
+the business-account payment migration. **None of these is work to pick up.**
+
+**Owner decisions stay locked.** The five from the 2026-08-21 closeout and the
+three from Unit 39 (preserved evidence keeps counting toward storage; the legal
+hold keeps its full reach; credentials and bootstrap handling are not to be
+touched over a red `portal-setup`). Do not re-litigate them.
+
+**One open question belongs to the owner, not to the queue:** whether the
+private lead card should carry more than *Send intake* and *Send payment
+options*. Recorded during the final reconcile as a question rather than
+claimed complete against a spec nobody has restated.
+
+---
 
 ## ✅ RECONCILE, 2026-08-22 — the required queue is empty
 
