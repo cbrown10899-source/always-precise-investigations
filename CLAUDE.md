@@ -363,15 +363,23 @@ destroy what it measures (`visibility:hidden` also removes an element from the
 accessibility tree), so **it runs on its own page** — done on the shared one it
 left every later accessible-name assertion reading `""`.
 
-**Open, and NOT this unit's to decide: `--teal` with white text is 3.37:1
-site-wide.** Every button on the public site — the nav call button, the
+**OWNER DECISION, 2026-08-22 — LOCKED: `--teal` stays exactly as it is.**
+*"Keep the current global teal unchanged. The Unit 40 card-button
+accessibility treatment is approved as implemented."*
+
+The finding this closes was real and stays on the record: white on `--teal` is
+**3.37:1**, and every button on the public site — the nav call button, the
 section CTA, the old hero buttons these cards replaced — is that pair at that
-ratio, and below 18.66px bold none of them clears AA. Darkening `--teal` is a
-palette change touching every button on the site and belongs to the owner, not
-to a hero redesign. `#33808f` would clear 4.54:1 and `#2f7788` 5.10:1 if it is
-ever wanted; `--navy` text on the existing teal is 4.67:1 and needs no new
-colour at all. Recorded here rather than fixed by making one control differ
-from the rest.
+ratio. Below 18.66px bold none of them clears AA. The owner was given the
+measured alternatives (`#33808f` 4.54:1, `#2f7788` 5.10:1, `--navy` on the
+existing teal 4.67:1) and chose to keep the palette.
+
+So **the sizing IS the approved mechanism**, not a stopgap: a control that
+must sit on `--teal` with white text clears AA by being at or above 18.66px
+bold, and that is why `.cta-go` is 18.88px and why the phone override says so
+in its own comment. **Do not "fix" this later by darkening `--teal`** — that
+was offered and declined. A future unit wanting white-on-teal below that size
+is the case that needs the owner again, not this one.
 
 **The 320px overflow was HALVED, not caused.** Both numbers were measured —
 master's tree and this one, served and rendered side by side. Before Unit 40 a

@@ -824,7 +824,7 @@ the accessibility requirements intact.
 | **Schema** | none. No `portal-setup` dispatch owed |
 | **Suites** | intake **537/0** · deploy guard **86/0** · worker **2870/0** · portal **2707/0** · visitor-alerts **47/0** |
 | **Routing** | asserted by CLICKING each card and reading the page it lands on — Secure Assignment Intake / Legal Investigation Assignment / Client Intake — not by matching an href |
-| **LIVE VERIFIED** | **OPEN** — owner visual check |
+| **LIVE VERIFIED** | ✅ **owner, 2026-08-22** — visual review passed |
 
 ### The requirement each half of the brief made, and where it is met
 
@@ -861,18 +861,26 @@ the accessibility requirements intact.
    sampling also removes elements from the accessibility tree, so it left every
    later name assertion reading `""`. It has its own page now.
 
-### One decision left with the owner
+### The one decision it raised — ANSWERED, and LOCKED
 
-**`--teal` with white text is 3.37:1 across the whole public site** — the nav
-call button, the section CTA, the hero buttons Unit 40 replaced. Below 18.66px
-bold, none of them clears AA. Darkening `--teal` touches every button on the
-site and is a palette decision, not a hero redesign's. Measured candidates:
-`#33808f` 4.54:1, `#2f7788` 5.10:1, or `--navy` text on the existing teal at
-4.67:1 with no new colour. **Recorded, not queued.**
+**OWNER, 2026-08-22:** *"Keep the current global teal unchanged. The Unit 40
+card-button accessibility treatment is approved as implemented."*
+
+The finding stays on the record because it is true: white on `--teal` is
+3.37:1 across the whole public site — the nav call button, the section CTA, the
+hero buttons Unit 40 replaced — and below 18.66px bold none of them clears AA.
+It was put to the owner with the measured alternatives (`#33808f` 4.54:1,
+`#2f7788` 5.10:1, `--navy` on the existing teal 4.67:1) rather than fixed by
+making one control differ from the rest, and the owner kept the palette.
+
+**What that makes durable:** sizing at or above 18.66px bold is the APPROVED
+mechanism for white text on `--teal`, not a stopgap. Darkening `--teal` was
+offered and declined — **a later unit must not do it**. A control needing
+white-on-teal below that size is a new question for the owner.
 
 ### Standing rules, unchanged by this unit
 
 No completed unit is to be rebuilt. Real-case-only LIVE VERIFY items stay OPEN,
 not failed. Deferred-by-owner items stay deferred, not queued. The owner
-decisions — five from the 2026-08-21 closeout and three from Unit 39 — stay
-locked.
+decisions — five from the 2026-08-21 closeout, three from Unit 39 and **one
+from Unit 40** — stay locked.
