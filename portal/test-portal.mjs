@@ -13805,14 +13805,15 @@ section('Unit 21 — accessibility: landmarks, a way in from the keyboard, and a
   /* Focused via the KEYBOARD, and read after the slide-in settles — the link
      eases into place, so measuring the instant it takes focus measures the
      animation rather than the result. */
-  /* `paint()` puts the caret in the case search box, so a bare Tab starts from
-     there rather than the top of the document — which is exactly why the skip
-     link matters and also why the test must start from a clean focus. */
   /* Focused directly and read AFTER the slide-in settles: the link eases into
      place over .12s, so measuring the instant it takes focus measures the
-     animation rather than the result. (`paint()` puts the caret in the case
-     search box, which is precisely why a skip link earns its place — but it
-     also means a bare Tab does not start at the top of the document.) */
+     animation rather than the result.
+
+     This comment used to explain that `paint()` puts the caret in the case
+     search box, so a bare Tab did not start at the top of the document. That
+     stopped being true on 2026-08-22 — the owner's rule is that arriving at a
+     section focuses nothing, so the document now starts where a keyboard user
+     expects it to and the skip link earns its place on the ordinary grounds. */
   await page.evaluate(() => document.querySelector('a.skiplink').focus());
   await page.waitForTimeout(320);
   const skip = await page.evaluate(() => {
@@ -14907,6 +14908,219 @@ section('Unit 38 — the investigator keeps their boundary');
      has(ds, 'Daily Summary'), ds.replace(/\s+/g, ' ').slice(0, 160));
   await page.close();
 }
+
+
+/* ------------------------------------------------------------------------
+   NAVIGATING TO A SECTION MUST NOT OPEN THE KEYBOARD (owner, 2026-08-22).
+
+   The audit found no `autofocus` attribute anywhere in this page. What raised
+   the keyboard was `paint()` handing the caret back unconditionally at the end
+   of every repaint, so arriving at Search — or at Cases, or at a case — put the
+   cursor in a box nobody had touched and an iPad slid its keyboard over half
+   the screen.
+
+   The fix has to hold BOTH halves, which is why this section tests both: the
+   caret must not be given to anyone who did not have it, AND it must still be
+   handed straight back to somebody who is typing, because each keystroke
+   rebuilds the box the cursor is in and without it typing lands one character
+   at a time. A test for only the first half would pass on a page where search
+   no longer works.
+
+   Run at a phone, a tablet and a desktop width because the failure the owner
+   saw is a touch-keyboard one and the nav is behind the burger under 900px. */
+async function focusedNow(page) {
+  return page.evaluate(() => {
+    const el = document.activeElement;
+    if (!el || el === document.body || el === document.documentElement) {
+      return { tag: 'BODY', id: '', typing: false };
+    }
+    const tag = el.tagName;
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    /* What a phone raises a keyboard for. A bare <input> with no type IS a
+       text box, so the empty string belongs in this list. */
+    const TYPES = ['', 'text', 'search', 'email', 'tel', 'number', 'password', 'url'];
+    return { tag, id: el.id || '',
+             typing: tag === 'TEXTAREA' || (tag === 'INPUT' && TYPES.includes(type)) };
+  });
+}
+
+/* The nav rail is behind the burger under 900px, so a section is reached the
+   way a person reaches it rather than by calling the handler. */
+async function goTab(page, key) {
+  const burger = page.locator('.burger');
+  if (await burger.count() && await burger.first().isVisible()) {
+    if (!(await page.evaluate(() => document.body.classList.contains('navopen')))) {
+      await burger.first().click();
+      await page.waitForTimeout(250);
+    }
+  }
+  await page.locator(`.tabs button[data-tab="${key}"]`).first().click();
+  await page.waitForTimeout(650);
+}
+
+for (const [label, width, height] of [['phone', 390, 844], ['tablet', 820, 1100], ['desktop', 1200, 900]]) {
+  section(`No section opens the keyboard at ${width}px (${label})`);
+  {
+    const ctx = await browser.newContext({ viewport: { width, height } });
+    const page = await ctx.newPage();
+    page.on('pageerror', e => ok(`no page errors at ${width}px (${e.message})`, false));
+    await page.goto(SITE + '/portal/');
+    await page.waitForTimeout(300);
+    await page.locator('#u').fill('trever');
+    await page.locator('#p').fill('AdminPassword1x');
+    await page.locator('#loginBtn').click();
+    await page.waitForTimeout(1000);
+
+    /* Signing in is itself a page entry, and it used to land the caret in the
+       case search box before the office had touched anything. */
+    const afterLogin = await focusedNow(page);
+    ok(`${width}px: signing in does not put the cursor in a text field`,
+       afterLogin.typing === false, JSON.stringify(afterLogin));
+
+    /* Every section the owner named, by its TAB KEY — labels are decoration,
+       keys are the destination. */
+    const SECTIONS = [
+      ['search', 'Search'], ['cases', 'Cases'], ['leads', 'Intakes'],
+      ['profiles', 'Clients & Firms'], ['filequeue', 'File queue'],
+      ['delivery', 'Reports & Packages'], ['sheets', 'Rate Sheets'],
+      ['invoices', 'Billing'], ['settings', 'Settings'],
+      ['tasks', 'Tasks'], ['calendar', 'Calendar'], ['staff', 'Staff'],
+      ['audit', 'Audit trail'], ['dashboard', 'Dashboard'],
+    ];
+    const raised = [];
+    for (const [key, name] of SECTIONS) {
+      await goTab(page, key);
+      const f = await focusedNow(page);
+      if (f.typing) raised.push(`${name} -> ${f.tag}#${f.id}`);
+    }
+    ok(`${width}px: no nav item focuses a text field on arrival`,
+       raised.length === 0, raised.join(', ') || `${SECTIONS.length} sections`);
+    ok(`${width}px: and the walk really visited them all`,
+       SECTIONS.length === 14, String(SECTIONS.length));
+
+    /* THE CASE WORKSPACE IS A PAGE ENTRY TOO. It has its own paint() branch,
+       so it can fail on its own. */
+    await goTab(page, 'cases');
+    await rowFor(page, 'API-20260812-4001').click();
+    await page.waitForTimeout(900);
+    const inCase = await focusedNow(page);
+    ok(`${width}px: opening a case does not focus a text field`,
+       inCase.typing === false, JSON.stringify(inCase));
+
+    /* AND THE OTHER HALF. Typing must still work — the caret is handed back to
+       whoever HAD it, so a search box that repaints on every keystroke keeps
+       the cursor and the characters land in order. */
+    await goTab(page, 'search');
+    await page.locator('#gsearch').click();
+    await page.locator('#gsearch').pressSequentially('smith', { delay: 60 });
+    await page.waitForTimeout(500);
+    const typed = await page.evaluate(() => {
+      const el = document.getElementById('gsearch');
+      return el ? { v: el.value, focused: document.activeElement === el,
+                    caret: el.selectionStart } : null;
+    });
+    ok(`${width}px: typing in Search keeps the cursor and the characters in order`,
+       typed && typed.v === 'smith' && typed.focused === true, JSON.stringify(typed));
+    ok(`${width}px: with the caret at the end, not thrown to the front`,
+       typed && typed.caret === 5, JSON.stringify(typed && typed.caret));
+
+    await goTab(page, 'cases');
+    await page.locator('#q').click();
+    await page.locator('#q').pressSequentially('API', { delay: 60 });
+    await page.waitForTimeout(400);
+    const filt = await page.evaluate(() => {
+      const el = document.getElementById('q');
+      return el ? { v: el.value, focused: document.activeElement === el } : null;
+    });
+    ok(`${width}px: and the case filter still types`,
+       filt && filt.v === 'API' && filt.focused === true, JSON.stringify(filt));
+
+    await goTab(page, 'profiles');
+    const pq = page.locator('#prof_q');
+    if (await pq.count()) {
+      await pq.click();
+      await pq.pressSequentially('law', { delay: 60 });
+      await page.waitForTimeout(500);
+      const dir = await page.evaluate(() => {
+        const el = document.getElementById('prof_q');
+        return el ? { v: el.value, focused: document.activeElement === el } : null;
+      });
+      ok(`${width}px: so does the Clients & Firms directory search`,
+         dir && dir.v === 'law' && dir.focused === true, JSON.stringify(dir));
+    } else {
+      ok(`${width}px: so does the Clients & Firms directory search`, false, 'no #prof_q');
+    }
+
+    /* THE SEARCH FIELD'S WIDTH. Contained on a desktop, released on a phone —
+       measured against the PANEL it sits in rather than a share of the
+       viewport, the way the Unit 10 timeline rules already are. */
+    await goTab(page, 'search');
+    const box = await page.evaluate(() => {
+      const el = document.querySelector('.srchbox');
+      if (!el) return null;
+      const card = el.closest('.card');
+      return { w: Math.round(el.getBoundingClientRect().width),
+               card: card ? Math.round(card.getBoundingClientRect().width) : 0,
+               max: getComputedStyle(el).maxWidth };
+    });
+    if (width >= 900) {
+      ok(`${width}px: the search field is contained rather than the width of the card`,
+         box && box.w <= 640 && box.w < box.card - 40, JSON.stringify(box));
+    } else {
+      ok(`${width}px: the search field takes the panel's width`,
+         box && box.max === 'none' && box.w >= box.card - 60, JSON.stringify(box));
+    }
+
+    await ctx.close();
+  }
+}
+
+section('The focus rule is an allow-list, and dialogs are exempt from it');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const rule = await page.evaluate(() => ({
+    keep: typeof FOCUS_KEEP !== 'undefined' ? FOCUS_KEEP.slice() : null,
+    hasCapture: typeof focusCapture === 'function',
+    hasRestore: typeof focusRestore === 'function',
+  }));
+  /* AN ALLOW-LIST FOR THE FIELD_KEEP REASON: a search box added later does not
+     acquire page-entry focus by existing. */
+  ok('the caret is handed back only to a named box', Array.isArray(rule.keep) && rule.keep.length > 0
+     && rule.keep.every(id => typeof id === 'string'), JSON.stringify(rule.keep));
+  ok('and the capture happens before the repaint, not after',
+     rule.hasCapture === true && rule.hasRestore === true, JSON.stringify(rule));
+
+  /* The page holds no autofocus attribute at all — the audit's own finding,
+     pinned so it cannot come back in a template somewhere. */
+  const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+  const attrs = (src.match(/\bautofocus\b/g) || []).filter(() => true);
+  const inCode = src.split('\n').filter(l => /\bautofocus\b/.test(l) && !/^\s*(\/\*|\*|\/\/)/.test(l) && !/There is no `autofocus`/.test(l));
+  ok('there is no autofocus attribute anywhere in the page',
+     inCode.length === 0, inCode.slice(0, 2).join(' | ') || String(attrs.length));
+
+  /* DIALOGS ARE EXEMPT BY THE OWNER'S OWN RULE — "dialogs/forms may focus
+     intentionally only after the user explicitly opens that dialog/form."
+     Opening the pre-case intake door is an explicit act, so its address box
+     may take the caret; arriving at Rate Sheets may not. */
+  await page.locator('.tabs button[data-tab="sheets"]').first().click();
+  await page.waitForTimeout(700);
+  const onSheets = await focusedNow(page);
+  ok('arriving at Rate Sheets focuses nothing', onSheets.typing === false, JSON.stringify(onSheets));
+
+  const door = page.locator('[data-act="preIntake"]').first();
+  if (await door.count()) {
+    await door.click();
+    await page.waitForTimeout(500);
+    const inDialog = await focusedNow(page);
+    ok('but opening the send form deliberately focuses its address box',
+       inDialog.id === 'pi_to', JSON.stringify(inDialog));
+  } else {
+    ok('but opening the send form deliberately focuses its address box', false, 'no preIntake door');
+  }
+  await page.close();
+}
+
 
 await browser.close();
 server.close();

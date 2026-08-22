@@ -1419,8 +1419,12 @@
   .tmpl-sug{font-size:.74rem;color:var(--teal);margin-top:4px;font-weight:700;}
 
   /* ------------------------------------- UNIT 8: search & attention */
+  /* CONTAINED ON A DESKTOP (owner, 2026-08-22). It had no maximum, so it ran
+     the full width of the card — a search box the width of a monitor. The
+     release back to full width below 900px is at the END of this stylesheet
+     with the other phone rules, where source order cannot kill it. */
   .srchbox{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:12px;
-    padding:4px 10px;background:#fff;}
+    padding:4px 10px;background:#fff;max-width:640px;}
   .srchbox:focus-within{border-color:var(--teal);box-shadow:0 0 0 3px rgba(23,124,138,.12);}
   .srchicon{opacity:.55;font-size:1rem;}
   /* 16px is the iOS zoom floor and it applies at EVERY width here, not only on
@@ -1670,6 +1674,18 @@
     [data-act="shRefresh"]{min-height:44px;}
     /* UNIT 16 — the delivery center's controls meet it too. */
     [data-act="dcCopy"],[data-act="dcRefresh"]{min-height:44px;}
+  }
+
+  /* THE SEARCH BOX IS RELEASED ON A PHONE AND A TABLET. Contained above, full
+     width here: 640px of box on a 390px screen is just a box with a margin
+     nobody asked for. Presentation only — no query, no route, no behaviour.
+
+     900px is READ OFF THIS PAGE rather than invented: it is already where the
+     navigation rail goes behind the burger, which is where this file has
+     decided the desktop ends. An iPad in portrait is 768px and gets the whole
+     width, which is what "full width on mobile" is asking for. */
+  @media(max-width:900px){
+    .srchbox{max-width:none;}
   }
 
 </style>
@@ -9351,6 +9367,44 @@ function vstHtml(){
    end up rendered, so reading what was rendered catches every one of them and
    any added later. Only announced when the text CHANGES, so a repaint that
    says the same thing does not repeat itself in the user's ear. */
+/* NAVIGATING TO A SECTION MUST NOT OPEN THE KEYBOARD (owner, 2026-08-22).
+
+   There is no `autofocus` attribute anywhere in this page — the audit looked
+   and found none. What opened the on-screen keyboard was `paint()` handing the
+   caret back UNCONDITIONALLY at the end of every repaint. That is right while
+   somebody is typing (each keystroke rebuilds the box the cursor is in, so
+   without it typing lands one character at a time) and wrong every other time,
+   and a repaint cannot tell the two apart by itself. So it is told: what was
+   focused BEFORE the repaint is captured, and only that element gets the caret
+   back afterwards. Tapping Cases, Search, Intakes or any other nav item paints
+   with nothing focused, so nothing is focused after — and on an iPad or a phone
+   no keyboard slides up over the screen the owner was trying to read.
+
+   FOCUS_KEEP is an allow-list for the FIELD_KEEP reason: a search box added
+   later does not silently acquire page-entry focus by existing. Each id here
+   is a box whose own repaint would otherwise eat the keystroke.
+
+   Dialogs are untouched and stay untouched — `ls_to` and `pi_to` focus after
+   the user has explicitly opened that form, which the owner's rule allows by
+   name. */
+const FOCUS_KEEP = ["q", "prof_q", "nl_pick", "gsearch", "am_q"];
+let FOCUS_WAS = null;
+function focusCapture(){
+  const el = document.activeElement;
+  FOCUS_WAS = el && el.id && FOCUS_KEEP.includes(el.id) ? el.id : null;
+}
+function focusRestore(){
+  const id = FOCUS_WAS;
+  FOCUS_WAS = null;
+  if(!id) return;
+  const el = $(id);
+  if(!el) return;
+  el.focus();
+  /* The caret goes to the end, where it was: assigning .value moves it to the
+     front, so without this typing reverses itself. */
+  try { el.setSelectionRange(el.value.length, el.value.length); } catch(e){ }
+}
+
 let SR_LAST = "";
 function announceRendered(){
   const el = document.querySelector("#app .err, #app .note, #app .linkbox, #app .loaderr");
@@ -9362,6 +9416,9 @@ function announceRendered(){
 }
 
 function paint(){
+  /* Before anything is replaced — once `app.innerHTML` is assigned the active
+     element is the body and there is nothing left to read. */
+  focusCapture();
   paintEvView();
   paintPStamp();
   paintVStamp();
@@ -9386,9 +9443,10 @@ function paint(){
       <div class="pagebar"><button class="btn sm ghost close" data-act="backToCases">&larr; Back to Cases</button></div>
       <div class="card"><div class="dlg" id="dlgBody">${caseBodyHtml()}</div></div>
     </div>`;
-    // Typing in the sheet's search repaints; hand the cursor straight back.
-    const amq = $("am_q");
-    if(amq && ACT_MODAL && ACT_MODAL.search){ amq.focus(); amq.setSelectionRange(amq.value.length, amq.value.length); }
+    // Typing in the sheet's search repaints; hand the cursor straight back —
+    // but only to whoever had it, which is what stops opening a case from
+    // raising the keyboard.
+    focusRestore();
     return;
   }
   app.innerHTML = shell(
@@ -9411,15 +9469,13 @@ function paint(){
     : TAB === "myexpenses" ? myExpensesView()
     : casesView());
   announceRendered();
-  const q = $("q");
-  if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
-  /* The directory and picker searches repaint on every keystroke, so the
-     cursor has to be handed back or typing lands one character at a time in a
-     box that keeps losing focus. Same treatment the case search already gets. */
-  for(const id of ["prof_q", "nl_pick", "gsearch"]){
-    const el = $(id);
-    if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
-  }
+  /* The case search, the directory and picker searches and the global search
+     all repaint on every keystroke, so the cursor has to be handed back or
+     typing lands one character at a time in a box that keeps losing focus.
+     ONLY to the box that already had it: this used to focus whichever of them
+     the new screen happened to contain, so arriving at a section focused a
+     field nobody had touched and the phone raised its keyboard over the page. */
+  focusRestore();
 }
 
 /* Loading the portal used to swallow every failure and paint an empty
