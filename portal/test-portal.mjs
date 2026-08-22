@@ -331,6 +331,12 @@ async function wsVisitAll(page, read) {
 /* UNIT 38 — the case workspace is one level deep now. Six tabs in a row, and
    everything else behind More. This walks the same way a person does: look for
    the tab, and if it is not on the row, open More and take it from there. */
+/* Which case tab is open, by key. Reading the current nav BUTTON's words was
+   fine while every tab was on a bar; since Unit 38 a tab inside More marks the
+   More button instead, so the words say "More" and not the panel on screen.
+   WS_TAB is the routing state itself and cannot disagree with the panel. */
+const wsOpenTab = page => page.evaluate(() => WS_TAB);
+
 async function wsTab(page, name) {
   /* Resolve the LABEL to its tab key first and click by key. Matching nav
      buttons by their words is what a person does, but Playwright's hasText is
@@ -505,8 +511,8 @@ section('Investigator scope');
      ['Overview', 'Activity', 'Daily Summary', 'Evidence', 'Report']
        .every(t => inav.some(x => x.trim() === t)), JSON.stringify(inav));
   ok('and no Billing tab on it', !inav.some(t => /Billing/i.test(t)), JSON.stringify(inav));
-  await wsTab(page, 'Activity log');
-  ok('the investigator has an Activity log tab', await page.locator('.wstabs button', { hasText: 'Activity log' }).count() === 1);
+  await wsTab(page, 'Activity');
+  ok('the investigator has an Activity tab', await page.locator('.wsnav button[data-tab="activity"]').count() === 1);
   ok('the investigator has a Field work tab', await page.locator('.wstabs button', { hasText: 'Field work' }).count() === 1);
   ok('the investigator has NO Assignment tab', await page.locator('.wstabs button', { hasText: 'Assignment' }).count() === 0);
   ok('the investigator gets no assignment controls', await page.locator('#asg').count() === 0);
@@ -1220,14 +1226,16 @@ section('The case workspace in the browser');
     ok(`the workspace navigates in one row: ${t}`, has(navbar, t), navbar);
   }
   // Every panel is still reachable behind its section.
-  for (const t of ['Subject', 'Activity log', 'Field work', 'Authorization', 'Assignment']) {
+  const tabKeys = { Subject: 'subject', Activity: 'activity', 'Field work': 'field',
+                    Authorization: 'auth', Assignment: 'assign' };
+  for (const t of ['Subject', 'Activity', 'Field work', 'Authorization', 'Assignment']) {
     await wsTab(page, t);
-    ok(`the ${t} panel is still reachable`, has(await text(page, '.wstabs button.on'), t));
+    ok(`the ${t} panel is still reachable`, (await wsOpenTab(page)) === tabKeys[t], t);
   }
 
   // The chain has to hold hands: Reports with nothing to report on points at
   // Field work rather than dead-ending.
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   ok('an empty Reports tab offers the way to Field work',
      await page.locator('.btn', { hasText: 'Go to Field work' }).count() === 1);
   await page.locator('.btn', { hasText: 'Go to Field work' }).click();
@@ -1255,7 +1263,7 @@ section('The case workspace in the browser');
   ok('the day is running', has(await text(page, '#dlgBody'), 'Day running since 7:00 AM'));
 
   // Log the timeline — the form lives in the Add Activity sheet now (P10).
-  await wsTab(page, 'Activity log');
+  await wsTab(page, 'Activity');
   ok('the log says a day is running', has(await text(page, '#dlgBody'), 'Investigation day running'));
   ok('and offers to end it from right there',
      await page.locator('.btn', { hasText: 'End the day' }).count() === 1);
@@ -1337,7 +1345,7 @@ section('Drafting and reviewing a daily report in the browser');
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
 
   ok('a completed day is offered to report on',
      await page.locator('#r_day').count() === 1);
@@ -1449,11 +1457,11 @@ section('An investigator gets the same field tools, without the money');
   ok('they do not get Billing on it', !has(fnav, 'Billing'));
 
   await wsTab(page, 'Field work');
-  ok('they get field work', has(await text(page, '.wstabs button.on'), 'Field work'));
+  ok('they get field work', (await wsOpenTab(page)) === 'field');
   ok('they can start their own day',
      await page.locator('.btn', { hasText: 'Start investigation' }).count() === 1);
 
-  await wsTab(page, 'Activity log');
+  await wsTab(page, 'Activity');
   await openComposer(page);
   await page.locator('#a_desc').fill('Arrived in vicinity of subject residence.');
   await page.locator('.btn', { hasText: 'Add to the log' }).click();
@@ -1576,7 +1584,7 @@ section('The Custom tab carries every composer');
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Activity log');
+  await wsTab(page, 'Activity');
 
   ok('the panel is the timeline, not a form (P10)', await page.locator('#a_desc').count() === 0);
   await openComposer(page);
@@ -1656,7 +1664,7 @@ section('A surveillance date is the date where the investigator is standing');
     await signIn(page, 'trever', 'AdminPassword1x');
     await rowFor(page, 'API-20260812-4001').click();
     await page.waitForTimeout(450);
-    await wsTab(page, 'Activity log');
+    await wsTab(page, 'Activity');
     await openComposer(page);
 
     const seen = await page.evaluate(() => {
@@ -2209,7 +2217,7 @@ section('Quick lines: search, favorites, one tap');
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Activity log');
+  await wsTab(page, 'Activity');
 
   await page.locator('[data-act="actOpen"]').click();
   await page.waitForTimeout(300);
@@ -2562,7 +2570,7 @@ section('Closing a case takes the checklist');
 
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   ok('the closing checklist waits under Billing & closing',
      has(await text(page, '#dlgBody'), 'Close the case'));
   await page.locator('[data-act="closeCase"]').click();
@@ -2615,7 +2623,7 @@ section('A closed case can be reopened where it was closed');
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4010').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   ok('an open case offers no Reopen button',
      await page.locator('[data-act="reopenCase"]').count() === 0);
 
@@ -2689,7 +2697,7 @@ section('A case can be archived and brought back');
 
   await rowFor(page, 'API-20260812-4011').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   ok('Archive sits beside closing, where the lifecycle lives',
      await page.locator('[data-act="archiveCase"]').count() === 1);
   ok('and says plainly that nothing is deleted',
@@ -2719,7 +2727,7 @@ section('A case can be archived and brought back');
   /* PUT IT BACK, and leave the database as this section found it. */
   await rowFor(page, 'API-20260812-4011').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   await page.locator('[data-act="restoreCase"]').click();
   await page.waitForTimeout(800);
   ok('restoring is offered from the archived case itself',
@@ -2764,7 +2772,7 @@ section('A case can be deleted as a tombstone and put back');
 
   await rowFor(page, 'API-20260812-4012').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   ok('Delete case sits with the other lifecycle controls',
      await page.locator('[data-act="deleteCase"]').count() === 1);
   ok('and says at rest that nothing is destroyed',
@@ -2799,7 +2807,7 @@ section('A case can be deleted as a tombstone and put back');
 
   await rowFor(page, 'API-20260812-4012').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   await page.locator('[data-act="undeleteCase"]').click();
   await page.waitForTimeout(900);
   ok('putting it back is offered from the deleted case itself',
@@ -3608,7 +3616,7 @@ section('An invoice from case to PAID');
   await page.locator('#m_hours').fill('8');
   await page.locator('.btn', { hasText: 'Save authorization' }).click();
   await page.waitForTimeout(500);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   await page.locator('[data-act="createInvoiceAuth"]').click();
   await page.waitForTimeout(800);
 
@@ -3686,7 +3694,7 @@ section('Evidence in the browser');
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
   ok('the tab says the failsafe is on', has(await text(page, '#dlgBody'), 'free-plan failsafe'));
 
   /* A PHOTOGRAPH — what this tab uploads now. The storage, classification,
@@ -3737,7 +3745,7 @@ section('Evidence in the browser');
   const subjCard = await text(page, '#dlgBody');
   ok('the photo rides with the subject card', has(subjCard, 'Photos & files'));
   ok('as an image thumbnail', await page.locator('.rcard img').count() >= 1);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
 
   // The gallery (UIBUILD P12): tabs cut by type, cards carry the picture.
   ok('the gallery tabs stand ready', has(await text(page, '.evtabs'), 'Photos'));
@@ -3760,15 +3768,15 @@ section('Evidence in the browser');
   await page.locator('#ev_link').selectOption({ label: '8:17 AM — Subject arrived at ABC Fitness.' });
   await page.locator('.btn', { hasText: 'Upload picture or document' }).click();
   await page.waitForTimeout(700);
-  await wsTab(page, 'Activity log');
+  await wsTab(page, 'Activity');
   ok('a linked photo puts a count on the moment',
      await page.locator('.tl-i', { hasText: 'Subject arrived at ABC Fitness.' })
        .locator('.tl-counts').count() >= 1);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
   ok('and the card names its moment', has(await text(page, '.evgrid'), '8:17 AM'));
 
   // The quick-entry fold links an already-uploaded file to the new moment (P9).
-  await wsTab(page, 'Activity log');
+  await wsTab(page, 'Activity');
   await page.locator('[data-act="actOpen"]').click();
   await page.waitForTimeout(300);
   await page.locator('.ampick', { hasText: 'Established stationary surveillance position.' }).click();
@@ -3782,7 +3790,7 @@ section('Evidence in the browser');
   ok('the ticked file rode to the new moment',
      await page.locator('.tl-i', { hasText: 'Established stationary surveillance position.' })
        .locator('.tl-counts').count() >= 1);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
 
   await page.locator('[data-act="evDelete"]').first().click();
   await page.waitForTimeout(600);
@@ -4087,7 +4095,7 @@ section('The case page: four sections, one obvious next step');
   // P22: the module lines route. The Report line lands on the Reports panel.
   await page.locator('.ov-mods button', { hasText: 'Report' }).first().click();
   await page.waitForTimeout(300);
-  ok('a module line routes to its panel', has(await text(page, '.wstabs button.on'), 'Reports'));
+  ok('a module line routes to its panel', (await wsOpenTab(page)) === 'reports');
 
   // And the one computed next step routes with a single GO. Every branch of
   // pkgNextStep leads away from the overview, so landing anywhere else is
@@ -4095,7 +4103,7 @@ section('The case page: four sections, one obvious next step');
   await wsTab(page, 'Overview');
   await page.locator('.ov-next .btn').click();
   await page.waitForTimeout(300);
-  ok('GO lands on the computed step', !has(await text(page, '.wstabs button.on'), 'Overview'));
+  ok('GO lands on the computed step', (await wsOpenTab(page)) !== 'overview');
 
   // The intake detail kept its home behind the Overview section.
   await wsTab(page, 'Intake details');
@@ -4494,7 +4502,7 @@ section('Active Surveillance Mode: a field view of the same case');
   await page.locator('.sv-exitblock [data-act="svExit"]').click();
   await page.waitForTimeout(700);
   ok('exiting returns to the ordinary case page', await page.locator('.casepage').count() === 1);
-  await wsTab(page, 'Activity log');
+  await wsTab(page, 'Activity');
   const log = await text(page, '#dlgBody');
   ok('the field entries are in the normal activity log', has(log, 'Arrived in vicinity'));
   ok('including the one-tap entry', has(log, 'No change was noted'));
@@ -6126,7 +6134,7 @@ section('Back, edit and delete, from the field');
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await wsTab(page, 'Activity log');
+  await wsTab(page, 'Activity');
   ok('the office timeline offers Delete too',
      await page.locator('.tl-edit', { hasText: 'Delete' }).count() >= 1);
   await page.close();
@@ -6317,7 +6325,7 @@ section('A private invoice shows the retainer drawing down');
   await page.locator('.btn', { hasText: 'Save authorization' }).click();
   await page.waitForTimeout(600);
 
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   await page.locator('[data-act="createInvoiceAuth"]').click();
   await page.waitForTimeout(900);
 
@@ -6561,7 +6569,7 @@ section('Completed cases are one obvious click away');
   await card4002.locator('.btn', { hasText: 'Final report' }).click();
   await page.waitForTimeout(800);
   ok('Final report lands inside the case, on the Reports tab',
-     has(await text(page, '.wstabs button.on'), 'Reports'));
+     (await wsOpenTab(page)) === 'reports');
   await page.close();
 }
 {
@@ -7210,7 +7218,7 @@ section('Evidence opens in one in-portal viewer, and never leaves the app');
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(500);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
   await page.waitForTimeout(400);
 
   // Land on a known screen, and remember it, so "back" can be checked properly.
@@ -7971,7 +7979,7 @@ section('The video timestamp screen');
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
 
   const tab = await text(page, '#dlgBody');
   ok('the Evidence tab carries the door into it', has(tab, 'Video timestamp'));
@@ -8279,7 +8287,7 @@ section('Adding media and looking at media are named apart');
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
   const body = await text(page, '#dlgBody');
   ok('the entry point for adding is named for what it adds',
      has(body, 'Upload video / picture'));
@@ -8291,7 +8299,7 @@ section('Adding media and looking at media are named apart');
      await page.locator('.btn', { hasText: 'Upload picture or document' }).count() === 1
      && await page.locator('.btn', { hasText: 'Upload video' }).count() === 0);
   ok('the tab itself reads Case media',
-     has(await text(page, '.wstabs button.on'), 'Case media'));
+     (await wsOpenTab(page)) === 'evidence');
   await page.close();
 }
 
@@ -8828,7 +8836,7 @@ section('Timestamp Photo: the stamp is in the pixels, and the original is not to
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
 
   /* A REAL PICTURE, written by this browser. 800x600 so the burned face is a
      legible 30px, which is what `vstDraw` scales it to. */
@@ -8998,7 +9006,7 @@ section('Timestamp Photo: nothing is guessed, and a correction is the operator�
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4003').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
 
   /* NO EXIF AT ALL — a screenshot, a scan, a file a share sheet stripped. */
   const before2 = await page.evaluate(() => ({
@@ -9122,7 +9130,7 @@ section('Timestamp Photo: the copy is what the client gets, and the original is 
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4020').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
 
   const jpeg = async (w, h, fill) => Buffer.from(await page.evaluate(([W, H, F]) => {
     const c = document.createElement('canvas');
@@ -10567,7 +10575,7 @@ section('Dropbox is visible, and it is not a file manager');
   await page.waitForTimeout(400);
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
   ok('a case shows no Dropbox folder links while the name is unknown',
      !has(await text(page, '#dlgBody'), 'In Dropbox'));
 
@@ -10621,7 +10629,7 @@ section('Dropbox is visible, and it is not a file manager');
   await page.waitForTimeout(400);
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
   const media = await text(page, '#dlgBody');
   ok('the case now carries its Dropbox folders', has(media, 'In Dropbox'), media.slice(0, 400));
   const links = page.locator('#dlgBody a', { hasText: /Photos|Reports|Video/ });
@@ -10659,7 +10667,7 @@ section('An investigator is shown none of the firm\'s Dropbox');
      beside media an investigator is allowed to see. */
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
   const media = await text(page, '#dlgBody');
   ok('the case media panel offers them no Dropbox folder links',
      !has(media, 'In Dropbox'), media.slice(0, 400));
@@ -10691,7 +10699,7 @@ section('An admin ships their own report without an approval ritual');
   });
   await rowFor(page, 'API-ITEM4-A').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   await page.locator('form[data-act="genReport"] button[type="submit"]').click();
   await page.waitForTimeout(700);
 
@@ -10720,7 +10728,7 @@ section('An admin ships their own report without an approval ritual');
      && await page.locator('[data-act="pkgPdfDropbox"]').count() === 1
      && await page.locator('[data-act="pkgPrint"]').count() === 1);
 
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   ok('the report now reads Approved — finalize was the recorded sign-off',
      has(await text(page, '#dlgBody'), 'Approved'));
   await page.close();
@@ -10739,7 +10747,7 @@ section('An investigator\'s report still goes through the office');
   });
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   if (await page.locator('form[data-act="genReport"]').count()) {
     /* Pick HER day by its date — the spare list can also carry an admin's
        unreported day on this shared fixture case, and generating against
@@ -12079,7 +12087,7 @@ section('The case timeline draws the case in order');
 
   ok('the Timeline panel exists in the case workspace',
      await page.locator('.tl2-wrap').count() === 1);
-  ok('and it is the tab that is on', has(await text(page, '.wstabs button.on'), 'Timeline'));
+  ok('and it is the tab that is on', (await wsOpenTab(page)) === 'timeline');
 
   const doc = await text(page, '#tldoc');
   ok('the case opening is on it', has(doc, 'Case opened'), doc.slice(0, 400));
@@ -12228,7 +12236,7 @@ section('The timeline filters, re-orders and links to the record');
   await go.click();
   await page.waitForTimeout(450);
   ok('opening an observation lands on the Activity log',
-     has(await text(page, '.wstabs button.on'), 'Activity log'));
+     (await wsOpenTab(page)) === 'activity');
   ok('and the entry it named is there',
      has(await text(page, '#dlgBody'), 'Subject vehicle observed parked at residence.'));
 
@@ -12239,7 +12247,7 @@ section('The timeline filters, re-orders and links to the record');
     await rep.click();
     await page.waitForTimeout(450);
     ok('opening a report event lands on Reports',
-       has(await text(page, '.wstabs button.on'), 'Reports'));
+       (await wsOpenTab(page)) === 'reports');
   } else {
     ok('opening a report event lands on Reports', false, 'no report event was drawn');
   }
@@ -12564,7 +12572,7 @@ section('Daily summary: deterministic sentences over the day\'s own facts');
       { credentials: 'same-origin' })).json();
     return JSON.stringify(ws.activity.map(a => [a.id, a.at_date, a.at_time, a.description]));
   }, 'API-20260812-4001');
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   await page.waitForTimeout(400);
   await page.locator('.rcard', { hasText: '2026-08-20' }).first().click();
   await page.waitForTimeout(400);
@@ -12633,7 +12641,7 @@ section('Daily summary: the writer\'s words survive everything but a deliberate 
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   await page.waitForTimeout(400);
   await page.locator('.rcard', { hasText: '2026-08-20' }).first().click();
   await page.waitForTimeout(400);
@@ -12699,7 +12707,7 @@ section('Daily summary: the writer\'s words survive everything but a deliberate 
     if (await cbtn.count()) { await cbtn.first().click(); await page.waitForTimeout(400); } }
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   await page.waitForTimeout(400);
   await page.locator('.rcard', { hasText: '2026-08-21' }).first().click();
   await page.waitForTimeout(400);
@@ -12743,7 +12751,7 @@ section('Daily summary: the narrative rides the documents, clean of builder scaf
   await page.waitForTimeout(500);
 
   /* The report's own draft document leads with it. */
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   await page.waitForTimeout(400);
   await page.locator('.rcard', { hasText: '2026-08-20' }).first().click();
   await page.waitForTimeout(400);
@@ -12852,7 +12860,7 @@ section('Daily summary: the field writes its own day and nothing more');
     if (await cbtn.count()) { await cbtn.first().click(); await inv.waitForTimeout(400); } }
   await rowFor(inv, 'API-DSFIELD-1').click();
   await inv.waitForTimeout(500);
-  await wsTab(inv, 'Reports');
+  await wsTab(inv, 'Report');
   await inv.waitForTimeout(400);
   await inv.locator('.rcard').first().click();
   await inv.waitForTimeout(400);
@@ -12879,7 +12887,7 @@ section('Daily summary: the field writes its own day and nothing more');
     if (await cbtn.count()) { await cbtn.first().click(); await inv.waitForTimeout(400); } }
   await rowFor(inv, 'API-DSFIELD-1').click();
   await inv.waitForTimeout(500);
-  await wsTab(inv, 'Reports');
+  await wsTab(inv, 'Report');
   await inv.waitForTimeout(400);
   await inv.locator('.rcard').first().click();
   await inv.waitForTimeout(400);
@@ -12922,7 +12930,7 @@ section('Daily summary on a phone: one column, honest targets, nothing sideways'
   await page.waitForTimeout(600);
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   await page.waitForTimeout(400);
   await page.locator('.rcard', { hasText: '2026-08-20' }).first().click();
   await page.waitForTimeout(400);
@@ -13483,7 +13491,7 @@ section('Closeout: the checklist shows what the record can see, and still obeys 
   }, 'API-CLOSE-1');
   await rowFor(page, 'API-CLOSE-1').click();
   await page.waitForTimeout(500);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   await page.waitForTimeout(700);
 
   const panel = page.locator('form', { hasText: 'Close the case' }).first();
@@ -13504,7 +13512,7 @@ section('Closeout: the checklist shows what the record can see, and still obeys 
   await page.evaluate(() => { CLOSEOUT = {}; });
   await wsTab(page, 'Overview');
   await page.waitForTimeout(300);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   await page.waitForTimeout(700);
   const failedBody = await page.locator('form', { hasText: 'Close the case' }).first().innerText();
   ok('a failed facts read is named — the checklist does not pretend the record is clean',
@@ -13936,7 +13944,7 @@ section('Unit 19 — a removed entry is shown as removed on the report Chronolog
 
   await rowFor(page, 'API-U19').click();
   await page.waitForTimeout(600);
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   await page.waitForTimeout(700);
   /* Open the report itself, then its Chronology view — the report screen
      renders into #dlgBody, the way the P11 section already drives it. */
@@ -13972,7 +13980,7 @@ section('Retention: five states as words, a hold that outranks, and an audit tra
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-RET-1').click();
   await page.waitForTimeout(500);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   await page.waitForTimeout(700);
 
   const panel = () => page.locator('.feebox', { hasText: 'Retention & legal hold' }).first();
@@ -14110,7 +14118,7 @@ section('Retention: five states as words, a hold that outranks, and an audit tra
   await page.evaluate(() => { RETC = {}; });
   await wsTab(page, 'Overview');
   await page.waitForTimeout(300);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   await page.waitForTimeout(700);
   body = await panel().innerText();
   ok('a failed retention read says so', /could not be\s+read just now/.test(body.replace(/\n/g, ' ')), body.slice(0, 200));
@@ -14168,7 +14176,7 @@ section('Retention: the investigator has no door and the phone has no overflow')
   await phone.waitForTimeout(600);
   await rowFor(phone, 'API-RET-1').click();
   await phone.waitForTimeout(600);
-  await wsTab(phone, 'Billing & closing');
+  await wsTab(phone, 'Billing');
   await phone.waitForTimeout(800);
   const m = await phone.evaluate(() => {
     const until = document.getElementById('ret_until');
@@ -14198,7 +14206,7 @@ section('Evidence integrity: the card states the record and the office can act o
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-INTP-1').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
 
   /* An upload through the page: the card carries the integrity block at once. */
   const bytes = Buffer.alloc(2048, 71);
@@ -14254,7 +14262,7 @@ section('Evidence integrity: the card states the record and the office can act o
   await page.waitForTimeout(300);
   await rowFor(page, 'API-INTP-1').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
   const older = () => page.locator('.evcard', { hasText: 'older.jpg' }).first();
   integ = await older().locator('.integ').innerText();
   ok('a historical file reads "Not yet recorded" — never a guessed hash',
@@ -14277,7 +14285,7 @@ section('Evidence integrity: the field sees the record and holds no lever');
   await signIn(page, 'dana', 'FieldWork2026x');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
   await page.locator('#ev_file').setInputFiles({
     name: 'field.jpg', mimeType: 'image/jpeg', buffer: Buffer.alloc(1200, 80) });
   await page.locator('.btn', { hasText: 'Upload picture or document' }).click();
@@ -14299,7 +14307,7 @@ section('The evidence manifest: a readable document, printable, honest when it f
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-INTP-1').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
 
   await page.locator('[data-act="manOpen"]').click();
   await page.waitForTimeout(700);
@@ -14365,7 +14373,7 @@ section('Evidence integrity on a phone: the hash wraps, the buttons reach the fl
   await page.waitForTimeout(600);
   await page.locator('tbody tr', { hasText: 'API-INTP-1' }).first().click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
 
   /* No sideways scroll with a 64-character token on screen. */
   await page.locator('.evcard .integ summary').first().click();
