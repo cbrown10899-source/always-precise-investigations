@@ -12700,6 +12700,28 @@ function packagePanel(){
   const inv = (PKG.invoices || [])[0];
 
   /* The mini-dashboard: state blocks, each a door (UXSIMPLIFY P9/P14/P19). */
+  /* SOURCE DATA CHANGED — REBUILD REQUIRED (Unit 39).
+
+     DECLARED BEFORE THE `if(!b)` EARLY RETURN, not beside the gate strip where
+     it is used. It was written there first and the page threw "Cannot access
+     'stale' before initialization" on every case with no package started —
+     a `const` in the temporal dead zone, read by a return statement above it.
+
+     Beside the gate strip rather than inside it, because they answer different
+     questions: the gates say something in the package is no longer clear to
+     ship, this says the CASE moved underneath a package that is already out.
+     The Worker derives it from the trail against `finalized_at` and hands over
+     the list; the page prints it and composes nothing, so what an admin reads
+     is what the record says changed.
+
+     OUTSIDE `#pkgdoc`, like `pkgWithheldNote()`. The print stylesheet makes
+     only that region visible, and a client's document must not carry a notice
+     about the office's own bookkeeping. */
+  const stale = PKG.stale && PKG.stale.stale ? `
+    <div class="pkgstale" role="status"><b>${esc(PKG.stale.label)}</b>
+      <ul>${PKG.stale.changes.map(c => `<li>${esc(c)}</li>`).join("")}</ul>
+      <div class="rmnote">${esc(PKG.stale.note)}</div></div>` : "";
+
   const blocks = `
     <div class="pkg-blocks">
       <button class="pkg-b ${act ? "done" : ""}" data-act="wsTab" data-tab="activity">
@@ -12734,23 +12756,6 @@ function packagePanel(){
      the one screen that ships it. The gates are not suppressed any more; only
      the wording changes, because "to finish this package" is the wrong sentence
      for something already finished. */
-  /* SOURCE DATA CHANGED — REBUILD REQUIRED (Unit 39).
-
-     Beside the gate strip rather than inside it, because they answer different
-     questions: the gates say something in the package is no longer clear to
-     ship, this says the CASE moved underneath a package that is already out.
-     The Worker derives it from the trail against `finalized_at` and hands over
-     the list; the page prints it and composes nothing, so what an admin reads
-     is what the record says changed.
-
-     OUTSIDE `#pkgdoc`, like `pkgWithheldNote()`. The print stylesheet makes
-     only that region visible, and a client's document must not carry a notice
-     about the office's own bookkeeping. */
-  const stale = PKG.stale && PKG.stale.stale ? `
-    <div class="pkgstale" role="status"><b>${esc(PKG.stale.label)}</b>
-      <ul>${PKG.stale.changes.map(c => `<li>${esc(c)}</li>`).join("")}</ul>
-      <div class="rmnote">${esc(PKG.stale.note)}</div></div>` : "";
-
   const missing = !PKG.gates.length ? "" : b.status !== "finalized" ? `
     <div class="pkg-miss"><b>To finish this package</b>
       <ul>${PKG.gates.map(g => `<li>${esc(g)}</li>`).join("")}</ul></div>` : `
