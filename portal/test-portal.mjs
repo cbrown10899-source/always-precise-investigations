@@ -14723,8 +14723,11 @@ section('Unit 38 — the case workspace, the twenty named properties');
   await page.locator('#a_time').fill('11:11');
   await page.locator('#a_desc').fill('Unit 38 check entry.');
   await page.locator('.btn', { hasText: 'Add to the log' }).click();
-  await page.waitForTimeout(700);
-  ok('6c. and the entry lands in the log',
+  await page.waitForTimeout(800);
+  /* Added from the Daily Summary tab — which is the point, the door is on
+     every tab now — so the LOG is where it has to be looked for. */
+  await wsTab(page, 'Activity');
+  ok('6c. and the entry lands in the log, wherever it was added from',
      has(await text(page, '#dlgBody'), 'Unit 38 check entry.'));
 
   /* 7 + 8. Evidence and Report open on the selected case. */
@@ -14866,8 +14869,11 @@ section('Unit 38 — the field-first case view on a phone');
 
     /* 6 on a phone: the add key is under the thumb and works. */
     await page.locator('.wsbar .wsbar-add').click();
-    await page.waitForTimeout(500);
-    ok(`${width}px: the add key opens the composer`, await page.locator('#a_desc').count() === 1);
+    await page.waitForTimeout(600);
+    ok(`${width}px: the add key opens the composer`,
+       await page.locator('.amwrap').count() === 1
+       && (await page.locator('.amtab').allInnerTexts()).length === 2,
+       JSON.stringify(await page.locator('.amtab').allInnerTexts()));
     await ctx.close();
   }
 }

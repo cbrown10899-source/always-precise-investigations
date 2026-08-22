@@ -9382,6 +9382,7 @@ function paint(){
     // The workspace takes the whole page. The back button carries the same
     // .close class the dialog's X had, so muscle memory and tests both hold.
     app.innerHTML = `<div class="casepage">
+      <h1 class="vh">Case ${esc(WS_CASE)} &mdash; Always Precise Investigations case portal</h1>
       <div class="pagebar"><button class="btn sm ghost close" data-act="backToCases">&larr; Back to Cases</button></div>
       <div class="card"><div class="dlg" id="dlgBody">${caseBodyHtml()}</div></div>
     </div>`;
