@@ -9380,9 +9380,15 @@ function vstHtml(){
    with nothing focused, so nothing is focused after — and on an iPad or a phone
    no keyboard slides up over the screen the owner was trying to read.
 
-   FOCUS_KEEP is an allow-list for the FIELD_KEEP reason: a search box added
-   later does not silently acquire page-entry focus by existing. Each id here
-   is a box whose own repaint would otherwise eat the keystroke.
+   FOCUS_KEEP is an allow-list for the same reason the Worker's redaction
+   allow-list is one: a search box added later does not silently acquire
+   page-entry focus by existing. Each id here is a box whose own repaint would
+   otherwise eat the keystroke.
+
+   Naming that Worker constant here in words rather than by its identifier is
+   deliberate — the suite greps this file for it, because a stale copy of a
+   security boundary in the page is worse than no copy, and a grep cannot tell
+   a comment from a declaration. Making the guard cleverer would weaken it.
 
    Dialogs are untouched and stay untouched — `ls_to` and `pi_to` focus after
    the user has explicitly opened that form, which the owner's rule allows by
