@@ -174,6 +174,20 @@
     overflow:hidden;text-decoration:none;color:var(--white);
     border:1px solid var(--line);background:var(--navy-2);
     transition:transform .16s ease, border-color .16s ease, box-shadow .16s ease;}
+  /* ?v= IS NOT DECORATION — IT IS REQUIRED, AND THIS COST A ROUND TO LEARN.
+     `_headers` caches `/assets/*` for SEVEN DAYS (max-age=604800), and these
+     three files are replaced IN PLACE at stable URLs. On 2026-08-22
+     card-insurance.webp was three different photographs at one URL inside an
+     hour, and the owner correctly reported the site as not updating: every
+     deploy was green, index.html is `no-cache` so the HTML was current, and
+     the browser went on serving the FIRST image it had cached. A stale asset
+     behind fresh markup looks exactly like a failed deploy.
+
+     BUMP THE NUMBER WHENEVER ONE OF THESE FILES CHANGES. Renaming the file
+     would work too but costs a manifest line as well; the query string is one
+     character and the manifest is untouched. A test fails if any `--cta-art`
+     loses its version token.
+
   /* THE ART IS ONE CUSTOM PROPERTY PER CARD, and that is the whole swap.
      Unit 40 shipped with three locally authored SVG motifs as placeholders and
      was built so photographs could replace them WITHOUT the layout moving. On
@@ -182,9 +196,9 @@
      manifest, and nothing else. The sizing, the grid, the text and the tests
      did not move. Keep it that way — a per-card background-position or a
      bespoke height for one card would end that property. */
-  .cta-ins{--cta-art:url('assets/card-insurance.webp');}
-  .cta-leg{--cta-art:url('assets/card-legal.webp');}
-  .cta-pri{--cta-art:url('assets/card-private.webp');}
+  .cta-ins{--cta-art:url('assets/card-insurance.webp?v=2');}
+  .cta-leg{--cta-art:url('assets/card-legal.webp?v=2');}
+  .cta-pri{--cta-art:url('assets/card-private.webp?v=2');}
   .cta-art{position:absolute;inset:0;background:var(--cta-art) center/cover no-repeat;}
   /* THE DARK OVERLAY IS A SEPARATE LAYER, above the art and below the text, so
      the contrast the text relies on does not depend on which image is behind
