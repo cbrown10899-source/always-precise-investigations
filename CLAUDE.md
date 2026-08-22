@@ -919,6 +919,118 @@ with data in it is a **TEST- case from Settings** — a real row, badged whereve
 it appears, created and removed deliberately. Do not reintroduce page-held
 example data; a test fails on `EXAMPLE-` appearing in the page at all.
 
+## The case workspace is one level deep
+
+Unit 38 (owner brief verbatim in `case-portal/CASE-WORKSPACE.md`, including
+the mobile/tablet focus addendum). Owner: *"The portal has become too busy
+when doing actual case work. Activity, Daily Summary, Evidence and Report must
+be much easier to reach ... Do not make the user return to the main portal
+navigation."* **The goal was not to remove functionality**, and none was
+removed: every tab that existed still exists, under its own key, so a
+bookmarked `?tab=` still lands where it did.
+
+**It was two levels, and the Daily Summary was three.** Four sections over
+seventeen tabs, and the builder sat at Report & Media → Reports → its sixth
+sub-view. `wsPrimary()` is now one row — Overview, Activity, Daily Summary,
+Evidence, Report, and Billing for an admin — and `wsMore()` is **derived from
+`wsSections()` by subtraction**, never listed again. Two lists of tabs is one
+list that goes stale, and a tab added to `wsSections()` therefore arrives in
+More rather than disappearing from the page.
+
+**`WS_BAR_TABS` is named once** for the same reason: the phone's thumb bar
+carries Activity, Summary and Evidence, and the More list works out what it
+must cover by subtracting them. The bar and the menu cannot drift into
+duplicating a door or losing one.
+
+**A door that the row hides must exist somewhere.** Under 640px the desktop
+tab row is `display:none`, which left Overview, Report and Billing reachable
+from nothing at all — a phone-only hole that no desktop assertion could see.
+`.more-primary` renders them inside More and is CSS-shown **only** at the
+widths where the row is hidden.
+
+**A control that draws on every tab has to work on every tab.** The Add
+Activity sheet was rendered inside `activityPanel()`, so the `+ Add activity`
+button in `caseActionsHtml()` — which draws on every screen of the case — did
+nothing on any of the others. It is rendered from `caseBodyHtml()` now.
+
+**And there is one obvious way to add an entry, not three.** The panel's own
+duplicate button came out, following the owner's duplicate-entry-point rule;
+`svLaunchButton()` did **not**, because it is the icon card that made the
+field view findable after the iPad incident and the rule is one primary door
+plus one contextual one.
+
+### Activity reads oldest first
+
+The owner's addendum, and it is a data-layer change rather than a page one:
+`caseWorkspace` returns `activity` **oldest first**, so the log, the Daily
+Summary builder, the report Chronology and the package all tell the day in the
+order it happened.
+
+**The cap still takes the newest.** The ORDER BY could not simply be flipped —
+`LIMIT 500` over an ASC sort keeps the oldest 500 and drops this morning's
+work, which is the opposite of what a cap is for. The read is a DESC-ordered
+LIMIT wrapped in a subquery that sorts the survivors ASC.
+
+**Four lists indexed the front of that array**, and the fourth was found by
+reading the HEADING rather than the code: a list labelled "recent" that begins
+`slice(0, 4)` is correct against a newest-first array and exactly backwards
+against an oldest-first one. `newestActivity(n)` is the one reader now.
+
+**A comment cannot hold a backtick inside a SQL template literal.** Writing
+one ended the string and broke the Worker; the explanation lives outside the
+literal.
+
+### The Overview answers "what now"
+
+Four blocks — NEXT STEP, TODAY, RECENT ACTIVITY, CASE STATUS — in place of the
+wall of cards, and every line routes somewhere real. `wsCurrentDay()` answers
+which day the case is on **once**, and returns its label with it: the open day
+if one is running, else the latest, with *running now* / *most recent day* /
+*no day yet* said out loud, because a screen that draws "Day 3" without saying
+whether it is running is the silently wrong day the owner named. `wsDayNo()`
+counts from `WS.days_total`, which is Unit 25's rule — a scoped list would
+draw "Day 1" on a case three days in.
+
+**The case page carries an `h1` now.** `shell()` holds the portal's single
+`h1` and the case page bypasses `shell()` entirely, so the most-used screen in
+the portal had no heading at all. It is `.vh` — in the accessibility tree, out
+of the visual layout — and the two never coexist because `shell()` is not
+rendered on this route.
+
+### Navigating to a section does not open the keyboard
+
+Owner, 2026-08-22: *"navigating to a section must NOT automatically focus a
+text field or open the on-screen keyboard."*
+
+**There is no `autofocus` attribute anywhere in this page** — the audit looked.
+What raised the keyboard was `paint()` handing the caret back
+**unconditionally** at the end of every repaint. That is right while somebody
+is typing, because each keystroke rebuilds the box the cursor is in and
+without it typing lands one character at a time; it is wrong every other time,
+and a repaint cannot tell the two apart by itself. So it is told:
+`focusCapture()` reads `document.activeElement` **before** the DOM is
+replaced, and `focusRestore()` gives the caret back only to that element.
+
+`FOCUS_KEEP` is an allow-list for the `FIELD_KEEP` reason — a search box added
+later does not acquire page-entry focus by existing.
+
+**Dialogs are exempt by the owner's own words** (*"dialogs/forms may focus
+intentionally only after the user explicitly opens that dialog/form"*), so
+`ls_to` and `pi_to` are untouched. So are the three restores that live in the
+`input` handler (`sv_q`, `vst_q`, `pst_q`): those fire only after a keystroke.
+
+**The tests assert both halves.** Nothing is focused on arrival at any of the
+fourteen sections or on opening a case, *and* typing still works in Search,
+the case filter and the directory — a test for only the first would pass on a
+page where search no longer works. Run at 390 / 820 / 1200px, because the
+failure the owner saw is a touch-keyboard one and the nav is behind the burger
+under 900px.
+
+`.srchbox` gained a 640px desktop maximum, released below 900px. **900 is read
+off this page rather than invented** — it is already where the nav rail goes
+behind the burger, so an iPad in portrait gets the whole width. Presentation
+only: no query, no route, no search behaviour changed.
+
 ## Test cases, and removing them completely
 
 `POST /demo-case` writes a **real** row prefixed `TEST-`, so the portal can be

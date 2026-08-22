@@ -726,3 +726,80 @@ all fourteen portal nav surfaces, the three Settings panels, all three rate-shee
 cards including Legal, all three pre-case send doors, the three field tools for
 both roles, the case workspace and its four sections, and the investigator role
 boundary. Detail in `case-portal/PRODUCTION-TRUTH-2.md`.
+
+
+## Queue state at 2026-08-22, when Unit 39 was added
+
+Checked under the owner's queue-safety instruction, with **Unit 38's portal
+suite actively running and deliberately not interrupted**:
+
+| Question | Answer |
+| --- | --- |
+| What is complete? | Locked order 1–17, hotfix 17A, Units 18–22, 24–37, 37A |
+| What is in progress? | **Unit 38 — Case Workspace Simplification**, on branch, suite in flight |
+| What is queued ahead of the new work? | Only Unit 38 |
+| What is deferred by owner? | The deferred list in `NEXT.md`, unchanged |
+| What needs live verification only? | Unit 23's sweep and every LIVE VERIFY OPEN row |
+
+**Unit 39 — Case content Delete / Restore controls** was therefore inserted at
+the next free position, after 38, displacing nothing. Owner brief verbatim in
+`case-portal/CASE-CONTENT-DELETE.md`.
+
+**It is a PRODUCTION unit and the owner opens by saying so** — *"This is NOT
+test-cleanup only ... Admin must have a quick, obvious way to remove
+incorrectly entered or no-longer-needed information from BOTH test cases AND
+REAL PRODUCTION CASES."* That distinction matters here because `POST
+/demo-case/clear` and `DEMO_SWEEP` already remove `TEST-` cases cleanly, and a
+reader skimming for "delete" would find them and think the work was done.
+
+**The tombstone model it must reuse already exists** — `case_deleted`,
+`activity_removed`, `case_archive`, `case_evidence.deleted_at` — and so does
+the rule they were built to serve: *nothing the office does in the portal is
+unrecoverable in the portal*. This unit widens who can reach that model and
+where the controls appear; it does not change what happens to bytes. The
+owner's limits say the same thing in their own words: no physical Dropbox
+deletion, no evidence overwrite, no silent hard deletion.
+
+**One thing to check rather than assume when it starts:** the brief asks that
+a finalized report or package whose source data changed shows *SOURCE DATA
+CHANGED — REBUILD REQUIRED*, "or use the existing equivalent mechanism".
+`CASEBUILD.md` already records that the package document renders only
+currently-deliverable evidence and NAMES what it withheld, and that printing
+re-reads the package first. Whether that is the equivalent mechanism, or
+whether a distinct stale marker is wanted, is the first question the unit has
+to answer from the code rather than from the brief.
+
+
+## Unit 38 — what the rebuild of the case screen found, and what was left alone
+
+**Found and fixed inside the unit**, because the unit's own tests named them:
+
+| Finding | Why it counts as Unit 38's |
+| --- | --- |
+| The case page had **no `h1` at all** | Test 20a asserts exactly one `h1` on the signed-in page and measured **0**. `shell()` holds the portal's single heading and the case page bypasses `shell()` entirely, so the most-opened screen in the portal was headingless |
+| `+ Add activity` **drew on every tab and worked on one** | The sheet was rendered inside `activityPanel()`; the button is in `caseActionsHtml()`, which draws on every screen of the case. A control that draws is not a control that works |
+| Overview, Report and Billing were **reachable from nothing under 640px** | The desktop row is `display:none` there and those three are not in the thumb bar. A phone-only hole no desktop assertion could see |
+| **Four** lists indexed the front of the activity array | The oldest-first flip made `slice(0, n)` return the oldest entries under a heading that says "recent". The fourth was found by reading the heading, not the code |
+| `LIMIT 500` was about to keep the **wrong end** | Flipping the ORDER BY alone would have dropped this morning's work and kept 2019's. The read is a DESC-ordered LIMIT wrapped in a subquery that re-sorts ASC |
+
+**Found and deliberately NOT fixed inside the unit** — recorded here so the
+decision is the owner's rather than a silence:
+
+**`announceRendered()` never runs on the case page.** Unit 21's whole design is
+one chokepoint — *"reading what was rendered catches every one of them and any
+added later"* — and `paint()`'s case branch `return`s before that call. So every
+confirmation and refusal inside a case is drawn silently for a screen-reader
+user, on the most-used screen in the portal.
+
+It is **pre-existing**, not a Unit 38 regression: the same early return is on
+`master`, from when the workspace became a full page. The owner's test 20 asks
+that accessibility *remains* sound, and it does — this was never sound there.
+
+It is one line and it is tempting, and that is exactly why it is being reported
+instead. Two things make it more than a one-liner: `.note` on this codebase is
+often **static explanatory prose** rather than a message (the profile panel's
+"No saved client or firm is linked to this case", and a dozen like it), so
+switching it on would start reading paragraphs aloud on arrival at a case tab —
+and whether that is an improvement is a judgement about how the office's
+screen-reader users actually work, not a mechanical fix. **Queued for the owner
+to decide, not slipped into a navigation unit.**

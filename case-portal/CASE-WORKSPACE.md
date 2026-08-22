@@ -485,3 +485,93 @@ Add regression tests proving:
 
 Include this in Unit 34 implementation and do not create a separate unit.
 ```
+
+---
+
+# ADDENDUM — mobile / tablet focus and the search field
+
+**Owner, 2026-08-22, verbatim below.** Added to **Unit 38** rather than queued
+separately, on the owner's own instruction — *"Ship with the current UI/UX
+unit if safe"* — because both are presentation changes in `portal/index.html`,
+the file this unit is already rebuilding, and neither touches search logic or
+any route.
+
+## What the audit found, before any change
+
+There are **no `autofocus` attributes anywhere** in the portal. The keyboard
+was being opened by `paint()`: it rebuilds the whole screen, the search boxes
+repaint on every keystroke, and the caret was handed back **unconditionally**.
+So tapping a nav item also put the caret in that section's search box — on
+**Search, Cases, Clients & Firms** and the quick-intake picker — and on an iPad
+or a phone the keyboard came up over the page someone had just asked to look
+at.
+
+**The two cases are told apart by asking who had the caret BEFORE the repaint.**
+Restoring focus to the box you were already typing in is the behaviour that was
+wanted; granting it to a box you have never touched is the defect. That is one
+distinction, written once, replacing five unconditional `.focus()` calls.
+
+**Deliberately unchanged**, and the owner allows it in as many words: a dialog
+or sheet the user explicitly opened may focus its first field. The send
+composers focus from their own CLICK handler and the field-view searches from
+their own INPUT handler — never from a repaint.
+
+An existing accessibility test's own comment had already recorded the
+annoyance: *"`paint()` puts the caret in the case search box ... it also means
+a bare Tab does not start at the top of the document."* This rule fixes that
+too.
+
+## The search field
+
+`.srchbox` had no maximum width, so it ran the width of the card. Contained on
+a desktop, released to full width on a phone. **Presentation only** — no search
+behaviour, no route, no query changes.
+
+---
+
+## THE BRIEF, VERBATIM
+
+```
+Also:
+
+ADD TO CURRENT MOBILE/TABLET UX CLEANUP.
+
+Owner rule: navigating to a section must NOT automatically focus a text field or open the on-screen keyboard.
+
+Audit all page-entry autofocus/focus calls.
+
+Apply to:
+- Search
+- Cases
+- Intakes
+- Clients & Firms
+- File Queue
+- Reports & Packages
+- Rate Sheets
+- Billing
+- Settings
+- Case Workspace
+- any other normal portal section
+
+Requirements:
+- tapping a nav item only opens the section
+- Search page must NOT autofocus the search input
+- keyboard appears only after the user explicitly taps a text field
+- remove autofocus attributes, automatic .focus() calls, and page-load focus that trigger mobile/iPad keyboards
+- preserve visible focus behavior for keyboard users
+- do not break accessibility
+- dialogs/forms may focus intentionally only after the user explicitly opens that dialog/form
+- desktop may also avoid automatic input focus for consistency
+
+Test on:
+- iPhone widths
+- iPad/tablet widths
+- desktop
+- Safari/mobile behavior if covered by existing browser tests
+
+Also keep the Search bar width fix:
+- contained desktop max-width
+- full width on mobile
+- presentation only, no search logic changes
+
+Ship with the current UI/UX unit if safe.```

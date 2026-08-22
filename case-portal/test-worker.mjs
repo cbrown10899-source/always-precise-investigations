@@ -3493,7 +3493,13 @@ section('The investigation day and the activity log');
 
   ws = await jsonOf(await call(env, '/cases/API-W1/workspace', { cookie: admin }));
   ok('the log holds every entry', ws.activity.length === 3);
-  ok('it reads newest first', ws.activity[0].at_time === '08:17');
+  /* Unit 38 — the log is a narrative, so it reads OLDEST first. This
+     assertion used to pin the opposite; it pins both ends now, because a
+     one-ended check passes on a list of one. */
+  ok('it reads oldest first', ws.activity[0].at_time === '07:03',
+     JSON.stringify(ws.activity.map(a => a.at_time)));
+  ok('and the newest entry is last', ws.activity[ws.activity.length - 1].at_time === '08:17',
+     JSON.stringify(ws.activity.map(a => a.at_time)));
   ok('entries attach to the running day', ws.activity.every(e => e.day_id === ws.open_day.id));
   ok('each entry names who logged it', ws.activity[0].investigator === 'Trever');
 
@@ -13424,6 +13430,124 @@ section('The intake subject fallback obeys the role boundary');
 
   ok('a signed-out caller still cannot search at all',
      (await call(env, '/search?q=Merrow')).status === 401);
+}
+
+/* ======================================================================
+   UNIT 38 — ACTIVITY IS CHRONOLOGICAL, OLDEST FIRST (owner, 2026-08-22).
+
+   A case's activity is a narrative: Day 1 before Day 2, 08:15 before 09:40.
+   `caseWorkspace` was returning it newest-first, so the case log, the field
+   timeline and the REPORT chronology all read backwards — while the Daily
+   Summary builder sorted ascending for itself. One case, two answers about
+   the same day, which is the thing this project refuses.
+
+   The five properties the owner named, each asserted on its own.
+   ====================================================================== */
+
+section('Activity reads oldest first, and everything that reads it agrees');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-ORD-0001', client_name: 'Order Client',
+    subject_name: 'Order Subject', service: 'Surveillance' });
+  await call(env, '/cases/API-ORD-0001/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-08-20', start_time: '07:00' } });
+
+  const log = (time, desc, date = '2026-08-20') => call(env, '/cases/API-ORD-0001/activity',
+    { method: 'POST', cookie: admin, body: { at_date: date, at_time: time, description: desc } });
+  const ws = async () => jsonOf(await call(env, '/cases/API-ORD-0001/workspace', { cookie: admin }));
+  const times = async () => (await ws()).activity.map(a => `${a.at_date} ${a.at_time}`);
+
+  /* 1. ENTERED OUT OF ORDER, RENDERED IN ORDER. The office types 09:40 first
+        and then remembers the 08:15 — the list must not follow the typing. */
+  await log('09:40', 'Subject returned to the residence.');
+  await log('08:15', 'Subject departed the residence.');
+  await log('12:05', 'Subject entered the hardware store.');
+  ok('out-of-order entries render by their own timestamp, oldest first',
+     JSON.stringify(await times()) === JSON.stringify(
+       ['2026-08-20 08:15', '2026-08-20 09:40', '2026-08-20 12:05']),
+     JSON.stringify(await times()));
+
+  /* 2. SAME TIME, DETERMINISTIC. Two entries in one minute must not swap
+        places between requests; the row id is the only stable thing about
+        them that already exists. */
+  const a1 = await jsonOf(await log('10:00', 'First of the two.'));
+  const a2 = await jsonOf(await log('10:00', 'Second of the two.'));
+  const idsAt10 = async () => (await ws()).activity
+    .filter(a => a.at_time === '10:00').map(a => a.id);
+  const first = await idsAt10();
+  ok('two entries at the same minute keep a stable order',
+     first.length === 2 && first[0] < first[1], JSON.stringify(first));
+  ok('and that order does not change between requests',
+     JSON.stringify(await idsAt10()) === JSON.stringify(first)
+     && JSON.stringify(await idsAt10()) === JSON.stringify(first), JSON.stringify(first));
+
+  /* 3. A LATER EVENT APPENDS TO THE BOTTOM. */
+  await log('16:30', 'Surveillance concluded for the day.');
+  const t = await times();
+  ok('a new later entry appears at the END of the list',
+     t[t.length - 1] === '2026-08-20 16:30', JSON.stringify(t));
+
+  /* A LATER DAY SORTS AFTER AN EARLIER ONE, not by when it was typed. */
+  await log('06:00', 'Second day, first thing.', '2026-08-21');
+  await log('23:00', 'First day, very late.', '2026-08-19');
+  const t2 = await times();
+  ok('days sort chronologically too, whatever order they were entered',
+     t2[0] === '2026-08-19 23:00' && t2[t2.length - 1] === '2026-08-21 06:00',
+     JSON.stringify(t2));
+
+  /* 4. A RESTORED ENTRY RETURNS TO ITS PLACE, not to the end. */
+  const midId = (await ws()).activity.find(a => a.at_time === '09:40').id;
+  await call(env, `/cases/API-ORD-0001/activity/${midId}/delete`,
+    { method: 'POST', cookie: admin, body: {} });
+  const removed = (await ws()).activity.find(a => a.id === midId);
+  ok('a removed entry is still returned, marked', removed && removed.removed_at,
+     JSON.stringify(removed || null));
+  await call(env, `/cases/API-ORD-0001/activity/${midId}/restore`,
+    { method: 'POST', cookie: admin, body: {} });
+  const back = (await ws()).activity;
+  const at = back.findIndex(a => a.id === midId);
+  ok('a restored entry comes back in its chronological place, not at the end',
+     at > 0 && at < back.length - 1
+     && back[at - 1].at_time <= '09:40' && back[at + 1].at_time >= '09:40',
+     JSON.stringify(back.map(a => `${a.at_time}#${a.id}`)));
+
+  /* 5. THE DAILY SUMMARY AND THE REPORT READ THE SAME SEQUENCE. Both take a
+        day's slice of this array; the builder then sorts by at_time and id for
+        itself. So the property that makes all three agree is that the array
+        ALREADY arrives in that order — asserted directly below rather than by
+        comparing two lists that could both be wrong the same way. The page
+        side of it is pinned in the portal suite. */
+
+  /* THE REPORT CHRONOLOGY reads the same array, filtered by day — so the
+     sequence a report prints is the sequence the log shows. */
+  const day = (await ws()).days[0];
+  const dayEntries = (await ws()).activity.filter(a => a.day_id === day.id && !a.removed_at);
+  const key = e => `${e.at_date} ${e.at_time}`;
+  const sorted = dayEntries.slice().sort((x, y) =>
+    key(x) < key(y) ? -1 : key(x) > key(y) ? 1 : x.id - y.id);
+  ok("a day's entries are already in report order without re-sorting",
+     JSON.stringify(dayEntries.map(a => a.id)) === JSON.stringify(sorted.map(a => a.id)),
+     JSON.stringify(dayEntries.map(a => `${a.at_time}#${a.id}`)));
+
+  /* AND THE CAP IS STILL TAKEN FROM THE NEWEST END — ordering ascending and
+     then LIMIT would keep the oldest rows and drop this morning's work. */
+  ok('the newest entry is present, which is what the cap must never drop',
+     (await ws()).activity.some(a => a.at_date === '2026-08-21'), JSON.stringify(await times()));
+
+  /* The DASHBOARD's recent-activity view is a different question and keeps
+     its own newest-first order, by the owner's own carve-out. */
+  const recent = await jsonOf(await call(env, '/recent-activity', { cookie: admin }));
+  const items = recent.items || recent.activity || [];
+  if (items.length > 1) {
+    const stamps = items.map(i => i.at || i.created_at || '').filter(Boolean);
+    ok('the dashboard recent-activity list stays newest-first',
+       stamps.every((v, i) => i === 0 || stamps[i - 1] >= v), JSON.stringify(stamps.slice(0, 5)));
+  } else {
+    ok('the dashboard recent-activity list is a separate read', true,
+       `${items.length} item(s)`);
+  }
 }
 
 section('Needs attention: every alert is something that is actually true');

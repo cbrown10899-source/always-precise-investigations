@@ -433,7 +433,8 @@ project is **not complete** while 37 and 38 are open.
 | --- | --- | --- | --- |
 | **37** | Final Production Truth Audit — Round 2 | `PRODUCTION-TRUTH-2.md` (owner verbatim + result) | ✅ **DONE — NOT PASSED.** One HIGH, two lesser. No repository file changed to run it |
 | **37A** | HOTFIX — all three Round 2 findings | `PRODUCTION-TRUTH-2.md` | ✅ **DONE.** No schema |
-| **38** | Case Workspace Simplification | `CASE-WORKSPACE.md` (owner verbatim) | 🔵 **REQUIRED — NEXT** |
+| **38** | Case Workspace Simplification | `CASE-WORKSPACE.md` (owner verbatim) | 🟡 **IN FLIGHT** |
+| **39** | Case content Delete / Restore controls | `CASE-CONTENT-DELETE.md` (owner verbatim) | 🔵 **REQUIRED — after 38.** A PRODUCTION unit: real cases, not only `TEST-` ones. No Dropbox byte deletion, no evidence overwrite, no silent hard delete |
 
 **Unit 38 carries three named requirements** and none may be split out, dropped
 or quietly satisfied by an existing feature:

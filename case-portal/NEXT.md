@@ -54,7 +54,7 @@ completed.
 | **Deployed** | at `b34ccda`: `Deploy site to Cloudflare Pages` ✅ **run 32540154210**. The Worker was untouched by Unit 36, so `deploy-portal.yml` correctly did not fire. LIVE byte-check not possible from this container — the proxy refuses the domain (403), as recorded |
 | **Closeout** | ✅ **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** — see `case-portal/FINAL-LEDGER.md` |
 | **Owner decisions** | ✅ five LOCKED at closeout, 2026-08-21 — see **FINAL OWNER DECISIONS** below. Four are deferrals or standing refusals; **decision 4 (Ended by Admin) is BUILT — Unit 27** |
-| **Next unit** | **UNIT 38 — Case Workspace Simplification** (owner brief verbatim in `case-portal/CASE-WORKSPACE.md`), carrying Activity oldest-to-newest ordering and simplified Activity / Daily Summary access. Unit 37 (the audit) did **not** pass and **37A fixed all three of its findings** — record in `case-portal/PRODUCTION-TRUTH-2.md` |
+| **Next unit** | **UNIT 38 — Case Workspace Simplification — IN FLIGHT** (owner brief verbatim in `case-portal/CASE-WORKSPACE.md`), carrying Activity oldest-to-newest ordering and simplified Activity / Daily Summary access. Then **UNIT 39 — Case content Delete / Restore controls** (owner brief verbatim in `case-portal/CASE-CONTENT-DELETE.md`), a PRODUCTION unit covering activity, days, daily summaries, evidence, package contents and an audit of other user-entered records. Unit 37 (the audit) did **not** pass and **37A fixed all three of its findings** — record in `case-portal/PRODUCTION-TRUTH-2.md` |
 
 ## 🔄 RESUME POINT — Production Truth Correction Queue (Units 28–33)
 
@@ -206,7 +206,28 @@ touch how existing cases are categorised, so it is recorded rather than done.
   door's own accessible page name and the legal page's cache-rule parity. The
   regression tests are written from that boundary and control-checked: with the
   fallback disabled the suite reports ten failures.
-- **38 — Case Workspace Simplification.** 🔵 **REQUIRED — NEXT.** Owner brief verbatim
+- **39 — Case content Delete / Restore controls.** 🔵 **REQUIRED, after 38.**
+  Owner brief verbatim in `case-portal/CASE-CONTENT-DELETE.md`. **This is a
+  PRODUCTION unit and the owner says so in the first line** — Admin must be
+  able to remove incorrectly entered or no-longer-needed information from
+  **real** cases, not only from `TEST-` ones. Today too much can only be
+  edited and then sits in the working case for ever.
+  Six areas, at minimum: **activity entries** (delete, restore, gone from the
+  Activity view, the Daily Summary source and the report chronology, restored
+  to its true chronological position); **investigation days**, with a
+  confirmation that names the date, the entry count, the evidence count,
+  whether a summary exists and whether the day is already in a report or
+  package; **daily summaries**, where Delete Summary is not Delete Day
+  Activity; **evidence**, through the existing tombstone model; **package
+  contents**, where *Remove from Package* and *Delete from Case* are never the
+  same action; and **an audit of other user-entered records** to find what can
+  be created but not removed — adding Delete only where it is safe.
+  Hard limits from the owner: **no physical Dropbox deletion, no evidence
+  overwrite, no silent hard deletion, no billing or history destruction**,
+  actor and timestamp preserved, reason preserved where consequential, and a
+  finalized report whose source changed must say **SOURCE DATA CHANGED —
+  REBUILD REQUIRED** rather than quietly looking current.
+- **38 — Case Workspace Simplification.** 🟡 **IN FLIGHT.** Owner brief verbatim
   in `case-portal/CASE-WORKSPACE.md`. Three things are durable required work
   inside it and must not be dropped or split out:
   **(a)** the simplified desktop and mobile case workspace,
@@ -220,6 +241,17 @@ touch how existing cases are categorised, so it is recorded rather than done.
   public-site unit, so this is 38 and the alias is recorded in the brief file.
   **The goal is NOT to remove functionality** — the brief carries a DO NOT
   REMOVE FUNCTIONALITY list and twenty numbered tests.
+  **(d)** the owner's mobile/tablet UX addendum of 2026-08-22, added to this
+  unit by their own instruction (*"Ship with the current UI/UX unit if safe"*)
+  and recorded verbatim at the end of `CASE-WORKSPACE.md`: **navigating to a
+  section must not automatically focus a text field or open the on-screen
+  keyboard**, across Search, Cases, Intakes, Clients & Firms, File Queue,
+  Reports & Packages, Rate Sheets, Billing, Settings and the Case Workspace;
+  dialogs may still focus after the user explicitly opens them; plus a
+  **contained desktop Search field**, full width on mobile, presentation only.
+  The audit found **no `autofocus` attribute anywhere in the page** — the
+  keyboard was raised by `paint()` restoring the caret unconditionally on every
+  repaint.
 - **26 — Final master reconciliation + project closeout.** ✅ **DONE.** Every
   durable owner requirement was compared against master and live state and
   classified in **`case-portal/FINAL-LEDGER.md`**: MASTER-HANDOFF §0–§43, the
@@ -228,6 +260,23 @@ touch how existing cases are categorised, so it is recorded rather than done.
   CODED / TESTED / PUSHED / MERGED / DEPLOYED / LIVE VERIFIED per unit. Nothing
   deferred was converted to complete. **No non-deferred approved requirement is
   missing.**
+
+## 🔵 QUEUED — reported by Unit 38, deferred to the owner rather than fixed
+
+**`announceRendered()` never runs on the case page.** Unit 21's chokepoint is
+the whole design — *"reading what was rendered catches every one of them and
+any added later"* — and `paint()`'s case branch returns before that call, so
+every confirmation and refusal inside a case is drawn silently for a
+screen-reader user, on the most-opened screen in the portal.
+
+**Pre-existing, not a Unit 38 regression** — the same early return is on
+`master` from when the workspace became a full page — so the owner's test 20
+("accessibility *remains* sound") is satisfied either way. It is one line and
+it was deliberately not taken: `.note` on this codebase is often **static
+explanatory prose** rather than a message, so switching it on would read
+paragraphs aloud on arrival at a case tab. Whether that is an improvement is a
+judgement about how the office actually works, not a mechanical fix. Detail in
+`RECONCILIATION.md`.
 
 ## Still needing the owner — carry these forward
 
@@ -300,7 +349,8 @@ CREATE A BRANCH. DO NOT DEPLOY. DO NOT START THE NEXT UNIT."*
 | 36 | Optional-field labelling, audited off the validators | ✅ **DONE — DEPLOYED** at `b34ccda` (#228), Pages run 32540154210. LIVE VERIFY **OPEN** |
 | **37** | **Final Production Truth Audit — Round 2** | ✅ **DONE — NOT PASSED.** One HIGH, two lesser. Result and correction queue in `case-portal/PRODUCTION-TRUTH-2.md`. No repository file was changed to run it |
 | **37A** | **HOTFIX — all three Round 2 findings** | ✅ **DONE.** HIGH: the search gained an intake fallback over `submissions.subject_name` and the payload address, scoped like the structured arms, with `case_subjects` kept as the preferred source so a curated case returns once. MEDIUM: `pageName()`/`pageKind()` give each door its own accessible name. LOW: `/legal-investigations/*` gained its siblings' cache rule, security untouched. **No schema.** Detail in `PRODUCTION-TRUTH-2.md` |
-| **38** | **Case Workspace Simplification** (the owner's message calls it "Unit 34" — that number is taken; see below) | 🔵 **REQUIRED — NEXT.** Owner brief verbatim in `case-portal/CASE-WORKSPACE.md`. Carries **Activity oldest-to-newest ordering** and **simplified Activity / Daily Summary access** inside it, by the owner's instruction — not separate units |
+| **38** | **Case Workspace Simplification** (the owner's message calls it "Unit 34" — that number is taken; see below) | 🟡 **IN FLIGHT.** Owner brief verbatim in `case-portal/CASE-WORKSPACE.md`. Carries **Activity oldest-to-newest ordering** and **simplified Activity / Daily Summary access** inside it, by the owner's instruction — not separate units |
+| **39** | **Case content Delete / Restore controls** | 🔵 **REQUIRED — after 38.** Owner brief verbatim in `case-portal/CASE-CONTENT-DELETE.md`. **A PRODUCTION unit, not test-cleanup**: Admin needs an obvious way to remove wrongly entered information from REAL cases. Six areas — activity, investigation days, daily summaries, evidence, package contents, and an audit of other user-entered records. **No Dropbox byte deletion, no evidence overwrite, no silent hard delete**; Remove from Package is never Delete from Case; a report whose source changed says so rather than looking current |
 
 ## CONFIRMED COMPLETE — DO NOT REOPEN
 

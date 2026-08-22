@@ -311,22 +311,65 @@ const earlierToday = (mins) => {
 // inside four sections now (UIBUILD P6) — when the wanted sub-tab is not in
 // the visible row, walk the section bar until it shows, the way a person
 // hunting for it would.
+/* UNIT 38 — every tab this role can reach on a case, row plus More. The
+   boundary walks below use it, so "no panel anywhere shows money" keeps
+   meaning ANYWHERE rather than "in the four sections that used to exist". */
+async function wsAllTabs(page) {
+  return page.evaluate(() => [...wsPrimary(), ...wsMore()].map(t => ({ key: t[0], label: t[1] })));
+}
+/* Visit every one of them and collect what each drew. */
+async function wsVisitAll(page, read) {
+  const out = [];
+  for (const t of await wsAllTabs(page)) {
+    await page.evaluate(k => { WS_TAB = k; WS_MORE = false; paintCase(); }, t.key);
+    await page.waitForTimeout(220);
+    out.push({ tab: t.label, text: await read(page) });
+  }
+  return out;
+}
+
+/* UNIT 38 — the case workspace is one level deep now. Six tabs in a row, and
+   everything else behind More. This walks the same way a person does: look for
+   the tab, and if it is not on the row, open More and take it from there. */
+/* Which case tab is open, by key. Reading the current nav BUTTON's words was
+   fine while every tab was on a bar; since Unit 38 a tab inside More marks the
+   More button instead, so the words say "More" and not the panel on screen.
+   WS_TAB is the routing state itself and cannot disagree with the panel. */
+const wsOpenTab = page => page.evaluate(() => WS_TAB);
+
 async function wsTab(page, name) {
-  const tab = () => page.locator('.wstabs button', { hasText: name });
-  if (!(await tab().count())) {
-    for (const sec of await page.locator('.wsecs button').all()) {
-      await sec.click();
-      await page.waitForTimeout(180);
-      if (await tab().count()) break;
+  /* Resolve the LABEL to its tab key first and click by key. Matching nav
+     buttons by their words is what a person does, but Playwright's hasText is
+     a substring match, so "Subject" also matches "Subject vehicles" and the
+     More button when it carried a name. The key is exact. */
+  const key = await page.evaluate(
+    n => ([...wsPrimary(), ...wsMore()].find(t => t[1] === n) || [])[0] || null, name);
+  if (!key) throw new Error(`no case tab labelled "${name}"`);
+  /* Take whichever door is VISIBLE at this width, the way a person would: the
+     desktop row, then the thumb bar, then More. Counting elements is not
+     enough — the row is in the DOM on a phone and hidden by CSS. */
+  for (const sel of [`.wsnav button[data-tab="${key}"]`, `.wsbar button[data-tab="${key}"]`]) {
+    const door = page.locator(`${sel}:visible`);
+    if (await door.count()) {
+      await door.first().click();
+      await page.waitForTimeout(250);
+      return;
     }
   }
-  await tab().click();
-  await page.waitForTimeout(200);
+  if (!(await page.locator('.wsmorelist:visible').count())) {
+    await page.locator('[data-act="wsMore"]:visible').first().click();
+    await page.waitForTimeout(250);
+  }
+  await page.locator(`.wsmorelist button[data-tab="${key}"]:visible`).first().click();
+  await page.waitForTimeout(250);
 }
 // The activity form lives in the Add Activity sheet (UIBUILD P8); the free
 // composer is its Custom tab.
 async function openComposer(page) {
-  await page.locator('[data-act="actOpen"]').click();
+  /* Unit 38 — Add activity has one primary door (the case action row) and one
+     contextual shortcut (the phone bar), so the DOM holds both and exactly one
+     is visible at any width. Click the visible one. */
+  await page.locator('[data-act="actOpen"]:visible').first().click();
   await page.waitForTimeout(250);
   await page.locator('.amtab', { hasText: 'Custom' }).click();
   await page.waitForTimeout(250);
@@ -384,7 +427,12 @@ section('Admin case list');
   const subj = await text(page, '#dlgBody');
   ok('the claimant is labelled as a claimant', subj.includes('Claimant'));
   ok('the injury and restrictions are shown', subj.includes('Lumbar strain'));
-  ok('the case opens on a workspace with four sections', await page.locator('.wsecs button').count() === 4);
+  /* Unit 38 — one row of six, not four sections over seventeen tabs. */
+  ok('the case opens on a one-level workspace',
+     await page.locator('.wsnav button[data-act="wsTab"]').count() === 6,
+     JSON.stringify(await page.locator('.wsnav button').allInnerTexts()));
+  ok('and Daily Summary is on it, not three levels down',
+     await page.locator('.wsnav button', { hasText: 'Daily Summary' }).count() === 1);
   await wsTab(page, 'Assignment');
   ok('an admin sees the assignment controls', await page.locator('#asg').count() === 1);
   await page.close();
@@ -465,13 +513,15 @@ section('Investigator scope');
   await wsTab(page, 'Subject');
   const isubj = await text(page, '#dlgBody');
   ok('the investigator gets the injury and restrictions', isubj.includes('Lumbar strain'));
-  const isecs = await text(page, '.wsecs');
-  ok('the investigator navigates their own four sections',
-     has(isecs, 'Assignment') && has(isecs, 'Activity') && has(isecs, 'Case media') && has(isecs, 'Report'));
-  ok('nothing administrative is offered as a section', !has(isecs, 'Admin'));
-  await wsTab(page, 'Activity log');
-  ok('the investigator has an Activity log tab', await page.locator('.wstabs button', { hasText: 'Activity log' }).count() === 1);
-  ok('the investigator has a Field work tab', await page.locator('.wstabs button', { hasText: 'Field work' }).count() === 1);
+  const inav = await page.locator('.wsnav button').allInnerTexts();
+  ok('the investigator gets the same one-level workspace',
+     ['Overview', 'Activity', 'Daily Summary', 'Evidence', 'Report']
+       .every(t => inav.some(x => x.trim() === t)), JSON.stringify(inav));
+  ok('and no Billing tab on it', !inav.some(t => /Billing/i.test(t)), JSON.stringify(inav));
+  await wsTab(page, 'Activity');
+  ok('the investigator has an Activity tab', await page.locator('.wsnav button[data-tab="activity"]').count() === 1);
+  ok('the investigator can still reach Field work', await page.evaluate(
+     () => [...wsPrimary(), ...wsMore()].some(t => t[0] === 'field')));
   ok('the investigator has NO Assignment tab', await page.locator('.wstabs button', { hasText: 'Assignment' }).count() === 0);
   ok('the investigator gets no assignment controls', await page.locator('#asg').count() === 0);
   await page.close();
@@ -765,7 +815,8 @@ section('Adding a test case from the portal');
   // It behaves like a real case, which is the whole point of having one.
   await page.locator('tbody tr', { hasText: 'TEST-' }).first().click();
   await page.waitForTimeout(500);
-  ok('it opens a full workspace', await page.locator('.wsecs button').count() === 4);
+  ok('it opens a full workspace', await page.locator('.wsnav button').count() >= 6,
+     String(await page.locator('.wsnav button').count()));
   await wsTab(page, 'Authorization');
   const auth = await text(page, '#dlgBody');
   ok('it arrives with hours to work against', auth.includes('24 hours'));
@@ -1178,19 +1229,21 @@ section('The case workspace in the browser');
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(450);
 
-  const secbar = await text(page, '.wsecs');
-  for (const t of ['Overview', 'Fieldwork', 'Report & Media', 'Admin']) {
-    ok(`the workspace navigates by section: ${t}`, has(secbar, t), secbar);
+  const navbar = await text(page, '.wsnav');
+  for (const t of ['Overview', 'Activity', 'Daily Summary', 'Evidence', 'Report', 'Billing']) {
+    ok(`the workspace navigates in one row: ${t}`, has(navbar, t), navbar);
   }
   // Every panel is still reachable behind its section.
-  for (const t of ['Subject', 'Activity log', 'Field work', 'Authorization', 'Assignment']) {
+  const tabKeys = { Subject: 'subject', Activity: 'activity', 'Field work': 'field',
+                    Authorization: 'auth', Assignment: 'assign' };
+  for (const t of ['Subject', 'Activity', 'Field work', 'Authorization', 'Assignment']) {
     await wsTab(page, t);
-    ok(`the ${t} panel is still reachable`, has(await text(page, '.wstabs button.on'), t));
+    ok(`the ${t} panel is still reachable`, (await wsOpenTab(page)) === tabKeys[t], t);
   }
 
   // The chain has to hold hands: Reports with nothing to report on points at
   // Field work rather than dead-ending.
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   ok('an empty Reports tab offers the way to Field work',
      await page.locator('.btn', { hasText: 'Go to Field work' }).count() === 1);
   await page.locator('.btn', { hasText: 'Go to Field work' }).click();
@@ -1218,7 +1271,7 @@ section('The case workspace in the browser');
   ok('the day is running', has(await text(page, '#dlgBody'), 'Day running since 7:00 AM'));
 
   // Log the timeline — the form lives in the Add Activity sheet now (P10).
-  await wsTab(page, 'Activity log');
+  await wsTab(page, 'Activity');
   ok('the log says a day is running', has(await text(page, '#dlgBody'), 'Investigation day running'));
   ok('and offers to end it from right there',
      await page.locator('.btn', { hasText: 'End the day' }).count() === 1);
@@ -1251,7 +1304,9 @@ section('The case workspace in the browser');
   await page.waitForTimeout(500);
   log = await text(page, '#dlgBody');
   ok('a second entry joins it', log.includes('Subject arrived at ABC Fitness.'));
-  ok('the newest entry reads first', log.indexOf('8:17 AM') < log.indexOf('7:14 AM'));
+  /* Unit 38 — the log is a narrative, so it reads OLDEST first. */
+  ok('the log reads oldest first', log.indexOf('7:14 AM') < log.indexOf('8:17 AM'),
+     `7:14 at ${log.indexOf('7:14 AM')}, 8:17 at ${log.indexOf('8:17 AM')}`);
 
   await openComposer(page);
   await page.locator('#a_desc').fill('');
@@ -1298,7 +1353,7 @@ section('Drafting and reviewing a daily report in the browser');
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
 
   ok('a completed day is offered to report on',
      await page.locator('#r_day').count() === 1);
@@ -1405,16 +1460,16 @@ section('An investigator gets the same field tools, without the money');
   await signIn(page, 'dana', 'FieldWork2026x');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(450);
-  const fsecs = await text(page, '.wsecs');
-  ok('they get their own sections', has(fsecs, 'Activity') && has(fsecs, 'Case media') && has(fsecs, 'Report'));
-  ok('they do not get the Admin section', !has(fsecs, 'Admin'));
+  const fnav = await text(page, '.wsnav');
+  ok('they get their own row', has(fnav, 'Activity') && has(fnav, 'Evidence') && has(fnav, 'Report'));
+  ok('they do not get Billing on it', !has(fnav, 'Billing'));
 
   await wsTab(page, 'Field work');
-  ok('they get field work', has(await text(page, '.wstabs button.on'), 'Field work'));
+  ok('they get field work', (await wsOpenTab(page)) === 'field');
   ok('they can start their own day',
      await page.locator('.btn', { hasText: 'Start investigation' }).count() === 1);
 
-  await wsTab(page, 'Activity log');
+  await wsTab(page, 'Activity');
   await openComposer(page);
   await page.locator('#a_desc').fill('Arrived in vicinity of subject residence.');
   await page.locator('.btn', { hasText: 'Add to the log' }).click();
@@ -1537,7 +1592,7 @@ section('The Custom tab carries every composer');
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Activity log');
+  await wsTab(page, 'Activity');
 
   ok('the panel is the timeline, not a form (P10)', await page.locator('#a_desc').count() === 0);
   await openComposer(page);
@@ -1617,7 +1672,7 @@ section('A surveillance date is the date where the investigator is standing');
     await signIn(page, 'trever', 'AdminPassword1x');
     await rowFor(page, 'API-20260812-4001').click();
     await page.waitForTimeout(450);
-    await wsTab(page, 'Activity log');
+    await wsTab(page, 'Activity');
     await openComposer(page);
 
     const seen = await page.evaluate(() => {
@@ -2170,9 +2225,9 @@ section('Quick lines: search, favorites, one tap');
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Activity log');
+  await wsTab(page, 'Activity');
 
-  await page.locator('[data-act="actOpen"]').click();
+  await page.locator('[data-act="actOpen"]:visible').first().click();
   await page.waitForTimeout(300);
   ok('the sheet opens on Quick', has(await text(page, '.amtab.on'), 'Quick'));
   const cats = await text(page, '.amcats');
@@ -2214,7 +2269,7 @@ section('Quick lines: search, favorites, one tap');
   ok('the sheet closed on success', await page.locator('.amsheet').count() === 0);
 
   // NO CHANGE is one tap: no compose step, straight to the log (P9).
-  await page.locator('[data-act="actOpen"]').click();
+  await page.locator('[data-act="actOpen"]:visible').first().click();
   await page.waitForTimeout(300);
   await page.locator('.amcat', { hasText: 'No activity' }).click();
   await page.waitForTimeout(250);
@@ -2224,7 +2279,7 @@ section('Quick lines: search, favorites, one tap');
   ok('with no compose step in between', await page.locator('.amsheet').count() === 0);
 
   // The arrival template generates the sentence from the extras.
-  await page.locator('[data-act="actOpen"]').click();
+  await page.locator('[data-act="actOpen"]:visible').first().click();
   await page.waitForTimeout(300);
   await page.locator('.amcat', { hasText: 'Arrival' }).click();
   await page.waitForTimeout(250);
@@ -2523,7 +2578,7 @@ section('Closing a case takes the checklist');
 
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   ok('the closing checklist waits under Billing & closing',
      has(await text(page, '#dlgBody'), 'Close the case'));
   await page.locator('[data-act="closeCase"]').click();
@@ -2576,7 +2631,7 @@ section('A closed case can be reopened where it was closed');
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4010').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   ok('an open case offers no Reopen button',
      await page.locator('[data-act="reopenCase"]').count() === 0);
 
@@ -2650,7 +2705,7 @@ section('A case can be archived and brought back');
 
   await rowFor(page, 'API-20260812-4011').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   ok('Archive sits beside closing, where the lifecycle lives',
      await page.locator('[data-act="archiveCase"]').count() === 1);
   ok('and says plainly that nothing is deleted',
@@ -2680,7 +2735,7 @@ section('A case can be archived and brought back');
   /* PUT IT BACK, and leave the database as this section found it. */
   await rowFor(page, 'API-20260812-4011').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   await page.locator('[data-act="restoreCase"]').click();
   await page.waitForTimeout(800);
   ok('restoring is offered from the archived case itself',
@@ -2725,7 +2780,7 @@ section('A case can be deleted as a tombstone and put back');
 
   await rowFor(page, 'API-20260812-4012').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   ok('Delete case sits with the other lifecycle controls',
      await page.locator('[data-act="deleteCase"]').count() === 1);
   ok('and says at rest that nothing is destroyed',
@@ -2760,7 +2815,7 @@ section('A case can be deleted as a tombstone and put back');
 
   await rowFor(page, 'API-20260812-4012').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   await page.locator('[data-act="undeleteCase"]').click();
   await page.waitForTimeout(900);
   ok('putting it back is offered from the deleted case itself',
@@ -2987,7 +3042,9 @@ section('Assignment is reachable from the overview, and stays secondary');
   await page.waitForTimeout(500);
 
   /* No wsTab() call: the point is that it is reachable from where a case opens. */
-  const card = await text(page, '.ovcard');
+  /* Unit 38 — the overview is four blocks now and the investigator sits on
+     Case status, so this reads the panel rather than whichever card is first. */
+  const card = await text(page, '.wspanel');
   ok('the overview still names the investigator', has(card, 'Investigator'), card.slice(0, 300));
   const link = page.locator('.ovcard [data-act="wsTab"][data-tab="assign"]');
   ok('and offers a way to act on it without hunting', await link.count() === 1);
@@ -3482,9 +3539,9 @@ section('Record payment is reachable from the case overview');
   /* Deliberately NO wsTab() call between opening the case and finding the
      control. A test that navigated first would pass just as well before this
      change, and would be proving nothing. */
-  const summary = await text(page, '.ovcard');
+  const summary = await text(page, '.wspanel');
   ok('the case opens on a summary carrying the retainer and the balance',
-     has(summary, 'Retainer') && has(summary, 'Balance'), summary.slice(0, 200));
+     has(summary, 'Retainer') && has(summary, 'Balance'), summary.slice(0, 300));
   ok('and Record payment is right there, with no tab to find first',
      await page.locator('.ovcard [data-act="retOpen"]').count() === 1);
   ok('offered once, not duplicated onto the page',
@@ -3509,7 +3566,7 @@ section('Record payment is reachable from the case overview');
   await page.locator('[data-act="retSave"]').click();
   await page.waitForTimeout(900);
   ok('recording it from the overview is confirmed there',
-     has(await text(page, '.ovcard'), 'Payment recorded'), (await text(page, '.ovcard')).slice(0, 200));
+     has(await text(page, '.wspanel'), 'Payment recorded'), (await text(page, '.wspanel')).slice(0, 300));
   ok('and the form closes behind it',
      await page.locator('.ovcard #ret_amt').count() === 0);
 
@@ -3538,7 +3595,7 @@ section('Record payment is reachable from the case overview');
   ok('a claim assignment offers no Record payment on its overview',
      await page.locator('[data-act="retOpen"]').count() === 0);
   ok('and shows authorization rather than a retainer',
-     has(await text(page, '.ovcard'), 'Authoriz'), (await text(page, '.ovcard')).slice(0, 200));
+     has(await text(page, '.wspanel'), 'Authoriz'), (await text(page, '.wspanel')).slice(0, 300));
   await page.close();
 }
 {
@@ -3569,7 +3626,7 @@ section('An invoice from case to PAID');
   await page.locator('#m_hours').fill('8');
   await page.locator('.btn', { hasText: 'Save authorization' }).click();
   await page.waitForTimeout(500);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   await page.locator('[data-act="createInvoiceAuth"]').click();
   await page.waitForTimeout(800);
 
@@ -3647,7 +3704,7 @@ section('Evidence in the browser');
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
   ok('the tab says the failsafe is on', has(await text(page, '#dlgBody'), 'free-plan failsafe'));
 
   /* A PHOTOGRAPH — what this tab uploads now. The storage, classification,
@@ -3698,7 +3755,7 @@ section('Evidence in the browser');
   const subjCard = await text(page, '#dlgBody');
   ok('the photo rides with the subject card', has(subjCard, 'Photos & files'));
   ok('as an image thumbnail', await page.locator('.rcard img').count() >= 1);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
 
   // The gallery (UIBUILD P12): tabs cut by type, cards carry the picture.
   ok('the gallery tabs stand ready', has(await text(page, '.evtabs'), 'Photos'));
@@ -3721,16 +3778,16 @@ section('Evidence in the browser');
   await page.locator('#ev_link').selectOption({ label: '8:17 AM — Subject arrived at ABC Fitness.' });
   await page.locator('.btn', { hasText: 'Upload picture or document' }).click();
   await page.waitForTimeout(700);
-  await wsTab(page, 'Activity log');
+  await wsTab(page, 'Activity');
   ok('a linked photo puts a count on the moment',
      await page.locator('.tl-i', { hasText: 'Subject arrived at ABC Fitness.' })
        .locator('.tl-counts').count() >= 1);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
   ok('and the card names its moment', has(await text(page, '.evgrid'), '8:17 AM'));
 
   // The quick-entry fold links an already-uploaded file to the new moment (P9).
-  await wsTab(page, 'Activity log');
-  await page.locator('[data-act="actOpen"]').click();
+  await wsTab(page, 'Activity');
+  await page.locator('[data-act="actOpen"]:visible').first().click();
   await page.waitForTimeout(300);
   await page.locator('.ampick', { hasText: 'Established stationary surveillance position.' }).click();
   await page.waitForTimeout(300);
@@ -3743,7 +3800,7 @@ section('Evidence in the browser');
   ok('the ticked file rode to the new moment',
      await page.locator('.tl-i', { hasText: 'Established stationary surveillance position.' })
        .locator('.tl-counts').count() >= 1);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
 
   await page.locator('[data-act="evDelete"]').first().click();
   await page.waitForTimeout(600);
@@ -4038,17 +4095,23 @@ section('The case page: four sections, one obvious next step');
   ok('and where the case stands', await page.locator('.caseheader .tag').count() >= 2);
 
   const body = await text(page, '#dlgBody');
-  ok('the overview leads with the case summary', has(body, 'Case summary'));
-  ok('the summary carries the authorization', has(body, 'Authorized'));
+  /* Unit 38 — the overview is four blocks in the owner's own order, and it
+     LEADS with the answer to "what now" rather than with a summary card. */
+  const heads = (await page.locator('.ovcard h3').allInnerTexts()).map(h => h.trim().toUpperCase());
+  ok('the overview leads with Next step',
+     JSON.stringify(heads) === JSON.stringify(['NEXT STEP', 'TODAY', 'RECENT ACTIVITY', 'CASE STATUS']),
+     JSON.stringify(heads));
+  ok('case status carries the authorization', has(body, 'Authorized'));
   ok('the package progress speaks percent', /\d+%/.test(body));
   ok('one next step is computed', has(body, 'Next step'));
   ok('recent activity is on the overview', has(body, 'Recent activity'));
-  ok('the evidence picture is on the overview', has(body, 'Evidence overview'));
+  ok('and the evidence is reachable from Today',
+     await page.locator('.ovcard [data-act="wsTab"][data-tab="evidence"]').count() >= 1);
 
   // P22: the module lines route. The Report line lands on the Reports panel.
   await page.locator('.ov-mods button', { hasText: 'Report' }).first().click();
   await page.waitForTimeout(300);
-  ok('a module line routes to its panel', has(await text(page, '.wstabs button.on'), 'Reports'));
+  ok('a module line routes to its panel', (await wsOpenTab(page)) === 'reports');
 
   // And the one computed next step routes with a single GO. Every branch of
   // pkgNextStep leads away from the overview, so landing anywhere else is
@@ -4056,7 +4119,7 @@ section('The case page: four sections, one obvious next step');
   await wsTab(page, 'Overview');
   await page.locator('.ov-next .btn').click();
   await page.waitForTimeout(300);
-  ok('GO lands on the computed step', !has(await text(page, '.wstabs button.on'), 'Overview'));
+  ok('GO lands on the computed step', (await wsOpenTab(page)) !== 'overview');
 
   // The intake detail kept its home behind the Overview section.
   await wsTab(page, 'Intake details');
@@ -4083,14 +4146,11 @@ section('The case page: four sections, one obvious next step');
 
   // Walk every section an investigator has; no sub-tab anywhere is money.
   const seen = [];
-  for (const sec of await page.locator('.wsecs button').all()) {
-    await sec.click();
-    await page.waitForTimeout(180);
-    seen.push(await text(page, '.wstabs'));
-  }
+  for (const t of await wsAllTabs(page)) seen.push(t.label);
   const everything = seen.join(' ');
-  ok('no section hides a Billing panel', !has(everything, 'Billing'));
-  ok('no section hides a Package panel', !has(everything, 'Package'));
+  ok('nothing anywhere in their nav is a Billing panel', !has(everything, 'Billing'), everything);
+  ok('nothing anywhere in their nav is a Package panel', !has(everything, 'Package'), everything);
+  ok('and the walk really walked something', seen.length >= 8, String(seen.length));
   ok('no section hides an Assignment panel', !has(everything, 'Assignment'));
   await page.close();
 }
@@ -4279,13 +4339,13 @@ section('The field case home, on a desk and in a hand');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
   ok('the section bar is the bottom navigation on a phone',
-     (await page.evaluate(() => getComputedStyle(document.querySelector('.wsecs')).position)) === 'fixed');
-  const box = await page.locator('.wsecs').boundingBox();
+     (await page.evaluate(() => getComputedStyle(document.querySelector('.wsbar')).position)) === 'fixed');
+  const box = await page.locator('.wsbar').boundingBox();
   ok('and it sits at the bottom of the hand', box && box.y > 600, JSON.stringify(box));
-  ok('with thumb-size words', has(await text(page, '.wsecs'), 'Home'));
-  await page.locator('.wsecs button', { hasText: 'Case media' }).click();
-  await page.waitForTimeout(350);
-  ok('the bottom bar navigates', has(await text(page, '.wstabs button.on'), 'Case media'));
+  ok('with thumb-size words', has(await text(page, '.wsbar'), 'Activity'));
+  await page.locator('.wsbar button', { hasText: 'Evidence' }).click();
+  await page.waitForTimeout(400);
+  ok('the bottom bar navigates', (await page.evaluate(() => WS_TAB)) === 'evidence');
   await page.close();
 }
 
@@ -4305,9 +4365,14 @@ section('Active Surveillance Mode: a field view of the same case');
 
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  ok('the assignment offers the field mode',
-     await page.locator('[data-act="svEnter"]').count() === 1);
-  await page.locator('[data-act="svEnter"]').click();
+  /* Unit 38 — two doors by design, which is the owner's own "1 obvious primary
+     entry point plus 1 useful contextual shortcut": the case action row on
+     every tab, and the icon card on the case home. Both must be there. */
+  ok('the assignment offers the field mode from the action row and the card',
+     await page.locator('.caseacts [data-act="svEnter"]').count() === 1
+     && await page.locator('.sv-go[data-act="svEnter"]').count() === 1,
+     String(await page.locator('[data-act="svEnter"]').count()));
+  await page.locator('[data-act="svEnter"]:visible').first().click();
   await page.waitForTimeout(700);
 
   ok('the field view takes the whole screen', await page.locator('.sv').count() === 1);
@@ -4355,7 +4420,7 @@ section('Active Surveillance Mode: a field view of the same case');
   await page.waitForTimeout(1200);
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await page.locator('[data-act="svEnter"]').click();
+  await page.locator('[data-act="svEnter"]:visible').first().click();
   await page.waitForTimeout(800);
   const after = await page.locator('#svTimer').innerText();
   const secs = t => t.split(':').reduce((a, n) => a * 60 + Number(n), 0);
@@ -4458,7 +4523,7 @@ section('Active Surveillance Mode: a field view of the same case');
   await page.locator('.sv-exitblock [data-act="svExit"]').click();
   await page.waitForTimeout(700);
   ok('exiting returns to the ordinary case page', await page.locator('.casepage').count() === 1);
-  await wsTab(page, 'Activity log');
+  await wsTab(page, 'Activity');
   const log = await text(page, '#dlgBody');
   ok('the field entries are in the normal activity log', has(log, 'Arrived in vicinity'));
   ok('including the one-tap entry', has(log, 'No change was noted'));
@@ -5313,7 +5378,7 @@ section('Voice mode: explicit, looping, and never filing what it is unsure of');
 
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await page.locator('[data-act="svEnter"]').click();
+  await page.locator('[data-act="svEnter"]:visible').first().click();
   await page.waitForTimeout(700);
   if (await page.locator('[data-act="svStartDay"]').count()) {
     await page.locator('#sv_start').fill('06:30');
@@ -5378,7 +5443,10 @@ section('Voice mode: explicit, looping, and never filing what it is unsure of');
   /* §3 + §9 — a recognized command becomes a REAL entry, and confirms briefly. */
   await say('no change at residence');
   ok('the command files a real activity entry', (await entries()) === before + 1);
-  const filed = await page.evaluate(() => (WS.activity[0] || {}));
+  /* THE ENTRY JUST FILED IS AT THE END. WS.activity is chronological and
+     oldest-first since Unit 38, so "the one I just spoke" is the last element
+     rather than the first — these six reads used to index from the front. */
+  const filed = await page.evaluate(() => (WS.activity[WS.activity.length - 1] || {}));
   ok('with the standardized wording, not the transcript',
      filed.description === 'No change observed at the residence.', filed.description);
   ok('marked as captured by voice, with the command that made it',
@@ -5407,7 +5475,7 @@ section('Voice mode: explicit, looping, and never filing what it is unsure of');
   await say('Mobile, lost visual');
   ok('an ambiguous phrase is saved rather than thrown away', (await entries()) === n2 + 1,
      `${n2} -> ${await entries()}`);
-  const amb = await page.evaluate(() => (WS.activity[0] || {}));
+  const amb = await page.evaluate(() => (WS.activity[WS.activity.length - 1] || {}));
   ok('in the words that were actually spoken', amb.description === 'lost visual', amb.description);
   /* THE PART OF §7 THAT STILL HOLDS, and the part that mattered: NO_CHANGE and
      CHANGE_POSITION are opposite facts about the same minute. An uncertain
@@ -5424,7 +5492,7 @@ section('Voice mode: explicit, looping, and never filing what it is unsure of');
   await say('Mobile, the grey van came back and parked across the street');
   ok('an unrecognised observation is saved in the investigator’s own words',
      (await entries()) === n3 + 1, `${n3} -> ${await entries()}`);
-  const free = await page.evaluate(() => (WS.activity[0] || {}));
+  const free = await page.evaluate(() => (WS.activity[WS.activity.length - 1] || {}));
   ok('with the wake word stripped off the front',
      free.description === 'the grey van came back and parked across the street',
      free.description);
@@ -5440,8 +5508,8 @@ section('Voice mode: explicit, looping, and never filing what it is unsure of');
   await say('Mobile, note the subject left in a grey van');
   ok('a dictated note is saved too', (await entries()) === n4 + 1);
   ok('without the word that asked for it',
-     (await page.evaluate(() => WS.activity[0].description)) === 'the subject left in a grey van',
-     await page.evaluate(() => WS.activity[0].description));
+     (await page.evaluate(() => WS.activity[WS.activity.length - 1].description)) === 'the subject left in a grey van',
+     await page.evaluate(() => WS.activity[WS.activity.length - 1].description));
 
   /* §8 still holds for free speech, which has no command id to key on. */
   const n5 = await entries();
@@ -5510,7 +5578,7 @@ section('Voice mode: the engine is one session, and it says what it did');
   await page.waitForTimeout(900);
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await page.locator('[data-act="svEnter"]').click();
+  await page.locator('[data-act="svEnter"]:visible').first().click();
   await page.waitForTimeout(700);
   if (await page.locator('[data-act="svStartDay"]').count()) {
     await page.locator('#sv_start').fill('06:30');
@@ -5635,7 +5703,7 @@ section('Voice §13 and §8: prepare the camera, claim nothing, lose nothing');
   await page.waitForTimeout(900);
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await page.locator('[data-act="svEnter"]').click();
+  await page.locator('[data-act="svEnter"]:visible').first().click();
   await page.waitForTimeout(700);
   if (await page.locator('[data-act="svStartDay"]').count()) {
     await page.locator('#sv_start').fill('06:30');
@@ -5737,8 +5805,8 @@ section('Voice §13 and §8: prepare the camera, claim nothing, lose nothing');
   ok('when the signal returns the held entry sends itself',
      (await entries()) === n1 + 1, `${n1} -> ${await entries()}`);
   ok('in the words that were spoken',
-     (await page.evaluate(() => WS.activity[0].description)) === 'the grey van came back',
-     await page.evaluate(() => WS.activity[0].description));
+     (await page.evaluate(() => WS.activity[WS.activity.length - 1].description)) === 'the grey van came back',
+     await page.evaluate(() => WS.activity[WS.activity.length - 1].description));
   ok('and the waiting notice is gone', !has(await panel(), 'held on this phone'));
 
   /* THE RETRY CARRIES THE SAME NAME, which is what stops a lost response
@@ -5761,7 +5829,7 @@ section('Voice §10: the last activity is corrected without leaving the field sc
 
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await page.locator('[data-act="svEnter"]').click();
+  await page.locator('[data-act="svEnter"]:visible').first().click();
   await page.waitForTimeout(700);
 
   // Whichever state earlier sections left the day in, get one running.
@@ -5992,7 +6060,7 @@ section('Back, edit and delete, from the field');
   await page.waitForTimeout(900);
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(600);
-  await page.locator('[data-act="svEnter"]').click();
+  await page.locator('[data-act="svEnter"]:visible').first().click();
   await page.waitForTimeout(800);
 
   // Earlier sections ended this case's day, so start one to work inside.
@@ -6087,7 +6155,7 @@ section('Back, edit and delete, from the field');
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await wsTab(page, 'Activity log');
+  await wsTab(page, 'Activity');
   ok('the office timeline offers Delete too',
      await page.locator('.tl-edit', { hasText: 'Delete' }).count() >= 1);
   await page.close();
@@ -6278,7 +6346,7 @@ section('A private invoice shows the retainer drawing down');
   await page.locator('.btn', { hasText: 'Save authorization' }).click();
   await page.waitForTimeout(600);
 
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   await page.locator('[data-act="createInvoiceAuth"]').click();
   await page.waitForTimeout(900);
 
@@ -6441,13 +6509,21 @@ section('The phone bottom bar can be seen and hit');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(700);
 
-  const bar = page.locator('.casepage .wsecs');
+  const bar = page.locator('.casepage .wsbar');
   ok('the bottom bar is there on a phone', await bar.isVisible());
 
   const box = await bar.boundingBox();
-  const btns = page.locator('.casepage .wsecs button');
+  const btns = page.locator('.casepage .wsbar button');
   const n = await btns.count();
-  ok('it carries the four sections', n === 4);
+  /* Unit 38 — Activity, Summary, + Add, Evidence, More. */
+  ok('it carries the five field keys', n === 5, String(n));
+  const barText = await text(page, '.casepage .wsbar');
+  ok('Activity and Summary are IN the bar, never under More',
+     has(barText, 'Activity') && has(barText, 'Summary'), barText);
+  ok('and the middle key is the one you press standing up',
+     await page.locator('.casepage .wsbar .wsbar-add').count() === 1);
+  ok('the desktop row is not a second navigation on a phone',
+     (await page.evaluate(() => getComputedStyle(document.querySelector('.wsnav')).display)) === 'none');
 
   let shortest = 1e9, lowestTop = 0;
   for (let i = 0; i < n; i++) {
@@ -6466,16 +6542,15 @@ section('The phone bottom bar can be seen and hit');
   ok('and the bar itself reaches the edge, so nothing shows through beneath it',
      Math.round(box.y + box.height) >= 844);
 
-  ok('each section has an icon, not just a word in small caps',
-     await page.locator('.casepage .wsecs .sec-i').count() === 4);
-  ok('the section you are on is marked for a screen reader too',
-     await page.locator('.casepage .wsecs button[aria-current="page"]').count() === 1);
+  ok('each key has an icon, not just a word in small caps',
+     await page.locator('.casepage .wsbar .sec-i').count() === 5);
 
   // Tapping still works — visibility changes must not break the routing.
-  await btns.nth(1).click();
+  await btns.nth(0).click();
   await page.waitForTimeout(600);
-  ok('tapping a section switches to it',
-     has(await text(page, '.casepage .wsecs button.on'), 'Field'));
+  ok('tapping a key switches to it', (await page.evaluate(() => WS_TAB)) === 'activity');
+  ok('and the one you are on is marked for a screen reader too',
+     await page.locator('.casepage .wsbar button[aria-current="page"]').count() === 1);
   await page.close();
 }
 
@@ -6515,7 +6590,7 @@ section('Completed cases are one obvious click away');
   await card4002.locator('.btn', { hasText: 'Final report' }).click();
   await page.waitForTimeout(800);
   ok('Final report lands inside the case, on the Reports tab',
-     has(await text(page, '.wstabs button.on'), 'Reports'));
+     (await wsOpenTab(page)) === 'reports');
   await page.close();
 }
 {
@@ -7105,8 +7180,14 @@ section('The case header status chip is a 44px target without becoming a button'
   /* Semantics untouched: it is still the door to the status control. */
   await page.locator('.ch-right .tag').first().click();
   await page.waitForTimeout(700);
+  /* Unit 38 — this passed on the word "Assignment" appearing as a TAB LABEL,
+     and that tab lives inside a closed More menu now. The panel itself never
+     carried the word, so the assertion was reading the navigation rather than
+     the destination. WS_TAB is the destination. */
   ok('tapping it still opens the Assignment panel, unchanged',
-     has(await text(page, 'body'), 'Assignment'));
+     (await wsOpenTab(page)) === 'assign'
+     && await page.locator('#asg').count() === 1,
+     await wsOpenTab(page));
   await page.close();
 }
 
@@ -7164,7 +7245,7 @@ section('Evidence opens in one in-portal viewer, and never leaves the app');
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(500);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
   await page.waitForTimeout(400);
 
   // Land on a known screen, and remember it, so "back" can be checked properly.
@@ -7925,7 +8006,7 @@ section('The video timestamp screen');
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
 
   const tab = await text(page, '#dlgBody');
   ok('the Evidence tab carries the door into it', has(tab, 'Video timestamp'));
@@ -8233,7 +8314,7 @@ section('Adding media and looking at media are named apart');
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
   const body = await text(page, '#dlgBody');
   ok('the entry point for adding is named for what it adds',
      has(body, 'Upload video / picture'));
@@ -8245,7 +8326,7 @@ section('Adding media and looking at media are named apart');
      await page.locator('.btn', { hasText: 'Upload picture or document' }).count() === 1
      && await page.locator('.btn', { hasText: 'Upload video' }).count() === 0);
   ok('the tab itself reads Case media',
-     has(await text(page, '.wstabs button.on'), 'Case media'));
+     (await wsOpenTab(page)) === 'evidence');
   await page.close();
 }
 
@@ -8261,7 +8342,7 @@ section('The four field actions are untouched');
   await page.waitForTimeout(900);
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(600);
-  await page.locator('[data-act="svEnter"]').click();
+  await page.locator('[data-act="svEnter"]:visible').first().click();
   await page.waitForTimeout(800);
   // The four field actions live on the home screen while a day is running.
   if (await page.locator('[data-act="svStartDay"]').count()) {
@@ -8782,7 +8863,7 @@ section('Timestamp Photo: the stamp is in the pixels, and the original is not to
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
 
   /* A REAL PICTURE, written by this browser. 800x600 so the burned face is a
      legible 30px, which is what `vstDraw` scales it to. */
@@ -8952,7 +9033,7 @@ section('Timestamp Photo: nothing is guessed, and a correction is the operator�
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4003').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
 
   /* NO EXIF AT ALL — a screenshot, a scan, a file a share sheet stripped. */
   const before2 = await page.evaluate(() => ({
@@ -9076,7 +9157,7 @@ section('Timestamp Photo: the copy is what the client gets, and the original is 
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4020').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
 
   const jpeg = async (w, h, fill) => Buffer.from(await page.evaluate(([W, H, F]) => {
     const c = document.createElement('canvas');
@@ -9620,7 +9701,7 @@ section('Timestamp Photo is reachable in the field, beside Timestamp video');
   await page.waitForTimeout(900);
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await page.locator('[data-act="svEnter"]').click();
+  await page.locator('[data-act="svEnter"]:visible').first().click();
   await page.waitForTimeout(800);
   await page.locator('[data-act="svTab"][data-t="evidence"]').click();
   await page.waitForTimeout(700);
@@ -10521,7 +10602,7 @@ section('Dropbox is visible, and it is not a file manager');
   await page.waitForTimeout(400);
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
   ok('a case shows no Dropbox folder links while the name is unknown',
      !has(await text(page, '#dlgBody'), 'In Dropbox'));
 
@@ -10575,7 +10656,7 @@ section('Dropbox is visible, and it is not a file manager');
   await page.waitForTimeout(400);
   await rowFor(page, 'API-20260812-4002').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
   const media = await text(page, '#dlgBody');
   ok('the case now carries its Dropbox folders', has(media, 'In Dropbox'), media.slice(0, 400));
   const links = page.locator('#dlgBody a', { hasText: /Photos|Reports|Video/ });
@@ -10613,7 +10694,7 @@ section('An investigator is shown none of the firm\'s Dropbox');
      beside media an investigator is allowed to see. */
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
   const media = await text(page, '#dlgBody');
   ok('the case media panel offers them no Dropbox folder links',
      !has(media, 'In Dropbox'), media.slice(0, 400));
@@ -10645,7 +10726,7 @@ section('An admin ships their own report without an approval ritual');
   });
   await rowFor(page, 'API-ITEM4-A').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   await page.locator('form[data-act="genReport"] button[type="submit"]').click();
   await page.waitForTimeout(700);
 
@@ -10674,7 +10755,7 @@ section('An admin ships their own report without an approval ritual');
      && await page.locator('[data-act="pkgPdfDropbox"]').count() === 1
      && await page.locator('[data-act="pkgPrint"]').count() === 1);
 
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   ok('the report now reads Approved — finalize was the recorded sign-off',
      has(await text(page, '#dlgBody'), 'Approved'));
   await page.close();
@@ -10693,7 +10774,7 @@ section('An investigator\'s report still goes through the office');
   });
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   if (await page.locator('form[data-act="genReport"]').count()) {
     /* Pick HER day by its date — the spare list can also carry an admin's
        unreported day on this shared fixture case, and generating against
@@ -11046,13 +11127,7 @@ section('A legal case shows an investigator the work, never the firm');
      !has(await text(page, '.wstabs'), 'Legal') && await page.evaluate(() => !WS.legal));
   /* Walk every section they have and assert the firm's identity is nowhere. */
   let all = '';
-  for (const sec of await page.locator('.wsecs button').all()) {
-    await sec.click(); await page.waitForTimeout(200);
-    for (const t of await page.locator('.wstabs button').all()) {
-      await t.click(); await page.waitForTimeout(150);
-      all += await text(page, '#dlgBody');
-    }
-  }
+  for (const seen of await wsVisitAll(page, p2 => text(p2, '#dlgBody'))) all += seen.text;
   ok('no firm, attorney or matter identity anywhere in their case',
      !all.includes('Harmon') && !all.includes('M-88'), all.slice(0, 150));
   ok('while the subject is theirs to work', all.includes('Watched Party'));
@@ -12039,7 +12114,7 @@ section('The case timeline draws the case in order');
 
   ok('the Timeline panel exists in the case workspace',
      await page.locator('.tl2-wrap').count() === 1);
-  ok('and it is the tab that is on', has(await text(page, '.wstabs button.on'), 'Timeline'));
+  ok('and it is the tab that is on', (await wsOpenTab(page)) === 'timeline');
 
   const doc = await text(page, '#tldoc');
   ok('the case opening is on it', has(doc, 'Case opened'), doc.slice(0, 400));
@@ -12188,7 +12263,7 @@ section('The timeline filters, re-orders and links to the record');
   await go.click();
   await page.waitForTimeout(450);
   ok('opening an observation lands on the Activity log',
-     has(await text(page, '.wstabs button.on'), 'Activity log'));
+     (await wsOpenTab(page)) === 'activity');
   ok('and the entry it named is there',
      has(await text(page, '#dlgBody'), 'Subject vehicle observed parked at residence.'));
 
@@ -12199,7 +12274,7 @@ section('The timeline filters, re-orders and links to the record');
     await rep.click();
     await page.waitForTimeout(450);
     ok('opening a report event lands on Reports',
-       has(await text(page, '.wstabs button.on'), 'Reports'));
+       (await wsOpenTab(page)) === 'reports');
   } else {
     ok('opening a report event lands on Reports', false, 'no report event was drawn');
   }
@@ -12524,7 +12599,7 @@ section('Daily summary: deterministic sentences over the day\'s own facts');
       { credentials: 'same-origin' })).json();
     return JSON.stringify(ws.activity.map(a => [a.id, a.at_date, a.at_time, a.description]));
   }, 'API-20260812-4001');
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   await page.waitForTimeout(400);
   await page.locator('.rcard', { hasText: '2026-08-20' }).first().click();
   await page.waitForTimeout(400);
@@ -12593,7 +12668,7 @@ section('Daily summary: the writer\'s words survive everything but a deliberate 
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   await page.waitForTimeout(400);
   await page.locator('.rcard', { hasText: '2026-08-20' }).first().click();
   await page.waitForTimeout(400);
@@ -12659,7 +12734,7 @@ section('Daily summary: the writer\'s words survive everything but a deliberate 
     if (await cbtn.count()) { await cbtn.first().click(); await page.waitForTimeout(400); } }
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   await page.waitForTimeout(400);
   await page.locator('.rcard', { hasText: '2026-08-21' }).first().click();
   await page.waitForTimeout(400);
@@ -12703,7 +12778,7 @@ section('Daily summary: the narrative rides the documents, clean of builder scaf
   await page.waitForTimeout(500);
 
   /* The report's own draft document leads with it. */
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   await page.waitForTimeout(400);
   await page.locator('.rcard', { hasText: '2026-08-20' }).first().click();
   await page.waitForTimeout(400);
@@ -12812,7 +12887,7 @@ section('Daily summary: the field writes its own day and nothing more');
     if (await cbtn.count()) { await cbtn.first().click(); await inv.waitForTimeout(400); } }
   await rowFor(inv, 'API-DSFIELD-1').click();
   await inv.waitForTimeout(500);
-  await wsTab(inv, 'Reports');
+  await wsTab(inv, 'Report');
   await inv.waitForTimeout(400);
   await inv.locator('.rcard').first().click();
   await inv.waitForTimeout(400);
@@ -12839,7 +12914,7 @@ section('Daily summary: the field writes its own day and nothing more');
     if (await cbtn.count()) { await cbtn.first().click(); await inv.waitForTimeout(400); } }
   await rowFor(inv, 'API-DSFIELD-1').click();
   await inv.waitForTimeout(500);
-  await wsTab(inv, 'Reports');
+  await wsTab(inv, 'Report');
   await inv.waitForTimeout(400);
   await inv.locator('.rcard').first().click();
   await inv.waitForTimeout(400);
@@ -12882,7 +12957,7 @@ section('Daily summary on a phone: one column, honest targets, nothing sideways'
   await page.waitForTimeout(600);
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   await page.waitForTimeout(400);
   await page.locator('.rcard', { hasText: '2026-08-20' }).first().click();
   await page.waitForTimeout(400);
@@ -13443,7 +13518,7 @@ section('Closeout: the checklist shows what the record can see, and still obeys 
   }, 'API-CLOSE-1');
   await rowFor(page, 'API-CLOSE-1').click();
   await page.waitForTimeout(500);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   await page.waitForTimeout(700);
 
   const panel = page.locator('form', { hasText: 'Close the case' }).first();
@@ -13464,7 +13539,7 @@ section('Closeout: the checklist shows what the record can see, and still obeys 
   await page.evaluate(() => { CLOSEOUT = {}; });
   await wsTab(page, 'Overview');
   await page.waitForTimeout(300);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   await page.waitForTimeout(700);
   const failedBody = await page.locator('form', { hasText: 'Close the case' }).first().innerText();
   ok('a failed facts read is named — the checklist does not pretend the record is clean',
@@ -13730,14 +13805,15 @@ section('Unit 21 — accessibility: landmarks, a way in from the keyboard, and a
   /* Focused via the KEYBOARD, and read after the slide-in settles — the link
      eases into place, so measuring the instant it takes focus measures the
      animation rather than the result. */
-  /* `paint()` puts the caret in the case search box, so a bare Tab starts from
-     there rather than the top of the document — which is exactly why the skip
-     link matters and also why the test must start from a clean focus. */
   /* Focused directly and read AFTER the slide-in settles: the link eases into
      place over .12s, so measuring the instant it takes focus measures the
-     animation rather than the result. (`paint()` puts the caret in the case
-     search box, which is precisely why a skip link earns its place — but it
-     also means a bare Tab does not start at the top of the document.) */
+     animation rather than the result.
+
+     This comment used to explain that `paint()` puts the caret in the case
+     search box, so a bare Tab did not start at the top of the document. That
+     stopped being true on 2026-08-22 — the owner's rule is that arriving at a
+     section focuses nothing, so the document now starts where a keyboard user
+     expects it to and the skip link earns its place on the ordinary grounds. */
   await page.evaluate(() => document.querySelector('a.skiplink').focus());
   await page.waitForTimeout(320);
   const skip = await page.evaluate(() => {
@@ -13896,7 +13972,7 @@ section('Unit 19 — a removed entry is shown as removed on the report Chronolog
 
   await rowFor(page, 'API-U19').click();
   await page.waitForTimeout(600);
-  await wsTab(page, 'Reports');
+  await wsTab(page, 'Report');
   await page.waitForTimeout(700);
   /* Open the report itself, then its Chronology view — the report screen
      renders into #dlgBody, the way the P11 section already drives it. */
@@ -13932,7 +14008,7 @@ section('Retention: five states as words, a hold that outranks, and an audit tra
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-RET-1').click();
   await page.waitForTimeout(500);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   await page.waitForTimeout(700);
 
   const panel = () => page.locator('.feebox', { hasText: 'Retention & legal hold' }).first();
@@ -14070,7 +14146,7 @@ section('Retention: five states as words, a hold that outranks, and an audit tra
   await page.evaluate(() => { RETC = {}; });
   await wsTab(page, 'Overview');
   await page.waitForTimeout(300);
-  await wsTab(page, 'Billing & closing');
+  await wsTab(page, 'Billing');
   await page.waitForTimeout(700);
   body = await panel().innerText();
   ok('a failed retention read says so', /could not be\s+read just now/.test(body.replace(/\n/g, ' ')), body.slice(0, 200));
@@ -14128,7 +14204,7 @@ section('Retention: the investigator has no door and the phone has no overflow')
   await phone.waitForTimeout(600);
   await rowFor(phone, 'API-RET-1').click();
   await phone.waitForTimeout(600);
-  await wsTab(phone, 'Billing & closing');
+  await wsTab(phone, 'Billing');
   await phone.waitForTimeout(800);
   const m = await phone.evaluate(() => {
     const until = document.getElementById('ret_until');
@@ -14158,7 +14234,7 @@ section('Evidence integrity: the card states the record and the office can act o
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-INTP-1').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
 
   /* An upload through the page: the card carries the integrity block at once. */
   const bytes = Buffer.alloc(2048, 71);
@@ -14214,7 +14290,7 @@ section('Evidence integrity: the card states the record and the office can act o
   await page.waitForTimeout(300);
   await rowFor(page, 'API-INTP-1').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
   const older = () => page.locator('.evcard', { hasText: 'older.jpg' }).first();
   integ = await older().locator('.integ').innerText();
   ok('a historical file reads "Not yet recorded" — never a guessed hash',
@@ -14237,7 +14313,7 @@ section('Evidence integrity: the field sees the record and holds no lever');
   await signIn(page, 'dana', 'FieldWork2026x');
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
   await page.locator('#ev_file').setInputFiles({
     name: 'field.jpg', mimeType: 'image/jpeg', buffer: Buffer.alloc(1200, 80) });
   await page.locator('.btn', { hasText: 'Upload picture or document' }).click();
@@ -14259,7 +14335,7 @@ section('The evidence manifest: a readable document, printable, honest when it f
   await signIn(page, 'trever', 'AdminPassword1x');
   await rowFor(page, 'API-INTP-1').click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
 
   await page.locator('[data-act="manOpen"]').click();
   await page.waitForTimeout(700);
@@ -14325,7 +14401,7 @@ section('Evidence integrity on a phone: the hash wraps, the buttons reach the fl
   await page.waitForTimeout(600);
   await page.locator('tbody tr', { hasText: 'API-INTP-1' }).first().click();
   await page.waitForTimeout(450);
-  await wsTab(page, 'Case media');
+  await wsTab(page, 'Evidence');
 
   /* No sideways scroll with a 64-character token on screen. */
   await page.locator('.evcard .integ summary').first().click();
@@ -14580,6 +14656,518 @@ section('The admin markers have one writer');
   }
   ok('no intake form spells the optional marker by hand', bare.length === 0, bare.join(' | '));
 }
+
+
+/* ======================================================================
+   UNIT 38 — THE TWENTY THE OWNER NUMBERED.
+
+   Their brief lists twenty page-level and navigation properties. Each is
+   asserted below under its own number, so a later reader can check the list
+   against the tests without reading either in full. Ordering (their five) is
+   pinned in the Worker suite, where the source is; what is pinned here is
+   what the PAGE does with it.
+   ====================================================================== */
+
+section('Unit 38 — the case workspace, the twenty named properties');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('[data-act="tab"][data-tab="cases"]').first().click();
+  await page.waitForTimeout(600);
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(800);
+  const caseNo = await page.evaluate(() => WS_CASE);
+
+  /* 1. Opening a case exposes Activity directly. */
+  const row = await page.locator('.wsnav button[data-act="wsTab"]').allInnerTexts();
+  ok('1. opening a case exposes Activity on the row itself',
+     await page.locator('.wsnav button[data-tab="activity"]').count() === 1, JSON.stringify(row));
+
+  /* 2. Daily Summary is directly reachable from the case. */
+  ok('2. Daily Summary is on the row too, not three levels down',
+     await page.locator('.wsnav button[data-tab="daily"]').count() === 1, JSON.stringify(row));
+
+  /* 3 + 4. Activity and Daily Summary default to the case already open —
+     nobody is asked which case, twice. */
+  await page.locator('.wsnav button[data-tab="activity"]').click();
+  await page.waitForTimeout(500);
+  ok('3. Activity opens on the case already open',
+     (await page.evaluate(() => WS_CASE)) === caseNo && (await wsOpenTab(page)) === 'activity');
+  ok('3b. and asks for no second case choice',
+     await page.locator('.wspanel select[id*="case"], .wspanel [data-act="pickCase"]').count() === 0);
+  await page.locator('.wsnav button[data-tab="daily"]').click();
+  await page.waitForTimeout(600);
+  ok('4. Daily Summary opens on the same case',
+     (await page.evaluate(() => WS_CASE)) === caseNo && (await wsOpenTab(page)) === 'daily');
+  ok('4b. and asks for no second case choice',
+     await page.locator('.wspanel select[id*="case"], .wspanel [data-act="pickCase"]').count() === 0);
+
+  /* 5. The current/open day is the one selected, and it says which it is. */
+  const dsText = await text(page, '.wspanel');
+  const dayFacts = await page.evaluate(() => {
+    const c = wsCurrentDay();
+    return { has: !!c.day, open: c.open, label: c.label, no: c.day ? wsDayNo(c.day) : null };
+  });
+  ok('5. the day on screen is the running one, or the latest, and is labelled',
+     dayFacts.has
+       ? (has(dsText, `Day ${dayFacts.no}`)
+          && has(dsText, dayFacts.open ? 'running now' : 'most recent day'))
+       : has(dsText, 'No investigation day yet'),
+     `${JSON.stringify(dayFacts)} :: ${dsText.replace(/\s+/g, ' ').slice(0, 160)}`);
+
+  /* 6. + Add Activity works — one visible door, and it opens the composer. */
+  ok('6a. exactly one Add activity door is visible',
+     await page.locator('[data-act="actOpen"]:visible').count() === 1,
+     String(await page.locator('[data-act="actOpen"]:visible').count()));
+  await openComposer(page);
+  ok('6b. + Add Activity opens the composer', await page.locator('#a_desc').count() === 1);
+  await page.locator('#a_time').fill('11:11');
+  await page.locator('#a_desc').fill('Unit 38 check entry.');
+  await page.locator('.btn', { hasText: 'Add to the log' }).click();
+  await page.waitForTimeout(800);
+  /* Added from the Daily Summary tab — which is the point, the door is on
+     every tab now — so the LOG is where it has to be looked for. */
+  await wsTab(page, 'Activity');
+  ok('6c. and the entry lands in the log, wherever it was added from',
+     has(await text(page, '#dlgBody'), 'Unit 38 check entry.'));
+
+  /* 7 + 8. Evidence and Report open on the selected case. */
+  await page.locator('.wsnav button[data-tab="evidence"]').click();
+  await page.waitForTimeout(600);
+  ok('7. Evidence opens the selected case',
+     (await wsOpenTab(page)) === 'evidence' && (await page.evaluate(() => WS_CASE)) === caseNo);
+  await page.locator('.wsnav button[data-tab="reports"]').click();
+  await page.waitForTimeout(600);
+  ok('8. Report opens the selected case',
+     (await wsOpenTab(page)) === 'reports' && (await page.evaluate(() => WS_CASE)) === caseNo);
+
+  /* 9. Admin Billing is still reachable. */
+  ok('9. an admin still has Billing on the row',
+     await page.locator('.wsnav button[data-tab="billing"]').count() === 1);
+  await page.locator('.wsnav button[data-tab="billing"]').click();
+  await page.waitForTimeout(700);
+  ok('9b. and it opens', (await wsOpenTab(page)) === 'billing');
+
+  /* 11. Every desktop tab works — the row and the More list both route. */
+  const tabs = await wsAllTabs(page);
+  const broken = [];
+  for (const t of tabs) {
+    await wsTab(page, t.label);
+    if ((await wsOpenTab(page)) !== t.key) broken.push(`${t.label}->${await wsOpenTab(page)}`);
+  }
+  ok('11. every workspace tab routes to its own panel', broken.length === 0, broken.join(', '));
+  ok('11b. and the walk covered the whole nav, row and More', tabs.length >= 15, String(tabs.length));
+
+  /* 15. Existing deep links do not break — every key the old sections used
+         still routes, because the keys never changed. */
+  const legacy = ['overview', 'details', 'subject', 'field', 'activity', 'timeline',
+                  'reports', 'evidence', 'package', 'edit', 'assign', 'auth',
+                  'expenses', 'notes', 'comms', 'tasks', 'billing'];
+  const dead = [];
+  for (const k of legacy) {
+    await page.evaluate(key => { WS_TAB = key; WS_MORE = false; paintCase(); }, k);
+    await page.waitForTimeout(160);
+    const drew = (await text(page, '.wspanel')).trim().length;
+    if ((await wsOpenTab(page)) !== k || drew < 5) dead.push(k);
+  }
+  ok('15. every pre-Unit-38 tab key still routes and draws', dead.length === 0, dead.join(', '));
+
+  /* 19. File Queue is a cross-case tool and did not move into the case. */
+  ok('19a. File queue is not a case tab', !tabs.some(t => /file queue/i.test(t.label)),
+     JSON.stringify(tabs.map(t => t.label)));
+  await page.locator('[data-act="backToCases"]').first().click();
+  await page.waitForTimeout(500);
+  ok('19b. and it is still its own door in the main nav',
+     await page.locator('[data-act="tab"][data-tab="filequeue"]').count() >= 1);
+
+  /* 20. Accessibility: one h1, the current tab marked, focusable controls. */
+  await rowFor(page, 'API-20260812-4002').click();
+  await page.waitForTimeout(700);
+  ok('20a. there is exactly one h1 on the signed-in page',
+     await page.locator('h1').count() === 1, String(await page.locator('h1').count()));
+  ok('20b. the tab you are on is marked for a screen reader',
+     await page.locator('.wsnav button[aria-current="page"]').count() === 1);
+  ok('20c. the More control announces that it opens a menu',
+     await page.locator('[data-act="wsMore"][aria-haspopup="true"]').first().count() === 1);
+  const expanded = async () => page.locator('[data-act="wsMore"]').first().getAttribute('aria-expanded');
+  ok('20d. and says whether it is open', (await expanded()) === 'false');
+  await page.locator('.wsnav [data-act="wsMore"]').click();
+  await page.waitForTimeout(300);
+  ok('20e. which changes when it is', (await expanded()) === 'true');
+  ok('20f. the menu is a menu', await page.locator('.wsmorelist[role="menu"]').count() === 1);
+  await page.close();
+}
+
+section('Unit 38 — the field-first case view on a phone');
+{
+  for (const width of [375, 390, 430]) {
+    const ctx = await browser.newContext({ viewport: { width, height: 844 } });
+    const page = await ctx.newPage();
+    page.on('pageerror', e => ok(`no page errors at ${width}px (${e.message})`, false));
+    await page.goto(SITE + '/portal/');
+    await page.waitForTimeout(300);
+    await page.locator('#u').fill('trever');
+    await page.locator('#p').fill('AdminPassword1x');
+    await page.locator('#loginBtn').click();
+    await page.waitForTimeout(900);
+    if (await page.locator('.burger').count()) {
+      await page.locator('.burger').click(); await page.waitForTimeout(300);
+    }
+    await page.locator('.tabs button', { hasText: 'Cases' }).first().click();
+    await page.waitForTimeout(700);
+    await rowFor(page, 'API-20260812-4002').click();
+    await page.waitForTimeout(800);
+
+    /* 12. The mobile field layout works at each width. */
+    const bar = await page.evaluate(() => {
+      const b = document.querySelector('.casepage .wsbar');
+      if (!b) return null;
+      const cs = getComputedStyle(b);
+      const btns = [...b.querySelectorAll('button')];
+      return { display: cs.display, position: cs.position, n: btns.length,
+               labels: btns.map(x => x.textContent.replace(/\s+/g, ' ').trim()),
+               minH: Math.min(...btns.map(x => Math.round(x.getBoundingClientRect().height))),
+               bottom: Math.round(Math.min(...btns.map(x => window.innerHeight - x.getBoundingClientRect().bottom))) };
+    });
+    ok(`12. ${width}px: the field bar is the case navigation`,
+       bar && bar.display === 'flex' && bar.position === 'fixed' && bar.n === 5, JSON.stringify(bar));
+    ok(`12b. ${width}px: every key clears Apple's 44px floor`, bar && bar.minH >= 44,
+       bar ? `${bar.minH}px` : 'no bar');
+    ok(`12c. ${width}px: and stands clear of the home indicator`, bar && bar.bottom >= 12,
+       bar ? `${bar.bottom}px` : 'no bar');
+
+    /* 13. No horizontal overflow. */
+    const of = await page.evaluate(() =>
+      document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    ok(`13. ${width}px: the case page does not scroll sideways`, of <= 0, String(of));
+
+    /* 14. Activity and Summary are never under More. */
+    ok(`14. ${width}px: Activity and Summary are IN the bar`,
+       bar && bar.labels.some(l => /Activity/.test(l)) && bar.labels.some(l => /Summary/.test(l)),
+       JSON.stringify(bar && bar.labels));
+    await page.locator('.wsbar [data-act="wsMore"]').click();
+    await page.waitForTimeout(350);
+    const moreLabels = await page.locator('.wsmorelist button').allInnerTexts();
+    ok(`14b. ${width}px: and NEITHER is inside More`,
+       !moreLabels.some(l => /^(Activity|Daily Summary)$/.test(l.trim())), JSON.stringify(moreLabels));
+    /* THE PHONE HOLE THIS UNIT NEARLY SHIPPED: the desktop row is hidden here,
+       so anything the thumb bar does not carry has to be in More or it has no
+       door at all. */
+    ok(`14c. ${width}px: More carries Overview, Report and Billing`,
+       ['Overview', 'Report', 'Billing'].every(l => moreLabels.some(x => x.trim() === l)),
+       JSON.stringify(moreLabels));
+    const reach = await page.evaluate(() => {
+      const vis = sel => [...document.querySelectorAll(sel)].filter(b => b.offsetParent !== null)
+        .map(b => b.dataset.tab).filter(Boolean);
+      const seen = new Set([...vis('.wsbar button'), ...vis('.wsnav button'), ...vis('.wsmorelist button')]);
+      return [...wsPrimary(), ...wsMore()].map(t => t[0]).filter(k => !seen.has(k));
+    });
+    ok(`14d. ${width}px: every tab has a door somewhere`, reach.length === 0, JSON.stringify(reach));
+
+    /* 10 (phone half) — the desktop row is not a second navigation. */
+    ok(`${width}px: the desktop row is hidden, so a phone has one navigation`,
+       (await page.evaluate(() => getComputedStyle(document.querySelector('.wsnav')).display)) === 'none');
+
+    /* 6 on a phone: the add key is under the thumb and works. */
+    await page.locator('.wsbar .wsbar-add').click();
+    await page.waitForTimeout(600);
+    ok(`${width}px: the add key opens the composer`,
+       await page.locator('.amwrap').count() === 1
+       && (await page.locator('.amtab').allInnerTexts()).length === 2,
+       JSON.stringify(await page.locator('.amtab').allInnerTexts()));
+    await ctx.close();
+  }
+}
+
+section('Unit 38 — the investigator keeps their boundary');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await rowFor(page, 'API-20260812-4001').click();
+  await page.waitForTimeout(800);
+
+  /* 10. Investigator financial restrictions remain intact. */
+  const tabs = await wsAllTabs(page);
+  const labels = tabs.map(t => t.label).join(' ');
+  ok('10a. no Billing tab anywhere in their workspace', !/Billing/i.test(labels), labels);
+  ok('10b. nor Package, Edit case or Assignment',
+     !/Package|Edit case|Assignment/i.test(labels), labels);
+  let seen = '';
+  for (const t of await wsVisitAll(page, p2 => text(p2, '#dlgBody'))) seen += ' ' + t.text;
+  ok('10c. and no panel they CAN open shows a rate, retainer or invoice total',
+     !/Retainer|Invoice total|Rate sheet/i.test(seen), (seen.match(/Retainer|Invoice total|Rate sheet/i) || [''])[0]);
+  ok('10d. the walk really walked their whole nav', tabs.length >= 8, String(tabs.length));
+
+  /* 16 + 17. Active Surveillance and the Daily Summary builder still work. */
+  ok('16a. Active Surveillance is still one press from the case',
+     await page.locator('[data-act="svEnter"]').count() >= 1);
+  await page.locator('.wsnav button[data-tab="daily"]').click();
+  await page.waitForTimeout(700);
+  const ds = await text(page, '.wspanel');
+  ok('17. the Daily Summary builder is intact for them too',
+     has(ds, 'Daily Summary'), ds.replace(/\s+/g, ' ').slice(0, 160));
+  await page.close();
+}
+
+
+/* ------------------------------------------------------------------------
+   NAVIGATING TO A SECTION MUST NOT OPEN THE KEYBOARD (owner, 2026-08-22).
+
+   The audit found no `autofocus` attribute anywhere in this page. What raised
+   the keyboard was `paint()` handing the caret back unconditionally at the end
+   of every repaint, so arriving at Search — or at Cases, or at a case — put the
+   cursor in a box nobody had touched and an iPad slid its keyboard over half
+   the screen.
+
+   The fix has to hold BOTH halves, which is why this section tests both: the
+   caret must not be given to anyone who did not have it, AND it must still be
+   handed straight back to somebody who is typing, because each keystroke
+   rebuilds the box the cursor is in and without it typing lands one character
+   at a time. A test for only the first half would pass on a page where search
+   no longer works.
+
+   Run at a phone, a tablet and a desktop width because the failure the owner
+   saw is a touch-keyboard one and the nav is behind the burger under 900px. */
+async function focusedNow(page) {
+  return page.evaluate(() => {
+    const el = document.activeElement;
+    if (!el || el === document.body || el === document.documentElement) {
+      return { tag: 'BODY', id: '', typing: false };
+    }
+    const tag = el.tagName;
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    /* What a phone raises a keyboard for. A bare <input> with no type IS a
+       text box, so the empty string belongs in this list. */
+    const TYPES = ['', 'text', 'search', 'email', 'tel', 'number', 'password', 'url'];
+    return { tag, id: el.id || '',
+             typing: tag === 'TEXTAREA' || (tag === 'INPUT' && TYPES.includes(type)) };
+  });
+}
+
+/* The nav rail is behind the burger under 900px, so a section is reached the
+   way a person reaches it rather than by calling the handler. */
+async function goTab(page, key) {
+  /* THE CASE PAGE IS NOT INSIDE shell(), so it carries no `.tabs` rail at all
+     — the way back is its own Back to Cases button. Walking straight from an
+     open case to another section would sit waiting for a nav that is not on
+     that screen. */
+  if (await page.locator('.casepage').count()) {
+    await page.locator('[data-act="backToCases"]').first().click();
+    await page.waitForTimeout(700);
+  }
+  const burger = page.locator('.burger');
+  if (await burger.count() && await burger.first().isVisible()) {
+    if (!(await page.evaluate(() => document.body.classList.contains('navopen')))) {
+      await burger.first().click();
+      await page.waitForTimeout(250);
+    }
+  }
+  await page.locator(`.tabs button[data-tab="${key}"]`).first().click();
+  await page.waitForTimeout(650);
+}
+
+for (const [label, width, height] of [['phone', 390, 844], ['tablet', 820, 1100], ['desktop', 1200, 900]]) {
+  section(`No section opens the keyboard at ${width}px (${label})`);
+  {
+    const ctx = await browser.newContext({ viewport: { width, height } });
+    const page = await ctx.newPage();
+    page.on('pageerror', e => ok(`no page errors at ${width}px (${e.message})`, false));
+    await page.goto(SITE + '/portal/');
+    await page.waitForTimeout(300);
+    await page.locator('#u').fill('trever');
+    await page.locator('#p').fill('AdminPassword1x');
+    await page.locator('#loginBtn').click();
+    await page.waitForTimeout(1000);
+
+    /* Signing in is itself a page entry, and it used to land the caret in the
+       case search box before the office had touched anything. */
+    const afterLogin = await focusedNow(page);
+    ok(`${width}px: signing in does not put the cursor in a text field`,
+       afterLogin.typing === false, JSON.stringify(afterLogin));
+
+    /* Every section the owner named, by its TAB KEY — labels are decoration,
+       keys are the destination. */
+    const SECTIONS = [
+      ['search', 'Search'], ['cases', 'Cases'], ['leads', 'Intakes'],
+      ['profiles', 'Clients & Firms'], ['filequeue', 'File queue'],
+      ['delivery', 'Reports & Packages'], ['sheets', 'Rate Sheets'],
+      ['invoices', 'Billing'], ['settings', 'Settings'],
+      ['tasks', 'Tasks'], ['calendar', 'Calendar'], ['staff', 'Staff'],
+      ['audit', 'Audit trail'], ['dashboard', 'Dashboard'],
+    ];
+    const raised = [];
+    for (const [key, name] of SECTIONS) {
+      await goTab(page, key);
+      const f = await focusedNow(page);
+      if (f.typing) raised.push(`${name} -> ${f.tag}#${f.id}`);
+    }
+    ok(`${width}px: no nav item focuses a text field on arrival`,
+       raised.length === 0, raised.join(', ') || `${SECTIONS.length} sections`);
+    ok(`${width}px: and the walk really visited them all`,
+       SECTIONS.length === 14, String(SECTIONS.length));
+
+    /* THE CASE WORKSPACE IS A PAGE ENTRY TOO. It has its own paint() branch,
+       so it can fail on its own. */
+    await goTab(page, 'cases');
+    await rowFor(page, 'API-20260812-4001').click();
+    await page.waitForTimeout(900);
+    const inCase = await focusedNow(page);
+    ok(`${width}px: opening a case does not focus a text field`,
+       inCase.typing === false, JSON.stringify(inCase));
+
+    /* AND THE OTHER HALF. Typing must still work — the caret is handed back to
+       whoever HAD it, so a search box that repaints on every keystroke keeps
+       the cursor and the characters land in order. */
+    await goTab(page, 'search');
+    await page.locator('#gsearch').click();
+    /* SLOWER THAN THE DEBOUNCE ON PURPOSE. srchSoon() waits 220ms, so typing
+       at 60ms between keys never repaints and the test would pass on a page
+       where the restore was deleted. At 300ms every keystroke runs the search
+       and rebuilds the box the cursor is in, which is the thing being tested. */
+    await page.locator('#gsearch').pressSequentially('smith', { delay: 300 });
+    await page.waitForTimeout(700);
+    const typed = await page.evaluate(() => {
+      const el = document.getElementById('gsearch');
+      return el ? { v: el.value, focused: document.activeElement === el,
+                    caret: el.selectionStart } : null;
+    });
+    ok(`${width}px: typing in Search keeps the cursor and the characters in order`,
+       typed && typed.v === 'smith' && typed.focused === true, JSON.stringify(typed));
+    ok(`${width}px: with the caret at the end, not thrown to the front`,
+       typed && typed.caret === 5, JSON.stringify(typed && typed.caret));
+
+    await goTab(page, 'cases');
+    await page.locator('#q').click();
+    // This one repaints SYNCHRONOUSLY on every keystroke — no debounce to clear.
+    await page.locator('#q').pressSequentially('API', { delay: 120 });
+    await page.waitForTimeout(400);
+    const filt = await page.evaluate(() => {
+      const el = document.getElementById('q');
+      return el ? { v: el.value, focused: document.activeElement === el } : null;
+    });
+    ok(`${width}px: and the case filter still types`,
+       filt && filt.v === 'API' && filt.focused === true, JSON.stringify(filt));
+
+    await goTab(page, 'profiles');
+    const pq = page.locator('#prof_q');
+    if (await pq.count()) {
+      await pq.click();
+      // Past profSearchSoon's 220ms debounce, for the reason above.
+      await pq.pressSequentially('law', { delay: 300 });
+      await page.waitForTimeout(700);
+      const dir = await page.evaluate(() => {
+        const el = document.getElementById('prof_q');
+        return el ? { v: el.value, focused: document.activeElement === el } : null;
+      });
+      ok(`${width}px: so does the Clients & Firms directory search`,
+         dir && dir.v === 'law' && dir.focused === true, JSON.stringify(dir));
+    } else {
+      ok(`${width}px: so does the Clients & Firms directory search`, false, 'no #prof_q');
+    }
+
+    /* THE SEARCH FIELD'S WIDTH. Contained on a desktop, released on a phone —
+       measured against the PANEL it sits in rather than a share of the
+       viewport, the way the Unit 10 timeline rules already are. */
+    await goTab(page, 'search');
+    const box = await page.evaluate(() => {
+      const el = document.querySelector('.srchbox');
+      if (!el) return null;
+      const card = el.closest('.card');
+      return { w: Math.round(el.getBoundingClientRect().width),
+               card: card ? Math.round(card.getBoundingClientRect().width) : 0,
+               max: getComputedStyle(el).maxWidth };
+    });
+    if (width >= 900) {
+      ok(`${width}px: the search field is contained rather than the width of the card`,
+         box && box.w <= 640 && box.w < box.card - 40, JSON.stringify(box));
+    } else {
+      ok(`${width}px: the search field takes the panel's width`,
+         box && box.max === 'none' && box.w >= box.card - 60, JSON.stringify(box));
+    }
+
+    await ctx.close();
+  }
+}
+
+/* THE CONTROL. An assertion that nothing is focused passes just as happily on
+   a page where focus never worked, so it has to be shown failing on the defect
+   it was written for. `focusRestore` is a top-level function declaration in a
+   classic script, so it IS a global binding — reassigning it changes what
+   paint() calls, and putting the ORIGINAL unconditional behaviour back is a
+   faithful reproduction of what the owner reported rather than an imitation
+   of it. */
+section('Control: the keyboard test can actually see the defect');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => {
+    window.__realRestore = focusRestore;
+    window.focusRestore = function () {
+      for (const id of ['q', 'prof_q', 'nl_pick', 'gsearch']) {
+        const el = document.getElementById(id);
+        if (el) { el.focus(); try { el.setSelectionRange(el.value.length, el.value.length); } catch (e) { } }
+      }
+    };
+  });
+  await goTab(page, 'cases');
+  const broken = await focusedNow(page);
+  ok('with the old unconditional restore put back, arriving at Cases DOES focus the search box',
+     broken.typing === true && broken.id === 'q', JSON.stringify(broken));
+
+  await page.evaluate(() => { window.focusRestore = window.__realRestore; });
+  await goTab(page, 'search');
+  await goTab(page, 'cases');
+  const fixed = await focusedNow(page);
+  ok('and with the real one restored it does not', fixed.typing === false, JSON.stringify(fixed));
+  await page.close();
+}
+
+section('The focus rule is an allow-list, and dialogs are exempt from it');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const rule = await page.evaluate(() => ({
+    keep: typeof FOCUS_KEEP !== 'undefined' ? FOCUS_KEEP.slice() : null,
+    hasCapture: typeof focusCapture === 'function',
+    hasRestore: typeof focusRestore === 'function',
+  }));
+  /* AN ALLOW-LIST FOR THE FIELD_KEEP REASON: a search box added later does not
+     acquire page-entry focus by existing. */
+  ok('the caret is handed back only to a named box', Array.isArray(rule.keep) && rule.keep.length > 0
+     && rule.keep.every(id => typeof id === 'string'), JSON.stringify(rule.keep));
+  ok('and the capture happens before the repaint, not after',
+     rule.hasCapture === true && rule.hasRestore === true, JSON.stringify(rule));
+
+  /* The page holds no autofocus attribute at all — the audit's own finding,
+     pinned so it cannot come back in a template somewhere. */
+  const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+  const attrs = (src.match(/\bautofocus\b/g) || []).filter(() => true);
+  const inCode = src.split('\n').filter(l => /\bautofocus\b/.test(l) && !/^\s*(\/\*|\*|\/\/)/.test(l) && !/There is no `autofocus`/.test(l));
+  ok('there is no autofocus attribute anywhere in the page',
+     inCode.length === 0, inCode.slice(0, 2).join(' | ') || String(attrs.length));
+
+  /* DIALOGS ARE EXEMPT BY THE OWNER'S OWN RULE — "dialogs/forms may focus
+     intentionally only after the user explicitly opens that dialog/form."
+     Opening the pre-case intake door is an explicit act, so its address box
+     may take the caret; arriving at Rate Sheets may not. */
+  await page.locator('.tabs button[data-tab="sheets"]').first().click();
+  await page.waitForTimeout(700);
+  const onSheets = await focusedNow(page);
+  ok('arriving at Rate Sheets focuses nothing', onSheets.typing === false, JSON.stringify(onSheets));
+
+  const door = page.locator('[data-act="preIntake"]').first();
+  if (await door.count()) {
+    await door.click();
+    await page.waitForTimeout(500);
+    const inDialog = await focusedNow(page);
+    ok('but opening the send form deliberately focuses its address box',
+       inDialog.id === 'pi_to', JSON.stringify(inDialog));
+  } else {
+    ok('but opening the send form deliberately focuses its address box', false, 'no preIntake door');
+  }
+  await page.close();
+}
+
 
 await browser.close();
 server.close();

@@ -640,46 +640,92 @@
      min-height and not a font or padding change. */
   .ch-right .btn{min-height:44px;}
   .ch-line{font-size:.8rem;color:var(--muted);}
-  .wsecs{display:flex;gap:6px;overflow-x:auto;margin:0 0 10px;-webkit-overflow-scrolling:touch;}
-  .wsecs button{flex:none;font:inherit;font-size:.76rem;font-weight:800;letter-spacing:.05em;
-    text-transform:uppercase;background:var(--panel);border:1px solid var(--line);border-radius:9px;
-    color:var(--muted);padding:8px 14px;cursor:pointer;white-space:nowrap;}
-  .wsecs button.on{background:var(--navy-2);border-color:var(--navy-2);color:#fff;}
-  .wsecs .sec-s{display:none;}
-  .wsecs .sec-i{display:none;}
-  /* UIBUILD P15 — on a phone the section bar is the bottom navigation:
-     fixed under the thumb, short labels, the add button pinned above it. */
+  /* ============ THE CASE WORKSPACE NAV (Unit 38) ============
+
+     One row of tabs, not a section bar over a tab bar. `.wsecs` is gone from
+     the case page — its markup went with it — and `.wsnav` is a distinct name
+     rather than a reuse, because this file has killed three rules by
+     source-order collision already (.qgrid, .dlg, the burger base rule).
+
+     Quieter by whitespace and weight rather than by more borders, which is the
+     owner's own visual direction: one hairline under the row, a teal underline
+     on the current tab, and nothing boxed. */
+  .wsnav{display:flex;gap:2px;align-items:center;flex-wrap:wrap;margin:0 0 14px;}
+  .wsnav button{min-height:44px;}
+  .wsnav .wsmore{margin-left:auto;color:var(--muted);}
+  .wsmorelist{display:flex;flex-wrap:wrap;gap:6px;margin:-6px 0 14px;padding:10px 12px;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;}
+  .wsmorelist button{font:inherit;font-size:.85rem;background:#fff;border:1px solid var(--line);
+    border-radius:8px;color:var(--ink);padding:8px 12px;min-height:44px;cursor:pointer;}
+  .wsmorelist button.on{background:var(--navy-2);border-color:var(--navy-2);color:#fff;}
+  /* On a desktop these are already on the row a few pixels above, so they are
+     not repeated in the menu. */
+  .wsmorelist .more-primary{display:none;}
+  .wsmorelist button:hover{border-color:var(--teal-2);}
+
+  /* THE PRIMARY ACTIONS, directly under the header. The owner's line: the most
+     common field actions are never buried behind More. */
+  .caseacts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px;}
+  .caseacts .btn{min-height:44px;}
+  .caseacts .addact{position:static;box-shadow:none;}
+
+  /* THE DAILY SUMMARY HEAD — day, date and state, so nobody has to guess which
+     day is on screen. */
+  .dayhead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;
+    padding:12px 14px;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;margin-bottom:12px;}
+  .dayhead-d{font-size:.86rem;color:var(--muted);margin-top:2px;}
+  .dayhead-r{text-align:right;}
+
+  /* The phone bar is hidden on a desktop; it is the case page's whole
+     navigation below 640px. */
+  .wsbar{display:none;}
   @media(max-width:640px){
-    /* The bottom bar is the ONLY navigation a phone has on a case, so it has
-       to announce itself. The owner could not see it or hit it (2026-08-14),
-       and it got three things wrong at once: it sat 6px off the screen edge,
-       its targets were about 33px tall — under Apple's 44px minimum — and it
-       was four small-caps words with nothing to recognise at a glance.
+    /* THE BOTTOM BAR IS THE ONLY NAVIGATION A PHONE HAS ON A CASE, so it has
+       to announce itself. It got three things wrong at once once before
+       (2026-08-14): it sat 6px off the screen edge, its targets were about
+       33px tall — under Apple's 44px minimum — and it was four small-caps
+       words with nothing to recognise at a glance.
 
        `max(14px, env(...))` is the load-bearing bit. Without
-       `viewport-fit=cover` iOS reports a safe-area inset of ZERO, so the old
-       calc() added nothing and the buttons pressed against the bottom edge,
-       where the home indicator lives and a thumb cannot land cleanly. The
-       max() guarantees real clearance whether or not the browser reports an
-       inset, and needs no change to the viewport meta. */
-    .casepage .wsecs{position:fixed;left:0;right:0;bottom:0;z-index:65;background:var(--navy-2);
-      margin:0;padding:6px 6px max(14px,env(safe-area-inset-bottom));gap:4px;
-      justify-content:space-around;border-radius:0;border-top:1px solid #2f5580;
+       `viewport-fit=cover` iOS reports a safe-area inset of ZERO, so a calc()
+       adds nothing and the buttons press against the bottom edge, where the
+       home indicator lives and a thumb cannot land cleanly. The max()
+       guarantees real clearance whether or not the browser reports an inset,
+       and needs no change to the viewport meta.
+
+       Unit 38 changed WHAT is in the bar, not how it sits: Activity, Summary,
+       Add, Evidence, More. Activity and Summary are here and never under
+       More — the owner's own line. */
+    .casepage .wsbar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:65;
+      background:var(--navy-2);margin:0;padding:6px 6px max(14px,env(safe-area-inset-bottom));
+      gap:4px;justify-content:space-around;border-top:1px solid #2f5580;
       box-shadow:0 -6px 18px rgba(9,18,30,.34);}
-    .casepage .wsecs button{flex:1;background:transparent;border:0;color:#dbe9f7;
+    .casepage .wsbar button{flex:1;background:transparent;border:0;color:#dbe9f7;
       border-radius:10px;padding:6px 2px;text-align:center;min-height:52px;position:relative;
       display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
-      font-size:.68rem;letter-spacing:.03em;}
-    .casepage .wsecs button .sec-i{display:block;font-size:1.3rem;line-height:1;}
-    .casepage .wsecs button.on{background:var(--nav-on);color:#fff;}
+      font:inherit;font-size:.68rem;letter-spacing:.03em;cursor:pointer;}
+    .casepage .wsbar button .sec-i{display:block;font-size:1.3rem;line-height:1;}
+    .casepage .wsbar button.on{background:var(--nav-on);color:#fff;}
     /* "You are here" has to survive a glance in a car at dusk, so it is a gold
        cap rather than a slightly different navy. */
-    .casepage .wsecs button.on::before{content:"";position:absolute;top:-6px;left:24%;right:24%;
+    .casepage .wsbar button.on::before{content:"";position:absolute;top:-6px;left:24%;right:24%;
       height:3px;border-radius:0 0 3px 3px;background:var(--gold);}
-    .casepage .wsecs .sec-l{display:none;}
-    .casepage .wsecs .sec-s{display:inline;}
+    .casepage .wsbar .wsbar-add{color:var(--gold);}
+    /* The desktop tab row would be a second navigation on a phone, so the six
+       live under More there — except Activity, Summary and Evidence, which are
+       in the bar. Overview and Report are reachable from the More list. */
+    .casepage .wsnav{display:none;}
+    /* The row is hidden here, so More is the only door to the tabs the thumb
+       bar does not carry. Activity and Summary are never among them. */
+    .casepage .wsmorelist .more-primary{display:inline-block;}
+    .casepage .wsmorelist{margin-top:0;}
     .casepage{padding-bottom:100px;}
     .addact{bottom:96px;}
+    .caseacts .btn{flex:1 1 auto;}
+    /* DUPLICATE ENTRY POINT CLEANUP. + Add is in the thumb bar on a phone, so
+       the action row's copy stands down: one obvious way in at any width. */
+    .caseacts .addact{display:none;}
   }
   .ovgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:14px;}
   .ovcard{background:#fff;border:1px solid var(--line);border-radius:12px;padding:13px 15px;}
@@ -697,6 +743,14 @@
   .ov-mods li:last-child button{border-bottom:0;}
   .ov-ring{display:flex;justify-content:center;margin-bottom:4px;}
   .ov-next{background:var(--gold-soft);border:1px solid #e3d3ae;}
+  /* Unit 38 — the admin overview LEADS with Next step, so the same block runs
+     the width of the panel and reads as a band rather than one card of five.
+     Same class, same .nx, same button: only the layout differs. */
+  .ov-band{display:flex;align-items:center;gap:16px;margin-bottom:14px;}
+  .ov-band h3{margin:0;flex:none;}
+  .ov-band .nx{margin:0;flex:1;}
+  .ov-band .btn{flex:none;min-height:44px;}
+  @media(max-width:560px){ .ov-band{flex-wrap:wrap;gap:8px;} .ov-band .nx{flex:1 1 100%;} }
   .ov-next .nx{font-size:1.02rem;font-weight:800;color:var(--navy-2);margin:2px 0 10px;}
   .ov-recent{margin:0;padding:0;list-style:none;}
   .ov-recent li{display:flex;gap:10px;font-size:.86rem;padding:5px 0;border-bottom:1px solid var(--line);}
@@ -1365,8 +1419,12 @@
   .tmpl-sug{font-size:.74rem;color:var(--teal);margin-top:4px;font-weight:700;}
 
   /* ------------------------------------- UNIT 8: search & attention */
+  /* CONTAINED ON A DESKTOP (owner, 2026-08-22). It had no maximum, so it ran
+     the full width of the card — a search box the width of a monitor. The
+     release back to full width below 900px is at the END of this stylesheet
+     with the other phone rules, where source order cannot kill it. */
   .srchbox{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:12px;
-    padding:4px 10px;background:#fff;}
+    padding:4px 10px;background:#fff;max-width:640px;}
   .srchbox:focus-within{border-color:var(--teal);box-shadow:0 0 0 3px rgba(23,124,138,.12);}
   .srchicon{opacity:.55;font-size:1rem;}
   /* 16px is the iOS zoom floor and it applies at EVERY width here, not only on
@@ -1618,6 +1676,18 @@
     [data-act="dcCopy"],[data-act="dcRefresh"]{min-height:44px;}
   }
 
+  /* THE SEARCH BOX IS RELEASED ON A PHONE AND A TABLET. Contained above, full
+     width here: 640px of box on a 390px screen is just a box with a margin
+     nobody asked for. Presentation only — no query, no route, no behaviour.
+
+     900px is READ OFF THIS PAGE rather than invented: it is already where the
+     navigation rail goes behind the burger, which is where this file has
+     decided the desktop ends. An iPad in portrait is 768px and gets the whole
+     width, which is what "full width on mobile" is asking for. */
+  @media(max-width:900px){
+    .srchbox{max-width:none;}
+  }
+
 </style>
 </head>
 <body>
@@ -1793,6 +1863,10 @@ let INVOICES = null, INV_OPEN = null, INV_MSG = "", INV_WARN = [], INV_EVENTS = 
     INV_FILTER = {status: "", type: "", q: ""};
 // The open case workspace: which case, which tab, its loaded data, last error.
 let WS = null, WS_CASE = null, WS_TAB = "overview", WS_ERR = "", WS_REPORT = null;
+/* Unit 38 — whether the case workspace's More menu is open. Closed on every
+   case open and on every tab choice, so it can never be left hanging over the
+   panel someone just asked for. */
+let WS_MORE = false;
 /* Active Surveillance Mode. SV is the whole of its state: which screen, the
    pending quick entry, the voice transcript awaiting review. The CASE data it
    draws is WS — the same workspace every other screen reads, because this is a
@@ -9293,6 +9367,50 @@ function vstHtml(){
    end up rendered, so reading what was rendered catches every one of them and
    any added later. Only announced when the text CHANGES, so a repaint that
    says the same thing does not repeat itself in the user's ear. */
+/* NAVIGATING TO A SECTION MUST NOT OPEN THE KEYBOARD (owner, 2026-08-22).
+
+   There is no `autofocus` attribute anywhere in this page — the audit looked
+   and found none. What opened the on-screen keyboard was `paint()` handing the
+   caret back UNCONDITIONALLY at the end of every repaint. That is right while
+   somebody is typing (each keystroke rebuilds the box the cursor is in, so
+   without it typing lands one character at a time) and wrong every other time,
+   and a repaint cannot tell the two apart by itself. So it is told: what was
+   focused BEFORE the repaint is captured, and only that element gets the caret
+   back afterwards. Tapping Cases, Search, Intakes or any other nav item paints
+   with nothing focused, so nothing is focused after — and on an iPad or a phone
+   no keyboard slides up over the screen the owner was trying to read.
+
+   FOCUS_KEEP is an allow-list for the same reason the Worker's redaction
+   allow-list is one: a search box added later does not silently acquire
+   page-entry focus by existing. Each id here is a box whose own repaint would
+   otherwise eat the keystroke.
+
+   Naming that Worker constant here in words rather than by its identifier is
+   deliberate — the suite greps this file for it, because a stale copy of a
+   security boundary in the page is worse than no copy, and a grep cannot tell
+   a comment from a declaration. Making the guard cleverer would weaken it.
+
+   Dialogs are untouched and stay untouched — `ls_to` and `pi_to` focus after
+   the user has explicitly opened that form, which the owner's rule allows by
+   name. */
+const FOCUS_KEEP = ["q", "prof_q", "nl_pick", "gsearch", "am_q"];
+let FOCUS_WAS = null;
+function focusCapture(){
+  const el = document.activeElement;
+  FOCUS_WAS = el && el.id && FOCUS_KEEP.includes(el.id) ? el.id : null;
+}
+function focusRestore(){
+  const id = FOCUS_WAS;
+  FOCUS_WAS = null;
+  if(!id) return;
+  const el = $(id);
+  if(!el) return;
+  el.focus();
+  /* The caret goes to the end, where it was: assigning .value moves it to the
+     front, so without this typing reverses itself. */
+  try { el.setSelectionRange(el.value.length, el.value.length); } catch(e){ }
+}
+
 let SR_LAST = "";
 function announceRendered(){
   const el = document.querySelector("#app .err, #app .note, #app .linkbox, #app .loaderr");
@@ -9304,6 +9422,9 @@ function announceRendered(){
 }
 
 function paint(){
+  /* Before anything is replaced — once `app.innerHTML` is assigned the active
+     element is the body and there is nothing left to read. */
+  focusCapture();
   paintEvView();
   paintPStamp();
   paintVStamp();
@@ -9324,12 +9445,14 @@ function paint(){
     // The workspace takes the whole page. The back button carries the same
     // .close class the dialog's X had, so muscle memory and tests both hold.
     app.innerHTML = `<div class="casepage">
+      <h1 class="vh">Case ${esc(WS_CASE)} &mdash; Always Precise Investigations case portal</h1>
       <div class="pagebar"><button class="btn sm ghost close" data-act="backToCases">&larr; Back to Cases</button></div>
       <div class="card"><div class="dlg" id="dlgBody">${caseBodyHtml()}</div></div>
     </div>`;
-    // Typing in the sheet's search repaints; hand the cursor straight back.
-    const amq = $("am_q");
-    if(amq && ACT_MODAL && ACT_MODAL.search){ amq.focus(); amq.setSelectionRange(amq.value.length, amq.value.length); }
+    // Typing in the sheet's search repaints; hand the cursor straight back —
+    // but only to whoever had it, which is what stops opening a case from
+    // raising the keyboard.
+    focusRestore();
     return;
   }
   app.innerHTML = shell(
@@ -9352,15 +9475,13 @@ function paint(){
     : TAB === "myexpenses" ? myExpensesView()
     : casesView());
   announceRendered();
-  const q = $("q");
-  if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
-  /* The directory and picker searches repaint on every keystroke, so the
-     cursor has to be handed back or typing lands one character at a time in a
-     box that keeps losing focus. Same treatment the case search already gets. */
-  for(const id of ["prof_q", "nl_pick", "gsearch"]){
-    const el = $(id);
-    if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
-  }
+  /* The case search, the directory and picker searches and the global search
+     all repaint on every keystroke, so the cursor has to be handed back or
+     typing lands one character at a time in a box that keeps losing focus.
+     ONLY to the box that already had it: this used to focus whichever of them
+     the new screen happened to contain, so arriving at a section focused a
+     field nobody had touched and the phone raised its keyboard over the page. */
+  focusRestore();
 }
 
 /* Loading the portal used to swallow every failure and paint an empty
@@ -9538,7 +9659,7 @@ function sessionForget(){
   INVOICES = null; INV_OPEN = null; INV_MSG = ""; INV_WARN = []; INV_EVENTS = [];
   INV_SETTINGS = null; INV_FILTER = {status: "", type: "", q: ""};
   retainerReset(); RET_CASE = null;
-  WS = null; WS_CASE = null; WS_TAB = "overview"; WS_ERR = ""; WS_REPORT = null;
+  WS = null; WS_CASE = null; WS_TAB = "overview"; WS_ERR = ""; WS_REPORT = null; WS_MORE = false;
   WS_NOTICE = ""; ACT_MODAL = null; REP_VIEW = "preview"; REP_VERS = {}; EV_TAB = "all";
   VIEW = "list"; SV = null; SV_SKEW = 0; svTickStop();
   document.body.classList.remove("surv");
@@ -9560,6 +9681,7 @@ async function doLogout(){
    feature that is not there. */
 async function openCase(caseNo, tab){
   WS_CASE = caseNo; WS_TAB = tab || "overview"; WS_ERR = ""; SUBJ_FORM = null; ACT_MODAL = null; VIEW = "case";
+  WS_MORE = false;
   REP_VIEW = "preview"; REP_VERS = {}; EV_TAB = "all";
   /* Unit 11: integrity answers and the manifest belong to the case they were
      read on — carried to the next case they would state another file's facts. */
@@ -9657,6 +9779,82 @@ function wsSections(){
 function wsSectionFor(tab){
   const secs = wsSections();
   return secs.find(s => s[2].some(t => t[0] === tab)) || secs[0];
+}
+
+/* ============ THE CASE WORKSPACE IS ONE LEVEL DEEP (Unit 38) ============
+
+   Owner, 2026-08-22: "The portal has become too busy when doing actual case
+   work. Activity, Daily Summary, Evidence and Report must be much easier to
+   reach ... Do not make the user return to the main portal navigation."
+
+   It was two levels — four sections over seventeen tabs — and the Daily
+   Summary was THREE: Report & Media, then Reports, then its sixth sub-view.
+   The six below are one row, and every one of the other tabs is still there,
+   under More, with its key unchanged so a bookmarked ?tab= keeps working.
+
+   `wsSections()` above is untouched and still the source for More, so a tab
+   added there arrives in this nav rather than disappearing from it. */
+/* The three the thumb bar carries. Named once: the More list works out what
+   it has to cover on a phone by subtracting these, so the bar and the menu
+   cannot drift into either duplicating a door or losing one. */
+const WS_BAR_TABS = ["activity", "daily", "evidence"];
+
+function wsPrimary(){
+  const admin = ME.role === "admin";
+  const t = [["overview", "Overview"], ["activity", "Activity"], ["daily", "Daily Summary"],
+             ["evidence", "Evidence"], ["reports", "Report"]];
+  /* Billing is the office's. An investigator's workspace carries no rate
+     sheet, no retention administration and no firm management — the owner's
+     role rule, and the same boundary the Worker already enforces. */
+  if(admin) t.push(["billing", "Billing"]);
+  return t;
+}
+/* Everything the six do not carry, in the order the sections had it, filtered
+   to the tabs this role could already reach. Derived from wsSections() rather
+   than listed again: two lists of tabs is one list that goes stale. */
+function wsMore(){
+  const primary = new Set(wsPrimary().map(t => t[0]));
+  const seen = new Set();
+  const out = [];
+  for(const [, , tabs] of wsSections()){
+    for(const [k, lbl] of tabs){
+      if(primary.has(k) || seen.has(k)) continue;
+      seen.add(k); out.push([k, lbl]);
+    }
+  }
+  /* Package belongs to the office and hangs off Report; it is in the admin
+     sections already, so it arrives here for an admin and not for the field. */
+  return out;
+}
+function wsTabLabel(tab){
+  const all = [...wsPrimary(), ...wsMore()];
+  return (all.find(t => t[0] === tab) || [tab, tab])[1];
+}
+
+/* WHICH DAY THE CASE IS ON, answered once (owner: "Prefer the actual
+   current/open investigation day. If no day is open: show the latest relevant
+   day with a clear label. Never silently show the wrong day.")
+
+   WS.days arrives newest-first from the Worker, so [0] is the latest. The
+   label is returned with it, because a screen that shows Day 3 without saying
+   whether it is running is the silent wrong day the owner named. */
+function wsCurrentDay(){
+  const open = (WS && WS.open_day) || null;
+  const days = (WS && WS.days) || [];
+  if(open){
+    const full = days.find(d => d.id === open.id) || open;
+    return { day: full, open: true, label: "running now" };
+  }
+  if(days.length) return { day: days[0], open: false, label: "most recent day" };
+  return { day: null, open: false, label: "no day yet" };
+}
+/* The case's own day NUMBER, not the position in a scoped list — Unit 25's
+   rule, which is why the Worker sends days_total. */
+function wsDayNo(day){
+  const days = (WS && WS.days) || [];
+  const total = (WS && typeof WS.days_total === "number") ? WS.days_total : days.length;
+  const i = days.findIndex(d => d.id === (day && day.id));
+  return i < 0 ? total : total - i;
 }
 
 function authPanel(a, admin){
@@ -10175,6 +10373,17 @@ function tlGo(tab, id, kind){
   paintCase();
 }
 
+/* WS.activity is CHRONOLOGICAL, OLDEST FIRST (Unit 38) — that is what a case
+   log, a field timeline and a report chronology all have to read like. A few
+   places want the opposite question, "what happened most recently", and they
+   ask it here rather than by indexing the array from whichever end happens to
+   be right this month. Newest first, because that is what a "recent" list
+   means. */
+function newestActivity(n){
+  const a = (WS && WS.activity) || [];
+  return a.slice(Math.max(0, a.length - n)).reverse();
+}
+
 function activityPanel(){
   const a = (WS && WS.activity) || [];
   const open = WS && WS.open_day;
@@ -10198,7 +10407,6 @@ function activityPanel(){
          is what totals the hours and mileage.
          <button class="btn sm ghost" data-act="wsTab" data-tab="field" style="margin-left:8px">Start a day</button></div>`}
 
-    <div class="ambar"><button class="btn addact" data-act="actOpen">+ Add activity</button></div>
 
     ${a.length ? Object.keys(byDay).map(d => `
       <div class="tl-day">${esc(fmtDay(d))}</div>
@@ -10233,8 +10441,7 @@ function activityPanel(){
                 <button class="tl-edit" style="color:#a6392f" data-act="actDelete" data-id="${e.id}">Delete</button>` : ""}</div>
           </div></li>`).join("")}
       </ol>`).join("")
-      : `<div class="empty">Nothing logged on this case yet. + Add activity starts the story.</div>`}
-    ${ACT_MODAL ? actModalHtml() : ""}`;
+      : `<div class="empty">Nothing logged on this case yet. + Add activity starts the story.</div>`}`;
 }
 
 /* --------------------------- the Add Activity sheet (UIBUILD P8/P9) */
@@ -10900,6 +11107,63 @@ function dsBuilderHtml(open, day, editable){
     ${st.err ? `<div class="err">${esc(st.err)}</div>` : ""}
     ${st.okmsg ? `<div class="note">${esc(st.okmsg)}</div>` : ""}
   </div>`;
+}
+
+/* ============ DAILY SUMMARY, ONE CLICK FROM THE CASE (Unit 38) ============
+
+   The builder itself is unchanged — dsBuilderHtml reads a DAY and an editable
+   flag and nothing else, which is what makes this possible without touching
+   it. What was missing was a door: it lived as the sixth sub-view of an open
+   report inside the Reports tab, so reaching it meant choosing a section, then
+   a tab, then a report, then a view.
+
+   Write authority mirrors saveReport exactly, as Unit 12 set it: an admin
+   always, the day's investigator until that day's report is with the office. */
+function dailyPanel(){
+  const admin = ME.role === "admin";
+  const cur = wsCurrentDay();
+  const day = cur.day;
+  /* A PANEL THAT DRAWS NOTHING STILL HAS TO SAY WHAT IT IS. The head is
+     rendered in every state, so "Daily Summary" is on screen whether or not
+     there is a day to narrate. */
+  if(!day){
+    return `<div class="dayhead">
+        <div><b>Daily Summary</b><div class="dayhead-d">No investigation day yet</div></div>
+        <div class="dayhead-r"><span class="tag">Not started</span></div>
+      </div>
+      <div class="empty"><b>Nothing to narrate yet.</b><br>
+      A daily summary is written about a day, so there is nothing to write until one has run.
+      <div class="actions" style="justify-content:center;margin-top:10px">
+        <button class="btn" data-act="wsTab" data-tab="field">Start an investigation day</button>
+      </div></div>`;
+  }
+  const report = ((WS && WS.reports) || []).find(r => r.day_id === day.id);
+  /* The day's own investigator keeps the pen until the report is with the
+     office; the office always has it. */
+  const editable = admin || !report || ["draft", "needs_revision"].includes(report.status);
+  const saved = dsSavedFor(day.id);
+  const entries = dsDayEntries(day.id);
+  const state = saved && String(saved.narrative || "").trim()
+    ? (report && ["approved", "delivered"].includes(report.status) ? "Complete" : "Draft")
+    : "Not started";
+  return `
+    <div class="dayhead">
+      <div>
+        <b>Daily Summary</b>
+        <div class="dayhead-d">Day ${wsDayNo(day)} &mdash; ${esc(fmtDay(day.day_date))}</div>
+      </div>
+      <div class="dayhead-r">
+        <span class="tag ${state === "Complete" ? "done" : state === "Draft" ? "part" : ""}">${state}</span>
+        <div class="tl-m">${cur.open ? "This day is running now" : "The most recent day on this case"}</div>
+      </div>
+    </div>
+    <p class="hint">${entries.length
+      ? `${entries.length} activity entr${entries.length === 1 ? "y" : "ies"} on this day are available to the builder below.`
+      : "Nothing has been logged on this day yet — the builder has no moments to draw on."}
+      ${((WS && WS.days) || []).length > 1
+        ? ` Another day's summary is written from its own report on the <button class="lnk" data-act="wsTab" data-tab="reports">Report</button> tab.`
+        : ""}</p>
+    ${dsBuilderHtml(report || null, day, editable)}`;
 }
 
 function reportsPanel(){
@@ -12085,7 +12349,7 @@ function evidencePanel(){
           ${((WS && WS.subjects) || []).length ? `<optgroup label="Subjects">
             ${WS.subjects.map(sj => `<option value="s:${sj.id}">${esc(sj.name)}</option>`).join("")}</optgroup>` : ""}
           ${((WS && WS.activity) || []).length ? `<optgroup label="Recent activity">
-            ${WS.activity.slice(0, 8).map(a => `<option value="e:${a.id}">${esc(t12(a.at_time))} — ${esc(String(a.description || "").slice(0, 48))}</option>`).join("")}</optgroup>` : ""}
+            ${newestActivity(8).map(a => `<option value="e:${a.id}">${esc(t12(a.at_time))} — ${esc(String(a.description || "").slice(0, 48))}</option>`).join("")}</optgroup>` : ""}
         </select></label>
       <button class="btn" type="submit">Upload picture or document</button>
       <p class="hint">The free-plan failsafe is on: uploads stop before storage could ever bill.
@@ -13235,6 +13499,7 @@ function caseBodyHtml(){
 
   const panel =
       WS_TAB === "activity" ? activityPanel()
+    : WS_TAB === "daily"    ? dailyPanel()
     : WS_TAB === "field"    ? fieldPanel()
     : WS_TAB === "timeline" ? timelinePanel()
     : WS_TAB === "reports"  ? reportsPanel()
@@ -13255,16 +13520,71 @@ function caseBodyHtml(){
     :                         fieldHomeHtml() + myOfferBox() + detailList(s, "overview")
                               + (a.authorized_hours != null ? authPanel(a, admin) : "");
 
-  const sec = wsSectionFor(WS_TAB);
+  const primary = wsPrimary();
+  const more = wsMore();
+  const inMore = more.some(t => t[0] === WS_TAB);
   return `
     ${caseHeader(s, a, admin)}
-    <div class="wsecs">${wsSections().map(([k, lbl, _tabs, short, icon]) =>
-      `<button class="${sec[0] === k ? "on" : ""}" data-act="wsSec" data-sec="${k}"${
-        sec[0] === k ? ' aria-current="page"' : ""}><span class="sec-i" aria-hidden="true">${
-        icon || ""}</span><span class="sec-l">${esc(lbl)}</span><span class="sec-s">${esc(short || lbl)}</span></button>`).join("")}</div>
-    <div class="wstabs">${sec[2].map(([k, lbl]) =>
-      `<button class="${WS_TAB === k ? "on" : ""}" data-act="wsTab" data-tab="${k}">${esc(lbl)}</button>`).join("")}</div>
-    <div class="wspanel">${panel}</div>`;
+    ${caseActionsHtml()}
+    <div class="wstabs wsnav">${primary.map(([k, lbl]) =>
+      `<button class="${WS_TAB === k ? "on" : ""}" data-act="wsTab" data-tab="${k}"${
+        WS_TAB === k ? ' aria-current="page"' : ""}>${esc(lbl)}</button>`).join("")}
+      ${/* THE MORE BUTTON ALWAYS SAYS MORE. It briefly showed the current
+           tab's name instead, which reads well and is ambiguous: a control
+           labelled "Subject" that opens a menu is not a Subject button, and
+           anything matching nav buttons by their words — a test, a screen
+           reader, a person — has to guess. It carries `.on` when the tab you
+           are on lives inside it, and the menu marks which. */""}
+      ${more.length ? `<button class="${inMore ? "on" : ""} wsmore" data-act="wsMore"
+        aria-haspopup="true" aria-expanded="${WS_MORE ? "true" : "false"}"${
+        inMore ? ` title="${esc(wsTabLabel(WS_TAB))}"` : ""}>More &#9662;</button>` : ""}</div>
+    ${WS_MORE ? `<div class="wsmorelist" role="menu">${
+      primary.filter(([k]) => !WS_BAR_TABS.includes(k)).map(([k, lbl]) =>
+        `<button role="menuitem" class="more-primary${WS_TAB === k ? " on" : ""}" data-act="wsTab" data-tab="${k}">${esc(lbl)}</button>`).join("")
+      }${more.map(([k, lbl]) =>
+      `<button role="menuitem" class="${WS_TAB === k ? "on" : ""}" data-act="wsTab" data-tab="${k}">${esc(lbl)}</button>`).join("")}</div>` : ""}
+    <div class="wspanel">${panel}</div>
+    ${/* The Add Activity sheet is `position:fixed; inset:0` — an overlay over
+         the whole page, not a part of the Activity panel it used to be
+         rendered inside. It lives here so the action row's + Add activity
+         works from every tab, which is what a primary action has to do. */""}
+    ${ACT_MODAL ? actModalHtml() : ""}
+    ${/* THE PHONE BAR. Activity and Summary are IN it, never under More —
+         the owner's own line. + Add is the middle key because it is the one
+         thing someone does standing up. */""}
+    <div class="wsbar">
+      <button class="${WS_TAB === "activity" ? "on" : ""}" data-act="wsTab" data-tab="activity"${
+        WS_TAB === "activity" ? ' aria-current="page"' : ""}>
+        <span class="sec-i" aria-hidden="true">&#9998;</span><span>Activity</span></button>
+      <button class="${WS_TAB === "daily" ? "on" : ""}" data-act="wsTab" data-tab="daily"${
+        WS_TAB === "daily" ? ' aria-current="page"' : ""}>
+        <span class="sec-i" aria-hidden="true">&#128221;</span><span>Summary</span></button>
+      <button class="wsbar-add" data-act="actOpen">
+        <span class="sec-i" aria-hidden="true">&#10133;</span><span>Add</span></button>
+      <button class="${WS_TAB === "evidence" ? "on" : ""}" data-act="wsTab" data-tab="evidence"${
+        WS_TAB === "evidence" ? ' aria-current="page"' : ""}>
+        <span class="sec-i" aria-hidden="true">&#128247;</span><span>Evidence</span></button>
+      <button class="${WS_MORE ? "on" : ""}" data-act="wsMore"
+        aria-haspopup="true" aria-expanded="${WS_MORE ? "true" : "false"}">
+        <span class="sec-i" aria-hidden="true">&#8943;</span><span>More</span></button>
+    </div>`;
+}
+
+/* THE ACTIONS SOMEONE ACTUALLY DOES ON A CASE (Unit 38). Owner: "the most
+   common field actions should never be buried behind More menus." One row,
+   directly under the header, above the tabs — so the answer to "what now" is
+   on the screen rather than two clicks into it. */
+function caseActionsHtml(){
+  const cur = wsCurrentDay();
+  return `<div class="caseacts">
+    <button class="btn addact" data-act="actOpen">+ Add activity</button>
+    <button class="btn sm ghost" data-act="wsTab" data-tab="daily">Daily summary</button>
+    ${cur.open
+      ? `<button class="btn sm ghost" data-act="wsTab" data-tab="field">End day</button>
+         <button class="btn sm accent" data-act="svEnter" data-case="${esc(WS_CASE)}">Resume surveillance</button>`
+      : `<button class="btn sm ghost" data-act="wsTab" data-tab="field">Start a day</button>
+         <button class="btn sm ghost" data-act="svEnter" data-case="${esc(WS_CASE)}">Active surveillance</button>`}
+  </div>`;
 }
 
 /* UIBUILD P5 — the case header. Identity on the left, state on the right.
@@ -13320,6 +13640,19 @@ function wsPkgShape(){
    next step across the top; recent activity and the evidence picture below.
    Every line routes somewhere real (P22). */
 function overviewPanel(s, a){
+  /* ============ THE OVERVIEW ANSWERS "WHAT NOW" (Unit 38) ============
+
+     Owner: "Simplify the case Overview ... Avoid a wall of cards. Do not
+     duplicate every piece of case information on this page." It was five
+     cards over two grids, and the one that answered the question — Next step —
+     was the third of them.
+
+     Four blocks now, in the order the owner named: NEXT STEP, TODAY, RECENT
+     ACTIVITY, CASE STATUS. What went is DUPLICATION, not function: the
+     requested start, priority and received date are on Intake details and are
+     read there; the evidence counts and thumbnails moved into TODAY, where
+     "photos/videos added" is one of the things the owner asked TODAY to show.
+     Record payment stays exactly where it was, on the money line. */
   const p = s.payload || {};
   const claim = s.kind === "claims";
   const shape = wsPkgShape();
@@ -13327,15 +13660,76 @@ function overviewPanel(s, a){
   const next = pkgNextStep(shape);
   const mark = st => st === "done" ? "&#10003;" : st === "part" ? "&#9685;" : "&#9675;";
   const assignee = s.assigned_to ? USERS.find(u => u.id === s.assigned_to) : null;
-  const acts = ((WS && WS.activity) || []).slice(0, 5);
-  const docs = ((WS && WS.evidence) || []).filter(e => !e.deleted_at).length - shape.photos - shape.videos;
+  const acts = newestActivity(5);
+  const evLive = ((WS && WS.evidence) || []).filter(e => !e.deleted_at);
+  const docs = evLive.length - shape.photos - shape.videos;
   const row = (k, v) => v == null || v === "" ? "" : `<div class="ov-row"><span>${esc(k)}</span><b>${esc(v)}</b></div>`;
+
+  /* TODAY is about the day that is running, or the last one that ran — the
+     same question wsCurrentDay() answers for the Daily Summary tab, asked
+     once so the two screens cannot disagree about which day it is. */
+  const cur = wsCurrentDay();
+  const day = cur.day;
+  const dayActs = day ? dsDayEntries(day.id) : [];
+  const dayEv = day ? evLive.filter(e => dayActs.some(x => x.id === e.entry_id)) : [];
+  const dayPhotos = dayEv.filter(e => String(e.content_type || "").startsWith("image/")).length;
+  const dayVideos = dayEv.filter(e => String(e.content_type || "").startsWith("video/")).length;
+  const dsSaved = day ? dsSavedFor(day.id) : null;
+  const dsState2 = !day ? "&mdash;"
+    : dsSaved && String(dsSaved.narrative || "").trim() ? "Draft saved" : "Not started";
+
+  const thumbs = evLive.filter(e => String(e.content_type || "").startsWith("image/")).slice(0, 4);
+
   return `
-    ${/* The office runs its own fieldwork too — the same door, same icon. */""}
+    ${/* NEXT STEP FIRST. It is the answer to the question someone opened the
+         case to ask, so it is the first thing on the page rather than the
+         third card in a grid. The surveillance door is NOT repeated here: the
+         case to ask, so it is the first thing on the page. The surveillance
+         card follows it: that card wears the app icon and is what made the
+         field view findable after the owner could not reach it from an iPad,
+         so it stays as the contextual shortcut the owner's own rule allows
+         beside the action row's primary. */""}
+    <div class="ovcard ov-next ov-band">
+      <h3>Next step</h3>
+      <div class="nx">${esc(next.label)}</div>
+      <button class="btn" data-act="wsTab" data-tab="${next.tab}">Go &rarr;</button>
+    </div>
+
     ${svLaunchButton()}
+
     <div class="ovgrid">
       <div class="ovcard">
-        <h3>Case summary</h3>
+        <h3>Today</h3>
+        ${day ? `
+          <div class="ov-row"><span>Day ${wsDayNo(day)}</span><b>${esc(fmtDay(day.day_date))}</b></div>
+          <div class="ov-row"><span>Surveillance</span><b>${cur.open
+            ? (svPaused() ? "Paused" : "Running now") : "Not running"}</b></div>
+          ${row("Activity entries", String(dayActs.length))}
+          ${row("Photos added", String(dayPhotos))}
+          ${dayVideos ? row("Video added", String(dayVideos)) : ""}
+          <div class="ov-row"><span>Daily summary</span>
+            <b>${dsState2} <button class="tl-edit" data-act="wsTab" data-tab="daily">Open</button></b></div>
+        ` : `<div class="empty" style="padding:10px 0">No investigation day yet.
+            <button class="btn sm ghost" data-act="wsTab" data-tab="field">Start one</button></div>`}
+        ${thumbs.length ? `<div class="ovthumbs">${thumbs.map(e =>
+          `<button data-act="wsTab" data-tab="evidence" style="padding:0;border:0;background:none;cursor:pointer">
+             <img src="/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${e.id}/file"
+               alt="${esc(e.filename)}" loading="lazy"></button>`).join("")}</div>` : ""}
+        <div class="ov-foot"><button class="btn sm ghost" data-act="wsTab" data-tab="evidence">${
+          evLive.length} file${evLive.length === 1 ? "" : "s"} on this case &rarr;</button></div>
+      </div>
+
+      <div class="ovcard">
+        <h3>Recent activity</h3>
+        ${acts.length ? `<ul class="ov-recent">${acts.map(e =>
+            `<li><span class="t">${esc(t12(e.at_time))}</span><span>${esc(String(e.description || "").slice(0, 90))}</span></li>`).join("")}</ul>`
+          : `<div class="empty">No activity yet. The log starts with the first investigation day.</div>`}
+        <div class="ov-foot"><button class="btn sm ghost" data-act="wsTab" data-tab="activity">Open the activity log &rarr;</button></div>
+      </div>
+
+      <div class="ovcard">
+        <h3>Case status</h3>
+        <div class="ov-ring">${ringHtml(prog.pct)}</div>
         ${claim
           ? (a.authorized_hours != null
               ? row("Authorized", a.authorized_hours + " hrs")
@@ -13348,63 +13742,23 @@ function overviewPanel(s, a){
                  already in CLAUDE.md). This row used to call `remaining`
                  "Balance", and `remaining` is the retainer the recorded WORK
                  has not consumed — not what the client still owes. Outstanding
-                 is the balance; the two must never share a word, which is why
-                 the Authorization panel has always labelled them apart. */
+                 is the balance; the two must never share a word. */
               ? row("Retainer", "$" + a.retainer.amount.toLocaleString())
                 + row("Received", "$" + (a.retainer.received_total || 0).toLocaleString())
                 + row("Balance owed", "$" + (a.retainer.outstanding || 0).toLocaleString())
                 + ovRecordPaymentHtml(a.retainer)
               : row("Type", "Private client"))}
-        ${row("Requested start", p.start_date)}
-        ${row("Priority", p.priority)}
-        ${/* ASSIGNMENT, REACHABLE BUT SECONDARY (owner, 2026-08-16). The row was
-              read-only, and the only way to act on it was Admin -> Assignment.
-              This is a quiet link on the row it belongs to, not a primary case
-              action: no button styling, no place in the Next step card, and it
-              opens the Assignment panel that already exists rather than
-              duplicating the control. A case with nobody on it is still
-              perfectly valid — assignment is optional and stays optional. */""}
+        ${/* ASSIGNMENT, REACHABLE BUT SECONDARY (owner, 2026-08-16): a quiet
+              link on the row it belongs to, not a primary case action. A case
+              with nobody on it is perfectly valid — assignment stays optional. */""}
         <div class="ov-row"><span>Investigator</span>
           <b>${esc(assignee ? (assignee.display_name || assignee.username) : "Unassigned")}${
             ME.role === "admin" ? ` <button class="tl-edit" data-act="wsTab" data-tab="assign">${
               assignee ? "Change" : "Assign"}</button>` : ""}</b></div>
-        ${row("Received", when(s.created_at))}
-      </div>
-      <div class="ovcard">
-        <h3>Case package progress</h3>
-        <div class="ov-ring">${ringHtml(prog.pct)}</div>
         <ul class="ov-mods">${prog.mods.map(([id, st, sub]) =>
           `<li><button data-act="wsTab" data-tab="${MOD_TAB[id]}">
              <span><b>${mark(st)}</b> ${MOD_LABEL[id]}</span><span style="color:var(--muted)">${esc(sub)}</span></button></li>`).join("")}</ul>
-      </div>
-      <div class="ovcard ov-next">
-        <h3>Next step</h3>
-        <div class="nx">${esc(next.label)}</div>
-        <button class="btn" data-act="wsTab" data-tab="${next.tab}">Go &rarr;</button>
-      </div>
-    </div>
-    <div class="ovgrid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr))">
-      <div class="ovcard">
-        <h3>Recent activity</h3>
-        ${acts.length ? `<ul class="ov-recent">${acts.map(e =>
-            `<li><span class="t">${esc(t12(e.at_time))}</span><span>${esc(String(e.description || "").slice(0, 90))}</span></li>`).join("")}</ul>`
-          : `<div class="empty">No activity yet. The timeline starts with the first investigation day.</div>`}
-        <div class="ov-foot"><button class="btn sm ghost" data-act="wsTab" data-tab="activity">View full timeline &rarr;</button></div>
-      </div>
-      <div class="ovcard">
-        <h3>Evidence overview</h3>
-        ${(() => {   // a first look at the pictures; each thumb opens the gallery
-          const th = ((WS && WS.evidence) || [])
-            .filter(e => !e.deleted_at && String(e.content_type || "").startsWith("image/")).slice(0, 4);
-          return th.length ? `<div class="ovthumbs">${th.map(e =>
-            `<button data-act="wsTab" data-tab="evidence" style="padding:0;border:0;background:none;cursor:pointer">
-               <img src="/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${e.id}/file"
-                 alt="${esc(e.filename)}" loading="lazy"></button>`).join("")}</div>` : "";
-        })()}
-        <div class="ov-row"><span>Photos</span><b>${shape.photos}</b></div>
-        <div class="ov-row"><span>Video</span><b>${shape.videos}</b></div>
-        <div class="ov-row"><span>Documents</span><b>${docs}</b></div>
-        <div class="ov-foot"><button class="btn sm ghost" data-act="wsTab" data-tab="evidence">View all evidence &rarr;</button></div>
+        <div class="ov-foot"><button class="btn sm ghost" data-act="wsTab" data-tab="details">Intake details &rarr;</button></div>
       </div>
     </div>`;
 }
@@ -13601,7 +13955,8 @@ function svHomeScreen(){
   const dayNo = (WS && typeof WS.days_total === "number") ? WS.days_total : days.length;
   const acts = (WS && WS.activity) || [];
   const a = (WS && WS.authorization) || {};
-  const last = acts[0];
+  /* The list is oldest-first, so the latest entry is at the END of it. */
+  const last = acts[acts.length - 1];
   const note = (SV.err ? `<div class="sv-err">${esc(SV.err)}</div>` : "")
              + (SV.ok ? `<div class="sv-ok">${esc(SV.ok)}</div>` : "");
 
@@ -14795,7 +15150,7 @@ function fieldHomeHtml(){
   const prog = pkgProgress(shape, "field");
   const next = pkgNextStep(shape, "field");
   const mark = st => st === "done" ? "&#10003;" : st === "part" ? "&#9685;" : "&#9675;";
-  const acts = ((WS && WS.activity) || []).slice(0, 4);
+  const acts = newestActivity(4);
   return `
     ${svLaunchButton()}
     <div class="ovgrid">
@@ -16711,14 +17066,21 @@ document.addEventListener("click", ev => {
   else if(act === "addDemo"){ addDemoCase(); }
   else if(act === "clearDemo"){ clearDemoCases(); }
   else if(act === "wsTab"){ if(WS_TAB !== el.dataset.tab){ WS_NOTICE = ""; ACT_MODAL = null; }
-    WS_TAB = el.dataset.tab; WS_ERR = "";
+    WS_TAB = el.dataset.tab; WS_ERR = ""; WS_MORE = false;
     if(WS_TAB === "package"){ PKG = null; loadPackage(); }
     else if(WS_TAB === "timeline"){ paintCase(); loadTimeline(); } else paintCase(); }
+  /* Unit 38 — the More menu. A toggle and nothing else: choosing anything in
+     it goes through wsTab, which closes it. */
+  else if(act === "wsMore"){ WS_MORE = !WS_MORE; paintCase(); }
+  /* The section bar is gone (Unit 38) and nothing renders data-act="wsSec"
+     any more, but the handler stays: `wsSections()` is still the source
+     `wsMore()` derives from, and an old bookmark or a stale tab that fires
+     this should still land somewhere real rather than doing nothing. It opens
+     the section's first panel exactly as it always did. */
   else if(act === "wsSec"){
-    // A section opens on its first panel; WS_TAB stays the only routing state.
     const sec = wsSections().find(x => x[0] === el.dataset.sec);
     if(sec){ if(WS_TAB !== sec[2][0][0]){ WS_NOTICE = ""; ACT_MODAL = null; }
-      WS_TAB = sec[2][0][0]; WS_ERR = "";
+      WS_TAB = sec[2][0][0]; WS_ERR = ""; WS_MORE = false;
       if(WS_TAB === "package"){ PKG = null; loadPackage(); }
       else if(WS_TAB === "timeline"){ paintCase(); loadTimeline(); } else paintCase(); } }
   /* UNIT 10 — the timeline. Each of these either repaints what is already
