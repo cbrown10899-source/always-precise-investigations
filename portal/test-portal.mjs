@@ -14416,6 +14416,11 @@ section('Admin intake labels say what the Worker actually enforces');
   for (const kind of ['claims', 'consumer', 'legal']) {
     await page.locator('[data-act="tab"][data-tab="newlead"]').first().click();
     await page.waitForTimeout(500);
+    /* The picker draws only while no door has been taken — coming back to the
+       tab with a door already chosen renders that door's form. "Change type"
+       is how a person gets back to the three cards, so it is how this does. */
+    const back = page.locator('[data-act="nlBack"]');
+    if (await back.count()) { await back.click(); await page.waitForTimeout(350); }
     await page.locator(`[data-act="nlKind"][data-k="${kind}"]`).click();
     await page.waitForTimeout(350);
     await audit('quick:' + kind);
@@ -14533,8 +14538,13 @@ section('Edit case and the Legal panel mark their fields too');
   /* An extra phone row is one of the fields the owner named by hand, and it
      is drawn by a helper — so the marker has to ride the helper or the second
      number arrives unmarked. */
+  /* Row 0 has to hold a number first: `readPhoneRows` skips blank rows, so on
+     a case with no saved numbers Add appends to an empty list and the panel
+     still draws one row. Typing one is what a person does before asking for a
+     second anyway. */
+  await page.locator('#edc_num_0').fill('5405550101');
   await page.locator('[data-act="edAddPhone"]').first().click();
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(400);
   const withRow = await panelLabels('Edit case');
   const rows = withRow.filter(l => /^(Phone|Also)\b/.test(l.text));
   ok('an added phone row carries the marker like the first one',
