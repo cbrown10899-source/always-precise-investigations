@@ -54,8 +54,8 @@ completed.
 | **Deployed** | **Site:** `Deploy site to Cloudflare Pages` ✅ **run 32598263366** at `e7b9117` — the Unit 40 SHA itself. **Worker:** `Deploy case-portal Worker` ✅ **run 32583656010** at `79da2b8`, and **that build is current**: `case-portal/worker.js` and `schema.sql` are byte-identical between `79da2b8` and `c8b52a8`, so nothing since needed a Worker deploy. Schema confirmed present on production by `harden-check` run **32584685117**. A LIVE byte-check is not possible from this container — the network policy refuses the domain with a 403 on CONNECT — which is why `verify.sh` runs from a GitHub runner |
 | **Closeout** | ✅ **ALWAYS PRECISE FUNCTIONAL BUILD COMPLETE** — see `case-portal/FINAL-LEDGER.md` |
 | **Owner decisions** | ✅ five LOCKED at closeout, 2026-08-21 — see **FINAL OWNER DECISIONS** below. Four are deferrals or standing refusals; **decision 4 (Ended by Admin) is BUILT — Unit 27** |
-| **Next unit** | **NONE — the durable queue is empty of required work.** Units 17A–39, 21A and **40** are shipped; 38 and 39 are LIVE VERIFIED by the owner (2026-08-22), **21A and 40 have LIVE VERIFY open**. What remains is Unit 23's live-verification sweep (deferred — needs a real case) and the deferred-by-owner list. **Do not start anything without the owner.** |
-| **Open for the owner (Unit 40)** | `--teal` with white text is **3.37:1** site-wide — every button on the public site. Below 18.66px bold it does not clear WCAG AA. Darkening it is a palette change touching every button and is the owner's call. Candidates measured: `#33808f` 4.54:1, `#2f7788` 5.10:1, or `--navy` text on the existing teal 4.67:1 with no new colour. **Not queued work** — a decision |
+| **Next unit** | **NONE — the durable queue is empty of required work.** Units 17A–39, 21A and **40** are shipped; 38, 39 and **40** are LIVE VERIFIED by the owner (2026-08-22), **21A has LIVE VERIFY open**. What remains is Unit 23's live-verification sweep (deferred — needs a real case) and the deferred-by-owner list. **Do not start anything without the owner.** |
+| **Nothing open for the owner** | The one question Unit 40 raised was answered the same day and is LOCKED below: the global teal stays unchanged and the card-button treatment is approved as implemented |
 
 ## 🔄 RESUME POINT — Production Truth Correction Queue (Units 28–33)
 
@@ -411,7 +411,7 @@ href:
 schema, no `portal-setup` dispatch. The Worker was untouched, so
 `deploy-portal.yml` correctly did not fire. Suites: intake **537/0** · deploy
 **86/0** · worker **2870/0** · portal **2707/0** · visitor **47/0**.
-LIVE VERIFY **OPEN**.
+✅ **LIVE VERIFIED by the owner, 2026-08-22.**
 
 Design detail is in `CLAUDE.md` under *The homepage offers three doors, as
 cards*. What is worth carrying here is what measuring found that reading would
@@ -437,12 +437,31 @@ not have:
    those elements from the **accessibility tree** — so on the shared page every
    later accessible-name assertion read `""`. It runs on its own page now.
 
-**Open for the owner, deliberately not fixed:** `--teal` with white text is
-3.37:1 **site-wide** — the nav call button, the section CTA, the buttons these
-cards replaced. Darkening it touches every button on the public site and is a
-palette decision, not a hero redesign's. Measured candidates: `#33808f`
-4.54:1, `#2f7788` 5.10:1, `--navy` on the existing teal 4.67:1. **This is a
-decision, not queued work.**
+**Raised for the owner, and ANSWERED — see the locked decision below.** The
+finding was that `--teal` with white text is 3.37:1 **site-wide**: the nav call
+button, the section CTA, the buttons these cards replaced. It was put to the
+owner with measured alternatives rather than fixed by making one control differ
+from the rest, and they chose to keep the palette. **The sizing is therefore
+the approved mechanism, not a stopgap.**
+
+## 🔒 OWNER DECISION — 2026-08-22, Unit 40 (LOCKED)
+
+*"Keep the current global teal unchanged. The Unit 40 card-button
+accessibility treatment is approved as implemented."*
+
+**One decision, two halves, and the second half is the part a later session
+needs.** The measurement stands on the record: white on `--teal` is **3.37:1**,
+and that is every button the public site has. The owner was given the measured
+alternatives — `#33808f` 4.54:1, `#2f7788` 5.10:1, `--navy` text on the
+existing teal 4.67:1 with no new colour at all — and kept the palette.
+
+So **sizing at or above 18.66px bold IS the approved mechanism** for white text
+on `--teal`, not a temporary accommodation. `.cta-go` is 18.88px for that
+reason and the phone override says so in its own comment.
+
+**Do not darken `--teal` in a later unit.** It was offered and declined. A
+control that genuinely needs white-on-teal *below* 18.66px bold is a new
+question for the owner, not licence to reopen this one.
 
 ## 🔒 OWNER DECISIONS — 2026-08-22, Unit 39 (LOCKED)
 

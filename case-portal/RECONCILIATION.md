@@ -1041,11 +1041,19 @@ check.** The bar depends on the rendered size and weight, so both have to be
 measured, and the fix was to size the label above the 18.66px bold large-text
 line rather than to invent a teal the site does not already use.
 
-**Left with the owner, not fixed here:** `--teal` with white text is **3.37:1
-site-wide** — every button on the public site. Darkening it is a palette
-decision touching every button, not a hero redesign's. Candidates measured:
-`#33808f` 4.54:1, `#2f7788` 5.10:1, `--navy` on the existing teal 4.67:1.
+**Put to the owner rather than fixed here — and ANSWERED the same day.**
+`--teal` with white text is **3.37:1 site-wide**, every button on the public
+site. Darkening it is a palette decision touching every button, not a hero
+redesign's, so it went to the owner with the measured candidates (`#33808f`
+4.54:1, `#2f7788` 5.10:1, `--navy` on the existing teal 4.67:1).
 
-**Required build queue: still EMPTY.** LIVE VERIFY for Unit 40 is OPEN.
+**OWNER, 2026-08-22 — LOCKED:** *"Keep the current global teal unchanged. The
+Unit 40 card-button accessibility treatment is approved as implemented."* So
+sizing at or above 18.66px bold is the approved mechanism, and darkening
+`--teal` is declined rather than pending. The finding stays recorded; the
+question is closed.
+
+**Required build queue: still EMPTY.** Unit 40 is ✅ **LIVE VERIFIED** by the
+owner, 2026-08-22.
 
 Full record in `FINAL-LEDGER.md` PART 17.
