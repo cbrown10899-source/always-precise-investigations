@@ -13492,8 +13492,9 @@ function caseActionsHtml(){
     <button class="btn sm ghost" data-act="wsTab" data-tab="daily">Daily summary</button>
     ${cur.open
       ? `<button class="btn sm ghost" data-act="wsTab" data-tab="field">End day</button>
-         <button class="btn sm ghost sv-resume" data-act="svEnter" data-case="${esc(WS_CASE)}">Resume surveillance</button>`
-      : `<button class="btn sm ghost" data-act="wsTab" data-tab="field">Start a day</button>`}
+         <button class="btn sm accent" data-act="svEnter" data-case="${esc(WS_CASE)}">Resume surveillance</button>`
+      : `<button class="btn sm ghost" data-act="wsTab" data-tab="field">Start a day</button>
+         <button class="btn sm ghost" data-act="svEnter" data-case="${esc(WS_CASE)}">Active surveillance</button>`}
   </div>`;
 }
 
@@ -13550,6 +13551,19 @@ function wsPkgShape(){
    next step across the top; recent activity and the evidence picture below.
    Every line routes somewhere real (P22). */
 function overviewPanel(s, a){
+  /* ============ THE OVERVIEW ANSWERS "WHAT NOW" (Unit 38) ============
+
+     Owner: "Simplify the case Overview ... Avoid a wall of cards. Do not
+     duplicate every piece of case information on this page." It was five
+     cards over two grids, and the one that answered the question — Next step —
+     was the third of them.
+
+     Four blocks now, in the order the owner named: NEXT STEP, TODAY, RECENT
+     ACTIVITY, CASE STATUS. What went is DUPLICATION, not function: the
+     requested start, priority and received date are on Intake details and are
+     read there; the evidence counts and thumbnails moved into TODAY, where
+     "photos/videos added" is one of the things the owner asked TODAY to show.
+     Record payment stays exactly where it was, on the money line. */
   const p = s.payload || {};
   const claim = s.kind === "claims";
   const shape = wsPkgShape();
@@ -13558,14 +13572,74 @@ function overviewPanel(s, a){
   const mark = st => st === "done" ? "&#10003;" : st === "part" ? "&#9685;" : "&#9675;";
   const assignee = s.assigned_to ? USERS.find(u => u.id === s.assigned_to) : null;
   const acts = newestActivity(5);
-  const docs = ((WS && WS.evidence) || []).filter(e => !e.deleted_at).length - shape.photos - shape.videos;
+  const evLive = ((WS && WS.evidence) || []).filter(e => !e.deleted_at);
+  const docs = evLive.length - shape.photos - shape.videos;
   const row = (k, v) => v == null || v === "" ? "" : `<div class="ov-row"><span>${esc(k)}</span><b>${esc(v)}</b></div>`;
+
+  /* TODAY is about the day that is running, or the last one that ran — the
+     same question wsCurrentDay() answers for the Daily Summary tab, asked
+     once so the two screens cannot disagree about which day it is. */
+  const cur = wsCurrentDay();
+  const day = cur.day;
+  const dayActs = day ? dsDayEntries(day.id) : [];
+  const dayEv = day ? evLive.filter(e => dayActs.some(x => x.id === e.entry_id)) : [];
+  const dayPhotos = dayEv.filter(e => String(e.content_type || "").startsWith("image/")).length;
+  const dayVideos = dayEv.filter(e => String(e.content_type || "").startsWith("video/")).length;
+  const dsSaved = day ? dsSavedFor(day.id) : null;
+  const dsState2 = !day ? "&mdash;"
+    : dsSaved && String(dsSaved.narrative || "").trim() ? "Draft saved" : "Not started";
+
+  const thumbs = evLive.filter(e => String(e.content_type || "").startsWith("image/")).slice(0, 4);
+
   return `
-    ${/* The office runs its own fieldwork too — the same door, same icon. */""}
+    ${/* NEXT STEP FIRST. It is the answer to the question someone opened the
+         case to ask, so it is the first thing on the page rather than the
+         third card in a grid. The surveillance door is NOT repeated here: the
+         case to ask, so it is the first thing on the page. The surveillance
+         card follows it: that card wears the app icon and is what made the
+         field view findable after the owner could not reach it from an iPad,
+         so it stays as the contextual shortcut the owner's own rule allows
+         beside the action row's primary. */""}
+    <div class="ovnext">
+      <div><small>Next step</small><b>${esc(next.label)}</b></div>
+      <button class="btn" data-act="wsTab" data-tab="${next.tab}">Go &rarr;</button>
+    </div>
+
     ${svLaunchButton()}
+
     <div class="ovgrid">
       <div class="ovcard">
-        <h3>Case summary</h3>
+        <h3>Today</h3>
+        ${day ? `
+          <div class="ov-row"><span>Day ${wsDayNo(day)}</span><b>${esc(fmtDay(day.day_date))}</b></div>
+          <div class="ov-row"><span>Surveillance</span><b>${cur.open
+            ? (svPaused() ? "Paused" : "Running now") : "Not running"}</b></div>
+          ${row("Activity entries", String(dayActs.length))}
+          ${row("Photos added", String(dayPhotos))}
+          ${dayVideos ? row("Video added", String(dayVideos)) : ""}
+          <div class="ov-row"><span>Daily summary</span>
+            <b>${dsState2} <button class="tl-edit" data-act="wsTab" data-tab="daily">Open</button></b></div>
+        ` : `<div class="empty" style="padding:10px 0">No investigation day yet.
+            <button class="btn sm ghost" data-act="wsTab" data-tab="field">Start one</button></div>`}
+        ${thumbs.length ? `<div class="ovthumbs">${thumbs.map(e =>
+          `<button data-act="wsTab" data-tab="evidence" style="padding:0;border:0;background:none;cursor:pointer">
+             <img src="/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${e.id}/file"
+               alt="${esc(e.filename)}" loading="lazy"></button>`).join("")}</div>` : ""}
+        <div class="ov-foot"><button class="btn sm ghost" data-act="wsTab" data-tab="evidence">${
+          evLive.length} file${evLive.length === 1 ? "" : "s"} on this case &rarr;</button></div>
+      </div>
+
+      <div class="ovcard">
+        <h3>Recent activity</h3>
+        ${acts.length ? `<ul class="ov-recent">${acts.map(e =>
+            `<li><span class="t">${esc(t12(e.at_time))}</span><span>${esc(String(e.description || "").slice(0, 90))}</span></li>`).join("")}</ul>`
+          : `<div class="empty">No activity yet. The log starts with the first investigation day.</div>`}
+        <div class="ov-foot"><button class="btn sm ghost" data-act="wsTab" data-tab="activity">Open the activity log &rarr;</button></div>
+      </div>
+
+      <div class="ovcard">
+        <h3>Case status</h3>
+        <div class="ov-ring">${ringHtml(prog.pct)}</div>
         ${claim
           ? (a.authorized_hours != null
               ? row("Authorized", a.authorized_hours + " hrs")
@@ -13578,63 +13652,23 @@ function overviewPanel(s, a){
                  already in CLAUDE.md). This row used to call `remaining`
                  "Balance", and `remaining` is the retainer the recorded WORK
                  has not consumed — not what the client still owes. Outstanding
-                 is the balance; the two must never share a word, which is why
-                 the Authorization panel has always labelled them apart. */
+                 is the balance; the two must never share a word. */
               ? row("Retainer", "$" + a.retainer.amount.toLocaleString())
                 + row("Received", "$" + (a.retainer.received_total || 0).toLocaleString())
                 + row("Balance owed", "$" + (a.retainer.outstanding || 0).toLocaleString())
                 + ovRecordPaymentHtml(a.retainer)
               : row("Type", "Private client"))}
-        ${row("Requested start", p.start_date)}
-        ${row("Priority", p.priority)}
-        ${/* ASSIGNMENT, REACHABLE BUT SECONDARY (owner, 2026-08-16). The row was
-              read-only, and the only way to act on it was Admin -> Assignment.
-              This is a quiet link on the row it belongs to, not a primary case
-              action: no button styling, no place in the Next step card, and it
-              opens the Assignment panel that already exists rather than
-              duplicating the control. A case with nobody on it is still
-              perfectly valid — assignment is optional and stays optional. */""}
+        ${/* ASSIGNMENT, REACHABLE BUT SECONDARY (owner, 2026-08-16): a quiet
+              link on the row it belongs to, not a primary case action. A case
+              with nobody on it is perfectly valid — assignment stays optional. */""}
         <div class="ov-row"><span>Investigator</span>
           <b>${esc(assignee ? (assignee.display_name || assignee.username) : "Unassigned")}${
             ME.role === "admin" ? ` <button class="tl-edit" data-act="wsTab" data-tab="assign">${
               assignee ? "Change" : "Assign"}</button>` : ""}</b></div>
-        ${row("Received", when(s.created_at))}
-      </div>
-      <div class="ovcard">
-        <h3>Case package progress</h3>
-        <div class="ov-ring">${ringHtml(prog.pct)}</div>
         <ul class="ov-mods">${prog.mods.map(([id, st, sub]) =>
           `<li><button data-act="wsTab" data-tab="${MOD_TAB[id]}">
              <span><b>${mark(st)}</b> ${MOD_LABEL[id]}</span><span style="color:var(--muted)">${esc(sub)}</span></button></li>`).join("")}</ul>
-      </div>
-      <div class="ovcard ov-next">
-        <h3>Next step</h3>
-        <div class="nx">${esc(next.label)}</div>
-        <button class="btn" data-act="wsTab" data-tab="${next.tab}">Go &rarr;</button>
-      </div>
-    </div>
-    <div class="ovgrid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr))">
-      <div class="ovcard">
-        <h3>Recent activity</h3>
-        ${acts.length ? `<ul class="ov-recent">${acts.map(e =>
-            `<li><span class="t">${esc(t12(e.at_time))}</span><span>${esc(String(e.description || "").slice(0, 90))}</span></li>`).join("")}</ul>`
-          : `<div class="empty">No activity yet. The timeline starts with the first investigation day.</div>`}
-        <div class="ov-foot"><button class="btn sm ghost" data-act="wsTab" data-tab="activity">View full timeline &rarr;</button></div>
-      </div>
-      <div class="ovcard">
-        <h3>Evidence overview</h3>
-        ${(() => {   // a first look at the pictures; each thumb opens the gallery
-          const th = ((WS && WS.evidence) || [])
-            .filter(e => !e.deleted_at && String(e.content_type || "").startsWith("image/")).slice(0, 4);
-          return th.length ? `<div class="ovthumbs">${th.map(e =>
-            `<button data-act="wsTab" data-tab="evidence" style="padding:0;border:0;background:none;cursor:pointer">
-               <img src="/portal-api/cases/${encodeURIComponent(WS_CASE)}/evidence/${e.id}/file"
-                 alt="${esc(e.filename)}" loading="lazy"></button>`).join("")}</div>` : "";
-        })()}
-        <div class="ov-row"><span>Photos</span><b>${shape.photos}</b></div>
-        <div class="ov-row"><span>Video</span><b>${shape.videos}</b></div>
-        <div class="ov-row"><span>Documents</span><b>${docs}</b></div>
-        <div class="ov-foot"><button class="btn sm ghost" data-act="wsTab" data-tab="evidence">View all evidence &rarr;</button></div>
+        <div class="ov-foot"><button class="btn sm ghost" data-act="wsTab" data-tab="details">Intake details &rarr;</button></div>
       </div>
     </div>`;
 }
@@ -15026,7 +15060,7 @@ function fieldHomeHtml(){
   const prog = pkgProgress(shape, "field");
   const next = pkgNextStep(shape, "field");
   const mark = st => st === "done" ? "&#10003;" : st === "part" ? "&#9685;" : "&#9675;";
-  const acts = ((WS && WS.activity) || []).slice(0, 4);
+  const acts = newestActivity(4);
   return `
     ${svLaunchButton()}
     <div class="ovgrid">

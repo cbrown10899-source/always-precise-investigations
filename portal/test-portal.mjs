@@ -4353,9 +4353,14 @@ section('Active Surveillance Mode: a field view of the same case');
 
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  ok('the assignment offers the field mode',
-     await page.locator('[data-act="svEnter"]').count() === 1);
-  await page.locator('[data-act="svEnter"]').click();
+  /* Unit 38 — two doors by design, which is the owner's own "1 obvious primary
+     entry point plus 1 useful contextual shortcut": the case action row on
+     every tab, and the icon card on the case home. Both must be there. */
+  ok('the assignment offers the field mode from the action row and the card',
+     await page.locator('.caseacts [data-act="svEnter"]').count() === 1
+     && await page.locator('.sv-go[data-act="svEnter"]').count() === 1,
+     String(await page.locator('[data-act="svEnter"]').count()));
+  await page.locator('[data-act="svEnter"]:visible').first().click();
   await page.waitForTimeout(700);
 
   ok('the field view takes the whole screen', await page.locator('.sv').count() === 1);
@@ -4403,7 +4408,7 @@ section('Active Surveillance Mode: a field view of the same case');
   await page.waitForTimeout(1200);
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await page.locator('[data-act="svEnter"]').click();
+  await page.locator('[data-act="svEnter"]:visible').first().click();
   await page.waitForTimeout(800);
   const after = await page.locator('#svTimer').innerText();
   const secs = t => t.split(':').reduce((a, n) => a * 60 + Number(n), 0);
@@ -5361,7 +5366,7 @@ section('Voice mode: explicit, looping, and never filing what it is unsure of');
 
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await page.locator('[data-act="svEnter"]').click();
+  await page.locator('[data-act="svEnter"]:visible').first().click();
   await page.waitForTimeout(700);
   if (await page.locator('[data-act="svStartDay"]').count()) {
     await page.locator('#sv_start').fill('06:30');
@@ -5561,7 +5566,7 @@ section('Voice mode: the engine is one session, and it says what it did');
   await page.waitForTimeout(900);
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await page.locator('[data-act="svEnter"]').click();
+  await page.locator('[data-act="svEnter"]:visible').first().click();
   await page.waitForTimeout(700);
   if (await page.locator('[data-act="svStartDay"]').count()) {
     await page.locator('#sv_start').fill('06:30');
@@ -5686,7 +5691,7 @@ section('Voice §13 and §8: prepare the camera, claim nothing, lose nothing');
   await page.waitForTimeout(900);
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await page.locator('[data-act="svEnter"]').click();
+  await page.locator('[data-act="svEnter"]:visible').first().click();
   await page.waitForTimeout(700);
   if (await page.locator('[data-act="svStartDay"]').count()) {
     await page.locator('#sv_start').fill('06:30');
@@ -5812,7 +5817,7 @@ section('Voice §10: the last activity is corrected without leaving the field sc
 
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await page.locator('[data-act="svEnter"]').click();
+  await page.locator('[data-act="svEnter"]:visible').first().click();
   await page.waitForTimeout(700);
 
   // Whichever state earlier sections left the day in, get one running.
@@ -6043,7 +6048,7 @@ section('Back, edit and delete, from the field');
   await page.waitForTimeout(900);
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(600);
-  await page.locator('[data-act="svEnter"]').click();
+  await page.locator('[data-act="svEnter"]:visible').first().click();
   await page.waitForTimeout(800);
 
   // Earlier sections ended this case's day, so start one to work inside.
@@ -8319,7 +8324,7 @@ section('The four field actions are untouched');
   await page.waitForTimeout(900);
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(600);
-  await page.locator('[data-act="svEnter"]').click();
+  await page.locator('[data-act="svEnter"]:visible').first().click();
   await page.waitForTimeout(800);
   // The four field actions live on the home screen while a day is running.
   if (await page.locator('[data-act="svStartDay"]').count()) {
@@ -9678,7 +9683,7 @@ section('Timestamp Photo is reachable in the field, beside Timestamp video');
   await page.waitForTimeout(900);
   await rowFor(page, 'API-20260812-4001').click();
   await page.waitForTimeout(500);
-  await page.locator('[data-act="svEnter"]').click();
+  await page.locator('[data-act="svEnter"]:visible').first().click();
   await page.waitForTimeout(800);
   await page.locator('[data-act="svTab"][data-t="evidence"]').click();
   await page.waitForTimeout(700);
