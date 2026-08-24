@@ -171,6 +171,24 @@ touch how existing cases are categorised, so it is recorded rather than done.
 | **24** page-level rendering tests | #214 | `5835cdf` | tests only |
 | **25** Security / authorization / regression pass | #215 | `73b7f5b` | open — see below |
 
+## In flight — MTS/M2TS support for Video Timestamp (owner, 2026-08-24)
+
+Owner brief verbatim: *"Add local MTS/M2TS support to Video Timestamp. Do not
+rely on browser playback to decide compatibility. Decode/process locally, burn
+the timestamp, output MP4, keep original untouched, and never upload the
+source."* Interleaved between Unit 24 and Unit 25 at the owner's request.
+
+Page-only change (no Worker, no schema, no portal-setup dispatch): the
+container is sniffed off the 0x47 packet grid, PAT/PMT/PES demuxed in bounded
+`file.slice` chunks, the H.264 SPS parsed for dimensions/profile/interlace,
+and `vstTranscodeTs` feeds the existing WebCodecs→mp4-muxer pipeline in
+Annex-B form (no invented `description`). For a TS the media element is never
+consulted and the legacy route does not exist. Design record and the
+device-evidence boundary: `VIDEO-TIMESTAMP.md` §MTS. **The decode→burn→encode
+of a real .MTS on real hardware is the owner's device check** — this
+container's Chromium has no WebCodecs (re-measured 2026-08-24, asserted in
+the suite).
+
 ## What is left
 
 - **23 — Consolidated Live Verification Sweep.** ⏸️ **LIVE VERIFICATION
