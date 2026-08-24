@@ -1144,6 +1144,24 @@ boundaries, 33-bit PTS exactness and rollover, keyframe flags, every refusal,
 the no-network guarantee, and the decoder boundary (right codec string, no
 description, demux genuinely reaches `configure`).
 
+**The owner's first real .MTS found the next defect downstream (2026-08-24),
+and it was mine, not the parser's:** the demux, PMT and SPS all read the file
+("M2TS/AVCHD, H.264/AVC" on the read-out), the decoder was configured — and the
+screen then said *"flush called after codec closed."* A WebCodecs codec that
+errors CLOSES ITSELF, and both transcode paths called `flush()`
+unconditionally, so the flush's own `InvalidStateError` replaced the one
+sentence that explained anything. Reproduced against the real API in this
+container (junk VP8 keyframe → error callback → `state: "closed"` → flush
+throws), fixed as `vstCodecDrain` — flush only a codec still `configured`,
+never let the drain outrank the first recorded error, close defensively — plus
+first-error-wins on both callbacks and guarded `decode()` calls, because
+decode() can ALSO throw synchronously (measured: `DataError: A key frame is
+required after configure() or flush()`). The harness ran the fixed and the
+pre-fix code against the same real AVCHD fixture and stub codecs: old code
+reports the flush noise, fixed code reports the codec's own error with
+"your original is unchanged". What the codec's real error on the owner's
+device IS remains unknown until the retest — this fix makes it say so.
+
 **A measurement corrected the same day:** the "this container has no
 WebCodecs" claim from the first probe was an artifact of the probe's own
 context — `VideoDecoder` is `[SecureContext]` and the probe page was not one,

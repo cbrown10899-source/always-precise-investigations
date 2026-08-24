@@ -8283,6 +8283,27 @@ async function vstEncoderConfig(w, h, fps){
   return null;
 }
 
+/* A CODEC THAT ERRORS CLOSES ITSELF, and flushing a closed codec throws
+   "Cannot call 'flush' on a closed codec" — which then replaces the REAL
+   error the codec's own callback recorded. Found on the owner's PC on the
+   first real .MTS this feature met (2026-08-24), and reproduced here against
+   the real API: junk frame -> error callback -> state "closed" -> flush
+   throws. So draining is guarded on the codec's own state, the drain's own
+   failure is never allowed to outrank the first recorded error, and closing
+   is defensive. One writer for both transcode paths — the MOV/MP4 path had
+   the identical latent defect. */
+async function vstCodecDrain(codec){
+  try{ if(codec.state === "configured") await codec.flush(); }
+  catch{ /* the codec's error callback holds the primary fault */ }
+  try{ if(codec.state !== "closed") codec.close(); }catch{}
+}
+
+/* Feeding is the same story in the other direction: decode() can ALSO throw
+   SYNCHRONOUSLY (measured: DataError "A key frame is required after
+   configure() or flush()"), and decode() on a codec that has already closed
+   itself throws InvalidStateError. Either way the first error is the one
+   that explains what happened, so it is recorded once and feeding stops. */
+
 /* THE TRANSCODE. Returns {blob, mime, name, audio, frames} or throws with a
    sentence the screen can show. `onStage` reports progress without the caller
    needing to know the stages. */
@@ -8332,9 +8353,10 @@ async function vstTranscode(file, parsed, startMs, tz, onStage){
   const cx = cv.getContext("2d", {alpha: false});
 
   let encoded = 0, decoded = 0, encErr = null;
+  const fail = e => { if(!encErr) encErr = e; };
   const encoder = new VideoEncoder({
     output: (chunk, meta) => { muxer.addVideoChunk(chunk, meta); encoded++; },
-    error: e => { encErr = e; },
+    error: fail,
   });
   encoder.configure(encCfg);
 
@@ -8350,37 +8372,37 @@ async function vstTranscode(file, parsed, startMs, tz, onStage){
         vstDraw(cx, W, H, vstLabel(startMs + Math.floor(tSec) * 1000, tz));
         const out = new VideoFrame(cv, {timestamp: frame.timestamp,
                                         duration: frame.duration || undefined});
-        encoder.encode(out, {keyFrame: decoded % (fps * 2) === 0});
+        if(encoder.state === "configured") encoder.encode(out, {keyFrame: decoded % (fps * 2) === 0});
         out.close();
       } finally { frame.close(); decoded++; }
     },
-    error: e => { encErr = e; },
+    error: fail,
   });
   decoder.configure({codec: V.codecString, description: V.description,
                      codedWidth: W, codedHeight: H});
 
   const total = V.samples.length;
   for(let i = 0; i < total; i++){
-    if(encErr) break;
+    if(encErr || decoder.state !== "configured") break;
     const sm = V.samples[i];
     // One sample at a time — the file is never held whole.
     const buf = await file.slice(sm.offset, sm.offset + sm.size).arrayBuffer();
-    decoder.decode(new EncodedVideoChunk({
-      type: sm.sync ? "key" : "delta",
-      timestamp: Math.round(sm.cts / vTs * 1e6),
-      duration: Math.round((sm.duration || 0) / vTs * 1e6),
-      data: buf,
-    }));
+    try{
+      decoder.decode(new EncodedVideoChunk({
+        type: sm.sync ? "key" : "delta",
+        timestamp: Math.round(sm.cts / vTs * 1e6),
+        duration: Math.round((sm.duration || 0) / vTs * 1e6),
+        data: buf,
+      }));
+    }catch(e){ fail(e); break; }
     if(i % 12 === 0){
       if(onStage) onStage("decoding", Math.round(i / total * 100));
       // Let the decoder drain rather than queueing the whole film at once.
       while(decoder.decodeQueueSize > 24) await new Promise(r => setTimeout(r, 8));
     }
   }
-  await decoder.flush();
-  decoder.close();
-  await encoder.flush();
-  encoder.close();
+  await vstCodecDrain(decoder);
+  await vstCodecDrain(encoder);
   if(encErr) throw new Error("The device's video codec stopped part-way: "
     + (encErr.message || encErr) + ". Nothing was saved and your original is unchanged.");
   if(!encoded) throw new Error("No frames came out of the encoder, so no file was written. Your original is unchanged.");
@@ -8433,9 +8455,10 @@ async function vstTranscodeTs(file, parsed, startMs, tz, onStage){
   const cx = cv.getContext("2d", {alpha: false});
 
   let encoded = 0, decoded = 0, encErr = null;
+  const fail = e => { if(!encErr) encErr = e; };
   const encoder = new VideoEncoder({
     output: (chunk, meta) => { muxer.addVideoChunk(chunk, meta); encoded++; },
-    error: e => { encErr = e; },
+    error: fail,
   });
   encoder.configure(encCfg);
 
@@ -8447,11 +8470,11 @@ async function vstTranscodeTs(file, parsed, startMs, tz, onStage){
         vstDraw(cx, W, H, vstLabel(startMs + Math.floor(tSec) * 1000, tz));
         const out = new VideoFrame(cv, {timestamp: frame.timestamp,
                                         duration: frame.duration || undefined});
-        encoder.encode(out, {keyFrame: decoded % (fps * 2) === 0});
+        if(encoder.state === "configured") encoder.encode(out, {keyFrame: decoded % (fps * 2) === 0});
         out.close();
       } finally { frame.close(); decoded++; }
     },
-    error: e => { encErr = e; },
+    error: fail,
   });
   decoder.configure({codec: V.codecString, codedWidth: W, codedHeight: H});
 
@@ -8469,6 +8492,7 @@ async function vstTranscodeTs(file, parsed, startMs, tz, onStage){
   const nominal = Math.round(VST_TS_HZ / fps);
 
   const push = async (au, dur) => {
+    if(encErr || decoder.state !== "configured") return;
     if(!started){
       /* DECODING MUST BEGIN AT A KEYFRAME. A transport stream can be cut
          anywhere, and handing a decoder a mid-GOP frame produces either an
@@ -8476,12 +8500,14 @@ async function vstTranscodeTs(file, parsed, startMs, tz, onStage){
       if(!au.sync){ skipped++; return; }
       started = true;
     }
-    decoder.decode(new EncodedVideoChunk({
-      type: au.sync ? "key" : "delta",
-      timestamp: us(au.pts != null ? au.pts : au.dts),
-      duration: Math.round(Math.max(1, dur) * (1e6 / VST_TS_HZ)),
-      data: au.data,
-    }));
+    try{
+      decoder.decode(new EncodedVideoChunk({
+        type: au.sync ? "key" : "delta",
+        timestamp: us(au.pts != null ? au.pts : au.dts),
+        duration: Math.round(Math.max(1, dur) * (1e6 / VST_TS_HZ)),
+        data: au.data,
+      }));
+    }catch(e){ fail(e); return; }
     fed++;
     // Let the decoder drain rather than queueing the whole card at once.
     let guard = 0;
@@ -8491,7 +8517,7 @@ async function vstTranscodeTs(file, parsed, startMs, tz, onStage){
   };
 
   await vstTsScan(file, parsed.layout, null, async au => {
-    if(encErr) return false;
+    if(encErr || decoder.state !== "configured") return false;
     if(held){
       const d = (held.dts != null && au.dts != null && au.dts > held.dts)
         ? au.dts - held.dts : nominal;
@@ -8504,10 +8530,8 @@ async function vstTranscodeTs(file, parsed, startMs, tz, onStage){
   }});
   if(held && !encErr) await push(held, nominal);
 
-  await decoder.flush();
-  decoder.close();
-  await encoder.flush();
-  encoder.close();
+  await vstCodecDrain(decoder);
+  await vstCodecDrain(encoder);
   if(encErr) throw new Error("The device's video codec stopped part-way: "
     + (encErr.message || encErr) + ". Nothing was saved and your original is unchanged.");
   if(!encoded) throw new Error("No frames came out of the encoder, so no file was written. Your original is unchanged.");
