@@ -8831,7 +8831,8 @@ section('Video timestamp: a non-video file is refused, but a bare .mov is not');
   /* The picker still ASKS for video first — the refusal is the backstop for a
      desktop filter being switched, not a replacement for asking. */
   const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
-  ok('the file picker still asks for video up front', /inp\.accept\s*=\s*"video\/\*"/.test(src));
+  ok('the file picker still asks for video up front',
+     /inp\.accept\s*=\s*"video\/\*,\.mts,\.m2ts,\.ts"/.test(src));
 }
 
 /* ====================================================== Timestamp Photo
@@ -10115,7 +10116,7 @@ const TS_LIB = String.raw`
   };
   const makeTs = ({stride = 188, frames = 30, fps = 30, width = 1920, height = 1080,
       interlaced = false, videoType = 0x1b, audio = true, basePts = 900000,
-      picturesPerPes = 1, bframes = false} = {}) => {
+      picturesPerPes = 1, bframes = false, sliceLen = 0} = {}) => {
     const wMbs = Math.ceil(width / 16);
     const hUnits = interlaced ? Math.ceil(height / 32) : Math.ceil(height / 16);
     const coded = interlaced ? hUnits * 32 : hUnits * 16;
@@ -10130,7 +10131,8 @@ const TS_LIB = String.raw`
     for(let i = 0; i < frames; i++){
       const key = i % 15 === 0;
       const pics = [];
-      for(let k = 0; k < picturesPerPes; k++) pics.push(tsSlice(key, key ? 900 : 120));
+      const bodyLen = (typeof sliceLen === 'number' && sliceLen > 0) ? sliceLen : (key ? 900 : 120);
+      for(let k = 0; k < picturesPerPes; k++) pics.push(tsSlice(key, bodyLen));
       const au = key ? annexb(sps, pps, ...pics) : annexb(...pics);
       const dts = basePts + i * dur;
       units.push({pid: 0x1011, data: pesOf(au, bframes ? dts + dur : dts, bframes ? dts : null),
@@ -10208,7 +10210,11 @@ section('MTS/M2TS: every frame is demuxed, byte-exact, and nothing leaves the de
     const realBeacon = navigator.sendBeacon && navigator.sendBeacon.bind(navigator);
     if(realBeacon) navigator.sendBeacon = (...a) => { beacons++; return realBeacon(...a); };
 
-    const bytes = makeTs({stride: 192, frames: 30});
+    /* Fat frames on purpose: the file must be BIGGER than one ~1.2 MB read
+       chunk or "never held whole" is asserted against a file that fits in one
+       slice — which is exactly how the first version of this test passed
+       while measuring nothing. */
+    const bytes = makeTs({stride: 192, frames: 30, sliceLen: 84000});
     const f = new File([bytes], '00001.MTS', {type: ''});
     let maxSlice = 0, total = 0;
     const realSlice = f.slice.bind(f);
@@ -10240,7 +10246,8 @@ section('MTS/M2TS: every frame is demuxed, byte-exact, and nothing leaves the de
   ok('no fetch, no XHR, no beacon while the file is parsed and demuxed',
      demux.fetches === 0 && demux.opens === 0 && demux.beacons === 0, JSON.stringify(demux));
   ok('the file is streamed in bounded slices, never held whole',
-     demux.maxSlice <= 6144 * 192 && demux.maxSlice < demux.size, JSON.stringify({max: demux.maxSlice, size: demux.size}));
+     demux.size > 6144 * 192 && demux.maxSlice <= 6144 * 192 && demux.maxSlice < demux.size,
+     JSON.stringify({max: demux.maxSlice, size: demux.size}));
   ok('all thirty frames come out — the short final AVCHD packet included',
      demux.count === 30, String(demux.count));
   ok('the PTS ladder is exact at 90 kHz', demux.ladder === true,
@@ -10268,33 +10275,29 @@ section('MTS/M2TS: refusals are named, and playback never decides');
     const fields = await parse({picturesPerPes: 2, interlaced: true, width: 1440});
     const clean = await parse({});
 
-    /* THE OWNER'S RULE, ASSERTED DIRECTLY: a media element that claims it can
-       play the file must not unlock generation for a transport stream, and a
-       decoder that declines must block it even then. This device has no
-       WebCodecs, so first the real state; then WebCodecs is stubbed present to
-       prove readable is not consulted on the TS branch either way. */
+    /* THE OWNER'S RULE, ASSERTED AS AN INVARIANCE so it holds whatever this
+       browser carries: for a transport stream the media element's verdict must
+       make NO difference to the route, and a declined decoder must block even
+       a "playable" stream. WebCodecs presence is an environment fact and is
+       RECORDED, not assumed — an earlier version assumed absence, and the
+       suite's own secure-context pages proved it present. */
     const saved = VST;
-    const paths = {};
+    const paths = {webcodecs: vstCanPipeline()};
     VST = {parsed: clean, readable: true, decodeOk: true, name: 'clip.mts'};
-    paths.noWebcodecsButPlayable = vstPath();
-    paths.textNoWebcodecs = vstCompatText();
+    const withPlayable = vstPath();
     paths.containerNamed = vstContainer();
-    window.VideoDecoder = class { static async isConfigSupported(){ return {supported: true}; } };
-    window.VideoEncoder = class { static async isConfigSupported(){ return {supported: true}; } };
-    window.VideoFrame = class {};
-    window.EncodedVideoChunk = class {};
+    VST = {parsed: clean, readable: false, decodeOk: true, name: 'clip.mts'};
+    const withoutPlayable = vstPath();
+    paths.readableIrrelevant = withPlayable === withoutPlayable;
+    paths.route = withPlayable;
     VST = {parsed: clean, readable: true, decodeOk: false, name: 'clip.mts'};
     paths.playableButDecoderDeclined = vstPath();
     paths.textDeclined = vstCompatText();
-    VST = {parsed: clean, readable: false, decodeOk: true, name: 'clip.mts'};
-    paths.unplayableButDecodes = vstPath();
     VST = {parsed: clean, readable: null, decodeOk: null, name: 'clip.mts'};
     paths.stillChecking = vstPath();
     VST = {parsed: mpeg2, readable: true, decodeOk: true, name: 'old.mts'};
     paths.mpeg2 = vstPath();
     paths.mpeg2Text = vstCompatText();
-    delete window.VideoDecoder; delete window.VideoEncoder;
-    delete window.VideoFrame; delete window.EncodedVideoChunk;
     VST = saved;
 
     return {mpeg2: vstTsRefusal(mpeg2), packed: vstTsRefusal(packed),
@@ -10310,19 +10313,20 @@ section('MTS/M2TS: refusals are named, and playback never decides');
      verdicts.fields === '' && verdicts.fieldsInterlaced === true, verdicts.fields);
   ok('a clean stream is not refused', verdicts.clean === '');
   const P = verdicts.paths;
-  ok('with no WebCodecs, a playable claim does NOT open the legacy route',
-     P.noWebcodecsButPlayable === 'none', P.noWebcodecsButPlayable);
-  ok('and the sentence blames WebCodecs, never the media player',
-     /WebCodecs/.test(P.textNoWebcodecs) && !/media player/.test(P.textNoWebcodecs), P.textNoWebcodecs);
+  ok('a playable claim changes nothing — readable is not consulted for a TS',
+     P.readableIrrelevant === true && P.route === (P.webcodecs ? 'pipeline' : 'none'),
+     JSON.stringify(P));
   ok('a declined decoder blocks even a "playable" transport stream',
      P.playableButDecoderDeclined === 'none', P.playableButDecoderDeclined);
-  ok('an unplayable one generates anyway when the decoder accepts',
-     P.unplayableButDecodes === 'pipeline', P.unplayableButDecodes);
-  ok('an outstanding answer reads as checking, not as no', P.stillChecking === 'checking');
+  ok('and the sentence names the decoder or WebCodecs, never the media player',
+     /WebCodecs|video decoder declined/.test(P.textDeclined) && !/media player/.test(P.textDeclined),
+     P.textDeclined);
+  ok('an outstanding answer reads as checking, never as no',
+     P.stillChecking === (P.webcodecs ? 'checking' : 'none'), P.stillChecking);
   ok('an MPEG-2 stream is blocked with its own name in the sentence',
      P.mpeg2 === 'none' && /MPEG-2/.test(P.mpeg2Text), P.mpeg2Text);
   ok('the container line reports the measured layout, not the extension',
-     P.containerNamed === 'M2TS / AVCHD', P.containerNamed);
+     P.containerNamed === 'MPEG-TS', P.containerNamed);
   ok('.MTS and .m2ts pass the not-a-video gate', verdicts.notVideo.every(v => v === false));
   ok('the picker names the TS extensions beside video/*', verdicts.accept === true);
   await page.close();
@@ -10333,12 +10337,15 @@ section('MTS/M2TS: the transcode is fed annex-b and stops honestly at the codec 
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
 
-  /* THIS CONTAINER'S CHROMIUM HAS NO WEBCODECS (measured 2026-08-24, and the
-     absence is itself asserted here so a future image that gains it makes this
-     section say so). What CAN be proven: the TS branch reaches the decoder
-     with the file's own codec string and NO invented description, streams the
-     demux behind it, and a device without the codecs is told the truth. The
-     full burn on a real device is the owner's check, as it was for MOV. */
+  /* WEBCODECS PRESENCE IS RECORDED, NOT ASSUMED. An earlier version asserted
+     this container had none — measured in an INSECURE probe context, where
+     [SecureContext] hides VideoDecoder while VideoFrame stays visible. The
+     suite's own pages run on 127.0.0.1, a secure context, and carry the real
+     thing. What this section proves either way: the TS branch reaches the
+     decoder with the file's own codec string and NO invented description, the
+     demux genuinely streams behind it, and a junk bitstream ends in a refusal
+     that protects the original rather than a fabricated file. The full burn
+     on the owner's real device stays the owner's check, as it was for MOV. */
   const stage = await page.evaluate(`(async () => { ${TS_LIB}
     const absent = typeof VideoDecoder === 'undefined' && typeof VideoEncoder === 'undefined';
     const bytes = makeTs({stride: 192, frames: 30});
@@ -10373,9 +10380,9 @@ section('MTS/M2TS: the transcode is fed annex-b and stops honestly at the codec 
                          w: dec.codedWidth, h: dec.codedHeight},
             enc: enc && {codec: enc.codec, w: enc.width, h: enc.height}};
   })()`);
-  ok('this container still has no WebCodecs (re-measure the day this fails)', stage.absent === true);
-  ok('without them the transcode refuses in words and protects the original',
-     stage.honest && /original is unchanged/.test(stage.honest), String(stage.honest));
+  ok('a junk bitstream never becomes a file — the transcode throws and protects the original',
+     stage.honest && /original is unchanged/.test(stage.honest),
+     JSON.stringify({webcodecsAbsent: stage.absent, err: String(stage.honest).slice(0, 120)}));
   ok('the decoder gets the stream\'s own codec string, annex-b, no invented description',
      stage.dec && stage.dec.codec === 'avc1.42001E' && stage.dec.hasDescription === false
      && stage.dec.w === 1920 && stage.dec.h === 1080, JSON.stringify(stage.dec));

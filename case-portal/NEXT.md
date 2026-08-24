@@ -185,9 +185,9 @@ and `vstTranscodeTs` feeds the existing WebCodecs→mp4-muxer pipeline in
 Annex-B form (no invented `description`). For a TS the media element is never
 consulted and the legacy route does not exist. Design record and the
 device-evidence boundary: `VIDEO-TIMESTAMP.md` §MTS. **The decode→burn→encode
-of a real .MTS on real hardware is the owner's device check** — this
-container's Chromium has no WebCodecs (re-measured 2026-08-24, asserted in
-the suite).
+of a real .MTS on real hardware is the owner's device check.** (The earlier
+"no WebCodecs in this container" claim was an insecure-context artifact —
+corrected same day; the suite records presence instead of asserting absence.)
 
 ## What is left
 

@@ -1144,13 +1144,17 @@ boundaries, 33-bit PTS exactness and rollover, keyframe flags, every refusal,
 the no-network guarantee, and the decoder boundary (right codec string, no
 description, demux genuinely reaches `configure`).
 
-**Not provable here: the decode→burn→encode of a transport stream on real
-hardware.** This container's Chromium has no WebCodecs (re-measured
-2026-08-24; a test asserts the absence so a future image that gains it says
-so). The full burn on a real `.MTS` is the owner's device check, exactly as
-it was for the MOV pipeline — the screen will say **Ready — decoded and
-re-encoded on this device** when that device's decoder accepts the stream,
-and name what failed when it does not.
+**A measurement corrected the same day:** the "this container has no
+WebCodecs" claim from the first probe was an artifact of the probe's own
+context — `VideoDecoder` is `[SecureContext]` and the probe page was not one,
+while `VideoFrame` (not SecureContext) stayed visible, which is exactly the
+split the probe recorded. The suite's pages run on `127.0.0.1`, a secure
+context, and the first full run proved WebCodecs PRESENT there. The suite now
+RECORDS presence instead of asserting absence, and the path assertions are
+written as invariances that hold either way. **The burn on the owner's real
+`.MTS`, on their hardware, remains the owner's device check** — the screen
+says **Ready — decoded and re-encoded on this device** when that device's
+decoder accepts the stream, and names what failed when it does not.
 
 One capability note recorded for that check: WebCodecs Annex-B H.264 decode
 is standard in Chromium-family browsers; Safari has historically wanted
