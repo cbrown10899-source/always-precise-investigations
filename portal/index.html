@@ -7241,11 +7241,586 @@ function vstAppleCreation(bytes, moov){
   return null;
 }
 
+/* ================= AVCHD / MPEG-TS (.MTS, .M2TS, .TS) =================
+
+   Owner, 2026-08-24: "Add local MTS/M2TS support to Video Timestamp. Do not
+   rely on browser playback to decide compatibility. Decode/process locally,
+   burn the timestamp, output MP4, keep original untouched, and never upload
+   the source."
+
+   A camcorder .MTS is not a container this page could read at all. `vstParse`
+   walks ISO/QuickTime boxes; an MPEG-TS file has none, so the parse returned a
+   video of `null`, `vstPath()` fell through to "none", and the file was refused
+   with a codec sentence that named no codec. Nothing was broken — the format
+   was simply absent.
+
+   THE RULE THIS FOLLOWS IS THE ONE ALREADY WRITTEN ABOVE `vstBoxCodec`: name
+   the stream from the FILE'S OWN BYTES, and return null rather than guess.
+   Not from the extension — an .MTS may be 188-byte or 192-byte packets and may
+   carry H.264, MPEG-2 or HEVC — and NOT from a `<video>` element, which cannot
+   play MPEG-TS in any browser this portal runs in and would therefore refuse
+   every camcorder file on the planet. The media probe stays informational for
+   MP4/MOV and is not consulted for a transport stream at all.
+
+   WHAT IS READ, AND HOW LITTLE OF IT:
+
+     layout   the packet stride and the first sync byte, from the first 64 KB
+     PAT      program 0's PMT PID
+     PMT      the elementary stream PIDs and their stream types
+     PES      the video PID's packets reassembled into access units, with the
+              33-bit PTS/DTS the stream carries at 90 kHz
+     SPS      the H.264 sequence parameter set, for width, height, profile,
+              level and whether the picture is interlaced
+
+   Picking a file reads the head (until the SPS and a few frames' timing are
+   in hand) and one tail window for the last PTS. Generating streams the file
+   in packet-aligned slices and never holds it whole — the same discipline the
+   MP4 path keeps with `file.slice`. Nothing is uploaded, nothing is written to
+   R2, D1 or any browser store, and the original is opened read-only. */
+
+const VST_TS_STRIDES = [188, 192, 204, 208];
+const VST_TS_PKT = 188;
+const VST_TS_HZ = 90000;                       // the transport clock, always
+
+/* Stream types worth naming. Only H.264 can be processed here; the rest are
+   NAMED so the refusal says what the file actually is rather than "unknown". */
+const VST_TS_VIDEO = {
+  0x01: {name: "MPEG-1 video"}, 0x02: {name: "MPEG-2 video"},
+  0x10: {name: "MPEG-4 Part 2"}, 0x1b: {name: "H.264 / AVC", cc: "avc1"},
+  0x24: {name: "HEVC / H.265"}, 0x42: {name: "AVS"}, 0xea: {name: "VC-1"},
+};
+const VST_TS_AUDIO = {
+  0x03: "MPEG-1 audio", 0x04: "MPEG-2 audio", 0x0f: "AAC", 0x11: "AAC",
+  0x80: "LPCM", 0x81: "AC-3", 0x82: "DTS", 0x84: "AC-3", 0x85: "DTS",
+  0x86: "DTS-HD", 0x87: "Enhanced AC-3",
+};
+
+/* THE PACKET LAYOUT, MEASURED RATHER THAN ASSUMED.
+
+   A transport stream is a fixed grid of packets each starting 0x47. The stride
+   is 188 for a plain .ts, 192 for the AVCHD/Blu-ray .m2ts and .mts a camcorder
+   writes (four bytes of arrival timecode ahead of every packet), and 204/208
+   for the same two with DVB error-correction bytes appended. A single 0x47 is
+   meaningless — it is a byte value like any other — so this scores each
+   candidate by how many packets land on the grid and takes the best. */
+function vstTsLayout(bytes){
+  const limit = bytes.length;
+  let best = null;
+  for(let start = 0; start < Math.min(limit, 1024); start++){
+    if(bytes[start] !== 0x47) continue;
+    for(const stride of VST_TS_STRIDES){
+      let hits = 0;
+      for(let k = 1; k <= 40; k++){
+        const at = start + k * stride;
+        if(at >= limit) break;
+        if(bytes[at] !== 0x47) break;
+        hits++;
+      }
+      if(hits >= 5 && (!best || hits > best.hits)) best = {stride, start, hits};
+    }
+    if(best && best.hits >= 40) break;
+  }
+  return best;
+}
+
+/* Is this a transport stream at all? Reads 64 KB — enough for 340 packets of
+   the widest stride — and answers from the grid, never from the name. */
+async function vstTsSniff(file){
+  if(!file || typeof file.slice !== "function" || file.size < VST_TS_PKT * 8) return null;
+  try{
+    const head = new Uint8Array(await file.slice(0, Math.min(65536, file.size)).arrayBuffer());
+    return vstTsLayout(head);
+  }catch{ return null; }
+}
+
+/* ---- H.264 bit reading: Exp-Golomb over an RBSP ---- */
+
+/* Emulation prevention: the encoder inserts 0x03 into any 00 00 0x sequence so
+   a start code cannot appear inside a NAL. It has to come back out before the
+   bits mean anything. */
+function vstRbsp(u8){
+  const out = new Uint8Array(u8.length);
+  let o = 0, zeros = 0;
+  for(let i = 0; i < u8.length; i++){
+    const b = u8[i];
+    if(zeros === 2 && b === 0x03){ zeros = 0; continue; }
+    out[o++] = b;
+    zeros = b === 0 ? zeros + 1 : 0;
+  }
+  return out.subarray(0, o);
+}
+
+function vstBits(u8){
+  let bit = 0;
+  const total = u8.length * 8;
+  const u1 = () => {
+    if(bit >= total) throw new Error("bitstream ended");
+    const v = (u8[bit >> 3] >> (7 - (bit & 7))) & 1;
+    bit++;
+    return v;
+  };
+  const u = n => { let v = 0; for(let i = 0; i < n; i++) v = (v * 2) + u1(); return v; };
+  const ue = () => {
+    let lead = 0;
+    while(u1() === 0){ lead++; if(lead > 31) throw new Error("bad exp-golomb"); }
+    return lead === 0 ? 0 : (Math.pow(2, lead) - 1) + u(lead);
+  };
+  const se = () => { const k = ue(); return (k & 1) ? (k + 1) / 2 : -(k / 2); };
+  return {u1, u, ue, se, pos: () => bit};
+}
+
+/* THE SEQUENCE PARAMETER SET — where a transport stream keeps the picture's
+   real shape. There is no `avcC` box here and no `stsd`; the SPS travels
+   in-band ahead of each keyframe, which is also why the decoder can be fed
+   Annex-B directly with no `description` at all.
+
+   Cropping is not decoration: an AVCHD 1080i stream codes 1088 lines (34 macro
+   block rows) and crops eight away, so a parser that ignores `frame_cropping`
+   reports 1088 and every frame drawn from it is stretched. */
+const VST_H264_HIGH = new Set([100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135]);
+
+function vstSkipScaling(br, count){
+  for(let i = 0; i < count; i++){
+    if(br.u1()){                                    // seq_scaling_list_present_flag
+      const size = i < 6 ? 16 : 64;
+      let last = 8, next = 8;
+      for(let j = 0; j < size; j++){
+        if(next !== 0){ next = (last + br.se() + 256) % 256; }
+        last = next === 0 ? last : next;
+      }
+    }
+  }
+}
+
+function vstSps(nal){
+  try{
+    const r = vstRbsp(nal);
+    if(r.length < 4) return null;
+    const profile = r[1], compat = r[2], level = r[3];
+    const br = vstBits(r.subarray(4));
+    br.ue();                                        // seq_parameter_set_id
+    let chroma = 1, separate = 0;
+    if(VST_H264_HIGH.has(profile)){
+      chroma = br.ue();
+      if(chroma === 3) separate = br.u1();
+      br.ue(); br.ue();                             // bit depths
+      br.u1();                                      // qpprime_y_zero_transform_bypass
+      if(br.u1()) vstSkipScaling(br, chroma !== 3 ? 8 : 12);
+    }
+    br.ue();                                        // log2_max_frame_num_minus4
+    const poc = br.ue();
+    if(poc === 0) br.ue();
+    else if(poc === 1){
+      br.u1(); br.se(); br.se();
+      const n = br.ue();
+      for(let i = 0; i < n; i++) br.se();
+    }
+    br.ue();                                        // max_num_ref_frames
+    br.u1();                                        // gaps_in_frame_num_value_allowed
+    const wMbs = br.ue() + 1;
+    const hUnits = br.ue() + 1;
+    const frameMbsOnly = br.u1();
+    if(!frameMbsOnly) br.u1();                      // mb_adaptive_frame_field_flag
+    br.u1();                                        // direct_8x8_inference_flag
+    let cl = 0, cr = 0, ct = 0, cb = 0;
+    if(br.u1()){ cl = br.ue(); cr = br.ue(); ct = br.ue(); cb = br.ue(); }
+    // SubWidthC / SubHeightC, per the chroma format actually coded.
+    const mono = chroma === 0 || separate === 1;
+    const subW = mono ? 1 : (chroma === 3 ? 1 : 2);
+    const subH = mono ? 1 : (chroma === 1 ? 2 : 1);
+    const unitX = subW, unitY = subH * (2 - frameMbsOnly);
+    const width = wMbs * 16 - unitX * (cl + cr);
+    const height = (2 - frameMbsOnly) * hUnits * 16 - unitY * (ct + cb);
+    if(!(width > 0 && height > 0)) return null;
+    return {profile, compat, level, width, height,
+            interlaced: !frameMbsOnly, chroma,
+            codecString: "avc1." + [profile, compat, level]
+              .map(b => b.toString(16).padStart(2, "0")).join("").toUpperCase()};
+  }catch{ return null; }
+}
+
+/* Every Annex-B start code in a buffer, as the index of the byte AFTER it. */
+function vstNalStarts(d){
+  const out = [];
+  for(let i = 0; i + 3 <= d.length; i++){
+    if(d[i] === 0 && d[i + 1] === 0 && d[i + 2] === 1){ out.push(i + 3); i += 2; }
+  }
+  return out;
+}
+
+/* What an access unit contains: whether it is a keyframe, its parameter sets,
+   and HOW MANY PICTURES it holds. That last one is not curiosity — see
+   `vstTsAu`. */
+function vstAuScan(d){
+  const starts = vstNalStarts(d);
+  const out = {idr: false, sps: null, pps: null, pictures: 0, nals: starts.length};
+  for(let i = 0; i < starts.length; i++){
+    const s = starts[i];
+    let e = i + 1 < starts.length ? starts[i + 1] - 3 : d.length;
+    while(e > s && d[e - 1] === 0) e--;              // trailing zero_byte padding
+    const type = d[s] & 0x1f;
+    if(type === 5) out.idr = true;
+    if(type === 7 && !out.sps) out.sps = d.slice(s, e);
+    if(type === 8 && !out.pps) out.pps = d.slice(s, e);
+    if(type === 1 || type === 5){
+      /* first_mb_in_slice is the first value in every slice header, and zero
+         means a picture starts here. Counting them is how a PES carrying more
+         than one frame announces itself. */
+      try{
+        const br = vstBits(vstRbsp(d.subarray(s + 1, Math.min(e, s + 9))));
+        if(br.ue() === 0) out.pictures++;
+      }catch{ /* an unreadable slice header is not a picture claim */ }
+    }
+  }
+  return out;
+}
+
+/* ---- The demultiplexer ---- */
+
+function vstTsStamp(b, i){
+  /* 33 bits, so the top three cannot be shifted — they are multiplied. */
+  return ((b[i] & 0x0e) * 536870912)
+    + ((b[i + 1] << 22) | ((b[i + 2] & 0xfe) << 14) | (b[i + 3] << 7) | ((b[i + 4] & 0xfe) >> 1));
+}
+
+const VST_TS_WRAP = 8589934592;                 // 2^33, one full PTS cycle
+
+/* A PTS is 33 bits and rolls over about every 26.5 hours. Unwrapping keeps the
+   axis monotonic; without it a clip that straddles the rollover jumps 26 hours
+   backwards mid-file. */
+function vstTsUnwrap(pts, prev){
+  if(prev == null || pts == null) return pts;
+  let v = pts;
+  while(v < prev - VST_TS_WRAP / 2) v += VST_TS_WRAP;
+  while(v > prev + VST_TS_WRAP / 2) v -= VST_TS_WRAP;
+  return v;
+}
+
+function vstPsiSection(slot, bytes, pay, end, pusi){
+  if(pusi){
+    const ptr = bytes[pay];
+    const s = pay + 1 + ptr;
+    if(s >= end) { slot.parts = null; return null; }
+    slot.parts = [bytes.slice(s, end)];
+    slot.len = end - s;
+  } else if(slot.parts){
+    slot.parts.push(bytes.slice(pay, end));
+    slot.len += end - pay;
+  } else return null;
+  const head = slot.parts[0];
+  if(head.length < 3) return null;
+  const total = 3 + (((head[1] & 0x0f) << 8) | head[2]);
+  if(slot.len < total) return null;
+  const out = new Uint8Array(slot.len);
+  let o = 0;
+  for(const p of slot.parts){ out.set(p, o); o += p.length; }
+  slot.parts = null;
+  return out.subarray(0, total);
+}
+
+/* The reader is a state machine over packet-aligned byte runs. `feed` may be
+   called with any number of whole packets; access units come out through
+   `emit`. It holds one PES at a time and nothing else. */
+function vstTsReader(layout, seed){
+  const st = {
+    stride: layout.stride, start: layout.start,
+    pmtPid: -1, videoPid: -1, videoType: -1, audioPid: -1, audioType: -1,
+    streams: [], programs: 0, packets: 0, desync: 0, scrambled: 0,
+    pat: {parts: null, len: 0}, pmt: {parts: null, len: 0},
+    pes: null, prevPts: null,
+  };
+  if(seed){ st.videoPid = seed.videoPid; st.videoType = seed.videoType;
+            st.pmtPid = seed.pmtPid; }
+
+  function readPat(sec){
+    if(sec[0] !== 0x00) return;
+    const stop = sec.length - 4;                   // the section's own CRC32
+    for(let i = 8; i + 4 <= stop; i += 4){
+      const prog = (sec[i] << 8) | sec[i + 1];
+      if(prog === 0) continue;                     // network information, not a program
+      st.programs++;
+      if(st.pmtPid < 0) st.pmtPid = ((sec[i + 2] & 0x1f) << 8) | sec[i + 3];
+    }
+  }
+  function readPmt(sec){
+    if(sec[0] !== 0x02) return;
+    const stop = sec.length - 4;
+    if(stop < 12) return;
+    const pil = ((sec[10] & 0x0f) << 8) | sec[11];
+    let i = 12 + pil;
+    st.streams = [];
+    while(i + 5 <= stop){
+      const type = sec[i];
+      const pid = ((sec[i + 1] & 0x1f) << 8) | sec[i + 2];
+      const esil = ((sec[i + 3] & 0x0f) << 8) | sec[i + 4];
+      st.streams.push({type, pid});
+      if(st.videoPid < 0 && VST_TS_VIDEO[type]){ st.videoPid = pid; st.videoType = type; }
+      if(st.audioPid < 0 && VST_TS_AUDIO[type]){ st.audioPid = pid; st.audioType = type; }
+      i += 5 + esil;
+    }
+  }
+
+  function closePes(emit){
+    const p = st.pes;
+    st.pes = null;
+    if(!p || !p.len || !emit) return;
+    const data = new Uint8Array(p.len);
+    let o = 0;
+    for(const q of p.parts){ data.set(q, o); o += q.length; }
+    const pts = vstTsUnwrap(p.pts, st.prevPts);
+    if(pts != null) st.prevPts = pts;
+    const dts = p.dts == null ? pts : vstTsUnwrap(p.dts, st.prevPts);
+    emit({data, pts, dts: dts == null ? pts : dts});
+  }
+
+  function feed(bytes, emit){
+    const stride = st.stride;
+    for(let off = 0; off + VST_TS_PKT <= bytes.length; off += stride){
+      if(bytes[off] !== 0x47){ st.desync++; continue; }
+      st.packets++;
+      const b1 = bytes[off + 1], b3 = bytes[off + 3];
+      if(b1 & 0x80) continue;                      // transport_error_indicator
+      if((b3 >> 6) & 3){ st.scrambled++; continue; }
+      const afc = (b3 >> 4) & 3;
+      if(afc === 0 || afc === 2) continue;         // no payload in this packet
+      const pusi = (b1 & 0x40) !== 0;
+      const pid = ((b1 & 0x1f) << 8) | bytes[off + 2];
+      let pay = off + 4;
+      if(afc === 3) pay += 1 + bytes[off + 4];
+      const end = off + VST_TS_PKT;
+      if(pay >= end) continue;
+
+      if(pid === 0){
+        const sec = vstPsiSection(st.pat, bytes, pay, end, pusi);
+        if(sec) readPat(sec);
+      } else if(pid === st.pmtPid){
+        const sec = vstPsiSection(st.pmt, bytes, pay, end, pusi);
+        if(sec) readPmt(sec);
+      } else if(pid === st.videoPid){
+        if(pusi){
+          closePes(emit);
+          if(end - pay >= 9 && bytes[pay] === 0 && bytes[pay + 1] === 0 && bytes[pay + 2] === 1){
+            const flags = bytes[pay + 7], hlen = bytes[pay + 8];
+            const pf = (flags >> 6) & 3;
+            let pts = null, dts = null, h = pay + 9;
+            if((pf & 2) && h + 5 <= end){ pts = vstTsStamp(bytes, h); h += 5; }
+            if(pf === 3 && h + 5 <= end){ dts = vstTsStamp(bytes, h); h += 5; }
+            const at = pay + 9 + hlen;
+            st.pes = {parts: [], len: 0, pts, dts};
+            if(at < end){ st.pes.parts.push(bytes.slice(at, end)); st.pes.len = end - at; }
+          }
+        } else if(st.pes){
+          st.pes.parts.push(bytes.slice(pay, end));
+          st.pes.len += end - pay;
+        }
+      }
+    }
+  }
+
+  return {st, feed, flush: emit => closePes(emit)};
+}
+
+/* One access unit, in the shape `vstTranscodeTs` feeds the decoder. Timestamps
+   stay in the stream's own 90 kHz until the very last moment. */
+function vstTsAu(pes){
+  const scan = vstAuScan(pes.data);
+  return {data: pes.data, pts: pes.pts, dts: pes.dts, sync: scan.idr,
+          sps: scan.sps, pps: scan.pps, pictures: scan.pictures};
+}
+
+/* Packet-aligned reading. Every slice begins on a packet boundary, so the
+   reader never has to carry a half packet between calls. */
+const VST_TS_CHUNK = 6144;                        // packets per read ≈ 1.2 MB
+
+async function vstTsScan(file, layout, seed, onAu, opts){
+  const o = opts || {};
+  const stride = layout.stride;
+  const reader = vstTsReader(layout, seed);
+  let pos = o.from == null ? layout.start : o.from;
+  const stop = o.to == null ? file.size : Math.min(o.to, file.size);
+  let stopped = false;
+  /* A CHUNK'S ACCESS UNITS ARE HANDED OVER ONE AT A TIME AND AWAITED. The
+     demultiplexer itself is a tight synchronous loop over packets, so it
+     collects what a chunk yields and the caller is then given each unit in
+     turn — which is what lets the transcode hold the decoder queue down
+     instead of posting a whole film into it. At most one chunk's frames are
+     ever pending, and a chunk is about a megabyte. */
+  while(pos < stop && !stopped){
+    const want = Math.min(VST_TS_CHUNK * stride, stop - pos);
+    const buf = new Uint8Array(await file.slice(pos, pos + want).arrayBuffer());
+    /* THE LAST PACKET OF AN AVCHD FILE IS SHORTER THAN THE STRIDE. A 192-byte
+       stream is [4-byte arrival stamp][188-byte packet] repeated, so the final
+       packet ends at the file end with nothing after it — cutting the buffer
+       to whole strides silently dropped the last frame of every clip. A tail
+       that still holds a whole packet is fed. */
+    const whole = Math.floor(buf.length / stride) * stride;
+    const rem = buf.length - whole;
+    const usable = whole + (rem >= VST_TS_PKT ? rem : 0);
+    if(usable < VST_TS_PKT) break;
+    const batch = [];
+    reader.feed(buf.subarray(0, usable), pes => batch.push(vstTsAu(pes)));
+    pos += usable;
+    for(const au of batch){
+      if(await onAu(au) === false){ stopped = true; break; }
+    }
+    if(o.onProgress) o.onProgress(pos, stop);
+  }
+  if(!stopped){
+    const tail = [];
+    reader.flush(pes => tail.push(vstTsAu(pes)));
+    for(const au of tail){ if(await onAu(au) === false) break; }
+  }
+  return reader.st;
+}
+
+/* ---- What the screen and the pipeline need to know about this file ----
+
+   HEAD: read until the SPS is in hand and a handful of frames have been timed,
+   capped so a stream with no video PID cannot walk a whole card.
+   TAIL: one window at the end for the last PTS, so the duration is measured
+   from the stream's own clock rather than estimated from the file size.
+
+   A tail that yields nothing is reported as an unknown duration, never as
+   zero — the same rule the rest of this file follows about absent values. */
+const VST_TS_HEAD_MAX = 48 * 1048576;
+const VST_TS_TAIL = 8 * 1048576;
+const VST_TS_TIMING_FRAMES = 24;
+
+async function vstTsParse(file, layout){
+  const out = {container: "mpegts", layout, tracks: 0, rotation: 0, capture: null,
+               video: null, audio: null,
+               brand: layout.stride === 192 ? "M2TS / AVCHD"
+                    : layout.stride === 188 ? "MPEG-TS" : "MPEG-TS (" + layout.stride + ")"};
+  let sps = null, pps = null, minPts = null, maxPts = null, maxPics = 0;
+  const deltas = [];
+  let prevDts = null, frames = 0;
+
+  const head = await vstTsScan(file, layout, null, au => {
+    frames++;
+    if(au.pictures > maxPics) maxPics = au.pictures;
+    if(!sps && au.sps) sps = au.sps;
+    if(!pps && au.pps) pps = au.pps;
+    if(au.pts != null){
+      if(minPts == null || au.pts < minPts) minPts = au.pts;
+      if(maxPts == null || au.pts > maxPts) maxPts = au.pts;
+    }
+    /* THE FRAME INTERVAL COMES FROM DTS, NOT PTS. With B-frames the
+       presentation stamps arrive out of order, so consecutive PTS differences
+       in decode order are a reordering artefact and estimating a frame rate
+       from them lands at half or double the real one. Decode stamps are
+       monotonic by definition, and their spacing IS the frame interval. */
+    if(au.dts != null){
+      if(prevDts != null && au.dts > prevDts) deltas.push(au.dts - prevDts);
+      prevDts = au.dts;
+    }
+    if(sps && deltas.length >= VST_TS_TIMING_FRAMES) return false;
+    return true;
+  }, {to: Math.min(file.size, VST_TS_HEAD_MAX)});
+
+  out.tracks = head.streams.length;
+  out.streams = head.streams.slice();
+  if(head.audioType >= 0 && VST_TS_AUDIO[head.audioType]){
+    out.audio = {cc: "ts" + head.audioType.toString(16), name: VST_TS_AUDIO[head.audioType],
+                 pid: head.audioPid, streamType: head.audioType, samples: null, asc: null};
+  }
+  const vt = VST_TS_VIDEO[head.videoType];
+  if(head.videoPid < 0 || !vt) return out;
+
+  /* NAMED EVEN WHEN IT CANNOT BE PROCESSED. An MPEG-2 or HEVC transport stream
+     is a real answer and the refusal should say so; only H.264 goes further,
+     because only H.264's parameter sets are read here. */
+  const ps = head.videoType === 0x1b && sps ? vstSps(sps) : null;
+  const fps = deltas.length
+    ? Math.round(VST_TS_HZ / deltas.slice().sort((a, b) => a - b)[Math.floor(deltas.length / 2)])
+    : null;
+
+  /* AN INTERLACED FRAME IS TWO PICTURES AND STILL ONE MOMENT. A field-coded
+     stream puts both fields of a frame in one PES under one PTS, and each
+     field's slice header starts at macroblock zero — so counting pictures
+     alone would read every 1080i camcorder file as unstampable. The pair is
+     normal; three or more, or two in a progressive stream, is not. */
+  const multiPicture = ps && ps.interlaced ? maxPics > 2 : maxPics > 1;
+
+  /* THE LAST PTS, from a tail window aligned to the packet grid — the stream's
+     own clock rather than an estimate from the file size. A tail that yields
+     nothing leaves the duration UNKNOWN, never zero. */
+  let tailMax = null;
+  {
+    /* A file smaller than the window is simply scanned whole — the head scan
+       stops early once it has its timing sample, so ITS maximum is not the
+       stream's end and must not be reported as one. */
+    const raw = Math.max(layout.start, file.size - VST_TS_TAIL);
+    const from = layout.start + Math.floor((raw - layout.start) / layout.stride) * layout.stride;
+    try{
+      await vstTsScan(file, layout, {videoPid: head.videoPid, videoType: head.videoType,
+                                     pmtPid: head.pmtPid}, au => {
+        if(au.pts != null && (tailMax == null || au.pts > tailMax)) tailMax = au.pts;
+        return true;
+      }, {from});
+    }catch{ tailMax = null; }
+  }
+  const lastPts = tailMax != null ? tailMax : maxPts;
+  const span = (lastPts != null && minPts != null && lastPts > minPts) ? lastPts - minPts : null;
+  const seconds = span != null
+    ? +((span + (fps ? VST_TS_HZ / fps : 0)) / VST_TS_HZ).toFixed(2) : null;
+
+  out.video = {
+    cc: vt.cc || ("ts" + head.videoType.toString(16)),
+    name: vt.name,
+    streamType: head.videoType, pid: head.videoPid,
+    width: ps ? ps.width : 0,
+    height: ps ? ps.height : 0,
+    interlaced: ps ? ps.interlaced : null,
+    profile: ps ? ps.profile : null, level: ps ? ps.level : null,
+    timescale: VST_TS_HZ, duration: span, seconds, fps,
+    codecString: ps ? ps.codecString : null,
+    /* ANNEX B, AND THAT IS WHY THERE IS NO `description`. WebCodecs takes a
+       length-prefixed bitstream when a codec description is supplied and a
+       start-code bitstream when it is not — a transport stream is the second,
+       carrying its own SPS and PPS in-band ahead of each keyframe. So nothing
+       has to synthesise an `avcC` record, which is one fewer place to be
+       wrong. */
+    bitstream: "annexb", hasConfig: false, description: null,
+    parameterSets: !!(sps && pps),
+    /* There is no sample table in a transport stream: a frame is not a byte
+       range, it is a run of PES payloads spread across the packet grid. The
+       pipeline streams them instead — see `vstTranscodeTs`. */
+    samples: null,
+    firstPts: minPts, multiPicture, pictures: maxPics,
+    headFrames: frames, headPackets: head.packets,
+  };
+  return out;
+}
+
+/* CAN THE PIPELINE TAKE THIS TRANSPORT STREAM? One sentence when it cannot,
+   naming what was actually found — and reached without asking a `<video>`
+   element anything, because no browser this portal runs in plays MPEG-TS and
+   its answer would refuse every camcorder file there is. */
+function vstTsRefusal(p){
+  const v = p && p.video;
+  if(!v) return "No video stream was found in this transport file.";
+  if(v.streamType !== 0x1b) return `This is a ${v.name} transport stream. Only H.264 / AVC is processed here.`;
+  if(!v.codecString) return "The H.264 parameter set could not be read from this stream, so its picture size and profile are unknown.";
+  if(!v.width || !v.height) return "The picture size could not be read from this stream.";
+  if(v.multiPicture) return "This stream packs more than one picture into a single PES packet, which carries no separate time for each. Nothing would be generated with an honest timestamp.";
+  return "";
+}
+
+function vstIsTs(p){ return !!(p && p.container === "mpegts"); }
+function vstTsReady(p){ return vstIsTs(p) && !!p.video && !vstTsRefusal(p); }
+
 async function vstParse(file){
   if(!file || typeof file.slice !== "function") return null;
+  /* WHICH CONTAINER THIS IS, DECIDED BY THE FILE. An MPEG-TS has no boxes at
+     all, so the walk below would find no `moov`, report a file with no video
+     track and refuse a perfectly good camcorder recording. The extension is
+     not consulted: an .MTS may be 188- or 192-byte packets, and a .ts named
+     .mp4 is still a transport stream. */
+  const ts = await vstTsSniff(file);
+  if(ts) return await vstTsParse(file, ts);
   const u8 = async (off, len) => new Uint8Array(await file.slice(off, off + len).arrayBuffer());
-  const out = {brand: null, video: null, audio: null, tracks: 0, rotation: 0, moovBytes: 0,
-               capture: null};
+  const out = {container: "iso", brand: null, video: null, audio: null, tracks: 0,
+               rotation: 0, moovBytes: 0, capture: null};
   try{
     let off = 0, moov = null, guard = 0;
     while(off + 8 <= file.size && guard++ < 400){
@@ -7572,6 +8147,16 @@ function vstProbe(url){
 function vstPath(){
   const v = VST;
   if(!v) return "none";
+  /* A TRANSPORT STREAM HAS EXACTLY ONE ROUTE. No browser this portal runs in
+     plays MPEG-TS in a media element, so for an .MTS the legacy route does not
+     exist and `readable` is not consulted at all — the owner's rule that
+     browser playback must not decide compatibility, made structural. The
+     pipeline route needs no sample table for it: the packet grid is streamed
+     instead. */
+  if(v.parsed && vstIsTs(v.parsed)){
+    if(!vstCanPipeline() || !vstTsReady(v.parsed)) return "none";
+    return v.decodeOk === true ? "pipeline" : v.decodeOk === null ? "checking" : "none";
+  }
   const pipeReady = vstCanPipeline() && v.parsed && v.parsed.video && v.parsed.video.samples;
   if(pipeReady && v.decodeOk === true) return "pipeline";
   if(v.readable === true && vstCan()) return "legacy";
@@ -7580,9 +8165,11 @@ function vstPath(){
   return "none";
 }
 
-/* The container, from the filename — which is a LABEL and is described as one.
-   The codec comes from the file's own boxes or not at all. */
+/* The container. A transport stream's layout was MEASURED off the packet grid
+   and that outranks the filename; otherwise the extension is a LABEL and is
+   described as one. The codec comes from the file's own bytes or not at all. */
 function vstContainer(){
+  if(VST && VST.parsed && vstIsTs(VST.parsed)) return VST.parsed.brand;
   const m = /\.(\w{2,5})$/.exec(String((VST && VST.name) || ""));
   if(!m) return null;
   const e = m[1].toUpperCase();
@@ -7602,6 +8189,19 @@ function vstCompatText(){
   const named = v.codec ? v.codec.name : null;
   const kind = vstContainer() ? vstContainer() + " video" : "video";
   const what = named ? `This ${kind} uses ${named}.` : `This ${kind}'s codec could not be determined from the file.`;
+  /* A transport stream was refused for a reason this build actually measured —
+     the stream type, a missing parameter set, packed pictures — or because the
+     device has no WebCodecs, which is the only dependency the format has. The
+     media element is not mentioned because it was never asked. */
+  if(v.parsed && vstIsTs(v.parsed)){
+    const r = vstTsRefusal(v.parsed);
+    const tsWhy = r || (!vstCanPipeline()
+      ? "This browser has no WebCodecs, which is the only way a transport stream can be processed here."
+      : v.decodeOk === false
+        ? "This device's video decoder declined this stream's configuration."
+        : "This device could not decode it.");
+    return `${what} ${tsWhy} Your original is unchanged.`;
+  }
   /* Say which route failed, because they fail for different reasons and the
      owner has to know which one to chase. */
   /* WHICH ROUTE FAILED, AND WHY — the three answers are different problems and
@@ -7687,6 +8287,9 @@ async function vstEncoderConfig(w, h, fps){
    sentence the screen can show. `onStage` reports progress without the caller
    needing to know the stages. */
 async function vstTranscode(file, parsed, startMs, tz, onStage){
+  /* A transport stream is streamed rather than read from a sample table. Same
+     muxer, same burn, same MP4 out — see `vstTranscodeTs`. */
+  if(vstIsTs(parsed)) return vstTranscodeTs(file, parsed, startMs, tz, onStage);
   const M = await vstMuxer();
   const V = parsed && parsed.video, A = parsed && parsed.audio;
   if(!V || !V.samples || !V.samples.length) throw new Error("The video track's sample table could not be read, so nothing was generated. Your original is unchanged.");
@@ -7791,6 +8394,132 @@ async function vstTranscode(file, parsed, startMs, tz, onStage){
           audio: "stripped", sourceAudio};
 }
 
+/* ---- THE TRANSPORT-STREAM TRANSCODE ----
+
+   Same shape as `vstTranscode`, same muxer, same burn, same output: an MP4
+   with H.264 picture and no audio track. What differs is only where the
+   encoded frames come from — streamed out of the packet grid instead of read
+   from a sample table — and the fact that the decoder is configured WITHOUT a
+   description, which is what tells WebCodecs the bitstream is Annex B.
+
+   MEMORY: the file is read in packet-aligned slices of about a megabyte and
+   one access unit is held back at a time. A 20 GB card file is never resident,
+   nothing is uploaded, nothing is written to R2, D1, localStorage,
+   sessionStorage or IndexedDB, and the original is opened read-only — the
+   output is one Blob the operator then saves. */
+async function vstTranscodeTs(file, parsed, startMs, tz, onStage){
+  const M = await vstMuxer();
+  const V = parsed && parsed.video;
+  const refusal = vstTsRefusal(parsed);
+  if(refusal) throw new Error(refusal + " Nothing was generated and your original is unchanged.");
+
+  const W = V.width, H = V.height, fps = V.fps || 30;
+  const encCfg = await vstEncoderConfig(W, H, fps);
+  if(!encCfg) throw new Error("This device would not accept any H.264 encoder configuration for "
+    + `${W}x${H}, so no MP4 could be written. Your original is unchanged.`);
+
+  const muxer = new M.Muxer({
+    target: new M.ArrayBufferTarget(),
+    /* A transport stream carries no rotation matrix — there is no `tkhd` to
+       hold one — so nothing is claimed about orientation and no pixels are
+       turned. A camcorder writes the picture the way it is shot. */
+    video: {codec: "avc", width: W, height: H, rotation: 0},
+    fastStart: "in-memory",
+    firstTimestampBehavior: "offset",
+  });
+
+  const cv = document.createElement("canvas");
+  cv.width = W; cv.height = H;
+  const cx = cv.getContext("2d", {alpha: false});
+
+  let encoded = 0, decoded = 0, encErr = null;
+  const encoder = new VideoEncoder({
+    output: (chunk, meta) => { muxer.addVideoChunk(chunk, meta); encoded++; },
+    error: e => { encErr = e; },
+  });
+  encoder.configure(encCfg);
+
+  const decoder = new VideoDecoder({
+    output: frame => {
+      try{
+        const tSec = Math.max(0, frame.timestamp / 1e6);
+        cx.drawImage(frame, 0, 0, W, H);
+        vstDraw(cx, W, H, vstLabel(startMs + Math.floor(tSec) * 1000, tz));
+        const out = new VideoFrame(cv, {timestamp: frame.timestamp,
+                                        duration: frame.duration || undefined});
+        encoder.encode(out, {keyFrame: decoded % (fps * 2) === 0});
+        out.close();
+      } finally { frame.close(); decoded++; }
+    },
+    error: e => { encErr = e; },
+  });
+  decoder.configure({codec: V.codecString, codedWidth: W, codedHeight: H});
+
+  /* The base is the earliest PRESENTATION stamp the head scan measured, so the
+     burned clock starts at the operator's chosen moment and advances with the
+     footage rather than with this machine. */
+  const base = V.firstPts != null ? V.firstPts : 0;
+  const us = t => Math.round((t - base) * (1e6 / VST_TS_HZ));
+
+  /* One access unit is held back so its duration can be the DISTANCE TO THE
+     NEXT ONE rather than a frame rate assumed for it. The last unit takes the
+     median interval, which is the only honest answer for a frame with nothing
+     after it. */
+  let held = null, started = false, skipped = 0, fed = 0;
+  const nominal = Math.round(VST_TS_HZ / fps);
+
+  const push = async (au, dur) => {
+    if(!started){
+      /* DECODING MUST BEGIN AT A KEYFRAME. A transport stream can be cut
+         anywhere, and handing a decoder a mid-GOP frame produces either an
+         error or a smeared picture that looks like a fault in the camera. */
+      if(!au.sync){ skipped++; return; }
+      started = true;
+    }
+    decoder.decode(new EncodedVideoChunk({
+      type: au.sync ? "key" : "delta",
+      timestamp: us(au.pts != null ? au.pts : au.dts),
+      duration: Math.round(Math.max(1, dur) * (1e6 / VST_TS_HZ)),
+      data: au.data,
+    }));
+    fed++;
+    // Let the decoder drain rather than queueing the whole card at once.
+    let guard = 0;
+    while(decoder.decodeQueueSize > 24 && !encErr && guard++ < 4000){
+      await new Promise(r => setTimeout(r, 8));
+    }
+  };
+
+  await vstTsScan(file, parsed.layout, null, async au => {
+    if(encErr) return false;
+    if(held){
+      const d = (held.dts != null && au.dts != null && au.dts > held.dts)
+        ? au.dts - held.dts : nominal;
+      await push(held, d);
+    }
+    held = au;
+    return true;
+  }, {onProgress: (pos, stop) => {
+    if(onStage) onStage("decoding", Math.min(98, Math.round(pos / stop * 100)));
+  }});
+  if(held && !encErr) await push(held, nominal);
+
+  await decoder.flush();
+  decoder.close();
+  await encoder.flush();
+  encoder.close();
+  if(encErr) throw new Error("The device's video codec stopped part-way: "
+    + (encErr.message || encErr) + ". Nothing was saved and your original is unchanged.");
+  if(!encoded) throw new Error("No frames came out of the encoder, so no file was written. Your original is unchanged.");
+
+  if(onStage) onStage("finishing", 99);
+  muxer.finalize();
+  const blob = new Blob([muxer.target.buffer], {type: "video/mp4"});
+  return {blob, mime: "video/mp4", frames: encoded, audio: "stripped",
+          sourceAudio: parsed.audio ? parsed.audio.name : null,
+          skippedLeading: skipped};
+}
+
 /* IS THIS CONFIDENTLY NOT A VIDEO? (owner, 2026-08-18: desktop must reject a
    non-video file immediately with "Video files only".)
 
@@ -7827,7 +8556,12 @@ function vstNotVideo(f){
 function vstOpen(caseNo){
   const inp = document.createElement("input");
   inp.type = "file";
-  inp.accept = "video/*";
+  /* The extensions are listed as well as `video/*` because a camcorder's
+     .MTS/.M2TS usually has NO registered MIME type on the machine it is copied
+     to — a bare `video/*` filter greys the files out in the picker, and a door
+     that cannot see the file is no door. Naming them only widens what the
+     dialog SHOWS; what is accepted is still decided from the bytes. */
+  inp.accept = "video/*,.mts,.m2ts,.ts";
   inp.onchange = async () => {
     const f = inp.files && inp.files[0];
     if(!f) return;
@@ -7890,11 +8624,22 @@ function vstOpen(caseNo){
       /* CAN THE PIPELINE ACTUALLY TAKE THIS FILE? Asked here, at pick time, so
          the screen knows before it decides what to offer. `null` means the
          answer is still outstanding; it is never treated as "no". */
-      if(vstCanPipeline() && p && p.video && p.video.samples){
+      if(vstCanPipeline() && p && p.video && (p.video.samples || vstTsReady(p))){
         vstDecoderAccepts(p.video).then(r => {
           if(VST && VST.url === url){ VST.decodeOk = !!(r && r.supported); paintVStamp(); }
         });
       } else if(VST) VST.decodeOk = false;
+      /* A TRANSPORT STREAM IS NEVER HANDED TO THE MEDIA ELEMENT. No browser
+         here plays MPEG-TS, so the probe below would refuse every camcorder
+         file after a 20-second timeout and its verdict would mean nothing —
+         the owner's rule is that browser playback does not decide
+         compatibility, and for this format it is not even consulted.
+         `readable` is set false as a fact (the element cannot play it), and
+         `vstPath` does not read it for a TS. */
+      if(vstIsTs(p) && VST && VST.url === url && VST.readable === null){
+        VST.readable = false;
+        paintVStamp();
+      }
       if(p && p.capture && VST.guessed){
         const c = vstParts(p.capture.ms);
         VST.mo = c.month; VST.da = c.day; VST.yr = c.year;
@@ -7909,6 +8654,7 @@ function vstOpen(caseNo){
     });
     vstProbe(url).then(r => {
       if(!VST || VST.url !== url) return;
+      if(VST.parsed && vstIsTs(VST.parsed)) return;   // the fact is already stated
       VST.readable = r.ok;
       if(r.ok){ VST.vw = r.w; VST.vh = r.h; VST.vdur = r.dur; }
       paintVStamp();
@@ -8339,8 +9085,11 @@ async function vstDiagnose(){
   const vid = p && p.video, aud = p && p.audio;
   lines.push(row("Video codec", vid ? `${vid.name} (${vid.cc})` : "could not be read from the file"));
   if(vid){
-    lines.push(row("  codec string", vid.codecString + (vid.hasConfig ? "" : "  [no config record]")));
-    lines.push(row("  dimensions", `${vid.width}x${vid.height}` + (p.rotation ? `  rotated ${p.rotation}°` : "")));
+    lines.push(row("  codec string", (vid.codecString || "could not be read")
+      + (vid.hasConfig ? "" : vstIsTs(p) ? "  [in-band parameter sets]" : "  [no config record]")));
+    lines.push(row("  dimensions", (vid.width && vid.height ? `${vid.width}x${vid.height}` : "could not be read")
+      + (p.rotation ? `  rotated ${p.rotation}°` : "")
+      + (vid.interlaced ? "  interlaced" : "")));
     lines.push(row("  timescale", String(vid.timescale) + (vid.seconds ? `  (${vid.seconds}s)` : "")));
   }
   lines.push(row("Audio codec", aud ? `${aud.name} (${aud.cc}) ${aud.channels}ch ${aud.sampleRate}Hz`
@@ -8354,7 +9103,9 @@ async function vstDiagnose(){
     : VST.startFrom === "creation" ? "the creation time (no zone)"
     : VST.startFrom === "modified" ? "the file's modified date — NOT the recording"
     : "nothing yet — the operator must enter it"));
-  lines.push(row("Decode original", v.readable === null ? "still checking"
+  lines.push(row("Decode original", p && vstIsTs(p)
+    ? "not consulted — no media element plays MPEG-TS, and it does not decide"
+    : v.readable === null ? "still checking"
     : v.readable ? "yes (media element)" : "NO (media element)"));
   paint([row("Testing this device", "…")]);
 
@@ -8369,13 +9120,18 @@ async function vstDiagnose(){
   /* THE REAL PIPELINE'S OWN ROWS — demux and mux are this build's, not a guess
      about an API. Demux is proven by the sample table actually coming out of
      the file; mux by the vendored module loading. */
-  lines.push(row("MP4 demux", vid && vid.samples
+  lines.push(row(p && vstIsTs(p) ? "TS demux" : "MP4 demux", vid && vid.samples
     ? `yes — ${vid.samples.length} video samples`
-    : "no — the sample tables could not be read"));
+    : p && vstIsTs(p)
+      ? (vstTsReady(p)
+          ? `yes — ${vid.headFrames} access units read from the packet grid (stride ${p.layout.stride})`
+          : "no — " + vstTsRefusal(p))
+      : "no — the sample tables could not be read"));
   let muxOk = false;
   try{ const M = await vstMuxer(); muxOk = !!(M && M.Muxer); }catch(e){ muxOk = false; }
   lines.push(row("MP4 mux", muxOk ? "yes — same-origin module loaded" : "no — the muxer did not load"));
-  lines.push(row("Pipeline available", vstCanPipeline() && vid && vid.samples && muxOk
+  lines.push(row("Pipeline available",
+    vstCanPipeline() && muxOk && (vid && vid.samples || vstTsReady(p))
     ? "YES — this device can generate the MP4 here" : "no"));
   /* THE ROUTE THAT WILL ACTUALLY BE USED. The media element's verdict above is
      informational; this is the line that says whether Generate is offered. */

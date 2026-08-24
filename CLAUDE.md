@@ -2637,6 +2637,25 @@ throws above 1 GB. It would work on demo clips and fail on surveillance files.
 The recommendation for HEVC is the iPhone's *Most Compatible* camera setting,
 which writes H.264 that the existing renderer already handles.
 
+**An MTS/M2TS is demuxed from its own packets, and playback decides nothing**
+(owner, 2026-08-24). A camcorder transport stream has no boxes, and no browser
+here plays MPEG-TS — so the format is recognised by scoring the 0x47 packet
+grid (188/192-byte strides, never the extension), PAT→PMT→PES are demuxed in
+~1.2 MB `file.slice` chunks, and the H.264 SPS supplies dimensions (crop
+applied — 1080i codes 1088 lines), profile and interlacing. For a TS,
+`vstPath` never reads `readable` and the MediaRecorder legacy route does not
+exist: WebCodecs fed Annex-B (in-band SPS/PPS, **no invented `description`)**
+is the only route, and the suite pins that a "playable" claim opens nothing.
+The frame rate comes from **DTS spacing, not PTS** (B-frames reorder PTS);
+33-bit stamps unwrap across the rollover; the last AVCHD packet is shorter
+than the stride and must still be fed (dropping it cost the last frame of
+every clip). Non-H.264 streams and multi-picture PES are refused **by name**
+— except a field PAIR in a stream whose SPS says interlaced, which is one
+frame and one moment. Fixtures are written by an independent spec-first muxer
+in the test file; the decode→burn→encode on a real device is the owner's
+check, same as the MOV pipeline. Nothing is uploaded — the tests count
+network calls during a full parse+demux and assert zero.
+
 **Media wording:** *Upload video / picture* names the entry point for ADDING,
 *Case media* names what is already there. **Keys, routes, tables and variables
 are unchanged** — `evidence` is still the tab key, the route and the table. The

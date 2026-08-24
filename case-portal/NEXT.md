@@ -171,6 +171,35 @@ touch how existing cases are categorised, so it is recorded rather than done.
 | **24** page-level rendering tests | #214 | `5835cdf` | tests only |
 | **25** Security / authorization / regression pass | #215 | `73b7f5b` | open — see below |
 
+## ✅ SHIPPED (pending merge SHA) — MTS/M2TS support for Video Timestamp (owner, 2026-08-24)
+
+**State: coded, tested, rebased onto master `4a1c964`, merging via this
+branch's PR. Suites on the rebased tree: portal e2e green (pre-rebase run
+2458/0; rebased run is the merge gate), worker 2870/0, deploy guard 86/0.
+LIVE VERIFY waits on exactly one thing: the owner's real `00000.MTS` on their
+own hardware.** No further MTS changes unless that test fails (owner,
+2026-08-24). The parser was cross-validated in-container against real
+ffmpeg-written streams (188/192-byte, 1080i interlaced, AC-3) — field-for-field
+agreement with ffprobe; ffprobe commands for the owner's PC are in the session
+log, and a pasted `mts-report.txt` or a 16 MB head slice of the file is the
+diagnosis channel if the device test fails.
+
+Owner brief verbatim: *"Add local MTS/M2TS support to Video Timestamp. Do not
+rely on browser playback to decide compatibility. Decode/process locally, burn
+the timestamp, output MP4, keep original untouched, and never upload the
+source."* Interleaved between Unit 24 and Unit 25 at the owner's request.
+
+Page-only change (no Worker, no schema, no portal-setup dispatch): the
+container is sniffed off the 0x47 packet grid, PAT/PMT/PES demuxed in bounded
+`file.slice` chunks, the H.264 SPS parsed for dimensions/profile/interlace,
+and `vstTranscodeTs` feeds the existing WebCodecs→mp4-muxer pipeline in
+Annex-B form (no invented `description`). For a TS the media element is never
+consulted and the legacy route does not exist. Design record and the
+device-evidence boundary: `VIDEO-TIMESTAMP.md` §MTS. **The decode→burn→encode
+of a real .MTS on real hardware is the owner's device check.** (The earlier
+"no WebCodecs in this container" claim was an insecure-context artifact —
+corrected same day; the suite records presence instead of asserting absence.)
+
 ## What is left
 
 - **23 — Consolidated Live Verification Sweep.** ⏸️ **LIVE VERIFICATION

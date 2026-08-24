@@ -8831,7 +8831,8 @@ section('Video timestamp: a non-video file is refused, but a bare .mov is not');
   /* The picker still ASKS for video first — the refusal is the backstop for a
      desktop filter being switched, not a replacement for asking. */
   const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
-  ok('the file picker still asks for video up front', /inp\.accept\s*=\s*"video\/\*"/.test(src));
+  ok('the file picker still asks for video up front',
+     /inp\.accept\s*=\s*"video\/\*,\.mts,\.m2ts,\.ts"/.test(src));
 }
 
 /* ====================================================== Timestamp Photo
@@ -9985,6 +9986,410 @@ section('The MOV is parsed, not guessed at');
   });
   ok('the parser reads a bounded slice, never the whole file',
      bytes.read < bytes.size / 10, JSON.stringify(bytes));
+  await page.close();
+}
+
+/* OWNER, 2026-08-24: "Add local MTS/M2TS support to Video Timestamp. Do not
+   rely on browser playback to decide compatibility. Decode/process locally,
+   burn the timestamp, output MP4, keep original untouched, and never upload
+   the source."
+
+   The fixtures are written by an INDEPENDENT muxer below — spec-first bit
+   packing that shares nothing with the page's reader, so a mirrored
+   misunderstanding cannot pass itself. No browser plays MPEG-TS, so unlike the
+   MOV fixtures nothing here can lean on a media element even by accident. */
+const TS_LIB = String.raw`
+  const bitWriter = () => {
+    const bits = [];
+    return {
+      u: (v, n) => { for(let i = n - 1; i >= 0; i--) bits.push((v >> i) & 1); },
+      ue: v => { const k = v + 1; const n = 32 - Math.clz32(k);
+                 for(let i = 0; i < n - 1; i++) bits.push(0);
+                 for(let i = n - 1; i >= 0; i--) bits.push((k >> i) & 1); },
+      bytes: () => { while(bits.length % 8) bits.push(1);
+        const out = new Uint8Array(bits.length / 8);
+        for(let i = 0; i < bits.length; i++) if(bits[i]) out[i >> 3] |= 128 >> (i & 7);
+        return out; },
+    };
+  };
+  const escapeRbsp = u8 => {
+    const out = []; let zeros = 0;
+    for(const b of u8){
+      if(zeros === 2 && b <= 3){ out.push(3); zeros = 0; }
+      out.push(b); zeros = b === 0 ? zeros + 1 : 0;
+    }
+    return new Uint8Array(out);
+  };
+  const makeSps = ({profile = 66, level = 30, wMbs, hUnits, frameMbsOnly = 1, cropB = 0}) => {
+    const w = bitWriter();
+    w.u(profile, 8); w.u(0, 8); w.u(level, 8);
+    w.ue(0); w.ue(0); w.ue(0); w.ue(0); w.ue(1); w.u(0, 1);
+    w.ue(wMbs - 1); w.ue(hUnits - 1); w.u(frameMbsOnly, 1);
+    if(!frameMbsOnly) w.u(0, 1);
+    w.u(1, 1);
+    w.u(cropB ? 1 : 0, 1);
+    if(cropB){ w.ue(0); w.ue(0); w.ue(0); w.ue(cropB); }
+    w.u(0, 1);
+    const esc = escapeRbsp(w.bytes());
+    const out = new Uint8Array(1 + esc.length);
+    out[0] = 0x67; out.set(esc, 1);
+    return out;
+  };
+  const annexb = (...nals) => {
+    const out = new Uint8Array(nals.reduce((s, x) => s + 4 + x.length, 0));
+    let o = 0;
+    for(const x of nals){ out.set([0, 0, 0, 1], o); o += 4; out.set(x, o); o += x.length; }
+    return out;
+  };
+  const tsSlice = (idr, len = 24) => {
+    const b = new Uint8Array(len).fill(0xaa);
+    b[0] = idr ? 0x65 : 0x41; b[1] = 0x88;      // first_mb_in_slice = 0
+    return b;
+  };
+  const pesOf = (payload, ptsVal, dtsVal) => {
+    const both = dtsVal != null && dtsVal !== ptsVal;
+    const hlen = both ? 10 : 5;
+    const head = new Uint8Array(9 + hlen);
+    head.set([0, 0, 1, 0xe0, 0, 0, 0x80, both ? 0xc0 : 0x80, hlen], 0);
+    const stamp = (at, v, tag) => {
+      const b = BigInt(v);
+      head[at] = (tag << 4) | (Number((b >> 30n) & 7n) << 1) | 1;
+      head[at + 1] = Number((b >> 22n) & 0xffn);
+      head[at + 2] = (Number((b >> 15n) & 0x7fn) << 1) | 1;
+      head[at + 3] = Number((b >> 7n) & 0xffn);
+      head[at + 4] = (Number(b & 0x7fn) << 1) | 1;
+    };
+    stamp(9, ptsVal, both ? 3 : 2);
+    if(both) stamp(14, dtsVal, 1);
+    const out = new Uint8Array(head.length + payload.length);
+    out.set(head, 0); out.set(payload, head.length);
+    return out;
+  };
+  const patSection = pmtPid => {
+    const b = new Uint8Array([0, 0xb0, 0, 0, 1, 0xc1, 0, 0,
+      0, 1, 0xe0 | (pmtPid >> 8), pmtPid & 0xff, 0, 0, 0, 0]);
+    b[2] = b.length - 3;
+    return b;
+  };
+  const pmtSection = streams => {
+    const rows = [];
+    for(const s of streams) rows.push(s.type, 0xe0 | (s.pid >> 8), s.pid & 0xff, 0xf0, 0);
+    const b = new Uint8Array(12 + rows.length + 4);
+    b[0] = 0x02; b[1] = 0xb0; b[2] = b.length - 3;
+    b[4] = 1; b[5] = 0xc1;
+    b[8] = 0xe0 | (streams[0].pid >> 8); b[9] = streams[0].pid & 0xff;
+    b[10] = 0xf0;
+    b.set(rows, 12);
+    return b;
+  };
+  const tsPackets = (units, stride = 188) => {
+    const packets = [], cc = {};
+    for(const u of units){
+      let at = 0, first = true;
+      while(at < u.data.length || first){
+        const p = new Uint8Array(188).fill(0xff);
+        p[0] = 0x47;
+        p[1] = ((first && u.pusi) ? 0x40 : 0) | (u.pid >> 8);
+        p[2] = u.pid & 0xff;
+        cc[u.pid] = ((cc[u.pid] || 0) + 1) & 0xf;
+        let pay = 4, room = 184;
+        const remain = u.data.length - at + (first && u.psi ? 1 : 0);
+        if(!u.psi && remain < room){
+          const stuff = room - remain;
+          p[3] = 0x30 | cc[u.pid];
+          p[4] = stuff - 1;
+          if(stuff > 1) p[5] = 0;
+          pay = 4 + stuff; room = remain;
+        } else p[3] = 0x10 | cc[u.pid];
+        if(first && u.psi){ p[pay++] = 0; room--; }
+        const take = Math.min(room, u.data.length - at);
+        p.set(u.data.subarray(at, at + take), pay);
+        at += take;
+        packets.push(p);
+        first = false;
+        if(u.data.length === 0) break;
+      }
+    }
+    const out = new Uint8Array(packets.length * stride);
+    packets.forEach((p, i) => out.set(p, i * stride + (stride - 188)));
+    return out;
+  };
+  const makeTs = ({stride = 188, frames = 30, fps = 30, width = 1920, height = 1080,
+      interlaced = false, videoType = 0x1b, audio = true, basePts = 900000,
+      picturesPerPes = 1, bframes = false, sliceLen = 0} = {}) => {
+    const wMbs = Math.ceil(width / 16);
+    const hUnits = interlaced ? Math.ceil(height / 32) : Math.ceil(height / 16);
+    const coded = interlaced ? hUnits * 32 : hUnits * 16;
+    const cropB = (coded - height) / (interlaced ? 4 : 2);
+    const sps = makeSps({wMbs, hUnits, frameMbsOnly: interlaced ? 0 : 1, cropB});
+    const pps = new Uint8Array([0x68, 0xce, 0x38, 0x80]);
+    const dur = Math.round(90000 / fps);
+    const streams = [{type: videoType, pid: 0x1011}];
+    if(audio) streams.push({type: 0x0f, pid: 0x1100});
+    const units = [{pid: 0, data: patSection(0x100), pusi: true, psi: true},
+                   {pid: 0x100, data: pmtSection(streams), pusi: true, psi: true}];
+    for(let i = 0; i < frames; i++){
+      const key = i % 15 === 0;
+      const pics = [];
+      const bodyLen = (typeof sliceLen === 'number' && sliceLen > 0) ? sliceLen : (key ? 900 : 120);
+      for(let k = 0; k < picturesPerPes; k++) pics.push(tsSlice(key, bodyLen));
+      const au = key ? annexb(sps, pps, ...pics) : annexb(...pics);
+      const dts = basePts + i * dur;
+      units.push({pid: 0x1011, data: pesOf(au, bframes ? dts + dur : dts, bframes ? dts : null),
+                  pusi: true});
+    }
+    return tsPackets(units, stride);
+  };
+`;
+
+section('MTS/M2TS: the stream is named from its own packets, never from playback');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* THE FILE DECIDES, NOT THE NAME. The AVCHD fixture is deliberately named
+     .mp4 — an extension that lies — and still parses as a transport stream,
+     while a real ISO head does not sniff as one. */
+  const facts = await page.evaluate(`(async () => { ${TS_LIB}
+    const m2ts = makeTs({stride: 192});
+    const f = new File([m2ts], 'wrongly-named.mp4', {type: ''});
+    const sniff = await vstTsSniff(f);
+    const p = await vstParse(f);
+    const iso = new Uint8Array(65536);
+    iso.set([0,0,0,32,102,116,121,112,113,116,32,32], 0);
+    const isoSniff = await vstTsSniff(new File([iso], 'a.mov', {type: 'video/quicktime'}));
+    const plain = await vstParse(new File([makeTs({stride: 188})], 'clip.ts', {type: ''}));
+    return {sniff, isoSniff, brand: p.brand, container: p.container,
+            video: p.video && {name: p.video.name, w: p.video.width, h: p.video.height,
+              fps: p.video.fps, seconds: p.video.seconds, codecString: p.video.codecString,
+              bitstream: p.video.bitstream, description: p.video.description,
+              parameterSets: p.video.parameterSets, samples: p.video.samples},
+            audio: p.audio && p.audio.name,
+            refusal: vstTsRefusal(p), ready: vstTsReady(p),
+            plainBrand: plain.brand, plainReady: vstTsReady(plain)};
+  })()`);
+  ok('a 192-byte AVCHD grid is measured off the bytes',
+     facts.sniff && facts.sniff.stride === 192 && facts.sniff.start === 4, JSON.stringify(facts.sniff));
+  ok('an ISO head does not sniff as a transport stream', facts.isoSniff === null);
+  ok('the misleading .mp4 name changed nothing', facts.container === 'mpegts'
+     && facts.brand === 'M2TS / AVCHD', JSON.stringify([facts.container, facts.brand]));
+  ok('H.264 named from the PMT stream type', facts.video && facts.video.name === 'H.264 / AVC');
+  ok('dimensions from the SPS, crop applied — 1088 coded lines report as 1080',
+     facts.video && facts.video.w === 1920 && facts.video.h === 1080,
+     facts.video && `${facts.video.w}x${facts.video.h}`);
+  ok('the frame rate is measured from DTS spacing', facts.video && facts.video.fps === 30,
+     facts.video && String(facts.video.fps));
+  ok('the duration is first-to-last PTS off the stream clock',
+     facts.video && Math.abs(facts.video.seconds - 1.0) < 0.011, facts.video && String(facts.video.seconds));
+  ok('the codec string comes from the profile bytes',
+     facts.video && facts.video.codecString === 'avc1.42001E', facts.video && facts.video.codecString);
+  ok('annex-b with in-band parameter sets, so no description is invented',
+     facts.video && facts.video.bitstream === 'annexb' && facts.video.description === null
+     && facts.video.parameterSets === true && facts.video.samples === null);
+  ok('the audio stream is named from the PMT', facts.audio === 'AAC', String(facts.audio));
+  ok('a clean H.264 stream has no refusal', facts.refusal === '' && facts.ready === true, facts.refusal);
+  ok('a 188-byte .ts is the same facts under its own label',
+     facts.plainBrand === 'MPEG-TS' && facts.plainReady === true, facts.plainBrand);
+  await page.close();
+}
+
+section('MTS/M2TS: every frame is demuxed, byte-exact, and nothing leaves the device');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const demux = await page.evaluate(`(async () => { ${TS_LIB}
+    /* NOTHING IS UPLOADED. Every network door the page has is counted while
+       the whole file is parsed and demuxed — the owner's line is "never
+       upload the source", and the count is the proof. */
+    let fetches = 0, beacons = 0, opens = 0;
+    const realFetch = window.fetch;
+    window.fetch = (...a) => { fetches++; return realFetch(...a); };
+    const realOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(...a){ opens++; return realOpen.apply(this, a); };
+    const realBeacon = navigator.sendBeacon && navigator.sendBeacon.bind(navigator);
+    if(realBeacon) navigator.sendBeacon = (...a) => { beacons++; return realBeacon(...a); };
+
+    /* Fat frames on purpose: the file must be BIGGER than one ~1.2 MB read
+       chunk or "never held whole" is asserted against a file that fits in one
+       slice — which is exactly how the first version of this test passed
+       while measuring nothing. */
+    const bytes = makeTs({stride: 192, frames: 30, sliceLen: 84000});
+    const f = new File([bytes], '00001.MTS', {type: ''});
+    let maxSlice = 0, total = 0;
+    const realSlice = f.slice.bind(f);
+    f.slice = (a, b) => { maxSlice = Math.max(maxSlice, b - a); total += b - a; return realSlice(a, b); };
+
+    const layout = await vstTsSniff(f);
+    const parsed = await vstTsParse(f, layout);
+    const aus = [];
+    await vstTsScan(f, layout, null, au => { aus.push({pts: au.pts, dts: au.dts,
+      sync: au.sync, len: au.data.length}); return true; });
+
+    window.fetch = realFetch;
+    XMLHttpRequest.prototype.open = realOpen;
+    if(realBeacon) navigator.sendBeacon = realBeacon;
+
+    const bigBase = [];
+    await vstTsScan(new File([makeTs({basePts: 5000000000, frames: 6})], 'b.ts', {type: ''}),
+      {stride: 188, start: 0}, null, au => { bigBase.push(au.pts); return true; });
+
+    return {fetches, beacons, opens, maxSlice, total, size: f.size,
+            count: aus.length,
+            firstPts: aus[0] && aus[0].pts, lastPts: aus[29] && aus[29].pts,
+            ladder: aus.every((a, i) => a.pts === 900000 + i * 3000),
+            keys: aus.filter(a => a.sync).length,
+            key0: aus[0] && aus[0].sync, key15: aus[15] && aus[15].sync,
+            wrap: vstTsUnwrap(100, 8589934500),
+            bigPts: bigBase[0]};
+  })()`);
+  ok('no fetch, no XHR, no beacon while the file is parsed and demuxed',
+     demux.fetches === 0 && demux.opens === 0 && demux.beacons === 0, JSON.stringify(demux));
+  ok('the file is streamed in bounded slices, never held whole',
+     demux.size > 6144 * 192 && demux.maxSlice <= 6144 * 192 && demux.maxSlice < demux.size,
+     JSON.stringify({max: demux.maxSlice, size: demux.size}));
+  ok('all thirty frames come out — the short final AVCHD packet included',
+     demux.count === 30, String(demux.count));
+  ok('the PTS ladder is exact at 90 kHz', demux.ladder === true,
+     JSON.stringify([demux.firstPts, demux.lastPts]));
+  ok('keyframes are flagged where the IDR slices are', demux.keys === 2 && demux.key0 && demux.key15);
+  ok('a 33-bit PTS above 2^32 survives exactly', demux.bigPts === 5000000000, String(demux.bigPts));
+  ok('a PTS rollover unwraps rather than jumping 26 hours back',
+     demux.wrap === 8589934692, String(demux.wrap));
+  await page.close();
+}
+
+section('MTS/M2TS: refusals are named, and playback never decides');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const verdicts = await page.evaluate(`(async () => { ${TS_LIB}
+    const parse = async opts => {
+      const b = makeTs(opts);
+      const f = new File([b], 'x.mts', {type: ''});
+      return await vstTsParse(f, await vstTsSniff(f));
+    };
+    const mpeg2 = await parse({videoType: 0x02});
+    const packed = await parse({picturesPerPes: 2});
+    const fields = await parse({picturesPerPes: 2, interlaced: true, width: 1440});
+    const clean = await parse({});
+
+    /* THE OWNER'S RULE, ASSERTED AS AN INVARIANCE so it holds whatever this
+       browser carries: for a transport stream the media element's verdict must
+       make NO difference to the route, and a declined decoder must block even
+       a "playable" stream. WebCodecs presence is an environment fact and is
+       RECORDED, not assumed — an earlier version assumed absence, and the
+       suite's own secure-context pages proved it present. */
+    const saved = VST;
+    const paths = {webcodecs: vstCanPipeline()};
+    VST = {parsed: clean, readable: true, decodeOk: true, name: 'clip.mts'};
+    const withPlayable = vstPath();
+    paths.containerNamed = vstContainer();
+    VST = {parsed: clean, readable: false, decodeOk: true, name: 'clip.mts'};
+    const withoutPlayable = vstPath();
+    paths.readableIrrelevant = withPlayable === withoutPlayable;
+    paths.route = withPlayable;
+    VST = {parsed: clean, readable: true, decodeOk: false, name: 'clip.mts'};
+    paths.playableButDecoderDeclined = vstPath();
+    paths.textDeclined = vstCompatText();
+    VST = {parsed: clean, readable: null, decodeOk: null, name: 'clip.mts'};
+    paths.stillChecking = vstPath();
+    VST = {parsed: mpeg2, readable: true, decodeOk: true, name: 'old.mts'};
+    paths.mpeg2 = vstPath();
+    paths.mpeg2Text = vstCompatText();
+    VST = saved;
+
+    return {mpeg2: vstTsRefusal(mpeg2), packed: vstTsRefusal(packed),
+            fields: vstTsRefusal(fields), fieldsInterlaced: fields.video && fields.video.interlaced,
+            clean: vstTsRefusal(clean), paths,
+            notVideo: [vstNotVideo({name: 'A.MTS', type: ''}), vstNotVideo({name: 'b.m2ts', type: ''})],
+            accept: vstOpen.toString().includes('video/*,.mts,.m2ts,.ts')};
+  })()`);
+  ok('an MPEG-2 stream is named, not "unknown"', /MPEG-2/.test(verdicts.mpeg2), verdicts.mpeg2);
+  ok('packed pictures in a progressive stream are refused in words',
+     /more than one picture/.test(verdicts.packed), verdicts.packed);
+  ok('a field pair in an interlaced stream is normal, not refused',
+     verdicts.fields === '' && verdicts.fieldsInterlaced === true, verdicts.fields);
+  ok('a clean stream is not refused', verdicts.clean === '');
+  const P = verdicts.paths;
+  ok('a playable claim changes nothing — readable is not consulted for a TS',
+     P.readableIrrelevant === true && P.route === (P.webcodecs ? 'pipeline' : 'none'),
+     JSON.stringify(P));
+  ok('a declined decoder blocks even a "playable" transport stream',
+     P.playableButDecoderDeclined === 'none', P.playableButDecoderDeclined);
+  ok('and the sentence names the decoder or WebCodecs, never the media player',
+     /WebCodecs|video decoder declined/.test(P.textDeclined) && !/media player/.test(P.textDeclined),
+     P.textDeclined);
+  ok('an outstanding answer reads as checking, never as no',
+     P.stillChecking === (P.webcodecs ? 'checking' : 'none'), P.stillChecking);
+  ok('an MPEG-2 stream is blocked with its own name in the sentence',
+     P.mpeg2 === 'none' && /MPEG-2/.test(P.mpeg2Text), P.mpeg2Text);
+  ok('the container line reports the measured layout, not the extension',
+     P.containerNamed === 'MPEG-TS', P.containerNamed);
+  ok('.MTS and .m2ts pass the not-a-video gate', verdicts.notVideo.every(v => v === false));
+  ok('the picker names the TS extensions beside video/*', verdicts.accept === true);
+  await page.close();
+}
+
+section('MTS/M2TS: the transcode is fed annex-b and stops honestly at the codec boundary');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* WEBCODECS PRESENCE IS RECORDED, NOT ASSUMED. An earlier version asserted
+     this container had none — measured in an INSECURE probe context, where
+     [SecureContext] hides VideoDecoder while VideoFrame stays visible. The
+     suite's own pages run on 127.0.0.1, a secure context, and carry the real
+     thing. What this section proves either way: the TS branch reaches the
+     decoder with the file's own codec string and NO invented description, the
+     demux genuinely streams behind it, and a junk bitstream ends in a refusal
+     that protects the original rather than a fabricated file. The full burn
+     on the owner's real device stays the owner's check, as it was for MOV. */
+  const stage = await page.evaluate(`(async () => { ${TS_LIB}
+    const absent = typeof VideoDecoder === 'undefined' && typeof VideoEncoder === 'undefined';
+    const bytes = makeTs({stride: 192, frames: 30});
+    const f = new File([bytes], '00001.MTS', {type: ''});
+    const parsed = await vstParse(f);
+
+    let honest = null;
+    try{ await vstTranscode(f, parsed, Date.now(), 'America/New_York', () => {}); }
+    catch(e){ honest = String(e.message || e); }
+
+    window.VideoDecoder = class {
+      static async isConfigSupported(){ return {supported: true}; }
+      constructor(){ }
+      configure(cfg){ window.__tsDecCfg = cfg; throw new Error('stop-at-boundary'); }
+    };
+    window.VideoEncoder = class {
+      static async isConfigSupported(){ return {supported: true}; }
+      constructor(){ }
+      configure(cfg){ window.__tsEncCfg = cfg; }
+    };
+    window.VideoFrame = class {};
+    window.EncodedVideoChunk = class {};
+    let boundary = null;
+    try{ await vstTranscode(f, parsed, Date.now(), 'America/New_York', () => {}); }
+    catch(e){ boundary = String(e.message || e); }
+    const dec = window.__tsDecCfg, enc = window.__tsEncCfg;
+    delete window.VideoDecoder; delete window.VideoEncoder;
+    delete window.VideoFrame; delete window.EncodedVideoChunk;
+    delete window.__tsDecCfg; delete window.__tsEncCfg;
+    return {absent, honest, boundary,
+            dec: dec && {codec: dec.codec, hasDescription: 'description' in dec,
+                         w: dec.codedWidth, h: dec.codedHeight},
+            enc: enc && {codec: enc.codec, w: enc.width, h: enc.height}};
+  })()`);
+  ok('a junk bitstream never becomes a file — the transcode throws and protects the original',
+     stage.honest && /original is unchanged/.test(stage.honest),
+     JSON.stringify({webcodecsAbsent: stage.absent, err: String(stage.honest).slice(0, 120)}));
+  ok('the decoder gets the stream\'s own codec string, annex-b, no invented description',
+     stage.dec && stage.dec.codec === 'avc1.42001E' && stage.dec.hasDescription === false
+     && stage.dec.w === 1920 && stage.dec.h === 1080, JSON.stringify(stage.dec));
+  ok('the encoder is configured at the source\'s own size', stage.enc && stage.enc.w === 1920
+     && stage.enc.h === 1080 && /^avc1\./.test(stage.enc.codec), JSON.stringify(stage.enc));
+  ok('the demux actually reached the decoder — the stub stopped it there',
+     stage.boundary && /stop-at-boundary/.test(stage.boundary), String(stage.boundary));
   await page.close();
 }
 

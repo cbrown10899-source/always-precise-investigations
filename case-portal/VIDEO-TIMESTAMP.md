@@ -1054,3 +1054,112 @@ So `vstNotVideo` refuses only what it can positively identify as something else:
 
 The picker still asks for `video/*` first. The refusal is the backstop for a
 filter being switched, not a replacement for asking — there is a test for both.
+
+## MTS / M2TS — a transport stream is demuxed, never played (2026-08-24)
+
+Owner: *"Add local MTS/M2TS support to Video Timestamp. Do not rely on browser
+playback to decide compatibility. Decode/process locally, burn the timestamp,
+output MP4, keep original untouched, and never upload the source."*
+
+A camcorder's `.MTS`/`.M2TS` is MPEG-TS — a fixed grid of 188-byte packets
+(192 with the 4-byte AVCHD arrival stamp ahead of each), no boxes, no sample
+tables. `vstParse` could not read it, so the tool refused every camcorder file
+with a codec sentence that named no codec. The format was absent, not broken.
+
+### The design, in the shape this file already uses
+
+- **The container is decided by the bytes.** `vstTsSniff` reads 64 KB and
+  scores each candidate stride (188/192/204/208) by how many packets land on
+  the 0x47 grid; a single sync byte proves nothing and the extension is never
+  consulted. An ISO file cannot false-positive (measured: the box fixtures and
+  a random-bytes file both sniff null), and an AVCHD file named `.mp4` still
+  parses as a transport stream — asserted.
+- **`vstTsParse` answers the same questions `vstParse` does**, from the
+  stream's own structures: PAT → PMT → stream types (video AND audio named,
+  MPEG-2/HEVC/VC-1 included, so a refusal can say what the file actually is);
+  the H.264 **SPS** for width, height, profile/level (the `avc1.PPCCLL` codec
+  string) and interlacing — with `frame_cropping` applied, because 1080-line
+  AVCHD codes 1088 and crops 8, and a parser that skips the crop stretches
+  every frame; PES **PTS/DTS** at 90 kHz for timing. The frame interval comes
+  from **DTS spacing, not PTS** — with B-frames the presentation stamps arrive
+  reordered and a PTS-based rate lands at half or double. Duration is first
+  PTS to last PTS, the last read from a tail window on the packet grid; a
+  33-bit stamp is unwrapped across the 26.5-hour rollover.
+- **No `<video>` element is consulted, structurally.** No browser this portal
+  runs in plays MPEG-TS, so the media probe would refuse every camcorder file
+  on the planet after a 20-second timeout. For a TS, `vstOpen` never starts
+  the probe's verdict path, `vstPath` does not read `readable` at all, and the
+  legacy MediaRecorder route does not exist. The suite pins the owner's rule
+  directly: `readable: true` opens nothing for a TS, `readable: false` blocks
+  nothing, and a declined decoder blocks even a "playable" stream.
+- **Annex B is why no `description` is invented.** WebCodecs reads a
+  length-prefixed stream when a codec description is supplied and a start-code
+  stream when it is not. A transport stream carries SPS/PPS in-band ahead of
+  each keyframe, so the decoder is configured with the codec string alone —
+  nothing synthesises an `avcC`, which is one fewer record to get wrong.
+  Asserted: the decoder receives `avc1.42001E` (the fixture's own profile
+  bytes) and no `description` key.
+- **`vstTranscodeTs` is the same pipeline with a different feed.** Same
+  muxer, same `vstDraw`/`vstLabel` burn, same MP4-no-audio output, same
+  refusal sentences. Frames stream out of the packet grid in ~1.2 MB
+  packet-aligned slices (`file.slice`, one access unit held back so its
+  duration is the measured distance to the next); decode starts at the first
+  IDR because a stream cut mid-GOP smears; the burned label is the operator's
+  start plus the frame's own PTS offset, never this machine's clock. Nothing
+  is uploaded, nothing touches R2/D1/browser storage, and the original is
+  opened read-only — the tests count fetches/XHR/beacons during a full parse
+  and demux and assert zero.
+
+### What the demux refuses, by name
+
+- A stream whose video is **not H.264** — named ("This is a MPEG-2 video
+  transport stream. Only H.264 / AVC is processed here."), because only
+  H.264's parameter sets are read.
+- A stream that **packs more than one picture into a PES** under one PTS —
+  no honest per-frame stamp exists. The **exception is measured, not
+  assumed**: an interlaced frame is two field pictures under one PTS and one
+  moment, so a field PAIR in a stream whose SPS says interlaced is normal;
+  three pictures, or two in a progressive stream, still refuse.
+- A stream whose SPS cannot be read — no dimensions, no configuration, said
+  in those words.
+
+### The last packet of an AVCHD file is shorter than the stride
+
+Found by the fixture suite before it shipped: a 192-byte stream is
+[4-byte stamp][188-byte packet] repeated, so the final packet ends at the file
+end with no trailing pad — and chunking the read to whole strides silently
+dropped the last frame of every clip (29 of 30 came out, and the duration was
+short one frame). The scan now feeds a tail that still holds a whole packet.
+
+### What is proven here, and what is not
+
+The fixtures are written by an **independent muxer in the test file** —
+spec-first bit packing (Exp-Golomb SPS writer, RBSP escaper, PES/PSI/packet
+writers) that shares no code with the page's reader, so a mirrored
+misunderstanding cannot pass itself. Proven in this container, in real
+Chromium: layout sniffing (both strides, ISO negative), SPS arithmetic
+(1920×1080 progressive, 1440×1080 interlaced cropped from 1088, 1280×720),
+codec strings, fps from DTS, duration, byte-exact AU extraction across packet
+boundaries, 33-bit PTS exactness and rollover, keyframe flags, every refusal,
+the no-network guarantee, and the decoder boundary (right codec string, no
+description, demux genuinely reaches `configure`).
+
+**A measurement corrected the same day:** the "this container has no
+WebCodecs" claim from the first probe was an artifact of the probe's own
+context — `VideoDecoder` is `[SecureContext]` and the probe page was not one,
+while `VideoFrame` (not SecureContext) stayed visible, which is exactly the
+split the probe recorded. The suite's pages run on `127.0.0.1`, a secure
+context, and the first full run proved WebCodecs PRESENT there. The suite now
+RECORDS presence instead of asserting absence, and the path assertions are
+written as invariances that hold either way. **The burn on the owner's real
+`.MTS`, on their hardware, remains the owner's device check** — the screen
+says **Ready — decoded and re-encoded on this device** when that device's
+decoder accepts the stream, and names what failed when it does not.
+
+One capability note recorded for that check: WebCodecs Annex-B H.264 decode
+is standard in Chromium-family browsers; Safari has historically wanted
+length-prefixed + description. If the owner's iPhone declines the Annex-B
+configuration, the recorded fallback design is to convert AU payloads to
+length-prefixed form and synthesise the `avcC` from the in-band SPS/PPS —
+both already in hand from the demux — as a follow-up keyed to a real device
+answer, not built speculatively against a guess.
