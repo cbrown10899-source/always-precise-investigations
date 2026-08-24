@@ -171,7 +171,18 @@ touch how existing cases are categorised, so it is recorded rather than done.
 | **24** page-level rendering tests | #214 | `5835cdf` | tests only |
 | **25** Security / authorization / regression pass | #215 | `73b7f5b` | open — see below |
 
-## In flight — MTS/M2TS support for Video Timestamp (owner, 2026-08-24)
+## ✅ SHIPPED (pending merge SHA) — MTS/M2TS support for Video Timestamp (owner, 2026-08-24)
+
+**State: coded, tested, rebased onto master `4a1c964`, merging via this
+branch's PR. Suites on the rebased tree: portal e2e green (pre-rebase run
+2458/0; rebased run is the merge gate), worker 2870/0, deploy guard 86/0.
+LIVE VERIFY waits on exactly one thing: the owner's real `00000.MTS` on their
+own hardware.** No further MTS changes unless that test fails (owner,
+2026-08-24). The parser was cross-validated in-container against real
+ffmpeg-written streams (188/192-byte, 1080i interlaced, AC-3) — field-for-field
+agreement with ffprobe; ffprobe commands for the owner's PC are in the session
+log, and a pasted `mts-report.txt` or a 16 MB head slice of the file is the
+diagnosis channel if the device test fails.
 
 Owner brief verbatim: *"Add local MTS/M2TS support to Video Timestamp. Do not
 rely on browser playback to decide compatibility. Decode/process locally, burn
