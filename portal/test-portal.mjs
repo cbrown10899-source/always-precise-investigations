@@ -10393,6 +10393,118 @@ section('MTS/M2TS: the transcode is fed annex-b and stops honestly at the codec 
   await page.close();
 }
 
+section('MTS/M2TS: a codec error is reported as itself, never as the flush that followed it');
+{
+  /* THE OWNER'S REAL .MTS FOUND THIS (2026-08-24): the device's decoder hit an
+     error mid-stream, the codec CLOSED ITSELF — the spec's behaviour on error —
+     and the transcode's unconditional flush() then threw "flush called after
+     codec closed", replacing the one sentence that explained anything. Three
+     pins: the self-close mechanism against the REAL API in this browser, the
+     drain helper on real codecs, and the transcode reporting the codec's own
+     first error through both failure shapes (async error callback, and the
+     synchronous throw decode() is also measured to produce). */
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const life = await page.evaluate(`(async () => { ${TS_LIB}
+    const out = {};
+
+    // ---- 1. The mechanism, on the real API (VP8 — present in this build). ----
+    out.real = 'no VP8 decoder in this browser';
+    if(typeof VideoDecoder !== 'undefined'
+       && (await VideoDecoder.isConfigSupported({codec: 'vp8', codedWidth: 320, codedHeight: 240})).supported){
+      const errs = [];
+      const d = new VideoDecoder({output(){}, error(e){ errs.push(String(e && e.message || e)); }});
+      d.configure({codec: 'vp8', codedWidth: 320, codedHeight: 240});
+      /* A payload whose VP8 header genuinely says KEYFRAME, then garbage —
+         passes the synchronous sniff, fails inside the decoder. */
+      const junk = new Uint8Array(64);
+      junk.set([0x10, 0x02, 0x00, 0x9d, 0x01, 0x2a, 0x40, 0x01, 0xf0, 0x00]);
+      junk.fill(0xa7, 10);
+      d.decode(new EncodedVideoChunk({type: 'key', timestamp: 0, data: junk}));
+      await new Promise(r => setTimeout(r, 500));
+      let flushSaid = 'resolved';
+      try{ await d.flush(); }catch(e){ flushSaid = String(e && e.message || e); }
+      out.real = {stateAfterError: d.state, firstErr: errs[0] || null, flushSaid};
+      // ---- 2. The drain helper survives exactly that codec. ----
+      let drainThrew = null;
+      try{ await vstCodecDrain(d); }catch(e){ drainThrew = String(e); }
+      out.drain = {threw: drainThrew, state: d.state};
+      // And on a healthy configured codec it flushes then closes.
+      const h = new VideoDecoder({output(){}, error(){}});
+      h.configure({codec: 'vp8', codedWidth: 320, codedHeight: 240});
+      await vstCodecDrain(h);
+      out.drainHealthy = h.state;
+    }
+
+    // ---- 3. The transcode reports the FIRST codec error, not the drain. ----
+    const bytes = makeTs({stride: 192, frames: 30});
+    const f = new File([bytes], '00001.MTS', {type: ''});
+    const parsed = await vstParse(f);
+    const RD = window.VideoDecoder, RE = window.VideoEncoder,
+          RF = window.VideoFrame, RC = window.EncodedVideoChunk;
+    class StubChunk { constructor(o){ Object.assign(this, o); } }
+    class StubEncoder {
+      static async isConfigSupported(){ return {supported: true}; }
+      constructor(){ this.state = 'unconfigured'; }
+      configure(){ this.state = 'configured'; }
+      encode(){}
+      async flush(){}
+      close(){ this.state = 'closed'; }
+    }
+    const mkDecoder = mode => class {
+      static async isConfigSupported(){ return {supported: true}; }
+      constructor(cb){ this.cb = cb; this.state = 'unconfigured'; this.n = 0; this.decodeQueueSize = 0; }
+      configure(){ this.state = 'configured'; }
+      decode(){
+        if(this.state === 'closed') throw new DOMException("Cannot call 'decode' on a closed codec", 'InvalidStateError');
+        this.n++;
+        if(mode === 'sync' && this.n === 1) throw new DOMException('A key frame is required after configure() or flush().', 'DataError');
+        if(mode === 'async' && this.n === 5){
+          this.state = 'closed';
+          this.cb.error(new DOMException('Decoding error: this stream is not supported.', 'EncodingError'));
+        }
+      }
+      async flush(){
+        if(this.state === 'closed') throw new DOMException("Cannot call 'flush' on a closed codec", 'InvalidStateError');
+      }
+      close(){ this.state = 'closed'; }
+    };
+    window.VideoEncoder = StubEncoder;
+    window.VideoFrame = class {};
+    window.EncodedVideoChunk = StubChunk;
+    for(const mode of ['async', 'sync']){
+      window.VideoDecoder = mkDecoder(mode);
+      try{ await vstTranscode(f, parsed, 1700000000000, 'America/New_York', () => {}); out[mode] = 'RESOLVED'; }
+      catch(e){ out[mode] = String(e && e.message || e); }
+    }
+    window.VideoDecoder = RD; window.VideoEncoder = RE;
+    window.VideoFrame = RF; window.EncodedVideoChunk = RC;
+    return out;
+  })()`);
+
+  if(typeof life.real === 'string'){
+    ok('mechanism pin skipped — ' + life.real, true);
+  } else {
+    ok('an errored codec closes itself, and flushing it throws — the real API says so',
+       life.real.stateAfterError === 'closed' && /closed/i.test(life.real.flushSaid),
+       JSON.stringify(life.real));
+    ok('vstCodecDrain survives exactly that codec without throwing',
+       life.drain && life.drain.threw === null && life.drain.state === 'closed',
+       JSON.stringify(life.drain));
+    ok('and on a healthy codec it flushes and closes', life.drainHealthy === 'closed',
+       String(life.drainHealthy));
+  }
+  ok('an async mid-stream codec error is reported as ITSELF, with the original protected',
+     /Decoding error: this stream is not supported/.test(life.async)
+     && /original is unchanged/.test(life.async)
+     && !/flush/i.test(life.async) && !/closed codec/i.test(life.async), String(life.async));
+  ok('a synchronous decode() throw is reported the same way, not propagated raw',
+     /key frame is required/.test(life.sync) && /original is unchanged/.test(life.sync),
+     String(life.sync));
+  await page.close();
+}
+
 section('The device read-out validates the pipeline, not the API list');
 {
   const page = await newPage();
