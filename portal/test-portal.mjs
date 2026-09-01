@@ -2387,6 +2387,18 @@ section('The calendar shows the month of work');
   ok('the office gets a Calendar tab', has(await text(page, '.tabs'), 'Calendar'));
   await page.locator('.tabs button', { hasText: 'Calendar' }).click();
   await page.waitForTimeout(600);
+  /* THE FIXTURE DAYS LIVE IN AUGUST 2026, AND THE CALENDAR OPENS ON TODAY.
+     For two weeks those were the same month; on the 1st of September every
+     chip assertion below went false with no code having changed. So the test
+     now walks to the fixtures' own month first — the calendar genuinely shows
+     the work in the month it happened, which is the thing worth asserting. */
+  for (let i = 0; i < 24; i++) {
+    if (has(await text(page, '.bar'), 'August 2026')) break;
+    await page.locator('[data-act="calMonth"][data-d="-1"]').click();
+    await page.waitForTimeout(250);
+  }
+  ok('the calendar reaches the month the work happened in',
+     has(await text(page, '.bar'), 'August 2026'));
   const grid = await text(page, '.cal-grid');
   ok('a month grid renders with weekday headers', has(grid, 'Sun') && has(grid, 'Sat'));
   ok('the admin calendar covers every investigator',
@@ -2403,15 +2415,23 @@ section('The calendar shows the month of work');
   await page.locator('.close').click();
   await page.waitForTimeout(400);
 
-  // Month navigation: last month has no work, and the same buttons come back.
+  /* Month navigation, against months chosen for what they hold: July 2026 has
+     no work in the fixtures, August has the two days — whatever month "today"
+     happens to be. Reopening the tab resets the view to today, so the walk
+     back to August is repeated, then one step to July and back. */
   await page.locator('.tabs button', { hasText: 'Calendar' }).click();
   await page.waitForTimeout(400);
+  for (let i = 0; i < 24; i++) {
+    if (has(await text(page, '.bar'), 'August 2026')) break;
+    await page.locator('[data-act="calMonth"][data-d="-1"]').click();
+    await page.waitForTimeout(250);
+  }
   await page.locator('[data-act="calMonth"][data-d="-1"]').click();
   await page.waitForTimeout(600);
-  ok('stepping back a month clears the chips', await page.locator('.cal-ev').count() === 0);
+  ok('stepping to a month with no work clears the chips', await page.locator('.cal-ev').count() === 0);
   await page.locator('[data-act="calMonth"][data-d="1"]').click();
   await page.waitForTimeout(600);
-  ok('and stepping forward brings the work back', await page.locator('.cal-ev').count() === 2);
+  ok('and stepping back to the worked month brings them back', await page.locator('.cal-ev').count() === 2);
   await page.close();
 }
 {
@@ -5457,7 +5477,13 @@ section('Voice mode: explicit, looping, and never filing what it is unsure of');
 
   /* §3 + §9 — a recognized command becomes a REAL entry, and confirms briefly. */
   await say('no change at residence');
-  ok('the command files a real activity entry', (await entries()) === before + 1);
+  let filedCount = await entries();
+  for (let i = 0; i < 20 && filedCount !== before + 1; i++) {
+    await page.waitForTimeout(200);
+    filedCount = await entries();
+  }
+  ok('the command files a real activity entry', filedCount === before + 1,
+     `${before} -> ${filedCount}`);
   /* THE ENTRY JUST FILED IS AT THE END. WS.activity is chronological and
      oldest-first since Unit 38, so "the one I just spoke" is the last element
      rather than the first — these six reads used to index from the front. */
@@ -11496,7 +11522,7 @@ section('Recent activity rows are doors, and stacked records read on a phone');
   ok('the feed carries real events from this suite\'s own work',
      await page.locator('.ra-row').count() >= 3,
      String(await page.locator('.ra-row').count()));
-  const row = page.locator('.ra-row').first();
+  const row = page.locator('.ra-row .ra-open').first();
   const caseNo = await row.evaluate(el => el.dataset.case);
   await row.click();
   await page.waitForTimeout(600);
@@ -16103,6 +16129,202 @@ section('Unit 21A — the shell still announces what the office did');
   } else {
     ok('and an action there still reaches the live region', true, 'no submit control on Settings');
   }
+  await page.close();
+}
+
+section('DASH-DELETE: the two trash cans — red, outlined, confirmed, and honest');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* Fixtures: a duplicate fresh intake, its innocent sibling, and a case that
+     has become real (it owns an investigation day). */
+  await post('/ingest', { case_no: 'API-DASHDEL-1', service: 'Surveillance',
+    client_name: 'Dup Dana', client_phone: '4345550101', objective: 'dup' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await post('/ingest', { case_no: 'API-DASHDEL-2', service: 'Surveillance',
+    client_name: 'Keep Kate', client_phone: '4345550102', objective: 'keep' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await post('/ingest', { case_no: 'API-DASHDEL-3', service: 'Surveillance',
+    client_name: 'Worked Wanda', client_phone: '4345550103', objective: 'worked' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await page.evaluate(async () => {
+    await api('/cases/API-DASHDEL-3/day/start', { method: 'POST',
+      body: { day_date: '2026-08-30', start_time: '08:00' } });
+    await api('/cases/API-DASHDEL-3/day/end', { method: 'POST', body: { end_time: '09:00' } });
+  });
+
+  /* ---- the leads desk ---- */
+  await page.evaluate(async () => { await render(); TAB = 'leads'; paint(); });
+  await page.waitForTimeout(300);
+
+  const desk = await page.evaluate(() => {
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--bad)';
+    document.body.appendChild(probe);
+    const bad = getComputedStyle(probe).color;
+    probe.remove();
+    const btn = document.querySelector('.pcard button[data-act="intakeDel"]');
+    const cards = [...document.querySelectorAll('.pcard button[data-act="intakeDel"]')];
+    const cs = btn ? getComputedStyle(btn) : null;
+    const r = btn ? btn.getBoundingClientRect() : {};
+    return {
+      bad, count: cards.length,
+      names: cards.map(b => b.dataset.name),
+      border: cs && cs.borderTopColor, fill: cs && cs.backgroundColor,
+      ink: cs && cs.color, w: r.width, h: r.height,
+      label: btn && btn.getAttribute('aria-label'),
+      svg: btn ? !!btn.querySelector('svg') : false,
+    };
+  });
+  ok('every fresh intake card carries the trash, visible with no menu',
+     desk.count >= 3 && desk.names.includes('Dup Dana') && desk.names.includes('Keep Kate'),
+     JSON.stringify(desk.names));
+  ok('it is RED and OUTLINED — the border is --bad and the ground is clear',
+     desk.border === desk.bad && desk.ink === desk.bad
+     && /rgba\(0, 0, 0, 0\)|transparent/.test(desk.fill),
+     JSON.stringify({border: desk.border, bad: desk.bad, fill: desk.fill}));
+  ok('and never under the 44px tap floor', desk.w >= 44 && desk.h >= 44,
+     `${desk.w}x${desk.h}`);
+  ok('the icon is drawn in currentColor, not an emoji with its own colours',
+     desk.svg === true);
+  ok('the control names its act to a screen reader', /Delete intake/.test(desk.label || ''));
+
+  /* Cancel: the exact dictated wording, and NOTHING leaves the page. */
+  const cancel = await page.evaluate(async () => {
+    let msg = null, calls = 0;
+    const realConfirm = window.confirm, realFetch = window.fetch;
+    window.confirm = m => { msg = m; return false; };
+    window.fetch = (...a) => { calls++; return realFetch(...a); };
+    document.querySelector('.pcard button[data-act="intakeDel"][data-name="Dup Dana"]').click();
+    await new Promise(r => setTimeout(r, 150));
+    window.confirm = realConfirm; window.fetch = realFetch;
+    return { msg, calls, still: CASES.some(c => c.case_no === 'API-DASHDEL-1') };
+  });
+  ok('the confirmation is the owner\'s wording, naming the client',
+     cancel.msg === 'Delete intake for Dup Dana? This cannot be undone.', String(cancel.msg));
+  ok('cancelling deletes nothing and calls nothing',
+     cancel.calls === 0 && cancel.still === true, JSON.stringify(cancel));
+
+  /* Confirm: the duplicate goes, the sibling stays — asserted after a reload
+     from the Worker, not from this page\'s optimism. */
+  await page.evaluate(async () => {
+    const realConfirm = window.confirm;
+    window.confirm = () => true;
+    document.querySelector('.pcard button[data-act="intakeDel"][data-name="Dup Dana"]').click();
+    await new Promise(r => setTimeout(r, 900));
+    window.confirm = realConfirm;
+  });
+  await page.waitForTimeout(600);
+  const afterDel = await page.evaluate(async () => {
+    const d = await api('/submissions?limit=200');
+    const list = (d.submissions || []).map(c => c.case_no);
+    return { dup: list.includes('API-DASHDEL-1'), keep: list.includes('API-DASHDEL-2'),
+             worked: list.includes('API-DASHDEL-3'),
+             msg: LEAD_MSG };
+  });
+  ok('the duplicate is gone from the Worker itself', afterDel.dup === false);
+  ok('the sibling and the worked case are untouched',
+     afterDel.keep === true && afterDel.worked === true);
+  ok('the desk says what happened', /API-DASHDEL-1 deleted/.test(afterDel.msg), afterDel.msg);
+
+  /* A developed case refuses toward the real workflow, and the desk shows the
+     refusal rather than pretending. */
+  const refused = await page.evaluate(async () => {
+    const realConfirm = window.confirm;
+    window.confirm = () => true;
+    const btn = document.querySelector('.pcard button[data-act="intakeDel"][data-case="API-DASHDEL-3"]');
+    if(!btn) return { nobtn: true };
+    btn.click();
+    await new Promise(r => setTimeout(r, 900));
+    window.confirm = realConfirm;
+    const d = await api('/submissions?limit=200');
+    return { still: (d.submissions || []).some(c => c.case_no === 'API-DASHDEL-3'), msg: LEAD_MSG };
+  });
+  ok('a worked case refuses the quick delete and stays',
+     refused.nobtn === true || (refused.still === true && /become a real case|Delete case/.test(refused.msg)),
+     JSON.stringify(refused).slice(0, 200));
+
+  /* ---- recent activity ---- */
+  await page.evaluate(async () => { TAB = 'dashboard'; paint(); await loadRecent(); paint(); });
+  await page.waitForTimeout(300);
+  const feed = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.ra-row')];
+    const withDel = rows.filter(r => r.querySelector('button[data-act="feedHide"]'));
+    const one = withDel[0] && withDel[0].querySelector('button[data-act="feedHide"]');
+    const open = withDel[0] && withDel[0].querySelector('.ra-open');
+    const rr = one && one.getBoundingClientRect(), or = open && open.getBoundingClientRect();
+    return { rows: rows.length, withDel: withDel.length,
+             trashRightOfText: rr && or ? rr.left >= or.right : null,
+             w: rr && rr.width, h: rr && rr.height,
+             nested: !!document.querySelector('.ra-row button button') };
+  });
+  ok('every feed row carries its own trash at the far right',
+     feed.rows > 0 && feed.withDel === feed.rows && feed.trashRightOfText === true,
+     JSON.stringify(feed));
+  ok('at or above the tap floor there too', feed.w >= 44 && feed.h >= 44, `${feed.w}x${feed.h}`);
+  ok('and no button is nested inside a button', feed.nested === false);
+
+  const hid = await page.evaluate(async () => {
+    const realConfirm = window.confirm;
+    let msg = null;
+    const target = [...document.querySelectorAll('button[data-act="feedHide"]')]
+      .find(b => b.dataset.kind === 'day');
+    if(!target) return { notarget: true };
+    const key = { kind: target.dataset.kind, ref: target.dataset.ref };
+    window.confirm = m => { msg = m; return false; };
+    target.click();
+    await new Promise(r => setTimeout(r, 120));
+    const stillThere = !!document.querySelector(
+      `button[data-act="feedHide"][data-kind="${key.kind}"][data-ref="${key.ref}"]`);
+    window.confirm = () => true;
+    target.click();
+    await new Promise(r => setTimeout(r, 900));
+    window.confirm = realConfirm;
+    const gone = !(RECENT || []).some(r => r.kind === key.kind && String(r.ref) === String(key.ref));
+    const ws = await api('/cases/API-DASHDEL-3/workspace');
+    return { msg, stillThere, gone, dayIntact: (ws.days || []).length >= 1, key };
+  });
+  ok('the feed confirmation names the line and says the record is kept',
+     hid.msg && /Remove "Investigation day/.test(hid.msg) && /record itself is kept/.test(hid.msg),
+     String(hid.msg));
+  ok('cancel keeps the line', hid.stillThere === true);
+  ok('confirm removes the line from the feed', hid.gone === true, JSON.stringify(hid.key));
+  ok('THE DAY ITSELF SURVIVES — the feed hid a line, not a record', hid.dayIntact === true);
+
+  /* Hidden means hidden after a full reload too. */
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForTimeout(1200);
+  const again = await page.evaluate(async () => {
+    const d = await api('/recent-activity');
+    return (d.activity || []).some(r => r.kind === 'day' && r.case_no === 'API-DASHDEL-3'
+      && r.detail === 'Investigation day ended');
+  });
+  ok('the hidden line stays hidden after a reload', again === false);
+
+  /* Layout: clean at phone widths on both screens, trash inside the viewport. */
+  for (const w of [320, 390]) {
+    await page.setViewportSize({ width: w, height: 760 });
+    await page.evaluate(() => { TAB = 'dashboard'; paint(); });
+    await page.waitForTimeout(150);
+    const dash = await page.evaluate(() => ({
+      overflow: document.documentElement.scrollWidth > window.innerWidth,
+      trashIn: [...document.querySelectorAll('button[data-act="feedHide"]')]
+        .every(b => b.getBoundingClientRect().right <= window.innerWidth + 1),
+    }));
+    ok(`the dashboard stays clean at ${w}px`, !dash.overflow && dash.trashIn !== false,
+       JSON.stringify(dash));
+    await page.evaluate(() => { TAB = 'leads'; paint(); });
+    await page.waitForTimeout(150);
+    const leads = await page.evaluate(() => ({
+      overflow: document.documentElement.scrollWidth > window.innerWidth,
+      trashIn: [...document.querySelectorAll('button[data-act="intakeDel"]')]
+        .every(b => b.getBoundingClientRect().right <= window.innerWidth + 1),
+    }));
+    ok(`the leads desk stays clean at ${w}px`, !leads.overflow && leads.trashIn !== false,
+       JSON.stringify(leads));
+  }
+  await page.setViewportSize({ width: 1200, height: 800 });
   await page.close();
 }
 

@@ -1392,9 +1392,24 @@
   /* UNIT 5 — the activity feed rows: full-width buttons so the whole row is
      the door to its case, metadata quiet, nothing loaded but text. */
   .ra-list{display:grid;gap:6px;}
-  .ra-row{display:flex;align-items:center;gap:10px;width:100%;text-align:left;font:inherit;
-    background:#fff;border:1px solid var(--line);border-radius:9px;padding:9px 12px;cursor:pointer;}
+  /* DASH-DELETE — the row used to be ONE button for the whole line; a trash
+     control inside it would be a button inside a button, the invalid nesting
+     Unit 40 already paid for. So the bordered row is a shell now, holding the
+     original open-the-case button and the trash as SIBLINGS: same painted
+     line, two tab stops for two actions. */
+  .ra-row{display:flex;align-items:center;gap:6px;
+    background:#fff;border:1px solid var(--line);border-radius:9px;padding:4px 8px 4px 12px;}
+  .ra-open{display:flex;align-items:center;gap:10px;flex:1;min-width:0;text-align:left;
+    font:inherit;background:transparent;border:0;padding:5px 0;cursor:pointer;color:inherit;}
   .ra-row:hover{border-color:var(--teal);}
+  /* The one destructive control, red and OUTLINED — the filled .btn.danger
+     stays the workspace's. Compact but never under the 44px tap floor, and
+     the glyph is an inline SVG stroked currentColor, because an emoji trash
+     carries its own colours and ignores the palette. */
+  .btn-del{display:inline-flex;align-items:center;justify-content:center;flex:none;
+    min-width:44px;min-height:44px;padding:0 10px;border:1.5px solid var(--bad);
+    border-radius:9px;background:transparent;color:var(--bad);cursor:pointer;}
+  .btn-del:hover{background:var(--bad-bg);}
   .ra-i{flex:none;font-size:1rem;}
   .ra-what{min-width:0;font-size:.88rem;overflow-wrap:anywhere;}
   .ra-case{display:block;font-size:.7rem;color:var(--muted);margin-top:1px;}
@@ -2952,6 +2967,45 @@ function quickToolsHtml(){
    never loaded, failed (which says so), and loaded-and-quiet. The rows are
    the Worker's — time, what, which case — and each links to its case. */
 let RECENT = null, RECENT_ERR = "";
+/* DASH-DELETE §1 — the quick delete on a fresh intake card. The wording is
+   the owner's, verbatim, and it is TRUE: the Worker refuses the moment the
+   intake carries any dependent record, so the only thing this can ever
+   destroy is the intake's own paperwork. A developed case's 409 already
+   names what it found and the workflow to use, so the message is shown as
+   it arrives rather than rewritten here. */
+async function intakeQuickDelete(caseNo, name){
+  if(!confirm(`Delete intake for ${name || caseNo}? This cannot be undone.`)) return;
+  LEAD_MSG = "";
+  try{
+    await api(`/cases/${encodeURIComponent(caseNo)}/intake-delete`, {method: "POST", body: {}});
+    LEAD_MSG = `Intake ${caseNo} deleted.`;
+  }catch(e){
+    LEAD_MSG = e.message;
+  }
+  /* Reload from the Worker rather than splicing locally — what the desk shows
+     next is the database's answer, not this page's optimism. */
+  await render();
+}
+
+/* DASH-DELETE §2 — remove one line from Recent activity. A marker in the
+   Worker, never a touch on the record the line described, and the dialog says
+   so out loud — hiding must not masquerade as destruction any more than
+   destruction may masquerade as hiding. */
+async function feedHide(kind, ref, line){
+  if(!confirm(`Remove "${line}" from Recent activity?\n\n`
+    + "The record itself is kept — only this feed line is removed.")) return;
+  try{
+    await api("/feed/hide", {method: "POST", body: {kind, ref_id: Number(ref)}});
+    /* The local filter is cosmetic; the reload underneath is the answer. */
+    if(Array.isArray(RECENT)) RECENT = RECENT.filter(r => !(r.kind === kind && String(r.ref) === String(ref)));
+    paint();
+    await loadRecent();
+  }catch(e){
+    RECENT_ERR = e.message;
+  }
+  paint();
+}
+
 async function loadRecent(){
   RECENT_ERR = "";
   try{ RECENT = (await api("/recent-activity")).activity; }
@@ -3434,6 +3488,10 @@ function attnList(a){
     : a.slice(0, -1).join(", ") + " and " + a[a.length - 1];
 }
 
+const TRASH_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+  stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path
+  d="M3 6h18M8 6V4h8v2m1 0-1 14H8L7 6m3 4v7m4-7v7"/></svg>`;
+
 function recentActivityHtml(){
   if(ME.role !== "admin") return "";
   const body = RECENT_ERR
@@ -3444,11 +3502,17 @@ function recentActivityHtml(){
         <div class="empty-hint">Intakes, days, reports, media, payments and packages appear here
         as they happen.</div></div>`
     : `<div class="ra-list">${RECENT.map(r => `
-        <button class="ra-row" data-act="openCase" data-case="${esc(r.case_no)}">
-          <span class="ra-i">${RECENT_ICON[r.kind] || "&#8226;"}</span>
-          <span class="ra-what">${esc(r.detail)}<span class="ra-case mono">${esc(r.case_no)}</span></span>
-          <span class="ra-when">${when(r.at)}</span>
-        </button>`).join("")}</div>`;
+        <div class="ra-row">
+          <button class="ra-open" data-act="openCase" data-case="${esc(r.case_no)}">
+            <span class="ra-i">${RECENT_ICON[r.kind] || "&#8226;"}</span>
+            <span class="ra-what">${esc(r.detail)}<span class="ra-case mono">${esc(r.case_no)}</span></span>
+            <span class="ra-when">${when(r.at)}</span>
+          </button>
+          ${r.ref != null ? `<button class="btn-del" data-act="feedHide"
+            data-kind="${esc(r.kind)}" data-ref="${esc(String(r.ref))}"
+            data-line="${esc(r.detail)} &middot; ${esc(r.case_no)}"
+            aria-label="Remove from Recent activity" title="Remove from Recent activity">${TRASH_SVG}</button>` : ""}
+        </div>`).join("")}</div>`;
   return `<div class="card">
     <div class="bar"><h2 style="margin:0">Recent activity</h2>
       <span class="count">The last few things that happened, newest first</span></div>
@@ -3772,6 +3836,11 @@ function leadsView(){
     const [lbl, tone] = leadState(c);
     const claim = c.kind === "claims";
     const open = ["new", "awaiting_client"].includes(stageOf(c));
+    /* DASH-DELETE — who the confirmation names: the card's own headline, which
+       is what the admin is looking at when they press it. */
+    const who = c.legal ? (c.legal_firm || c.client_name || c.case_no)
+      : claim ? (c.carrier || c.client_name || c.case_no)
+      : (c.client_name || c.case_no);
     /* MASTER §5 — the lead's own status, beside (never instead of) the intake
        state. The select is the office's hand; the two sends stamp themselves. */
     const ls = c.lead_status || "lead";
@@ -3844,6 +3913,9 @@ function leadsView(){
             paySent ? "Resend payment options" : "Send payment options"}</button>`}
           ${retPending ? `<button class="btn sm ghost" data-act="leadRecordPay"
             data-case="${esc(c.case_no)}">Record payment</button>` : ""}
+          ${open ? `<button class="btn-del" style="margin-left:auto" data-act="intakeDel"
+            data-case="${esc(c.case_no)}" data-name="${esc(who)}"
+            aria-label="Delete intake for ${esc(who)}" title="Delete intake">${TRASH_SVG}</button>` : ""}
         </div>
         ${sendRow}
         ${open ? `<button class="btn sm" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="assign">Accept &rarr;</button>` : ""}
@@ -18521,6 +18593,8 @@ document.addEventListener("click", ev => {
        opens on what this client already agreed rather than on the standard. */
     SHEET_MSG = ""; wizPaymentLoad(); wizSheetLoad(); paint();
   }
+  else if(act === "intakeDel"){ intakeQuickDelete(el.dataset.case, el.dataset.name); }
+  else if(act === "feedHide"){ feedHide(el.dataset.kind, el.dataset.ref, el.dataset.line); }
   else if(act === "leadIntake"){
     const c = CASES.find(x => x.case_no === el.dataset.case) || {};
     LEAD_SEND = {case_no: el.dataset.case, to: c.client_email || "", err: "", busy: false};

@@ -200,6 +200,19 @@ of a real .MTS on real hardware is the owner's device check.** (The earlier
 "no WebCodecs in this container" claim was an insecure-context artifact —
 corrected same day; the suite records presence instead of asserting absence.)
 
+## ✅ SHIPPED — Dashboard delete controls (owner brief 2026-08-24, DASH-DELETE.md)
+
+Red outlined trash on fresh intake cards and Recent Activity rows. Intake side
+is the portal's one HARD delete, admissible only while the intake owns nothing
+but its own paperwork (`INTAKE_OWNED`); anything dependent → 409 naming it,
+toward the recoverable workflow; hold/deleted/archived refuse through existing
+gates. Feed side is a `feed_hidden` marker — the feed is derived from
+non-deletable records, so removal can only mean "stop drawing it", stated in
+the dialog. Classification completeness is a derived test over `DEMO_SWEEP`.
+**One manual `portal-setup.yml` dispatch owed after merge (feed_hidden).**
+Also fixed in passing: the invoice suite's hardcoded August `paid_date`s
+became `MDAY(n)` — they failed on the 1st of September with no code changed.
+
 ## What is left
 
 - **23 — Consolidated Live Verification Sweep.** ⏸️ **LIVE VERIFICATION

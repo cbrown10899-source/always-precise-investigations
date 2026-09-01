@@ -1115,6 +1115,52 @@ with data in it is a **TEST- case from Settings** — a real row, badged whereve
 it appears, created and removed deliberately. Do not reintroduce page-held
 example data; a test fails on `EXAMPLE-` appearing in the page at all.
 
+## The dashboard's two trash cans are two different instruments
+
+Owner brief 2026-08-24, verbatim in `case-portal/DASH-DELETE.md` with derived
+decisions D1–D7. A red outlined trash on every FRESH intake card (Leads &
+Intakes) and on every Recent Activity row — and the two do opposite things,
+each saying truthfully which it is.
+
+**The intake trash is the one HARD delete in the portal, and the dependency
+guard is what reconciles it with the standing "no purge" decision.**
+`POST /cases/:no/intake-delete` (admin-only) refuses 409 — naming what it
+found — the moment the intake carries ANY dependent record (a day, activity,
+media, a report, an invoice, money, a send, curated records…), pointing at the
+existing recoverable workflow. What it can ever destroy is the intake's own
+paperwork: `INTAKE_OWNED` in `worker.js` (submissions + eight intake-time
+companions). So the dictated confirmation — *"Delete intake for [name]? This
+cannot be undone."* — is TRUE, which is the standard every screen is held to.
+**Every case-scoped table is classified** into OWNED / BLOCKERS / EXEMPT (each
+exemption carrying its reason — `alert_failure` is left alone both ways
+because alert history is non-deletable and a failed alert must not make a
+duplicate immortal), and a test derives the inventory from `DEMO_SWEEP` and
+fails on an unclassified table. The route matches no gate carve-out on
+purpose: tombstoned and archived cases refuse it through the existing
+chokepoint, and a legal hold refuses first by name.
+
+**The feed trash is a MARKER, never a touch on a record.** Recent activity is
+composed at read time from six real sources — including payments and package
+events, the owner's own non-deletables — so "delete this entry" can only mean
+"stop drawing it". `feed_hidden (kind, ref_id, case_no, …)` records who hid
+what; each arm excludes hidden rows IN ITS SQL before its LIMIT (older lines
+surface instead of the arm emptying), guarded like search's `case_deleted`
+subquery so a missing table degrades to an unfiltered feed, never a silently
+empty one. The dialog names the line and says the record is kept — hiding must
+not masquerade as destruction any more than destruction may masquerade as
+hiding. No un-hide UI; the marker keeps who/when.
+
+The row was ONE `<button>`; the trash inside it would be invalid nesting (the
+Unit 40 lesson), so `.ra-row` is a flex shell holding the open-the-case button
+and the trash as siblings. `.btn-del` is the one destructive control: outlined
+`--bad`, transparent ground, inline SVG in `currentColor` (an emoji trash
+ignores the palette), never under the 44px tap floor.
+
+**Adding `feed_hidden` means a manual `portal-setup.yml` dispatch after
+merge.** Until then `/feed/hide` answers 503 naming the workflow, the feed
+draws unfiltered, and the intake delete — which needs no new table — works
+immediately; its batch already skips absent tables.
+
 ## The case workspace is one level deep
 
 Unit 38 (owner brief verbatim in `case-portal/CASE-WORKSPACE.md`, including
