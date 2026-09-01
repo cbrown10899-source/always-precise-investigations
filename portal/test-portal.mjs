@@ -2387,6 +2387,18 @@ section('The calendar shows the month of work');
   ok('the office gets a Calendar tab', has(await text(page, '.tabs'), 'Calendar'));
   await page.locator('.tabs button', { hasText: 'Calendar' }).click();
   await page.waitForTimeout(600);
+  /* THE FIXTURE DAYS LIVE IN AUGUST 2026, AND THE CALENDAR OPENS ON TODAY.
+     For two weeks those were the same month; on the 1st of September every
+     chip assertion below went false with no code having changed. So the test
+     now walks to the fixtures' own month first — the calendar genuinely shows
+     the work in the month it happened, which is the thing worth asserting. */
+  for (let i = 0; i < 24; i++) {
+    if (has(await text(page, '.bar'), 'August 2026')) break;
+    await page.locator('[data-act="calMonth"][data-d="-1"]').click();
+    await page.waitForTimeout(250);
+  }
+  ok('the calendar reaches the month the work happened in',
+     has(await text(page, '.bar'), 'August 2026'));
   const grid = await text(page, '.cal-grid');
   ok('a month grid renders with weekday headers', has(grid, 'Sun') && has(grid, 'Sat'));
   ok('the admin calendar covers every investigator',
@@ -2403,15 +2415,23 @@ section('The calendar shows the month of work');
   await page.locator('.close').click();
   await page.waitForTimeout(400);
 
-  // Month navigation: last month has no work, and the same buttons come back.
+  /* Month navigation, against months chosen for what they hold: July 2026 has
+     no work in the fixtures, August has the two days — whatever month "today"
+     happens to be. Reopening the tab resets the view to today, so the walk
+     back to August is repeated, then one step to July and back. */
   await page.locator('.tabs button', { hasText: 'Calendar' }).click();
   await page.waitForTimeout(400);
+  for (let i = 0; i < 24; i++) {
+    if (has(await text(page, '.bar'), 'August 2026')) break;
+    await page.locator('[data-act="calMonth"][data-d="-1"]').click();
+    await page.waitForTimeout(250);
+  }
   await page.locator('[data-act="calMonth"][data-d="-1"]').click();
   await page.waitForTimeout(600);
-  ok('stepping back a month clears the chips', await page.locator('.cal-ev').count() === 0);
+  ok('stepping to a month with no work clears the chips', await page.locator('.cal-ev').count() === 0);
   await page.locator('[data-act="calMonth"][data-d="1"]').click();
   await page.waitForTimeout(600);
-  ok('and stepping forward brings the work back', await page.locator('.cal-ev').count() === 2);
+  ok('and stepping back to the worked month brings them back', await page.locator('.cal-ev').count() === 2);
   await page.close();
 }
 {
