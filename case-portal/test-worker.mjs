@@ -5010,10 +5010,12 @@ section('Invoice defaults: admin reads and writes them, and the prefix is bounde
 
   const read = await jsonOf(await call(env, '/billing-settings', { cookie: admin }));
   ok('an admin reads the defaults', read.settings && typeof read.settings === 'object');
-  ok('and they are the seven the backend supports, no more',
+  ok('and they are the eight the backend supports, no more',
      ['company_name', 'company_line', 'invoice_prefix', 'terms_insurance', 'terms_private',
-      'payment_instructions', 'invoice_footer'].every(k => k in read.settings)
-     && Object.keys(read.settings).length === 7, JSON.stringify(Object.keys(read.settings)));
+      'payment_instructions', 'invoice_footer', 'remit_address'].every(k => k in read.settings)
+     && Object.keys(read.settings).length === 8, JSON.stringify(Object.keys(read.settings)));
+  ok('the remittance address DEFAULTS TO EMPTY — nothing invents one (MAIL-CHECK.md D2)',
+     read.settings.remit_address === '');
   ok('none of them is a credential',
      !/key|secret|token|password/i.test(JSON.stringify(Object.keys(read.settings))));
 
@@ -5083,8 +5085,18 @@ section('Legal can be sent before a case exists, and the three doors stay separa
   const privCard = cards.find(c => c.key === 'private');
   ok('the legal card carries the private product and the legal context',
      legalCard.id === 'private_retainer' && legalCard.context === 'legal');
-  ok('and identical pricing lines to the private card — one source',
-     JSON.stringify(legalCard.lines) === JSON.stringify(privCard.lines));
+  /* MAIL-CHECK.md D1 — the legal card is the private PRICING plus exactly one
+     price-free line. Identity over the pricing prefix keeps the one-source
+     rule; the delta is pinned to the Mail Check line and to carrying no
+     figure, so a price could still never fork here. */
+  ok('and the private card\'s pricing lines verbatim — one source',
+     JSON.stringify(legalCard.lines.slice(0, privCard.lines.length)) === JSON.stringify(privCard.lines));
+  ok('plus exactly the Mail Check line, which carries no figure',
+     legalCard.lines.length === privCard.lines.length + 1
+     && legalCard.lines[legalCard.lines.length - 1].label === 'Mail Check'
+     && !/\$|\d/.test(legalCard.lines[legalCard.lines.length - 1].value
+        + legalCard.lines[legalCard.lines.length - 1].note),
+     JSON.stringify(legalCard.lines[legalCard.lines.length - 1]));
   ok('the legal card names the approved billing arrangements',
      /BILL\.com/.test(legalCard.closing) && /pick-up/.test(legalCard.closing)
        && /check by mail/.test(legalCard.closing), legalCard.closing);
@@ -16296,6 +16308,103 @@ section('Recent activity: a hidden line is a marker, never a touched record');
   feed = (await jsonOf(await call(env, '/recent-activity', { cookie: admin }))).activity;
   ok('and the feed still draws, unfiltered rather than empty',
      Array.isArray(feed) && feed.some(r => r.kind === 'day'), String(feed.length));
+}
+
+
+/* ================= MAIL-CHECK: the wording travels, the address does not
+
+   Owner, 2026-09-01 (MAIL-CHECK.md). The legal card and the insurance sheet
+   carry the Mail Check line in the owner's own words; the private sheet does
+   not; no sheet payload can carry an address even after one is configured;
+   and the invoice document gains its remittance section ONLY for a legal or
+   insurance context AND only once the owner has typed a real address into
+   billing settings. The consumer payment boundary is untouched. */
+
+section('Mail Check: sheets say it in the owner\'s words, and never the address');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  const d = await jsonOf(await call(env, '/sheets', { cookie: admin }));
+  const cards = d.sheets || d.cards || [];
+  ok('the sheets route answers with the cards', cards.length >= 3, String(cards.length));
+  const byKey = k => cards.find(c => c.key === k) || cards.find(c => c.context === k) || null;
+  const hasLine = c => !!(c && (c.lines || []).find(l => l.label === 'Mail Check'
+      && l.note === 'Mailing instructions provided with invoice.'));
+  ok('the insurance sheet carries Mail Check, wording verbatim', hasLine(byKey('insurance')));
+  ok('the legal card carries it too', hasLine(byKey('legal')));
+  ok('THE PRIVATE SHEET DOES NOT — its lines are untouched', !hasLine(byKey('private')));
+
+  /* Configure a remittance address, then prove no sheet payload leaks it. */
+  const addr = '4571 Test Remit Way\nSuite 9\nLynchburg, VA 24501';
+  let res = await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { remit_address: addr } });
+  ok('the address is ordinary billing configuration', res.status === 200
+     && (await jsonOf(res)).settings.remit_address === addr);
+  const after = JSON.stringify(await jsonOf(await call(env, '/sheets', { cookie: admin })));
+  ok('NO SHEET CARRIES THE ADDRESS, configured or not — the owner\'s own rule',
+     !after.includes('Test Remit Way'));
+}
+
+section('Mail Check: the invoice prints remittance only where it may, only once it exists');
+{
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  await ingest(env, { case_no: 'API-MC-LGL', assignment: 'legal', law_firm: 'Check & Mail LLP',
+    attorney_name: 'Rem Itt', client_name: 'Check & Mail LLP' });
+  await ingest(env, { case_no: 'API-MC-INS', client_name: 'Adjuster Ann',
+    carrier: 'Example Mutual', claim_number: 'WC-77' });
+  await ingest(env, { case_no: 'API-MC-PRV', client_name: 'Private Pam' });
+
+  const mkInv = async no => (await jsonOf(await call(env, `/cases/${no}/invoices`,
+    { method: 'POST', cookie: admin, body: {} }))).invoice;
+  const lgl = await mkInv('API-MC-LGL'), ins = await mkInv('API-MC-INS'), prv = await mkInv('API-MC-PRV');
+  const read = async id => (await jsonOf(await call(env, `/invoices/${id}`, { cookie: admin }))).invoice;
+
+  let a = await read(lgl.id), b = await read(ins.id), c = await read(prv.id);
+  ok('contexts ride the invoice payload from the typed record',
+     a.send_context === 'legal' && b.send_context === 'insurance' && c.send_context === 'private',
+     JSON.stringify([a.send_context, b.send_context, c.send_context]));
+  ok('with NOTHING configured, no invoice carries a remittance address',
+     a.remit_address === undefined && b.remit_address === undefined && c.remit_address === undefined);
+
+  const addr = '4571 Test Remit Way\nSuite 9\nLynchburg, VA 24501';
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin, body: { remit_address: addr } });
+  a = await read(lgl.id); b = await read(ins.id); c = await read(prv.id);
+  ok('once configured, the LEGAL invoice carries it', a.remit_address === addr);
+  ok('and the INSURANCE invoice', b.remit_address === addr);
+  ok('and the PRIVATE invoice still carries NOTHING — absent, not blank',
+     c.remit_address === undefined, JSON.stringify(c.remit_address));
+
+  /* Whitespace is not an address: a value of spaces stays unconfigured. */
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin, body: { remit_address: '   ' } });
+  b = await read(ins.id);
+  ok('a blank-looking value never prints', b.remit_address === undefined);
+
+  /* The legal retainer recorder takes the real method. */
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin, body: { remit_address: addr } });
+  const pay = await call(env, '/cases/API-MC-LGL/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 1500, method: 'mail_check', paid_on: new Date().toISOString().slice(0, 10) } });
+  const pd = await jsonOf(pay);
+  ok('a mailed legal retainer records as mail_check with its own label',
+     pay.status === 200 || pay.status === 201, JSON.stringify(pd).slice(0, 160));
+  const row = await env.DB.prepare("SELECT method FROM retainer_payment WHERE case_no = 'API-MC-LGL'").first();
+  ok('the stored method is the real value, not a relabel', row && row.method === 'mail_check',
+     row && row.method);
+  ok('an invented method is still refused',
+     (await call(env, '/cases/API-MC-LGL/retainer/payment', { method: 'POST', cookie: admin,
+       body: { amount: 5, method: 'meteor' } })).status !== 200);
+
+  /* The locked boundary did not move: payment options still refuse both
+     non-private contexts by name. */
+  const refuse = await call(env, '/payment-options/email', { method: 'POST', cookie: admin,
+    body: { to: 'firm@x.test', name: 'Check & Mail LLP', case_no: 'API-MC-LGL' } });
+  ok('the consumer payment block still refuses a legal case', refuse.status === 409 || refuse.status === 400,
+     String(refuse.status));
 }
 
 /* ------------------------------------------------------------------ report */

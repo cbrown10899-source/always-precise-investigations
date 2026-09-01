@@ -476,10 +476,14 @@ const PERSONAL = { retainer: 1500, hourly: 100, minHours: 4 };
    record: it states that money came in by a means nobody wrote down, which is
    the precise thing a payment record exists to prevent. The original handoff
    listed both; the correction is later and governs. */
-const RETAINER_METHODS = ['cash_app', 'venmo', 'check', 'cash', 'ach_bill'];
+const RETAINER_METHODS = ['cash_app', 'venmo', 'check', 'cash', 'ach_bill', 'mail_check'];
 const RETAINER_METHOD_LABEL = {
   cash_app: 'Cash App', venmo: 'Venmo', check: 'Check', cash: 'Cash',
   ach_bill: 'ACH / BILL',
+  /* MAIL-CHECK.md (owner, 2026-09-01): how a LEGAL retainer arrives when the
+     firm mails one. This column carries no CHECK — the list above is the
+     validation — so the method is a real recorded value, not a relabel. */
+  mail_check: 'Mail Check',
 };
 
 /* THE AGREED RETAINER IS THE CASE'S, NOT THE STANDARD ONE.
@@ -598,6 +602,11 @@ function rateSheets(retainer) {
           note: 'Assignments requiring significant travel outside our normal service area are '
               + 'quoted and approved before the assignment is accepted. No unapproved travel '
               + 'charge is added afterward.' },
+        /* MAIL-CHECK.md (owner, 2026-09-01) — the wording is the owner's,
+           verbatim, and the ADDRESS IS NOT HERE by the owner's own rule: the
+           sheet may say checks are accepted, the mailing details ride only
+           with an invoice. */
+        MAIL_CHECK_LINE,
       ],
       closing_title: 'Clear pricing. No surprise billing.',
       closing: 'Rates and authorization are confirmed in writing before investigative work '
@@ -664,6 +673,10 @@ function sheetCards(retainer) {
              + 'or a retainer check held for pick-up at the firm\u2019s office — and an '
              + 'existing billing arrangement is honoured where one is on file. Rates and '
              + 'authorization are confirmed in writing before investigative work begins.',
+      /* MAIL-CHECK.md — the legal card carries the Mail Check line the
+         insurance sheet carries, appended to the PRIVATE PRODUCT'S lines
+         without touching them: the private sheet itself must not gain it. */
+      lines: [...priv.lines, MAIL_CHECK_LINE],
     });
   }
   return cards;
@@ -677,6 +690,13 @@ function sheetCards(retainer) {
    investigator view. The boundary is the same shape as the intake pairing
    already enforced by SHEET_INTAKE — decided HERE, server-side, from the sheet
    id, never from anything the caller says. */
+/* MAIL-CHECK.md — the one line both the insurance sheet and the legal card
+   carry. One writer, so the sheet, the email and the page preview cannot
+   drift, and NO ADDRESS: "Do NOT place the full mailing address on the rate
+   sheet" is the owner's own sentence. */
+const MAIL_CHECK_LINE = { label: 'Mail Check', value: 'Accepted',
+  note: 'Mailing instructions provided with invoice.' };
+
 /* The firm's payment destinations, given by the owner 2026-08-15.
  *
  * THE DISPLAY TEXT AND THE URL ARE SEPARATE VALUES AND NEITHER IS DERIVED FROM
@@ -7683,6 +7703,12 @@ const BILLING_DEFAULTS = {
   terms_private: 'Due on receipt',
   payment_instructions: 'Please remit payment according to the electronic payment instructions provided with this invoice.',
   invoice_footer: 'Thank you for choosing Always Precise Investigations. Please reference the invoice number and claim number with payment.',
+  /* MAIL-CHECK.md — the check remittance address. EMPTY ON PURPOSE: no
+     mailing address exists anywhere in this configuration and nothing here
+     may invent one. The owner supplies it in Settings -> Billing; until then
+     the rate sheets say "mailing instructions provided with invoice" and the
+     invoices print no remittance section. Never seeded, never derived. */
+  remit_address: '',
 };
 
 async function billingSettings(env) {
@@ -7843,7 +7869,23 @@ async function invoiceWithMoney(env, inv) {
   const money = invoiceMoney(lines, inv.adjustments, payments);
   let refs = {};
   try { refs = JSON.parse(inv.refs_json || '{}'); } catch { refs = {}; }
+  /* MAIL-CHECK.md — which business this invoice belongs to, and whether a
+     check remittance section may print on its document. DECIDED HERE, in the
+     Worker, from the case's own typed kind and legal marker: the page prints
+     `remit_address` when it arrives and composes nothing itself. A PRIVATE
+     invoice never carries the field at all — absent, not empty — and neither
+     does anything else until the owner has typed a real address into
+     Settings -> Billing. Nothing is invented. */
+  const invSub = await env.DB.prepare(
+    'SELECT kind, payload FROM submissions WHERE case_no = ?').bind(inv.case_no).first();
+  const invCtx = invSub ? contextForSub(invSub) : null;
+  let remit;
+  if (invCtx === SEND_CONTEXT.LEGAL || invCtx === SEND_CONTEXT.INSURANCE) {
+    const addr = String((await billingSettings(env)).remit_address || '').trim();
+    if (addr) remit = addr;
+  }
   return { ...inv, refs_json: undefined, refs, lines: lines || [], payments: payments || [],
+           send_context: invCtx || undefined, remit_address: remit,
            ...money, retainer: await retainerBlock(env, inv),
            display_status: invoiceDisplayStatus(inv, money) };
 }

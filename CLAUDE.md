@@ -878,6 +878,36 @@ consumer sheet and the payment instructions; and the pre-case intake door is
 paired from an **explicit `kind`**, never from a lookup. Resting it on the
 product being sent is stronger than resting it on a case that may not exist.
 
+## Mail Check is wording and a recording value, never a hole in the boundary
+
+Owner brief 2026-09-01, verbatim in `case-portal/MAIL-CHECK.md` (derived
+decisions D1–D4). Legal and Insurance flows say **"Mail Check — Mailing
+instructions provided with invoice."** — `MAIL_CHECK_LINE`, one writer,
+carried by the insurance sheet and appended to the legal card's copy of the
+private lines (the private sheet itself is untouched, and a test pins the
+legal card as the private pricing verbatim plus exactly this one price-free
+line). **No sheet can carry the address**, configured or not — asserted by
+grep over the whole `/sheets` payload.
+
+**The remittance address is configuration that starts EMPTY**
+(`BILLING_DEFAULTS.remit_address`, editable at Settings → Billing → "Check
+remittance address"). Nothing seeds or derives it. `invoiceWithMoney` attaches
+`remit_address` to an invoice payload only when the case's own typed record
+says legal or insurance AND the trimmed configured value is non-empty; the
+page prints "Remit checks to" only when the field arrives. **A private
+invoice never carries the field — absent, not blank.**
+
+**Recording:** `RETAINER_METHODS` gained a real `mail_check` value (that
+column has no CHECK; the Worker list is the validation), offered by the page
+only on a legal case. `invoice_payments.method` DOES carry a CHECK, and
+widening one is the forbidden rebuild — so on non-private invoices "Mail
+Check" is a dropdown label that stores the existing `check` instrument.
+
+**What did not move:** `CONTEXT_TAKES_PAYMENT === PRIVATE`, every Cash
+App/Venmo path, `/payment-options/email`'s refusals, the private sheet and
+private invoices, and the legal payment arrangements. No schema change, no
+portal-setup dispatch.
+
 ## The send context — never guess a recipient's type from their email
 
 **Every outgoing send is PRIVATE or INSURANCE, and which one is decided by WHAT

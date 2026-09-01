@@ -213,6 +213,18 @@ the dialog. Classification completeness is a derived test over `DEMO_SWEEP`.
 Also fixed in passing: the invoice suite's hardcoded August `paid_date`s
 became `MDAY(n)` — they failed on the 1st of September with no code changed.
 
+## ✅ SHIPPED — Mail Check for Legal and Insurance (owner brief 2026-09-01, MAIL-CHECK.md)
+
+The owner's wording on the insurance sheet and the legal card (one writer,
+no address can reach a sheet); `remit_address` as empty-by-default billing
+configuration; invoices print "Remit checks to" only for legal/insurance
+context and only once the owner types the address into Settings → Billing;
+private sheet, private invoices and the Cash App/Venmo boundary untouched.
+`mail_check` is a real retainer method (legal recorder only); on invoices
+Mail Check is a label storing the CHECK-constrained `check` instrument.
+**Owed by the owner: the actual remittance address, typed into Settings →
+Billing — until then invoices deliberately print no remittance section.**
+
 ## What is left
 
 - **23 — Consolidated Live Verification Sweep.** ⏸️ **LIVE VERIFICATION

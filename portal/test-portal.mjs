@@ -16328,6 +16328,104 @@ section('DASH-DELETE: the two trash cans — red, outlined, confirmed, and hones
   await page.close();
 }
 
+section('MAIL-CHECK: the sheets say it, the invoice prints it only where and when it may');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  await post('/ingest', { case_no: 'API-MC-L1', assignment: 'legal', law_firm: 'Mailer & Mailer LLP',
+    attorney_name: 'Lee Gal', client_name: 'Mailer & Mailer LLP' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await post('/ingest', { case_no: 'API-MC-I1', client_name: 'Carrier Cass', carrier: 'Example Mutual',
+    claim_number: 'WC-MC-1' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await post('/ingest', { case_no: 'API-MC-P1', client_name: 'Private Perry' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  /* ---- the three sheet cards, desktop and phone ---- */
+  for (const w of [1200, 390]) {
+    await page.setViewportSize({ width: w, height: 820 });
+    const seen = await page.evaluate(async () => {
+      const d = await api('/sheets');
+      const cards = d.sheets || d.cards || [];
+      const line = c => (c.lines || []).find(l => l.label === 'Mail Check');
+      const g = k => cards.find(c => c.key === k);
+      return { ins: !!line(g('insurance')), lgl: !!line(g('legal')), prv: !!line(g('private')),
+               note: (line(g('insurance')) || {}).note };
+    });
+    ok(`at ${w}px the legal and insurance sheets carry Mail Check and private does not`,
+       seen.ins && seen.lgl && !seen.prv
+       && seen.note === 'Mailing instructions provided with invoice.', JSON.stringify(seen));
+  }
+  await page.setViewportSize({ width: 1200, height: 820 });
+  await page.evaluate(() => { TAB = 'sheets'; paint(); });
+  await page.waitForTimeout(400);
+  const drawn = await page.evaluate(() => {
+    const t = document.body.innerText;
+    return { word: t.includes('Mail Check'), addr: t.includes('Remit Way') };
+  });
+  ok('the Rate Sheets screen draws the wording and, before configuration, no address anywhere',
+     drawn.word === true && drawn.addr === false, JSON.stringify(drawn));
+
+  /* ---- invoices: nothing prints until the owner has typed an address ---- */
+  const mkInv = async no => await page.evaluate(async n =>
+    (await api(`/cases/${n}/invoices`, { method: 'POST', body: {} })).invoice.id, no);
+  const insInv = await mkInv('API-MC-I1'), prvInv = await mkInv('API-MC-P1'), lglInv = await mkInv('API-MC-L1');
+
+  const docFor = async id => await page.evaluate(async invId => {
+    const d = await api(`/invoices/${invId}`);
+    INV_OPEN = d.invoice; INV_SETTINGS = d.settings || INV_SETTINGS;
+    return { html: invoiceDocHtml(d.invoice), ctx: d.invoice.send_context,
+             remit: d.invoice.remit_address || null };
+  }, id);
+
+  let doc = await docFor(insInv);
+  ok('an insurance invoice prints NO remittance before the address exists',
+     !doc.html.includes('Remit checks to') && doc.remit === null && doc.ctx === 'insurance',
+     JSON.stringify({ ctx: doc.ctx, remit: doc.remit }));
+
+  /* The owner types the address into Settings -> Billing — the same form. */
+  const ADDR = '4571 Test Remit Way\nSuite 9\nLynchburg, VA 24501';
+  await page.evaluate(async a => {
+    await api('/billing-settings', { method: 'POST', body: { remit_address: a } });
+  }, ADDR);
+
+  doc = await docFor(insInv);
+  ok('once configured, the insurance invoice prints Remit checks to + the address',
+     doc.html.includes('Remit checks to') && doc.html.includes('4571 Test Remit Way'),
+     doc.html.includes('Remit checks to') ? 'section present' : 'missing');
+  const lgl = await docFor(lglInv);
+  ok('the legal invoice prints it too', lgl.html.includes('Remit checks to') && lgl.ctx === 'legal');
+  const prv = await docFor(prvInv);
+  ok('THE PRIVATE INVOICE NEVER PRINTS IT — configured or not',
+     !prv.html.includes('Remit checks to') && prv.remit === null && prv.ctx === 'private');
+
+  /* ---- the recording dropdowns ---- */
+  const ddl = await page.evaluate(async ids => {
+    const opts = async invId => {
+      const d = await api(`/invoices/${invId}`);
+      INV_OPEN = d.invoice;
+      const html = invoiceDetailView();
+      const m = html.match(/<select id="ip_method">([\s\S]*?)<\/select>/);
+      return m ? m[1] : '';
+    };
+    return { ins: await opts(ids.ins), prv: await opts(ids.prv) };
+  }, { ins: insInv, prv: prvInv });
+  ok('the insurance invoice offers Mail Check, recording the check instrument',
+     ddl.ins.includes('>Mail Check<') && /value="check">Mail Check/.test(ddl.ins), ddl.ins.slice(0, 200));
+  ok('the private invoice dropdown is exactly as it was', !ddl.prv.includes('Mail Check'));
+
+  const ret = await page.evaluate(() => {
+    WS = { legal: { firm_name: 'Mailer & Mailer LLP' } };
+    const legal = retainerFormHtml({ amount: 1500 });
+    WS = { legal: undefined };
+    const priv = retainerFormHtml({ amount: 1500 });
+    WS = null;
+    return { legal: legal.includes('>Mail Check<'), priv: priv.includes('>Mail Check<') };
+  });
+  ok('the legal retainer recorder offers Mail Check and the private one does not',
+     ret.legal === true && ret.priv === false, JSON.stringify(ret));
+  await page.close();
+}
+
 await browser.close();
 server.close();
 
