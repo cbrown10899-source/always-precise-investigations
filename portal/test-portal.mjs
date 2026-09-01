@@ -16356,7 +16356,10 @@ section('MAIL-CHECK: the sheets say it, the invoice prints it only where and whe
        && seen.note === 'Mailing instructions provided with invoice.', JSON.stringify(seen));
   }
   await page.setViewportSize({ width: 1200, height: 820 });
-  await page.evaluate(() => { TAB = 'sheets'; paint(); });
+  /* The screen draws from SHEETS, which render() loads — and a card's lines
+     draw only once that card is OPEN, which is how an admin actually reads a
+     sheet. */
+  await page.evaluate(async () => { await render(); TAB = 'sheets'; OPEN_SHEET = 'insurance'; paint(); });
   await page.waitForTimeout(400);
   const drawn = await page.evaluate(() => {
     const t = document.body.innerText;
@@ -16399,19 +16402,26 @@ section('MAIL-CHECK: the sheets say it, the invoice prints it only where and whe
      !prv.html.includes('Remit checks to') && prv.remit === null && prv.ctx === 'private');
 
   /* ---- the recording dropdowns ---- */
+  /* THE PAYMENTS REGION ONLY EXISTS OFF DRAFT — the real flow an office
+     follows: line the invoice, mark it ready, then record what arrived. */
   const ddl = await page.evaluate(async ids => {
     const opts = async invId => {
+      await api(`/invoices/${invId}/lines`, { method: 'POST',
+        body: { lines: [{ description: 'Investigation services', amount: 500 }] } });
+      await api(`/invoices/${invId}/status`, { method: 'POST', body: { status: 'ready' } });
       const d = await api(`/invoices/${invId}`);
       INV_OPEN = d.invoice;
       const html = invoiceDetailView();
       const m = html.match(/<select id="ip_method">([\s\S]*?)<\/select>/);
-      return m ? m[1] : '';
+      return m ? m[1] : 'NO-FORM';
     };
     return { ins: await opts(ids.ins), prv: await opts(ids.prv) };
   }, { ins: insInv, prv: prvInv });
   ok('the insurance invoice offers Mail Check, recording the check instrument',
      ddl.ins.includes('>Mail Check<') && /value="check">Mail Check/.test(ddl.ins), ddl.ins.slice(0, 200));
-  ok('the private invoice dropdown is exactly as it was', !ddl.prv.includes('Mail Check'));
+  ok('the private invoice dropdown is exactly as it was',
+     ddl.prv !== 'NO-FORM' && ddl.prv.includes('CHECK') && !ddl.prv.includes('Mail Check'),
+     ddl.prv.slice(0, 120));
 
   const ret = await page.evaluate(() => {
     WS = { legal: { firm_name: 'Mailer & Mailer LLP' } };
