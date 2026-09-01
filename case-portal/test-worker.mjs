@@ -237,6 +237,11 @@ function req(p, { method = 'GET', body, cookie, headers = {}, origin = ORIGIN } 
 }
 const call = (env, p, opts) => worker.fetch(req(p, opts), env);
 async function jsonOf(res) { try { return await res.json(); } catch { return {}; } }
+/* Payments asserted into "this month" must be dated THIS month, whatever
+   month the suite runs in — hardcoded August dates passed for two weeks and
+   then failed on the 1st of September with no code having changed. Days 13,
+   20 and 27 exist in every month. */
+const MDAY = d => `${new Date().toISOString().slice(0, 7)}-${String(d).padStart(2, '0')}`;
 function cookieFrom(res) {
   const sc = res.headers.getSetCookie ? res.headers.getSetCookie()[0] : res.headers.get('Set-Cookie');
   return sc ? sc.split(';')[0] : '';
@@ -2416,7 +2421,7 @@ section("Invoices: the office's money desk, and BILL only collects");
      arithmetic and never a button. */
   ok('a draft takes no payments',
      (await call(env, `/invoices/${iv1.id}/payments`, { method: 'POST', cookie: admin,
-       body: { amount: 100, paid_date: '2026-08-13' } })).status === 400);
+       body: { amount: 100, paid_date: MDAY(13) } })).status === 400);
   ok('paid can never be clicked into being',
      (await call(env, `/invoices/${iv1.id}/status`, { method: 'POST', cookie: admin,
        body: { status: 'paid' } })).status === 400);
@@ -2454,11 +2459,11 @@ section("Invoices: the office's money desk, and BILL only collects");
 
   /* Partial payments: arithmetic decides the status. */
   const p1 = (await jsonOf(await call(env, `/invoices/${iv1.id}/payments`, { method: 'POST', cookie: admin,
-    body: { amount: 1000, paid_date: '2026-08-20', method: 'ach', provider: 'bill',
+    body: { amount: 1000, paid_date: MDAY(20), method: 'ach', provider: 'bill',
             external_payment_id: 'PAY-1' } }))).invoice;
   ok('a first payment leaves it partially paid', p1.status === 'partially_paid' && p1.balance_due === 2900);
   const p2 = (await jsonOf(await call(env, `/invoices/${iv1.id}/payments`, { method: 'POST', cookie: admin,
-    body: { amount: 2900, paid_date: '2026-08-27', method: 'check' } }))).invoice;
+    body: { amount: 2900, paid_date: MDAY(27), method: 'check' } }))).invoice;
   ok('the balance reaching zero is what makes it PAID', p2.status === 'paid' && p2.balance_due === 0);
 
   /* Void keeps the record and locks the doors. */
@@ -2468,7 +2473,7 @@ section("Invoices: the office's money desk, and BILL only collects");
        body: { bill_to: 'someone else' } })).status === 400);
   ok('or paid',
      (await call(env, `/invoices/${priv.id}/payments`, { method: 'POST', cookie: admin,
-       body: { amount: 5, paid_date: '2026-08-13' } })).status === 400);
+       body: { amount: 5, paid_date: MDAY(13) } })).status === 400);
   /* A voided invoice must stop consuming the retainer, or the balance the
      office reads is money the client never actually owed. */
   ok('and it stops drawing down the retainer — the only invoice voided releases all of it',
@@ -2555,7 +2560,7 @@ section('An invoice with money against it cannot be put back to draft');
 
   await call(env, `/invoices/${iv.id}/status`, { method: 'POST', cookie: admin, body: { status: 'ready' } });
   const part = (await jsonOf(await call(env, `/invoices/${iv.id}/payments`, { method: 'POST', cookie: admin,
-    body: { amount: 1000, paid_date: '2026-08-20', method: 'check' } }))).invoice;
+    body: { amount: 1000, paid_date: MDAY(20), method: 'check' } }))).invoice;
   ok('a part payment leaves real money owed', part.status === 'partially_paid' && part.balance_due === 2300);
 
   const before = await jsonOf(await call(env, '/invoices', { cookie: admin }));
@@ -2582,7 +2587,7 @@ section('An invoice with money against it cannot be put back to draft');
 
   // A fully paid one is refused for the same reason.
   await call(env, `/invoices/${iv.id}/payments`, { method: 'POST', cookie: admin,
-    body: { amount: 2300, paid_date: '2026-08-27', method: 'check' } });
+    body: { amount: 2300, paid_date: MDAY(27), method: 'check' } });
   ok('a fully paid invoice is refused too',
      (await call(env, `/invoices/${iv.id}/status`, { method: 'POST', cookie: admin,
        body: { status: 'draft' } })).status === 400);
@@ -7494,9 +7499,9 @@ section('Unit 18 — invoice payment integrity: recorded once, voidable, never r
 
   // ---- DOUBLE SUBMIT / RETRY / DUPLICATE TOKEN ----
   const T = 'tok-double-1';
-  const first = await jsonOf(await pay(a.id, { amount: 400, paid_date: '2026-08-20', method: 'check', client_token: T }));
+  const first = await jsonOf(await pay(a.id, { amount: 400, paid_date: MDAY(20), method: 'check', client_token: T }));
   ok('a payment records', first.ok === true && first.invoice.amount_paid === 400);
-  const second = await jsonOf(await pay(a.id, { amount: 400, paid_date: '2026-08-20', method: 'check', client_token: T }));
+  const second = await jsonOf(await pay(a.id, { amount: 400, paid_date: MDAY(20), method: 'check', client_token: T }));
   ok('the same token again answers success, the idempotent case', second.ok === true && second.duplicate === true);
   ok('and the money is on the ledger exactly once', second.invoice.amount_paid === 400,
      String(second.invoice.amount_paid));
@@ -7509,10 +7514,10 @@ section('Unit 18 — invoice payment integrity: recorded once, voidable, never r
        "SELECT COUNT(*) AS n FROM invoice_events WHERE invoice_id = ? AND action = 'payment_recorded'")
        .bind(a.id).first()).n) === 1);
   /* A DIFFERENT token is a different payment — the key is the caller's word. */
-  const third = await jsonOf(await pay(a.id, { amount: 100, paid_date: '2026-08-20', method: 'check', client_token: 'tok-other' }));
+  const third = await jsonOf(await pay(a.id, { amount: 100, paid_date: MDAY(20), method: 'check', client_token: 'tok-other' }));
   ok('a different token records a genuinely separate payment', third.invoice.amount_paid === 500);
   ok('no token at all still records, as it always did',
-     (await jsonOf(await pay(a.id, { amount: 100, paid_date: '2026-08-20', method: 'check' }))).invoice.amount_paid === 600);
+     (await jsonOf(await pay(a.id, { amount: 100, paid_date: MDAY(20), method: 'check' }))).invoice.amount_paid === 600);
 
   // ---- PARTIAL PAYMENTS ----
   let cur = await get(a.id);
@@ -7552,7 +7557,7 @@ section('Unit 18 — invoice payment integrity: recorded once, voidable, never r
   await lines(b.id, 500);
   await call(env, `/invoices/${b.id}/status`, { method: 'POST', cookie: admin, body: { status: 'ready' } });
   await call(env, `/invoices/${b.id}/status`, { method: 'POST', cookie: admin, body: { status: 'sent_to_bill' } });
-  await pay(b.id, { amount: 500, paid_date: '2026-08-20', method: 'ach' });
+  await pay(b.id, { amount: 500, paid_date: MDAY(20), method: 'ach' });
   let bx = await get(b.id);
   ok('paid in full by arithmetic', bx.display_status === 'paid' && bx.status === 'paid');
   const bpay = bx.payments[0];
@@ -7568,7 +7573,7 @@ section('Unit 18 — invoice payment integrity: recorded once, voidable, never r
   const c = await mk();
   await lines(c.id, 300);
   await call(env, `/invoices/${c.id}/status`, { method: 'POST', cookie: admin, body: { status: 'ready' } });
-  await pay(c.id, { amount: 800, paid_date: '2026-08-20', method: 'check' });
+  await pay(c.id, { amount: 800, paid_date: MDAY(20), method: 'check' });
   const cx = await get(c.id);
   ok('an overpayment is recorded rather than refused', cx.amount_paid === 800);
   ok('and is stated as a CREDIT, not a negative balance',
@@ -8094,7 +8099,7 @@ section('End to end: a private client, sheet to completed');
   await call(env, `/invoices/${made.invoice.id}/status`, { method: 'POST', cookie: admin,
     body: { status: 'sent_to_client' } });
   const paid = await jsonOf(await call(env, `/invoices/${made.invoice.id}/payments`, { method: 'POST',
-    cookie: admin, body: { amount: 1500, paid_date: '2026-08-20', method: 'other',
+    cookie: admin, body: { amount: 1500, paid_date: MDAY(20), method: 'other',
                            notes: 'Retainer received before work began' } }));
   ok('E2E-39: paid by arithmetic, like every invoice here', paid.invoice.status === 'paid');
 
@@ -16078,6 +16083,219 @@ section('Unit 39 — the other records that could be created and never removed')
     { method: 'POST', cookie: admin, body: {} });
   ok('a deleted case refuses content removal through the router chokepoint',
      gated.status === 409 && (await jsonOf(gated)).case_deleted === true, String(gated.status));
+}
+
+
+/* =============================== DASH-DELETE: the dashboard's two trash cans
+
+   The quick intake delete is the one HARD delete this Worker has, and the
+   dependency guard is what reconciles it with the standing "no purge"
+   decision: it can only ever remove an intake's own paperwork, and a case
+   with anything dependent is refused by name toward the recoverable
+   workflow. The feed's trash is the opposite instrument — a marker that
+   never touches a source row, because the feed is composed from money,
+   reports and package events. Both are asserted here, plus the
+   classification completeness the design rests on. */
+
+section('Quick intake delete: only fresh paperwork, and only for an admin');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'ivy', display_name: 'Ivy', role: 'investigator' }))).url;
+  const tok = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'ivy', 'FieldWork2026x')).cookie;
+
+  await ingest(env, { case_no: 'API-DUP', client_name: 'Duplicate Dan', client_email: 'dan@x.test' });
+  await ingest(env, { case_no: 'API-KEEP', client_name: 'Keeper Kim', client_email: 'kim@x.test' });
+  await ingest(env, { case_no: 'API-LGL', assignment: 'legal', law_firm: 'Firm & Firm',
+    attorney_name: 'Ada Att', client_name: 'Firm & Firm' });
+
+  /* The full OWNED footprint, planted on the duplicate so the delete has all
+     of it to remove — and an alert-failure row, which must SURVIVE: alert
+     history is non-deletable, and a failed alert about a duplicate must not
+     make the duplicate immortal. */
+  const now = new Date().toISOString();
+  await env.DB.prepare("INSERT INTO case_status (case_no, stage, set_by, set_at) VALUES ('API-DUP', 'awaiting_client', 1, ?)").bind(now).run();
+  await env.DB.prepare("INSERT INTO lead_status (case_no, status, set_by, set_at) VALUES ('API-DUP', 'contacted', 1, ?)").bind(now).run();
+  await env.DB.prepare("INSERT INTO case_meta (case_no, authorized_hours, updated_by, updated_at) VALUES ('API-DUP', 8, 1, ?)").bind(now).run();
+  await env.DB.prepare("INSERT INTO case_retainer (case_no, retainer_amount, updated_by, updated_at) VALUES ('API-DUP', 1500, 1, ?)").bind(now).run();
+  await env.DB.prepare("INSERT INTO case_phone (case_no, owner_kind, label, number, position, created_at, updated_at) VALUES ('API-DUP', 'client', 'Cell', '(540) 555-0000', 0, ?, ?)").bind(now, now).run();
+  await env.DB.prepare("INSERT INTO profile (kind, name, name_norm, created_by, created_at) VALUES ('private_client', 'Duplicate Dan', 'duplicate dan', 1, ?)").bind(now).run();
+  await env.DB.prepare("INSERT INTO case_profile (case_no, profile_id, contact_name, source, linked_by, linked_at) VALUES ('API-DUP', 1, 'Duplicate Dan', 'manual', 1, ?)").bind(now).run();
+  await env.DB.prepare("INSERT INTO alert_failure (event, case_no, reason, at) VALUES ('intakes', 'API-DUP', 'provider down', ?)").bind(now).run();
+  await env.DB.prepare("INSERT INTO feed_hidden (kind, ref_id, case_no, hidden_by, hidden_at) VALUES ('intake', 999999, 'API-DUP', 1, ?)").bind(now).run();
+
+  const keepBefore = await env.DB.prepare("SELECT payload FROM submissions WHERE case_no = 'API-KEEP'").first();
+
+  ok('unauthenticated is refused',
+     (await call(env, '/cases/API-DUP/intake-delete', { method: 'POST', body: {} })).status === 401);
+  ok('an investigator is refused — consequential deletion is the office\'s',
+     (await call(env, '/cases/API-DUP/intake-delete', { method: 'POST', cookie: inv, body: {} })).status === 403);
+
+  let res = await call(env, '/cases/API-DUP/intake-delete', { method: 'POST', cookie: admin, body: {} });
+  let d = await jsonOf(res);
+  ok('a fresh duplicate deletes', res.status === 200 && d.deleted === true, JSON.stringify(d));
+  ok('and says what it removed', d.removed && d.removed.submissions === 1
+     && d.removed.case_phone === 1 && d.removed.case_profile === 1, JSON.stringify(d.removed));
+
+  const owned = ['submissions', 'legal_intake', 'lead_status', 'case_status', 'case_meta',
+                 'case_retainer', 'case_phone', 'case_profile', 'feed_hidden'];
+  const leftover = [];
+  for (const t of owned) {
+    const r = await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${t} WHERE case_no = 'API-DUP'`).first();
+    if (r.n) leftover.push(`${t}:${r.n}`);
+  }
+  ok('no owned row survives in any owned table', leftover.length === 0, leftover.join(', '));
+  ok('the alert-failure row SURVIVES — alert history is non-deletable',
+     (await env.DB.prepare("SELECT COUNT(*) AS n FROM alert_failure WHERE case_no = 'API-DUP'").first()).n === 1);
+  ok('the profile itself is untouched — the link died, the firm did not',
+     (await env.DB.prepare("SELECT COUNT(*) AS n FROM profile").first()).n === 1);
+  const keepAfter = await env.DB.prepare("SELECT payload FROM submissions WHERE case_no = 'API-KEEP'").first();
+  ok('the unrelated sibling is byte-identical', !!keepAfter && keepAfter.payload === keepBefore.payload);
+  ok('a legal intake\'s structured row goes with it', (await (async () => {
+    const r = await call(env, '/cases/API-LGL/intake-delete', { method: 'POST', cookie: admin, body: {} });
+    const n = (await env.DB.prepare("SELECT COUNT(*) AS n FROM legal_intake WHERE case_no = 'API-LGL'").first()).n;
+    return r.status === 200 && n === 0;
+  })()) === true);
+  ok('deleting a case that never existed is 404',
+     (await call(env, '/cases/API-NOPE/intake-delete', { method: 'POST', cookie: admin, body: {} })).status === 404);
+}
+
+section('Quick intake delete: anything dependent refuses toward the real workflow');
+{
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '50';   // seven fixtures arrive in one minute here
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const now = new Date().toISOString();
+
+  /* Three developed shapes, three refusals — a day, money, and a send. */
+  await ingest(env, { case_no: 'API-DAY', client_name: 'Worked Wendy' });
+  await env.DB.prepare("INSERT INTO case_days (case_no, investigator_id, day_date, start_time, created_at) VALUES ('API-DAY', 1, '2026-08-20', '08:00', ?)").bind(now).run();
+  await ingest(env, { case_no: 'API-PAY', client_name: 'Paid Pat' });
+  await env.DB.prepare("INSERT INTO retainer_payment (case_no, amount, method, recorded_by, recorded_at) VALUES ('API-PAY', 1500, 'check', 1, ?)").bind(now).run();
+  await ingest(env, { case_no: 'API-SENT', client_name: 'Mailed Mel' });
+  await env.DB.prepare("INSERT INTO send_log (case_no, kind, sheet_id, recipient, ok, sent_by, sent_at) VALUES ('API-SENT', 'rate_sheet', 'private_retainer', 'mel@x.test', 1, 1, ?)").bind(now).run();
+
+  for (const [no, word] of [['API-DAY', 'an investigation day'], ['API-PAY', 'a recorded retainer payment'],
+                            ['API-SENT', 'sent rate sheets or intake links']]) {
+    const res = await call(env, `/cases/${no}/intake-delete`, { method: 'POST', cookie: admin, body: {} });
+    const d = await jsonOf(res);
+    ok(`${no} refuses, naming ${word}`,
+       res.status === 409 && d.code === 'intake_developed' && d.error.includes(word)
+       && d.use_case_workflow === true && d.error.includes('Delete case'), JSON.stringify(d).slice(0, 200));
+    ok(`${no} still exists afterward — a refusal deletes nothing`,
+       (await env.DB.prepare('SELECT COUNT(*) AS n FROM submissions WHERE case_no = ?').bind(no).first()).n === 1);
+  }
+
+  /* The hold outranks, before any list is consulted. */
+  await ingest(env, { case_no: 'API-HOLD', client_name: 'Held Hank' });
+  await call(env, '/cases/API-HOLD/hold', { method: 'POST', cookie: admin, body: { reason: 'litigation' } });
+  const held = await call(env, '/cases/API-HOLD/intake-delete', { method: 'POST', cookie: admin, body: {} });
+  ok('a legal hold refuses the quick delete by name',
+     held.status === 409 && (await jsonOf(held)).code === 'legal_hold');
+
+  /* And the chokepoint gates apply unmodified — no carve-out was added. */
+  await ingest(env, { case_no: 'API-TOMB', client_name: 'Tomb Tia' });
+  await call(env, '/cases/API-TOMB/delete', { method: 'POST', cookie: admin, body: { reason: 'x' } });
+  const gated = await call(env, '/cases/API-TOMB/intake-delete', { method: 'POST', cookie: admin, body: {} });
+  ok('a tombstoned case refuses through the router gate — restore first',
+     gated.status === 409 && (await jsonOf(gated)).case_deleted === true);
+  await ingest(env, { case_no: 'API-ARCH', client_name: 'Filed Fay' });
+  await call(env, '/cases/API-ARCH/archive', { method: 'POST', cookie: admin, body: {} });
+  const arch = await call(env, '/cases/API-ARCH/intake-delete', { method: 'POST', cookie: admin, body: {} });
+  ok('an archived case refuses through the router gate — the existing workflow is the answer',
+     arch.status === 409 && (await jsonOf(arch)).case_archived === true);
+
+  /* Owned tables that have not arrived on the live database are skipped, not
+     fatal — the batch names only what exists. */
+  await ingest(env, { case_no: 'API-THIN', client_name: 'Thin Theo' });
+  env.DB.prepare('DROP TABLE IF EXISTS legal_intake').run();
+  env.DB.prepare('DROP TABLE IF EXISTS case_profile').run();
+  env.DB.prepare('DROP TABLE IF EXISTS feed_hidden').run();
+  const thin = await call(env, '/cases/API-THIN/intake-delete', { method: 'POST', cookie: admin, body: {} });
+  ok('a database missing optional tables still deletes a fresh intake', thin.status === 200,
+     String(thin.status));
+}
+
+section('Every case-scoped table is classified for the quick delete');
+{
+  const src = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  const grab = re => new Set([...((src.match(re) || [, ''])[1]).matchAll(/\['([a-z_]+)'/g)].map(m => m[1]));
+  const owned = grab(/const INTAKE_OWNED = \[([\s\S]*?)\n\];/);
+  const blockers = grab(/const INTAKE_BLOCKERS = \[([\s\S]*?)\n\];/);
+  const exemptBlock = (src.match(/const INTAKE_EXEMPT = \{([\s\S]*?)\n\};/) || [, ''])[1];
+  const exempt = new Set([...exemptBlock.matchAll(/([a-z_]+):/g)].map(m => m[1]));
+  ok('the three lists are declared', owned.size >= 8 && blockers.size >= 25 && exempt.size >= 20,
+     `${owned.size}/${blockers.size}/${exempt.size}`);
+
+  const sweepBlock = (src.match(/const DEMO_SWEEP = \[([\s\S]*?)\n\];/) || [, ''])[1];
+  const swept = [...new Set([...sweepBlock.matchAll(/\['([a-z_]+)'\s*,/g)].map(m => m[1]))];
+  const unclassified = swept.filter(t => !owned.has(t) && !blockers.has(t) && !exempt.has(t));
+  ok('EVERY case-scoped table is classified — owned, blocking, or exempt with a reason',
+     unclassified.length === 0, `unclassified: ${unclassified.join(', ')}`);
+  const twice = swept.filter(t => (owned.has(t) + blockers.has(t) + exempt.has(t)) > 1);
+  ok('and no table is classified twice', twice.length === 0, twice.join(', '));
+  ok('feed_hidden is in EXPECTED_TABLES and the sweep',
+     /'feed_hidden',\n\];/.test(src.replace(/ /g, '')) || src.includes("'feed_hidden'"),
+     'feed_hidden missing');
+  ok('the sweep clears feed markers with the case they pointed at',
+     swept.includes('feed_hidden'));
+}
+
+section('Recent activity: a hidden line is a marker, never a touched record');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const link = (await jsonOf(await invite(env, admin, { username: 'ned', display_name: 'Ned', role: 'investigator' }))).url;
+  const tok = new URL(link, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'ned', 'FieldWork2026x')).cookie;
+  const now = new Date().toISOString();
+
+  await ingest(env, { case_no: 'API-FEED', client_name: 'Feed Flo' });
+  await env.DB.prepare("INSERT INTO case_days (case_no, investigator_id, day_date, start_time, created_at) VALUES ('API-FEED', 1, '2026-08-21', '08:00', ?)").bind(now).run();
+  await env.DB.prepare("INSERT INTO retainer_payment (case_no, amount, method, recorded_by, recorded_at) VALUES ('API-FEED', 1500, 'venmo', 1, ?)").bind(now).run();
+
+  let feed = (await jsonOf(await call(env, '/recent-activity', { cookie: admin }))).activity;
+  ok('every feed line carries its kind and its source row id',
+     feed.length >= 3 && feed.every(r => r.kind && r.ref != null), JSON.stringify(feed.map(r => r.kind)));
+  const dayLine = feed.find(r => r.kind === 'day');
+  ok('the planted day is on the feed', !!dayLine);
+
+  ok('hiding needs the office', (await call(env, '/feed/hide',
+     { method: 'POST', cookie: inv, body: { kind: 'day', ref_id: dayLine.ref } })).status === 403);
+  ok('an unknown kind is refused', (await call(env, '/feed/hide',
+     { method: 'POST', cookie: admin, body: { kind: 'meteor', ref_id: 1 } })).status === 400);
+  ok('a row that never existed is 404', (await call(env, '/feed/hide',
+     { method: 'POST', cookie: admin, body: { kind: 'day', ref_id: 987654 } })).status === 404);
+
+  let res = await call(env, '/feed/hide', { method: 'POST', cookie: admin,
+    body: { kind: 'day', ref_id: dayLine.ref } });
+  ok('the office hides a line', res.status === 200 && (await jsonOf(res)).hidden === true);
+  feed = (await jsonOf(await call(env, '/recent-activity', { cookie: admin }))).activity;
+  ok('the line is gone from the feed', !feed.some(r => r.kind === 'day' && r.ref === dayLine.ref));
+  ok('the other lines are untouched', feed.some(r => r.kind === 'payment') && feed.some(r => r.kind === 'intake'));
+  ok('THE DAY ITSELF IS UNTOUCHED — the record stays, only the line went',
+     (await env.DB.prepare("SELECT COUNT(*) AS n FROM case_days WHERE case_no = 'API-FEED'").first()).n === 1);
+  ok('hiding twice is idempotent, not an error', (await call(env, '/feed/hide',
+     { method: 'POST', cookie: admin, body: { kind: 'day', ref_id: dayLine.ref } })).status === 200);
+  ok('the marker records whose case the line described',
+     (await env.DB.prepare("SELECT case_no FROM feed_hidden WHERE kind = 'day' AND ref_id = ?").bind(dayLine.ref).first()).case_no === 'API-FEED');
+
+  /* The missing-table degradation, in BOTH directions: the write refuses
+     naming the workflow, and the feed keeps drawing rather than going quiet. */
+  env.DB.prepare('DROP TABLE feed_hidden').run();
+  const noTable = await call(env, '/feed/hide', { method: 'POST', cookie: admin,
+    body: { kind: 'day', ref_id: dayLine.ref } });
+  ok('without the table the write is 503 naming portal-setup',
+     noTable.status === 503 && (await jsonOf(noTable)).error.includes('portal-setup'));
+  feed = (await jsonOf(await call(env, '/recent-activity', { cookie: admin }))).activity;
+  ok('and the feed still draws, unfiltered rather than empty',
+     Array.isArray(feed) && feed.some(r => r.kind === 'day'), String(feed.length));
 }
 
 /* ------------------------------------------------------------------ report */

@@ -1818,3 +1818,26 @@ CREATE TABLE IF NOT EXISTS case_content_event (
 );
 CREATE INDEX IF NOT EXISTS idx_content_event_case ON case_content_event(case_no, id DESC);
 CREATE INDEX IF NOT EXISTS idx_content_event_ref ON case_content_event(kind, ref_id, id DESC);
+
+/* ------------------------------------------- DASHBOARD FEED HIDES (DASH-DELETE)
+
+   Recent activity is COMPOSED at read time from six real tables — there are no
+   feed rows — and its sources include money, reports and package events, which
+   are non-deletable by the owner's own limits. So "remove from the feed" is a
+   marker here, never a touch on a source row: the line stops rendering, the
+   record it described is untouched, and the marker says who hid it and when.
+
+   `kind` carries no CHECK (the Unit 7 rule — widening a CHECK is the rebuild
+   `schema.sql` cannot do idempotently); the Worker validates it against the
+   feed's own arm list. PRIMARY KEY (kind, ref_id) makes a double tap
+   idempotent. `case_no` is kept so the TEST- sweep can clear markers with the
+   case they pointed at, and so the record answers whose case the line was
+   about after the fact. */
+CREATE TABLE IF NOT EXISTS feed_hidden (
+  kind      TEXT    NOT NULL,   -- intake | day | report | evidence | payment | package
+  ref_id    INTEGER NOT NULL,   -- the source row's own id in that arm's table
+  case_no   TEXT    NOT NULL,
+  hidden_by INTEGER REFERENCES users(id),
+  hidden_at TEXT    NOT NULL,
+  PRIMARY KEY (kind, ref_id)
+);

@@ -2028,38 +2028,71 @@ async function caseSummary(env, user) {
    and deleted cases are excluded the same way every dashboard read excludes
    them. Admin-only, like the dashboard that draws it: the feed spans every
    case, which is exactly what an investigator's view must never do. */
+/* The feed's arm vocabulary IS the hide vocabulary (DASH-DELETE): a line is
+   addressed by the arm it came from plus the source row's own id, and
+   `/feed/hide` validates the kind against this map — which table the id must
+   exist in, and how to learn whose case the line described. `package` is the
+   one arm whose case number lives on the parent build. */
+const FEED_KINDS = {
+  intake:   'SELECT case_no FROM submissions WHERE id = ?',
+  day:      'SELECT case_no FROM case_days WHERE id = ?',
+  report:   'SELECT case_no FROM case_reports WHERE id = ?',
+  evidence: 'SELECT case_no FROM case_evidence WHERE id = ?',
+  payment:  'SELECT case_no FROM retainer_payment WHERE id = ?',
+  package:  `SELECT b.case_no FROM build_events e
+               JOIN case_builds b ON b.id = e.build_id WHERE e.id = ?`,
+};
+
 async function recentActivity(env) {
   const hidden = await hiddenCases(env);
   const missing = await missingTables(env);
+  /* Hidden lines are excluded IN EACH ARM'S SQL, before that arm's LIMIT, so
+     hiding the ten newest lines of one kind surfaces older ones instead of
+     emptying the arm. Guarded the way search guards its case_deleted
+     subquery: when the table has not arrived, the feed goes unfiltered — an
+     arm erroring on a missing table would come back [] through q()'s catch,
+     which draws as a quiet week, the one direction this page must never
+     fail in. */
+  const canHide = !missing.includes('feed_hidden');
+  const hide = (kind, idCol) => canHide
+    ? `AND NOT EXISTS (SELECT 1 FROM feed_hidden h WHERE h.kind = '${kind}' AND h.ref_id = ${idCol})`
+    : '';
   const per = 10, out = [];
   const push = (rows, kind, label) => {
     for (const r of rows || []) {
       if (!r.at || hidden.has(r.case_no)) continue;
-      out.push({ at: r.at, kind, case_no: r.case_no, detail: label(r) });
+      /* `ref` is the source row's own id — what the trash control on the page
+         sends back, and the only identity a composed line has. */
+      out.push({ at: r.at, kind, ref: r.id, case_no: r.case_no, detail: label(r) });
     }
   };
   const q = async sql => { try { return (await env.DB.prepare(sql).all()).results; } catch { return []; } };
 
-  push(await q(`SELECT case_no, created_at AS at, kind FROM submissions
+  push(await q(`SELECT id, case_no, created_at AS at, kind FROM submissions
+                 WHERE 1 = 1 ${hide('intake', 'submissions.id')}
                  ORDER BY id DESC LIMIT ${per}`),
     'intake', r => r.kind === 'claims' ? 'Carrier assignment received' : 'Intake received');
-  push(await q(`SELECT case_no, created_at AS at, end_time FROM case_days
+  push(await q(`SELECT id, case_no, created_at AS at, end_time FROM case_days
+                 WHERE 1 = 1 ${hide('day', 'case_days.id')}
                  ORDER BY id DESC LIMIT ${per}`),
     'day', r => r.end_time ? 'Investigation day ended' : 'Investigation day started');
-  push(await q(`SELECT case_no, status_at AS at, status FROM case_reports
-                 WHERE status_at IS NOT NULL ORDER BY id DESC LIMIT ${per}`),
+  push(await q(`SELECT id, case_no, status_at AS at, status FROM case_reports
+                 WHERE status_at IS NOT NULL ${hide('report', 'case_reports.id')}
+                 ORDER BY id DESC LIMIT ${per}`),
     'report', r => `Report ${r.status === 'needs_revision' ? 'sent back' : r.status}`);
-  push(await q(`SELECT case_no, uploaded_at AS at, filename, r2_key FROM case_evidence
-                 WHERE deleted_at IS NULL ORDER BY id DESC LIMIT ${per}`),
+  push(await q(`SELECT id, case_no, uploaded_at AS at, filename, r2_key FROM case_evidence
+                 WHERE deleted_at IS NULL ${hide('evidence', 'case_evidence.id')}
+                 ORDER BY id DESC LIMIT ${per}`),
     'evidence', r => `${String(r.r2_key || '').startsWith('dropbox:') ? 'Filed to Dropbox' : 'Media added'} — ${r.filename}`);
   if (!missing.includes('retainer_payment')) {
-    push(await q(`SELECT case_no, recorded_at AS at FROM retainer_payment
+    push(await q(`SELECT id, case_no, recorded_at AS at FROM retainer_payment
+                   WHERE 1 = 1 ${hide('payment', 'retainer_payment.id')}
                    ORDER BY id DESC LIMIT ${per}`),
       'payment', () => 'Retainer payment recorded');
   }
-  push(await q(`SELECT b.case_no, e.at AS at, e.action FROM build_events e
+  push(await q(`SELECT e.id AS id, b.case_no, e.at AS at, e.action FROM build_events e
                  JOIN case_builds b ON b.id = e.build_id
-                WHERE e.action IN ('finalized', 'delivered')
+                WHERE e.action IN ('finalized', 'delivered') ${hide('package', 'e.id')}
                 ORDER BY e.id DESC LIMIT ${per}`),
     'package', r => r.action === 'delivered' ? 'Package delivered' : 'Package finalized');
 
@@ -11014,6 +11047,140 @@ async function createDemoCase(env, user) {
      the opposite of the truth. */
 const DEMO_LIKE = 'TEST-%';
 
+/* =============================== DASH-DELETE: QUICK DELETE FOR FRESH INTAKES
+
+   The owner's quick delete is a HARD delete, and the dependency guard is what
+   makes that compatible with the standing "Delete Case is a tombstone, no
+   purge" decision: it refuses — naming what it found — the moment the intake
+   carries ANY dependent record, so the only thing it can ever destroy is the
+   intake's own paperwork. The dictated confirmation ("This cannot be undone")
+   is then TRUE, which is the standard every screen here is held to. A
+   developed case's answer is the existing workflow: tombstone delete or
+   archive, both recoverable.
+
+   EVERY case-scoped table is classified into exactly one of the three lists
+   below, and a test derives the case-scoped inventory from DEMO_SWEEP and
+   fails on an unclassified table — the sweep-completeness pattern applied a
+   second time, so a future table cannot quietly escape the guard. */
+
+/* What intake creation and lead-desk handling themselves write — the only
+   rows the quick delete removes. Each statement is skipped when its table has
+   not arrived on the live database; submissions goes LAST (the parent every
+   view joins through); the whole set runs as one D1 batch, one transaction. */
+const INTAKE_OWNED = [
+  ['feed_hidden',   'DELETE FROM feed_hidden   WHERE case_no = ?1'],
+  ['case_profile',  'DELETE FROM case_profile  WHERE case_no = ?1'],
+  ['case_phone',    'DELETE FROM case_phone    WHERE case_no = ?1'],
+  ['case_retainer', 'DELETE FROM case_retainer WHERE case_no = ?1'],
+  ['case_meta',     'DELETE FROM case_meta     WHERE case_no = ?1'],
+  ['case_status',   'DELETE FROM case_status   WHERE case_no = ?1'],
+  ['lead_status',   'DELETE FROM lead_status   WHERE case_no = ?1'],
+  ['legal_intake',  'DELETE FROM legal_intake  WHERE case_no = ?1'],
+  ['submissions',   'DELETE FROM submissions   WHERE case_no = ?1'],
+];
+
+/* A row in ANY of these means the intake became a real case: refuse and name
+   it. Children that cannot exist without one of these parents (invoice lines,
+   build items, activity media, day pauses…) are blocked through the parent. */
+const INTAKE_BLOCKERS = [
+  ['case_days',            'an investigation day'],
+  ['activity_log',         'activity entries'],
+  ['activity_voice_event', 'voice activity events'],
+  ['case_evidence',        'case media'],
+  ['photo_stamp',          'a timestamped photo record'],
+  ['video_stamp',          'a timestamped video record'],
+  ['evidence_integrity',   'integrity records'],
+  ['case_reports',         'a report'],
+  ['case_day_summary',     'a daily summary'],
+  ['case_day_end',         'a day-end record'],
+  ['invoices',             'an invoice'],
+  ['case_builds',          'a client package'],
+  ['retainer_payment',     'a recorded retainer payment'],
+  ['retainer_payment_token', 'a retainer payment in progress'],
+  ['retainer_receipt',     'a recorded retainer receipt'],
+  ['send_log',             'sent rate sheets or intake links'],
+  ['payment_send',         'sent payment instructions'],
+  ['case_expenses',        'expenses'],
+  ['case_tasks',           'tasks'],
+  ['case_notes',           'internal notes'],
+  ['case_comms',           'client communications'],
+  ['case_subjects',        'curated subject records'],
+  ['case_offers',          'an assignment offer'],
+  ['case_closure',         'a closing record'],
+  ['case_details',         'curated case details'],
+  ['case_settings',        'case billing settings'],
+  ['case_retention',       'a retention setting'],
+  ['retention_event',      'retention history'],
+  ['case_content_removed', 'content-removal records'],
+  ['case_content_event',   'content-removal history'],
+  ['storage_failure',      'storage-failure records'],
+];
+
+/* Neither deleted nor blocking, each with its reason on the record. The
+   completeness test reads these keys. */
+const INTAKE_EXEMPT = {
+  alert_failure: 'alert history is non-deletable, and a failed alert about a duplicate must not make it immortal',
+  case_archive: 'the archived gate refuses this route before any list is consulted',
+  case_deleted: 'the deleted gate refuses this route before any list is consulted',
+  legal_hold: 'the hold refusal runs before any list is consulted',
+  activity_media: 'child of activity_log', activity_removed: 'child of activity_log',
+  activity_source: 'child of activity_log',
+  case_day_pauses: 'child of case_days',
+  report_versions: 'child of case_reports',
+  build_items: 'child of case_builds', build_reports: 'child of case_builds',
+  build_summary: 'child of case_builds', build_custom: 'child of case_builds',
+  build_events: 'child of case_builds', build_template: 'child of case_builds',
+  external_files: 'child of case_evidence',
+  invoice_lines: 'child of invoices', invoice_payments: 'child of invoices',
+  invoice_events: 'child of invoices', invoice_retainer: 'child of invoices',
+  invoice_payment_token: 'child of invoices', invoice_payment_void: 'child of invoices',
+  retainer_payment_void: 'child of retainer_payment',
+  subject_vehicles: 'child of case_subjects',
+};
+
+async function intakeDelete(env, user, caseNo) {
+  const sub = await env.DB.prepare(
+    'SELECT case_no, client_name FROM submissions WHERE case_no = ?').bind(caseNo).first();
+  if (!sub) return json({ error: 'not found' }, 404);
+
+  /* THE HOLD OUTRANKS (Unit 17, decision 5) — and a hard delete is the most
+     destructive act this Worker has, so it is refused first and by name. */
+  const hold = await activeHold(env, caseNo);
+  if (hold) {
+    return json({ error: 'This case is under a legal hold — deleting is blocked until the '
+      + 'hold is released.', code: 'legal_hold' }, 409);
+  }
+
+  const missing = await missingTables(env);
+  const arms = INTAKE_BLOCKERS.filter(([t]) => !missing.includes(t));
+  /* One statement, constant shape: a UNION of EXISTS probes, one per present
+     blocker table. Nothing here grows with the customer's data. */
+  const sql = arms.map(([t]) =>
+    `SELECT '${t}' AS t FROM (SELECT 1) WHERE EXISTS (SELECT 1 FROM ${t} WHERE case_no = ?1)`)
+    .join(' UNION ALL ');
+  const found = sql ? (await env.DB.prepare(sql).bind(caseNo).all()).results.map(r => r.t) : [];
+  if (found.length) {
+    const what = INTAKE_BLOCKERS.filter(([t]) => found.includes(t)).map(([, w]) => w);
+    return json({
+      error: `${caseNo} has become a real case — it carries ${what.slice(0, 4).join(', ')}`
+        + `${what.length > 4 ? ` and ${what.length - 4} more kinds of record` : ''}. `
+        + 'The quick delete is for fresh intakes only. Use Delete case on the case workspace '
+        + '(Billing & closing), which removes it from every list recoverably and destroys nothing.',
+      code: 'intake_developed', dependents: found, use_case_workflow: true,
+    }, 409);
+  }
+
+  const owned = INTAKE_OWNED.filter(([t]) => !missing.includes(t));
+  const results = await env.DB.batch(owned.map(([, q]) => env.DB.prepare(q).bind(caseNo)));
+  const removed = {};
+  owned.forEach(([t], i) => {
+    const n = results[i] && results[i].meta ? results[i].meta.changes || 0 : 0;
+    if (n) removed[t] = n;
+  });
+  return json({ ok: true, case_no: caseNo, deleted: true, removed,
+                client_name: sub.client_name || null });
+}
+
 const DEMO_SWEEP = [
   /* --- children, addressed through their parent's id --- */
   ['activity_media',        'DELETE FROM activity_media WHERE entry_id IN (SELECT id FROM activity_log WHERE case_no LIKE ?)'],
@@ -11049,6 +11216,7 @@ const DEMO_SWEEP = [
   ['legal_hold',            'DELETE FROM legal_hold WHERE case_no LIKE ?'],
   ['retention_event',       'DELETE FROM retention_event WHERE case_no LIKE ?'],
   ['alert_failure',         'DELETE FROM alert_failure WHERE case_no LIKE ?'],
+  ['feed_hidden',           'DELETE FROM feed_hidden WHERE case_no LIKE ?'],
   /* UNIT 39. Both carry their own case_no and neither carries a foreign key —
      `ref_id` is deliberately not one, because the table is keyed by (kind,
      ref_id) across eight different parents. So they need no ordering against
@@ -12551,7 +12719,7 @@ const EXPECTED_TABLES = [
   'profile', 'profile_contact', 'profile_phone', 'case_profile',
   'build_template', 'evidence_integrity', 'case_day_summary', 'storage_failure',
   'case_retention', 'legal_hold', 'retention_event', 'case_day_end',
-  'case_content_removed', 'case_content_event',
+  'case_content_removed', 'case_content_event', 'feed_hidden',
 ];
 
 async function missingTables(env) {
@@ -12915,6 +13083,37 @@ async function route(request, env) {
   if (p === '/recent-activity' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return json({ activity: await recentActivity(env) });
+  }
+
+  /* DASH-DELETE — remove one line from the feed above. A MARKER, never a touch
+     on a source row: the feed is composed from intakes, days, reports, media,
+     money and package events, and money, sends and audit rows are non-deletable
+     by the owner's own limits. So "delete this entry" here can only ever mean
+     "stop drawing it", the underlying record stays exactly where it was, and
+     the marker keeps who hid it and when. Idempotent by PRIMARY KEY — a double
+     tap on a flaky connection is not an error the office has to interpret. */
+  if (p === '/feed/hide' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if ((await missingTables(env)).includes('feed_hidden')) {
+      return json({ error: 'Hiding feed entries is not set up on this database yet. Run the '
+                         + 'portal-setup workflow once and try again.' }, 503);
+    }
+    const body = await readJson(request);
+    const kind = String(body.kind || '');
+    const refId = Math.floor(Number(body.ref_id));
+    if (!FEED_KINDS[kind]) return json({ error: 'Unknown feed entry kind.' }, 400);
+    if (!Number.isFinite(refId) || refId <= 0) {
+      return json({ error: 'ref_id must be the feed row\'s id.' }, 400);
+    }
+    /* The row must exist, and whose case the line described is recorded from
+       the row itself — never from anything the page sent. */
+    const row = await env.DB.prepare(FEED_KINDS[kind]).bind(refId).first();
+    if (!row) return json({ error: 'That feed entry no longer exists.' }, 404);
+    await env.DB.prepare(
+      `INSERT INTO feed_hidden (kind, ref_id, case_no, hidden_by, hidden_at)
+       VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(kind, ref_id) DO NOTHING`)
+      .bind(kind, refId, row.case_no, user.id, nowIso()).run();
+    return json({ ok: true, kind, ref_id: refId, case_no: row.case_no, hidden: true });
   }
 
   /* The case workspace. Every route below re-checks that this caller may open
@@ -14099,6 +14298,16 @@ async function route(request, env) {
      It differs from archive in REACH, not in destructiveness: a deleted case
      leaves every ordinary view including Archived, and comes back only under
      the Deleted lens — where an admin can restore it. */
+  /* DASH-DELETE — the quick delete on the Leads desk. Matches no gate
+     carve-out on purpose: a tombstoned case refuses it (restore first) and an
+     archived one refuses it (the existing workflow is the answer), through
+     the chokepoint above rather than checks repeated here. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/intake-delete$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return intakeDelete(env, user, m[1]);
+  }
+
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/delete$/);
   if (m && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
