@@ -5477,7 +5477,13 @@ section('Voice mode: explicit, looping, and never filing what it is unsure of');
 
   /* §3 + §9 — a recognized command becomes a REAL entry, and confirms briefly. */
   await say('no change at residence');
-  ok('the command files a real activity entry', (await entries()) === before + 1);
+  let filedCount = await entries();
+  for (let i = 0; i < 20 && filedCount !== before + 1; i++) {
+    await page.waitForTimeout(200);
+    filedCount = await entries();
+  }
+  ok('the command files a real activity entry', filedCount === before + 1,
+     `${before} -> ${filedCount}`);
   /* THE ENTRY JUST FILED IS AT THE END. WS.activity is chronological and
      oldest-first since Unit 38, so "the one I just spoke" is the last element
      rather than the first — these six reads used to index from the front. */
@@ -11516,7 +11522,7 @@ section('Recent activity rows are doors, and stacked records read on a phone');
   ok('the feed carries real events from this suite\'s own work',
      await page.locator('.ra-row').count() >= 3,
      String(await page.locator('.ra-row').count()));
-  const row = page.locator('.ra-row').first();
+  const row = page.locator('.ra-row .ra-open').first();
   const caseNo = await row.evaluate(el => el.dataset.case);
   await row.click();
   await page.waitForTimeout(600);
