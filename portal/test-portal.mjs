@@ -16796,33 +16796,40 @@ section('LEGAL-SERVICES: the wizard generates the sheet from the service, and a 
      lead.v === 'locate' && lead.retainerBox === false, JSON.stringify(lead));
   await page.evaluate(() => { SHEET_WIZ = null; paint(); });
 
-  /* ---- the case money block: Fee (flat) $250; a historical case unchanged ---- */
-  const money = await page.evaluate(async () => {
-    const statusCard = () => {
+  /* ---- the case money block: Fee (flat) $250; a historical case unchanged ----
+     Rendered by the page's own state and paint(), with the api errors CAPTURED
+     rather than lost to openCase's alert-and-return — a failed read must name
+     itself in the test evidence, not draw as a missing card. */
+  const openStatusCard = async caseNo => page.evaluate(async no => {
+    try{
+      const [sub, ws] = await Promise.all([
+        api('/submissions/' + no), api('/cases/' + no + '/workspace')]);
+      WS = { ...ws, submission: sub.submission };
+      WS_CASE = no; WS_TAB = 'overview'; VIEW = 'case'; paint();
       const c = [...document.querySelectorAll('.ovcard')]
         .find(x => x.innerText.includes('Case status'));
-      return c ? c.innerText : 'NO-CARD';
-    };
-    await openCase('API-LSV-F', 'overview');
-    await new Promise(r => setTimeout(r, 500));
-    const fixed = statusCard();
-    const fixedPricing = WS && WS.authorization && WS.authorization.legal_pricing;
-    await openCase('API-LSV-H', 'overview');
-    await new Promise(r => setTimeout(r, 500));
-    return { fixed, fixedPricing, hist: statusCard() };
-  });
+      return { card: c ? c.innerText : 'NO-CARD',
+               pricing: WS.authorization && WS.authorization.legal_pricing };
+    }catch(e){ return { card: 'API-ERROR: ' + (e.message || e), pricing: null }; }
+  }, caseNo);
+  const moneyF = await openStatusCard('API-LSV-F');
   ok('a fixed case\'s Overview reads Fee (flat) $250 and never Retainer',
-     /Fee \(flat\)/.test(money.fixed) && /\$250\b/.test(money.fixed)
-     && !/Retainer/.test(money.fixed), money.fixed.slice(0, 300));
+     /Fee \(flat\)/.test(moneyF.card) && /\$250\b/.test(moneyF.card)
+     && !/Retainer/.test(moneyF.card), moneyF.card.slice(0, 300));
   ok('and its record knows the service and model',
-     money.fixedPricing && money.fixedPricing.service === 'locate'
-     && money.fixedPricing.model === 'fixed', JSON.stringify(money.fixedPricing));
+     moneyF.pricing && moneyF.pricing.service === 'locate'
+     && moneyF.pricing.model === 'fixed', JSON.stringify(moneyF.pricing));
+  const moneyH = await openStatusCard('API-LSV-H');
   ok('a historical legal case still reads Retainer $1,500 — unchanged',
-     /Retainer/.test(money.hist) && /\$1,500\b/.test(money.hist)
-     && !/Fee \(flat\)/.test(money.hist), money.hist.slice(0, 300));
+     /Retainer/.test(moneyH.card) && /\$1,500\b/.test(moneyH.card)
+     && !/Fee \(flat\)/.test(moneyH.card), moneyH.card.slice(0, 300));
 
-  /* ---- the Quick Legal form offers the optional service, defaulting to none ---- */
+  /* ---- the Quick Legal form offers the optional service, defaulting to none ----
+     The case view is left FIRST: paint() routes to the case whenever
+     VIEW === 'case', which is exactly how the first run of this section drew
+     a case page under a #nl_lsvc probe and reported the select missing. */
   const quick = await page.evaluate(async () => {
+    VIEW = 'list'; WS_CASE = ''; WS = null;
     TAB = 'newlead'; NL = { kind: 'legal', err: '', v: {} }; paint();
     await new Promise(r => setTimeout(r, 150));
     const s = document.querySelector('#nl_lsvc');
