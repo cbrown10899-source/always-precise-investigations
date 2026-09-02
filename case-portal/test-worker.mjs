@@ -17025,6 +17025,159 @@ section('Process Service — standard and custom flat fee, and history keeps its
   globalThis.fetch = realFetch;
 }
 
+/* ============== API ASSISTANT — Beta dry-run (ASSISTANT.md, Units 1–3) =====
+   Reads, navigation and refusals: every answer from live data or the
+   registry, every consequential verb refused by name, and NOTHING sent. */
+section('API Assistant — Beta reads, role-scoped navigation, refusals by name');
+{
+  const realFetch = globalThis.fetch;
+  let mailed = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) { mailed = JSON.parse(init.body); return new Response('{"id":"re_1"}', { status: 200 }); }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  let res = await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' });
+  const token = new URL((await jsonOf(res)).url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const cmd = (cookie, text, context = {}) => call(env, '/assistant/command',
+    { method: 'POST', cookie, body: { text, context } });
+
+  /* ---- /assistant/state: the Beta facts and the role's own registry ---- */
+  let d = await jsonOf(await call(env, '/assistant/state', { cookie: admin }));
+  ok('Beta is on, the banner is the exact dry-run sentence, the provider is honestly not configured',
+     d.beta === true
+     && d.banner === 'ASSISTANT BETA — DRY RUN MODE. No external client messages or consequential actions will be sent.'
+     && d.provider.ready === false && d.provider.reason === 'not_configured');
+  ok('the admin registry offers the admin doors',
+     ['dashboard', 'leads', 'invoices', 'sheets', 'settings'].every(id => d.nav.some(n => n.id === id)));
+  d = await jsonOf(await call(env, '/assistant/state', { cookie: dana }));
+  ok('an investigator\'s registry carries no admin door at all — the paying side never reaches their browser',
+     !d.nav.some(n => ['dashboard', 'leads', 'invoices', 'sheets', 'staff', 'audit', 'settings', 'profiles', 'delivery', 'newlead'].includes(n.id))
+     && ['today', 'myreports', 'cases', 'search'].every(id => d.nav.some(n => n.id === id)),
+     JSON.stringify(d.nav.map(n => n.id)));
+  ok('the provider needs BOTH env values before it answers ready',
+     (env.ASSISTANT_PROVIDER = 'anthropic',
+      (await jsonOf(await call(env, '/assistant/state', { cookie: admin }))).provider.ready === false)
+     && (env.ASSISTANT_API_KEY = 'k',
+      (await jsonOf(await call(env, '/assistant/state', { cookie: admin }))).provider.ready === true));
+  delete env.ASSISTANT_PROVIDER; delete env.ASSISTANT_API_KEY;
+
+  /* ---- navigation: registry ids, never invented routes ---- */
+  let j = await jsonOf(await cmd(admin, 'Take me to invoices'));
+  ok('“take me to invoices” navigates to the Billing tab by registry id',
+     j.kind === 'navigate' && j.navigate.kind === 'tab' && j.navigate.id === 'invoices');
+  j = await jsonOf(await cmd(admin, 'open billing'));
+  ok('“open billing” resolves the same door', j.navigate && j.navigate.id === 'invoices');
+  j = await jsonOf(await cmd(admin, 'Take me to the intakes'));
+  ok('“take me to the intakes” opens Leads & Intakes', j.navigate && j.navigate.id === 'leads');
+  j = await jsonOf(await cmd(admin, 'go back to the dashboard'));
+  ok('“go back to the dashboard” navigates home', j.navigate && j.navigate.id === 'dashboard');
+  j = await jsonOf(await cmd(dana, 'Take me to billing'));
+  ok('an investigator asking for an admin door is NOT navigated anywhere',
+     j.kind !== 'navigate' && !j.navigate, JSON.stringify(j).slice(0, 160));
+
+  /* ---- where am I / explain ---- */
+  j = await jsonOf(await cmd(admin, 'Where am I?', { route: 'invoices' }));
+  ok('“where am I?” explains the current section from the portal\'s own write-up',
+     j.kind === 'explain' && /Billing/.test(j.text) && /paid is what a zero balance means/i.test(j.text));
+  j = await jsonOf(await cmd(admin, 'Explain this page', { route: 'sheets' }));
+  ok('“explain this page” explains Rate Sheets', /Rate Sheets/.test(j.text) && /explicit act/i.test(j.text));
+  j = await jsonOf(await cmd(admin, 'What is this page for?', { route: 'case', case_no: 'API-ANY' }));
+  ok('on a case, the explanation is the workspace\'s', /case workspace/i.test(j.text));
+
+  /* ---- Beta enforcement: consequential verbs refused BY NAME, nothing sent ---- */
+  mailed = null;
+  for (const [text, what] of [
+    ['Send the rate sheet to the firm', /sending/],
+    ['Email them the invoice', /sending/],
+    ['Record a payment of $250 on this case', /recording payments/],
+    ['Delete this intake', /deleting/],
+    ['Archive this case', /archiving/],
+    ['Close the case', /closing cases/],
+    ['Assign Dana to this case', /assigning/],
+    ['Change the price to $99', /changing pricing/],
+  ]) {
+    j = await jsonOf(await cmd(admin, text, { route: 'case', case_no: 'API-ANY' }));
+    ok(`“${text}” is refused by name`,
+       j.kind === 'refused' && j.code === 'assistant_beta' && what.test(j.text), JSON.stringify(j).slice(0, 160));
+  }
+  ok('and no email left the building for any of them', mailed === null);
+  j = await jsonOf(await cmd(admin, 'Why can\'t I delete this intake?'));
+  ok('a QUESTION about deleting is not a delete — it is answered, not refused',
+     j.kind !== 'refused');
+
+  /* ---- live status: the answer is the database, not memory ---- */
+  j = await jsonOf(await cmd(admin, 'Anything new?'));
+  ok('with nothing on the desk, “anything new?” says exactly that',
+     /No new intakes/.test(j.text));
+  await ingest(env, { case_no: 'API-AST-1', assignment: 'legal', legal_service: 'process',
+    firm_name: 'Marks & Harrison', attorney_name: 'M. Harrison', client_name: 'Marks & Harrison',
+    objective: 'Serve' });
+  j = await jsonOf(await cmd(admin, 'Has any intake forms shown up yet?'));
+  ok('a fresh intake appears the moment it exists, with its service named',
+     /1 new intake is/.test(j.text) && j.card && j.card[0].case_no === 'API-AST-1'
+     && /Process Service/.test(j.card[0].line)
+     && j.actions && j.actions[0].navigate.id === 'leads', JSON.stringify(j).slice(0, 300));
+  j = await jsonOf(await cmd(dana, 'anything new?'));
+  ok('an investigator is not shown the intake desk',
+     !j.card && /admin desk/i.test(j.text));
+  j = await jsonOf(await cmd(admin, 'What should I do?'));
+  ok('“what should I do?” recommends reviewing the newest intake, by name',
+     /RECOMMENDED NEXT STEP/.test(j.text) && /API-AST-1/.test(j.text));
+  j = await jsonOf(await cmd(admin, 'What should I do?', { route: 'case', case_no: 'API-AST-1' }));
+  ok('on a case, the recommendation is the case\'s own next step',
+     /RECOMMENDED NEXT STEP/.test(j.text) && /No investigation day has run yet/.test(j.text));
+  await call(env, '/leads/API-AST-1/status', { method: 'POST', cookie: admin,
+    body: { status: 'converted' } });
+  j = await jsonOf(await cmd(admin, 'anything new?'));
+  ok('a converted intake leaves the answer — live data, never a cached claim',
+     /No new intakes/.test(j.text));
+
+  /* ---- find and open ---- */
+  await ingest(env, { case_no: 'API-AST-2', client_name: 'Vanessa E. Hicks',
+    subject_name: 'R. Subject', objective: 'Locate' });
+  j = await jsonOf(await cmd(admin, "Open Vanessa's case"));
+  ok('one safe match navigates straight to the case',
+     j.kind === 'navigate' && j.navigate.kind === 'case' && j.navigate.case_no === 'API-AST-2',
+     JSON.stringify(j).slice(0, 200));
+  await ingest(env, { case_no: 'API-AST-3', client_name: 'Vanessa Other', objective: 'Second' });
+  j = await jsonOf(await cmd(admin, 'find Vanessa'));
+  ok('two matches ask which one, never guessing',
+     j.kind === 'choices' && j.card.length === 2);
+  j = await jsonOf(await cmd(admin, 'find zzz-nobody-here'));
+  ok('no match says so and offers the Search screen',
+     /Nothing in the portal matched/.test(j.text) && j.actions[0].navigate.id === 'search');
+  j = await jsonOf(await cmd(dana, 'find Vanessa'));
+  ok('an investigator\'s find is scoped to their own cases — nothing leaks through the Assistant',
+     /Nothing in the portal matched/.test(j.text));
+
+  /* ---- the honest fallback ---- */
+  j = await jsonOf(await cmd(admin, 'please reticulate the splines'));
+  ok('an unrecognized phrasing says what Beta understands and that no provider is guessing',
+     j.kind === 'help' && /not connected/.test(j.text));
+
+  /* ---- source pins: the read-only promise, counted not promised ---- */
+  {
+    const src = fs.readFileSync(new URL('./worker.js', import.meta.url), 'utf8');
+    const blk = src.slice(src.indexOf('API ASSISTANT — BETA / DRY RUN'),
+                          src.indexOf('async function route(request, env) {'));
+    ok('the Assistant block is a real block and calls sendMail exactly never',
+       blk.length > 5000 && !blk.includes('sendMail('));
+    ok('and contains no INSERT, UPDATE or DELETE — reads only, structurally',
+       !/\b(INSERT INTO|UPDATE |DELETE FROM)\b/.test(blk),
+       (blk.match(/\b(INSERT INTO|UPDATE |DELETE FROM)\b.{0,40}/g) || []).join(' | '));
+    ok('no assistant route writes app_config — Live Mode cannot be born here',
+       !blk.includes('app_config'));
+  }
+
+  globalThis.fetch = realFetch;
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

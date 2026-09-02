@@ -64,7 +64,8 @@ every merge:**
 
 | Unit | PR / SHA | State |
 | --- | --- | --- |
-| **Service-aware Legal** — five services, three pricing models (`LEGAL-SERVICES.md`) | in flight on `claude/app-crashes-lockups-debug-psf6zd` at `cb915cd` | worker 2991/0 · intake 558/0 · deploy guard 86/0 · visitor 47/0 · e2e gate running at handoff — see the PR for the final state |
+| **API Assistant Units 1–3** — shell + Beta enforcement, navigation, live status (`ASSISTANT.md`) | in flight on the branch | worker 3045/0 · intake 558/0 · deploy guard 86/0 · visitor 47/0 · e2e running at this write |
+| **Service-aware Legal + Process Service standard/custom flat fee** (`LEGAL-SERVICES.md` D1–D14) | #260 `6770609` | ✅ **DEPLOYED** — site + Worker both `success` on `67706099` at 05:28Z. Suites at merge: worker 3009/0 · e2e 2813/0 · intake 558/0 · deploy guard 86/0 · visitor 47/0 |
 | **Bill.com prepared, gated, connected to nothing** (`BILLCOM.md`) | #259 `a2ce137` | ✅ DEPLOYED — both workflows green at `a2ce137a`. **Stays dark until the owner says the account is ready** |
 | **Three jobs**: live intake-delete 500 fix (API-20260901-3207, the `?1` UNION-bind class), Mail Check tickable send option, queue reconciliation | #258 `14ba2d2` | ✅ DEPLOYED |
 | **Mail Check** for Legal + Insurance (`MAIL-CHECK.md`) | #257 `ede24f6` | ✅ DEPLOYED. Remittance address still **owner-owed** at Settings → Invoice defaults |

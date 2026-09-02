@@ -16845,6 +16845,137 @@ section('LEGAL-SERVICES: the wizard generates the sheet from the service, and a 
   await page.close();
 }
 
+section('API ASSISTANT — the dock, the doors, the Beta banner, and real navigation');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* ---- the sidebar door, both the item and the badge ---- */
+  const nav = await page.evaluate(() => {
+    const b = document.querySelector('[data-act="asstOpen"]');
+    return { present: !!b, text: b ? b.innerText : '',
+             beforeSurv: b ? !!(b.compareDocumentPosition(document.querySelector('.side-surv'))
+               & Node.DOCUMENT_POSITION_FOLLOWING) : null };
+  });
+  ok('the sidebar carries ✨ Assistant with a BETA badge, before the utility doors',
+     nav.present && /Assistant/.test(nav.text) && /BETA/.test(nav.text) && nav.beforeSurv === true,
+     JSON.stringify(nav));
+
+  /* ---- open: the dock, the banner, the home actions ---- */
+  await page.locator('.navfoot [data-act="asstOpen"]').click();
+  await page.waitForSelector('.asst-panel', { timeout: 4000 });
+  await page.waitForFunction(() => ASST && ASST.state, null, { timeout: 4000 });
+  const panel = await page.evaluate(() => ({
+    banner: document.querySelector('.asst-banner').innerText,
+    home: [...document.querySelectorAll('.asst-big')].map(b => b.innerText.trim()),
+    portalStillThere: !!document.querySelector('.tabs'),
+  }));
+  ok('the dock opens over the portal — the page stays visible beside it',
+     panel.portalStillThere === true);
+  ok('the persistent banner is the exact dry-run sentence',
+     /ASSISTANT BETA — DRY RUN MODE/.test(panel.banner)
+     && /No external client messages or consequential actions will be sent\./.test(panel.banner),
+     panel.banner);
+  ok('the empty state offers big options, not a bare box',
+     panel.home.length >= 3 && panel.home.some(t => /What should I do/.test(t)));
+
+  /* ---- typed navigation actually navigates ---- */
+  await page.locator('#asst_in').fill('Take me to invoices');
+  await page.locator('.asst-ask button').click();
+  await page.waitForTimeout(700);
+  ok('“take me to invoices” lands on the Billing screen for real',
+     await page.evaluate(() => TAB) === 'invoices');
+  ok('and the Assistant survives the trip — Beta state intact, transcript kept',
+     await page.evaluate(() => !!(ASST && ASST.state && ASST.state.beta && ASST.msgs.length >= 2)));
+
+  /* ---- a consequential ask draws the refusal, visibly ---- */
+  await page.locator('#asst_in').fill('Send the client their invoice');
+  await page.locator('.asst-ask button').click();
+  await page.waitForTimeout(600);
+  const refused = await page.evaluate(() => {
+    const blocks = [...document.querySelectorAll('.asst-m')];
+    const last = blocks[blocks.length - 1];
+    /* An empty list must FAIL with evidence, never crash the run. */
+    if (!last) return { label: false, text: 'NO-ANSWER msgs=' + JSON.stringify((ASST && ASST.msgs) || []) };
+    return { label: !!last.querySelector('.asst-blocked'), text: last.innerText };
+  });
+  ok('a send request shows the BETA — ACTION DISABLED label and the plain refusal',
+     refused.label === true && /disabled/.test(refused.text), refused.text.slice(0, 160));
+
+  /* ---- the case-level door primes the case context ---- */
+  await page.evaluate(() => { ASST = null; });
+  await post('/ingest', { case_no: 'API-ASST-C', client_name: 'Assistant Case',
+    objective: 'Context test' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await page.evaluate(async () => {
+    const [sub, ws] = await Promise.all([
+      api('/submissions/API-ASST-C'), api('/cases/API-ASST-C/workspace')]);
+    WS = { ...ws, submission: sub.submission };
+    WS_CASE = 'API-ASST-C'; WS_TAB = 'overview'; VIEW = 'case'; paint();
+  });
+  await page.waitForTimeout(200);
+  ok('the case page carries an ✨ Ask Assistant action',
+     await page.locator('.caseacts [data-act="asstOpen"]').count() === 1);
+  await page.locator('.caseacts [data-act="asstOpen"]').click();
+  await page.waitForSelector('.asst-panel', { timeout: 4000 });
+  await page.waitForFunction(() => ASST && ASST.state, null, { timeout: 4000 });
+  await page.locator('#asst_in').fill('What should I do?');
+  await page.locator('.asst-ask button').click();
+  await page.waitForTimeout(700);
+  const caseAnswer = await page.evaluate(() => {
+    const blocks = [...document.querySelectorAll('.asst-m')];
+    const last = blocks[blocks.length - 1];
+    return last ? last.innerText
+      : 'NO-ANSWER msgs=' + JSON.stringify((ASST && ASST.msgs) || []);
+  });
+  ok('“what should I do?” on a case answers from the case\'s own record',
+     /RECOMMENDED NEXT STEP/.test(caseAnswer) && /No investigation day/.test(caseAnswer),
+     caseAnswer.slice(0, 160));
+
+  /* ---- the phone: the pill on shell screens only, the sheet when open ---- */
+  await page.setViewportSize({ width: 390, height: 760 });
+  await page.evaluate(() => { ASST = null; VIEW = 'list'; WS_CASE = ''; TAB = 'cases'; paint(); });
+  await page.waitForTimeout(300);
+  const phone = await page.evaluate(() => {
+    const pill = document.querySelector('.asst-pill');
+    const r = pill ? pill.getBoundingClientRect() : null;
+    return { pill: !!pill, visible: r ? r.height >= 44 && r.bottom <= window.innerHeight + 1 : false,
+             overflow: document.documentElement.scrollWidth > window.innerWidth };
+  });
+  ok('the phone pill is visible on shell screens, tappable, and causes no overflow',
+     phone.pill && phone.visible && !phone.overflow, JSON.stringify(phone));
+  await page.locator('.asst-pill').click();
+  await page.waitForSelector('.asst-panel', { timeout: 4000 });
+  await page.waitForFunction(() => ASST && ASST.state, null, { timeout: 4000 });
+  const sheet = await page.evaluate(() => {
+    const p = document.querySelector('.asst-panel').getBoundingClientRect();
+    return { full: p.width >= window.innerWidth - 2, banner: !!document.querySelector('.asst-banner'),
+             pillGone: !document.querySelector('.asst-pill') };
+  });
+  ok('open, it is a full-width bottom sheet with the banner, and the pill withdraws — nothing stacks',
+     sheet.full && sheet.banner && sheet.pillGone, JSON.stringify(sheet));
+  const navPhone = await page.evaluate(async () => {
+    document.querySelector('#asst_in').value = 'take me to my assignments';
+    await asstSend('take me to my assignments');
+    await new Promise(r => setTimeout(r, 500));
+    return { tab: TAB, closed: !(ASST && ASST.open), pillBack: !!document.querySelector('.asst-pill') };
+  });
+  ok('phone navigation goes there, closes the sheet, and the pill returns for easy reopen',
+     navPhone.tab === 'cases' && navPhone.closed && navPhone.pillBack, JSON.stringify(navPhone));
+
+  /* ---- the case screen never draws the pill — the wsbar owns that edge ---- */
+  await page.evaluate(async () => {
+    const [sub, ws] = await Promise.all([
+      api('/submissions/API-ASST-C'), api('/cases/API-ASST-C/workspace')]);
+    WS = { ...ws, submission: sub.submission };
+    WS_CASE = 'API-ASST-C'; WS_TAB = 'overview'; VIEW = 'case'; paint();
+  });
+  await page.waitForTimeout(200);
+  ok('no pill on the case screen — its bottom bar keeps the edge to itself',
+     await page.evaluate(() => !document.querySelector('.asst-pill')));
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.close();
+}
+
 await browser.close();
 server.close();
 
