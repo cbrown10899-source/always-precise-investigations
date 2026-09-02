@@ -3107,6 +3107,28 @@ surveillance** item in the navigation that opens the same launcher, and a test
 asserts it at iPad and phone widths. Do not remove it in favour of the
 case-level button; that button is the shortcut, not the door.
 
+**The launcher's list excludes hidden cases IN THE SQL, and a card never wears
+the case number as a name** (owner live issue, 2026-09-02). The assignments arm
+of `/my/active` was the one working list without the tombstone/archive
+exclusion — `outNow`, one function down, had it with a comment — so the
+home-screen icon went on offering cases the office had deleted or archived
+weeks earlier. The exclusion sits BEFORE the `LIMIT` (filtering after the read
+lets a page of hidden rows empty the launcher while live assignments wait
+beyond the cap), is guarded through `missingTables` like every marker-table
+read, and the RESUME arm deliberately has no filter: a running day blocks
+archive, tombstone and intake-delete at their own routes, so an open day can
+never point at a hidden case, and a filter there is the one way to strand a
+running clock. There was **no cache in this path to fix**: the launcher holds
+no local case state, fetches `/my/active` on every open, `portal/` has no
+service worker and `index.html` is `no-cache` — the "stale PWA" was the live
+answer being wrong. The one local case-id store (the sessionStorage
+pinned/recent strip) already refused to DRAW an unknown id; a successful
+complete `/submissions` load now also PRUNES dead ids from it. And a
+subject-less assignment card says *"No subject recorded"* (naming the business
+side for a claims case) instead of drawing its case number in the name
+position — a number where a name belongs is exactly how a live card reads as
+an orphaned reference, which is what the owner reported seeing.
+
 **An entry can be removed but never erased** (owner, 2026-08-14). `activity_removed`
 is a companion table — not columns on `activity_log`, because `schema.sql` is
 re-applied on every portal-setup run and `ALTER TABLE ADD COLUMN` is not

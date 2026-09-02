@@ -17360,6 +17360,97 @@ section('ASSISTANT COMPOSER — the input row clears the phone\'s bottom edge');
   await page.close();
 }
 
+/* ==========================================================================
+   THE LAUNCHER HIDES REMOVED CASES, AND NO CARD WEARS THE NUMBER AS A NAME
+   (owner live issue, 2026-09-02). The home-screen Active Surveillance view
+   was still offering cases tombstoned or archived weeks earlier — the
+   assignments arm of /my/active was the one working list without the
+   exclusion, pinned in the worker suite. And a subject-less assignment drew
+   its case number in the NAME position, which is exactly the "stale/orphaned
+   reference" look the owner reported. This section proves the screen: hidden
+   cases draw no card, honest words replace the number, a dead id stored
+   locally is pruned by the next successful office load, and putting a case
+   back brings it back with nothing special-cased. Fixtures are seeded here,
+   at the end of the run, so they cannot shift earlier counts. */
+section('The launcher hides removed cases, and no card wears the number as a name');
+{
+  await post('/ingest', {
+    case_no: 'API-LNCH-E1', service: 'Surveillance',
+    client_name: 'Launcher Client', subject_name: 'Launcher Subject',
+    objective: 'Launcher fixture',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await post('/ingest', {
+    case_no: 'API-LNCH-E2', service: 'Insurance Claim Assignment',
+    carrier: 'Launcher Mutual', claim_number: 'LM-1', client_name: 'L. Adjuster',
+    objective: 'Subject-less claims fixture',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await post('/ingest', {
+    case_no: 'API-LNCH-E3', service: 'Surveillance',
+    client_name: 'Stale Client', subject_name: 'Stale Subject',
+    objective: 'Tombstone fixture',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await post('/ingest', {
+    case_no: 'API-LNCH-E4', service: 'Surveillance',
+    client_name: 'Filed Client', subject_name: 'Filed Subject',
+    objective: 'Archive fixture',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const lr = await post('/auth/login', { username: 'trever', password: 'AdminPassword1x' });
+  const sc = lr.headers.getSetCookie ? lr.headers.getSetCookie()[0] : lr.headers.get('Set-Cookie');
+  const adminCookie = sc.split(';')[0];
+  await post('/cases/API-LNCH-E3/delete', {}, { Cookie: adminCookie });
+  await post('/cases/API-LNCH-E4/archive', {}, { Cookie: adminCookie });
+
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(250);
+  /* Plant a dead id beside a live one in each session store BEFORE signing
+     in, the way a stale shortcut session would hold them. The strip already
+     refused to DRAW the dead one; the fix also REMOVES it once a complete
+     load has answered — and must not touch the live one. */
+  await page.evaluate(() => {
+    sessionStorage.setItem('apiFavCases', JSON.stringify(['API-GONE-999', 'API-LNCH-E1']));
+    sessionStorage.setItem('apiRecentCases', JSON.stringify(['API-GONE-998']));
+  });
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const stores = await page.evaluate(() => ({
+    favs: JSON.parse(sessionStorage.getItem('apiFavCases') || '[]'),
+    recent: JSON.parse(sessionStorage.getItem('apiRecentCases') || '[]'),
+  }));
+  ok('a dead pinned id is pruned from storage by a successful load',
+     !stores.favs.includes('API-GONE-999'), JSON.stringify(stores));
+  ok('the live pinned id survives the prune', stores.favs.includes('API-LNCH-E1'));
+  ok('a dead recent id is pruned the same way', !stores.recent.includes('API-GONE-998'));
+
+  await page.goto(SITE + '/portal/?surveillance=1');
+  await page.waitForTimeout(1100);
+  const l = await text(page, '.sv');
+  ok('the launcher lists a live case by its subject', has(l, 'Launcher Subject'));
+  ok('a tombstoned case draws no card', !has(l, 'API-LNCH-E3'));
+  ok('an archived case draws no card', !has(l, 'API-LNCH-E4'));
+
+  /* DISPLAY SAFETY: the subject-less card's name line is honest words; the
+     case number appears once, on its own mono line, as itself. */
+  const card = page.locator('.sv-launch', { hasText: 'API-LNCH-E2' });
+  ok('the subject-less live case still gets its card', await card.count() === 1);
+  const nameLine = await card.locator('div').first().innerText();
+  ok('its name position never carries the case number',
+     !nameLine.includes('API-LNCH-E2'), nameLine);
+  ok('and says what the record states instead',
+     /insurance assignment/i.test(nameLine) && /no subject recorded/i.test(nameLine), nameLine);
+
+  /* The way back: putting the case back brings the card back, no id
+     special-cased anywhere. */
+  await post('/cases/API-LNCH-E3/undelete', {}, { Cookie: adminCookie });
+  await page.goto(SITE + '/portal/?surveillance=1');
+  await page.waitForTimeout(1100);
+  ok('an undeleted case is offered again', has(await text(page, '.sv'), 'Stale Subject'));
+
+  /* Housekeeping so the fixtures cannot leak into any later section. */
+  await post('/cases/API-LNCH-E3/delete', {}, { Cookie: adminCookie });
+  await page.close();
+}
+
 await browser.close();
 server.close();
 

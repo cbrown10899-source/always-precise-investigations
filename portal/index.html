@@ -11211,6 +11211,22 @@ async function render(){
     CASES = Array.isArray(d.submissions) ? d.submissions : [];
     TOTAL = d.total || 0;
     CASES_OK = true;
+    /* A stored case id that no longer resolves to a case this user may see is
+       pruned HERE and only here (owner, 2026-09-02): after a load that
+       SUCCEEDED, and only when the page holds the whole working set, so an
+       outage or a caseload beyond the page can never eat someone's pins. The
+       strip already refuses to DRAW an unknown id; this removes the dead
+       reference itself rather than leaving it in storage. The surveillance
+       launcher keeps no local case state at all — it renders each open from
+       the live /my/active answer — so this is the only local case-id store
+       there is to reconcile. */
+    if(CASES.length >= TOTAL){
+      const live = new Set(CASES.map(c => c.case_no));
+      for(const [key, list] of [[FAVS_KEY, favCases()], [RECENT_KEY, recentCases()]]){
+        const kept = list.filter(n => live.has(n));
+        if(kept.length !== list.length) setCaseIds(key, kept);
+      }
+    }
   }catch(e){
     CASES = []; TOTAL = 0; CASES_OK = false;
     LOAD_ERR = "The case list could not be loaded — " + e.message;
@@ -15850,7 +15866,20 @@ function svLaunchButton(){
 
 /* SURVEILLANCE P16 — what the home-screen icon opens. With a day running it
    resumes it; with none it lists the assignments that could start one. This is
-   the same signed-in website, not a second app. */
+   the same signed-in website, not a second app.
+
+   DISPLAY SAFETY (owner, 2026-09-02). A card whose record has no subject must
+   SAY so, never wear the case number as though it were a person's name — a
+   number in the name position is exactly how a card reads as a stale or
+   orphaned reference, and it is what the owner reported seeing. The number
+   stays on its own mono line below, as itself. `kind` is a typed column with
+   a CHECK, so naming the business side of a subject-less card is the record
+   talking, not a guess about the recipient. */
+function svCardName(c){
+  if(c.subject_name) return esc(c.subject_name);
+  return c.kind === "claims" ? "Insurance assignment &mdash; no subject recorded"
+                             : "No subject recorded";
+}
 function svLauncher(){
   const d = SV.launcher || {};
   const a = d.active;
@@ -15873,7 +15902,7 @@ function svLauncher(){
       <button class="sv-x" data-act="svLeaveLauncher">&larr; The full portal</button></div>
     <div class="sv-body">
       ${list.length ? list.map(c => `<button class="sv-launch" data-act="svEnter" data-case="${esc(c.case_no)}">
-          <div style="font-weight:800">${esc(c.subject_name || c.case_no)}</div>
+          <div style="font-weight:800">${svCardName(c)}</div>
           <div style="color:#8fb4d9;font-size:.82rem" class="mono">${esc(c.case_no)}</div>
         </button>`).join("")
         : `<div class="sv-card">No assignments yet. The office assigns cases and they appear here.</div>`}
