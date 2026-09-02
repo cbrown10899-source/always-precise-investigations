@@ -3128,6 +3128,50 @@ auto-submitted**; the transcript is shown for review and only Use Text turns it
 into an entry. The privacy wording says only what is verifiable ("this page
 keeps no audio"), never the mockup's "never stored".
 
+## The API Assistant is BETA / DRY RUN, and the server is what enforces it
+
+Owner master spec 2026-09-02 (§1–38), architecture and unit ledger in
+`case-portal/ASSISTANT.md`. An INTERNAL operations copilot behind the
+existing sign-in — never a public chatbot. Units 1–4 are built; the rules
+that outlive them:
+
+**Beta is permanent in v1 and structural.** No Live Mode switch exists, and
+the Assistant cannot create one: the `/assistant/*` block writes exactly ONE
+table — `assistant_log`, its own — and a source test counts the writes (one
+`INSERT INTO`, into that table only; no UPDATE, no DELETE, no `sendMail`, no
+settings store, and the literals for the real history tables appear nowhere
+in the block). Consequential verbs are refused server-side BY NAME
+(`assistant_beta`) before any intent runs; questions about those acts are
+answered, not refused. **Deterministic grammar, no AI provider**:
+`assistantProvider` answers `not_configured` until BOTH env vars exist, and
+nothing else reads the key. Model text never becomes a route — navigation
+answers are REGISTRY IDS (`ASSISTANT_NAV`, the TAB map per role) the page
+resolves against its own handlers.
+
+**Every tool runs as the signed-in user through the functions the ordinary
+routes use** — `globalSearch`, the dashboard counts — so the role boundary
+stays the SQL it always was. An investigator's Assistant is an investigator.
+
+**Unit 4: a rehearsal is the real send minus the sending.**
+`/assistant/prepare-intake` and `/assistant/simulate-intake` (admin-only,
+like the doors they rehearse) run the REAL validation — the same email
+check, the same explicit-kind resolution, `contextForSub` for a case
+reference, `caseSendRefusal` for deleted/archived — and render the preview
+through `intakeInviteEmail` itself. The door is derived from the context
+exactly once, so the `intakeForContext` single-reader guard counts 4. A
+SIMULATE writes `assistant_log` — outcome `SIMULATED — NOT SENT` on every
+row's face — and NOTHING the real history lives in: no `send_log` row, no
+lead stamp, no transport call. The response is honest about its own record
+(`logged: false` + reason until portal-setup applies the table). The table
+is `INTAKE_EXEMPT` (audit history: neither blocks an intake delete nor dies
+with it) and `DEMO_SWEEP`-swept by its own `case_no`, which is null for
+pre-case rehearsals — the send_log rule.
+
+**The page workbench holds its draft in `ASST.prep`** (the EDIT_DRAFT rule);
+`.asst-` classes only, bare palette tokens, no new dialogs. The dock is
+`role="complementary"`, the phone door is the pill, and the case screen's
+door is the Ask Assistant action.
+
 ## The /watch/ dashboard
 
 `watch/` is a private, passcode- and Face ID-gated dashboard showing live site

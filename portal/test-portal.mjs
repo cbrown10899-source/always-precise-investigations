@@ -16976,6 +16976,101 @@ section('API ASSISTANT — the dock, the doors, the Beta banner, and real naviga
   await page.close();
 }
 
+section('API ASSISTANT Unit 4 — the intake dry-run workbench, on the real page');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* ---- the utterance opens the workbench, prefilled from the sentence ---- */
+  await page.locator('.navfoot [data-act="asstOpen"]').click();
+  await page.waitForSelector('.asst-panel', { timeout: 4000 });
+  await page.waitForFunction(() => ASST && ASST.state, null, { timeout: 4000 });
+  ok('the admin empty state offers the dry-run door as a big option',
+     await page.evaluate(() =>
+       [...document.querySelectorAll('.asst-big')].some(b => /Prepare an intake/.test(b.innerText))));
+  await page.locator('#asst_in').fill('prepare a legal intake');
+  await page.locator('.asst-ask button').click();
+  await page.waitForSelector('.asst-work', { timeout: 4000 });
+  const bench = await page.evaluate(() => ({
+    head: document.querySelector('.asst-dry').innerText,
+    kind: document.querySelector('#asst_pk').value,
+    banner: !!document.querySelector('.asst-banner'),
+  }));
+  ok('the workbench opens as a DRY RUN, with the door picked from the sentence',
+     /DRY RUN/.test(bench.head) && bench.kind === 'legal' && bench.banner === true,
+     JSON.stringify(bench));
+
+  /* ---- the EDIT_DRAFT rule holds: a repaint from anywhere keeps the typing ---- */
+  await page.locator('#asst_pto').fill('workbench-test@example.com');
+  await page.locator('#asst_pname').fill('Marks & Harrison');
+  await page.evaluate(() => paint());
+  ok('a repaint mid-form keeps every typed value — the draft rule',
+     await page.evaluate(() =>
+       $('asst_pto').value === 'workbench-test@example.com'
+       && $('asst_pname').value === 'Marks & Harrison' && $('asst_pk').value === 'legal'));
+
+  /* ---- Preview: the real email, rendered, and nothing spent ---- */
+  const sendsBefore = await page.evaluate(async () => (await api('/sends')).sends.length);
+  await page.locator('[data-act="asstPrepPrev"]').click();
+  await page.waitForFunction(() => ASST && ASST.prep && ASST.prep.preview, null, { timeout: 4000 });
+  const prev = await page.evaluate(() => ({
+    head: document.querySelector('.asst-dry').innerText,
+    body: document.querySelector('.asst-pre') ? document.querySelector('.asst-pre').innerText : '',
+    text: document.querySelector('.asst-work').innerText,
+  }));
+  ok('the preview says READY TO SEND and that nothing has been sent, in one breath',
+     /DRY RUN — READY TO SEND/.test(prev.head) && /nothing has been sent/.test(prev.head));
+  ok('and the body is the REAL invite — the legal door, the greeting, the DCJS line',
+     /assignment=legal/.test(prev.body) && /^Marks & Harrison,/.test(prev.body)
+     && /DCJS/.test(prev.body), prev.body.slice(0, 160));
+  ok('the preview names recipient, subject and door beside the body',
+     /workbench-test@example\.com/.test(prev.text)
+     && /Legal Investigation Assignment — Always Precise Investigations/.test(prev.text));
+
+  /* ---- SIMULATE: the outcome lands in the transcript, the history moves not ---- */
+  await page.locator('[data-act="asstPrepSim"]').click();
+  await page.waitForFunction(() => ASST && !ASST.prep, null, { timeout: 4000 });
+  const simMsg = await page.evaluate(() => {
+    const blocks = [...document.querySelectorAll('.asst-m')];
+    const last = blocks[blocks.length - 1];
+    return last ? { chip: !!last.querySelector('.asst-sim'), text: last.innerText }
+      : { chip: false, text: 'NO-ANSWER msgs=' + JSON.stringify((ASST && ASST.msgs) || []) };
+  });
+  ok('the simulation answer wears SIMULATED — NOT SENT and says it was recorded',
+     simMsg.chip === true && /SIMULATED — NOT SENT/.test(simMsg.text)
+     && /Recorded in the Assistant beta log/.test(simMsg.text), simMsg.text.slice(0, 200));
+  const sendsAfter = await page.evaluate(async () => (await api('/sends')).sends.length);
+  ok('the office send history did not move by one rehearsal — a dry run is not a send',
+     sendsAfter === sendsBefore, `before=${sendsBefore} after=${sendsAfter}`);
+
+  /* ---- the beta log reads back where it was written ---- */
+  await page.locator('#asst_in').fill('show recent simulations');
+  await page.locator('.asst-ask button').click();
+  await page.waitForTimeout(700);
+  const logAnswer = await page.evaluate(() => {
+    const blocks = [...document.querySelectorAll('.asst-m')];
+    const last = blocks[blocks.length - 1];
+    return last ? last.innerText : 'NO-ANSWER msgs=' + JSON.stringify((ASST && ASST.msgs) || []);
+  });
+  ok('“show recent simulations” lists the rehearsal, outcome on its face',
+     /SIMULATED — NOT SENT/.test(logAnswer) && /workbench-test@example\.com/.test(logAnswer),
+     logAnswer.slice(0, 200));
+
+  /* ---- a bad address is refused inside the workbench, in the desk's words ---- */
+  await page.locator('#asst_in').fill('prepare an intake');
+  await page.locator('.asst-ask button').click();
+  await page.waitForSelector('.asst-work', { timeout: 4000 });
+  await page.locator('#asst_pto').fill('not-an-address');
+  await page.locator('[data-act="asstPrepPrev"]').click();
+  await page.waitForFunction(() => ASST && ASST.prep && ASST.prep.err, null, { timeout: 4000 });
+  ok('a bad address draws the refusal inside the workbench',
+     await page.evaluate(() => /valid email/.test(ASST.prep.err)));
+  await page.locator('[data-act="asstPrepCancel"]').click();
+  ok('Cancel withdraws the workbench cleanly',
+     await page.evaluate(() => !ASST.prep && !document.querySelector('.asst-work')));
+  await page.close();
+}
+
 await browser.close();
 server.close();
 

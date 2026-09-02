@@ -11671,6 +11671,10 @@ const INTAKE_EXEMPT = {
      to nothing. */
   send_log: 'send history is non-deletable and a send alone must not block deletion',
   payment_send: 'send history is non-deletable and a send alone must not block deletion',
+  /* Unit 4: a SIMULATED — NOT SENT rehearsal is Beta audit history — kept for
+     the same reason the send log is kept, and a dry run about a duplicate
+     must not make the duplicate immortal. */
+  assistant_log: 'the Beta audit trail is non-deletable and a simulation alone must not block deletion',
   case_archive: 'the archived gate refuses this route before any list is consulted',
   case_deleted: 'the deleted gate refuses this route before any list is consulted',
   legal_hold: 'the hold refusal runs before any list is consulted',
@@ -11831,6 +11835,9 @@ const DEMO_SWEEP = [
   ['retainer_payment_token','DELETE FROM retainer_payment_token WHERE case_no LIKE ?'],
   ['send_log',              'DELETE FROM send_log WHERE case_no LIKE ?'],
   ['payment_send',          'DELETE FROM payment_send WHERE case_no LIKE ?'],
+  /* Unit 4: a TEST- case's rehearsals go with it. Pre-case simulations carry a
+     null case_no and are untouched, like a pre-case send. */
+  ['assistant_log',         'DELETE FROM assistant_log WHERE case_no LIKE ?'],
   ['video_stamp',           'DELETE FROM video_stamp WHERE case_no LIKE ?'],
 
   /* --- the spine, last --- */
@@ -13281,7 +13288,7 @@ const EXPECTED_TABLES = [
   'profile', 'profile_contact', 'profile_phone', 'case_profile',
   'build_template', 'evidence_integrity', 'case_day_summary', 'storage_failure',
   'case_retention', 'legal_hold', 'retention_event', 'case_day_end',
-  'case_content_removed', 'case_content_event', 'feed_hidden',
+  'case_content_removed', 'case_content_event', 'feed_hidden', 'assistant_log',
 ];
 
 async function missingTables(env) {
@@ -13479,6 +13486,116 @@ async function assistantCounts(env, user) {
   return { fresh: [], open: Number(mine && mine.n) || 0 };
 }
 
+/* ---------------- UNIT 4 — intake preparation, preview, SIMULATE ----------
+
+   The owner's §12: the Assistant may PREPARE an intake link exactly as the
+   real desk would — the same validation, the same email rendering, the same
+   door pairing — and then SIMULATE the send. The rehearsal is complete and
+   the send never happens: the mail sender is not called, the real send
+   history gains no row, and the lead ladder does not move (source pins count
+   all three). What a simulation writes is `assistant_log`, its own table,
+   where every row states the outcome on its face. */
+
+const ASSISTANT_SIM_OUTCOME = 'SIMULATED — NOT SENT';
+
+/* One resolver for prepare and simulate, mirroring the two real doors: a case
+   reference resolves the door from the case's own record (the payload marker
+   outranking kind, exactly as the desk send does — `contextForSub`), and a
+   pre-case rehearsal names an explicit kind, the same three answers
+   `/intake-link/email` accepts. A rehearsal must also mirror the REFUSALS the
+   real send would hit — a dry run that answers READY TO SEND about a send the
+   portal would refuse is a rehearsal of the wrong play — so the deleted and
+   archived gates run here too, through the same shared helper. */
+async function assistantIntakePlan(env, body) {
+  const to = String(body.to || '').trim();
+  if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(to) || to.length > 200) {
+    return { fail: json({ error: 'Enter a valid email address.' }, 400) };
+  }
+  let name = String(body.name || '')
+    .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 120);
+
+  /* Both branches produce a CONTEXT and nothing else; the door is derived
+     from it exactly once below, because the context-to-door table having one
+     reader per sender is the guard that caught the sheet-keyed door bug. */
+  let context = null, caseNo = null;
+  const ref = String(body.case_no || '').trim().slice(0, 64);
+  if (ref) {
+    if (!CASE_NO_RE.test(ref)) {
+      return { fail: json({ error: 'That case reference is not a case number.' }, 400) };
+    }
+    const lead = await env.DB.prepare(
+      'SELECT case_no, kind, client_name, payload FROM submissions WHERE case_no = ?').bind(ref).first();
+    if (!lead) {
+      return { fail: json({ error: `No case ${ref} exists. For someone who is not on the desk yet, `
+        + `leave the case blank and say which intake this is.` }, 404) };
+    }
+    const refusal = await caseSendRefusal(env, ref);
+    if (refusal) return { fail: refusal };
+    context = contextForSub(lead);
+    if (!context) {
+      return { fail: json({ error: `${ref} does not say whether it is a private client or a claim `
+        + `assignment, so the right intake form cannot be chosen.` }, 409) };
+    }
+    caseNo = ref;
+    if (!name) name = String(lead.client_name || '');
+  } else {
+    const kind = String(body.kind || '').trim().toLowerCase();
+    context = kind === 'legal' ? SEND_CONTEXT.LEGAL
+      : contextForKind(
+          kind === 'insurance' || kind === 'claims' ? 'claims'
+          : kind === 'private' || kind === 'consumer' ? 'consumer' : null);
+  }
+  const intake = context ? intakeForContext(context) : null;
+  if (!intake) {
+    return { fail: json({ error: 'Say which intake this is — Private Client, Insurance Assignment or '
+                       + 'Legal / Law Firm. The forms are never interchangeable.' }, 400) };
+  }
+  return { to, name, context, intake, caseNo };
+}
+
+/* POST /assistant/prepare-intake — the rehearsal's PREVIEW: what WOULD go,
+   rendered by the same function the real send renders with, plus the door,
+   context and subject line. Reads only; nothing is spent, logged or sent. */
+async function assistantPrepareIntake(request, env) {
+  const plan = await assistantIntakePlan(env, await readJson(request));
+  if (plan.fail) return plan.fail;
+  const { text } = intakeInviteEmail(plan.intake, plan.name);
+  return json({ ok: true, dry_run: true,
+    to: plan.to, name: plan.name || null, case_no: plan.caseNo,
+    send_context: plan.context, intake: plan.intake.label, door: plan.intake.url,
+    subject: `${plan.intake.label} — Always Precise Investigations`,
+    body_text: text });
+}
+
+/* POST /assistant/simulate-intake — the rehearsal recorded. The ONE write in
+   the Assistant block, into its own table. The write is honest about itself:
+   a missing table degrades to logged:false with the named reason — the
+   integrity-record rule, because a success that hides an unrecorded rehearsal
+   and a 500 that eats the answer are both lies — and a present table that
+   refuses the row answers the same way. */
+async function assistantSimulateIntake(request, env, user) {
+  const plan = await assistantIntakePlan(env, await readJson(request));
+  if (plan.fail) return plan.fail;
+  const subject = `${plan.intake.label} — Always Precise Investigations`;
+  const base = { ok: true, outcome: ASSISTANT_SIM_OUTCOME, to: plan.to,
+    case_no: plan.caseNo, send_context: plan.context, intake: plan.intake.label };
+  if ((await missingTables(env)).includes('assistant_log')) {
+    return json({ ...base, logged: false, reason: 'not_set_up',
+      note: 'Run the portal-setup workflow to add the Assistant log table; until then rehearsals are not recorded.' });
+  }
+  try {
+    await env.DB.prepare(
+      `INSERT INTO assistant_log (action, outcome, case_no, recipient, detail, done_by, done_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .bind('intake_send', ASSISTANT_SIM_OUTCOME, plan.caseNo, plan.to,
+            JSON.stringify({ context: plan.context, door: plan.intake.url, subject }),
+            user ? user.id : null, nowIso()).run();
+  } catch {
+    return json({ ...base, logged: false, reason: 'log_write_failed' });
+  }
+  return json({ ...base, logged: true });
+}
+
 /* POST /assistant/command — the deterministic Beta grammar. Every branch
    composes from live reads or the registry; the fallback says plainly what
    Beta understands rather than pretending. */
@@ -13490,6 +13607,27 @@ async function assistantCommand(request, env, user) {
   const caseNo = CASE_NO_RE.test(String(ctx.case_no || '')) ? String(ctx.case_no) : '';
   const t = ' ' + asstStrip(text) + ' ';
 
+  /* ---- UNIT 4: the one send-shaped act Beta can REHEARSE. An utterance
+     about sending or preparing an INTAKE opens the workbench instead of the
+     flat refusal — the doing is two explicit routes, the send still never
+     happens, and destructive verbs about an intake still refuse below. */
+  if (/\bintake\b/i.test(text)
+      && /\b(prepare|send|email|simulate|draft|rehears|dry.?run)\b/i.test(text)
+      && !/\bdelete\b|\barchiv/i.test(text)) {
+    if (user.role !== 'admin') {
+      return json({ ok: true, kind: 'status',
+        text: 'Sending intake links is an admin desk — this action requires Admin permission.' });
+    }
+    const mail = (text.match(/[^@\s]+@[^@\s.]+\.[^@\s]+/) || [null])[0];
+    const kindGuess = /insuran|carrier|claim/i.test(text) ? 'insurance'
+      : /legal|law firm|attorney|\bfirm\b/i.test(text) ? 'legal'
+      : /private|consumer/i.test(text) ? 'private' : '';
+    return json({ ok: true, kind: 'prepare_intake',
+      text: 'Dry run: say who this intake link is for and preview exactly what would go. '
+          + `Nothing is sent — the SIMULATE step records the rehearsal as ${ASSISTANT_SIM_OUTCOME}.`,
+      form: { kind: kindGuess, to: mail || '', name: '', case_no: caseNo || '' } });
+  }
+
   /* ---- Beta enforcement FIRST: a consequential verb is refused before any
      intent could act on it, whatever else the sentence says. Pure questions
      ("why can't I delete this?") are let through to the explainers below. */
@@ -13500,9 +13638,35 @@ async function assistantCommand(request, env, user) {
         return json({ ok: true, kind: 'refused', code: 'assistant_beta',
           text: `Beta dry-run: ${what} is disabled for the Assistant — nothing was done, `
               + `and no message left the building. The ordinary portal controls still work; `
-              + `preparation and simulation arrive in a later Assistant unit.` });
+              + `for intake links I can rehearse the send ("prepare an intake"), and rate-sheet `
+              + `and invoice preparation arrive in later Assistant units.` });
       }
     }
+  }
+
+  /* ---- UNIT 4: the Beta audit trail, readable where it is written (§26) —
+     what has been simulated, each row wearing its outcome. */
+  if (/simulation (log|history)|\b(show|list|recent|what have)\b[^]*simulat/i.test(text)) {
+    if (user.role !== 'admin') {
+      return json({ ok: true, kind: 'status', text: 'The simulation log is an admin desk.' });
+    }
+    if ((await missingTables(env)).includes('assistant_log')) {
+      return json({ ok: true, kind: 'status',
+        text: 'The Assistant log table has not been set up yet — run the portal-setup workflow to add it. Until then rehearsals are not recorded.' });
+    }
+    const rows = await env.DB.prepare(
+      `SELECT a.action, a.outcome, a.case_no, a.recipient, a.done_at, u.display_name AS who
+         FROM assistant_log a LEFT JOIN users u ON u.id = a.done_by
+        ORDER BY a.id DESC LIMIT 8`).all();
+    const list = rows.results || [];
+    if (!list.length) {
+      return json({ ok: true, kind: 'status', text: 'No simulations have been recorded yet.' });
+    }
+    return json({ ok: true, kind: 'status',
+      text: `${list.length} recorded simulation${list.length === 1 ? '' : 's'}, newest first — every one ${ASSISTANT_SIM_OUTCOME}.`,
+      card: list.map(r => ({ title: `${r.action} → ${r.recipient}`, case_no: r.case_no || null,
+        line: [r.outcome, r.case_no || 'no case', String(r.done_at || '').slice(0, 16).replace('T', ' '),
+               r.who || ''].filter(Boolean).join(' · ') })) });
   }
 
   /* ---- where am I / explain this page ---- */
@@ -14026,6 +14190,16 @@ async function route(request, env) {
      no /assistant route writes anything anywhere. */
   if (p === '/assistant/state' && method === 'GET') return assistantState(env, user);
   if (p === '/assistant/command' && method === 'POST') return assistantCommand(request, env, user);
+  /* Unit 4 — admin-only, exactly like the real intake-send doors these
+     rehearse (`/leads/:no/send-intake`, `/intake-link/email`). */
+  if (p === '/assistant/prepare-intake' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return assistantPrepareIntake(request, env);
+  }
+  if (p === '/assistant/simulate-intake' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return assistantSimulateIntake(request, env, user);
+  }
 
   if (p === '/tasks' && method === 'GET') return taskBoard(env, user);
   if (p === '/file-queue' && method === 'GET') return fileQueue(env, user);

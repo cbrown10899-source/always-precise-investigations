@@ -1789,6 +1789,23 @@
   box-shadow:0 6px 18px rgba(12,22,38,.3);min-height:48px}
 .side-asst{display:flex;align-items:center;gap:8px}
 .side-asst .asst-beta{margin-left:2px}
+/* UNIT 4 — the dry-run workbench. Gold family on purpose: it is the same
+   "Beta, nothing leaves the building" voice the banner already speaks. */
+.asst-work{margin:8px 14px 0;border:1px solid var(--gold-line);border-radius:12px;
+  background:var(--neutral-bg);padding:10px 12px;display:flex;flex-direction:column;
+  gap:8px;max-height:46%;overflow-y:auto}
+.asst-work label.cap{display:flex;flex-direction:column;gap:4px;font-size:.85rem}
+.asst-work input,.asst-work select{min-height:44px;font-size:16px;padding:8px 10px;
+  border:1px solid var(--line);border-radius:8px;background:#fff;width:100%}
+.asst-dry{font-size:.68rem;font-weight:800;letter-spacing:.06em;color:var(--gold-ink)}
+.asst-kv{display:flex;gap:8px;font-size:.85rem}
+.asst-kv b{flex:0 0 58px;font-weight:700}
+.asst-kv span{word-break:break-word;min-width:0}
+.asst-pre{white-space:pre-wrap;word-break:break-word;font-size:.78rem;background:#fff;
+  border:1px solid var(--line);border-radius:8px;padding:8px 10px;max-height:180px;
+  overflow-y:auto;margin:0}
+.asst-sim{font-size:.68rem;font-weight:800;letter-spacing:.06em;color:var(--gold-ink);
+  margin-bottom:4px}
 
 /* APPEND AT THE VERY END OF THE STYLESHEET (the source-order rule — the fifth
    casualty list): the phone shape. The pill only exists under 900px, and only
@@ -2557,7 +2574,8 @@ function shell(inner){
    the same handlers a click uses. If the routes fail, the panel shows the
    error inside itself and the rest of the portal is untouched — the
    Assistant is additive, never load-bearing. */
-let ASST = null;   // {open, busy, guide, state, msgs:[{who,text,card,actions}], err}
+let ASST = null;   // {open, busy, guide, state, msgs:[{who,text,card,actions,kind}], err,
+                   //  prep: null | {kind,to,name,case_no,preview,err,busy}}  (Unit 4)
 
 function asstReset(){ ASST = null; }
 
@@ -2596,6 +2614,13 @@ async function asstSend(text){
       body: { text: t, context: asstContext() } });
     ASST.msgs.push({ who: "asst", text: r.text || "", card: r.card || null,
                      actions: r.actions || null, kind: r.kind || "" });
+    /* UNIT 4 — a prepare answer opens the workbench, prefilled from whatever
+       the utterance itself carried. The server's form is a SEED; the draft
+       object is the source of truth from here on. */
+    if(r.kind === "prepare_intake" && r.form){
+      ASST.prep = { kind: r.form.kind || "", to: r.form.to || "", name: r.form.name || "",
+                    case_no: r.form.case_no || "", preview: null, err: "", busy: false };
+    }
     ASST.busy = false; paint();
     if(r.navigate) asstNavigate(r.navigate);
   }catch(e){
@@ -2632,9 +2657,102 @@ function asstNavigate(nav){
   paint();
 }
 
+/* ---- UNIT 4: the intake dry-run workbench. `ASST.prep` is the draft — the
+   EDIT_DRAFT rule, so inputs write INTO it on every keystroke and any repaint
+   redraws exactly what was typed. The preview and the simulation are the
+   Worker's own answers; the page renders them and composes nothing. */
+function asstPrepCollect(){
+  if(!ASST || !ASST.prep) return;
+  const read = id => { const el = $(id); return el ? el.value : null; };
+  const k = read("asst_pk"), to = read("asst_pto"), nm = read("asst_pname"), cs = read("asst_pcase");
+  if(k !== null) ASST.prep.kind = k;
+  if(to !== null) ASST.prep.to = to;
+  if(nm !== null) ASST.prep.name = nm;
+  if(cs !== null) ASST.prep.case_no = cs;
+}
+
+async function asstPrepPrev(){
+  if(!ASST || !ASST.prep || ASST.prep.busy) return;
+  asstPrepCollect();
+  const p = ASST.prep;
+  p.busy = true; p.err = ""; paint();
+  try{
+    p.preview = await api("/assistant/prepare-intake", { method: "POST",
+      body: { kind: p.kind, to: p.to, name: p.name, case_no: p.case_no } });
+    p.busy = false; paint();
+  }catch(e){
+    p.busy = false; p.err = e.message || "The preview was refused."; paint();
+  }
+}
+
+async function asstPrepSim(){
+  if(!ASST || !ASST.prep || ASST.prep.busy) return;
+  const p = ASST.prep;
+  p.busy = true; p.err = ""; paint();
+  try{
+    const r = await api("/assistant/simulate-intake", { method: "POST",
+      body: { kind: p.kind, to: p.to, name: p.name, case_no: p.case_no } });
+    ASST.prep = null;
+    ASST.msgs.push({ who: "asst", kind: "simulated",
+      text: `${r.outcome} — ${r.intake} for ${r.to}` + (r.case_no ? ` on ${r.case_no}` : "") + ". "
+          + (r.logged ? "Recorded in the Assistant beta log."
+             : r.reason === "not_set_up"
+               ? "Not recorded — the log table is not set up yet (run portal-setup)."
+               : "Not recorded — the log write failed.") });
+    paint();
+  }catch(e){
+    p.busy = false; p.err = e.message || "The simulation was refused."; paint();
+  }
+}
+
+function asstPrepHtml(){
+  if(!ASST || !ASST.prep) return "";
+  const p = ASST.prep;
+  if(p.preview){
+    const v = p.preview;
+    return `<div class="asst-work">
+      <div class="asst-dry">DRY RUN &mdash; READY TO SEND &middot; nothing has been sent</div>
+      ${p.err ? `<div class="err">${esc(p.err)}</div>` : ""}
+      <div class="asst-kv"><b>To</b><span>${esc(v.to)}</span></div>
+      <div class="asst-kv"><b>Subject</b><span>${esc(v.subject)}</span></div>
+      <div class="asst-kv"><b>Form</b><span>${esc(v.intake)}${v.case_no ? ` &middot; ${esc(v.case_no)}` : ""}</span></div>
+      <div class="asst-kv"><b>Door</b><span>${esc(v.door)}</span></div>
+      <pre class="asst-pre">${esc(v.body_text)}</pre>
+      <div class="asst-acts">
+        <button class="btn sm accent" data-act="asstPrepSim" ${p.busy ? "disabled" : ""}>Simulate &mdash; record only</button>
+        <button class="btn sm ghost" data-act="asstPrepEdit">Edit</button>
+        <button class="btn sm ghost" data-act="asstPrepCancel">Cancel</button>
+      </div>
+    </div>`;
+  }
+  return `<div class="asst-work">
+    <div class="asst-dry">PREPARE AN INTAKE LINK &mdash; DRY RUN</div>
+    ${p.err ? `<div class="err">${esc(p.err)}</div>` : ""}
+    <label class="cap">Which intake &mdash; a case reference below overrides this
+      <select id="asst_pk" data-act-input="asstPrep">
+        <option value=""${p.kind ? "" : " selected"}>Choose&hellip;</option>
+        <option value="private"${p.kind === "private" ? " selected" : ""}>Private Client</option>
+        <option value="insurance"${p.kind === "insurance" ? " selected" : ""}>Insurance Assignment</option>
+        <option value="legal"${p.kind === "legal" ? " selected" : ""}>Legal / Law Firm</option>
+      </select></label>
+    <label class="cap">Recipient email
+      <input id="asst_pto" data-act-input="asstPrep" value="${esc(p.to)}" autocomplete="off"></label>
+    <label class="cap">Name (optional)
+      <input id="asst_pname" data-act-input="asstPrep" value="${esc(p.name)}" autocomplete="off"></label>
+    <label class="cap">Case (optional)
+      <input id="asst_pcase" data-act-input="asstPrep" value="${esc(p.case_no)}" autocomplete="off"></label>
+    <div class="asst-acts">
+      <button class="btn sm" data-act="asstPrepPrev" ${p.busy ? "disabled" : ""}>Preview the dry run</button>
+      <button class="btn sm ghost" data-act="asstPrepCancel">Cancel</button>
+    </div>
+  </div>`;
+}
+
 function asstQuickHtml(){
   return `<div class="asst-home">
     <button class="asst-big" data-act="asstQuick" data-cmd="What should I do?">What should I do?</button>
+    ${ASST && ASST.state && ASST.state.role === "admin"
+      ? `<button class="asst-big" data-act="asstQuick" data-cmd="Prepare an intake">Prepare an intake &mdash; dry run</button>` : ""}
     <button class="asst-big" data-act="asstQuick" data-cmd="Anything new?">What&rsquo;s new?</button>
     <button class="asst-big" data-act="asstQuick" data-cmd="Explain this page">Explain this page</button>
     <button class="asst-big" data-act="asstQuick" data-cmd="Take me to ">Take me somewhere&hellip;</button>
@@ -2645,6 +2763,7 @@ function asstMsgHtml(m){
   if(m.who === "you") return `<div class="asst-you">${esc(m.text)}</div>`;
   return `<div class="asst-m">
     ${m.kind === "refused" ? `<div class="asst-blocked">BETA — ACTION DISABLED</div>` : ""}
+    ${m.kind === "simulated" ? `<div class="asst-sim">SIMULATED — NOT SENT</div>` : ""}
     <div>${esc(m.text)}</div>
     ${m.card ? `<div class="asst-card">${m.card.map(c => `
       <button class="asst-row" data-act="asstOpenCase" data-case="${esc(c.case_no || "")}">
@@ -2670,6 +2789,7 @@ function asstHtml(){
         ${ASST.msgs.length ? ASST.msgs.map(asstMsgHtml).join("") : asstQuickHtml()}
         ${ASST.busy ? `<div class="asst-m" style="opacity:.6">&hellip;</div>` : ""}
       </div>
+      ${asstPrepHtml()}
       <label class="cap asst-guide"><input type="checkbox" id="asst_guide" data-act="asstGuide"
         ${ASST.guide ? "checked" : ""}><span>Explain &amp; Guide Me</span></label>
       <form class="asst-ask" data-act="asstAsk">
@@ -18633,6 +18753,10 @@ document.addEventListener("click", ev => {
     const action = ASST && ASST.msgs[mi] && (ASST.msgs[mi].actions || [])[ai];
     if(action && action.navigate) asstNavigate(action.navigate);
   }
+  else if(act === "asstPrepPrev"){ asstPrepPrev(); }
+  else if(act === "asstPrepSim"){ asstPrepSim(); }
+  else if(act === "asstPrepEdit"){ if(ASST && ASST.prep){ ASST.prep.preview = null; ASST.prep.err = ""; paint(); } }
+  else if(act === "asstPrepCancel"){ if(ASST){ ASST.prep = null; paint(); } }
   else if(act === "tab"){
     if(TAB === "leads" && el.dataset.tab !== "leads") LEAD_MSG = "";
     TAB = el.dataset.tab; paint();
@@ -19606,6 +19730,9 @@ document.addEventListener("input", ev => {
   /* Unit 17 — the reason boxes and the date survive async repaints (loadCloseout
      resolving, a retention write returning) without the box being rebuilt mid-word. */
   if(din === "retDraft"){ RTN_DRAFT[ev.target.id] = ev.target.value; return; }
+  /* UNIT 4 — the Assistant workbench draft: the value lands in ASST.prep on
+     every keystroke, so a repaint from anywhere redraws what was typed. */
+  if(din === "asstPrep"){ asstPrepCollect(); return; }
   /* Typing IN the paragraph is the writer taking it over: the flag flips and
      nothing rewrites the box — no repaint here, the cursor is in it. */
   if(din === "dsText"){
@@ -19707,6 +19834,9 @@ document.addEventListener("input", ev => {
   /* The quick-legal service pick relabels the fee input (fixed → "Agreed
      fee") — captured first, so the repaint discards nothing typed. */
   if(ev.target.id === "nl_lsvc" && NL){ nlCollect(); paint(); }
+  /* UNIT 4 — a select's change also lands in the workbench draft, alongside
+     the input event, so the picked door survives any repaint either way. */
+  if(ev.target.dataset && ev.target.dataset.actInput === "asstPrep"){ asstPrepCollect(); }
   if(ev.target.dataset && ev.target.dataset.act === "leadStatus"){
     const caseNo = ev.target.dataset.case, v = ev.target.value;
     api(`/leads/${encodeURIComponent(caseNo)}/status`, {method:"POST", body:{status: v}})
