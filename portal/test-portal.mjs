@@ -16651,6 +16651,126 @@ section('BILLCOM: not configured means invisible; configured means offered exact
   await page.close();
 }
 
+section('LEGAL-SERVICES: the wizard generates the sheet from the service, and a fixed case never says retainer');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* A fixed-service legal lead exactly as the public form delivers one, and a
+     historical legal lead with no marker at all. */
+  await post('/ingest', { case_no: 'API-LSV-F', assignment: 'legal', legal_service: 'locate',
+    firm_name: 'Locate & Co', attorney_name: 'L. Cate', client_name: 'Locate & Co',
+    client_email: 'l@locateco.example', objective: 'Find the witness' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await post('/ingest', { case_no: 'API-LSV-H', assignment: 'legal',
+    firm_name: 'Historic LLP', attorney_name: 'H. Old', client_name: 'Historic LLP' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  /* ---- the Rate sheets legal wizard: selector, retainer handoff, preview ---- */
+  await page.evaluate(async () => { await render(); TAB = 'sheets'; OPEN_SHEET = 'legal'; paint(); });
+  await page.waitForTimeout(300);
+  await page.locator('[data-act="shWiz"][data-context="legal"]').click();
+  await page.waitForSelector('#wiz_lsvc', { timeout: 4000 });
+  const sel = await page.evaluate(() => ({
+    options: [...document.querySelectorAll('#wiz_lsvc option')].map(o => o.value),
+    text: document.querySelector('#wiz_lsvc').closest('.feebox').innerText,
+    retainerBox: !!document.querySelector('#wiz_ret'),
+  }));
+  ok('the legal wizard offers the five services plus not-specified',
+     sel.options.join() === ',locate,process,general,surveillance,custom', JSON.stringify(sel.options));
+  ok('the fixed options carry the Worker-composed price label', /\$250 Flat Fee/.test(sel.text),
+     sel.text.slice(0, 200));
+  ok('unspecified, the retainer selector still draws — the existing send unchanged',
+     sel.retainerBox === true);
+
+  const picked = await page.evaluate(() => {
+    document.querySelector('#wiz_lsvc').value = 'locate';
+    wizCollect(); SHEET_WIZ.lsvcTouched = true; paint();
+    const fee = document.querySelector('#wiz_lsvc').closest('.feebox').innerText;
+    document.querySelector('#wiz_to').value = 'firm@locateco.example';
+    wizCollect(); SHEET_WIZ.step = 2; paint();
+    return { fee, retainerBox: !!document.querySelector('#wiz_ret'),
+             summary: document.querySelector('.amsheet').innerText };
+  });
+  ok('picking Person Locate withdraws the retainer selector — a flat fee is not a retainer',
+     picked.retainerBox === false);
+  ok('and the hint names the concise flat-fee sheet',
+     /Person Locate \/ Skip Trace — \$250 Flat Fee/.test(picked.fee), picked.fee.slice(0, 200));
+  ok('the preview names the fixed sheet and the service, with no Agreed-retainer row',
+     /Person Locate \/ Skip Trace — \$250 Flat Fee/.test(picked.summary)
+     && /Legal service/.test(picked.summary)
+     && !/Agreed retainer/.test(picked.summary)
+     && /does not mark the fee paid/.test(picked.summary), picked.summary.slice(0, 400));
+
+  const posted = await page.evaluate(async () => {
+    let body = null; const real = window.fetch;
+    window.fetch = async (url, init) => {
+      if (String(url).includes('/sheets/')) { body = JSON.parse(init.body);
+        return new Response(JSON.stringify({ ok: true, sent_to: 'x', send_context: 'legal',
+          legal_service: { id: 'locate', label: 'Person Locate / Skip Trace', model: 'fixed' },
+          included: { rate_sheet: 'x', payment_methods: [] } }),
+          { status: 200, headers: { 'content-type': 'application/json' } }); }
+      return real(url, init);
+    };
+    await wizSend(); window.fetch = real;
+    return body;
+  });
+  ok('the page posts exactly the service it previewed',
+     posted && posted.legal_service === 'locate', JSON.stringify(posted));
+
+  /* ---- a lead-card wizard preselects the case's own service ---- */
+  await page.evaluate(async () => { SHEET_WIZ = null; TAB = 'leads'; paint(); });
+  await page.waitForTimeout(200);
+  await page.locator('.pcard', { hasText: 'Locate & Co' }).first()
+    .locator('[data-act="leadSheet"]').click();
+  await page.waitForTimeout(700);
+  const lead = await page.evaluate(() => ({
+    v: document.querySelector('#wiz_lsvc') ? document.querySelector('#wiz_lsvc').value : 'NONE',
+    retainerBox: !!document.querySelector('#wiz_ret'),
+  }));
+  ok('a fixed-service lead opens its wizard ON the service, retainer selector withdrawn',
+     lead.v === 'locate' && lead.retainerBox === false, JSON.stringify(lead));
+  await page.evaluate(() => { SHEET_WIZ = null; paint(); });
+
+  /* ---- the case money block: Fee (flat) $250; a historical case unchanged ---- */
+  const money = await page.evaluate(async () => {
+    const statusCard = () => {
+      const c = [...document.querySelectorAll('.ovcard')]
+        .find(x => x.innerText.includes('Case status'));
+      return c ? c.innerText : 'NO-CARD';
+    };
+    await openCase('API-LSV-F', 'overview');
+    await new Promise(r => setTimeout(r, 500));
+    const fixed = statusCard();
+    const fixedPricing = WS && WS.authorization && WS.authorization.legal_pricing;
+    await openCase('API-LSV-H', 'overview');
+    await new Promise(r => setTimeout(r, 500));
+    return { fixed, fixedPricing, hist: statusCard() };
+  });
+  ok('a fixed case\'s Overview reads Fee (flat) $250 and never Retainer',
+     /Fee \(flat\)/.test(money.fixed) && /\$250\b/.test(money.fixed)
+     && !/Retainer/.test(money.fixed), money.fixed.slice(0, 300));
+  ok('and its record knows the service and model',
+     money.fixedPricing && money.fixedPricing.service === 'locate'
+     && money.fixedPricing.model === 'fixed', JSON.stringify(money.fixedPricing));
+  ok('a historical legal case still reads Retainer $1,500 — unchanged',
+     /Retainer/.test(money.hist) && /\$1,500\b/.test(money.hist)
+     && !/Fee \(flat\)/.test(money.hist), money.hist.slice(0, 300));
+
+  /* ---- the Quick Legal form offers the optional service, defaulting to none ---- */
+  const quick = await page.evaluate(async () => {
+    TAB = 'newlead'; NL = { kind: 'legal', err: '', v: {} }; paint();
+    await new Promise(r => setTimeout(r, 150));
+    const s = document.querySelector('#nl_lsvc');
+    return { present: !!s, value: s ? s.value : null,
+             options: s ? [...s.options].map(o => o.textContent.trim().slice(0, 30)) : [] };
+  });
+  ok('Quick Legal offers the five services under "Not decided yet" — chosen, never defaulted',
+     quick.present === true && quick.value === '' && quick.options.length === 6
+     && quick.options[0] === 'Not decided yet', JSON.stringify(quick));
+  await page.close();
+}
+
 await browser.close();
 server.close();
 

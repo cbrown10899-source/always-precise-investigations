@@ -463,6 +463,13 @@ const AUTH_PRESETS = [8, 16, 24];
    a figure that is set elsewhere. */
 const PERSONAL = { retainer: 1500, hourly: 100, minHours: 4 };
 
+/* THE TWO FLAT-FEE LEGAL SERVICES (LEGAL-SERVICES.md D1, owner 2026-09-02) and
+   THE ONLY PLACE THEIR FIGURES ARE SET. The catalogue, the fixed sheets, the
+   workspace money block, the invoice block and the case list all read from
+   here — the PERSONAL / RATES rule applied to legal flat fees. The fixed-sheet
+   builder deliberately contains no digit literal; a source test pins that. */
+const LEGAL_FLAT = { locate: 250, process: 250 };
+
 /* How a private client's retainer can arrive (PAYMENTS.md §5/§11, corrected by
    the owner 2026-08-15). Validated here rather than by a CHECK constraint on
    the table: schema.sql is re-applied on every portal-setup run and a CHECK
@@ -682,6 +689,62 @@ function sheetCards(retainer) {
   return cards;
 }
 
+/* THE CONCISE FLAT-FEE SHEET a fixed legal service sends (LEGAL-SERVICES.md
+   D4/D5, owner 2026-09-02: "A law firm buying a $250 Person Locate should
+   receive a concise $250 Person Locate rate sheet").
+
+   It is one more context-resolved PRESENTATION behind the same send door the
+   legal card already uses — same product id, same email renderer, same mobile
+   styling — selected by the legal service, never by a new route. THE WORDS ARE
+   THE BOUNDARY: nothing here may say retainer, hourly, minimum, additional
+   time or deposit, because those are the retainer product's terms and the
+   whole point of this sheet is that they do not apply. The tests grep for the
+   vocabulary, so a reworded leak still fails.
+
+   THE FIGURE COMES FROM LEGAL_FLAT AND NOWHERE ELSE — no digit literal lives
+   in this function (D1), and a source test pins that. Payment information is
+   the Mail Check line (and Bill.com only when the adapter answers ready, via
+   the same withBillcomLine every non-private send goes through). */
+function legalFixedSheet(svc) {
+  const money = n => '$' + Number(n).toLocaleString('en-US');
+  const fee = money(LEGAL_FLAT[svc.id]);
+  return {
+    id: 'private_retainer',
+    type: 'flat',
+    service: svc.id,
+    service_label: svc.label,
+    name: `${svc.label} — ${fee} Flat Fee`,
+    selector_label: `Legal / Law Firm — ${svc.label}`,
+    audience: 'Law firms, attorneys and paralegals',
+    summary: `${svc.label} at a flat ${fee}. That is the full price for the `
+           + 'assignment, confirmed in writing before work begins.',
+    lines: [
+      { label: 'Flat fee', value: fee, big: true,
+        sub: 'The full price for this service',
+        note: 'The complete price for the assignment described on this sheet — '
+            + 'no separate figure follows it.' },
+      { label: 'What it covers', value: svc.label,
+        note: svc.covers },
+      { label: 'Included in the flat fee', value: 'No routine add-on fees',
+        note: 'Standard local travel, routine case expenses, documentation and '
+            + 'delivery of the results are included. There are no routine '
+            + 'mileage, toll, parking or report surcharges within our normal '
+            + 'service area.' },
+      { label: 'Outside our normal service area', value: 'Quoted in advance',
+        note: 'Work requiring significant travel outside our normal service '
+            + 'area is quoted and approved before the assignment is accepted.' },
+      /* The same one-writer line the insurance sheet and the legal card carry —
+         no address, invoice-only mailing details (MAIL-CHECK.md). */
+      MAIL_CHECK_LINE,
+    ],
+    closing_title: 'Billed to the firm. No surprise billing.',
+    closing: 'Work begins once the assignment is confirmed in writing. Law '
+           + 'firms are billed by invoice — BILL.com invoice or ACH, check by '
+           + 'mail, or a check held for pick-up at the firm’s office — and '
+           + 'an existing billing arrangement is honoured where one is on file.',
+  };
+}
+
 /* ---- Private-client payment methods (PAYMENTS.md, owner 2026-08-14) ----
 
    PRIVATE CLIENT ONLY. Cash App and Venmo may appear on the private retainer
@@ -881,6 +944,91 @@ const LEGAL_ARRANGEMENTS = {
 const LEGAL_ASSIGNMENTS = ['Surveillance', 'Locate / Skip trace', 'Background investigation',
   'Witness locate', 'Domestic / custody investigation', 'Civil investigation',
   'Evidence / documentation', 'Process / service support', 'Other / custom assignment'];
+
+/* ================= LEGAL SERVICES — the one catalogue (LEGAL-SERVICES.md) ==
+
+   The pricing-level choice a law firm makes, owner brief 2026-09-02: five
+   services, three pricing models. `model` is what the case, the sheet and the
+   billing language all key off — `fixed` (a flat fee from LEGAL_FLAT),
+   `retainer` (the existing private/legal retainer+hourly product, untouched),
+   `custom` (no figure of its own; the existing custom-retainer workflow sets
+   one per case).
+
+   Each entry maps onto the EXISTING assignment-type vocabulary (D2) rather
+   than duplicating it: the five services are the pricing choice, the nine
+   LEGAL_ASSIGNMENTS stay the finer categorisation, and a chosen service
+   defaults `assignment_type` only where the form left it blank.
+
+   NO CHECK ANYWHERE — the marker is `payload.legal_service` on the
+   submission's own row (the `assignment === 'legal'` shape, D3), so a sixth
+   service is an ordinary edit here and historical cases carry no marker at
+   all, which is exactly the `retainer` default branch below. */
+const LEGAL_MODEL_LABEL = { fixed: 'Fixed price', retainer: 'Retainer / hourly', custom: 'Custom' };
+const LEGAL_SERVICES = {
+  locate: {
+    id: 'locate', label: 'Person Locate / Skip Trace', model: 'fixed',
+    assignment_type: 'Locate / Skip trace',
+    covers: 'Identifying and locating the named subject — current address and '
+          + 'whereabouts suitable for contact, filing or service, with the '
+          + 'identifying details checked against what the firm supplied.',
+  },
+  process: {
+    id: 'process', label: 'Process Service', model: 'fixed',
+    assignment_type: 'Process / service support',
+    covers: 'Service of the firm’s documents on the named recipient, '
+          + 'documented attempt by attempt, with the outcome reported to the '
+          + 'firm for its file.',
+  },
+  general: {
+    id: 'general', label: 'General Investigation', model: 'retainer',
+    assignment_type: 'Civil investigation',
+  },
+  surveillance: {
+    id: 'surveillance', label: 'Surveillance', model: 'retainer',
+    assignment_type: 'Surveillance',
+  },
+  custom: {
+    id: 'custom', label: 'Other / Custom Assignment', model: 'custom',
+    assignment_type: 'Other / custom assignment',
+  },
+};
+const legalServiceById = id => LEGAL_SERVICES[String(id == null ? '' : id).trim().toLowerCase()] || null;
+/* The catalogue as the pages receive it — id, label, model, model label; no
+   figure, because a fee belongs beside the surface that quotes it. */
+const LEGAL_SVC_LIST = Object.values(LEGAL_SERVICES).map(s => ({
+  id: s.id, label: s.label, model: s.model, model_label: LEGAL_MODEL_LABEL[s.model],
+}));
+
+/* The service a submission's own record names — one reader, the `isLegalSub`
+   rule: never inferred from a recipient, a sheet, or the legal_intake table.
+   Null for a non-legal case AND for a legal case with no marker; the two are
+   told apart by `isLegalSub` where it matters. */
+const legalServiceForSub = sub => {
+  if (!sub || !isLegalSub(sub)) return null;
+  try { return legalServiceById(JSON.parse(sub.payload || '{}').legal_service); }
+  catch { return null; }
+};
+
+/* FIXED / RETAINER-HOURLY / CUSTOM, derived and never stored (D3). The
+   historical default is `retainer` — a legal case that predates the catalogue
+   renders exactly as it did the day it was filed, which is the owner's
+   "existing historical cases must remain readable and unchanged" as the
+   default branch rather than a migration. */
+function legalPricingFor(sub) {
+  if (!sub || !isLegalSub(sub)) return null;
+  const svc = legalServiceForSub(sub);
+  const model = svc ? svc.model : 'retainer';
+  return {
+    service: svc ? svc.id : null,
+    service_label: svc ? svc.label : null,
+    model,
+    model_label: LEGAL_MODEL_LABEL[model],
+    /* The fee a fixed service is quoted at — the catalogue's, from LEGAL_FLAT.
+       The case's own agreed figure still outranks this at the money surfaces
+       (D7); this is the default the model carries. */
+    fee: svc && svc.model === 'fixed' ? LEGAL_FLAT[svc.id] : null,
+  };
+}
 
 /* ---------------------------------------------- UNIT 7: client profiles
 
@@ -1385,6 +1533,10 @@ async function emailSheet(request, env, user, id) {
      nothing about what is SENT changes — the subject line still carries
      whatever was typed. */
   let linkedCase = null;
+  /* The resolved case's own row, kept for the legal-service derivation below —
+     the lookup already happens for the sheet/lead guard, so this costs
+     nothing extra. */
+  let caseSub = null;
   /* The context this send actually happens in: the sheet's, until a resolved
      case says otherwise — a LEGAL case takes the private sheet in the LEGAL
      context, and the answer the office reads must say which (observable and
@@ -1439,6 +1591,7 @@ async function emailSheet(request, env, user, id) {
       const refusal = await caseSendRefusal(env, caseNo);
       if (refusal) return refusal;
       linkedCase = caseNo;
+      caseSub = lead;
       /* Per-case context (Unit 6): a LEGAL case takes the private sheet —
          same product, same figures, D1 — so `wanted` maps through the context
          table rather than a kind ternary. */
@@ -1452,6 +1605,34 @@ async function emailSheet(request, env, user, id) {
           expected_sheet: wanted }, 400);
       }
     }
+  }
+
+  /* WHICH LEGAL SERVICE THIS SEND IS ABOUT (LEGAL-SERVICES.md D4). An explicit
+     pick on the screen wins — the office may deliberately quote a firm a
+     different service than the case on file — else the case's own marker
+     answers, else there is no service and the send is the retainer product
+     exactly as before this unit. Nothing here writes the marker: choosing a
+     document for one send is not re-typing the case.
+
+     REFUSED BY NAME off the legal context: a legal service on an insurance or
+     private send is a caller error, and silently dropping it would send a
+     different document than the screen believed it chose. */
+  const askedSvc = String(body.legal_service || '').trim().toLowerCase();
+  let legalSvc = null;
+  if (askedSvc) {
+    if (sendCtx !== SEND_CONTEXT.LEGAL) {
+      return json({ error: `Legal services describe legal sends, and this send is ${sendCtx}. `
+        + 'Leave the legal service out, or send from the Legal card.',
+        code: 'legal_service_not_legal' }, 400);
+    }
+    legalSvc = legalServiceById(askedSvc);
+    if (!legalSvc) {
+      return json({ error: 'No such legal service. The services are: '
+        + Object.values(LEGAL_SERVICES).map(s => `${s.id} — ${s.label}`).join('; ') + '.',
+        code: 'unknown_legal_service' }, 400);
+    }
+  } else if (sendCtx === SEND_CONTEXT.LEGAL) {
+    legalSvc = legalServiceForSub(caseSub);
   }
 
   /* THE PAYMENT HALF OF THE BOUNDARY, AND IT IS ONE CHECK (Unit 28 moved it
@@ -1519,7 +1700,14 @@ async function emailSheet(request, env, user, id) {
      investigations" — to a law firm, while the screen showed the legal card.
      The figures are identical either way; what differs is who it says it is
      for, which is the owner's "must clearly identify LEGAL / LAW FIRM". */
-  const sheet = sheetForContext(id, sendCtx, retainer);
+  /* AND FOR A FIXED LEGAL SERVICE, THE DOCUMENT IS THE SERVICE'S OWN
+     (LEGAL-SERVICES.md D4/D5): the concise flat-fee sheet, not the retainer
+     product — "a law firm buying a $250 Person Locate should receive a
+     concise $250 Person Locate rate sheet". General, Surveillance and Custom
+     stay the legal card, which IS the existing legal pricing. */
+  const sheet = legalSvc && legalSvc.model === 'fixed'
+    ? legalFixedSheet(legalSvc)
+    : sheetForContext(id, sendCtx, retainer);
 
   /* The Options step (UIBUILD P18): include the intake, or not. Which intake
      is never the caller's choice.
@@ -1538,7 +1726,16 @@ async function emailSheet(request, env, user, id) {
      label cannot disagree — three derivations of one answer is three chances
      to drift, which is how this one survived. */
   const includeIntake = body.include_intake === true || body.include_intake === 1 || body.include_intake === '1';
-  const intakeDoor = includeIntake ? (intakeForContext(sendCtx) || null) : null;
+  const baseDoor = includeIntake ? (intakeForContext(sendCtx) || null) : null;
+  /* The Start Assignment action opens the form on the service the sheet
+     quoted (LEGAL-SERVICES.md D5/D9): the legal door plus `&service=`,
+     resolved HERE beside the door itself so the email body, the URL and the
+     response label cannot disagree. Any named legal service carries — the
+     retainer-model sheet's door preselects too, because that is the service
+     the office chose to quote. */
+  const intakeDoor = baseDoor && legalSvc
+    ? { ...baseDoor, url: `${baseDoor.url}&service=${legalSvc.id}` }
+    : baseDoor;
   const intakeUrl = intakeDoor ? intakeDoor.url : null;
 
   /* Payment instructions ride only with the PRIVATE sheet (PAYMENTS.md).
@@ -1597,7 +1794,12 @@ async function emailSheet(request, env, user, id) {
         + 'before including payment instructions.' }, 400);
   }
 
-  const { text, html } = sheetEmail(withBillcomLine(sheet, billcom.ready), note, intakeDoor, payment, retainer, npPicked);
+  /* CONTEXT-GUARDED (LEGAL-SERVICES.md D10): /sheets already excluded the
+     private card from the Bill.com line, but this wrap did not — so a PRIVATE
+     send with Bill.com configured would have carried the line to a private
+     client. The line rides legal and insurance sends only, like Mail Check. */
+  const { text, html } = sheetEmail(withBillcomLine(sheet,
+    billcom.ready && !CONTEXT_TAKES_PAYMENT(sendCtx)), note, intakeDoor, payment, retainer, npPicked);
   const subject = caseNo
     ? `${sheet.name} — Always Precise Investigations (case ${caseNo})`
     : `${sheet.name} — Always Precise Investigations`;
@@ -1638,6 +1840,11 @@ async function emailSheet(request, env, user, id) {
      instructions says nothing whatever about the retainer being paid. */
   return json({ ok: true, sent_to: to, sheet: sheet.id,
     send_context: sendCtx,
+    /* Which legal service the document was generated from — observable and
+       asserted, the send_context rule applied one level down. Absent when no
+       service was named or on file, which is the pre-unit send exactly. */
+    legal_service: legalSvc
+      ? { id: legalSvc.id, label: legalSvc.label, model: legalSvc.model } : undefined,
     included: {
       rate_sheet: sheet.name,
       intake: intakeDoor ? intakeDoor.label : null,
@@ -1850,6 +2057,15 @@ async function createManualIntake(request, env, user) {
     return json({ error: 'Pick one of the four legal payment arrangements — BILL.com invoice/ACH, '
       + 'check pick-up, check by mail, or an existing billing arrangement.' }, 400);
   }
+  /* LEGAL-SERVICES.md D2/D3 — the pricing-level service, validated against the
+     catalogue. OPTIONAL, like the assignment type: a phone call that never
+     settled the service files with no marker and renders under the retainer
+     model, which is the honest record of what was actually decided. */
+  if (legal && body.legal_service != null && String(body.legal_service).trim() !== ''
+      && !legalServiceById(body.legal_service)) {
+    return json({ error: 'No such legal service. The services are: '
+      + Object.values(LEGAL_SERVICES).map(s => s.label).join(', ') + '.' }, 400);
+  }
 
   const fields = ['service', 'client_name', 'client_email', 'client_phone', 'client_address',
     'carrier', 'claim_number', 'policy_number', 'claim_type', 'date_of_loss',
@@ -1861,6 +2077,14 @@ async function createManualIntake(request, env, user) {
   if (legal) {
     payload.assignment = 'legal';
     for (const f of LEGAL_FIELDS) { const v = cleanLegal(body[f]); if (v) payload[f] = v; }
+    /* The service marker (D3), and the finer category defaulted from it ONLY
+       where the office typed none — a typed assignment_type is the office's
+       own word and is never overwritten by a mapping. */
+    const lsvc = legalServiceById(body.legal_service);
+    if (lsvc) {
+      payload.legal_service = lsvc.id;
+      if (!payload.assignment_type) payload.assignment_type = lsvc.assignment_type;
+    }
     /* The attorney is the client-side contact of record when no separate
        client contact was typed — the denormalised columns feed the case list
        and the send flows, and a legal lead with an empty contact column would
@@ -5168,8 +5392,13 @@ async function authorizationFor(env, caseNo, forAdmin) {
        pricing models never share a number (RATESHEETS.md). A claims case
        bills at the standard carrier rate; a private case at the retainer
        model's hourly. An explicit per-case rate still overrides either. */
-    const sub = await env.DB.prepare('SELECT kind FROM submissions WHERE case_no = ?').bind(caseNo).first();
+    const sub = await env.DB.prepare('SELECT kind, payload FROM submissions WHERE case_no = ?').bind(caseNo).first();
     const kind = sub ? sub.kind : null;
+    /* LEGAL-SERVICES.md D7 — which pricing model this case's own record
+       carries. Null for a non-legal case; `retainer` for a legal case with no
+       marker, which is every case that predates the catalogue, so historical
+       cases render exactly as they always did. */
+    const legalPricing = legalPricingFor(sub);
     const rate = st.client_hourly != null ? Number(st.client_hourly)
       : (kind === 'consumer' ? PERSONAL.hourly : RATES.surveillance.standard);
     const budget = meta && meta.authorized_budget != null ? Number(meta.authorized_budget) : null;
@@ -5194,7 +5423,13 @@ async function authorizationFor(env, caseNo, forAdmin) {
          and no client-facing surface reads it yet. */
       const ret = await env.DB.prepare(
         'SELECT retainer_amount, received FROM case_retainer WHERE case_no = ?').bind(caseNo).first();
-      const amount = ret && ret.retainer_amount != null ? Number(ret.retainer_amount) : PERSONAL.retainer;
+      /* A FIXED legal case's figure defaults from the catalogue, never from
+         PERSONAL.retainer — a fresh $250 locate must not read $1,500 (D7).
+         An explicitly agreed per-case figure still outranks the default, the
+         agreedRetainer principle applied to a flat fee. */
+      const fixed = !!(legalPricing && legalPricing.model === 'fixed');
+      const amount = ret && ret.retainer_amount != null ? Number(ret.retainer_amount)
+        : fixed ? legalPricing.fee : PERSONAL.retainer;
       const applied = Math.round(hoursUsed * rate * 100) / 100;
       const paid = await retainerPaid(env, caseNo);
       /* The legacy single receipt, still shown when it is the only record —
@@ -5221,9 +5456,18 @@ async function authorizationFor(env, caseNo, forAdmin) {
         outstanding,
         received: received > 0 || !!(ret && ret.received),
         payments: paid.payments,
-        applied,
-        remaining: Math.round((amount - applied) * 100) / 100,
-        approx_hours_remaining: rate > 0 ? Math.round(((amount - applied) / rate) * 10) / 10 : null,
+        /* NEVER CALLED A RETAINER on a fixed case (LEGAL-SERVICES.md D7), and
+           never given hourly arithmetic either: a flat fee is the price of
+           the whole assignment, so "applied at $100/hr" and "hours remaining"
+           are the retainer model's figures and are NULL here rather than
+           zero — null is "does not apply", zero would be a numeric claim. The
+           page keys every money word off `model`. */
+        model: fixed ? 'fixed' : 'retainer',
+        service_label: fixed ? legalPricing.service_label : undefined,
+        applied: fixed ? null : applied,
+        remaining: fixed ? null : Math.round((amount - applied) * 100) / 100,
+        approx_hours_remaining: (fixed || !(rate > 0)) ? null
+          : Math.round(((amount - applied) / rate) * 10) / 10,
         /* PENDING until money is recorded, PART PAID while some has arrived and
            some has not. Sending payment instructions never reaches any of this —
            payment_send records that the firm asked, which is not being paid. */
@@ -5246,6 +5490,10 @@ async function authorizationFor(env, caseNo, forAdmin) {
         } : null,
       };
     }
+    /* The service and model on the case's own record, for the legal panel and
+       the billing labels — the paying side, so admin only like everything
+       else in this block. Undefined for a non-legal case. */
+    out.legal_pricing = legalPricing || undefined;
     out.show_client_identity = st.show_client_identity ? 1 : 0;
   }
   return out;
@@ -5635,6 +5883,10 @@ async function caseWorkspace(env, user, caseNo) {
        every one of these fields names the paying side. The subject fields the
        field needs ride the ordinary payload allow-list, not this. */
     legal: admin ? await legalFor(env, caseNo) : undefined,
+    /* LEGAL-SERVICES.md — the service catalogue for the Legal panel's pricing
+       selector, one writer with the Worker's own vocabulary so the page never
+       grows a second copy to drift. Admin-only beside `legal` above. */
+    legal_services: admin ? LEGAL_SVC_LIST : undefined,
     /* UNIT 7 — which saved profile this assignment came from, and (only when
        there is none) the possible match computed from the case's own values.
        ADMIN ONLY for the same reason as the line above: a profile IS the
@@ -5672,14 +5924,34 @@ async function setLegalDetail(request, env, user, caseNo) {
     return json({ error: `${caseNo} is not a legal assignment — the Legal panel writes only to `
       + `legal cases, and a private client or a carrier file has no firm record to hold.` }, 400);
   }
-  if ((await missingTables(env)).includes('legal_intake')) {
+  const body = await readJson(request);
+  const mentioned = LEGAL_FIELDS.filter(f => body[f] !== undefined);
+  /* LEGAL-SERVICES.md D8 — the pricing-level service, under the same absent/
+     blank rules as everything else here. It lives in the submission PAYLOAD
+     (the marker of record, D3), not in legal_intake, so it is written the way
+     /cases/:no/edit writes payload fields — and a service-only edit therefore
+     works even before legal_intake exists. Blank clears the marker and the
+     case returns to the retainer presentation; nothing here touches
+     assignment_type, which on an EDIT is the office's own word. */
+  const svcMentioned = body.legal_service !== undefined;
+  let svcValue = null;
+  if (svcMentioned) {
+    const raw = String(body.legal_service == null ? '' : body.legal_service).trim();
+    if (raw !== '') {
+      const svc = legalServiceById(raw);
+      if (!svc) {
+        return json({ error: 'No such legal service. The services are: '
+          + Object.values(LEGAL_SERVICES).map(s => s.label).join(', ') + '.' }, 400);
+      }
+      svcValue = svc.id;
+    }
+  }
+  if (!mentioned.length && !svcMentioned) return json({ error: 'Nothing to change.' }, 400);
+  if (mentioned.length && (await missingTables(env)).includes('legal_intake')) {
     return json({ error: 'The legal_intake table is not on this database yet. Run the '
       + 'portal-setup workflow once and save again — nothing typed is lost meanwhile, the '
       + 'intake payload still holds what the firm sent.', code: 'not_set_up' }, 503);
   }
-  const body = await readJson(request);
-  const mentioned = LEGAL_FIELDS.filter(f => body[f] !== undefined);
-  if (!mentioned.length) return json({ error: 'Nothing to change.' }, 400);
   const vals = {};
   for (const f of mentioned) {
     let v = cleanLegal(body[f]);
@@ -5688,15 +5960,27 @@ async function setLegalDetail(request, env, user, caseNo) {
     }
     vals[f] = v;
   }
-  /* Ensure the row exists (the backfill), then update only what was named. */
-  await env.DB.prepare(
-    `INSERT INTO legal_intake (case_no, created_at) VALUES (?, ?)
-     ON CONFLICT(case_no) DO NOTHING`).bind(caseNo, nowIso()).run();
-  await env.DB.prepare(
-    `UPDATE legal_intake SET ${mentioned.map(f => `${f} = ?`).join(', ')},
-       updated_by = ?, updated_at = ? WHERE case_no = ?`)
-    .bind(...mentioned.map(f => vals[f]), user.id, nowIso(), caseNo).run();
-  return json({ ok: true, legal: await legalFor(env, caseNo) });
+  let updatedPayload = null;
+  if (svcMentioned) {
+    let p = {}; try { p = JSON.parse(sub.payload || '{}'); } catch { p = {}; }
+    if (svcValue) p.legal_service = svcValue; else delete p.legal_service;
+    updatedPayload = JSON.stringify(p);
+    await env.DB.prepare('UPDATE submissions SET payload = ? WHERE case_no = ?')
+      .bind(updatedPayload, caseNo).run();
+  }
+  if (mentioned.length) {
+    /* Ensure the row exists (the backfill), then update only what was named. */
+    await env.DB.prepare(
+      `INSERT INTO legal_intake (case_no, created_at) VALUES (?, ?)
+       ON CONFLICT(case_no) DO NOTHING`).bind(caseNo, nowIso()).run();
+    await env.DB.prepare(
+      `UPDATE legal_intake SET ${mentioned.map(f => `${f} = ?`).join(', ')},
+         updated_by = ?, updated_at = ? WHERE case_no = ?`)
+      .bind(...mentioned.map(f => vals[f]), user.id, nowIso(), caseNo).run();
+  }
+  return json({ ok: true, legal: await legalFor(env, caseNo),
+    legal_pricing: legalPricingFor(updatedPayload != null
+      ? { ...sub, payload: updatedPayload } : sub) });
 }
 
 /* ======================================================================
@@ -7895,11 +8179,20 @@ function invoiceDisplayStatus(inv, money) {
 
    A negative balance is not an error — it is the case having run past the
    retainer, which is exactly the moment the office needs to see it. */
-async function retainerBlock(env, inv) {
+async function retainerBlock(env, inv, sub) {
   if (inv.invoice_type !== 'private') return null;
+  /* LEGAL-SERVICES.md D7 — the caller already read the case's submission row
+     for the send-context/remittance decision, so the pricing model costs no
+     extra query. A FIXED legal case's document must not print the retainer
+     drawdown: its fee defaults from the catalogue, and the hourly-model
+     figures are null — the page prints a one-line flat-fee statement off
+     `model` instead of the deposit table. */
+  const legalPricing = legalPricingFor(sub);
+  const fixed = !!(legalPricing && legalPricing.model === 'fixed');
   const ret = await env.DB.prepare(
     'SELECT retainer_amount, received FROM case_retainer WHERE case_no = ?').bind(inv.case_no).first();
-  const amount = ret && ret.retainer_amount != null ? Number(ret.retainer_amount) : PERSONAL.retainer;
+  const amount = ret && ret.retainer_amount != null ? Number(ret.retainer_amount)
+    : fixed ? legalPricing.fee : PERSONAL.retainer;
   /* A DRAFT INVOICE IS NOT EARNED MONEY (owner decision, 2026-08-21): "UNSENT
      or DRAFT invoices MUST NOT reduce the client-facing retainer balance. Only
      finalized/issued billable work may affect the client-facing retainer
@@ -7945,11 +8238,13 @@ async function retainerBlock(env, inv) {
   const budget = meta && meta.authorized_budget != null ? Number(meta.authorized_budget) : null;
   return {
     amount,
+    model: fixed ? 'fixed' : 'retainer',
+    service_label: fixed ? legalPricing.service_label : undefined,
     received: !!(ret && ret.received),
-    applied,
-    balance: Math.round((amount - applied) * 100) / 100,
+    applied: fixed ? null : applied,
+    balance: fixed ? null : Math.round((amount - applied) * 100) / 100,
     // Only "additional" when it is genuinely above the retainer.
-    additional_authorized: budget != null && budget > amount
+    additional_authorized: !fixed && budget != null && budget > amount
       ? Math.round((budget - amount) * 100) / 100 : null,
   };
 }
@@ -8000,7 +8295,7 @@ async function invoiceWithMoney(env, inv) {
   }
   return { ...inv, refs_json: undefined, refs, lines: lines || [], payments: payments || [],
            send_context: invCtx || undefined, remit_address: remit, billcom_url: billcomUrl,
-           ...money, retainer: await retainerBlock(env, inv),
+           ...money, retainer: await retainerBlock(env, inv, invSub),
            display_status: invoiceDisplayStatus(inv, money) };
 }
 
@@ -10956,7 +11251,11 @@ async function casePackages(env) {
     if (c.kind === 'consumer') {
       const auth = await authorizationFor(env, c.case_no, true);
       retainer = auth.retainer ? { amount: auth.retainer.amount, remaining: auth.retainer.remaining,
-                                   received: auth.retainer.received } : null;
+                                   received: auth.retainer.received,
+                                   /* The card's money words follow the model
+                                      (LEGAL-SERVICES.md D7). */
+                                   model: auth.retainer.model,
+                                   service_label: auth.retainer.service_label } : null;
     }
     packages.push({
       case_no: c.case_no, kind: c.kind, stage: c.stage || null, case_type: c.case_type || null,
@@ -13203,6 +13502,13 @@ async function route(request, env) {
        the same helper the send uses — the preview and the email must resolve
        identically or the screen lies about what will go out. */
     const retainer = await retainerForSend(env, caseNo, url.searchParams.get('retainer'));
+    /* LEGAL-SERVICES.md — the case's own service marker, so a wizard opened
+       from a legal lead preselects the service the email will actually be
+       generated from. Null when the reference resolves to nothing or the case
+       carries no marker; the preview then honestly shows the retainer sheet. */
+    const caseSubRow = caseNo ? await env.DB.prepare(
+      'SELECT kind, payload FROM submissions WHERE case_no = ?').bind(caseNo).first() : null;
+    const caseSvc = legalServiceForSub(caseSubRow);
     /* BILLCOM.md — the cards gain the Bill.com line and the wizard learns it
        may offer the tick ONLY from the adapter's answer. Not-ready costs
        nothing and shows nothing new. The PRIVATE card never gains the line —
@@ -13211,6 +13517,19 @@ async function route(request, env) {
     return json({ sheets: sheetCards(retainer).map(c =>
                     c.context === SEND_CONTEXT.PRIVATE ? c : withBillcomLine(c, billcom.ready)),
                   retainer,
+                  /* LEGAL-SERVICES.md — the catalogue the legal send wizard
+                     offers. price_label is COMPOSED HERE so no figure ever
+                     lives in the page source (the no-dollar guard), and
+                     sheet_name is what the preview step names for a fixed
+                     service, so the screen and the email cannot disagree. */
+                  legal_services: Object.values(LEGAL_SERVICES).map(s => ({
+                    id: s.id, label: s.label, model: s.model,
+                    model_label: LEGAL_MODEL_LABEL[s.model],
+                    price_label: s.model === 'fixed'
+                      ? '$' + Number(LEGAL_FLAT[s.id]).toLocaleString('en-US') + ' Flat Fee' : null,
+                    sheet_name: s.model === 'fixed' ? legalFixedSheet(s).name : null,
+                  })),
+                  case_legal_service: caseSvc ? caseSvc.id : null,
                   billcom_ready: billcom.ready,
                   email_configured: Boolean(env.RESEND_API_KEY) });
   }
