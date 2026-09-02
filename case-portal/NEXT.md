@@ -37,6 +37,51 @@ item is finished.
 
 ---
 
+# ✅ READY FOR HUMAN LIVE TEST — Assistant Units 1–10 + intake delete
+
+Sign in to the live portal as an Admin and walk these in order. Every one
+should behave exactly as written; anything else is a finding worth reporting.
+
+1. **Open the Assistant** — click **✨ Assistant BETA** in the left sidebar
+   (or the ✨ pill bottom-right on a phone). The dock opens on the right with
+   the banner *ASSISTANT BETA — DRY RUN MODE…* and the portal stays visible.
+2. Type **`intakes`** — expect an INTAKES status with real counts and
+   situation-dependent buttons (REVIEW NEW INTAKES first if any are waiting).
+3. Type **`old intakes`** — each older undecided intake is classified
+   (ELIGIBLE FOR CLEANUP REVIEW / PROTECTED / POSSIBLE DUPLICATE / NEEDS
+   REVIEW) with its reason, and the answer says Beta never deletes.
+4. Type **`invoices`** — live counts and the real outstanding total; click
+   **SHOW OVERDUE** if offered and watch the follow-up answer arrive.
+5. Type **`Take me to billing`** — the screen actually changes to Billing.
+6. Type **`What is outstanding?`** — the live figure, with an Open Billing
+   button.
+7. Open any case → click **✨ Ask Assistant** → type **`invoice preview`** —
+   expect *DRY RUN — INVOICE PREVIEW · SIMULATED — NOT CREATED* and the
+   would-be invoice; then check **Billing**: no new invoice exists.
+8. Still on the case: **`Check this case`**, then **`Is this ready to
+   close?`**, then **`Summarize today's activity`** (verbatim entries only),
+   then **`Why can't I delete this?`** — the answer names exactly what the
+   delete would refuse over.
+9. Type **`prepare an intake`** → fill a TEST email (yours) → **Preview the
+   dry run** → **Simulate — record only** — expect *SIMULATED — NOT SENT*,
+   and confirm no email arrived and Rate Sheets → send history is unchanged.
+10. Type **`prepare a rate sheet`** → Legal → Process Service → custom fee →
+    Preview — the exact document with the fee you typed; Simulate; nothing
+    sends.
+11. Toggle **Explain & Guide Me** ON and ask **`billing status`** — the
+    answer now LEADS with the screen's plain-language paragraph; toggle OFF
+    and ask again — compact.
+12. Type **`What needs attention?`** — the Watch list, saying INTERNAL ONLY.
+13. On a phone (or narrow window): the ✨ pill opens a full-width bottom
+    sheet; **`take me to my assignments`** navigates and the pill returns.
+14. **Intake delete (previously fixed live-500):** on the Dashboard's Leads &
+    Intakes, click the red trash on a FRESH test intake — the confirmation
+    names the person, the delete succeeds, the card is gone. On a developed
+    case's intake the delete refuses and points at Archive / Delete case.
+15. Sign in as an investigator (if available): the Assistant offers no admin
+    doors, `intakes`/`invoices` answer "admin desk", and `cases`/`tasks`
+    answer with their own scoped counts.
+
 # 🌙 OVERNIGHT FINAL REPORT — 2026-09-02 (owner-ordered format)
 
 **Branch:** `claude/app-crashes-lockups-debug-psf6zd`, reset to master after
