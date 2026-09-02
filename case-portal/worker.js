@@ -11387,6 +11387,12 @@ async function casePackages(env) {
  * home-screen launch can resume it) and "who is out right now?" (P18). */
 
 async function myActiveDay(env, user) {
+  /* The resume arm deliberately carries NO tombstone/archive exclusion. A
+     running day blocks both markers at their own routes ("a day still running
+     is refused, naming the day") and blocks the intake hard-delete as a
+     protected dependent, so an open day can never point at a hidden case —
+     and a filter here would be the one way to strand a legitimately running
+     day's clock behind a screen that no longer offers it. */
   const row = await env.DB.prepare(
     `SELECT d.id, d.case_no, d.day_date, d.start_time, d.start_mileage,
             d.created_at AS started_at, s.kind, s.subject_name
@@ -11394,11 +11400,29 @@ async function myActiveDay(env, user) {
       WHERE d.investigator_id = ? AND d.end_time IS NULL
       ORDER BY d.id DESC LIMIT 1`).bind(user.id).first();
   if (!row) {
-    // Nothing running: the launcher offers the assignments they could start.
+    /* Nothing running: the launcher offers the assignments they could start.
+       Tombstoned and archived cases are excluded HERE, in the SQL — the same
+       rule outNow states one function down. This arm used to skip it, so a
+       case the office deleted or archived weeks earlier was still offered on
+       the home-screen launcher as a startable assignment (found live,
+       2026-09-02). The exclusion sits BEFORE the LIMIT on purpose: filtering
+       the 25 rows after the read would let a page of hidden cases empty the
+       launcher while live assignments wait beyond the cap. Starting a day on
+       a hidden case was already refused at the route chokepoint; this makes
+       the offer agree with the gate instead of advertising what the gate
+       refuses. Guarded like every read that touches the marker tables — a
+       database portal-setup has not reached degrades to the unfiltered list,
+       never to a 500 on the field's own screen. */
+    const missing = await missingTables(env);
+    const notArchived = missing.includes('case_archive') ? ''
+      : 'AND s.case_no NOT IN (SELECT case_no FROM case_archive)';
+    const notDeleted = missing.includes('case_deleted') ? ''
+      : 'AND s.case_no NOT IN (SELECT case_no FROM case_deleted)';
     const { results } = await env.DB.prepare(
       `SELECT s.case_no, s.kind, s.subject_name, st.stage
          FROM submissions s LEFT JOIN case_status st ON st.case_no = s.case_no
-        WHERE s.status != 'closed' ${user.role === 'admin' ? '' : 'AND s.assigned_to = ?'}
+        WHERE s.status != 'closed' ${notArchived} ${notDeleted}
+              ${user.role === 'admin' ? '' : 'AND s.assigned_to = ?'}
         ORDER BY s.created_at DESC LIMIT 25`)
       .bind(...(user.role === 'admin' ? [] : [user.id])).all();
     return json({ active: null, server_now: nowIso(), assignments: results || [] });

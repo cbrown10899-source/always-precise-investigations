@@ -18065,6 +18065,133 @@ section('API Assistant — Unit 10: topic commands, live status, situational opt
   globalThis.fetch = realFetch;
 }
 
+/* ============== THE LAUNCHER OFFERS NO HIDDEN CASE =========================
+   Found live, 2026-09-02: the home-screen Active Surveillance launcher was
+   still offering cases the office had tombstoned or archived weeks earlier.
+   The assignments arm of /my/active was the ONE working list without the
+   tombstone/archive exclusion — outNow, the case list, search and the
+   assistant counts all had it. The fix is in the SQL, before the LIMIT, and
+   these tests would have caught the original defect: they plant each hidden
+   state and assert the launcher list, for both roles, with no case id
+   hard-coded anywhere in the fix. */
+section('The home-screen launcher offers no tombstoned, archived or hard-deleted case');
+{
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  let res = await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' });
+  const token = new URL((await jsonOf(res)).url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const launcher = async cookie =>
+    (await jsonOf(await call(env, '/my/active', { cookie }))).assignments.map(a => a.case_no);
+
+  /* Five cases: one live with a subject, one live claims case identified by
+     its claim number alone (no subject name — the shape every card the owner
+     reported as "the case number shown as the name" actually has), and three
+     to hide one way each. */
+  await ingest(env, { case_no: 'API-LNCH-LIVE', client_name: 'Live Client', subject_name: 'Live Subject' });
+  await ingest(env, { case_no: 'API-LNCH-NOSUBJ', carrier: 'Quiet Mutual', claim_number: 'QM-77',
+                      client_name: 'Q. Adjuster' });
+  await ingest(env, { case_no: 'API-LNCH-DEAD', client_name: 'Dead Client', subject_name: 'Dead Subject' });
+  await ingest(env, { case_no: 'API-LNCH-COLD', client_name: 'Cold Client', subject_name: 'Cold Subject' });
+  await ingest(env, { case_no: 'API-LNCH-GONE', client_name: 'Gone Client', subject_name: 'Gone Subject' });
+  await ingest(env, { case_no: 'API-LNCH-DONE', client_name: 'Done Client', subject_name: 'Done Subject' });
+  const danaId = (await jsonOf(await call(env, '/users', { cookie: admin })))
+    .users.find(u => u.username === 'dana').id;
+  for (const no of ['API-LNCH-NOSUBJ', 'API-LNCH-DEAD', 'API-LNCH-COLD', 'API-LNCH-GONE']) {
+    await call(env, `/submissions/${no}/assign`, { method: 'POST', cookie: admin, body: { user_id: danaId } });
+  }
+
+  /* Hide one each way: tombstone, archive, intake hard-delete, closed. */
+  ok('tombstone lands', (await call(env, '/cases/API-LNCH-DEAD/delete',
+     { method: 'POST', cookie: admin, body: {} })).status === 200);
+  ok('archive lands', (await call(env, '/cases/API-LNCH-COLD/archive',
+     { method: 'POST', cookie: admin, body: {} })).status === 200);
+  ok('a fresh duplicate intake hard-deletes', (await call(env, '/cases/API-LNCH-GONE/intake-delete',
+     { method: 'POST', cookie: admin, body: {} })).status === 200);
+  await env.DB.prepare(`UPDATE submissions SET status = 'closed' WHERE case_no = 'API-LNCH-DONE'`).run();
+
+  /* The admin's launcher — admins are offered every workable case. */
+  let nos = await launcher(admin);
+  ok('the live case is offered', nos.includes('API-LNCH-LIVE'));
+  ok('the subject-less live case is offered too', nos.includes('API-LNCH-NOSUBJ'));
+  ok('a tombstoned case is NOT offered as a startable assignment', !nos.includes('API-LNCH-DEAD'));
+  ok('an archived case is NOT offered either', !nos.includes('API-LNCH-COLD'));
+  ok('a hard-deleted intake leaves no card at all', !nos.includes('API-LNCH-GONE'));
+  ok('a closed case stays excluded as it always was', !nos.includes('API-LNCH-DONE'));
+
+  /* The investigator's launcher — same exclusions inside their own scope. */
+  nos = await launcher(dana);
+  ok('the investigator is offered their live assignment', nos.includes('API-LNCH-NOSUBJ'));
+  ok('and not a case that is not theirs', !nos.includes('API-LNCH-LIVE'));
+  ok('their tombstoned assignment is gone from the launcher', !nos.includes('API-LNCH-DEAD'));
+  ok('their archived assignment is gone from the launcher', !nos.includes('API-LNCH-COLD'));
+  ok('their hard-deleted assignment is gone from the launcher', !nos.includes('API-LNCH-GONE'));
+
+  /* DISPLAY SAFETY, the server's half: the Worker returns the subject column
+     as it is — empty — and never copies the case number into the name
+     position. The page's half (honest words instead of the number) is
+     asserted in the portal suite. */
+  const noSubj = (await jsonOf(await call(env, '/my/active', { cookie: dana })))
+    .assignments.find(a => a.case_no === 'API-LNCH-NOSUBJ');
+  ok('a subject-less assignment carries no invented name',
+     !noSubj.subject_name && noSubj.subject_name !== 'API-LNCH-NOSUBJ');
+
+  /* The way back: put a case back and it reappears with no id special-cased. */
+  await call(env, '/cases/API-LNCH-DEAD/undelete', { method: 'POST', cookie: admin, body: {} });
+  await call(env, '/cases/API-LNCH-COLD/restore', { method: 'POST', cookie: admin, body: {} });
+  nos = await launcher(admin);
+  ok('an undeleted case is offered again', nos.includes('API-LNCH-DEAD'));
+  ok('a restored case is offered again', nos.includes('API-LNCH-COLD'));
+
+  /* ACTIVE DAY SAFETY. Even if a stale card were tapped (an old tab, a race),
+     starting a day on a hidden case refuses at the chokepoint and writes
+     nothing — the launcher fix removes the offer; the gate was already
+     refusing the act. */
+  await call(env, '/cases/API-LNCH-DEAD/delete', { method: 'POST', cookie: admin, body: {} });
+  const staleTap = await call(env, '/cases/API-LNCH-DEAD/day/start', { method: 'POST', cookie: dana,
+    body: { day_date: '2026-09-02', start_time: '08:00' } });
+  ok('starting a day on a tombstoned case refuses at the gate', staleTap.status === 409);
+  ok('and no day row was written by the refused start',
+     Number((await env.DB.prepare(`SELECT COUNT(*) AS n FROM case_days WHERE case_no = 'API-LNCH-DEAD'`)
+       .first()).n) === 0);
+
+  /* And the resume arm is untouched: a RUNNING day cannot belong to a hidden
+     case, because hiding refuses while the day runs — so the launcher can
+     always offer the resume, and the refusal costs the field nothing. */
+  await call(env, '/cases/API-LNCH-NOSUBJ/day/start', { method: 'POST', cookie: dana,
+    body: { day_date: '2026-09-02', start_time: '08:00' } });
+  const running = await jsonOf(await call(env, '/my/active', { cookie: dana }));
+  ok('with a day running the launcher resumes it', running.active
+     && running.active.case_no === 'API-LNCH-NOSUBJ');
+  ok('archiving a case whose day is running is refused, naming the day',
+     (await call(env, '/cases/API-LNCH-NOSUBJ/archive',
+        { method: 'POST', cookie: admin, body: {} })).status === 409);
+  ok('and the refused archive stranded nothing — the day still resumes',
+     (await jsonOf(await call(env, '/my/active', { cookie: dana }))).active.case_no === 'API-LNCH-NOSUBJ');
+  await call(env, '/cases/API-LNCH-NOSUBJ/day/end', { method: 'POST', cookie: dana,
+    body: { end_time: '10:00' } });
+
+  /* The guard: a database portal-setup has not reached degrades to the
+     unfiltered list — the field's own screen never 500s over a marker table.
+     Its own env, because dropping tables poisons this one. */
+  {
+    const env2 = freshEnv();
+    env2.INGEST_PER_MINUTE = '50';
+    await bootstrapAdmin(env2);
+    const admin2 = (await login(env2, 'trever', 'FirstAdminPass1')).cookie;
+    await ingest(env2, { case_no: 'API-LNCH-G1', client_name: 'G. Client', subject_name: 'G. Subject' });
+    env2.DB.prepare('DROP TABLE IF EXISTS case_archive').run();
+    env2.DB.prepare('DROP TABLE IF EXISTS case_deleted').run();
+    const r = await call(env2, '/my/active', { cookie: admin2 });
+    ok('without the marker tables the launcher still answers', r.status === 200);
+    ok('…with the unfiltered list rather than an empty one',
+       (await jsonOf(r)).assignments.some(a => a.case_no === 'API-LNCH-G1'));
+  }
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));
