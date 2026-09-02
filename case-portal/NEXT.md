@@ -241,6 +241,17 @@ Worker takes methods ['mail_check'] on non-private and nothing else —
 cash_app/venmo beside it refuse, private+mail_check refuses by name;
 payment_send records mail_check. No schema change either job.
 
+## ✅ SHIPPED — Bill.com prepared, not connected (owner brief 2026-09-02, BILLCOM.md)
+
+The adapter (`billcomConfig`) gates everything on an enable word + valid
+https payment link, both empty until the owner types them into Settings →
+Invoice defaults. Ready: sheet line, wizard checkbox, send method, invoice
+link — everywhere at once. Not ready: refused by name, drawn as "Not
+configured", mentioned nowhere. No credential anywhere; no schema; private
+untouched; Cash App/Venmo boundaries unmoved. **Enabling later is typing two
+Settings values — no code, no deploy. Do not enable until the owner says
+the account is ready.**
+
 ## What is left
 
 - **23 — Consolidated Live Verification Sweep.** ⏸️ **LIVE VERIFICATION

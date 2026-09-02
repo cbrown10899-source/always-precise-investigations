@@ -1871,6 +1871,9 @@ let PAY_ERR = false;
 let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
 let NL = null;        // manual intake (UIBUILD P17): null | {kind, err}
 let SHEET_WIZ = null; // the 3-step send wizard (UIBUILD P18)
+/* BILLCOM.md — null means NOT ANSWERED YET, which the wizard treats exactly
+   like not-ready: nothing is offered on an unknown. Set from /sheets. */
+let BILLCOM_READY = null;
 /* PAYMENTS.md second handoff §4 — Send Payment Options on its own, so
    instructions can go later without resending the rate sheet. Private leads
    only; the button is not drawn on an insurance card and the Worker refuses a
@@ -4827,7 +4830,18 @@ function wizPaymentSendable(){
    intake and both payment options together, and an admin unticks what they do
    not want rather than hunting for what they do. */
 async function wizPaymentLoad(){
-  if(!SHEET_WIZ || SHEET_WIZ.sheet !== "private_retainer") return;
+  if(!SHEET_WIZ) return;
+  /* A wizard opened from a lead card has not been near the Rate Sheets screen,
+     so the adapter's answer is fetched on demand — the same reason PAYCFG is. */
+  if(wizContext(SHEET_WIZ) !== "private"){
+    if(BILLCOM_READY === null){
+      try{ BILLCOM_READY = !!(await api("/sheets")).billcom_ready; }
+      catch{ BILLCOM_READY = false; }
+      paint();
+    }
+    return;
+  }
+  if(SHEET_WIZ.sheet !== "private_retainer") return;
   if(!PAYCFG) await loadPaymentMethods();
   if(!SHEET_WIZ) return;
   if(!(SHEET_WIZ.payMethods || []).length){
@@ -4859,8 +4873,15 @@ function wizPaymentHtml(w){
       <label class="cap" style="display:flex"><input type="checkbox" id="wiz_mailck" ${w.mailCheck ? "checked" : ""}>
         <span>Include <b>Mail Check</b> as a payment option &mdash;
           &ldquo;Mailing instructions provided with invoice.&rdquo;</span></label>
-      <p class="hint">No mailing address goes on the sheet. The remittance address prints on the
-        invoice, from Settings &rarr; Invoice defaults.</p>
+      ${BILLCOM_READY === true ? `
+      <label class="cap" style="display:flex"><input type="checkbox" id="wiz_billcom" ${w.billcom ? "checked" : ""}>
+        <span>Include <b>Bill.com</b> as a payment option &mdash;
+          &ldquo;Electronic payment instructions provided with invoice.&rdquo;</span></label>` : `
+      <label class="cap" style="display:flex;opacity:.55"><input type="checkbox" disabled>
+        <span><b>Bill.com</b> <span class="tag new" style="margin-left:6px">Not configured</span>
+          &mdash; enable it in Settings &rarr; Invoice defaults once the account exists</span></label>`}
+      <p class="hint">No mailing address or payment link goes on the sheet. Payment details print
+        on the invoice, from Settings &rarr; Invoice defaults.</p>
     </div>`;
   }
   if(w.sheet !== "private_retainer") return "";
@@ -5099,9 +5120,10 @@ function sheetWizardHtml(){
         <dt>Sheet</dt><dd>${esc(sheet.name || w.sheet)}</dd>
         <dt>To</dt><dd>${esc(w.to)}</dd>
         ${w.caseNo ? `<dt>Case</dt><dd>${esc(w.caseNo)}</dd>` : ""}
-        ${wizContext(w) !== "private" ? `<dt>Payment option</dt><dd>${w.mailCheck
-          ? "Mail Check &mdash; &ldquo;Mailing instructions provided with invoice.&rdquo;"
-          : "None included"}</dd>` : ""}
+        ${wizContext(w) !== "private" ? `<dt>Payment options</dt><dd>${[
+            w.mailCheck ? "Mail Check &mdash; &ldquo;Mailing instructions provided with invoice.&rdquo;" : "",
+            (w.billcom && BILLCOM_READY === true) ? "Bill.com &mdash; &ldquo;Electronic payment instructions provided with invoice.&rdquo;" : "",
+          ].filter(Boolean).join("<br>") || "None included"}</dd>` : ""}
         ${w.sheet === "private_retainer" && (w.retainerOffered != null || w.retainer != null)
           /* The figure is named on the last screen before it goes, and said to
              be unrecorded where it is — this is the admin's final chance to add
@@ -6375,6 +6397,15 @@ const BILL_FIELDS = [
      the firm's real remittance address here, and only then do Legal and
      Insurance invoices print their "Remit checks to" section. */
   ["remit_address",        "Check remittance address — printed on Legal and Insurance invoices when set", "area"],
+  /* BILLCOM.md — prepared, not connected. All four start empty; none is a
+     secret; Bill.com is offered NOWHERE until the enable word AND a real
+     https payment link are both typed here. Credentials, if a full API
+     integration is ever wanted, go in Worker environment secrets — never in
+     these fields. */
+  ["billcom_enabled",      "Bill.com — type ON to offer it (leave empty until the account exists)", "text"],
+  ["billcom_payment_url",  "Bill.com payment link (https://…) — from your Bill.com account, once created", "text"],
+  ["billcom_org_id",       "Bill.com organization / account ID (optional reference)", "text"],
+  ["billcom_environment",  "Bill.com environment — sandbox or production (optional)", "text"],
 ];
 
 async function loadBillingSettings(){
@@ -10566,7 +10597,8 @@ async function render(){
   if(ME.role === "admin"){
     try{ USERS = (await api("/users")).users; }catch(e){ USERS = []; }
     try{ INVITES = (await api("/invites")).invites; }catch(e){ INVITES = []; }
-    try{ SHEETS = (await api("/sheets")).sheets; }catch(e){ SHEETS = []; }
+    try{ const d = await api("/sheets"); SHEETS = d.sheets; BILLCOM_READY = !!d.billcom_ready; }
+    catch(e){ SHEETS = []; }
     // The dashboard is the admin's landing, so render() is a second door to
     // it — the tab click is not the only way in. Without this, the first
     // sign-in paints "Loading…" forever, because nothing ever fetches.
@@ -10667,6 +10699,7 @@ function sessionForget(){
   LAST_LINK = ""; LAST_EMAILED = false; RESET_BOX = null;
   PAYCFG = null; PAY_DRAFT = {}; PAY_MSG = ""; PAY_ERR = false;
   SUMMARY = null; SHEETS = []; SHEET_MAIL = ""; OPEN_SHEET = null; SHEET_MSG = ""; SHEET_WIZ = null;
+  BILLCOM_READY = null;
   NL = null; LEAD_SEND = null; LEAD_MSG = ""; PAY_SEND = null;
   SRCH = { q: "", results: null, err: "", busy: false, hi: -1 };
   ATTN = null; ATTN_OK = false; ATTN_ERR = ""; ATTN_FILTER = "all";
@@ -10952,6 +10985,7 @@ const RETAINER_METHOD_OPTIONS = [
 function payMethodLabels(csv){
   const by = Object.fromEntries(RETAINER_METHOD_OPTIONS);
   by.mail_check = "Mail Check";
+  by.bill_com = "Bill.com";
   return String(csv || "").split(",").map(s => by[s.trim()]).filter(Boolean).join(" + ");
 }
 
@@ -16805,6 +16839,9 @@ function invoiceDocHtml(i){
     ${i.client_notes ? `<p style="font-size:.9rem">${esc(i.client_notes)}</p>` : ""}
     ${i.remit_address ? `<p style="font-size:.9rem;white-space:pre-line"><b>Remit checks to</b><br>${
       esc(i.remit_address)}</p>` : ""}
+    ${i.billcom_url ? `<p style="font-size:.9rem"><b>Pay electronically via Bill.com</b><br>
+      <a href="${esc(i.billcom_url)}" rel="noopener noreferrer">${esc(i.billcom_url)}</a><br>
+      Electronic payment instructions provided with invoice.</p>` : ""}
     <p style="font-size:.88rem;color:var(--muted)">${esc(cfg.payment_instructions || "")}</p>
     <p style="font-size:.85rem;border-top:1px solid var(--line);padding-top:10px;color:var(--muted)">${esc(cfg.invoice_footer || "")}</p>
   </div>`;
@@ -17862,6 +17899,7 @@ function wizCollect(){
   if($("wiz_retc")) SHEET_WIZ.retainerCustom = $("wiz_retc").value.trim();
   if($("wiz_pay")) SHEET_WIZ.pay = $("wiz_pay").checked;
   if($("wiz_mailck")) SHEET_WIZ.mailCheck = $("wiz_mailck").checked;
+  if($("wiz_billcom")) SHEET_WIZ.billcom = $("wiz_billcom").checked;
   const boxes = [...document.querySelectorAll(".wiz-pm")];
   if(boxes.length){
     SHEET_WIZ.payMethods = boxes.filter(b => b.checked).map(b => b.dataset.pm);
@@ -17881,7 +17919,9 @@ async function wizSend(){
     && w.pay && (w.payMethods || []).length;
   /* The one option a legal or insurance send may carry (MAIL-CHECK.md D5) —
      the same include_payment door, narrowed server-side to mail_check. */
-  const mailChecking = wizContext(w) !== "private" && !!w.mailCheck;
+  const npMethods = wizContext(w) !== "private"
+    ? [...(w.mailCheck ? ["mail_check"] : []), ...(w.billcom && BILLCOM_READY === true ? ["bill_com"] : [])]
+    : [];
   try{
     const r = await api(`/sheets/${encodeURIComponent(w.sheet)}/email`,
       {method:"POST", body:{to: w.to, note: w.note, case_no: w.caseNo, include_intake: w.include,
@@ -17894,7 +17934,7 @@ async function wizSend(){
            cannot overwrite what the office agreed. */
         ...(w.retainerOffered != null ? {retainer_amount: w.retainerOffered} : {}),
         ...(paying ? {include_payment: true, methods: w.payMethods} : {}),
-        ...(mailChecking ? {include_payment: true, methods: ["mail_check"]} : {})}});
+        ...(npMethods.length ? {include_payment: true, methods: npMethods} : {})}});
     /* §13 — say what actually WENT, read back from the Worker's own answer
        rather than from the boxes that were ticked. */
     const inc = r.included || {};

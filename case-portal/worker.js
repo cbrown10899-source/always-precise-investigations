@@ -1474,20 +1474,35 @@ async function emailSheet(request, env, user, id) {
      exactly as before. On a PRIVATE send, mail_check is refused by name the
      same way — no context is ever quietly widened. */
   const rawMethods = Array.isArray(body.methods) ? body.methods.map(x => String(x)) : null;
-  const mailCheckOn = includePayment && !CONTEXT_TAKES_PAYMENT(sendCtx)
-    && rawMethods !== null && rawMethods.length > 0 && rawMethods.every(m => m === 'mail_check');
-  if (includePayment && !CONTEXT_TAKES_PAYMENT(sendCtx) && !mailCheckOn) {
+  /* The non-private option set is the adapter's answer: Mail Check always,
+     Bill.com only once genuinely configured (BILLCOM.md). Asking for
+     bill_com while it is not ready is refused BY NAME rather than folded
+     into the consumer-method refusal — the admin's fix is Settings, not the
+     tick boxes. */
+  const billcom = await billcomState(env);
+  const npAllowed = billcom.ready ? ['mail_check', 'bill_com'] : ['mail_check'];
+  const npPicked = includePayment && !CONTEXT_TAKES_PAYMENT(sendCtx)
+    && rawMethods !== null && rawMethods.length > 0
+    && rawMethods.every(m => npAllowed.includes(m))
+    ? [...new Set(rawMethods)] : [];
+  const mailCheckOn = npPicked.includes('mail_check');
+  const billcomOn = npPicked.includes('bill_com');
+  if (includePayment && !CONTEXT_TAKES_PAYMENT(sendCtx) && !npPicked.length) {
+    if ((rawMethods || []).includes('bill_com') && !billcom.ready
+        && (rawMethods || []).every(m => m === 'bill_com' || m === 'mail_check')) {
+      return json({ error: 'Bill.com is not configured yet — it needs the enable word and the '
+        + 'https payment link in Settings → Invoice defaults before it can be offered. '
+        + 'Mail Check is available now.', code: 'billcom_not_configured' }, 400);
+    }
     const who = linkedCase ? `${linkedCase} is a ${sendCtx} assignment` : `This is a ${sendCtx} assignment`;
     return json({ error: `${who} — Cash App and Venmo are private-client methods and cannot be `
-      + `included. The one payment option here is Mail Check: tick it and the sheet says `
-      + `"Mailing instructions provided with invoice."`,
+      + `included. The payment options here are Mail Check${billcom.ready ? ' and Bill.com' : ''}.`,
       code: 'legal_no_payment_block' }, 400);
   }
   if (includePayment && CONTEXT_TAKES_PAYMENT(sendCtx)
-      && (rawMethods || []).includes('mail_check')) {
-    return json({ error: 'Mail Check rides legal and insurance sends. A private client keeps the '
-      + 'Cash App and Venmo options, and mailed-check arrangements for one are handled on the '
-      + 'case, not the sheet.', code: 'mail_check_not_private' }, 400);
+      && (rawMethods || []).some(m => m === 'mail_check' || m === 'bill_com')) {
+    return json({ error: 'Mail Check and Bill.com ride legal and insurance sends. A private '
+      + 'client keeps the Cash App and Venmo options.', code: 'mail_check_not_private' }, 400);
   }
 
   if (!(await withinRateLimit(env, 'mail'))) {
@@ -1536,7 +1551,7 @@ async function emailSheet(request, env, user, id) {
      `methods` is the admin's per-send selection. It can only ever narrow what
      the central configuration has enabled — paymentOptionsFor drops anything
      not enabled there, so the wizard cannot switch a method on. */
-  if (includePayment && !mailCheckOn && !sheetTakesPayment(sheet.id)) {
+  if (includePayment && !npPicked.length && !sheetTakesPayment(sheet.id)) {
     return json({ error: 'Payment options are private-client only and cannot be sent with the '
                        + 'Insurance Assignment Rates.' }, 400);
   }
@@ -1560,20 +1575,20 @@ async function emailSheet(request, env, user, id) {
   const brokenMethods = [];
   // The sheet's own context is passed through, so the refusal is the function's
   // as well as this route's — two independent gates, not one repeated.
-  const payment = (includePayment && !mailCheckOn)
+  const payment = (includePayment && !npPicked.length)
     ? await paymentOptionsFor(env, wantedMethods, brokenMethods, contextForSheet(sheet.id)) : [];
 
   /* A method switched on with no link cannot be offered, and must not be
      dropped in silence — the admin would see a successful send and never learn
      the client got one option instead of two. Named, refused, fixable. */
-  if (includePayment && !mailCheckOn && brokenMethods.length) {
+  if (includePayment && !npPicked.length && brokenMethods.length) {
     const names = brokenMethods.map(m => m.display_name || m.label).join(' and ');
     return json({ error: `${names} is switched on but has no payment link, so it cannot be `
                        + `offered — every payment option a client sees has to be tappable. `
                        + `Add a link in Settings, or switch it off.`,
                   needs_link: brokenMethods.map(m => m.id) }, 400);
   }
-  if (includePayment && !mailCheckOn && !payment.length) {
+  if (includePayment && !npPicked.length && !payment.length) {
     /* Two different reasons for nothing to send, and they need different
        sentences: one is answered in this dialog, the other in Settings. */
     return json({ error: wantedMethods && !wantedMethods.length
@@ -1582,7 +1597,7 @@ async function emailSheet(request, env, user, id) {
         + 'before including payment instructions.' }, 400);
   }
 
-  const { text, html } = sheetEmail(sheet, note, intakeDoor, payment, retainer, mailCheckOn);
+  const { text, html } = sheetEmail(withBillcomLine(sheet, billcom.ready), note, intakeDoor, payment, retainer, npPicked);
   const subject = caseNo
     ? `${sheet.name} — Always Precise Investigations (case ${caseNo})`
     : `${sheet.name} — Always Precise Investigations`;
@@ -1591,9 +1606,9 @@ async function emailSheet(request, env, user, id) {
   if (!mail.sent) {
     await logSend(env, user, { case_no: linkedCase, kind: 'rate_sheet', sheet_id: sheet.id,
       door: intakeUrl, recipient: to, ok: 0, detail: mail.reason || 'send failed' });
-    if (payment.length || mailCheckOn) {
+    if (payment.length || npPicked.length) {
       await logPaymentSend(env, user, { case_no: linkedCase, recipient: to,
-        methods: mailCheckOn ? ['mail_check'] : payment.map(x => x.id), with_sheet: 1, ok: 0,
+        methods: npPicked.length ? npPicked : payment.map(x => x.id), with_sheet: 1, ok: 0,
         detail: mail.reason || 'send failed' });
     }
     return json({
@@ -1614,9 +1629,9 @@ async function emailSheet(request, env, user, id) {
       .bind(caseNo).first();
     if (lead) await stampLead(env, user, caseNo, includeIntake ? 'intake_sent' : 'rate_sheet_sent');
   }
-  if (payment.length || mailCheckOn) {
+  if (payment.length || npPicked.length) {
     await logPaymentSend(env, user, { case_no: linkedCase, recipient: to,
-      methods: mailCheckOn ? ['mail_check'] : payment.map(x => x.id), with_sheet: 1, ok: 1 });
+      methods: npPicked.length ? npPicked : payment.map(x => x.id), with_sheet: 1, ok: 1 });
   }
   /* §13 — the confirmation lists exactly what WENT. Read back from the record
      of the send rather than echoed from the request, and note that sending
@@ -1626,8 +1641,8 @@ async function emailSheet(request, env, user, id) {
     included: {
       rate_sheet: sheet.name,
       intake: intakeDoor ? intakeDoor.label : null,
-      payment_methods: mailCheckOn
-        ? [{ id: 'mail_check', label: MAIL_CHECK_LINE.label }]
+      payment_methods: npPicked.length
+        ? npPicked.map(id => ({ id, label: id === 'bill_com' ? BILLCOM_LINE.label : MAIL_CHECK_LINE.label }))
         : payment.map(x => ({ id: x.id, label: x.label })),
     } });
 }
@@ -3144,26 +3159,68 @@ function paymentBlockHtml(pay, retainer) {
    a flag to re-derive one from. It used to take a boolean and look the door up
    by `sheet.id`, which is what sent a law firm the private form: the legal
    context shares the private sheet on purpose. One resolution, passed in. */
+/* ================== BILL.COM — THE ADAPTER BOUNDARY (BILLCOM.md) ==========
+
+   Everything Bill.com goes through here, so connecting the real account later
+   is a configuration act, not a rewrite. LINK-CONFIGURATION ONLY: the adapter
+   reads the admin-typed billing settings, validates the shape, and answers
+   whether the option may be offered. It calls no external API, invents no
+   URL, id or credential, and refuses to be "ready" without an enable word AND
+   an https payment link. `sent_to_bill`, `billing_provider = 'bill'` and the
+   `bill_ach` legal arrangement — the existing record-keeping — are untouched
+   and independent of this. */
+const BILLCOM_LINE = { label: 'Bill.com', value: 'Accepted',
+  note: 'Electronic payment instructions provided with invoice.' };
+
+function billcomConfig(settings) {
+  const enabled = /^(1|on|yes|true)$/i.test(String(settings.billcom_enabled || '').trim());
+  const url = String(settings.billcom_payment_url || '').trim();
+  const okUrl = /^https:\/\/[^\s]+$/i.test(url);
+  return {
+    enabled,
+    payment_url: okUrl ? url : '',
+    org_id: String(settings.billcom_org_id || '').trim() || null,
+    environment: String(settings.billcom_environment || '').trim() || null,
+    /* NOT READY MEANS NOT OFFERED, ANYWHERE. An enable word without a valid
+       https link is still not ready — a half-configuration must never put a
+       dead or invented link in front of a firm or a carrier. */
+    ready: enabled && okUrl,
+  };
+}
+async function billcomState(env) { return billcomConfig(await billingSettings(env)); }
+
+/* The one writer that puts the Bill.com line on a sheet — applied at the
+   consumption points, only when the adapter answers ready, so the static
+   sheet definitions stay exactly as the owner approved them. */
+function withBillcomLine(sheet, ready) {
+  return ready && sheet ? { ...sheet, lines: [...(sheet.lines || []), BILLCOM_LINE] } : sheet;
+}
+
 /* THE MAIL CHECK BLOCK — the ticked option's presence in the email, in both
    MIME parts. Deliberately NOT `paymentBlockText`: that block opens with the
    private retainer sentence ("A $1,500 retainer is required…"), which must
    never reach a carrier or a firm. One wording source — MAIL_CHECK_LINE — so
    the sheet's own line, this block, and the page cannot drift. No handle, no
    link, no address: the address is invoice-only, from Settings. */
-function mailCheckBlockText() {
+const NP_PAY_LINES = { mail_check: MAIL_CHECK_LINE, bill_com: BILLCOM_LINE };
+function npPayBlockText(picked) {
+  const rows = (picked || []).map(id => NP_PAY_LINES[id]).filter(Boolean);
+  if (!rows.length) return '';
   return `
 PAYMENT
-${MAIL_CHECK_LINE.label} — ${MAIL_CHECK_LINE.note}
+${rows.map(l => `${l.label} — ${l.note}`).join('\n')}
 `;
 }
-function mailCheckBlockHtml() {
+function npPayBlockHtml(picked) {
+  const rows = (picked || []).map(id => NP_PAY_LINES[id]).filter(Boolean);
+  if (!rows.length) return '';
   return `<div style="margin:0 0 18px;padding:14px 18px;background:#f4f8fa;border:1px solid #dfe7ec;border-radius:10px">
     <p style="margin:0 0 4px;font-weight:800;color:#12305a;letter-spacing:.04em">PAYMENT</p>
-    <p style="margin:0;font-size:.95rem"><b>${escHtml(MAIL_CHECK_LINE.label)}</b> — ${escHtml(MAIL_CHECK_LINE.note)}</p>
+    ${rows.map(l => `<p style="margin:0;font-size:.95rem"><b>${escHtml(l.label)}</b> — ${escHtml(l.note)}</p>`).join('')}
   </div>`;
 }
 
-function sheetEmail(sheet, note, intake, pay, retainer, mailCheck) {
+function sheetEmail(sheet, note, intake, pay, retainer, npPicked) {
   /* Belt and braces on the boundary: even called wrongly, the carrier sheet
      cannot carry a consumer payment handle. */
   const payment = (sheetTakesPayment(sheet.id) && Array.isArray(pay)) ? pay : [];
@@ -3180,7 +3237,7 @@ ${rows}
 
 ${sheet.closing_title}
 ${sheet.closing}
-${paymentBlockText(payment, retainer)}${mailCheck ? mailCheckBlockText() : ''}${intake ? `\nReady to begin? The ${intake.label} takes a few minutes:\n${intake.url}\n` : ''}
+${paymentBlockText(payment, retainer)}${npPayBlockText(npPicked)}${intake ? `\nReady to begin? The ${intake.label} takes a few minutes:\n${intake.url}\n` : ''}
 Questions: (434) 907-0975
 Always Precise Investigations, LLC`;
 
@@ -3205,7 +3262,7 @@ Always Precise Investigations, LLC`;
   </table>
   <p style="margin:0 0 4px;font-weight:800;color:#12305a">${escHtml(sheet.closing_title)}</p>
   <p style="margin:0 0 14px;font-size:.92rem">${escHtml(sheet.closing)}</p>
-  ${paymentBlockHtml(payment, retainer)}${mailCheck ? mailCheckBlockHtml() : ''}
+  ${paymentBlockHtml(payment, retainer)}${npPayBlockHtml(npPicked)}
   ${intake ? `<p style="margin:0 0 14px">
     <a href="${escHtml(intake.url)}" style="display:inline-block;background:#12305a;color:#fff;
        padding:11px 18px;border-radius:8px;text-decoration:none;font-weight:700">
@@ -7747,6 +7804,18 @@ const BILLING_DEFAULTS = {
      the rate sheets say "mailing instructions provided with invoice" and the
      invoices print no remittance section. Never seeded, never derived. */
   remit_address: '',
+  /* BILLCOM.md — PREPARED, NOT CONNECTED (owner, 2026-09-02). All four start
+     EMPTY and none is a secret: the enable word, the payment link Bill.com
+     will supply, an account reference, and the environment name. Until the
+     owner types real values, `billcomConfig` answers not-ready and nothing
+     anywhere offers, prints or sends Bill.com. NO credential lives here or in
+     any table — if a full API integration is ever wanted, its secrets go in
+     Worker env vars (the RESEND_API_KEY pattern) and are read inside the
+     adapter and nowhere else. */
+  billcom_enabled: '',
+  billcom_payment_url: '',
+  billcom_org_id: '',
+  billcom_environment: '',
 };
 
 async function billingSettings(env) {
@@ -7917,13 +7986,20 @@ async function invoiceWithMoney(env, inv) {
   const invSub = await env.DB.prepare(
     'SELECT kind, payload FROM submissions WHERE case_no = ?').bind(inv.case_no).first();
   const invCtx = invSub ? contextForSub(invSub) : null;
-  let remit;
+  let remit, billcomUrl;
   if (invCtx === SEND_CONTEXT.LEGAL || invCtx === SEND_CONTEXT.INSURANCE) {
-    const addr = String((await billingSettings(env)).remit_address || '').trim();
+    const cfg = await billingSettings(env);
+    const addr = String(cfg.remit_address || '').trim();
     if (addr) remit = addr;
+    /* BILLCOM.md — the invoice offers the Bill.com link only when the adapter
+       is genuinely ready. Nothing is invented: the URL is the one the owner
+       typed, or the field is ABSENT — never a placeholder. Private invoices
+       never carry it, the remit_address rule again. */
+    const billcom = billcomConfig(cfg);
+    if (billcom.ready) billcomUrl = billcom.payment_url;
   }
   return { ...inv, refs_json: undefined, refs, lines: lines || [], payments: payments || [],
-           send_context: invCtx || undefined, remit_address: remit,
+           send_context: invCtx || undefined, remit_address: remit, billcom_url: billcomUrl,
            ...money, retainer: await retainerBlock(env, inv),
            display_status: invoiceDisplayStatus(inv, money) };
 }
@@ -13127,8 +13203,15 @@ async function route(request, env) {
        the same helper the send uses — the preview and the email must resolve
        identically or the screen lies about what will go out. */
     const retainer = await retainerForSend(env, caseNo, url.searchParams.get('retainer'));
-    return json({ sheets: sheetCards(retainer),
+    /* BILLCOM.md — the cards gain the Bill.com line and the wizard learns it
+       may offer the tick ONLY from the adapter's answer. Not-ready costs
+       nothing and shows nothing new. The PRIVATE card never gains the line —
+       the map is legal/insurance contexts only. */
+    const billcom = await billcomState(env);
+    return json({ sheets: sheetCards(retainer).map(c =>
+                    c.context === SEND_CONTEXT.PRIVATE ? c : withBillcomLine(c, billcom.ready)),
                   retainer,
+                  billcom_ready: billcom.ready,
                   email_configured: Boolean(env.RESEND_API_KEY) });
   }
 

@@ -16553,6 +16553,98 @@ section('MAIL-CHECK D5: the tickable option on legal and insurance sends');
   await page.close();
 }
 
+section('BILLCOM: not configured means invisible; configured means offered exactly like Mail Check');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await post('/ingest', { case_no: 'API-BC-L', assignment: 'legal', law_firm: 'Billable & Co LLP',
+    attorney_name: 'B. Ill', client_name: 'Billable & Co LLP' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await page.evaluate(async () => { await render(); TAB = 'leads'; paint(); });
+  await page.waitForTimeout(300);
+
+  /* ---- not configured: the disabled row, pointing at Settings ---- */
+  await page.locator('.pcard', { hasText: 'Billable & Co LLP' }).first()
+    .locator('[data-act="leadSheet"]').click();
+  await page.waitForTimeout(600);
+  const off = await page.evaluate(() => {
+    const box = document.querySelector('#wiz_mailck');
+    return {
+      mailck: !!box,
+      billBox: !!document.querySelector('#wiz_billcom'),
+      text: box ? box.closest('.amsheet').innerText : 'NO-WIZARD',
+    };
+  });
+  ok('unconfigured, Mail Check is offered and Bill.com is a disabled Not-configured row',
+     off.mailck === true && off.billBox === false
+     && /Bill\.com/.test(off.text) && /Not configured/.test(off.text), off.text.slice(0, 200));
+
+  /* ---- the owner types the two values; the same wizard grows the box ---- */
+  await page.evaluate(async () => {
+    await api('/billing-settings', { method: 'POST', body: {
+      billcom_enabled: 'ON', billcom_payment_url: 'https://pay.example.test/api-e2e' } });
+    BILLCOM_READY = null;                     // a fresh answer, as a reload would fetch
+    SHEET_WIZ = null; paint();
+    TAB = 'leads'; paint();
+  });
+  await page.waitForTimeout(200);
+  await page.locator('.pcard', { hasText: 'Billable & Co LLP' }).first()
+    .locator('[data-act="leadSheet"]').click();
+  await page.waitForTimeout(600);
+  const on = await page.evaluate(() => {
+    const box = document.querySelector('#wiz_billcom');
+    return {
+      billBox: !!box,
+      ticked: box ? box.checked : null,
+      link: box ? /pay\.example\.test/.test(box.closest('.amsheet').innerText) : null,
+    };
+  });
+  ok('configured, the checkbox appears, unticked, and the link itself is nowhere on the wizard',
+     on.billBox === true && on.ticked === false && on.link === false, JSON.stringify(on));
+
+  /* Tick both and capture the post. */
+  const posted = await page.evaluate(async () => {
+    document.querySelector('#wiz_mailck').checked = true;
+    document.querySelector('#wiz_billcom').checked = true;
+    document.querySelector('#wiz_to').value = 'firm@example.test';
+    wizCollect();
+    let body = null;
+    const real = window.fetch;
+    window.fetch = async (url, init) => {
+      if (String(url).includes('/sheets/')) {
+        body = JSON.parse(init.body);
+        return new Response(JSON.stringify({ ok: true, sent_to: 'firm@example.test',
+          send_context: 'legal', included: { rate_sheet: 'x', payment_methods: [
+            { id: 'mail_check', label: 'Mail Check' }, { id: 'bill_com', label: 'Bill.com' }] } }),
+          { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return real(url, init);
+    };
+    await wizSend();
+    window.fetch = real;
+    return body;
+  });
+  ok('ticking both posts exactly mail_check and bill_com',
+     posted && posted.include_payment === true
+     && (posted.methods || []).sort().join() === 'bill_com,mail_check', JSON.stringify(posted));
+
+  /* ---- the invoice document renders the section only now ---- */
+  const inv = await page.evaluate(async () => {
+    const id = (await api('/cases/API-BC-L/invoices', { method: 'POST', body: {} })).invoice.id;
+    const d = await api(`/invoices/${id}`);
+    INV_SETTINGS = d.settings || INV_SETTINGS;
+    const withIt = invoiceDocHtml(d.invoice);
+    await api('/billing-settings', { method: 'POST', body: { billcom_enabled: '' } });
+    const d2 = await api(`/invoices/${id}`);
+    const without = invoiceDocHtml(d2.invoice);
+    return { withIt: withIt.includes('Pay electronically via Bill.com')
+               && withIt.includes('https://pay.example.test/api-e2e'),
+             without: !without.includes('Bill.com') };
+  });
+  ok('the legal invoice prints the Bill.com section while enabled and not a word after disabling',
+     inv.withIt === true && inv.without === true, JSON.stringify(inv));
+  await page.close();
+}
+
 await browser.close();
 server.close();
 
