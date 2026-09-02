@@ -2789,6 +2789,7 @@ const ATTN = {
   QUIET_DAYS: 21,        // a working case with nothing recorded for three weeks
   LONG_DAY_HOURS: 14,    // a surveillance day this long was probably never ended
   INTAKE_STALE_DAYS: 2,  // an intake nobody has looked at
+  DORMANT_INTAKE_DAYS: 14, // an undecided intake this old is "dormant" to the topic desk (Unit 10)
   PER_KIND: 6,           // rows any single rule may contribute
   TOTAL: 40,
 };
@@ -14071,6 +14072,381 @@ async function assistantWatch(env, user) {
   return rows.slice(0, 30);
 }
 
+/* ---------------- UNIT 10 — TOPIC COMMANDS: a menu that talks back --------
+
+   A bare word — "intakes", "invoices", "cases" — answers with LIVE STATUS
+   plus the actions that fit the situation, so a non-technical member of
+   staff types one word and knows what is happening, whether anything needs
+   attention, and where to go. Counts are counted, never invented; the
+   primary action changes with the state; and every offered action is a
+   NAVIGATION (registry id), a SAY (a phrase fed back through this same
+   deterministic grammar, exactly as if typed), or a SEED (text placed in
+   the box for the person to finish) — nothing here can delete, archive,
+   send, pay or close, in Beta or by these buttons ever.
+
+   DORMANT-INTAKE INTELLIGENCE runs the SAME eligibility probe the real
+   delete runs (`intakeBlockersFound`), so "eligible for cleanup review"
+   means exactly "the quick delete would not refuse this", and PROTECTED
+   names what it carries. The Assistant identifies and explains; deleting
+   stays the manual control on the intake card, and the answer says so. */
+
+const nav = (label, id, kind = 'tab') => ({ label, navigate: kind === 'case' ? { kind, case_no: id } : { kind, id } });
+const say = (label, text) => ({ label, say: text });
+const seed = (label, text) => ({ label, seed: text });
+
+/* The undecided-intake base: on the desk, no final decision recorded. */
+const UNDECIDED = `FROM submissions s WHERE s.status = 'new'
+  AND NOT EXISTS (SELECT 1 FROM lead_status l WHERE l.case_no = s.case_no
+                    AND l.status IN ('converted','declined','closed_lead'))`;
+
+async function assistantIntakeFacts(env) {
+  const cutoff = new Date(Date.now() - ATTN.DORMANT_INTAKE_DAYS * 86400000).toISOString();
+  const one = async sql => Number(((await env.DB.prepare(sql).bind(cutoff).first()) || {}).n) || 0;
+  const fresh = Number(((await env.DB.prepare(
+    `SELECT COUNT(*) AS n ${UNDECIDED} AND s.created_at >= ?`).bind(cutoff).first()) || {}).n) || 0;
+  const dormant = await one(`SELECT COUNT(*) AS n ${UNDECIDED} AND s.created_at < ?`);
+  const decided = Number(((await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM lead_status WHERE status IN ('closed_lead','declined')`).first()) || {}).n) || 0;
+  const dupRows = (await env.DB.prepare(
+    `SELECT s.client_name AS name, COUNT(*) AS n ${UNDECIDED}
+       AND s.client_name IS NOT NULL AND s.client_name != ''
+      GROUP BY s.client_name HAVING COUNT(*) > 1 LIMIT 6`).all()).results || [];
+  return { fresh, dormant, decided, dupRows, cutoff };
+}
+
+/* Classify the dormant list the way the DELETE would judge it — capped, each
+   probe the same bounded UNION statement the real route runs. */
+async function assistantDormantList(env, cutoff, dupNames) {
+  const rows = (await env.DB.prepare(
+    `SELECT s.case_no, s.client_name, s.created_at,
+            (SELECT status FROM lead_status l WHERE l.case_no = s.case_no) AS lead
+       ${UNDECIDED} AND s.created_at < ? ORDER BY s.created_at LIMIT 8`).bind(cutoff).all()).results || [];
+  const out = [];
+  for (const r of rows) {
+    let cls, why;
+    const hold = await activeHold(env, r.case_no);
+    if (hold) { cls = 'PROTECTED / LEGAL HOLD'; why = 'a legal hold refuses every removal'; }
+    else {
+      const found = await intakeBlockersFound(env, r.case_no);
+      if (found.length) {
+        const what = INTAKE_BLOCKERS.filter(([t]) => found.includes(t)).map(([, w]) => w);
+        cls = 'PROTECTED / DEVELOPED CASE';
+        why = `carries ${what.slice(0, 3).join(', ')}${what.length > 3 ? '…' : ''}`;
+      } else if (dupNames.has(r.client_name || '')) {
+        cls = 'POSSIBLE DUPLICATE'; why = `"${r.client_name}" appears on more than one undecided intake`;
+      } else if (r.lead) {
+        cls = 'NEEDS REVIEW'; why = `the lead is being worked (${r.lead}) — not a cleanup candidate`;
+      } else {
+        cls = 'ELIGIBLE FOR CLEANUP REVIEW'; why = 'no dependent records — the quick delete would not refuse it';
+      }
+    }
+    out.push({ case_no: r.case_no, who: r.client_name || r.case_no,
+      age_days: Math.floor((Date.now() - Date.parse(r.created_at)) / 86400000), cls, why });
+  }
+  return out;
+}
+
+const topicJson = (topic, lines, actions, card) => json({ ok: true, kind: 'topic',
+  text: `${topic}\n${lines.filter(Boolean).join('\n')}`, actions, card: card || null });
+
+async function assistantTopicAnswer(env, user, short, caseNo) {
+  const admin = user.role === 'admin';
+  const adminOnly = what => json({ ok: true, kind: 'status',
+    text: `${what} is an admin desk. Cases and Today carry your own work.` });
+  const is = re => re.test(short);
+
+  /* ---- intakes ---- */
+  if (is(/^(new )?(intakes?|leads?)$|^new cases$/)) {
+    if (!admin) return adminOnly('Intake review');
+    const f = await assistantIntakeFacts(env);
+    const lines = [
+      f.fresh ? `${f.fresh} new intake${f.fresh === 1 ? ' is' : 's are'} waiting for review.`
+              : 'No new intakes are waiting for review.',
+      (f.dormant || f.dupRows.length || f.decided) ? 'I found:' : null,
+      f.dormant ? `- ${f.dormant} older undecided intake${f.dormant === 1 ? '' : 's'} (${ATTN.DORMANT_INTAKE_DAYS}+ days)` : null,
+      f.dupRows.length ? `- ${f.dupRows.length} possible duplicate name${f.dupRows.length === 1 ? '' : 's'}` : null,
+      f.decided ? `- ${f.decided} closed/declined lead record${f.decided === 1 ? '' : 's'} (kept)` : null,
+      (!f.fresh && !f.dormant) ? 'No new or dormant intakes currently need attention.' : null,
+    ];
+    const actions = [];
+    if (f.fresh) actions.push(nav('REVIEW NEW INTAKES', 'leads'));
+    else if (f.dormant) actions.push(say('REVIEW CLEANUP CANDIDATES', 'old intakes'));
+    if (f.dupRows.length) actions.push(say('CHECK FOR DUPLICATES', 'duplicate intakes'));
+    if (!f.fresh) actions.push(nav('OPEN INTAKES', 'leads'));
+    actions.push(say('PREPARE AN INTAKE', 'prepare an intake'));
+    actions.push(seed('FIND AN INTAKE', 'Find '));
+    return topicJson('INTAKES', lines, actions);
+  }
+  if (is(/^(old|dormant) intakes?$|^cleanup( candidates)?$/)) {
+    if (!admin) return adminOnly('Intake review');
+    const f = await assistantIntakeFacts(env);
+    const list = await assistantDormantList(env, f.cutoff, new Set(f.dupRows.map(d => d.name)));
+    if (!list.length) {
+      return topicJson('DORMANT INTAKES', ['No undecided intake is older than '
+        + `${ATTN.DORMANT_INTAKE_DAYS} days.`], [nav('OPEN INTAKES', 'leads')]);
+    }
+    const elig = list.filter(x => x.cls === 'ELIGIBLE FOR CLEANUP REVIEW').length;
+    const prot = list.filter(x => x.cls.startsWith('PROTECTED')).length;
+    return topicJson('DORMANT INTAKES', [
+      `${list.length} older undecided intake${list.length === 1 ? '' : 's'} — ${elig} eligible for cleanup review, ${prot} protected.`,
+      'The Assistant identifies and explains; deleting stays the manual control on the intake card, and Beta never deletes anything.',
+    ], [nav('OPEN INTAKES', 'leads')],
+      list.map(x => ({ title: `${x.cls} — ${x.who}`, case_no: x.case_no,
+        line: `${x.case_no} · ${x.age_days}d old · ${x.why}` })));
+  }
+  if (is(/^duplicate intakes?$|^duplicates$/)) {
+    if (!admin) return adminOnly('Intake review');
+    const f = await assistantIntakeFacts(env);
+    if (!f.dupRows.length) {
+      return topicJson('DUPLICATE INTAKES', ['No undecided intake shares its client name with another.'],
+        [nav('OPEN INTAKES', 'leads')]);
+    }
+    return topicJson('DUPLICATE INTAKES', [
+      `${f.dupRows.length} name${f.dupRows.length === 1 ? '' : 's'} appear${f.dupRows.length === 1 ? 's' : ''} on more than one undecided intake — exact name matches only, nothing inferred.`,
+    ], [nav('OPEN INTAKES', 'leads'), say('REVIEW CLEANUP CANDIDATES', 'old intakes')],
+      f.dupRows.map(d => ({ title: d.name, line: `${d.n} undecided intakes carry this exact name` })));
+  }
+
+  /* ---- invoices / money ---- */
+  if (is(/^(invoices?|billing|payments?)$/)) {
+    if (!admin) return adminOnly('Billing');
+    const data = await (await listInvoices(new Request('http://assistant.internal/invoices'), env)).json();
+    const live = (data.invoices || []).filter(i => i.status !== 'void');
+    const owing = live.filter(i => i.status !== 'draft' && Number(i.balance_due) > 0);
+    const over = live.filter(i => i.display_status === 'overdue');
+    const s = data.summary || {};
+    const lines = [
+      owing.length ? `${owing.length} invoice${owing.length === 1 ? ' has a balance' : 's have balances'} due.`
+                   : 'No live invoice carries a balance.',
+      over.length ? `${over.length} ${over.length === 1 ? 'is' : 'are'} overdue.` : null,
+      `${asstFmt$(s.outstanding)} total outstanding.`,
+    ];
+    const actions = [nav('OPEN BILLING', 'invoices')];
+    if (over.length) actions.push(say('SHOW OVERDUE', 'overdue'));
+    if (owing.length) actions.push(say('SHOW UNPAID', 'unpaid'));
+    actions.push(seed('FIND AN INVOICE', 'Find '));
+    if (caseNo) actions.push(say('PREPARE INVOICE PREVIEW', 'invoice preview'));
+    return topicJson('INVOICES', lines, actions);
+  }
+  if (is(/^overdue( invoices?)?$/)) {
+    if (!admin) return adminOnly('Billing');
+    const data = await (await listInvoices(new Request('http://assistant.internal/invoices'), env)).json();
+    const over = (data.invoices || []).filter(i => i.status !== 'void' && i.display_status === 'overdue');
+    return topicJson('OVERDUE', [over.length
+      ? `${over.length} overdue invoice${over.length === 1 ? '' : 's'}, oldest first.`
+      : 'Nothing is overdue.'], [nav('OPEN BILLING', 'invoices')],
+      over.slice(0, 8).map(i => ({ title: `${i.invoice_no} — ${i.case_no}`, case_no: i.case_no,
+        line: `balance ${asstFmt$(i.balance_due)} · due ${i.due_date || '—'}` })));
+  }
+  if (is(/^unpaid( invoices?)?$/)) {
+    if (!admin) return adminOnly('Billing');
+    const data = await (await listInvoices(new Request('http://assistant.internal/invoices'), env)).json();
+    const owing = (data.invoices || []).filter(i =>
+      i.status !== 'void' && i.status !== 'draft' && Number(i.balance_due) > 0);
+    return topicJson('UNPAID', [owing.length
+      ? `${owing.length} live invoice${owing.length === 1 ? ' carries' : 's carry'} a balance (drafts never count).`
+      : 'No live invoice carries a balance.'], [nav('OPEN BILLING', 'invoices')],
+      owing.slice(0, 8).map(i => ({ title: `${i.invoice_no} — ${i.display_status}`, case_no: i.case_no,
+        line: `${i.case_no} · balance ${asstFmt$(i.balance_due)}` })));
+  }
+
+  /* ---- cases ---- */
+  if (is(/^cases$/)) {
+    if (!admin) {
+      const mine = await env.DB.prepare(
+        `SELECT COUNT(*) AS n, SUM(CASE WHEN EXISTS (SELECT 1 FROM case_days d
+             WHERE d.case_no = s.case_no AND d.end_time IS NULL) THEN 1 ELSE 0 END) AS active
+           FROM submissions s WHERE s.assigned_to = ? AND s.status != 'closed'`).bind(user.id).first();
+      return topicJson('CASES', [
+        `You have ${Number(mine.n) || 0} open assignment${Number(mine.n) === 1 ? '' : 's'}${Number(mine.active) ? ` — ${Number(mine.active)} with a day running now` : ''}.`,
+      ], [nav('OPEN CASES', 'cases'), nav('TODAY', 'today')]);
+    }
+    /* Hidden cases leave every count, the assistantCounts pattern. */
+    const missing = await missingTables(env);
+    const hide = [
+      missing.includes('case_archive') ? '' : 'AND s.case_no NOT IN (SELECT case_no FROM case_archive)',
+      missing.includes('case_deleted') ? '' : 'AND s.case_no NOT IN (SELECT case_no FROM case_deleted)',
+    ].filter(Boolean).join(' ');
+    const open = (await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM submissions s WHERE s.status != 'closed' ${hide}`).first());
+    const activeNow = (await env.DB.prepare(
+      `SELECT COUNT(DISTINCT case_no) AS n FROM case_days WHERE end_time IS NULL`).first());
+    const unassigned = (await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM submissions s
+        WHERE s.assigned_to IS NULL AND s.status NOT IN ('new','closed') ${hide}`).first());
+    const due = (await env.DB.prepare(
+      `SELECT COUNT(DISTINCT d.case_no) AS n FROM case_days d WHERE d.end_time IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM case_reports r WHERE r.day_id = d.id)`).first());
+    const lines = [
+      `${Number(open.n) || 0} open · ${Number(activeNow.n) || 0} active right now · ${Number(unassigned.n) || 0} unassigned · ${Number(due.n) || 0} with a finished day and no report.`,
+    ];
+    const actions = [nav('OPEN CASES', 'cases')];
+    if (Number(unassigned.n)) actions.push(say('SHOW UNASSIGNED', 'unassigned'));
+    if (Number(due.n)) actions.push(say('REPORTS DUE', 'reports due'));
+    actions.push(say('READY TO CLOSE', 'ready to close'));
+    return topicJson('CASES', lines, actions);
+  }
+  if (is(/^unassigned( cases?)?$/)) {
+    if (!admin) return adminOnly('Assignment');
+    const hidden = await hiddenCases(env);
+    const rows = ((await env.DB.prepare(
+      `SELECT case_no, client_name, kind FROM submissions
+        WHERE assigned_to IS NULL AND status NOT IN ('new','closed') ORDER BY id DESC LIMIT 8`).all())
+      .results || []).filter(r => !hidden.has(r.case_no));
+    return topicJson('UNASSIGNED', [rows.length
+      ? `${rows.length} accepted case${rows.length === 1 ? '' : 's'} with no investigator.`
+      : 'Every accepted case has an investigator.'], [nav('OPEN CASES', 'cases')],
+      rows.map(r => ({ title: r.client_name || r.case_no, case_no: r.case_no,
+        line: `${r.case_no} · ${r.kind === 'claims' ? 'insurance' : 'private'}` })));
+  }
+  if (is(/^reports? due$/)) {
+    if (!admin) return adminOnly('The report review desk');
+    const hidden = await hiddenCases(env);
+    const rows = ((await env.DB.prepare(
+      `SELECT DISTINCT d.case_no FROM case_days d WHERE d.end_time IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM case_reports r WHERE r.day_id = d.id)
+        ORDER BY d.case_no LIMIT 8`).all()).results || []).filter(r => !hidden.has(r.case_no));
+    return topicJson('REPORTS DUE', [rows.length
+      ? `${rows.length} case${rows.length === 1 ? ' has' : 's have'} a finished day with no report.`
+      : 'Every finished day has its report.'], [nav('OPEN REPORTS & PACKAGES', 'delivery')],
+      rows.map(r => ({ title: r.case_no, case_no: r.case_no, line: 'finished day, no report yet' })));
+  }
+  if (is(/^ready (to )?close$/)) {
+    if (!admin) return adminOnly('Closing');
+    const hidden = await hiddenCases(env);
+    const data = await (await listInvoices(new Request('http://assistant.internal/invoices'), env)).json();
+    const bal = {};
+    for (const i of (data.invoices || [])) {
+      if (i.status === 'void' || i.status === 'draft') continue;
+      bal[i.case_no] = (bal[i.case_no] || 0) + Math.max(0, Number(i.balance_due) || 0);
+    }
+    const delivered = ((await env.DB.prepare(
+      `SELECT DISTINCT b.case_no FROM case_builds b JOIN submissions s ON s.case_no = b.case_no
+        WHERE b.delivered_at IS NOT NULL AND s.status != 'closed' LIMIT 12`).all()).results || [])
+      .filter(r => !hidden.has(r.case_no) && !(bal[r.case_no] > 0)).slice(0, 8);
+    return topicJson('READY TO CLOSE', [delivered.length
+      ? `${delivered.length} open case${delivered.length === 1 ? '' : 's'} with a delivered package and nothing outstanding — worth the closeout checklist. The eight attestations stay human; nothing here closes anything.`
+      : 'No open case pairs a delivered package with a clear balance yet.'],
+      [nav('OPEN CASES', 'cases')],
+      delivered.map(r => ({ title: r.case_no, case_no: r.case_no,
+        line: 'delivered · no outstanding balance' })));
+  }
+
+  /* ---- rate sheets ---- */
+  if (is(/^(rate ?sheets?|pricing sheets?)$/)) {
+    if (!admin) return adminOnly('Rate Sheets');
+    const recent = (await env.DB.prepare(
+      `SELECT sheet_id, recipient, ok, sent_at FROM send_log
+        WHERE kind = 'rate_sheet' ORDER BY id DESC LIMIT 5`).all()).results || [];
+    const waiting = Number(((await env.DB.prepare(
+      `SELECT COUNT(*) AS n ${UNDECIDED}
+         AND NOT EXISTS (SELECT 1 FROM lead_status l2 WHERE l2.case_no = s.case_no)`).first()) || {}).n) || 0;
+    return topicJson('RATE SHEETS', [
+      recent.length ? `${recent.length} sent recently (newest: ${recent[0].sheet_id} to ${recent[0].recipient}${Number(recent[0].ok) ? '' : ' — FAILED'}).`
+                    : 'Nothing has been sent yet.',
+      waiting ? `${waiting} undecided intake${waiting === 1 ? ' has' : 's have'} had nothing sent at all.` : null,
+      'Private and Legal share the retainer sheet; Insurance has its own. Sending is always a person\'s explicit act.',
+    ], [say('PREPARE RATE SHEET', 'prepare a rate sheet'), nav('VIEW RATE SHEETS', 'sheets'),
+        seed('FIND CLIENT', 'Find ')]);
+  }
+
+  /* ---- surveillance ---- */
+  if (is(/^surveillance$/)) {
+    if (!admin) {
+      const mine = await env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM case_days WHERE investigator_id = ? AND end_time IS NULL`).bind(user.id).first();
+      return topicJson('SURVEILLANCE', [Number(mine.n)
+        ? 'Your day is running — the field view has the clock.' : 'No day of yours is running.'],
+        [nav('ACTIVE SURVEILLANCE', 'surveillance', 'action'), nav('TODAY', 'today')]);
+    }
+    const active = (await env.DB.prepare(
+      `SELECT d.case_no, u.display_name AS who, d.start_time FROM case_days d
+         LEFT JOIN users u ON u.id = d.investigator_id
+        WHERE d.end_time IS NULL ORDER BY d.id DESC LIMIT 8`).all()).results || [];
+    const due = Number(((await env.DB.prepare(
+      `SELECT COUNT(DISTINCT d.case_no) AS n FROM case_days d WHERE d.end_time IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM case_reports r WHERE r.day_id = d.id)`).first()) || {}).n) || 0;
+    const actions = [nav('OPEN CALENDAR', 'calendar'), nav('ACTIVE SURVEILLANCE', 'surveillance', 'action')];
+    if (due) actions.push(say('REPORTS DUE', 'reports due'));
+    return topicJson('SURVEILLANCE', [
+      active.length ? `${active.length} day${active.length === 1 ? ' is' : 's are'} running right now.` : 'Nobody is out right now.',
+      due ? `${due} case${due === 1 ? ' has' : 's have'} a finished day awaiting its report.` : null,
+    ], actions, active.map(a => ({ title: `${a.who || 'Unassigned'} — ${a.case_no}`, case_no: a.case_no,
+      line: `out since ${a.start_time || '—'}` })));
+  }
+
+  /* ---- reports ---- */
+  if (is(/^reports?$/)) {
+    const mineClause = admin ? '' : 'WHERE investigator_id = ?';
+    const st = (await env.DB.prepare(
+      `SELECT status, COUNT(*) AS n FROM case_reports ${mineClause} GROUP BY status`)
+      .bind(...(admin ? [] : [user.id])).all()).results || [];
+    const line = st.length ? st.map(r => `${r.n} ${r.status}`).join(' · ') : 'none yet';
+    if (!admin) {
+      return topicJson('REPORTS', [`Your reports: ${line}.`], [nav('OPEN REPORTS', 'myreports')]);
+    }
+    const due = Number(((await env.DB.prepare(
+      `SELECT COUNT(DISTINCT d.case_no) AS n FROM case_days d WHERE d.end_time IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM case_reports r WHERE r.day_id = d.id)`).first()) || {}).n) || 0;
+    const actions = [nav('OPEN REPORTS & PACKAGES', 'delivery')];
+    if (due) actions.push(say('REPORTS DUE', 'reports due'));
+    return topicJson('REPORTS', [`Across the book: ${line}.`,
+      due ? `${due} case${due === 1 ? ' has' : 's have'} a finished day with no report.` : null], actions);
+  }
+
+  /* ---- clients ---- */
+  if (is(/^(clients?|firms?|clients and firms|client directory)$/)) {
+    if (!admin) return adminOnly('The client directory');
+    if ((await missingTables(env)).includes('profile')) {
+      return topicJson('CLIENTS & FIRMS', ['The saved directory is not set up on this database yet (portal-setup).'],
+        [nav('OPEN CLIENTS & FIRMS', 'profiles')]);
+    }
+    const rows = (await env.DB.prepare(
+      `SELECT kind, COUNT(*) AS n FROM profile WHERE active = 1 GROUP BY kind`).all()).results || [];
+    const k = Object.fromEntries(rows.map(r => [r.kind, Number(r.n)]));
+    return topicJson('CLIENTS & FIRMS', [
+      `${k.law_firm || 0} law firm${(k.law_firm || 0) === 1 ? '' : 's'} · ${k.insurance_org || 0} insurance org${(k.insurance_org || 0) === 1 ? '' : 's'} · ${k.private_client || 0} private client${(k.private_client || 0) === 1 ? '' : 's'} saved.`,
+      'A profile is a default; every case stays a snapshot.',
+    ], [nav('OPEN CLIENTS & FIRMS', 'profiles'), seed('FIND CLIENT', 'Find ')]);
+  }
+
+  /* ---- tasks ---- */
+  if (is(/^tasks?$/)) {
+    const t = await (await taskBoard(env, user)).json();
+    const c = b => (t[b] || []).length;
+    const lines = [`${c('overdue')} overdue · ${c('today')} due today · ${c('upcoming')} upcoming.`];
+    return topicJson('TASKS', lines, [nav('OPEN TASKS', 'tasks')]);
+  }
+
+  /* ---- today ---- */
+  if (is(/^(today|day|my day)$/)) {
+    if (!admin) {
+      const mine = await env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM case_days WHERE investigator_id = ? AND end_time IS NULL`).bind(user.id).first();
+      const t = await (await taskBoard(env, user)).json();
+      return topicJson('TODAY', [
+        Number(mine.n) ? 'Your day is running.' : 'No day of yours is running.',
+        `${(t.today || []).length} task${(t.today || []).length === 1 ? '' : 's'} due today, ${(t.overdue || []).length} overdue.`,
+      ], [nav('OPEN TODAY', 'today'), nav('ACTIVE SURVEILLANCE', 'surveillance', 'action')]);
+    }
+    const f = await assistantIntakeFacts(env);
+    const activeNow = Number(((await env.DB.prepare(
+      `SELECT COUNT(DISTINCT case_no) AS n FROM case_days WHERE end_time IS NULL`).first()) || {}).n) || 0;
+    const t = await (await taskBoard(env, user)).json();
+    const data = await (await listInvoices(new Request('http://assistant.internal/invoices'), env)).json();
+    const over = (data.invoices || []).filter(i => i.status !== 'void' && i.display_status === 'overdue').length;
+    const actions = [];
+    if (f.fresh) actions.push(nav('REVIEW NEW INTAKES', 'leads'));
+    actions.push(nav('OPEN DASHBOARD', 'dashboard'));
+    if (over) actions.push(say('SHOW OVERDUE', 'overdue'));
+    return topicJson('TODAY', [
+      `${f.fresh} new intake${f.fresh === 1 ? '' : 's'} · ${activeNow} day${activeNow === 1 ? '' : 's'} running · ${(t.today || []).length} task${(t.today || []).length === 1 ? '' : 's'} due today · ${over} overdue invoice${over === 1 ? '' : 's'}.`,
+    ], actions);
+  }
+
+  return null;
+}
+
 /* POST /assistant/command — the deterministic Beta grammar. Every branch
    composes from live reads or the registry; the fallback says plainly what
    Beta understands rather than pretending.
@@ -14292,7 +14668,9 @@ async function assistantCommandCore(body, env, user) {
         + ' Say "invoice preview" to see exactly what would be prepared — nothing is created.' });
   }
 
-  if (/ready to close|can (we|i) close/i.test(text)) {
+  /* Case-scoped when a case is open; the BARE phrase with no case falls
+     through to the Unit 10 topic, which lists close-worthy cases book-wide. */
+  if (caseNo && /ready to close|can (we|i) close/i.test(text)) {
     if (user.role !== 'admin') return json({ ok: true, kind: 'status', text: 'Closing is an admin desk.' });
     const g = await u7Case(); if (g.fail) return g.fail;
     const notes = Object.values(await closeoutFacts(env, caseNo)).map(f => f.note);
@@ -14503,13 +14881,27 @@ async function assistantCommandCore(body, env, user) {
     }
   }
 
+  /* ---- UNIT 10: topic commands — a bare word or short phrase answers with
+     live status and the actions that fit the state. Runs LAST so every
+     richer phrasing above keeps its own handler; only inputs of up to four
+     stripped words reach the topic table. */
+  {
+    const shortT = asstStrip(text);
+    if (shortT && shortT.split(' ').length <= 4) {
+      const topicAns = await assistantTopicAnswer(env, user, shortT, caseNo);
+      if (topicAns) return topicAns;
+    }
+  }
+
   /* ---- the honest fallback ---- */
   const provider = assistantProvider(env);
   return json({ ok: true, kind: 'help',
     text: 'Beta understands set phrases so far: "Where am I?", "Explain this page", '
         + '"Take me to <a portal section>", "Anything new?", "What should I do?", '
         + '"What needs attention?", "What is outstanding?", "Find <a name or case number>", '
-        + '"Prepare an intake", "Prepare a rate sheet", "invoice preview", and on a case: '
+        + '"Prepare an intake", "Prepare a rate sheet", "invoice preview", bare topics like '
+        + '"intakes", "invoices", "cases", "rate sheets", "surveillance", "reports", "clients", '
+        + '"tasks", "today", and on a case: '
         + '"Check this case", "Is this ready to close?", "Is this ready to invoice?", '
         + '"Summarize today\'s activity", "Draft a report", "Package readiness", '
         + '"Why can\'t I delete this?". '

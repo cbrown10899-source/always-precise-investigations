@@ -17219,6 +17219,54 @@ section('API ASSISTANT Unit 5 — the rate-sheet dry-run workbench, on the real 
        const t = blocks[blocks.length - 1].innerText;
        return /^Watch:/.test(t.trim()) && /never emails, texts or touches anything/.test(t);
      }));
+
+  /* ---- UNIT 10 topics on the real page: live status, structured lines,
+     and the three action shapes actually doing their three things ---- */
+  await page.locator('#asst_in').fill('intakes');
+  await page.locator('.asst-ask button').click();
+  await page.waitForTimeout(800);
+  const topicMsg = await page.evaluate(() => {
+    const blocks = [...document.querySelectorAll('.asst-m')];
+    const last = blocks[blocks.length - 1];
+    return { text: last.innerText, buttons: [...last.querySelectorAll('.asst-acts button')].length,
+             preLine: getComputedStyle(last.querySelector('.asst-t')).whiteSpace };
+  });
+  ok('a bare “intakes” renders TOPIC + status lines + action buttons, not a chat paragraph',
+     /^INTAKES\n/.test(topicMsg.text) && topicMsg.buttons >= 2 && topicMsg.preLine === 'pre-line',
+     JSON.stringify(topicMsg).slice(0, 200));
+  await page.locator('#asst_in').fill('clients');
+  await page.locator('.asst-ask button').click();
+  await page.waitForTimeout(800);
+  await page.evaluate(() => {
+    const blocks = [...document.querySelectorAll('.asst-m')];
+    const btns = [...blocks[blocks.length - 1].querySelectorAll('.asst-acts button')];
+    btns.find(b => /FIND CLIENT/.test(b.innerText)).click();
+  });
+  ok('a SEED action puts its text in the box for the person to finish',
+     await page.evaluate(() => $('asst_in').value === 'Find '));
+  await page.locator('#asst_in').fill('cases');
+  await page.locator('.asst-ask button').click();
+  await page.waitForTimeout(800);
+  await page.evaluate(() => {
+    const blocks = [...document.querySelectorAll('.asst-m')];
+    const btns = [...blocks[blocks.length - 1].querySelectorAll('.asst-acts button')];
+    btns.find(b => /READY TO CLOSE/.test(b.innerText)).click();
+  });
+  await page.waitForTimeout(800);
+  ok('a SAY action feeds its phrase back through the grammar — the follow-up answer lands',
+     await page.evaluate(() => {
+       const blocks = [...document.querySelectorAll('.asst-m')];
+       return /^READY TO CLOSE\n/.test(blocks[blocks.length - 1].innerText);
+     }));
+  await page.evaluate(() => {
+    const blocks = [...document.querySelectorAll('.asst-m')];
+    const all = blocks.flatMap(b => [...b.querySelectorAll('.asst-acts button')]);
+    const t = all.find(b => /OPEN TASKS|OPEN BILLING|OPEN INTAKES|OPEN CASES/.test(b.innerText));
+    if (t) t.click();
+  });
+  await page.waitForTimeout(500);
+  ok('a NAVIGATE action still actually navigates',
+     await page.evaluate(() => ['tasks', 'invoices', 'leads', 'cases'].includes(TAB)));
   await page.close();
 }
 

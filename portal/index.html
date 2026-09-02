@@ -1810,6 +1810,8 @@
 .asst-work .asst-ck input{width:20px;height:20px;min-height:20px;flex:0 0 auto}
 .asst-guidep{color:var(--muted);font-size:.85rem;margin-bottom:6px;padding-bottom:6px;
   border-bottom:1px solid var(--line)}
+/* UNIT 10 — topic answers carry their own line structure. */
+.asst-t{white-space:pre-line}
 
 /* APPEND AT THE VERY END OF THE STYLESHEET (the source-order rule — the fifth
    casualty list): the phone shape. The pill only exists under 900px, and only
@@ -2856,7 +2858,7 @@ function asstMsgHtml(m){
     ${m.kind === "invoice_preview" ? `<div class="asst-sim">DRY RUN — INVOICE PREVIEW · SIMULATED — NOT CREATED</div>` : ""}
     ${m.guide_intro ? `<div class="asst-guidep">${esc(m.guide_intro)}</div>` : ""}
     ${m.kind === "invoice_preview" || m.kind === "chronology"
-      ? `<pre class="asst-pre">${esc(m.text)}</pre>` : `<div>${esc(m.text)}</div>`}
+      ? `<pre class="asst-pre">${esc(m.text)}</pre>` : `<div class="asst-t">${esc(m.text)}</div>`}
     ${m.card ? `<div class="asst-card">${m.card.map(c => `
       <button class="asst-row" data-act="asstOpenCase" data-case="${esc(c.case_no || "")}">
         <b>${esc(c.title || c.case_no || "")}</b>
@@ -18843,7 +18845,13 @@ document.addEventListener("click", ev => {
   else if(act === "asstAction"){
     const [mi, ai] = String(el.dataset.i || "").split(":").map(Number);
     const action = ASST && ASST.msgs[mi] && (ASST.msgs[mi].actions || [])[ai];
+    /* UNIT 10 — three action shapes, all inert by construction: navigate is a
+       registry id, say feeds a phrase back through the same deterministic
+       grammar exactly as if typed, seed puts text in the box for the person
+       to finish. No action can send, delete, archive, pay or close. */
     if(action && action.navigate) asstNavigate(action.navigate);
+    else if(action && action.say) asstSend(action.say);
+    else if(action && action.seed){ const inp = $("asst_in"); if(inp){ inp.value = action.seed; inp.focus(); } }
   }
   else if(act === "asstPrepPrev"){ asstPrepPrev(); }
   else if(act === "asstPrepSim"){ asstPrepSim(); }
