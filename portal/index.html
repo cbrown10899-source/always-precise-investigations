@@ -479,7 +479,9 @@
     background:var(--navy-2);color:#fff;border:1px solid #4a6b91;border-left:0;
     border-radius:0 12px 12px 0;font-size:1.5rem;line-height:1;cursor:pointer;
     padding:0 4px 2px 0;box-shadow:6px 0 18px rgba(9,18,30,.35);}
-  .navhandle:active{background:#2c4a6e;}
+  /* No :active tint: the burger's press color is already at the two-use
+     budget — a third use means promoting it to a token, and a tint nobody
+     can see during a 185ms close is not worth a palette change. */
   /* The slide is a KEYFRAME, not a transition: the drawer is display-gated
      (the virtue recorded above), and a transition cannot run from
      display:none. The open animation rides a one-shot body.navanim class so

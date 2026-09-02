@@ -5215,9 +5215,20 @@ for (const [label, w, h] of [['phone 390', 390, 844], ['desktop 1200', 1200, 900
 
   const over = await page.evaluate(() => {
     const vw = window.innerWidth, out = [];
+    /* An element inside a horizontal scroll container is not "past the edge"
+       — it is where a scroll container puts what does not fit, which is this
+       project's own rule for wide content. The doc check beside this still
+       pins that the PAGE never scrolls sideways. */
+    const inHScroll = el => {
+      for (let n = el.parentElement; n; n = n.parentElement) {
+        const o = getComputedStyle(n).overflowX;
+        if (o === 'auto' || o === 'scroll') return true;
+      }
+      return false;
+    };
     for (const el of document.querySelectorAll('#app *')) {
       const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.right > vw + 1) out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
+      if (r.width > 0 && r.right > vw + 1 && !inHScroll(el)) out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
     }
     return { doc: Math.round(document.documentElement.scrollWidth - vw), els: out.slice(0, 4) };
   });
@@ -5248,9 +5259,20 @@ for (const [label, w, h] of [['phone 390', 390, 844], ['desktop 1200', 1200, 900
 
   const over = await page.evaluate(() => {
     const vw = window.innerWidth, out = [];
+    /* An element inside a horizontal scroll container is not "past the edge"
+       — it is where a scroll container puts what does not fit, which is this
+       project's own rule for wide content. The doc check beside this still
+       pins that the PAGE never scrolls sideways. */
+    const inHScroll = el => {
+      for (let n = el.parentElement; n; n = n.parentElement) {
+        const o = getComputedStyle(n).overflowX;
+        if (o === 'auto' || o === 'scroll') return true;
+      }
+      return false;
+    };
     for (const el of document.querySelectorAll('#app *')) {
       const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.right > vw + 1) out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
+      if (r.width > 0 && r.right > vw + 1 && !inHScroll(el)) out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
     }
     return { doc: Math.round(document.documentElement.scrollWidth - vw), els: out.slice(0, 4) };
   });
@@ -11483,21 +11505,30 @@ section('The mobile header is a control, not a glyph');
   ok('tapping outside closes the drawer',
      await page.evaluate(() => !document.body.classList.contains('navopen')));
 
-  /* Quick tools: the day's launcher, at tap size, nothing overflowing. */
+  /* Quick tools: the day's launcher, at tap size. It is a SWIPE STRIP on a
+     phone now (owner, 2026-09-02) — six doors cannot simultaneously fit a
+     320px screen and never could as targets; what the old "fits" assertion
+     was really protecting is that no tool is unreachable and the page never
+     widens. Both are pinned directly. */
   const qt = await page.evaluate(() => {
     const doc = document.documentElement;
-    const btns = [...document.querySelectorAll('.qtool')].map(x => {
-      const r = x.getBoundingClientRect();
-      return { t: x.textContent.trim(), h: Math.round(r.height),
-               fits: r.right <= doc.clientWidth + 1 }; });
-    return { overflowX: doc.scrollWidth - doc.clientWidth, btns };
+    const g = document.querySelector('.qtgrid');
+    const btns = [...document.querySelectorAll('.qtool')].map(x =>
+      ({ t: x.textContent.trim(), h: Math.round(x.getBoundingClientRect().height) }));
+    const firstFits = document.querySelector('.qtool').getBoundingClientRect().right
+      <= doc.clientWidth + 1;
+    g.scrollLeft = 99999;
+    const lastReachable = [...document.querySelectorAll('.qtool')].pop()
+      .getBoundingClientRect().right <= doc.clientWidth + 2;
+    g.scrollLeft = 0;
+    return { overflowX: doc.scrollWidth - doc.clientWidth, btns, firstFits, lastReachable };
   });
   ok('the page does not scroll sideways at 320px', qt.overflowX === 0, String(qt.overflowX));
   ok('quick tools reach the day\'s doors',
      ['Timestamp Photo', 'Timestamp Video', 'Active Surveillance', 'Cases']
        .every(name => qt.btns.some(x => x.t.includes(name))), JSON.stringify(qt.btns));
-  ok('every tool is a tap target that fits',
-     qt.btns.every(x => x.h >= 44 && x.fits), JSON.stringify(qt.btns));
+  ok('every tool is a 44px target on a strip that swipes to reach them all',
+     qt.btns.every(x => x.h >= 44) && qt.firstFits && qt.lastReachable, JSON.stringify(qt));
 
   /* The dashboard's operational panels render. */
   const dash = await page.evaluate(() => ({
@@ -12077,9 +12108,20 @@ section('Clients & Firms on a phone: cards, taps and no sideways scroll');
 
   const over = await page.evaluate(() => {
     const vw = window.innerWidth, out = [];
+    /* An element inside a horizontal scroll container is not "past the edge"
+       — it is where a scroll container puts what does not fit, which is this
+       project's own rule for wide content. The doc check beside this still
+       pins that the PAGE never scrolls sideways. */
+    const inHScroll = el => {
+      for (let n = el.parentElement; n; n = n.parentElement) {
+        const o = getComputedStyle(n).overflowX;
+        if (o === 'auto' || o === 'scroll') return true;
+      }
+      return false;
+    };
     for (const el of document.querySelectorAll('#app *')) {
       const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.right > vw + 1) {
+      if (r.width > 0 && r.right > vw + 1 && !inHScroll(el)) {
         out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
       }
     }
@@ -12398,9 +12440,20 @@ section('Search and alerts on a phone: stacked, tappable, no sideways scroll');
 
   const over = await page.evaluate(() => {
     const vw = window.innerWidth, out = [];
+    /* An element inside a horizontal scroll container is not "past the edge"
+       — it is where a scroll container puts what does not fit, which is this
+       project's own rule for wide content. The doc check beside this still
+       pins that the PAGE never scrolls sideways. */
+    const inHScroll = el => {
+      for (let n = el.parentElement; n; n = n.parentElement) {
+        const o = getComputedStyle(n).overflowX;
+        if (o === 'auto' || o === 'scroll') return true;
+      }
+      return false;
+    };
     for (const el of document.querySelectorAll('#app *')) {
       const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.right > vw + 1) {
+      if (r.width > 0 && r.right > vw + 1 && !inHScroll(el)) {
         out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
       }
     }
@@ -12636,9 +12689,20 @@ section('Report templates on a phone: stacked, tappable, no sideways scroll');
      String(await page.locator('.tmplcard').count()));
   const over = await page.evaluate(() => {
     const vw = window.innerWidth, out = [];
+    /* An element inside a horizontal scroll container is not "past the edge"
+       — it is where a scroll container puts what does not fit, which is this
+       project's own rule for wide content. The doc check beside this still
+       pins that the PAGE never scrolls sideways. */
+    const inHScroll = el => {
+      for (let n = el.parentElement; n; n = n.parentElement) {
+        const o = getComputedStyle(n).overflowX;
+        if (o === 'auto' || o === 'scroll') return true;
+      }
+      return false;
+    };
     for (const el of document.querySelectorAll('.tmplgrid, .tmplgrid *')) {
       const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.right > vw + 1) {
+      if (r.width > 0 && r.right > vw + 1 && !inHScroll(el)) {
         out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
       }
     }
@@ -12956,9 +13020,20 @@ for (const [label, w, h] of [['phone 375', 375, 812], ['phone 390', 390, 844], [
 
   const over = await page.evaluate(() => {
     const vw = window.innerWidth, out = [];
+    /* An element inside a horizontal scroll container is not "past the edge"
+       — it is where a scroll container puts what does not fit, which is this
+       project's own rule for wide content. The doc check beside this still
+       pins that the PAGE never scrolls sideways. */
+    const inHScroll = el => {
+      for (let n = el.parentElement; n; n = n.parentElement) {
+        const o = getComputedStyle(n).overflowX;
+        if (o === 'auto' || o === 'scroll') return true;
+      }
+      return false;
+    };
     for (const el of document.querySelectorAll('#app *')) {
       const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.right > vw + 1) {
+      if (r.width > 0 && r.right > vw + 1 && !inHScroll(el)) {
         out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
       }
     }
