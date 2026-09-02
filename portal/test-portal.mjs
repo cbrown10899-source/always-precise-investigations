@@ -16523,9 +16523,12 @@ section('MAIL-CHECK D5: the tickable option on legal and insurance sends');
   await page.waitForTimeout(500);
   const prv = await page.evaluate(() => {
     const to = document.querySelector('#wiz_to');
+    /* The wizard is an .amsheet dialog — it has no .card ancestor, which a
+       previous version of this read learned as a null crash. */
+    const sheetEl = to ? to.closest('.amsheet') : null;
     return {
       box: !!document.querySelector('#wiz_mailck'),
-      text: to ? to.closest('.card').innerText : 'NO-WIZARD',
+      text: sheetEl ? sheetEl.innerText : 'NO-WIZARD',
     };
   });
   ok('a PRIVATE send has no Mail Check box and no Mail Check wording',
