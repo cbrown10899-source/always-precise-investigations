@@ -1780,9 +1780,12 @@
   padding:16px 14px;font-size:1rem;font-weight:700;text-align:left;cursor:pointer;min-height:52px}
 .asst-big:hover{border-color:var(--teal)}
 .asst-guide{padding:6px 14px;font-size:.85rem}
-.asst-ask{display:flex;gap:8px;padding:8px 14px 0}
-.asst-ask input{flex:1;min-height:44px;font-size:16px;padding:8px 12px;
+.asst-ask{display:flex;gap:8px;padding:8px 14px 12px}
+.asst-ask input{flex:1;min-width:0;min-height:44px;font-size:16px;padding:8px 12px;
   border:1px solid var(--line);border-radius:10px}
+/* The Ask button never shrinks below its word and always sits level with the
+   input — stretch matches their heights, so neither can ride lower. */
+.asst-ask .btn{flex:0 0 auto;align-self:stretch}
 .asst-pill{position:fixed;right:14px;bottom:max(14px,env(safe-area-inset-bottom));z-index:55;
   display:none;align-items:center;gap:6px;background:var(--navy-2);color:#fff;
   border:0;border-radius:24px;padding:12px 16px;font-size:1rem;cursor:pointer;
@@ -1821,6 +1824,17 @@
   .asst-panel{left:0;right:0;top:auto;bottom:0;width:100%;height:min(92dvh,100%);
     border-left:0;border-top:1px solid var(--line);border-radius:16px 16px 0 0}
   .asst-pill{display:flex}
+  /* THE COMPOSER CLEARS THE PHONE'S BOTTOM EDGE (owner, 2026-09-02: on an
+     iPhone the input row sat against Safari's bottom bar). The sheet's
+     bottom tracks the DYNAMIC viewport (dvh), so this padding is the gap
+     between the input and the browser bar's top edge. The max() carries a
+     REAL floor because env(safe-area-inset-bottom) is 0 in browser Safari
+     without viewport-fit=cover (the recorded calc() trap); the env() arm
+     takes over in standalone/PWA, where the home indicator is what needs
+     clearing. Keyboard-open is covered by the same shape: dvh shrinks with
+     the visual viewport and the sheet's flex column keeps the composer as
+     the last row above it, with the 16px input font preventing iOS zoom. */
+  .asst-ask{padding-bottom:max(26px, calc(env(safe-area-inset-bottom) + 6px))}
 }
 
 </style>

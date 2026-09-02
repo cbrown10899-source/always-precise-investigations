@@ -17274,6 +17274,92 @@ section('API ASSISTANT Unit 5 — the rate-sheet dry-run workbench, on the real 
   await page.close();
 }
 
+section('ASSISTANT COMPOSER — the input row clears the phone\'s bottom edge');
+{
+  /* Owner, 2026-09-02: on an iPhone the composer sat against Safari's bottom
+     bar. The sheet's bottom tracks the DYNAMIC viewport (dvh), so the fix is
+     measured as the gap between the input row and the sheet's own bottom
+     edge — with a real px floor, because env(safe-area-inset-bottom) is 0 in
+     browser Safari without viewport-fit=cover (the recorded calc() trap).
+     A real iOS keyboard cannot be summoned headless; what CAN be measured is
+     the shape that makes keyboard-open correct — the dvh-tracked sheet, the
+     flex column keeping the composer last, and the 16px input font that
+     stops iOS zooming — plus focus keeping the input fully in view. */
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const measure = () => page.evaluate(() => {
+    const panel = document.querySelector('.asst-panel').getBoundingClientRect();
+    const form = document.querySelector('.asst-ask');
+    const inp = document.querySelector('#asst_in').getBoundingClientRect();
+    const btn = document.querySelector('.asst-ask .btn').getBoundingClientRect();
+    const lr = document.querySelector('.asst-log').getBoundingClientRect();
+    return { pad: parseFloat(getComputedStyle(form).paddingBottom),
+             inputClear: Math.round(panel.bottom - inp.bottom),
+             btnClear: Math.round(panel.bottom - btn.bottom),
+             level: Math.abs(Math.round(inp.top - btn.top)),
+             btnH: Math.round(btn.height),
+             btnInside: btn.right <= panel.right + 1 && btn.bottom <= window.innerHeight + 1,
+             gapAboveComposer: Math.round(form.getBoundingClientRect().top - lr.bottom),
+             overflowX: document.documentElement.scrollWidth > window.innerWidth };
+  });
+
+  await page.setViewportSize({ width: 390, height: 760 });
+  await page.evaluate(() => { VIEW = 'list'; WS_CASE = ''; TAB = 'cases'; paint(); });
+  await page.waitForTimeout(300);
+  await page.locator('.asst-pill').click();
+  await page.waitForFunction(() => ASST && ASST.state, null, { timeout: 4000 });
+  let m = await measure();
+  ok('iPhone: the input and Ask button both sit well clear of the sheet\'s bottom edge',
+     m.pad >= 26 && m.inputClear >= 24 && m.btnClear >= 24, JSON.stringify(m));
+  ok('iPhone: the Ask button is level with the input, 44px+, and fully inside the sheet',
+     m.level <= 2 && m.btnH >= 44 && m.btnInside === true, JSON.stringify(m));
+  ok('iPhone: the message list ends above the composer — no overlap between the two',
+     m.gapAboveComposer >= 0 && m.overflowX === false, JSON.stringify(m));
+  for (const t of ['intakes', 'invoices', 'cases', 'tasks']) {
+    await page.locator('#asst_in').fill(t);
+    await page.locator('.asst-ask button').click();
+    await page.waitForTimeout(450);
+  }
+  ok('a long conversation scrolls inside the log and its last message clears the composer',
+     await page.evaluate(() => {
+       const log = document.querySelector('.asst-log');
+       log.scrollTop = log.scrollHeight;
+       const last = [...document.querySelectorAll('.asst-m')].pop().getBoundingClientRect();
+       const form = document.querySelector('.asst-ask').getBoundingClientRect();
+       return log.scrollHeight > log.clientHeight
+         && log.scrollTop + log.clientHeight >= log.scrollHeight - 2
+         && last.bottom <= form.top + 1;
+     }));
+  ok('focused for typing, the input stays fully visible at the 16px no-zoom size',
+     await page.evaluate(() => {
+       const inp = document.querySelector('#asst_in'); inp.focus();
+       const r = inp.getBoundingClientRect();
+       return document.activeElement === inp && r.top >= 0 && r.bottom <= window.innerHeight
+         && parseFloat(getComputedStyle(inp).fontSize) >= 16;
+     }));
+  await page.locator('.asst-x').click();
+  await page.waitForTimeout(250);
+  ok('closing returns the pill, and the pill reopens the sheet — the door survives the fix',
+     (await page.locator('.asst-pill').count()) === 1
+     && await (async () => { await page.locator('.asst-pill').click();
+          await page.waitForTimeout(250);
+          return page.evaluate(() => !!(ASST && ASST.open) && !!document.querySelector('.asst-panel')); })());
+
+  await page.setViewportSize({ width: 820, height: 1000 });
+  await page.waitForTimeout(300);
+  m = await measure();
+  ok('tablet: the same clearance holds under the 900px sheet rule',
+     m.pad >= 26 && m.inputClear >= 24 && m.level <= 2 && m.btnH >= 44, JSON.stringify(m));
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.evaluate(() => { if (ASST) ASST.open = true; paint(); });
+  await page.waitForTimeout(300);
+  m = await measure();
+  ok('desktop: the docked panel keeps its shape — modest breathing room, nothing redesigned',
+     m.pad >= 12 && m.pad < 26 && m.level <= 2 && m.btnH >= 44 && m.overflowX === false,
+     JSON.stringify(m));
+  await page.close();
+}
+
 await browser.close();
 server.close();
 
