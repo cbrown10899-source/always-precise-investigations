@@ -17456,6 +17456,128 @@ section('The launcher hides removed cases, and no card wears the number as a nam
   await page.close();
 }
 
+/* ==========================================================================
+   ASSISTANT BACK / ASSISTANT HOME (owner brief 2026-09-02, ASSISTANT.md A18).
+   The way back to the original menu, without closing the panel. The level is
+   DERIVED from state the panel already holds — home / chat / workbench form /
+   workbench preview — and Back walks one level using the transitions the
+   panel already owned (preview→form is Edit's write, form→chat is Cancel's,
+   chat→home is the one new view pointer). On home, no Back control renders,
+   in the owner's own words; the X is untouched; nothing outside the panel
+   moves. The home menu used to render only while `msgs` was empty, so the
+   first tap buried it for the session — closing and reopening did not bring
+   it back, which is the defect behind the owner's report. */
+section('Assistant Back and Assistant Home: every level has a way back');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const navText = () => page.evaluate(() => {
+    const n = document.querySelector('.asst-nav');
+    return n ? n.innerText.replace(/\s+/g, ' ').trim() : null;
+  });
+  const level = () => page.evaluate(() => asstLevel());
+  const tabBefore = await page.evaluate(() => TAB);
+  const wsBefore = await page.evaluate(() => WS_CASE);
+
+  await page.locator('.side-asst').click();
+  await page.waitForTimeout(700);
+  ok('the panel opens on the home menu', await page.locator('.asst-home').count() === 1);
+  ok('and the home menu carries NO Back control', (await navText()) === null);
+
+  await page.locator('.asst-big', { hasText: 'Explain this page' }).click();
+  await page.waitForTimeout(700);
+  ok('one level in, the single control reads Assistant Home — Back IS home here',
+     /‹ Assistant Home$/.test(await navText() || ''), String(await navText()));
+  ok('the page behind the panel did not move', await page.evaluate(() => TAB) === tabBefore);
+
+  await page.locator('[data-act="asstBack"]').click();
+  await page.waitForTimeout(250);
+  ok('tapping it returns to the menu immediately, panel still open',
+     await page.evaluate(() => ASST.open === true)
+     && await page.locator('.asst-home').count() === 1
+     && (await navText()) === null);
+  ok('the conversation is KEPT, with a way back down',
+     await page.locator('.asst-resume').count() === 1
+     && await page.evaluate(() => ASST.msgs.length >= 2));
+  await page.locator('.asst-resume').click();
+  await page.waitForTimeout(250);
+  ok('Return to the conversation shows the same messages again',
+     await level() === 2
+     && await page.evaluate(() => document.querySelectorAll('.asst-you, .asst-m').length >= 2));
+
+  /* The deepest flow there is: workbench form, then its preview. */
+  await page.locator('[data-act="asstBack"]').click();
+  await page.waitForTimeout(250);
+  await page.locator('.asst-big', { hasText: 'Prepare an intake' }).click();
+  await page.waitForFunction(() => ASST && ASST.prep, null, { timeout: 4000 });
+  await page.waitForTimeout(250);
+  ok('the workbench is two levels deep: Back AND Assistant Home',
+     await level() === 3 && /‹ Back Assistant Home/.test(await navText() || ''),
+     String(await navText()));
+  await page.selectOption('#asst_pk', 'private');
+  await page.waitForTimeout(250);
+  await page.fill('#asst_pto', 'nav.e2e@example.com');
+  await page.locator('[data-act="asstPrepPrev"]').click();
+  await page.waitForFunction(() => ASST && ASST.prep && ASST.prep.preview, null, { timeout: 4000 });
+  ok('the preview is one deeper still, same two controls',
+     await level() === 4 && /‹ Back Assistant Home/.test(await navText() || ''));
+  await page.locator('[data-act="asstBack"]').click();
+  await page.waitForTimeout(250);
+  ok('Back from the preview returns ONE level — to the form, draft kept',
+     await level() === 3
+     && await page.evaluate(() => ASST.prep.to) === 'nav.e2e@example.com');
+  await page.locator('[data-act="asstBack"]').click();
+  await page.waitForTimeout(250);
+  ok('Back from the form returns to the conversation, workbench closed',
+     await level() === 2 && await page.locator('.asst-work').count() === 0);
+
+  /* The jump: straight home from deep inside a flow. */
+  await page.locator('[data-act="asstBack"]').click();
+  await page.waitForTimeout(250);
+  await page.locator('.asst-big', { hasText: 'Prepare an intake' }).click();
+  await page.waitForFunction(() => ASST && ASST.prep, null, { timeout: 4000 });
+  await page.locator('[data-act="asstHome"]').click();
+  await page.waitForTimeout(250);
+  ok('Assistant Home jumps from the workbench straight to the menu',
+     await level() === 1 && await page.evaluate(() => !ASST.prep));
+  ok('and the whole walk moved nothing outside the panel',
+     await page.evaluate(() => TAB) === tabBefore
+     && await page.evaluate(() => WS_CASE) === wsBefore);
+
+  /* Phone: same strip in the sheet, real targets, the X untouched, and the
+     composer fix still holds underneath the new row. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('.asst-big', { hasText: 'Explain this page' }).click();
+  await page.waitForTimeout(700);
+  const bb = await page.locator('.asst-nav .btn').first().boundingBox();
+  ok('phone: the Back control meets the tap floor', bb && bb.height >= 44, JSON.stringify(bb));
+  ok('phone: the composer still clears the bottom edge',
+     await page.evaluate(() =>
+       parseFloat(getComputedStyle(document.querySelector('.asst-ask')).paddingBottom)) >= 26);
+  await page.locator('.asst-x').click();
+  await page.waitForTimeout(250);
+  ok('the existing X still closes the panel completely',
+     await page.evaluate(() => !ASST.open) && await page.locator('.asst-pill').count() === 1);
+  await page.close();
+
+  /* The other role: fewer menu options, same way back. */
+  const inv = await newPage();
+  await signIn(inv, 'dana', 'FieldWork2026x');
+  await inv.locator('.side-asst').click();
+  await inv.waitForTimeout(700);
+  await inv.locator('.asst-big', { hasText: 'Explain this page' }).click();
+  await inv.waitForTimeout(700);
+  ok('an investigator gets the same way back',
+     /‹ Assistant Home$/.test(await inv.evaluate(() => {
+       const n = document.querySelector('.asst-nav');
+       return n ? n.innerText.replace(/\s+/g, ' ').trim() : '';
+     })));
+  await inv.locator('[data-act="asstBack"]').click();
+  await inv.waitForTimeout(250);
+  ok('and lands back on their own menu', await inv.locator('.asst-home').count() === 1);
+  await inv.close();
+}
+
 await browser.close();
 server.close();
 

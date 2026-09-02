@@ -1759,6 +1759,12 @@
   border-radius:9px;background:var(--gold);color:var(--gold-ink)}
 .asst-x{margin-left:auto;background:none;border:0;color:#fff;font-size:1.4rem;
   cursor:pointer;min-width:44px;min-height:44px}
+/* A18 — the way back, under the head so it is where the owner asked for it
+   ("near the top") and clear of the X. Real 44px targets: this is a phone
+   control as much as a desktop one. */
+.asst-nav{display:flex;gap:8px;padding:8px 14px 0}
+.asst-nav .btn{min-height:44px}
+.asst-resume{opacity:.85;font-weight:600}
 .asst-banner{padding:10px 14px;background:var(--warn-bg);color:var(--warn);
   font-weight:800;font-size:.8rem;letter-spacing:.03em;border-bottom:1px solid var(--gold-line)}
 .asst-banner span{font-weight:600;letter-spacing:0}
@@ -2595,12 +2601,14 @@ function shell(inner){
    error inside itself and the rest of the portal is untouched — the
    Assistant is additive, never load-bearing. */
 let ASST = null;   // {open, busy, guide, state, msgs:[{who,text,card,actions,kind}], err,
-                   //  prep: null | {kind,to,name,case_no,preview,err,busy}}  (Unit 4)
+                   //  view: 'home'|'chat' (A18 — the menu is a VIEW, not the
+                   //  absence of messages), prep: null | {kind,to,name,case_no,
+                   //  preview,err,busy}}  (Unit 4)
 
 function asstReset(){ ASST = null; }
 
 async function asstOpen(caseNo){
-  if(!ASST) ASST = { open: true, busy: false, guide: false, state: null, msgs: [], err: "" };
+  if(!ASST) ASST = { open: true, busy: false, guide: false, state: null, msgs: [], err: "", view: "home" };
   ASST.open = true;
   ASST.case = caseNo || (VIEW === "case" && WS_CASE ? WS_CASE : "");
   paint();
@@ -2627,6 +2635,9 @@ function asstContext(){
 async function asstSend(text){
   const t = String(text || "").trim();
   if(!t || !ASST || ASST.busy) return;
+  /* Any send lands in the conversation — a question asked from the home menu
+     must show its answer, and the menu is one Back away (A18). */
+  ASST.view = "chat";
   ASST.msgs.push({ who: "you", text: t });
   ASST.busy = true; ASST.err = ""; paint();
   try{
@@ -2851,6 +2862,41 @@ function asstPrepHtml(){
   </div>`;
 }
 
+/* A18 — Back and Assistant Home are DERIVED from state the panel already
+   holds, never a stored stack. The panel's whole depth is four levels and
+   every one already exists as state: HOME (the menu), CHAT (the log), the
+   WORKBENCH FORM (ASST.prep) and the WORKBENCH PREVIEW (prep.preview). Back
+   walks one level using exactly the transitions the panel already owned —
+   preview→form is the Edit button's own write, form→chat is Cancel's,
+   chat→home is the view pointer. A stored stack would be a second copy of
+   this state, and it would drift the first time a flow forgot to push. A
+   future flow that keeps its own sub-state joins by adding one branch here;
+   one that rides the log inherits level 2 with nothing to do. */
+function asstLevel(){
+  if(ASST && ASST.prep) return ASST.prep.preview ? 4 : 3;
+  return ASST && ASST.view === "chat" ? 2 : 1;
+}
+function asstBack(){
+  if(!ASST) return;
+  const lvl = asstLevel();
+  if(lvl === 4){ ASST.prep.preview = null; ASST.prep.err = ""; }
+  else if(lvl === 3){ ASST.prep = null; }
+  else if(lvl === 2){ ASST.view = "home"; }
+  paint();
+}
+/* One level in: the single control reads "Assistant Home", because that is
+   where Back goes — a "Back" and a "Home" button pointing at the same place
+   would be two names for one door. Deeper: Back (one level) plus the jump.
+   On the home screen nothing renders, in the owner's own words. */
+function asstNavHtml(){
+  const lvl = asstLevel();
+  if(lvl === 1) return "";
+  return `<div class="asst-nav">
+    <button class="btn sm ghost" data-act="asstBack">&lsaquo; ${lvl === 2 ? "Assistant Home" : "Back"}</button>
+    ${lvl > 2 ? `<button class="btn sm ghost" data-act="asstHome">Assistant Home</button>` : ""}
+  </div>`;
+}
+
 function asstQuickHtml(){
   return `<div class="asst-home">
     <button class="asst-big" data-act="asstQuick" data-cmd="What should I do?">What should I do?</button>
@@ -2861,6 +2907,7 @@ function asstQuickHtml(){
     <button class="asst-big" data-act="asstQuick" data-cmd="Anything new?">What&rsquo;s new?</button>
     <button class="asst-big" data-act="asstQuick" data-cmd="Explain this page">Explain this page</button>
     <button class="asst-big" data-act="asstQuick" data-cmd="Take me to ">Take me somewhere&hellip;</button>
+    ${ASST && ASST.msgs.length ? `<button class="asst-big asst-resume" data-act="asstResume">&rsaquo; Return to the conversation</button>` : ""}
   </div>`;
 }
 
@@ -2890,12 +2937,13 @@ function asstHtml(){
       <div class="asst-head"><b>&#10024; API Assistant</b>
         <span class="asst-beta">BETA</span>
         <button class="asst-x" data-act="asstClose" aria-label="Close the Assistant">&times;</button></div>
+      ${asstNavHtml()}
       <div class="asst-banner">ASSISTANT BETA &mdash; DRY RUN MODE<br>
         <span>No external client messages or consequential actions will be sent.</span></div>
       ${ASST.err ? `<div class="err">${esc(ASST.err)}</div>` : ""}
       <div class="asst-log" id="asst_log">
-        ${ASST.msgs.length ? ASST.msgs.map(asstMsgHtml).join("") : asstQuickHtml()}
-        ${ASST.busy ? `<div class="asst-m" style="opacity:.6">&hellip;</div>` : ""}
+        ${ASST.view === "chat" ? ASST.msgs.map(asstMsgHtml).join("") : asstQuickHtml()}
+        ${ASST.busy && ASST.view === "chat" ? `<div class="asst-m" style="opacity:.6">&hellip;</div>` : ""}
       </div>
       ${asstPrepHtml()}
       <label class="cap asst-guide"><input type="checkbox" id="asst_guide" data-act="asstGuide"
@@ -18900,6 +18948,12 @@ document.addEventListener("click", ev => {
   else if(act === "asstPrepSim"){ asstPrepSim(); }
   else if(act === "asstPrepEdit"){ if(ASST && ASST.prep){ ASST.prep.preview = null; ASST.prep.err = ""; paint(); } }
   else if(act === "asstPrepCancel"){ if(ASST){ ASST.prep = null; paint(); } }
+  /* A18 — panel navigation. All three touch ASST alone: no case, tab or page
+     draft moves, and none of them closes the panel. Home keeps the log —
+     "Return to the conversation" on the menu goes back down. */
+  else if(act === "asstBack"){ asstBack(); }
+  else if(act === "asstHome"){ if(ASST){ ASST.prep = null; ASST.view = "home"; paint(); } }
+  else if(act === "asstResume"){ if(ASST){ ASST.view = "chat"; paint(); } }
   else if(act === "tab"){
     if(TAB === "leads" && el.dataset.tab !== "leads") LEAD_MSG = "";
     TAB = el.dataset.tab; paint();
