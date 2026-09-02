@@ -1841,3 +1841,29 @@ CREATE TABLE IF NOT EXISTS feed_hidden (
   hidden_at TEXT    NOT NULL,
   PRIMARY KEY (kind, ref_id)
 );
+
+/* --------------------------------- ASSISTANT BETA AUDIT LOG (ASSISTANT.md §26)
+
+   Every Assistant SIMULATION is recorded here and NOWHERE the real history
+   lives: a dry run must never look like a send, so nothing about this table
+   touches `send_log`, `payment_send` or the lead ladder, and nothing that
+   reads those ever reads this. `outcome` is written by the Worker — the
+   literal 'SIMULATED — NOT SENT' — so every row states on its face that no
+   message left the building.
+
+   `case_no` follows the send_log rule: null unless the reference actually
+   resolved to a case, so a typed reference cannot credit a future case with
+   a rehearsal. `action` carries no CHECK (the Unit 7 rule); the Worker's own
+   allow-list is the validation, so a later unit's simulation kind is an
+   ordinary edit. */
+CREATE TABLE IF NOT EXISTS assistant_log (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  action    TEXT    NOT NULL,   -- what was rehearsed: 'intake_send', later units add their own
+  outcome   TEXT    NOT NULL,   -- 'SIMULATED — NOT SENT', stated per row, never implied
+  case_no   TEXT,               -- null unless the reference resolved to a real case
+  recipient TEXT    NOT NULL,   -- who WOULD have received it — nobody did
+  detail    TEXT,               -- JSON: door, context, subject line
+  done_by   INTEGER REFERENCES users(id),
+  done_at   TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_asstlog_case ON assistant_log(case_no, id DESC);

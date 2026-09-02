@@ -6306,8 +6306,11 @@ section('Every send works before a case exists, and still works after one does')
        sends a law firm the private form because a legal case takes the private
        SHEET on purpose. Counting senders would not have caught that — the
        assertion below is the one that would, and it is the real guard now. */
-    ok('and all three intake senders derive it from the context',
-       (src.match(/intakeForContext\(/g) || []).length === 3,
+    /* FOUR since Unit 4: the fourth is the Assistant's dry-run resolver,
+       which rehearses a send and therefore derives its door the same one
+       way. Anything beyond four is a new door-chooser to audit. */
+    ok('and all four intake senders derive it from the context',
+       (src.match(/intakeForContext\(/g) || []).length === 4,
        String((src.match(/intakeForContext\(/g) || []).length));
     /* THE DOOR TABLE HAS EXACTLY ONE READER. Any other `SHEET_INTAKE[...]`
        lookup is a second way to choose a door, and a second way is how the
@@ -17168,12 +17171,201 @@ section('API Assistant — Beta reads, role-scoped navigation, refusals by name'
                           src.indexOf('async function route(request, env) {'));
     ok('the Assistant block is a real block and calls sendMail exactly never',
        blk.length > 5000 && !blk.includes('sendMail('));
-    ok('and contains no INSERT, UPDATE or DELETE — reads only, structurally',
-       !/\b(INSERT INTO|UPDATE |DELETE FROM)\b/.test(blk),
+    /* Unit 4 widened the read-only pin by EXACTLY ONE WRITE: the simulation
+       log, in its own table. Anything else — a second INSERT, any UPDATE or
+       DELETE — is the Beta promise breaking, wherever it thinks it writes. */
+    ok('the block\'s one write is the simulation log — no UPDATE, no DELETE, no other INSERT',
+       (blk.match(/\bINSERT INTO\b/g) || []).length === 1
+       && /INSERT INTO assistant_log/.test(blk)
+       && !/\b(UPDATE |DELETE FROM)\b/.test(blk),
        (blk.match(/\b(INSERT INTO|UPDATE |DELETE FROM)\b.{0,40}/g) || []).join(' | '));
+    ok('and it never touches the real send history or the lead ladder, even by name',
+       !blk.includes('send_log') && !blk.includes('payment_send')
+       && !blk.includes('stampLead') && !blk.includes('logSend'));
     ok('no assistant route writes app_config — Live Mode cannot be born here',
        !blk.includes('app_config'));
   }
+
+  globalThis.fetch = realFetch;
+}
+
+/* ============== API ASSISTANT — Unit 4: intake dry run =====================
+   Prepare, preview, SIMULATE. The rehearsal uses the REAL validation and the
+   REAL email rendering, and the send never happens: the transport is not
+   called, the real send history gains no row, the lead ladder does not move.
+   What a simulation writes is assistant_log — its own table, every row
+   wearing SIMULATED — NOT SENT on its face. */
+section('API Assistant — Unit 4: intake preparation, preview, SIMULATE');
+{
+  const realFetch = globalThis.fetch;
+  let mailed = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) { mailed = JSON.parse(init.body); return new Response('{"id":"re_1"}', { status: 200 }); }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  let res = await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' });
+  const token = new URL((await jsonOf(res)).url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const cmd = (cookie, text, context = {}) => call(env, '/assistant/command',
+    { method: 'POST', cookie, body: { text, context } });
+  const prep = (cookie, body) => call(env, '/assistant/prepare-intake', { method: 'POST', cookie, body });
+  const sim = (cookie, body) => call(env, '/assistant/simulate-intake', { method: 'POST', cookie, body });
+  const count = async (sql) => Number((await env.DB.prepare(sql).first()).n);
+
+  /* ---- the grammar carve-out: a send-phrased INTAKE utterance opens the
+     workbench instead of the flat refusal — and the flat refusals stand
+     everywhere else. */
+  let j = await jsonOf(await cmd(admin, 'Send an intake link to jane@example.com for the law firm'));
+  ok('a send-phrased intake utterance opens the dry-run workbench, prefilled from the sentence',
+     j.kind === 'prepare_intake' && j.form && j.form.kind === 'legal'
+     && j.form.to === 'jane@example.com' && /SIMULATED — NOT SENT/.test(j.text),
+     JSON.stringify(j).slice(0, 200));
+  ok('…and opening the workbench sent nothing', mailed === null);
+  j = await jsonOf(await cmd(admin, 'Prepare an intake'));
+  ok('a bare “prepare an intake” opens it empty — nothing is guessed',
+     j.kind === 'prepare_intake' && j.form.kind === '' && j.form.to === '');
+  j = await jsonOf(await cmd(admin, 'prepare an insurance intake for the carrier',
+    { route: 'case', case_no: 'API-U4-CTX' }));
+  ok('on a case screen, the case reference rides into the form',
+     j.kind === 'prepare_intake' && j.form.kind === 'insurance' && j.form.case_no === 'API-U4-CTX');
+  j = await jsonOf(await cmd(admin, 'Send the rate sheet to the firm'));
+  ok('a rate-sheet send is still refused by name — that rehearsal is Unit 5, not this one',
+     j.kind === 'refused' && j.code === 'assistant_beta');
+  j = await jsonOf(await cmd(admin, 'Delete this intake'));
+  ok('“delete this intake” still refuses — the carve-out is for preparing, never destroying',
+     j.kind === 'refused');
+  j = await jsonOf(await cmd(dana, 'prepare an intake'));
+  ok('an investigator is told the desk is admin, and gets no workbench',
+     j.kind !== 'prepare_intake' && /[Aa]dmin/.test(j.text));
+
+  /* ---- prepare: the same validation the real doors run ---- */
+  res = await prep(admin, { kind: 'legal', to: 'not-an-address' });
+  ok('a bad address is refused with the desk\'s own sentence',
+     res.status === 400 && /valid email/.test((await jsonOf(res)).error));
+  res = await prep(admin, { to: 'a@b.co' });
+  ok('no kind and no case refuses with the never-interchangeable sentence',
+     res.status === 400 && /never interchangeable/.test((await jsonOf(res)).error));
+  res = await prep(admin, { kind: 'wholesale', to: 'a@b.co' });
+  ok('an unrecognised kind fails CLOSED, exactly like the real pre-case door',
+     res.status === 400 && /never interchangeable/.test((await jsonOf(res)).error));
+
+  let d = await jsonOf(await prep(admin, { kind: 'legal', to: 'firm@example.com', name: 'Marks & Harrison' }));
+  ok('the legal preview pairs the LEGAL door and renders the REAL email',
+     d.ok && d.dry_run === true && d.send_context === 'legal'
+     && d.intake === 'Legal Investigation Assignment'
+     && /assignment=legal/.test(d.door)
+     && d.subject === 'Legal Investigation Assignment — Always Precise Investigations'
+     && d.body_text.includes(d.door) && /DCJS/.test(d.body_text)
+     && /^Marks & Harrison,/.test(d.body_text), JSON.stringify(d).slice(0, 300));
+  d = await jsonOf(await prep(admin, { kind: 'insurance', to: 'adj@example.com' }));
+  ok('the insurance preview pairs the carrier door — never the picker',
+     d.send_context === 'insurance' && /assignment=insurance/.test(d.door));
+  d = await jsonOf(await prep(admin, { kind: 'private', to: 'p@example.com' }));
+  ok('the private preview pairs the private door', /assignment=private/.test(d.door));
+  ok('previewing sent nothing and wrote NOTHING anywhere',
+     mailed === null && await count('SELECT COUNT(*) AS n FROM send_log') === 0
+     && await count('SELECT COUNT(*) AS n FROM assistant_log') === 0);
+
+  /* ---- a case reference resolves the door from the case's own record ---- */
+  await ingest(env, { case_no: 'API-U4-LGL', assignment: 'legal', legal_service: 'process',
+    firm_name: 'Harmon PLC', client_name: 'Harmon PLC', objective: 'Serve' });
+  await ingest(env, { case_no: 'API-U4-CLM', assignment: 'insurance', carrier: 'Blue Ridge Mutual',
+    claim_number: 'CL-77', client_name: 'Blue Ridge Mutual', objective: 'AOE/COE' });
+  d = await jsonOf(await prep(admin, { to: 'x@example.com', case_no: 'API-U4-LGL' }));
+  ok('a legal case picks the LEGAL door by its own marker — kind would have said consumer',
+     d.send_context === 'legal' && /assignment=legal/.test(d.door) && d.case_no === 'API-U4-LGL'
+     && /^Harmon PLC,/.test(d.body_text));
+  d = await jsonOf(await prep(admin, { kind: 'private', to: 'x@example.com', case_no: 'API-U4-CLM' }));
+  ok('a claims case picks the carrier door, and the case OUTRANKS a typed kind',
+     d.send_context === 'insurance' && /assignment=insurance/.test(d.door));
+  res = await prep(admin, { to: 'x@example.com', case_no: 'API-U4-NOPE' });
+  ok('a reference that resolves to nothing is told so, and told the pre-case way in',
+     res.status === 404 && /leave the case blank/i.test((await jsonOf(res)).error));
+
+  /* ---- SIMULATE: recorded in its own table, and NOWHERE the real history
+     lives ---- */
+  const sendsBefore = await count('SELECT COUNT(*) AS n FROM send_log');
+  d = await jsonOf(await sim(admin, { kind: 'insurance', to: 'adjuster@example.com' }));
+  ok('SIMULATE answers the literal outcome and says it was recorded',
+     d.ok && d.outcome === 'SIMULATED — NOT SENT' && d.logged === true && d.case_no === null);
+  const row = await env.DB.prepare('SELECT * FROM assistant_log ORDER BY id DESC LIMIT 1').first();
+  ok('the log row wears the outcome on its face, with the door in its detail',
+     row && row.action === 'intake_send' && row.outcome === 'SIMULATED — NOT SENT'
+     && row.recipient === 'adjuster@example.com' && row.case_no === null
+     && /assignment=insurance/.test(row.detail || ''), JSON.stringify(row).slice(0, 200));
+  d = await jsonOf(await sim(admin, { to: 'firm2@example.com', case_no: 'API-U4-LGL' }));
+  const stamped = await env.DB.prepare(
+    "SELECT status FROM lead_status WHERE case_no = 'API-U4-LGL'").first();
+  ok('a case-keyed simulation records the case and moves NOTHING on the lead',
+     d.case_no === 'API-U4-LGL' && d.logged === true
+     && (!stamped || stamped.status !== 'intake_sent'), JSON.stringify(stamped));
+  ok('the REAL history is untouched by both: no transport call, no send row, no payment row',
+     mailed === null
+     && await count('SELECT COUNT(*) AS n FROM send_log') === sendsBefore
+     && await count('SELECT COUNT(*) AS n FROM payment_send') === 0);
+  d = await jsonOf(await call(env, '/sends', { cookie: admin }));
+  ok('the office\'s send history still reads EMPTY — a rehearsal never masquerades as a send',
+     Array.isArray(d.sends) && d.sends.length === 0);
+
+  /* ---- the rehearsal mirrors the refusals the real send would hit ---- */
+  await ingest(env, { case_no: 'API-U4-GONE', client_name: 'Gone Person', objective: 'x' });
+  await call(env, '/cases/API-U4-GONE/delete', { method: 'POST', cookie: admin, body: {} });
+  res = await prep(admin, { to: 'x@example.com', case_no: 'API-U4-GONE' });
+  ok('a deleted case refuses the rehearsal exactly as it would refuse the send',
+     res.status === 409 && (await jsonOf(res)).case_deleted === true);
+
+  /* ---- the intake hard-delete: a rehearsal neither blocks it nor dies with
+     it — the audit-history rule, the send_log shape ---- */
+  await ingest(env, { case_no: 'API-U4-DUP', client_name: 'Dup Person', objective: 'dup' });
+  await jsonOf(await sim(admin, { to: 'dup@example.com', case_no: 'API-U4-DUP' }));
+  res = await call(env, '/cases/API-U4-DUP/intake-delete', { method: 'POST', cookie: admin });
+  d = await jsonOf(res);
+  ok('a simulation does not make a disposable duplicate immortal',
+     res.status === 200 && d.deleted === true, JSON.stringify(d).slice(0, 200));
+  ok('…and the rehearsal record SURVIVES the delete',
+     await count("SELECT COUNT(*) AS n FROM assistant_log WHERE case_no = 'API-U4-DUP'") === 1);
+
+  /* ---- role fidelity: both routes are the admin desk they rehearse ---- */
+  res = await prep(dana, { kind: 'private', to: 'p@example.com' });
+  ok('an investigator gets 403 from prepare', res.status === 403);
+  res = await sim(dana, { kind: 'private', to: 'p@example.com' });
+  ok('and 403 from simulate', res.status === 403);
+
+  /* ---- the beta log is readable where it is written (§26) ---- */
+  j = await jsonOf(await cmd(admin, 'Show recent simulations'));
+  ok('the log reads back as a card, newest first, every row wearing the outcome',
+     j.card && j.card.length >= 3 && /SIMULATED — NOT SENT/.test(j.text)
+     && j.card.every(c => /SIMULATED — NOT SENT/.test(c.line)), JSON.stringify(j).slice(0, 300));
+  j = await jsonOf(await cmd(dana, 'show recent simulations'));
+  ok('an investigator is not shown the log', !j.card && /admin/i.test(j.text));
+
+  /* ---- the guards a new table owes ---- */
+  {
+    const src = fs.readFileSync(new URL('./worker.js', import.meta.url), 'utf8');
+    const expected = (src.match(/const EXPECTED_TABLES = \[([\s\S]*?)\n\];/) || [, ''])[1];
+    ok('assistant_log is named in EXPECTED_TABLES', /'assistant_log'/.test(expected));
+    const sweep = (src.match(/const DEMO_SWEEP = \[([\s\S]*?)\n\];/) || [, ''])[1];
+    ok('and swept with its case, by its own case_no',
+       /\['assistant_log',\s*'DELETE FROM assistant_log WHERE case_no LIKE \?'\]/.test(sweep));
+    const exempt = (src.match(/const INTAKE_EXEMPT = \{([\s\S]*?)\n\};/) || [, ''])[1];
+    ok('and classified for the intake delete — exempt, with its reason on the record',
+       /assistant_log:/.test(exempt) && /non-deletable/.test(exempt));
+  }
+
+  /* ---- the missing-table honesty, LAST because it breaks the table ---- */
+  await env.DB.prepare('DROP TABLE assistant_log').run();
+  d = await jsonOf(await sim(admin, { kind: 'private', to: 'p2@example.com' }));
+  ok('with the table missing the rehearsal still answers — and says it was NOT recorded, by reason',
+     d.ok && d.outcome === 'SIMULATED — NOT SENT' && d.logged === false && d.reason === 'not_set_up'
+     && /portal-setup/.test(d.note || ''), JSON.stringify(d).slice(0, 200));
+  j = await jsonOf(await cmd(admin, 'show recent simulations'));
+  ok('and the log read names the workflow instead of drawing an empty history',
+     /portal-setup/.test(j.text));
 
   globalThis.fetch = realFetch;
 }

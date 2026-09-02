@@ -174,6 +174,49 @@ role), and tool results the user could already see — never DOBs, evidence
 bytes, uploaded documents, or full narratives unless the specific authorized
 task requires them.
 
+**A6 — Unit 4's rehearsal is the real thing minus the send, structurally.**
+`assistantIntakePlan` runs the SAME validation the two real doors run — the
+email regex, the explicit-kind resolution `/intake-link/email` uses, the
+`contextForSub` case resolution `/leads/:no/send-intake` uses — and the
+deleted/archived gates through the shared `caseSendRefusal`, because a dry
+run that answers READY TO SEND about a send the portal would refuse is a
+rehearsal of the wrong play. The preview renders through `intakeInviteEmail`
+itself; two renderings of one email drift. Both branches produce a CONTEXT
+and the door is derived from it exactly once, so the `intakeForContext`
+single-reader-per-sender guard counts 4 now (the three real senders plus
+this resolver) and its test names the fourth.
+
+**A7 — the simulation log is honest about itself.** The SIMULATE response
+always states `outcome: 'SIMULATED — NOT SENT'`, and `logged: true|false`
+with the named reason (`not_set_up` until portal-setup applies the table,
+`log_write_failed` on a refused row) — the Unit 11 integrity-record rule: a
+success that hides an unrecorded rehearsal and a 500 that eats the answer
+are both lies. The rehearsal itself never depends on the table.
+
+**A8 — `assistant_log` is Beta audit history, classified as such.** In
+`EXPECTED_TABLES`, swept by `DEMO_SWEEP` on its own `case_no` (null for
+pre-case rehearsals — the send_log rule: a typed reference never credits a
+case that does not exist), and `INTAKE_EXEMPT` for the intake hard-delete —
+a rehearsal must not make a disposable duplicate immortal, and audit history
+is non-deletable, so the row neither blocks the delete nor dies with it.
+
+**A9 — the source pin narrowed rather than vanished.** The Assistant block's
+write-freedom is now: exactly ONE `INSERT INTO`, and only into
+`assistant_log`; still no UPDATE, no DELETE, no `sendMail(`, no settings
+store, and the literals `send_log` / `payment_send` / `stampLead` /
+`logSend` appear nowhere in the block, comments included. A second write
+anywhere in the block fails the suite by count.
+
+**A10 — the grammar carve-out opens a workbench, never a send.** An
+utterance about sending/preparing an INTAKE resolves to `kind:
+'prepare_intake'` with a prefilled form seed (email lifted from the
+sentence, door guessed from its words, the case from the screen context) —
+the doing is two explicit admin-only routes. Destructive verbs about an
+intake still refuse; every other send-shaped verb keeps the flat refusal,
+which now names what CAN be rehearsed. The page workbench holds its state
+in `ASST.prep` under the EDIT_DRAFT rule, so no repaint can eat what was
+typed — the exact bug Unit 1's suite caught in `asstOpen`.
+
 ## Unit ledger (update as units move)
 
 | Unit | Scope | State |
@@ -181,7 +224,7 @@ task requires them.
 | 1 | Shell: sidebar item, case-level door, mobile pill+sheet, dock panel, Beta banner, server-side gate + tool registry + provider adapter (not ready) | ✅ **DEPLOYED** — #261 `b379990`, both workflows `success` on `b3799902` |
 | 2 | Navigation: registry, "take me to…", current-page context, "Where am I?", "Explain this page" | ✅ **DEPLOYED** — #261, deterministic grammar, registry ids only |
 | 3 | Live status: "anything new?", "what needs attention?", "what should I do?", find client/case/intake with disambiguation | ✅ **DEPLOYED** — #261, live reads through the existing role-scoped functions |
-| 4 | Intake preparation + preview + SIMULATE + `assistant_log` (schema: one additive table → portal-setup dispatch) | NOT STARTED |
+| 4 | Intake preparation + preview + SIMULATE + `assistant_log` (schema: one additive table → portal-setup dispatch) | **BUILT** — see A6–A10 below |
 | 5 | Rate-sheet preparation + preview + simulation (pricing via the real resolvers) | NOT STARTED |
 | 6 | Invoice/billing read + preparation + simulation | NOT STARTED |
 | 7 | Case health / summaries / report drafting from recorded facts | NOT STARTED |
