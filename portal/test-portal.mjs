@@ -17186,6 +17186,39 @@ section('API ASSISTANT Unit 5 — the rate-sheet dry-run workbench, on the real 
        const last = blocks[blocks.length - 1];
        return !!last && !last.querySelector('.asst-guidep');
      }));
+
+  /* ---- UNITS 6–8 on the real page: preview banner, health, watch ---- */
+  await page.evaluate(() => { ASST.case = 'API-ASST-C'; });
+  await page.locator('#asst_in').fill('invoice preview');
+  await page.locator('.asst-ask button').click();
+  await page.waitForTimeout(700);
+  const invPrev = await page.evaluate(() => {
+    const blocks = [...document.querySelectorAll('.asst-m')];
+    const last = blocks[blocks.length - 1];
+    return { chip: last ? (last.querySelector('.asst-sim') || {}).innerText || '' : '',
+             pre: last && last.querySelector('.asst-pre') ? last.querySelector('.asst-pre').innerText : '' };
+  });
+  ok('the invoice preview renders both banner lines and the real document, in a pre block',
+     /DRY RUN — INVOICE PREVIEW/.test(invPrev.chip) && /SIMULATED — NOT CREATED/.test(invPrev.chip)
+     && /Investigation Retainer/.test(invPrev.pre) && /NOT reserved/.test(invPrev.pre),
+     JSON.stringify(invPrev).slice(0, 200));
+  await page.locator('#asst_in').fill('Draft a report');
+  await page.locator('.asst-ask button').click();
+  await page.waitForTimeout(700);
+  ok('“draft a report” on a case with no field days says so — nothing is invented',
+     await page.evaluate(() => {
+       const blocks = [...document.querySelectorAll('.asst-m')];
+       return /No investigation day/.test(blocks[blocks.length - 1].innerText);
+     }));
+  await page.locator('#asst_in').fill('What needs attention?');
+  await page.locator('.asst-ask button').click();
+  await page.waitForTimeout(900);
+  ok('Watch answers as itself and says INTERNAL ONLY on the page',
+     await page.evaluate(() => {
+       const blocks = [...document.querySelectorAll('.asst-m')];
+       const t = blocks[blocks.length - 1].innerText;
+       return /^Watch:/.test(t.trim()) && /never emails, texts or touches anything/.test(t);
+     }));
   await page.close();
 }
 

@@ -17587,7 +17587,237 @@ section('API Assistant — Unit 5: rate-sheet preparation, preview, SIMULATE');
   j = await jsonOf(await cmd(admin, 'Take me to billing', { guide: true }));
   ok('navigation is never decorated either', j.kind === 'navigate' && j.guide_intro === undefined);
 
+  /* ============ UNIT 6 COMPLETED: the ZERO-WRITE invoice preview ============
+     Owner's Beta invoice rule: show the invoice exactly as it would be
+     prepared — no row, no draft, no number reservation, no billing write of
+     any kind. Twin cases prove the mirror: the preview on one must equal the
+     real create on its identical twin, field for field, and the previewed
+     number must be exactly what the next real invoice receives. */
+  for (const cn of ['API-U6-PVA', 'API-U6-PVB']) {
+    await ingest(env, { case_no: cn, carrier: 'Twin Mutual', claim_number: 'TW-1',
+      policy_number: 'P-9', subject_name: 'T. Subject', date_of_loss: '2026-08-01',
+      adjuster: 'A. Djuster', billing_email: 'billing@twinmutual.example',
+      client_name: 'Twin Mutual', objective: 'AOE' });
+    await call(env, `/cases/${cn}/meta`, { method: 'POST', cookie: admin,
+      body: { authorized_hours: 16 } });
+  }
+  const snap = async () => ({
+    inv: await count('SELECT COUNT(*) AS n FROM invoices'),
+    lines: await count('SELECT COUNT(*) AS n FROM invoice_lines'),
+    ev: await count('SELECT COUNT(*) AS n FROM invoice_events'),
+    retmark: await count('SELECT COUNT(*) AS n FROM invoice_retainer'),
+    pays: await count('SELECT COUNT(*) AS n FROM invoice_payments'),
+    log: await count('SELECT COUNT(*) AS n FROM assistant_log'),
+    sends: await count('SELECT COUNT(*) AS n FROM send_log'),
+    comms: await count('SELECT COUNT(*) AS n FROM case_comms'),
+  });
+  const before6 = await snap();
+  j = await jsonOf(await cmd(admin, 'What would this invoice look like?',
+    { route: 'case', case_no: 'API-U6-PVA' }));
+  ok('T2 — the preview is realistic: type, bill-to with Attn line, refs, the authorized package line, both banner lines',
+     j.kind === 'invoice_preview' && j.outcome === 'SIMULATED — NOT CREATED'
+     && /DRY RUN — INVOICE PREVIEW/.test(j.text) && /SIMULATED — NOT CREATED/.test(j.text)
+     && j.preview.invoice_type === 'insurance' && /Twin Mutual/.test(j.preview.bill_to)
+     && /Attn: A\. Djuster/.test(j.preview.bill_to)
+     && j.preview.refs.claim_number === 'TW-1' && j.preview.billing_email === 'billing@twinmutual.example'
+     && j.preview.lines.length === 1 && /16-Hour Surveillance Authorization/.test(j.preview.lines[0].description)
+     && j.preview.total === 2300 && j.preview.balance_due === 2300
+     && /NOT reserved/.test(j.text), JSON.stringify(j.preview).slice(0, 300));
+  const after6 = await snap();
+  ok('T3 — the preview made ZERO database writes, across every billing table and the beta log',
+     JSON.stringify(after6) === JSON.stringify(before6),
+     JSON.stringify({ before6, after6 }).slice(0, 300));
+  const shownNo = j.preview.would_be_no;
+  const created6 = await jsonOf(await call(env, '/cases/API-U6-PVB/invoices',
+    { method: 'POST', cookie: admin, body: { from_authorization: true } }));
+  ok('T4 + T7 — no number was consumed, and manual Create still works: the next real invoice receives exactly the previewed number',
+     created6.ok === true && created6.invoice.invoice_no === shownNo,
+     `${shownNo} vs ${created6.invoice && created6.invoice.invoice_no}`);
+  ok('PIN — the preview equals its real twin field for field: terms, bill-to, email, refs, line, total',
+     created6.invoice.payment_terms === j.preview.terms
+     && created6.invoice.bill_to === j.preview.bill_to
+     && created6.invoice.billing_email === j.preview.billing_email
+     && JSON.stringify(created6.invoice.refs) === JSON.stringify(j.preview.refs)
+     && created6.invoice.lines.length === 1
+     && created6.invoice.lines[0].description === j.preview.lines[0].description
+     && Number(created6.invoice.lines[0].amount) === j.preview.lines[0].amount
+     && created6.invoice.total === j.preview.total,
+     JSON.stringify({ pt: created6.invoice.payment_terms, t: j.preview.terms }).slice(0, 200));
+  d = await jsonOf(await call(env, '/invoices', { cookie: admin }));
+  ok('T5 — no invoice appears in Billing for the previewed case; the real twin\'s does',
+     !(d.invoices || []).some(i => i.case_no === 'API-U6-PVA')
+     && (d.invoices || []).some(i => i.case_no === 'API-U6-PVB'));
+  ok('T6 — no history anywhere says an invoice was created for the previewed case',
+     await count("SELECT COUNT(*) AS n FROM invoice_events WHERE detail LIKE '%API-U6-PVA%'") === 0);
+  /* The private path bills the case's OWN agreed figure, and says so. */
+  await ingest(env, { case_no: 'API-U6-PVP', client_name: 'Priv Client', objective: 'w' });
+  await call(env, '/cases/API-U6-PVP/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 2000 } });
+  j = await jsonOf(await cmd(admin, 'Prepare the invoice for this case.',
+    { route: 'case', case_no: 'API-U6-PVP' }));
+  ok('a private preview bills the case\'s own agreed retainer, and says nothing was written',
+     j.preview.invoice_type === 'private' && j.preview.lines[0].description === 'Investigation Retainer'
+     && j.preview.total === 2000 && /Nothing was written/.test(j.text));
+  j = await jsonOf(await cmd(admin, 'invoice preview', { route: 'case', case_no: 'API-U6-BILL' }));
+  ok('a case that already carries a live invoice is told the real Create will ask about a supplemental',
+     /already bills this case/.test(j.text));
+  j = await jsonOf(await cmd(dana, 'prepare the invoice', { route: 'case', case_no: 'API-U6-PVP' }));
+  ok('an investigator gets the admin-desk answer, never a money preview', /admin desk/i.test(j.text) && !j.preview);
+  j = await jsonOf(await cmd(admin, 'Can we invoice this?'));
+  ok('without a case, the preview asks for one instead of guessing', /Open the case first/.test(j.text));
+  j = await jsonOf(await cmd(admin, 'What is outstanding?'));
+  ok('T1 — "what is outstanding?" is still the live read, untouched by the preview intent',
+     /Outstanding across live invoices: \$/.test(j.text));
+
   globalThis.fetch = realFetch;
+}
+
+/* ============== API ASSISTANT — Unit 7: case health, recorded facts only ===
+   Check / holding / ready-to-invoice / ready-to-close / summarize / draft /
+   package readiness / delete-block explanation — every line derived from
+   rows that exist, activity quoted VERBATIM, nothing invented. */
+section('API Assistant — Unit 7: case health and operational assistance');
+{
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  let res = await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' });
+  const token = new URL((await jsonOf(res)).url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const cmd = (cookie, text, context = {}) => call(env, '/assistant/command',
+    { method: 'POST', cookie, body: { text, context } });
+  const onCase = (cookie, text, cn) => cmd(cookie, text, { route: 'case', case_no: cn });
+
+  await ingest(env, { case_no: 'API-U7-C', client_name: 'Health Client',
+    subject_name: 'S. Ubject', objective: 'Observe and document' });
+  const danaId = (await env.DB.prepare("SELECT id FROM users WHERE username = 'dana'").first()).id;
+  await env.DB.prepare("UPDATE submissions SET assigned_to = ?, status = 'in_progress' WHERE case_no = 'API-U7-C'")
+    .bind(danaId).run();
+  await call(env, '/cases/API-U7-C/day/start', { method: 'POST', cookie: dana,
+    body: { day_date: '2026-09-01', start_time: '07:00' } });
+  const LINES7 = [
+    ['07:05', 'Arrived in vicinity of subject residence.'],
+    ['07:30', 'Subject departed in a gray sedan.'],
+    ['08:00', 'Surveillance concluded for the period.'],
+  ];
+  for (const [t, d2] of LINES7) {
+    await call(env, '/cases/API-U7-C/activity', { method: 'POST', cookie: dana,
+      body: { at_date: '2026-09-01', at_time: t, description: d2 } });
+  }
+  await call(env, '/cases/API-U7-C/day/end', { method: 'POST', cookie: dana,
+    body: { end_time: '12:00' } });
+
+  /* ---- the composite health answer, and the ONE next-step writer ---- */
+  let j = await jsonOf(await onCase(admin, 'Check this case', 'API-U7-C'));
+  ok('“check this case” composes the record: days, entries, reports, files, and the next step',
+     j.kind === 'status' && /Days: 1/.test(j.text) && /Activity entries: 3/.test(j.text)
+     && /Reports: none/.test(j.text) && /RECOMMENDED NEXT STEP/.test(j.text)
+     && /Field days exist with no report/.test(j.text), j.text.slice(0, 300));
+  const j2 = await jsonOf(await onCase(admin, 'What should I do?', 'API-U7-C'));
+  ok('…and “what should I do?” names the SAME next step — one writer, no second opinion',
+     /Field days exist with no report/.test(j2.text));
+  j = await jsonOf(await onCase(admin, "What's holding this up?", 'API-U7-C'));
+  ok('“what\'s holding this up?” is the same composite, reached by its own phrase',
+     /RECOMMENDED NEXT STEP/.test(j.text));
+
+  /* ---- ready to close / ready to invoice: closeoutFacts, worn plainly ---- */
+  j = await jsonOf(await onCase(admin, 'Is this ready to close?', 'API-U7-C'));
+  ok('“ready to close?” lists the record\'s own objections and keeps the attestations human',
+     /thing/.test(j.text) && /no report/i.test(j.text) && /attestations stay yours/.test(j.text),
+     j.text.slice(0, 250));
+  j = await jsonOf(await onCase(admin, 'Is this ready to invoice?', 'API-U7-C'));
+  ok('“ready to invoice?” answers from the same facts and offers the zero-write preview',
+     /Not yet, by the record/.test(j.text) && /invoice preview/.test(j.text));
+
+  /* ---- the chronology: verbatim, complete, nothing composed ---- */
+  j = await jsonOf(await onCase(admin, "Summarize today's activity", 'API-U7-C'));
+  ok('“summarize today\'s activity” quotes every surviving entry VERBATIM under its day header',
+     j.kind === 'chronology' && /Day 1 — 2026-09-01/.test(j.text)
+     && LINES7.every(([t, d2]) => j.text.includes(`${t} — ${d2}`))
+     && /nothing composed/i.test(j.text), j.text.slice(0, 300));
+  j = await jsonOf(await onCase(admin, 'Draft a report', 'API-U7-C'));
+  ok('“draft a report” is the recorded chronology and says so — facts only, count named',
+     j.kind === 'chronology' && /DRAFT FROM RECORDED FACTS ONLY — 1 day, 3 entries/.test(j.text)
+     && LINES7.every(([t, d2]) => j.text.includes(d2))
+     && /Nothing here is invented/.test(j.text));
+  ok('…and the draft contains NO line that is not a header, a recorded entry, or the frame',
+     (() => {
+       const body = j.text.split('\n').filter(l => l.startsWith('  '));
+       return body.length === 3 && body.every(l => LINES7.some(([t, d2]) => l.includes(d2)));
+     })(), j.text);
+
+  /* ---- package readiness, from the build and gate facts ---- */
+  j = await jsonOf(await onCase(admin, 'Package readiness', 'API-U7-C'));
+  ok('“package readiness” states the build, the rideable reports and the cleared files',
+     /No package has been started/.test(j.text) && /0 reports are ready/.test(j.text));
+
+  /* ---- delete-block explanation: the SAME probe the delete runs ---- */
+  j = await jsonOf(await onCase(admin, "Why can't I delete this?", 'API-U7-C'));
+  ok('a developed case\'s delete-block answer names what the delete would refuse over',
+     /has become a real case/.test(j.text) && /an investigation day/.test(j.text)
+     && /activity entries/.test(j.text) && /Archive or Delete case/.test(j.text));
+  await ingest(env, { case_no: 'API-U7-FRESH', client_name: 'Fresh Dup', objective: 'dup' });
+  j = await jsonOf(await onCase(admin, 'Can I delete this?', 'API-U7-FRESH'));
+  ok('a fresh intake\'s answer says nothing blocks the quick delete',
+     /Nothing blocks the quick intake delete/.test(j.text));
+  await call(env, '/cases/API-U7-FRESH/hold', { method: 'POST', cookie: admin,
+    body: { reason: 'litigation hold for testing' } });
+  j = await jsonOf(await onCase(admin, "why can't I delete this?", 'API-U7-FRESH'));
+  ok('a legal hold answers FIRST, exactly as the delete refuses first',
+     /legal hold/.test(j.text) && /released/.test(j.text));
+
+  /* ---- role fidelity ---- */
+  j = await jsonOf(await onCase(dana, "Summarize today's activity", 'API-U7-C'));
+  ok('the assigned investigator gets their own case\'s chronology — fieldwork is theirs',
+     j.kind === 'chronology' && LINES7.every(([, d2]) => j.text.includes(d2)));
+  j = await jsonOf(await onCase(dana, 'Is this ready to close?', 'API-U7-C'));
+  ok('closing questions are the admin desk, even on their own case', /admin desk/i.test(j.text));
+  j = await jsonOf(await onCase(dana, 'check this case', 'API-U7-FRESH'));
+  ok('an unassigned case answers “cannot read with your access” — the same SQL boundary as everywhere',
+     /cannot read/.test(j.text));
+  j = await jsonOf(await onCase(dana, 'check this case', 'API-U7-C'));
+  ok('the investigator\'s health answer carries NO invoice line — money never reaches their panel',
+     /Days: 1/.test(j.text) && !/Invoices/.test(j.text) && !/\$/.test(j.text));
+  j = await jsonOf(await cmd(admin, 'Check this case'));
+  ok('without a case, health asks for one instead of guessing', /Open the case first/.test(j.text));
+
+  /* ============ UNIT 8 — Assistant Watch: internal only, composed on ask ====
+     The exception list merged whole, plus the added arms — each row a
+     recorded fact. And the safety is an absence: no send, no write, no
+     notification path exists for Watch to take. */
+  j = await jsonOf(await cmd(admin, 'What needs attention?'));
+  ok('Watch lists the fresh intake, the day-without-report case, and says INTERNAL ONLY out loud',
+     /^Watch: \d+ items? worth a look/.test(j.text) && /never emails, texts or touches anything/.test(j.text)
+     && j.card && j.card.some(r => /Intake: new/.test(r.title) && r.case_no === 'API-U7-FRESH')
+     && j.card.some(r => /Attention:/.test(r.title)), JSON.stringify(j).slice(0, 400));
+  ok('every Watch row is a recorded fact with its case on it — no invented category',
+     j.card.every(r => /^(Attention|Intake|Money|Delivery|Storage|Cases): /.test(r.title)));
+  {
+    const sendsW = await env.DB.prepare('SELECT COUNT(*) AS n FROM send_log').first();
+    ok('Watch sent nothing and wrote nothing — the send log has no rows at all',
+       Number(sendsW.n) === 0);
+  }
+  /* An unassigned accepted case joins the watch. */
+  await ingest(env, { case_no: 'API-U8-UA', client_name: 'Unassigned Person', objective: 'x' });
+  await env.DB.prepare(
+    "UPDATE submissions SET status = 'in_progress' WHERE case_no = 'API-U8-UA'").run();
+  j = await jsonOf(await cmd(admin, 'watch'));
+  ok('an accepted case with no investigator appears under Cases',
+     j.card.some(r => /Cases: accepted with no investigator/.test(r.title) && r.case_no === 'API-U8-UA'));
+  /* A refused upload appears when the record exists. */
+  await env.DB.prepare(
+    `INSERT INTO storage_failure (case_no, kind, reason, at) VALUES ('API-U7-C', 'evidence', 'dropbox_unreachable', ?)`)
+    .bind(new Date().toISOString()).run();
+  j = await jsonOf(await cmd(admin, 'anything I should know?'));
+  ok('a refused upload surfaces under Storage, with its reason',
+     j.card.some(r => /Storage: an upload was refused/.test(r.title) && /dropbox_unreachable/.test(r.line)));
+  j = await jsonOf(await cmd(dana, 'What needs attention?'));
+  ok('an investigator is not shown the office-wide watch', !j.card && /admin desk/i.test(j.text));
+  j = await jsonOf(await cmd(admin, 'What should I do?'));
+  ok('the one-recommendation briefing still answers on its own phrase',
+     /RECOMMENDED NEXT STEP|alert cards/.test(j.text));
 }
 
 /* ------------------------------------------------------------------ report */

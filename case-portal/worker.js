@@ -11693,6 +11693,31 @@ const INTAKE_EXEMPT = {
   subject_vehicles: 'child of case_subjects',
 };
 
+/* The blocker probe, extracted so the DELETE and the EXPLANATION cannot
+   drift: the Assistant's "why can't I delete this?" (Unit 7) names exactly
+   what this route would refuse over, because it runs the same statement.
+
+   One statement, constant shape: a UNION of EXISTS probes, one per present
+   blocker table. Nothing here grows with the customer's data.
+
+   THE BINDS ARE COUNTED EXACTLY — one anonymous `?` per arm, one value per
+   `?` — because the first version reused `?1` across every arm with a
+   single bound value, which node:sqlite accepts and LIVE D1 REFUSED: the
+   route 500'd on the owner's first real delete while every suite was
+   green. The same class as the 401-parameter statement Unit 7 paid for —
+   a shape the test database tolerates and production does not. A test
+   pins this builder to anonymous binds. */
+async function intakeBlockersFound(env, caseNo) {
+  const missing = await missingTables(env);
+  const arms = INTAKE_BLOCKERS.filter(([t]) => !missing.includes(t));
+  const sql = arms.map(([t]) =>
+    `SELECT '${t}' AS t WHERE EXISTS (SELECT 1 FROM ${t} WHERE case_no = ?)`)
+    .join(' UNION ALL ');
+  return sql
+    ? (await env.DB.prepare(sql).bind(...arms.map(() => caseNo)).all()).results.map(r => r.t)
+    : [];
+}
+
 async function intakeDelete(env, user, caseNo) {
   const sub = await env.DB.prepare(
     'SELECT case_no, client_name FROM submissions WHERE case_no = ?').bind(caseNo).first();
@@ -11707,23 +11732,7 @@ async function intakeDelete(env, user, caseNo) {
   }
 
   const missing = await missingTables(env);
-  const arms = INTAKE_BLOCKERS.filter(([t]) => !missing.includes(t));
-  /* One statement, constant shape: a UNION of EXISTS probes, one per present
-     blocker table. Nothing here grows with the customer's data.
-
-     THE BINDS ARE COUNTED EXACTLY — one anonymous `?` per arm, one value per
-     `?` — because the first version reused `?1` across every arm with a
-     single bound value, which node:sqlite accepts and LIVE D1 REFUSED: the
-     route 500'd on the owner's first real delete while every suite was
-     green. The same class as the 401-parameter statement Unit 7 paid for —
-     a shape the test database tolerates and production does not. A test now
-     pins this builder to anonymous binds. */
-  const sql = arms.map(([t]) =>
-    `SELECT '${t}' AS t WHERE EXISTS (SELECT 1 FROM ${t} WHERE case_no = ?)`)
-    .join(' UNION ALL ');
-  const found = sql
-    ? (await env.DB.prepare(sql).bind(...arms.map(() => caseNo)).all()).results.map(r => r.t)
-    : [];
+  const found = await intakeBlockersFound(env, caseNo);
   if (found.length) {
     const what = INTAKE_BLOCKERS.filter(([t]) => found.includes(t)).map(([, w]) => w);
     return json({
@@ -13791,6 +13800,277 @@ async function assistantSimulateSheet(request, env, user) {
       methods: plan.npPicked.length ? plan.npPicked : plan.payment.map(x => x.id) });
 }
 
+/* ---------------- UNIT 6 (completed) — the ZERO-WRITE invoice preview -----
+
+   Owner rule: the Assistant may show the invoice EXACTLY as it would be
+   prepared and must not create an invoice row, a draft, a number
+   reservation, a payment record or any persistent billing write. So this is
+   a VIEW-MODEL over the same derivations the real `createInvoice` runs — the
+   same bill-to, refs, terms, authorization-seeded lines and agreed figures —
+   composed from reads alone. The would-be invoice number comes from the same
+   MAX-derived read the real route uses, so deriving it consumes nothing: the
+   next real invoice still receives exactly the number the preview showed,
+   and a test proves it. `invoiceMoney` and `retainerBlock` are pure over
+   what they are handed (the block reads only `invoice_type` and `case_no`),
+   so the preview's money is the real arithmetic. The suite pins the mirror
+   the Unit 5 way: a twin case created for real must match the preview field
+   for field. */
+const ASSISTANT_PREVIEW_OUTCOME = 'SIMULATED — NOT CREATED';
+
+async function assistantInvoicePreview(env, caseNo) {
+  const sub = await env.DB.prepare('SELECT * FROM submissions WHERE case_no = ?').bind(caseNo).first();
+  if (!sub) return { fail: json({ error: 'not found' }, 404) };
+  const refusal = await caseSendRefusal(env, caseNo);
+  if (refusal) return { fail: refusal };
+
+  let payload = {};
+  try { payload = JSON.parse(sub.payload || '{}'); } catch { payload = {}; }
+  const type = sub.kind === 'claims' ? 'insurance' : 'private';
+  const cfg = await billingSettings(env);
+  const billTo = type === 'insurance'
+    ? [sub.carrier || payload.carrier, payload.adjuster ? `Attn: ${payload.adjuster}` : 'Attn: Billing Department']
+        .filter(Boolean).join('\n')
+    : (sub.client_name || payload.client_name || '');
+  const refs = {};
+  if (type === 'insurance') {
+    for (const [k, v] of [['claim_number', sub.claim_number || payload.claim_number],
+                          ['policy_number', payload.policy_number],
+                          ['claimant', payload.subject_name],
+                          ['date_of_loss', payload.date_of_loss],
+                          ['adjuster', payload.adjuster]]) {
+      if (v) refs[k] = String(v).slice(0, 200);
+    }
+  }
+  const billingEmail = (type === 'insurance'
+    ? (payload.billing_email || payload.adjuster_email)
+    : (sub.client_email || payload.client_email)) || null;
+  const terms = type === 'insurance' ? cfg.terms_insurance : cfg.terms_private;
+
+  /* The from-authorization seeding, mirrored read-for-read. */
+  const lines = [];
+  let clientNotes = null;
+  if (type === 'insurance') {
+    const meta = await env.DB.prepare(
+      'SELECT authorized_hours FROM case_meta WHERE case_no = ?').bind(caseNo).first();
+    const hours = meta ? Number(meta.authorized_hours) : null;
+    const pkg = hours != null ? RATES.packages.find(pk => pk.hours === hours) : null;
+    if (pkg) {
+      lines.push({ description: `${pkg.hours}-Hour Surveillance Authorization`, qty: 1, rate: null, amount: pkg.price });
+    } else if (hours) {
+      lines.push({ description: 'Authorized Surveillance', qty: hours, rate: RATES.surveillance.standard,
+        amount: Math.round(hours * RATES.surveillance.standard * 100) / 100 });
+    }
+  } else {
+    const ret = await env.DB.prepare(
+      'SELECT retainer_amount FROM case_retainer WHERE case_no = ?').bind(caseNo).first();
+    const retAmount = ret && ret.retainer_amount != null ? Number(ret.retainer_amount) : PERSONAL.retainer;
+    lines.push({ description: 'Investigation Retainer', qty: 1, rate: null, amount: retAmount });
+    clientNotes = 'Retainer is applied toward authorized investigative services.';
+  }
+
+  const money = invoiceMoney(lines, 0, []);
+  const retainer = await retainerBlock(env, { invoice_type: type, case_no: caseNo }, sub);
+  const wouldBeNo = await nextInvoiceNo(env);
+  const dup = await env.DB.prepare(
+    "SELECT invoice_no FROM invoices WHERE case_no = ? AND status != 'void' LIMIT 1").bind(caseNo).first();
+
+  const fmt = n => '$' + (Math.round(Number(n || 0) * 100) / 100)
+    .toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const text = [
+    `DRY RUN — INVOICE PREVIEW`,
+    ASSISTANT_PREVIEW_OUTCOME,
+    ``,
+    `Case: ${caseNo} (${type})`,
+    `Would-be number: ${wouldBeNo} — derived, NOT reserved`,
+    `Issue date: ${nowIso().slice(0, 10)} · Terms: ${terms || '—'}`,
+    `Bill to: ${billTo || '—'}`,
+    billingEmail ? `Billing email: ${billingEmail}` : null,
+    Object.keys(refs).length
+      ? `Refs: ${Object.entries(refs).map(([k, v]) => `${k}=${v}`).join(' · ')}` : null,
+    ``,
+    ...lines.map(l => `  ${l.description} — ${l.qty} × ${l.rate == null ? 'flat' : fmt(l.rate)} = ${fmt(l.amount)}`),
+    lines.length ? null : `  (no authorization on file — the real Create would open with no lines)`,
+    ``,
+    `Subtotal ${fmt(money.subtotal)} · Total ${fmt(money.total)} · Balance due ${fmt(money.balance_due)}`,
+    retainer ? `${retainer.model === 'fixed' ? 'Agreed flat fee' : 'Retainer'}: ${fmt(retainer.amount)}`
+      + ` · received: ${retainer.received ? 'yes' : 'not yet'}`
+      + (retainer.applied != null ? ` · applied ${fmt(retainer.applied)} · remaining ${fmt(retainer.balance)}` : '') : null,
+    clientNotes ? `Note: ${clientNotes}` : null,
+    dup ? `` : null,
+    dup ? `⚠ ${dup.invoice_no} already bills this case — the real Create will ask to confirm a supplemental.` : null,
+    ``,
+    `Nothing was written. Create the real invoice from Billing when ready.`,
+  ].filter(x => x !== null).join('\n');
+
+  return { ok: true, preview: {
+    case_no: caseNo, invoice_type: type, would_be_no: wouldBeNo, terms: terms || null,
+    bill_to: billTo || null, billing_email: billingEmail, refs, lines, clientNotes,
+    subtotal: money.subtotal, total: money.total, balance_due: money.balance_due,
+    retainer, duplicate_of: dup ? dup.invoice_no : null,
+  }, text };
+}
+
+/* ---------------- UNIT 7 — case health and operational assistance ---------
+
+   Every answer is composed from RECORDED FACTS through functions that
+   already exist: `closeoutFacts` for "ready to close", the extracted
+   `intakeBlockersFound` for "why can't I delete", `shippableReports` for
+   package readiness, and the case's own rows for everything else. Activity
+   is quoted VERBATIM, counts are counted, and a fact that is not recorded
+   is said to be absent — nothing here writes prose on anyone's behalf, and
+   nothing invents an event, a time, a vehicle or an amount. */
+
+const asstFmt$ = n => '$' + (Math.round(Number(n || 0) * 100) / 100)
+  .toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/* The one writer of a case's next step — the what-should-I-do branch and the
+   health summary both read it, so they cannot disagree. */
+async function assistantCaseNextStep(env, caseNo) {
+  const day = await env.DB.prepare(
+    `SELECT COUNT(*) AS n, SUM(CASE WHEN end_time IS NULL THEN 1 ELSE 0 END) AS open
+       FROM case_days WHERE case_no = ?`).bind(caseNo).first();
+  const rep = await env.DB.prepare(
+    `SELECT status FROM case_reports WHERE case_no = ? ORDER BY id DESC LIMIT 1`).bind(caseNo).first();
+  return Number(day && day.open) > 0 ? 'An investigation day is running — continue the activity log, and end the day when the field work is done.'
+    : !Number(day && day.n) ? 'No investigation day has run yet. Starting one is the next step.'
+    : !rep ? 'Field days exist with no report. Drafting the report is the next step.'
+    : rep.status === 'draft' ? 'The report is still a draft. Finishing and submitting it is the next step.'
+    : rep.status === 'submitted' ? 'The report is with the office for review.'
+    : 'Field work and reporting are in hand — billing and the client package are the remaining stations.';
+}
+
+/* The shared facts a health answer reads — bounded, role-scoped by the
+   caller having already passed `caseFor`. */
+async function assistantCaseHealth(env, caseNo) {
+  const days = await env.DB.prepare(
+    `SELECT COUNT(*) AS n, SUM(CASE WHEN end_time IS NULL THEN 1 ELSE 0 END) AS open,
+            MAX(day_date) AS last_date FROM case_days WHERE case_no = ?`).bind(caseNo).first();
+  const acts = await env.DB.prepare(
+    `SELECT COUNT(*) AS n, MAX(at_date) AS last FROM activity_log a
+      WHERE a.case_no = ?
+        AND NOT EXISTS (SELECT 1 FROM activity_removed r WHERE r.entry_id = a.id)`).bind(caseNo).first();
+  const reps = (await env.DB.prepare(
+    `SELECT status, COUNT(*) AS n FROM case_reports WHERE case_no = ? GROUP BY status`).bind(caseNo).all()).results || [];
+  const ev = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM case_evidence WHERE case_no = ? AND deleted_at IS NULL`).bind(caseNo).first();
+  return { days, acts, reps, evidence: Number(ev && ev.n) || 0 };
+}
+
+/* The recorded chronology, verbatim: Day N — date, then each surviving entry
+   as "HH:MM — text". The one composition both the daily summary answer and
+   the report draft read. Capped and the cap is named. */
+async function assistantChronology(env, caseNo, { dayId = null, cap = 200 } = {}) {
+  const days = (await env.DB.prepare(
+    `SELECT id, day_date, start_time, end_time FROM case_days
+      WHERE case_no = ? ${dayId ? 'AND id = ?' : ''} ORDER BY id`)
+    .bind(...(dayId ? [caseNo, dayId] : [caseNo])).all()).results || [];
+  const out = [];
+  let used = 0, cut = false;
+  for (let i = 0; i < days.length; i++) {
+    const d = days[i];
+    const entries = (await env.DB.prepare(
+      `SELECT at_time, description FROM activity_log a
+        WHERE a.day_id = ?
+          AND NOT EXISTS (SELECT 1 FROM activity_removed r WHERE r.entry_id = a.id)
+        ORDER BY a.at_date, a.at_time, a.id LIMIT ?`).bind(d.id, cap - used + 1).all()).results || [];
+    out.push(`Day ${i + 1} — ${d.day_date}${d.end_time ? '' : ' (still running)'}`);
+    for (const e of entries) {
+      if (used >= cap) { cut = true; break; }
+      out.push(`  ${e.at_time || '—'} — ${String(e.description || '').slice(0, 300)}`);
+      used++;
+    }
+    if (!entries.length) out.push('  (no recorded entries)');
+    if (cut) break;
+  }
+  if (cut) out.push(`… capped at ${cap} entries — the full log is on the Activity tab.`);
+  return { text: out.join('\n'), days: days.length, entries: used, capped: cut };
+}
+
+/* ---------------- UNIT 8 — Assistant Watch: proactive INTERNAL attention --
+
+   Beta Watch is a COMPOSITION, not a notifier: it answers when asked, inside
+   the signed-in panel, and there is no path from here to email, SMS, a
+   client, a payment or a destructive act — the same absence-of-code that
+   protects everything else in this block. It prefers existing portal state
+   over new machinery: the exception list IS `needsAttention` (merged whole,
+   its severities kept), and the added arms — fresh intakes by business,
+   overdue and due-soon invoices, packages finalized but not delivered,
+   refused uploads, unassigned cases, and the delivered-and-paid conjunction
+   worth a closeout look — are each ONE bounded read over rows that already
+   exist. Nothing is stored, nothing polls, nothing fires on its own. */
+async function assistantWatch(env, user) {
+  const hidden = await hiddenCases(env);
+  const missing = await missingTables(env);
+  const rows = [];
+  const push = (group, title, line, caseNo) =>
+    rows.push({ title: `${group}: ${title}`, line, case_no: caseNo || null });
+
+  /* The existing exception list, whole — same role gate, same derivations. */
+  const att = await (await needsAttention(env, user)).json();
+  for (const a of (att.alerts || []).slice(0, 12)) {
+    push('Attention', a.what, [a.severity, a.case_no, a.why].filter(Boolean).join(' · '), a.case_no);
+  }
+
+  const c = await assistantCounts(env, user);
+  for (const f of c.fresh) {
+    push('Intake', `new ${f.kind === 'claims' ? 'Insurance' : f.legal_service ? `Legal — ${f.legal_service}` : 'Private / Legal'} intake`,
+      [f.who, f.created_at ? String(f.created_at).slice(0, 10) : ''].filter(Boolean).join(' · '), f.case_no);
+  }
+
+  const inv = await (await listInvoices(new Request('http://assistant.internal/invoices'), env)).json();
+  const live = (inv.invoices || []).filter(i => i.status !== 'void' && !hidden.has(i.case_no));
+  for (const i of live.filter(x => x.display_status === 'overdue').slice(0, 6)) {
+    push('Money', `${i.invoice_no} is overdue`, `${i.case_no} · balance ${asstFmt$(i.balance_due)}`, i.case_no);
+  }
+  const dueSoon = Number((inv.summary || {}).due_soon) || 0;
+  if (dueSoon) push('Money', `${dueSoon} invoice${dueSoon === 1 ? '' : 's'} due within 14 days`, 'listed on Billing', null);
+
+  const readyPk = (await env.DB.prepare(
+    `SELECT id, case_no, finalized_at FROM case_builds
+      WHERE status = 'finalized' AND delivered_at IS NULL ORDER BY id DESC LIMIT 6`).all()).results || [];
+  for (const b of readyPk.filter(b2 => !hidden.has(b2.case_no))) {
+    push('Delivery', `package #${b.id} finalized, not delivered`,
+      `${b.case_no} · finalized ${String(b.finalized_at || '').slice(0, 10)}`, b.case_no);
+  }
+
+  if (!missing.includes('storage_failure')) {
+    const fails = (await env.DB.prepare(
+      `SELECT case_no, reason, at FROM storage_failure ORDER BY id DESC LIMIT 5`).all()).results || [];
+    for (const f of fails) {
+      push('Storage', 'an upload was refused', [f.case_no, f.reason, String(f.at || '').slice(0, 10)]
+        .filter(Boolean).join(' · '), f.case_no);
+    }
+  }
+
+  const unassigned = (await env.DB.prepare(
+    `SELECT case_no, client_name FROM submissions
+      WHERE assigned_to IS NULL AND status NOT IN ('new', 'closed')
+      ORDER BY id DESC LIMIT 6`).all()).results || [];
+  for (const u of unassigned.filter(u2 => !hidden.has(u2.case_no))) {
+    push('Cases', 'accepted with no investigator', u.client_name || u.case_no, u.case_no);
+  }
+
+  /* Delivered AND paid AND still open — three recorded facts, worded softly:
+     the closeout checklist is where a person decides. */
+  const delivered = (await env.DB.prepare(
+    `SELECT DISTINCT b.case_no FROM case_builds b
+       JOIN submissions s ON s.case_no = b.case_no
+      WHERE b.delivered_at IS NOT NULL AND s.status != 'closed' LIMIT 12`).all()).results || [];
+  const balByCase = {};
+  for (const i of live) {
+    if (i.status === 'draft') continue;
+    balByCase[i.case_no] = (balByCase[i.case_no] || 0) + Math.max(0, Number(i.balance_due) || 0);
+  }
+  let closeN = 0;
+  for (const d of delivered) {
+    if (hidden.has(d.case_no) || (balByCase[d.case_no] || 0) > 0 || closeN >= 5) continue;
+    push('Cases', 'delivered and nothing outstanding — worth the closeout checklist', d.case_no, d.case_no);
+    closeN++;
+  }
+
+  return rows.slice(0, 30);
+}
+
 /* POST /assistant/command — the deterministic Beta grammar. Every branch
    composes from live reads or the registry; the fallback says plainly what
    Beta understands rather than pretending.
@@ -13868,7 +14148,7 @@ async function assistantCommandCore(body, env, user) {
   /* ---- Beta enforcement FIRST: a consequential verb is refused before any
      intent could act on it, whatever else the sentence says. Pure questions
      ("why can't I delete this?") are let through to the explainers below. */
-  const asking = /\bwhy\b|\bexplain\b|\bwhat\b|\bcan i\b/i.test(text);
+  const asking = /\bwhy\b|\bexplain\b|\bwhat\b|\bcan (i|we)\b|\bis this\b/i.test(text);
   if (!asking) {
     for (const [re, what] of ASSISTANT_BLOCKED) {
       if (re.test(text)) {
@@ -13927,6 +14207,26 @@ async function assistantCommandCore(body, env, user) {
     /* Not a destination — fall through to search, "open Vanessa's case". */
   }
 
+  /* ---- UNIT 6 completed: the ZERO-WRITE invoice preview. "Prepare the
+     invoice" here means SHOW it — the owner's Beta invoice rule: no row, no
+     draft, no number reservation, no billing write of any kind. Placed
+     before the billing-status read because its phrases are the more
+     specific. Admin-only, like every Billing door. */
+  if (/prepare (the |an |this )?invoice|can we invoice|what would (this|the) invoice look like|invoice preview|preview (the |an )?invoice/i.test(text)) {
+    if (user.role !== 'admin') {
+      return json({ ok: true, kind: 'status', text: 'Billing is an admin desk.' });
+    }
+    if (!caseNo) {
+      return json({ ok: true, kind: 'status',
+        text: 'Open the case first — an invoice preview is built from a case\'s own record. '
+            + 'Find it with "Find <name or case number>".' });
+    }
+    const pv = await assistantInvoicePreview(env, caseNo);
+    if (pv.fail) return pv.fail;
+    return json({ ok: true, kind: 'invoice_preview', outcome: ASSISTANT_PREVIEW_OUTCOME,
+      preview: pv.preview, text: pv.text });
+  }
+
   /* ---- UNIT 6 (the read half): billing answered from the SAME money reads
      the Billing screen uses — listInvoices' own composition, drafts excluded
      from outstanding exactly as everywhere. Placed AFTER navigation so
@@ -13962,6 +14262,143 @@ async function assistantCommandCore(body, env, user) {
       actions: [{ label: 'Open Billing', navigate: { kind: 'tab', id: 'invoices' } }] });
   }
 
+  /* ---- UNIT 7: case health and operational assistance — recorded facts
+     only, through the functions the portal already trusts. Each needs a
+     case; the shared gate reads it once with the caller's own access. */
+  const u7Case = async () => {
+    if (!caseNo) return { fail: json({ ok: true, kind: 'status',
+      text: 'Open the case first — this is answered from a case\'s own record. '
+          + 'Find it with "Find <name or case number>".' }) };
+    const row = await caseFor(env, user, caseNo);
+    if (!row) return { fail: json({ ok: true, kind: 'status',
+      text: `I cannot read ${caseNo} with your access.` }) };
+    return { row };
+  };
+
+  if (/ready to invoice/i.test(text)) {
+    if (user.role !== 'admin') return json({ ok: true, kind: 'status', text: 'Billing is an admin desk.' });
+    const g = await u7Case(); if (g.fail) return g.fail;
+    const facts = await closeoutFacts(env, caseNo);
+    const hold = ['field_work', 'activity_logs', 'report', 'expenses']
+      .filter(k => facts[k]).map(k => facts[k].note);
+    const live = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM invoices WHERE case_no = ? AND status != 'void'").bind(caseNo).first();
+    const n = Number(live && live.n) || 0;
+    return json({ ok: true, kind: 'status',
+      text: (hold.length
+        ? `Not yet, by the record: ${hold.join('; ')}.`
+        : 'The record shows nothing in the way of invoicing.')
+        + (n ? ` ${n} live invoice${n === 1 ? ' already bills' : 's already bill'} this case.` : '')
+        + ' Say "invoice preview" to see exactly what would be prepared — nothing is created.' });
+  }
+
+  if (/ready to close|can (we|i) close/i.test(text)) {
+    if (user.role !== 'admin') return json({ ok: true, kind: 'status', text: 'Closing is an admin desk.' });
+    const g = await u7Case(); if (g.fail) return g.fail;
+    const notes = Object.values(await closeoutFacts(env, caseNo)).map(f => f.note);
+    return json({ ok: true, kind: 'status',
+      text: notes.length
+        ? `The record shows ${notes.length} thing${notes.length === 1 ? '' : 's'} to look at first: `
+          + `${notes.join('; ')}. The eight closeout attestations stay yours — nothing here closes anything.`
+        : 'The record shows nothing standing in the way. Closing is still the eight human attestations '
+          + 'on Billing & closing — the Assistant cannot and does not close cases.' });
+  }
+
+  if (/package (readiness|ready|status)|ready to (deliver|ship)/i.test(text)) {
+    if (user.role !== 'admin') return json({ ok: true, kind: 'status', text: 'Packages are an admin desk.' });
+    const g = await u7Case(); if (g.fail) return g.fail;
+    const build = await env.DB.prepare(
+      'SELECT id, status, finalized_at FROM case_builds WHERE case_no = ? ORDER BY id DESC LIMIT 1')
+      .bind(caseNo).first();
+    const ship = await shippableReports(env, caseNo);
+    const dev = await env.DB.prepare(
+      `SELECT SUM(CASE WHEN classification = 'client_deliverable' THEN 1 ELSE 0 END) AS ok,
+              COUNT(*) AS total FROM case_evidence WHERE case_no = ? AND deleted_at IS NULL`)
+      .bind(caseNo).first();
+    const okN = Number(dev && dev.ok) || 0, totN = Number(dev && dev.total) || 0;
+    const held = totN - okN;
+    return json({ ok: true, kind: 'status',
+      text: `${build
+        ? `Package #${build.id} is ${build.status}${build.finalized_at ? ` (finalized ${String(build.finalized_at).slice(0, 10)})` : ''}.`
+        : 'No package has been started.'} `
+        + `${ship.length} report${ship.length === 1 ? ' is' : 's are'} ready to ride; `
+        + `${okN} of ${totN} file${totN === 1 ? '' : 's'} cleared to ship`
+        + `${held ? ` (${held} held back by classification)` : ''}. The build screen holds the gates.` });
+  }
+
+  if (/can.?t i delete|can i delete|what.?s blocking (the )?delete|delete.?block/i.test(text)) {
+    if (user.role !== 'admin') return json({ ok: true, kind: 'status', text: 'Deleting is an admin act.' });
+    const g = await u7Case(); if (g.fail) return g.fail;
+    const hold = await activeHold(env, caseNo);
+    if (hold) {
+      return json({ ok: true, kind: 'status',
+        text: `${caseNo} is under a legal hold — every removal is refused until the hold is released `
+            + '(Billing & closing → Retention, with a reason on the record).' });
+    }
+    const found = await intakeBlockersFound(env, caseNo);
+    if (!found.length) {
+      return json({ ok: true, kind: 'status',
+        text: 'Nothing blocks the quick intake delete — it would remove only the intake\'s own '
+            + 'paperwork, and its confirmation says exactly that.' });
+    }
+    const what = INTAKE_BLOCKERS.filter(([t]) => found.includes(t)).map(([, w]) => w);
+    return json({ ok: true, kind: 'status',
+      text: `${caseNo} has become a real case — it carries ${what.slice(0, 6).join(', ')}`
+        + `${what.length > 6 ? ` and ${what.length - 6} more kinds of record` : ''}. The quick delete is `
+        + 'for fresh intakes only; Archive or Delete case (Billing & closing) take it off the desk, '
+        + 'and both can be undone.' });
+  }
+
+  if (/summari[sz]e today|today.?s activity|draft (the |a )?daily summary/i.test(text)) {
+    const g = await u7Case(); if (g.fail) return g.fail;
+    const day = await env.DB.prepare(
+      `SELECT id FROM case_days WHERE case_no = ? AND end_time IS NULL ORDER BY id DESC LIMIT 1`)
+      .bind(caseNo).first()
+      || await env.DB.prepare(
+        `SELECT id FROM case_days WHERE case_no = ? ORDER BY id DESC LIMIT 1`).bind(caseNo).first();
+    if (!day) {
+      return json({ ok: true, kind: 'status',
+        text: 'No investigation day has been recorded on this case yet — there is nothing to summarize.' });
+    }
+    const chron = await assistantChronology(env, caseNo, { dayId: day.id });
+    return json({ ok: true, kind: 'chronology',
+      text: `Recorded entries, verbatim — nothing composed:\n\n${chron.text}\n\n`
+          + 'The Daily Summary Builder (Report tab) writes the paragraph deterministically from these.' });
+  }
+
+  if (/draft (a |the )?report/i.test(text)) {
+    const g = await u7Case(); if (g.fail) return g.fail;
+    const chron = await assistantChronology(env, caseNo, {});
+    if (!chron.days) {
+      return json({ ok: true, kind: 'status',
+        text: 'No investigation day has been recorded on this case yet — a report draft would have nothing true to say.' });
+    }
+    return json({ ok: true, kind: 'chronology',
+      text: `DRAFT FROM RECORDED FACTS ONLY — ${chron.days} day${chron.days === 1 ? '' : 's'}, `
+          + `${chron.entries} entr${chron.entries === 1 ? 'y' : 'ies'}, quoted verbatim:\n\n${chron.text}\n\n`
+          + 'Nothing here is invented. The Report screen builds the formal document, and the office signs it.' });
+  }
+
+  if (/check this case|what.?s holding this up|summari[sz]e (this |the )?case|case summary|case health/i.test(text)) {
+    const g = await u7Case(); if (g.fail) return g.fail;
+    const h = await assistantCaseHealth(env, caseNo);
+    const next = await assistantCaseNextStep(env, caseNo);
+    const repLine = h.reps.length ? h.reps.map(r => `${r.n} ${r.status}`).join(', ') : 'none';
+    let money = '';
+    if (user.role === 'admin') {
+      const inv = await env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM invoices WHERE case_no = ? AND status != 'void'`).bind(caseNo).first();
+      money = ` Invoices: ${Number(inv && inv.n) || 0} live — "billing status" has the figures.`;
+    }
+    return json({ ok: true, kind: 'status',
+      text: `${caseNo} — ${g.row.kind === 'claims' ? 'insurance' : 'private'} · status ${g.row.status}. `
+        + `Days: ${Number(h.days.n) || 0}${Number(h.days.open) ? ` (${Number(h.days.open)} running)` : ''}`
+        + `${h.days.last_date ? `, last ${h.days.last_date}` : ''}. `
+        + `Activity entries: ${Number(h.acts.n) || 0}${h.acts.last ? `, last ${h.acts.last}` : ''}. `
+        + `Reports: ${repLine}. Files: ${h.evidence}.${money}\n`
+        + `RECOMMENDED NEXT STEP — ${next}` });
+  }
+
   /* ---- live status: anything new / new intakes ---- */
   if (/anything new|what'?s new|any (new )?(intake|lead)|has any intake|intake forms? shown up|new legal intake/i.test(text)) {
     if (user.role !== 'admin') {
@@ -13984,25 +14421,37 @@ async function assistantCommandCore(body, env, user) {
       actions: [{ label: 'Open Intakes', navigate: { kind: 'tab', id: 'leads' } }] });
   }
 
-  /* ---- what needs attention / what should I do ---- */
-  if (/what (needs|requires) (my )?attention|what should i do|morning briefing|needs attention/i.test(text)) {
+  /* ---- UNIT 8: the watch list — the whole internal picture on demand ---- */
+  if (/\bwatch( list| mode)?\b|anything i should know|what needs (my )?attention|needs attention/i.test(text)) {
+    if (user.role !== 'admin') {
+      return json({ ok: true, kind: 'status',
+        text: 'The office-wide watch is an admin desk. Cases and Today carry your own work.' });
+    }
+    const rows = await assistantWatch(env, user);
+    if (!rows.length) {
+      return json({ ok: true, kind: 'status',
+        text: 'Watch: nothing is waiting — no fresh intakes, nothing overdue, no refused uploads, '
+            + 'no finalized package sitting undelivered. Internal only; Watch never emails, texts '
+            + 'or touches anything.',
+        actions: [{ label: 'Open Dashboard', navigate: { kind: 'tab', id: 'dashboard' } }] });
+    }
+    return json({ ok: true, kind: 'status',
+      text: `Watch: ${rows.length} item${rows.length === 1 ? '' : 's'} worth a look, grouped and `
+          + 'newest first. Internal only — Watch never emails, texts or touches anything.',
+      card: rows, actions: [{ label: 'Open Dashboard', navigate: { kind: 'tab', id: 'dashboard' } }] });
+  }
+
+  /* ---- what should I do (the one-recommendation briefing) ---- */
+  if (/what should i do|morning briefing/i.test(text)) {
     if (caseNo) {
       /* On a case: the same derivation the case page draws as NEXT STEP —
-         answered from the case's own record, one recommendation, not fifteen. */
+         answered from the case's own record, one recommendation, not fifteen.
+         Extracted (Unit 7) so the health summary and this branch cannot say
+         two different next steps about one case. */
       const row = await caseFor(env, user, caseNo);
       if (!row) return json({ ok: true, kind: 'status', text: `I cannot read ${caseNo} with your access.` });
-      const day = await env.DB.prepare(
-        `SELECT COUNT(*) AS n, SUM(CASE WHEN end_time IS NULL THEN 1 ELSE 0 END) AS open
-           FROM case_days WHERE case_no = ?`).bind(caseNo).first();
-      const rep = await env.DB.prepare(
-        `SELECT status FROM case_reports WHERE case_no = ? ORDER BY id DESC LIMIT 1`).bind(caseNo).first();
-      const next = Number(day && day.open) > 0 ? 'An investigation day is running — continue the activity log, and end the day when the field work is done.'
-        : !Number(day && day.n) ? 'No investigation day has run yet. Starting one is the next step.'
-        : !rep ? 'Field days exist with no report. Drafting the report is the next step.'
-        : rep.status === 'draft' ? 'The report is still a draft. Finishing and submitting it is the next step.'
-        : rep.status === 'submitted' ? 'The report is with the office for review.'
-        : 'Field work and reporting are in hand — billing and the client package are the remaining stations.';
-      return json({ ok: true, kind: 'status', text: `RECOMMENDED NEXT STEP — ${next}` });
+      return json({ ok: true, kind: 'status',
+        text: `RECOMMENDED NEXT STEP — ${await assistantCaseNextStep(env, caseNo)}` });
     }
     if (user.role !== 'admin') {
       const c = await assistantCounts(env, user);
@@ -14059,8 +14508,11 @@ async function assistantCommandCore(body, env, user) {
   return json({ ok: true, kind: 'help',
     text: 'Beta understands set phrases so far: "Where am I?", "Explain this page", '
         + '"Take me to <a portal section>", "Anything new?", "What should I do?", '
-        + '"What is outstanding?", "Find <a name or case number>", "Prepare an intake" '
-        + 'and "Prepare a rate sheet". '
+        + '"What needs attention?", "What is outstanding?", "Find <a name or case number>", '
+        + '"Prepare an intake", "Prepare a rate sheet", "invoice preview", and on a case: '
+        + '"Check this case", "Is this ready to close?", "Is this ready to invoice?", '
+        + '"Summarize today\'s activity", "Draft a report", "Package readiness", '
+        + '"Why can\'t I delete this?". '
         + (provider.ready ? 'Freer phrasing arrives in a later unit.'
            : 'The AI provider is not connected, so freer phrasing is not available yet — '
            + 'nothing here guesses.') });
