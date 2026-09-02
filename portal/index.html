@@ -473,15 +473,23 @@
      as `.tabs button`, and a control in there would be counted as a
      destination. Display-gated by the drawer block below, so it exists only
      where the drawer does. */
+  /* GOLD, AND THAT WAS LEARNED ON A REAL PHONE (owner, 2026-09-02, live
+     verification failure). The first handle was navy-2 — the drawer's own
+     color — protruding onto a dimmed page: geometry said rendered, and to a
+     person it read as a shadow. The Timestamp Video lesson verbatim: a
+     control that renders is not a control that can be seen, and the suite
+     had asserted display and position, never separation. Gold on navy is
+     this drawer's own emphasis pair (the intake door inside it), the
+     chevron is an SVG in currentColor rather than a thin text glyph, the
+     tab overlaps the drawer 20px and PROTRUDES 28px (the owner's 20-30
+     band), and a computed-luminance assertion now holds it apart from both
+     the drawer and the dim — the qtools ≥8-point test, applied here. */
   .navhandle{display:none;position:fixed;z-index:65;top:50%;
-    left:calc(min(76%, 300px) - 6px);transform:translateY(-50%);
-    min-width:44px;min-height:56px;align-items:center;justify-content:center;
-    background:var(--navy-2);color:#fff;border:1px solid #4a6b91;border-left:0;
-    border-radius:0 12px 12px 0;font-size:1.5rem;line-height:1;cursor:pointer;
-    padding:0 4px 2px 0;box-shadow:6px 0 18px rgba(9,18,30,.35);}
-  /* No :active tint: the burger's press color is already at the two-use
-     budget — a third use means promoting it to a token, and a tint nobody
-     can see during a 185ms close is not worth a palette change. */
+    left:calc(min(76%, 300px) - 20px);transform:translateY(-50%);
+    min-width:48px;min-height:64px;align-items:center;justify-content:center;
+    background:var(--gold);color:var(--navy-2);border:0;
+    border-radius:0 14px 14px 0;line-height:1;cursor:pointer;
+    padding:0 6px 0 2px;box-shadow:4px 2px 14px rgba(9,18,30,.5);}
   /* The slide is a KEYFRAME, not a transition: the drawer is display-gated
      (the virtue recorded above), and a transition cannot run from
      display:none. The open animation rides a one-shot body.navanim class so
@@ -1956,7 +1964,7 @@
      a child — `.tabs button` means a destination everywhere in this file and
      the suite, and this is a control. The ✕ on the burger stays: it is the
      same button that opened the drawer, saying what tapping it now does. -->
-<button class="navhandle" data-act="navToggle" aria-label="Close menu">&lsaquo;</button>
+<button class="navhandle" data-act="navToggle" aria-label="Close menu"><svg width="18" height="28" viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2 3 10l7 8" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
 
 <main id="app"></main>
 <!-- WHAT THE SCREEN SAYS, SAID OUT LOUD. Every "Saved.", "Payment recorded."

@@ -1109,7 +1109,12 @@ Three rules came out of it that outlive the unit:
   `display:none`); opening rides a one-shot `navanim` class so a background
   repaint cannot replay it, closing holds `navopen` for the 185ms of
   `navclosing` so there is something to slide, and reduced motion closes
-  instantly.
+  instantly. **The handle is GOLD, and that was learned on a real phone**:
+  the first version was navy-2 — the drawer's own color — and the owner's
+  live check could not see it at all while every geometry assertion passed.
+  Separation is a measured number now (computed luminance vs the drawer and
+  the dim, ≥25 points), the same instrument the qtools visibility incident
+  produced. Do not restyle it toward the drawer's palette.
 - **A primary action never shrinks below its own words.** Intake Accept
   measured 42–60px wide × up to 119px tall — the flex row handed the ghost
   cluster the width and let the primary wrap letter by letter.

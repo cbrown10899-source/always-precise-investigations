@@ -17751,14 +17751,27 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
       const r = t.getBoundingClientRect();
       return !(b.right < r.left + 8 || b.left > r.right - 24 || b.bottom < r.top || b.top > r.bottom);
     });
+    /* Relative luminance, 0-100 — the qtools separation test's own measure.
+       The first handle shipped navy-on-navy: geometry said rendered, the
+       owner's phone said invisible. Separation is asserted as a NUMBER now,
+       against the drawer it rides and the backdrop it protrudes onto. */
+    const lum = c => { const m = (c.match(/\d+/g) || [0, 0, 0]).map(Number);
+      const f = v => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; };
+      return (0.2126 * f(m[0]) + 0.7152 * f(m[1]) + 0.0722 * f(m[2])) * 100; };
+    const hl = lum(getComputedStyle(el).backgroundColor);
     return { shown: getComputedStyle(el).display !== 'none', w: Math.round(b.width),
              h: Math.round(b.height), left: Math.round(b.left),
-             drawerRight: Math.round(drawer.right), overText };
+             protrusion: Math.round(b.right - drawer.right),
+             drawerRight: Math.round(drawer.right), overText,
+             sepDrawer: Math.round(Math.abs(hl - lum(getComputedStyle(document.querySelector('.tabs')).backgroundColor))),
+             sepDim: Math.round(Math.abs(hl - lum(getComputedStyle(document.querySelector('.navback')).backgroundColor))) };
   });
-  ok('the open drawer carries a visible ‹ handle on its right edge',
-     hd.shown && Math.abs(hd.left + 6 - hd.drawerRight) <= 2, JSON.stringify(hd));
+  ok('the open drawer carries the handle riding its right edge, protruding 20-30px',
+     hd.shown && hd.protrusion >= 20 && hd.protrusion <= 30, JSON.stringify(hd));
   ok('the handle is a real iPhone target', hd.w >= 44 && hd.h >= 44, JSON.stringify(hd));
   ok('and covers no navigation text', !hd.overText);
+  ok('and is MEASURABLY apart from the drawer and the dim it sits over — the navy-on-navy lesson',
+     hd.sepDrawer >= 25 && hd.sepDim >= 25, JSON.stringify(hd));
   await page.locator('.navhandle').click();
   await page.waitForTimeout(110);
   ok('tapping it SLIDES the drawer away rather than blinking it',
