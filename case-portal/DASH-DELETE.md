@@ -124,6 +124,33 @@ runs, `/feed/hide` answers 503 naming the workflow, the feed itself keeps
 working unfiltered, and intake-delete (which needs no new table) works
 immediately — each statement in its batch already skips absent tables.
 
+## Refined in production — owner rules of 2026-09-02, and the live 500
+
+**The first real delete (API-20260901-3207) hit the Worker's generic 500.**
+The blocker probe reused `?1` across every UNION arm with one bound value —
+node:sqlite accepts that shape and live D1 refused it, the same
+green-in-test/red-in-production class as Unit 7's 401-parameter statement.
+The probe now binds one anonymous `?` per arm with exactly that many values,
+and a test pins the builder to that shape.
+
+**Lead-handling acts stopped blocking deletion** (owner rules, verbatim in
+substance): a sent rate sheet, a sent intake link, sent payment instructions,
+a changed lead status (Closed Lead included), an "Awaiting Mailed Check"
+arrangement, or a recorded communication alone must not make a disposable
+duplicate undeletable. So `send_log` and `payment_send` moved from BLOCKERS
+to EXEMPT-left-alone — send history is non-deletable by the standing owner
+limit, so those rows neither die nor block, exactly like a pre-case send
+whose reference resolves to nothing — and `case_comms` moved to OWNED: a
+phone note about a lead is the lead's own paperwork. Days, media, reports,
+invoices, payments, receipts, packages, holds and every other protected
+record still refuse, and the refusal now names BOTH recoverable roads
+(Archive and Delete case).
+
+**This supersedes INTAKE-OPS.md §2's "do not hard-delete through the normal
+Admin UI"** — that rule was written 2026-08-14, before the owner's
+2026-08-24 brief ordered exactly this control; the dependency guard is what
+keeps the two philosophies compatible.
+
 ## What this unit deliberately does not do
 
 No un-hide UI (the marker table keeps who/when, so support can recover it);

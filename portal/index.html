@@ -4836,7 +4836,33 @@ async function wizPaymentLoad(){
   paint();
 }
 
+/* Which business a send belongs to, from what the wizard already knows: the
+   legal flag a lead card set, the context a Rate Sheets card declared, or the
+   carrier sheet's identity. The Worker re-derives and enforces this on its
+   own — this only decides what the screen offers. */
+function wizContext(w){
+  if(w.legal || w.context === "legal") return "legal";
+  if(w.context === "insurance" || w.sheet === "insurance_assignment") return "insurance";
+  return "private";
+}
+
 function wizPaymentHtml(w){
+  /* MAIL-CHECK.md D5 (owner, 2026-09-02) — a legal or insurance send offers
+     exactly ONE payment option, in the same checkbox pattern the private send
+     uses: Mail Check. Unticked by default, so an unsent option is never
+     advertised as selected; no address here or anywhere on a sheet — the
+     mailing details are invoice-only, from Settings. Cash App and Venmo stay
+     private, structurally: this branch simply never draws them. */
+  const ctx = wizContext(w);
+  if(ctx !== "private"){
+    return `<div class="feebox" style="margin:10px 0">
+      <label class="cap" style="display:flex"><input type="checkbox" id="wiz_mailck" ${w.mailCheck ? "checked" : ""}>
+        <span>Include <b>Mail Check</b> as a payment option &mdash;
+          &ldquo;Mailing instructions provided with invoice.&rdquo;</span></label>
+      <p class="hint">No mailing address goes on the sheet. The remittance address prints on the
+        invoice, from Settings &rarr; Invoice defaults.</p>
+    </div>`;
+  }
   if(w.sheet !== "private_retainer") return "";
   if(!PAYCFG) return `<p class="hint">Checking payment options&hellip;</p>`;
   const usable = wizPaymentSendable();
@@ -5073,6 +5099,9 @@ function sheetWizardHtml(){
         <dt>Sheet</dt><dd>${esc(sheet.name || w.sheet)}</dd>
         <dt>To</dt><dd>${esc(w.to)}</dd>
         ${w.caseNo ? `<dt>Case</dt><dd>${esc(w.caseNo)}</dd>` : ""}
+        ${wizContext(w) !== "private" ? `<dt>Payment option</dt><dd>${w.mailCheck
+          ? "Mail Check &mdash; &ldquo;Mailing instructions provided with invoice.&rdquo;"
+          : "None included"}</dd>` : ""}
         ${w.sheet === "private_retainer" && (w.retainerOffered != null || w.retainer != null)
           /* The figure is named on the last screen before it goes, and said to
              be unrecorded where it is — this is the admin's final chance to add
@@ -10922,6 +10951,7 @@ const RETAINER_METHOD_OPTIONS = [
    "cash_app" learns nothing the line did not already say. */
 function payMethodLabels(csv){
   const by = Object.fromEntries(RETAINER_METHOD_OPTIONS);
+  by.mail_check = "Mail Check";
   return String(csv || "").split(",").map(s => by[s.trim()]).filter(Boolean).join(" + ");
 }
 
@@ -17831,6 +17861,7 @@ function wizCollect(){
   if($("wiz_ret")) SHEET_WIZ.retainerPick = $("wiz_ret").value;
   if($("wiz_retc")) SHEET_WIZ.retainerCustom = $("wiz_retc").value.trim();
   if($("wiz_pay")) SHEET_WIZ.pay = $("wiz_pay").checked;
+  if($("wiz_mailck")) SHEET_WIZ.mailCheck = $("wiz_mailck").checked;
   const boxes = [...document.querySelectorAll(".wiz-pm")];
   if(boxes.length){
     SHEET_WIZ.payMethods = boxes.filter(b => b.checked).map(b => b.dataset.pm);
@@ -17846,8 +17877,11 @@ async function wizSend(){
   /* AND NEVER ON A LEGAL SEND. Legal takes the private SHEET, so the sheet id
      alone would have said yes — the context is what decides, here and in the
      Worker, which refuses it by name either way (Unit 28). */
-  const paying = w.sheet === "private_retainer" && !w.legal
+  const paying = wizContext(w) === "private" && w.sheet === "private_retainer"
     && w.pay && (w.payMethods || []).length;
+  /* The one option a legal or insurance send may carry (MAIL-CHECK.md D5) —
+     the same include_payment door, narrowed server-side to mail_check. */
+  const mailChecking = wizContext(w) !== "private" && !!w.mailCheck;
   try{
     const r = await api(`/sheets/${encodeURIComponent(w.sheet)}/email`,
       {method:"POST", body:{to: w.to, note: w.note, case_no: w.caseNo, include_intake: w.include,
@@ -17859,7 +17893,8 @@ async function wizSend(){
            ignores it outright if the case has a figure of its own, so this
            cannot overwrite what the office agreed. */
         ...(w.retainerOffered != null ? {retainer_amount: w.retainerOffered} : {}),
-        ...(paying ? {include_payment: true, methods: w.payMethods} : {})}});
+        ...(paying ? {include_payment: true, methods: w.payMethods} : {}),
+        ...(mailChecking ? {include_payment: true, methods: ["mail_check"]} : {})}});
     /* §13 — say what actually WENT, read back from the Worker's own answer
        rather than from the boxes that were ticked. */
     const inc = r.included || {};
@@ -17868,8 +17903,9 @@ async function wizSend(){
     if((inc.payment_methods || []).length){
       bits.push(inc.payment_methods.map(m => m.label).join(" and "));
     }
+    const consumerPay = (inc.payment_methods || []).some(m => m.id !== "mail_check");
     SHEET_MSG = `Sent to ${r.sent_to}${bits.length ? ", with " + bits.join(" and ") : ""}.`
-      + ((inc.payment_methods || []).length ? " The retainer is still pending until you record it." : "");
+      + (consumerPay ? " The retainer is still pending until you record it." : "");
     if(w.fromLead){ LEAD_MSG = SHEET_MSG; SHEET_WIZ = null; return render(); }
     SHEET_WIZ = null;
   }catch(e){ w.err = e.message; }

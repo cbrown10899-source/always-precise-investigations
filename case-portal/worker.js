@@ -1466,11 +1466,28 @@ async function emailSheet(request, env, user, id) {
      App and Venmo can only ever attach to a private context. The case is named
      when there is one, because a refusal that says which case is easier to act
      on than one that does not. */
-  if (includePayment && !CONTEXT_TAKES_PAYMENT(sendCtx)) {
-    const who = linkedCase ? `${linkedCase} is a legal assignment` : 'This is a legal assignment';
-    return json({ error: `${who} — payment instructions here are Cash App and Venmo, which are `
-      + `private-client methods. Law firms are billed by invoice or retainer check.`,
+  /* MAIL CHECK IS THE ONE PAYMENT OPTION A LEGAL OR INSURANCE SEND MAY TICK
+     (owner, 2026-09-02, MAIL-CHECK.md D5). It carries no handle, no link and
+     no address — one sentence pointing at the invoice — so the boundary this
+     gate exists for is untouched: Cash App and Venmo still reach a law firm
+     or a carrier through no code path, and asking for them here is refused
+     exactly as before. On a PRIVATE send, mail_check is refused by name the
+     same way — no context is ever quietly widened. */
+  const rawMethods = Array.isArray(body.methods) ? body.methods.map(x => String(x)) : null;
+  const mailCheckOn = includePayment && !CONTEXT_TAKES_PAYMENT(sendCtx)
+    && rawMethods !== null && rawMethods.length > 0 && rawMethods.every(m => m === 'mail_check');
+  if (includePayment && !CONTEXT_TAKES_PAYMENT(sendCtx) && !mailCheckOn) {
+    const who = linkedCase ? `${linkedCase} is a ${sendCtx} assignment` : `This is a ${sendCtx} assignment`;
+    return json({ error: `${who} — Cash App and Venmo are private-client methods and cannot be `
+      + `included. The one payment option here is Mail Check: tick it and the sheet says `
+      + `"Mailing instructions provided with invoice."`,
       code: 'legal_no_payment_block' }, 400);
+  }
+  if (includePayment && CONTEXT_TAKES_PAYMENT(sendCtx)
+      && (rawMethods || []).includes('mail_check')) {
+    return json({ error: 'Mail Check rides legal and insurance sends. A private client keeps the '
+      + 'Cash App and Venmo options, and mailed-check arrangements for one are handled on the '
+      + 'case, not the sheet.', code: 'mail_check_not_private' }, 400);
   }
 
   if (!(await withinRateLimit(env, 'mail'))) {
@@ -1519,7 +1536,7 @@ async function emailSheet(request, env, user, id) {
      `methods` is the admin's per-send selection. It can only ever narrow what
      the central configuration has enabled — paymentOptionsFor drops anything
      not enabled there, so the wizard cannot switch a method on. */
-  if (includePayment && !sheetTakesPayment(sheet.id)) {
+  if (includePayment && !mailCheckOn && !sheetTakesPayment(sheet.id)) {
     return json({ error: 'Payment options are private-client only and cannot be sent with the '
                        + 'Insurance Assignment Rates.' }, 400);
   }
@@ -1543,20 +1560,20 @@ async function emailSheet(request, env, user, id) {
   const brokenMethods = [];
   // The sheet's own context is passed through, so the refusal is the function's
   // as well as this route's — two independent gates, not one repeated.
-  const payment = includePayment
+  const payment = (includePayment && !mailCheckOn)
     ? await paymentOptionsFor(env, wantedMethods, brokenMethods, contextForSheet(sheet.id)) : [];
 
   /* A method switched on with no link cannot be offered, and must not be
      dropped in silence — the admin would see a successful send and never learn
      the client got one option instead of two. Named, refused, fixable. */
-  if (includePayment && brokenMethods.length) {
+  if (includePayment && !mailCheckOn && brokenMethods.length) {
     const names = brokenMethods.map(m => m.display_name || m.label).join(' and ');
     return json({ error: `${names} is switched on but has no payment link, so it cannot be `
                        + `offered — every payment option a client sees has to be tappable. `
                        + `Add a link in Settings, or switch it off.`,
                   needs_link: brokenMethods.map(m => m.id) }, 400);
   }
-  if (includePayment && !payment.length) {
+  if (includePayment && !mailCheckOn && !payment.length) {
     /* Two different reasons for nothing to send, and they need different
        sentences: one is answered in this dialog, the other in Settings. */
     return json({ error: wantedMethods && !wantedMethods.length
@@ -1565,7 +1582,7 @@ async function emailSheet(request, env, user, id) {
         + 'before including payment instructions.' }, 400);
   }
 
-  const { text, html } = sheetEmail(sheet, note, intakeDoor, payment, retainer);
+  const { text, html } = sheetEmail(sheet, note, intakeDoor, payment, retainer, mailCheckOn);
   const subject = caseNo
     ? `${sheet.name} — Always Precise Investigations (case ${caseNo})`
     : `${sheet.name} — Always Precise Investigations`;
@@ -1574,9 +1591,9 @@ async function emailSheet(request, env, user, id) {
   if (!mail.sent) {
     await logSend(env, user, { case_no: linkedCase, kind: 'rate_sheet', sheet_id: sheet.id,
       door: intakeUrl, recipient: to, ok: 0, detail: mail.reason || 'send failed' });
-    if (payment.length) {
+    if (payment.length || mailCheckOn) {
       await logPaymentSend(env, user, { case_no: linkedCase, recipient: to,
-        methods: payment.map(x => x.id), with_sheet: 1, ok: 0,
+        methods: mailCheckOn ? ['mail_check'] : payment.map(x => x.id), with_sheet: 1, ok: 0,
         detail: mail.reason || 'send failed' });
     }
     return json({
@@ -1597,9 +1614,9 @@ async function emailSheet(request, env, user, id) {
       .bind(caseNo).first();
     if (lead) await stampLead(env, user, caseNo, includeIntake ? 'intake_sent' : 'rate_sheet_sent');
   }
-  if (payment.length) {
+  if (payment.length || mailCheckOn) {
     await logPaymentSend(env, user, { case_no: linkedCase, recipient: to,
-      methods: payment.map(x => x.id), with_sheet: 1, ok: 1 });
+      methods: mailCheckOn ? ['mail_check'] : payment.map(x => x.id), with_sheet: 1, ok: 1 });
   }
   /* §13 — the confirmation lists exactly what WENT. Read back from the record
      of the send rather than echoed from the request, and note that sending
@@ -1609,7 +1626,9 @@ async function emailSheet(request, env, user, id) {
     included: {
       rate_sheet: sheet.name,
       intake: intakeDoor ? intakeDoor.label : null,
-      payment_methods: payment.map(x => ({ id: x.id, label: x.label })),
+      payment_methods: mailCheckOn
+        ? [{ id: 'mail_check', label: MAIL_CHECK_LINE.label }]
+        : payment.map(x => ({ id: x.id, label: x.label })),
     } });
 }
 
@@ -3125,7 +3144,26 @@ function paymentBlockHtml(pay, retainer) {
    a flag to re-derive one from. It used to take a boolean and look the door up
    by `sheet.id`, which is what sent a law firm the private form: the legal
    context shares the private sheet on purpose. One resolution, passed in. */
-function sheetEmail(sheet, note, intake, pay, retainer) {
+/* THE MAIL CHECK BLOCK — the ticked option's presence in the email, in both
+   MIME parts. Deliberately NOT `paymentBlockText`: that block opens with the
+   private retainer sentence ("A $1,500 retainer is required…"), which must
+   never reach a carrier or a firm. One wording source — MAIL_CHECK_LINE — so
+   the sheet's own line, this block, and the page cannot drift. No handle, no
+   link, no address: the address is invoice-only, from Settings. */
+function mailCheckBlockText() {
+  return `
+PAYMENT
+${MAIL_CHECK_LINE.label} — ${MAIL_CHECK_LINE.note}
+`;
+}
+function mailCheckBlockHtml() {
+  return `<div style="margin:0 0 18px;padding:14px 18px;background:#f4f8fa;border:1px solid #dfe7ec;border-radius:10px">
+    <p style="margin:0 0 4px;font-weight:800;color:#12305a;letter-spacing:.04em">PAYMENT</p>
+    <p style="margin:0;font-size:.95rem"><b>${escHtml(MAIL_CHECK_LINE.label)}</b> — ${escHtml(MAIL_CHECK_LINE.note)}</p>
+  </div>`;
+}
+
+function sheetEmail(sheet, note, intake, pay, retainer, mailCheck) {
   /* Belt and braces on the boundary: even called wrongly, the carrier sheet
      cannot carry a consumer payment handle. */
   const payment = (sheetTakesPayment(sheet.id) && Array.isArray(pay)) ? pay : [];
@@ -3142,7 +3180,7 @@ ${rows}
 
 ${sheet.closing_title}
 ${sheet.closing}
-${paymentBlockText(payment, retainer)}${intake ? `\nReady to begin? The ${intake.label} takes a few minutes:\n${intake.url}\n` : ''}
+${paymentBlockText(payment, retainer)}${mailCheck ? mailCheckBlockText() : ''}${intake ? `\nReady to begin? The ${intake.label} takes a few minutes:\n${intake.url}\n` : ''}
 Questions: (434) 907-0975
 Always Precise Investigations, LLC`;
 
@@ -3167,7 +3205,7 @@ Always Precise Investigations, LLC`;
   </table>
   <p style="margin:0 0 4px;font-weight:800;color:#12305a">${escHtml(sheet.closing_title)}</p>
   <p style="margin:0 0 14px;font-size:.92rem">${escHtml(sheet.closing)}</p>
-  ${paymentBlockHtml(payment, retainer)}
+  ${paymentBlockHtml(payment, retainer)}${mailCheck ? mailCheckBlockHtml() : ''}
   ${intake ? `<p style="margin:0 0 14px">
     <a href="${escHtml(intake.url)}" style="display:inline-block;background:#12305a;color:#fff;
        padding:11px 18px;border-radius:8px;text-decoration:none;font-weight:700">
@@ -11110,6 +11148,7 @@ const DEMO_LIKE = 'TEST-%';
    not arrived on the live database; submissions goes LAST (the parent every
    view joins through); the whole set runs as one D1 batch, one transaction. */
 const INTAKE_OWNED = [
+  ['case_comms',    'DELETE FROM case_comms    WHERE case_no = ?1'],
   ['feed_hidden',   'DELETE FROM feed_hidden   WHERE case_no = ?1'],
   ['case_profile',  'DELETE FROM case_profile  WHERE case_no = ?1'],
   ['case_phone',    'DELETE FROM case_phone    WHERE case_no = ?1'],
@@ -11140,12 +11179,9 @@ const INTAKE_BLOCKERS = [
   ['retainer_payment',     'a recorded retainer payment'],
   ['retainer_payment_token', 'a retainer payment in progress'],
   ['retainer_receipt',     'a recorded retainer receipt'],
-  ['send_log',             'sent rate sheets or intake links'],
-  ['payment_send',         'sent payment instructions'],
   ['case_expenses',        'expenses'],
   ['case_tasks',           'tasks'],
   ['case_notes',           'internal notes'],
-  ['case_comms',           'client communications'],
   ['case_subjects',        'curated subject records'],
   ['case_offers',          'an assignment offer'],
   ['case_closure',         'a closing record'],
@@ -11162,6 +11198,14 @@ const INTAKE_BLOCKERS = [
    completeness test reads these keys. */
 const INTAKE_EXEMPT = {
   alert_failure: 'alert history is non-deletable, and a failed alert about a duplicate must not make it immortal',
+  /* OWNER RULE, 2026-09-02: sending a rate sheet, an intake link or payment
+     instructions ALONE must not make a disposable duplicate undeletable —
+     and send history is non-deletable by the owner's standing limit. So
+     these rows neither block nor die: they stay, describing sends that
+     really happened, exactly like a pre-case send whose reference resolves
+     to nothing. */
+  send_log: 'send history is non-deletable and a send alone must not block deletion',
+  payment_send: 'send history is non-deletable and a send alone must not block deletion',
   case_archive: 'the archived gate refuses this route before any list is consulted',
   case_deleted: 'the deleted gate refuses this route before any list is consulted',
   legal_hold: 'the hold refusal runs before any list is consulted',
@@ -11196,18 +11240,29 @@ async function intakeDelete(env, user, caseNo) {
   const missing = await missingTables(env);
   const arms = INTAKE_BLOCKERS.filter(([t]) => !missing.includes(t));
   /* One statement, constant shape: a UNION of EXISTS probes, one per present
-     blocker table. Nothing here grows with the customer's data. */
+     blocker table. Nothing here grows with the customer's data.
+
+     THE BINDS ARE COUNTED EXACTLY — one anonymous `?` per arm, one value per
+     `?` — because the first version reused `?1` across every arm with a
+     single bound value, which node:sqlite accepts and LIVE D1 REFUSED: the
+     route 500'd on the owner's first real delete while every suite was
+     green. The same class as the 401-parameter statement Unit 7 paid for —
+     a shape the test database tolerates and production does not. A test now
+     pins this builder to anonymous binds. */
   const sql = arms.map(([t]) =>
-    `SELECT '${t}' AS t FROM (SELECT 1) WHERE EXISTS (SELECT 1 FROM ${t} WHERE case_no = ?1)`)
+    `SELECT '${t}' AS t WHERE EXISTS (SELECT 1 FROM ${t} WHERE case_no = ?)`)
     .join(' UNION ALL ');
-  const found = sql ? (await env.DB.prepare(sql).bind(caseNo).all()).results.map(r => r.t) : [];
+  const found = sql
+    ? (await env.DB.prepare(sql).bind(...arms.map(() => caseNo)).all()).results.map(r => r.t)
+    : [];
   if (found.length) {
     const what = INTAKE_BLOCKERS.filter(([t]) => found.includes(t)).map(([, w]) => w);
     return json({
       error: `${caseNo} has become a real case — it carries ${what.slice(0, 4).join(', ')}`
         + `${what.length > 4 ? ` and ${what.length - 4} more kinds of record` : ''}. `
-        + 'The quick delete is for fresh intakes only. Use Delete case on the case workspace '
-        + '(Billing & closing), which removes it from every list recoverably and destroys nothing.',
+        + 'The quick delete is for fresh intakes only. To take it off the desk without '
+        + 'destroying anything, open the case and use Archive or Delete case '
+        + '(Billing & closing) — both remove it from every list and both can be undone.',
       code: 'intake_developed', dependents: found, use_case_workflow: true,
     }, 409);
   }
