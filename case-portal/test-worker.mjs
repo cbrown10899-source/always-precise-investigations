@@ -6306,11 +6306,12 @@ section('Every send works before a case exists, and still works after one does')
        sends a law firm the private form because a legal case takes the private
        SHEET on purpose. Counting senders would not have caught that — the
        assertion below is the one that would, and it is the real guard now. */
-    /* FOUR since Unit 4: the fourth is the Assistant's dry-run resolver,
-       which rehearses a send and therefore derives its door the same one
-       way. Anything beyond four is a new door-chooser to audit. */
-    ok('and all four intake senders derive it from the context',
-       (src.match(/intakeForContext\(/g) || []).length === 4,
+    /* FIVE since Assistant Units 4 and 5: the fourth and fifth are the
+       Assistant's two dry-run resolvers (intake, sheet), which rehearse
+       sends and therefore derive their doors the same one way. Anything
+       beyond five is a new door-chooser to audit. */
+    ok('and all five intake senders derive it from the context',
+       (src.match(/intakeForContext\(/g) || []).length === 5,
        String((src.match(/intakeForContext\(/g) || []).length));
     /* THE DOOR TABLE HAS EXACTLY ONE READER. Any other `SHEET_INTAKE[...]`
        lookup is a second way to choose a door, and a second way is how the
@@ -17096,7 +17097,9 @@ section('API Assistant — Beta reads, role-scoped navigation, refusals by name'
   /* ---- Beta enforcement: consequential verbs refused BY NAME, nothing sent ---- */
   mailed = null;
   for (const [text, what] of [
-    ['Send the rate sheet to the firm', /sending/],
+    /* 'Send the rate sheet…' moved to the Unit 5 carve-out — it opens the
+       dry-run workbench now, asserted in the Unit 4/5 sections below. */
+    ['Email the firm their case documents', /sending/],
     ['Email them the invoice', /sending/],
     ['Record a payment of $250 on this case', /recording payments/],
     ['Delete this intake', /deleting/],
@@ -17234,8 +17237,8 @@ section('API Assistant — Unit 4: intake preparation, preview, SIMULATE');
   ok('on a case screen, the case reference rides into the form',
      j.kind === 'prepare_intake' && j.form.kind === 'insurance' && j.form.case_no === 'API-U4-CTX');
   j = await jsonOf(await cmd(admin, 'Send the rate sheet to the firm'));
-  ok('a rate-sheet send is still refused by name — that rehearsal is Unit 5, not this one',
-     j.kind === 'refused' && j.code === 'assistant_beta');
+  ok('a rate-sheet send opens ITS dry-run workbench (Unit 5), audience picked from the sentence',
+     j.kind === 'prepare_sheet' && j.form && j.form.context === 'legal');
   j = await jsonOf(await cmd(admin, 'Delete this intake'));
   ok('“delete this intake” still refuses — the carve-out is for preparing, never destroying',
      j.kind === 'refused');
@@ -17366,6 +17369,161 @@ section('API Assistant — Unit 4: intake preparation, preview, SIMULATE');
   j = await jsonOf(await cmd(admin, 'show recent simulations'));
   ok('and the log read names the workflow instead of drawing an empty history',
      /portal-setup/.test(j.text));
+
+  globalThis.fetch = realFetch;
+}
+
+/* ============== API ASSISTANT — Unit 5: rate-sheet dry run =================
+   The strongest possible anti-drift pin: the SAME inputs through the real
+   sender and through the rehearsal must produce the SAME subject and body,
+   byte for byte, and the same refusals by code. The rehearsal then records
+   itself in assistant_log and moves nothing real. */
+section('API Assistant — Unit 5: rate-sheet preparation, preview, SIMULATE');
+{
+  const realFetch = globalThis.fetch;
+  let mailed = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) { mailed = JSON.parse(init.body); return new Response('{"id":"re_1"}', { status: 200 }); }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '50';
+  env.RESEND_API_KEY = 'test-resend-key';   // the REAL sends in the pins must reach the intercept
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  let res = await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' });
+  const token = new URL((await jsonOf(res)).url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const cmd = (cookie, text, context = {}) => call(env, '/assistant/command',
+    { method: 'POST', cookie, body: { text, context } });
+  const real = (id, body) => call(env, `/sheets/${id}/email`, { method: 'POST', cookie: admin, body });
+  const prep = (body) => call(env, '/assistant/prepare-sheet', { method: 'POST', cookie: admin, body });
+  const sim = (body) => call(env, '/assistant/simulate-sheet', { method: 'POST', cookie: admin, body });
+  const count = async (sql) => Number((await env.DB.prepare(sql).first()).n);
+
+  /* ---- the byte pins: real send vs rehearsal, same inputs, same product.
+     Four shapes cover the resolution space: private with an agreed retainer
+     and the intake link; a fixed legal service with a custom fee; the
+     carrier sheet with Mail Check; and a case-resolved legal retainer card. */
+  const shapes = [
+    ['private retainer + intake link + note',
+     'private_retainer',
+     { to: 'pin-a@example.com', retainer_amount: 2000, include_intake: true, note: 'As discussed by phone.' }],
+    ['legal fixed Process Service + custom fee + intake door with &service=',
+     'private_retainer',
+     { to: 'pin-b@example.com', send_context: 'legal', legal_service: 'process',
+       flat_fee: 375, include_intake: true }],
+    ['insurance + Mail Check',
+     'insurance_assignment',
+     { to: 'pin-c@example.com', include_payment: true, methods: ['mail_check'] }],
+  ];
+  for (const [what, id, body] of shapes) {
+    mailed = null;
+    const r = await jsonOf(await real(id, body));
+    const sent = mailed;
+    const p = await jsonOf(await prep({ id, ...body }));
+    ok(`PIN — ${what}: the rehearsal's subject and body EQUAL the real send's`,
+       r.ok === true && sent && p.dry_run === true
+       && p.subject === sent.subject && p.body_text === sent.text,
+       JSON.stringify({ real_subj: sent && sent.subject, prep_subj: p.subject,
+         same_body: !!(sent && p.body_text === sent.text) }).slice(0, 300));
+    ok(`…and the resolution facts match — context, sheet, inclusions`,
+       p.send_context === r.send_context && p.sheet === r.sheet
+       && JSON.stringify(p.included) === JSON.stringify(r.included),
+       JSON.stringify({ p: p.included, r: r.included }).slice(0, 300));
+  }
+  /* The fixed-service door carried the service, on both sides. */
+  {
+    const p = await jsonOf(await prep({ id: 'private_retainer', to: 'pin-b@example.com',
+      send_context: 'legal', legal_service: 'process', flat_fee: 375, include_intake: true }));
+    ok('the fixed rehearsal quotes the chosen figure and the &service= door',
+       p.flat_fee === 375 && /\$375/.test(p.body_text) && /assignment=legal&service=process/.test(p.body_text));
+  }
+
+  /* ---- a case-resolved legal send: the rehearsal reads the case exactly
+     as the sender does, and only the SENDER stamps the lead ---- */
+  await ingest(env, { case_no: 'API-U5-L', assignment: 'legal',
+    firm_name: 'Harmon PLC', client_name: 'Harmon PLC', objective: 'General work' });
+  mailed = null;
+  const realD = await jsonOf(await real('private_retainer', { to: 'firm@example.com', case_no: 'API-U5-L' }));
+  const sentD = mailed;
+  const prepD = await jsonOf(await prep({ id: 'private_retainer', to: 'firm@example.com', case_no: 'API-U5-L' }));
+  ok('PIN — a legal case resolves the LEGAL card identically through both',
+     realD.send_context === 'legal' && prepD.send_context === 'legal'
+     && prepD.subject === sentD.subject && prepD.body_text === sentD.text);
+  const stamped = await env.DB.prepare(
+    "SELECT status FROM lead_status WHERE case_no = 'API-U5-L'").first();
+  ok('the REAL send stamped the lead; the rehearsal never does (asserted below)',
+     stamped && stamped.status === 'rate_sheet_sent', JSON.stringify(stamped));
+
+  /* ---- the refusal mirror: same bad inputs, same status, same code ---- */
+  await ingest(env, { case_no: 'API-U5-CLM', carrier: 'Blue Ridge Mutual',
+    claim_number: 'CL-9', client_name: 'Blue Ridge Mutual', objective: 'AOE' });
+  const mirror = async (id, body) => {
+    const a = await real(id, body); const b = await prep({ id, ...body });
+    const aj = await jsonOf(a); const bj = await jsonOf(b);
+    return { same: a.status === b.status && (aj.code || null) === (bj.code || null)
+             && a.status >= 400, status: a.status, a: aj.code, b: bj.code };
+  };
+  for (const [what, id, body] of [
+    ['the consumer sheet against a claims case', 'private_retainer',
+     { to: 'x@example.com', case_no: 'API-U5-CLM' }],
+    ['a legal service on a private send', 'private_retainer',
+     { to: 'x@example.com', legal_service: 'process' }],
+    ['a flat fee on a retainer service', 'private_retainer',
+     { to: 'x@example.com', send_context: 'legal', legal_service: 'general', flat_fee: 300 }],
+    ['Mail Check on a private send', 'private_retainer',
+     { to: 'x@example.com', include_payment: true, methods: ['mail_check'] }],
+    ['Bill.com while not configured', 'private_retainer',
+     { to: 'x@example.com', send_context: 'legal', include_payment: true, methods: ['bill_com'] }],
+    ['Cash App asked of a legal send', 'private_retainer',
+     { to: 'x@example.com', send_context: 'legal', include_payment: true, methods: ['cashapp'] }],
+  ]) {
+    const m = await mirror(id, body);
+    ok(`MIRROR — ${what} refuses identically through both doors`, m.same, JSON.stringify(m));
+  }
+
+  /* ---- SIMULATE: its own record, and nothing real moves ---- */
+  const sendsBefore = await count('SELECT COUNT(*) AS n FROM send_log');
+  const paysBefore = await count('SELECT COUNT(*) AS n FROM payment_send');
+  mailed = null;
+  let d = await jsonOf(await sim({ id: 'insurance_assignment', to: 'adjuster@example.com',
+    include_payment: true, methods: ['mail_check'] }));
+  ok('the sheet SIMULATE answers the literal outcome and records it',
+     d.ok && d.outcome === 'SIMULATED — NOT SENT' && d.logged === true
+     && d.sheet === 'insurance_assignment' && d.case_no === null, JSON.stringify(d).slice(0, 200));
+  const row = await env.DB.prepare(
+    "SELECT * FROM assistant_log WHERE action = 'sheet_send' ORDER BY id DESC LIMIT 1").first();
+  ok('the log row carries the sheet, the methods and the outcome on its face',
+     row && row.outcome === 'SIMULATED — NOT SENT' && row.recipient === 'adjuster@example.com'
+     && /insurance_assignment/.test(row.detail || '') && /mail_check/.test(row.detail || ''));
+  d = await jsonOf(await sim({ id: 'private_retainer', to: 'firm2@example.com', case_no: 'API-U5-L' }));
+  ok('a case-keyed sheet rehearsal records the case', d.case_no === 'API-U5-L' && d.logged === true);
+  const stamped2 = await env.DB.prepare(
+    "SELECT status FROM lead_status WHERE case_no = 'API-U5-L'").first();
+  ok('…and the lead did not move again — a rehearsal stamps nothing',
+     stamped2 && stamped2.status === 'rate_sheet_sent');
+  ok('no transport call, no send row, no payment row from any rehearsal',
+     mailed === null
+     && await count('SELECT COUNT(*) AS n FROM send_log') === sendsBefore
+     && await count('SELECT COUNT(*) AS n FROM payment_send') === paysBefore);
+
+  /* ---- role fidelity and the grammar door ---- */
+  res = await call(env, '/assistant/prepare-sheet', { method: 'POST', cookie: dana,
+    body: { id: 'private_retainer', to: 'p@example.com' } });
+  ok('an investigator gets 403 from sheet prepare', res.status === 403);
+  res = await call(env, '/assistant/simulate-sheet', { method: 'POST', cookie: dana,
+    body: { id: 'private_retainer', to: 'p@example.com' } });
+  ok('and 403 from sheet simulate', res.status === 403);
+  let j = await jsonOf(await cmd(admin, 'prepare a rate sheet for the carrier'));
+  ok('“prepare a rate sheet for the carrier” opens the workbench on insurance',
+     j.kind === 'prepare_sheet' && j.form.context === 'insurance');
+  j = await jsonOf(await cmd(dana, 'prepare a rate sheet'));
+  ok('an investigator is told the sheet desk is admin', j.kind !== 'prepare_sheet' && /[Aa]dmin/.test(j.text));
+  j = await jsonOf(await cmd(admin, 'Show recent simulations'));
+  ok('the log read lists both rehearsal kinds', j.card && j.card.some(c => /sheet_send/.test(c.title))
+     && j.card.every(c => /SIMULATED — NOT SENT/.test(c.line)));
 
   globalThis.fetch = realFetch;
 }

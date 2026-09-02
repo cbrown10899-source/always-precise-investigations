@@ -3132,7 +3132,7 @@ keeps no audio"), never the mockup's "never stored".
 
 Owner master spec 2026-09-02 (§1–38), architecture and unit ledger in
 `case-portal/ASSISTANT.md`. An INTERNAL operations copilot behind the
-existing sign-in — never a public chatbot. Units 1–4 are built; the rules
+existing sign-in — never a public chatbot. Units 1–5 are built; the rules
 that outlive them:
 
 **Beta is permanent in v1 and structural.** No Live Mode switch exists, and
@@ -3166,6 +3166,16 @@ lead stamp, no transport call. The response is honest about its own record
 is `INTAKE_EXEMPT` (audit history: neither blocks an intake delete nor dies
 with it) and `DEMO_SWEEP`-swept by its own `case_no`, which is null for
 pre-case rehearsals — the send_log rule.
+
+**Unit 5: the rate-sheet rehearsal is a PINNED MIRROR of `emailSheet`**
+(`assistantSheetPlan` + `/assistant/prepare-sheet` + `/assistant/simulate-sheet`,
+admin-only). It restates the sender's resolution using the same named
+helpers and contains no way to send; the suite holds the two together the
+strong way — same inputs through both produce the SAME subject and body byte
+for byte, and the SAME refusals by code. Do not "simplify" by extracting a
+shared resolver out of `emailSheet` unless a third consumer appears
+(`ASSISTANT.md` A11). The workbench's non-private payment tick means Mail
+Check only. `assistantLogged` is the ONE log writer for every rehearsal kind.
 
 **The page workbench holds its draft in `ASST.prep`** (the EDIT_DRAFT rule);
 `.asst-` classes only, bare palette tokens, no new dialogs. The dock is

@@ -207,6 +207,24 @@ store, and the literals `send_log` / `payment_send` / `stampLead` /
 `logSend` appear nowhere in the block, comments included. A second write
 anywhere in the block fails the suite by count.
 
+**A11 — Unit 5's sheet rehearsal is a PINNED MIRROR, not surgery on the real
+sender.** `assistantSheetPlan` restates `emailSheet`'s resolution step for
+step — context rules, case pairing, legal service and fee, the payment-method
+boundary — reusing the same named helpers (`sheetForContext`,
+`legalFixedSheet`, `retainerForSend`, `paymentOptionsFor`, `withBillcomLine`,
+`sheetEmail`) and containing no way to send. Extracting a shared resolver
+out of `emailSheet` was considered and deliberately not done: that function
+is the most safety-critical send path in the Worker, and the suite holds the
+two together more strongly than code-sharing claims would — the SAME inputs
+through both must produce the SAME subject and body byte for byte, and the
+SAME refusals by code (asserted across the private/fixed/insurance/case
+shapes and six refusal mirrors). A divergence fails loudly instead of
+drifting. If a THIRD consumer of this resolution ever appears, extract then
+— the third-reader lesson. The workbench's non-private payment tick means
+Mail Check only; the full method set stays the send wizard's. The one log
+writer (`assistantLogged`) keeps the block at exactly one INSERT, and the
+`intakeForContext` single-reader count is 5, each named.
+
 **A10 — the grammar carve-out opens a workbench, never a send.** An
 utterance about sending/preparing an INTAKE resolves to `kind:
 'prepare_intake'` with a prefilled form seed (email lifted from the
@@ -225,7 +243,7 @@ typed — the exact bug Unit 1's suite caught in `asstOpen`.
 | 2 | Navigation: registry, "take me to…", current-page context, "Where am I?", "Explain this page" | ✅ **DEPLOYED** — #261, deterministic grammar, registry ids only |
 | 3 | Live status: "anything new?", "what needs attention?", "what should I do?", find client/case/intake with disambiguation | ✅ **DEPLOYED** — #261, live reads through the existing role-scoped functions |
 | 4 | Intake preparation + preview + SIMULATE + `assistant_log` (schema: one additive table → portal-setup dispatch) | ✅ **DEPLOYED** — #262 `85806e6`; site + Worker + **portal-setup all `success` on `85806e68`** (08:39Z), so `assistant_log` is live. A6–A10 below |
-| 5 | Rate-sheet preparation + preview + simulation (pricing via the real resolvers) | **IN FLIGHT** — Worker + suite green (3105/0, byte-pins + refusal mirrors); page workbench being wired |
+| 5 | Rate-sheet preparation + preview + simulation (pricing via the real resolvers) | **BUILT** — A11; byte-pins hold the mirror to the real sender; no schema change |
 | 6 | Invoice/billing read + preparation + simulation | NOT STARTED |
 | 7 | Case health / summaries / report drafting from recorded facts | NOT STARTED |
 | 8 | Watch mode (internal read-only monitoring) | NOT STARTED |

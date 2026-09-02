@@ -1806,6 +1806,8 @@
   overflow-y:auto;margin:0}
 .asst-sim{font-size:.68rem;font-weight:800;letter-spacing:.06em;color:var(--gold-ink);
   margin-bottom:4px}
+.asst-work label.asst-ck{flex-direction:row;align-items:center;gap:8px}
+.asst-work .asst-ck input{width:20px;height:20px;min-height:20px;flex:0 0 auto}
 
 /* APPEND AT THE VERY END OF THE STYLESHEET (the source-order rule — the fifth
    casualty list): the phone shape. The pill only exists under 900px, and only
@@ -2618,8 +2620,18 @@ async function asstSend(text){
        the utterance itself carried. The server's form is a SEED; the draft
        object is the source of truth from here on. */
     if(r.kind === "prepare_intake" && r.form){
-      ASST.prep = { kind: r.form.kind || "", to: r.form.to || "", name: r.form.name || "",
-                    case_no: r.form.case_no || "", preview: null, err: "", busy: false };
+      ASST.prep = { mode: "intake", kind: r.form.kind || "", to: r.form.to || "",
+                    name: r.form.name || "", case_no: r.form.case_no || "",
+                    preview: null, err: "", busy: false };
+    }
+    /* UNIT 5 — the sheet workbench: same draft object, its own fields. The
+       legal-service catalogue loads lazily exactly as the send wizard's. */
+    if(r.kind === "prepare_sheet" && r.form){
+      ASST.prep = { mode: "sheet", context: r.form.context || "", to: r.form.to || "",
+                    case_no: r.form.case_no || "", legal_service: "", flat_fee: "",
+                    include_intake: false, include_payment: false,
+                    preview: null, err: "", busy: false };
+      legalSvcsLoad();
     }
     ASST.busy = false; paint();
     if(r.navigate) asstNavigate(r.navigate);
@@ -2663,12 +2675,45 @@ function asstNavigate(nav){
    Worker's own answers; the page renders them and composes nothing. */
 function asstPrepCollect(){
   if(!ASST || !ASST.prep) return;
+  const p = ASST.prep;
   const read = id => { const el = $(id); return el ? el.value : null; };
+  if(p.mode === "sheet"){
+    const c = read("asst_sctx"), to = read("asst_sto"), cs = read("asst_scase"),
+          sv = read("asst_ssvc"), fe = read("asst_sfee");
+    if(c !== null) p.context = c;
+    if(to !== null) p.to = to;
+    if(cs !== null) p.case_no = cs;
+    if(sv !== null) p.legal_service = sv;
+    if(fe !== null) p.flat_fee = fe;
+    const ii = $("asst_sint"), ip = $("asst_spay");
+    if(ii) p.include_intake = ii.checked;
+    if(ip) p.include_payment = ip.checked;
+    return;
+  }
   const k = read("asst_pk"), to = read("asst_pto"), nm = read("asst_pname"), cs = read("asst_pcase");
-  if(k !== null) ASST.prep.kind = k;
-  if(to !== null) ASST.prep.to = to;
-  if(nm !== null) ASST.prep.name = nm;
-  if(cs !== null) ASST.prep.case_no = cs;
+  if(k !== null) p.kind = k;
+  if(to !== null) p.to = to;
+  if(nm !== null) p.name = nm;
+  if(cs !== null) p.case_no = cs;
+}
+
+/* One builder for both workbench posts, so Preview and Simulate can never
+   send different requests. The sheet id is derived from the audience; a
+   non-private payment tick means Mail Check, the one non-private option the
+   workbench offers (the send wizard carries the full set). */
+function asstPrepBody(){
+  const p = ASST.prep;
+  if(p.mode === "sheet"){
+    const body = { id: p.context === "insurance" ? "insurance_assignment" : "private_retainer",
+                   to: p.to, case_no: p.case_no,
+                   include_intake: p.include_intake, include_payment: p.include_payment };
+    if(p.context) body.send_context = p.context;
+    if(p.context === "legal" && p.legal_service) body.legal_service = p.legal_service;
+    if(p.flat_fee) body.flat_fee = p.flat_fee;
+    if(p.include_payment && p.context && p.context !== "private") body.methods = ["mail_check"];
+    return body;
+  }
+  return { kind: p.kind, to: p.to, name: p.name, case_no: p.case_no };
 }
 
 async function asstPrepPrev(){
@@ -2677,8 +2722,8 @@ async function asstPrepPrev(){
   const p = ASST.prep;
   p.busy = true; p.err = ""; paint();
   try{
-    p.preview = await api("/assistant/prepare-intake", { method: "POST",
-      body: { kind: p.kind, to: p.to, name: p.name, case_no: p.case_no } });
+    p.preview = await api(p.mode === "sheet" ? "/assistant/prepare-sheet" : "/assistant/prepare-intake",
+      { method: "POST", body: asstPrepBody() });
     p.busy = false; paint();
   }catch(e){
     p.busy = false; p.err = e.message || "The preview was refused."; paint();
@@ -2690,11 +2735,11 @@ async function asstPrepSim(){
   const p = ASST.prep;
   p.busy = true; p.err = ""; paint();
   try{
-    const r = await api("/assistant/simulate-intake", { method: "POST",
-      body: { kind: p.kind, to: p.to, name: p.name, case_no: p.case_no } });
+    const r = await api(p.mode === "sheet" ? "/assistant/simulate-sheet" : "/assistant/simulate-intake",
+      { method: "POST", body: asstPrepBody() });
     ASST.prep = null;
     ASST.msgs.push({ who: "asst", kind: "simulated",
-      text: `${r.outcome} — ${r.intake} for ${r.to}` + (r.case_no ? ` on ${r.case_no}` : "") + ". "
+      text: `${r.outcome} — ${r.sheet_name || r.intake} for ${r.to}` + (r.case_no ? ` on ${r.case_no}` : "") + ". "
           + (r.logged ? "Recorded in the Assistant beta log."
              : r.reason === "not_set_up"
                ? "Not recorded — the log table is not set up yet (run portal-setup)."
@@ -2710,17 +2755,56 @@ function asstPrepHtml(){
   const p = ASST.prep;
   if(p.preview){
     const v = p.preview;
+    /* One preview card for both modes: the intake answer names its form and
+       door; the sheet answer names the document and what rides with it. */
+    const inc = v.included ? [
+      v.included.intake ? `Intake link: ${v.included.intake}` : "",
+      (v.included.payment_methods || []).length
+        ? `Payment: ${v.included.payment_methods.map(m => m.label).join(", ")}` : "",
+    ].filter(Boolean).join(" · ") : "";
     return `<div class="asst-work">
       <div class="asst-dry">DRY RUN &mdash; READY TO SEND &middot; nothing has been sent</div>
       ${p.err ? `<div class="err">${esc(p.err)}</div>` : ""}
       <div class="asst-kv"><b>To</b><span>${esc(v.to)}</span></div>
       <div class="asst-kv"><b>Subject</b><span>${esc(v.subject)}</span></div>
-      <div class="asst-kv"><b>Form</b><span>${esc(v.intake)}${v.case_no ? ` &middot; ${esc(v.case_no)}` : ""}</span></div>
-      <div class="asst-kv"><b>Door</b><span>${esc(v.door)}</span></div>
+      <div class="asst-kv"><b>${v.sheet_name ? "Sheet" : "Form"}</b><span>${esc(v.sheet_name || v.intake)}${v.case_no ? ` &middot; ${esc(v.case_no)}` : ""}</span></div>
+      ${v.door ? `<div class="asst-kv"><b>Door</b><span>${esc(v.door)}</span></div>` : ""}
+      ${inc ? `<div class="asst-kv"><b>With</b><span>${esc(inc)}</span></div>` : ""}
       <pre class="asst-pre">${esc(v.body_text)}</pre>
       <div class="asst-acts">
         <button class="btn sm accent" data-act="asstPrepSim" ${p.busy ? "disabled" : ""}>Simulate &mdash; record only</button>
         <button class="btn sm ghost" data-act="asstPrepEdit">Edit</button>
+        <button class="btn sm ghost" data-act="asstPrepCancel">Cancel</button>
+      </div>
+    </div>`;
+  }
+  if(p.mode === "sheet"){
+    const svc = LEGAL_SVCS.find(s => s.id === p.legal_service) || null;
+    return `<div class="asst-work">
+      <div class="asst-dry">PREPARE A RATE SHEET &mdash; DRY RUN</div>
+      ${p.err ? `<div class="err">${esc(p.err)}</div>` : ""}
+      <label class="cap">Audience &mdash; a case reference below overrides this
+        <select id="asst_sctx" data-act-input="asstPrep">
+          <option value=""${p.context ? "" : " selected"}>Choose&hellip;</option>
+          <option value="private"${p.context === "private" ? " selected" : ""}>Private Client</option>
+          <option value="insurance"${p.context === "insurance" ? " selected" : ""}>Insurance Assignment</option>
+          <option value="legal"${p.context === "legal" ? " selected" : ""}>Legal / Law Firm</option>
+        </select></label>
+      ${p.context === "legal" && LEGAL_SVCS.length ? `<label class="cap">Legal service (optional)
+        <select id="asst_ssvc" data-act-input="asstPrep">
+          <option value=""${p.legal_service ? "" : " selected"}>Not specified</option>
+          ${LEGAL_SVCS.map(s => `<option value="${esc(s.id)}"${p.legal_service === s.id ? " selected" : ""}>${esc(s.label)}</option>`).join("")}
+        </select></label>` : ""}
+      ${svc && svc.model === "fixed" ? `<label class="cap">Custom flat fee (optional)
+        <input id="asst_sfee" data-act-input="asstPrep" value="${esc(p.flat_fee)}" inputmode="decimal" autocomplete="off"></label>` : ""}
+      <label class="cap">Recipient email
+        <input id="asst_sto" data-act-input="asstPrep" value="${esc(p.to)}" autocomplete="off"></label>
+      <label class="cap">Case (optional)
+        <input id="asst_scase" data-act-input="asstPrep" value="${esc(p.case_no)}" autocomplete="off"></label>
+      <label class="cap asst-ck"><input type="checkbox" id="asst_sint" data-act-input="asstPrep"${p.include_intake ? " checked" : ""}><span>Include the intake link</span></label>
+      <label class="cap asst-ck"><input type="checkbox" id="asst_spay" data-act-input="asstPrep"${p.include_payment ? " checked" : ""}><span>Include payment options${p.context && p.context !== "private" ? " (Mail Check)" : ""}</span></label>
+      <div class="asst-acts">
+        <button class="btn sm" data-act="asstPrepPrev" ${p.busy ? "disabled" : ""}>Preview the dry run</button>
         <button class="btn sm ghost" data-act="asstPrepCancel">Cancel</button>
       </div>
     </div>`;
@@ -2752,7 +2836,8 @@ function asstQuickHtml(){
   return `<div class="asst-home">
     <button class="asst-big" data-act="asstQuick" data-cmd="What should I do?">What should I do?</button>
     ${ASST && ASST.state && ASST.state.role === "admin"
-      ? `<button class="asst-big" data-act="asstQuick" data-cmd="Prepare an intake">Prepare an intake &mdash; dry run</button>` : ""}
+      ? `<button class="asst-big" data-act="asstQuick" data-cmd="Prepare an intake">Prepare an intake &mdash; dry run</button>
+    <button class="asst-big" data-act="asstQuick" data-cmd="Prepare a rate sheet">Prepare a rate sheet &mdash; dry run</button>` : ""}
     <button class="asst-big" data-act="asstQuick" data-cmd="Anything new?">What&rsquo;s new?</button>
     <button class="asst-big" data-act="asstQuick" data-cmd="Explain this page">Explain this page</button>
     <button class="asst-big" data-act="asstQuick" data-cmd="Take me to ">Take me somewhere&hellip;</button>
@@ -19703,6 +19788,18 @@ document.addEventListener("change", ev => {
   if(act) srActed();
   /* The daily summary's controls: capture-then-recompose, per day. */
   if(act === "dsCtl"){ dsCtl(parseInt(ev.target.dataset.day, 10)); return; }
+  /* UNIT 4/5 — BEFORE the NL bail-out below, because the Assistant workbench
+     exists on every screen. A change lands in the draft, and a SELECT or
+     CHECKBOX change also repaints — the sheet form's service and fee fields
+     exist conditionally on the audience picked. A TEXT input's change fires
+     on blur — often the blur caused by pressing Preview — and a repaint
+     there rebuilds the button under the pointer mid-click, so text inputs
+     collect without repainting. */
+  if(ev.target.dataset && ev.target.dataset.actInput === "asstPrep"){
+    asstPrepCollect();
+    if(ev.target.tagName === "SELECT" || ev.target.type === "checkbox") paint();
+    return;
+  }
   if(!act || !NL) return;
   if(act === "nlPickContact"){
     nlCollect();
@@ -19834,9 +19931,6 @@ document.addEventListener("input", ev => {
   /* The quick-legal service pick relabels the fee input (fixed → "Agreed
      fee") — captured first, so the repaint discards nothing typed. */
   if(ev.target.id === "nl_lsvc" && NL){ nlCollect(); paint(); }
-  /* UNIT 4 — a select's change also lands in the workbench draft, alongside
-     the input event, so the picked door survives any repaint either way. */
-  if(ev.target.dataset && ev.target.dataset.actInput === "asstPrep"){ asstPrepCollect(); }
   if(ev.target.dataset && ev.target.dataset.act === "leadStatus"){
     const caseNo = ev.target.dataset.case, v = ev.target.value;
     api(`/leads/${encodeURIComponent(caseNo)}/status`, {method:"POST", body:{status: v}})

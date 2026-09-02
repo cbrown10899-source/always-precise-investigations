@@ -17071,6 +17071,83 @@ section('API ASSISTANT Unit 4 — the intake dry-run workbench, on the real page
   await page.close();
 }
 
+section('API ASSISTANT Unit 5 — the rate-sheet dry-run workbench, on the real page');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.navfoot [data-act="asstOpen"]').click();
+  await page.waitForSelector('.asst-panel', { timeout: 4000 });
+  await page.waitForFunction(() => ASST && ASST.state, null, { timeout: 4000 });
+  ok('the admin empty state offers the rate-sheet dry run beside the intake one',
+     await page.evaluate(() =>
+       [...document.querySelectorAll('.asst-big')].some(b => /Prepare a rate sheet/.test(b.innerText))));
+
+  /* ---- the legal fixed-service flow, end to end ---- */
+  await page.locator('#asst_in').fill('prepare a rate sheet for the law firm');
+  await page.locator('.asst-ask button').click();
+  await page.waitForSelector('.asst-work', { timeout: 4000 });
+  await page.waitForFunction(() => LEGAL_SVCS.length > 0, null, { timeout: 4000 });
+  ok('the sheet workbench opens on the audience the sentence named, services loaded',
+     await page.evaluate(() =>
+       /PREPARE A RATE SHEET/.test(document.querySelector('.asst-dry').innerText)
+       && $('asst_sctx').value === 'legal' && !!document.querySelector('#asst_ssvc')));
+  /* Picking a FIXED service must draw the fee box — the change listener
+     reaches the workbench on every screen (it once sat behind the
+     quick-intake bail-out and silently did nothing). */
+  await page.selectOption('#asst_ssvc', 'process');
+  await page.waitForSelector('#asst_sfee', { timeout: 3000 });
+  ok('picking a fixed service draws the custom-fee box', true);
+  await page.locator('#asst_sfee').fill('375');
+  await page.locator('#asst_sto').fill('sheet-e2e@example.com');
+  await page.locator('#asst_sint').click();
+  await page.evaluate(() => paint());
+  ok('a repaint mid-form keeps the audience, service, fee, recipient and tick — the draft rule',
+     await page.evaluate(() =>
+       $('asst_sctx').value === 'legal' && $('asst_ssvc').value === 'process'
+       && $('asst_sfee').value === '375' && $('asst_sto').value === 'sheet-e2e@example.com'
+       && $('asst_sint').checked === true));
+  const sheetSendsBefore = await page.evaluate(async () => (await api('/sends')).sends.length);
+  await page.locator('[data-act="asstPrepPrev"]').click();
+  await page.waitForFunction(() => ASST && ASST.prep && ASST.prep.preview, null, { timeout: 4000 });
+  const sheetPrev = await page.evaluate(() => ({
+    subj: ASST.prep.preview.subject, body: ASST.prep.preview.body_text,
+    work: document.querySelector('.asst-work').innerText }));
+  ok('the fixed preview is the real document — the chosen figure, the service door, the intake link',
+     sheetPrev.subj === 'Process Service — $375 Flat Fee — Always Precise Investigations'
+     && /\$375/.test(sheetPrev.body) && /assignment=legal&service=process/.test(sheetPrev.body)
+     && /Intake link/.test(sheetPrev.work), sheetPrev.subj);
+  await page.locator('[data-act="asstPrepSim"]').click();
+  await page.waitForFunction(() => ASST && !ASST.prep, null, { timeout: 4000 });
+  const sheetSim = await page.evaluate(() => {
+    const blocks = [...document.querySelectorAll('.asst-m')];
+    const last = blocks[blocks.length - 1];
+    return last ? { chip: !!last.querySelector('.asst-sim'), text: last.innerText }
+      : { chip: false, text: 'NO-ANSWER' };
+  });
+  ok('the sheet simulation wears the outcome and names the document',
+     sheetSim.chip === true && /SIMULATED — NOT SENT/.test(sheetSim.text)
+     && /Process Service — \$375 Flat Fee/.test(sheetSim.text), sheetSim.text.slice(0, 160));
+  ok('and the send history did not move — a sheet rehearsal is not a send',
+     await page.evaluate(async () => (await api('/sends')).sends.length) === sheetSendsBefore);
+
+  /* ---- the carrier flow: Mail Check only, and no consumer handle ---- */
+  await page.locator('#asst_in').fill('prepare a rate sheet for the carrier');
+  await page.locator('.asst-ask button').click();
+  await page.waitForSelector('#asst_sctx', { timeout: 4000 });
+  ok('the carrier sentence lands on the insurance audience',
+     await page.evaluate(() => $('asst_sctx').value === 'insurance'));
+  await page.locator('#asst_sto').fill('adjuster-e2e@example.com');
+  await page.locator('#asst_spay').click();
+  await page.locator('[data-act="asstPrepPrev"]').click();
+  await page.waitForFunction(() => ASST && ASST.prep && ASST.prep.preview, null, { timeout: 4000 });
+  ok('an insurance payment tick means Mail Check, and the body carries no consumer handle',
+     await page.evaluate(() =>
+       (ASST.prep.preview.included.payment_methods || []).map(m => m.id).join(',') === 'mail_check'
+       && !/cash ?app|venmo/i.test(ASST.prep.preview.body_text)));
+  await page.locator('[data-act="asstPrepCancel"]').click();
+  await page.close();
+}
+
 await browser.close();
 server.close();
 
