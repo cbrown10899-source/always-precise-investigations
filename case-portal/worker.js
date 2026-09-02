@@ -13793,9 +13793,31 @@ async function assistantSimulateSheet(request, env, user) {
 
 /* POST /assistant/command — the deterministic Beta grammar. Every branch
    composes from live reads or the registry; the fallback says plainly what
-   Beta understands rather than pretending. */
+   Beta understands rather than pretending.
+
+   §11 — EXPLAIN & GUIDE ME lives HERE, in the wrapper, because the first
+   build's toggle was INERT: the page sent `context.guide` on every command
+   and no branch read it — a control that renders is not a control that
+   works, the profile-contact-select defect again. Guide ON leads a STATUS
+   answer with the plain-language paragraph for the screen the person is on
+   (the case workspace's when a case is in context); everything else —
+   refusals, navigation, explanations that already are the paragraph — is
+   untouched, and OFF is exactly the compact answer it always was. */
 async function assistantCommand(request, env, user) {
   const body = await readJson(request);
+  const res = await assistantCommandCore(body, env, user);
+  const ctx = body.context && typeof body.context === 'object' ? body.context : {};
+  if (ctx.guide !== true) return res;
+  let d; try { d = await res.json(); } catch { return res; }
+  if (!d || d.kind !== 'status') return json(d);
+  const route = String(ctx.route || '').slice(0, 40);
+  const caseNo = CASE_NO_RE.test(String(ctx.case_no || '')) ? String(ctx.case_no) : '';
+  const key = caseNo ? 'case' : (ASSISTANT_EXPLAIN[route] ? route : null);
+  if (key) d.guide_intro = ASSISTANT_EXPLAIN[key];
+  return json(d);
+}
+
+async function assistantCommandCore(body, env, user) {
   const text = String(body.text || '').slice(0, 500);
   const ctx = body.context && typeof body.context === 'object' ? body.context : {};
   const route = String(ctx.route || '').slice(0, 40);

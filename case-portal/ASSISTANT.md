@@ -253,6 +253,19 @@ which now names what CAN be rehearsed. The page workbench holds its state
 in `ASST.prep` under the EDIT_DRAFT rule, so no repaint can eat what was
 typed — the exact bug Unit 1's suite caught in `asstOpen`.
 
+## Found gap (2026-09-02, overnight audit): the guide toggle was inert
+
+**`Explain & Guide Me` drew, stored its tick, sent `context.guide` on every
+command — and NO Worker branch read it.** The §11 behavior it promises
+(answers lead with one plain-language paragraph about the record on screen)
+did not exist; the toggle changed nothing. The exact defect class this
+project keeps on file — the inert profile-contact select, the invisible
+quick tool: a control that renders is not a control that works. Found by
+grepping the Assistant block for `guide` (zero occurrences) after Units 1–3
+had already deployed in #261. Fix ships as its own unit with both suites
+extended to assert the ON/OFF difference — a test for only "the toggle
+exists" is exactly how this shipped.
+
 ## Unit ledger (update as units move)
 
 | Unit | Scope | State |

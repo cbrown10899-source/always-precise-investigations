@@ -17566,6 +17566,27 @@ section('API Assistant — Unit 5: rate-sheet preparation, preview, SIMULATE');
   ok('“email them the invoice” is still refused — reading money is not sending it',
      j.kind === 'refused' && j.code === 'assistant_beta');
 
+  /* ============ §11 — Explain & Guide Me actually guides ====================
+     The first build's toggle was INERT: the flag rode every command and no
+     branch read it. These assert the ON/OFF DIFFERENCE, because a test that
+     only checks the toggle exists is exactly how that shipped. */
+  j = await jsonOf(await cmd(admin, 'billing status',
+    { route: 'invoices', guide: true }));
+  ok('guide ON leads a status answer with the screen\'s own plain-language paragraph',
+     j.kind === 'status' && /paid is what a zero balance means/i.test(j.guide_intro || ''),
+     JSON.stringify(j).slice(0, 200));
+  j = await jsonOf(await cmd(admin, 'billing status', { route: 'invoices' }));
+  ok('guide OFF is the compact answer — no paragraph', j.guide_intro === undefined);
+  j = await jsonOf(await cmd(admin, 'What should I do?',
+    { route: 'case', case_no: 'API-U6-BILL', guide: true }));
+  ok('on a case, the guide paragraph is the case workspace\'s',
+     /case workspace/i.test(j.guide_intro || '') && /RECOMMENDED NEXT STEP/.test(j.text));
+  j = await jsonOf(await cmd(admin, 'Delete this case', { route: 'case', case_no: 'API-U6-BILL', guide: true }));
+  ok('a refusal is never decorated — the block speaks alone',
+     j.kind === 'refused' && j.guide_intro === undefined);
+  j = await jsonOf(await cmd(admin, 'Take me to billing', { guide: true }));
+  ok('navigation is never decorated either', j.kind === 'navigate' && j.guide_intro === undefined);
+
   globalThis.fetch = realFetch;
 }
 
