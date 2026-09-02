@@ -13567,18 +13567,13 @@ async function assistantPrepareIntake(request, env) {
     body_text: text });
 }
 
-/* POST /assistant/simulate-intake — the rehearsal recorded. The ONE write in
-   the Assistant block, into its own table. The write is honest about itself:
-   a missing table degrades to logged:false with the named reason — the
-   integrity-record rule, because a success that hides an unrecorded rehearsal
-   and a 500 that eats the answer are both lies — and a present table that
-   refuses the row answers the same way. */
-async function assistantSimulateIntake(request, env, user) {
-  const plan = await assistantIntakePlan(env, await readJson(request));
-  if (plan.fail) return plan.fail;
-  const subject = `${plan.intake.label} — Always Precise Investigations`;
-  const base = { ok: true, outcome: ASSISTANT_SIM_OUTCOME, to: plan.to,
-    case_no: plan.caseNo, send_context: plan.context, intake: plan.intake.label };
+/* THE ONE LOG WRITER (Unit 5 extracted it from the intake simulate so a
+   second rehearsal kind could not become a second INSERT — the source pin
+   counts one, and one it stays). Honest about itself: a missing table
+   degrades to logged:false with the named reason — the integrity-record
+   rule, because a success that hides an unrecorded rehearsal and a 500 that
+   eats the answer are both lies — and a refused row answers the same way. */
+async function assistantLogged(env, user, action, base, detail) {
   if ((await missingTables(env)).includes('assistant_log')) {
     return json({ ...base, logged: false, reason: 'not_set_up',
       note: 'Run the portal-setup workflow to add the Assistant log table; until then rehearsals are not recorded.' });
@@ -13587,20 +13582,242 @@ async function assistantSimulateIntake(request, env, user) {
     await env.DB.prepare(
       `INSERT INTO assistant_log (action, outcome, case_no, recipient, detail, done_by, done_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`)
-      .bind('intake_send', ASSISTANT_SIM_OUTCOME, plan.caseNo, plan.to,
-            JSON.stringify({ context: plan.context, door: plan.intake.url, subject }),
-            user ? user.id : null, nowIso()).run();
+      .bind(action, ASSISTANT_SIM_OUTCOME, base.case_no || null, base.to,
+            JSON.stringify(detail), user ? user.id : null, nowIso()).run();
   } catch {
     return json({ ...base, logged: false, reason: 'log_write_failed' });
   }
   return json({ ...base, logged: true });
 }
 
+/* POST /assistant/simulate-intake — the rehearsal recorded. */
+async function assistantSimulateIntake(request, env, user) {
+  const plan = await assistantIntakePlan(env, await readJson(request));
+  if (plan.fail) return plan.fail;
+  const subject = `${plan.intake.label} — Always Precise Investigations`;
+  return assistantLogged(env, user, 'intake_send',
+    { ok: true, outcome: ASSISTANT_SIM_OUTCOME, to: plan.to,
+      case_no: plan.caseNo, send_context: plan.context, intake: plan.intake.label },
+    { context: plan.context, door: plan.intake.url, subject });
+}
+
+/* ---------------- UNIT 5 — rate-sheet preparation, preview, SIMULATE ------
+
+   The intake rehearsal's shape applied to the sheet sender: this resolver
+   MIRRORS the real route's resolution step for step — the context rules, the
+   case pairing, the legal service and its fee, the payment-method boundary —
+   and contains no way to send. It is deliberately a pinned mirror rather
+   than surgery on the real sender: the suite holds the two together the
+   strong way, same inputs through both producing the SAME subject and body
+   byte for byte and the same refusals by code, so a divergence fails loudly
+   instead of drifting. If a THIRD consumer of this resolution ever appears,
+   extract the shared resolver then — the third-reader lesson. */
+async function assistantSheetPlan(env, body) {
+  const id = String(body.id || body.sheet || '').trim();
+  if (!sheetById(id)) return { fail: json({ error: 'no such rate sheet' }, 404) };
+  const to = String(body.to || '').trim();
+  if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(to) || to.length > 200) {
+    return { fail: json({ error: 'Enter a valid email address.' }, 400) };
+  }
+  const note = String(body.note || '')
+    .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').slice(0, 500);
+  const caseNo = String(body.case_no || '').replace(/[^\x20-\x7e]/g, '').slice(0, 64);
+
+  let linkedCase = null, caseSub = null;
+  let sendCtx = contextForSheet(id);
+  const askedCtx = String(body.send_context || '').trim().toLowerCase();
+  if (askedCtx) {
+    if (!Object.values(SEND_CONTEXT).includes(askedCtx) || !sheetAllowsContext(id, askedCtx)) {
+      return { fail: json({ error: `That rate sheet cannot be sent as a ${askedCtx || 'blank'} `
+        + 'assignment. Private and Legal share the retainer sheet; the carrier sheet is '
+        + 'insurance only.', code: 'context_not_allowed' }, 400) };
+    }
+    sendCtx = askedCtx;
+  }
+  const includePayment = body.include_payment === true || body.include_payment === 1
+    || body.include_payment === '1';
+  if (caseNo) {
+    const lead = await env.DB.prepare('SELECT kind, payload FROM submissions WHERE case_no = ?')
+      .bind(caseNo).first();
+    if (lead) {
+      const refusal = await caseSendRefusal(env, caseNo);
+      if (refusal) return { fail: refusal };
+      linkedCase = caseNo;
+      caseSub = lead;
+      sendCtx = contextForSub(lead) || sendCtx;
+      const wanted = CONTEXT_SHEET[sendCtx];
+      if (wanted && id !== wanted) {
+        return { fail: json({ error: sendCtx === SEND_CONTEXT.INSURANCE
+          ? `${caseNo} is a claim assignment — send it the Insurance Assignment Rates, never the consumer sheet.`
+          : `${caseNo} is a private client — send it the Private Client Retainer, never the carrier sheet.`,
+          expected_sheet: wanted }, 400) };
+      }
+    }
+  }
+  const askedSvc = String(body.legal_service || '').trim().toLowerCase();
+  let legalSvc = null;
+  if (askedSvc) {
+    if (sendCtx !== SEND_CONTEXT.LEGAL) {
+      return { fail: json({ error: `Legal services describe legal sends, and this send is ${sendCtx}. `
+        + 'Leave the legal service out, or send from the Legal card.',
+        code: 'legal_service_not_legal' }, 400) };
+    }
+    legalSvc = legalServiceById(askedSvc);
+    if (!legalSvc) {
+      return { fail: json({ error: 'No such legal service. The services are: '
+        + Object.values(LEGAL_SERVICES).map(s => `${s.id} — ${s.label}`).join('; ') + '.',
+        code: 'unknown_legal_service' }, 400) };
+    }
+  } else if (sendCtx === SEND_CONTEXT.LEGAL) {
+    legalSvc = legalServiceForSub(caseSub);
+  }
+  let flatFee = null;
+  if (body.flat_fee !== undefined && body.flat_fee !== null && String(body.flat_fee).trim() !== '') {
+    if (!legalSvc || legalSvc.model !== 'fixed') {
+      return { fail: json({ error: 'A flat fee describes a fixed-price legal service — this send is not '
+        + 'one. Pick Person Locate / Skip Trace or Process Service, or leave the fee out.',
+        code: 'flat_fee_not_fixed' }, 400) };
+    }
+    const n = Number(String(body.flat_fee).replace(/[$,\s]/g, ''));
+    if (!(Number.isFinite(n) && n > 0 && n <= 1000000)) {
+      return { fail: json({ error: 'Enter the flat fee as a dollar amount above zero.',
+        code: 'bad_flat_fee' }, 400) };
+    }
+    flatFee = Math.round(n * 100) / 100;
+  }
+  if (legalSvc && legalSvc.model === 'fixed' && flatFee == null) {
+    const stored = linkedCase ? await env.DB.prepare(
+      'SELECT retainer_amount FROM case_retainer WHERE case_no = ?').bind(linkedCase).first() : null;
+    flatFee = stored && stored.retainer_amount != null
+      ? Number(stored.retainer_amount)
+      : await legalFlatDefault(env, legalSvc.id);
+  }
+  const rawMethods = Array.isArray(body.methods) ? body.methods.map(x => String(x)) : null;
+  const billcom = await billcomState(env);
+  const npAllowed = billcom.ready ? ['mail_check', 'bill_com'] : ['mail_check'];
+  const npPicked = includePayment && !CONTEXT_TAKES_PAYMENT(sendCtx)
+    && rawMethods !== null && rawMethods.length > 0
+    && rawMethods.every(m => npAllowed.includes(m))
+    ? [...new Set(rawMethods)] : [];
+  if (includePayment && !CONTEXT_TAKES_PAYMENT(sendCtx) && !npPicked.length) {
+    if ((rawMethods || []).includes('bill_com') && !billcom.ready
+        && (rawMethods || []).every(m => m === 'bill_com' || m === 'mail_check')) {
+      return { fail: json({ error: 'Bill.com is not configured yet — it needs the enable word and the '
+        + 'https payment link in Settings → Invoice defaults before it can be offered. '
+        + 'Mail Check is available now.', code: 'billcom_not_configured' }, 400) };
+    }
+    const who = linkedCase ? `${linkedCase} is a ${sendCtx} assignment` : `This is a ${sendCtx} assignment`;
+    return { fail: json({ error: `${who} — Cash App and Venmo are private-client methods and cannot be `
+      + `included. The payment options here are Mail Check${billcom.ready ? ' and Bill.com' : ''}.`,
+      code: 'legal_no_payment_block' }, 400) };
+  }
+  if (includePayment && CONTEXT_TAKES_PAYMENT(sendCtx)
+      && (rawMethods || []).some(m => m === 'mail_check' || m === 'bill_com')) {
+    return { fail: json({ error: 'Mail Check and Bill.com ride legal and insurance sends. A private '
+      + 'client keeps the Cash App and Venmo options.', code: 'mail_check_not_private' }, 400) };
+  }
+  /* No rate-limit spend here: nothing is about to be sent. */
+  const retainer = await retainerForSend(env, caseNo, body.retainer_amount);
+  const sheet = legalSvc && legalSvc.model === 'fixed'
+    ? legalFixedSheet(legalSvc, flatFee)
+    : sheetForContext(id, sendCtx, retainer);
+  const includeIntake = body.include_intake === true || body.include_intake === 1 || body.include_intake === '1';
+  const baseDoor = includeIntake ? (intakeForContext(sendCtx) || null) : null;
+  const intakeDoor = baseDoor && legalSvc
+    ? { ...baseDoor, url: `${baseDoor.url}&service=${legalSvc.id}` }
+    : baseDoor;
+  if (includePayment && !npPicked.length && !sheetTakesPayment(sheet.id)) {
+    return { fail: json({ error: 'Payment options are private-client only and cannot be sent with the '
+                       + 'Insurance Assignment Rates.' }, 400) };
+  }
+  const wantedMethods = Array.isArray(body.methods)
+    ? body.methods.map(x => String(x)).filter(x => PAY_IDS.includes(x)) : null;
+  const brokenMethods = [];
+  const payment = (includePayment && !npPicked.length)
+    ? await paymentOptionsFor(env, wantedMethods, brokenMethods, contextForSheet(sheet.id)) : [];
+  if (includePayment && !npPicked.length && brokenMethods.length) {
+    const names = brokenMethods.map(m => m.display_name || m.label).join(' and ');
+    return { fail: json({ error: `${names} is switched on but has no payment link, so it cannot be `
+                       + `offered — every payment option a client sees has to be tappable. `
+                       + `Add a link in Settings, or switch it off.`,
+                  needs_link: brokenMethods.map(m => m.id) }, 400) };
+  }
+  if (includePayment && !npPicked.length && !payment.length) {
+    return { fail: json({ error: wantedMethods && !wantedMethods.length
+      ? 'Choose at least one payment method, or untick payment instructions.'
+      : 'No payment method is enabled and configured. Set one up in Settings '
+        + 'before including payment instructions.' }, 400) };
+  }
+  const { text } = sheetEmail(withBillcomLine(sheet,
+    billcom.ready && !CONTEXT_TAKES_PAYMENT(sendCtx)), note, intakeDoor, payment, retainer, npPicked);
+  const subject = caseNo
+    ? `${sheet.name} — Always Precise Investigations (case ${caseNo})`
+    : `${sheet.name} — Always Precise Investigations`;
+  return { to, subject, text, sendCtx, legalSvc, flatFee, sheet, intakeDoor,
+           payment, npPicked, linkedCase, caseNo };
+}
+
+/* POST /assistant/prepare-sheet — what WOULD go, priced by the real
+   resolvers, and the response shaped like the real sender's own answer. */
+async function assistantPrepareSheet(request, env) {
+  const plan = await assistantSheetPlan(env, await readJson(request));
+  if (plan.fail) return plan.fail;
+  return json({ ok: true, dry_run: true, to: plan.to, case_no: plan.linkedCase,
+    send_context: plan.sendCtx, sheet: plan.sheet.id, sheet_name: plan.sheet.name,
+    legal_service: plan.legalSvc
+      ? { id: plan.legalSvc.id, label: plan.legalSvc.label, model: plan.legalSvc.model } : undefined,
+    flat_fee: plan.legalSvc && plan.legalSvc.model === 'fixed' ? plan.flatFee : undefined,
+    included: {
+      rate_sheet: plan.sheet.name,
+      intake: plan.intakeDoor ? plan.intakeDoor.label : null,
+      payment_methods: plan.npPicked.length
+        ? plan.npPicked.map(m => ({ id: m, label: m === 'bill_com' ? BILLCOM_LINE.label : MAIL_CHECK_LINE.label }))
+        : plan.payment.map(x => ({ id: x.id, label: x.label })),
+    },
+    subject: plan.subject, body_text: plan.text });
+}
+
+/* POST /assistant/simulate-sheet — the sheet rehearsal recorded, through the
+   one log writer. */
+async function assistantSimulateSheet(request, env, user) {
+  const plan = await assistantSheetPlan(env, await readJson(request));
+  if (plan.fail) return plan.fail;
+  return assistantLogged(env, user, 'sheet_send',
+    { ok: true, outcome: ASSISTANT_SIM_OUTCOME, to: plan.to,
+      case_no: plan.linkedCase, send_context: plan.sendCtx,
+      sheet: plan.sheet.id, sheet_name: plan.sheet.name },
+    { context: plan.sendCtx, sheet_id: plan.sheet.id, subject: plan.subject,
+      door: plan.intakeDoor ? plan.intakeDoor.url : null,
+      methods: plan.npPicked.length ? plan.npPicked : plan.payment.map(x => x.id) });
+}
+
 /* POST /assistant/command — the deterministic Beta grammar. Every branch
    composes from live reads or the registry; the fallback says plainly what
-   Beta understands rather than pretending. */
+   Beta understands rather than pretending.
+
+   §11 — EXPLAIN & GUIDE ME lives HERE, in the wrapper, because the first
+   build's toggle was INERT: the page sent `context.guide` on every command
+   and no branch read it — a control that renders is not a control that
+   works, the profile-contact-select defect again. Guide ON leads a STATUS
+   answer with the plain-language paragraph for the screen the person is on
+   (the case workspace's when a case is in context); everything else —
+   refusals, navigation, explanations that already are the paragraph — is
+   untouched, and OFF is exactly the compact answer it always was. */
 async function assistantCommand(request, env, user) {
   const body = await readJson(request);
+  const res = await assistantCommandCore(body, env, user);
+  const ctx = body.context && typeof body.context === 'object' ? body.context : {};
+  if (ctx.guide !== true) return res;
+  let d; try { d = await res.json(); } catch { return res; }
+  if (!d || d.kind !== 'status') return json(d);
+  const route = String(ctx.route || '').slice(0, 40);
+  const caseNo = CASE_NO_RE.test(String(ctx.case_no || '')) ? String(ctx.case_no) : '';
+  const key = caseNo ? 'case' : (ASSISTANT_EXPLAIN[route] ? route : null);
+  if (key) d.guide_intro = ASSISTANT_EXPLAIN[key];
+  return json(d);
+}
+
+async function assistantCommandCore(body, env, user) {
   const text = String(body.text || '').slice(0, 500);
   const ctx = body.context && typeof body.context === 'object' ? body.context : {};
   const route = String(ctx.route || '').slice(0, 40);
@@ -13628,6 +13845,26 @@ async function assistantCommand(request, env, user) {
       form: { kind: kindGuess, to: mail || '', name: '', case_no: caseNo || '' } });
   }
 
+  /* ---- UNIT 5: the same carve-out for RATE SHEETS — pick the audience,
+     preview the priced document, SIMULATE. Ordered after the intake one, so
+     a sentence naming both is taken as the intake. */
+  if (/rate sheet|ratesheet|pricing sheet|rate card/i.test(text)
+      && /\b(prepare|send|email|simulate|draft|rehears|dry.?run)\b/i.test(text)
+      && !/\bdelete\b|\barchiv/i.test(text)) {
+    if (user.role !== 'admin') {
+      return json({ ok: true, kind: 'status',
+        text: 'Sending rate sheets is an admin desk — this action requires Admin permission.' });
+    }
+    const mail = (text.match(/[^@\s]+@[^@\s.]+\.[^@\s]+/) || [null])[0];
+    const ctxGuess = /insuran|carrier|claim/i.test(text) ? 'insurance'
+      : /legal|law firm|attorney|\bfirm\b/i.test(text) ? 'legal'
+      : /private|consumer/i.test(text) ? 'private' : '';
+    return json({ ok: true, kind: 'prepare_sheet',
+      text: 'Dry run: pick the audience, preview the exact sheet email, then SIMULATE — '
+          + `recorded as ${ASSISTANT_SIM_OUTCOME}, and nothing is sent.`,
+      form: { context: ctxGuess, to: mail || '', case_no: caseNo || '' } });
+  }
+
   /* ---- Beta enforcement FIRST: a consequential verb is refused before any
      intent could act on it, whatever else the sentence says. Pure questions
      ("why can't I delete this?") are let through to the explainers below. */
@@ -13638,8 +13875,8 @@ async function assistantCommand(request, env, user) {
         return json({ ok: true, kind: 'refused', code: 'assistant_beta',
           text: `Beta dry-run: ${what} is disabled for the Assistant — nothing was done, `
               + `and no message left the building. The ordinary portal controls still work; `
-              + `for intake links I can rehearse the send ("prepare an intake"), and rate-sheet `
-              + `and invoice preparation arrive in later Assistant units.` });
+              + `I can rehearse intake links ("prepare an intake") and rate sheets ("prepare `
+              + `a rate sheet"), and invoice preparation arrives in a later Assistant unit.` });
       }
     }
   }
@@ -13688,6 +13925,41 @@ async function assistantCommand(request, env, user) {
         text: `Opening ${dest.label}.` });
     }
     /* Not a destination — fall through to search, "open Vanessa's case". */
+  }
+
+  /* ---- UNIT 6 (the read half): billing answered from the SAME money reads
+     the Billing screen uses — listInvoices' own composition, drafts excluded
+     from outstanding exactly as everywhere. Placed AFTER navigation so
+     "take me to billing" still navigates. The preparation/simulation half is
+     deliberately deferred: the portal has no invoice-send route to rehearse,
+     and creating a draft invoice is a real write this block structurally
+     cannot make — the owner's call, named in ASSISTANT.md. */
+  if (/what.{0,30}(outstanding|owed|balance)|\b(billing|invoice) status\b|\b(outstanding|unpaid) invoices?\b|what (do|does) .{0,40}owe/i.test(text)) {
+    if (user.role !== 'admin') {
+      return json({ ok: true, kind: 'status', text: 'Billing is an admin desk.' });
+    }
+    const ires = await listInvoices(new Request('http://assistant.internal/invoices'), env);
+    const data = await ires.json();
+    const fmt = n => '$' + (Math.round(Number(n || 0) * 100) / 100)
+      .toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (caseNo) {
+      const mine = (data.invoices || []).filter(i => i.case_no === caseNo && i.status !== 'void');
+      if (!mine.length) {
+        return json({ ok: true, kind: 'status', text: `${caseNo} has no live invoices.`,
+          actions: [{ label: 'Open Billing', navigate: { kind: 'tab', id: 'invoices' } }] });
+      }
+      const due = mine.filter(i => i.status !== 'draft')
+        .reduce((t, i) => t + Math.max(0, Number(i.balance_due) || 0), 0);
+      return json({ ok: true, kind: 'status',
+        text: `${caseNo} carries ${mine.length} live invoice${mine.length === 1 ? '' : 's'} — ${fmt(due)} outstanding. Drafts never count toward what is owed.`,
+        card: mine.slice(0, 6).map(i => ({ title: `${i.invoice_no} — ${i.display_status}`, case_no: caseNo,
+          line: `Total ${fmt(i.total)} · paid ${fmt(i.amount_paid)} · balance ${fmt(i.balance_due)}` })),
+        actions: [{ label: 'Open Billing', navigate: { kind: 'tab', id: 'invoices' } }] });
+    }
+    const s = data.summary || {};
+    return json({ ok: true, kind: 'status',
+      text: `Outstanding across live invoices: ${fmt(s.outstanding)} — ${s.overdue || 0} overdue, ${s.due_soon || 0} due within 14 days.`,
+      actions: [{ label: 'Open Billing', navigate: { kind: 'tab', id: 'invoices' } }] });
   }
 
   /* ---- live status: anything new / new intakes ---- */
@@ -13786,8 +14058,9 @@ async function assistantCommand(request, env, user) {
   const provider = assistantProvider(env);
   return json({ ok: true, kind: 'help',
     text: 'Beta understands set phrases so far: "Where am I?", "Explain this page", '
-        + '"Take me to <a portal section>", "Anything new?", "What should I do?", and '
-        + '"Find <a name or case number>". '
+        + '"Take me to <a portal section>", "Anything new?", "What should I do?", '
+        + '"What is outstanding?", "Find <a name or case number>", "Prepare an intake" '
+        + 'and "Prepare a rate sheet". '
         + (provider.ready ? 'Freer phrasing arrives in a later unit.'
            : 'The AI provider is not connected, so freer phrasing is not available yet — '
            + 'nothing here guesses.') });
@@ -14199,6 +14472,15 @@ async function route(request, env) {
   if (p === '/assistant/simulate-intake' && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return assistantSimulateIntake(request, env, user);
+  }
+  /* Unit 5 — admin-only like `/sheets/:id/email`, the door this rehearses. */
+  if (p === '/assistant/prepare-sheet' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return assistantPrepareSheet(request, env);
+  }
+  if (p === '/assistant/simulate-sheet' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return assistantSimulateSheet(request, env, user);
   }
 
   if (p === '/tasks' && method === 'GET') return taskBoard(env, user);

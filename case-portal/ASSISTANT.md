@@ -207,6 +207,42 @@ store, and the literals `send_log` / `payment_send` / `stampLead` /
 `logSend` appear nowhere in the block, comments included. A second write
 anywhere in the block fails the suite by count.
 
+**A11 — Unit 5's sheet rehearsal is a PINNED MIRROR, not surgery on the real
+sender.** `assistantSheetPlan` restates `emailSheet`'s resolution step for
+step — context rules, case pairing, legal service and fee, the payment-method
+boundary — reusing the same named helpers (`sheetForContext`,
+`legalFixedSheet`, `retainerForSend`, `paymentOptionsFor`, `withBillcomLine`,
+`sheetEmail`) and containing no way to send. Extracting a shared resolver
+out of `emailSheet` was considered and deliberately not done: that function
+is the most safety-critical send path in the Worker, and the suite holds the
+two together more strongly than code-sharing claims would — the SAME inputs
+through both must produce the SAME subject and body byte for byte, and the
+SAME refusals by code (asserted across the private/fixed/insurance/case
+shapes and six refusal mirrors). A divergence fails loudly instead of
+drifting. If a THIRD consumer of this resolution ever appears, extract then
+— the third-reader lesson. The workbench's non-private payment tick means
+Mail Check only; the full method set stays the send wizard's. The one log
+writer (`assistantLogged`) keeps the block at exactly one INSERT, and the
+`intakeForContext` single-reader count is 5, each named.
+
+**A12 — Unit 6 is HALF built, and the missing half is an owner decision, not
+a gap.** The READ half ships: "What is outstanding?" / "billing status" (with
+a case in context) answer from `listInvoices`' own composition — the same
+money the Billing screen draws, drafts excluded from outstanding exactly as
+the locked invoices rule says, admin-only, navigation to Billing offered.
+The PREPARATION + SIMULATION half is deferred because there is nothing
+honest for it to rehearse: **the portal has no invoice-send route** —
+`sent_to_client` is a status the office sets after sending by its own means,
+and no code path emails an invoice — and *creating* a draft invoice is a
+REAL write into `invoices`, which the Beta block structurally cannot make
+(the one-INSERT source pin is the enforcement the owner asked for). Giving
+the Assistant a second write table is exactly the kind of widening §37 says
+to stop and ask about. **Owner question on the record:** should invoice
+"preparation" (a) create a real draft through the existing `createInvoice`
+writer under an explicit owner-approved widening of the Beta pin, (b) wait
+for Live Mode, or (c) be a pure preview of a would-be invoice with no
+record? Until answered, the Assistant reads money and never touches it.
+
 **A10 — the grammar carve-out opens a workbench, never a send.** An
 utterance about sending/preparing an INTAKE resolves to `kind:
 'prepare_intake'` with a prefilled form seed (email lifted from the
@@ -217,6 +253,23 @@ which now names what CAN be rehearsed. The page workbench holds its state
 in `ASST.prep` under the EDIT_DRAFT rule, so no repaint can eat what was
 typed — the exact bug Unit 1's suite caught in `asstOpen`.
 
+## Found gap (2026-09-02, overnight audit): the guide toggle was inert
+
+**`Explain & Guide Me` drew, stored its tick, sent `context.guide` on every
+command — and NO Worker branch read it.** The §11 behavior it promises
+(answers lead with one plain-language paragraph about the record on screen)
+did not exist; the toggle changed nothing. The exact defect class this
+project keeps on file — the inert profile-contact select, the invisible
+quick tool: a control that renders is not a control that works. Found by
+grepping the Assistant block for `guide` (zero occurrences) after Units 1–3
+had already deployed in #261. **FIXED in the same overnight window**: guide
+ON now leads a STATUS answer with the screen's own plain-language paragraph
+(`guide_intro`, decorated in a wrapper over the grammar core — the case
+workspace's paragraph when a case is in context); refusals, navigation and
+the explain answers are untouched, OFF stays compact. Both suites assert the
+ON/OFF DIFFERENCE — a test for only "the toggle exists" is exactly how the
+gap shipped.
+
 ## Unit ledger (update as units move)
 
 | Unit | Scope | State |
@@ -224,9 +277,9 @@ typed — the exact bug Unit 1's suite caught in `asstOpen`.
 | 1 | Shell: sidebar item, case-level door, mobile pill+sheet, dock panel, Beta banner, server-side gate + tool registry + provider adapter (not ready) | ✅ **DEPLOYED** — #261 `b379990`, both workflows `success` on `b3799902` |
 | 2 | Navigation: registry, "take me to…", current-page context, "Where am I?", "Explain this page" | ✅ **DEPLOYED** — #261, deterministic grammar, registry ids only |
 | 3 | Live status: "anything new?", "what needs attention?", "what should I do?", find client/case/intake with disambiguation | ✅ **DEPLOYED** — #261, live reads through the existing role-scoped functions |
-| 4 | Intake preparation + preview + SIMULATE + `assistant_log` (schema: one additive table → portal-setup dispatch) | **BUILT** — see A6–A10 below |
-| 5 | Rate-sheet preparation + preview + simulation (pricing via the real resolvers) | NOT STARTED |
-| 6 | Invoice/billing read + preparation + simulation | NOT STARTED |
+| 4 | Intake preparation + preview + SIMULATE + `assistant_log` (schema: one additive table → portal-setup dispatch) | ✅ **DEPLOYED** — #262 `85806e6`; site + Worker + **portal-setup all `success` on `85806e68`** (08:39Z), so `assistant_log` is live. A6–A10 below |
+| 5 | Rate-sheet preparation + preview + simulation (pricing via the real resolvers) | **BUILT** — A11; byte-pins hold the mirror to the real sender; no schema change |
+| 6 | Invoice/billing read + preparation + simulation | **READ HALF BUILT** (A12) — live billing answers from `listInvoices`, drafts excluded from outstanding; preparation/simulation DEFERRED pending the owner's answer in A12 (no invoice-send route exists to rehearse; creating drafts would widen the Beta write pin) |
 | 7 | Case health / summaries / report drafting from recorded facts | NOT STARTED |
 | 8 | Watch mode (internal read-only monitoring) | NOT STARTED |
 | 9 | Visual QA / workflow advisor | NOT STARTED |
