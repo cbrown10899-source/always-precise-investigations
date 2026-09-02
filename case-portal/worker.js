@@ -13296,6 +13296,339 @@ async function missingTables(env) {
   }
 }
 
+/* ================== API ASSISTANT — BETA / DRY RUN (ASSISTANT.md) =========
+
+   An INTERNAL operations copilot behind the existing sign-in, Units 1–3:
+   shell + enforcement, navigation, live status. Owner master spec 2026-09-02.
+
+   THE WHOLE SAFETY MODEL, in one place:
+
+   - BETA IS PERMANENT IN V1. There is no Live Mode switch anywhere in this
+     code, and the Assistant can never create one: no /assistant route writes
+     the settings store, sends mail, or touches money, status, deletion or
+     archival. A source test counts the calls, the intake-delete pattern.
+   - Every tool runs as the SIGNED-IN USER through the same functions the
+     ordinary routes use, so the role boundary is the SQL it always was. The
+     Assistant grants nothing: an investigator's Assistant is an investigator.
+   - CONSEQUENTIAL VERBS ARE REFUSED BY NAME, server-side, before any tool
+     runs — conversational wording cannot bypass a classifier that runs on
+     the server and matches the act, not the phrasing.
+   - No AI provider is required or contacted. `assistantProvider` answers
+     not_configured until BOTH env vars exist (the billcomConfig shape), and
+     nothing else reads the key. Model text never becomes a route: navigation
+     answers are REGISTRY IDS the page resolves against its own handlers. */
+
+const assistantProvider = env => {
+  const provider = String(env.ASSISTANT_PROVIDER || '').trim().toLowerCase();
+  const key = String(env.ASSISTANT_API_KEY || '').trim();
+  return { provider: provider || null, ready: !!(provider && key),
+           reason: provider && key ? null : 'not_configured' };
+};
+
+/* The navigation registry — the TAB map `shell()` already routes, plus the
+   action doors and the case door. `roles` decides what each account is even
+   TOLD exists; aliases are matched lower-cased with filler words stripped. */
+const ASSISTANT_NAV = [
+  { id: 'dashboard', kind: 'tab', label: 'Dashboard', roles: ['admin'],
+    aliases: ['dashboard', 'home', 'main screen'] },
+  { id: 'search', kind: 'tab', label: 'Search', roles: ['admin', 'investigator'],
+    aliases: ['search'] },
+  { id: 'cases', kind: 'tab', label: 'Cases', roles: ['admin', 'investigator'],
+    aliases: ['cases', 'case list', 'my assignments', 'assignments'] },
+  { id: 'tasks', kind: 'tab', label: 'Tasks', roles: ['admin', 'investigator'],
+    aliases: ['tasks', 'task board', 'follow ups'] },
+  { id: 'leads', kind: 'tab', label: 'Intakes', roles: ['admin'],
+    aliases: ['intakes', 'intake', 'leads', 'new intakes', 'leads and intakes'] },
+  { id: 'profiles', kind: 'tab', label: 'Clients & Firms', roles: ['admin'],
+    aliases: ['clients', 'firms', 'clients and firms', 'client directory', 'contacts directory'] },
+  { id: 'calendar', kind: 'tab', label: 'Calendar', roles: ['admin', 'investigator'],
+    aliases: ['calendar', 'schedule'] },
+  { id: 'filequeue', kind: 'tab', label: 'File queue', roles: ['admin', 'investigator'],
+    aliases: ['file queue', 'files', 'uploads'] },
+  { id: 'delivery', kind: 'tab', label: 'Reports & Packages', roles: ['admin'],
+    aliases: ['reports and packages', 'packages', 'delivery', 'reports'] },
+  { id: 'sheets', kind: 'tab', label: 'Rate Sheets', roles: ['admin'],
+    aliases: ['rate sheets', 'sheets', 'pricing sheets'] },
+  { id: 'invoices', kind: 'tab', label: 'Billing', roles: ['admin'],
+    aliases: ['billing', 'invoices', 'invoice section', 'unpaid invoices', 'balances'] },
+  { id: 'staff', kind: 'tab', label: 'Staff', roles: ['admin'],
+    aliases: ['staff', 'team', 'investigators'] },
+  { id: 'audit', kind: 'tab', label: 'Audit trail', roles: ['admin'],
+    aliases: ['audit', 'audit trail', 'history log'] },
+  { id: 'settings', kind: 'tab', label: 'Settings', roles: ['admin'],
+    aliases: ['settings', 'configuration'] },
+  { id: 'today', kind: 'tab', label: 'Today', roles: ['investigator'],
+    aliases: ['today', 'my day'] },
+  { id: 'myreports', kind: 'tab', label: 'Reports', roles: ['investigator'],
+    aliases: ['my reports', 'reports'] },
+  { id: 'myexpenses', kind: 'tab', label: 'Expenses', roles: ['investigator'],
+    aliases: ['expenses', 'my expenses'] },
+  { id: 'surveillance', kind: 'action', label: 'Active Surveillance', roles: ['admin', 'investigator'],
+    aliases: ['active surveillance', 'surveillance mode', 'field view', 'field mode'] },
+  { id: 'vst', kind: 'action', label: 'Timestamp Video', roles: ['admin', 'investigator'],
+    aliases: ['timestamp video', 'video timestamp', 'video tool'] },
+  { id: 'pst', kind: 'action', label: 'Timestamp Photo', roles: ['admin', 'investigator'],
+    aliases: ['timestamp photo', 'photo timestamp', 'photo tool'] },
+  { id: 'newlead', kind: 'tab', label: 'Intake a Client', roles: ['admin'],
+    aliases: ['intake a client', 'new lead', 'quick intake', 'manual intake'] },
+];
+const assistantNavFor = role =>
+  ASSISTANT_NAV.filter(n => n.roles.includes(role)).map(({ id, kind, label }) => ({ id, kind, label }));
+
+/* What each destination IS, for "where am I?" / "explain this page" — written
+   from the portal's own rules, one short honest paragraph each. The `case`
+   entry covers the case workspace, which is not a TAB. */
+const ASSISTANT_EXPLAIN = {
+  dashboard: 'The Dashboard answers "what needs my attention today": the alert cards up top are clickable filters, the outstanding balance and case packages sit below, and every number is the Worker\'s own — a zero is a real answer, not decoration.',
+  search: 'Search finds cases, claim and matter numbers, clients, carriers, subjects, vehicles, firms and staff by the records the portal already holds. What you can find is decided server-side by your role.',
+  cases: 'The case list, with lenses for Active, Completed, Archived and Deleted. Opening a row opens the full case workspace.',
+  tasks: 'The task board buckets the same case tasks the case tabs write into Overdue, Today, Upcoming and Completed.',
+  leads: 'Leads & Intakes is the desk where new submissions land: review a fresh intake, send a rate sheet or intake link, record how the lead moved, or accept it into working state.',
+  profiles: 'Clients & Firms is the saved directory — law firms, insurance organizations and private clients — so a repeat assignment starts prefilled instead of retyped. A profile is a default; every case stays a snapshot.',
+  calendar: 'The calendar shows investigation days and dated case events for the month.',
+  filequeue: 'The file queue lists uploads needing review, per your role.',
+  delivery: 'Reports & Packages is the delivery desk: report status, package builds, and the completed-case artifacts.',
+  sheets: 'Rate Sheets is where the office emails pricing: the private retainer sheet, the insurance assignment rates, and the legal cards including the fixed-fee services. Sending is always a person\'s explicit act.',
+  invoices: 'Billing holds invoices, balances, payments and their documents. Money is arithmetic here — paid is what a zero balance means, never a stored flag.',
+  staff: 'Staff manages accounts and invitations. Accounts exist only by invitation.',
+  audit: 'The audit trail composes who/what/when from the records that already exist — status, invoices, packages, payments, closure, retention and report versions.',
+  settings: 'Settings holds notification recipients, billing defaults (including the check remittance address and the Process Service default fee), payment methods, Dropbox status, storage health and the developer tools.',
+  today: 'Today is your day at a glance: your assignments, your open day and what is due.',
+  myreports: 'Your reports: drafts, submissions and what the office returned.',
+  myexpenses: 'Your expenses: what you have recorded and its review state.',
+  newlead: 'Quick intake: the office types in what a phone call brought — Insurance, Private or Legal — and fills the rest in later.',
+  case: 'A case workspace: Overview answers "what now", with Activity, Daily Summary, Evidence, Report and Billing one tap away. Everything you do here lands on the same records the rest of the portal reads.',
+};
+
+/* The verbs Beta refuses BY NAME (owner: "conversational wording must never
+   bypass this restriction"). Matched against the utterance server-side; the
+   answer names the block and the manual door that still works. */
+const ASSISTANT_BLOCKED = [
+  [/\b(send|email|resend)\b/i, 'sending anything to a client'],
+  [/\brecord (a )?payment\b|\bmark .*paid\b/i, 'recording payments'],
+  [/\bdelete\b/i, 'deleting records'],
+  [/\barchiv/i, 'archiving'],
+  [/\bclose (the )?case\b|\bclose this\b/i, 'closing cases'],
+  [/\bassign\b/i, 'assigning investigators'],
+  [/\bapprove\b/i, 'approvals'],
+  [/\b(change|set|update) .*(price|fee|rate|retainer)\b/i, 'changing pricing'],
+];
+
+const asstStrip = s => String(s || '').toLowerCase()
+  .replace(/[?.!,]/g, ' ')
+  .replace(/\b(please|can you|could you|would you|the|my|our|a|an|to|me|us|section|page|screen|tab)\b/g, ' ')
+  .replace(/\s+/g, ' ').trim();
+
+function assistantNavMatch(text, role) {
+  const t = asstStrip(text);
+  if (!t) return null;
+  let best = null;
+  for (const n of ASSISTANT_NAV) {
+    if (!n.roles.includes(role)) continue;
+    for (const a of n.aliases) {
+      const al = asstStrip(a);
+      if (t === al || t.includes(al)) {
+        if (!best || al.length > best.len) best = { nav: n, len: al.length };
+      }
+    }
+  }
+  return best ? best.nav : null;
+}
+
+/* GET /assistant/state — what the panel needs to draw: the Beta facts, the
+   provider's honest state, and the navigation this ROLE may be offered. */
+async function assistantState(env, user) {
+  return json({
+    beta: true,
+    banner: 'ASSISTANT BETA — DRY RUN MODE. No external client messages or consequential actions will be sent.',
+    provider: assistantProvider(env),
+    role: user.role,
+    nav: assistantNavFor(user.role),
+  });
+}
+
+/* The live counts a status question reads — the same tables the dashboard
+   reads, bounded, hidden cases excluded, scoped per role. */
+async function assistantCounts(env, user) {
+  const missing = await missingTables(env);
+  const have = t => !missing.includes(t);
+  const hide = [
+    have('case_archive') ? 'AND s.case_no NOT IN (SELECT case_no FROM case_archive)' : '',
+    have('case_deleted') ? 'AND s.case_no NOT IN (SELECT case_no FROM case_deleted)' : '',
+  ].filter(Boolean).join(' ');
+  if (user.role === 'admin') {
+    const fresh = await env.DB.prepare(
+      `SELECT s.case_no, s.kind, s.client_name, s.carrier, s.created_at, s.payload
+         FROM submissions s
+        WHERE s.status = 'new' ${hide}
+          AND NOT EXISTS (SELECT 1 FROM lead_status l WHERE l.case_no = s.case_no
+                            AND l.status IN ('converted','declined','closed_lead'))
+        ORDER BY s.id DESC LIMIT 6`).all();
+    const open = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM submissions s WHERE s.status != 'closed' ${hide}`).first();
+    return { fresh: (fresh.results || []).map(r => {
+      let svc = null; try { svc = (legalServiceForSub(r) || {}).label || null; } catch { svc = null; }
+      return { case_no: r.case_no, kind: r.kind,
+               who: r.kind === 'claims' ? (r.carrier || r.client_name) : r.client_name,
+               legal_service: svc, created_at: r.created_at };
+    }), open: Number(open && open.n) || 0 };
+  }
+  const mine = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM submissions s WHERE s.assigned_to = ? AND s.status != 'closed' ${hide}`)
+    .bind(user.id).first();
+  return { fresh: [], open: Number(mine && mine.n) || 0 };
+}
+
+/* POST /assistant/command — the deterministic Beta grammar. Every branch
+   composes from live reads or the registry; the fallback says plainly what
+   Beta understands rather than pretending. */
+async function assistantCommand(request, env, user) {
+  const body = await readJson(request);
+  const text = String(body.text || '').slice(0, 500);
+  const ctx = body.context && typeof body.context === 'object' ? body.context : {};
+  const route = String(ctx.route || '').slice(0, 40);
+  const caseNo = CASE_NO_RE.test(String(ctx.case_no || '')) ? String(ctx.case_no) : '';
+  const t = ' ' + asstStrip(text) + ' ';
+
+  /* ---- Beta enforcement FIRST: a consequential verb is refused before any
+     intent could act on it, whatever else the sentence says. Pure questions
+     ("why can't I delete this?") are let through to the explainers below. */
+  const asking = /\bwhy\b|\bexplain\b|\bwhat\b|\bcan i\b/i.test(text);
+  if (!asking) {
+    for (const [re, what] of ASSISTANT_BLOCKED) {
+      if (re.test(text)) {
+        return json({ ok: true, kind: 'refused', code: 'assistant_beta',
+          text: `Beta dry-run: ${what} is disabled for the Assistant — nothing was done, `
+              + `and no message left the building. The ordinary portal controls still work; `
+              + `preparation and simulation arrive in a later Assistant unit.` });
+      }
+    }
+  }
+
+  /* ---- where am I / explain this page ---- */
+  if (/where am i|what is this (page|for)|what does this page do|what can i do here|explain this page|^ *explain page *$/i.test(text)) {
+    const key = caseNo ? 'case' : (ASSISTANT_EXPLAIN[route] ? route : null);
+    const nav = ASSISTANT_NAV.find(n => n.id === route);
+    const name = caseNo ? `the case workspace for ${caseNo}` : nav ? nav.label : 'this screen';
+    return json({ ok: true, kind: 'explain',
+      text: key ? `You are in ${name}. ${ASSISTANT_EXPLAIN[key]}`
+                : `You are in ${name}. I do not have a write-up for this screen yet — that is a gap in my notes, not a hidden feature.` });
+  }
+
+  /* ---- navigation: "take me to…", "open billing", "go to intakes" ---- */
+  const navPhrase = text.match(/(?:take me (?:to|back to)|go (?:to|back to)|open|show me|navigate to)\s+(.{2,60})/i);
+  if (navPhrase) {
+    const dest = assistantNavMatch(navPhrase[1], user.role);
+    if (dest) {
+      return json({ ok: true, kind: 'navigate', navigate: { kind: dest.kind, id: dest.id },
+        text: `Opening ${dest.label}.` });
+    }
+    /* Not a destination — fall through to search, "open Vanessa's case". */
+  }
+
+  /* ---- live status: anything new / new intakes ---- */
+  if (/anything new|what'?s new|any (new )?(intake|lead)|has any intake|intake forms? shown up|new legal intake/i.test(text)) {
+    if (user.role !== 'admin') {
+      return json({ ok: true, kind: 'status',
+        text: 'Intake review is an admin desk. Your own open assignments are under Cases.' });
+    }
+    const c = await assistantCounts(env, user);
+    if (!c.fresh.length) {
+      return json({ ok: true, kind: 'status',
+        text: 'No new intakes are currently waiting for review.',
+        actions: [{ label: 'Open Intakes', navigate: { kind: 'tab', id: 'leads' } }] });
+    }
+    const wantLegal = /legal/i.test(text);
+    const rows = c.fresh.filter(r => !wantLegal || r.legal_service || r.kind === 'consumer');
+    return json({ ok: true, kind: 'status',
+      text: `${c.fresh.length === 1 ? 'Yes — 1 new intake is' : `Yes — ${c.fresh.length} new intakes are`} waiting for review.`,
+      card: rows.map(r => ({ title: r.who || r.case_no, case_no: r.case_no,
+        line: [r.kind === 'claims' ? 'Insurance' : r.legal_service ? `Legal — ${r.legal_service}` : 'Private / Legal',
+               r.created_at ? r.created_at.slice(0, 10) : ''].filter(Boolean).join(' · ') })),
+      actions: [{ label: 'Open Intakes', navigate: { kind: 'tab', id: 'leads' } }] });
+  }
+
+  /* ---- what needs attention / what should I do ---- */
+  if (/what (needs|requires) (my )?attention|what should i do|morning briefing|needs attention/i.test(text)) {
+    if (caseNo) {
+      /* On a case: the same derivation the case page draws as NEXT STEP —
+         answered from the case's own record, one recommendation, not fifteen. */
+      const row = await caseFor(env, user, caseNo);
+      if (!row) return json({ ok: true, kind: 'status', text: `I cannot read ${caseNo} with your access.` });
+      const day = await env.DB.prepare(
+        `SELECT COUNT(*) AS n, SUM(CASE WHEN end_time IS NULL THEN 1 ELSE 0 END) AS open
+           FROM case_days WHERE case_no = ?`).bind(caseNo).first();
+      const rep = await env.DB.prepare(
+        `SELECT status FROM case_reports WHERE case_no = ? ORDER BY id DESC LIMIT 1`).bind(caseNo).first();
+      const next = Number(day && day.open) > 0 ? 'An investigation day is running — continue the activity log, and end the day when the field work is done.'
+        : !Number(day && day.n) ? 'No investigation day has run yet. Starting one is the next step.'
+        : !rep ? 'Field days exist with no report. Drafting the report is the next step.'
+        : rep.status === 'draft' ? 'The report is still a draft. Finishing and submitting it is the next step.'
+        : rep.status === 'submitted' ? 'The report is with the office for review.'
+        : 'Field work and reporting are in hand — billing and the client package are the remaining stations.';
+      return json({ ok: true, kind: 'status', text: `RECOMMENDED NEXT STEP — ${next}` });
+    }
+    if (user.role !== 'admin') {
+      const c = await assistantCounts(env, user);
+      return json({ ok: true, kind: 'status',
+        text: `You have ${c.open} open assignment${c.open === 1 ? '' : 's'}. Cases and Today show what each needs.`,
+        actions: [{ label: 'Open Cases', navigate: { kind: 'tab', id: 'cases' } }] });
+    }
+    const c = await assistantCounts(env, user);
+    const first = c.fresh[0];
+    return json({ ok: true, kind: 'status',
+      text: first
+        ? `RECOMMENDED NEXT STEP — review the newest intake: ${first.who || first.case_no} (${first.case_no}). ${c.fresh.length - 1 > 0 ? `${c.fresh.length - 1} more are waiting behind it. ` : ''}The dashboard's alert cards carry the rest.`
+        : `Nothing is waiting in intake review. The dashboard's alert cards are the live answer for the rest — reports due, authorization, money outstanding.`,
+      actions: [{ label: first ? 'Open Intakes' : 'Open Dashboard',
+                  navigate: { kind: 'tab', id: first ? 'leads' : 'dashboard' } }] });
+  }
+
+  /* ---- find a record: "find …", "open Vanessa's case" ---- */
+  const findPhrase = text.match(/(?:find|look up|search for|open)\s+(.{2,80})/i);
+  if (findPhrase) {
+    const q = findPhrase[1].replace(/'s case\b|case\b/ig, ' ').trim().slice(0, 80);
+    if (q) {
+      /* The EXISTING search, called as itself — same role boundary, same
+         caps, nothing re-implemented. A synthetic Request carries the query
+         because globalSearch reads its URL; nothing external is fetched. */
+      const sres = await globalSearch(
+        new Request('http://assistant.internal/search?q=' + encodeURIComponent(q)), env, user);
+      const data = await sres.json();
+      const hits = [];
+      for (const row of data.results || []) {
+        if (row.case_no && !hits.some(x => x.case_no === row.case_no)) {
+          hits.push({ case_no: row.case_no, title: row.subtitle || row.case_no,
+                      line: [row.case_no, (row.matched || []).join(', ')].filter(Boolean).join(' · ') });
+        }
+        if (hits.length >= 6) break;
+      }
+      if (hits.length === 1) {
+        return json({ ok: true, kind: 'navigate',
+          navigate: { kind: 'case', case_no: hits[0].case_no },
+          text: `Opening ${hits[0].title} — ${hits[0].case_no}.` });
+      }
+      if (hits.length > 1) {
+        return json({ ok: true, kind: 'choices',
+          text: `I found ${hits.length} matches. Which one?`, card: hits });
+      }
+      return json({ ok: true, kind: 'status',
+        text: `Nothing in the portal matched "${q}". Search covers case, claim and matter numbers, names, firms, subjects and vehicles — the full Search screen has the detail.`,
+        actions: [{ label: 'Open Search', navigate: { kind: 'tab', id: 'search' } }] });
+    }
+  }
+
+  /* ---- the honest fallback ---- */
+  const provider = assistantProvider(env);
+  return json({ ok: true, kind: 'help',
+    text: 'Beta understands set phrases so far: "Where am I?", "Explain this page", '
+        + '"Take me to <a portal section>", "Anything new?", "What should I do?", and '
+        + '"Find <a name or case number>". '
+        + (provider.ready ? 'Freer phrasing arrives in a later unit.'
+           : 'The AI provider is not connected, so freer phrasing is not available yet — '
+           + 'nothing here guesses.') });
+}
+
 async function route(request, env) {
   const url = new URL(request.url);
   // The Worker is mounted on /portal-api/* on the site's own domain; strip that
@@ -13687,6 +14020,13 @@ async function route(request, env) {
   /* And the exception list the office works from. Admin-only, like the
      recent-activity feed and the storage card it summarises. */
   if (p === '/attention' && method === 'GET') return needsAttention(env, user);
+  /* API ASSISTANT (ASSISTANT.md) — Beta dry-run, both roles: everything the
+     Assistant can do is a read the signed-in user could already make, the
+     consequential verbs are refused inside the command handler by name, and
+     no /assistant route writes anything anywhere. */
+  if (p === '/assistant/state' && method === 'GET') return assistantState(env, user);
+  if (p === '/assistant/command' && method === 'POST') return assistantCommand(request, env, user);
+
   if (p === '/tasks' && method === 'GET') return taskBoard(env, user);
   if (p === '/file-queue' && method === 'GET') return fileQueue(env, user);
   if (p === '/audit' && method === 'GET') return auditTrail(request, env, user);

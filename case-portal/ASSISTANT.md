@@ -178,9 +178,9 @@ task requires them.
 
 | Unit | Scope | State |
 | --- | --- | --- |
-| 1 | Shell: sidebar item, case-level door, mobile pill+sheet, dock panel, Beta banner, server-side gate + tool registry + provider adapter (not ready) | NOT STARTED |
-| 2 | Navigation: registry, "take me to…", current-page context, "Where am I?", "Explain this page" | NOT STARTED |
-| 3 | Live status: "anything new?", "what needs attention?", "what should I do?", find client/case/intake with disambiguation | NOT STARTED |
+| 1 | Shell: sidebar item, case-level door, mobile pill+sheet, dock panel, Beta banner, server-side gate + tool registry + provider adapter (not ready) | **BUILT** — see the ledger note below |
+| 2 | Navigation: registry, "take me to…", current-page context, "Where am I?", "Explain this page" | **BUILT** — deterministic grammar, registry ids only |
+| 3 | Live status: "anything new?", "what needs attention?", "what should I do?", find client/case/intake with disambiguation | **BUILT** — live reads through the existing role-scoped functions |
 | 4 | Intake preparation + preview + SIMULATE + `assistant_log` (schema: one additive table → portal-setup dispatch) | NOT STARTED |
 | 5 | Rate-sheet preparation + preview + simulation (pricing via the real resolvers) | NOT STARTED |
 | 6 | Invoice/billing read + preparation + simulation | NOT STARTED |
@@ -188,6 +188,18 @@ task requires them.
 | 8 | Watch mode (internal read-only monitoring) | NOT STARTED |
 | 9 | Visual QA / workflow advisor | NOT STARTED |
 
-**Checkpoint (2026-09-02):** the pause instruction arrived before any
-Assistant code existed — NOT STARTED across the board, nothing lost. Resume
-after the pre-Assistant units are green (they are being shipped in PR #260).
+**Checkpoint (2026-09-02, updated overnight):** the pre-Assistant units went
+green first — PR #260 merged as `6770609`, both deploy workflows `success` on
+`67706099` — and Units 1–3 were then built as ONE additive change:
+`/assistant/state` + `/assistant/command` in the Worker (deterministic
+grammar, registry-id navigation, live status reads through the existing
+role-scoped functions, consequential verbs refused by name as
+`assistant_beta`, provider adapter answering `not_configured`), and the page's
+dock/pill/case door under the `.asst-` prefix. No schema change. Worker suite
+carries 36 Assistant checks (source pins included: no sendMail, no
+INSERT/UPDATE/DELETE, no settings-store write inside the Assistant block);
+the e2e carries the dock, banner, real navigation, refusal rendering and the
+phone pill/sheet. Units 4–6 (intake/rate-sheet/invoice preparation +
+SIMULATE) are the next tier and bring `assistant_log` — the first Assistant
+schema change, one portal-setup dispatch, reported to the owner before it
+lands.

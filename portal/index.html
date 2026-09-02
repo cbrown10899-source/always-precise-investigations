@@ -1744,6 +1744,62 @@
     .srchbox{max-width:none;}
   }
 
+/* ============== API ASSISTANT (ASSISTANT.md) — .asst- is its own prefix ===
+   The dock keeps the portal visible beside it on desktop and becomes a
+   bottom sheet under 900px; the pill is the phone door on shell screens.
+   Palette: the existing navy/teal/gold tokens only. */
+.asst-wrap{position:fixed;inset:0;z-index:60;pointer-events:none}
+.asst-panel{pointer-events:auto;position:absolute;top:0;right:0;height:100%;
+  width:min(420px,94vw);background:var(--panel,#fff);border-left:1px solid var(--line,#d8e0e8);
+  box-shadow:-12px 0 32px rgba(12,22,38,.18);display:flex;flex-direction:column;padding:0 0 10px}
+.asst-head{display:flex;align-items:center;gap:8px;padding:12px 14px;
+  background:var(--navy-2,#12305a);color:#fff;font-size:1rem}
+.asst-head b{font-weight:800}
+.asst-beta{font-size:.62rem;font-weight:800;letter-spacing:.08em;padding:2px 7px;
+  border-radius:9px;background:var(--gold,#b7924c);color:#1c2531}
+.asst-x{margin-left:auto;background:none;border:0;color:#fff;font-size:1.4rem;
+  cursor:pointer;min-width:44px;min-height:44px}
+.asst-banner{padding:10px 14px;background:var(--warn-bg,#fdf6e7);color:var(--warn,#96600f);
+  font-weight:800;font-size:.8rem;letter-spacing:.03em;border-bottom:1px solid var(--line,#e4dcc8)}
+.asst-banner span{font-weight:600;letter-spacing:0}
+.asst-log{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.asst-you{align-self:flex-end;background:var(--teal,#2f7d90);color:#fff;
+  padding:8px 12px;border-radius:12px 12px 2px 12px;max-width:88%;font-size:.92rem}
+.asst-m{align-self:flex-start;background:var(--soft,#f2f6f8);border:1px solid var(--line,#e0e7ec);
+  padding:10px 12px;border-radius:12px 12px 12px 2px;max-width:94%;font-size:.92rem;line-height:1.45}
+.asst-blocked{font-size:.68rem;font-weight:800;letter-spacing:.06em;color:var(--bad,#a33);
+  margin-bottom:4px}
+.asst-card{margin-top:8px;display:flex;flex-direction:column;gap:6px}
+.asst-row{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;
+  border:1px solid var(--line,#d8e0e8);background:#fff;border-radius:8px;padding:8px 10px;
+  cursor:pointer;min-height:44px;font-size:.88rem;width:100%}
+.asst-row span{color:var(--muted,#5c6775);font-size:.8rem}
+.asst-acts{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
+.asst-home{display:flex;flex-direction:column;gap:10px;margin:auto 0}
+.asst-big{border:1px solid var(--line,#d8e0e8);background:#fff;border-radius:12px;
+  padding:16px 14px;font-size:1rem;font-weight:700;text-align:left;cursor:pointer;min-height:52px}
+.asst-big:hover{border-color:var(--teal,#2f7d90)}
+.asst-guide{padding:6px 14px;font-size:.85rem}
+.asst-ask{display:flex;gap:8px;padding:8px 14px 0}
+.asst-ask input{flex:1;min-height:44px;font-size:16px;padding:8px 12px;
+  border:1px solid var(--line,#c8d2da);border-radius:10px}
+.asst-pill{position:fixed;right:14px;bottom:max(14px,env(safe-area-inset-bottom));z-index:55;
+  display:none;align-items:center;gap:6px;background:var(--navy-2,#12305a);color:#fff;
+  border:0;border-radius:24px;padding:12px 16px;font-size:1rem;cursor:pointer;
+  box-shadow:0 6px 18px rgba(12,22,38,.3);min-height:48px}
+.side-asst{display:flex;align-items:center;gap:8px}
+.side-asst .asst-beta{margin-left:2px}
+
+/* APPEND AT THE VERY END OF THE STYLESHEET (the source-order rule — the fifth
+   casualty list): the phone shape. The pill only exists under 900px, and only
+   the pill — the case/field bottom bars never coexist with it because the
+   pill renders on shell screens alone. */
+@media (max-width:899px){
+  .asst-panel{left:0;right:0;top:auto;bottom:0;width:100%;height:min(92dvh,100%);
+    border-left:0;border-top:1px solid var(--line,#d8e0e8);border-radius:16px 16px 0 0}
+  .asst-pill{display:flex}
+}
+
 </style>
 </head>
 <body>
@@ -2388,6 +2444,11 @@ function shell(inner){
      Active Surveillance — the field view's only top-level entrance — is not
      buried mid-list where it sat for the investigator. */
   const foot = `<div class="navfoot">
+    ${/* API ASSISTANT (ASSISTANT.md) — the owner's placement: after the
+         grouped navigation, before the big utility doors, both roles, with a
+         visible BETA badge. It opens the dock; it changes no route. */""}
+    <button class="side-vst side-asst" data-act="asstOpen">&#10024; Assistant
+      <span class="asst-beta">BETA</span></button>
     <button class="side-surv" data-act="surveillance">&#128373; Active Surveillance</button>
     <!-- Timestamp Video is a door that does something, so it belongs in this
          block rather than in a list of places. It is here for BOTH roles and
@@ -2484,9 +2545,143 @@ function shell(inner){
     <nav class="tabs" aria-label="Portal sections">${tabs}</nav>${schema}${problem}${quickToolsHtml()}${
     summaryCards()}${inner}${
     SHEET_WIZ ? sheetWizardHtml() : ""}${PAY_SEND ? paySendHtml() : ""}${
-    INTAKE_SEND ? preIntakeHtml() : ""}`;
+    INTAKE_SEND ? preIntakeHtml() : ""}${asstPillHtml()}${asstHtml()}`;
 }
 
+
+/* ============== API ASSISTANT — the panel (ASSISTANT.md, Units 1–3) =======
+
+   A dock on desktop, a bottom sheet on the phone, one markup for both. The
+   page NEVER decides what the Assistant may do — every answer comes from
+   POST /assistant/command, and navigation executes only registry ids through
+   the same handlers a click uses. If the routes fail, the panel shows the
+   error inside itself and the rest of the portal is untouched — the
+   Assistant is additive, never load-bearing. */
+let ASST = null;   // {open, busy, guide, state, msgs:[{who,text,card,actions}], err}
+
+function asstReset(){ ASST = null; }
+
+async function asstOpen(caseNo){
+  if(!ASST) ASST = { open: true, busy: false, guide: false, state: null, msgs: [], err: "" };
+  ASST.open = true;
+  ASST.case = caseNo || (VIEW === "case" && WS_CASE ? WS_CASE : "");
+  paint();
+  if(!ASST.state){
+    try{ ASST.state = await api("/assistant/state"); }
+    catch(e){ ASST.err = e.message || "The Assistant could not be reached."; }
+    paint();
+  }
+}
+
+function asstContext(){
+  return { route: VIEW === "case" && WS_CASE ? "case" : TAB,
+           case_no: ASST && ASST.case ? ASST.case : (VIEW === "case" ? WS_CASE : ""),
+           guide: !!(ASST && ASST.guide) };
+}
+
+async function asstSend(text){
+  const t = String(text || "").trim();
+  if(!t || !ASST || ASST.busy) return;
+  ASST.msgs.push({ who: "you", text: t });
+  ASST.busy = true; ASST.err = ""; paint();
+  try{
+    const r = await api("/assistant/command", { method: "POST",
+      body: { text: t, context: asstContext() } });
+    ASST.msgs.push({ who: "asst", text: r.text || "", card: r.card || null,
+                     actions: r.actions || null, kind: r.kind || "" });
+    ASST.busy = false; paint();
+    if(r.navigate) asstNavigate(r.navigate);
+  }catch(e){
+    ASST.busy = false;
+    ASST.msgs.push({ who: "asst", text: "That did not go through: " + (e.message || e) });
+    paint();
+  }
+}
+
+/* Registry ids only — the server names a destination, the page resolves it
+   against its OWN handlers. Nothing here builds a URL from answer text. */
+function asstNavigate(nav){
+  if(!nav || !nav.kind) return;
+  const phone = window.innerWidth < 900;
+  if(phone && ASST) ASST.open = false;   // the pill brings it back (owner: no stacked panels)
+  if(nav.kind === "tab" && typeof nav.id === "string"){
+    const allowed = ((ASST && ASST.state && ASST.state.nav) || []).some(n => n.id === nav.id);
+    if(!allowed) return paint();
+    VIEW = "list"; WS_CASE = "";
+    TAB = nav.id; paint();
+    if(TAB === "calendar") loadCalendar(CAL ? CAL.month : "");
+    if(TAB === "invoices"){ INV_OPEN = null; INV_MSG = ""; loadInvoices(); }
+    if(TAB === "sheets" && ME.role === "admin"){ SEND_MSG = ""; loadSends(); }
+    if(TAB === "dashboard"){ PKGS = null; loadPackages(); loadCompleted(); RECENT = null; loadRecent(); loadAttention().then(paint); }
+    return;
+  }
+  if(nav.kind === "case" && nav.case_no){ openCase(String(nav.case_no), "overview"); return; }
+  if(nav.kind === "action"){
+    if(nav.id === "surveillance") openSurveillanceLauncher();
+    if(nav.id === "vst") vstOpen("");
+    if(nav.id === "pst") pstLaunch("");
+    return;
+  }
+  paint();
+}
+
+function asstQuickHtml(){
+  return `<div class="asst-home">
+    <button class="asst-big" data-act="asstQuick" data-cmd="What should I do?">What should I do?</button>
+    <button class="asst-big" data-act="asstQuick" data-cmd="Anything new?">What&rsquo;s new?</button>
+    <button class="asst-big" data-act="asstQuick" data-cmd="Explain this page">Explain this page</button>
+    <button class="asst-big" data-act="asstQuick" data-cmd="Take me to ">Take me somewhere&hellip;</button>
+  </div>`;
+}
+
+function asstMsgHtml(m){
+  if(m.who === "you") return `<div class="asst-you">${esc(m.text)}</div>`;
+  return `<div class="asst-m">
+    ${m.kind === "refused" ? `<div class="asst-blocked">BETA — ACTION DISABLED</div>` : ""}
+    <div>${esc(m.text)}</div>
+    ${m.card ? `<div class="asst-card">${m.card.map(c => `
+      <button class="asst-row" data-act="asstOpenCase" data-case="${esc(c.case_no || "")}">
+        <b>${esc(c.title || c.case_no || "")}</b>
+        <span>${esc(c.line || "")}</span>
+      </button>`).join("")}</div>` : ""}
+    ${m.actions ? `<div class="asst-acts">${m.actions.map((a, i) => `
+      <button class="btn sm" data-act="asstAction" data-i="${ASST.msgs.indexOf(m)}:${i}">${esc(a.label)}</button>`).join("")}</div>` : ""}
+  </div>`;
+}
+
+function asstHtml(){
+  if(!ASST || !ASST.open) return "";
+  return `<div class="asst-wrap">
+    <div class="asst-panel" role="dialog" aria-modal="false" aria-label="API Assistant">
+      <div class="asst-head"><b>&#10024; API Assistant</b>
+        <span class="asst-beta">BETA</span>
+        <button class="asst-x" data-act="asstClose" aria-label="Close the Assistant">&times;</button></div>
+      <div class="asst-banner">ASSISTANT BETA &mdash; DRY RUN MODE<br>
+        <span>No external client messages or consequential actions will be sent.</span></div>
+      ${ASST.err ? `<div class="err">${esc(ASST.err)}</div>` : ""}
+      <div class="asst-log" id="asst_log">
+        ${ASST.msgs.length ? ASST.msgs.map(asstMsgHtml).join("") : asstQuickHtml()}
+        ${ASST.busy ? `<div class="asst-m" style="opacity:.6">&hellip;</div>` : ""}
+      </div>
+      <label class="cap asst-guide"><input type="checkbox" id="asst_guide" data-act="asstGuide"
+        ${ASST.guide ? "checked" : ""}><span>Explain &amp; Guide Me</span></label>
+      <form class="asst-ask" data-act="asstAsk">
+        <input id="asst_in" autocomplete="off" placeholder="Ask the Assistant&hellip;"
+          aria-label="Ask the Assistant">
+        <button class="btn sm" type="submit">Ask</button>
+      </form>
+    </div>
+  </div>`;
+}
+
+/* The phone door: a sticky pill on shell screens only — the case and field
+   views keep their own bottom bars, and the case screen's door is the Ask
+   Assistant action instead, so nothing fixed ever overlaps. */
+function asstPillHtml(){
+  if(ASST && ASST.open) return "";
+  return `<button class="asst-pill" data-act="asstOpen" aria-label="Open the API Assistant (Beta)">
+    &#10024; <span class="asst-beta">BETA</span></button>`;
+}
 
 /* --------------------------------------------------------- the dashboard */
 
@@ -10926,6 +11121,7 @@ function sessionForget(){
   PAYCFG = null; PAY_DRAFT = {}; PAY_MSG = ""; PAY_ERR = false;
   SUMMARY = null; SHEETS = []; SHEET_MAIL = ""; OPEN_SHEET = null; SHEET_MSG = ""; SHEET_WIZ = null;
   BILLCOM_READY = null; LEGAL_SVCS = [];
+  asstReset();
   NL = null; LEAD_SEND = null; LEAD_MSG = ""; PAY_SEND = null;
   SRCH = { q: "", results: null, err: "", busy: false, hi: -1 };
   ATTN = null; ATTN_OK = false; ATTN_ERR = ""; ATTN_FILTER = "all";
@@ -15061,7 +15257,12 @@ function caseBodyHtml(){
       <button class="${WS_MORE ? "on" : ""}" data-act="wsMore"
         aria-haspopup="true" aria-expanded="${WS_MORE ? "true" : "false"}">
         <span class="sec-i" aria-hidden="true">&#8943;</span><span>More</span></button>
-    </div>`;
+    </div>
+    ${/* The case page bypasses shell(), so the Assistant dock renders here
+         too — opened by the Ask Assistant action, primed with this case. The
+         phone pill deliberately does NOT render here: the wsbar owns the
+         bottom edge, and the case door is the action button above. */""}
+    ${asstHtml()}`;
 }
 
 /* THE ACTIONS SOMEONE ACTUALLY DOES ON A CASE (Unit 38). Owner: "the most
@@ -15072,6 +15273,7 @@ function caseActionsHtml(){
   const cur = wsCurrentDay();
   return `<div class="caseacts">
     <button class="btn addact" data-act="actOpen">+ Add activity</button>
+    <button class="btn sm ghost" data-act="asstOpen" data-case="${esc(WS_CASE)}">&#10024; Ask Assistant</button>
     <button class="btn sm ghost" data-act="wsTab" data-tab="daily">Daily summary</button>
     ${cur.open
       ? `<button class="btn sm ghost" data-act="wsTab" data-tab="field">End day</button>
@@ -18400,6 +18602,30 @@ document.addEventListener("click", ev => {
     document.body.classList.remove("navopen");
     openSurveillanceLauncher();
   }
+  /* API ASSISTANT (ASSISTANT.md) — the panel's own acts. Everything they can
+     reach is a read; navigation goes through asstNavigate's registry check. */
+  else if(act === "asstOpen"){
+    document.body.classList.remove("navopen");
+    asstOpen(el.dataset.case || "");
+  }
+  else if(act === "asstClose"){ if(ASST) ASST.open = false; paint(); }
+  else if(act === "asstQuick"){
+    const cmd = el.dataset.cmd || "";
+    if(/take me to\s*$/i.test(cmd)){
+      /* "Take me somewhere…" seeds the box rather than sending half a
+         sentence — the user finishes it. */
+      const inp = $("asst_in");
+      if(inp){ inp.value = cmd; inp.focus(); }
+    } else asstSend(cmd);
+  }
+  else if(act === "asstOpenCase"){
+    if(el.dataset.case) asstNavigate({ kind: "case", case_no: el.dataset.case });
+  }
+  else if(act === "asstAction"){
+    const [mi, ai] = String(el.dataset.i || "").split(":").map(Number);
+    const action = ASST && ASST.msgs[mi] && (ASST.msgs[mi].actions || [])[ai];
+    if(action && action.navigate) asstNavigate(action.navigate);
+  }
   else if(act === "tab"){
     if(TAB === "leads" && el.dataset.tab !== "leads") LEAD_MSG = "";
     TAB = el.dataset.tab; paint();
@@ -19306,6 +19532,12 @@ document.addEventListener("submit", ev => {
   ev.preventDefault();
   const a = el.dataset.act;
   if(a === "login") doLogin();
+  else if(a === "asstAsk"){
+    const inp = $("asst_in");
+    const t = inp ? inp.value : "";
+    if(inp) inp.value = "";
+    asstSend(t);
+  }
   else if(a === "invite") doInvite();
   else if(a === "accept") doAccept(new URLSearchParams(location.search).get("invite") || "");
   else if(a === "resetAccept") doResetAccept(new URLSearchParams(location.search).get("reset") || "");
@@ -19461,6 +19693,9 @@ document.addEventListener("input", ev => {
   }
   if(ev.target.dataset && ev.target.dataset.act === "wizFeePick" && SHEET_WIZ){
     wizCollect(); SHEET_WIZ.feeTouched = true; SHEET_WIZ.err = ""; paint();
+  }
+  if(ev.target.dataset && ev.target.dataset.act === "asstGuide" && ASST){
+    ASST.guide = !!ev.target.checked;
   }
   /* The quick-legal service pick relabels the fee input (fixed → "Agreed
      fee") — captured first, so the repaint discards nothing typed. */
