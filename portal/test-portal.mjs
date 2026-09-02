@@ -16566,17 +16566,21 @@ section('BILLCOM: not configured means invisible; configured means offered exact
   await page.locator('.pcard', { hasText: 'Billable & Co LLP' }).first()
     .locator('[data-act="leadSheet"]').click();
   await page.waitForTimeout(600);
+  await page.waitForSelector('#wiz_mailck', { timeout: 8000 });
   const off = await page.evaluate(() => {
     const box = document.querySelector('#wiz_mailck');
+    const fee = box ? box.closest('.feebox') : null;
     return {
       mailck: !!box,
       billBox: !!document.querySelector('#wiz_billcom'),
-      text: box ? box.closest('.amsheet').innerText : 'NO-WIZARD',
+      ready: typeof BILLCOM_READY === 'undefined' ? 'undef' : String(BILLCOM_READY),
+      fee: fee ? fee.innerText : 'NO-FEEBOX',
     };
   });
   ok('unconfigured, Mail Check is offered and Bill.com is a disabled Not-configured row',
      off.mailck === true && off.billBox === false
-     && /Bill\.com/.test(off.text) && /Not configured/.test(off.text), off.text.slice(0, 200));
+     && /Bill\.com/.test(off.fee) && /Not configured/.test(off.fee),
+     JSON.stringify(off).slice(0, 300));
 
   /* ---- the owner types the two values; the same wizard grows the box ---- */
   await page.evaluate(async () => {
