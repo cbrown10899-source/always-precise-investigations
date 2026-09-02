@@ -278,8 +278,8 @@ gap shipped.
 | 2 | Navigation: registry, "take me to…", current-page context, "Where am I?", "Explain this page" | ✅ **DEPLOYED** — #261, deterministic grammar, registry ids only |
 | 3 | Live status: "anything new?", "what needs attention?", "what should I do?", find client/case/intake with disambiguation | ✅ **DEPLOYED** — #261, live reads through the existing role-scoped functions |
 | 4 | Intake preparation + preview + SIMULATE + `assistant_log` (schema: one additive table → portal-setup dispatch) | ✅ **DEPLOYED** — #262 `85806e6`; site + Worker + **portal-setup all `success` on `85806e68`** (08:39Z), so `assistant_log` is live. A6–A10 below |
-| 5 | Rate-sheet preparation + preview + simulation (pricing via the real resolvers) | **BUILT** — A11; byte-pins hold the mirror to the real sender; no schema change |
-| 6 | Invoice/billing read + preparation + simulation | **READ HALF BUILT** (A12) — live billing answers from `listInvoices`, drafts excluded from outstanding; preparation/simulation DEFERRED pending the owner's answer in A12 (no invoice-send route exists to rehearse; creating drafts would widen the Beta write pin) |
+| 5 | Rate-sheet preparation + preview + simulation (pricing via the real resolvers) | ✅ **DEPLOYED** — #263 `099b817`, both workflows `success` on `099b8174` (A11; byte-pins hold the mirror to the real sender; no schema change) |
+| 6 | Invoice/billing read + preparation + simulation | **READ HALF DEPLOYED** — #263 (A12) — live billing answers from `listInvoices`, drafts excluded from outstanding; preparation/simulation DEFERRED pending the owner's answer in A12 (no invoice-send route exists to rehearse; creating drafts would widen the Beta write pin) |
 | 7 | Case health / summaries / report drafting from recorded facts | NOT STARTED |
 | 8 | Watch mode (internal read-only monitoring) | NOT STARTED |
 | 9 | Visual QA / workflow advisor | NOT STARTED |

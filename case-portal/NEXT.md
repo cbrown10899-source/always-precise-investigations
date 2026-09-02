@@ -37,6 +37,52 @@ item is finished.
 
 ---
 
+# 🌙 OVERNIGHT FINAL REPORT — 2026-09-02 (owner-ordered format)
+
+**Branch:** `claude/app-crashes-lockups-debug-psf6zd`, reset to master after
+each merge. **Master at this report:** `099b817` (#263), site + Worker deploys both `success` on `099b8174`. **Open PRs:** none.
+**Tests at the final ship tree:** worker **3117/0** · portal e2e **2849/0** ·
+intake **558/0** · deploy guard **86/0** · visitor-alerts **47/0** — all five
+suites, run this window. **Failures/blockers:** none; the open items below
+are owner decisions, not defects.
+
+## SECTION 1 — PRE-ASSISTANT PORTAL WORK
+
+| Item | Furthest truthful stage |
+| --- | --- |
+| Intake delete (dashboard trash, hard delete with dependency guard) | ✅ **DEPLOYED** — #256/#258 (`86fd715`, `14ba2d2`); live `?1`-bind 500 fixed in #258. LIVE VERIFY (a real click on the live portal) is the owner's — this container cannot reach the domain |
+| Recent Activity delete-hide (`feed_hidden` marker, never a touch on records) | ✅ **DEPLOYED** — #256 + `portal-setup` run 33570951001 applied the table |
+| Mail Check — Legal | ✅ **DEPLOYED** — #257 `ede24f6` + tickable send option #258. Remittance address VALUE still owner-owed (Settings → Invoice defaults) |
+| Mail Check — Insurance | ✅ **DEPLOYED** — same PRs, same wording rule (`MAIL_CHECK_LINE`, no address on any sheet) |
+| BILL.com preparation | ✅ **DEPLOYED SAFE/DISABLED** — #259 `a2ce137`. `billcomConfig` answers not-ready until the owner types the enable word + https link; **stays dark until the owner says the account is ready** |
+| Legal service-aware pricing (five services, three models) | ✅ **DEPLOYED** — #260 `6770609`, both workflows `success` on `67706099` |
+| Person Locate / Skip Trace ($250 fixed, from `LEGAL_FLAT`) | ✅ **DEPLOYED** — #260 |
+| Process Service standard/custom flat fee (acceptance snapshots the fee) | ✅ **DEPLOYED** — #260; default configurable at Settings → Invoice defaults (`process_fee_default`) |
+| Other prior outstanding | Intake Archive **Part 2 brief never arrived — not inferred**; SMS alerting blocked on a provider choice; PORTAL-OPS Permissions spec corrupted — not invented; Bill.com A-list owner-owed |
+
+## SECTION 2 — API ASSISTANT (Beta / dry-run, server-enforced)
+
+| Unit | Furthest truthful stage |
+| --- | --- |
+| 1 — shell, Beta enforcement, provider adapter (not ready) | ✅ **DEPLOYED** — #261 `b379990`, both workflows `success` on `b3799902` |
+| 2 — navigation, context, explain | ✅ **DEPLOYED** — #261. The §11 guide toggle shipped INERT there — found by audit this window, **fixed in #263** with ON/OFF-difference tests |
+| 3 — live status, find with disambiguation | ✅ **DEPLOYED** — #261 |
+| 4 — intake preparation + preview + SIMULATE + `assistant_log` | ✅ **DEPLOYED + SCHEMA APPLIED** — #262 `85806e6`; site, Worker AND `portal-setup` all `success` on `85806e68`, so the log table is live. Every simulation records `SIMULATED — NOT SENT`; the real send history, lead ladder and transport are untouched (source-pinned: exactly one INSERT in the block) |
+| 5 — rate-sheet preparation + preview + SIMULATE | ✅ **DEPLOYED** — #263 `099b817`, site + Worker both `success` on `099b8174` at 09:37Z. Pinned mirror of the real sender: same inputs → same subject and body byte for byte, same refusals by code |
+| 6 — invoice/billing | **READ HALF DEPLOYED** in #263 (live outstanding/balance, drafts excluded per the locked rule). **Preparation/simulation half DEFERRED — owner decision needed (`ASSISTANT.md` A12):** the portal has no invoice-send route to rehearse, and creating drafts is a real write the Beta one-INSERT pin forbids. Options put to the owner: widen the pin explicitly for `createInvoice`, wait for Live Mode, or a record-free preview |
+| 7–9 — case health / watch mode / visual QA advisor | NOT STARTED — next tier when sanctioned |
+
+**Beta safety state, verified by source pins in the suite:** ASSISTANT BETA =
+ON · LIVE CLIENT SEND = OFF · LIVE AI EMAIL = OFF · LIVE AI PAYMENT = OFF ·
+AI DELETE = OFF · AI ARCHIVE = OFF · AI CLOSE CASE = OFF. No credential
+exists anywhere; `assistantProvider` answers `not_configured`.
+
+**Exact next recommended step:** answer `ASSISTANT.md` A12 (what invoice
+"preparation" may do), then Unit 7 per the spec. Owner live-verify checklist
+when convenient: the ✨ Assistant sidebar door, "prepare an intake" →
+Preview → Simulate (recorded, nothing sent), "prepare a rate sheet",
+"What is outstanding?", and the Explain & Guide Me toggle.
+
 # 👋 START HERE — session handoff, 2026-09-02
 
 ## 🤖 API ASSISTANT: RESUMED — Units 1–3 SHIPPED (#261), Unit 4 in flight
@@ -72,7 +118,7 @@ every merge:**
 
 | Unit | PR / SHA | State |
 | --- | --- | --- |
-| **API Assistant Unit 5 + Unit 6 read half + §11 guide fix** — rate-sheet preparation + preview + SIMULATE (`ASSISTANT.md` A11; pinned mirror of `emailSheet`, byte-equality + refusal-mirror tests); live billing answers (A12; drafts excluded from outstanding; Unit 6's preparation half DEFERRED — owner question in A12); and the inert Explain & Guide Me toggle made real (found gap, `guide_intro`). No schema change | in flight on the branch | worker 3117/0 · e2e 2849/0 · deploy guard 86/0 · intake 558/0 · visitor 47/0 |
+| **API Assistant Unit 5 + Unit 6 read half + §11 guide fix** — rate-sheet preparation + preview + SIMULATE (`ASSISTANT.md` A11; pinned mirror of `emailSheet`, byte-equality + refusal-mirror tests); live billing answers (A12; drafts excluded from outstanding; Unit 6's preparation half DEFERRED — owner question in A12); and the inert Explain & Guide Me toggle made real (found gap, `guide_intro`). No schema change | #263 `099b817` | ✅ **DEPLOYED** — both workflows `success` on `099b8174` at 09:37Z. Suites at merge: worker 3117/0 · e2e 2849/0 · deploy guard 86/0 · intake 558/0 · visitor 47/0 |
 | **API Assistant Unit 4** — intake preparation + preview + SIMULATE + `assistant_log` (`ASSISTANT.md` A6–A10) | #262 `85806e6` | ✅ **DEPLOYED + SCHEMA APPLIED** — site, Worker AND `portal-setup` all `success` on `85806e68` at 08:39Z, so `assistant_log` is live. Suites at merge: worker 3080/0 · e2e 2837/0 · intake 558/0 · deploy guard 86/0 · visitor 47/0 |
 | **API Assistant Units 1–3** — shell + Beta enforcement, navigation, live status (`ASSISTANT.md`) | #261 `b379990` | ✅ **DEPLOYED** — site + Worker both `success` on `b3799902` at 06:24Z. Suites at merge: worker 3045/0 · e2e 2826/0 · intake 558/0 · deploy guard 86/0 · visitor 47/0. No schema change, no portal-setup owed |
 | **Service-aware Legal + Process Service standard/custom flat fee** (`LEGAL-SERVICES.md` D1–D14) | #260 `6770609` | ✅ **DEPLOYED** — site + Worker both `success` on `67706099` at 05:28Z. Suites at merge: worker 3009/0 · e2e 2813/0 · intake 558/0 · deploy guard 86/0 · visitor 47/0 |
