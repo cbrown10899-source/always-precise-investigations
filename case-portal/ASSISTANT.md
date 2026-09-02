@@ -243,6 +243,56 @@ writer under an explicit owner-approved widening of the Beta pin, (b) wait
 for Live Mode, or (c) be a pure preview of a would-be invoice with no
 record? Until answered, the Assistant reads money and never touches it.
 
+**A13 — Unit 6's preview is a VIEW-MODEL, and the number proof is the test.**
+The owner's zero-write rule made the shape: `assistantInvoicePreview` mirrors
+`createInvoice`'s derivations (bill-to, refs, terms, authorization-seeded
+lines) over pure reads, prices through `invoiceMoney`/`retainerBlock` (which
+read only `invoice_type` + `case_no`, checked), and shows the would-be number
+from the same MAX-derived read the real route uses — deriving consumes
+nothing, and the suite proves the NEXT real invoice receives exactly the
+previewed number. A twin case pins field equality with a real create; a
+snapshot pins zero writes across every billing table AND `assistant_log`
+(the preview is a read, so it is deliberately not logged — logging it would
+itself be the write the rule forbids).
+
+**A14 — Unit 7 quotes, counts, and never composes.** Case health, holding,
+ready-to-invoice and ready-to-close (both worn `closeoutFacts`), package
+readiness (`shippableReports` + classification counts), and the delete-block
+explanation through `intakeBlockersFound` — EXTRACTED from `intakeDelete` so
+the explanation and the refusal run the same statement and cannot drift.
+"Draft report" and "summarize today" are the recorded chronology VERBATIM
+(`assistantChronology`: day headers, `HH:MM — description`, caps named) — no
+prose engine, no invented event, vehicle, time or amount; the deterministic
+paragraph stays the Daily Summary Builder's job. `assistantCaseNextStep` is
+the one writer both the briefing and the health summary read.
+
+**A15 — Unit 8's Watch is a composition, and its safety is an absence.**
+`assistantWatch` answers when ASKED: `needsAttention` merged whole (same
+admin gate, same severities) plus bounded arms — fresh intakes by business,
+overdue/due-soon invoices, finalized-undelivered packages, refused uploads
+(`storage_failure`), unassigned accepted cases, and the delivered-and-paid
+conjunction worded softly toward the closeout checklist. Nothing is stored,
+nothing polls, nothing fires on its own, and there is NO code path from
+Watch to email, SMS, a client, a payment or a destructive act — the answer
+says "internal only" out loud. Proactivity in Beta is the quick button on
+the panel's empty state, not a background process.
+
+**A16 — Unit 9 measures; it never opines, and it cannot deploy.**
+`portal/ux-advisor.mjs` renders the seeded, signed-in portal at 1200/820/390
+and measures the owner's machine-decidable classes: sideways overflow,
+overlap (only when BOTH controls are hittable at their own centers — a fixed
+overlay covering the page, or rows scrolled under the ask bar, occlude by
+design and are excluded), under-44px tap targets (HIGH at iPhone, MEDIUM at
+tablet where desktop density is intentional), genuinely wrapped controls
+(a Range over the text, immune to flex centering — the first two heuristics
+false-positived on every properly-44px nav button and were replaced),
+duplicated action labels, mixed terminology, scroll depth. Findings dedupe
+across screens and land in `case-portal/UX-FINDINGS.json` + `.md` with
+page/severity/observation/evidence/recommendation/status/seen. Hierarchy,
+relevance and click-depth are LISTED as needing a person — not decided by
+pattern-matching. The advisor writes those two files and nothing else;
+no Assistant surface can modify or deploy source.
+
 **A10 — the grammar carve-out opens a workbench, never a send.** An
 utterance about sending/preparing an INTAKE resolves to `kind:
 'prepare_intake'` with a prefilled form seed (email lifted from the
@@ -279,10 +329,10 @@ gap shipped.
 | 3 | Live status: "anything new?", "what needs attention?", "what should I do?", find client/case/intake with disambiguation | ✅ **DEPLOYED** — #261, live reads through the existing role-scoped functions |
 | 4 | Intake preparation + preview + SIMULATE + `assistant_log` (schema: one additive table → portal-setup dispatch) | ✅ **DEPLOYED** — #262 `85806e6`; site + Worker + **portal-setup all `success` on `85806e68`** (08:39Z), so `assistant_log` is live. A6–A10 below |
 | 5 | Rate-sheet preparation + preview + simulation (pricing via the real resolvers) | ✅ **DEPLOYED** — #263 `099b817`, both workflows `success` on `099b8174` (A11; byte-pins hold the mirror to the real sender; no schema change) |
-| 6 | Invoice/billing read + preparation + simulation | **READ HALF DEPLOYED** — #263 (A12) — live billing answers from `listInvoices`, drafts excluded from outstanding; preparation/simulation DEFERRED pending the owner's answer in A12 (no invoice-send route exists to rehearse; creating drafts would widen the Beta write pin) |
-| 7 | Case health / summaries / report drafting from recorded facts | NOT STARTED |
-| 8 | Watch mode (internal read-only monitoring) | NOT STARTED |
-| 9 | Visual QA / workflow advisor | NOT STARTED |
+| 6 | Invoice/billing read + preparation + simulation | **COMPLETE (zero-write)** — read half DEPLOYED in #263 (A12); the owner's zero-write invoice preview answered A12's question and is BUILT (A13): DRY RUN — INVOICE PREVIEW / SIMULATED — NOT CREATED, no row, no number consumed, twin-pinned |
+| 7 | Case health / summaries / report drafting from recorded facts | **BUILT** — A14; recorded facts only, verbatim chronology, one next-step writer, the delete-probe extracted and shared |
+| 8 | Watch mode (internal read-only monitoring) | **BUILT** — A15; composition on ask over needsAttention + bounded arms; internal only, by absence of any send path |
+| 9 | Visual QA / workflow advisor | **BUILT** — A16; `portal/ux-advisor.mjs` measurement sweep, findings in `UX-FINDINGS.json`/`.md` (51 on first run), judgment classes named for a person |
 
 **Checkpoint (2026-09-02, updated overnight):** the pre-Assistant units went
 green first — PR #260 merged as `6770609`, both deploy workflows `success` on
