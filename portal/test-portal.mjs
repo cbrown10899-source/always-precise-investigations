@@ -16436,6 +16436,112 @@ section('MAIL-CHECK: the sheets say it, the invoice prints it only where and whe
   await page.close();
 }
 
+section('MAIL-CHECK D5: the tickable option on legal and insurance sends');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await post('/ingest', { case_no: 'API-MCW-L', assignment: 'legal', law_firm: 'Ticker & Box LLP',
+    attorney_name: 'A. Tick', client_name: 'Ticker & Box LLP' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await post('/ingest', { case_no: 'API-MCW-P', client_name: 'Priva Kate',
+    client_email: 'kate@example.test' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await page.evaluate(async () => { await render(); TAB = 'leads'; paint(); });
+  await page.waitForTimeout(300);
+
+  /* ---- LEGAL: the checkbox, unticked, and nothing consumer ---- */
+  const lglCard = page.locator('.pcard', { hasText: 'Ticker & Box LLP' }).first();
+  await lglCard.locator('[data-act="leadSheet"]').click();
+  await page.waitForTimeout(500);
+  const lgl = await page.evaluate(() => ({
+    box: !!document.querySelector('#wiz_mailck'),
+    ticked: document.querySelector('#wiz_mailck') ? document.querySelector('#wiz_mailck').checked : null,
+    consumer: document.querySelectorAll('.wiz-pm').length,
+    text: document.querySelector('.wizover, .dlg, #app').innerText,
+  }));
+  ok('a legal send offers the Mail Check checkbox', lgl.box === true);
+  ok('UNTICKED by default — an unsent option is never advertised', lgl.ticked === false);
+  ok('no consumer method box is drawn beside it', lgl.consumer === 0);
+  ok('the hint says the address is invoice-only, and no handle appears',
+     /Invoice defaults/.test(lgl.text) && !/cash\.app|venmo/i.test(lgl.text), lgl.text.slice(0, 200));
+
+  /* Tick it, preview, and capture exactly what the page would post. */
+  const posted = await page.evaluate(async () => {
+    document.querySelector('#wiz_mailck').checked = true;
+    document.querySelector('#wiz_to').value = 'firm@example.test';
+    wizCollect();
+    SHEET_WIZ.step = 2; paint();
+    const summary = document.querySelector('#app').innerText;
+    let body = null;
+    const real = window.fetch;
+    window.fetch = async (url, init) => {
+      if (String(url).includes('/sheets/')) {
+        body = JSON.parse(init.body);
+        return new Response(JSON.stringify({ ok: true, sent_to: 'firm@example.test',
+          send_context: 'legal', included: { rate_sheet: 'x',
+            payment_methods: [{ id: 'mail_check', label: 'Mail Check' }] } }),
+          { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return real(url, init);
+    };
+    await wizSend();
+    window.fetch = real;
+    return { summary, body, msg: LEAD_MSG || SHEET_MSG };
+  });
+  ok('the preview names the choice before it goes',
+     /Payment option/.test(posted.summary) && /Mail Check/.test(posted.summary)
+     && /Mailing instructions provided with invoice/.test(posted.summary), posted.summary.slice(0, 300));
+  ok('the page posts include_payment with exactly mail_check',
+     posted.body && posted.body.include_payment === true
+     && Array.isArray(posted.body.methods) && posted.body.methods.join() === 'mail_check',
+     JSON.stringify(posted.body));
+  ok('the confirmation names Mail Check and does NOT chase a retainer',
+     /Mail Check/.test(posted.msg) && !/retainer is still pending/.test(posted.msg), posted.msg);
+
+  /* ---- INSURANCE: same box from the Rate Sheets screen ---- */
+  await page.evaluate(async () => { TAB = 'sheets'; OPEN_SHEET = 'insurance'; paint(); });
+  await page.waitForTimeout(300);
+  await page.locator('[data-act="shWiz"][data-context="insurance"]').click();
+  await page.waitForTimeout(400);
+  const ins = await page.evaluate(() => ({
+    box: !!document.querySelector('#wiz_mailck'),
+    ticked: document.querySelector('#wiz_mailck') ? document.querySelector('#wiz_mailck').checked : null,
+    consumer: document.querySelectorAll('.wiz-pm').length,
+  }));
+  ok('an insurance send offers the same unticked checkbox and nothing consumer',
+     ins.box === true && ins.ticked === false && ins.consumer === 0, JSON.stringify(ins));
+  await page.evaluate(() => { SHEET_WIZ = null; paint(); });
+
+  /* ---- PRIVATE: exactly as it was — no Mail Check anywhere ---- */
+  await page.evaluate(async () => { TAB = 'leads'; paint(); });
+  await page.waitForTimeout(200);
+  const prvCard = page.locator('.pcard', { hasText: 'Priva Kate' }).first();
+  await prvCard.locator('[data-act="leadSheet"]').click();
+  await page.waitForTimeout(500);
+  const prv = await page.evaluate(() => ({
+    box: !!document.querySelector('#wiz_mailck'),
+    text: document.querySelector('#app').innerText,
+  }));
+  ok('a PRIVATE send has no Mail Check box and no Mail Check wording',
+     prv.box === false && !/Mail Check/.test(prv.text), prv.text.slice(0, 160));
+
+  /* ---- phone ---- */
+  await page.setViewportSize({ width: 390, height: 760 });
+  await page.evaluate(async () => { SHEET_WIZ = null; TAB = 'leads'; paint(); });
+  await page.waitForTimeout(200);
+  await page.locator('.pcard', { hasText: 'Ticker & Box LLP' }).first()
+    .locator('[data-act="leadSheet"]').click();
+  await page.waitForTimeout(400);
+  const ph = await page.evaluate(() => {
+    const el = document.querySelector('#wiz_mailck');
+    const r = el ? el.closest('label').getBoundingClientRect() : null;
+    return { box: !!el, fits: r ? r.right <= window.innerWidth + 1 : null,
+             overflow: document.documentElement.scrollWidth > window.innerWidth };
+  });
+  ok('the checkbox is offered and clean at 390px', ph.box === true && ph.fits === true && !ph.overflow,
+     JSON.stringify(ph));
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.close();
+}
+
 await browser.close();
 server.close();
 

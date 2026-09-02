@@ -88,6 +88,21 @@ ARRANGEMENTS (which already include check-by-mail as a request) are
 untouched — this unit is presentation and recording vocabulary on top of the
 same model.
 
+**D5 — The tickable option on a send (owner, 2026-09-02).** The legal and
+insurance send wizards offer exactly one payment checkbox — **[ ] Mail
+Check** — in the same pattern as the private wizard's method boxes, unticked
+by default so an unsent option is never advertised. Ticked, the email gains a
+PAYMENT block rendered by `mailCheckBlockText/Html` — deliberately NOT
+`paymentBlockText`, whose opening retainer sentence must never reach a firm
+or carrier — reading exactly `Mail Check — Mailing instructions provided
+with invoice.` The Worker accepts `include_payment` with methods
+`['mail_check']` on a non-private context and NOTHING else: Cash App or
+Venmo in the same request still refuses (`legal_no_payment_block`), and a
+PRIVATE send asking for mail_check refuses by name
+(`mail_check_not_private`). The send is recorded in `payment_send` as
+`mail_check`, the response names it, and the page's confirmation does not
+chase a retainer for it.
+
 ## Owed to the owner
 
 The remittance address itself. Until it is typed into Settings → Billing →

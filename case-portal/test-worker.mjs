@@ -16188,11 +16188,7 @@ section('Quick intake delete: anything dependent refuses toward the real workflo
   await env.DB.prepare("INSERT INTO case_days (case_no, investigator_id, day_date, start_time, created_at) VALUES ('API-DAY', 1, '2026-08-20', '08:00', ?)").bind(now).run();
   await ingest(env, { case_no: 'API-PAY', client_name: 'Paid Pat' });
   await env.DB.prepare("INSERT INTO retainer_payment (case_no, amount, method, recorded_by, recorded_at) VALUES ('API-PAY', 1500, 'check', 1, ?)").bind(now).run();
-  await ingest(env, { case_no: 'API-SENT', client_name: 'Mailed Mel' });
-  await env.DB.prepare("INSERT INTO send_log (case_no, kind, sheet_id, recipient, ok, sent_by, sent_at) VALUES ('API-SENT', 'rate_sheet', 'private_retainer', 'mel@x.test', 1, 1, ?)").bind(now).run();
-
-  for (const [no, word] of [['API-DAY', 'an investigation day'], ['API-PAY', 'a recorded retainer payment'],
-                            ['API-SENT', 'sent rate sheets or intake links']]) {
+  for (const [no, word] of [['API-DAY', 'an investigation day'], ['API-PAY', 'a recorded retainer payment']]) {
     const res = await call(env, `/cases/${no}/intake-delete`, { method: 'POST', cookie: admin, body: {} });
     const d = await jsonOf(res);
     ok(`${no} refuses, naming ${word}`,
@@ -16200,6 +16196,38 @@ section('Quick intake delete: anything dependent refuses toward the real workflo
        && d.use_case_workflow === true && d.error.includes('Delete case'), JSON.stringify(d).slice(0, 200));
     ok(`${no} still exists afterward — a refusal deletes nothing`,
        (await env.DB.prepare('SELECT COUNT(*) AS n FROM submissions WHERE case_no = ?').bind(no).first()).n === 1);
+  }
+
+  /* OWNER RULE 2026-09-02 — the lead-handling states and acts that must NOT
+     make a disposable duplicate undeletable: a sent rate sheet, sent payment
+     instructions, a Closed Lead status, a recorded communication. The sends
+     are non-deletable history, so they SURVIVE the delete rather than dying
+     with it; the comm and the status are the intake's own paperwork and go. */
+  await ingest(env, { case_no: 'API-SENT', client_name: 'Mailed Mel' });
+  await env.DB.prepare("INSERT INTO send_log (case_no, kind, sheet_id, recipient, ok, sent_by, sent_at) VALUES ('API-SENT', 'rate_sheet', 'private_retainer', 'mel@x.test', 1, 1, ?)").bind(now).run();
+  await env.DB.prepare("INSERT INTO payment_send (case_no, recipient, methods, ok, sent_by, sent_at) VALUES ('API-SENT', 'mel@x.test', 'cash_app', 1, 1, ?)").bind(now).run();
+  await env.DB.prepare("INSERT INTO lead_status (case_no, status, set_by, set_at) VALUES ('API-SENT', 'closed_lead', 1, ?)").bind(now).run();
+  await env.DB.prepare("INSERT INTO case_comms (case_no, comm_type, at_date, at_time, summary, author_id, created_at) VALUES ('API-SENT', 'phone', '2026-09-01', '10:00', 'Left a voicemail about the duplicate', 1, ?)").bind(now).run();
+  const sentDel = await call(env, '/cases/API-SENT/intake-delete', { method: 'POST', cookie: admin, body: {} });
+  ok('a Closed Lead that was emailed sheets, sent instructions and phoned still deletes',
+     sentDel.status === 200, String(sentDel.status) + ' ' + JSON.stringify(await jsonOf(sentDel)).slice(0, 160));
+  ok('ITS SEND HISTORY SURVIVES — non-deletable, and no longer a blocker',
+     (await env.DB.prepare("SELECT COUNT(*) AS n FROM send_log WHERE case_no = 'API-SENT'").first()).n === 1
+     && (await env.DB.prepare("SELECT COUNT(*) AS n FROM payment_send WHERE case_no = 'API-SENT'").first()).n === 1);
+  ok('its comm note and lead status went with the intake',
+     (await env.DB.prepare("SELECT COUNT(*) AS n FROM case_comms WHERE case_no = 'API-SENT'").first()).n === 0
+     && (await env.DB.prepare("SELECT COUNT(*) AS n FROM lead_status WHERE case_no = 'API-SENT'").first()).n === 0);
+
+  /* THE LIVE 500 (owner, API-20260901-3207): the blocker probe reused ?1
+     across every UNION arm with one bound value — node:sqlite green, live D1
+     a 500 wearing the generic sentence. The builder is pinned to
+     exactly-counted anonymous binds so the shape cannot quietly return. */
+  {
+    const src2 = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+    const probe = (src2.match(/const sql = arms\.map[\s\S]{0,400}?join\(' UNION ALL '\)/) || [''])[0];
+    ok('the blocker probe binds one anonymous ? per arm — never a reused ?1',
+       probe.includes('case_no = ?)') && !probe.includes('?1')
+       && src2.includes('.bind(...arms.map(() => caseNo))'), probe.slice(0, 120));
   }
 
   /* The hold outranks, before any list is consulted. */
@@ -16405,6 +16433,87 @@ section('Mail Check: the invoice prints remittance only where it may, only once 
     body: { to: 'firm@x.test', name: 'Check & Mail LLP', case_no: 'API-MC-LGL' } });
   ok('the consumer payment block still refuses a legal case', refuse.status === 409 || refuse.status === 400,
      String(refuse.status));
+}
+
+
+section('Mail Check is the one tickable payment option on a legal or insurance send');
+{
+  const realFetch = globalThis.fetch;
+  let last = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) { last = JSON.parse(init.body); return new Response('{"id":"re_1"}', { status: 200 }); }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  /* An address is configured, which must change NOTHING about any sheet. */
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { remit_address: '4571 Test Remit Way, Lynchburg, VA' } });
+
+  /* LEGAL, ticked: the block rides, in the owner's words, address nowhere. */
+  let res = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'firm@example.test', send_context: 'legal',
+            include_payment: true, methods: ['mail_check'] } });
+  let d = await jsonOf(res);
+  ok('a legal send ticks Mail Check and sends', res.status === 200
+     && d.send_context === 'legal', JSON.stringify(d).slice(0, 160));
+  ok('the answer names exactly Mail Check',
+     (d.included.payment_methods || []).length === 1
+     && d.included.payment_methods[0].id === 'mail_check'
+     && d.included.payment_methods[0].label === 'Mail Check');
+  ok('both MIME parts carry the block wording',
+     /PAYMENT\n Mail Check|PAYMENT\nMail Check/.test(last.text)
+     && last.text.includes('Mail Check — Mailing instructions provided with invoice.')
+     && last.html.includes('Mailing instructions provided with invoice.'), last.text.slice(-400));
+  ok('and NO address, configured or not — invoice-only by the owner\'s rule',
+     !last.text.includes('Test Remit Way') && !last.html.includes('Test Remit Way'));
+  ok('no consumer handle leaked into a legal email',
+     !last.text.includes('cash.app') && !last.text.includes('venmo.com')
+     && !last.html.includes('cash.app') && !last.html.includes('venmo.com'));
+  ok('the send history records mail_check',
+     (await env.DB.prepare("SELECT methods FROM payment_send ORDER BY id DESC LIMIT 1").first()).methods === 'mail_check');
+
+  /* LEGAL, unticked: the sheet line stays (it is product copy), the BLOCK
+     does not — one occurrence of the sentence, not two. */
+  last = null;
+  await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'firm2@example.test', send_context: 'legal' } });
+  const onceOnly = (last.text.match(/Mailing instructions provided with invoice\./g) || []).length;
+  ok('unticked, the sheet line remains and the payment block does not',
+     onceOnly === 1 && !/\nPAYMENT\n/.test(last.text), String(onceOnly));
+
+  /* INSURANCE, ticked: the carrier sheet may carry it now — and only it. */
+  last = null;
+  res = await call(env, '/sheets/insurance_assignment/email', { method: 'POST', cookie: admin,
+    body: { to: 'adjuster@example.test', include_payment: true, methods: ['mail_check'] } });
+  d = await jsonOf(res);
+  ok('an insurance send ticks Mail Check and sends', res.status === 200
+     && d.send_context === 'insurance'
+     && (d.included.payment_methods || []).map(m => m.id).join() === 'mail_check',
+     JSON.stringify(d).slice(0, 160));
+  ok('the carrier email carries the wording and nothing consumer',
+     last.text.includes('Mail Check — Mailing instructions provided with invoice.')
+     && !last.text.includes('cash.app') && !last.text.includes('venmo.com')
+     && !last.text.includes('Test Remit Way'));
+
+  /* The boundary did not move an inch. */
+  res = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'firm@example.test', send_context: 'legal',
+            include_payment: true, methods: ['cash_app'] } });
+  ok('Cash App still cannot ride a legal send', res.status === 400
+     && (await jsonOf(res)).code === 'legal_no_payment_block');
+  res = await call(env, '/sheets/insurance_assignment/email', { method: 'POST', cookie: admin,
+    body: { to: 'adjuster@example.test', include_payment: true, methods: ['mail_check', 'venmo'] } });
+  ok('nor Venmo an insurance one, even hidden beside mail_check', res.status === 400);
+  res = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'client@example.test', include_payment: true, methods: ['mail_check'] } });
+  ok('and a PRIVATE send refuses mail_check by name', res.status === 400
+     && (await jsonOf(res)).code === 'mail_check_not_private');
+
+  globalThis.fetch = realFetch;
 }
 
 /* ------------------------------------------------------------------ report */

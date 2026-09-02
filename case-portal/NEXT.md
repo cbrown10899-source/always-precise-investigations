@@ -225,6 +225,22 @@ Mail Check is a label storing the CHECK-constrained `check` instrument.
 **Owed by the owner: the actual remittance address, typed into Settings →
 Billing — until then invoices deliberately print no remittance section.**
 
+## ✅ SHIPPED — Live intake-delete fix + Mail Check as a send option (owner jobs, 2026-09-02)
+
+**Job 1:** the first real quick-delete (API-20260901-3207) 500'd — the blocker
+probe reused `?1` across UNION arms, node:sqlite green, live D1 red (the Unit 7
+parameter class; builder now one-`?`-per-arm, shape pinned by test). Owner
+rules folded in: sends/payment-instructions no longer block (they SURVIVE —
+non-deletable history), comms + lead status are intake paperwork (deleted with
+it), Closed Lead / Awaiting Mailed Check delete like any fresh duplicate;
+protected records still refuse, naming Archive and Delete case as the roads.
+**Job 2 (MAIL-CHECK.md D5):** legal + insurance send wizards carry the one
+tickable payment option [ ] Mail Check (unticked default); ticked, the email
+gains its own PAYMENT block (never the private retainer-sentence block);
+Worker takes methods ['mail_check'] on non-private and nothing else —
+cash_app/venmo beside it refuse, private+mail_check refuses by name;
+payment_send records mail_check. No schema change either job.
+
 ## What is left
 
 - **23 — Consolidated Live Verification Sweep.** ⏸️ **LIVE VERIFICATION

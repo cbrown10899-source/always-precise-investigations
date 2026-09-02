@@ -903,6 +903,14 @@ only on a legal case. `invoice_payments.method` DOES carry a CHECK, and
 widening one is the forbidden rebuild — so on non-private invoices "Mail
 Check" is a dropdown label that stores the existing `check` instrument.
 
+**And it is a TICKABLE send option (D5, owner 2026-09-02):** the legal and
+insurance send wizards offer exactly one payment checkbox — Mail Check,
+unticked by default — and the Worker accepts `methods: ['mail_check']` on a
+non-private context and nothing else: Cash App/Venmo beside it still refuse,
+a private send asking for it refuses by name, and the block the email gains
+is its own renderer because the private payment block opens with a retainer
+sentence no firm or carrier may receive.
+
 **What did not move:** `CONTEXT_TAKES_PAYMENT === PRIVATE`, every Cash
 App/Venmo path, `/payment-options/email`'s refusals, the private sheet and
 private invoices, and the legal payment arrangements. No schema change, no
@@ -1155,9 +1163,15 @@ each saying truthfully which it is.
 **The intake trash is the one HARD delete in the portal, and the dependency
 guard is what reconciles it with the standing "no purge" decision.**
 `POST /cases/:no/intake-delete` (admin-only) refuses 409 — naming what it
-found — the moment the intake carries ANY dependent record (a day, activity,
-media, a report, an invoice, money, a send, curated records…), pointing at the
-existing recoverable workflow. What it can ever destroy is the intake's own
+found — the moment the intake carries ANY protected dependent record (a day,
+activity, media, a report, an invoice, money, curated records…), pointing at
+the existing recoverable workflow. **Lead-handling acts do not block** (owner,
+2026-09-02): sends and payment instructions are non-deletable history that
+SURVIVES the delete without blocking it, a comm note and the lead status are
+the intake's own paperwork, and a Closed Lead or "Awaiting Mailed Check"
+state deletes like any fresh duplicate. **The blocker probe binds one `?` per
+arm** — the first version reused `?1` and live D1 500'd where node:sqlite was
+green, the Unit 7 parameter lesson again; a test pins the shape. What it can ever destroy is the intake's own
 paperwork: `INTAKE_OWNED` in `worker.js` (submissions + eight intake-time
 companions). So the dictated confirmation — *"Delete intake for [name]? This
 cannot be undone."* — is TRUE, which is the standard every screen is held to.
