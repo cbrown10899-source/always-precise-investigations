@@ -17221,7 +17221,11 @@ section('API ASSISTANT Unit 5 — the rate-sheet dry-run workbench, on the real 
      }));
 
   /* ---- UNIT 10 topics on the real page: live status, structured lines,
-     and the three action shapes actually doing their three things ---- */
+     and the three action shapes actually doing their three things. The
+     invoice-preview probes above primed a case into the panel context;
+     bare topics are the NO-case posture, so clear it — with a case open,
+     "ready to close" rightly answers about that case instead (Unit 7). */
+  await page.evaluate(() => { ASST.case = ''; });
   await page.locator('#asst_in').fill('intakes');
   await page.locator('.asst-ask button').click();
   await page.waitForTimeout(800);
