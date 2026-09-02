@@ -1808,6 +1808,8 @@
   margin-bottom:4px}
 .asst-work label.asst-ck{flex-direction:row;align-items:center;gap:8px}
 .asst-work .asst-ck input{width:20px;height:20px;min-height:20px;flex:0 0 auto}
+.asst-guidep{color:var(--muted);font-size:.85rem;margin-bottom:6px;padding-bottom:6px;
+  border-bottom:1px solid var(--line)}
 
 /* APPEND AT THE VERY END OF THE STYLESHEET (the source-order rule — the fifth
    casualty list): the phone shape. The pill only exists under 900px, and only
@@ -2615,7 +2617,8 @@ async function asstSend(text){
     const r = await api("/assistant/command", { method: "POST",
       body: { text: t, context: asstContext() } });
     ASST.msgs.push({ who: "asst", text: r.text || "", card: r.card || null,
-                     actions: r.actions || null, kind: r.kind || "" });
+                     actions: r.actions || null, kind: r.kind || "",
+                     guide_intro: r.guide_intro || "" });
     /* UNIT 4 — a prepare answer opens the workbench, prefilled from whatever
        the utterance itself carried. The server's form is a SEED; the draft
        object is the source of truth from here on. */
@@ -2849,6 +2852,7 @@ function asstMsgHtml(m){
   return `<div class="asst-m">
     ${m.kind === "refused" ? `<div class="asst-blocked">BETA — ACTION DISABLED</div>` : ""}
     ${m.kind === "simulated" ? `<div class="asst-sim">SIMULATED — NOT SENT</div>` : ""}
+    ${m.guide_intro ? `<div class="asst-guidep">${esc(m.guide_intro)}</div>` : ""}
     <div>${esc(m.text)}</div>
     ${m.card ? `<div class="asst-card">${m.card.map(c => `
       <button class="asst-row" data-act="asstOpenCase" data-case="${esc(c.case_no || "")}">

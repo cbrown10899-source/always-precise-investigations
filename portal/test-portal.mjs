@@ -17145,6 +17145,47 @@ section('API ASSISTANT Unit 5 — the rate-sheet dry-run workbench, on the real 
        (ASST.prep.preview.included.payment_methods || []).map(m => m.id).join(',') === 'mail_check'
        && !/cash ?app|venmo/i.test(ASST.prep.preview.body_text)));
   await page.locator('[data-act="asstPrepCancel"]').click();
+
+  /* ---- UNIT 6 read half: the live money answer, with its door ---- */
+  await page.locator('#asst_in').fill('What is outstanding?');
+  await page.locator('.asst-ask button').click();
+  await page.waitForTimeout(700);
+  const billing = await page.evaluate(() => {
+    const blocks = [...document.querySelectorAll('.asst-m')];
+    const last = blocks[blocks.length - 1];
+    return last ? { text: last.innerText, door: !!last.querySelector('.asst-acts button') }
+      : { text: 'NO-ANSWER', door: false };
+  });
+  ok('“what is outstanding?” answers with the live billing figure and offers the Billing door',
+     /Outstanding across live invoices: \$/.test(billing.text) && billing.door === true,
+     billing.text.slice(0, 160));
+
+  /* ---- §11: the guide toggle CHANGES the answer — the inert-toggle fix ---- */
+  await page.evaluate(() => { VIEW = 'list'; WS_CASE = ''; TAB = 'invoices'; paint(); });
+  await page.waitForTimeout(200);
+  await page.locator('#asst_guide').click();
+  await page.locator('#asst_in').fill('billing status');
+  await page.locator('.asst-ask button').click();
+  await page.waitForTimeout(700);
+  const guided = await page.evaluate(() => {
+    const blocks = [...document.querySelectorAll('.asst-m')];
+    const last = blocks[blocks.length - 1];
+    return { p: last && last.querySelector('.asst-guidep') ? last.querySelector('.asst-guidep').innerText : '',
+             text: last ? last.innerText : 'NO-ANSWER' };
+  });
+  ok('guide ON leads the billing answer with the screen\'s own paragraph',
+     /paid is what a zero balance means/i.test(guided.p) && /Outstanding|invoice/i.test(guided.text),
+     JSON.stringify(guided).slice(0, 200));
+  await page.locator('#asst_guide').click();
+  await page.locator('#asst_in').fill('billing status');
+  await page.locator('.asst-ask button').click();
+  await page.waitForTimeout(700);
+  ok('guide OFF is the compact answer again — no paragraph',
+     await page.evaluate(() => {
+       const blocks = [...document.querySelectorAll('.asst-m')];
+       const last = blocks[blocks.length - 1];
+       return !!last && !last.querySelector('.asst-guidep');
+     }));
   await page.close();
 }
 

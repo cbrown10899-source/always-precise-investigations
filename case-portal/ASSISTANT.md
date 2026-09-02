@@ -262,9 +262,13 @@ did not exist; the toggle changed nothing. The exact defect class this
 project keeps on file — the inert profile-contact select, the invisible
 quick tool: a control that renders is not a control that works. Found by
 grepping the Assistant block for `guide` (zero occurrences) after Units 1–3
-had already deployed in #261. Fix ships as its own unit with both suites
-extended to assert the ON/OFF difference — a test for only "the toggle
-exists" is exactly how this shipped.
+had already deployed in #261. **FIXED in the same overnight window**: guide
+ON now leads a STATUS answer with the screen's own plain-language paragraph
+(`guide_intro`, decorated in a wrapper over the grammar core — the case
+workspace's paragraph when a case is in context); refusals, navigation and
+the explain answers are untouched, OFF stays compact. Both suites assert the
+ON/OFF DIFFERENCE — a test for only "the toggle exists" is exactly how the
+gap shipped.
 
 ## Unit ledger (update as units move)
 
