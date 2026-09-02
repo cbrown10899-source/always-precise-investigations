@@ -17412,7 +17412,12 @@ section('The launcher hides removed cases, and no card wears the number as a nam
     sessionStorage.setItem('apiFavCases', JSON.stringify(['API-GONE-999', 'API-LNCH-E1']));
     sessionStorage.setItem('apiRecentCases', JSON.stringify(['API-GONE-998']));
   });
-  await signIn(page, 'trever', 'AdminPassword1x');
+  /* Inline sign-in, not signIn(): at 390px the tab rail is behind the burger,
+     so the helper's Cases click waits on a button that is never visible. */
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(1200);
   const stores = await page.evaluate(() => ({
     favs: JSON.parse(sessionStorage.getItem('apiFavCases') || '[]'),
     recent: JSON.parse(sessionStorage.getItem('apiRecentCases') || '[]'),
