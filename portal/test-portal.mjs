@@ -5215,9 +5215,20 @@ for (const [label, w, h] of [['phone 390', 390, 844], ['desktop 1200', 1200, 900
 
   const over = await page.evaluate(() => {
     const vw = window.innerWidth, out = [];
+    /* An element inside a horizontal scroll container is not "past the edge"
+       — it is where a scroll container puts what does not fit, which is this
+       project's own rule for wide content. The doc check beside this still
+       pins that the PAGE never scrolls sideways. */
+    const inHScroll = el => {
+      for (let n = el.parentElement; n; n = n.parentElement) {
+        const o = getComputedStyle(n).overflowX;
+        if (o === 'auto' || o === 'scroll') return true;
+      }
+      return false;
+    };
     for (const el of document.querySelectorAll('#app *')) {
       const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.right > vw + 1) out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
+      if (r.width > 0 && r.right > vw + 1 && !inHScroll(el)) out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
     }
     return { doc: Math.round(document.documentElement.scrollWidth - vw), els: out.slice(0, 4) };
   });
@@ -5248,9 +5259,20 @@ for (const [label, w, h] of [['phone 390', 390, 844], ['desktop 1200', 1200, 900
 
   const over = await page.evaluate(() => {
     const vw = window.innerWidth, out = [];
+    /* An element inside a horizontal scroll container is not "past the edge"
+       — it is where a scroll container puts what does not fit, which is this
+       project's own rule for wide content. The doc check beside this still
+       pins that the PAGE never scrolls sideways. */
+    const inHScroll = el => {
+      for (let n = el.parentElement; n; n = n.parentElement) {
+        const o = getComputedStyle(n).overflowX;
+        if (o === 'auto' || o === 'scroll') return true;
+      }
+      return false;
+    };
     for (const el of document.querySelectorAll('#app *')) {
       const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.right > vw + 1) out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
+      if (r.width > 0 && r.right > vw + 1 && !inHScroll(el)) out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
     }
     return { doc: Math.round(document.documentElement.scrollWidth - vw), els: out.slice(0, 4) };
   });
@@ -11483,21 +11505,30 @@ section('The mobile header is a control, not a glyph');
   ok('tapping outside closes the drawer',
      await page.evaluate(() => !document.body.classList.contains('navopen')));
 
-  /* Quick tools: the day's launcher, at tap size, nothing overflowing. */
+  /* Quick tools: the day's launcher, at tap size. It is a SWIPE STRIP on a
+     phone now (owner, 2026-09-02) — six doors cannot simultaneously fit a
+     320px screen and never could as targets; what the old "fits" assertion
+     was really protecting is that no tool is unreachable and the page never
+     widens. Both are pinned directly. */
   const qt = await page.evaluate(() => {
     const doc = document.documentElement;
-    const btns = [...document.querySelectorAll('.qtool')].map(x => {
-      const r = x.getBoundingClientRect();
-      return { t: x.textContent.trim(), h: Math.round(r.height),
-               fits: r.right <= doc.clientWidth + 1 }; });
-    return { overflowX: doc.scrollWidth - doc.clientWidth, btns };
+    const g = document.querySelector('.qtgrid');
+    const btns = [...document.querySelectorAll('.qtool')].map(x =>
+      ({ t: x.textContent.trim(), h: Math.round(x.getBoundingClientRect().height) }));
+    const firstFits = document.querySelector('.qtool').getBoundingClientRect().right
+      <= doc.clientWidth + 1;
+    g.scrollLeft = 99999;
+    const lastReachable = [...document.querySelectorAll('.qtool')].pop()
+      .getBoundingClientRect().right <= doc.clientWidth + 2;
+    g.scrollLeft = 0;
+    return { overflowX: doc.scrollWidth - doc.clientWidth, btns, firstFits, lastReachable };
   });
   ok('the page does not scroll sideways at 320px', qt.overflowX === 0, String(qt.overflowX));
   ok('quick tools reach the day\'s doors',
      ['Timestamp Photo', 'Timestamp Video', 'Active Surveillance', 'Cases']
        .every(name => qt.btns.some(x => x.t.includes(name))), JSON.stringify(qt.btns));
-  ok('every tool is a tap target that fits',
-     qt.btns.every(x => x.h >= 44 && x.fits), JSON.stringify(qt.btns));
+  ok('every tool is a 44px target on a strip that swipes to reach them all',
+     qt.btns.every(x => x.h >= 44) && qt.firstFits && qt.lastReachable, JSON.stringify(qt));
 
   /* The dashboard's operational panels render. */
   const dash = await page.evaluate(() => ({
@@ -12077,9 +12108,20 @@ section('Clients & Firms on a phone: cards, taps and no sideways scroll');
 
   const over = await page.evaluate(() => {
     const vw = window.innerWidth, out = [];
+    /* An element inside a horizontal scroll container is not "past the edge"
+       — it is where a scroll container puts what does not fit, which is this
+       project's own rule for wide content. The doc check beside this still
+       pins that the PAGE never scrolls sideways. */
+    const inHScroll = el => {
+      for (let n = el.parentElement; n; n = n.parentElement) {
+        const o = getComputedStyle(n).overflowX;
+        if (o === 'auto' || o === 'scroll') return true;
+      }
+      return false;
+    };
     for (const el of document.querySelectorAll('#app *')) {
       const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.right > vw + 1) {
+      if (r.width > 0 && r.right > vw + 1 && !inHScroll(el)) {
         out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
       }
     }
@@ -12398,9 +12440,20 @@ section('Search and alerts on a phone: stacked, tappable, no sideways scroll');
 
   const over = await page.evaluate(() => {
     const vw = window.innerWidth, out = [];
+    /* An element inside a horizontal scroll container is not "past the edge"
+       — it is where a scroll container puts what does not fit, which is this
+       project's own rule for wide content. The doc check beside this still
+       pins that the PAGE never scrolls sideways. */
+    const inHScroll = el => {
+      for (let n = el.parentElement; n; n = n.parentElement) {
+        const o = getComputedStyle(n).overflowX;
+        if (o === 'auto' || o === 'scroll') return true;
+      }
+      return false;
+    };
     for (const el of document.querySelectorAll('#app *')) {
       const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.right > vw + 1) {
+      if (r.width > 0 && r.right > vw + 1 && !inHScroll(el)) {
         out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
       }
     }
@@ -12636,9 +12689,20 @@ section('Report templates on a phone: stacked, tappable, no sideways scroll');
      String(await page.locator('.tmplcard').count()));
   const over = await page.evaluate(() => {
     const vw = window.innerWidth, out = [];
+    /* An element inside a horizontal scroll container is not "past the edge"
+       — it is where a scroll container puts what does not fit, which is this
+       project's own rule for wide content. The doc check beside this still
+       pins that the PAGE never scrolls sideways. */
+    const inHScroll = el => {
+      for (let n = el.parentElement; n; n = n.parentElement) {
+        const o = getComputedStyle(n).overflowX;
+        if (o === 'auto' || o === 'scroll') return true;
+      }
+      return false;
+    };
     for (const el of document.querySelectorAll('.tmplgrid, .tmplgrid *')) {
       const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.right > vw + 1) {
+      if (r.width > 0 && r.right > vw + 1 && !inHScroll(el)) {
         out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
       }
     }
@@ -12956,9 +13020,20 @@ for (const [label, w, h] of [['phone 375', 375, 812], ['phone 390', 390, 844], [
 
   const over = await page.evaluate(() => {
     const vw = window.innerWidth, out = [];
+    /* An element inside a horizontal scroll container is not "past the edge"
+       — it is where a scroll container puts what does not fit, which is this
+       project's own rule for wide content. The doc check beside this still
+       pins that the PAGE never scrolls sideways. */
+    const inHScroll = el => {
+      for (let n = el.parentElement; n; n = n.parentElement) {
+        const o = getComputedStyle(n).overflowX;
+        if (o === 'auto' || o === 'scroll') return true;
+      }
+      return false;
+    };
     for (const el of document.querySelectorAll('#app *')) {
       const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.right > vw + 1) {
+      if (r.width > 0 && r.right > vw + 1 && !inHScroll(el)) {
         out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}@${Math.round(r.right)}`);
       }
     }
@@ -17576,6 +17651,185 @@ section('Assistant Back and Assistant Home: every level has a way back');
   await inv.waitForTimeout(250);
   ok('and lands back on their own menu', await inv.locator('.asst-home').count() === 1);
   await inv.close();
+}
+
+/* ==========================================================================
+   NAV / DASHBOARD REFINEMENT (owner brief 2026-09-02): the drawer gets a
+   visible retract handle on its right edge; Quick Tools becomes a one-row
+   swipe strip on phones (it was an auto-fill grid that resolved to ONE
+   column at 390px — six stacked doors, 336px); the Search card stops being a
+   billboard (245px on a phone for one input, mostly card padding and an
+   unstyled explainer paragraph). Measured before/after, which is this
+   file's rule: Today / next actions began at 682px on a 390px phone —
+   off the first screen — and begins around 286px now. */
+section('The first screen earns its height: drawer handle, tool strip, compact search');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(250);
+  /* Inline sign-in — at 390px the tab rail is behind the burger and the
+     signIn() helper's Cases click never resolves (the launcher section's
+     lesson). An admin lands on the Dashboard, which is the screen under test. */
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(1100);
+
+  /* ---- the first screen: order kept, height reclaimed ---- */
+  const fs = await page.evaluate(() => {
+    const r = sel => { const el = document.querySelector(sel);
+      return el ? Math.round(el.getBoundingClientRect().top) : null; };
+    const h = sel => { const el = document.querySelector(sel);
+      return el ? Math.round(el.getBoundingClientRect().height) : null; };
+    const today = [...document.querySelectorAll('#app .card')]
+      .find(c => /Today \/ next actions/.test((c.querySelector('h2') || {}).innerText || ''));
+    return { qtoolsTop: r('.qtools'), qtoolsH: h('.qtools'),
+             srchTop: r('.srchcard'), srchH: h('.srchcard'),
+             todayTop: today ? Math.round(today.getBoundingClientRect().top) : null };
+  });
+  ok('the order stands: Quick Tools, then Search, then Today',
+     fs.qtoolsTop < fs.srchTop && fs.srchTop < fs.todayTop, JSON.stringify(fs));
+  ok('Quick Tools is a strip, not a stack (was 336px)', fs.qtoolsH <= 90, JSON.stringify(fs));
+  ok('the Search card is a box, not a billboard (was 245px)', fs.srchH <= 140, JSON.stringify(fs));
+  ok('Today / next actions is ON the first screen (was 682px down)',
+     fs.todayTop !== null && fs.todayTop <= 420, JSON.stringify(fs));
+
+  /* ---- the quick-tools strip ---- */
+  const strip = await page.evaluate(() => {
+    const g = document.querySelector('.qtgrid');
+    return { rowH: Math.round(g.getBoundingClientRect().height),
+             sw: g.scrollWidth, cw: g.clientWidth,
+             pageSw: document.documentElement.scrollWidth,
+             pageCw: document.documentElement.clientWidth,
+             toolH: Math.round(document.querySelector('.qtool').getBoundingClientRect().height),
+             acts: [...g.querySelectorAll('.qtool')].map(b => b.dataset.act + ':' + (b.dataset.tab || '')) };
+  });
+  ok('one row on a phone', strip.rowH <= 50, JSON.stringify(strip));
+  ok('it swipes inside its own container', strip.sw > strip.cw + 40, JSON.stringify(strip));
+  ok('and the PAGE never scrolls sideways', strip.pageSw <= strip.pageCw + 1, JSON.stringify(strip));
+  ok('every tool keeps the 44px floor', strip.toolH >= 44, String(strip.toolH));
+  ok('the six doors are exactly the six, most-used first, acts untouched',
+     JSON.stringify(strip.acts) === JSON.stringify(
+       ['pstLaunch:', 'vstOpen:', 'surveillance:', 'tab:newlead', 'tab:cases', 'tab:delivery']),
+     JSON.stringify(strip.acts));
+  const reach = await page.evaluate(() => {
+    const g = document.querySelector('.qtgrid'); g.scrollLeft = 9999;
+    const last = [...g.querySelectorAll('.qtool')].pop().getBoundingClientRect();
+    return { lastRight: Math.round(last.right), cw: document.documentElement.clientWidth };
+  });
+  ok('the last tool is reachable by swiping', reach.lastRight <= reach.cw + 2, JSON.stringify(reach));
+  const pill = await page.evaluate(() => {
+    const p = document.querySelector('.asst-pill'); if (!p) return { present: false };
+    const b = p.getBoundingClientRect(), g = document.querySelector('.qtgrid').getBoundingClientRect();
+    return { present: true, overlap: !(b.top > g.bottom || b.bottom < g.top) };
+  });
+  ok('the Assistant pill does not collide with the strip', pill.present && !pill.overlap,
+     JSON.stringify(pill));
+
+  /* ---- search: same function, less ceremony ---- */
+  ok('the idle explainer is the placeholder\'s job on a phone',
+     await page.evaluate(() => ![...document.querySelectorAll('.srchcard .hint')]
+       .some(e => getComputedStyle(e).display !== 'none')));
+  await page.locator('#gsearch').click();
+  await page.locator('#gsearch').pressSequentially('WC-2026-88421', { delay: 20 });
+  await page.waitForTimeout(900);
+  ok('and the search itself is untouched — a claim number still finds its case',
+     await page.locator('.srchrow').count() >= 1
+     && (await text(page, '.srchrow')).includes('API-20260812-4001'));
+  await page.locator('[data-act="srchClear"]').click();
+  await page.waitForTimeout(300);
+
+  /* ---- the drawer's retract handle ---- */
+  await page.locator('.burger').click();
+  await page.waitForTimeout(350);
+  const hd = await page.evaluate(() => {
+    const el = document.querySelector('.navhandle');
+    const b = el.getBoundingClientRect();
+    const drawer = document.querySelector('.tabs').getBoundingClientRect();
+    const overText = [...document.querySelectorAll('.tabs button')].some(t => {
+      const r = t.getBoundingClientRect();
+      return !(b.right < r.left + 8 || b.left > r.right - 24 || b.bottom < r.top || b.top > r.bottom);
+    });
+    return { shown: getComputedStyle(el).display !== 'none', w: Math.round(b.width),
+             h: Math.round(b.height), left: Math.round(b.left),
+             drawerRight: Math.round(drawer.right), overText };
+  });
+  ok('the open drawer carries a visible ‹ handle on its right edge',
+     hd.shown && Math.abs(hd.left + 6 - hd.drawerRight) <= 2, JSON.stringify(hd));
+  ok('the handle is a real iPhone target', hd.w >= 44 && hd.h >= 44, JSON.stringify(hd));
+  ok('and covers no navigation text', !hd.overText);
+  await page.locator('.navhandle').click();
+  await page.waitForTimeout(110);
+  ok('tapping it SLIDES the drawer away rather than blinking it',
+     await page.evaluate(() => document.body.classList.contains('navclosing')));
+  await page.waitForTimeout(220);
+  ok('closed, with every animation class gone',
+     await page.evaluate(() => ['navopen', 'navclosing', 'navanim']
+       .every(c => !document.body.classList.contains(c))));
+  ok('and the burger announces closed',
+     (await page.locator('#burger').getAttribute('aria-expanded')) === 'false');
+  await page.locator('.burger').click();
+  await page.waitForTimeout(320);
+  ok('the burger still opens the drawer', await page.locator('.tabs').isVisible());
+  await page.locator('.navback').click({ position: { x: 380, y: 720 } });
+  await page.waitForTimeout(320);
+  ok('and the backdrop still closes it',
+     await page.evaluate(() => !document.body.classList.contains('navopen')));
+
+  /* Reduced motion: the close is instant — no closing phase to be stuck in. */
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.locator('.burger').click();
+  await page.waitForTimeout(250);
+  await page.locator('.navhandle').click();
+  ok('under reduced motion the close is immediate',
+     await page.evaluate(() => !document.body.classList.contains('navopen')
+       && !document.body.classList.contains('navclosing')));
+  await page.emulateMedia({ reducedMotion: null });
+  await page.close();
+
+  /* ---- tablet: the same handle where the drawer exists ---- */
+  const pad = await (await browser.newContext({ viewport: { width: 820, height: 1180 } })).newPage();
+  pad.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await pad.goto(SITE + '/portal/');
+  await pad.waitForTimeout(250);
+  await pad.locator('#u').fill('trever');
+  await pad.locator('#p').fill('AdminPassword1x');
+  await pad.locator('#loginBtn').click();
+  await pad.waitForTimeout(1000);
+  await pad.locator('.burger').click();
+  await pad.waitForTimeout(320);
+  ok('tablet: the drawer handle is there too',
+     await pad.evaluate(() => getComputedStyle(document.querySelector('.navhandle')).display !== 'none'));
+  await pad.locator('.navhandle').click();
+  await pad.waitForTimeout(350);
+  ok('tablet: and retracts the drawer',
+     await pad.evaluate(() => !document.body.classList.contains('navopen')));
+  await pad.close();
+
+  /* ---- desktop: rail untouched, tools one compact row, search compact ---- */
+  const desk = await newPage();
+  await signIn(desk, 'trever', 'AdminPassword1x');
+  await desk.setViewportSize({ width: 1280, height: 900 });
+  await gotoDash(desk);
+  const d = await desk.evaluate(() => ({
+    handle: getComputedStyle(document.querySelector('.navhandle')).display,
+    rail: getComputedStyle(document.querySelector('.tabs')).position,
+    gridH: Math.round(document.querySelector('.qtgrid').getBoundingClientRect().height),
+    srchH: Math.round(document.querySelector('.srchcard').getBoundingClientRect().height),
+    hint: [...document.querySelectorAll('.srchcard .hint')]
+      .map(e => ({ shown: getComputedStyle(e).display !== 'none',
+                   size: parseFloat(getComputedStyle(e).fontSize) }))[0] || null,
+  }));
+  ok('desktop: no handle, the fixed rail is exactly as it was',
+     d.handle === 'none' && d.rail === 'fixed', JSON.stringify(d));
+  ok('desktop: quick tools sits in one compact row at 1280 (was two rows)',
+     d.gridH <= 50, JSON.stringify(d));
+  ok('desktop: the search card lost its billboard height (was 194px)',
+     d.srchH <= 165, JSON.stringify(d));
+  ok('desktop: the explainer survives as a small muted line',
+     d.hint && d.hint.shown && d.hint.size <= 13, JSON.stringify(d.hint));
+  await desk.close();
 }
 
 await browser.close();

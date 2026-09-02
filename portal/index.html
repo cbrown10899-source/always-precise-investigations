@@ -257,17 +257,23 @@
   .alsoline button.alsoitem:hover{color:var(--navy);text-decoration-color:var(--teal);}
   /* Quick tools: one compact row of case-independent utilities, in the same
      visual language as .alsoline so the dashboard gains a shortcut and not a
-     fifth equal-weight box. 44px minimum, wraps rather than overflowing. */
-  .qtools{margin:0 0 14px;padding:0 2px;}
+     fifth equal-weight box. 44px minimum stands at every width. */
+  .qtools{margin:0 0 10px;padding:0 2px;}
   /* .qtgrid, not .qgrid — that name was already taken by the field view's
      84px action grid at the other end of this stylesheet, and the later rule
      was silently winning. The third source-order casualty this project has
-     records for; a distinct name ends the contest instead of refereeing it. */
-  .qtgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(200px,100%),1fr));
-    gap:8px;margin-top:6px;}
-  /* The Timestamp pair reads as a pair: same accent edge on both, and the grid
+     records for; a distinct name ends the contest instead of refereeing it.
+
+     A FLEX ROW NOW, NOT A GRID (owner, 2026-09-02: "one compact row", and the
+     grid was the height problem it replaced — auto-fill at minmax(200px,1fr)
+     resolved to ONE COLUMN on a 390px phone, so six 44px buttons stacked into
+     336px of the first screen). Desktop wraps only when it genuinely runs out
+     of room; the phone rule at the end of the stylesheet makes it a
+     swipeable strip instead of wrapping at all. */
+  .qtgrid{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
+  /* The Timestamp pair reads as a pair: same accent edge on both, and the row
      keeps them adjacent because they are declared adjacent. */
-  .qtgrid .qtool{width:100%;justify-content:flex-start;}
+  .qtgrid .qtool{flex:0 0 auto;justify-content:flex-start;white-space:nowrap;}
   .qtool.qt-pair{border-left:3px solid var(--teal);}
   .qtools-l{font-size:.76rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
     color:var(--muted);}
@@ -282,10 +288,10 @@
      Filled navy: unmistakable against a light page, and deliberately NOT the
      teal the bands' own actions use, so a utility does not compete with the
      work queue. Still one 44px row, still not a card. */
-  .qtool{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 16px;
+  .qtool{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 10px;
     border:1px solid var(--navy);border-radius:9px;background:var(--navy);color:#fff;
-    font:inherit;font-size:.9rem;font-weight:700;cursor:pointer;}
-  .qtool b{font-weight:400;font-size:1.1rem;line-height:1;}
+    font:inherit;font-size:.82rem;font-weight:700;cursor:pointer;}
+  .qtool b{font-weight:400;font-size:1rem;line-height:1;}
   .qtool:hover{background:var(--navy-2);border-color:var(--navy-2);}
   .chip{display:inline-flex;align-items:center;gap:6px;background:var(--info-bg);border:1px solid var(--info-line);
     color:var(--navy);border-radius:999px;padding:3px 6px 3px 11px;font-size:.8rem;font-weight:700;}
@@ -455,6 +461,38 @@
   .navback{display:none;position:fixed;inset:0;background:rgba(9,18,30,.45);border:0;
     padding:0;cursor:pointer;z-index:55;}
   body.navopen .navback{display:block;}
+  /* THE DRAWER'S OWN RETRACT HANDLE (owner, 2026-09-02): a visible ‹ tab
+     riding the drawer's right EDGE, so closing is where the drawer is rather
+     than back at the burger or out on the dim. Anchored to the same measure
+     as the drawer's width (76% capped at 300px), overlapping the edge by 6px
+     — the drawer's right padding is 12px, so no navigation text is ever
+     under it. Vertically centred, which is thumb country on a phone and
+     needs no safe-area arithmetic; 44x56 target. z-index 65: above the
+     backdrop (55) and drawer (60), below the burger (70). Sibling of
+     .navback, NOT a child of .tabs — the suite and this file reach the rail
+     as `.tabs button`, and a control in there would be counted as a
+     destination. Display-gated by the drawer block below, so it exists only
+     where the drawer does. */
+  .navhandle{display:none;position:fixed;z-index:65;top:50%;
+    left:calc(min(76%, 300px) - 6px);transform:translateY(-50%);
+    min-width:44px;min-height:56px;align-items:center;justify-content:center;
+    background:var(--navy-2);color:#fff;border:1px solid #4a6b91;border-left:0;
+    border-radius:0 12px 12px 0;font-size:1.5rem;line-height:1;cursor:pointer;
+    padding:0 4px 2px 0;box-shadow:6px 0 18px rgba(9,18,30,.35);}
+  /* No :active tint: the burger's press color is already at the two-use
+     budget — a third use means promoting it to a token, and a tint nobody
+     can see during a 185ms close is not worth a palette change. */
+  /* The slide is a KEYFRAME, not a transition: the drawer is display-gated
+     (the virtue recorded above), and a transition cannot run from
+     display:none. The open animation rides a one-shot body.navanim class so
+     an unrelated repaint while the drawer is open cannot replay it; the
+     close keeps navopen for the 180ms of navclosing so there is something
+     on screen to slide away, then both classes drop together. */
+  @keyframes navslidein{from{transform:translateX(-100%);}to{transform:translateX(0);}}
+  @keyframes navslideout{from{transform:translateX(0);}to{transform:translateX(-100%);}}
+  @media(prefers-reduced-motion:reduce){
+    body.withnav .tabs,.navhandle{animation:none !important;transition:none !important;}
+  }
   /* NAVIGATION GROUPS (owner, 2026-08-16). The rail was eight flat doors that
      said nothing about which part of the business each belongs to. Three
      labelled groups do.
@@ -559,6 +597,18 @@
     /* inline-flex, not inline-block: the centring above only applies to a flex
        container, and without it the 50px box holds an off-centre glyph. */
     .top .burger{display:inline-flex;}
+    /* The retract handle exists only where the drawer does — a phone and a
+       tablet in portrait. It slides with the drawer both ways, and vanishes
+       the instant a close begins so it cannot be tapped twice. */
+    /* No slide keyframe on the handle itself: its resting transform is the
+       translateY(-50%) centring, and a keyframe's transform would replace it
+       mid-animation and bounce the tab vertically. It appears with the
+       drawer and is withdrawn the instant a close begins. */
+    body.withnav.navopen .navhandle{display:inline-flex;}
+    body.withnav.navopen.navclosing .navhandle{display:none;}
+    body.withnav.navopen.navanim .tabs{animation:navslidein .22s ease-out;}
+    body.withnav.navopen.navclosing .tabs{animation:navslideout .18s ease-in forwards;}
+    body.withnav.navopen.navclosing .navback{opacity:0;transition:opacity .18s ease-in;}
   }
   /* Reports & Packages stacks three existing panels; the gap lives on the
      container so no panel carries a margin that depends on its position. */
@@ -1481,6 +1531,17 @@
      with the other phone rules, where source order cannot kill it. */
   .srchbox{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:12px;
     padding:4px 10px;background:#fff;max-width:640px;}
+  /* THE SEARCH CARD IS A BOX, NOT A BILLBOARD (owner, 2026-09-02). Measured
+     before this rule: 245px tall on a 390px phone and 194px on a desktop, for
+     one input — the .card's 22px padding, the .bar's 14px margin, and an
+     UNSTYLED explainer paragraph carrying the page's default 1em margins.
+     Function unchanged: same input, same routes, same states. The idle
+     explainer becomes a small muted line here and is dropped entirely on
+     phones (end-of-stylesheet block), where the placeholder already says what
+     the box searches. */
+  .srchcard{padding:12px 16px 14px;}
+  .srchcard .bar{margin-bottom:8px;}
+  .srchcard .hint{font-size:.78rem;color:var(--muted);margin:6px 2px 0;line-height:1.4;}
   .srchbox:focus-within{border-color:var(--teal);box-shadow:0 0 0 3px rgba(23,124,138,.12);}
   .srchicon{opacity:.55;font-size:1rem;}
   /* 16px is the iOS zoom floor and it applies at EVERY width here, not only on
@@ -1742,6 +1803,23 @@
      width, which is what "full width on mobile" is asking for. */
   @media(max-width:900px){
     .srchbox{max-width:none;}
+    /* QUICK TOOLS IS A SHORTCUT STRIP ON A PHONE, NOT A STACK (owner,
+       2026-09-02). Measured before: the auto-fill grid resolved to ONE column
+       at 390px, so six 44px doors stacked into 336px of the first screen.
+       One row now, swiped sideways INSIDE its own container — the page never
+       scrolls horizontally (the suite pins that) — with the most-used tools
+       first, which is the order the row already declares. Targets keep the
+       44px floor; only the geometry changed, every data-act untouched. */
+    .qtgrid{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;
+      scrollbar-width:none;margin-top:4px;padding-bottom:2px;}
+    .qtgrid::-webkit-scrollbar{display:none;}
+    .qtools{margin:0 0 8px;}
+    /* The search explainer is the placeholder's job on a phone — the idle
+       paragraph is dropped (owner option b), and the .bar's category line
+       goes with it; error and result states are untouched. */
+    .srchcard{padding:10px 12px 12px;}
+    .srchcard .hint{display:none;}
+    .srchcard .count{display:none;}
   }
 
 /* ============== API ASSISTANT (ASSISTANT.md) — .asst- is its own prefix ===
@@ -1873,6 +1951,12 @@
      nothing left to close it. A real backdrop intercepts those taps and IS the
      close control. -->
 <button class="navback" data-act="navToggle" aria-label="Close menu" tabindex="-1"></button>
+<!-- The drawer's retract handle (owner, 2026-09-02): the obvious quick way to
+     slide the drawer away, riding its right edge. A SIBLING of the drawer, not
+     a child — `.tabs button` means a destination everywhere in this file and
+     the suite, and this is a control. The ✕ on the burger stays: it is the
+     same button that opened the drawer, saying what tapping it now does. -->
+<button class="navhandle" data-act="navToggle" aria-label="Close menu">&lsaquo;</button>
 
 <main id="app"></main>
 <!-- WHAT THE SCREEN SAYS, SAID OUT LOUD. Every "Saved.", "Payment recorded."
@@ -18901,8 +18985,29 @@ document.addEventListener("click", ev => {
   else srActed();
   if(act === "backToCases"){ VIEW = "list"; render(); }
   else if(act === "navToggle"){
-    const open = document.body.classList.toggle("navopen");
-    const bg = $("burger"); if(bg) bg.setAttribute("aria-expanded", open ? "true" : "false");
+    /* The drawer slides rather than blinks (owner, 2026-09-02). Opening rides
+       a one-shot `navanim` class so a background repaint while the drawer is
+       open cannot replay the slide; closing keeps `navopen` for the length of
+       the slide-out so there is something to animate, then drops everything.
+       Both classes clear on a timer that nothing cancels, so no state can
+       stick. Reduced motion (and the desktop rail, where none of these
+       classes draw anything) closes instantly. */
+    const body = document.body, bg = $("burger");
+    const setExp = open => { if(bg) bg.setAttribute("aria-expanded", open ? "true" : "false"); };
+    if(body.classList.contains("navopen")){
+      if(body.classList.contains("navclosing")) return;   // already on its way out
+      setExp(false);
+      if(matchMedia("(prefers-reduced-motion: reduce)").matches || window.innerWidth >= 900){
+        body.classList.remove("navopen", "navanim");
+        return;
+      }
+      body.classList.add("navclosing");
+      setTimeout(() => body.classList.remove("navopen", "navclosing", "navanim"), 185);
+    } else {
+      body.classList.add("navopen", "navanim");
+      setExp(true);
+      setTimeout(() => body.classList.remove("navanim"), 260);
+    }
   }
   else if(act === "pkgJump"){ openCase(el.dataset.case, el.dataset.tab === "overview" ? undefined : el.dataset.tab); }
   /* The top-level door into the field view (owner, 2026-08-14). It used to

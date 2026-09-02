@@ -381,7 +381,7 @@ gap shipped.
 | 8 | Watch mode (internal read-only monitoring) | ✅ **DEPLOYED** — #265 `3f1f640` (A15); internal only, by absence of any send path |
 | 10 | Topic commands / smart shortcuts (owner brief 2026-09-02, second window) | ✅ **DEPLOYED** — #266 `9dd7f64`, both workflows `success` on `9dd7f643` (A17) |
 | 9 | Visual QA / workflow advisor | ✅ **DEPLOYED** — #265 `3f1f640` (A16); `portal/ux-advisor.mjs`, 51 findings stored in `UX-FINDINGS.json`/`.md`, judgment classes named for a person |
-| 11 | Back / Assistant Home panel navigation (owner brief 2026-09-02, third window) | ⏳ **DESIGNED, not yet coded** — A18 above is the derivation; build starts once the launcher-fix e2e frees the page files |
+| 11 | Back / Assistant Home panel navigation (owner brief 2026-09-02, third window) | ✅ **DEPLOYED** — #270 `1f41310`, `deploy.yml` `success` on `1f413100` (A18; page-only, level derived never stored, +18 e2e checks incl. both roles, phone targets, draft/conversation preservation, page-state isolation) |
 
 **Checkpoint (2026-09-02, updated overnight):** the pre-Assistant units went
 green first — PR #260 merged as `6770609`, both deploy workflows `success` on
