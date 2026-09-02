@@ -176,6 +176,10 @@ mechanism keep a point of return at all times:
 - **Rollback:** `git revert <bad-sha>` and push for one bad change (the deploy
   workflow republishes the site); `git checkout -B master save/<tag>` and a
   `--force-with-lease` push to return the whole tree to a save point.
+- **Latest owner-verified checkpoint: master at PR #272 (`8355dec`, 2026-09-02),
+  recorded in `case-portal/NEXT.md` with the exact behaviors the owner
+  confirmed on a real iPhone.** The docs checkpoint PR after it carries this
+  note and a manual `save-point.yml` run tags it; hardening starts from there.
 
 **The case database is not in git, on purpose** — claimant names and signatures
 must not land in a repo. Its point of return is Cloudflare **D1 Time Travel**,

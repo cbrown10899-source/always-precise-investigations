@@ -9,6 +9,20 @@ state. Update it when the queue moves; keep it short.
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
 truth** (recorded verbatim 2026-08-13).
 
+## ✅ LIVE VERIFIED CHECKPOINT — owner, 2026-09-02 (end of the mobile window)
+
+**Master at `8355dec` (PR #272) is the owner-verified working state**, confirmed
+on the owner's actual iPhone in the closeout brief of 2026-09-02. Verified there:
+Full Portal on ONE tap with the dashboard shell painting immediately; the gold
+drawer close handle visible with hamburger/✕ intact; compact Quick Tools,
+Search and empty Today / next actions; the phone header; Assistant Back /
+Assistant Home; the Active Surveillance launcher cleanup; the iPhone Assistant
+composer safe area; intake-deletion safeguards; immutable audit behavior; and
+the Private / Legal / Insurance payment boundaries. The point of return is
+this checkpoint's `save/` tag (cut by `save-point.yml`) plus D1 Time Travel —
+see CLAUDE.md "Save points and rollback". Hardening work after this point
+starts from here and must not move any of the behaviors listed above.
+
 ## 🔒 LOCKED ORDER — owner, 2026-08-18
 
 The queue, in the owner's own words. **Nothing below jumps ahead of anything
