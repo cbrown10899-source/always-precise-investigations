@@ -16451,12 +16451,17 @@ section('MAIL-CHECK D5: the tickable option on legal and insurance sends');
   const lglCard = page.locator('.pcard', { hasText: 'Ticker & Box LLP' }).first();
   await lglCard.locator('[data-act="leadSheet"]').click();
   await page.waitForTimeout(500);
-  const lgl = await page.evaluate(() => ({
-    box: !!document.querySelector('#wiz_mailck'),
-    ticked: document.querySelector('#wiz_mailck') ? document.querySelector('#wiz_mailck').checked : null,
-    consumer: document.querySelectorAll('.wiz-pm').length,
-    text: document.querySelector('.wizover, .dlg, #app').innerText,
-  }));
+  const lgl = await page.evaluate(() => {
+    const box = document.querySelector('#wiz_mailck');
+    return {
+      box: !!box,
+      ticked: box ? box.checked : null,
+      consumer: document.querySelectorAll('.wiz-pm').length,
+      /* The WIZARD's own text — the desk behind it legitimately carries other
+         cases' payment history, which is not this send's offer. */
+      text: box ? box.closest('.feebox').innerText : '',
+    };
+  });
   ok('a legal send offers the Mail Check checkbox', lgl.box === true);
   ok('UNTICKED by default — an unsent option is never advertised', lgl.ticked === false);
   ok('no consumer method box is drawn beside it', lgl.consumer === 0);
@@ -16516,10 +16521,13 @@ section('MAIL-CHECK D5: the tickable option on legal and insurance sends');
   const prvCard = page.locator('.pcard', { hasText: 'Priva Kate' }).first();
   await prvCard.locator('[data-act="leadSheet"]').click();
   await page.waitForTimeout(500);
-  const prv = await page.evaluate(() => ({
-    box: !!document.querySelector('#wiz_mailck'),
-    text: document.querySelector('#app').innerText,
-  }));
+  const prv = await page.evaluate(() => {
+    const to = document.querySelector('#wiz_to');
+    return {
+      box: !!document.querySelector('#wiz_mailck'),
+      text: to ? to.closest('.card').innerText : 'NO-WIZARD',
+    };
+  });
   ok('a PRIVATE send has no Mail Check box and no Mail Check wording',
      prv.box === false && !/Mail Check/.test(prv.text), prv.text.slice(0, 160));
 
