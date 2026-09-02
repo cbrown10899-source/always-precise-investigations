@@ -1101,7 +1101,15 @@ Three rules came out of it that outlive the unit:
   controls underneath, and the open drawer covered the burger with nothing left
   to close it. `.navback` is a real button: it intercepts, it closes, and the
   burger sits above it (z-index) swapping ☰/✕ off `body.navopen` with
-  `aria-expanded` kept true-to-state.
+  `aria-expanded` kept true-to-state. The drawer's `‹` retract handle
+  (`.navhandle`, owner 2026-09-02) is a SIBLING of `.tabs`, never a child —
+  everything in this file and the suite reaches the rail as `.tabs button`,
+  so a control in there would be counted as a destination. The slide is a
+  KEYFRAME because the drawer is display-gated (a transition cannot run from
+  `display:none`); opening rides a one-shot `navanim` class so a background
+  repaint cannot replay it, closing holds `navopen` for the 185ms of
+  `navclosing` so there is something to slide, and reduced motion closes
+  instantly.
 - **A primary action never shrinks below its own words.** Intake Accept
   measured 42–60px wide × up to 119px tall — the flex row handed the ghost
   cluster the width and let the primary wrap letter by letter.
