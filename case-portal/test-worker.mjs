@@ -17525,6 +17525,47 @@ section('API Assistant — Unit 5: rate-sheet preparation, preview, SIMULATE');
   ok('the log read lists both rehearsal kinds', j.card && j.card.some(c => /sheet_send/.test(c.title))
      && j.card.every(c => /SIMULATED — NOT SENT/.test(c.line)));
 
+  /* ============ UNIT 6, the read half: billing from the live money ============
+     The same listInvoices composition the Billing screen reads — drafts never
+     count toward outstanding, the rule the invoices unit already enforces.
+     The preparation/simulation half is DEFERRED BY DESIGN: no invoice-send
+     route exists to rehearse, and creating a draft is a real write the Beta
+     block cannot make — the source pin above counts exactly one INSERT. */
+  await ingest(env, { case_no: 'API-U6-BILL', client_name: 'Billed Person', objective: 'work' });
+  let inv = await jsonOf(await call(env, '/cases/API-U6-BILL/invoices',
+    { method: 'POST', cookie: admin, body: {} }));
+  await call(env, `/invoices/${inv.invoice.id}/lines`, { method: 'POST', cookie: admin,
+    body: { lines: [{ description: 'Surveillance day', qty: 1, rate: 450 }] } });
+  await call(env, `/invoices/${inv.invoice.id}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'ready' } });
+  j = await jsonOf(await cmd(admin, 'What is outstanding?'));
+  ok('“what is outstanding?” answers with the live figure and the Billing door',
+     /Outstanding across live invoices: \$450\.00/.test(j.text)
+     && j.actions && j.actions[0].navigate.id === 'invoices', j.text.slice(0, 160));
+  j = await jsonOf(await cmd(admin, 'billing status', { route: 'case', case_no: 'API-U6-BILL' }));
+  ok('on a case, billing status lists the case\'s own invoices with their money',
+     /API-U6-BILL carries 1 live invoice/.test(j.text) && /\$450\.00 outstanding/.test(j.text)
+     && j.card && j.card.length === 1 && /balance \$450\.00/.test(j.card[0].line),
+     JSON.stringify(j).slice(0, 300));
+  j = await jsonOf(await cmd(admin, 'billing status', { route: 'case', case_no: 'API-U4-LGL' }));
+  ok('a case with no invoices says exactly that', /API-U4-LGL has no live invoices/.test(j.text));
+  /* A DRAFT joins the count of invoices but never the money — the owner's
+     locked rule, spoken by the Assistant too. */
+  await call(env, '/cases/API-U6-BILL/invoices', { method: 'POST', cookie: admin,
+    body: { confirm_duplicate: true } });
+  j = await jsonOf(await cmd(admin, 'billing status', { route: 'case', case_no: 'API-U6-BILL' }));
+  ok('a draft shows on the list and adds NOTHING to outstanding',
+     /carries 2 live invoices/.test(j.text) && /\$450\.00 outstanding/.test(j.text));
+  j = await jsonOf(await cmd(dana, 'What is outstanding?'));
+  ok('an investigator is told billing is an admin desk, and shown no figure',
+     /admin desk/i.test(j.text) && !/\$/.test(j.text));
+  j = await jsonOf(await cmd(admin, 'Take me to billing'));
+  ok('“take me to billing” still NAVIGATES — the read runs after the navigator',
+     j.kind === 'navigate' && j.navigate.id === 'invoices');
+  j = await jsonOf(await cmd(admin, 'Email them the invoice'));
+  ok('“email them the invoice” is still refused — reading money is not sending it',
+     j.kind === 'refused' && j.code === 'assistant_beta');
+
   globalThis.fetch = realFetch;
 }
 

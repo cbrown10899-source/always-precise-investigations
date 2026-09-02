@@ -13905,6 +13905,41 @@ async function assistantCommand(request, env, user) {
     /* Not a destination — fall through to search, "open Vanessa's case". */
   }
 
+  /* ---- UNIT 6 (the read half): billing answered from the SAME money reads
+     the Billing screen uses — listInvoices' own composition, drafts excluded
+     from outstanding exactly as everywhere. Placed AFTER navigation so
+     "take me to billing" still navigates. The preparation/simulation half is
+     deliberately deferred: the portal has no invoice-send route to rehearse,
+     and creating a draft invoice is a real write this block structurally
+     cannot make — the owner's call, named in ASSISTANT.md. */
+  if (/what.{0,30}(outstanding|owed|balance)|\b(billing|invoice) status\b|\b(outstanding|unpaid) invoices?\b|what (do|does) .{0,40}owe/i.test(text)) {
+    if (user.role !== 'admin') {
+      return json({ ok: true, kind: 'status', text: 'Billing is an admin desk.' });
+    }
+    const ires = await listInvoices(new Request('http://assistant.internal/invoices'), env);
+    const data = await ires.json();
+    const fmt = n => '$' + (Math.round(Number(n || 0) * 100) / 100)
+      .toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (caseNo) {
+      const mine = (data.invoices || []).filter(i => i.case_no === caseNo && i.status !== 'void');
+      if (!mine.length) {
+        return json({ ok: true, kind: 'status', text: `${caseNo} has no live invoices.`,
+          actions: [{ label: 'Open Billing', navigate: { kind: 'tab', id: 'invoices' } }] });
+      }
+      const due = mine.filter(i => i.status !== 'draft')
+        .reduce((t, i) => t + Math.max(0, Number(i.balance_due) || 0), 0);
+      return json({ ok: true, kind: 'status',
+        text: `${caseNo} carries ${mine.length} live invoice${mine.length === 1 ? '' : 's'} — ${fmt(due)} outstanding. Drafts never count toward what is owed.`,
+        card: mine.slice(0, 6).map(i => ({ title: `${i.invoice_no} — ${i.display_status}`, case_no: caseNo,
+          line: `Total ${fmt(i.total)} · paid ${fmt(i.amount_paid)} · balance ${fmt(i.balance_due)}` })),
+        actions: [{ label: 'Open Billing', navigate: { kind: 'tab', id: 'invoices' } }] });
+    }
+    const s = data.summary || {};
+    return json({ ok: true, kind: 'status',
+      text: `Outstanding across live invoices: ${fmt(s.outstanding)} — ${s.overdue || 0} overdue, ${s.due_soon || 0} due within 14 days.`,
+      actions: [{ label: 'Open Billing', navigate: { kind: 'tab', id: 'invoices' } }] });
+  }
+
   /* ---- live status: anything new / new intakes ---- */
   if (/anything new|what'?s new|any (new )?(intake|lead)|has any intake|intake forms? shown up|new legal intake/i.test(text)) {
     if (user.role !== 'admin') {
@@ -14001,8 +14036,9 @@ async function assistantCommand(request, env, user) {
   const provider = assistantProvider(env);
   return json({ ok: true, kind: 'help',
     text: 'Beta understands set phrases so far: "Where am I?", "Explain this page", '
-        + '"Take me to <a portal section>", "Anything new?", "What should I do?", and '
-        + '"Find <a name or case number>". '
+        + '"Take me to <a portal section>", "Anything new?", "What should I do?", '
+        + '"What is outstanding?", "Find <a name or case number>", "Prepare an intake" '
+        + 'and "Prepare a rate sheet". '
         + (provider.ready ? 'Freer phrasing arrives in a later unit.'
            : 'The AI provider is not connected, so freer phrasing is not available yet — '
            + 'nothing here guesses.') });
