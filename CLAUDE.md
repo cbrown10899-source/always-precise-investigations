@@ -3177,6 +3177,14 @@ shared resolver out of `emailSheet` unless a third consumer appears
 (`ASSISTANT.md` A11). The workbench's non-private payment tick means Mail
 Check only. `assistantLogged` is the ONE log writer for every rehearsal kind.
 
+**Topic commands are a menu that talks back** (Unit 10): a bare word —
+"intakes", "invoices", "cases" — answers with live status and situational
+actions, and every offered action is NAVIGATE (registry id), SAY (fed back
+through the same grammar) or SEED (text in the box) — no button can act.
+The dormant-intake intelligence runs the delete's own `intakeBlockersFound`
+per candidate, and Beta never deletes; the manual control stays the only
+delete.
+
 **The page workbench holds its draft in `ASST.prep`** (the EDIT_DRAFT rule);
 `.asst-` classes only, bare palette tokens, no new dialogs. The dock is
 `role="complementary"`, the phone door is the pill, and the case screen's

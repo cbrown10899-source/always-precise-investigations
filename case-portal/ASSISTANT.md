@@ -293,6 +293,27 @@ relevance and click-depth are LISTED as needing a person — not decided by
 pattern-matching. The advisor writes those two files and nothing else;
 no Assistant surface can modify or deploy source.
 
+**A17 — Unit 10's topics are a menu that talks back, and its buttons are
+inert by construction.** A bare word ("intakes", "invoices", "cases"…)
+answers TOPIC + LIVE STATUS + the actions that fit the state — counts
+counted from the same tables the screens read, the primary action flipping
+with the situation (fresh intakes → REVIEW NEW INTAKES; none but dormant →
+REVIEW CLEANUP CANDIDATES; neither → the three quiet doors). Only inputs of
+up to four stripped words reach the topic table, and it runs LAST, so every
+richer phrasing keeps its handler. Three action shapes exist and only
+three: NAVIGATE (a registry id), SAY (a phrase fed back through this same
+deterministic grammar, exactly as if typed), SEED (text placed in the box) —
+no button can send, delete, archive, pay or close, and the suite walks every
+topic asserting the shapes and that nothing was sent or written. The
+dormant-intake intelligence runs `intakeBlockersFound` PER CANDIDATE — the
+delete's own probe — so ELIGIBLE FOR CLEANUP REVIEW means exactly "the
+quick delete would not refuse this", PROTECTED names what it carries, and
+the answer says in words that Beta never deletes; the manual control on the
+intake card stays the only delete. `ATTN.DORMANT_INTAKE_DAYS` (14) is the
+one arguable window. The rate-sheets topic READS `send_log` (recent sends),
+so the source pin was narrowed with the reason on the record: the writers
+stay banned by name, and the block still carries exactly one INSERT.
+
 **A10 — the grammar carve-out opens a workbench, never a send.** An
 utterance about sending/preparing an INTAKE resolves to `kind:
 'prepare_intake'` with a prefilled form seed (email lifted from the
@@ -332,6 +353,7 @@ gap shipped.
 | 6 | Invoice/billing read + preparation + simulation | **COMPLETE (zero-write)** — read half DEPLOYED in #263 (A12); the owner's zero-write invoice preview answered A12's question and is BUILT (A13): DRY RUN — INVOICE PREVIEW / SIMULATED — NOT CREATED, no row, no number consumed, twin-pinned |
 | 7 | Case health / summaries / report drafting from recorded facts | **BUILT** — A14; recorded facts only, verbatim chronology, one next-step writer, the delete-probe extracted and shared |
 | 8 | Watch mode (internal read-only monitoring) | **BUILT** — A15; composition on ask over needsAttention + bounded arms; internal only, by absence of any send path |
+| 10 | Topic commands / smart shortcuts (owner brief 2026-09-02, second window) | **BUILT** — A17; ten live topic desks + short phrases, situational primary actions, dormant-intake cleanup intelligence on the delete's own probe |
 | 9 | Visual QA / workflow advisor | **BUILT** — A16; `portal/ux-advisor.mjs` measurement sweep, findings in `UX-FINDINGS.json`/`.md` (51 on first run), judgment classes named for a person |
 
 **Checkpoint (2026-09-02, updated overnight):** the pre-Assistant units went
