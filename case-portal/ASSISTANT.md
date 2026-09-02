@@ -224,8 +224,8 @@ typed — the exact bug Unit 1's suite caught in `asstOpen`.
 | 1 | Shell: sidebar item, case-level door, mobile pill+sheet, dock panel, Beta banner, server-side gate + tool registry + provider adapter (not ready) | ✅ **DEPLOYED** — #261 `b379990`, both workflows `success` on `b3799902` |
 | 2 | Navigation: registry, "take me to…", current-page context, "Where am I?", "Explain this page" | ✅ **DEPLOYED** — #261, deterministic grammar, registry ids only |
 | 3 | Live status: "anything new?", "what needs attention?", "what should I do?", find client/case/intake with disambiguation | ✅ **DEPLOYED** — #261, live reads through the existing role-scoped functions |
-| 4 | Intake preparation + preview + SIMULATE + `assistant_log` (schema: one additive table → portal-setup dispatch) | **BUILT** — see A6–A10 below |
-| 5 | Rate-sheet preparation + preview + simulation (pricing via the real resolvers) | NOT STARTED |
+| 4 | Intake preparation + preview + SIMULATE + `assistant_log` (schema: one additive table → portal-setup dispatch) | ✅ **DEPLOYED** — #262 `85806e6`; site + Worker + **portal-setup all `success` on `85806e68`** (08:39Z), so `assistant_log` is live. A6–A10 below |
+| 5 | Rate-sheet preparation + preview + simulation (pricing via the real resolvers) | **IN FLIGHT** — Worker + suite green (3105/0, byte-pins + refusal mirrors); page workbench being wired |
 | 6 | Invoice/billing read + preparation + simulation | NOT STARTED |
 | 7 | Case health / summaries / report drafting from recorded facts | NOT STARTED |
 | 8 | Watch mode (internal read-only monitoring) | NOT STARTED |

@@ -72,7 +72,7 @@ every merge:**
 
 | Unit | PR / SHA | State |
 | --- | --- | --- |
-| **API Assistant Unit 4** — intake preparation + preview + SIMULATE + `assistant_log` (`ASSISTANT.md` A6–A10). **Schema: one additive table → portal-setup dispatch owed after merge** | in flight on the branch | worker 3080/0 · e2e 2837/0 · deploy guard 86/0 · intake 558/0 · visitor 47/0 |
+| **API Assistant Unit 4** — intake preparation + preview + SIMULATE + `assistant_log` (`ASSISTANT.md` A6–A10) | #262 `85806e6` | ✅ **DEPLOYED + SCHEMA APPLIED** — site, Worker AND `portal-setup` all `success` on `85806e68` at 08:39Z, so `assistant_log` is live. Suites at merge: worker 3080/0 · e2e 2837/0 · intake 558/0 · deploy guard 86/0 · visitor 47/0 |
 | **API Assistant Units 1–3** — shell + Beta enforcement, navigation, live status (`ASSISTANT.md`) | #261 `b379990` | ✅ **DEPLOYED** — site + Worker both `success` on `b3799902` at 06:24Z. Suites at merge: worker 3045/0 · e2e 2826/0 · intake 558/0 · deploy guard 86/0 · visitor 47/0. No schema change, no portal-setup owed |
 | **Service-aware Legal + Process Service standard/custom flat fee** (`LEGAL-SERVICES.md` D1–D14) | #260 `6770609` | ✅ **DEPLOYED** — site + Worker both `success` on `67706099` at 05:28Z. Suites at merge: worker 3009/0 · e2e 2813/0 · intake 558/0 · deploy guard 86/0 · visitor 47/0 |
 | **Bill.com prepared, gated, connected to nothing** (`BILLCOM.md`) | #259 `a2ce137` | ✅ DEPLOYED — both workflows green at `a2ce137a`. **Stays dark until the owner says the account is ready** |
