@@ -9,6 +9,20 @@ state. Update it when the queue moves; keep it short.
 **`MASTER-HANDOFF.md` next to this file is the owner's consolidated source of
 truth** (recorded verbatim 2026-08-13).
 
+## ✅ LIVE VERIFIED CHECKPOINT — owner, 2026-09-02 (end of the mobile window)
+
+**Master at `8355dec` (PR #272) is the owner-verified working state**, confirmed
+on the owner's actual iPhone in the closeout brief of 2026-09-02. Verified there:
+Full Portal on ONE tap with the dashboard shell painting immediately; the gold
+drawer close handle visible with hamburger/✕ intact; compact Quick Tools,
+Search and empty Today / next actions; the phone header; Assistant Back /
+Assistant Home; the Active Surveillance launcher cleanup; the iPhone Assistant
+composer safe area; intake-deletion safeguards; immutable audit behavior; and
+the Private / Legal / Insurance payment boundaries. The point of return is
+this checkpoint's `save/` tag (cut by `save-point.yml`) plus D1 Time Travel —
+see CLAUDE.md "Save points and rollback". Hardening work after this point
+starts from here and must not move any of the behaviors listed above.
+
 ## 🔒 LOCKED ORDER — owner, 2026-08-18
 
 The queue, in the owner's own words. **Nothing below jumps ahead of anything
@@ -163,6 +177,7 @@ every merge:**
 
 | Unit | PR / SHA | State |
 | --- | --- | --- |
+| **One tap to the full portal + instant shell; gold drawer handle; slim empty queue; phone header** (owner live-iPhone briefs 2026-09-02) — `render()` paints the shell first and runs its eight fetches concurrently (measured tap→shell 2072→9ms @250ms/call, 4473→12ms @550ms/call; fresh data by ~1–2 RTT) — also the two-tap cause; cases list gains a Loading state; launcher early-leave guarded. Gold handle (luminance separation ≥25 asserted). Empty queue card slim + owner's one-liner on phones; identity moves to the drawer foot. Page-only | #272 `8355dec` | ✅ **DEPLOYED** — `deploy.yml` `success` on `8355deca` at 23:33Z. Suites at merge: worker 3218/0 · e2e 2935/0 · intake 558/0 · deploy guard 86/0 · visitor 47/0. LIVE VERIFIED pending the owner's iPhone check |
 | **Nav/dashboard refinement** (owner brief 2026-09-02) — drawer `‹` retract handle (sibling of `.tabs`, keyframe slide both ways, reduced-motion instant); Quick Tools = one-row swipe strip on phones (was a one-column 336px stack) and one tightened desktop row at ≥1280; Search card 245→114px phone / 194→142px desktop; "Today / next actions" begins ~286px instead of 682px at 390px. Order, acts, search behavior unchanged. Page-only | #271 `7e2b4a1` | ✅ **DEPLOYED** — `deploy.yml` `success` on `7e2b4a14` at 20:56Z. Suites at merge: worker 3218/0 · e2e 2920/0 · intake 558/0 · deploy guard 86/0 · visitor 47/0 |
 | **Assistant Back / Assistant Home** (`ASSISTANT.md` A18, unit 11) — the home menu is a VIEW; the level derives from existing state (home / chat / workbench form / preview); Back walks one level on the panel's own transitions, Assistant Home jumps; no Back on home; X untouched; conversation kept with a Return row; nothing outside the panel moves. Page-only | #270 `1f41310` | ✅ **DEPLOYED** — `deploy.yml` `success` on `1f413100` at 19:43Z (page-only; no Worker deploy applies). Suites at merge: worker 3218/0 · e2e 2892/0 · intake 558/0 · deploy guard 86/0 · visitor 47/0 |
 | **Surveillance launcher hides removed cases; display safety; local prune** (owner live issue) — `/my/active` assignments arm gained the tombstone/archive exclusion in the SQL before the LIMIT (guarded; resume arm deliberately unfiltered — a running day blocks every hide route); subject-less cards say "No subject recorded" instead of wearing the number as a name; a successful complete case-list load prunes dead sessionStorage ids. No cache was involved: no service worker, launcher fetches live each open, index.html no-cache | #269 `590e6c5` | ✅ **DEPLOYED** — site AND Worker both `success` on `590e6c5e` at 19:15Z. Suites at merge: worker 3218/0 · e2e 2874/0 · intake 558/0 · deploy guard 86/0 · visitor 47/0. No schema change |
