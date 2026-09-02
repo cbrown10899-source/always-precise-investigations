@@ -2839,7 +2839,8 @@ function asstQuickHtml(){
   return `<div class="asst-home">
     <button class="asst-big" data-act="asstQuick" data-cmd="What should I do?">What should I do?</button>
     ${ASST && ASST.state && ASST.state.role === "admin"
-      ? `<button class="asst-big" data-act="asstQuick" data-cmd="Prepare an intake">Prepare an intake &mdash; dry run</button>
+      ? `<button class="asst-big" data-act="asstQuick" data-cmd="What needs attention?">What needs attention?</button>
+    <button class="asst-big" data-act="asstQuick" data-cmd="Prepare an intake">Prepare an intake &mdash; dry run</button>
     <button class="asst-big" data-act="asstQuick" data-cmd="Prepare a rate sheet">Prepare a rate sheet &mdash; dry run</button>` : ""}
     <button class="asst-big" data-act="asstQuick" data-cmd="Anything new?">What&rsquo;s new?</button>
     <button class="asst-big" data-act="asstQuick" data-cmd="Explain this page">Explain this page</button>
@@ -2852,8 +2853,10 @@ function asstMsgHtml(m){
   return `<div class="asst-m">
     ${m.kind === "refused" ? `<div class="asst-blocked">BETA — ACTION DISABLED</div>` : ""}
     ${m.kind === "simulated" ? `<div class="asst-sim">SIMULATED — NOT SENT</div>` : ""}
+    ${m.kind === "invoice_preview" ? `<div class="asst-sim">DRY RUN — INVOICE PREVIEW · SIMULATED — NOT CREATED</div>` : ""}
     ${m.guide_intro ? `<div class="asst-guidep">${esc(m.guide_intro)}</div>` : ""}
-    <div>${esc(m.text)}</div>
+    ${m.kind === "invoice_preview" || m.kind === "chronology"
+      ? `<pre class="asst-pre">${esc(m.text)}</pre>` : `<div>${esc(m.text)}</div>`}
     ${m.card ? `<div class="asst-card">${m.card.map(c => `
       <button class="asst-row" data-act="asstOpenCase" data-case="${esc(c.case_no || "")}">
         <b>${esc(c.title || c.case_no || "")}</b>
