@@ -16864,6 +16864,7 @@ section('API ASSISTANT — the dock, the doors, the Beta banner, and real naviga
   /* ---- open: the dock, the banner, the home actions ---- */
   await page.locator('.navfoot [data-act="asstOpen"]').click();
   await page.waitForSelector('.asst-panel', { timeout: 4000 });
+  await page.waitForFunction(() => ASST && ASST.state, null, { timeout: 4000 });
   const panel = await page.evaluate(() => ({
     banner: document.querySelector('.asst-banner').innerText,
     home: [...document.querySelectorAll('.asst-big')].map(b => b.innerText.trim()),
@@ -16894,6 +16895,8 @@ section('API ASSISTANT — the dock, the doors, the Beta banner, and real naviga
   const refused = await page.evaluate(() => {
     const blocks = [...document.querySelectorAll('.asst-m')];
     const last = blocks[blocks.length - 1];
+    /* An empty list must FAIL with evidence, never crash the run. */
+    if (!last) return { label: false, text: 'NO-ANSWER msgs=' + JSON.stringify((ASST && ASST.msgs) || []) };
     return { label: !!last.querySelector('.asst-blocked'), text: last.innerText };
   });
   ok('a send request shows the BETA — ACTION DISABLED label and the plain refusal',
@@ -16914,12 +16917,15 @@ section('API ASSISTANT — the dock, the doors, the Beta banner, and real naviga
      await page.locator('.caseacts [data-act="asstOpen"]').count() === 1);
   await page.locator('.caseacts [data-act="asstOpen"]').click();
   await page.waitForSelector('.asst-panel', { timeout: 4000 });
+  await page.waitForFunction(() => ASST && ASST.state, null, { timeout: 4000 });
   await page.locator('#asst_in').fill('What should I do?');
   await page.locator('.asst-ask button').click();
   await page.waitForTimeout(700);
   const caseAnswer = await page.evaluate(() => {
     const blocks = [...document.querySelectorAll('.asst-m')];
-    return blocks[blocks.length - 1].innerText;
+    const last = blocks[blocks.length - 1];
+    return last ? last.innerText
+      : 'NO-ANSWER msgs=' + JSON.stringify((ASST && ASST.msgs) || []);
   });
   ok('“what should I do?” on a case answers from the case\'s own record',
      /RECOMMENDED NEXT STEP/.test(caseAnswer) && /No investigation day/.test(caseAnswer),
@@ -16939,6 +16945,7 @@ section('API ASSISTANT — the dock, the doors, the Beta banner, and real naviga
      phone.pill && phone.visible && !phone.overflow, JSON.stringify(phone));
   await page.locator('.asst-pill').click();
   await page.waitForSelector('.asst-panel', { timeout: 4000 });
+  await page.waitForFunction(() => ASST && ASST.state, null, { timeout: 4000 });
   const sheet = await page.evaluate(() => {
     const p = document.querySelector('.asst-panel').getBoundingClientRect();
     return { full: p.width >= window.innerWidth - 2, banner: !!document.querySelector('.asst-banner'),

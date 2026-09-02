@@ -1750,41 +1750,41 @@
    Palette: the existing navy/teal/gold tokens only. */
 .asst-wrap{position:fixed;inset:0;z-index:60;pointer-events:none}
 .asst-panel{pointer-events:auto;position:absolute;top:0;right:0;height:100%;
-  width:min(420px,94vw);background:var(--panel,#fff);border-left:1px solid var(--line,#d8e0e8);
+  width:min(420px,94vw);background:var(--panel);border-left:1px solid var(--line);
   box-shadow:-12px 0 32px rgba(12,22,38,.18);display:flex;flex-direction:column;padding:0 0 10px}
 .asst-head{display:flex;align-items:center;gap:8px;padding:12px 14px;
-  background:var(--navy-2,#12305a);color:#fff;font-size:1rem}
+  background:var(--navy-2);color:#fff;font-size:1rem}
 .asst-head b{font-weight:800}
 .asst-beta{font-size:.62rem;font-weight:800;letter-spacing:.08em;padding:2px 7px;
-  border-radius:9px;background:var(--gold,#b7924c);color:#1c2531}
+  border-radius:9px;background:var(--gold);color:var(--gold-ink)}
 .asst-x{margin-left:auto;background:none;border:0;color:#fff;font-size:1.4rem;
   cursor:pointer;min-width:44px;min-height:44px}
-.asst-banner{padding:10px 14px;background:var(--warn-bg,#fdf6e7);color:var(--warn,#96600f);
-  font-weight:800;font-size:.8rem;letter-spacing:.03em;border-bottom:1px solid var(--line,#e4dcc8)}
+.asst-banner{padding:10px 14px;background:var(--warn-bg);color:var(--warn);
+  font-weight:800;font-size:.8rem;letter-spacing:.03em;border-bottom:1px solid var(--gold-line)}
 .asst-banner span{font-weight:600;letter-spacing:0}
 .asst-log{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
-.asst-you{align-self:flex-end;background:var(--teal,#2f7d90);color:#fff;
+.asst-you{align-self:flex-end;background:var(--teal);color:#fff;
   padding:8px 12px;border-radius:12px 12px 2px 12px;max-width:88%;font-size:.92rem}
-.asst-m{align-self:flex-start;background:var(--soft,#f2f6f8);border:1px solid var(--line,#e0e7ec);
+.asst-m{align-self:flex-start;background:var(--neutral-bg);border:1px solid var(--line);
   padding:10px 12px;border-radius:12px 12px 12px 2px;max-width:94%;font-size:.92rem;line-height:1.45}
-.asst-blocked{font-size:.68rem;font-weight:800;letter-spacing:.06em;color:var(--bad,#a33);
+.asst-blocked{font-size:.68rem;font-weight:800;letter-spacing:.06em;color:var(--bad);
   margin-bottom:4px}
 .asst-card{margin-top:8px;display:flex;flex-direction:column;gap:6px}
 .asst-row{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;
-  border:1px solid var(--line,#d8e0e8);background:#fff;border-radius:8px;padding:8px 10px;
+  border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 10px;
   cursor:pointer;min-height:44px;font-size:.88rem;width:100%}
-.asst-row span{color:var(--muted,#5c6775);font-size:.8rem}
+.asst-row span{color:var(--muted);font-size:.8rem}
 .asst-acts{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
 .asst-home{display:flex;flex-direction:column;gap:10px;margin:auto 0}
-.asst-big{border:1px solid var(--line,#d8e0e8);background:#fff;border-radius:12px;
+.asst-big{border:1px solid var(--line);background:#fff;border-radius:12px;
   padding:16px 14px;font-size:1rem;font-weight:700;text-align:left;cursor:pointer;min-height:52px}
-.asst-big:hover{border-color:var(--teal,#2f7d90)}
+.asst-big:hover{border-color:var(--teal)}
 .asst-guide{padding:6px 14px;font-size:.85rem}
 .asst-ask{display:flex;gap:8px;padding:8px 14px 0}
 .asst-ask input{flex:1;min-height:44px;font-size:16px;padding:8px 12px;
-  border:1px solid var(--line,#c8d2da);border-radius:10px}
+  border:1px solid var(--line);border-radius:10px}
 .asst-pill{position:fixed;right:14px;bottom:max(14px,env(safe-area-inset-bottom));z-index:55;
-  display:none;align-items:center;gap:6px;background:var(--navy-2,#12305a);color:#fff;
+  display:none;align-items:center;gap:6px;background:var(--navy-2);color:#fff;
   border:0;border-radius:24px;padding:12px 16px;font-size:1rem;cursor:pointer;
   box-shadow:0 6px 18px rgba(12,22,38,.3);min-height:48px}
 .side-asst{display:flex;align-items:center;gap:8px}
@@ -1796,7 +1796,7 @@
    pill renders on shell screens alone. */
 @media (max-width:899px){
   .asst-panel{left:0;right:0;top:auto;bottom:0;width:100%;height:min(92dvh,100%);
-    border-left:0;border-top:1px solid var(--line,#d8e0e8);border-radius:16px 16px 0 0}
+    border-left:0;border-top:1px solid var(--line);border-radius:16px 16px 0 0}
   .asst-pill{display:flex}
 }
 
@@ -2569,7 +2569,14 @@ async function asstOpen(caseNo){
   if(!ASST.state){
     try{ ASST.state = await api("/assistant/state"); }
     catch(e){ ASST.err = e.message || "The Assistant could not be reached."; }
+    /* The EDIT_DRAFT rule, panel edition: the state arrives a beat after the
+       panel opens, and its repaint must not eat whatever the user has already
+       started typing — that was a real lost-input bug, caught by the suite
+       racing the fetch exactly the way fast fingers would. */
+    const draft = $("asst_in") ? $("asst_in").value : "";
     paint();
+    const inp = $("asst_in");
+    if(inp && draft) inp.value = draft;
   }
 }
 
@@ -2652,7 +2659,7 @@ function asstMsgHtml(m){
 function asstHtml(){
   if(!ASST || !ASST.open) return "";
   return `<div class="asst-wrap">
-    <div class="asst-panel" role="dialog" aria-modal="false" aria-label="API Assistant">
+    <div class="asst-panel" role="complementary" aria-label="API Assistant">
       <div class="asst-head"><b>&#10024; API Assistant</b>
         <span class="asst-beta">BETA</span>
         <button class="asst-x" data-act="asstClose" aria-label="Close the Assistant">&times;</button></div>
