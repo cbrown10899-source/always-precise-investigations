@@ -324,6 +324,32 @@ which now names what CAN be rehearsed. The page workbench holds its state
 in `ASST.prep` under the EDIT_DRAFT rule, so no repaint can eat what was
 typed — the exact bug Unit 1's suite caught in `asstOpen`.
 
+**A18 — Back and Assistant Home are DERIVED from state the panel already
+holds, never a stored stack** (owner brief 2026-09-02: a persistent way back
+to the original menu without closing the panel). The panel's real depth is
+four levels and all four already exist as state: HOME (the quick menu),
+CHAT (`ASST.msgs` rendered), the WORKBENCH FORM (`ASST.prep`), and the
+WORKBENCH PREVIEW (`ASST.prep.preview`). `asstBack()` walks one level using
+exactly the transitions the panel already owned — preview→form is the Edit
+button's own write, form→chat is Cancel's, chat→home is the one new pointer
+(`ASST.view`) — and `Assistant Home` jumps straight to the menu. A stored
+navigation stack would be a second copy of this state and would drift the
+first time a flow forgot to push. The menu became a VIEW rather than the
+absence of messages (it used to render only while `msgs` was empty, so the
+first tap buried it for the life of the session — closing and reopening did
+not bring it back, which is the defect behind the owner's report). The
+conversation is never destroyed by going Home: `msgs` stays, a "Return to
+the conversation" row on the menu (drawn only when one exists) goes back
+down, and any new question lands in the same log. Back from the workbench
+inherits Cancel's meaning — the draft is discarded exactly as the Cancel
+button always discarded it, one behavior, not two. The strip lives under
+the head, 44px targets, palette tokens; the X is untouched; on the home
+screen no Back control renders, in the owner's own words. Case and page
+state (`WS_CASE`, `TAB`, drafts elsewhere) are never touched by any of the
+three acts. (This entry is the design record, written before the code — the
+PHOTO-TIMESTAMP.md pattern; the ledger row below says how far the build
+actually is, and the suite assertions land with the code.)
+
 ## Found gap (2026-09-02, overnight audit): the guide toggle was inert
 
 **`Explain & Guide Me` drew, stored its tick, sent `context.guide` on every
@@ -355,6 +381,7 @@ gap shipped.
 | 8 | Watch mode (internal read-only monitoring) | ✅ **DEPLOYED** — #265 `3f1f640` (A15); internal only, by absence of any send path |
 | 10 | Topic commands / smart shortcuts (owner brief 2026-09-02, second window) | ✅ **DEPLOYED** — #266 `9dd7f64`, both workflows `success` on `9dd7f643` (A17) |
 | 9 | Visual QA / workflow advisor | ✅ **DEPLOYED** — #265 `3f1f640` (A16); `portal/ux-advisor.mjs`, 51 findings stored in `UX-FINDINGS.json`/`.md`, judgment classes named for a person |
+| 11 | Back / Assistant Home panel navigation (owner brief 2026-09-02, third window) | ⏳ **DESIGNED, not yet coded** — A18 above is the derivation; build starts once the launcher-fix e2e frees the page files |
 
 **Checkpoint (2026-09-02, updated overnight):** the pre-Assistant units went
 green first — PR #260 merged as `6770609`, both deploy workflows `success` on
