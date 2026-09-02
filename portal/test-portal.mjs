@@ -16806,8 +16806,11 @@ section('LEGAL-SERVICES: the wizard generates the sheet from the service, and a 
         api('/submissions/' + no), api('/cases/' + no + '/workspace')]);
       WS = { ...ws, submission: sub.submission };
       WS_CASE = no; WS_TAB = 'overview'; VIEW = 'case'; paint();
+      /* Matched case-insensitively: the card's h3 is CSS-uppercased and
+         innerText returns the RENDERED text — the same lesson the Bill.com
+         "Not configured" chip taught, re-learned here as NO-CARD. */
       const c = [...document.querySelectorAll('.ovcard')]
-        .find(x => x.innerText.includes('Case status'));
+        .find(x => /case status/i.test(x.innerText));
       return { card: c ? c.innerText : 'NO-CARD',
                pricing: WS.authorization && WS.authorization.legal_pricing };
     }catch(e){ return { card: 'API-ERROR: ' + (e.message || e), pricing: null }; }
