@@ -6342,6 +6342,10 @@ const BILL_FIELDS = [
   ["terms_private",        "Default terms — private",   "text"],
   ["payment_instructions", "Payment instructions",    "area"],
   ["invoice_footer",       "Invoice footer",          "area"],
+  /* MAIL-CHECK.md — starts EMPTY and nothing invents a value: the owner types
+     the firm's real remittance address here, and only then do Legal and
+     Insurance invoices print their "Remit checks to" section. */
+  ["remit_address",        "Check remittance address — printed on Legal and Insurance invoices when set", "area"],
 ];
 
 async function loadBillingSettings(){
@@ -10966,6 +10970,11 @@ function retainerFormHtml(r){
         value="${esc(RET_DRAFT.amt || "")}"></label>
     <label class="f"><span>Payment method <span class="opt">(optional)</span></span>
       <select id="ret_method"><option value="">&mdash;</option>${RETAINER_METHOD_OPTIONS
+        /* MAIL-CHECK.md — Mail Check is offered where a law firm mails one:
+           the legal case's recorder. The private recorder is unchanged by the
+           owner's own scope line, and the Worker accepts the method wherever
+           it is honestly recorded. */
+        .concat(WS && WS.legal ? [["mail_check", "Mail Check"]] : [])
         .map(([v, l]) => `<option value="${v}"${RET_DRAFT.meth === v ? " selected" : ""}>${l}</option>`).join("")}</select></label>
     <div class="two">
       <label class="f"><span>Payment date <span class="opt">when the client paid</span></span>
@@ -16764,6 +16773,8 @@ function invoiceDocHtml(i){
     </tbody></table>` : ""}
     ${special ? `<p style="font-size:.9rem;white-space:pre-line"><b>Special instructions</b><br>${esc(special)}</p>` : ""}
     ${i.client_notes ? `<p style="font-size:.9rem">${esc(i.client_notes)}</p>` : ""}
+    ${i.remit_address ? `<p style="font-size:.9rem;white-space:pre-line"><b>Remit checks to</b><br>${
+      esc(i.remit_address)}</p>` : ""}
     <p style="font-size:.88rem;color:var(--muted)">${esc(cfg.payment_instructions || "")}</p>
     <p style="font-size:.85rem;border-top:1px solid var(--line);padding-top:10px;color:var(--muted)">${esc(cfg.invoice_footer || "")}</p>
   </div>`;
@@ -16881,7 +16892,14 @@ function invoiceDetailView(){
       </div>
       <div class="two">
         <label class="f"><span>Method</span><select id="ip_method">${["ach","check","card","wire","other"]
-          .map(v => `<option value="${v}">${v.toUpperCase()}</option>`).join("")}</select></label>
+          .map(v => `<option value="${v}">${v.toUpperCase()}</option>`).join("")}${
+          /* MAIL-CHECK.md — the label a carrier's or firm's mailed check is
+             recorded under. It stores the existing 'check' instrument: the
+             invoice_payments.method column carries a CHECK constraint, and
+             widening one is the rebuild schema.sql cannot do idempotently —
+             so the vocabulary widens, the stored value does not. */
+          i.send_context && i.send_context !== "private"
+            ? `<option value="check">Mail Check</option>` : ""}</select></label>
         <label class="f"><span>Reference <span class="opt">(optional)</span></span><input id="ip_ref"></label>
       </div>
       <button class="btn sm" type="submit">Record payment</button>
