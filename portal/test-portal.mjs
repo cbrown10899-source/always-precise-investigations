@@ -52,7 +52,9 @@ function ok(name, cond, detail = '') {
   if (cond) { passed++; results.push(`  PASS  ${name}`); }
   else { failed++; results.push(`  FAIL  ${name}${detail ? ' — ' + detail : ''}`); }
 }
-function section(name) { results.push(`\n${name}`); }
+/* Progress streams to stderr so a stalled run says WHERE it stalled — the
+   results themselves still buffer and print at the end, unchanged. */
+function section(name) { results.push(`\n${name}`); console.error(`>> ${name}`); }
 
 /* A crashed run must still say what it saw. An uncaught Playwright timeout
    otherwise swallows the whole report — including the page-error FAILs that
@@ -16648,6 +16650,198 @@ section('BILLCOM: not configured means invisible; configured means offered exact
   });
   ok('the legal invoice prints the Bill.com section while enabled and not a word after disabling',
      inv.withIt === true && inv.without === true, JSON.stringify(inv));
+  await page.close();
+}
+
+section('LEGAL-SERVICES: the wizard generates the sheet from the service, and a fixed case never says retainer');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* A fixed-service legal lead exactly as the public form delivers one, and a
+     historical legal lead with no marker at all. */
+  await post('/ingest', { case_no: 'API-LSV-F', assignment: 'legal', legal_service: 'locate',
+    firm_name: 'Locate & Co', attorney_name: 'L. Cate', client_name: 'Locate & Co',
+    client_email: 'l@locateco.example', objective: 'Find the witness' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await post('/ingest', { case_no: 'API-LSV-H', assignment: 'legal',
+    firm_name: 'Historic LLP', attorney_name: 'H. Old', client_name: 'Historic LLP' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  /* ---- the Rate sheets legal wizard: selector, retainer handoff, preview ---- */
+  await page.evaluate(async () => { await render(); TAB = 'sheets'; OPEN_SHEET = 'legal'; paint(); });
+  await page.waitForTimeout(300);
+  await page.locator('[data-act="shWiz"][data-context="legal"]').click();
+  await page.waitForSelector('#wiz_lsvc', { timeout: 4000 });
+  const sel = await page.evaluate(() => ({
+    options: [...document.querySelectorAll('#wiz_lsvc option')].map(o => o.value),
+    text: document.querySelector('#wiz_lsvc').closest('.feebox').innerText,
+    retainerBox: !!document.querySelector('#wiz_ret'),
+  }));
+  ok('the legal wizard offers the five services plus not-specified',
+     sel.options.join() === ',locate,process,general,surveillance,custom', JSON.stringify(sel.options));
+  ok('the fixed options carry the Worker-composed price label', /\$250 Flat Fee/.test(sel.text),
+     sel.text.slice(0, 200));
+  ok('unspecified, the retainer selector still draws — the existing send unchanged',
+     sel.retainerBox === true);
+
+  const picked = await page.evaluate(() => {
+    document.querySelector('#wiz_lsvc').value = 'locate';
+    wizCollect(); SHEET_WIZ.lsvcTouched = true; paint();
+    const fee = document.querySelector('#wiz_lsvc').closest('.feebox').innerText;
+    document.querySelector('#wiz_to').value = 'firm@locateco.example';
+    wizCollect(); SHEET_WIZ.step = 2; paint();
+    return { fee, retainerBox: !!document.querySelector('#wiz_ret'),
+             summary: document.querySelector('.amsheet').innerText };
+  });
+  ok('picking Person Locate withdraws the retainer selector — a flat fee is not a retainer',
+     picked.retainerBox === false);
+  ok('and the hint names the concise flat-fee sheet',
+     /Person Locate \/ Skip Trace — \$250 Flat Fee/.test(picked.fee), picked.fee.slice(0, 200));
+  ok('the preview names the fixed sheet and the service, with no Agreed-retainer row',
+     /Person Locate \/ Skip Trace — \$250 Flat Fee/.test(picked.summary)
+     && /Legal service/.test(picked.summary)
+     && !/Agreed retainer/.test(picked.summary)
+     && /does not mark the fee paid/.test(picked.summary), picked.summary.slice(0, 400));
+
+  const posted = await page.evaluate(async () => {
+    let body = null; const real = window.fetch;
+    window.fetch = async (url, init) => {
+      if (String(url).includes('/sheets/')) { body = JSON.parse(init.body);
+        return new Response(JSON.stringify({ ok: true, sent_to: 'x', send_context: 'legal',
+          legal_service: { id: 'locate', label: 'Person Locate / Skip Trace', model: 'fixed' },
+          included: { rate_sheet: 'x', payment_methods: [] } }),
+          { status: 200, headers: { 'content-type': 'application/json' } }); }
+      return real(url, init);
+    };
+    await wizSend(); window.fetch = real;
+    return body;
+  });
+  ok('the page posts exactly the service it previewed',
+     posted && posted.legal_service === 'locate', JSON.stringify(posted));
+
+  /* ---- Process Service: the Standard / Custom flat-fee control (D12) ---- */
+  await page.evaluate(async () => { SHEET_WIZ = null; TAB = 'sheets'; OPEN_SHEET = 'legal'; paint(); });
+  await page.waitForTimeout(200);
+  await page.locator('[data-act="shWiz"][data-context="legal"]').click();
+  await page.waitForSelector('#wiz_lsvc', { timeout: 4000 });
+  const feeCtl = await page.evaluate(() => {
+    document.querySelector('#wiz_lsvc').value = 'process';
+    wizCollect(); SHEET_WIZ.lsvcTouched = true; paint();
+    const std = document.querySelector('#wiz_fee_std');
+    return { radios: !!std && !!document.querySelector('#wiz_fee_custom'),
+             stdChecked: std ? std.checked : null,
+             label: std ? std.closest('label').innerText : '',
+             box: !!document.querySelector('#wiz_feec') };
+  });
+  ok('picking Process Service draws Standard/Custom radios, Standard preselected with the Worker-composed label',
+     feeCtl.radios && feeCtl.stdChecked === true && /\$250 Flat Fee/.test(feeCtl.label) && feeCtl.box,
+     JSON.stringify(feeCtl));
+  const feeCustom = await page.evaluate(async () => {
+    document.querySelector('#wiz_fee_custom').checked = true;
+    document.querySelector('#wiz_feec').value = '375';
+    wizCollect(); SHEET_WIZ.feeTouched = true; SHEET_WIZ.feeMode = 'custom';
+    document.querySelector('#wiz_to').value = 'firm@serve.example';
+    wizCollect(); SHEET_WIZ.step = 2; paint();
+    const summary = document.querySelector('.amsheet').innerText;
+    let body = null; const real = window.fetch;
+    window.fetch = async (url, init) => {
+      if (String(url).includes('/sheets/')) { body = JSON.parse(init.body);
+        return new Response(JSON.stringify({ ok: true, sent_to: 'x', send_context: 'legal',
+          legal_service: { id: 'process', label: 'Process Service', model: 'fixed' }, flat_fee: 375,
+          included: { rate_sheet: 'x', payment_methods: [] } }),
+          { status: 200, headers: { 'content-type': 'application/json' } }); }
+      return real(url, init);
+    };
+    await wizSend(); window.fetch = real;
+    return { summary, body };
+  });
+  ok('the preview names Process Service — $375 Flat Fee and never the unused default',
+     /Process Service — \$375 Flat Fee/.test(feeCustom.summary)
+     && !/\$250/.test(feeCustom.summary), feeCustom.summary.slice(0, 300));
+  ok('and the page posts flat_fee 375 with the service',
+     feeCustom.body && feeCustom.body.flat_fee === 375
+     && feeCustom.body.legal_service === 'process', JSON.stringify(feeCustom.body));
+
+  /* An empty custom amount blocks the step with words, the retainer rule. */
+  await page.evaluate(async () => { SHEET_WIZ = null; TAB = 'sheets'; OPEN_SHEET = 'legal'; paint(); });
+  await page.waitForTimeout(200);
+  await page.locator('[data-act="shWiz"][data-context="legal"]').click();
+  await page.waitForSelector('#wiz_lsvc', { timeout: 4000 });
+  const feeErr = await page.evaluate(async () => {
+    document.querySelector('#wiz_lsvc').value = 'process';
+    wizCollect(); SHEET_WIZ.lsvcTouched = true; paint();
+    document.querySelector('#wiz_fee_custom').checked = true;
+    wizCollect(); SHEET_WIZ.feeMode = 'custom'; SHEET_WIZ.feeTouched = true;
+    document.querySelector('#wiz_to').value = 'firm@serve.example';
+    wizCollect();
+    const okd = await wizFeeSave();
+    return { okd, err: SHEET_WIZ.err };
+  });
+  ok('custom with no amount refuses in words before Preview',
+     feeErr.okd === false && /dollar amount above zero/.test(feeErr.err), JSON.stringify(feeErr));
+  await page.evaluate(() => { SHEET_WIZ = null; paint(); });
+
+  /* ---- a lead-card wizard preselects the case's own service ---- */
+  await page.evaluate(async () => { SHEET_WIZ = null; TAB = 'leads'; paint(); });
+  await page.waitForTimeout(200);
+  await page.locator('.pcard', { hasText: 'Locate & Co' }).first()
+    .locator('[data-act="leadSheet"]').click();
+  await page.waitForTimeout(700);
+  const lead = await page.evaluate(() => ({
+    v: document.querySelector('#wiz_lsvc') ? document.querySelector('#wiz_lsvc').value : 'NONE',
+    retainerBox: !!document.querySelector('#wiz_ret'),
+  }));
+  ok('a fixed-service lead opens its wizard ON the service, retainer selector withdrawn',
+     lead.v === 'locate' && lead.retainerBox === false, JSON.stringify(lead));
+  await page.evaluate(() => { SHEET_WIZ = null; paint(); });
+
+  /* ---- the case money block: Fee (flat) $250; a historical case unchanged ----
+     Rendered by the page's own state and paint(), with the api errors CAPTURED
+     rather than lost to openCase's alert-and-return — a failed read must name
+     itself in the test evidence, not draw as a missing card. */
+  const openStatusCard = async caseNo => page.evaluate(async no => {
+    try{
+      const [sub, ws] = await Promise.all([
+        api('/submissions/' + no), api('/cases/' + no + '/workspace')]);
+      WS = { ...ws, submission: sub.submission };
+      WS_CASE = no; WS_TAB = 'overview'; VIEW = 'case'; paint();
+      /* Matched case-insensitively: the card's h3 is CSS-uppercased and
+         innerText returns the RENDERED text — the same lesson the Bill.com
+         "Not configured" chip taught, re-learned here as NO-CARD. */
+      const c = [...document.querySelectorAll('.ovcard')]
+        .find(x => /case status/i.test(x.innerText));
+      return { card: c ? c.innerText : 'NO-CARD',
+               pricing: WS.authorization && WS.authorization.legal_pricing };
+    }catch(e){ return { card: 'API-ERROR: ' + (e.message || e), pricing: null }; }
+  }, caseNo);
+  const moneyF = await openStatusCard('API-LSV-F');
+  ok('a fixed case\'s Overview reads Fee (flat) $250 and never Retainer',
+     /Fee \(flat\)/.test(moneyF.card) && /\$250\b/.test(moneyF.card)
+     && !/Retainer/.test(moneyF.card), moneyF.card.slice(0, 300));
+  ok('and its record knows the service and model',
+     moneyF.pricing && moneyF.pricing.service === 'locate'
+     && moneyF.pricing.model === 'fixed', JSON.stringify(moneyF.pricing));
+  const moneyH = await openStatusCard('API-LSV-H');
+  ok('a historical legal case still reads Retainer $1,500 — unchanged',
+     /Retainer/.test(moneyH.card) && /\$1,500\b/.test(moneyH.card)
+     && !/Fee \(flat\)/.test(moneyH.card), moneyH.card.slice(0, 300));
+
+  /* ---- the Quick Legal form offers the optional service, defaulting to none ----
+     The case view is left FIRST: paint() routes to the case whenever
+     VIEW === 'case', which is exactly how the first run of this section drew
+     a case page under a #nl_lsvc probe and reported the select missing. */
+  const quick = await page.evaluate(async () => {
+    VIEW = 'list'; WS_CASE = ''; WS = null;
+    TAB = 'newlead'; NL = { kind: 'legal', err: '', v: {} }; paint();
+    await new Promise(r => setTimeout(r, 150));
+    const s = document.querySelector('#nl_lsvc');
+    return { present: !!s, value: s ? s.value : null,
+             options: s ? [...s.options].map(o => o.textContent.trim().slice(0, 30)) : [] };
+  });
+  ok('Quick Legal offers the five services under "Not decided yet" — chosen, never defaulted',
+     quick.present === true && quick.value === '' && quick.options.length === 6
+     && quick.options[0] === 'Not decided yet', JSON.stringify(quick));
   await page.close();
 }
 

@@ -230,7 +230,31 @@ const PRIVATE_ONLY = /^private$/i
 const LEGAL_ONLY = /^legal$/i
   .test(new URLSearchParams(location.search).get("assignment") || "");
 
-const S = { step:0, svc:CARRIER_ONLY ? "claims" : LEGAL_ONLY ? "legal" : null, sig:null, files:[] };
+/* LEGAL-SERVICES.md (owner, 2026-09-02): the five legal services, chosen at
+   the start of the legal flow. LABELS AND WORDING ONLY — no price appears on
+   this page for any of them, because no pricing is public (owner decision,
+   2026-08-21, locked); the figure arrives in the office's own email.
+   `assignment_type` maps the choice onto the record's existing category
+   vocabulary when the later Assignment-type select is left blank — the same
+   fact restated, never a guess. That email's Start Assignment button lands
+   here with `?assignment=legal&service=<id>`, preselecting what it quoted. */
+const LEGAL_SVCS = [
+  { id: "locate", label: "Person Locate / Skip Trace", atype: "Locate / Skip trace",
+    desc: "Find a current address and whereabouts for a subject — for service, filing or contact." },
+  { id: "process", label: "Process Service", atype: "Process / service support",
+    desc: "Serve the firm's documents on a named recipient, with the attempts and outcome documented." },
+  { id: "general", label: "General Investigation", atype: "Civil investigation",
+    desc: "Broader investigative work — background, witness work, evidence and documentation." },
+  { id: "surveillance", label: "Surveillance", atype: "Surveillance",
+    desc: "Documented field surveillance of a subject, reported day by day." },
+  { id: "custom", label: "Other / Custom Assignment", atype: "Other / custom assignment",
+    desc: "Anything that doesn't fit the above — describe it and we will scope it with you." },
+];
+const legalSvcById = id => LEGAL_SVCS.find(s => s.id === String(id || "").toLowerCase()) || null;
+const LEGAL_SVC_PARAM = (legalSvcById(new URLSearchParams(location.search).get("service")) || {}).id || null;
+
+const S = { step:0, svc:CARRIER_ONLY ? "claims" : LEGAL_ONLY ? "legal" : null,
+            lsvc:LEGAL_ONLY ? LEGAL_SVC_PARAM : null, sig:null, files:[] };
 
 /* ============ Required / optional markers ============
 
@@ -270,7 +294,11 @@ const CLAIM_STEPS = ["info","service","claim","subject","objective","authorizati
    subject the firm already knows about, then the assignment itself. No payment
    step and no figure anywhere — a paralegal finishes this in a few minutes
    with what is on their desk, and anything not to hand follows later. */
-const LEGAL_STEPS = ["info","service","firm","matter","subject","objective","agreement"];
+/* "lsvc" is the legal-service choice, at the START of the legal flow (owner,
+   2026-09-02): the service decides which questions the later steps lead with
+   and which sheet the office's send wizard generates. It sits right after the
+   shared info/service prefix, so switching service mid-flow stays safe. */
+const LEGAL_STEPS = ["info","service","lsvc","firm","matter","subject","objective","agreement"];
 function steps(){
   // A fixed door has no service picker to show, so it is dropped rather
   // than rendered and skipped — a step that exists but is never reached still
@@ -471,6 +499,21 @@ function view(step){
     ${navButtons()}
   </div>`;
 
+  /* The legal-service step (LEGAL-SERVICES.md D9). NO PRICE APPEARS HERE —
+     no pricing is public (owner, 2026-08-21, locked); the emailed sheet is
+     where a figure lives. Required like the main picker: defaulting it would
+     file a record nobody chose. */
+  if(step==="lsvc") return `<div class="card">
+    <h2>What does the firm need?</h2>
+    <p class="lead">Pick the service this assignment is for &mdash; the next steps ask only for
+      what that service actually needs, and the fee sheet your office receives is specific to it.</p>
+    ${LEGAL_SVCS.map(s => `<label class="opt" id="opt-lsvc-${s.id}" onclick="pickLsvc('${s.id}')">
+      <input type="radio" name="lsvc" ${S.lsvc===s.id?"checked":""}><b>${s.label}</b>
+      <div class="desc">${s.desc}</div>
+    </label>`).join("")}
+    ${navButtons()}
+  </div>`;
+
   if(step==="firm") return `<div class="card">
     <h2>Law firm &amp; contacts</h2>
     <p class="lead">Who is assigning this work and who we coordinate with. An attorney or a
@@ -599,13 +642,31 @@ function view(step){
     ${navButtons()}
   </div>`;
 
-  if(step==="subject") return `<div class="card">
-    <h2>${isClaims()?"The claimant":"Subject of the investigation"}</h2>
+  if(step==="subject"){
+  /* LEGAL-SERVICES.md D9 — the legal door's subject step leads with what the
+     CHOSEN SERVICE needs: a locate is about identifying and finding the
+     subject, process service is about the recipient and the papers. Same
+     fields, same data keys — the wording adapts, the structure does not, and
+     the one added field is the process path's documents line. */
+  const lsvc = isLegal() ? S.lsvc : null;
+  const legalHead = lsvc === "locate" ? "Who are we locating?"
+                  : lsvc === "process" ? "Who is being served?"
+                  : "Subject of the investigation";
+  const legalLead = lsvc === "locate"
+    ? "Everything that identifies the subject helps us find them — full name, last known address, date of birth, employer, vehicles, anyone they are connected to."
+    : lsvc === "process"
+    ? "The recipient of the documents. A reliable address and a description are what make service quick."
+    : "Who or what should we look into? Share whatever you know — more detail helps.";
+  return `<div class="card">
+    <h2>${isClaims()?"The claimant":isLegal()?legalHead:"Subject of the investigation"}</h2>
     <p class="lead">${isClaims()
       ? "Who we are going out on. Addresses and vehicles are what make or break a first day in the field."
+      : isLegal() ? legalLead
       : "Who or what should we look into? Share whatever you know — more detail helps."}</p>
-    <label class="f"><span>${isClaims()?"Claimant's name":"Subject's name"}${isClaims()?ONE_FILEID:OPT}</span><input type="text" data-k="s_name"></label>
-    <label class="f"><span>Known address or location${OPT}</span><input type="text" data-k="s_addr" placeholder="Full or partial — a general area helps, e.g. Forest, Virginia area"></label>
+    <label class="f"><span>${isClaims()?"Claimant's name":lsvc==="process"?"Recipient's name":"Subject's name"}${isClaims()?ONE_FILEID:OPT}</span><input type="text" data-k="s_name"></label>
+    ${lsvc==="process" ? `<label class="f"><span>Documents to be served${OPT}</span>
+      <input type="text" data-k="ls_docs" placeholder="e.g. summons and complaint, subpoena, witness summons"></label>` : ""}
+    <label class="f"><span>${lsvc==="locate"?"Last known address or location":"Known address or location"}${OPT}</span><input type="text" data-k="s_addr" placeholder="Full or partial — a general area helps, e.g. Forest, Virginia area"></label>
     ${naBox("s_addr", "Exact address not available yet")}
     <label class="f"><span>Vehicle / physical description${OPT}</span><input type="text" data-k="s_desc" placeholder="Whatever you know — even &quot;white SUV&quot; helps"></label>
     ${naBox("s_desc", "Vehicle information not available yet")}
@@ -617,13 +678,14 @@ function view(step){
       <span class="hint" id="filenote">${isClaims()?"Attach the claim file, ISO report or a photo of the claimant.":"Attach court papers or a photo of the subject if you have them."}</span></label>
     ${navButtons()}
   </div>`;
+  }
 
   if(step==="objective") return `<div class="card">
     <h2>${isClaims()?"Scope &amp; deadline":"Your objective"}</h2>
     <p class="lead">${isClaims()
       ? "What does this file need to answer, and by when?"
       : "What outcome are you hoping for, and how soon?"}</p>
-    <label class="f"><span>${isClaims()?"What does the file need to establish?":"What do you want to find out or accomplish?"}${REQ}</span><textarea data-k="o_goal" placeholder="${isClaims()?"e.g. activity level versus stated restrictions, employment verification, scene documentation…":"Describe the situation and the result you need…"}"></textarea></label>
+    <label class="f"><span>${isClaims()?"What does the file need to establish?":"What do you want to find out or accomplish?"}${REQ}</span><textarea data-k="o_goal" placeholder="${isClaims()?"e.g. activity level versus stated restrictions, employment verification, scene documentation…":isLegal()&&S.lsvc==="locate"?"e.g. current residential address for service; confirm employment and vehicles…":isLegal()&&S.lsvc==="process"?"e.g. serve the summons and complaint before the return date; note any avoidance…":"Describe the situation and the result you need…"}"></textarea></label>
     <label class="f"><span>${isClaims()?"Deadline":"Timeline / urgency"}${OPT}</span><input type="text" data-k="o_time" placeholder="${isClaims()?"e.g. hearing 9/12, report needed by 9/1":"e.g. before a court date on 8/15, ASAP, flexible"}"></label>
     <label class="f"><span>Anything else we should know${OPT}</span><textarea data-k="o_notes" placeholder="e.g. prior attempts, safety concerns, people to avoid"></textarea></label>
     ${navButtons()}
@@ -696,8 +758,13 @@ function view(step){
          <div class="row"><span>Rate</span><span>Confirmed in writing before work begins</span></div>
          <div class="row"><span>Additional fees</span><span>None &mdash; mileage, travel and reporting included</span></div>`
       : isLegal()
-      ? `<div class="row"><span>Retainer</span><b>Arranged with the firm in writing</b></div>
-         <div class="row"><span>Additional fees</span><span>None &mdash; mileage, travel and the report included</span></div>`
+      /* A FIXED service's terms name a fee, never a retainer (LEGAL-SERVICES.md
+         D5 applied to the door) — still no figure, this page is public. */
+      ? (legalSvcById(S.lsvc) && (S.lsvc === "locate" || S.lsvc === "process")
+        ? `<div class="row"><span>Fee</span><b>A flat fee, confirmed with your office in writing</b></div>
+           <div class="row"><span>Additional fees</span><span>None &mdash; mileage, travel and the report included</span></div>`
+        : `<div class="row"><span>Retainer</span><b>Arranged with the firm in writing</b></div>
+           <div class="row"><span>Additional fees</span><span>None &mdash; mileage, travel and the report included</span></div>`)
       : `<div class="row"><span>Fee</span><b>Sent to you in writing</b></div>
          <div class="row"><span>Additional fees</span><span>None &mdash; mileage, travel and the report included</span></div>`;
     const dueLine = isClaims()
@@ -710,13 +777,18 @@ function view(step){
        to handle the retainer, so the office can act on it — a request, never a
        payment. Nothing here is Cash App or Venmo, and choosing one records
        nothing as paid anywhere. */
+    /* The stored arrangement VALUES are unchanged whichever service was
+       picked; only the words follow the pricing shape — a fixed service's
+       check is the fee, not a retainer. */
+    const fixedSvc = isLegal() && (S.lsvc === "locate" || S.lsvc === "process");
+    const arrWord = fixedSvc ? "fee" : "retainer";
     const arrangement = !isLegal() ? "" : `
-      <h3 class="substep">Retainer arrangement${OPT}</h3>
-      <p class="hint">How your office prefers to handle the retainer. Choosing one here arranges
+      <h3 class="substep">${fixedSvc ? "Payment arrangement" : "Retainer arrangement"}${OPT}</h3>
+      <p class="hint">How your office prefers to handle the ${arrWord}. Choosing one here arranges
         it &mdash; nothing is collected on this form, and nothing is marked paid by choosing.</p>
       ${[["bill_ach","BILL.com invoice / ACH","We invoice the firm electronically."],
-         ["check_pickup","Retainer check — pick up at your office","Let us know when the check is ready and we will arrange pickup at your office."],
-         ["check_mail","Retainer check — by mail","Mailing details are confirmed with the office when the assignment is accepted."],
+         ["check_pickup",(fixedSvc?"Check — pick up at your office":"Retainer check — pick up at your office"),"Let us know when the check is ready and we will arrange pickup at your office."],
+         ["check_mail",(fixedSvc?"Check — by mail":"Retainer check — by mail"),"Mailing details are confirmed with the office when the assignment is accepted."],
          ["existing_billing","Existing billing arrangement","For firms we already bill — nothing new to set up."]]
         .map(([k, label, desc]) => `<label class="opt" onclick="pickArr('${k}')">
           <input type="radio" name="larr" ${val.l_arrangement===k?"checked":""}><b>${label}</b>
@@ -736,13 +808,23 @@ function view(step){
       <div class="feebox">${feeLines}${dueLine}</div>
       ${arrangement}
       <div class="agree">
-      ${isLegal() ? `
+      ${isLegal() ? (fixedSvc ? `
+        ${""/* LEGAL-SERVICES.md D5 applied to the door's own terms: a fixed
+             service's billing language names a flat fee, never a retainer or
+             a rate billed against one. Still no figure — this page is public,
+             the fee arrives on the emailed sheet. */}
+        <h4>Assignment</h4>
+        <p>The law firm retains ${FIRM.name} ("the firm," Va DCJS #${FIRM.license}) to perform the assignment described in this intake. Work begins on written acceptance; submitting this form does not by itself start work or create a charge.</p>
+        <h4>Fee &amp; billing</h4>
+        <p>This assignment is performed for a flat fee, confirmed with the firm in writing before work begins. The confirmed fee is the full price of the assignment. No payment is collected on this form, and no payment method chosen here is treated as payment received.</p>
+        <h4>No additional fees</h4>
+        <p>The confirmed fee is the billed amount. Mileage, travel time, tolls, parking, database and record fees and report preparation are included and are not billed as separate line items. An assignment outside the firm's service area has its travel quoted and agreed before acceptance.</p>` : `
         <h4>Assignment</h4>
         <p>The law firm retains ${FIRM.name} ("the firm," Va DCJS #${FIRM.license}) to perform the investigative assignment described in this intake. Work begins on written acceptance and the agreed retainer arrangement; submitting this form does not by itself start work or create a charge.</p>
         <h4>Retainer &amp; billing</h4>
         <p>The retainer and rate are confirmed with the firm in writing before work begins. Work is billed against the retainer; the firm is told before the retainer is exhausted, and nothing beyond it is worked without approval. No payment is collected on this form, and no payment method chosen here is treated as payment received.</p>
         <h4>No additional fees</h4>
-        <p>The confirmed rate is the billed amount. Mileage, travel time, tolls, parking, database and record fees, video review and report preparation are included and are not billed as separate line items. An assignment outside the firm's service area has its travel quoted and agreed before acceptance.</p>
+        <p>The confirmed rate is the billed amount. Mileage, travel time, tolls, parking, database and record fees, video review and report preparation are included and are not billed as separate line items. An assignment outside the firm's service area has its travel quoted and agreed before acceptance.</p>`) + `
         <h4>Lawful conduct</h4>
         <p>All work is performed lawfully and from lawful vantage points. The firm does not trespass on private property, record into a residence, place tracking devices on vehicles it has no authority over, access accounts or devices, or misrepresent itself to obtain financial or medical records.</p>
         <h4>Work product &amp; confidentiality</h4>
@@ -811,6 +893,7 @@ function pickSvc(k){
   if(PRIVATE_ONLY && (k === "claims" || k === "legal")) return;
   capture(); S.svc=k; render();
 }
+function pickLsvc(k){ if(!legalSvcById(k)) return; capture(); S.lsvc=k; render(); }
 function pickAuth(k){ capture(); val.z_auth=k; render(); }
 function pickArr(k){ capture(); val.l_arrangement=k; render(); }
 function pickFiles(input){ S.files=[...input.files].map(f=>f.name); const n=$("filenote"); if(n) n.textContent = S.files.length? S.files.length+" file(s) attached: "+S.files.join(", ") : "Attach court papers or a photo of the subject if you have them."; }
@@ -842,6 +925,7 @@ function validate(step){
     if(!(val.c_phone||"").trim() && !(val.c_email||"").trim()) return "Add a phone number or email so we can reach you.";
   }
   if(step==="service" && !S.svc) return "Please choose a service.";
+  if(step==="lsvc" && !S.lsvc) return "Please choose the service the firm needs.";
   if(step==="firm"){
     if(!(val.lf_firm||"").trim()) return "Please name the law firm.";
     if(!(val.lf_atty||"").trim()) return "Please name the assigning attorney.";
@@ -916,8 +1000,15 @@ function buildPayload(){
        details ride client_email/client_phone plus contact_name so a call-back
        reaches the person who actually sent it. assignment:'legal' is the
        marker of record the Worker files the case by. */
+    const lsvcRec = legalSvcById(S.lsvc);
     Object.assign(p, {
       assignment: "legal",
+      /* LEGAL-SERVICES.md D3 — the service marker the portal derives the
+         pricing model from. The finer assignment_type defaults from it ONLY
+         where the Assignment-type select was left blank: the same choice
+         restated in the record's existing vocabulary, never a guess. */
+      legal_service: lsvcRec ? lsvcRec.id : "",
+      documents_to_serve: lsvcRec && lsvcRec.id === "process" ? (val.ls_docs||"") : "",
       contact_name: val.c_name||"",
       client_name: val.lm_client||"",
       firm_name: val.lf_firm||"", firm_address: val.lf_firm_addr||"",
@@ -928,7 +1019,8 @@ function buildPayload(){
       billing_reference: val.lf_bill_ref||"",
       matter_number: val.lm_matter||"", court_case_number: val.lm_court_no||"",
       court_jurisdiction: val.lm_court||"",
-      assignment_type: val.lm_type||"", conflict_names: val.lm_conflicts||"",
+      assignment_type: (val.lm_type||"") || (lsvcRec ? lsvcRec.atype : ""),
+      conflict_names: val.lm_conflicts||"",
       deadline: val.lm_deadline||"", hearing_date: val.lm_hearing||"",
       trial_date: val.lm_trial||"", other_date: val.lm_other||"", other_date_label: val.lm_other_label||"",
       special_instructions: val.lm_instructions||"",

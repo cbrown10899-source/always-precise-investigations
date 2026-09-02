@@ -809,14 +809,30 @@ section('The legal door — /intake/?assignment=legal');
      (await page.title()).includes('Legal Investigation Assignment'));
   ok('and the masthead says legal assignment',
      (await page.locator('.name').innerText()).includes('LEGAL ASSIGNMENT'));
-  ok('the service picker is gone from the flow — six steps', await dots(page) === 6);
+  ok('the service picker is gone from the flow — seven steps with the legal service',
+     await dots(page) === 7);
 
   // Step 1: the submitter — a paralegal, in this walk.
   await set(page, 'c_name', 'Tessa Boyd');
   await set(page, 'c_email', 'tboyd@harmonboyle.test');
   await advance(page);
 
-  // Step 2: the firm.
+  /* Step 2: the legal service (LEGAL-SERVICES.md D9) — chosen at the start of
+     the legal flow, required like the main picker, and PRICE-FREE: no pricing
+     is public, whatever the service costs. */
+  ok('the legal-service step opens next', await heading(page) === 'What does the firm need?');
+  await advance(page);
+  ok('the service must be chosen, in words', (await err(page)).includes('service the firm needs'));
+  const lsvcStep = await page.locator('.card').innerText();
+  ok('all five services are offered, with no dollar figure anywhere on the step',
+     lsvcStep.includes('Person Locate / Skip Trace') && lsvcStep.includes('Process Service')
+     && lsvcStep.includes('General Investigation') && lsvcStep.includes('Surveillance')
+     && lsvcStep.includes('Other / Custom Assignment') && !lsvcStep.includes('$'));
+  await page.evaluate(() => pickLsvc('general'));
+  await page.waitForTimeout(120);
+  await advance(page);
+
+  // Step 3: the firm.
   ok('the firm step asks a law office\'s questions', await heading(page) === 'Law firm & contacts');
   const firmStep = await page.locator('.card').innerText();
   ok('a paralegal is not required and says so',
@@ -1042,6 +1058,11 @@ section('Field labels say what validate() actually enforces');
     await auditStep(page, 'legal:info');
     await set(page, 'c_name', 'P Aralegal'); await set(page, 'c_email', 'p@firm.example');
     await advance(page);
+    /* The legal-service step is radio cards like the main picker — no labeled
+       fields for the marker audit, and the walk simply chooses one. */
+    await page.evaluate(() => pickLsvc('general'));
+    await page.waitForTimeout(80);
+    await advance(page);
     await auditStep(page, 'legal:firm');
     await set(page, 'lf_firm', 'Smith Law'); await set(page, 'lf_atty', 'J Smith');
     await advance(page);
@@ -1135,6 +1156,11 @@ section('Every field marked (optional) really can be left blank');
     await advance(page);
     if (door === 'private') { await page.locator('#opt-surveillance').click(); await page.waitForTimeout(80); await advance(page); }
     if (door === 'legal') {
+      /* The legal service is a required radio step, like the main picker —
+         chosen, never defaulted (LEGAL-SERVICES.md D9). */
+      await page.evaluate(() => pickLsvc('general'));
+      await page.waitForTimeout(80);
+      await advance(page);
       await set(page, 'lf_firm', 'Required Firm'); await set(page, 'lf_atty', 'Required Attorney');
       await advance(page);
       await set(page, 'lm_client', 'Required Client');       // one half of the pair
@@ -1186,6 +1212,13 @@ section('Every field marked * really does block the step');
   await advance(page);
 
   await advance(page);
+  ok('the legal service blocks its own step — a service is chosen, never defaulted',
+     /service the firm needs/i.test(await err(page)), await err(page));
+  await page.evaluate(() => pickLsvc('general'));
+  await page.waitForTimeout(80);
+  await advance(page);
+
+  await advance(page);
   ok('the law firm blocks the firm step', /law firm/i.test(await err(page)), await err(page));
   await set(page, 'lf_firm', 'Smith Law');
   await advance(page);
@@ -1203,6 +1236,77 @@ section('Every field marked * really does block the step');
   await advance(page);
   ok('the objective blocks the objective step — the * this unit added',
      /documented/i.test(await err(page)), await err(page));
+  await page.close();
+}
+
+/* ============ LEGAL-SERVICES.md D9 — the door adapts to the service ========
+   The same fields, the same keys — the wording leads with what the chosen
+   service needs, the ONE added field is the process path's documents line,
+   and the payload carries the marker the portal prices the case from. */
+section('The legal door adapts to the chosen service');
+{
+  /* A rate-sheet email's Start Assignment lands here with &service=… */
+  submitted = null; stored = null;
+  let page = await newPage();
+  await page.goto(BASE + '?assignment=legal&service=process');
+  await page.waitForTimeout(120);
+  await set(page, 'c_name', 'P Aralegal'); await set(page, 'c_email', 'p@serve.example');
+  await advance(page);
+  ok('the emailed link preselects the service on its step',
+     await page.evaluate(() => S.lsvc) === 'process'
+     && await page.locator('#opt-lsvc-process input').isChecked());
+  await advance(page);
+  await set(page, 'lf_firm', 'Serve Firm'); await set(page, 'lf_atty', 'S. Erver');
+  await advance(page);
+  await set(page, 'lm_client', 'Plaintiff P');
+  await advance(page);
+  ok('process service asks about the RECIPIENT and the documents',
+     (await heading(page)) === 'Who is being served?'
+     && (await page.locator('.card').innerText()).includes("Recipient's name")
+     && await page.locator('[data-k="ls_docs"]').count() === 1);
+  await set(page, 's_name', 'D. Efendant');
+  await set(page, 'ls_docs', 'Summons and complaint');
+  await advance(page);
+  await set(page, 'o_goal', 'Serve before the return date.');
+  await advance(page);
+  ok('a fixed service’s terms name a fee, never a retainer — and still no figure',
+     (await page.locator('.card').innerText()).includes('A flat fee, confirmed with your office in writing')
+     && !(await page.locator('.card').innerText()).includes('Retainer')
+     && !(await page.locator('.card').innerText()).includes('$'));
+  await page.locator('[data-k="a_consent"]').check();
+  await set(page, 'a_typed', 'P Aralegal');
+  await sign(page);
+  await advance(page);
+  await page.waitForTimeout(400);
+  ok('the payload carries the service marker, the documents and the mapped assignment type',
+     stored && stored.legal_service === 'process'
+     && stored.documents_to_serve === 'Summons and complaint'
+     && stored.assignment_type === 'Process / service support', JSON.stringify(stored || {}).slice(0, 200));
+  await page.close();
+
+  /* Locate leads with identification; nothing about documents. */
+  page = await newPage();
+  await page.goto(BASE + '?assignment=legal&service=locate');
+  await page.waitForTimeout(120);
+  await set(page, 'c_name', 'P Aralegal'); await set(page, 'c_email', 'p@find.example');
+  await advance(page);
+  await advance(page);
+  await set(page, 'lf_firm', 'Find Firm'); await set(page, 'lf_atty', 'L. Ocate');
+  await advance(page);
+  await set(page, 'lm_matter', 'M-9');
+  await advance(page);
+  ok('a locate asks who we are finding, with the last-known address wording',
+     (await heading(page)) === 'Who are we locating?'
+     && (await page.locator('.card').innerText()).includes('Last known address')
+     && await page.locator('[data-k="ls_docs"]').count() === 0);
+  await page.close();
+
+  /* A mangled service parameter preselects nothing — the step still asks. */
+  page = await newPage();
+  await page.goto(BASE + '?assignment=legal&service=paralegal%20services');
+  await page.waitForTimeout(120);
+  ok('an unknown service in the link preselects nothing',
+     await page.evaluate(() => S.lsvc) === null);
   await page.close();
 }
 

@@ -669,6 +669,74 @@ case-media upload — the public form grew no upload door, and says so.
 
 **Adding this table means a manual `portal-setup.yml` dispatch after merge.**
 
+## Legal is service-aware: five services, three pricing models, one architecture
+
+Owner brief 2026-09-02, verbatim in `case-portal/LEGAL-SERVICES.md` (derived
+decisions D1–D10). The legal flow asks **which service** first, and everything
+downstream — the sheet, the email, the intake questions, the case's money
+labels — keys off it. **`LEGAL_SERVICES`** in `case-portal/worker.js` is the
+one catalogue: Person Locate / Skip Trace and Process Service are **fixed**
+($250 flat, from **`LEGAL_FLAT`** beside `PERSONAL` — the only place those
+figures are set, and the fixed-sheet builder holds no digit literal, tested);
+General Investigation and Surveillance are **retainer** (the existing legal
+card, i.e. the private product, untouched); Other / Custom is **custom** (the
+existing custom-retainer workflow, no figure of its own).
+
+**The marker is `payload.legal_service`; the model is derived, never stored.**
+Same shape as `assignment === 'legal'`: one reader (`legalServiceForSub`), no
+schema change, and **a legal case with no marker answers `retainer`** — which
+is why every historical legal case reads exactly as it did. The public legal
+door gained a required `lsvc` step (price-free — no pricing is public, the
+2026-08-21 rule stands; the figure lives in the emailed sheet); Quick Legal
+and the Legal panel carry an optional selector (panel edits go through
+`/cases/:no/legal` under the /meta rules — absent unchanged, blank clears).
+
+**The fixed sheet is a presentation of the one send route, like the legal card
+before it.** `emailSheet` resolves `body.legal_service` (explicit pick first,
+else the case's own marker; unknown or non-legal-context values refuse BY
+NAME), and a fixed service swaps in `legalFixedSheet(svc)` — same renderer,
+same styling, same Mail Check / Bill.com gating, and **its words are the
+boundary**: no "retainer", no hourly, no minimum, no deposit, no additional
+time; the tests grep the vocabulary so a reworded leak still fails. The Start
+Assignment door carries `&service=<id>` so the form opens on what was quoted.
+The response's `legal_service` makes the resolution observable and asserted.
+
+**A fixed case's money is a flat fee and is never called a retainer.**
+`authorizationFor` and `retainerBlock` return `model: 'fixed'`, default the
+figure from the catalogue (an explicitly agreed `case_retainer` figure still
+outranks it — the agreedRetainer principle), and null the hourly arithmetic
+(`applied`/`remaining`/`approx_hours_remaining` — null means does-not-apply,
+zero would be a claim). The page keys every money word off `model`: "Fee
+(flat)" on the Overview, a one-line flat-fee statement on the invoice document
+instead of the drawdown table, "Agreed flat fee" on Edit case. The wizard
+withdraws the retainer selector for a fixed service and never writes
+`case_retainer` on its way to Preview.
+
+**Found and fixed in passing (D10):** `emailSheet` applied `withBillcomLine`
+with no context guard, so a private send with Bill.com configured would have
+carried the Bill.com line — `/sheets` excluded the private card, the email
+path did not. Guarded with `CONTEXT_TAKES_PAYMENT` and pinned from the wire.
+
+**Process Service is adjustable (addendum, owner 2026-09-02, D11–D14).** The
+send wizard offers **Standard Flat Fee / Custom Flat Fee** on Process Service
+only; the chosen amount is the WHOLE document ("$375 Flat Fee", never the
+unused default beside it), rides the send as `flat_fee` (validated positive,
+refused by name on any non-fixed send), and **becomes the case-specific
+agreed price through the one writer that figure already has** —
+`case_retainer.retainer_amount`, worn by the model's label, which is what
+carries it into the workspace, the invoice, the balance and Record Payment
+with no new plumbing. The untouched-selector rule applies: opening a wizard
+writes nothing, and a case's agreed figure can never be reset by previewing
+an email. The default resolves through **`legalFlatDefault`** — the
+admin-typed `process_fee_default` in Settings → Invoice defaults, else
+`LEGAL_FLAT` — and **acceptance snapshots the fee in force onto the case**
+(`snapshotFixedFee`, inside `stampLead`'s converted branch, never
+overwriting), which is what makes "changing the default later does not alter
+historical cases" structural rather than hoped-for.
+
+No schema change, no portal-setup dispatch. Insurance and Private pricing are
+untouched, asserted by the suites' existing guards.
+
 ## A profile is a default; a case is a snapshot
 
 Unit 7 (owner brief verbatim in `case-portal/PROFILES.md`, derived decisions

@@ -1869,6 +1869,12 @@ function retainerEnter(caseNo){
 let PAY_MSG = "";
 let PAY_ERR = false;
 let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
+/* LEGAL-SERVICES.md — the legal-service catalogue from /sheets: id, label,
+   model, and the Worker-composed price_label / sheet_name, so no figure ever
+   lives in this file (the no-dollar guard). Empty until a /sheets response
+   arrives; empty also against an older Worker, which simply offers no
+   selector — nothing new is promised that the server cannot honour. */
+let LEGAL_SVCS = [];
 let NL = null;        // manual intake (UIBUILD P17): null | {kind, err}
 let SHEET_WIZ = null; // the 3-step send wizard (UIBUILD P18)
 /* BILLCOM.md — null means NOT ANSWERED YET, which the wizard treats exactly
@@ -2580,7 +2586,11 @@ function pkgCard(p){
         ? `Auth: ${esc(p.authorized_hours)} hrs${p.authorized_budget != null ? " / $" + esc(p.authorized_budget.toLocaleString()) : ""} &middot; Used: ${esc(p.hours_used)} hrs`
         : "No authorization set")
     : (p.retainer
-        ? `Retainer: $${esc(p.retainer.amount.toLocaleString())} &middot; Balance: $${esc(p.retainer.remaining.toLocaleString())}`
+        ? (p.retainer.model === "fixed"
+            /* LEGAL-SERVICES.md D7 — a flat-fee case names its fee, never a
+               retainer, and has no work-drawdown "balance" to show. */
+            ? `Flat fee: $${esc(p.retainer.amount.toLocaleString())} &middot; ${p.retainer.received ? "Received" : "Pending"}`
+            : `Retainer: $${esc(p.retainer.amount.toLocaleString())} &middot; Balance: $${esc((p.retainer.remaining == null ? 0 : p.retainer.remaining).toLocaleString())}`)
         : "Private client");
   return `<div class="pcard">
     <div class="pc-top">
@@ -4432,6 +4442,7 @@ function profStart(p){
   const contact = (p.contacts || []).find(c => c.preferred && c.active)
     || (p.contacts || []).find(c => c.active) || null;
   NL = {kind, profile: p, profile_id: p.id, contact_id: contact ? contact.id : null, v: {}};
+  if(kind === "legal") legalSvcsLoad();
   nlPrefill(p, contact);
   PROF_OPEN = null; PROF_FORM = null; PROF_CONTACT = null;
   TAB = "newlead";
@@ -4610,6 +4621,28 @@ function legalPanel(){
       <div class="two">${f("paralegal_email", "Paralegal email")}${f("paralegal_phone", "Paralegal phone")}</div>
       <div class="two">${f("billing_name", "Billing contact")}${f("billing_email", "Billing email")}</div>
       <div class="two">${f("billing_phone", "Billing phone")}${f("billing_reference", "Billing / matter reference")}</div>
+      <h3 class="rc-h"><b>Pricing</b></h3>
+      ${(() => {
+        /* LEGAL-SERVICES.md D8 — the pricing-level service, editable under the
+           /meta rules (absent unchanged, blank clears). The catalogue rides
+           the workspace so this select cannot drift from the Worker's own
+           vocabulary; the current model line reads the derived answer back. */
+        const lp = ((WS && WS.authorization) || {}).legal_pricing || null;
+        const curSvc = (lp && lp.service) || "";
+        return `<label class="f"><span>Legal service <span class="opt">(optional) &mdash; decides the
+            pricing model this case shows and which sheet a send generates</span></span>
+          <select id="lg_legal_service">
+            <option value=""${curSvc === "" ? " selected" : ""}>Not specified &mdash; retainer / hourly</option>
+            ${((WS && WS.legal_services) || []).map(sv => `<option value="${esc(sv.id)}"${
+              curSvc === sv.id ? " selected" : ""}>${esc(sv.label)} &mdash; ${esc(sv.model_label)}</option>`).join("")}
+          </select></label>
+        ${lp ? `<p class="hint">Presented as <b>${esc(lp.model_label || "")}</b>${
+            lp.service_label ? ` &mdash; ${esc(lp.service_label)}` : ""}${
+            lp.model === "fixed" && lp.fee != null
+              ? `, $${esc(Number(lp.fee).toLocaleString())} flat` : ""}. Changing the service changes
+            how the fee is labelled and which sheet a send generates &mdash; it rewrites no history
+            and touches no recorded payment.</p>` : ""}`;
+      })()}
       <h3 class="rc-h"><b>Matter</b></h3>
       <div class="two">${f("matter_number", "Firm matter number")}${f("court_case_number", "Court case number")}</div>
       ${f("court_jurisdiction", "Court / jurisdiction")}
@@ -4649,9 +4682,19 @@ async function saveLegalPanel(){
     "assignment_type","conflict_names",
     "deadline","hearing_date","trial_date","other_date","other_date_label",
     "payment_arrangement"]) body[k] = g("lg_" + k);
+  /* The pricing-level service (LEGAL-SERVICES.md D8) — mentioned only when
+     its select is on screen, so an older panel posts nothing and nothing
+     changes: the /meta absent-means-unchanged rule, client side. */
+  const lsvcEl = $("lg_legal_service");
+  const prevSvc = ((((WS || {}).authorization) || {}).legal_pricing || {}).service || "";
+  if(lsvcEl) body.legal_service = lsvcEl.value;
   try{
     const r = await api(`/cases/${encodeURIComponent(WS_CASE)}/legal`, {method:"POST", body});
     WS.legal = r.legal; LEGAL_MSG = "Saved.";
+    /* A CHANGED service changes the money block's derivation (fee, labels),
+       so the workspace is re-read rather than patched by hand; an unchanged
+       one keeps the ordinary in-place confirmation. */
+    if(lsvcEl && lsvcEl.value !== prevSvc) return openCase(WS_CASE, WS_TAB);
   }catch(e){ LEGAL_MSG = e.message; }
   paintCase();
 }
@@ -4743,12 +4786,18 @@ function newLeadView(){
           <label class="f"><span>Firm's client${OPTL}</span><input id="nl_client" placeholder="Who the firm represents" value="${val("nl_client")}"></label>
           <label class="f"><span>Subject / opposing party${OPTL}</span><input id="nl_subject" value="${val("nl_subject")}"></label>
         </div>
+        ${LEGAL_SVCS.length ? `<label class="f"><span>Legal service
+            <span class="opt">(optional) &mdash; sets the pricing model; a call that never settled it stays unspecified</span></span>
+          <select id="nl_lsvc"><option value="">Not decided yet</option>
+            ${LEGAL_SVCS.map(s2 => `<option value="${esc(s2.id)}"${sel("nl_lsvc", s2.id)}>${
+              esc(s2.label)} &mdash; ${esc(s2.model_label)}</option>`).join("")}</select></label>` : ""}
         <div class="two">
           <label class="f"><span>Assignment${OPTL}</span>
             <select id="nl_asgtype"><option value="">Select&hellip;</option>
               ${assignOptions(val("nl_asgtype"))
                 .map(o => `<option value="${esc(o)}"${sel("nl_asgtype", o)}>${esc(termLabel(o))}</option>`).join("")}</select></label>
-          <label class="f"><span>Retainer amount <span class="opt">(optional) &mdash; recorded as agreed, never as paid</span></span>
+          <label class="f"><span>${(LEGAL_SVCS.find(s2 => s2.id === (V["nl_lsvc"] || "")) || {}).model === "fixed"
+              ? "Agreed fee" : "Retainer amount"} <span class="opt">(optional) &mdash; recorded as agreed, never as paid</span></span>
             <input id="nl_retainer" inputmode="decimal" placeholder="If one was agreed on the call" value="${val("nl_retainer")}"></label>
         </div>
         <div class="two">
@@ -4834,9 +4883,11 @@ async function wizPaymentLoad(){
   /* A wizard opened from a lead card has not been near the Rate Sheets screen,
      so the adapter's answer is fetched on demand — the same reason PAYCFG is. */
   if(wizContext(SHEET_WIZ) !== "private"){
-    if(BILLCOM_READY === null){
-      try{ BILLCOM_READY = !!(await api("/sheets")).billcom_ready; }
-      catch{ BILLCOM_READY = false; }
+    if(BILLCOM_READY === null || (wizContext(SHEET_WIZ) === "legal" && !LEGAL_SVCS.length)){
+      try{ const d = await api("/sheets");
+           BILLCOM_READY = !!d.billcom_ready;
+           if(!LEGAL_SVCS.length) LEGAL_SVCS = d.legal_services || []; }
+      catch{ if(BILLCOM_READY === null) BILLCOM_READY = false; }
       paint();
     }
     return;
@@ -4904,6 +4955,131 @@ function wizPaymentHtml(w){
       <p class="hint">Each is a button the client taps. Tick either or both.</p>
     </div>` : ""}
   </div>`;
+}
+
+/* LEGAL-SERVICES.md — the service a LEGAL send is generated from. The
+   catalogue comes from /sheets (Worker-composed labels, so no figure lives in
+   this file), the selection posts as `legal_service`, and the Worker builds
+   the matching document: a fixed service sends the concise flat-fee sheet, so
+   the retainer selector comes off the screen for it — a flat fee is not a
+   retainer and choosing one here would write the wrong record. */
+function wizLegalSvc(w){
+  return LEGAL_SVCS.find(s => s.id === (w.legalService || "")) || null;
+}
+/* Fetched on demand for the screens that need the catalogue before the Rate
+   sheets screen has been visited — the wizPaymentLoad shape. */
+async function legalSvcsLoad(){
+  if(LEGAL_SVCS.length) return;
+  try{
+    const d = await api("/sheets");
+    LEGAL_SVCS = d.legal_services || [];
+    if(BILLCOM_READY === null) BILLCOM_READY = !!d.billcom_ready;
+    paint();
+  }catch(e){ /* the selector simply does not draw — nothing is promised */ }
+}
+function wizLegalFixed(w){
+  const svc = wizLegalSvc(w);
+  return !!(svc && svc.model === "fixed");
+}
+function wizLegalSvcHtml(w){
+  if(wizContext(w) !== "legal" || !LEGAL_SVCS.length) return "";
+  const cur = w.legalService || "";
+  const svc = wizLegalSvc(w);
+  return `<div class="feebox" style="margin:10px 0">
+    <label class="f" style="margin:0"><span>Legal service
+      <span class="opt">the sheet is generated from this</span></span>
+      <select id="wiz_lsvc" data-act="wizLegalSvcPick">
+        <option value=""${cur === "" ? " selected" : ""}>Not specified &mdash; full retainer sheet</option>
+        ${LEGAL_SVCS.map(s => `<option value="${esc(s.id)}"${cur === s.id ? " selected" : ""}>${
+          esc(s.label)}${s.price_label ? " — " + esc(s.price_label)
+            : s.model === "custom" ? " — fee agreed per case" : ""}</option>`).join("")}
+      </select></label>
+    <p class="hint">${!svc
+      ? "Without a service the firm receives the full legal retainer sheet, exactly as before."
+      : svc.model === "fixed"
+      ? `The firm receives the concise <b>${esc(wizFeeSheetName(w) || svc.label)}</b> sheet &mdash;
+         the flat fee is the full price, and no retainer, hourly rate or minimum appears on it.`
+      : svc.model === "custom"
+      ? "The retainer sheet goes, with the figure you agree below — the existing custom-retainer workflow."
+      : "The retainer sheet goes — this service bills retainer and hourly, exactly as before."}</p>
+    ${wizFeeHtml(w)}
+  </div>`;
+}
+
+/* THE ADJUSTABLE FLAT FEE (LEGAL-SERVICES.md D12, owner 2026-09-02) — the
+   Standard / Custom control for Process Service. The Standard label is the
+   Worker-composed price_label so no figure lives in this file; the custom
+   amount is required and validated before Preview; and the retainerTouched
+   rule applies — an untouched control writes nothing and posts nothing, so a
+   case's own agreed figure can never be reset by looking at an email. */
+function wizFeeAdjustable(w){
+  const svc = wizLegalSvc(w);
+  return !!(svc && svc.model === "fixed" && svc.adjustable);
+}
+function wizFeeWanted(w){
+  const svc = wizLegalSvc(w);
+  if(!svc || svc.model !== "fixed") return null;
+  if(!wizFeeAdjustable(w)) return svc.fee_default;
+  if((w.feeMode || "std") === "std") return svc.fee_default;
+  const n = Number(String(w.feeCustom == null ? "" : w.feeCustom).replace(/[$,\s]/g, ""));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+/* The name of the document the preview promises — composed from the resolved
+   fee exactly the way the Worker composes it, so the screen and the email
+   cannot disagree about the figure. */
+function wizFeeSheetName(w){
+  const svc = wizLegalSvc(w);
+  if(!svc || svc.model !== "fixed") return null;
+  const fee = wizFeeWanted(w);
+  return fee == null ? svc.sheet_name
+    : `${svc.label} — $${Number(fee).toLocaleString("en-US")} Flat Fee`;
+}
+function wizFeeHtml(w){
+  if(!wizFeeAdjustable(w)) return "";
+  const svc = wizLegalSvc(w);
+  const mode = w.feeMode || "std";
+  return `<div style="margin:8px 0 0 2px">
+    <div style="font-size:.85rem;font-weight:600;margin-bottom:4px">Pricing</div>
+    <label class="cap" style="display:flex"><input type="radio" name="wiz_fee" id="wiz_fee_std"
+        data-act="wizFeePick" value="std" ${mode === "std" ? "checked" : ""}>
+      <span>Standard Flat Fee &mdash; ${esc(svc.price_label || "")}</span></label>
+    <label class="cap" style="display:flex"><input type="radio" name="wiz_fee" id="wiz_fee_custom"
+        data-act="wizFeePick" value="custom" ${mode === "custom" ? "checked" : ""}>
+      <span>Custom Flat Fee &mdash; $</span>
+      <input id="wiz_feec" inputmode="decimal" placeholder="e.g. 375" style="width:110px;margin-left:4px"
+        data-act-input="wizFeeDirty" value="${esc(w.feeCustom || "")}"></label>
+    <p class="hint">The chosen amount is the full price on the sheet and becomes this case&rsquo;s
+      agreed fee. The unused option never appears on anything the firm sees.</p>
+  </div>`;
+}
+
+/* Written on the way to Preview, the wizRetainerSave shape: a TOUCHED choice
+   becomes the case's agreed fee through the one writer that figure has; an
+   untouched control writes nothing; with no case the figure is carried on
+   the send and said plainly to be unrecorded. */
+async function wizFeeSave(){
+  const w = SHEET_WIZ;
+  if(!w || !wizFeeAdjustable(w)) return true;
+  const want = wizFeeWanted(w);
+  if((w.feeMode || "std") === "custom" && want == null){
+    w.err = "Enter the custom flat fee as a dollar amount above zero.";
+    return false;
+  }
+  if(!w.feeTouched) return true;
+  if(!w.caseNo){ w.feeOffered = want; w.feeUnrecorded = true; return true; }
+  if(w.caseFlatFee != null && want === w.caseFlatFee) return true;
+  try{
+    await api(`/cases/${encodeURIComponent(w.caseNo)}/retainer`,
+      {method:"POST", body:{retainer_amount: want}});
+    w.caseFlatFee = want;
+    w.feeUnrecorded = false;
+    return true;
+  }catch(e){
+    if(/not found/i.test(e.message || "")){
+      w.feeOffered = want; w.feeUnrecorded = true; return true;
+    }
+    w.err = e.message; return false;
+  }
 }
 
 /* THE AGREED RETAINER, CHOSEN BEFORE THE SEND (PAYMENTS.md, owner 2026-08-15).
@@ -4992,6 +5168,10 @@ function wizRetainerHtml(w){
 async function wizRetainerSave(){
   const w = SHEET_WIZ;
   if(!w || w.sheet !== "private_retainer") return true;
+  /* A FIXED legal service has no retainer to save — its selector never drew,
+     and writing case_retainer on the way to Preview would file the flat fee
+     as a retainer, the exact record the owner forbade (LEGAL-SERVICES.md). */
+  if(wizLegalFixed(w)) return true;
   /* NOTHING IS WRITTEN UNLESS SOMEONE CHOSE SOMETHING, and this guard is the
      whole safety of the feature.
 
@@ -5062,6 +5242,25 @@ async function wizSheetLoad(){
     const r = await api(`/sheets?${q}`);
     if(SHEET_WIZ === w){
       w.sheetData = (r.sheets || []).find(s => s.id === w.sheet) || null;
+      if(!LEGAL_SVCS.length && (r.legal_services || []).length) LEGAL_SVCS = r.legal_services;
+      /* The case's own service marker preselects the selector — but never on
+         top of a choice the admin has made, the retainerTouched rule. The
+         email is generated from what this select says, so the preview and the
+         send resolve from the same value. */
+      if(w.legal && !w.lsvcTouched && r.case_legal_service !== undefined){
+        w.legalService = r.case_legal_service || "";
+      }
+      /* The fee control opens on the case's own figure (D12): at the default
+         it opens on Standard; a different agreed figure opens on Custom with
+         that figure in the box — never on top of a choice already made. */
+      if(r.case_flat_fee !== undefined && !w.feeTouched){
+        w.caseFlatFee = r.case_flat_fee;
+        const fsvc = wizLegalSvc(w);
+        if(fsvc && fsvc.adjustable && r.case_flat_fee != null){
+          if(r.case_flat_fee === fsvc.fee_default){ w.feeMode = "std"; w.feeCustom = ""; }
+          else { w.feeMode = "custom"; w.feeCustom = String(r.case_flat_fee); }
+        }
+      }
       /* The selector opens on what the case ALREADY agreed — but never on top
          of a choice the admin has just made. Without the `retainerTouched`
          guard the re-read on the way to Preview would snap the figure they just
@@ -5113,21 +5312,35 @@ function sheetWizardHtml(){
       <p class="hint">The matching intake is paired automatically. ${w.sheet === "insurance_assignment"
         ? "Carriers land on the Secure Assignment Intake — never the consumer picker."
         : "Private clients land on the private intake — the carrier path is never offered."}</p>
-      ${wizRetainerHtml(w)}
+      ${wizLegalSvcHtml(w)}
+      ${wizLegalFixed(w) ? "" : wizRetainerHtml(w)}
       ${wizPaymentHtml(w)}`
     : `
       <dl class="detail">
-        <dt>Sheet</dt><dd>${esc(sheet.name || w.sheet)}</dd>
+        <dt>Sheet</dt><dd>${esc(wizLegalFixed(w)
+          /* A fixed service sends the concise flat-fee document the Worker
+             builds — the preview must name THAT, with the RESOLVED fee, not
+             the retainer card this screen renders (LEGAL-SERVICES.md D5/D12). */
+          ? (wizFeeSheetName(w) || (wizLegalSvc(w) || {}).label || w.sheet)
+          : (sheet.name || w.sheet))}</dd>
+        ${wizContext(w) === "legal" && wizLegalSvc(w) ? `<dt>Legal service</dt><dd>${
+          esc(wizLegalSvc(w).label)}${wizLegalFixed(w) && wizFeeWanted(w) != null
+            ? ` — $${esc(Number(wizFeeWanted(w)).toLocaleString("en-US"))} Flat Fee`
+            : wizLegalSvc(w).price_label
+            ? ` — ${esc(wizLegalSvc(w).price_label)}` : ` — ${esc(wizLegalSvc(w).model_label || "")}`}</dd>` : ""}
         <dt>To</dt><dd>${esc(w.to)}</dd>
         ${w.caseNo ? `<dt>Case</dt><dd>${esc(w.caseNo)}</dd>` : ""}
         ${wizContext(w) !== "private" ? `<dt>Payment options</dt><dd>${[
             w.mailCheck ? "Mail Check &mdash; &ldquo;Mailing instructions provided with invoice.&rdquo;" : "",
             (w.billcom && BILLCOM_READY === true) ? "Bill.com &mdash; &ldquo;Electronic payment instructions provided with invoice.&rdquo;" : "",
           ].filter(Boolean).join("<br>") || "None included"}</dd>` : ""}
-        ${w.sheet === "private_retainer" && (w.retainerOffered != null || w.retainer != null)
+        ${!wizLegalFixed(w) && w.sheet === "private_retainer" && (w.retainerOffered != null || w.retainer != null)
           /* The figure is named on the last screen before it goes, and said to
              be unrecorded where it is — this is the admin's final chance to add
-             a case number, and after Send there is nothing to look it up by. */
+             a case number, and after Send there is nothing to look it up by.
+             A FIXED service names no retainer at all — its fee rode the Legal
+             service line above, and calling it a retainer here is the exact
+             wording the owner forbade. */
           ? `<dt>Agreed retainer</dt><dd>$${esc(Number(
                w.retainerOffered != null ? w.retainerOffered : w.retainer).toLocaleString("en-US"))}${
                w.retainerUnrecorded
@@ -5141,12 +5354,19 @@ function sheetWizardHtml(){
                 .map(m => esc(m.display_name || m.label)).join(" + ")
             : "Not included"}</dd>` : ""}
       </dl>
-      <p class="hint">The email is the sheet exactly as shown on this page${w.include ? ", plus the intake button" : ""}${
+      <p class="hint">${wizLegalFixed(w)
+        ? `The email is the concise flat-fee sheet for this service — the full retainer
+           sheet shown on the Rate sheets screen does not go`
+        : `The email is the sheet exactly as shown on this page`}${w.include ? ", plus the intake button" : ""}${
         w.sheet === "private_retainer" && w.pay && (w.payMethods || []).length ? ", plus the payment buttons" : ""}.
-        Sending payment instructions does not mark the retainer paid.</p>`;
+        Sending payment instructions does not mark the ${wizLegalFixed(w) ? "fee" : "retainer"} paid.</p>`;
   return `<div class="amwrap" data-act="wizClose">
     <div class="amsheet" data-act="amNoop" role="dialog" aria-modal="true" aria-label="Send the rate sheet">
-      <div class="amhead"><b>Send &mdash; ${esc(sheet.selector_label || sheet.name || "")}</b>
+      <div class="amhead"><b>Send &mdash; ${esc(wizLegalFixed(w)
+        /* A fixed send's dialog names the document it will actually send —
+           not the retainer card whose route it shares (D5/D12). */
+        ? `Legal / Law Firm — ${(wizLegalSvc(w) || {}).label || ""}`
+        : (sheet.selector_label || sheet.name || ""))}</b>
         <button class="amx" data-act="wizClose" aria-label="Close">&times;</button></div>
       ${rail}
       ${body}
@@ -6406,6 +6626,11 @@ const BILL_FIELDS = [
   ["billcom_payment_url",  "Bill.com payment link (https://…) — from your Bill.com account, once created", "text"],
   ["billcom_org_id",       "Bill.com organization / account ID (optional reference)", "text"],
   ["billcom_environment",  "Bill.com environment — sandbox or production (optional)", "text"],
+  /* LEGAL-SERVICES.md D14 — the DEFAULT Process Service flat fee. Blank keeps
+     the standard figure; a case's own agreed fee always outranks this, and
+     acceptance snapshots the fee in force, so changing it later cannot
+     rewrite what a historical case was accepted at. */
+  ["process_fee_default",  "Process Service default flat fee — blank = the standard figure; a case's own agreed fee always wins", "text"],
 ];
 
 async function loadBillingSettings(){
@@ -10597,7 +10822,8 @@ async function render(){
   if(ME.role === "admin"){
     try{ USERS = (await api("/users")).users; }catch(e){ USERS = []; }
     try{ INVITES = (await api("/invites")).invites; }catch(e){ INVITES = []; }
-    try{ const d = await api("/sheets"); SHEETS = d.sheets; BILLCOM_READY = !!d.billcom_ready; }
+    try{ const d = await api("/sheets"); SHEETS = d.sheets; BILLCOM_READY = !!d.billcom_ready;
+         LEGAL_SVCS = d.legal_services || []; }
     catch(e){ SHEETS = []; }
     // The dashboard is the admin's landing, so render() is a second door to
     // it — the tab click is not the only way in. Without this, the first
@@ -10699,7 +10925,7 @@ function sessionForget(){
   LAST_LINK = ""; LAST_EMAILED = false; RESET_BOX = null;
   PAYCFG = null; PAY_DRAFT = {}; PAY_MSG = ""; PAY_ERR = false;
   SUMMARY = null; SHEETS = []; SHEET_MAIL = ""; OPEN_SHEET = null; SHEET_MSG = ""; SHEET_WIZ = null;
-  BILLCOM_READY = null;
+  BILLCOM_READY = null; LEGAL_SVCS = [];
   NL = null; LEAD_SEND = null; LEAD_MSG = ""; PAY_SEND = null;
   SRCH = { q: "", results: null, err: "", busy: false, hi: -1 };
   ATTN = null; ATTN_OK = false; ATTN_ERR = ""; ATTN_FILTER = "all";
@@ -10941,7 +11167,19 @@ function authPanel(a, admin){
       <div class="row"><span>Billable so far</span><b>$${esc(a.billable_so_far.toLocaleString())}</b></div>
       <div class="row"><span>Remaining</span><b>$${esc(a.budget_remaining.toLocaleString())}</b></div>
       <div class="row"><span style="color:var(--muted);font-size:.82rem">Billed at $${esc(a.billed_at_rate)}/hr</span><span></span></div>` : ""}
-    ${admin && a.retainer ? `
+    ${admin && a.retainer ? (a.retainer.model === "fixed" ? `
+      ${/* LEGAL-SERVICES.md D7 — a FIXED legal case's money is a flat fee and
+           is never called a retainer. No applied/remaining rows either: those
+           are the hourly model's arithmetic and the Worker sends null for
+           them here. The receipt machinery is unchanged — recording the fee
+           arriving is the same instrument, relabeled. */""}
+      <div class="row" style="border-top:1px solid #cfe6ec;margin-top:8px;padding-top:8px">
+        <span>Flat fee${a.retainer.service_label ? ` &middot; ${esc(a.retainer.service_label)}` : ""}</span>
+        <b>$${esc(a.retainer.amount.toLocaleString())}</b></div>
+      <div class="row"><span>Status</span>${a.retainer.received
+        ? `<span class="tag closed">Fee received</span>`
+        : `<span class="tag rs-needs_revision">Fee pending</span>`}</div>
+      ${retainerReceiptHtml(a.retainer)}` : `
       <div class="row" style="border-top:1px solid #cfe6ec;margin-top:8px;padding-top:8px">
         <span>Original retainer</span><b>$${esc(a.retainer.amount.toLocaleString())}</b></div>
       <div class="row"><span>Status</span>${a.retainer.received
@@ -10951,7 +11189,7 @@ function authPanel(a, admin){
       <div class="row"><span>Remaining retainer</span><b>$${esc(a.retainer.remaining.toLocaleString())}</b></div>
       ${a.retainer.approx_hours_remaining != null ? `<div class="row">
         <span style="color:var(--muted);font-size:.82rem">&asymp; ${esc(a.retainer.approx_hours_remaining)} hours at this case's rate</span><span></span></div>` : ""}
-      ${retainerReceiptHtml(a.retainer)}` : ""}
+      ${retainerReceiptHtml(a.retainer)}`) : ""}
     ${a.miles_total ? `<div class="row"><span>Miles logged</span><span>${esc(a.miles_total)}</span></div>` : ""}
   </div>`;
 }
@@ -11022,7 +11260,7 @@ function retainerReceiptHtml(r){
   }
   return `${RET_FORM ? retainerFormHtml(r)
     : `<div class="actions"><button class="btn sm" data-act="retOpen">Record payment</button></div>
-      <p class="hint">The retainer stays pending until a payment is recorded here. Sending payment
+      <p class="hint">The ${r.model === "fixed" ? "fee" : "retainer"} stays pending until a payment is recorded here. Sending payment
         instructions does not mark it paid.</p>`}
     ${RET_MSG ? `<div class="${RET_ERR ? "err" : "linkbox"}">${esc(RET_MSG)}</div>` : ""}`;
 }
@@ -12846,7 +13084,11 @@ function editCasePanel(s, a){
     <div class="two">
       <label class="f"><span>${claim ? "Claim number" : "Reference"}${OPTL}</span>
         <input id="ed_claim" value="${esc(pick("claim", p.claim_number || s.claim_number))}"></label>
-      ${a.retainer ? `<label class="f"><span>Agreed retainer${OPTL}</span>
+      ${a.retainer ? `<label class="f"><span>${a.retainer.model === "fixed"
+          /* LEGAL-SERVICES.md D7 — the same stored figure, the model's word.
+             On a fixed case this edits the agreed flat fee, defaulting from
+             the catalogue; it is never presented as a retainer. */
+          ? "Agreed flat fee" : "Agreed retainer"}${OPTL}</span>
         <input id="ed_retainer" inputmode="decimal" value="${esc(pick("retainer", String(a.retainer.amount)))}"></label>` : ""}
     </div>
     <label class="f"><span>Investigator <span class="opt">(optional) &mdash; a case may stay unassigned</span></span>
@@ -14721,11 +14963,13 @@ function authAdminForm(){
       <input id="m_chourly" inputmode="decimal" value="${a.case_rate_set ? a.billed_at_rate : ""}"></label>
     ${WS && WS.kind === "consumer" ? `
     <div class="two">
-      <label class="f"><span>Retainer amount <span class="opt">the private model &mdash; a claims case never has one</span></span>
+      <label class="f"><span>${a.retainer && a.retainer.model === "fixed"
+          ? `Flat fee amount <span class="opt">this case's fixed-price service &mdash; never a retainer</span>`
+          : `Retainer amount <span class="opt">the private model &mdash; a claims case never has one</span>`}</span>
         <input id="m_ret" inputmode="decimal" value="${a.retainer ? a.retainer.amount : ""}"></label>
       <label class="cap" style="align-self:center;margin-top:14px">
         <input type="checkbox" id="m_retrec" ${a.retainer && a.retainer.received ? "checked" : ""}>
-        <span>Retainer received</span></label>
+        <span>${a.retainer && a.retainer.model === "fixed" ? "Fee received" : "Retainer received"}</span></label>
     </div>` : ""}
     <label class="cap" style="margin:2px 0 10px">
       <input type="checkbox" id="m_showclient" ${a.show_client_identity ? "checked" : ""}>
@@ -14992,8 +15236,12 @@ function overviewPanel(s, a){
                  already in CLAUDE.md). This row used to call `remaining`
                  "Balance", and `remaining` is the retainer the recorded WORK
                  has not consumed — not what the client still owes. Outstanding
-                 is the balance; the two must never share a word. */
-              ? row("Retainer", "$" + a.retainer.amount.toLocaleString())
+                 is the balance; the two must never share a word.
+                 A FIXED legal case's first figure is its flat fee and is never
+                 called a retainer (LEGAL-SERVICES.md D7) — same three rows,
+                 the first word follows the model. */
+              ? row(a.retainer.model === "fixed" ? "Fee (flat)" : "Retainer",
+                    "$" + a.retainer.amount.toLocaleString())
                 + row("Received", "$" + (a.retainer.received_total || 0).toLocaleString())
                 + row("Balance owed", "$" + (a.retainer.outstanding || 0).toLocaleString())
                 + ovRecordPaymentHtml(a.retainer)
@@ -16825,7 +17073,15 @@ function invoiceDocHtml(i){
       : `${i.amount_paid ? "Balance due" : "Total due"} <b>${usd(i.balance_due)}</b>`}</div>
     ${i.overpaid ? `<div style="text-align:right;font-size:.9rem;color:var(--muted)">Payments received
       exceed the invoice total. Nothing further is due.</div>` : ""}
-    ${ret ? `<table class="doc-table" style="margin-top:12px"><tbody>
+    ${ret ? (ret.model === "fixed" ? `<table class="doc-table" style="margin-top:12px"><tbody>
+      ${/* LEGAL-SERVICES.md D7 — a flat-fee assignment's document states its
+           fee in one line and prints NO deposit drawdown: applied/remaining
+           are the retainer model's arithmetic and the Worker sends null for
+           them on a fixed case. Never the word retainer here. */""}
+      <tr><td style="width:60%"><b>Flat-fee assignment${ret.service_label
+          ? ` &mdash; ${esc(ret.service_label)}` : ""}</b></td><td class="n">${usd(ret.amount)}${
+        ret.received ? "" : " <span style='color:var(--muted);font-size:.85rem'>(not yet received)</span>"}</td></tr>
+    </tbody></table>` : `<table class="doc-table" style="margin-top:12px"><tbody>
       <tr><td style="width:60%"><b>Retainer held</b></td><td class="n">${usd(ret.amount)}${
         ret.received ? "" : " <span style='color:var(--muted);font-size:.85rem'>(not yet received)</span>"}</td></tr>
       <tr><td>Applied to date${
@@ -16834,7 +17090,7 @@ function invoiceDocHtml(i){
         <td class="n">${usd(ret.additional_authorized)}</td></tr>` : ""}
       <tr><td><b>${ret.balance < 0 ? "Beyond the retainer" : "Retainer remaining"}</b></td>
         <td class="n"><b>${usd(Math.abs(ret.balance))}</b></td></tr>
-    </tbody></table>` : ""}
+    </tbody></table>`) : ""}
     ${special ? `<p style="font-size:.9rem;white-space:pre-line"><b>Special instructions</b><br>${esc(special)}</p>` : ""}
     ${i.client_notes ? `<p style="font-size:.9rem">${esc(i.client_notes)}</p>` : ""}
     ${i.remit_address ? `<p style="font-size:.9rem;white-space:pre-line"><b>Remit checks to</b><br>${
@@ -16893,7 +17149,12 @@ function invoiceDetailView(){
         <span class="opt">the carrier's own billing instruction &mdash; prints on the invoice</span></span>
         <textarea id="ir_special_instructions" rows="2" ${editable ? "" : "disabled"}>${esc((i.refs || {}).special_instructions || "")}</textarea></label>`
       : `<div class="two">${refIn("service_dates", "Service dates")}${refIn("client_reference", "Client ref")}</div>
-      ${i.retainer ? `<div class="feebox">
+      ${i.retainer ? (i.retainer.model === "fixed" ? `<div class="feebox">
+        <div class="row"><span><b>Flat fee${i.retainer.service_label
+            ? ` &middot; ${esc(i.retainer.service_label)}` : ""}</b></span>
+          <span style="color:var(--muted);font-size:.82rem">${i.retainer.received ? "received" : "not yet received"}</span></div>
+        <div class="row"><span>Fee</span><b>${usd(i.retainer.amount)}</b></div>
+      </div>` : `<div class="feebox">
         <div class="row"><span><b>Retainer</b></span>
           <span style="color:var(--muted);font-size:.82rem">${i.retainer.received ? "received" : "not yet received"}</span></div>
         <div class="row"><span>Retainer held</span><b>${usd(i.retainer.amount)}</b></div>
@@ -16903,7 +17164,7 @@ function invoiceDetailView(){
           <b>${usd(i.retainer.additional_authorized)}</b></div>` : ""}
         <div class="row"><span>${i.retainer.balance < 0 ? "Beyond the retainer" : "Retainer remaining"}</span>
           <b>${usd(Math.abs(i.retainer.balance))}</b></div>
-      </div>` : ""}`}
+      </div>`) : ""}`}
       <label class="f"><span>Note to the client <span class="opt">prints on the invoice</span></span>
         <input id="iv_cnotes" value="${esc(i.client_notes || "")}" ${editable ? "" : "disabled"}></label>
       <label class="f"><span>Internal notes <span class="opt">never prints</span></span>
@@ -17898,6 +18159,10 @@ function wizCollect(){
   if($("wiz_ret")) SHEET_WIZ.retainerPick = $("wiz_ret").value;
   if($("wiz_retc")) SHEET_WIZ.retainerCustom = $("wiz_retc").value.trim();
   if($("wiz_pay")) SHEET_WIZ.pay = $("wiz_pay").checked;
+  if($("wiz_lsvc")) SHEET_WIZ.legalService = $("wiz_lsvc").value;
+  const feeRadio = document.querySelector('input[name="wiz_fee"]:checked');
+  if(feeRadio) SHEET_WIZ.feeMode = feeRadio.value;
+  if($("wiz_feec")) SHEET_WIZ.feeCustom = $("wiz_feec").value.trim();
   if($("wiz_mailck")) SHEET_WIZ.mailCheck = $("wiz_mailck").checked;
   if($("wiz_billcom")) SHEET_WIZ.billcom = $("wiz_billcom").checked;
   const boxes = [...document.querySelectorAll(".wiz-pm")];
@@ -17925,6 +18190,17 @@ async function wizSend(){
   try{
     const r = await api(`/sheets/${encodeURIComponent(w.sheet)}/email`,
       {method:"POST", body:{to: w.to, note: w.note, case_no: w.caseNo, include_intake: w.include,
+        /* LEGAL-SERVICES.md — the service the document is generated from,
+           exactly what the selector on screen says. Sent only on a legal
+           send with a service chosen; absent, the Worker falls back to the
+           case's own marker, then to the retainer sheet. */
+        ...(wizContext(w) === "legal" && w.legalService ? {legal_service: w.legalService} : {}),
+        /* The fee the preview showed rides the send whenever the admin
+           touched the control or there is no case to resolve it from —
+           otherwise the Worker resolves stored-figure-else-default, which is
+           exactly what the untouched control displayed (D12/D13). */
+        ...(wizFeeAdjustable(w) && (w.feeTouched || !w.caseNo) && wizFeeWanted(w) != null
+          ? {flat_fee: wizFeeWanted(w)} : {}),
         /* Declared only where the screen actually chose a context — a send
            from a lead card leaves it out and the case decides, exactly as
            before. */
@@ -17976,7 +18252,7 @@ function nlCollect(){
   if(!NL) return;
   const v = NL.v || (NL.v = {});
   for(const id of ["nl_firm", "nl_atty", "nl_email", "nl_phone", "nl_client", "nl_subject",
-    "nl_asgtype", "nl_retainer", "nl_arrangement", "nl_legal_deadline", "nl_carrier",
+    "nl_lsvc", "nl_asgtype", "nl_retainer", "nl_arrangement", "nl_legal_deadline", "nl_carrier",
     "nl_claim", "nl_policy", "nl_service", "nl_obj", "nl_deadline", "nl_notes"]){
     const el = $(id);
     if(el) v[id] = el.value;
@@ -18002,6 +18278,9 @@ async function submitManualIntake(openAfter){
     Object.assign(body, {
       firm_name: g("nl_firm"), attorney_name: g("nl_atty"),
       attorney_email: g("nl_email"), attorney_phone: g("nl_phone"),
+      /* LEGAL-SERVICES.md — the pricing-level service. Optional: blank files
+         no marker and the case presents under the retainer model. */
+      legal_service: g("nl_lsvc"),
       assignment_type: g("nl_asgtype"), payment_arrangement: g("nl_arrangement"),
       deadline: g("nl_legal_deadline"),
     });
@@ -18663,6 +18942,7 @@ document.addEventListener("click", ev => {
     SHEET_WIZ = {sheet: el.dataset.sheet, context: ctx, legal: ctx === "legal",
                  step: 1, to: "", caseNo: "", note: "", include: true,
                  pay: ctx !== "legal", payMethods: [], err: "",
+                 legalService: "", lsvcTouched: false,
                  retainer: null, retainerPick: String(RETAINER_PRESETS[0]),
                  retainerCustom: "", retainerTouched: false};
     SHEET_MSG = ""; wizPaymentLoad(); paint();
@@ -18681,6 +18961,9 @@ document.addEventListener("click", ev => {
                  legal: !!c.legal,
                  step: 1, to: c.client_email || "", caseNo: el.dataset.case, note: "",
                  include: true, pay: true, payMethods: [], err: "", fromLead: true,
+                 /* Preselected from the case's own marker by wizSheetLoad, so
+                    a fixed-service lead opens on its flat-fee sheet. */
+                 legalService: "", lsvcTouched: false,
                  retainer: null, retainerPick: String(RETAINER_PRESETS[0]),
                  retainerCustom: "", retainerTouched: false};
     /* wizSheetLoad also brings back the case's agreed retainer, so the selector
@@ -18781,16 +19064,25 @@ document.addEventListener("click", ev => {
        holds, so the preview can never display an amount that was not stored. */
     else if(s2 > 1){
       SHEET_WIZ.err = "";
-      wizRetainerSave().then(okd => {
+      /* The flat fee saves first for the same reason the retainer does — a
+         TOUCHED choice becomes the case's agreed fee before the preview is
+         re-read, so the preview shows what the case actually holds (D12). */
+      wizFeeSave().then(okf => {
         if(!SHEET_WIZ) return;
-        if(!okd) return paint();
-        SHEET_WIZ.step = s2; paint(); wizSheetLoad();
+        if(!okf) return paint();
+        wizRetainerSave().then(okd => {
+          if(!SHEET_WIZ) return;
+          if(!okd) return paint();
+          SHEET_WIZ.step = s2; paint(); wizSheetLoad();
+        });
       });
     }
     else { SHEET_WIZ.err = ""; SHEET_WIZ.step = s2; paint(); }
   }
   else if(act === "wizSend"){ wizSend(); }
-  else if(act === "nlKind"){ NL = {kind: el.dataset.k, err: "", v: {}}; paint(); }
+  else if(act === "nlKind"){ NL = {kind: el.dataset.k, err: "", v: {}};
+    if(el.dataset.k === "legal") legalSvcsLoad();
+    paint(); }
   else if(act === "nlBack"){ NL = {kind: null, err: "", v: {}}; paint(); }
   else if(act === "nlSave"){ submitManualIntake(el.dataset.open === "1"); }
   /* ------------------------------------------------- UNIT 7: the picker */
@@ -19113,6 +19405,8 @@ document.addEventListener("input", ev => {
   /* Typing a custom retainer counts as choosing one. No repaint — the box the
      cursor is sitting in must not be rebuilt underneath it mid-number. */
   if(din === "wizRetDirty" && SHEET_WIZ){ SHEET_WIZ.retainerTouched = true; return; }
+  /* Typing a custom flat fee counts as choosing one — same no-repaint rule. */
+  if(din === "wizFeeDirty" && SHEET_WIZ){ SHEET_WIZ.feeTouched = true; SHEET_WIZ.feeMode = "custom"; return; }
   /* What will actually be burned in, following the typing. Only this one line
      is rewritten — a repaint would rebuild the box the cursor is in, mid-number,
      the same reason `vstProgress` exists. */
@@ -19162,6 +19456,15 @@ document.addEventListener("input", ev => {
   if(ev.target.dataset && ev.target.dataset.act === "wizRetPick" && SHEET_WIZ){
     wizCollect(); SHEET_WIZ.retainerTouched = true; SHEET_WIZ.err = ""; paint();
   }
+  if(ev.target.dataset && ev.target.dataset.act === "wizLegalSvcPick" && SHEET_WIZ){
+    wizCollect(); SHEET_WIZ.lsvcTouched = true; SHEET_WIZ.err = ""; paint();
+  }
+  if(ev.target.dataset && ev.target.dataset.act === "wizFeePick" && SHEET_WIZ){
+    wizCollect(); SHEET_WIZ.feeTouched = true; SHEET_WIZ.err = ""; paint();
+  }
+  /* The quick-legal service pick relabels the fee input (fixed → "Agreed
+     fee") — captured first, so the repaint discards nothing typed. */
+  if(ev.target.id === "nl_lsvc" && NL){ nlCollect(); paint(); }
   if(ev.target.dataset && ev.target.dataset.act === "leadStatus"){
     const caseNo = ev.target.dataset.case, v = ev.target.value;
     api(`/leads/${encodeURIComponent(caseNo)}/status`, {method:"POST", body:{status: v}})
