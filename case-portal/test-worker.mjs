@@ -5010,12 +5010,17 @@ section('Invoice defaults: admin reads and writes them, and the prefix is bounde
 
   const read = await jsonOf(await call(env, '/billing-settings', { cookie: admin }));
   ok('an admin reads the defaults', read.settings && typeof read.settings === 'object');
-  ok('and they are the eight the backend supports, no more',
+  ok('and they are the twelve the backend supports, no more',
      ['company_name', 'company_line', 'invoice_prefix', 'terms_insurance', 'terms_private',
-      'payment_instructions', 'invoice_footer', 'remit_address'].every(k => k in read.settings)
-     && Object.keys(read.settings).length === 8, JSON.stringify(Object.keys(read.settings)));
+      'payment_instructions', 'invoice_footer', 'remit_address',
+      'billcom_enabled', 'billcom_payment_url', 'billcom_org_id', 'billcom_environment']
+       .every(k => k in read.settings)
+     && Object.keys(read.settings).length === 12, JSON.stringify(Object.keys(read.settings)));
   ok('the remittance address DEFAULTS TO EMPTY — nothing invents one (MAIL-CHECK.md D2)',
      read.settings.remit_address === '');
+  ok('every Bill.com field DEFAULTS TO EMPTY — prepared, not connected (BILLCOM.md)',
+     read.settings.billcom_enabled === '' && read.settings.billcom_payment_url === ''
+     && read.settings.billcom_org_id === '' && read.settings.billcom_environment === '');
   ok('none of them is a credential',
      !/key|secret|token|password/i.test(JSON.stringify(Object.keys(read.settings))));
 
@@ -16512,6 +16517,103 @@ section('Mail Check is the one tickable payment option on a legal or insurance s
     body: { to: 'client@example.test', include_payment: true, methods: ['mail_check'] } });
   ok('and a PRIVATE send refuses mail_check by name', res.status === 400
      && (await jsonOf(res)).code === 'mail_check_not_private');
+
+  globalThis.fetch = realFetch;
+}
+
+
+section('Bill.com is prepared, gated, and offered NOWHERE until genuinely configured');
+{
+  const realFetch = globalThis.fetch;
+  let last = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) { last = JSON.parse(init.body); return new Response('{"id":"re_1"}', { status: 200 }); }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const hasLine = c => !!(c && (c.lines || []).find(l => l.label === 'Bill.com'));
+
+  /* ---- NOT CONFIGURED: invisible and refused by name ---- */
+  let d = await jsonOf(await call(env, '/sheets', { cookie: admin }));
+  ok('unconfigured, the sheets answer not-ready and no card carries the line',
+     d.billcom_ready === false && d.sheets.every(c => !hasLine(c)));
+  let res = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'firm@example.test', send_context: 'legal',
+            include_payment: true, methods: ['bill_com'] } });
+  ok('asking for it unconfigured refuses BY NAME, pointing at Settings',
+     res.status === 400 && (await jsonOf(res)).code === 'billcom_not_configured');
+  ok('even ticked beside Mail Check', (await call(env, '/sheets/private_retainer/email',
+     { method: 'POST', cookie: admin, body: { to: 'firm@example.test', send_context: 'legal',
+       include_payment: true, methods: ['mail_check', 'bill_com'] } })).status === 400);
+
+  /* Half a configuration is still NOT ready: the enable word without a valid
+     https link must never surface a dead or invented link. */
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { billcom_enabled: 'ON' } });
+  d = await jsonOf(await call(env, '/sheets', { cookie: admin }));
+  ok('the enable word alone is not readiness', d.billcom_ready === false);
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { billcom_payment_url: 'http://insecure.example.test/pay' } });
+  d = await jsonOf(await call(env, '/sheets', { cookie: admin }));
+  ok('a non-https link is not readiness either', d.billcom_ready === false);
+
+  /* ---- CONFIGURED: offered exactly where it may be ---- */
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { billcom_payment_url: 'https://pay.example.test/always-precise' } });
+  d = await jsonOf(await call(env, '/sheets', { cookie: admin }));
+  const by = k => d.sheets.find(c => c.key === k);
+  ok('ready now, and the legal and insurance cards carry the line in the expected wording',
+     d.billcom_ready === true && hasLine(by('legal')) && hasLine(by('insurance'))
+     && (by('legal').lines.find(l => l.label === 'Bill.com') || {}).note
+        === 'Electronic payment instructions provided with invoice.');
+  ok('THE PRIVATE CARD NEVER GAINS IT', !hasLine(by('private')));
+
+  last = null;
+  res = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'firm@example.test', send_context: 'legal',
+            include_payment: true, methods: ['mail_check', 'bill_com'] } });
+  d = await jsonOf(res);
+  ok('a legal send ticks both and sends', res.status === 200
+     && d.included.payment_methods.map(m => m.id).sort().join() === 'bill_com,mail_check',
+     JSON.stringify(d).slice(0, 160));
+  ok('the email carries both wordings and no payment link, handle or address',
+     last.text.includes('Mail Check — Mailing instructions provided with invoice.')
+     && last.text.includes('Bill.com — Electronic payment instructions provided with invoice.')
+     && !last.text.includes('pay.example.test')
+     && !last.text.includes('cash.app') && !last.text.includes('venmo.com'), last.text.slice(-500));
+  ok('the send history records both', (await env.DB.prepare(
+     "SELECT methods FROM payment_send ORDER BY id DESC LIMIT 1").first()).methods === 'mail_check,bill_com');
+
+  /* ---- the boundaries did not move ---- */
+  ok('Cash App beside bill_com still refuses on a legal send',
+     (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+       body: { to: 'firm@example.test', send_context: 'legal',
+               include_payment: true, methods: ['bill_com', 'cash_app'] } })).status === 400);
+  res = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'client@example.test', include_payment: true, methods: ['bill_com'] } });
+  ok('a PRIVATE send refuses bill_com by name', res.status === 400
+     && (await jsonOf(res)).code === 'mail_check_not_private');
+
+  /* ---- invoices: the link only when ready, and never on private ---- */
+  env.INGEST_PER_MINUTE = '50';
+  await ingest(env, { case_no: 'API-BC-INS', client_name: 'Adjuster Bea',
+    carrier: 'Example Mutual', claim_number: 'WC-BC-1' });
+  await ingest(env, { case_no: 'API-BC-PRV', client_name: 'Private Bo' });
+  const mkInv = async no => (await jsonOf(await call(env, `/cases/${no}/invoices`,
+    { method: 'POST', cookie: admin, body: {} }))).invoice;
+  const insInv = await mkInv('API-BC-INS'), prvInv = await mkInv('API-BC-PRV');
+  const read = async id => (await jsonOf(await call(env, `/invoices/${id}`, { cookie: admin }))).invoice;
+  let a = await read(insInv.id), b = await read(prvInv.id);
+  ok('a configured insurance invoice carries the typed link, verbatim',
+     a.billcom_url === 'https://pay.example.test/always-precise');
+  ok('a private invoice never carries it', b.billcom_url === undefined);
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin, body: { billcom_enabled: '' } });
+  a = await read(insInv.id);
+  ok('switching the enable word off withdraws it everywhere at once', a.billcom_url === undefined);
 
   globalThis.fetch = realFetch;
 }

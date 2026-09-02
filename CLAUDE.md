@@ -916,6 +916,26 @@ App/Venmo path, `/payment-options/email`'s refusals, the private sheet and
 private invoices, and the legal payment arrangements. No schema change, no
 portal-setup dispatch.
 
+## Bill.com is prepared, gated, and connected to nothing
+
+Owner brief 2026-09-02, verbatim in substance in `case-portal/BILLCOM.md`.
+`billcomConfig()` in `worker.js` is the ONE boundary: it reads four empty-by-
+default billing settings (enable word, https payment link, account reference,
+environment) and answers `ready` only when the enable word AND a valid https
+link are both typed — half a configuration offers nothing anywhere. When
+ready, and only then: the legal and insurance sheet cards gain *"Bill.com —
+Electronic payment instructions provided with invoice."* (`withBillcomLine`,
+applied at consumption so the approved static sheets never change), the send
+wizards grow a second checkbox beside Mail Check, `emailSheet` accepts
+`bill_com` in the non-private method set, and legal/insurance invoices carry
+and print the typed link verbatim. Not ready: a disabled "Not configured" row
+in the wizard, a refusal BY NAME (`billcom_not_configured`) on the route, and
+no mention on any sheet, email or invoice. **No credential exists anywhere**
+— a future API integration puts secrets in Worker env vars read inside the
+adapter only. Private never gains it; Cash App/Venmo boundaries unmoved; the
+existing `sent_to_bill` record-keeping untouched. **Do not enable it until
+the owner says the account is ready.**
+
 ## The send context — never guess a recipient's type from their email
 
 **Every outgoing send is PRIVATE or INSURANCE, and which one is decided by WHAT
