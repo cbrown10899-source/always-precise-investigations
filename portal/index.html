@@ -93,6 +93,10 @@
        row is enough. */
     .top button{margin-left:0;min-height:44px;padding:6px 10px;white-space:nowrap;}
     .top .who b{white-space:nowrap;}
+    /* The phone header carries the brand, Sign out and the burger — the name
+       and role were the jam (owner, 2026-09-02) and they live in the drawer's
+       foot now (`.navwho`), where there is room. Relocated, not removed. */
+    .top .who .who-id{display:none;}
   }
 
   main{max-width:1180px;margin:0 auto;padding:22px 16px 70px;}
@@ -150,6 +154,15 @@
   .tag.cancelled{background:#f1f1f1;color:#888;}
   .tag.open{background:var(--warn-bg);color:var(--warn);}
   .empty{color:var(--muted);padding:26px 4px;font-size:.92rem;}
+  /* The GENUINELY-EMPTY queue card is slim (owner, 2026-09-02): the heading,
+     the one-line answer, and no billboard. The phone block at the end of the
+     stylesheet swaps the long explanation for the owner's one-liner; the
+     short copy exists at every width so there is one writer, hidden here. */
+  .qslim{padding:14px 16px;}
+  .qslim .bar{margin-bottom:2px;}
+  .qslim .empty{padding:8px 2px 2px;}
+  .qslim .empty-hint{line-height:1.45;}
+  .qe-short{display:none;}
 
   /* dashboard strip */
   .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(140px,100%),1fr));gap:12px;margin-bottom:16px;}
@@ -525,6 +538,10 @@
      from the destinations above them and pinned to the foot of the rail. */
   .navfoot{margin-top:auto;display:flex;flex-direction:column;gap:10px;
     padding-top:16px;border-top:1px solid var(--field-line);}
+  /* Who is signed in, at the drawer's foot — a DIV like the group headers,
+     for the same reason: `.tabs button` means a destination everywhere. */
+  .navwho{font-size:.76rem;color:#7f97b3;padding:2px 2px 0;}
+  .navwho b{color:#fff;font-weight:700;}
   @media(min-width:900px){
     /* `flex-wrap:nowrap` is LOAD-BEARING, not tidying. `.tabs` is a wrapping
        row at the top of this file, and turning it into a column here kept the
@@ -1828,6 +1845,15 @@
     .srchcard{padding:10px 12px 12px;}
     .srchcard .hint{display:none;}
     .srchcard .count{display:none;}
+    /* The empty queue on a phone: the owner's one-liner in place of the
+       paragraph, and a card that is a statement rather than a billboard.
+       Only the genuinely-empty card carries .qslim — every honesty state
+       (failed, filtered, incomplete) keeps its full height and wording. */
+    .qe-long{display:none;}
+    .qe-short{display:block;}
+    .qslim{padding:10px 14px 12px;}
+    .qslim .empty{padding:4px 2px 2px;}
+    .qslim .empty-title{font-size:.95rem;}
   }
 
 /* ============== API ASSISTANT (ASSISTANT.md) — .asst- is its own prefix ===
@@ -2598,6 +2624,15 @@ function shell(inner){
     <button class="side-vst" data-act="pstLaunch" data-case="">&#128247; Timestamp Photo</button>${
     ME.role === "admin"
       ? `<button class="side-intake" data-act="tab" data-tab="newlead">+ Intake a Client</button>` : ""}
+    ${/* Who is signed in, said where there is room for it (owner, 2026-09-02):
+         the phone header hides the name and role to stop the top row jamming,
+         and this line is where they went — not removed, relocated. A div, not
+         a button: the navgrp rule, so no selector or tab stop ever counts it
+         as a destination. Drawn at every width; the desktop header still
+         carries the identity too, and two statements of a fact this simple
+         cannot drift — both read ME directly. */""}
+    <div class="navwho">Signed in as <b>${esc(ME.display_name || ME.username)}</b>
+      &middot; ${ME.role === "admin" ? "Admin" : "Investigator"}</div>
   </div>`;
 
   const tabs = (ME.role === "admin"
@@ -3998,7 +4033,12 @@ function nextActionsHtml(){
   const rows = attnRows();
   const count = !rows ? "the office's queue"
     : rows.length ? `${ATTN.total || rows.length} waiting` : "nothing waiting";
-  const head = body => `<div class="card queuecard">
+  /* `slim` marks the GENUINELY-EMPTY card only (owner, 2026-09-02): with no
+     work waiting, the card was spending a third of a phone's first screen on
+     an explanatory paragraph. The failure, filter and incomplete states keep
+     their full wording — those are honesty states, not decoration — and a
+     queue with real rows is untouched. */
+  const head = (body, slim) => `<div class="card queuecard${slim ? " qslim" : ""}">
     <div class="bar"><h2 style="margin:0">Today / next actions</h2>
       <span class="count">${esc(count)}</span></div>
     ${rows && (ATTN.total || 0) ? attnFilterHtml() : ""}
@@ -4030,12 +4070,16 @@ function nextActionsHtml(){
       partial view. It usually means the database is missing tables the portal-setup workflow
       creates.</div></div>`);
 
+  /* Two renderings of one sentence, chosen by CSS width: the phone gets the
+     owner's one-liner, the desktop keeps the fuller explanation — both are
+     in the markup so there is one writer and no JS width probe. */
   if(!rows.length) return head(`<div class="empty">
     <div class="empty-title">Nothing needs you right now.</div>
-    <div class="empty-hint">This fills itself as work arrives &mdash; a new intake, a finished day
+    <div class="empty-hint qe-long">This fills itself as work arrives &mdash; a new intake, a finished day
       with no report, a retainer still unpaid, a hearing coming up, a package left unfinished.
       Nothing here is a to-do list somebody has to keep up to date, and nothing here is dismissed:
-      a row leaves when the thing is done.</div></div>`);
+      a row leaves when the thing is done.</div>
+    <div class="empty-hint qe-short">New work and deadlines will appear here automatically.</div></div>`, true);
 
   const shown = rows.slice(0, QUEUE_MAX);
   return head(`<div class="queue">${shown.map(r => {
@@ -6411,6 +6455,13 @@ function casesEmptyHtml(admin, searching){
 
   if(admin && CASE_VIEW === "deleted") return wrap("No deleted cases.",
     "A deleted case is kept here and can be put back. Nothing in the portal is removed for good.");
+
+  /* Never loaded, or a load in flight: CASES_OK is only true after a
+     successful fetch and LOAD_ERR only set by a failed one, so this state
+     means "the answer has not arrived" — which must never read as an empty
+     portal. The shell-first paint in render() lands here on a cold sign-in. */
+  if(!CASES_OK) return wrap("Loading the case list…",
+    "Fetching the live list from the office now.");
 
   return admin
     ? wrap("No cases yet.",
@@ -11272,7 +11323,12 @@ function paint(){
   document.body.classList.add("withnav");
   if($("burger")) $("burger").hidden = false;
   $("who").hidden = false;
-  $("who").innerHTML = `<b>${esc(ME.display_name || ME.username)}</b>${ME.role === "admin" ? "Admin" : "Investigator"}
+  /* The identity is a SPAN of its own so the phone header can withdraw it
+     without touching Sign out (owner, 2026-09-02 — the top row was jamming
+     the wordmark, the name, the role, the button and the burger into 390px).
+     On a phone the name and role live in the drawer's foot instead. */
+  $("who").innerHTML = `<span class="who-id"><b>${esc(ME.display_name || ME.username)}</b>${
+    ME.role === "admin" ? "Admin" : "Investigator"}</span>
     <button data-act="logout">Sign out</button>`;
   // Active Surveillance takes the whole screen — it is a field view, not a
   // panel inside the office one.
@@ -11338,6 +11394,24 @@ async function render(){
   if(!ME){ paint(); return; }
   if(!BOOTED){ BOOTED = true; if(ME.role === "admin" && TAB === "cases") TAB = "dashboard"; }
   LOAD_ERR = "";
+  /* THE SHELL PAINTS BEFORE ANY FETCH (owner, 2026-09-02 — measured). This
+     function used to await eight serial round trips with ONE paint() at the
+     end, so from the launcher's "The full portal" tap NOTHING changed on
+     screen until the last answer landed: 2072ms at 250ms a call, 4473ms at a
+     phone-realistic 550ms — the owner's five seconds, and the reason the
+     button read as needing two taps (the first tap worked; the screen just
+     did not say so, so the eventual paint was credited to the second).
+     The shell — header, rail, tabs, and each panel's own honest loading or
+     last-known state — draws immediately now, and every fetch below runs
+     CONCURRENTLY, each closure keeping exactly the try/catch it always had,
+     writing the same globals it always wrote, so the data itself lands in
+     roughly the slowest single call rather than the sum of all of them.
+     Warm, the user sees the data they already had while the refresh lands;
+     cold, each panel draws its own loading state (never a false empty — the
+     cases list has a loading branch for exactly that). One paint at the end
+     redraws whatever the answers changed. */
+  paint();
+  const jobs = [];
   /* An empty list stays empty. A first sign-in used to be met with two
      fabricated cases so the table had something in it — the screen taught the
      layout and misrepresented the caseload in the same breath, and the reader
@@ -11346,31 +11420,33 @@ async function render(){
      keeps "could not load" from being drawn as "no work". */
   /* THE ORDINARY WORKING SET, ALWAYS, whatever lens the Cases tab is on. Every
      other view on the page reads this, so it must never be the archived query. */
-  try{
-    const d = await api("/submissions?limit=200");
-    CASES = Array.isArray(d.submissions) ? d.submissions : [];
-    TOTAL = d.total || 0;
-    CASES_OK = true;
-    /* A stored case id that no longer resolves to a case this user may see is
-       pruned HERE and only here (owner, 2026-09-02): after a load that
-       SUCCEEDED, and only when the page holds the whole working set, so an
-       outage or a caseload beyond the page can never eat someone's pins. The
-       strip already refuses to DRAW an unknown id; this removes the dead
-       reference itself rather than leaving it in storage. The surveillance
-       launcher keeps no local case state at all — it renders each open from
-       the live /my/active answer — so this is the only local case-id store
-       there is to reconcile. */
-    if(CASES.length >= TOTAL){
-      const live = new Set(CASES.map(c => c.case_no));
-      for(const [key, list] of [[FAVS_KEY, favCases()], [RECENT_KEY, recentCases()]]){
-        const kept = list.filter(n => live.has(n));
-        if(kept.length !== list.length) setCaseIds(key, kept);
+  jobs.push((async () => {
+    try{
+      const d = await api("/submissions?limit=200");
+      CASES = Array.isArray(d.submissions) ? d.submissions : [];
+      TOTAL = d.total || 0;
+      CASES_OK = true;
+      /* A stored case id that no longer resolves to a case this user may see is
+         pruned HERE and only here (owner, 2026-09-02): after a load that
+         SUCCEEDED, and only when the page holds the whole working set, so an
+         outage or a caseload beyond the page can never eat someone's pins. The
+         strip already refuses to DRAW an unknown id; this removes the dead
+         reference itself rather than leaving it in storage. The surveillance
+         launcher keeps no local case state at all — it renders each open from
+         the live /my/active answer — so this is the only local case-id store
+         there is to reconcile. */
+      if(CASES.length >= TOTAL){
+        const live = new Set(CASES.map(c => c.case_no));
+        for(const [key, list] of [[FAVS_KEY, favCases()], [RECENT_KEY, recentCases()]]){
+          const kept = list.filter(n => live.has(n));
+          if(kept.length !== list.length) setCaseIds(key, kept);
+        }
       }
+    }catch(e){
+      CASES = []; TOTAL = 0; CASES_OK = false;
+      LOAD_ERR = "The case list could not be loaded — " + e.message;
     }
-  }catch(e){
-    CASES = []; TOTAL = 0; CASES_OK = false;
-    LOAD_ERR = "The case list could not be loaded — " + e.message;
-  }
+  })());
 
   /* The archived and deleted lenses are a different SET, not a filter over the
      rows above: the Worker excludes those cases from every other view, so asking
@@ -11378,39 +11454,53 @@ async function render(){
      the Cases table reads. Cleared whenever the lens is not one of them, so a
      stale archived list cannot outlive the lens that fetched it. */
   if(CASE_VIEW === "archived" || CASE_VIEW === "deleted"){
-    try{
-      const dq = await api("/submissions?limit=200&view=" + encodeURIComponent(CASE_VIEW));
-      CASES_Q = Array.isArray(dq.submissions) ? dq.submissions : [];
-      TOTAL_Q = dq.total || 0;
-      CASES_Q_OK = true;
-    }catch(e){
-      CASES_Q = []; TOTAL_Q = 0; CASES_Q_OK = false;
-      // Same rule as above: a failed load is never drawn as an empty archive.
-      LOAD_ERR = "The " + CASE_VIEW + " cases could not be loaded — " + e.message;
-    }
+    jobs.push((async () => {
+      try{
+        const dq = await api("/submissions?limit=200&view=" + encodeURIComponent(CASE_VIEW));
+        CASES_Q = Array.isArray(dq.submissions) ? dq.submissions : [];
+        TOTAL_Q = dq.total || 0;
+        CASES_Q_OK = true;
+      }catch(e){
+        CASES_Q = []; TOTAL_Q = 0; CASES_Q_OK = false;
+        // Same rule as above: a failed load is never drawn as an empty archive.
+        LOAD_ERR = "The " + CASE_VIEW + " cases could not be loaded — " + e.message;
+      }
+    })());
   }else{
     CASES_Q = null; TOTAL_Q = 0; CASES_Q_OK = false;
   }
 
   if(ME.role !== "admin"){
-    try{ OFFERS = (await api("/my/offers")).offers; }catch(e){ OFFERS = []; }
+    jobs.push((async () => {
+      try{ OFFERS = (await api("/my/offers")).offers; }catch(e){ OFFERS = []; }
+    })());
   }
-  try{ SUMMARY = (await api("/summary")).summary; }
-  catch(e){ SUMMARY = null; if(!LOAD_ERR) LOAD_ERR = "The dashboard totals could not be loaded — " + e.message; }
+  jobs.push((async () => {
+    try{ SUMMARY = (await api("/summary")).summary; }
+    catch(e){ SUMMARY = null; if(!LOAD_ERR) LOAD_ERR = "The dashboard totals could not be loaded — " + e.message; }
+  })());
 
   // A half-applied schema is the one failure that looks like a dozen different
   // bugs, so ask directly rather than waiting to trip over it.
-  try{
-    const h = await api("/health");
-    SCHEMA_MISSING = Array.isArray(h.missing_tables) ? h.missing_tables : [];
-  }catch(e){ SCHEMA_MISSING = []; }
+  jobs.push((async () => {
+    try{
+      const h = await api("/health");
+      SCHEMA_MISSING = Array.isArray(h.missing_tables) ? h.missing_tables : [];
+    }catch(e){ SCHEMA_MISSING = []; }
+  })());
 
   if(ME.role === "admin"){
-    try{ USERS = (await api("/users")).users; }catch(e){ USERS = []; }
-    try{ INVITES = (await api("/invites")).invites; }catch(e){ INVITES = []; }
-    try{ const d = await api("/sheets"); SHEETS = d.sheets; BILLCOM_READY = !!d.billcom_ready;
-         LEGAL_SVCS = d.legal_services || []; }
-    catch(e){ SHEETS = []; }
+    jobs.push((async () => {
+      try{ USERS = (await api("/users")).users; }catch(e){ USERS = []; }
+    })());
+    jobs.push((async () => {
+      try{ INVITES = (await api("/invites")).invites; }catch(e){ INVITES = []; }
+    })());
+    jobs.push((async () => {
+      try{ const d = await api("/sheets"); SHEETS = d.sheets; BILLCOM_READY = !!d.billcom_ready;
+           LEGAL_SVCS = d.legal_services || []; }
+      catch(e){ SHEETS = []; }
+    })());
     // The dashboard is the admin's landing, so render() is a second door to
     // it — the tab click is not the only way in. Without this, the first
     // sign-in paints "Loading…" forever, because nothing ever fetches.
@@ -11418,7 +11508,7 @@ async function render(){
     // land back here — with dashboard-only guards, Try again on the delivery
     // tab would null PKGS and then nothing would ever fetch it: a spinner
     // that never resolves, which is the false-empty bug wearing a new face.
-    if((TAB === "dashboard" || TAB === "delivery") && !PKGS) await loadPackages();
+    if((TAB === "dashboard" || TAB === "delivery") && !PKGS) jobs.push(loadPackages());
     // Recently completed reads the same route the Cases lens and Reports &
     // Packages already use. Landed on, not only clicked into, for the reason
     // directly above.
@@ -11427,7 +11517,7 @@ async function render(){
     /* The exception list, fetched on arrival like everything else the
        dashboard draws — and refetched, because a stale queue is a wrong next
        action rather than an old number. */
-    if(TAB === "dashboard" && ME.role === "admin") await loadAttention();
+    if(TAB === "dashboard" && ME.role === "admin") jobs.push(loadAttention());
     /* The directory, landed on rather than only clicked into — the same rule,
        and the same reason: a tab reached by reload must still fetch.
 
@@ -11437,10 +11527,13 @@ async function render(){
        still showed the set fetched before the firm existed — the screen whose
        whole job is answering "who do we already work for" quietly answering
        it wrong. One indexed read, the same as the case list does. */
-    if(TAB === "profiles" && !PROF_OPEN && !PROF_FORM) await loadProfiles();
+    if(TAB === "profiles" && !PROF_OPEN && !PROF_FORM) jobs.push(loadProfiles());
     // Same rule for who-is-out: landed on, not only clicked into.
-    try{ OUT_NOW = await api("/active"); }catch(e){ OUT_NOW = null; }
+    jobs.push((async () => {
+      try{ OUT_NOW = await api("/active"); }catch(e){ OUT_NOW = null; }
+    })());
   }
+  await Promise.all(jobs);
   paint();
 }
 
@@ -15895,8 +15988,12 @@ async function openSurveillanceLauncher(){
   SV = {tab: "launcher", entry: null, heard: null, err: "", ok: "", cat: "arrival", search: ""};
   document.body.classList.add("surv");
   paint();
-  try{ SV.launcher = await api("/my/active"); }
-  catch(e){ SV.launcher = {active: null, assignments: []}; SV.err = e.message; }
+  /* The user can leave for the full portal before this answer arrives — a
+     real one-tap on a slow connection. SV is null then, and writing into it
+     would throw from a stale promise; the answer belongs to a launcher that
+     no longer exists, so it is simply dropped. */
+  try{ const d = await api("/my/active"); if(!SV) return; SV.launcher = d; }
+  catch(e){ if(!SV) return; SV.launcher = {active: null, assignments: []}; SV.err = e.message; }
   paint();
 }
 
