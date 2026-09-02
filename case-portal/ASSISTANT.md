@@ -350,11 +350,11 @@ gap shipped.
 | 3 | Live status: "anything new?", "what needs attention?", "what should I do?", find client/case/intake with disambiguation | ✅ **DEPLOYED** — #261, live reads through the existing role-scoped functions |
 | 4 | Intake preparation + preview + SIMULATE + `assistant_log` (schema: one additive table → portal-setup dispatch) | ✅ **DEPLOYED** — #262 `85806e6`; site + Worker + **portal-setup all `success` on `85806e68`** (08:39Z), so `assistant_log` is live. A6–A10 below |
 | 5 | Rate-sheet preparation + preview + simulation (pricing via the real resolvers) | ✅ **DEPLOYED** — #263 `099b817`, both workflows `success` on `099b8174` (A11; byte-pins hold the mirror to the real sender; no schema change) |
-| 6 | Invoice/billing read + preparation + simulation | **COMPLETE (zero-write)** — read half DEPLOYED in #263 (A12); the owner's zero-write invoice preview answered A12's question and is BUILT (A13): DRY RUN — INVOICE PREVIEW / SIMULATED — NOT CREATED, no row, no number consumed, twin-pinned |
-| 7 | Case health / summaries / report drafting from recorded facts | **BUILT** — A14; recorded facts only, verbatim chronology, one next-step writer, the delete-probe extracted and shared |
-| 8 | Watch mode (internal read-only monitoring) | **BUILT** — A15; composition on ask over needsAttention + bounded arms; internal only, by absence of any send path |
-| 10 | Topic commands / smart shortcuts (owner brief 2026-09-02, second window) | **BUILT** — A17; ten live topic desks + short phrases, situational primary actions, dormant-intake cleanup intelligence on the delete's own probe |
-| 9 | Visual QA / workflow advisor | **BUILT** — A16; `portal/ux-advisor.mjs` measurement sweep, findings in `UX-FINDINGS.json`/`.md` (51 on first run), judgment classes named for a person |
+| 6 | Invoice/billing read + preparation + simulation | ✅ **DEPLOYED (zero-write, complete)** — read half #263; the zero-write preview #265 `3f1f640` (A13): DRY RUN — INVOICE PREVIEW / SIMULATED — NOT CREATED, no row, no number consumed, twin-pinned |
+| 7 | Case health / summaries / report drafting from recorded facts | ✅ **DEPLOYED** — #265 `3f1f640` (A14); recorded facts only, verbatim chronology, one next-step writer, the delete-probe extracted and shared |
+| 8 | Watch mode (internal read-only monitoring) | ✅ **DEPLOYED** — #265 `3f1f640` (A15); internal only, by absence of any send path |
+| 10 | Topic commands / smart shortcuts (owner brief 2026-09-02, second window) | ✅ **DEPLOYED** — #266 `9dd7f64`, both workflows `success` on `9dd7f643` (A17) |
+| 9 | Visual QA / workflow advisor | ✅ **DEPLOYED** — #265 `3f1f640` (A16); `portal/ux-advisor.mjs`, 51 findings stored in `UX-FINDINGS.json`/`.md`, judgment classes named for a person |
 
 **Checkpoint (2026-09-02, updated overnight):** the pre-Assistant units went
 green first — PR #260 merged as `6770609`, both deploy workflows `success` on
