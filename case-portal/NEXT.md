@@ -37,6 +37,51 @@ item is finished.
 
 ---
 
+# ✅ READY FOR HUMAN LIVE TEST — Assistant Units 1–10 + intake delete
+
+Sign in to the live portal as an Admin and walk these in order. Every one
+should behave exactly as written; anything else is a finding worth reporting.
+
+1. **Open the Assistant** — click **✨ Assistant BETA** in the left sidebar
+   (or the ✨ pill bottom-right on a phone). The dock opens on the right with
+   the banner *ASSISTANT BETA — DRY RUN MODE…* and the portal stays visible.
+2. Type **`intakes`** — expect an INTAKES status with real counts and
+   situation-dependent buttons (REVIEW NEW INTAKES first if any are waiting).
+3. Type **`old intakes`** — each older undecided intake is classified
+   (ELIGIBLE FOR CLEANUP REVIEW / PROTECTED / POSSIBLE DUPLICATE / NEEDS
+   REVIEW) with its reason, and the answer says Beta never deletes.
+4. Type **`invoices`** — live counts and the real outstanding total; click
+   **SHOW OVERDUE** if offered and watch the follow-up answer arrive.
+5. Type **`Take me to billing`** — the screen actually changes to Billing.
+6. Type **`What is outstanding?`** — the live figure, with an Open Billing
+   button.
+7. Open any case → click **✨ Ask Assistant** → type **`invoice preview`** —
+   expect *DRY RUN — INVOICE PREVIEW · SIMULATED — NOT CREATED* and the
+   would-be invoice; then check **Billing**: no new invoice exists.
+8. Still on the case: **`Check this case`**, then **`Is this ready to
+   close?`**, then **`Summarize today's activity`** (verbatim entries only),
+   then **`Why can't I delete this?`** — the answer names exactly what the
+   delete would refuse over.
+9. Type **`prepare an intake`** → fill a TEST email (yours) → **Preview the
+   dry run** → **Simulate — record only** — expect *SIMULATED — NOT SENT*,
+   and confirm no email arrived and Rate Sheets → send history is unchanged.
+10. Type **`prepare a rate sheet`** → Legal → Process Service → custom fee →
+    Preview — the exact document with the fee you typed; Simulate; nothing
+    sends.
+11. Toggle **Explain & Guide Me** ON and ask **`billing status`** — the
+    answer now LEADS with the screen's plain-language paragraph; toggle OFF
+    and ask again — compact.
+12. Type **`What needs attention?`** — the Watch list, saying INTERNAL ONLY.
+13. On a phone (or narrow window): the ✨ pill opens a full-width bottom
+    sheet; **`take me to my assignments`** navigates and the pill returns.
+14. **Intake delete (previously fixed live-500):** on the Dashboard's Leads &
+    Intakes, click the red trash on a FRESH test intake — the confirmation
+    names the person, the delete succeeds, the card is gone. On a developed
+    case's intake the delete refuses and points at Archive / Delete case.
+15. Sign in as an investigator (if available): the Assistant offers no admin
+    doors, `intakes`/`invoices` answer "admin desk", and `cases`/`tasks`
+    answer with their own scoped counts.
+
 # 🌙 OVERNIGHT FINAL REPORT — 2026-09-02 (owner-ordered format)
 
 **Branch:** `claude/app-crashes-lockups-debug-psf6zd`, reset to master after
@@ -118,7 +163,8 @@ every merge:**
 
 | Unit | PR / SHA | State |
 | --- | --- | --- |
-| **API Assistant Units 6 (completed) + 7 + 8 + 9** — zero-write invoice preview (A13: no row, no number consumed, twin-pinned, snapshot-proven zero writes); case health from recorded facts with verbatim chronology (A14); internal Watch composition (A15); UX Advisor measurement sweep with 51 stored findings (A16, `UX-FINDINGS.json`/`.md`). No schema change | in flight on the branch | worker 3152/0 · deploy guard/intake/visitor pending re-run · e2e running at this write |
+| **API Assistant Unit 10 — topic commands** (owner brief, second window; `ASSISTANT.md` A17) — bare-word live-status desks with situational actions (navigate/say/seed only), dormant-intake cleanup intelligence on the delete's own eligibility probe. No schema change | in flight on the branch | worker 3194/0 · e2e running at this write |
+| **API Assistant Units 6 (completed) + 7 + 8 + 9** — zero-write invoice preview (A13); case health with verbatim chronology (A14); internal Watch (A15); UX Advisor with 51 stored findings (A16). No schema change | #265 `3f1f640` | ✅ **MERGED** — deploy verification recorded below when the workflows land. Suites at merge: worker 3152/0 · e2e 2852/0 · intake 558/0 · deploy guard 86/0 · visitor 47/0 |
 | **API Assistant Unit 5 + Unit 6 read half + §11 guide fix** — rate-sheet preparation + preview + SIMULATE (`ASSISTANT.md` A11; pinned mirror of `emailSheet`, byte-equality + refusal-mirror tests); live billing answers (A12; drafts excluded from outstanding; Unit 6's preparation half DEFERRED — owner question in A12); and the inert Explain & Guide Me toggle made real (found gap, `guide_intro`). No schema change | #263 `099b817` | ✅ **DEPLOYED** — both workflows `success` on `099b8174` at 09:37Z. Suites at merge: worker 3117/0 · e2e 2849/0 · deploy guard 86/0 · intake 558/0 · visitor 47/0 |
 | **API Assistant Unit 4** — intake preparation + preview + SIMULATE + `assistant_log` (`ASSISTANT.md` A6–A10) | #262 `85806e6` | ✅ **DEPLOYED + SCHEMA APPLIED** — site, Worker AND `portal-setup` all `success` on `85806e68` at 08:39Z, so `assistant_log` is live. Suites at merge: worker 3080/0 · e2e 2837/0 · intake 558/0 · deploy guard 86/0 · visitor 47/0 |
 | **API Assistant Units 1–3** — shell + Beta enforcement, navigation, live status (`ASSISTANT.md`) | #261 `b379990` | ✅ **DEPLOYED** — site + Worker both `success` on `b3799902` at 06:24Z. Suites at merge: worker 3045/0 · e2e 2826/0 · intake 558/0 · deploy guard 86/0 · visitor 47/0. No schema change, no portal-setup owed |

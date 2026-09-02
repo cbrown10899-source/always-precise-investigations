@@ -17182,8 +17182,12 @@ section('API Assistant — Beta reads, role-scoped navigation, refusals by name'
        && /INSERT INTO assistant_log/.test(blk)
        && !/\b(UPDATE |DELETE FROM)\b/.test(blk),
        (blk.match(/\b(INSERT INTO|UPDATE |DELETE FROM)\b.{0,40}/g) || []).join(' | '));
-    ok('and it never touches the real send history or the lead ladder, even by name',
-       !blk.includes('send_log') && !blk.includes('payment_send')
+    /* Unit 10 reads recent rate-sheet sends, so `send_log` may appear in a
+       SELECT — the write shape is pinned above (exactly one INSERT, into
+       assistant_log). What stays banned by name: the writers, and the
+       payment log, which nothing here has any business even reading. */
+    ok('and it never touches the send writers or the payment log, even by name',
+       !blk.includes('INSERT INTO send_log') && !blk.includes('payment_send')
        && !blk.includes('stampLead') && !blk.includes('logSend'));
     ok('no assistant route writes app_config — Live Mode cannot be born here',
        !blk.includes('app_config'));
@@ -17818,6 +17822,247 @@ section('API Assistant — Unit 7: case health and operational assistance');
   j = await jsonOf(await cmd(admin, 'What should I do?'));
   ok('the one-recommendation briefing still answers on its own phrase',
      /RECOMMENDED NEXT STEP|alert cards/.test(j.text));
+}
+
+/* ============== API ASSISTANT — Unit 10: topic commands ====================
+   A bare word answers with LIVE status and situation-dependent actions.
+   Counts are pinned to planted fixtures exactly — invented numbers fail. */
+section('API Assistant — Unit 10: topic commands, live status, situational options');
+{
+  const realFetch = globalThis.fetch;
+  let mailed = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) { mailed = JSON.parse(init.body); return new Response('{"id":"re_1"}', { status: 200 }); }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '50';
+  env.RESEND_API_KEY = 'test-resend-key';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  let res = await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' });
+  const token = new URL((await jsonOf(res)).url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const cmd = (cookie, text, context = {}) => call(env, '/assistant/command',
+    { method: 'POST', cookie, body: { text, context } });
+  const backdate = (cn, days) => env.DB.prepare(
+    'UPDATE submissions SET created_at = ? WHERE case_no = ?')
+    .bind(new Date(Date.now() - days * 86400000).toISOString(), cn).run();
+
+  /* Fixtures: 1 fresh + a duplicate pair (fresh) + 3 dormant of three kinds +
+     1 closed lead + an overdue invoice + an unassigned case + a finished day
+     with no report + a task due today. */
+  for (const [cn, name] of [['API-T-F1', 'Fresh Person'], ['API-T-DupA', 'Dup Name'],
+    ['API-T-DupB', 'Dup Name'], ['API-T-D1', 'Dormant Eligible'], ['API-T-D2', 'Dormant Protected'],
+    ['API-T-D3', 'Dormant Worked'], ['API-T-CL', 'Closed Lead'], ['API-T-INV', 'Invoiced Person'],
+    ['API-T-UA', 'Unassigned Person'], ['API-T-RD', 'Reportless Person']]) {
+    await ingest(env, { case_no: cn, client_name: name, objective: 'x' });
+  }
+  for (const cn of ['API-T-D1', 'API-T-D2', 'API-T-D3']) await backdate(cn, 30);
+  await call(env, '/cases/API-T-D2/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-09-02', start_time: '07:00' } });          // protected + active now
+  await call(env, '/leads/API-T-D3/status', { method: 'POST', cookie: admin,
+    body: { status: 'contacted' } });                                   // worked, not cleanup
+  await call(env, '/leads/API-T-CL/status', { method: 'POST', cookie: admin,
+    body: { status: 'closed_lead' } });
+  const invT = await jsonOf(await call(env, '/cases/API-T-INV/invoices',
+    { method: 'POST', cookie: admin, body: {} }));
+  await call(env, `/invoices/${invT.invoice.id}/lines`, { method: 'POST', cookie: admin,
+    body: { lines: [{ description: 'Surveillance day', qty: 1, rate: 450 }] } });
+  await call(env, `/invoices/${invT.invoice.id}/status`, { method: 'POST', cookie: admin,
+    body: { status: 'ready' } });
+  await env.DB.prepare("UPDATE invoices SET due_date = '2026-01-01' WHERE id = ?")
+    .bind(invT.invoice.id).run();
+  await env.DB.prepare(
+    "UPDATE submissions SET status = 'in_progress' WHERE case_no = 'API-T-UA'").run();
+  /* INV and RD are developed cases, off the intake desk and assigned — the
+     intake topic must not count them, and dana's own counts must stay zero. */
+  const trevId = (await env.DB.prepare("SELECT id FROM users WHERE username = 'trever'").first()).id;
+  await env.DB.prepare(
+    "UPDATE submissions SET status = 'in_progress', assigned_to = ? WHERE case_no IN ('API-T-INV', 'API-T-RD')")
+    .bind(trevId).run();
+  await call(env, '/cases/API-T-RD/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-09-01', start_time: '07:00' } });
+  await call(env, '/cases/API-T-RD/day/end', { method: 'POST', cookie: admin,
+    body: { end_time: '11:00' } });
+  await env.DB.prepare(
+    `INSERT INTO case_tasks (case_no, task, due_date, priority, status) VALUES ('API-T-F1', 'Call the client', ?, 'normal', 'open')`)
+    .bind(new Date().toISOString().slice(0, 10)).run();
+
+  const actShape = a => Object.keys(a).every(k => ['label', 'navigate', 'say', 'seed'].includes(k))
+    && [a.navigate, a.say, a.seed].filter(x => x !== undefined).length === 1;
+
+  /* ---- 1. intakes: live counts, primary = REVIEW NEW INTAKES ---- */
+  let j = await jsonOf(await cmd(admin, 'intakes'));
+  ok('“intakes” answers TOPIC + LIVE STATUS with exact planted counts',
+     j.kind === 'topic' && /^INTAKES\n/.test(j.text)
+     && /3 new intakes are waiting for review\./.test(j.text)
+     && /- 3 older undecided intakes \(14\+ days\)/.test(j.text)
+     && /- 1 possible duplicate name/.test(j.text)
+     && /- 1 closed\/declined lead record/.test(j.text), j.text);
+  ok('…with new intakes present, the PRIMARY action is REVIEW NEW INTAKES',
+     j.actions[0].label === 'REVIEW NEW INTAKES' && j.actions[0].navigate.id === 'leads');
+  ok('…and every offered action is navigate, say or seed — nothing else exists',
+     j.actions.every(actShape));
+  j = await jsonOf(await cmd(admin, 'new intakes'));
+  ok('“new intakes” reaches the same live desk', j.kind === 'topic' && /^INTAKES\n/.test(j.text));
+
+  /* ---- duplicates, while the pair is still undecided ---- */
+  j = await jsonOf(await cmd(admin, 'duplicate intakes'));
+  ok('“duplicate intakes” lists the exact-name pair, and says nothing is inferred',
+     /^DUPLICATE INTAKES\n/.test(j.text) && j.card.length === 1 && j.card[0].title === 'Dup Name'
+     && /2 undecided intakes carry this exact name/.test(j.card[0].line)
+     && /nothing inferred/.test(j.text));
+
+  /* ---- situational flip: no fresh → primary becomes cleanup review ---- */
+  for (const cn of ['API-T-F1', 'API-T-DupA', 'API-T-DupB']) {
+    await call(env, `/leads/${cn}/status`, { method: 'POST', cookie: admin,
+      body: { status: 'declined' } });
+  }
+  j = await jsonOf(await cmd(admin, 'intakes'));
+  ok('with no fresh intakes, the answer flips and the PRIMARY action is cleanup review',
+     /No new intakes are waiting for review\./.test(j.text)
+     && j.actions[0].label === 'REVIEW CLEANUP CANDIDATES' && j.actions[0].say === 'old intakes',
+     JSON.stringify(j.actions).slice(0, 200));
+
+  /* ---- 2-3. old intakes: the delete's OWN eligibility, per candidate ---- */
+  j = await jsonOf(await cmd(admin, 'old intakes'));
+  ok('“old intakes” classifies each dormant record the way the delete would judge it',
+     /^DORMANT INTAKES\n/.test(j.text) && /1 eligible for cleanup review, 1 protected/.test(j.text)
+     && j.card.length === 3
+     && j.card.some(c => /^ELIGIBLE FOR CLEANUP REVIEW — Dormant Eligible/.test(c.title)
+                         && /the quick delete would not refuse it/.test(c.line))
+     && j.card.some(c => /^PROTECTED \/ DEVELOPED CASE — Dormant Protected/.test(c.title)
+                         && /an investigation day/.test(c.line))
+     && j.card.some(c => /^NEEDS REVIEW — Dormant Worked/.test(c.title)
+                         && /being worked \(contacted\)/.test(c.line)), JSON.stringify(j.card).slice(0, 400));
+  ok('…and it says out loud that Beta never deletes — the manual control stays the only delete',
+     /deleting stays the manual control/.test(j.text) && /Beta never deletes anything/.test(j.text));
+
+  /* ---- 4. invoices: live money, situational SHOW OVERDUE ---- */
+  j = await jsonOf(await cmd(admin, 'invoices'));
+  ok('“invoices” answers with the live figures — count, overdue, total',
+     /^INVOICES\n/.test(j.text) && /1 invoice has a balance due\./.test(j.text)
+     && /1 is overdue\./.test(j.text) && /\$450\.00 total outstanding\./.test(j.text), j.text);
+  ok('…offering OPEN BILLING first, then SHOW OVERDUE and SHOW UNPAID as say-backs',
+     j.actions[0].label === 'OPEN BILLING'
+     && j.actions.some(a => a.label === 'SHOW OVERDUE' && a.say === 'overdue')
+     && j.actions.some(a => a.label === 'SHOW UNPAID' && a.say === 'unpaid'));
+  j = await jsonOf(await cmd(admin, 'overdue'));
+  ok('“overdue” lists the overdue invoice with its balance and due date',
+     /^OVERDUE\n/.test(j.text) && j.card.length === 1
+     && /balance \$450\.00 · due 2026-01-01/.test(j.card[0].line));
+  j = await jsonOf(await cmd(admin, 'unpaid'));
+  ok('“unpaid” lists it too, and says drafts never count',
+     /^UNPAID\n/.test(j.text) && /drafts never count/.test(j.text) && j.card.length === 1);
+
+  /* ---- 5. cases: the live category counts ---- */
+  j = await jsonOf(await cmd(admin, 'cases'));
+  ok('“cases” counts open, active-now, unassigned, and finished-day-no-report from the live tables',
+     /^CASES\n/.test(j.text) && /1 active right now/.test(j.text)
+     && /1 unassigned/.test(j.text) && /1 with a finished day and no report/.test(j.text), j.text);
+  ok('…and the situational say-backs exist for both non-zero categories',
+     j.actions.some(a => a.say === 'unassigned') && j.actions.some(a => a.say === 'reports due'));
+  j = await jsonOf(await cmd(admin, 'unassigned'));
+  ok('“unassigned” names the case', j.card.length === 1 && j.card[0].case_no === 'API-T-UA');
+  j = await jsonOf(await cmd(admin, 'reports due'));
+  ok('“reports due” names the case with the finished, reportless day',
+     j.card.length === 1 && j.card[0].case_no === 'API-T-RD');
+  j = await jsonOf(await cmd(admin, 'ready to close'));
+  ok('“ready to close” with no delivered package says so — and keeps closing human',
+     /No open case pairs a delivered package/.test(j.text));
+
+  /* ---- 6. rate sheets: recent sends + never-sent intakes ---- */
+  await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'topic-sheet@example.com' } });
+  j = await jsonOf(await cmd(admin, 'rate sheets'));
+  ok('“rate sheets” shows the newest real send and counts never-sent undecided intakes',
+     /^RATE SHEETS\n/.test(j.text)
+     && /newest: private_retainer to topic-sheet@example\.com/.test(j.text)
+     && /2 undecided intakes have had nothing sent at all\./.test(j.text), j.text);
+  ok('…and offers PREPARE RATE SHEET as a say-back into the Unit 5 workbench',
+     j.actions.some(a => a.label === 'PREPARE RATE SHEET' && a.say === 'prepare a rate sheet'));
+
+  /* ---- 7. surveillance ---- */
+  j = await jsonOf(await cmd(admin, 'surveillance'));
+  ok('“surveillance” shows who is out now and the days awaiting reports',
+     /^SURVEILLANCE\n/.test(j.text) && /1 day is running right now\./.test(j.text)
+     && /1 case has a finished day awaiting its report\./.test(j.text)
+     && j.card.length === 1 && j.card[0].case_no === 'API-T-D2', j.text);
+
+  /* ---- 8. reports ---- */
+  j = await jsonOf(await cmd(admin, 'reports'));
+  ok('“reports” states the book\'s report statuses and the due count',
+     /^REPORTS\n/.test(j.text) && /none yet/.test(j.text)
+     && /1 case has a finished day with no report\./.test(j.text));
+
+  /* ---- 9. clients ---- */
+  j = await jsonOf(await cmd(admin, 'clients'));
+  ok('“clients” counts the saved directory by kind — zeros are real answers',
+     /^CLIENTS & FIRMS\n/.test(j.text) && /0 law firms · 0 insurance orgs · 0 private clients saved\./.test(j.text));
+
+  /* ---- 10. tasks + today ---- */
+  j = await jsonOf(await cmd(admin, 'tasks'));
+  ok('“tasks” counts the live buckets', /^TASKS\n/.test(j.text) && /1 due today/.test(j.text));
+  j = await jsonOf(await cmd(admin, 'today'));
+  ok('“today” composes the day: intakes, days running, tasks, overdue money',
+     /^TODAY\n/.test(j.text) && /0 new intakes/.test(j.text) && /1 day running/.test(j.text)
+     && /1 task due today/.test(j.text) && /1 overdue invoice/.test(j.text), j.text);
+
+  /* ---- roles, and the desks that stay admin ---- */
+  j = await jsonOf(await cmd(dana, 'intakes'));
+  ok('an investigator typing “intakes” is told it is an admin desk', /admin desk/i.test(j.text));
+  j = await jsonOf(await cmd(dana, 'invoices'));
+  ok('…and “invoices” likewise, with no figure shown', /admin desk/i.test(j.text) && !/\$/.test(j.text));
+  j = await jsonOf(await cmd(dana, 'cases'));
+  ok('an investigator\'s “cases” is their own scoped count',
+     /^CASES\n/.test(j.text) && /You have 0 open assignments\./.test(j.text));
+  j = await jsonOf(await cmd(dana, 'tasks'));
+  ok('an investigator\'s “tasks” works, scoped by the same SQL as the board',
+     /^TASKS\n/.test(j.text));
+
+  /* ---- long sentences never fall into the topic table ---- */
+  j = await jsonOf(await cmd(admin, 'please tell me everything about the intakes desk and how it works'));
+  ok('a long sentence is NOT a topic command — richer intents or the honest fallback answer it',
+     j.kind !== 'topic');
+
+  /* ---- Beta safety: nothing in any topic answer can act ---- */
+  {
+    let mailedBefore = mailed;
+    const sends0 = Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM send_log').first()).n);
+    for (const t of ['intakes', 'old intakes', 'invoices', 'overdue', 'cases', 'rate sheets',
+                     'surveillance', 'reports', 'clients', 'tasks', 'today']) {
+      const a = await jsonOf(await cmd(admin, t));
+      if (a.actions) {
+        ok(`“${t}”: every action is navigate/say/seed and none is a destructive door`,
+           a.actions.every(actShape)
+           && a.actions.every(x => !/DELETE|ARCHIVE|SEND |RECORD PAY/i.test(x.label)),
+           JSON.stringify(a.actions).slice(0, 200));
+      }
+    }
+    const sends1 = Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM send_log').first()).n);
+    ok('walking every topic sent nothing and wrote no send row',
+       mailed === mailedBefore && sends1 === sends0);
+  }
+
+  /* ---- the empty portal: the third intake state ---- */
+  {
+    const env2 = freshEnv();
+    await bootstrapAdmin(env2);
+    const admin2 = (await login(env2, 'trever', 'FirstAdminPass1')).cookie;
+    const j2 = await jsonOf(await call(env2, '/assistant/command',
+      { method: 'POST', cookie: admin2, body: { text: 'intakes', context: {} } }));
+    ok('with neither new nor dormant intakes, the answer says so and offers the three quiet doors',
+       /No new intakes are waiting for review\./.test(j2.text)
+       && /No new or dormant intakes currently need attention\./.test(j2.text)
+       && j2.actions.some(a => a.label === 'PREPARE AN INTAKE' && a.say === 'prepare an intake')
+       && j2.actions.some(a => a.label === 'FIND AN INTAKE' && a.seed === 'Find ')
+       && j2.actions.some(a => a.label === 'OPEN INTAKES' && a.navigate && a.navigate.id === 'leads'),
+       JSON.stringify(j2).slice(0, 300));
+  }
+
+  globalThis.fetch = realFetch;
 }
 
 /* ------------------------------------------------------------------ report */
