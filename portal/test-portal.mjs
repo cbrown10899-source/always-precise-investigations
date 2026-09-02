@@ -16579,7 +16579,9 @@ section('BILLCOM: not configured means invisible; configured means offered exact
   });
   ok('unconfigured, Mail Check is offered and Bill.com is a disabled Not-configured row',
      off.mailck === true && off.billBox === false
-     && /Bill\.com/.test(off.fee) && /Not configured/.test(off.fee),
+     /* the .tag chip UPPERCASES via CSS and innerText returns the RENDERED
+        text — the regex has to be case-insensitive or it fails a correct row */
+     && /Bill\.com/.test(off.fee) && /Not configured/i.test(off.fee),
      JSON.stringify(off).slice(0, 300));
 
   /* ---- the owner types the two values; the same wizard grows the box ---- */
