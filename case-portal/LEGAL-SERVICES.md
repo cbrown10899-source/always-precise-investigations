@@ -266,6 +266,120 @@ configured would have carried the Bill.com line to a private client. The wrap
 is now `billcom.ready && !CONTEXT_TAKES_PAYMENT(sendCtx)`, and a test pins the
 private email clean with Bill.com fully configured.
 
+## Addendum — Process Service adjustable flat fee (owner, 2026-09-02, second brief)
+
+### Owner brief (verbatim)
+
+> PROCESS SERVICE PRICING CHANGE
+>
+> Process Service is a flat-fee service, but the amount must be adjustable by
+> Admin before sending the rate sheet.
+>
+> Default: Standard Flat Fee — $250
+>
+> In the Admin Send Rate Sheet / pricing controls for Process Service, provide:
+>
+> Pricing:
+> (•) Standard Flat Fee — $250
+> ( ) Custom Flat Fee — $______
+>
+> If Custom Flat Fee is selected:
+> - require Admin to enter the dollar amount
+> - validate a positive currency amount
+> - show the entered amount in preview before sending
+>
+> Example: Custom Flat Fee — $375
+>
+> The client-facing rate sheet/email must then show:
+>
+> PROCESS SERVICE
+> $375 Flat Fee
+>
+> It must NOT mention that the normal/default price is $250.
+>
+> Carry the selected amount through: rate-sheet preview, rate-sheet email,
+> authorization/start-assignment flow, accepted case, invoice, billing
+> balance, Record Payment, report/package billing references where applicable.
+>
+> The selected Process Service price becomes the case-specific agreed price.
+>
+> Do not convert this into hourly billing or a retainer.
+>
+> Historical cases must preserve the price they were originally accepted at.
+>
+> The $250 value should remain the Admin default only and should not overwrite
+> an existing custom case price.
+>
+> Also make the default Process Service amount configurable in the existing
+> pricing/settings architecture if a safe appropriate location already exists,
+> rather than scattering $250 throughout templates.
+>
+> Test:
+> 1. Process Service defaults to $250
+> 2. Admin sends $250 -> client sees "$250 Flat Fee"
+> 3. Admin selects Custom and enters $375 -> client sees "$375 Flat Fee"
+> 4. client never sees the unused/default $250 when Custom is selected
+> 5. accepted case retains $375 after refresh
+> 6. invoice uses $375
+> 7. changing the default later does not alter historical cases
+> 8. no hourly/minimum/retainer wording appears for Process Service
+
+### Derived decisions
+
+**D11 — the case-specific agreed price is `case_retainer.retainer_amount`,
+which the fixed model already reads stored-first.** "The selected Process
+Service price becomes the case-specific agreed price" is exactly the
+`agreedRetainer` mechanism D7 already wired: `authorizationFor`,
+`retainerBlock`, the invoice, the balance and Record Payment all read the
+stored figure first and fall back to the default. So the whole case-side
+carry-through (tests 5, 6, and the Record Payment path) is one write into the
+existing column — one figure per case, LABELLED by the model, never called a
+retainer on a fixed case. No new storage.
+
+**D12 — the wizard control follows the retainer selector's own rules.**
+Standard / Custom radios on a Process Service send, Standard preselected;
+opening against a case whose stored figure differs from the default opens on
+Custom with that figure. **An untouched selector writes nothing** (the
+RET_DRAFT/`retainerTouched` rule): a send with nothing touched resolves
+stored-figure-else-default in the Worker, identical to what the screen
+showed. A touched choice writes through the existing `/cases/:no/retainer`
+writer on the way to Preview — the one writer that column has — and a
+pre-case send carries the figure unrecorded, saying so, exactly like the
+retainer path. Custom with no valid positive amount blocks with words.
+
+**D13 — the send carries `flat_fee`, refused anywhere it does not belong.**
+`emailSheet` accepts `flat_fee` only on a send whose resolved legal service is
+FIXED (400 by name otherwise), validates a positive currency amount capped
+like every money input, and resolves the sheet's figure as: explicit
+`flat_fee` → the case's stored figure → the configured default. The email is
+built from that one resolved figure, so the unused default cannot appear
+beside a custom price (test 4) — there is no second figure in the document to
+leak. The response answers `flat_fee` so the resolution is observable.
+
+**D14 — the default is configurable in Settings → Invoice defaults, and
+ACCEPTANCE SNAPSHOTS the price so a changed default cannot rewrite history.**
+`process_fee_default` joins `BILLING_DEFAULTS` (empty = the standard
+`LEGAL_FLAT.process`; a typed positive amount overrides it), resolved by ONE
+helper — `legalFlatDefault` — read by the sheets, the emails, the money
+blocks and the snapshot alike. The owner's test 7 ("changing the default
+later does not alter historical cases") is made STRUCTURAL rather than
+hoped-for: when a lead CONVERTS and its service is fixed with no agreed
+figure on record, the default in force at that moment is written as the
+case's own figure (`snapshotFixedFee`, inside `stampLead`'s converted branch
+— the one writer of 'converted'). Never overwrites an existing figure; a
+failed snapshot never fails the conversion. Locate deliberately has no
+settings override — the owner's brief adjusts Process Service only.
+
+### What was deliberately NOT done (addendum)
+
+- No fee parameter on the public intake door URL: a price in a public link
+  would be visible and tamperable, and no pricing is public.
+- `retainerForSend` was not overloaded for the fee — its PERSONAL.retainer
+  fallback belongs to the retainer product; the fee resolves through its own
+  helper.
+- No second column: the agreed figure stays in `case_retainer`, worn by the
+  model's label, exactly as D7 established.
+
 ## What was deliberately NOT done
 
 - No settings rows for the flat fees (D1) — a code constant, like every price.

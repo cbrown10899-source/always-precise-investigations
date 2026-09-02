@@ -52,7 +52,9 @@ function ok(name, cond, detail = '') {
   if (cond) { passed++; results.push(`  PASS  ${name}`); }
   else { failed++; results.push(`  FAIL  ${name}${detail ? ' — ' + detail : ''}`); }
 }
-function section(name) { results.push(`\n${name}`); }
+/* Progress streams to stderr so a stalled run says WHERE it stalled — the
+   results themselves still buffer and print at the end, unchanged. */
+function section(name) { results.push(`\n${name}`); console.error(`>> ${name}`); }
 
 /* A crashed run must still say what it saw. An uncaught Playwright timeout
    otherwise swallows the whole report — including the page-error FAILs that
@@ -16717,6 +16719,68 @@ section('LEGAL-SERVICES: the wizard generates the sheet from the service, and a 
   });
   ok('the page posts exactly the service it previewed',
      posted && posted.legal_service === 'locate', JSON.stringify(posted));
+
+  /* ---- Process Service: the Standard / Custom flat-fee control (D12) ---- */
+  await page.evaluate(async () => { SHEET_WIZ = null; TAB = 'sheets'; OPEN_SHEET = 'legal'; paint(); });
+  await page.waitForTimeout(200);
+  await page.locator('[data-act="shWiz"][data-context="legal"]').click();
+  await page.waitForSelector('#wiz_lsvc', { timeout: 4000 });
+  const feeCtl = await page.evaluate(() => {
+    document.querySelector('#wiz_lsvc').value = 'process';
+    wizCollect(); SHEET_WIZ.lsvcTouched = true; paint();
+    const std = document.querySelector('#wiz_fee_std');
+    return { radios: !!std && !!document.querySelector('#wiz_fee_custom'),
+             stdChecked: std ? std.checked : null,
+             label: std ? std.closest('label').innerText : '',
+             box: !!document.querySelector('#wiz_feec') };
+  });
+  ok('picking Process Service draws Standard/Custom radios, Standard preselected with the Worker-composed label',
+     feeCtl.radios && feeCtl.stdChecked === true && /\$250 Flat Fee/.test(feeCtl.label) && feeCtl.box,
+     JSON.stringify(feeCtl));
+  const feeCustom = await page.evaluate(async () => {
+    document.querySelector('#wiz_fee_custom').checked = true;
+    document.querySelector('#wiz_feec').value = '375';
+    wizCollect(); SHEET_WIZ.feeTouched = true; SHEET_WIZ.feeMode = 'custom';
+    document.querySelector('#wiz_to').value = 'firm@serve.example';
+    wizCollect(); SHEET_WIZ.step = 2; paint();
+    const summary = document.querySelector('.amsheet').innerText;
+    let body = null; const real = window.fetch;
+    window.fetch = async (url, init) => {
+      if (String(url).includes('/sheets/')) { body = JSON.parse(init.body);
+        return new Response(JSON.stringify({ ok: true, sent_to: 'x', send_context: 'legal',
+          legal_service: { id: 'process', label: 'Process Service', model: 'fixed' }, flat_fee: 375,
+          included: { rate_sheet: 'x', payment_methods: [] } }),
+          { status: 200, headers: { 'content-type': 'application/json' } }); }
+      return real(url, init);
+    };
+    await wizSend(); window.fetch = real;
+    return { summary, body };
+  });
+  ok('the preview names Process Service — $375 Flat Fee and never the unused default',
+     /Process Service — \$375 Flat Fee/.test(feeCustom.summary)
+     && !/\$250/.test(feeCustom.summary), feeCustom.summary.slice(0, 300));
+  ok('and the page posts flat_fee 375 with the service',
+     feeCustom.body && feeCustom.body.flat_fee === 375
+     && feeCustom.body.legal_service === 'process', JSON.stringify(feeCustom.body));
+
+  /* An empty custom amount blocks the step with words, the retainer rule. */
+  await page.evaluate(async () => { SHEET_WIZ = null; TAB = 'sheets'; OPEN_SHEET = 'legal'; paint(); });
+  await page.waitForTimeout(200);
+  await page.locator('[data-act="shWiz"][data-context="legal"]').click();
+  await page.waitForSelector('#wiz_lsvc', { timeout: 4000 });
+  const feeErr = await page.evaluate(async () => {
+    document.querySelector('#wiz_lsvc').value = 'process';
+    wizCollect(); SHEET_WIZ.lsvcTouched = true; paint();
+    document.querySelector('#wiz_fee_custom').checked = true;
+    wizCollect(); SHEET_WIZ.feeMode = 'custom'; SHEET_WIZ.feeTouched = true;
+    document.querySelector('#wiz_to').value = 'firm@serve.example';
+    wizCollect();
+    const okd = await wizFeeSave();
+    return { okd, err: SHEET_WIZ.err };
+  });
+  ok('custom with no amount refuses in words before Preview',
+     feeErr.okd === false && /dollar amount above zero/.test(feeErr.err), JSON.stringify(feeErr));
+  await page.evaluate(() => { SHEET_WIZ = null; paint(); });
 
   /* ---- a lead-card wizard preselects the case's own service ---- */
   await page.evaluate(async () => { SHEET_WIZ = null; TAB = 'leads'; paint(); });

@@ -717,6 +717,23 @@ with no context guard, so a private send with Bill.com configured would have
 carried the Bill.com line — `/sheets` excluded the private card, the email
 path did not. Guarded with `CONTEXT_TAKES_PAYMENT` and pinned from the wire.
 
+**Process Service is adjustable (addendum, owner 2026-09-02, D11–D14).** The
+send wizard offers **Standard Flat Fee / Custom Flat Fee** on Process Service
+only; the chosen amount is the WHOLE document ("$375 Flat Fee", never the
+unused default beside it), rides the send as `flat_fee` (validated positive,
+refused by name on any non-fixed send), and **becomes the case-specific
+agreed price through the one writer that figure already has** —
+`case_retainer.retainer_amount`, worn by the model's label, which is what
+carries it into the workspace, the invoice, the balance and Record Payment
+with no new plumbing. The untouched-selector rule applies: opening a wizard
+writes nothing, and a case's agreed figure can never be reset by previewing
+an email. The default resolves through **`legalFlatDefault`** — the
+admin-typed `process_fee_default` in Settings → Invoice defaults, else
+`LEGAL_FLAT` — and **acceptance snapshots the fee in force onto the case**
+(`snapshotFixedFee`, inside `stampLead`'s converted branch, never
+overwriting), which is what makes "changing the default later does not alter
+historical cases" structural rather than hoped-for.
+
 No schema change, no portal-setup dispatch. Insurance and Private pricing are
 untouched, asserted by the suites' existing guards.
 

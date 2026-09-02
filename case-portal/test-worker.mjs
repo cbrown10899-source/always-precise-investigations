@@ -5010,12 +5010,13 @@ section('Invoice defaults: admin reads and writes them, and the prefix is bounde
 
   const read = await jsonOf(await call(env, '/billing-settings', { cookie: admin }));
   ok('an admin reads the defaults', read.settings && typeof read.settings === 'object');
-  ok('and they are the twelve the backend supports, no more',
+  ok('and they are the thirteen the backend supports, no more',
      ['company_name', 'company_line', 'invoice_prefix', 'terms_insurance', 'terms_private',
       'payment_instructions', 'invoice_footer', 'remit_address',
-      'billcom_enabled', 'billcom_payment_url', 'billcom_org_id', 'billcom_environment']
+      'billcom_enabled', 'billcom_payment_url', 'billcom_org_id', 'billcom_environment',
+      'process_fee_default']
        .every(k => k in read.settings)
-     && Object.keys(read.settings).length === 12, JSON.stringify(Object.keys(read.settings)));
+     && Object.keys(read.settings).length === 13, JSON.stringify(Object.keys(read.settings)));
   ok('the remittance address DEFAULTS TO EMPTY — nothing invents one (MAIL-CHECK.md D2)',
      read.settings.remit_address === '');
   ok('every Bill.com field DEFAULTS TO EMPTY — prepared, not connected (BILLCOM.md)',
@@ -16886,6 +16887,140 @@ section('Legal services — the fixed sheet says $250 Flat Fee and nothing hourl
     ok('the sheet-email Bill.com wrap is context-guarded (D10, pinned in source too)',
        src.includes('billcom.ready && !CONTEXT_TAKES_PAYMENT(sendCtx)'));
   }
+
+  globalThis.fetch = realFetch;
+}
+
+/* ===== Process Service adjustable flat fee (LEGAL-SERVICES.md addendum,
+   owner 2026-09-02) — the eight enumerated tests plus the boundaries. ===== */
+section('Process Service — standard and custom flat fee, and history keeps its price');
+{
+  const realFetch = globalThis.fetch;
+  let last = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) { last = JSON.parse(init.body); return new Response('{"id":"re_1"}', { status: 200 }); }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '200';
+  env.INGEST_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const send = (extra = {}) => call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body: { to: 'firm@serve.example', send_context: 'legal',
+      legal_service: 'process', ...extra } });
+
+  /* ---- T1: the default, and where the wizard learns it ---- */
+  let d = await jsonOf(await call(env, '/sheets', { cookie: admin }));
+  const proc = d.legal_services.find(s => s.id === 'process');
+  const loc = d.legal_services.find(s => s.id === 'locate');
+  ok('T1 Process Service defaults to $250, and only Process is adjustable',
+     proc.adjustable === true && proc.fee_default === 250 && proc.price_label === '$250 Flat Fee'
+     && loc.adjustable === false && loc.fee_default === 250, JSON.stringify({ proc, loc }));
+
+  /* ---- T2: standard send ---- */
+  last = null;
+  let res = await send();
+  let j = await jsonOf(res);
+  ok('T2 a standard send shows the firm $250 Flat Fee',
+     res.status === 200 && j.flat_fee === 250
+     && j.included.rate_sheet === 'Process Service — $250 Flat Fee'
+     && last.text.includes('$250 Flat Fee'));
+
+  /* ---- T3/T4: custom send ---- */
+  last = null;
+  res = await send({ flat_fee: 375 });
+  j = await jsonOf(res);
+  ok('T3 a custom $375 send shows the firm $375 Flat Fee',
+     res.status === 200 && j.flat_fee === 375
+     && j.included.rate_sheet === 'Process Service — $375 Flat Fee'
+     && last.text.includes('$375 Flat Fee') && last.subject.includes('$375 Flat Fee'));
+  ok('T4 the unused default appears NOWHERE on a custom send',
+     !last.text.includes('250') && !last.html.includes('250'),
+     (last.text.match(/.{0,30}250.{0,30}/g) || []).join(' | '));
+  ok('T8 and the custom sheet still carries no hourly, minimum or retainer wording',
+     ['retainer', 'hourly', 'per hour', '/hr', 'minimum', 'deposit', 'additional time']
+       .every(word => !last.text.toLowerCase().includes(word)
+                   && !last.html.toLowerCase().includes(word)));
+
+  /* ---- the refusals: named, never silently dropped ---- */
+  ok('a non-positive fee refuses by name',
+     (await jsonOf(await send({ flat_fee: 0 }))).code === 'bad_flat_fee'
+     && (await jsonOf(await send({ flat_fee: 'lots' }))).code === 'bad_flat_fee');
+  res = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'firm@serve.example', send_context: 'legal', legal_service: 'general', flat_fee: 375 } });
+  ok('a flat fee on a retainer-model service refuses by name',
+     res.status === 400 && (await jsonOf(res)).code === 'flat_fee_not_fixed');
+  res = await call(env, '/sheets/insurance_assignment/email', { method: 'POST', cookie: admin,
+    body: { to: 'adjuster@example.test', flat_fee: 375 } });
+  ok('and on an insurance send', res.status === 400
+     && (await jsonOf(res)).code === 'flat_fee_not_fixed');
+
+  /* ---- T5/T6: the agreed price on the case, and its invoice ---- */
+  await ingest(env, { case_no: 'API-PSF-1', assignment: 'legal', legal_service: 'process',
+    firm_name: 'Serve & Co', attorney_name: 'S. Erver', client_name: 'S. Erver',
+    client_email: 'firm@serve.example', objective: 'Serve the summons' });
+  await call(env, '/cases/API-PSF-1/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 375 } });
+  let ws = await jsonOf(await call(env, '/cases/API-PSF-1/workspace', { cookie: admin }));
+  ok('T5 the accepted case retains $375 on a fresh read — flat fee, never a retainer',
+     ws.authorization.retainer.model === 'fixed' && ws.authorization.retainer.amount === 375
+     && ws.authorization.legal_pricing.fee === 375);
+  const inv = (await jsonOf(await call(env, '/cases/API-PSF-1/invoices',
+    { method: 'POST', cookie: admin, body: {} }))).invoice;
+  const invRead = await jsonOf(await call(env, `/invoices/${inv.id}`, { cookie: admin }));
+  ok('T6 the invoice block uses $375',
+     invRead.invoice.retainer.model === 'fixed' && invRead.invoice.retainer.amount === 375);
+  /* A send against the case with nothing explicit resolves ITS figure. */
+  last = null;
+  res = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'firm@serve.example', case_no: 'API-PSF-1' } });
+  j = await jsonOf(res);
+  ok('an untouched send against the case carries the case\'s own $375',
+     res.status === 200 && j.flat_fee === 375 && last.text.includes('$375 Flat Fee'));
+
+  /* ---- T7: acceptance snapshots the price; a changed default alters nothing ---- */
+  await ingest(env, { case_no: 'API-PSF-OLD', assignment: 'legal', legal_service: 'process',
+    firm_name: 'History LLP', attorney_name: 'H. Old', client_name: 'H. Old',
+    client_email: 'h@history.example', objective: 'Old serve' });
+  await call(env, '/leads/API-PSF-OLD/status', { method: 'POST', cookie: admin,
+    body: { status: 'converted' } });
+  const snap = await env.DB.prepare(
+    "SELECT retainer_amount FROM case_retainer WHERE case_no = 'API-PSF-OLD'").first();
+  ok('T7a converting a fixed lead snapshots the fee in force onto the case',
+     snap && Number(snap.retainer_amount) === 250, JSON.stringify(snap));
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { process_fee_default: '300' } });
+  d = await jsonOf(await call(env, '/sheets', { cookie: admin }));
+  ok('T7b the configured default takes over for NEW quotes',
+     d.legal_services.find(s => s.id === 'process').fee_default === 300
+     && d.legal_services.find(s => s.id === 'process').price_label === '$300 Flat Fee'
+     && d.legal_services.find(s => s.id === 'locate').fee_default === 250);
+  ws = await jsonOf(await call(env, '/cases/API-PSF-OLD/workspace', { cookie: admin }));
+  const ws2 = await jsonOf(await call(env, '/cases/API-PSF-1/workspace', { cookie: admin }));
+  ok('T7c neither historical case moved — the accepted price is the case\'s own',
+     ws.authorization.retainer.amount === 250 && ws2.authorization.retainer.amount === 375);
+  last = null;
+  res = await send();
+  j = await jsonOf(res);
+  ok('T7d a fresh standard send now quotes the configured $300',
+     res.status === 200 && j.flat_fee === 300 && last.text.includes('$300 Flat Fee'));
+  ok('T7e converting again never overwrites a stored figure',
+     (await call(env, '/leads/API-PSF-1/status', { method: 'POST', cookie: admin,
+        body: { status: 'converted' } })).status === 200
+     && Number((await env.DB.prepare(
+        "SELECT retainer_amount FROM case_retainer WHERE case_no = 'API-PSF-1'").first()).retainer_amount) === 375);
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { process_fee_default: '' } });
+  ok('T7f blanking the setting returns the standard default',
+     (await jsonOf(await call(env, '/sheets', { cookie: admin })))
+       .legal_services.find(s => s.id === 'process').fee_default === 250);
+  ok('a garbage default is ignored rather than quoted',
+     (await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+        body: { process_fee_default: 'free' } })).status === 200
+     && (await jsonOf(await call(env, '/sheets', { cookie: admin })))
+        .legal_services.find(s => s.id === 'process').fee_default === 250);
 
   globalThis.fetch = realFetch;
 }

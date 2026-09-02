@@ -37,7 +37,49 @@ item is finished.
 
 ---
 
-# 👋 START HERE — session handoff, 2026-08-21
+# 👋 START HERE — session handoff, 2026-09-02
+
+## 🤖 API ASSISTANT: PAUSED AT SAFE CHECKPOINT — NOT ABANDONED
+
+**State: NOT STARTED — and that is the whole checkpoint.** The owner's master
+specification for the API Assistant (internal operations copilot, Beta/dry-run
+only) arrived 2026-09-02, and the pause instruction arrived before any
+Assistant code was written. Verified by inspection: no Assistant branch, no
+Assistant commits, no Assistant files, no uncommitted Assistant work — the
+only "assistant" strings in the codebase are the *Legal Assistant* profile
+role and the paralegal/legal-assistant field labels, which predate the spec.
+Nothing was preserved because nothing existed; nothing was lost.
+
+**RESUME AFTER PRIOR PORTAL UNITS ARE GREEN** (the owner's Phase 2 gate).
+When resuming: the full master spec is in the owner's messages of 2026-09-02
+(sections 1–38 plus the resume message's Unit 1–9 plan). Version 1 is BETA /
+DRY RUN ONLY — no client email, no consequential actions, server-side
+enforcement, provider-agnostic adapter with NO credentials until the owner
+approves a provider. Final required state: ASSISTANT BETA = ON, LIVE CLIENT
+ACTIONS = OFF, DESTRUCTIVE AI ACTIONS = OFF, LIVE AI PAYMENT ACTIONS = OFF.
+
+**Current window (2026-09-01 → 02), newest first — each shipped through the
+full chain (CODED → TESTED → PUSHED → MERGED → DEPLOYED), suites green at
+every merge:**
+
+| Unit | PR / SHA | State |
+| --- | --- | --- |
+| **Service-aware Legal** — five services, three pricing models (`LEGAL-SERVICES.md`) | in flight on `claude/app-crashes-lockups-debug-psf6zd` at `cb915cd` | worker 2991/0 · intake 558/0 · deploy guard 86/0 · visitor 47/0 · e2e gate running at handoff — see the PR for the final state |
+| **Bill.com prepared, gated, connected to nothing** (`BILLCOM.md`) | #259 `a2ce137` | ✅ DEPLOYED — both workflows green at `a2ce137a`. **Stays dark until the owner says the account is ready** |
+| **Three jobs**: live intake-delete 500 fix (API-20260901-3207, the `?1` UNION-bind class), Mail Check tickable send option, queue reconciliation | #258 `14ba2d2` | ✅ DEPLOYED |
+| **Mail Check** for Legal + Insurance (`MAIL-CHECK.md`) | #257 `ede24f6` | ✅ DEPLOYED. Remittance address still **owner-owed** at Settings → Invoice defaults |
+| **Dashboard delete controls** (`DASH-DELETE.md`, `feed_hidden`) | #256 `86fd715` | ✅ DEPLOYED + portal-setup run 33570951001 applied the table |
+| **MTS decoder lifecycle fix** (owner's real 0000.MTS) | #255 `eaf66d6` | ✅ DEPLOYED — owner's device test passed |
+| **MTS/M2TS Video Timestamp** | #254 `d8a6924` | ✅ DEPLOYED |
+
+**Owner-owed inputs (nothing buildable is blocked on the builder):** the
+remittance mailing address (Settings → Invoice defaults); the Bill.com A-list
+when the account exists (enable word, https payment link, org id,
+environment); the Intake Archive / Sample Cleanup **Part 2 brief** (never
+arrived — do not infer it); an SMS provider choice if SMS alerting is wanted;
+the PORTAL-OPS Permissions spec re-send (arrived corrupted — do not invent).
+
+# 👋 Previous handoff — 2026-08-21
 
 **A fresh session begins at this block.** Everything below it is the durable
 queue; everything here is where the work actually stands. **Verify repository

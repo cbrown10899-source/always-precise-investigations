@@ -4997,12 +4997,89 @@ function wizLegalSvcHtml(w){
     <p class="hint">${!svc
       ? "Without a service the firm receives the full legal retainer sheet, exactly as before."
       : svc.model === "fixed"
-      ? `The firm receives the concise <b>${esc(svc.sheet_name || svc.label)}</b> sheet &mdash;
+      ? `The firm receives the concise <b>${esc(wizFeeSheetName(w) || svc.label)}</b> sheet &mdash;
          the flat fee is the full price, and no retainer, hourly rate or minimum appears on it.`
       : svc.model === "custom"
       ? "The retainer sheet goes, with the figure you agree below — the existing custom-retainer workflow."
       : "The retainer sheet goes — this service bills retainer and hourly, exactly as before."}</p>
+    ${wizFeeHtml(w)}
   </div>`;
+}
+
+/* THE ADJUSTABLE FLAT FEE (LEGAL-SERVICES.md D12, owner 2026-09-02) — the
+   Standard / Custom control for Process Service. The Standard label is the
+   Worker-composed price_label so no figure lives in this file; the custom
+   amount is required and validated before Preview; and the retainerTouched
+   rule applies — an untouched control writes nothing and posts nothing, so a
+   case's own agreed figure can never be reset by looking at an email. */
+function wizFeeAdjustable(w){
+  const svc = wizLegalSvc(w);
+  return !!(svc && svc.model === "fixed" && svc.adjustable);
+}
+function wizFeeWanted(w){
+  const svc = wizLegalSvc(w);
+  if(!svc || svc.model !== "fixed") return null;
+  if(!wizFeeAdjustable(w)) return svc.fee_default;
+  if((w.feeMode || "std") === "std") return svc.fee_default;
+  const n = Number(String(w.feeCustom == null ? "" : w.feeCustom).replace(/[$,\s]/g, ""));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+/* The name of the document the preview promises — composed from the resolved
+   fee exactly the way the Worker composes it, so the screen and the email
+   cannot disagree about the figure. */
+function wizFeeSheetName(w){
+  const svc = wizLegalSvc(w);
+  if(!svc || svc.model !== "fixed") return null;
+  const fee = wizFeeWanted(w);
+  return fee == null ? svc.sheet_name
+    : `${svc.label} — $${Number(fee).toLocaleString("en-US")} Flat Fee`;
+}
+function wizFeeHtml(w){
+  if(!wizFeeAdjustable(w)) return "";
+  const svc = wizLegalSvc(w);
+  const mode = w.feeMode || "std";
+  return `<div style="margin:8px 0 0 2px">
+    <div style="font-size:.85rem;font-weight:600;margin-bottom:4px">Pricing</div>
+    <label class="cap" style="display:flex"><input type="radio" name="wiz_fee" id="wiz_fee_std"
+        data-act="wizFeePick" value="std" ${mode === "std" ? "checked" : ""}>
+      <span>Standard Flat Fee &mdash; ${esc(svc.price_label || "")}</span></label>
+    <label class="cap" style="display:flex"><input type="radio" name="wiz_fee" id="wiz_fee_custom"
+        data-act="wizFeePick" value="custom" ${mode === "custom" ? "checked" : ""}>
+      <span>Custom Flat Fee &mdash; $</span>
+      <input id="wiz_feec" inputmode="decimal" placeholder="e.g. 375" style="width:110px;margin-left:4px"
+        data-act-input="wizFeeDirty" value="${esc(w.feeCustom || "")}"></label>
+    <p class="hint">The chosen amount is the full price on the sheet and becomes this case&rsquo;s
+      agreed fee. The unused option never appears on anything the firm sees.</p>
+  </div>`;
+}
+
+/* Written on the way to Preview, the wizRetainerSave shape: a TOUCHED choice
+   becomes the case's agreed fee through the one writer that figure has; an
+   untouched control writes nothing; with no case the figure is carried on
+   the send and said plainly to be unrecorded. */
+async function wizFeeSave(){
+  const w = SHEET_WIZ;
+  if(!w || !wizFeeAdjustable(w)) return true;
+  const want = wizFeeWanted(w);
+  if((w.feeMode || "std") === "custom" && want == null){
+    w.err = "Enter the custom flat fee as a dollar amount above zero.";
+    return false;
+  }
+  if(!w.feeTouched) return true;
+  if(!w.caseNo){ w.feeOffered = want; w.feeUnrecorded = true; return true; }
+  if(w.caseFlatFee != null && want === w.caseFlatFee) return true;
+  try{
+    await api(`/cases/${encodeURIComponent(w.caseNo)}/retainer`,
+      {method:"POST", body:{retainer_amount: want}});
+    w.caseFlatFee = want;
+    w.feeUnrecorded = false;
+    return true;
+  }catch(e){
+    if(/not found/i.test(e.message || "")){
+      w.feeOffered = want; w.feeUnrecorded = true; return true;
+    }
+    w.err = e.message; return false;
+  }
 }
 
 /* THE AGREED RETAINER, CHOSEN BEFORE THE SEND (PAYMENTS.md, owner 2026-08-15).
@@ -5173,6 +5250,17 @@ async function wizSheetLoad(){
       if(w.legal && !w.lsvcTouched && r.case_legal_service !== undefined){
         w.legalService = r.case_legal_service || "";
       }
+      /* The fee control opens on the case's own figure (D12): at the default
+         it opens on Standard; a different agreed figure opens on Custom with
+         that figure in the box — never on top of a choice already made. */
+      if(r.case_flat_fee !== undefined && !w.feeTouched){
+        w.caseFlatFee = r.case_flat_fee;
+        const fsvc = wizLegalSvc(w);
+        if(fsvc && fsvc.adjustable && r.case_flat_fee != null){
+          if(r.case_flat_fee === fsvc.fee_default){ w.feeMode = "std"; w.feeCustom = ""; }
+          else { w.feeMode = "custom"; w.feeCustom = String(r.case_flat_fee); }
+        }
+      }
       /* The selector opens on what the case ALREADY agreed — but never on top
          of a choice the admin has just made. Without the `retainerTouched`
          guard the re-read on the way to Preview would snap the figure they just
@@ -5231,12 +5319,14 @@ function sheetWizardHtml(){
       <dl class="detail">
         <dt>Sheet</dt><dd>${esc(wizLegalFixed(w)
           /* A fixed service sends the concise flat-fee document the Worker
-             builds — the preview must name THAT, not the retainer card this
-             screen renders (LEGAL-SERVICES.md D5). */
-          ? ((wizLegalSvc(w) || {}).sheet_name || (wizLegalSvc(w) || {}).label || w.sheet)
+             builds — the preview must name THAT, with the RESOLVED fee, not
+             the retainer card this screen renders (LEGAL-SERVICES.md D5/D12). */
+          ? (wizFeeSheetName(w) || (wizLegalSvc(w) || {}).label || w.sheet)
           : (sheet.name || w.sheet))}</dd>
         ${wizContext(w) === "legal" && wizLegalSvc(w) ? `<dt>Legal service</dt><dd>${
-          esc(wizLegalSvc(w).label)}${wizLegalSvc(w).price_label
+          esc(wizLegalSvc(w).label)}${wizLegalFixed(w) && wizFeeWanted(w) != null
+            ? ` — $${esc(Number(wizFeeWanted(w)).toLocaleString("en-US"))} Flat Fee`
+            : wizLegalSvc(w).price_label
             ? ` — ${esc(wizLegalSvc(w).price_label)}` : ` — ${esc(wizLegalSvc(w).model_label || "")}`}</dd>` : ""}
         <dt>To</dt><dd>${esc(w.to)}</dd>
         ${w.caseNo ? `<dt>Case</dt><dd>${esc(w.caseNo)}</dd>` : ""}
@@ -5272,7 +5362,11 @@ function sheetWizardHtml(){
         Sending payment instructions does not mark the ${wizLegalFixed(w) ? "fee" : "retainer"} paid.</p>`;
   return `<div class="amwrap" data-act="wizClose">
     <div class="amsheet" data-act="amNoop" role="dialog" aria-modal="true" aria-label="Send the rate sheet">
-      <div class="amhead"><b>Send &mdash; ${esc(sheet.selector_label || sheet.name || "")}</b>
+      <div class="amhead"><b>Send &mdash; ${esc(wizLegalFixed(w)
+        /* A fixed send's dialog names the document it will actually send —
+           not the retainer card whose route it shares (D5/D12). */
+        ? `Legal / Law Firm — ${(wizLegalSvc(w) || {}).label || ""}`
+        : (sheet.selector_label || sheet.name || ""))}</b>
         <button class="amx" data-act="wizClose" aria-label="Close">&times;</button></div>
       ${rail}
       ${body}
@@ -6532,6 +6626,11 @@ const BILL_FIELDS = [
   ["billcom_payment_url",  "Bill.com payment link (https://…) — from your Bill.com account, once created", "text"],
   ["billcom_org_id",       "Bill.com organization / account ID (optional reference)", "text"],
   ["billcom_environment",  "Bill.com environment — sandbox or production (optional)", "text"],
+  /* LEGAL-SERVICES.md D14 — the DEFAULT Process Service flat fee. Blank keeps
+     the standard figure; a case's own agreed fee always outranks this, and
+     acceptance snapshots the fee in force, so changing it later cannot
+     rewrite what a historical case was accepted at. */
+  ["process_fee_default",  "Process Service default flat fee — blank = the standard figure; a case's own agreed fee always wins", "text"],
 ];
 
 async function loadBillingSettings(){
@@ -18061,6 +18160,9 @@ function wizCollect(){
   if($("wiz_retc")) SHEET_WIZ.retainerCustom = $("wiz_retc").value.trim();
   if($("wiz_pay")) SHEET_WIZ.pay = $("wiz_pay").checked;
   if($("wiz_lsvc")) SHEET_WIZ.legalService = $("wiz_lsvc").value;
+  const feeRadio = document.querySelector('input[name="wiz_fee"]:checked');
+  if(feeRadio) SHEET_WIZ.feeMode = feeRadio.value;
+  if($("wiz_feec")) SHEET_WIZ.feeCustom = $("wiz_feec").value.trim();
   if($("wiz_mailck")) SHEET_WIZ.mailCheck = $("wiz_mailck").checked;
   if($("wiz_billcom")) SHEET_WIZ.billcom = $("wiz_billcom").checked;
   const boxes = [...document.querySelectorAll(".wiz-pm")];
@@ -18093,6 +18195,12 @@ async function wizSend(){
            send with a service chosen; absent, the Worker falls back to the
            case's own marker, then to the retainer sheet. */
         ...(wizContext(w) === "legal" && w.legalService ? {legal_service: w.legalService} : {}),
+        /* The fee the preview showed rides the send whenever the admin
+           touched the control or there is no case to resolve it from —
+           otherwise the Worker resolves stored-figure-else-default, which is
+           exactly what the untouched control displayed (D12/D13). */
+        ...(wizFeeAdjustable(w) && (w.feeTouched || !w.caseNo) && wizFeeWanted(w) != null
+          ? {flat_fee: wizFeeWanted(w)} : {}),
         /* Declared only where the screen actually chose a context — a send
            from a lead card leaves it out and the case decides, exactly as
            before. */
@@ -18956,10 +19064,17 @@ document.addEventListener("click", ev => {
        holds, so the preview can never display an amount that was not stored. */
     else if(s2 > 1){
       SHEET_WIZ.err = "";
-      wizRetainerSave().then(okd => {
+      /* The flat fee saves first for the same reason the retainer does — a
+         TOUCHED choice becomes the case's agreed fee before the preview is
+         re-read, so the preview shows what the case actually holds (D12). */
+      wizFeeSave().then(okf => {
         if(!SHEET_WIZ) return;
-        if(!okd) return paint();
-        SHEET_WIZ.step = s2; paint(); wizSheetLoad();
+        if(!okf) return paint();
+        wizRetainerSave().then(okd => {
+          if(!SHEET_WIZ) return;
+          if(!okd) return paint();
+          SHEET_WIZ.step = s2; paint(); wizSheetLoad();
+        });
       });
     }
     else { SHEET_WIZ.err = ""; SHEET_WIZ.step = s2; paint(); }
@@ -19290,6 +19405,8 @@ document.addEventListener("input", ev => {
   /* Typing a custom retainer counts as choosing one. No repaint — the box the
      cursor is sitting in must not be rebuilt underneath it mid-number. */
   if(din === "wizRetDirty" && SHEET_WIZ){ SHEET_WIZ.retainerTouched = true; return; }
+  /* Typing a custom flat fee counts as choosing one — same no-repaint rule. */
+  if(din === "wizFeeDirty" && SHEET_WIZ){ SHEET_WIZ.feeTouched = true; SHEET_WIZ.feeMode = "custom"; return; }
   /* What will actually be burned in, following the typing. Only this one line
      is rewritten — a repaint would rebuild the box the cursor is in, mid-number,
      the same reason `vstProgress` exists. */
@@ -19341,6 +19458,9 @@ document.addEventListener("input", ev => {
   }
   if(ev.target.dataset && ev.target.dataset.act === "wizLegalSvcPick" && SHEET_WIZ){
     wizCollect(); SHEET_WIZ.lsvcTouched = true; SHEET_WIZ.err = ""; paint();
+  }
+  if(ev.target.dataset && ev.target.dataset.act === "wizFeePick" && SHEET_WIZ){
+    wizCollect(); SHEET_WIZ.feeTouched = true; SHEET_WIZ.err = ""; paint();
   }
   /* The quick-legal service pick relabels the fee input (fixed → "Agreed
      fee") — captured first, so the repaint discards nothing typed. */

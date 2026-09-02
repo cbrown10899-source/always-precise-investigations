@@ -701,13 +701,16 @@ function sheetCards(retainer) {
    whole point of this sheet is that they do not apply. The tests grep for the
    vocabulary, so a reworded leak still fails.
 
-   THE FIGURE COMES FROM LEGAL_FLAT AND NOWHERE ELSE — no digit literal lives
-   in this function (D1), and a source test pins that. Payment information is
-   the Mail Check line (and Bill.com only when the adapter answers ready, via
-   the same withBillcomLine every non-private send goes through). */
-function legalFixedSheet(svc) {
+   THE FIGURE IS PASSED IN, RESOLVED BY THE CALLER — explicit per-send fee,
+   else the case's own agreed figure, else legalFlatDefault (D13/D14) — and
+   no digit literal lives in this function (D1); a source test pins that. The
+   document is built from that ONE figure, so an unused default cannot appear
+   beside a custom price. Payment information is the Mail Check line (and
+   Bill.com only when the adapter answers ready, via the same withBillcomLine
+   every non-private send goes through). */
+function legalFixedSheet(svc, feeAmount) {
   const money = n => '$' + Number(n).toLocaleString('en-US');
-  const fee = money(LEGAL_FLAT[svc.id]);
+  const fee = money(feeAmount);
   return {
     id: 'private_retainer',
     type: 'flat',
@@ -998,6 +1001,48 @@ const legalServiceById = id => LEGAL_SERVICES[String(id == null ? '' : id).trim(
 const LEGAL_SVC_LIST = Object.values(LEGAL_SERVICES).map(s => ({
   id: s.id, label: s.label, model: s.model, model_label: LEGAL_MODEL_LABEL[s.model],
 }));
+
+/* THE DEFAULT FEE A FIXED SERVICE IS QUOTED AT, resolved in ONE place
+   (LEGAL-SERVICES.md D14). Process Service may be given an admin-typed
+   default in Settings → Invoice defaults; anything absent, non-positive or
+   unparseable falls back to LEGAL_FLAT — a sheet must never print $0 or NaN
+   at a firm. Locate deliberately has no override: the owner's adjustable-fee
+   brief names Process Service only. A CASE-specific agreed figure outranks
+   whatever this answers, everywhere it is read. */
+async function legalFlatDefault(env, id) {
+  if (id === 'process') {
+    const cfg = await billingSettings(env);
+    const n = Number(String(cfg.process_fee_default || '').replace(/[$,\s]/g, ''));
+    if (Number.isFinite(n) && n > 0 && n <= 1000000) return Math.round(n * 100) / 100;
+  }
+  return LEGAL_FLAT[id];
+}
+
+/* ACCEPTANCE FIXES THE PRICE (D14 — the owner's "historical cases must
+   preserve the price they were originally accepted at", made structural).
+   When a lead CONVERTS and its service is fixed with no agreed figure on
+   record, the default in force RIGHT NOW is written as the case's own
+   figure — so a later change to the default cannot rewrite what this case
+   was accepted at. Never overwrites: an existing figure is the office's own
+   record. Best-effort: a failed snapshot must never fail the conversion,
+   and the derivation still answers sensibly until someone converts again
+   or agrees a figure by hand. */
+async function snapshotFixedFee(env, caseNo, userId) {
+  try {
+    const sub = await env.DB.prepare(
+      'SELECT kind, payload FROM submissions WHERE case_no = ?').bind(caseNo).first();
+    const svc = legalServiceForSub(sub);
+    if (!svc || svc.model !== 'fixed') return;
+    const ret = await env.DB.prepare(
+      'SELECT retainer_amount FROM case_retainer WHERE case_no = ?').bind(caseNo).first();
+    if (ret && ret.retainer_amount != null) return;
+    const fee = await legalFlatDefault(env, svc.id);
+    await env.DB.prepare(
+      `INSERT INTO case_retainer (case_no, retainer_amount, updated_by, updated_at)
+       VALUES (?, ?, ?, ?) ON CONFLICT(case_no) DO NOTHING`)
+      .bind(caseNo, fee, userId || null, nowIso()).run();
+  } catch { /* the conversion is the point; the snapshot is a record of it */ }
+}
 
 /* The service a submission's own record names — one reader, the `isLegalSub`
    rule: never inferred from a recipient, a sheet, or the legal_intake table.
@@ -1635,6 +1680,35 @@ async function emailSheet(request, env, user, id) {
     legalSvc = legalServiceForSub(caseSub);
   }
 
+  /* THE FEE THIS FIXED SEND CARRIES (LEGAL-SERVICES.md D12/D13). `flat_fee`
+     is the admin's per-send choice — the Custom Flat Fee box, or a touched
+     Standard — validated as a positive currency amount and REFUSED BY NAME on
+     any send whose service is not a fixed one: silently dropping it would
+     email a different figure than the screen chose. Absent, the case's own
+     agreed figure answers, then the configured default — so an untouched
+     wizard resolves to exactly what it displayed. */
+  let flatFee = null;
+  if (body.flat_fee !== undefined && body.flat_fee !== null && String(body.flat_fee).trim() !== '') {
+    if (!legalSvc || legalSvc.model !== 'fixed') {
+      return json({ error: 'A flat fee describes a fixed-price legal service — this send is not '
+        + 'one. Pick Person Locate / Skip Trace or Process Service, or leave the fee out.',
+        code: 'flat_fee_not_fixed' }, 400);
+    }
+    const n = Number(String(body.flat_fee).replace(/[$,\s]/g, ''));
+    if (!(Number.isFinite(n) && n > 0 && n <= 1000000)) {
+      return json({ error: 'Enter the flat fee as a dollar amount above zero.',
+        code: 'bad_flat_fee' }, 400);
+    }
+    flatFee = Math.round(n * 100) / 100;
+  }
+  if (legalSvc && legalSvc.model === 'fixed' && flatFee == null) {
+    const stored = linkedCase ? await env.DB.prepare(
+      'SELECT retainer_amount FROM case_retainer WHERE case_no = ?').bind(linkedCase).first() : null;
+    flatFee = stored && stored.retainer_amount != null
+      ? Number(stored.retainer_amount)
+      : await legalFlatDefault(env, legalSvc.id);
+  }
+
   /* THE PAYMENT HALF OF THE BOUNDARY, AND IT IS ONE CHECK (Unit 28 moved it
      here). It used to live inside the `if (lead)` block above, which was
      correct only while a legal send was impossible without a case: the moment
@@ -1706,7 +1780,7 @@ async function emailSheet(request, env, user, id) {
      concise $250 Person Locate rate sheet". General, Surveillance and Custom
      stay the legal card, which IS the existing legal pricing. */
   const sheet = legalSvc && legalSvc.model === 'fixed'
-    ? legalFixedSheet(legalSvc)
+    ? legalFixedSheet(legalSvc, flatFee)
     : sheetForContext(id, sendCtx, retainer);
 
   /* The Options step (UIBUILD P18): include the intake, or not. Which intake
@@ -1845,6 +1919,9 @@ async function emailSheet(request, env, user, id) {
        service was named or on file, which is the pre-unit send exactly. */
     legal_service: legalSvc
       ? { id: legalSvc.id, label: legalSvc.label, model: legalSvc.model } : undefined,
+    /* The figure the fixed document actually carried — observable, so the
+       screen, the record and the email cannot quietly disagree (D13). */
+    flat_fee: legalSvc && legalSvc.model === 'fixed' ? flatFee : undefined,
     included: {
       rate_sheet: sheet.name,
       intake: intakeDoor ? intakeDoor.label : null,
@@ -4061,6 +4138,9 @@ async function stampLead(env, user, caseNo, status, { manual = false } = {}) {
     `INSERT INTO lead_status (case_no, status, set_by, set_at) VALUES (?1, ?2, ?3, ?4)
      ON CONFLICT(case_no) DO UPDATE SET status = ?2, set_by = ?3, set_at = ?4`)
     .bind(caseNo, status, user ? user.id : null, nowIso()).run();
+  /* This is the one writer of 'converted', wherever the button lives — so the
+     acceptance-time fee snapshot cannot be forgotten by a new door (D14). */
+  if (status === 'converted') await snapshotFixedFee(env, caseNo, user ? user.id : null);
   return true;
 }
 const coarseFor = stage =>
@@ -5429,7 +5509,10 @@ async function authorizationFor(env, caseNo, forAdmin) {
          agreedRetainer principle applied to a flat fee. */
       const fixed = !!(legalPricing && legalPricing.model === 'fixed');
       const amount = ret && ret.retainer_amount != null ? Number(ret.retainer_amount)
-        : fixed ? legalPricing.fee : PERSONAL.retainer;
+        : fixed ? await legalFlatDefault(env, legalPricing.service) : PERSONAL.retainer;
+      /* The panel's own fee line reads the CASE's figure, so the money block
+         and the Legal panel cannot show two numbers for one case (D11). */
+      if (fixed) legalPricing.fee = amount;
       const applied = Math.round(hoursUsed * rate * 100) / 100;
       const paid = await retainerPaid(env, caseNo);
       /* The legacy single receipt, still shown when it is the only record —
@@ -8100,6 +8183,13 @@ const BILLING_DEFAULTS = {
   billcom_payment_url: '',
   billcom_org_id: '',
   billcom_environment: '',
+  /* LEGAL-SERVICES.md D14 (owner, 2026-09-02) — the DEFAULT Process Service
+     flat fee. Empty means the standard LEGAL_FLAT figure; a typed positive
+     amount overrides it for everything that has no case-specific figure of
+     its own. Historical cases are safe from a change here because acceptance
+     SNAPSHOTS the fee in force onto the case (snapshotFixedFee) and a stored
+     figure always wins. */
+  process_fee_default: '',
 };
 
 async function billingSettings(env) {
@@ -8192,7 +8282,7 @@ async function retainerBlock(env, inv, sub) {
   const ret = await env.DB.prepare(
     'SELECT retainer_amount, received FROM case_retainer WHERE case_no = ?').bind(inv.case_no).first();
   const amount = ret && ret.retainer_amount != null ? Number(ret.retainer_amount)
-    : fixed ? legalPricing.fee : PERSONAL.retainer;
+    : fixed ? await legalFlatDefault(env, legalPricing.service) : PERSONAL.retainer;
   /* A DRAFT INVOICE IS NOT EARNED MONEY (owner decision, 2026-08-21): "UNSENT
      or DRAFT invoices MUST NOT reduce the client-facing retainer balance. Only
      finalized/issued billable work may affect the client-facing retainer
@@ -13509,6 +13599,21 @@ async function route(request, env) {
     const caseSubRow = caseNo ? await env.DB.prepare(
       'SELECT kind, payload FROM submissions WHERE case_no = ?').bind(caseNo).first() : null;
     const caseSvc = legalServiceForSub(caseSubRow);
+    /* The FEE the case would be quoted at (D12): its own agreed figure, else
+       the configured default — what the wizard's Standard/Custom control
+       opens on, so the screen and the email resolve identically. */
+    let caseFlatFee = null;
+    if (caseSvc && caseSvc.model === 'fixed') {
+      const stored = await env.DB.prepare(
+        'SELECT retainer_amount FROM case_retainer WHERE case_no = ?').bind(caseNo).first();
+      caseFlatFee = stored && stored.retainer_amount != null
+        ? Number(stored.retainer_amount)
+        : await legalFlatDefault(env, caseSvc.id);
+    }
+    const feeDefaults = {
+      locate: await legalFlatDefault(env, 'locate'),
+      process: await legalFlatDefault(env, 'process'),
+    };
     /* BILLCOM.md — the cards gain the Bill.com line and the wizard learns it
        may offer the tick ONLY from the adapter's answer. Not-ready costs
        nothing and shows nothing new. The PRIVATE card never gains the line —
@@ -13526,10 +13631,16 @@ async function route(request, env) {
                     id: s.id, label: s.label, model: s.model,
                     model_label: LEGAL_MODEL_LABEL[s.model],
                     price_label: s.model === 'fixed'
-                      ? '$' + Number(LEGAL_FLAT[s.id]).toLocaleString('en-US') + ' Flat Fee' : null,
-                    sheet_name: s.model === 'fixed' ? legalFixedSheet(s).name : null,
+                      ? '$' + Number(feeDefaults[s.id]).toLocaleString('en-US') + ' Flat Fee' : null,
+                    sheet_name: s.model === 'fixed' ? legalFixedSheet(s, feeDefaults[s.id]).name : null,
+                    /* D12 — the Standard/Custom fee control draws only for a
+                       service the owner made adjustable, and its Standard
+                       label is composed HERE so no figure lives in the page. */
+                    adjustable: s.id === 'process',
+                    fee_default: s.model === 'fixed' ? feeDefaults[s.id] : null,
                   })),
                   case_legal_service: caseSvc ? caseSvc.id : null,
+                  case_flat_fee: caseFlatFee,
                   billcom_ready: billcom.ready,
                   email_configured: Boolean(env.RESEND_API_KEY) });
   }
