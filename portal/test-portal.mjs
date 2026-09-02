@@ -17751,14 +17751,27 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
       const r = t.getBoundingClientRect();
       return !(b.right < r.left + 8 || b.left > r.right - 24 || b.bottom < r.top || b.top > r.bottom);
     });
+    /* Relative luminance, 0-100 — the qtools separation test's own measure.
+       The first handle shipped navy-on-navy: geometry said rendered, the
+       owner's phone said invisible. Separation is asserted as a NUMBER now,
+       against the drawer it rides and the backdrop it protrudes onto. */
+    const lum = c => { const m = (c.match(/\d+/g) || [0, 0, 0]).map(Number);
+      const f = v => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; };
+      return (0.2126 * f(m[0]) + 0.7152 * f(m[1]) + 0.0722 * f(m[2])) * 100; };
+    const hl = lum(getComputedStyle(el).backgroundColor);
     return { shown: getComputedStyle(el).display !== 'none', w: Math.round(b.width),
              h: Math.round(b.height), left: Math.round(b.left),
-             drawerRight: Math.round(drawer.right), overText };
+             protrusion: Math.round(b.right - drawer.right),
+             drawerRight: Math.round(drawer.right), overText,
+             sepDrawer: Math.round(Math.abs(hl - lum(getComputedStyle(document.querySelector('.tabs')).backgroundColor))),
+             sepDim: Math.round(Math.abs(hl - lum(getComputedStyle(document.querySelector('.navback')).backgroundColor))) };
   });
-  ok('the open drawer carries a visible ‹ handle on its right edge',
-     hd.shown && Math.abs(hd.left + 6 - hd.drawerRight) <= 2, JSON.stringify(hd));
+  ok('the open drawer carries the handle riding its right edge, protruding 20-30px',
+     hd.shown && hd.protrusion >= 20 && hd.protrusion <= 30, JSON.stringify(hd));
   ok('the handle is a real iPhone target', hd.w >= 44 && hd.h >= 44, JSON.stringify(hd));
   ok('and covers no navigation text', !hd.overText);
+  ok('and is MEASURABLY apart from the drawer and the dim it sits over — the navy-on-navy lesson',
+     hd.sepDrawer >= 25 && hd.sepDim >= 25, JSON.stringify(hd));
   await page.locator('.navhandle').click();
   await page.waitForTimeout(110);
   ok('tapping it SLIDES the drawer away rather than blinking it',
@@ -17829,6 +17842,167 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
      d.srchH <= 165, JSON.stringify(d));
   ok('desktop: the explainer survives as a small muted line',
      d.hint && d.hint.shown && d.hint.size <= 13, JSON.stringify(d.hint));
+  await desk.close();
+}
+
+/* ==========================================================================
+   ONE TAP TO THE FULL PORTAL, AND THE SHELL PAINTS FIRST (owner, 2026-09-02
+   — measured ~5s from tap to anything visible on a real phone, and a button
+   that read as needing two taps because the first changed nothing on
+   screen). render() used to await eight serial round trips with one paint at
+   the end; it paints the shell immediately now and runs the fetches
+   concurrently. Measured in the throttled harness: 2072ms→9ms to shell at
+   250ms/call, 4473ms→12ms at 550ms/call, all fresh data by ~1-2 round trips.
+   This section pins the BEHAVIOR, not the milliseconds: one tap leaves the
+   launcher and shows the portal shell fast even locally, the cold cases
+   screen says LOADING rather than claiming an empty portal, and leaving the
+   launcher before its own fetch answers breaks nothing. */
+section('One tap reaches the full portal, and the shell never waits for data');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(250);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(1400);
+
+  await page.goto(SITE + '/portal/?surveillance=1');
+  await page.waitForTimeout(900);
+  ok('in the launcher', await page.locator('.sv').count() === 1);
+  /* ONE tap. The shell must be on screen quickly — the local API is fast, so
+     the bound here is generous CI headroom, not the real target; the real
+     numbers are in the section comment and the ship report. */
+  const t0 = Date.now();
+  await page.locator('[data-act="svLeaveLauncher"]').click();
+  await page.waitForFunction(() =>
+    !document.querySelector('.sv') && document.querySelector('.qtools'), null, { timeout: 3000 });
+  const dt = Date.now() - t0;
+  ok('ONE tap leaves the launcher and shows the portal shell', dt < 1500, `${dt}ms`);
+  await page.waitForTimeout(800);
+  ok('and the dashboard data lands after it', await page.locator('.band').count() > 0);
+
+  /* The cold cases screen says LOADING, never an empty portal: the state the
+     shell-first paint lands in before the first answer. Probed directly. */
+  const cold = await page.evaluate(() => {
+    const keep = { ok: CASES_OK, cases: CASES, total: TOTAL, err: LOAD_ERR, tab: TAB };
+    CASES_OK = false; CASES = []; TOTAL = 0; LOAD_ERR = ""; TAB = "cases"; paint();
+    const txt = document.querySelector('#app').innerText;
+    CASES_OK = keep.ok; CASES = keep.cases; TOTAL = keep.total; LOAD_ERR = keep.err;
+    TAB = keep.tab; paint();
+    return txt;
+  });
+  ok('a not-yet-loaded case list says Loading, not "No cases yet"',
+     /Loading the case list/.test(cold) && !/No cases yet/.test(cold), cold.slice(0, 200));
+
+  /* Leaving the launcher before its own fetch answers must break nothing —
+     the answer belongs to a launcher that no longer exists and is dropped.
+     The pageerror hook above turns any TypeError into a failure. */
+  await page.evaluate(() => { openSurveillanceLauncher(); SV = null;
+    document.body.classList.remove("surv"); return render(); });
+  await page.waitForTimeout(600);
+  ok('leaving before the launcher fetch resolves breaks nothing',
+     await page.evaluate(() => !!document.querySelector('.qtools')));
+  await page.close();
+}
+
+/* ==========================================================================
+   THE EMPTY QUEUE IS A STATEMENT, AND THE PHONE HEADER BREATHES (owner,
+   2026-09-02, live iPhone view). The genuinely-empty Today / next actions
+   card keeps its heading, its "nothing waiting" count and its one-line
+   answer, and on a phone swaps the explanatory paragraph for the owner's
+   own sentence; every honesty state (failed, filtered, incomplete) keeps
+   its full wording. The phone header drops the name and role — relocated
+   to the drawer's foot, not removed — so the brand, Sign out and the
+   burger stop jamming. */
+section('The empty queue is short on a phone, and the header identity moves to the drawer');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(250);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(1400);
+
+  /* Force the genuinely-empty queue regardless of fixtures: the card under
+     test is the empty STATE, and the fixture caseload varies by run order. */
+  const q = await page.evaluate(() => {
+    const keep = ATTN;
+    ATTN = { alerts: [], total: 0, missing_sources: [] }; paint();
+    const card = document.querySelector('.queuecard');
+    const r = {
+      slim: card.classList.contains('qslim'),
+      h: Math.round(card.getBoundingClientRect().height),
+      txt: card.innerText.replace(/\s+/g, ' '),
+      longShown: [...card.querySelectorAll('.qe-long')].some(e => getComputedStyle(e).display !== 'none'),
+      shortShown: [...card.querySelectorAll('.qe-short')].some(e => getComputedStyle(e).display !== 'none'),
+    };
+    ATTN = keep; paint();
+    return r;
+  });
+  ok('the empty queue keeps its heading, count and answer',
+     /Today \/ next actions/.test(q.txt) && /nothing waiting/i.test(q.txt)
+     && /Nothing needs you right now\./.test(q.txt), q.txt.slice(0, 160));
+  ok('the phone shows the one-line sentence, not the paragraph',
+     q.shortShown && !q.longShown
+     && /New work and deadlines will appear here automatically\./.test(q.txt), q.txt.slice(0, 200));
+  ok('and the card is a statement, not a billboard', q.slim && q.h <= 150, JSON.stringify(q));
+
+  /* The honesty states are untouched: a failed queue keeps its full warning. */
+  const failed = await page.evaluate(() => {
+    const keep = ATTN, keepErr = ATTN_ERR;
+    ATTN = null; ATTN_ERR = "probe"; paint();
+    const card = document.querySelector('.queuecard');
+    const r = { slim: card.classList.contains('qslim'), txt: card.innerText };
+    ATTN = keep; ATTN_ERR = keepErr; paint();
+    return r;
+  });
+  ok('a failed queue is NOT slimmed and still refuses to read as a clear desk',
+     !failed.slim && /Do not read this as a clear desk/.test(failed.txt));
+
+  /* The header: brand + Sign out + burger, no identity jam; the identity is
+     in the drawer's foot instead — relocated, not removed. */
+  const head = await page.evaluate(() => ({
+    idShown: [...document.querySelectorAll('.who-id')].some(e => getComputedStyle(e).display !== 'none'),
+    signout: !!document.querySelector('#who button'),
+    burger: getComputedStyle(document.querySelector('.burger')).display !== 'none',
+  }));
+  ok('the phone header carries no name/role text', !head.idShown, JSON.stringify(head));
+  ok('but Sign out and the burger stay', head.signout && head.burger);
+  await page.locator('.burger').click();
+  await page.waitForTimeout(350);
+  const who = await page.evaluate(() => {
+    const el = document.querySelector('.navwho');
+    return el ? el.innerText.replace(/\s+/g, ' ') : null;
+  });
+  ok('the drawer\'s foot says who is signed in',
+     who !== null && /Signed in as/.test(who) && /Trever Brown/.test(who) && /Admin/.test(who),
+     String(who));
+  await page.locator('.navhandle').click();
+  await page.waitForTimeout(400);
+  await page.close();
+
+  /* Desktop unchanged: identity in the header, the fuller empty wording. */
+  const desk = await newPage();
+  await signIn(desk, 'trever', 'AdminPassword1x');
+  ok('desktop keeps the identity in the header',
+     (await text(desk, '#who')).includes('Trever Brown'));
+  const dq = await desk.evaluate(() => {
+    const keep = ATTN;
+    ATTN = { alerts: [], total: 0, missing_sources: [] }; TAB = "dashboard"; paint();
+    const card = document.querySelector('.queuecard');
+    const r = {
+      longShown: [...card.querySelectorAll('.qe-long')].some(e => getComputedStyle(e).display !== 'none'),
+      shortShown: [...card.querySelectorAll('.qe-short')].some(e => getComputedStyle(e).display !== 'none'),
+    };
+    ATTN = keep; paint();
+    return r;
+  });
+  ok('desktop keeps the fuller empty-state wording', dq.longShown && !dq.shortShown,
+     JSON.stringify(dq));
   await desk.close();
 }
 
