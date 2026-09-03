@@ -18091,23 +18091,26 @@ section('Closeout hardening: one case at a time, one tap, one token');
   /* The day clock is one tap. startDay is check-then-insert with no unique
      index behind it, so two taps could open two days on one case — each
      storing its own full hours, only the newer reachable by End. */
-  await page.evaluate(() => openCase('API-20260812-4002', 'field'));
-  await page.waitForTimeout(700);
+  /* Its own case: a shared fixture might already carry an open day, which
+     would make this pass while testing nothing — and ending it would disturb
+     whichever later section put it there. */
+  await post('/ingest', { case_no: 'API-HARD-DAY', service: 'Surveillance',
+    client_name: 'Hard Day Client', subject_name: 'Hard Day Subject', objective: 'f' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await page.evaluate(() => openCase('API-HARD-DAY', 'field'));
+  await page.waitForTimeout(800);
   const days = await page.evaluate(async () => {
     if ($('d_date')) $('d_date').value = '2026-09-03';
     if ($('d_start')) $('d_start').value = '08:00';
     startInvestigationDay(); startInvestigationDay();
-    await new Promise(r => setTimeout(r, 1500));
-    const ws = await api('/cases/API-20260812-4002/workspace');
-    return { open: (ws.days || []).filter(d => !d.end_time).length, busy: DAY_BUSY };
+    await new Promise(r => setTimeout(r, 1600));
+    const ws = await api('/cases/API-HARD-DAY/workspace');
+    return { open: (ws.days || []).filter(d => !d.end_time).length,
+             total: (ws.days || []).length, busy: DAY_BUSY };
   });
-  ok('a double tap on Start day opens ONE investigation day', days.open === 1, JSON.stringify(days));
+  ok('a double tap on Start day opens ONE investigation day',
+     days.open === 1 && days.total === 1, JSON.stringify(days));
   ok('and the guard releases so the next tap works', days.busy === false);
-  await page.evaluate(async () => {
-    const ws = await api('/cases/API-20260812-4002/workspace');
-    const open = (ws.days || []).find(d => !d.end_time);
-    if (open) await api('/cases/API-20260812-4002/day/end', { method: 'POST', body: { end_time: '09:00' } });
-  });
 
   /* The invoice payment token belongs to ONE invoice: carried to another it
      could not be matched there and the payment answered indeterminate. */
