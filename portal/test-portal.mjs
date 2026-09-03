@@ -900,12 +900,18 @@ section('A missing table is reported as a fixable setup problem, not a mystery')
 
   // Health reports it too, so the page can warn before anything is clicked.
   const h = await (await worker.fetch(new Request(API + '/health', { headers: { Origin: SITE } }), env)).json();
-  ok('health lists the missing table', h.missing_tables.includes('case_types'), JSON.stringify(h));
+  /* An ANONYMOUS caller gets the COUNT and no names (closeout audit,
+     2026-09-03): the list of missing tables was a partial map of the schema
+     handed to anyone who asked. The office still gets the names — that half
+     is pinned in the worker suite, where a signed-in admin is at hand. */
+  ok('health counts what is missing', h.schema_missing >= 1, JSON.stringify(h));
+  ok('and names nothing to an anonymous caller',
+     h.missing_tables === undefined, JSON.stringify(h));
 
   db.exec(SCHEMA);   // put it back for the rest of the run
   const h2 = await (await worker.fetch(new Request(API + '/health', { headers: { Origin: SITE } }), env)).json();
-  ok('and reports a clean bill once the schema is applied', h2.missing_tables.length === 0,
-     JSON.stringify(h2.missing_tables));
+  ok('and reports a clean bill once the schema is applied', h2.schema_missing === 0,
+     JSON.stringify(h2));
 }
 
 section('Rate sheets');

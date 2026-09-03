@@ -2713,6 +2713,104 @@ a test asserts the upload path cannot read it. `dropboxWebUrls()` is the one
 writer of the shape; the page substitutes into its template and assembles no
 path of its own. Detail in `case-portal/DROPBOX.md`.
 
+## The closeout hardening rules (2026-09-03)
+
+A five-agent read of the whole application, live security check green. Most of
+what it found was not a hole in a boundary — the role, redaction, tombstone and
+CSRF boundaries all held under attack — but **claims the code made about
+itself that were not true**, and **writes with no protection against a second
+tap**. The durable rules:
+
+**A GUARD MUST NOT BE THE COST IT GUARDS.** The ingest rate limiter did two
+writes and a read *before* deciding whether the caller was over the cap, so a
+flood of REJECTED requests was itself an unbounded write path into the one
+database every authenticated route shares. Read first, write only for a caller
+under the cap. The same shape put a permanent `login_fails` row on disk for any
+username an anonymous caller could invent; a name outside the account alphabet
+is refused before it can be written, with the same 401 wording so nothing is
+enumerable.
+
+**A RETRY AND A COLLISION ARE DIFFERENT EVENTS.** The public ingest answered
+both with `ok:true, duplicate:true` — so a second client arriving on a case
+number already taken was told their intake landed, and the firm was emailed a
+notice pointing at somebody else's file. An identical body still passes (a
+network hiccup is not the client's problem); a different one is refused
+`case_no_taken`, and the intake page re-mints its number once on that code. The
+number is 9,000 values a day, so this is reachable by chance, not only by
+attack.
+
+**A DIAGNOSTIC MAY NOT BE A MAP.** `/health` handed anyone who asked the list
+of missing table NAMES. Anonymous callers get `schema_missing` — a count — and
+the names go to a signed-in admin; `verify.sh` reads the count. Its storage
+aggregate is cached a minute **keyed on the database binding**, not in a module
+global: the suite runs many databases through one process and caught a global
+answering one env's figure for another's, which is the same mistake production
+would make the day a Worker serves two.
+
+**REVIEWED MONEY IS THE OFFICE'S — ON EVERY PATH.** `contentTarget` enforced it
+for REMOVING an expense; `editExpense` did not, and its UPDATE clears
+`reviewed_at`/`reviewed_by`, so an investigator could rewrite a reviewed figure
+and take the reviewer's name off it in the same statement. A rule that lives on
+one path is a rule with a door beside it.
+
+**ONE ATTEMPT KEY PER WRITE, AND AN IN-FLIGHT GUARD.** The Worker has always
+answered `duplicate` for an `/activity` POST repeating an `event_id`, and the
+page never sent one from its three ordinary writers, so a double tap made two
+entries. Every write that can be tapped twice now carries the retainer's
+`client_token` shape — one key per attempt, reused across a failure, new for a
+new entry — plus a busy flag so the second tap does not fire at all. This
+covers the field and office activity writers, the rate-sheet send (the one send
+whose three siblings all had the guard), the five day actions, the evidence
+upload and the manual intake. **`case_days` still has no unique index behind
+`startDay`'s check-then-insert** — that is a schema change, deferred with the
+owner, and the page guard is what stands in front of it meanwhile.
+
+**A TOKEN BELONGS TO ONE OBJECT.** `INVPAY_TOKEN` survived a move to another
+invoice, where the Worker's recovery lookup (token AND invoice_id) could not
+match it and answered `indeterminate_payment` about a payment that was fine.
+The retainer's twin is reset per case by `retainerEnter`; invoices had no
+equivalent.
+
+**THE PREVIOUS CASE'S DATA LEAVES WITH THE CASE.** `openCase` set `WS_CASE` and
+`VIEW` while `WS` still held the last case and painted nothing until both reads
+landed — so any paint in that window drew one case's NUMBER over another's
+record, and Edit case would have saved that identity onto the wrong file. `WS`
+is cleared and painted immediately (the shape `enterSurveillance` already had),
+and every late answer for a case the user has left is dropped by a `WS_CASE`
+re-check — in `openCase`, `reloadWorkspace` and `svReload`.
+
+**A CONTROL WIRED TO THE WRONG EVENT IS A CONTROL THAT LOSES WORK.** The
+package Combined Summary was registered on `input` while its own comment said
+`change`: every keystroke POSTed, the response repainted the panel, the
+textarea (which has no id, so `FOCUS_KEEP` cannot restore it) was rebuilt from
+the stored prefix, and the rest of the sentence was gone. The invoice search
+had the same shape without the data loss. Anything that repaints on a response
+must fire on blur or be debounced, and its input needs an id.
+
+**LEAVING A SCREEN MUST NOT DESTROY WHAT IT HELD.** `exitSurveillance` dropped
+`SV.voice.queue` — entries dictated out of coverage — without a word, and the
+voice helper threw on every reconnect outside the field view because three of
+its callers (the `online` listener, the flush interval, the recogniser's own
+handlers) outlive `SV`. The helper is null-safe, the timer is cleared, and the
+office is told plainly when entries are still waiting to file.
+
+**Also fixed, smaller:** a chunked body was buffered before its size test; the
+public ingest's alert reached the mail sender with no cap while every admin
+sender had one; legacy R2 video ignored `Range`, which iOS Safari requires
+before it will play anything; a negative `?limit` reached SQLite as *no* limit;
+the provider's rejection text (which quotes the recipient's address) reached
+the log; the Worker's responses carry HSTS; four phone controls sat under the
+16px iOS-zoom floor and one under the 44px tap floor; five controls had no
+accessible name; the public form carried a file input that uploaded nothing;
+and a claim number typed and then marked unavailable still satisfied the
+identity rule while the payload stored it blank.
+
+**Deferred by name, with the owner** (each needs a decision, not a keystroke):
+a unique index on open `case_days` (a schema change that would abort the whole
+apply if production already holds a duplicate pair — check first), making the
+payment `client_token` mandatory (an API contract change), and a used-case-
+number tombstone so a freed number cannot inherit send history (a new table).
+
 ## The free-plan failsafe
 
 The owner runs Cloudflare on free tiers and wants zero possibility of a
