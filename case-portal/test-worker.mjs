@@ -18266,6 +18266,125 @@ section('An activity event_id dedupes any writer, not only the voice path');
     { method: 'POST', cookie: admin, body: { ...body, event_id: 'x' } })).status === 201);
 }
 
+/* ============ ONE OPEN DAY PER CASE PER INVESTIGATOR =====================
+   The guard `case_day_pauses` has always had, applied to the days themselves
+   (owner, 2026-09-03, after production was read clean: 0 open days, no
+   duplicate pairs). `startDay` reads for an open day and then inserts, with
+   nothing between the two — so this pins BOTH halves: the ordinary check that
+   refuses a second tap, and the database index that refuses a real race the
+   check cannot see. What must NOT change is everything around it: two
+   investigators out on one case, one investigator out on two cases, and a
+   fresh day after ending one. */
+section('One open investigation day per case per investigator');
+{
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const mkInv = async (username, display) => {
+    const res = await invite(env, admin, { username, display_name: display, role: 'investigator' });
+    const token = new URL((await jsonOf(res)).url, 'https://x.test').searchParams.get('invite');
+    await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+    return (await login(env, username, 'FieldWork2026x')).cookie;
+  };
+  const dana = await mkInv('dana', 'Dana');
+  const users = (await jsonOf(await call(env, '/users', { cookie: admin }))).users;
+  const danaId = users.find(u => u.username === 'dana').id;
+  const adminId = users.find(u => u.username === 'trever').id;
+
+  for (const no of ['API-DAY-A', 'API-DAY-B']) {
+    await ingest(env, { case_no: no, client_name: 'Day Client', subject_name: 'Day Subject' });
+  }
+  for (const [no, uid] of [['API-DAY-A', danaId], ['API-DAY-B', danaId]]) {
+    await call(env, `/submissions/${no}/assign`, { method: 'POST', cookie: admin, body: { user_id: uid } });
+  }
+  const start = (cookie, no, time = '08:00') => call(env, `/cases/${no}/day/start`,
+    { method: 'POST', cookie, body: { day_date: '2026-09-03', start_time: time } });
+  const openCount = (no, uid) => Number(env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM case_days WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL')
+    .bind(no, uid).first().n);
+  const rowCount = no => Number(env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM case_days WHERE case_no = ?').bind(no).first().n);
+
+  /* The index itself is on the database, and it is PARTIAL — a case keeps as
+     many closed days as it has had. */
+  const idx = env.DB.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_days_open_one'").first();
+  ok('the open-day index exists on the database', !!idx, JSON.stringify(idx));
+  ok('and it is partial, scoped to days that are RUNNING',
+     /end_time IS NULL/i.test((idx && idx.sql) || '') && /case_no/.test((idx && idx.sql) || ''),
+     (idx && idx.sql) || '');
+
+  /* 1 — the ordinary start still works. */
+  const first = await start(dana, 'API-DAY-A');
+  ok('a normal Start Day opens the day', first.status === 201);
+  ok('and exactly one day is open on that case', openCount('API-DAY-A', danaId) === 1);
+
+  /* 2 — the double tap: the check sees the open day and refuses by name. */
+  const second = await start(dana, 'API-DAY-A');
+  const secondBody = await jsonOf(second);
+  ok('a second tap is refused, not a second day', second.status === 409);
+  ok('and it names the day already running',
+     /already have a day running/i.test(secondBody.error) && typeof secondBody.day_id === 'number');
+  ok('still exactly one day on the case', rowCount('API-DAY-A') === 1);
+
+  /* 3 — the REAL race: the pre-check misses (as it would when two requests
+     interleave), the insert reaches the index, and the answer is the same 409
+     rather than a 500. The blind read is consumed once, so the catch's own
+     re-read sees the truth and returns the id of the day that won. */
+  let blind = true;
+  const PRECHECK = 'SELECT id FROM case_days WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL';
+  const raceEnv = { ...env, DB: { ...env.DB, prepare(sql) {
+    const st = env.DB.prepare(sql);
+    if (blind && sql === PRECHECK) {
+      const wrap = (...args) => {
+        const bound = st.bind(...args);
+        return { ...bound, first: async () => { blind = false; return null; } };
+      };
+      return { ...st, bind: wrap };
+    }
+    return st;
+  } } };
+  const raced = await call(raceEnv, '/cases/API-DAY-A/day/start',
+    { method: 'POST', cookie: dana, body: { day_date: '2026-09-03', start_time: '09:00' } });
+  const racedBody = await jsonOf(raced);
+  ok('a collision the check could not see is refused cleanly, not a 500',
+     raced.status === 409, `${raced.status} ${JSON.stringify(racedBody).slice(0, 120)}`);
+  ok('with the same wording as the ordinary refusal',
+     /already have a day running/i.test(racedBody.error || ''), JSON.stringify(racedBody));
+  ok('naming the day that actually won the race',
+     racedBody.day_id === secondBody.day_id, JSON.stringify(racedBody));
+  ok('and the database still holds ONE day for that case', rowCount('API-DAY-A') === 1);
+
+  /* 4 — what must not change: TWO PEOPLE OUT ON ONE CASE. An investigator is
+     scoped to their own assignment, so the pair that can share a case is the
+     assigned investigator and an admin — the arrangement SURVEILLANCE already
+     describes, and the reason the index is keyed on the pair rather than on
+     the case alone. The case is NOT reassigned to arrange this: assignment is
+     single-valued, and moving it would take the first investigator's access
+     away, which is a different test. */
+  ok('an admin may open their own day on a case an investigator is already out on',
+     (await start(admin, 'API-DAY-A', '08:30')).status === 201);
+  ok('so the case has two people out, one day each',
+     openCount('API-DAY-A', danaId) === 1 && openCount('API-DAY-A', adminId) === 1);
+
+  /* 5 — and the SAME investigator on a DIFFERENT case. */
+  ok('the same investigator may open a day on another case',
+     (await start(dana, 'API-DAY-B')).status === 201);
+  ok('which is its own open day', openCount('API-DAY-B', danaId) === 1);
+
+  /* 6 — ending a day lets the next one start; the closed row stays. */
+  ok('the day ends normally',
+     (await call(env, '/cases/API-DAY-A/day/end', { method: 'POST', cookie: dana,
+       body: { end_time: '12:00' } })).status === 200);
+  ok('nothing is open for them on that case now', openCount('API-DAY-A', danaId) === 0);
+  const again = await start(dana, 'API-DAY-A', '13:00');
+  ok('and a NEW day starts afterwards — the index constrains only what is running',
+     again.status === 201);
+  ok('leaving the finished day beside the running one',
+     rowCount('API-DAY-A') === 3 && openCount('API-DAY-A', danaId) === 1);
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

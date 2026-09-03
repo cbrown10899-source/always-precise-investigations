@@ -7102,9 +7102,32 @@ async function startDay(request, env, user, caseNo) {
   if (miles !== null && !(Number.isFinite(miles) && miles >= 0)) {
     return json({ error: 'Beginning mileage must be a number.' }, 400);
   }
-  const res = await env.DB.prepare(
-    `INSERT INTO case_days (case_no, investigator_id, day_date, start_time, start_mileage, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`).bind(caseNo, user.id, date, time, miles, nowIso()).run();
+  /* THE READ ABOVE AND THIS WRITE ARE NOT ONE ACT (owner, 2026-09-03). Two
+     taps on a flaky connection, or two devices, can both pass the check and
+     arrive here — so `idx_days_open_one` refuses the second at the database,
+     and this catch turns that refusal into the SAME answer the check gives:
+     the 409 naming the day that is already running. The loser of a race and
+     the second tap are the same event to the person holding the phone, so
+     they read the same on screen; only a raw 500 would have been new. The
+     re-read is what makes the answer true rather than assumed — it returns
+     the id of the day that actually won. */
+  let res;
+  try {
+    res = await env.DB.prepare(
+      `INSERT INTO case_days (case_no, investigator_id, day_date, start_time, start_mileage, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`).bind(caseNo, user.id, date, time, miles, nowIso()).run();
+  } catch (e) {
+    if (!/UNIQUE|constraint/i.test(String(e))) throw e;
+    const won = await env.DB.prepare(
+      'SELECT id FROM case_days WHERE case_no = ? AND investigator_id = ? AND end_time IS NULL')
+      .bind(caseNo, user.id).first();
+    /* If the row is gone by now the day was ended between the collision and
+       this read, and there is genuinely nothing running — say so plainly
+       rather than pointing at an id that no longer exists. */
+    return json(won
+      ? { error: 'You already have a day running on this case.', day_id: won.id }
+      : { error: 'That day could not be started — try again.' }, 409);
+  }
   return json({ ok: true, day_id: res.meta ? res.meta.last_row_id : null }, 201);
 }
 
