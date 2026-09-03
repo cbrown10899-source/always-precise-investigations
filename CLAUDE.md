@@ -2761,9 +2761,24 @@ entries. Every write that can be tapped twice now carries the retainer's
 new entry — plus a busy flag so the second tap does not fire at all. This
 covers the field and office activity writers, the rate-sheet send (the one send
 whose three siblings all had the guard), the five day actions, the evidence
-upload and the manual intake. **`case_days` still has no unique index behind
-`startDay`'s check-then-insert** — that is a schema change, deferred with the
-owner, and the page guard is what stands in front of it meanwhile.
+upload and the manual intake.
+
+**AND THE DAY CLOCK IS NOW GUARDED BY THE DATABASE** (owner, 2026-09-03, after
+production was read clean — 0 open days, no duplicate pairs).
+`idx_days_open_one` is a PARTIAL UNIQUE index on `(case_no, investigator_id)
+WHERE end_time IS NULL`, the guard `case_day_pauses` has carried since it was
+written. `startDay` reads then inserts, and nothing sat between the two: two
+devices, or a retry after a dropped response, could both pass the check. Each
+row stores its own full `hours`, so one worked day would be counted twice by
+the authorization SUM. **The refusal reads the same either way** — the catch
+re-reads the open day and returns the same 409 naming it, because the loser of
+a race and a second tap are one event to the person holding the phone; only a
+raw 500 would have been new. Partial on purpose: closed days are unlimited,
+and two people may still be out on one case (an investigator is scoped to
+their own assignment, so that pair is the assigned investigator and an admin).
+**READ PRODUCTION BEFORE ADDING ONE OF THESE**: `portal-setup.yml` applies
+`schema.sql` as ONE transaction, so a failing `CREATE UNIQUE INDEX` aborts the
+whole apply rather than just itself.
 
 **A TOKEN BELONGS TO ONE OBJECT.** `INVPAY_TOKEN` survived a move to another
 invoice, where the Worker's recovery lookup (token AND invoice_id) could not
@@ -2806,10 +2821,11 @@ and a claim number typed and then marked unavailable still satisfied the
 identity rule while the payload stored it blank.
 
 **Deferred by name, with the owner** (each needs a decision, not a keystroke):
-a unique index on open `case_days` (a schema change that would abort the whole
-apply if production already holds a duplicate pair — check first), making the
-payment `client_token` mandatory (an API contract change), and a used-case-
-number tombstone so a freed number cannot inherit send history (a new table).
+making the payment `client_token` mandatory (an API contract change), and a
+used-case-number tombstone so a freed number cannot inherit send history (a
+new table). The third — the unique index on open `case_days` — was taken off
+this list on 2026-09-03 once production had been read clean; it is described
+above.
 
 ## The free-plan failsafe
 

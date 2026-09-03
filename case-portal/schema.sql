@@ -157,6 +157,27 @@ CREATE TABLE IF NOT EXISTS case_days (
 );
 CREATE INDEX IF NOT EXISTS idx_days_case ON case_days(case_no, day_date);
 CREATE INDEX IF NOT EXISTS idx_days_open ON case_days(investigator_id) WHERE end_time IS NULL;
+/* AT MOST ONE OPEN DAY PER CASE PER INVESTIGATOR, enforced by the database
+   rather than by a check in the route (owner, 2026-09-03). `startDay` reads
+   for an open day and then inserts, and nothing sat between the two: two taps
+   on a flaky connection, or two devices, could both read "none open" and both
+   insert. The cost is not cosmetic — each row stores its own full `hours`, so
+   one worked day would be counted twice by the authorization SUM and by any
+   invoice built from it, while End and Pause only ever reach the newer row and
+   the older one stays open for ever. `case_day_pauses` has carried exactly
+   this guard, for exactly this reason, since the day it was written.
+
+   PARTIAL on `end_time IS NULL`, so it constrains only what is RUNNING: a case
+   keeps as many closed days as it has had, and two investigators may still be
+   out on one case at once — the pair is (case_no, investigator_id), which is
+   the scope `startDay` itself checks.
+
+   Added only after production was read: 0 open days, no duplicate pairs. That
+   order is load-bearing — `portal-setup.yml` applies this file as ONE
+   transaction, so a failing CREATE UNIQUE INDEX would abort the whole apply,
+   not just itself. Check before adding one of these, always. */
+CREATE UNIQUE INDEX IF NOT EXISTS idx_days_open_one
+  ON case_days(case_no, investigator_id) WHERE end_time IS NULL;
 
 -- The activity log: the timestamped field timeline. Append-only in spirit —
 -- entries are edited with an audit stamp, never silently overwritten, and
