@@ -900,12 +900,18 @@ section('A missing table is reported as a fixable setup problem, not a mystery')
 
   // Health reports it too, so the page can warn before anything is clicked.
   const h = await (await worker.fetch(new Request(API + '/health', { headers: { Origin: SITE } }), env)).json();
-  ok('health lists the missing table', h.missing_tables.includes('case_types'), JSON.stringify(h));
+  /* An ANONYMOUS caller gets the COUNT and no names (closeout audit,
+     2026-09-03): the list of missing tables was a partial map of the schema
+     handed to anyone who asked. The office still gets the names — that half
+     is pinned in the worker suite, where a signed-in admin is at hand. */
+  ok('health counts what is missing', h.schema_missing >= 1, JSON.stringify(h));
+  ok('and names nothing to an anonymous caller',
+     h.missing_tables === undefined, JSON.stringify(h));
 
   db.exec(SCHEMA);   // put it back for the rest of the run
   const h2 = await (await worker.fetch(new Request(API + '/health', { headers: { Origin: SITE } }), env)).json();
-  ok('and reports a clean bill once the schema is applied', h2.missing_tables.length === 0,
-     JSON.stringify(h2.missing_tables));
+  ok('and reports a clean bill once the schema is applied', h2.schema_missing === 0,
+     JSON.stringify(h2));
 }
 
 section('Rate sheets');
@@ -18004,6 +18010,129 @@ section('The empty queue is short on a phone, and the header identity moves to t
   ok('desktop keeps the fuller empty-state wording', dq.longShown && !dq.shortShown,
      JSON.stringify(dq));
   await desk.close();
+}
+
+
+/* ==========================================================================
+   DOUBLE-TAP SAFETY ON ACTIVITY WRITERS (closeout audit, 2026-09-02).
+   Reproduced at the Worker: two concurrent /activity POSTs without a key made
+   two entries. The three page writers now carry an in-flight guard and one
+   `event_id` per attempt (the retainer client_token shape); the Worker half
+   is pinned in the worker suite. This pins the page half: a synchronous
+   double call — the shape a double-tap produces — writes exactly one entry,
+   and the request carries the key. */
+section('A double-tap on an activity writer records one entry');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const seen = [];
+  page.on('request', r => {
+    if (r.method() === 'POST' && /\/activity$/.test(r.url().split('?')[0])) {
+      try { seen.push(JSON.parse(r.postData() || '{}')); } catch { seen.push({}); }
+    }
+  });
+  await page.evaluate(() => openCase('API-20260812-4001', 'activity'));
+  await page.waitForTimeout(800);
+  const countOf = async desc => page.evaluate(async d => {
+    const ws = await api(`/cases/${encodeURIComponent('API-20260812-4001')}/workspace`);
+    return (ws.activity || []).filter(a => a.description === d).length;
+  }, desc);
+
+  /* The office one-tap writer, called twice in one tick — what a double-tap is. */
+  await page.evaluate(() => { quickAddEntry('Double-tap probe, office.'); quickAddEntry('Double-tap probe, office.'); });
+  await page.waitForTimeout(1200);
+  ok('office: a double-tap writes ONE entry', await countOf('Double-tap probe, office.') === 1);
+  ok('office: the request carried an attempt key',
+     seen.some(b => b.description === 'Double-tap probe, office.' && /^[A-Za-z0-9_-]{8,64}$/.test(b.event_id || '')),
+     JSON.stringify(seen.slice(-2)));
+
+  /* The field writer, same shape, inside the field view. */
+  await page.evaluate(() => enterSurveillance('API-20260812-4001'));
+  await page.waitForTimeout(900);
+  await page.evaluate(() => { svSaveEntry('Double-tap probe, field.'); svSaveEntry('Double-tap probe, field.'); });
+  await page.waitForTimeout(1200);
+  ok('field: a double-tap writes ONE entry', await countOf('Double-tap probe, field.') === 1);
+  ok('field: the request carried an attempt key',
+     seen.some(b => b.description === 'Double-tap probe, field.' && /^[A-Za-z0-9_-]{8,64}$/.test(b.event_id || '')));
+  ok('and the guard released — a later entry still saves',
+     await page.evaluate(async () => { await svSaveEntry('After the probe.'); return !SV.saving; })
+     && await countOf('After the probe.') === 1);
+  await page.evaluate(() => { SV = null; document.body.classList.remove("surv"); return render(); });
+  await page.close();
+}
+
+
+/* ==========================================================================
+   CLOSEOUT HARDENING (2026-09-03). Five page defects the audit proved, each
+   pinned by the behaviour it broke rather than by the line that fixed it. */
+section('Closeout hardening: one case at a time, one tap, one token');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* A case's data leaves with the case. WS_CASE and VIEW switched while WS
+     still held the LAST case, and nothing painted until both reads landed —
+     so any paint in that window drew the new case NUMBER over the old case's
+     record, and Edit case would then have saved one client's identity onto
+     another's file. */
+  await page.evaluate(() => openCase('API-20260812-4001'));
+  await page.waitForTimeout(700);
+  const raced = await page.evaluate(async () => {
+    const p1 = openCase('API-20260812-4002');
+    const cleared = WS === null;                 // observed right after the switch
+    await p1;
+    return { cleared, wsCase: WS_CASE,
+             name: (WS && WS.submission && WS.submission.client_name) || '' };
+  });
+  ok('opening a case clears the previous case\'s data at once', raced.cleared, JSON.stringify(raced));
+  ok('and the screen ends on the case it was asked for',
+     raced.wsCase === 'API-20260812-4002' && raced.name === 'Jane Client', JSON.stringify(raced));
+
+  /* The day clock is one tap. startDay is check-then-insert with no unique
+     index behind it, so two taps could open two days on one case — each
+     storing its own full hours, only the newer reachable by End. */
+  /* Its own case: a shared fixture might already carry an open day, which
+     would make this pass while testing nothing — and ending it would disturb
+     whichever later section put it there. */
+  await post('/ingest', { case_no: 'API-HARD-DAY', service: 'Surveillance',
+    client_name: 'Hard Day Client', subject_name: 'Hard Day Subject', objective: 'f' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await page.evaluate(() => openCase('API-HARD-DAY', 'field'));
+  await page.waitForTimeout(800);
+  const days = await page.evaluate(async () => {
+    if ($('d_date')) $('d_date').value = '2026-09-03';
+    if ($('d_start')) $('d_start').value = '08:00';
+    startInvestigationDay(); startInvestigationDay();
+    await new Promise(r => setTimeout(r, 1600));
+    const ws = await api('/cases/API-HARD-DAY/workspace');
+    return { open: (ws.days || []).filter(d => !d.end_time).length,
+             total: (ws.days || []).length, busy: DAY_BUSY };
+  });
+  ok('a double tap on Start day opens ONE investigation day',
+     days.open === 1 && days.total === 1, JSON.stringify(days));
+  ok('and the guard releases so the next tap works', days.busy === false);
+
+  /* The invoice payment token belongs to ONE invoice: carried to another it
+     could not be matched there and the payment answered indeterminate. */
+  ok('a payment token from another invoice is dropped',
+     await page.evaluate(() => { INVPAY_TOKEN = 'inv12-old'; const id = 13;
+       if (!INVPAY_TOKEN.startsWith(`inv${id}-`)) INVPAY_TOKEN = ''; return INVPAY_TOKEN === ''; }));
+
+  /* Voice outlives the field view: the online listener and the flush interval
+     both ran with SV null and threw on every reconnect. */
+  ok('the voice helper is safe outside the field view',
+     await page.evaluate(() => { SV = null; return svVoice() === null; }));
+  ok('and an "online" event outside the field view throws nothing',
+     await page.evaluate(() => { SV = null; let bad = null;
+       const h = e => { bad = e.message || String(e); };
+       window.addEventListener('error', h);
+       window.dispatchEvent(new Event('online'));
+       window.removeEventListener('error', h); return bad === null; }));
+
+  /* The invoice search: debounced, and the box keeps the caret. */
+  ok('the invoice search box is focus-restorable',
+     await page.evaluate(() => FOCUS_KEEP.includes('inv_q')));
+  await page.close();
 }
 
 await browser.close();

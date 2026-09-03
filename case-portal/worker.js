@@ -209,6 +209,16 @@ async function handleLogin(request, env) {
   const username = String(body.username || '').trim().toLowerCase();
   const password = String(body.password || '');
   if (!username || !password) return json({ error: 'Username and password are required.' }, 400);
+  /* A username that cannot belong to an account is refused BEFORE it reaches
+     login_fails (closeout audit, 2026-09-03). That table is keyed by the name
+     supplied, is written on every failure and is pruned only per-username on
+     a successful sign-in — so an unauthenticated caller could write unbounded
+     permanent rows by inventing a new name each time, into the one database
+     every route shares. Same alphabet the account and invite writers enforce,
+     and the same 401 wording, so nothing is enumerable. */
+  if (!/^[a-z0-9._-]{3,32}$/.test(username)) {
+    return json({ error: 'Those details do not match an account.' }, 401);
+  }
 
   const { locked } = await lockState(env, username);
   if (locked) {
@@ -266,6 +276,13 @@ function pick(o, ...keys) {
    or 'mail', keyed with a prefix so outbound email has its own cap. The mail
    cap exists so a compromised admin session cannot turn the firm's own
    verified domain into a spam source in the minutes before anyone notices. */
+/* The /health storage figure, a minute at a time — keyed by the DATABASE, not
+   held as one module global. An isolate serves one database in production, but
+   a global would still be the wrong shape: the suite runs many databases
+   through one process and caught it immediately, answering one env's figure
+   for another's. A WeakMap keyed on the binding cannot make that mistake. */
+const HEALTH_CACHE = new WeakMap();
+
 async function withinRateLimit(env, kind) {
   const mail = kind === 'mail';
   const cap = mail
@@ -273,6 +290,15 @@ async function withinRateLimit(env, kind) {
     : (parseInt(env.INGEST_PER_MINUTE || '', 10) || INGEST_PER_MINUTE);
   const minute = nowIso().slice(0, 16);   // YYYY-MM-DDTHH:MM
   const key = mail ? 'mail:' + minute : minute;
+  /* READ BEFORE WRITE (closeout audit, 2026-09-03). This upserted, read and
+     swept on EVERY call — two writes and a read spent before deciding whether
+     the caller was over the cap — so a flood of REJECTED requests was itself
+     the unbounded cost the cap exists to bound, against the one database
+     every authenticated route shares. Over the cap now costs one read and
+     writes nothing. Everyone under it still increments and is judged on the
+     re-read, so two requests racing at the line resolve exactly as before. */
+  const seen = await env.DB.prepare('SELECT n FROM ingest_rate WHERE minute = ?').bind(key).first();
+  if (seen && seen.n >= cap) return false;
   await env.DB.prepare(
     `INSERT INTO ingest_rate (minute, n) VALUES (?, 1)
        ON CONFLICT(minute) DO UPDATE SET n = n + 1`).bind(key).run();
@@ -286,6 +312,23 @@ async function withinRateLimit(env, kind) {
   return !row || row.n <= cap;
 }
 
+/* Read a request body up to `max` bytes; null the moment it exceeds them. */
+async function readBounded(request, max) {
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const chunks = []; let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) { try { await reader.cancel(); } catch { /* already gone */ } return null; }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(total); let o = 0;
+  for (const c of chunks) { all.set(c, o); o += c.byteLength; }
+  return new TextDecoder().decode(all);
+}
+
 async function handleIngest(request, env) {
   const supplied = request.headers.get('X-Ingest-Key') || '';
   if (!env.INGEST_KEY || !(await secretEqual(supplied, env.INGEST_KEY))) {
@@ -296,8 +339,12 @@ async function handleIngest(request, env) {
   if (Number.isFinite(declared) && declared > MAX_PAYLOAD_BYTES) {
     return json({ error: 'payload too large' }, 413);
   }
-  const raw = await request.text();
-  if (raw.length > MAX_PAYLOAD_BYTES) return json({ error: 'payload too large' }, 413);
+  /* A chunked request declares no length, so the header check above never
+     fires for it and the whole body used to be buffered before the size test
+     (closeout audit, 2026-09-03). The stream is read up to the cap and
+     abandoned the byte it is exceeded, whatever the headers said. */
+  const raw = await readBounded(request, MAX_PAYLOAD_BYTES);
+  if (raw === null) return json({ error: 'payload too large' }, 413);
 
   if (!(await withinRateLimit(env))) return json({ error: 'too many submissions' }, 429);
 
@@ -327,8 +374,19 @@ async function handleIngest(request, env) {
         pick(p, 'subject_name'), pick(p, 'carrier'), pick(p, 'claim_number'),
         raw, nowIso()).run();
   } catch (e) {
-    // A retry from the browser must not surface as an error to the client.
-    if (String(e).includes('UNIQUE')) return json({ ok: true, duplicate: true });
+    if (String(e).includes('UNIQUE')) {
+      /* A browser RETRY resends the identical body and must not surface as an
+         error — that rule stands. But a DIFFERENT submission under a taken
+         number is a COLLISION, and "recorded" would be a lie to the client
+         and a notice to the firm pointing at someone else's file (closeout
+         audit, 2026-09-03). The intake mints its number from 9,000 daily
+         values, so a clash is reachable by chance; the page re-mints once on
+         this code and tries again. */
+      const prior = await env.DB.prepare('SELECT payload FROM submissions WHERE case_no = ?')
+        .bind(caseNo).first();
+      if (prior && prior.payload === raw) return json({ ok: true, duplicate: true });
+      return json({ error: 'That case number is already in use.', code: 'case_no_taken' }, 409);
+    }
     throw e;
   }
   /* The structured legal row. GUARDED: schema.sql arrives by a manual
@@ -4567,6 +4625,16 @@ async function notifyAdmins(env, event, caseNo) {
           AND email IS NOT NULL AND TRIM(email) != ''`).all();
     const to = (results || []).map(r => String(r.email).trim()).filter(Boolean);
     if (!to.length) return { sent: 0, reason: 'no_recipients' };
+    /* THE PUBLIC INGEST REACHES THIS SENDER WITH NO SESSION AT ALL (closeout
+       audit, 2026-09-03): every admin sender goes through the outbound-mail
+       cap and this one did not, so an unauthenticated flood of intakes could
+       send unbounded email out of the firm's verified domain. Same cap, same
+       bucket; a capped alert is recorded like any other failure, so the
+       Settings card says it happened rather than nothing. */
+    if (!(await withinRateLimit(env, 'mail'))) {
+      await recordAlertFailure(env, event, caseNo, 'rate_limited', to.length);
+      return { sent: 0, reason: 'rate_limited' };
+    }
 
     const label = (ALERT_EVENTS.find(([id]) => id === event) || [])[1] || 'Portal alert';
     const clean = /^[A-Za-z0-9-]{3,64}$/.test(String(caseNo || '')) ? String(caseNo) : '';
@@ -6407,7 +6475,12 @@ async function listProfilesRoute(request, env) {
     includeInactive: url.searchParams.get('inactive') === '1',
     /* Bounded for the same reason CANDIDATE_CAP is: `limit` binds a parameter
        per row in the contact, phone and count reads below. */
-    limit: Math.min(PAGE_CAP, Number(url.searchParams.get('limit')) || 60),
+    /* `Number('-1')` is truthy, so `||` never fired and Math.min handed SQLite
+       a negative LIMIT — which SQLite reads as NO limit, defeating PAGE_CAP
+       and building a bind list that grows with the customer's data (closeout
+       audit, 2026-09-03). Clamped at both ends, as the sheet reader already
+       does. */
+    limit: Math.min(PAGE_CAP, Math.max(1, Number(url.searchParams.get('limit')) || 60)),
   });
   return json({ ...out, kinds: PROFILE_KINDS, roles: PROFILE_ROLES, phone_labels: PHONE_LABELS });
 }
@@ -7971,6 +8044,14 @@ async function editExpense(request, env, user, caseNo, id) {
   const admin = user.role === 'admin';
   if (!admin && row.investigator_id !== user.id) {
     return json({ error: 'That expense belongs to another investigator.' }, 403);
+  }
+  /* REVIEWED MONEY IS THE OFFICE'S — the rule `contentTarget` already applies
+     to REMOVING an expense, applied here to EDITING one (closeout audit,
+     2026-09-03). Without it an investigator could rewrite the figure on an
+     expense the office had already reviewed, and the UPDATE clears
+     reviewed_at/reviewed_by, so who reviewed it went with it. */
+  if (!admin && row.reviewed_at) {
+    return json({ error: 'The office has already reviewed that expense — ask them to change it.' }, 403);
   }
   // Once reviewed, the classification decision was made against these numbers;
   // changing them re-opens the review rather than sliding under it.
@@ -9690,7 +9771,7 @@ function inlineSafeType(contentType) {
   return null;
 }
 
-async function serveEvidence(env, user, caseNo, eid) {
+async function serveEvidence(env, user, caseNo, eid, rangeHeader) {
   if (!(await caseFor(env, user, caseNo))) return json({ error: 'not found' }, 404);
   const row = await env.DB.prepare(
     'SELECT r2_key, filename, content_type, deleted_at FROM case_evidence WHERE id = ? AND case_no = ?')
@@ -9717,9 +9798,33 @@ async function serveEvidence(env, user, caseNo, eid) {
   /* EVERY FILE UPLOADED BEFORE THIS CHANGE IS STILL HERE and still reads from
      the bucket. Nothing was migrated and nothing was deleted (owner). */
   if (!env.EVIDENCE) return json({ error: 'Evidence storage is not attached.' }, 503);
-  const obj = await env.EVIDENCE.get(row.r2_key);
+  /* RANGE REQUESTS (closeout audit, 2026-09-03): iOS Safari's media loader
+     asks for `bytes=0-1` first and refuses to play a 200 that ignores it, so
+     a legacy video row in R2 would not play on a phone. R2 serves a range
+     natively and still reports the object's full size. Dropbox-backed rows
+     are untouched — video was never written there. */
+  const range = parseByteRange(rangeHeader);
+  const obj = await env.EVIDENCE.get(row.r2_key, range
+    ? { range: range.end == null ? { offset: range.start } : { offset: range.start, length: range.end - range.start + 1 } }
+    : undefined);
   if (!obj) return json({ error: 'The stored object is missing from the bucket.' }, 404);
+  headers['Accept-Ranges'] = 'bytes';
+  if (range && typeof obj.size === 'number' && range.start < obj.size) {
+    const end = Math.min(range.end == null ? obj.size - 1 : range.end, obj.size - 1);
+    headers['Content-Range'] = `bytes ${range.start}-${end}/${obj.size}`;
+    return new Response(obj.body, { status: 206, headers });
+  }
   return new Response(obj.body, { status: 200, headers });
+}
+
+/* `bytes=a-b` or `bytes=a-`; anything else (multi-range, the suffix form) is
+   ignored and the whole object is served, which every client accepts. */
+function parseByteRange(h) {
+  const m = /^bytes=(\d+)-(\d*)$/.exec(String(h || '').trim());
+  if (!m) return null;
+  const start = parseInt(m[1], 10), end = m[2] === '' ? null : parseInt(m[2], 10);
+  if (!Number.isFinite(start) || (end != null && end < start)) return null;
+  return { start, end };
 }
 
 async function editEvidence(request, env, user, caseNo, eid) {
@@ -13147,7 +13252,11 @@ async function sendMail(env, { to, subject, text, html }) {
     if (res.ok) return { sent: true };
     let detail = '';
     try { detail = (await res.json()).message || ''; } catch { /* body may not be json */ }
-    console.error('email rejected', res.status, detail);
+    /* The provider's message commonly quotes the offending address, and a
+       client's, adjuster's or firm's email must not land in the Worker log —
+       the same rule alertText keeps for what leaves the building (closeout
+       audit, 2026-09-03). The status is what a person debugging needs. */
+    console.error('email rejected', res.status);
     return { sent: false, reason: 'rejected', status: res.status, detail };
   } catch (e) {
     console.error('email failed', e && e.message ? e.message : e);
@@ -14945,18 +15054,35 @@ async function route(request, env) {
 
   if (p === '/health') {
     const missing = await missingTables(env);
+    /* Anonymous callers get the COUNT (closeout audit, 2026-09-03): the list
+       of missing table NAMES was a partial map of the schema handed to anyone
+       who asked. The names still go to a signed-in admin — the page's "not
+       fully set up" banner reads them — and verify.sh reads the count. */
+    let who = null;
+    try { who = await currentUser(request, env); } catch { who = null; }
     let storagePct = null;
     if (env.DB && !missing.includes('case_evidence')) {
-      try { storagePct = (await evidenceUsage(env)).percent_of_free; } catch { storagePct = null; }
+      /* One aggregate a minute per isolate: the daily probe and the page both
+         read this figure, and an anonymous flood must not re-run the sum. */
+      const now = Date.now();
+      let hit = env.DB ? HEALTH_CACHE.get(env.DB) : null;
+      if (!hit || now - hit.at > 60_000) {
+        let pct = null;
+        try { pct = (await evidenceUsage(env)).percent_of_free; } catch { pct = null; }
+        hit = { at: now, pct };
+        if (env.DB) HEALTH_CACHE.set(env.DB, hit);
+      }
+      storagePct = hit.pct;
     }
     return json({
       ok: true,
       configured: Boolean(env.DB && env.INGEST_KEY),
       email: Boolean(env.RESEND_API_KEY),
-      // Which tables are actually there. The portal checks this on load so a
-      // half-applied schema announces itself, instead of waiting for whichever
-      // button happens to touch a missing table first.
-      missing_tables: missing,
+      // How many expected tables are absent — a half-applied schema announces
+      // itself here, to the live check and to the portal alike.
+      schema_missing: missing.length,
+      // Which ones, for the office only.
+      ...(who && who.role === 'admin' ? { missing_tables: missing } : {}),
       // A bare percentage of the R2 free tier — nothing sensitive, and what
       // the daily site-health run reads to warn the owner at 75%.
       storage_pct: storagePct,
@@ -15946,7 +16072,9 @@ async function route(request, env) {
   if (m && method === 'POST') return uploadEvidence(request, env, user, m[1]);
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/evidence\/(\d{1,12})\/file$/);
-  if (m && method === 'GET') return serveEvidence(env, user, m[1], parseInt(m[2], 10));
+  if (m && method === 'GET') {
+    return serveEvidence(env, user, m[1], parseInt(m[2], 10), request.headers.get('Range'));
+  }
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/evidence\/(\d{1,12})$/);
   if (m && method === 'POST') return editEvidence(request, env, user, m[1], parseInt(m[2], 10));
@@ -16948,9 +17076,14 @@ async function route(request, env) {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return listUsers(env);
   }
-  // There is deliberately no route that creates an account directly. Accounts
-  // exist only by redeeming an invitation, so nobody sets another person's
-  // password — not even an admin.
+  /* There is deliberately no route that CREATES an account directly: accounts
+     exist only by redeeming an invitation. An admin can, however, set an
+     existing user's password — `/users/:id/password` below, kept for the case
+     where somebody is locked out and cannot reach their email. It is not the
+     ordinary path: `/users/:id/reset-link` is what the page offers, and it
+     leaves a `password_resets` row naming who issued it, which a direct set
+     does not. Said plainly here because this comment claimed the opposite
+     until the closeout audit of 2026-09-03 read it against the routes. */
   if (p === '/invites' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return listInvites(env);
@@ -17071,6 +17204,9 @@ export default {
     headers.set('Cache-Control', 'no-store');
     headers.set('X-Content-Type-Options', 'nosniff');
     headers.set('Referrer-Policy', 'no-referrer');
+    // Pages sets this for the site; the Worker answers on the same origin and
+    // now says the same thing (closeout audit, 2026-09-03).
+    headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
     return new Response(res.body, { status: res.status, headers });
   },
 };

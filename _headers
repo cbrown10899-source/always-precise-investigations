@@ -54,7 +54,14 @@
   X-Frame-Options: DENY
 
 /portal/*
-  Cache-Control: no-store
+  # private, no-cache — NOT no-store (closeout audit, 2026-09-02). The page
+  # holds no user data (every datum arrives from the Worker, which is no-store
+  # itself), and it is 1.1 MB: no-store forbade even a conditional request, so
+  # every open of the portal re-downloaded 334 KB gzipped with no 304 possible.
+  # no-cache still revalidates on every load, so a deploy lands exactly as fast
+  # as before; an unchanged shell now costs an empty 304. /watch/* keeps
+  # no-store — it holds a token in the page.
+  Cache-Control: private, no-cache
   X-Robots-Tag: noindex, nofollow, noarchive
   X-Frame-Options: DENY
   Referrer-Policy: no-referrer

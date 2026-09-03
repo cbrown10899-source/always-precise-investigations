@@ -217,6 +217,25 @@ const call = (req, env) => worker.fetch(req, env);
   ok('floods from one visitor get rate limited', limited > 0, `${limited} blocked`);
 }
 
+/* CLOSEOUT HARDENING (2026-09-03): the limiter was keyed on a hash that
+   INCLUDED the User-Agent, which the caller chooses — so changing it handed
+   every request a fresh bucket and the flood control above could be walked
+   straight past. The dedup key still carries the UA (it wants to tell one
+   person's two browsers apart); the LIMITER key is the address alone. */
+{
+  const env = makeEnv();
+  let limited = 0;
+  for (let i = 0; i < 30; i++) {
+    const r = await call(hit({ path: '/p' + i },
+      { ip: '203.0.113.78', ua: HUMAN_UA + ' build/' + i }), env);
+    if (r.status === 429) limited++;
+  }
+  ok('a caller rotating its User-Agent does NOT get a fresh bucket',
+     limited > 0, `${limited} blocked across 30 distinct user-agents`);
+  ok('and a different address is still unaffected',
+     (await call(hit({ path: '/other' }, { ip: '203.0.113.79' }), env)).status === 200);
+}
+
 // --- push endpoint validation (SSRF guard)
 {
   const env = makeEnv();

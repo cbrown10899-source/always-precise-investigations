@@ -1953,6 +1953,61 @@ section('Unit 40 — contrast, focus, and what the hero kept');
   await ctx.close();
 }
 
+
+/* ==========================================================================
+   CLOSEOUT HARDENING (2026-09-03). Two public-form defects the audit proved:
+   a claim number typed and then marked unavailable still satisfied the
+   identity rule while the payload stored it blank, and the form carried a
+   file input that uploaded nothing at all. */
+section('Closeout: an unavailable claim number cannot identify the file');
+{
+  const page = await (await browser.newContext()).newPage();
+  await page.goto(BASE + '?assignment=insurance');
+  await page.waitForTimeout(120);
+  await set(page, 'c_name', 'Dana Adjuster');
+  await set(page, 'c_email', 'dana@carrier.example');
+  await advance(page);
+
+  await set(page, 'k_carrier', 'Urgent Mutual');
+  /* TYPE the number, THEN mark it unavailable. The control keeps what was
+     typed so un-ticking restores it — which is right — but buildPayload
+     stores it blank, so it must not count as identifying the file either. */
+  await set(page, 'k_claimno', 'WC-2026-0001');
+  await page.locator('[data-k="k_claimno_na"]').check();
+  await page.waitForTimeout(80);
+  await advance(page);
+  ok('the assignment still reaches the claimant step',
+     await heading(page) === 'The claimant');
+
+  await advance(page);
+  ok('but it will NOT pass the claimant step with no name and no live claim number',
+     await heading(page) === 'The claimant');
+  const msg = await page.locator('.err, #err').first().innerText().catch(() => '');
+  ok('and it says which of the two it needs', /claimant|claim number/i.test(msg), msg);
+
+  await set(page, 's_name', 'Pat Claimant');
+  await advance(page);
+  ok('naming the claimant moves it on', await heading(page) !== 'The claimant');
+  await page.close();
+}
+
+section('Closeout: the form offers no upload it cannot honour');
+{
+  const page = await (await browser.newContext()).newPage();
+  await page.goto(BASE);
+  await page.waitForTimeout(120);
+  const html = await page.content();
+  ok('no file input anywhere on the form',
+     !/type="file"/i.test(html) && await page.locator('input[type=file]').count() === 0);
+  ok('and no pickFiles handler survives',
+     await page.evaluate(() => typeof pickFiles === 'undefined'));
+  ok('the note says what actually happens to documents',
+     /attached to the case by the office/i.test(html));
+  ok('and the payload carries no attachments field',
+     await page.evaluate(() => !('attachments' in buildPayload())));
+  await page.close();
+}
+
 await browser.close();
 server.close();
 
