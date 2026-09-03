@@ -18055,6 +18055,77 @@ section('A double-tap on an activity writer records one entry');
   await page.close();
 }
 
+
+/* ==========================================================================
+   CLOSEOUT HARDENING (2026-09-03). Five page defects the audit proved, each
+   pinned by the behaviour it broke rather than by the line that fixed it. */
+section('Closeout hardening: one case at a time, one tap, one token');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* A case's data leaves with the case. WS_CASE and VIEW switched while WS
+     still held the LAST case, and nothing painted until both reads landed —
+     so any paint in that window drew the new case NUMBER over the old case's
+     record, and Edit case would then have saved one client's identity onto
+     another's file. */
+  await page.evaluate(() => openCase('API-20260812-4001'));
+  await page.waitForTimeout(700);
+  const raced = await page.evaluate(async () => {
+    const p1 = openCase('API-20260812-4002');
+    const cleared = WS === null;                 // observed right after the switch
+    await p1;
+    return { cleared, wsCase: WS_CASE,
+             name: (WS && WS.submission && WS.submission.client_name) || '' };
+  });
+  ok('opening a case clears the previous case\'s data at once', raced.cleared, JSON.stringify(raced));
+  ok('and the screen ends on the case it was asked for',
+     raced.wsCase === 'API-20260812-4002' && raced.name === 'Jane Client', JSON.stringify(raced));
+
+  /* The day clock is one tap. startDay is check-then-insert with no unique
+     index behind it, so two taps could open two days on one case — each
+     storing its own full hours, only the newer reachable by End. */
+  await page.evaluate(() => openCase('API-20260812-4002', 'field'));
+  await page.waitForTimeout(700);
+  const days = await page.evaluate(async () => {
+    if ($('d_date')) $('d_date').value = '2026-09-03';
+    if ($('d_start')) $('d_start').value = '08:00';
+    startInvestigationDay(); startInvestigationDay();
+    await new Promise(r => setTimeout(r, 1500));
+    const ws = await api('/cases/API-20260812-4002/workspace');
+    return { open: (ws.days || []).filter(d => !d.end_time).length, busy: DAY_BUSY };
+  });
+  ok('a double tap on Start day opens ONE investigation day', days.open === 1, JSON.stringify(days));
+  ok('and the guard releases so the next tap works', days.busy === false);
+  await page.evaluate(async () => {
+    const ws = await api('/cases/API-20260812-4002/workspace');
+    const open = (ws.days || []).find(d => !d.end_time);
+    if (open) await api('/cases/API-20260812-4002/day/end', { method: 'POST', body: { end_time: '09:00' } });
+  });
+
+  /* The invoice payment token belongs to ONE invoice: carried to another it
+     could not be matched there and the payment answered indeterminate. */
+  ok('a payment token from another invoice is dropped',
+     await page.evaluate(() => { INVPAY_TOKEN = 'inv12-old'; const id = 13;
+       if (!INVPAY_TOKEN.startsWith(`inv${id}-`)) INVPAY_TOKEN = ''; return INVPAY_TOKEN === ''; }));
+
+  /* Voice outlives the field view: the online listener and the flush interval
+     both ran with SV null and threw on every reconnect. */
+  ok('the voice helper is safe outside the field view',
+     await page.evaluate(() => { SV = null; return svVoice() === null; }));
+  ok('and an "online" event outside the field view throws nothing',
+     await page.evaluate(() => { SV = null; let bad = null;
+       const h = e => { bad = e.message || String(e); };
+       window.addEventListener('error', h);
+       window.dispatchEvent(new Event('online'));
+       window.removeEventListener('error', h); return bad === null; }));
+
+  /* The invoice search: debounced, and the box keeps the caret. */
+  ok('the invoice search box is focus-restorable',
+     await page.evaluate(() => FOCUS_KEEP.includes('inv_q')));
+  await page.close();
+}
+
 await browser.close();
 server.close();
 

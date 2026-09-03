@@ -1854,6 +1854,16 @@
     .qslim{padding:10px 14px 12px;}
     .qslim .empty{padding:4px 2px 2px;}
     .qslim .empty-title{font-size:.95rem;}
+    /* FOUR CONTROLS ESCAPED THE 16px FLOOR (closeout audit, 2026-09-02). The
+       phone rule `input,select,textarea{font-size:16px}` is (0,0,1); these
+       class-scoped rules are (0,1,1) and won inside the media query whatever
+       the source order, so iOS zoomed on focus — worst in the field view's
+       transcript box, tapped one-handed to correct a line. Same specificity,
+       later in source, phone only. The daily-summary selects were also 36px
+       against the 44px floor for the same reason. */
+    .lead-send input,.sv-heard textarea,.comprow input,
+    .dsb-actrow select,.dsb-actrow input{font-size:16px;}
+    .dsb-actrow select{min-height:44px;}
   }
 
 /* ============== API ASSISTANT (ASSISTANT.md) — .asst- is its own prefix ===
@@ -5987,7 +5997,8 @@ function sheetWizardHtml(){
       <div class="actions" style="margin-top:12px">
         ${w.step > 1 ? `<button class="btn ghost sm" data-act="wizStep" data-s="${w.step - 1}">&larr; Back</button>` : ""}
         ${w.step < 2 ? `<button class="btn sm" data-act="wizStep" data-s="${w.step + 1}">Preview &rarr;</button>`
-          : `<button class="btn sm" data-act="wizSend">Send it</button>`}
+          : `<button class="btn sm" data-act="wizSend"${w.busy ? " disabled" : ""}>${
+              w.busy ? "Sending&hellip;" : "Send it"}</button>`}
       </div>
       ${w.err ? `<div class="err">${esc(w.err)}</div>` : ""}
     </div>
@@ -11196,7 +11207,8 @@ function vstHtml(){
    Dialogs are untouched and stay untouched — `ls_to` and `pi_to` focus after
    the user has explicitly opened that form, which the owner's rule allows by
    name. */
-const FOCUS_KEEP = ["q", "prof_q", "nl_pick", "gsearch", "am_q"];
+const FOCUS_KEEP = ["q", "prof_q", "nl_pick", "gsearch", "am_q", "inv_q"];
+let INV_Q_TIMER = null;   // the invoice search's debounce, the srchSoon shape
 let FOCUS_WAS = null;
 function focusCapture(){
   const el = document.activeElement;
@@ -11654,11 +11666,23 @@ async function openCase(caseNo, tab){
      prefilled amount on another client's retainer is the kind of mistake that
      is only found when the money is reconciled. */
   retainerEnter(caseNo);
+  /* THE PREVIOUS CASE'S DATA LEAVES WITH IT (closeout audit, 2026-09-02).
+     WS_CASE and VIEW were switched above while WS still held the LAST case,
+     and nothing painted until both reads landed — so any paint that fired in
+     that window (a dashboard loader finishing, a search debounce) drew the
+     new case NUMBER over the old case's record. enterSurveillance, the
+     sibling with the same two reads, already did this; caseBodyHtml draws
+     "Loading the case…" for a null WS, which is also the first feedback the
+     tap had ever had. */
+  WS = null;
+  paint();
   try{
     const [sub, ws] = await Promise.all([
       api("/submissions/" + encodeURIComponent(caseNo)),
       api("/cases/" + encodeURIComponent(caseNo) + "/workspace"),
     ]);
+    /* A slower answer for a case the user has already left must not land. */
+    if(WS_CASE !== caseNo) return;
     WS = { ...ws, submission: sub.submission };
   }catch(e){ alert(e.message); return; }
   /* PHASE 8 — recorded HERE, after both reads came back, so "recently viewed"
@@ -11685,7 +11709,10 @@ async function openCase(caseNo, tab){
 async function reloadWorkspace(){
   if(!WS_CASE) return;
   try{
-    const ws = await api("/cases/" + encodeURIComponent(WS_CASE) + "/workspace");
+    const want = WS_CASE;
+    const ws = await api("/cases/" + encodeURIComponent(want) + "/workspace");
+    // A slower answer for a case the user has already left must not land.
+    if(WS_CASE !== want) return;
     WS = { ...ws, submission: WS ? WS.submission : null };
   }catch(e){ WS_ERR = e.message; }
   paintCase();
@@ -13221,7 +13248,7 @@ function dsBuilderHtml(open, day, editable){
 
     <div class="rc-h dsb-h"><b>The paragraph</b>
       ${st.manual ? `<span class="tag rs-submitted">Yours &mdash; protected</span>` : `<span class="tag">Built from selections</span>`}</div>
-    <textarea id="ds_text" rows="7" class="rbody" data-act-input="dsText" data-day="${day.id}"
+    <textarea id="ds_text" aria-label="Daily summary" rows="7" class="rbody" data-act-input="dsText" data-day="${day.id}"
       ${editable ? "" : "disabled"}>${esc(st.text)}</textarea>
     ${st.manual ? `<p class="hint">This wording is protected: the controls above stopped rewriting the
       box the moment it became yours. <b>Rebuild</b> replaces it from the selections, and asks first.</p>` : ""}
@@ -13350,7 +13377,7 @@ function reportOpenHtml(open, admin, badge){
 
   const body =
       REP_VIEW === "edit" && editable ? `
-        <textarea id="r_body" rows="16" class="rbody">${esc(open.body)}</textarea>
+        <textarea id="r_body" aria-label="Report body" rows="16" class="rbody">${esc(open.body)}</textarea>
         <div class="ractions">
           <button class="btn sm" data-act="saveReport" data-id="${open.id}">Save changes</button>
           <button class="btn sm ghost" data-act="repView" data-v="preview">Done editing</button>
@@ -14461,7 +14488,7 @@ function evidencePanel(){
                `caseFor` is the boundary that matters. `pstButton` is the one
                place that decides whether it may be offered at all. */}
         ${pstButton(e, "btn sm ghost") ? `<div style="margin-top:6px">${pstButton(e, "btn sm ghost")}</div>` : ""}
-        ${admin ? `<div style="margin-top:6px"><select data-act="evClass" data-id="${e.id}" style="font-size:.78rem">
+        ${admin ? `<div style="margin-top:6px"><select data-act="evClass" aria-label="Classification" data-id="${e.id}" style="font-size:.78rem">
             ${["needs_review","client_deliverable","internal_only","needs_redaction","do_not_use"]
               .map(c => `<option value="${c}" ${c === e.classification ? "selected" : ""}>${clsLabel(c)}</option>`).join("")}
           </select>
@@ -14521,7 +14548,13 @@ function evidencePanel(){
     ${dbxCaseLinksHtml(WS_CASE)}`;
 }
 
+let EV_UP_BUSY = false;
 async function uploadEvidenceFile(){
+  /* A double submit uploaded the file twice — Dropbox is add+autorename, so
+     it lands as `photo.jpg` and `photo (1).jpg` with two evidence rows, and
+     Unit 39 removal then preserves both sets of bytes (closeout audit). */
+  if(EV_UP_BUSY) return;
+  EV_UP_BUSY = true;
   WS_ERR = ""; WS_NOTICE = "";
   const f = $("ev_file") && $("ev_file").files[0];
   if(!f){ WS_ERR = "Pick a file first."; return paintCase(); }
@@ -14539,6 +14572,7 @@ async function uploadEvidenceFile(){
     if(!res.ok) throw new Error(d.error || ("Upload failed (" + res.status + ")"));
     WS_NOTICE = "Stored. " + (d.usage ? d.usage.percent_of_free + "% of the free plan used." : "");
   }catch(e){ WS_ERR = e.message; }
+  finally{ EV_UP_BUSY = false; }
   await reloadWorkspace();
 }
 
@@ -16017,6 +16051,16 @@ async function enterSurveillance(caseNo){
 }
 function exitSurveillance(){
   svTickStop();
+  /* THE DICTATED QUEUE DOES NOT DIE WITH THE SCREEN (closeout audit,
+     2026-09-03). Entries recorded out of coverage live in SV.voice.queue and
+     were discarded here without a word — the one place the field view could
+     lose work it had already taken. Stop the recogniser, clear the flush
+     timer, and say plainly if anything is still waiting to file. */
+  const waiting = (SV && SV.voice && (SV.voice.queue || []).length) || 0;
+  try{ svVoiceStop("off"); }catch(e){ /* nothing was listening */ }
+  if(SV && SV.voice && SV.voice.flushTimer){ clearInterval(SV.voice.flushTimer); SV.voice.flushTimer = null; }
+  if(waiting) WS_ERR = waiting + " dictated " + (waiting === 1 ? "entry is" : "entries are")
+    + " still waiting to file — reopen Active Surveillance on this case while you have signal.";
   SV = null;
   document.body.classList.remove("surv");
   VIEW = "case"; WS_TAB = "overview";
@@ -16024,7 +16068,9 @@ function exitSurveillance(){
 }
 async function svReload(){
   try{
-    const ws = await api("/cases/" + encodeURIComponent(WS_CASE) + "/workspace");
+    const want = WS_CASE;
+    const ws = await api("/cases/" + encodeURIComponent(want) + "/workspace");
+    if(WS_CASE !== want) return;
     WS = { ...ws, submission: WS ? WS.submission : null };
     if(ws.server_now) SV_SKEW = Date.parse(ws.server_now) - Date.now();
   }catch(e){ SV.err = e.message; }
@@ -16254,7 +16300,7 @@ function svHomeScreen(){
             data-id="${last.id}">Put it back</button>`
         : SV.lastEdit === last.id ? `
           <div class="sv-row"><span>${esc(t12(last.at_time))}</span></div>
-          <textarea id="sv_last_edit" rows="3"
+          <textarea id="sv_last_edit" aria-label="Entry text" rows="3"
             style="width:100%">${esc(String(last.description || ""))}</textarea>
           <div style="display:flex;gap:8px;margin-top:8px">
             <button class="sv-btn gold" data-act="svLastSave" data-id="${last.id}">Save</button>
@@ -16528,6 +16574,12 @@ function svVoiceSupported(){
 }
 
 function svVoice(){
+  /* SV IS NULL OUTSIDE THE FIELD VIEW, and three callers outlive it: the
+     `online` listener registered once at load, the 20s flush interval, and
+     the live recogniser's own handlers (closeout audit, 2026-09-03). Any
+     reconnect while not in field mode threw here, and the interval threw
+     before it could clear itself — every 20s for the life of the page. */
+  if(!SV) return null;
   if(!SV.voice){
     SV.voice = {on: false, state: "off", msg: "", err: "", armed: false,
                 rec: null, filing: false, last: null};
@@ -16751,7 +16803,7 @@ function svVoiceScheduleFlush(){
 }
 
 if(typeof window !== "undefined"){
-  window.addEventListener("online", () => { if(svVoiceQueue().length) svVoiceFlush(); });
+  window.addEventListener("online", () => { if(SV && svVoiceQueue().length) svVoiceFlush(); });
 }
 
 function svVoiceConfirm(label, when){
@@ -17039,7 +17091,7 @@ function svMicHtml(){
                                                 : "Heard &mdash; read it before it goes in"}</div>
       ${standardized || m.status === "dictation" ? `<div style="font-size:.8rem;color:#5c6775;
         margin-bottom:6px">Heard &ldquo;${esc(SV.heard)}&rdquo;</div>` : ""}
-      <textarea id="sv_heard" rows="4">${esc(std)}</textarea>
+      <textarea id="sv_heard" aria-label="Transcript" rows="4">${esc(std)}</textarea>
       <div style="display:flex;gap:8px;margin-top:10px">
         <button class="btn sm" data-act="svUseText">Use this text</button>
         <button class="btn sm ghost" data-act="svDiscard">Discard</button>
@@ -17712,7 +17764,7 @@ function invoicesView(){
           ${[["","Both sides"],["insurance","Insurance"],["private","Private"]]
             .map(([v,l]) => `<option value="${v}" ${INV_FILTER.type === v ? "selected" : ""}>${l}</option>`).join("")}
         </select>
-        <input data-act="invFilterQ" placeholder="Search # / case / claim" value="${esc(INV_FILTER.q)}" style="max-width:220px">
+        <input id="inv_q" data-act="invFilterQ" placeholder="Search # / case / claim" value="${esc(INV_FILTER.q)}" style="max-width:220px">
       </div>
       ${rows ? `<div style="overflow-x:auto"><table>
           <thead><tr><th>Invoice</th><th class="hide">Bill to</th><th class="hide">Issued</th>
@@ -18033,6 +18085,13 @@ let INVPAY_TOKEN = "";
 async function recordInvPayment(){
   INV_MSG = "";
   const id = INV_OPEN.id;
+  /* THE TOKEN BELONGS TO ONE INVOICE (closeout audit, 2026-09-03). It is kept
+     across a failed attempt on purpose, but nothing reset it when the admin
+     moved to a different invoice — so a token claimed under invoice 12 rode
+     to invoice 13, where the Worker's recovery lookup (token AND invoice_id)
+     could not find it and answered `indeterminate_payment`. The retainer's
+     twin is reset per case by retainerEnter; invoices had no equivalent. */
+  if(!INVPAY_TOKEN.startsWith(`inv${id}-`)) INVPAY_TOKEN = "";
   INVPAY_TOKEN = INVPAY_TOKEN || `inv${id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   try{
     const d = await api(`/invoices/${id}/payments`, {method: "POST", body: {
@@ -18275,6 +18334,8 @@ async function restoreActivityEntry(id){
    existed: the mode adds screens, never a second way to store the work. ---- */
 
 async function svStartDay(){
+  if(SV.dayBusy) return;
+  SV.dayBusy = true;
   SV.err = ""; SV.ok = "";
   try{
     await api(`/cases/${encodeURIComponent(WS_CASE)}/day/start`, {method:"POST", body:{
@@ -18283,6 +18344,7 @@ async function svStartDay(){
     }});
     SV.ok = "Day started.";
   }catch(e){ SV.err = e.message; }
+  finally{ if(SV) SV.dayBusy = false; }
   await svReload();
   svTickStart();
 }
@@ -18291,25 +18353,33 @@ async function svStartDay(){
    here stops a tick — svElapsed() freezes on its own because `paused_at` is
    a fixed server instant, so a reload while paused shows the same number. */
 async function svPauseDay(){
+  if(SV.dayBusy) return;
+  SV.dayBusy = true;
   SV.err = ""; SV.ok = "";
   try{
     await api(`/cases/${encodeURIComponent(WS_CASE)}/day/pause`, {method:"POST", body:{}});
     SV.ok = "Paused — the clock is stopped.";
   }catch(e){ SV.err = e.message; }
+  finally{ if(SV) SV.dayBusy = false; }
   await svReload();
 }
 
 async function svResumeDay(){
+  if(SV.dayBusy) return;
+  SV.dayBusy = true;
   SV.err = ""; SV.ok = "";
   try{
     await api(`/cases/${encodeURIComponent(WS_CASE)}/day/resume`, {method:"POST", body:{}});
     SV.ok = "Back on the clock.";
   }catch(e){ SV.err = e.message; }
+  finally{ if(SV) SV.dayBusy = false; }
   await svReload();
   svTickStart();
 }
 
 async function svEndDay(){
+  if(SV.dayBusy) return;
+  SV.dayBusy = true;
   SV.err = "";
   try{
     const r = await api(`/cases/${encodeURIComponent(WS_CASE)}/day/end`, {method:"POST", body:{
@@ -18320,6 +18390,7 @@ async function svEndDay(){
       + (r.paused_hours ? ` ${r.paused_hours} h of breaks came off the ${r.span_hours} h on the clock.` : "");
     svTickStop();
   }catch(e){ SV.err = e.message; }
+  finally{ if(SV) SV.dayBusy = false; }
   await svReload();
 }
 
@@ -18509,13 +18580,22 @@ function svMic(){
   try{ r.start(); }catch(e){ SV.listening = false; SV.err = e.message; paint(); }
 }
 
+/* THE DAY CLOCK IS ONE TAP (closeout audit, 2026-09-03). None of the five day
+   actions had an in-flight guard, and `startDay` is check-then-insert with no
+   unique index behind it — so two taps on a flaky connection could open two
+   days on one case, each storing its own full hours, and only the newer one
+   was ever reachable by End or Pause. */
+let DAY_BUSY = false;
 async function startInvestigationDay(){
+  if(DAY_BUSY) return;
+  DAY_BUSY = true;
   WS_ERR = "";
   try{
     await api(`/cases/${encodeURIComponent(WS_CASE)}/day/start`, {method:"POST", body:{
       day_date: $("d_date").value, start_time: $("d_start").value, start_mileage: $("d_smiles").value,
     }});
   }catch(e){ WS_ERR = e.message; }
+  finally{ DAY_BUSY = false; }
   await reloadWorkspace();
 }
 
@@ -18908,6 +18988,13 @@ function wizCollect(){
 async function wizSend(){
   wizCollect();
   const w = SHEET_WIZ;
+  /* THE ONE SEND WITHOUT AN IN-FLIGHT GUARD (closeout audit, 2026-09-03).
+     Its three siblings — payment options, the pre-case intake, the lead
+     intake — all set busy and disable their button; this one stayed live for
+     the whole round trip, so a double tap on a slow link emailed the client
+     twice and wrote two non-deletable send_log rows. */
+  if(w.busy) return;
+  w.busy = true; paint();
   /* Only the private sheet may carry payment, and only what was ticked. The
      Worker decides this too, from the sheet id — sending the flag here for a
      carrier sheet would be refused rather than obeyed. */
@@ -18959,6 +19046,7 @@ async function wizSend(){
     if(w.fromLead){ LEAD_MSG = SHEET_MSG; SHEET_WIZ = null; return render(); }
     SHEET_WIZ = null;
   }catch(e){ w.err = e.message; }
+  w.busy = false;
   paint();
 }
 
@@ -18995,7 +19083,11 @@ function nlCollect(){
   if(save) NL.saveProfile = save.checked;
 }
 
+let NL_BUSY = false;
 async function submitManualIntake(openAfter){
+  // A double tap on Create case made TWO cases, with two intake alerts.
+  if(NL_BUSY) return;
+  NL_BUSY = true;
   nlCollect();
   const g = id => (NL.v && NL.v[id] != null) ? NL.v[id] : "";
   const legal = NL.kind === "legal";
@@ -19080,6 +19172,7 @@ async function submitManualIntake(openAfter){
     TAB = "leads";
     await render();
   }catch(e){ NL.err = e.message; paint(); }
+  finally{ NL_BUSY = false; }
 }
 
 /* --------------------------------------------------------- event routing */
@@ -20137,6 +20230,15 @@ document.addEventListener("submit", ev => {
    posted. A control that draws is not a control that works — the same lesson
    the Timestamp Video quick tool taught at a different layer. */
 document.addEventListener("change", ev => {
+  /* THE COMBINED SUMMARY SAVES ON BLUR, and this is where blur arrives
+     (closeout audit, 2026-09-03). It was registered on `input` while its own
+     comment said `change`: every keystroke POSTed, the response repainted the
+     panel from the stored value, the textarea was rebuilt — it has no id, so
+     focus could not be restored — and the rest of the sentence went nowhere.
+     Out-of-order responses could leave the stored paragraph at any prefix. */
+  if(ev.target.dataset && ev.target.dataset.act === "pkgSummary"){
+    pkgApi(`/build/${PKG.build.id}/summary`, {body: ev.target.value});
+  }
   const act = ev.target.dataset ? ev.target.dataset.actChange : "";
   if(act) srActed();
   /* The daily summary's controls: capture-then-recompose, per day. */
@@ -20266,7 +20368,17 @@ document.addEventListener("input", ev => {
   if(ev.target.dataset && ev.target.dataset.act === "filter"){ FILTER = ev.target.value; paint(); }
   if(ev.target.dataset && ev.target.dataset.act === "invFilterStatus"){ INV_FILTER.status = ev.target.value; loadInvoices(); }
   if(ev.target.dataset && ev.target.dataset.act === "invFilterType"){ INV_FILTER.type = ev.target.value; loadInvoices(); }
-  if(ev.target.dataset && ev.target.dataset.act === "invFilterQ"){ INV_FILTER.q = ev.target.value; loadInvoices(); }
+  /* DEBOUNCED, AND THE BOX KEEPS THE CARET (closeout audit, 2026-09-03). This
+     fired a request per keystroke; the first answer repainted the list and
+     rebuilt the input, which had no id, so focus could not be restored and
+     the rest of the word went nowhere — with overlapping requests settling
+     last-answer-wins. The global search next door has done it this way since
+     Unit 8: a short timer, and the id in FOCUS_KEEP. */
+  if(ev.target.dataset && ev.target.dataset.act === "invFilterQ"){
+    INV_FILTER.q = ev.target.value;
+    clearTimeout(INV_Q_TIMER);
+    INV_Q_TIMER = setTimeout(() => loadInvoices(), 220);
+  }
   if(ev.target.dataset && ev.target.dataset.act === "evClass"){ setEvidenceClass(Number(ev.target.dataset.id), ev.target.value); }
   if(ev.target.dataset && ev.target.dataset.act === "pkgType"){ pkgApi(`/build/${PKG.build.id}/package`, {package_type: ev.target.value}); }
   if(ev.target.dataset && ev.target.dataset.act === "wizRetPick" && SHEET_WIZ){
@@ -20293,7 +20405,7 @@ document.addEventListener("input", ev => {
   }
   // Saves on blur, so the admin can write the paragraph without a repaint
   // pulling the cursor out from under them mid-sentence.
-  if(ev.target.dataset && ev.target.dataset.act === "pkgSummary"){ pkgApi(`/build/${PKG.build.id}/summary`, {body: ev.target.value}); }
+
 });
 
 /* ------------------------------------------------------------------- boot */

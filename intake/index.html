@@ -198,7 +198,8 @@ const PORTAL_API = "/portal-api";
 const PORTAL_INGEST_KEY = "8d9ad57784dbc7e00d86806d2c186d60337fb4f762ea5f100ef311f70a84eb7b";
 
 /* ============ State ============ */
-const CASE_NO = "API-" + new Date().toISOString().slice(0,10).replace(/-/g,"") + "-" + String(Math.floor(1000+Math.random()*9000));
+function mintCaseNo(){ return "API-" + new Date().toISOString().slice(0,10).replace(/-/g,"") + "-" + String(Math.floor(1000+Math.random()*9000)); }
+let CASE_NO = mintCaseNo();
 /* A carrier arriving from the insurance pages must never be shown the consumer
    side of the business. Landing on the shared service picker would offer an
    adjuster domestic surveillance, with a private-client price beside it, which
@@ -674,8 +675,8 @@ function view(step){
       ? `<label class="f"><span>Alleged injury &amp; stated restrictions${OPT}</span><textarea data-k="s_rel" placeholder="Reported injury, work status, and any restrictions in the file…"></textarea></label>`
       : `<label class="f"><span>Relationship to you${OPT}</span><input type="text" data-k="s_rel" placeholder="e.g. spouse, tenant, employee, defendant"></label>`}
     <label class="f"><span>Documents or photos${OPT}</span>
-      <input type="file" id="files" multiple onchange="pickFiles(this)" style="font-size:.9rem;padding:8px 0;border:0;">
-      <span class="hint" id="filenote">${isClaims()?"Attach the claim file, ISO report or a photo of the claimant.":"Attach court papers or a photo of the subject if you have them."}</span></label>
+
+      <span class="hint" id="filenote">Documents are attached to the case by the office once the assignment is accepted &mdash; nothing uploads from this form.</span></label>
     ${navButtons()}
   </div>`;
   }
@@ -896,7 +897,7 @@ function pickSvc(k){
 function pickLsvc(k){ if(!legalSvcById(k)) return; capture(); S.lsvc=k; render(); }
 function pickAuth(k){ capture(); val.z_auth=k; render(); }
 function pickArr(k){ capture(); val.l_arrangement=k; render(); }
-function pickFiles(input){ S.files=[...input.files].map(f=>f.name); const n=$("filenote"); if(n) n.textContent = S.files.length? S.files.length+" file(s) attached: "+S.files.join(", ") : "Attach court papers or a photo of the subject if you have them."; }
+
 
 
 /* ============ Signature pad ============ */
@@ -947,7 +948,11 @@ function validate(step){
   /* The file has to be identifiable: the claimant's name, or failing that the
      claim number from the earlier step. Never both required — one. */
   if(step==="subject" && isClaims()){
-    if(!(val.s_name||"").trim() && !(val.k_claimno||"").trim()){
+    /* A number typed and THEN marked unavailable stays in `val` (the control
+       keeps what was typed so un-ticking restores it) but leaves the payload
+       blank — so it must not count here either (closeout audit, 2026-09-02). */
+    const claimNo = val.k_claimno_na ? "" : (val.k_claimno||"");
+    if(!(val.s_name||"").trim() && !claimNo.trim()){
       return "Give us the claimant's name — or go back and add the claim number — so the file can be identified.";
     }
   }
@@ -988,7 +993,6 @@ function buildPayload(){
     client_address:val.c_addr||"", best_time:val.c_best||"",
     subject_name:val.s_name||"", subject_address:val.s_addr||"", subject_description:val.s_desc||"", subject_relationship:val.s_rel||"",
     objective:val.o_goal||"", timeline:val.o_time||"", notes:val.o_notes||"",
-    attachments:(S.files||[]).join(", "),
     signed_name:val.a_typed||"", signature:S.sig||"",
     submitted_at:new Date().toLocaleString()
   };
@@ -1127,7 +1131,7 @@ async function notifyFirm(notice){
 }
 
 /* The case portal is the record. This is the write that has to succeed. */
-async function recordInPortal(p){
+async function recordInPortal(p, retried){
   if(!PORTAL_INGEST_KEY || PORTAL_INGEST_KEY === "PASTE_INGEST_KEY") return false;
   try{
     const r = await fetch(PORTAL_API + "/ingest", {
@@ -1135,6 +1139,14 @@ async function recordInPortal(p){
       headers:{"Content-Type":"application/json","X-Ingest-Key":PORTAL_INGEST_KEY},
       body:JSON.stringify(p)
     });
+    /* The number is minted here from 9,000 daily values, so it can collide.
+       The Worker answers a collision by name (closeout audit, 2026-09-02);
+       mint once more and try again, so a chance clash costs the client
+       nothing. A second clash falls through to the truthful amber panel. */
+    if(r.status === 409 && !retried){
+      let code = ""; try{ code = (await r.json()).code || ""; }catch(e){}
+      if(code === "case_no_taken"){ CASE_NO = mintCaseNo(); p.case_no = CASE_NO; return recordInPortal(p, true); }
+    }
     return r.ok;
   }catch(e){ return false; }
 }
@@ -1191,7 +1203,7 @@ function renderRecord(p, sent, threw, stored){
         : `${row("Fee","Sent to you in writing — nothing charged yet")}`}
       ${row(claims?"Authorized by":"Signed by",p.signed_name)}
     </dl>
-    ${p.signature?`<div><div style="font-size:.8rem;color:var(--muted)">Signature</div><img class="sig" src="${p.signature}" alt="signature"></div>`:""}
+    ${p.signature?`<div><div style="font-size:.8rem;color:var(--muted)">Signature</div><img class="sig" src="${esc(p.signature)}" alt="signature"></div>`:""}
     <div class="nav"><button type="button" class="btn ghost" onclick="window.print()">Print / Save PDF</button></div>
   </div>`;
   window.scrollTo(0,0);

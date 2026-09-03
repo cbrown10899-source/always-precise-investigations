@@ -344,8 +344,14 @@ async function handleHit(request, env) {
     day, env.SALT || 'api',
   ].join('|'))).slice(0, 16);
 
-  // Per-visitor flood control.
-  const rlKey = `rl:${vkey}`;
+  /* Per-visitor flood control — keyed on the ADDRESS, not the visitor key
+     above: `vkey` carries the User-Agent, which the caller chooses, so keying
+     the limiter on it handed every request a fresh bucket (closeout audit,
+     2026-09-02). The dedup and "returning" semantics keep `vkey` as it was. */
+  const rlKey = 'rl:' + (await sha256Hex([
+    request.headers.get('cf-connecting-ip') || '',
+    day, env.SALT || 'api',
+  ].join('|'))).slice(0, 16);
   const count = Number((await env.HITS.get(rlKey)) || 0);
   if (count >= HIT_LIMIT) return json({ ok: false, error: 'rate limited' }, 429);
   await env.HITS.put(rlKey, String(count + 1), { expirationTtl: HIT_WINDOW });

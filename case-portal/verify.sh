@@ -53,18 +53,20 @@ else
   #     `missing_tables` at all would match an empty-array test and report a
   #     clean schema — the reassuring direction, which is the one this must
   #     never fail in. So the key's presence is checked first.
-  if ! printf '%s' "$HEALTH" | grep -q '"missing_tables"'; then
+  #     Since 2026-09-02 the anonymous answer is the COUNT (`schema_missing`);
+  #     the table NAMES go only to a signed-in admin, because the list was a
+  #     partial map of the schema handed to anyone who asked. Same rule about
+  #     absence: no key means unknown, never clean.
+  if ! printf '%s' "$HEALTH" | grep -q '"schema_missing"'; then
     bad "every table this build expects is on the database" \
-        "health did not report missing_tables at all — this Worker predates the check, so the schema state is unknown rather than clean."
+        "health did not report schema_missing at all — this Worker predates the check, so the schema state is unknown rather than clean."
   else
-    MISSING=$(printf '%s' "$HEALTH" \
-      | sed -n 's/.*"missing_tables":\[\([^]]*\)\].*/\1/p' \
-      | tr -d '"' | tr ',' ' ' | tr -s ' ' | sed 's/^ *//; s/ *$//')
-    if [ -z "$MISSING" ]; then
+    MISSING=$(printf '%s' "$HEALTH" | sed -n 's/.*"schema_missing":\([0-9][0-9]*\).*/\1/p')
+    if [ "$MISSING" = "0" ]; then
       ok "every table this build expects is on the database"
     else
       bad "every table this build expects is on the database" \
-          "missing: $MISSING — run the portal-setup workflow (Actions → Set up the case portal → Run workflow). It is idempotent."
+          "$MISSING expected table(s) missing — sign in as an admin to see which, then run the portal-setup workflow (Actions → Set up the case portal → Run workflow). It is idempotent."
     fi
   fi
 fi

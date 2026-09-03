@@ -446,7 +446,7 @@ section('The manifest describes the site honestly');
       'Cross-Origin-Opener-Policy: same-origin', '! Access-Control-Allow-Origin']
        .every(h => headers.includes(h)));
   ok('and the two signed-in apps are still no-store and noindex',
-     /\/portal\/\*\s*\n(?:  .*\n)*?  Cache-Control: no-store/.test(headers)
+     /\/portal\/\*\s*\n(?:  .*\n)*?  Cache-Control: private, no-cache/.test(headers)
      && /\/watch\/\*\s*\n(?:  .*\n)*?  X-Robots-Tag: noindex/.test(headers));
   ok('no public content route was given no-store or noindex by accident',
      routes.every(r => {

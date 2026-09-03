@@ -371,10 +371,6 @@ section('Submission ingest');
   res = await ingest(env, { client_name: 'No case number' });
   ok('a submission without a case number is refused', res.status === 400);
 
-  res = await ingest(env, { case_no: 'API-1', client_name: 'Jane again' });
-  ok('a duplicate case number is accepted quietly, not an error',
-     res.status === 200 && (await jsonOf(res)).duplicate === true);
-
   res = await call(env, '/ingest', {
     method: 'POST', headers: { 'X-Ingest-Key': env.INGEST_KEY },
     body: JSON.stringify({ case_no: 'API-BIG', blob: 'x'.repeat(600_000) }),
@@ -389,6 +385,34 @@ section('Submission ingest');
   const byCase = Object.fromEntries(list.submissions.map(s => [s.case_no, s]));
   ok('a submission with a claim number is classified as a claim', byCase['API-C1'].kind === 'claims');
   ok('a submission without one is classified as consumer', byCase['API-P1'].kind === 'consumer');
+}
+
+/* A BROWSER RETRY AND A COLLISION ARE DIFFERENT EVENTS (closeout audit,
+   2026-09-03). The retry resends the IDENTICAL body and must still be
+   accepted quietly — a network hiccup is not the client's problem. A
+   DIFFERENT submission under a number already taken must not be answered
+   "recorded": the client would be told it landed and the firm would be
+   pointed at somebody else's file. The intake mints its number from 9,000
+   values a day, so a clash is reachable by chance; the page re-mints once on
+   this code. Its own env because the fixture cap above is five a minute. */
+section('Ingest: a retry is not a collision');
+{
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '50';
+  const body = { case_no: 'API-DUP-A', client_name: 'Jane Client', client_email: 'jane@example.com' };
+  ok('the first submission is stored', (await ingest(env, body)).status === 200);
+  let res = await ingest(env, body);
+  ok('an identical retry is accepted quietly, not an error',
+     res.status === 200 && (await jsonOf(res)).duplicate === true);
+  res = await ingest(env, { case_no: 'API-DUP-A', client_name: 'Someone Else' });
+  ok('but a DIFFERENT submission under that number is refused BY NAME',
+     res.status === 409 && (await jsonOf(res)).code === 'case_no_taken');
+  ok('and the first client\'s record is untouched by the refusal',
+     (await env.DB.prepare("SELECT client_name AS n FROM submissions WHERE case_no = 'API-DUP-A'")
+       .first()).n === 'Jane Client');
+  ok('exactly one row exists under that number',
+     (await env.DB.prepare("SELECT COUNT(*) AS n FROM submissions WHERE case_no = 'API-DUP-A'")
+       .first()).n === 1);
 }
 
 /* ------------------------------------------------- roles and case visibility */
@@ -3921,8 +3945,19 @@ section('Expenses: three separate decisions, made by the office');
   ok('the decisions stick', reviewed.reimbursable === 1 && reviewed.billable === 1 && reviewed.internal === 0);
   ok('the review is stamped', reviewed.reviewed_at !== null);
 
-  ok('editing a reviewed expense reopens the review',
+  /* REVIEWED MONEY IS THE OFFICE'S (closeout audit, 2026-09-03). The rule the
+     removal path already enforced now covers the EDIT path: an investigator
+     cannot rewrite the figure on an expense the office has reviewed, because
+     the update clears reviewed_at/reviewed_by and the reviewer would go with
+     it. The office's own correction still works and still reopens the review. */
+  ok('an investigator cannot edit an expense the office has reviewed',
      (await call(env, `/cases/API-X1/expenses/${exp.id}`, { method: 'POST', cookie: inv,
+       body: { amount: 18.5, description: 'Courthouse garage — corrected receipt' } })).status === 403);
+  ok('and the review it would have erased is still standing',
+     (await jsonOf(await call(env, '/cases/API-X1/workspace', { cookie: admin })))
+       .expenses.find(e => e.id === exp.id).reviewed_at !== null);
+  ok('the office editing it reopens the review',
+     (await call(env, `/cases/API-X1/expenses/${exp.id}`, { method: 'POST', cookie: admin,
        body: { amount: 18.5, description: 'Courthouse garage — corrected receipt' } })).status === 200);
   ws = await jsonOf(await call(env, '/cases/API-X1/workspace', { cookie: admin }));
   const reopened = ws.expenses.find(e => e.id === exp.id);
@@ -9147,7 +9182,9 @@ section('The case list survives a database that has not been set up yet');
   ok('and the completed desk still answers rather than going down with them',
      (await call(env, '/completed', { cookie: admin })).status === 200);
   // Health is how the office finds out the dispatch has not been run.
-  const health = await jsonOf(await call(env, '/health'));
+  /* The NAMES are the office's answer — an admin cookie (closeout audit,
+     2026-09-03); an anonymous caller gets the count and nothing else. */
+  const health = await jsonOf(await call(env, '/health', { cookie: admin }));
   ok('health names case_archive',  (health.missing_tables || []).includes('case_archive'));
   ok('and names case_deleted too', (health.missing_tables || []).includes('case_deleted'));
 }
@@ -10175,7 +10212,7 @@ section('Phone lists degrade to the existing single number before setup');
      (await call(env, '/cases/API-NOPH-1/edit', { method: 'POST', cookie: admin,
        body: { client_name: 'Renamed Anyway' } })).status === 200);
   ok('health names the missing table, which is how the office finds out',
-     ((await jsonOf(await call(env, '/health'))).missing_tables || []).includes('case_phone'));
+     ((await jsonOf(await call(env, '/health', { cookie: admin }))).missing_tables || []).includes('case_phone'));
 }
 
 /* NO NUMBER AND NO PROVIDER CREDENTIAL IS EVER WRITTEN INTO THE SOURCE. The
@@ -10394,7 +10431,7 @@ section('Video timestamp on a database that has not been set up');
   await env.DB.prepare('DROP TABLE video_stamp').run();
 
   ok('health names the missing table',
-     (await jsonOf(await call(env, '/health'))).missing_tables.includes('video_stamp'));
+     (await jsonOf(await call(env, '/health', { cookie: admin }))).missing_tables.includes('video_stamp'));
   const list = await jsonOf(await call(env, '/cases/API-VS-NS/video-stamps', { cookie: admin }));
   ok('the list degrades rather than failing', Array.isArray(list.stamps) && list.not_set_up === true);
   const w = await call(env, '/cases/API-VS-NS/video-stamp', { method: 'POST', cookie: admin,
@@ -10531,7 +10568,7 @@ section('Voice §3: a voice entry is a real entry, marked but not privileged');
   ok('without the table the entry is still made, and keeps its words',
      typeof made.id === 'number');
   ok('health names the missing table rather than hiding it',
-     (await jsonOf(await call(bare, '/health'))).missing_tables.includes('activity_source'));
+     (await jsonOf(await call(bare, '/health', { cookie: a2 }))).missing_tables.includes('activity_source'));
   const ws2 = await jsonOf(await call(bare, '/cases/API-VOX2/workspace', { cookie: a2 }));
   ok('and the workspace still loads, with no source on the entry',
      ws2.activity.length === 1 && !ws2.activity[0].source);
@@ -10675,7 +10712,7 @@ section('Voice §8: the same utterance twice is one entry, however it arrives');
             event_id: 'evt-cccccccc3333' } }));
   ok('without the table the entry is still made', typeof madeA.id === 'number');
   ok('health names the missing table',
-     (await jsonOf(await call(bare, '/health'))).missing_tables.includes('activity_voice_event'));
+     (await jsonOf(await call(bare, '/health', { cookie: a2 }))).missing_tables.includes('activity_voice_event'));
   /* And WITHOUT it a retry does duplicate — which is the state before this
      table existed, and is why the dispatch matters. Asserted so the cost of
      not running it is written down rather than assumed. */
@@ -11473,7 +11510,7 @@ section('Timestamped photograph — before the schema catches up, and when Dropb
   ok('and reports no pairings rather than failing',
      JSON.stringify((await jsonOf(ws)).photo_stamps) === '[]');
   ok('health names the missing table',
-     (await jsonOf(await call(bare, '/health'))).missing_tables.includes('photo_stamp'));
+     (await jsonOf(await call(bare, '/health', { cookie: admin }))).missing_tables.includes('photo_stamp'));
 
   const mkStamp = (env, cookie) => {
     const fd = new FormData();
@@ -11937,7 +11974,7 @@ section('Dropbox — secrets only, and no file migration yet');
   delete env.DROPBOX_REFRESH_TOKEN;
   await env.DB.prepare('DROP TABLE dropbox_auth').run();
   ok('health names the missing table',
-     (await jsonOf(await call(env, '/health'))).missing_tables.includes('dropbox_auth'));
+     (await jsonOf(await call(env, '/health', { cookie: admin }))).missing_tables.includes('dropbox_auth'));
   const st = (await jsonOf(await call(env, '/dropbox/status', { cookie: admin }))).dropbox;
   ok('status degrades rather than failing', st.connected === false && st.not_set_up === true);
   env.DROPBOX_APP_KEY = 'k'; env.DROPBOX_APP_SECRET = 's';
