@@ -18167,6 +18167,9 @@ function assignPanel(s){
 /* ---- workspace actions ---- */
 
 async function addActivityEntry(){
+  if(ACT_BUSY) return;
+  ACT_BUSY = true;
+  ADD_ATTEMPT = ADD_ATTEMPT || svVoiceEventId();
   WS_ERR = "";
   const date = $("a_date").value, time = $("a_time").value;
   try{
@@ -18181,7 +18184,7 @@ async function addActivityEntry(){
         miles, amount: amt, description: desc,
       }});
       await api(`/cases/${encodeURIComponent(WS_CASE)}/activity`, {method:"POST", body:{
-        kind: QKIND, at_date: date, at_time: time,
+        kind: QKIND, at_date: date, at_time: time, event_id: ADD_ATTEMPT,
         description: QKIND === "mileage" ? `${miles} miles — ${desc}` : `$${amt} ${$("a_cat").value} — ${desc}`,
       }});
     }else{
@@ -18189,7 +18192,7 @@ async function addActivityEntry(){
       if(QKIND === "location" && !loc.trim()){ WS_ERR = "A location entry needs the location."; return paintCase(); }
       if(QKIND === "vehicle" && !veh.trim()){ WS_ERR = "A vehicle entry needs the vehicle."; return paintCase(); }
       await api(`/cases/${encodeURIComponent(WS_CASE)}/activity`, {method:"POST", body:{
-        kind: QKIND, at_date: date, at_time: time,
+        kind: QKIND, at_date: date, at_time: time, event_id: ADD_ATTEMPT,
         description: $("a_desc").value,
         location: loc, vehicle: veh,
         internal_note: $("a_note").value,
@@ -18199,13 +18202,21 @@ async function addActivityEntry(){
       }});
     }
     ACT_MODAL = null;   // success closes the sheet; the timeline is the confirmation
+  ADD_ATTEMPT = null;
   }catch(e){ WS_ERR = e.message; }
+  finally{ ACT_BUSY = false; }
   await reloadWorkspace();
 }
 
 /* The quick path (P9): a picked line, the clock, and Add to log. Also carries
    the one-tap No-change entry and the correction of an existing entry. */
+/* The office's two activity writers get the same double-tap and retry safety
+   as the field's (see svSaveEntry). ACT_BUSY is the in-flight guard for both;
+   the modal keeps its attempt key across a failed save so a retry dedupes. */
+let ACT_BUSY = false, ADD_ATTEMPT = null;
 async function quickAddEntry(oneTapLine){
+  if(ACT_BUSY) return;
+  ACT_BUSY = true;
   WS_ERR = "";
   try{
     if(!oneTapLine && ACT_MODAL && ACT_MODAL.edit){
@@ -18232,6 +18243,8 @@ async function quickAddEntry(oneTapLine){
       // Ticked files ride to the new moment. Read before the paint eats the DOM.
       const links = oneTapLine ? []
         : [...document.querySelectorAll(".qa-ev:checked")].map(x => Number(x.dataset.id));
+      body.event_id = (oneTapLine || !ACT_MODAL) ? svVoiceEventId()
+        : (ACT_MODAL.attempt = ACT_MODAL.attempt || svVoiceEventId());
       const made = await api(`/cases/${encodeURIComponent(WS_CASE)}/activity`, {method:"POST", body});
       for(const evId of links){
         try{ await api(`/cases/${encodeURIComponent(WS_CASE)}/evidence/${evId}/link`,
@@ -18241,6 +18254,7 @@ async function quickAddEntry(oneTapLine){
     }
     ACT_MODAL = null;
   }catch(e){ WS_ERR = e.message; }
+  finally{ ACT_BUSY = false; }
   await reloadWorkspace();
 }
 
@@ -18368,7 +18382,21 @@ async function svSaveLast(id){
   await svReload();
 }
 
+/* DOUBLE-TAP AND RETRY SAFETY (closeout audit, 2026-09-02). Reproduced
+   against the real Worker: two concurrent POSTs made two entries. The Worker
+   already answers `duplicate` for any /activity POST that repeats an
+   `event_id` — the §8 mechanism, keyed by the id alone, not voice-specific —
+   and this page simply never sent one from its three ordinary writers. So:
+   ONE KEY PER ATTEMPT, exactly as the retainer's client_token works. A dropped
+   response and a second tap reuse the key and the Worker hands back the entry
+   it already has; a genuinely new entry gets a new key. And an in-flight
+   guard means a double-tap does not even fire twice. One-tap lines take a
+   fresh key per tap — the guard covers the double-tap, and a tap after a
+   dropped response is a new line by the user's own hand. */
 async function svSaveEntry(oneTap){
+  if(SV.saving) return;
+  SV.saving = true;
+  try{
   SV.err = "";
   // An edit changes the four fields the Worker allows and is stamped by it.
   if(!oneTap && SV.entry && SV.entry.edit){
@@ -18409,12 +18437,15 @@ async function svSaveEntry(oneTap){
     ...(SV.entry.source ? {source: SV.entry.source, command_id: SV.entry.command_id,
                           heard: SV.entry.heard} : {}),
   };
+  body.event_id = oneTap ? svVoiceEventId()
+    : (SV.entry.attempt = SV.entry.attempt || svVoiceEventId());
   try{
     await api(`/cases/${encodeURIComponent(WS_CASE)}/activity`, {method:"POST", body});
     SV.entry = null;
     SV.ok = "✓ Activity saved.";
   }catch(e){ SV.err = e.message; }
   await svReload();
+  }finally{ if(SV) SV.saving = false; }
 }
 
 /* Photo and video (P10/P11): the phone's own picker, straight to the same

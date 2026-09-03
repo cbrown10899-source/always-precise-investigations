@@ -18192,6 +18192,43 @@ section('The home-screen launcher offers no tombstoned, archived or hard-deleted
   }
 }
 
+/* ============== ACTIVITY DEDUPE IS GENERIC (closeout audit, 2026-09-02) ====
+   The Worker answers `duplicate` for ANY /activity POST that repeats an
+   `event_id` — the §8 mechanism is keyed by the id alone. The page's three
+   ordinary writers now send one key per attempt (the retainer client_token
+   shape); this pins the server half they rely on, and the tokenless shape
+   that two concurrent taps used to reach. */
+section('An activity event_id dedupes any writer, not only the voice path');
+{
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-DEDUPE-1', client_name: 'Dedupe Client', subject_name: 'Dedupe Subject' });
+  const body = { kind: 'activity', at_date: '2026-09-02', at_time: '09:10',
+                 description: 'Subject departed residence.', event_id: 'attempt-7f3a9c1d2e' };
+  const [a, b] = await Promise.all([
+    call(env, '/cases/API-DEDUPE-1/activity', { method: 'POST', cookie: admin, body }),
+    call(env, '/cases/API-DEDUPE-1/activity', { method: 'POST', cookie: admin, body }),
+  ]);
+  const ja = await jsonOf(a), jb = await jsonOf(b);
+  const rows = Number((await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM activity_log WHERE case_no = 'API-DEDUPE-1'`).first()).n);
+  ok('two concurrent posts with one attempt key write ONE entry', rows === 1, String(rows));
+  ok('and the repeat is answered as a duplicate of the same entry',
+     (ja.duplicate || jb.duplicate) && ja.id === jb.id, JSON.stringify([ja, jb]));
+  const again = await jsonOf(await call(env, '/cases/API-DEDUPE-1/activity',
+    { method: 'POST', cookie: admin, body }));
+  ok('a later retry with the same key still returns the existing entry', again.duplicate && again.id === ja.id);
+  await call(env, '/cases/API-DEDUPE-1/activity', { method: 'POST', cookie: admin,
+    body: { ...body, event_id: 'attempt-9b8c7d6e5f' } });
+  ok('a genuinely new attempt key is a second entry',
+     Number((await env.DB.prepare(`SELECT COUNT(*) AS n FROM activity_log WHERE case_no = 'API-DEDUPE-1'`)
+       .first()).n) === 2);
+  ok('a malformed key is ignored rather than refused', (await call(env, '/cases/API-DEDUPE-1/activity',
+    { method: 'POST', cookie: admin, body: { ...body, event_id: 'x' } })).status === 201);
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

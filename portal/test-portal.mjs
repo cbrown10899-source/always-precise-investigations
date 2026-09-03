@@ -18006,6 +18006,55 @@ section('The empty queue is short on a phone, and the header identity moves to t
   await desk.close();
 }
 
+
+/* ==========================================================================
+   DOUBLE-TAP SAFETY ON ACTIVITY WRITERS (closeout audit, 2026-09-02).
+   Reproduced at the Worker: two concurrent /activity POSTs without a key made
+   two entries. The three page writers now carry an in-flight guard and one
+   `event_id` per attempt (the retainer client_token shape); the Worker half
+   is pinned in the worker suite. This pins the page half: a synchronous
+   double call — the shape a double-tap produces — writes exactly one entry,
+   and the request carries the key. */
+section('A double-tap on an activity writer records one entry');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const seen = [];
+  page.on('request', r => {
+    if (r.method() === 'POST' && /\/activity$/.test(r.url().split('?')[0])) {
+      try { seen.push(JSON.parse(r.postData() || '{}')); } catch { seen.push({}); }
+    }
+  });
+  await page.evaluate(() => openCase('API-20260812-4001', 'activity'));
+  await page.waitForTimeout(800);
+  const countOf = async desc => page.evaluate(async d => {
+    const ws = await api(`/cases/${encodeURIComponent('API-20260812-4001')}/workspace`);
+    return (ws.activity || []).filter(a => a.description === d).length;
+  }, desc);
+
+  /* The office one-tap writer, called twice in one tick — what a double-tap is. */
+  await page.evaluate(() => { quickAddEntry('Double-tap probe, office.'); quickAddEntry('Double-tap probe, office.'); });
+  await page.waitForTimeout(1200);
+  ok('office: a double-tap writes ONE entry', await countOf('Double-tap probe, office.') === 1);
+  ok('office: the request carried an attempt key',
+     seen.some(b => b.description === 'Double-tap probe, office.' && /^[A-Za-z0-9_-]{8,64}$/.test(b.event_id || '')),
+     JSON.stringify(seen.slice(-2)));
+
+  /* The field writer, same shape, inside the field view. */
+  await page.evaluate(() => enterSurveillance('API-20260812-4001'));
+  await page.waitForTimeout(900);
+  await page.evaluate(() => { svSaveEntry('Double-tap probe, field.'); svSaveEntry('Double-tap probe, field.'); });
+  await page.waitForTimeout(1200);
+  ok('field: a double-tap writes ONE entry', await countOf('Double-tap probe, field.') === 1);
+  ok('field: the request carried an attempt key',
+     seen.some(b => b.description === 'Double-tap probe, field.' && /^[A-Za-z0-9_-]{8,64}$/.test(b.event_id || '')));
+  ok('and the guard released — a later entry still saves',
+     await page.evaluate(async () => { await svSaveEntry('After the probe.'); return !SV.saving; })
+     && await countOf('After the probe.') === 1);
+  await page.evaluate(() => { SV = null; document.body.classList.remove("surv"); return render(); });
+  await page.close();
+}
+
 await browser.close();
 server.close();
 
