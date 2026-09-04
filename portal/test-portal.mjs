@@ -18684,6 +18684,442 @@ section('Mobile shell: the bottom nav appears on a phone and nowhere else');
   await page.close();
 }
 
+/* ============================================================================
+   MOBILE UNIT B — HOME'S QUICK ACTIONS, against the approved mockup.
+
+   Two halves, and the second is the one that can regress silently: the phone
+   draws the owner's order with Rate Sheet leading, AND the desktop row is
+   EXACTLY the six doors, in the order and with the wording it already had.
+   The first build of this unit renamed "Intake a Client" to "New Intake" on
+   the desktop as a side effect of sharing one table — a desktop change, which
+   the owner's standing rule forbids — and no phone assertion could have seen
+   it.
+   ========================================================================= */
+section("Mobile Home: the owner's quick actions, and a desktop row that did not move");
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const read = async (w, h) => {
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(320);
+    return page.evaluate(() => {
+      const grid = document.querySelector('.qtgrid');
+      const apps = document.querySelector('.qtapps');
+      const cards = apps ? [...apps.querySelectorAll('.qtapp')] : [];
+      const lead = apps ? apps.querySelector('.qtapp-lead') : null;
+      const flag = lead ? lead.querySelector('.qtapp-flag') : null;
+      /* Painted contrast, computed the way this project already measures it —
+         a chip this small is held to the 4.5:1 normal-text bar, not 3:1. */
+      const lum = c => {
+        const [r, g, b] = c.match(/[\d.]+/g).slice(0, 3).map(Number).map(v => {
+          v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const ratio = (a, b) => { const A = lum(a), B = lum(b);
+        return +((Math.max(A, B) + 0.05) / (Math.min(A, B) + 0.05)).toFixed(2); };
+      const fcs = flag ? getComputedStyle(flag) : null;
+      return {
+        gridShown: grid ? getComputedStyle(grid).display !== 'none' : null,
+        appsShown: apps ? getComputedStyle(apps).display !== 'none' : null,
+        desk: grid ? [...grid.querySelectorAll('.qtool')]
+          .map(b => b.textContent.replace(/\s+/g, ' ').trim()) : [],
+        deskActs: grid ? [...grid.querySelectorAll('.qtool')]
+          .map(b => b.dataset.act + (b.dataset.tab ? ':' + b.dataset.tab : '')) : [],
+        phone: cards.map(c => c.querySelector('.qtapp-n').textContent.trim()),
+        phoneActs: cards.map(c => c.dataset.act + (c.dataset.tab ? ':' + c.dataset.tab : '')
+          + (c.dataset.k ? ':' + c.dataset.k : '')),
+        leadName: lead ? lead.querySelector('.qtapp-n').textContent.trim() : null,
+        leadBorder: lead ? getComputedStyle(lead).borderTopWidth : null,
+        flagRatio: fcs ? ratio(fcs.color, fcs.backgroundColor) : null,
+        flagH: flag ? Math.round(flag.getBoundingClientRect().height) : 0,
+        heights: cards.map(c => Math.round(c.getBoundingClientRect().height)),
+        minH: cards.length ? Math.min(...cards.map(c => Math.round(c.getBoundingClientRect().height))) : 0,
+        stripScrolls: apps ? apps.scrollWidth > apps.clientWidth : null,
+        pageOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      };
+    });
+  };
+
+  /* ---- THE DESKTOP ROW IS WHAT IT WAS ---------------------------------- */
+  const DESK = ['Timestamp Photo', 'Timestamp Video', 'Active Surveillance',
+                'Intake a Client', 'Cases', 'Reports & Packages'];
+  for (const [w, h] of [[1200, 900], [768, 1024]]) {
+    const d = await read(w, h);
+    ok(`at ${w}px the desktop quick-tools row is the six doors it always was`,
+       d.desk.length === 6 && DESK.every((n, i) => d.desk[i].endsWith(n)),
+       JSON.stringify(d.desk));
+    ok(`at ${w}px their destinations are unchanged`,
+       d.deskActs.join('|') === 'pstLaunch|vstOpen|surveillance|tab:newlead|tab:cases|tab:delivery',
+       d.deskActs.join('|'));
+    ok(`at ${w}px the phone card strip is not drawn at all`, d.appsShown === false);
+    ok(`at ${w}px the desktop row is`, d.gridShown === true);
+  }
+
+  /* ---- AND THE PHONE DRAWS THE OWNER'S ORDER --------------------------- */
+  const PHONE = ['Rate Sheet', 'New Intake', 'Private Intake', 'Insurance Intake',
+                 'Law Firm Intake', 'Reports & Packages', 'Timestamp Photo',
+                 'Timestamp Video', 'Active Surveillance', 'Cases'];
+  const p390 = await read(390, 844);
+  ok('on a phone the quick actions are cards, not the desktop chip row',
+     p390.appsShown === true && p390.gridShown === false, JSON.stringify(p390).slice(0, 200));
+  ok("and they are in the owner's order, Rate Sheet first",
+     p390.phone.join('|') === PHONE.join('|'), p390.phone.join('|'));
+  ok('the three intake kinds go straight to their own kind of intake',
+     p390.phoneActs.slice(2, 5).join('|') === 'nlKind:consumer|nlKind:claims|nlKind:legal',
+     p390.phoneActs.join('|'));
+  ok('Rate Sheet is the one card wearing the accent',
+     p390.leadName === 'Rate Sheet' && parseFloat(p390.leadBorder) >= 2, JSON.stringify(p390.leadBorder));
+  ok('the timestamp tools kept their door — they moved down the row, not away',
+     p390.phone.includes('Timestamp Photo') && p390.phone.includes('Timestamp Video'));
+
+  /* THE FLAG'S CONTRAST IS THE MEASUREMENT, NOT THE COLOUR NAME. At ~10px the
+     bar that applies is the normal-text 4.5:1. Against the PORTAL's tokens —
+     which are not the public site's, a distinction the first draft of this got
+     wrong — white on --teal is 4.71 and --navy on --teal is 3.71, so one of
+     the two obvious choices fails. The test names the RATIO, so a restyle
+     fails with the reason rather than with a hex nobody can weigh. */
+  ok('the lead flag clears AA for normal text at its own size',
+     p390.flagRatio >= 4.5, `ratio ${p390.flagRatio}`);
+  ok('and it is one line, so the lead card is the same shape as its siblings',
+     p390.flagH > 0 && p390.flagH < 26 && new Set(p390.heights).size === 1,
+     JSON.stringify({ flagH: p390.flagH, heights: p390.heights }));
+  ok('every card clears the 44px tap floor', p390.minH >= 44, `min ${p390.minH}`);
+
+  /* The strip scrolls INSIDE ITSELF; the page never scrolls sideways. */
+  ok('the strip swipes inside its own box', p390.stripScrolls === true);
+  ok('and the page does not scroll sideways at 390', p390.pageOverflow === false);
+  const p320 = await read(320, 700);
+  ok('nor at 320', p320.pageOverflow === false);
+  ok('and the order holds there too', p320.phone.join('|') === PHONE.join('|'));
+
+  /* ---- A CARD THAT CANNOT OPEN IS NOT DRAWN ---------------------------- */
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
+section('Mobile Home: an investigator is offered no door the Worker would refuse');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(320);
+  const inv = await page.evaluate(() => {
+    const apps = document.querySelector('.qtapps');
+    return {
+      names: apps ? [...apps.querySelectorAll('.qtapp-n')].map(n => n.textContent.trim()) : [],
+      lead: apps ? !!apps.querySelector('.qtapp-lead') : null,
+    };
+  });
+  /* /sheets, the manual intake and the delivery desk all answer 403 to this
+     role. A control that can open nothing must not be drawn as a button —
+     the closeout audit's own rule, applied here rather than restated. */
+  for (const gone of ['Rate Sheet', 'New Intake', 'Private Intake', 'Insurance Intake',
+                      'Law Firm Intake', 'Reports & Packages']) {
+    ok(`an investigator is not offered ${gone}`, !inv.names.includes(gone), inv.names.join('|'));
+  }
+  ok('and they keep the tools that are theirs',
+     inv.names.includes('Timestamp Photo') && inv.names.includes('Active Surveillance')
+     && inv.names.includes('Cases'), inv.names.join('|'));
+  ok('with no accent card, because the door it belongs to is not on their desk',
+     inv.lead === false);
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
+/* ============================================================================
+   MOBILE UNIT C — THE RATE SHEET AT PHONE WIDTH.
+
+   The assertion is the LABEL COLUMN'S WIDTH, and it is written that way
+   because the first probe for this bug was vacuous. Looking for geometric
+   overlap between .rs-l and .rs-v found none — with the fix and without it —
+   while the screen plainly showed the two running together. What was actually
+   wrong is measurable: .rs-v is sized by its content and the private sheet
+   puts sentences in it, so the label was left 90px of a 312px panel.
+
+   So this section carries its own CONTROL: it re-measures the same page with
+   the phone rule overridden and requires the number to be bad there. A test
+   that passes both ways is testing nothing, which is the trap this project has
+   already recorded once.
+   ========================================================================= */
+section('Mobile rate sheet: the fee lines stack instead of starving the label');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const openSheet = async (w, h) => {
+    await page.setViewportSize({ width: w, height: h });
+    await page.evaluate(() => { TAB = 'sheets'; OPEN_SHEET = null; paint(); loadSends(); });
+    await page.waitForTimeout(700);
+    await page.evaluate(() => document.querySelector('.sheet-card').click());
+    await page.waitForTimeout(500);
+  };
+  const measure = () => page.evaluate(() => {
+    const notes = [...document.querySelectorAll('.rs-note')]
+      .map(n => Math.round(n.getBoundingClientRect().width));
+    const box = document.querySelector('.feebox');
+    const sn = document.querySelector('.sendnew');
+    const btns = sn ? [...sn.querySelectorAll('.btn')]
+      .map(b => { const r = b.getBoundingClientRect();
+        return { w: Math.round(r.width), h: Math.round(r.height) }; }) : [];
+    return {
+      minNote: notes.length ? Math.min(...notes) : null,
+      panel: box ? Math.round(box.getBoundingClientRect().width) : null,
+      /* Every word still on screen — stacking must not have dropped anything. */
+      labels: [...document.querySelectorAll('.rs-row')].length,
+      values: [...document.querySelectorAll('.rs-v')].filter(v => v.textContent.trim()).length,
+      subs: [...document.querySelectorAll('.rs-sub')].length,
+      notes: notes.length,
+      btns,
+      overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    };
+  });
+
+  await openSheet(390, 900);
+  const phone = await measure();
+  ok('on a phone the fee note gets the whole panel, not a sliver of it',
+     phone.minNote !== null && phone.panel !== null && phone.minNote >= phone.panel - 4,
+     JSON.stringify({ minNote: phone.minNote, panel: phone.panel }));
+  ok('and no line lost its label, sub, note or value in the stacking',
+     phone.labels > 0 && phone.values > 0 && phone.subs > 0 && phone.notes > 0,
+     JSON.stringify(phone));
+  ok('and the sheet does not scroll the page sideways', phone.overflow === false);
+
+  /* ---- THE CONTROL: the same page with the phone rule taken away -------- */
+  await page.addStyleTag({ content:
+    '@media(max-width:640px){.rs-row{display:flex!important}'
+    + '.rs-v{display:inline!important;text-align:right!important;margin-top:0!important}}' });
+  await page.waitForTimeout(250);
+  const without = await measure();
+  ok('CONTROL: without the rule the label really is starved, so the check is not vacuous',
+     without.minNote !== null && without.minNote < phone.panel / 2,
+     JSON.stringify({ without: without.minNote, panel: phone.panel }));
+
+  /* ---- FOUR EVEN DOORS, AND A DESKTOP THAT DID NOT MOVE ---------------- */
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForTimeout(400);
+  await openSheet(390, 900);
+  const p2 = await measure();
+  ok('the four pre-case sends are an even grid on a phone',
+     p2.btns.length === 4 && new Set(p2.btns.map(b => b.w)).size === 1,
+     JSON.stringify(p2.btns));
+  ok('and each of them clears the 44px tap floor',
+     p2.btns.every(b => b.h >= 44), JSON.stringify(p2.btns));
+
+  await openSheet(1200, 900);
+  const desk = await measure();
+  ok('on the desktop they keep their own natural widths, as they always had',
+     desk.btns.length === 4 && new Set(desk.btns.map(b => b.w)).size > 1,
+     JSON.stringify(desk.btns));
+  ok('and the desktop fee row is still two columns, not stacked',
+     desk.minNote !== null && desk.panel !== null && desk.minNote < desk.panel,
+     JSON.stringify({ minNote: desk.minNote, panel: desk.panel }));
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
+/* ============================================================================
+   MOBILE UNITS D, E, F — the tap floor, and the one shared bug.
+
+   Every number here was read off a rendered page at 390px, and the sweep that
+   produced them covered all sixteen top-level screens rather than the three
+   this brief happened to redesign. What it found: five `.tl-edit` inline
+   actions at 12px, five `.ov-mods` case-status doors at 34-35px, one
+   `.linklike` at 22px, one `.cap` checkbox at 17px — and one control drawn
+   underneath the hamburger.
+   ========================================================================= */
+section('Mobile: the small controls that computed under the tap floor');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  /* ---- D: the intake's tick is a 44px target ------------------------- */
+  await page.evaluate(() => { TAB = 'newlead'; NL = { kind: 'consumer', err: '', v: {} }; paint(); });
+  await page.waitForTimeout(500);
+  const tick = await page.evaluate(() => {
+    const cb = document.getElementById('nl_saveprof');
+    if (!cb) return null;
+    const lab = cb.closest('label');
+    const before = cb.checked; lab.click(); const toggled = cb.checked !== before; lab.click();
+    return { box: Math.round(cb.getBoundingClientRect().height),
+             label: Math.round(lab.getBoundingClientRect().height),
+             cls: String(lab.className), toggled };
+  });
+  /* THE TARGET IS THE LABEL, not the 22px square — clicking the words is what
+     toggles it, and the suite proves that rather than assuming it. */
+  ok('the intake save-as-profile tick is inside a 44px label', tick && tick.label >= 44,
+     JSON.stringify(tick));
+  ok('and clicking that label really does toggle the box', tick && tick.toggled === true);
+  ok('the box itself is the 22px one .dsb-act already uses', tick && tick.box >= 22,
+     JSON.stringify(tick));
+
+  /* ---- E: the case screen's inline actions and status doors ---------- */
+  await page.evaluate(() => openCase('API-20260812-4002'));
+  await page.waitForTimeout(1400);
+  const caseSmall = await page.evaluate(() => {
+    const out = [];
+    for (const el of document.querySelectorAll('button, input, select, textarea')) {
+      if (!el.offsetParent) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) continue;
+      const cs = getComputedStyle(el);
+      const isText = /^(text|email|tel|number|search|password|url|date|time)$/.test(el.type || '')
+        || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
+      const why = [];
+      if (r.height < 44 && !(el.type === 'checkbox' || el.type === 'radio')) why.push('h' + Math.round(r.height));
+      if (isText && parseFloat(cs.fontSize) < 16) why.push('fs' + cs.fontSize);
+      if (why.length) out.push((el.textContent || el.id || el.type).replace(/\s+/g, ' ').trim().slice(0, 22)
+        + ' [' + String(el.className).slice(0, 18) + '] ' + why.join(','));
+    }
+    return [...new Set(out)];
+  });
+  ok('nothing on the case screen computes under the tap or font floor at 390',
+     caseSmall.length === 0, caseSmall.join(' | '));
+
+  /* ---- F: and nothing in the field view does either ------------------- */
+  await page.evaluate(() => {
+    const b = document.querySelector('[data-act="svEnter"],[data-act="surveillance"]');
+    if (b) b.click();
+  });
+  await page.waitForTimeout(1400);
+  const fieldSmall = await page.evaluate(() => {
+    const out = [];
+    for (const el of document.querySelectorAll('button, input, select, textarea')) {
+      if (!el.offsetParent) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) continue;
+      if (el.type === 'checkbox' || el.type === 'radio') continue;
+      const cs = getComputedStyle(el);
+      const isText = /^(text|email|tel|number|search|password|url|date|time)$/.test(el.type || '')
+        || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
+      if (r.height < 44 || (isText && parseFloat(cs.fontSize) < 16))
+        out.push((el.textContent || el.id || el.type).replace(/\s+/g, ' ').trim().slice(0, 22)
+          + ' h' + Math.round(r.height) + ' fs' + cs.fontSize);
+    }
+    return [...new Set(out)];
+  });
+  ok('nor anything in the field view — it is the one screen used in the dark',
+     fieldSmall.length === 0, fieldSmall.join(' | '));
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
+section('Mobile: Back to Cases stops being drawn underneath the hamburger');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* `.close` is the DIALOG X's rule and the case page borrowed the class, so
+     `position:absolute; right:14px; top:12px` came with it — into the corner
+     the burger owns below 900px. Measured with elementFromPoint, which is the
+     browser's own answer about what is on top, not z-index arithmetic. */
+  const at = async (w) => {
+    await page.setViewportSize({ width: w, height: 900 });
+    await page.evaluate(() => openCase('API-20260812-4002'));
+    await page.waitForTimeout(1200);
+    return page.evaluate(() => {
+      const back = document.querySelector('.pagebar .close');
+      if (!back) return null;
+      const bb = back.getBoundingClientRect();
+      const covers = [];
+      for (const el of document.querySelectorAll('.top button, .top a')) {
+        const r = el.getBoundingClientRect();
+        if (r.width < 1) continue;
+        if (bb.right > r.left + 1 && bb.left < r.right - 1
+            && bb.bottom > r.top + 1 && bb.top < r.bottom - 1)
+          covers.push(el.textContent.replace(/\s+/g, ' ').trim().slice(0, 16) || String(el.className));
+      }
+      /* And what is actually on top of the back button's own right edge? */
+      const onTop = document.elementFromPoint(Math.round(bb.right - 6),
+                                              Math.round(bb.top + bb.height / 2));
+      const signout = [...document.querySelectorAll('.top button')]
+        .find(b => /sign out/i.test(b.textContent));
+      const sr = signout && signout.getBoundingClientRect();
+      const atSignOut = sr ? document.elementFromPoint(Math.round(sr.left + sr.width / 2),
+                                                       Math.round(sr.top + sr.height / 2)) : null;
+      return { covers, onTop: onTop ? String(onTop.className) : null,
+               height: Math.round(bb.height),
+               signOutReachable: !!(atSignOut && /sign out/i.test(atSignOut.textContent || '')) };
+    });
+  };
+
+  for (const w of [390, 768]) {
+    const m = await at(w);
+    ok(`at ${w}px the back control covers nothing in the header`,
+       m && m.covers.length === 0, JSON.stringify(m));
+    ok(`at ${w}px nothing is drawn on top of it either`,
+       m && !/burger/.test(m.onTop || ''), JSON.stringify(m));
+    ok(`at ${w}px it clears the tap floor`, m && m.height >= 44, JSON.stringify(m));
+    ok(`at ${w}px Sign out is still the element at its own centre`,
+       m && m.signOutReachable === true, JSON.stringify(m));
+  }
+
+  /* THE DESKTOP WAS NEVER BROKEN AND IS NOT TOUCHED. At 1200 the header is
+     tall enough that the back button stacks above Admin | Sign out, and Sign
+     out is still reachable — measured, not assumed. So the fix is scoped to
+     899px, which is where the rail becomes a burger. */
+  const desk = await at(1200);
+  ok('on the desktop the back control keeps its place in the header corner',
+     desk && desk.covers.includes('Sign out'), JSON.stringify(desk));
+  ok('and Sign out was reachable there all along', desk && desk.signOutReachable === true,
+     JSON.stringify(desk));
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
+section("Mobile: a queue row is its content's height, not its flex basis");
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* `.qmain` is `flex:1 1 240px`, written for a ROW. The phone rule turns
+     `.qrow` into a COLUMN, and in a column the basis is the main axis — the
+     height. So every row on the office's first card drew 240px tall whatever
+     was in it. The assertion compares the phone against the SAME ROW at 1200px
+     rather than against a fixed pixel number, because the row's real height
+     depends on how much text the fixture happens to carry. */
+  const rowAt = async (w) => {
+    await page.setViewportSize({ width: w, height: 900 });
+    await page.evaluate(() => { TAB = 'dashboard'; paint(); });
+    await page.waitForTimeout(1000);
+    return page.evaluate(() => {
+      const row = document.querySelector('.qrow');
+      if (!row) return null;
+      const main = row.querySelector('.qmain');
+      return { row: Math.round(row.getBoundingClientRect().height),
+               main: main ? Math.round(main.getBoundingClientRect().height) : null,
+               dir: getComputedStyle(row).flexDirection };
+    });
+  };
+  const desk = await rowAt(1200);
+  const phone = await rowAt(390);
+  if (!desk || !phone) {
+    ok('SKIPPED: the dashboard queue has no rows in this fixture', true);
+  } else {
+    ok('the phone queue row stacks, as it is meant to', phone.dir === 'column',
+       JSON.stringify(phone));
+    ok('and the desktop one does not', desk.dir === 'row', JSON.stringify(desk));
+    /* Stacking legitimately makes it taller — the button moves to its own line.
+       What it must not do is inflate to the 240px basis: that is roughly three
+       times the desktop row, and the check is written as a multiple so it does
+       not depend on the fixture's wording. */
+    ok('and a stacked row is not inflated to its flex basis',
+       phone.main !== null && phone.main < 240,
+       JSON.stringify({ phoneMain: phone.main, deskMain: desk.main }));
+    ok('so the phone row stays close to the content it holds',
+       phone.row < desk.row * 2.2,
+       JSON.stringify({ phoneRow: phone.row, deskRow: desk.row }));
+  }
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
 await browser.close();
 server.close();
 
