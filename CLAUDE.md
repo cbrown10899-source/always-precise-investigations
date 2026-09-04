@@ -69,16 +69,27 @@ A single unfiltered call therefore costs more than an entire context window
 and will end the session. This repo accumulates runs quickly — five workflows,
 one of them a daily cron — so the count only grows.
 
-**`per_page` does not work on this tool.** Measured on 2026-08-12: asking for
-`per_page: 2` with `resource_id: deploy.yml` returned **30 runs, 464 KB**. The
-`resource_id` filter is honoured — only that workflow's runs came back — but the
-count is not, so scoping alone still overflows.
+**THE PARAMETER IS `perPage`, NOT `per_page` — and with the right spelling it
+works.** Measured 2026-09-04: `perPage: 3` with `resource_id: deploy.yml` plus
+`workflow_runs_filter: {branch, event}` returned **exactly 3 runs**, small
+enough to read inline, and the newest carried the head SHA and conclusion the
+question was actually about.
+
+This corrects the note that stood here since 2026-08-12, which said the count
+was ignored. What was ignored was a parameter the tool does not have: the
+schema names `perPage`, and `per_page` is silently dropped, so the call fell
+back to the 30-run default and returned 464 KB. The `resource_id` filter was
+honoured then and is honoured now; the spelling was the whole problem.
+
+So the cheap call is: `resource_id` + `perPage: 3` + a `workflow_runs_filter`
+of `{branch: "master", event: "push"}`. Do not go back to unfiltered listings.
 
 What actually works:
 
 - For "did my push deploy?", use `pull_request_read` with `get_status` or
   `get_check_runs`. Those return a few hundred bytes, not half a megabyte.
-- If you do call an Actions listing, **expect it to overflow and plan for it**.
+- If you call an Actions listing WITHOUT `perPage`, **expect it to overflow and
+  plan for it**.
   The harness saves the payload to a file and hands you the path. Parse that
   file with a small python script that prints only the fields you want — never
   read it into context. That path works reliably and costs nothing:
