@@ -3401,8 +3401,20 @@ section('The retainer balance on a private case');
   }
 
   ok('each recorded payment offers a void', await page.locator('[data-act="retVoid"]').count() >= 1);
+
+  /* CLOSEOUT AUDIT 2026-09-04 — the retainer void now CONFIRMS and asks for a
+     reason, the treatment its sibling voidInvPayment always had. There is no
+     un-void route anywhere, so one stray tap beside a payment row took real
+     money off the ledger permanently under a hard-coded sentence nobody wrote.
+     Accepting the dialogs is what lets the rest of this section run; asserting
+     that both of them appeared is what pins the safeguard. */
+  const voidDialogs = [];
+  page.on('dialog', d => { voidDialogs.push(d.type()); d.accept('miskeyed at the desk'); });
   await page.locator('[data-act="retVoid"]').first().click();
   await page.waitForTimeout(900);
+  ok('voiding a retainer payment asks first', voidDialogs.includes('confirm'));
+  ok('and takes the reason from the person rather than inventing one',
+     voidDialogs.includes('prompt'), voidDialogs.join(','));
   /* Read the effect from the API rather than the panel: the workspace reload
      lands on the case's default tab, and chasing the dialog around would test
      navigation rather than the money. */
@@ -18132,6 +18144,153 @@ section('Closeout hardening: one case at a time, one tap, one token');
   /* The invoice search: debounced, and the box keeps the caret. */
   ok('the invoice search box is focus-restorable',
      await page.evaluate(() => FOCUS_KEEP.includes('inv_q')));
+  await page.close();
+}
+
+/* ============================================================================
+   CLOSEOUT AUDIT, 2026-09-04 — the page half. Each assertion names the property
+   that was wrong, not the line that changed.
+   ========================================================================= */
+section('Closeout audit: the newest entry, the drawer, the composer, the honest empties');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'FirstAdminPass1');
+
+  /* 1 — A PHOTO RIDES WITH THE NEWEST ENTRY. WS.activity has been OLDEST-first
+     since Unit 38, so svPickFile's [0] took the case's FIRST line: a photo shot
+     on day three filed against day one's opening entry, under a message saying
+     "with the last entry". newestActivity() is the one reader. */
+  ok('newestActivity(1) returns the LATEST entry, not the earliest',
+     await page.evaluate(() => {
+       const keep = window.WS;
+       WS = { activity: [{ id: 11 }, { id: 22 }, { id: 33 }] };
+       const got = newestActivity(1)[0].id;
+       WS = keep; return got === 33;
+     }));
+  ok('and the field photo writer asks for it rather than indexing the array',
+     await page.evaluate(() => String(svPickFile).includes('newestActivity(1)')
+       && !/WS\.activity\) *\|\| *\[\]\)\[0\]/.test(String(svPickFile))));
+
+  /* 2 — THE DRAWER'S ATTRIBUTE MOVES WITH ITS CLASS. Tapping a destination
+     inside the open drawer closes it, and three handlers did that by removing
+     the class alone, leaving aria-expanded="true" over a shut drawer — which is
+     what a screen reader reads, on the most common close path there is. */
+  await page.setViewportSize({ width: 390, height: 780 });
+  await page.waitForTimeout(200);
+  await page.locator('#burger').click();
+  await page.waitForTimeout(250);
+  ok('the burger reports expanded while the drawer is open',
+     await page.locator('#burger').getAttribute('aria-expanded') === 'true');
+  const dest = page.locator('.tabs button', { hasText: 'Cases' }).first();
+  if (await dest.count()) { await dest.click(); await page.waitForTimeout(350); }
+  ok('and reports collapsed after a destination inside it closes the drawer',
+     await page.locator('#burger').getAttribute('aria-expanded') === 'false');
+  ok('with the drawer genuinely shut',
+     await page.evaluate(() => !document.body.classList.contains('navopen')));
+
+  /* 3 — THE ASSISTANT COMPOSER IS ABOVE THE CASE BAR. Nothing between
+     .asst-wrap and the root makes a stacking context, so at z-index 60 the case
+     bottom bar (65) and the Add-activity button (70) painted over the composer
+     on a phone and took its taps. */
+  ok('the Assistant panel outranks the case bar and the add button',
+     await page.evaluate(() => {
+       const z = sel => {
+         const el = document.createElement('div');
+         el.className = sel; document.body.appendChild(el);
+         const v = parseInt(getComputedStyle(el).zIndex, 10); el.remove(); return v;
+       };
+       return z('asst-wrap') > 70;
+     }));
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.waitForTimeout(200);
+
+  /* 4 — THE COMPOSER KEEPS WHAT IS BEING TYPED. Every paint() rebuilt #asst_in
+     empty, so a question typed while the previous answer was in flight was gone
+     when it landed. ASST.prep protected the workbench; nothing protected this. */
+  ok('the ask box is in the focus allow-list',
+     await page.evaluate(() => FOCUS_KEEP.includes('asst_in')));
+  ok('and its text survives a repaint',
+     await page.evaluate(async () => {
+       asstOpen('');
+       await new Promise(r => setTimeout(r, 150));
+       const inp = document.getElementById('asst_in');
+       if (!inp) return false;
+       inp.value = 'half a question';
+       inp.dispatchEvent(new Event('input', { bubbles: true }));
+       paint();
+       const after = document.getElementById('asst_in');
+       return !!after && after.value === 'half a question';
+     }));
+
+  /* 5 — A ROW THAT OPENS NOTHING IS NOT A BUTTON. Duplicate-intake rows, the
+     watch's invoice line and pre-case simulation rows arrive with no case
+     number, and drawn as buttons they invited a tap that did nothing. */
+  ok('an Assistant card row with no case number is not rendered as a button',
+     await page.evaluate(() => {
+       ASST.msgs = [{ who: 'api', text: 'x', card: [{ title: 'No case here', line: 'l' }] }];
+       ASST.view = 'chat'; paint();
+       const flat = document.querySelector('.asst-row-flat');
+       return !!flat && flat.tagName !== 'BUTTON';
+     }));
+  ok('while a row that carries one still is',
+     await page.evaluate(() => {
+       ASST.msgs = [{ who: 'api', text: 'x', card: [{ title: 'T', line: 'l', case_no: 'API-1' }] }];
+       ASST.view = 'chat'; paint();
+       const b = document.querySelector('.asst-row');
+       return !!b && b.tagName === 'BUTTON';
+     }));
+
+  /* 6 — THREE STATES, NOT TWO. A failed /sheets read landed on the same value
+     as "not fetched yet", so Rate Sheets drew a spinner that never resolved and
+     nothing said the read had failed. */
+  ok('a failed rate-sheet read says so instead of loading for ever',
+     await page.evaluate(() => {
+       const keep = [SHEETS, SHEETS_ERR];
+       SHEETS = []; SHEETS_ERR = 'network down';
+       const html = sheetsView();
+       SHEETS = keep[0]; SHEETS_ERR = keep[1];
+       return html.includes('could not') && !html.includes('Loading rate sheets');
+     }));
+
+  /* And the field launcher, which had no failed state at all: a dropped read
+     drew as "No assignments yet" — an empty desk — on the one screen a field
+     investigator has. */
+  ok('a failed assignments read is not drawn as an empty desk',
+     await page.evaluate(() => {
+       const keep = window.SV;
+       SV = { tab: 'launcher', err: 'network down', launcher: null };
+       const html = svLauncher();
+       SV = keep;
+       return !html.includes('No assignments yet') && html.includes('could not be loaded');
+     }));
+
+  /* 7 — THE SKIP LINK ACTUALLY MOVES FOCUS. A fragment link to a
+     non-focusable element moves focus in Chrome and Firefox but NOT in WebKit,
+     so on an iPhone it scrolled and skipped nothing. */
+  ok('the main region can receive focus for the skip link',
+     await page.evaluate(() => document.getElementById('app').getAttribute('tabindex') === '-1'));
+  ok('and the drawer handle has the project focus ring, not the browser default',
+     await page.evaluate(() => [...document.styleSheets].some(ss => {
+       try { return [...ss.cssRules].some(r => r.selectorText
+         && r.selectorText.includes('.navhandle:focus-visible')); } catch { return false; }
+     })));
+
+  /* 8 — THE FIELD'S SMALL CONTROLS MEET THE TAP FLOOR. Edit / Remove / Delete
+     / Caption declared padding:0 inline, cancelling the class's own padding and
+     leaving line-box height only — about 22px, destructive beside harmless,
+     one-handed in the dark. */
+  ok('.sv-back and .sv-tap carry a 44px floor',
+     await page.evaluate(() => {
+       const mk = cls => {
+         const b = document.createElement('button');
+         b.className = cls; b.style.padding = '0'; b.textContent = 'Delete';
+         document.body.appendChild(b);
+         const h = b.getBoundingClientRect().height; b.remove(); return h;
+       };
+       return mk('sv-back') >= 44 && mk('sv-tap') >= 44;
+     }));
+
   await page.close();
 }
 

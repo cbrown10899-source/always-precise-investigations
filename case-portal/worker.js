@@ -4993,7 +4993,9 @@ async function retentionSchedule(request, env, user, caseNo, on) {
     }
     const st = await retentionState(env, caseNo);
     if (st.deleted) return json({ error: 'This case is already deleted. Restore it first.' }, 409);
-    if (st.state === 'scheduled') return json({ ok: true, already: true });
+    /* Answer with the fresh read like the other three writers: the panel
+       repaints from this body, and {ok:true} alone blanked it. */
+    if (st.state === 'scheduled') return retentionRead(env, user, caseNo);
   }
   const body = await readJson(request);
   const prior = await env.DB.prepare(
@@ -13585,6 +13587,7 @@ const ASSISTANT_BLOCKED = [
   [/\bassign\b/i, 'assigning investigators'],
   [/\bapprove\b/i, 'approvals'],
   [/\b(change|set|update) .*(price|fee|rate|retainer)\b/i, 'changing pricing'],
+  [/\bauthoriz|\bauthoris/i, 'changing a case authorization'],
 ];
 
 const asstStrip = s => String(s || '').toLowerCase()
@@ -14408,31 +14411,36 @@ async function assistantTopicAnswer(env, user, short, caseNo) {
 
   /* ---- cases ---- */
   if (is(/^cases$/)) {
+    /* Hidden cases leave every count, the assistantCounts pattern — and the
+       clause has to name the right alias, so it is built per query. */
+    const missingC = await missingTables(env);
+    const hideOn = a => [
+      missingC.includes('case_archive') ? '' : `AND ${a}case_no NOT IN (SELECT case_no FROM case_archive)`,
+      missingC.includes('case_deleted') ? '' : `AND ${a}case_no NOT IN (SELECT case_no FROM case_deleted)`,
+    ].filter(Boolean).join(' ');
     if (!admin) {
       const mine = await env.DB.prepare(
         `SELECT COUNT(*) AS n, SUM(CASE WHEN EXISTS (SELECT 1 FROM case_days d
              WHERE d.case_no = s.case_no AND d.end_time IS NULL) THEN 1 ELSE 0 END) AS active
-           FROM submissions s WHERE s.assigned_to = ? AND s.status != 'closed'`).bind(user.id).first();
+           FROM submissions s WHERE s.assigned_to = ? AND s.status != 'closed'
+             ${hideOn('s.')}`).bind(user.id).first();
       return topicJson('CASES', [
         `You have ${Number(mine.n) || 0} open assignment${Number(mine.n) === 1 ? '' : 's'}${Number(mine.active) ? ` — ${Number(mine.active)} with a day running now` : ''}.`,
       ], [nav('OPEN CASES', 'cases'), nav('TODAY', 'today')]);
     }
-    /* Hidden cases leave every count, the assistantCounts pattern. */
-    const missing = await missingTables(env);
-    const hide = [
-      missing.includes('case_archive') ? '' : 'AND s.case_no NOT IN (SELECT case_no FROM case_archive)',
-      missing.includes('case_deleted') ? '' : 'AND s.case_no NOT IN (SELECT case_no FROM case_deleted)',
-    ].filter(Boolean).join(' ');
+    const hide = hideOn('s.');
     const open = (await env.DB.prepare(
       `SELECT COUNT(*) AS n FROM submissions s WHERE s.status != 'closed' ${hide}`).first());
     const activeNow = (await env.DB.prepare(
-      `SELECT COUNT(DISTINCT case_no) AS n FROM case_days WHERE end_time IS NULL`).first());
+      `SELECT COUNT(DISTINCT case_no) AS n FROM case_days WHERE end_time IS NULL
+         ${hideOn('')}`).first());
     const unassigned = (await env.DB.prepare(
       `SELECT COUNT(*) AS n FROM submissions s
         WHERE s.assigned_to IS NULL AND s.status NOT IN ('new','closed') ${hide}`).first());
     const due = (await env.DB.prepare(
       `SELECT COUNT(DISTINCT d.case_no) AS n FROM case_days d WHERE d.end_time IS NOT NULL
-         AND NOT EXISTS (SELECT 1 FROM case_reports r WHERE r.day_id = d.id)`).first());
+         AND NOT EXISTS (SELECT 1 FROM case_reports r WHERE r.day_id = d.id)
+         ${hideOn('d.')}`).first());
     const lines = [
       `${Number(open.n) || 0} open · ${Number(activeNow.n) || 0} active right now · ${Number(unassigned.n) || 0} unassigned · ${Number(due.n) || 0} with a finished day and no report.`,
     ];
@@ -14621,12 +14629,12 @@ async function assistantCommand(request, env, user) {
   const ctx = body.context && typeof body.context === 'object' ? body.context : {};
   if (ctx.guide !== true) return res;
   let d; try { d = await res.json(); } catch { return res; }
-  if (!d || d.kind !== 'status') return json(d);
+  if (!d || d.kind !== 'status') return json(d, res.status);
   const route = String(ctx.route || '').slice(0, 40);
   const caseNo = CASE_NO_RE.test(String(ctx.case_no || '')) ? String(ctx.case_no) : '';
   const key = caseNo ? 'case' : (ASSISTANT_EXPLAIN[route] ? route : null);
   if (key) d.guide_intro = ASSISTANT_EXPLAIN[key];
-  return json(d);
+  return json(d, res.status);
 }
 
 async function assistantCommandCore(body, env, user) {
