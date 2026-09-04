@@ -1882,7 +1882,10 @@ CREATE TABLE IF NOT EXISTS assistant_log (
   action    TEXT    NOT NULL,   -- what was rehearsed: 'intake_send', later units add their own
   outcome   TEXT    NOT NULL,   -- 'SIMULATED — NOT SENT', stated per row, never implied
   case_no   TEXT,               -- null unless the reference resolved to a real case
-  recipient TEXT    NOT NULL,   -- who WOULD have received it — nobody did
+  recipient TEXT    NOT NULL,   -- a rehearsal: who WOULD have received it, and nobody
+                               -- did. A Command Center row addresses nobody and
+                               -- stores '' — empty because there is no recipient,
+                               -- never a placeholder standing in for one.
   detail    TEXT,               -- JSON: door, context, subject line
   done_by   INTEGER REFERENCES users(id),
   done_at   TEXT    NOT NULL

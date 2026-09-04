@@ -18317,6 +18317,128 @@ section('Closeout audit: the newest entry, the drawer, the composer, the honest 
   await page.close();
 }
 
+/* ============================================================================
+   CASE COMMAND CENTER — the page half, end to end against the real Worker.
+   The point is the LOOP: the server offers, the page holds the offer, the
+   person confirms, the ORDINARY route does the work, and nothing runs that
+   was not offered.
+   ========================================================================= */
+section('Case Command Center: offered, confirmed, dispatched — and nothing else');
+{
+  await post('/ingest', { case_no: 'API-CMD-DAY', service: 'Surveillance',
+    client_name: 'Command Client', subject_name: 'Command Subject' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* THE ALLOW-LIST IS THE WHOLE EXECUTABLE SURFACE. An action id that is not
+     a key here can do nothing, however it got into the page. */
+  const surface = await page.evaluate(() => Object.keys(ASST_CMD).sort());
+  ok('the page can run exactly the commands it has entries for',
+     JSON.stringify(surface) === JSON.stringify(['end_day', 'start_day']), JSON.stringify(surface));
+
+  await page.evaluate(() => openCase('API-CMD-DAY'));
+  await page.waitForTimeout(700);
+
+  /* 1 — asking OFFERS; it does not act. */
+  await page.evaluate(async () => { await asstOpen('API-CMD-DAY'); await asstSend('start surveillance'); });
+  await page.waitForTimeout(900);
+  const offered = await page.evaluate(() => ({
+    pending: ASST.pending ? ASST.pending.action : null,
+    caseNo: ASST.pending ? ASST.pending.case_no : null,
+    card: !!document.querySelector('.asst-cmd'),
+    btn: (document.querySelector('[data-act="asstCmdRun"]') || {}).textContent || '',
+    shownCase: (document.querySelector('.asst-cmd-who .mono') || {}).textContent || '',
+  }));
+  ok('asking to start surveillance offers a confirmation, and only that',
+     offered.pending === 'start_day' && offered.card === true, JSON.stringify(offered));
+  ok('the card names the case it would act on and the button says what it does',
+     offered.shownCase === 'API-CMD-DAY' && /Start Day/i.test(offered.btn), JSON.stringify(offered));
+  const before = await page.evaluate(async () =>
+    (await (await fetch('/portal-api/cases/API-CMD-DAY/workspace',
+      { headers: { Accept: 'application/json' } })).json()).days.length);
+  ok('and no investigation day exists yet — asking is not doing', before === 0, String(before));
+
+  /* 2 — a STALE card cannot run the current pending command. */
+  const stale = await page.evaluate(async () => {
+    await asstCmdRun('not-the-token-that-was-issued');
+    return { err: ASST.err, still: ASST.pending ? ASST.pending.action : null };
+  });
+  ok('a confirmation from an older card is refused, and says so rather than doing nothing',
+     /no longer the current one/i.test(stale.err) && stale.still === 'start_day',
+     JSON.stringify(stale));
+
+  /* 3 — confirming dispatches to the ORDINARY route, and the day appears. */
+  await page.locator('[data-act="asstCmdRun"]').first().click();
+  await page.waitForTimeout(1400);
+  const after = await page.evaluate(async () => ({
+    days: (await (await fetch('/portal-api/cases/API-CMD-DAY/workspace',
+      { headers: { Accept: 'application/json' } })).json()).days.length,
+    pending: ASST.pending,
+    said: (ASST.msgs[ASST.msgs.length - 1] || {}).text || '',
+  }));
+  ok('confirming starts the day through the route the button already uses', after.days === 1,
+     JSON.stringify(after));
+  ok('the offer is spent once it has been confirmed', after.pending === null);
+  ok('and the panel says what happened', /started/i.test(after.said), after.said);
+
+  /* 4 — the Assistant recorded WHERE it was started from, without inventing a
+     recipient for a command that addressed nobody. */
+  const logged = await page.evaluate(async () => {
+    const d = await (await fetch('/portal-api/assistant/command', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'show the simulation log', context: { route: 'dashboard' } }),
+    })).json();
+    return d.card || [];
+  });
+  ok('the command is in the Assistant log, wearing its real outcome',
+     logged.some(r => /start_day/.test(r.title || '') && /EXECUTED/.test(r.line || '')),
+     JSON.stringify(logged.slice(0, 2)));
+
+  /* 5 — a second ask now REFUSES rather than offering a duplicate day, which
+     is what the database would do anyway. */
+  await page.evaluate(async () => { await asstSend('start surveillance'); });
+  await page.waitForTimeout(900);
+  const twice = await page.evaluate(() => ({
+    pending: ASST.pending,
+    said: (ASST.msgs[ASST.msgs.length - 1] || {}).text || '',
+  }));
+  ok('with a day running, asking again offers nothing and says why',
+     twice.pending === null && /already running/i.test(twice.said), JSON.stringify(twice));
+
+  /* 6 — Cancel changes nothing and says so. */
+  await page.evaluate(async () => { await asstSend('end the day'); });
+  await page.waitForTimeout(900);
+  await page.locator('[data-act="asstCmdCancel"]').first().click();
+  await page.waitForTimeout(400);
+  const cancelled = await page.evaluate(async () => ({
+    pending: ASST.pending,
+    said: (ASST.msgs[ASST.msgs.length - 1] || {}).text || '',
+    days: (await (await fetch('/portal-api/cases/API-CMD-DAY/workspace',
+      { headers: { Accept: 'application/json' } })).json()).days.filter(d => !d.end_time).length,
+  }));
+  ok('cancelling clears the offer and says nothing was changed',
+     cancelled.pending === null && /nothing was changed/i.test(cancelled.said));
+  ok('and the day is still running — Cancel really cancelled', cancelled.days === 1);
+
+  /* 7 — A PENDING COMMAND LEAVES WITH ITS CASE. An armed confirmation for one
+     case sitting on screen while another is open is the stale-context defect
+     this project has already paid for once. */
+  await page.evaluate(async () => { await asstSend('end the day'); });
+  await page.waitForTimeout(900);
+  const armed = await page.evaluate(() => (ASST.pending || {}).action || null);
+  ok('an offer is armed before navigating away', armed === 'end_day');
+  await page.evaluate(() => openCase('API-20260812-4001'));
+  await page.waitForTimeout(800);
+  const moved = await page.evaluate(() => ({ pending: ASST.pending, asstCase: ASST.case }));
+  ok('opening another case disarms it — no confirmation survives the case it belonged to',
+     moved.pending === null && moved.asstCase === 'API-20260812-4001', JSON.stringify(moved));
+
+  await page.close();
+}
+
 await browser.close();
 server.close();
 

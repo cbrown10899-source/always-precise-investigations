@@ -13550,6 +13550,61 @@ const ASSISTANT_NAV = [
 const assistantNavFor = role =>
   ASSISTANT_NAV.filter(n => n.roles.includes(role)).map(({ id, kind, label }) => ({ id, kind, label }));
 
+/* ============ CASE COMMAND CENTER — THE EXECUTABLE ACTION REGISTRY ========
+
+   Owner brief 2026-09-04. The Assistant becomes an operating layer, and the
+   whole safety of that rests on one sentence: THE MODEL MAY INTERPRET
+   LANGUAGE, IT MAY NOT CHOOSE AN ACTION. Every command a person can run is a
+   row in this table, and nothing outside it is executable — the same shape
+   ASSISTANT_NAV already uses for destinations, one layer up.
+
+   CONFIRMATION LEVELS, as the brief defines them:
+     0  read / navigate         — happens immediately
+     1  draft / prefill         — content prepared, the person saves it
+     2  internal state change   — explicit confirmation naming the case
+     3  high consequence        — confirmation PLUS the feature's own gates
+
+   WHAT THIS TABLE DELIBERATELY DOES NOT DO: it does not execute anything, and
+   the Assistant block still writes exactly one table (assistant_log). A
+   confirmed command is dispatched by the PAGE to the ordinary route the
+   button already uses, so every write keeps its existing role gate, its
+   deleted/archived chokepoint, its idempotency and its own audit record. The
+   Assistant never becomes a second way into the data — it becomes a faster
+   way to the same door. That is why no new write route exists here.
+
+   `needs_case: true` means the command is meaningless without one, and the
+   resolver refuses rather than guessing which case was meant. */
+const ASSISTANT_COMMANDS = [
+  { action: 'start_day', level: 2, label: 'Start Day', needs_case: true,
+    roles: ['admin', 'investigator'], route: 'day/start',
+    title: 'START INVESTIGATION DAY?' },
+  { action: 'end_day', level: 2, label: 'End Day', needs_case: true,
+    roles: ['admin', 'investigator'], route: 'day/end',
+    title: 'END TODAY\'S INVESTIGATION DAY?' },
+];
+/* `assistantCommand` is already the route handler's name — the class-name
+   contest this project has recorded five times, at the function layer. */
+const assistantCmd = action => ASSISTANT_COMMANDS.find(c => c.action === action) || null;
+
+/* THE ONE RESOLVER. Both the offer and the after-the-fact log go through it,
+   so a command cannot be logged that could not have been offered — and the
+   checks are the ordinary ones (registry membership, role, and caseFor, which
+   is the portal's IDOR boundary) rather than a second set invented here. */
+async function assistantPlan(env, user, action, caseNo) {
+  const cmd = assistantCmd(action);
+  if (!cmd) return { fail: 'unknown_action' };
+  if (!cmd.roles.includes(user.role)) return { fail: 'not_your_desk' };
+  if (cmd.needs_case) {
+    if (!CASE_NO_RE.test(String(caseNo || ''))) return { fail: 'no_case' };
+    const row = await caseFor(env, user, caseNo);
+    if (!row) return { fail: 'no_such_case' };     /* invented ids die here */
+    const gate = await caseSendRefusal(env, caseNo);
+    if (gate) return { fail: 'case_closed_to_writes' };
+    return { cmd, row, caseNo };
+  }
+  return { cmd, row: null, caseNo: null };
+}
+
 /* What each destination IS, for "where am I?" / "explain this page" — written
    from the portal's own rules, one short honest paragraph each. The `case`
    entry covers the case workspace, which is not a TAB. */
@@ -13742,7 +13797,7 @@ async function assistantPrepareIntake(request, env) {
    degrades to logged:false with the named reason — the integrity-record
    rule, because a success that hides an unrecorded rehearsal and a 500 that
    eats the answer are both lies — and a refused row answers the same way. */
-async function assistantLogged(env, user, action, base, detail) {
+async function assistantLogged(env, user, action, base, detail, outcome) {
   if ((await missingTables(env)).includes('assistant_log')) {
     return json({ ...base, logged: false, reason: 'not_set_up',
       note: 'Run the portal-setup workflow to add the Assistant log table; until then rehearsals are not recorded.' });
@@ -13751,12 +13806,39 @@ async function assistantLogged(env, user, action, base, detail) {
     await env.DB.prepare(
       `INSERT INTO assistant_log (action, outcome, case_no, recipient, detail, done_by, done_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`)
-      .bind(action, ASSISTANT_SIM_OUTCOME, base.case_no || null, base.to,
+      .bind(action, outcome || ASSISTANT_SIM_OUTCOME, base.case_no || null, base.to,
             JSON.stringify(detail), user ? user.id : null, nowIso()).run();
   } catch {
     return json({ ...base, logged: false, reason: 'log_write_failed' });
   }
   return json({ ...base, logged: true });
+}
+
+/* POST /assistant/executed — a confirmed command, recorded after the fact.
+
+   HONEST ABOUT WHAT IT IS: this does not authorize anything and does not
+   perform anything. The page dispatched the command to the ordinary route,
+   which applied every existing check; this records that it happened and that
+   the Assistant is where it started. The resolver runs again so the row is
+   validated rather than believed — an `action` the registry does not carry, a
+   case the caller cannot read, or a case closed to writes is refused here even
+   though the write it claims has already been judged elsewhere. */
+async function assistantExecuted(request, env, user) {
+  const body = await readJson(request);
+  const action = String(body.action || '');
+  const caseNo = String(body.case_no || '');
+  const plan = await assistantPlan(env, user, action, caseNo);
+  if (plan.fail) return json({ error: 'That command cannot be recorded.', code: plan.fail }, 400);
+  /* The outcome is the CALLER'S report of what the ordinary route answered, so
+     it is recorded as a report and never as a claim of success the Assistant
+     did not witness: a failure is logged as a failure. */
+  const worked = body.ok === true;
+  const outcome = worked ? `EXECUTED — ${plan.cmd.label}` : `FAILED — ${plan.cmd.label}`;
+  return assistantLogged(env, user, action,
+    { ok: true, outcome, to: '', case_no: plan.caseNo || null, command: action },
+    { level: plan.cmd.level, route: plan.cmd.route,
+      detail: String(body.detail || '').slice(0, 200) },
+    outcome);
 }
 
 /* POST /assistant/simulate-intake — the rehearsal recorded. */
@@ -14701,6 +14783,85 @@ async function assistantCommandCore(body, env, user) {
     }
   }
 
+  /* ============ CASE COMMAND CENTER — RESOLUTION ============================
+
+     Placed AFTER the Beta refusals on purpose: a sentence naming a send, a
+     deletion or a payment is still refused by name before anything here can
+     look at it, so widening the Assistant into an operating layer did not
+     widen what it may do. What resolves here is only what ASSISTANT_COMMANDS
+     lists, and only after caseFor has agreed the caller may read the case. */
+  {
+    const wantsStart = /\b(start|begin|open)\b[^]{0,20}\b(surveillance|investigation day|day)\b/i.test(text)
+      && !/\bactive surveillance\b/i.test(text);      /* that phrase is a DESTINATION */
+    const wantsEnd = /\b(end|stop|finish|close out)\b[^]{0,20}\b(surveillance|investigation day|day|today'?s day)\b/i.test(text);
+    const action = wantsStart ? 'start_day' : wantsEnd ? 'end_day' : null;
+    if (action) {
+      const plan = await assistantPlan(env, user, action, caseNo);
+      if (plan.fail === 'no_case') {
+        return json({ ok: true, kind: 'status',
+          text: 'Which case? Open it first, or find it with "Find <name or case number>" — '
+              + 'I will not guess which case a day belongs to.',
+          actions: [nav('CASES', 'cases')] });
+      }
+      if (plan.fail === 'no_such_case' || plan.fail === 'case_closed_to_writes') {
+        return json({ ok: true, kind: 'status',
+          text: plan.fail === 'no_such_case'
+            ? `I cannot read ${caseNo} with your access.`
+            : `${caseNo} has been archived or deleted, so its clock cannot be moved. Put the case back first.` });
+      }
+      if (plan.fail) return json({ ok: true, kind: 'status', text: 'That is not a command this account can run.' });
+
+      /* THE RECORD ANSWERS FIRST. A day that is already running must not be
+         offered a second start — idx_days_open_one would refuse it at the
+         database, and an offer the database will refuse is a screen telling
+         somebody something untrue. */
+      const open = (await missingTables(env)).includes('case_days') ? null
+        : await env.DB.prepare(
+            `SELECT d.id, d.day_date, d.investigator_id, u.display_name AS who
+               FROM case_days d LEFT JOIN users u ON u.id = d.investigator_id
+              WHERE d.case_no = ? AND d.end_time IS NULL
+              ORDER BY d.id DESC LIMIT 1`).bind(caseNo).first();
+
+      if (action === 'start_day' && open) {
+        return json({ ok: true, kind: 'status',
+          text: `An investigation day is already running on ${caseNo}`
+              + (open.who ? ` — ${open.who} started it` : '') + '. Nothing was started.',
+          actions: [nav('OPEN ACTIVE SURVEILLANCE', 'surveillance', 'action')] });
+      }
+      if (action === 'end_day' && !open) {
+        return json({ ok: true, kind: 'status',
+          text: `No investigation day is running on ${caseNo}, so there is nothing to end.` });
+      }
+      /* END DAY NAMES THE DAY IT WOULD END. The ordinary control refuses to
+         end somebody else's session, and the confirmation must not imply
+         otherwise — so it says whose it is. */
+      const cmd = plan.cmd;
+      const mine = !open || open.investigator_id === user.id;
+      if (action === 'end_day' && !mine && user.role !== 'admin') {
+        return json({ ok: true, kind: 'status',
+          text: `That day belongs to ${open.who || 'another investigator'} — only they or an admin can end it.` });
+      }
+      /* THE CARD NAMES WHO IT IS ABOUT, WITHIN THE ROLE'S OWN BOUNDARY.
+         caseFor answers permission, not identity — it selects four columns and
+         none of them is a name — so the confirmation reads them here. The
+         CLIENT is the paying side and reaches an admin only, exactly as
+         redactRow has always had it; the SUBJECT is who is watched and
+         reaches the field, which is the investigator's whole job. */
+      const nameRow = await env.DB.prepare(
+        'SELECT client_name, subject_name FROM submissions WHERE case_no = ?')
+        .bind(caseNo).first() || {};
+      return json({ ok: true, kind: 'command',
+        text: cmd.title,
+        command: {
+          action, case_no: caseNo, label: cmd.label, level: cmd.level,
+          ...(user.role === 'admin' ? { client: nameRow.client_name || '' } : {}),
+          subject: nameRow.subject_name || '',
+          day_id: action === 'end_day' && open ? open.id : null,
+          whose: action === 'end_day' && open && !mine ? (open.who || '') : '',
+        } });
+    }
+  }
+
   /* ---- UNIT 4: the Beta audit trail, readable where it is written (§26) —
      what has been simulated, each row wearing its outcome. */
   if (/simulation (log|history)|\b(show|list|recent|what have)\b[^]*simulat/i.test(text)) {
@@ -15507,6 +15668,14 @@ async function route(request, env) {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return assistantSimulateSheet(request, env, user);
   }
+
+  /* CASE COMMAND CENTER — the audit row for a command the person confirmed.
+     The write it describes has ALREADY happened, on its own route, with its
+     own gate and its own record; this only says the Assistant is where it was
+     started from. It re-runs the SAME resolver the offer used, so a row can
+     never name a command that could not have been offered — and it is still
+     the block's one INSERT, into the Assistant's own table. */
+  if (p === '/assistant/executed' && method === 'POST') return assistantExecuted(request, env, user);
 
   if (p === '/tasks' && method === 'GET') return taskBoard(env, user);
   if (p === '/file-queue' && method === 'GET') return fileQueue(env, user);

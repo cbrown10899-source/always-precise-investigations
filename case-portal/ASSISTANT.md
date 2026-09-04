@@ -383,6 +383,63 @@ gap shipped.
 | 9 | Visual QA / workflow advisor | ✅ **DEPLOYED** — #265 `3f1f640` (A16); `portal/ux-advisor.mjs`, 51 findings stored in `UX-FINDINGS.json`/`.md`, judgment classes named for a person |
 | 11 | Back / Assistant Home panel navigation (owner brief 2026-09-02, third window) | ✅ **DEPLOYED** — #270 `1f41310`, `deploy.yml` `success` on `1f413100` (A18; page-only, level derived never stored, +18 e2e checks incl. both roles, phone targets, draft/conversation preservation, page-state isolation) |
 
+**A19 — the Case Command Center: the model interprets language, it never
+chooses an action.** Owner brief 2026-09-04. The Assistant becomes an
+operating layer, and the whole safety of that rests on one table.
+`ASSISTANT_COMMANDS` in `worker.js` is the entire executable surface — action
+id, confirmation level, role list, and the ORDINARY route the command uses —
+the same shape `ASSISTANT_NAV` has always had for destinations, one layer up.
+Levels are the owner's: **0** read/navigate, **1** draft/prefill, **2**
+internal state change, **3** high consequence.
+
+**Execution is a dispatch, not a new door.** `assistantPlan` is the ONE
+resolver — registry membership, the role list, `caseFor` (which is the
+portal's IDOR boundary, so an invented case number dies there) and
+`caseSendRefusal` for the deleted/archived gate. It returns a plan; it runs
+nothing. The page holds the offer in `ASST.pending` and, on an explicit
+confirmation, calls the route the button already uses through `ASST_CMD`, a
+page-side allow-list keyed by action id. **No command has a private
+endpoint**, so every write keeps its own role gate, its own refusals, its own
+idempotency and its own audit record. The guarantee is therefore not "nothing
+happens" — it is *nothing happens that the signed-in person could not already
+do by pressing the button themselves*, and the source pins say exactly that
+now rather than claiming a read-only that is no longer true.
+
+**A confirmation belongs to ONE offer.** The token is minted when the offer is
+stored and carried by that card's button, so an older card left in the
+conversation is inert and SAYS it is stale — and `openCase` disarms a pending
+command along with the eight per-case globals it already cleared, because an
+armed confirmation for one case sitting on screen while another is open is the
+stale-context defect this project has already paid for once.
+
+**The card names who it is about, inside the role's boundary.** `caseFor`
+answers permission, not identity — it selects four columns and none of them is
+a name — so the confirmation reads the names itself: the **subject** for both
+roles, because the subject is who is watched and that is the field's job, and
+the **client only for an admin**, because the client is who is paying.
+`redactRow`'s rule with no exception carved for a confirmation screen.
+
+**The record is written after the fact and is honest about what it saw.**
+`/assistant/executed` re-runs the same resolver, so a row can never name a
+command that could not have been offered; the outcome is the caller's REPORT
+of what the ordinary route answered, so a failure is logged as `FAILED — …`
+rather than assumed to be a success the Assistant never witnessed. It is still
+the block's one `INSERT`, into `assistant_log`, and `recipient` stores `''` —
+empty because a command addresses nobody, never a placeholder standing in for
+a recipient.
+
+**Started with Start/End Day deliberately** (FUTURE.md §1b): reversible, and
+already guarded at the database by `idx_days_open_one`, so a second start is
+refused by the record rather than by a check that could be raced. The
+Assistant does not even offer one — a day already running answers with who has
+it and a door to Active Surveillance, because an offer the database will
+refuse is a screen telling somebody something untrue.
+
+**Unchanged:** every Beta refusal still wins, and is evaluated BEFORE any
+command resolves — a sentence naming a send, a deletion, an archive, an
+assignment or a payment is refused by name exactly as before. `sendMail` is
+still called nowhere in the block. No schema change; no portal-setup dispatch.
+
 **Checkpoint (2026-09-02, updated overnight):** the pre-Assistant units went
 green first — PR #260 merged as `6770609`, both deploy workflows `success` on
 `67706099` — and Units 1–3 were then built as ONE additive change, merged as
