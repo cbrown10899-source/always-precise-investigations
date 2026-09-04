@@ -18154,7 +18154,7 @@ section('Closeout hardening: one case at a time, one tap, one token');
 section('Closeout audit: the newest entry, the drawer, the composer, the honest empties');
 {
   const page = await newPage();
-  await signIn(page, 'trever', 'FirstAdminPass1');
+  await signIn(page, 'trever', 'AdminPassword1x');
 
   /* 1 — A PHOTO RIDES WITH THE NEWEST ENTRY. WS.activity has been OLDEST-first
      since Unit 38, so svPickFile's [0] took the case's FIRST line: a photo shot
@@ -18181,10 +18181,26 @@ section('Closeout audit: the newest entry, the drawer, the composer, the honest 
   await page.waitForTimeout(250);
   ok('the burger reports expanded while the drawer is open',
      await page.locator('#burger').getAttribute('aria-expanded') === 'true');
-  const dest = page.locator('.tabs button', { hasText: 'Cases' }).first();
-  if (await dest.count()) { await dest.click(); await page.waitForTimeout(350); }
+  /* The destination is found and clicked IN PAGE CONTEXT: a Playwright locator
+     that finds nothing turns into a 30s timeout and takes the whole run with
+     it, and what is under test here is that the HANDLER moves the attribute —
+     a real DOM click reaches the same delegated listener. The button list rides
+     along in the failure detail so a future failure says why rather than just
+     that. */
+  const drawer = await page.evaluate(() => {
+    const btns = [...document.querySelectorAll('.tabs button')];
+    const labels = btns.map(b => b.textContent.trim().slice(0, 20));
+    const dest = btns.find(b => !b.classList.contains('on'));
+    if (!dest) return { found: false, labels };
+    dest.click();
+    return { found: true, clicked: dest.textContent.trim().slice(0, 20), labels };
+  });
+  ok('the open drawer offers a destination to tap', drawer.found === true,
+     JSON.stringify(drawer.labels || []).slice(0, 200));
+  await page.waitForTimeout(600);
   ok('and reports collapsed after a destination inside it closes the drawer',
-     await page.locator('#burger').getAttribute('aria-expanded') === 'false');
+     await page.locator('#burger').getAttribute('aria-expanded') === 'false',
+     `${await page.locator('#burger').getAttribute('aria-expanded')} after ${drawer.clicked || 'nothing'}`);
   ok('with the drawer genuinely shut',
      await page.evaluate(() => !document.body.classList.contains('navopen')));
 
@@ -18210,36 +18226,43 @@ section('Closeout audit: the newest entry, the drawer, the composer, the honest 
      when it landed. ASST.prep protected the workbench; nothing protected this. */
   ok('the ask box is in the focus allow-list',
      await page.evaluate(() => FOCUS_KEEP.includes('asst_in')));
+  const draftProbe = await page.evaluate(async () => {
+    await asstOpen('');
+    ASST.view = 'chat'; ASST.prep = null; ASST.draft = ''; paint();
+    const inp = document.getElementById('asst_in');
+    if (!inp) return { found: false };
+    inp.value = 'half a question';
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+    const held = ASST.draft;
+    paint();
+    const after = document.getElementById('asst_in');
+    return { found: true, held, value: after ? after.value : null };
+  });
+  ok('the composer is on screen to test', draftProbe.found === true);
+  ok('typing is held on ASST rather than only in the DOM',
+     draftProbe.held === 'half a question', JSON.stringify(draftProbe));
   ok('and its text survives a repaint',
-     await page.evaluate(async () => {
-       asstOpen('');
-       await new Promise(r => setTimeout(r, 150));
-       const inp = document.getElementById('asst_in');
-       if (!inp) return false;
-       inp.value = 'half a question';
-       inp.dispatchEvent(new Event('input', { bubbles: true }));
-       paint();
-       const after = document.getElementById('asst_in');
-       return !!after && after.value === 'half a question';
-     }));
+     draftProbe.value === 'half a question', JSON.stringify(draftProbe));
 
   /* 5 — A ROW THAT OPENS NOTHING IS NOT A BUTTON. Duplicate-intake rows, the
      watch's invoice line and pre-case simulation rows arrive with no case
      number, and drawn as buttons they invited a tap that did nothing. */
+  const rowKinds = await page.evaluate(() => {
+    ASST.open = true; ASST.view = 'chat'; ASST.prep = null;
+    ASST.msgs = [{ who: 'api', text: 'x', card: [
+      { title: 'No case here', line: 'nothing to open' },
+      { title: 'Has one', line: 'opens', case_no: 'API-1' },
+    ] }];
+    paint();
+    const flat = document.querySelector('.asst-row-flat');
+    const live = document.querySelector('.asst-row:not(.asst-row-flat)');
+    return { flat: flat && flat.tagName, live: live && live.tagName,
+             liveCase: live && live.getAttribute('data-case') };
+  });
   ok('an Assistant card row with no case number is not rendered as a button',
-     await page.evaluate(() => {
-       ASST.msgs = [{ who: 'api', text: 'x', card: [{ title: 'No case here', line: 'l' }] }];
-       ASST.view = 'chat'; paint();
-       const flat = document.querySelector('.asst-row-flat');
-       return !!flat && flat.tagName !== 'BUTTON';
-     }));
+     rowKinds.flat === 'DIV', JSON.stringify(rowKinds));
   ok('while a row that carries one still is',
-     await page.evaluate(() => {
-       ASST.msgs = [{ who: 'api', text: 'x', card: [{ title: 'T', line: 'l', case_no: 'API-1' }] }];
-       ASST.view = 'chat'; paint();
-       const b = document.querySelector('.asst-row');
-       return !!b && b.tagName === 'BUTTON';
-     }));
+     rowKinds.live === 'BUTTON' && rowKinds.liveCase === 'API-1', JSON.stringify(rowKinds));
 
   /* 6 — THREE STATES, NOT TWO. A failed /sheets read landed on the same value
      as "not fetched yet", so Rate Sheets drew a spinner that never resolved and
