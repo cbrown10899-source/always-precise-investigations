@@ -8313,11 +8313,16 @@ section('Timestamp video is reachable without opening a case');
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(400);
-  const m = await page.evaluate(() => ({
-    h: Math.round(document.querySelector('.qtool').getBoundingClientRect().height),
-    sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth,
-  }));
-  ok('and on a phone it is still a 44px target', m.h >= 44, `${m.h}px`);
+  const m = await page.evaluate(() => {
+    /* On a phone the tools are `.qtapp` cards and `.qtool` is display:none.
+       Measure whichever strip is actually drawn — the floor is about what a
+       thumb can hit, not about which class won. */
+    const tool = [...document.querySelectorAll('.qtools button')].find(e => e.offsetParent);
+    return { h: Math.round(tool.getBoundingClientRect().height),
+      cls: String(tool.className).split(' ')[0],
+      sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth };
+  });
+  ok('and on a phone it is still a 44px target', m.h >= 44, JSON.stringify(m));
   ok('with nothing scrolling sideways', m.sw <= m.cw + 1, `${m.sw} vs ${m.cw}`);
   await page.close();
 }
@@ -8472,12 +8477,17 @@ section('Timestamp Video is on every top-level screen, for both roles');
     for (const t of tabs) {
       await page.locator('.tabs button', { hasText: t }).first().click();
       await page.waitForTimeout(500);
-      const n = await page.locator('.qtools [data-act="vstOpen"]').count();
-      ok(`${role} · ${t} carries the quick tool`, n === 1, String(n));
+      /* EXACTLY ONE *VISIBLE* DOOR. Mobile Unit B renders two strips — the
+         desktop chip row and the phone card strip — and hides one at every
+         width, so the raw count is 2 by design and "one visible" is the
+         stronger claim: a hidden element is out of the accessibility tree
+         entirely, so there is one door and one tab stop at any size. */
+      const n = await page.locator('.qtools [data-act="vstOpen"]:visible').count();
+      ok(`${role} · ${t} carries exactly one visible quick tool`, n === 1, String(n));
     }
     /* ONE WORDING. Two spellings of the same control meant a find-in-page for
        what the menu says did not match what the screen shows. */
-    const label = await text(page, '.qtools [data-act="vstOpen"]');
+    const label = await text(page, '.qtools [data-act="vstOpen"]:visible');
     ok(`and the ${role}'s reads Timestamp Video`, /Timestamp Video/.test(label), label);
     const navLabel = await page.locator('.navfoot [data-act="vstOpen"]').innerText();
     ok(`matching the navigation exactly (${role})`,
@@ -8517,7 +8527,11 @@ section('The quick tool is discoverable, not merely present');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(400);
   const p = await page.evaluate(() => {
-    const b = document.querySelector('.qtools [data-act="vstOpen"]');
+    /* THE VISIBLE ONE. querySelector returns the desktop chip, which is
+       display:none here — measuring it reports 0px and says nothing about
+       what a thumb can reach. */
+    const b = [...document.querySelectorAll('.qtools [data-act="vstOpen"]')]
+      .find(e => e.offsetParent);
     const r = b.getBoundingClientRect();
     const nav = document.querySelector('.tabs');
     return { h: Math.round(r.height), y: Math.round(r.y),
@@ -11530,16 +11544,21 @@ section('The mobile header is a control, not a glyph');
      widens. Both are pinned directly. */
   const qt = await page.evaluate(() => {
     const doc = document.documentElement;
-    const g = document.querySelector('.qtgrid');
-    const btns = [...document.querySelectorAll('.qtool')].map(x =>
-      ({ t: x.textContent.trim(), h: Math.round(x.getBoundingClientRect().height) }));
-    const firstFits = document.querySelector('.qtool').getBoundingClientRect().right
-      <= doc.clientWidth + 1;
+    /* WHICHEVER STRIP IS DRAWN AT THIS WIDTH. Mobile Unit B gave the phone its
+       own card strip and hides the desktop chip row; both are `.qtools`
+       children, and what this section is about — no tool unreachable, the page
+       never widening — is true of whichever one is on screen. */
+    const g = [...document.querySelectorAll('.qtgrid, .qtapps')].find(e => e.offsetParent);
+    const tools = [...g.children];
+    const btns = tools.map(x =>
+      ({ t: x.textContent.replace(/\s+/g, ' ').trim(), h: Math.round(x.getBoundingClientRect().height) }));
+    const firstFits = tools[0].getBoundingClientRect().right <= doc.clientWidth + 1;
     g.scrollLeft = 99999;
-    const lastReachable = [...document.querySelectorAll('.qtool')].pop()
-      .getBoundingClientRect().right <= doc.clientWidth + 2;
+    const lastReachable = tools[tools.length - 1].getBoundingClientRect().right
+      <= doc.clientWidth + 2;
     g.scrollLeft = 0;
-    return { overflowX: doc.scrollWidth - doc.clientWidth, btns, firstFits, lastReachable };
+    return { strip: String(g.className), overflowX: doc.scrollWidth - doc.clientWidth,
+             btns, firstFits, lastReachable };
   });
   ok('the page does not scroll sideways at 320px', qt.overflowX === 0, String(qt.overflowX));
   ok('quick tools reach the day\'s doors',
@@ -11632,7 +11651,7 @@ section('Quick Legal Assignment: a phone call becomes a case');
   const picker = await page.locator('#app').innerText();
   ok('the third door is Legal / Law Firm', has(picker, 'Legal / Law Firm'));
   ok('and it names the phone-call workflow', has(picker, 'pick up the papers'));
-  await page.locator('[data-act="nlKind"][data-k="legal"]').click();
+  await page.locator('.sheet-card[data-act="nlKind"][data-k="legal"]').click();
   await page.waitForTimeout(300);
 
   ok('the quick form says choosing an arrangement is never a payment',
@@ -11827,7 +11846,7 @@ section('Clients & Firms: a firm saved once, then an assignment in seconds');
   await page.waitForTimeout(300);
   await page.locator('[data-act="tab"][data-tab="newlead"]').first().click();
   await page.waitForTimeout(300);
-  await page.locator('[data-act="nlKind"][data-k="legal"]').click();
+  await page.locator('.sheet-card[data-act="nlKind"][data-k="legal"]').click();
   await page.waitForTimeout(300);
   ok('the Quick Legal form offers an existing firm', await page.locator('[data-act="nlPickOpen"]').count() === 1);
   await page.locator('[data-act="nlPickOpen"]').click();
@@ -12058,7 +12077,7 @@ section('Clients & Firms: a case says which profile it came from, and asks befor
   await page.waitForTimeout(300);
   await page.locator('[data-act="tab"][data-tab="newlead"]').first().click();
   await page.waitForTimeout(300);
-  await page.locator('[data-act="nlKind"][data-k="consumer"]').click();
+  await page.locator('.sheet-card[data-act="nlKind"][data-k="consumer"]').click();
   await page.waitForTimeout(300);
   await page.locator('#nl_client').fill('Rosalind Routing');
   await page.locator('#nl_email').fill('ros@routing.example');
@@ -12362,7 +12381,7 @@ section('Needs attention: an alert leaves because the thing was done');
   await page.waitForTimeout(300);
   await page.locator('[data-act="tab"][data-tab="newlead"]').first().click();
   await page.waitForTimeout(300);
-  await page.locator('[data-act="nlKind"][data-k="consumer"]').click();
+  await page.locator('.sheet-card[data-act="nlKind"][data-k="consumer"]').click();
   await page.waitForTimeout(300);
   /* The client's name must not contain the word the assertion below looks
      for — "Retainer Owing" made the row match on its own client name rather
@@ -13917,7 +13936,7 @@ section('The Admin UI carries none of the retired terms, and old records still r
   /* The assignment category belongs to the LEGAL door of the quick intake —
      the picker chooses which form renders, so the select does not exist until
      that door is taken. */
-  await page.locator('[data-act="nlKind"][data-k="legal"]').click();
+  await page.locator('.sheet-card[data-act="nlKind"][data-k="legal"]').click();
   await page.waitForTimeout(400);
   const opts = await page.evaluate(() =>
     [...document.querySelectorAll('#nl_asgtype option')].map(o => o.textContent));
@@ -15189,7 +15208,7 @@ section('Admin intake labels say what the Worker actually enforces');
        is how a person gets back to the three cards, so it is how this does. */
     const back = page.locator('[data-act="nlBack"]');
     if (await back.count()) { await back.click(); await page.waitForTimeout(350); }
-    await page.locator(`[data-act="nlKind"][data-k="${kind}"]`).click();
+    await page.locator(`.sheet-card[data-act="nlKind"][data-k="${kind}"]`).click();
     await page.waitForTimeout(350);
     await audit('quick:' + kind);
   }
@@ -15261,7 +15280,7 @@ section('Edit case and the Legal panel mark their fields too');
   await signIn(page, 'trever', 'AdminPassword1x');
   await page.locator('[data-act="tab"][data-tab="newlead"]').first().click();
   await page.waitForTimeout(500);
-  await page.locator('[data-act="nlKind"][data-k="legal"]').click();
+  await page.locator('.sheet-card[data-act="nlKind"][data-k="legal"]').click();
   await page.waitForTimeout(300);
   await page.locator('#nl_firm').fill('Marker Test Law');
   await page.locator('#nl_atty').fill('R. Marker');
@@ -18794,7 +18813,27 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
   ok('nor at 320', p320.pageOverflow === false);
   ok('and the order holds there too', p320.phone.join('|') === PHONE.join('|'));
 
-  /* ---- A CARD THAT CANNOT OPEN IS NOT DRAWN ---------------------------- */
+  /* ---- AND THE CARDS ACTUALLY GO WHERE THEY SAY ------------------------ */
+  /* `nlKind` used to be drawn only inside newLeadView(), where TAB is already
+     "newlead", so it set the kind and repainted. From Home it has to set the
+     tab too, or the card would change hidden state and leave the user on the
+     dashboard. Clicking it is the only way to know. */
+  for (const [i, kind, heading] of [[2, 'consumer', /private/i],
+                                    [3, 'claims', /insurance|commercial/i],
+                                    [4, 'legal', /legal|law firm/i]]) {
+    await page.evaluate(() => { TAB = 'dashboard'; NL = { kind: null, err: '', v: {} }; paint(); });
+    await page.waitForTimeout(300);
+    await page.locator(`.qtapp[data-act="nlKind"][data-k="${kind}"]`).click();
+    await page.waitForTimeout(500);
+    const landed = await page.evaluate(() => ({
+      tab: TAB, kind: NL && NL.kind,
+      h2: (document.querySelector('#app .card h2') || {}).textContent || '',
+    }));
+    ok(`the ${kind} card lands on the intake form for that kind`,
+       landed.tab === 'newlead' && landed.kind === kind, JSON.stringify(landed));
+    ok(`and the form it opens says so`, heading.test(landed.h2), landed.h2);
+  }
+
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.close();
 }
