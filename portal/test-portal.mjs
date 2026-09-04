@@ -18439,6 +18439,55 @@ section('Case Command Center: offered, confirmed, dispatched — and nothing els
   await page.close();
 }
 
+/* ============================================================================
+   UNIT C — the case the Assistant is talking about is ON SCREEN, and it moves
+   with the case rather than lingering on the last one.
+   ========================================================================= */
+section('Case Command Center: the case context chip follows the case');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* No case: no chip. The chip is context, and inventing one for a screen
+     that has no case would be the panel asserting something. */
+  await page.evaluate(async () => { await asstOpen(''); });
+  await page.waitForTimeout(600);
+  ok('with no case selected the panel shows no case context',
+     await page.locator('.asst-ctx').count() === 0);
+
+  /* Opened from inside a case: the client and the number, compactly. */
+  await page.evaluate(() => openCase('API-20260812-4002'));
+  await page.waitForTimeout(800);
+  await page.evaluate(async () => { await asstOpen('API-20260812-4002'); });
+  await page.waitForTimeout(500);
+  const chip = await page.evaluate(() => {
+    const el = document.querySelector('.asst-ctx');
+    return el ? { text: el.innerText.replace(/\s+/g, ' ').trim(),
+                  h: Math.round(el.getBoundingClientRect().height) } : null;
+  });
+  ok('the panel names the case it is talking about', !!chip && /API-20260812-4002/.test(chip.text),
+     JSON.stringify(chip));
+  ok('and names the client with it', !!chip && /Jane Client/.test(chip.text), JSON.stringify(chip));
+  ok('in one compact line, not a card', !!chip && chip.h <= 34, JSON.stringify(chip));
+
+  /* THE OWNER'S RULE: it must not linger. Opening another case moves the
+     context immediately — the panel does not close on a desktop, so without
+     this the Assistant would go on naming the case you left. */
+  await page.evaluate(() => openCase('API-20260812-4001'));
+  await page.waitForTimeout(800);
+  const moved = await page.evaluate(() => {
+    const el = document.querySelector('.asst-ctx');
+    return { text: el ? el.innerText.replace(/\s+/g, ' ').trim() : '', asst: ASST.case };
+  });
+  ok('opening another case moves the context with it',
+     /API-20260812-4001/.test(moved.text) && moved.asst === 'API-20260812-4001',
+     JSON.stringify(moved));
+  ok('and the case just left is not named anywhere in the chip',
+     !/4002/.test(moved.text), moved.text);
+
+  await page.close();
+}
+
 await browser.close();
 server.close();
 

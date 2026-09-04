@@ -1586,6 +1586,10 @@
   .srchtype-vehicle{background:var(--warn-bg);color:#8a5116;}
   .srchtype-profile{background:#e8e2f5;color:#4a3577;}
   .srchtype-intake{background:#fdecec;color:#8f2f2f;}
+  /* Unit B — the two new result types, in TOKENS: the palette budget
+     counts literals, and these needed no colour this file did not have. */
+  .srchtype-invoice{background:var(--info-bg-2);color:var(--navy-2);}
+  .srchtype-task{background:var(--gold-soft);color:var(--warn);}
   .srchmain{display:flex;flex-direction:column;gap:1px;min-width:0;overflow-wrap:anywhere;}
   .srchtitle{font-weight:700;}
   .srchsub{font-size:.84rem;color:var(--muted);}
@@ -1894,6 +1898,15 @@
 .asst-nav{display:flex;gap:8px;padding:8px 14px 0}
 .asst-nav .btn{min-height:44px}
 .asst-resume{opacity:.85;font-weight:600}
+/* One line, and it is CONTEXT rather than an answer — so it reads as part of
+   the chrome, not as something the Assistant said. */
+.asst-ctx{display:flex;align-items:baseline;gap:7px;padding:6px 14px 4px;font-size:.82rem;
+  border-bottom:1px solid var(--line);background:var(--neutral-bg);min-width:0}
+.asst-ctx-k{font-size:.62rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--muted)}
+.asst-ctx b{font-weight:800;color:var(--navy);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.asst-ctx .mono{color:var(--muted);font-size:.76rem;margin-left:auto;flex:none}
 .asst-banner{padding:6px 14px;background:var(--warn-bg);color:var(--warn);
   font-weight:800;font-size:.7rem;letter-spacing:.03em;line-height:1.35;
   border-bottom:1px solid var(--gold-line)}
@@ -2249,7 +2262,7 @@ const ATTN_SEV = { urgent: "Urgent", attention: "Attention", info: "Info" };
 const ATTN_KIND = { intakes: "Intakes", reports: "Reports", payments: "Payments",
   legal: "Legal", packages: "Packages", cases: "Cases", storage: "Storage" };
 const SRCH_TYPE = { case: "Case", intake: "Intake", subject: "Subject",
-  vehicle: "Vehicle", profile: "Profile" };
+  vehicle: "Vehicle", profile: "Profile", invoice: "Invoice", task: "Task" };
 /* UNIT 7 — the client & firm directory. PROF_OK keeps "did not load" apart
    from "genuinely empty", the distinction loadSends() was fixed to make: an
    outage drawn as an empty directory reads as reassurance in the one screen
@@ -2943,6 +2956,36 @@ async function asstSend(text){
   }
 }
 
+/* THE CASE THE ASSISTANT IS TALKING ABOUT, ON SCREEN.
+
+   The owner's rule: "Never let Vanessa's context remain active after opening
+   another client." ASST.case is already cleared and reset by openCase — this
+   makes that visible, so the answer and the case it is about can never
+   silently disagree while the panel is open on a desktop.
+
+   THE NAME COMES FROM WHAT THIS ROLE MAY ALREADY SEE. WS.submission when the
+   case is open, otherwise the case list, and both are redacted server-side —
+   so an investigator's chip shows the SUBJECT, which is their case's identity,
+   and never the client. Nothing is fetched for the chip; if neither source has
+   the case yet, the number stands alone rather than a name being invented. */
+function asstCaseChipHtml(){
+  const no = (ASST && ASST.case) || "";
+  if(!no) return "";
+  let name = "";
+  if(WS_CASE === no && WS && WS.submission){
+    name = WS.submission.client_name || WS.submission.subject_name || "";
+  }
+  if(!name){
+    const row = (CASES || []).find(c => c.case_no === no);
+    if(row) name = row.client_name || row.subject_name || "";
+  }
+  return `<div class="asst-ctx">
+    <span class="asst-ctx-k">Case</span>
+    ${name ? `<b>${esc(name)}</b>` : ""}
+    <span class="mono">${esc(no)}</span>
+  </div>`;
+}
+
 /* ===== THE CONSOLE RENDERERS =================================================
 
    One builder per shape the Assistant can answer with, so every unit from here
@@ -3381,6 +3424,7 @@ function asstHtml(){
         <span class="asst-beta">BETA</span>
         <button class="asst-x" data-act="asstClose" aria-label="Close the Assistant">&times;</button></div>
       ${asstNavHtml()}
+      ${asstCaseChipHtml()}
       <div class="asst-banner">ASSISTANT BETA &mdash; DRY RUN MODE<br>
         <span>No external client messages or consequential actions will be sent.</span></div>
       ${ASST.err ? `<div class="err">${esc(ASST.err)}</div>` : ""}

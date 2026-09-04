@@ -2815,6 +2815,56 @@ async function globalSearch(request, env, user) {
     }
   }
 
+  /* ---- INVOICES (Unit B). ADMIN ONLY, and by NOT RUNNING the arm rather
+     than by filtering its output — an invoice is the paying side, the same
+     reason the client's own phone and the saved directory do not run for an
+     investigator. It lands on the case's Billing tab, which is where the
+     invoice actually lives, so this needs no new destination in the page.
+
+     NOT SEEKABLE, and said out loud: invoice_no is UNIQUE and therefore
+     indexed, but a person types "1042" for "INV-1042", so this is a substring
+     and no index can serve it. Bounded by SEARCH_ARM_CAP like every other
+     scanning arm; no statement here grows with the customer's data. */
+  if (admin) {
+    for (const r of await run(
+      `SELECT i.id, i.invoice_no, i.case_no, i.status, s.client_name
+         FROM invoices i JOIN submissions s ON s.case_no = i.case_no
+        WHERE lower(i.invoice_no) LIKE ? ${notDeleted}
+        ORDER BY i.id DESC LIMIT ${SEARCH_ARM_CAP}`, [like])) {
+      add(`invoice:${r.id}`, {
+        type: 'invoice', title: r.invoice_no,
+        subtitle: [r.client_name || r.case_no, r.status].filter(Boolean).join(' · '),
+        case_no: r.case_no,
+        dest: { case_no: r.case_no, tab: 'billing' },
+      }, 'invoice number');
+    }
+  }
+
+  /* ---- TASKS (Unit B). BOTH ROLES, scoped exactly like the case arms: a
+     task is case work, and an investigator already sees their own cases'
+     tasks on the case tab. The OWNER'S NAME is admin-only as a search key —
+     a colleague's name is one of the things Unit 8 deliberately does not let
+     an investigator search by — so the arm matches the task text for both and
+     adds the name clause only for an admin. */
+  {
+    const byOwner = admin ? 'OR lower(COALESCE(u.display_name, \'\')) LIKE ?' : '';
+    const ownerBind = admin ? [like] : [];
+    for (const r of await run(
+      `SELECT t.id, t.task, t.case_no, t.status, t.due_date, u.display_name AS who
+         FROM case_tasks t JOIN submissions s ON s.case_no = t.case_no
+         LEFT JOIN users u ON u.id = t.assigned_to
+        WHERE (lower(t.task) LIKE ? ${byOwner}) ${mine} ${notDeleted}
+        ORDER BY t.id DESC LIMIT ${SEARCH_ARM_CAP}`, [like, ...ownerBind, ...meBind])) {
+      add(`task:${r.id}`, {
+        type: 'task', title: r.task,
+        subtitle: [r.case_no, r.status === 'open' ? (r.due_date ? `due ${r.due_date}` : 'open')
+                                                  : r.status, r.who].filter(Boolean).join(' · '),
+        case_no: r.case_no,
+        dest: { case_no: r.case_no, tab: 'tasks' },
+      }, 'task');
+    }
+  }
+
   return json({
     q: raw,
     results: [...found.values()].slice(0, SEARCH_TOTAL_CAP),
@@ -13647,6 +13697,7 @@ const ASSISTANT_BLOCKED = [
 
 const asstStrip = s => String(s || '').toLowerCase()
   .replace(/[?.!,]/g, ' ')
+  .replace(/^\s*(show|list|display|view|see|give)\s+/i, ' ')
   .replace(/\b(please|can you|could you|would you|the|my|our|a|an|to|me|us|section|page|screen|tab)\b/g, ' ')
   .replace(/\s+/g, ' ').trim();
 
@@ -14479,7 +14530,7 @@ async function assistantTopicAnswer(env, user, short, caseNo) {
       over.slice(0, 8).map(i => ({ title: `${i.invoice_no} — ${i.case_no}`, case_no: i.case_no,
         line: `balance ${asstFmt$(i.balance_due)} · due ${i.due_date || '—'}` })));
   }
-  if (is(/^unpaid( invoices?)?$/)) {
+  if (is(/^unpaid( invoices?| cases?)?$/)) {
     if (!admin) return adminOnly('Billing');
     const data = await (await listInvoices(new Request('http://assistant.internal/invoices'), env)).json();
     const owing = (data.invoices || []).filter(i =>
@@ -14545,7 +14596,7 @@ async function assistantTopicAnswer(env, user, short, caseNo) {
       rows.map(r => ({ title: r.client_name || r.case_no, case_no: r.case_no,
         line: `${r.case_no} · ${r.kind === 'claims' ? 'insurance' : 'private'}` })));
   }
-  if (is(/^reports? due$/)) {
+  if (is(/^reports? due$|^cases? waiting on reports?$|^waiting on reports?$/)) {
     if (!admin) return adminOnly('The report review desk');
     const hidden = await hiddenCases(env);
     const rows = ((await env.DB.prepare(
@@ -14597,7 +14648,7 @@ async function assistantTopicAnswer(env, user, short, caseNo) {
   }
 
   /* ---- surveillance ---- */
-  if (is(/^surveillance$/)) {
+  if (is(/^(active |today'?s |today'?s active )?surveillance$/)) {
     if (!admin) {
       const mine = await env.DB.prepare(
         `SELECT COUNT(*) AS n FROM case_days WHERE investigator_id = ? AND end_time IS NULL`).bind(user.id).first();
@@ -14657,7 +14708,7 @@ async function assistantTopicAnswer(env, user, short, caseNo) {
   }
 
   /* ---- tasks ---- */
-  if (is(/^tasks?$/)) {
+  if (is(/^(overdue |open )?tasks?$/)) {
     const t = await (await taskBoard(env, user)).json();
     const c = b => (t[b] || []).length;
     const lines = [`${c('overdue')} overdue · ${c('today')} due today · ${c('upcoming')} upcoming.`];
