@@ -17727,22 +17727,39 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
   });
   ok('the order stands: Quick Tools, then Search, then Today',
      fs.qtoolsTop < fs.srchTop && fs.srchTop < fs.todayTop, JSON.stringify(fs));
-  ok('Quick Tools is a strip, not a stack (was 336px)', fs.qtoolsH <= 90, JSON.stringify(fs));
+  /* A STRIP, NOT A STACK — and the number moved because the DESIGN moved.
+     The owner's 2026-09-04 mockup replaced the 44px chip row with icon-over-
+     label-over-sub cards, so the approved strip is ~138px where the chip row
+     was ~50. What the original 90px bound was protecting is unchanged and is
+     still asserted: this must be ONE ROW that swipes, never a column of doors
+     eating the first screen — the 336px it replaced. A stack of ten cards is
+     over 1000px, so the ceiling still catches one, and the no-wrap check
+     below is the property itself rather than a proxy for it. */
+  ok('Quick Tools is a strip, not a stack (was 336px)', fs.qtoolsH <= 170, JSON.stringify(fs));
   ok('the Search card is a box, not a billboard (was 245px)', fs.srchH <= 140, JSON.stringify(fs));
   ok('Today / next actions is ON the first screen (was 682px down)',
      fs.todayTop !== null && fs.todayTop <= 420, JSON.stringify(fs));
 
   /* ---- the quick-tools strip ---- */
   const strip = await page.evaluate(() => {
-    const g = document.querySelector('.qtgrid');
-    return { rowH: Math.round(g.getBoundingClientRect().height),
+    /* WHICHEVER STRIP IS DRAWN. The phone has its own card strip since Mobile
+       Unit B and `.qtgrid` is display:none here, so measuring it reports
+       zeroes and says nothing about what is on screen. */
+    const g = [...document.querySelectorAll('.qtgrid, .qtapps')].find(e => e.offsetParent);
+    const tools = [...g.children];
+    return { strip: String(g.className),
+             rowH: Math.round(g.getBoundingClientRect().height),
              sw: g.scrollWidth, cw: g.clientWidth,
              pageSw: document.documentElement.scrollWidth,
              pageCw: document.documentElement.clientWidth,
-             toolH: Math.round(document.querySelector('.qtool').getBoundingClientRect().height),
-             acts: [...g.querySelectorAll('.qtool')].map(b => b.dataset.act + ':' + (b.dataset.tab || '')) };
+             toolH: Math.round(tools[0].getBoundingClientRect().height),
+             /* ONE ROW is the real claim: every tool shares a top edge. That
+                is what "strip, not stack" means, and it cannot be satisfied by
+                a wrapped grid however short the container happens to be. */
+             tops: [...new Set(tools.map(b => Math.round(b.getBoundingClientRect().top)))].length,
+             acts: tools.map(b => b.dataset.act + ':' + (b.dataset.tab || '')) };
   });
-  ok('one row on a phone', strip.rowH <= 50, JSON.stringify(strip));
+  ok('one row on a phone', strip.tops === 1 && strip.rowH <= 150, JSON.stringify(strip));
   ok('it swipes inside its own container', strip.sw > strip.cw + 40, JSON.stringify(strip));
   ok('and the PAGE never scrolls sideways', strip.pageSw <= strip.pageCw + 1, JSON.stringify(strip));
   ok('every tool keeps the 44px floor', strip.toolH >= 44, String(strip.toolH));

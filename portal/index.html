@@ -1037,6 +1037,15 @@
     align-items:center;justify-content:center;font-size:2rem;}
   .ovthumbs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;}
   .ovthumbs img{width:56px;height:56px;object-fit:cover;border-radius:8px;}
+  /* THE CONTROL MUST NOT COLLAPSE WHEN ITS PICTURE DOES NOT ARRIVE. The button
+     holds nothing but the <img>, so a thumbnail that fails to load — a Dropbox
+     hiccup, a file removed behind the record, an expired proxy read — leaves
+     the browser drawing the alt text's line box instead: measured 70x16, a
+     16px tap target where a 56px one was. The image's own width/height do not
+     save it, because a broken image is replaced by its alt content. Flooring
+     the BUTTON keeps the target whatever the picture does, and changes nothing
+     in the ordinary case, where it is already 56px. */
+  .ovthumbs button{min-width:56px;min-height:56px;}
   /* ---- Active Surveillance Mode (SURVEILLANCE.md). A dark field view of the
      same case: usable one-handed, at dusk, from a vehicle. Large targets,
      one primary action per screen, nothing that needs a careful tap. ---- */
