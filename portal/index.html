@@ -2105,6 +2105,38 @@
      call sites. LAST IN THE FILE on purpose. */
   .sv-back, .sv-tap{min-height:44px;display:inline-flex;align-items:center;}
 
+  /* ===== THE MOBILE BOTTOM NAV — PHONE ONLY ==============================
+     Hidden by default so the desktop rail and the tablet drawer are literally
+     untouched: above 640px this element has no box at all. LAST IN THE FILE
+     for the source-order reason this project has recorded six times. */
+  .mnav{display:none}
+  @media(max-width:640px){
+    .mnav{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:60;
+      background:var(--navy-2);border-top:1px solid #2f5580;
+      box-shadow:0 -6px 18px rgba(9,18,30,.34);
+      padding:4px 4px max(10px, env(safe-area-inset-bottom));
+      justify-content:space-around;gap:2px;}
+    .mnav button{flex:1;min-width:0;background:transparent;border:0;color:#dbe9f7;
+      border-radius:10px;padding:5px 2px;min-height:52px;cursor:pointer;font:inherit;
+      font-size:.66rem;letter-spacing:.02em;display:flex;flex-direction:column;
+      align-items:center;justify-content:center;gap:3px;}
+    .mnav button .mnav-i{font-size:1.25rem;line-height:1;}
+    /* The active destination is stated in COLOUR AND WEIGHT, not colour alone —
+       the same reason /attention says the severity in a word. */
+    .mnav button.on{background:var(--nav-on);color:#fff;font-weight:800;}
+    .mnav button:focus-visible{outline:2px solid var(--gold);outline-offset:-2px;}
+
+    /* The content has to end above the bar. Scoped to the SHELL rather than to
+       #app, because the case page and the field view draw their own bottom bars
+       into the same element and must not gain a second bar's worth of padding. */
+    body.hasmnav #app{padding-bottom:calc(56px + max(10px, env(safe-area-inset-bottom)));}
+
+    /* AND NOTHING MAY SIT ON TOP OF IT. The Assistant pill lifts above the bar
+       rather than covering the middle destination — the owner's own line was
+       that the Assistant must not overlap the nav. */
+    body.hasmnav .asst-pill{bottom:calc(64px + max(10px, env(safe-area-inset-bottom)));}
+  }
+
 </style>
 </head>
 <body>
@@ -2746,6 +2778,49 @@ function navClose(){
   if(bg) bg.setAttribute("aria-expanded", "false");
 }
 
+/* ===== THE MOBILE BOTTOM NAV (owner brief 2026-09-04) =====================
+
+   PHONE ONLY, AND STRUCTURALLY SO. It is rendered from shell(), and shell() is
+   not rendered on the case page or in the field view — both draw straight into
+   #app — so the bar cannot collide with the case section bar or the field bar
+   without a CSS trick to suppress it. Above 640px it is display:none: the
+   desktop rail and the tablet drawer are untouched, which is the owner's
+   standing rule that the desktop-style portal does not change.
+
+   THE DRAWER IS NOT REPLACED. `More` opens the same drawer the burger opens,
+   so every destination stays reachable and nothing was moved out of it — the
+   bar is a shortcut to four of them, not a second navigation system.
+
+   THE FOUR ARE ROLE-TRUE. The owner's list is Home / Cases / Tasks / Intakes,
+   and Intakes is an admin desk — so an investigator gets Active Surveillance
+   in that slot rather than a door that would refuse them. A dead tab is the
+   thing this file has refused since the rail was written. */
+const MNAV = {
+  admin: [['dashboard', 'Home', '&#8962;'], ['cases', 'Cases', '&#128193;'],
+          ['tasks', 'Tasks', '&#10003;'], ['leads', 'Intakes', '&#128234;']],
+  investigator: [['today', 'Home', '&#8962;'], ['cases', 'Cases', '&#128193;'],
+                 ['tasks', 'Tasks', '&#10003;'], ['surveillance', 'Field', '&#128065;']],
+};
+
+function mnavHtml(){
+  const items = MNAV[ME.role === 'admin' ? 'admin' : 'investigator'];
+  const btn = ([id, label, icon]) => {
+    /* Active Surveillance is an ACTION, not a tab — the same registry
+       distinction ASSISTANT_NAV already draws, so it opens the launcher
+       rather than pretending to be a destination that can be "current". */
+    const act = id === 'surveillance' ? 'surveillance' : 'tab';
+    const on = act === 'tab' && TAB === id;
+    return `<button class="${on ? 'on' : ''}"${on ? ' aria-current="page"' : ''}
+      data-act="${act}"${act === 'tab' ? ` data-tab="${id}"` : ''}>
+      <span class="mnav-i" aria-hidden="true">${icon}</span><span>${label}</span></button>`;
+  };
+  return `<nav class="mnav" aria-label="Main">
+    ${items.map(btn).join('')}
+    <button data-act="navToggle" aria-label="More destinations">
+      <span class="mnav-i" aria-hidden="true">&#8943;</span><span>More</span></button>
+  </nav>`;
+}
+
 function shell(inner){
   /* Simplified navigation for the field, exactly as the handoff draws it —
      not a miniature admin portal. Calendar and Availability join when their
@@ -2878,7 +2953,7 @@ function shell(inner){
     <nav class="tabs" aria-label="Portal sections">${tabs}</nav>${schema}${problem}${quickToolsHtml()}${
     summaryCards()}${inner}${
     SHEET_WIZ ? sheetWizardHtml() : ""}${PAY_SEND ? paySendHtml() : ""}${
-    INTAKE_SEND ? preIntakeHtml() : ""}${asstPillHtml()}${asstHtml()}`;
+    INTAKE_SEND ? preIntakeHtml() : ""}${asstPillHtml()}${asstHtml()}${mnavHtml()}`;
 }
 
 
@@ -11727,7 +11802,7 @@ function paint(){
   paintPStamp();
   paintVStamp();
   if(!ME){ app.innerHTML = loginView(); $("who").hidden = true;
-    document.body.classList.remove("withnav", "navopen");
+    document.body.classList.remove("withnav", "navopen", "hasmnav");
     if($("burger")) $("burger").hidden = true;
     return; }
   document.body.classList.add("withnav");
@@ -11742,6 +11817,12 @@ function paint(){
     <button data-act="logout">Sign out</button>`;
   // Active Surveillance takes the whole screen — it is a field view, not a
   // panel inside the office one.
+  /* THE BOTTOM BAR IS THE SHELL'S. The field view and the case page draw their
+     own bar into this same element, so the flag that reserves room for the
+     mobile nav is cleared before either of them paints — two stacked bars, or
+     a bar's worth of dead space under a screen that has no bar, are both
+     things a phone notices immediately. */
+  document.body.classList.remove("hasmnav");
   if(SV && SV.tab === "launcher"){ app.innerHTML = svLauncher(); return; }
   if(SV && WS_CASE){ app.innerHTML = svView(); return; }
   if(VIEW === "case" && WS_CASE){
@@ -11765,6 +11846,9 @@ function paint(){
     focusRestore();
     return;
   }
+  /* The shell is on screen, so the mobile nav is too — the flag reserves the
+     room for it and lifts the Assistant pill clear of it. */
+  document.body.classList.add("hasmnav");
   app.innerHTML = shell(
       TAB === "dashboard" ? dashView()
     : TAB === "staff" ? staffView()

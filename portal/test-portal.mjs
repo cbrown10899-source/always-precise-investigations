@@ -18581,6 +18581,109 @@ section('Assistant rate sheet: the custom retainer field, on the products that h
   await page.close();
 }
 
+/* ============================================================================
+   MOBILE UNIT A — the bottom nav is a PHONE thing, and the desktop-style
+   portal is untouched. That second half is the owner's standing rule and is
+   asserted at both the tablet and the desktop width, not assumed from a
+   media query being present.
+   ========================================================================= */
+section('Mobile shell: the bottom nav appears on a phone and nowhere else');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const at = async (w, h) => {
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(300);
+    return page.evaluate(() => {
+      const nav = document.querySelector('.mnav');
+      const shown = nav && getComputedStyle(nav).display !== 'none';
+      const btns = nav ? [...nav.querySelectorAll('button')] : [];
+      const rail = document.querySelector('.tabs');
+      return {
+        shown: !!shown,
+        labels: btns.map(b => b.textContent.replace(/\s+/g, ' ').trim().replace(/^\W+/, '')),
+        minH: btns.length ? Math.min(...btns.map(b => Math.round(b.getBoundingClientRect().height))) : 0,
+        bottom: nav && shown ? Math.round(nav.getBoundingClientRect().bottom) : 0,
+        vh: window.innerHeight,
+        railPos: rail ? getComputedStyle(rail).position : null,
+        railW: rail ? Math.round(rail.getBoundingClientRect().width) : 0,
+        hOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      };
+    });
+  };
+
+  /* PHONE — the owner's five, in the owner's order. */
+  const phone = await at(390, 844);
+  ok('a phone shows the bottom nav', phone.shown === true);
+  ok('with Home, Cases, Tasks, Intakes and More, in that order',
+     JSON.stringify(phone.labels) === JSON.stringify(['Home', 'Cases', 'Tasks', 'Intakes', 'More']),
+     JSON.stringify(phone.labels));
+  ok('every destination is at least a 52px target', phone.minH >= 52, String(phone.minH));
+  ok('it sits ON the bottom edge', phone.bottom === phone.vh, `${phone.bottom} / ${phone.vh}`);
+  ok('and adds no horizontal overflow', phone.hOverflow === false);
+
+  /* THE DESKTOP-STYLE PORTAL IS UNCHANGED — the owner's standing rule. */
+  const tablet = await at(768, 1024);
+  ok('a tablet does NOT get the bottom nav', tablet.shown === false);
+  const desk = await at(1200, 900);
+  ok('nor does the desktop', desk.shown === false);
+  ok('and the desktop rail is still the fixed 198px sidebar it was',
+     desk.railPos === 'fixed' && desk.railW === 198, JSON.stringify(desk));
+
+  /* THE DRAWER IS NOT REPLACED: More opens the same one the burger opens, so
+     every destination stays reachable and nothing left it. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(250);
+  await page.evaluate(() => {
+    const more = [...document.querySelectorAll('.mnav button')].pop();
+    more.click();
+  });
+  await page.waitForTimeout(400);
+  ok('More opens the existing drawer rather than a second menu',
+     await page.evaluate(() => document.body.classList.contains('navopen')));
+  ok('and the burger reports it expanded, one writer for both halves',
+     await page.locator('#burger').getAttribute('aria-expanded') === 'true');
+  await page.evaluate(() => navClose());
+  await page.waitForTimeout(300);
+
+  /* A DESTINATION MOVES THE TAB AND TAKES THE ACTIVE STATE WITH IT. */
+  await page.evaluate(() => {
+    const cases = [...document.querySelectorAll('.mnav button')]
+      .find(b => /Cases/.test(b.textContent));
+    cases.click();
+  });
+  await page.waitForTimeout(600);
+  const after = await page.evaluate(() => ({
+    tab: TAB,
+    on: [...document.querySelectorAll('.mnav button.on')]
+      .map(b => b.textContent.replace(/\s+/g, ' ').trim().replace(/^\W+/, '')),
+    current: [...document.querySelectorAll('.mnav button[aria-current="page"]')].length,
+  }));
+  ok('tapping Cases goes to Cases', after.tab === 'cases', JSON.stringify(after));
+  ok('and exactly one destination is marked current',
+     after.on.length === 1 && after.on[0] === 'Cases' && after.current === 1,
+     JSON.stringify(after));
+
+  /* THE CASE PAGE AND THE FIELD VIEW OWN THE BOTTOM EDGE. The bar is rendered
+     from shell(), which neither of them uses — so this is structural, not a
+     rule someone has to remember to apply. */
+  await page.evaluate(() => openCase('API-20260812-4002'));
+  await page.waitForTimeout(900);
+  const onCase = await page.evaluate(() => ({
+    nav: !!document.querySelector('.mnav'),
+    flag: document.body.classList.contains('hasmnav'),
+    bar: !!document.querySelector('.wsbar'),
+  }));
+  ok('a case screen has no bottom nav — its own section bar owns that edge',
+     onCase.nav === false, JSON.stringify(onCase));
+  ok('and the case section bar is still there', onCase.bar === true, JSON.stringify(onCase));
+  ok('with no room reserved for a bar that is not on screen', onCase.flag === false);
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
 await browser.close();
 server.close();
 
