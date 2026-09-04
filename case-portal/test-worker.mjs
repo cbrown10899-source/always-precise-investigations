@@ -18650,6 +18650,132 @@ section('Case Command Center: the command protocol and its refusals');
      /^FAILED/.test(rows[0].outcome), rows[0].outcome);
 }
 
+/* ============================================================================
+   UNIT B — search reaches invoices and tasks, and stops where the role does.
+   ========================================================================= */
+section('Case Command Center: invoices and tasks are searchable, within the role');
+{
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const res = await invite(env, admin, { username: 'dana', display_name: 'Dana Field', role: 'investigator' });
+  const token = new URL((await jsonOf(res)).url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const users = (await jsonOf(await call(env, '/users', { cookie: admin }))).users;
+  const danaId = users.find(u => u.username === 'dana').id;
+
+  await ingest(env, { case_no: 'API-SB-MINE', client_name: 'Searchable Client', subject_name: 'Searchable Subject' });
+  await ingest(env, { case_no: 'API-SB-THEIRS', client_name: 'Other Client', subject_name: 'Other Subject' });
+  await call(env, '/submissions/API-SB-MINE/assign', { method: 'POST', cookie: admin,
+    body: { user_id: danaId } });
+
+  /* An invoice on each case, and a task on each. */
+  const inv = await jsonOf(await call(env, '/cases/API-SB-MINE/invoices', { method: 'POST', cookie: admin,
+    body: { invoice_type: 'private' } }));
+  const invNo = (inv.invoice && inv.invoice.invoice_no) || '';
+  await call(env, '/cases/API-SB-MINE/tasks', { method: 'POST', cookie: admin,
+    body: { task: 'Call Smith Law about the deposition', assigned_to: danaId } });
+  await call(env, '/cases/API-SB-THEIRS/tasks', { method: 'POST', cookie: admin,
+    body: { task: 'Call Smith Law about the other file' } });
+
+  const find = async (cookie, q) => (await jsonOf(await call(env,
+    `/search?q=${encodeURIComponent(q)}`, { cookie }))).results || [];
+
+  /* 1 — an invoice is findable by its number, and lands on Billing. */
+  ok('an invoice number was minted to search for', /\d/.test(invNo), invNo);
+  const byInv = await find(admin, invNo);
+  const invHit = byInv.find(r => r.type === 'invoice');
+  ok('searching the invoice number finds the invoice', !!invHit, JSON.stringify(byInv.slice(0, 2)));
+  ok('and it opens the case on its Billing tab rather than needing a new screen',
+     invHit && invHit.dest && invHit.dest.case_no === 'API-SB-MINE' && invHit.dest.tab === 'billing',
+     JSON.stringify(invHit && invHit.dest));
+
+  /* 2 — A PARTIAL number works, because that is how a person types one. */
+  const partial = invNo.replace(/^\D+/, '').slice(0, 3);
+  ok('a partial invoice number finds it too — the arm is a substring, and says so',
+     partial.length > 0 && (await find(admin, partial)).some(r => r.type === 'invoice'), partial);
+
+  /* 3 — INVOICES ARE THE PAYING SIDE. The arm does not run for an
+     investigator at all, which is stronger than filtering its output. */
+  ok('an investigator searching the same invoice number finds no invoice',
+     !(await find(dana, invNo)).some(r => r.type === 'invoice'));
+
+  /* 4 — tasks reach both roles, scoped to their own cases. */
+  const adminTasks = (await find(admin, 'Smith Law')).filter(r => r.type === 'task');
+  ok('an admin finds tasks on both cases', adminTasks.length === 2, String(adminTasks.length));
+  const danaTasks = (await find(dana, 'Smith Law')).filter(r => r.type === 'task');
+  ok('an investigator finds only the task on the case they are on', danaTasks.length === 1,
+     JSON.stringify(danaTasks.map(t => t.case_no)));
+  ok('and it is their own case', danaTasks[0] && danaTasks[0].case_no === 'API-SB-MINE');
+  ok('a task opens the case on its Tasks tab',
+     danaTasks[0] && danaTasks[0].dest.tab === 'tasks');
+
+  /* 5 — the OWNER'S NAME is an admin-only key, exactly as a colleague's name
+     is everywhere else in this search. */
+  ok('an admin can find a task by who it is assigned to',
+     (await find(admin, 'Dana Field')).some(r => r.type === 'task'));
+  ok('an investigator cannot search by a person\'s name and reach a task that way',
+     !(await find(dana, 'Dana Field')).some(r => r.type === 'task'));
+
+  /* 6 — a deleted case takes its invoices and tasks out of the search with
+     it, through the same clause the case arms use. */
+  await call(env, '/cases/API-SB-THEIRS/delete', { method: 'POST', cookie: admin, body: {} });
+  ok('a deleted case\'s task leaves the search',
+     (await find(admin, 'Smith Law')).filter(r => r.type === 'task').length === 1);
+}
+
+/* ============================================================================
+   UNIT C — the words a person actually types reach the desk they mean.
+   ========================================================================= */
+section('Case Command Center: "show me X" reaches the same desk as "X"');
+{
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const ask = t => call(env, '/assistant/command', { method: 'POST', cookie: admin,
+    body: { text: t, context: { route: 'dashboard' } } });
+
+  /* A PRESENTATIONAL VERB IS NOT A TOPIC. Every one of these reached the help
+     fallback before — the desks were there, keyed on the noun, and "show"
+     stopped the sentence getting to them. */
+  for (const [phrase, want] of [
+    ['show new intakes', 'topic'], ['show invoices', 'topic'], ['show tasks', 'topic'],
+    ['show my tasks', 'topic'], ['show overdue tasks', 'topic'],
+    ['show unpaid cases', 'topic'], ['show cases waiting on reports', 'topic'],
+    ["show today's active surveillance", 'topic'], ['list intakes', 'topic'],
+  ]) {
+    const d = await jsonOf(await ask(phrase));
+    ok(`"${phrase}" reaches a live desk rather than the help text`, d.kind === want, d.kind);
+  }
+
+  /* CONTENT WORDS ARE LEFT ALONE. "unpaid cases" and "cases" are different
+     questions, and stripping the adjective would answer the wrong one
+     confidently — which is worse than not answering. */
+  const unpaid = await jsonOf(await ask('show unpaid cases'));
+  const cases = await jsonOf(await ask('show open cases'));
+  ok('"unpaid cases" and "open cases" do not collapse into one answer',
+     JSON.stringify(unpaid) !== JSON.stringify(cases));
+
+  /* The doors all still resolve as navigation, unchanged. */
+  for (const [phrase, id] of [['open billing', 'invoices'], ['open intakes', 'leads'],
+    ['open tasks', 'tasks'], ['open reports', 'delivery'], ['open rate sheets', 'sheets'],
+    ['open timestamp photo', 'pst'], ['open timestamp video', 'vst'],
+    ['open Active Surveillance', 'surveillance']]) {
+    const d = await jsonOf(await ask(phrase));
+    ok(`"${phrase}" navigates to ${id}`, d.navigate && d.navigate.id === id,
+       JSON.stringify(d.navigate || d.kind));
+  }
+
+  /* AND NAVIGATION IS STILL A REGISTRY ID, never a route the model wrote. */
+  const d = await jsonOf(await ask('take me to billing'));
+  ok('a navigation answer carries an id, never a path',
+     d.navigate && typeof d.navigate.id === 'string' && !/[/]/.test(d.navigate.id),
+     JSON.stringify(d.navigate));
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));
