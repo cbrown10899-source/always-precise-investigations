@@ -1923,6 +1923,19 @@
    no invitation to tap. Named for the element it modifies — the previous
    name outlived the class it belonged to. */
 .asst-rec-flat{cursor:default}
+/* A money field reads as money: the unit is fixed furniture, not something to
+   type. The hint under it is the honest half — an offered figure cannot
+   overwrite what a case has already agreed, and the screen says so rather
+   than letting the preview quietly disagree with the form. */
+.asst-money{display:flex;align-items:center;gap:6px;border:1px solid var(--line);
+  border-radius:8px;padding:0 10px;background:#fff}
+.asst-money>span{color:var(--muted);font-weight:700;flex:none}
+.asst-money input{border:0;padding:10px 0;flex:1;min-width:0;font:inherit;font-size:16px;
+  background:none;min-height:44px}
+.asst-money input:focus{outline:none}
+.asst-money:focus-within{border-color:var(--teal);box-shadow:0 0 0 2px var(--teal-wash)}
+.asst-hint{display:block;margin-top:4px;font-size:.75rem;color:var(--muted);
+  font-weight:400;line-height:1.4;letter-spacing:0;text-transform:none}
 .asst-rec-flat:hover{border-color:var(--line)}
 /* The confirmation card: what will happen, to which case, and two buttons.
    Compact on purpose — this is read one-handed in a car, not studied. */
@@ -2942,7 +2955,7 @@ async function asstSend(text){
     }
     if(r.kind === "prepare_sheet" && r.form){
       ASST.prep = { mode: "sheet", context: r.form.context || "", to: r.form.to || "",
-                    case_no: r.form.case_no || "", legal_service: "", flat_fee: "",
+                    case_no: r.form.case_no || "", legal_service: "", flat_fee: "", retainer: "",
                     include_intake: false, include_payment: false,
                     preview: null, err: "", busy: false };
       legalSvcsLoad();
@@ -3170,12 +3183,13 @@ function asstPrepCollect(){
   const read = id => { const el = $(id); return el ? el.value : null; };
   if(p.mode === "sheet"){
     const c = read("asst_sctx"), to = read("asst_sto"), cs = read("asst_scase"),
-          sv = read("asst_ssvc"), fe = read("asst_sfee");
+          sv = read("asst_ssvc"), fe = read("asst_sfee"), rt = read("asst_sret");
     if(c !== null) p.context = c;
     if(to !== null) p.to = to;
     if(cs !== null) p.case_no = cs;
     if(sv !== null) p.legal_service = sv;
     if(fe !== null) p.flat_fee = fe;
+    if(rt !== null) p.retainer = rt;
     const ii = $("asst_sint"), ip = $("asst_spay");
     if(ii) p.include_intake = ii.checked;
     if(ip) p.include_payment = ip.checked;
@@ -3201,6 +3215,7 @@ function asstPrepBody(){
     if(p.context) body.send_context = p.context;
     if(p.context === "legal" && p.legal_service) body.legal_service = p.legal_service;
     if(p.flat_fee) body.flat_fee = p.flat_fee;
+    if(p.retainer) body.retainer_amount = p.retainer;
     if(p.include_payment && p.context && p.context !== "private") body.methods = ["mail_check"];
     return body;
   }
@@ -3288,6 +3303,16 @@ function asstPrepHtml(){
         </select></label>` : ""}
       ${svc && svc.model === "fixed" ? `<label class="cap">Custom flat fee (optional)
         <input id="asst_sfee" data-act-input="asstPrep" value="${esc(p.flat_fee)}" inputmode="decimal" autocomplete="off"></label>` : ""}
+      ${/* THE RETAINER PRODUCTS, and only those. A fixed legal service is a
+            flat fee and has no retainer; the carrier sheet is the package
+            ladder and has none either. The two fields are separate values
+            with separate wire names and are never both in play today. */
+        (p.context === "private" || p.context === "legal") && !(svc && svc.model === "fixed")
+        ? `<label class="cap">Custom retainer (optional)
+        <span class="asst-money"><span>$</span><input id="asst_sret" data-act-input="asstPrep"
+          value="${esc(p.retainer)}" inputmode="decimal" autocomplete="off" placeholder="1,500"></span>
+        <span class="asst-hint">Blank uses the standard retainer. A case that has already agreed a
+          figure keeps it &mdash; this cannot overwrite what the office recorded.</span></label>` : ""}
       <label class="cap">Recipient email
         <input id="asst_sto" data-act-input="asstPrep" value="${esc(p.to)}" autocomplete="off"></label>
       <label class="cap">Case (optional)

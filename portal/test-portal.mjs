@@ -18488,6 +18488,99 @@ section('Case Command Center: the case context chip follows the case');
   await page.close();
 }
 
+/* ============================================================================
+   THE CUSTOM RETAINER ON THE ASSISTANT'S RATE-SHEET FORM. It was missing, and
+   the Worker had always accepted it — so this is the field arriving, not a
+   second retainer system.
+   ========================================================================= */
+section('Assistant rate sheet: the custom retainer field, on the products that have one');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const openSheetForm = async ctx => page.evaluate(async (c) => {
+    await asstOpen('');
+    ASST.prep = { mode: 'sheet', context: c, to: '', case_no: '', legal_service: '',
+                  flat_fee: '', retainer: '', include_intake: false, include_payment: false,
+                  preview: null, err: '', busy: false };
+    paint();
+    return {
+      retainer: !!document.getElementById('asst_sret'),
+      fee: !!document.getElementById('asst_sfee'),
+    };
+  }, ctx);
+
+  /* THE PRODUCTS THAT HAVE A RETAINER, and only those. Private and Legal share
+     the retainer sheet; the carrier sheet is the package ladder and has none. */
+  const priv = await openSheetForm('private');
+  ok('Private Client offers the custom retainer', priv.retainer === true, JSON.stringify(priv));
+  const legal = await openSheetForm('legal');
+  ok('Legal offers it too — it takes the same retainer sheet', legal.retainer === true);
+  const ins = await openSheetForm('insurance');
+  ok('Insurance does not — the carrier sheet is a package ladder, not a retainer',
+     ins.retainer === false, JSON.stringify(ins));
+
+  /* A FIXED LEGAL SERVICE IS A FLAT FEE AND HAS NO RETAINER. The two fields
+     are never both in play, and the form must not imply they are. */
+  const fixed = await page.evaluate(async () => {
+    await asstOpen('');
+    LEGAL_SVCS = [{ id: 'process', label: 'Process Service', model: 'fixed', adjustable: true }];
+    ASST.prep = { mode: 'sheet', context: 'legal', to: '', case_no: '', legal_service: 'process',
+                  flat_fee: '', retainer: '', include_intake: false, include_payment: false,
+                  preview: null, err: '', busy: false };
+    paint();
+    return { retainer: !!document.getElementById('asst_sret'),
+             fee: !!document.getElementById('asst_sfee') };
+  });
+  ok('a fixed legal service offers the flat fee and NOT the retainer',
+     fixed.fee === true && fixed.retainer === false, JSON.stringify(fixed));
+
+  /* IT REACHES THE WIRE UNDER THE NAME THE REAL SENDER ALREADY READS. That is
+     what makes this the existing retainer rather than a new one: the same key,
+     resolved by the same retainerForSend for both callers. */
+  const wire = await page.evaluate(async () => {
+    await asstOpen('');
+    ASST.prep = { mode: 'sheet', context: 'private', to: 'x@example.com', case_no: '',
+                  legal_service: '', flat_fee: '', retainer: '2750',
+                  include_intake: false, include_payment: false,
+                  preview: null, err: '', busy: false };
+    return asstPrepBody();
+  });
+  ok('a typed retainer rides as retainer_amount, the sender\'s own key',
+     wire.retainer_amount === '2750', JSON.stringify(wire));
+  ok('and it is not confused with the flat fee', wire.flat_fee === undefined);
+
+  const blank = await page.evaluate(() => {
+    ASST.prep.retainer = '';
+    return asstPrepBody();
+  });
+  ok('a blank retainer sends no key at all, so the Worker uses its default',
+     !('retainer_amount' in blank), JSON.stringify(blank));
+
+  /* The money field is a real phone control: 16px so iOS does not zoom, and
+     at least 44px to press. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(200);
+  const m = await page.evaluate(async () => {
+    await asstOpen('');
+    ASST.prep = { mode: 'sheet', context: 'private', to: '', case_no: '', legal_service: '',
+                  flat_fee: '', retainer: '', include_intake: false, include_payment: false,
+                  preview: null, err: '', busy: false };
+    paint();
+    const el = document.getElementById('asst_sret');
+    if (!el) return null;
+    const cs = getComputedStyle(el);
+    return { h: Math.round(el.getBoundingClientRect().height), fs: parseFloat(cs.fontSize),
+             overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+  });
+  ok('the retainer input is at least 44px tall on a phone', m && m.h >= 44, JSON.stringify(m));
+  ok('and at least 16px, so focusing it does not zoom iOS', m && m.fs >= 16, JSON.stringify(m));
+  ok('and adding it caused no horizontal overflow', m && m.overflow === false);
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
 await browser.close();
 server.close();
 

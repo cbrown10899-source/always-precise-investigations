@@ -18776,6 +18776,99 @@ section('Case Command Center: "show me X" reaches the same desk as "X"');
      JSON.stringify(d.navigate));
 }
 
+/* ============================================================================
+   THE ASSISTANT'S CUSTOM RETAINER — the same field the real sender already
+   reads, proven at the four points the owner named: blank, overridden, beside
+   the flat fee, and unable to overwrite a figure a case has agreed.
+   ========================================================================= */
+section('Assistant rate sheet: the custom retainer is the existing one, not a second system');
+{
+  const realFetch = globalThis.fetch;
+  let mailed = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) { mailed = JSON.parse(init.body); return new Response('{"id":"re_1"}', { status: 200 }); }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '50';
+  env.RESEND_API_KEY = 'test-resend-key';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const prep = body => call(env, '/assistant/prepare-sheet', { method: 'POST', cookie: admin, body });
+  const sim = body => call(env, '/assistant/simulate-sheet', { method: 'POST', cookie: admin, body });
+
+  /* 1 — BLANK USES THE STANDARD FIGURE. PERSONAL.retainer is 1500 and it is
+     the only place that number is set, so this asserts the fallback rather
+     than a literal repeated in the test. */
+  let p = await jsonOf(await prep({ id: 'private_retainer', to: 'r1@example.com' }));
+  ok('a blank custom retainer prepares the standard $1,500 sheet',
+     /\$1,500/.test(p.subject + p.body_text) && !/\$2,750/.test(p.body_text), p.subject);
+
+  /* 2 — AN OFFERED FIGURE OVERRIDES THE DEFAULT, in the subject and the body,
+     because both resolve through retainerForSend rather than separately. */
+  p = await jsonOf(await prep({ id: 'private_retainer', to: 'r2@example.com', retainer_amount: 2750 }));
+  ok('an offered retainer overrides the default in the prepared sheet',
+     /\$2,750/.test(p.subject + p.body_text), p.subject);
+  ok('and the standard figure is not left behind anywhere in the body',
+     !/\$1,500/.test(p.body_text), (p.body_text || '').slice(0, 160));
+
+  /* 3 — IT CANNOT OVERWRITE WHAT A CASE HAS AGREED. This is the rule the form
+     states in words, and a screen that says it must be true underneath. */
+  await ingest(env, { case_no: 'API-RET-1', client_name: 'Agreed Client', subject_name: 'S' });
+  await call(env, '/cases/API-RET-1/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 3000 } });
+  p = await jsonOf(await prep({ id: 'private_retainer', to: 'r3@example.com',
+    case_no: 'API-RET-1', retainer_amount: 2750 }));
+  ok('a case that has AGREED a figure keeps it — the offered amount is ignored',
+     /\$3,000/.test(p.subject + p.body_text) && !/\$2,750/.test(p.body_text), p.subject);
+
+  /* 4 — THE FLAT FEE IS A DIFFERENT VALUE AND STAYS ONE. A fixed legal service
+     is a flat fee with no retainer, and the retainer vocabulary must not
+     appear on it — the words are the boundary (LEGAL-SERVICES D6). */
+  p = await jsonOf(await prep({ id: 'private_retainer', to: 'r4@example.com',
+    send_context: 'legal', legal_service: 'process', flat_fee: 375 }));
+  ok('a custom flat fee still prepares the fixed sheet independently',
+     /375/.test(p.subject + p.body_text), p.subject);
+  ok('and a fixed-fee sheet carries no retainer wording at all',
+     !/retainer/i.test(p.body_text), (p.body_text || '').slice(0, 160));
+
+  /* 5 — passing BOTH: the flat fee decides a fixed service, and the retainer
+     offered alongside it changes nothing. They are separate values with
+     separate wire names and cannot be confused for one another. */
+  const both = await jsonOf(await prep({ id: 'private_retainer', to: 'r5@example.com',
+    send_context: 'legal', legal_service: 'process', flat_fee: 375, retainer_amount: 2750 }));
+  ok('a retainer offered on a FIXED service does not leak into it',
+     !/2,750|retainer/i.test(both.body_text), (both.body_text || '').slice(0, 160));
+
+  /* 6 — DRY RUN SENDS NOTHING. The whole point of preparing it here. */
+  mailed = null;
+  await prep({ id: 'private_retainer', to: 'nobody@example.com', retainer_amount: 2750 });
+  ok('preparing a sheet puts nothing on the wire', mailed === null);
+  const before = Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM send_log').first()).n);
+  const simd = await jsonOf(await sim({ id: 'private_retainer', to: 'nobody@example.com',
+    retainer_amount: 2750 }));
+  ok('simulating it records the rehearsal and still sends nothing',
+     mailed === null && simd.outcome === 'SIMULATED — NOT SENT', JSON.stringify(simd.outcome));
+  ok('and the REAL send history gained no row',
+     Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM send_log').first()).n) === before);
+
+  /* 7 — THE NON-ASSISTANT FLOW IS UNCHANGED. The same offered figure through
+     the real sender produces the same sheet, which is what makes this one
+     retainer system rather than two that agree today. */
+  mailed = null;
+  const r = await jsonOf(await call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body: { to: 'r6@example.com', retainer_amount: 2750 } }));
+  ok('the ordinary send still honours the same offered retainer',
+     r.ok === true && mailed && /\$2,750/.test(mailed.subject + mailed.text),
+     mailed && mailed.subject);
+  const mirror = await jsonOf(await prep({ id: 'private_retainer', to: 'r6@example.com',
+    retainer_amount: 2750 }));
+  ok('and the rehearsal of it is byte-identical — one resolver, two callers',
+     mirror.subject === mailed.subject && mirror.body_text === mailed.text);
+
+  globalThis.fetch = realFetch;
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));
