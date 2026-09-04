@@ -18385,6 +18385,103 @@ section('One open investigation day per case per investigator');
      rowCount('API-DAY-A') === 3 && openCount('API-DAY-A', danaId) === 1);
 }
 
+/* ============================================================================
+   CLOSEOUT AUDIT, 2026-09-04 — four Worker fixes, each pinned by the property
+   that was wrong rather than by the line that changed.
+   ========================================================================= */
+section('Closeout audit: the guide wrapper, the blocked list, hidden cases, retention');
+{
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  await ingest(env, { case_no: 'API-CL-LIVE', client_name: 'Live', subject_name: 'Live Subject' });
+  await ingest(env, { case_no: 'API-CL-GONE', client_name: 'Gone', subject_name: 'Gone Subject' });
+  await ingest(env, { case_no: 'API-CL-ARCH', client_name: 'Arch', subject_name: 'Arch Subject' });
+
+  const ask = (text, ctx) => call(env, '/assistant/command', { method: 'POST', cookie: admin,
+    body: { text, ...(ctx ? { context: ctx } : {}) } });
+
+  /* 1 — A REFUSAL KEEPS ITS STATUS WITH THE GUIDE ON. The wrapper consumed the
+     core's body and re-wrapped it as a fresh 200, so the page's api() (which
+     throws only on !res.ok) returned an object with no `text` and drew a blank
+     bubble where the refusal belonged. Guide OFF was always right, which is
+     exactly why nobody saw it. */
+  await call(env, '/cases/API-CL-GONE/delete', { method: 'POST', cookie: admin, body: {} });
+  const offNo = await ask('invoice preview', { case_no: 'API-CL-GONE' });
+  const onNo  = await ask('invoice preview', { case_no: 'API-CL-GONE', guide: true });
+  ok('a case-scoped refusal is a non-200 with Explain & Guide Me OFF', offNo.status !== 200);
+  ok('and the SAME non-200 with it ON — the wrapper no longer swallows the status',
+     onNo.status === offNo.status);
+  const onBody = await jsonOf(onNo);
+  ok('so the page can render the reason rather than an empty bubble',
+     !!(onBody.error || onBody.text));
+
+  /* 2 — THE NINTH PROHIBITION. "authorize 8 more hours" matched none of the
+     eight patterns and fell through to the help fallback, so the answer
+     misdescribed why nothing happened. The `asking` guard above the loop still
+     has to let a QUESTION about the same subject through. */
+  const authDo = await jsonOf(await ask('authorize 8 more hours on this case',
+    { case_no: 'API-CL-LIVE' }));
+  ok('changing an authorization is refused by name', authDo.code === 'assistant_beta');
+  ok('and the refusal names the act', /authoriz/i.test(String(authDo.text || '')));
+  const authAsk = await jsonOf(await ask('what is the authorization?', { case_no: 'API-CL-LIVE' }));
+  ok('while ASKING about the authorization is still answered, not refused',
+     authAsk.code !== 'assistant_beta');
+
+  /* 3 — HIDDEN CASES LEAVE EVERY COUNT, which is what the comment over these
+     four queries already claimed. Two of the four had no exclusion, so the same
+     answer's NUMBER and its LIST disagreed: an archived case with a finished
+     day and no report was counted here and excluded from REPORTS DUE.
+     The line is "N open · N active right now · N unassigned · N with a
+     finished day and no report." */
+  const casesCounts = async () => {
+    const d = await jsonOf(await ask('cases'));
+    const line = String(d.text || '');   /* topicJson puts the lines in `text` */
+    const m = line.match(/(\d+) open · (\d+) active right now · (\d+) unassigned · (\d+) with a finished day/);
+    return m ? { open: +m[1], active: +m[2], unassigned: +m[3], due: +m[4], line } : { line };
+  };
+  const c0 = await casesCounts();
+  ok('the cases topic reports its four counts', typeof c0.open === 'number', c0.line);
+  await call(env, '/cases/API-CL-ARCH/archive', { method: 'POST', cookie: admin, body: {} });
+  const c1 = await casesCounts();
+  ok('an archived case leaves the open-cases count',
+     c1.open === c0.open - 1, `${c0.open} -> ${c1.open}`);
+
+  /* The count that had NO exclusion: a finished day with no report. The day is
+     ended BEFORE the case is hidden, because archiving a case with a day still
+     running is refused by design. */
+  await ingest(env, { case_no: 'API-CL-HIDE', client_name: 'Hide', subject_name: 'Hide Subject' });
+  await call(env, '/cases/API-CL-HIDE/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-09-04', start_time: '08:00' } });
+  await call(env, '/cases/API-CL-HIDE/day/end', { method: 'POST', cookie: admin,
+    body: { end_time: '12:00' } });
+  const c2 = await casesCounts();
+  ok('a finished day with no report counts as due while its case is live',
+     c2.due === c1.due + 1, `${c1.due} -> ${c2.due}`);
+  await call(env, '/cases/API-CL-HIDE/archive', { method: 'POST', cookie: admin, body: {} });
+  const c3 = await casesCounts();
+  ok('and leaves that count the moment the case is archived — the number now '
+     + 'agrees with the REPORTS DUE list beside it',
+     c3.due === c1.due, `${c2.due} -> ${c3.due}`);
+
+  /* 4 — A REPEAT SCHEDULE ANSWERS WITH THE FRESH READ. Every other retention
+     writer does; this one short-circuited with {ok:true, already:true}, and the
+     panel stores whatever comes back as its data — so a second tap blanked the
+     state chip, the retain-until date and the history, and offered Schedule
+     deletion again on a case that IS scheduled. */
+  const sched = () => call(env, '/cases/API-CL-LIVE/retention/schedule',
+    { method: 'POST', cookie: admin, body: { reason: 'closeout test' } });
+  const first = await jsonOf(await sched());
+  const second = await jsonOf(await sched());
+  ok('scheduling deletion answers with the retention state', !!first.state);
+  ok('and so does a SECOND schedule on the same case — the panel repaints from it',
+     !!second.state, JSON.stringify(second).slice(0, 120));
+  ok('both agree the case is scheduled',
+     first.state === second.state && String(second.state) === 'scheduled');
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

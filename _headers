@@ -66,7 +66,7 @@
   X-Frame-Options: DENY
   Referrer-Policy: no-referrer
   # `script-src 'self'` was added 2026-08-18, narrowly and on the owner's
-  # approval, for ONE thing: /portal/vendor/mp4-muxer.mjs, which the video
+  # approval, for ONE thing: /portal/vendor/mp4-muxer.js, which the video
   # timestamp pipeline imports same-origin. No third-party origin is allowed
   # and no CDN is used — the file is committed in this repo and listed in the
   # deploy allow-list. `worker-src` is deliberately NOT added: the pipeline

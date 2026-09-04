@@ -1640,7 +1640,8 @@
     padding:12px 14px;margin:0 0 14px;}
   .sheet-card.on{border-color:var(--teal);background:var(--teal-wash);}
   .lens:focus-visible,.pickitem:focus-visible,.srchrow:focus-visible,.tmplcard:focus-visible,.evtab:focus-visible,.rpnav button:focus-visible,
-  .top .burger:focus-visible,.navback:focus-visible,
+  #app:focus{outline:none;}
+  .top .burger:focus-visible,.navback:focus-visible,.navhandle:focus-visible,
   input:focus-visible,select:focus-visible,textarea:focus-visible{
     outline:2px solid var(--teal);outline-offset:2px;}
   /* UNIT 15 — the closeout fact beside its attestation. Inline, wrapping,
@@ -1870,7 +1871,10 @@
    The dock keeps the portal visible beside it on desktop and becomes a
    bottom sheet under 900px; the pill is the phone door on shell screens.
    Palette: the existing navy/teal/gold tokens only. */
-.asst-wrap{position:fixed;inset:0;z-index:60;pointer-events:none}
+/* ABOVE THE CASE BOTTOM BAR (65) AND THE ADD-ACTIVITY BUTTON (70), below
+   .amwrap (80). At 60 those two painted over the composer on a phone and the
+   taps went to them. */
+.asst-wrap{position:fixed;inset:0;z-index:71;pointer-events:none}
 .asst-panel{pointer-events:auto;position:absolute;top:0;right:0;height:100%;
   width:min(420px,94vw);background:var(--panel);border-left:1px solid var(--line);
   box-shadow:-12px 0 32px rgba(12,22,38,.18);display:flex;flex-direction:column;padding:0 0 10px}
@@ -1902,6 +1906,8 @@
   border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 10px;
   cursor:pointer;min-height:44px;font-size:.88rem;width:100%}
 .asst-row span{color:var(--muted);font-size:.8rem}
+/* A row that opens nothing: same shape, no pointer, no invitation to tap. */
+.asst-row-flat{cursor:default}
 .asst-acts{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
 .asst-home{display:flex;flex-direction:column;gap:10px;margin:auto 0}
 .asst-big{border:1px solid var(--line);background:#fff;border-radius:12px;
@@ -1965,6 +1971,15 @@
   .asst-ask{padding-bottom:max(26px, calc(env(safe-area-inset-bottom) + 6px))}
 }
 
+  /* ===== THE FIELD'S SMALL CONTROLS MEET THE TAP FLOOR =====
+     .sv-back and .sv-tap declare padding:8px 2px 12px, but every per-entry use
+     overrides it inline with padding:0, so Edit / Remove / Delete / Caption
+     computed to about 22px — under the 44px floor the rest of the portal
+     enforces, and the destructive one sits beside the harmless one. min-height
+     is not affected by the inline padding, so this needs no change at the six
+     call sites. LAST IN THE FILE on purpose. */
+  .sv-back, .sv-tap{min-height:44px;display:inline-flex;align-items:center;}
+
 </style>
 </head>
 <body>
@@ -2002,7 +2017,7 @@
      same button that opened the drawer, saying what tapping it now does. -->
 <button class="navhandle" data-act="navToggle" aria-label="Close menu"><svg width="18" height="28" viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2 3 10l7 8" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
 
-<main id="app"></main>
+<main id="app" tabindex="-1"></main>
 <!-- WHAT THE SCREEN SAYS, SAID OUT LOUD. Every "Saved.", "Payment recorded."
      and refusal on this page was drawn silently, so a screen-reader user got
      no confirmation that the thing they just did had worked — the one moment
@@ -2096,6 +2111,9 @@ function retainerEnter(caseNo){
 let PAY_MSG = "";
 let PAY_ERR = false;
 let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
+/* Three states, not two: an empty SHEETS is both "never loaded" and "failed",
+   and the view drew both as a spinner that never resolves. */
+let SHEETS_OK = false, SHEETS_ERR = "";
 /* LEGAL-SERVICES.md — the legal-service catalogue from /sheets: id, label,
    model, and the Worker-composed price_label / sheet_name, so no figure ever
    lives in this file (the no-dollar guard). Empty until a /sheets response
@@ -2593,6 +2611,16 @@ function resetView(state){
     </form></div>`;
 }
 
+/* THE CLASS AND THE ATTRIBUTE MOVE TOGETHER. Tapping a destination inside the
+   open drawer closes it, and three handlers did that by removing the class
+   alone — so aria-expanded stayed "true" over a shut drawer until the next
+   burger press. navToggle owns the animated path; this owns the plain one. */
+function navClose(){
+  document.body.classList.remove("navopen");
+  const bg = $("burger");
+  if(bg) bg.setAttribute("aria-expanded", "false");
+}
+
 function shell(inner){
   /* Simplified navigation for the field, exactly as the handoff draws it —
      not a miniature admin portal. Calendar and Availability join when their
@@ -2745,7 +2773,7 @@ let ASST = null;   // {open, busy, guide, state, msgs:[{who,text,card,actions,ki
 function asstReset(){ ASST = null; }
 
 async function asstOpen(caseNo){
-  if(!ASST) ASST = { open: true, busy: false, guide: false, state: null, msgs: [], err: "", view: "home" };
+  if(!ASST) ASST = { open: true, busy: false, guide: false, state: null, msgs: [], err: "", view: "home", draft: "" };
   ASST.open = true;
   ASST.case = caseNo || (VIEW === "case" && WS_CASE ? WS_CASE : "");
   paint();
@@ -2817,7 +2845,14 @@ function asstNavigate(nav){
   if(phone && ASST) ASST.open = false;   // the pill brings it back (owner: no stacked panels)
   if(nav.kind === "tab" && typeof nav.id === "string"){
     const allowed = ((ASST && ASST.state && ASST.state.nav) || []).some(n => n.id === nav.id);
-    if(!allowed) return paint();
+    if(!allowed){
+      /* Say so. Refusing in silence under an answer that reads "Opening
+         Billing." is the panel asserting something that did not happen. */
+      if(ASST) ASST.err = ASST.state
+        ? "That screen is not one this account can open."
+        : "The Assistant could not read what it may open — reopen the panel to try again.";
+      return paint();
+    }
     VIEW = "list"; WS_CASE = "";
     TAB = nav.id; paint();
     if(TAB === "calendar") loadCalendar(CAL ? CAL.month : "");
@@ -3057,11 +3092,18 @@ function asstMsgHtml(m){
     ${m.guide_intro ? `<div class="asst-guidep">${esc(m.guide_intro)}</div>` : ""}
     ${m.kind === "invoice_preview" || m.kind === "chronology"
       ? `<pre class="asst-pre">${esc(m.text)}</pre>` : `<div class="asst-t">${esc(m.text)}</div>`}
-    ${m.card ? `<div class="asst-card">${m.card.map(c => `
-      <button class="asst-row" data-act="asstOpenCase" data-case="${esc(c.case_no || "")}">
+    ${m.card ? `<div class="asst-card">${m.card.map(c => c.case_no
+      /* A ROW THAT CAN OPEN NOTHING IS NOT A BUTTON. Some card rows carry no
+         case number at all, and drawn as buttons they invited a tap that did
+         nothing silently. */
+      ? `<button class="asst-row" data-act="asstOpenCase" data-case="${esc(c.case_no)}">
         <b>${esc(c.title || c.case_no || "")}</b>
         <span>${esc(c.line || "")}</span>
-      </button>`).join("")}</div>` : ""}
+      </button>`
+      : `<div class="asst-row asst-row-flat">
+        <b>${esc(c.title || "")}</b>
+        <span>${esc(c.line || "")}</span>
+      </div>`).join("")}</div>` : ""}
     ${m.actions ? `<div class="asst-acts">${m.actions.map((a, i) => `
       <button class="btn sm" data-act="asstAction" data-i="${ASST.msgs.indexOf(m)}:${i}">${esc(a.label)}</button>`).join("")}</div>` : ""}
   </div>`;
@@ -3086,7 +3128,8 @@ function asstHtml(){
       <label class="cap asst-guide"><input type="checkbox" id="asst_guide" data-act="asstGuide"
         ${ASST.guide ? "checked" : ""}><span>Explain &amp; Guide Me</span></label>
       <form class="asst-ask" data-act="asstAsk">
-        <input id="asst_in" autocomplete="off" placeholder="Ask the Assistant&hellip;"
+        <input id="asst_in" autocomplete="off" data-act-input="asstDraft"
+          value="${esc(ASST.draft || "")}" placeholder="Ask the Assistant&hellip;"
           aria-label="Ask the Assistant">
         <button class="btn sm" type="submit">Ask</button>
       </form>
@@ -4042,7 +4085,8 @@ function attnFilterHtml(){
 function nextActionsHtml(){
   const rows = attnRows();
   const count = !rows ? "the office's queue"
-    : rows.length ? `${ATTN.total || rows.length} waiting` : "nothing waiting";
+    : rows.length ? `${(ATTN_FILTER === "all" ? ATTN.total : 0) || rows.length} waiting`
+    : "nothing waiting";
   /* `slim` marks the GENUINELY-EMPTY card only (owner, 2026-09-02): with no
      work waiting, the card was spending a third of a phone's first screen on
      an explanatory paragraph. The failure, filter and incomplete states keep
@@ -4133,7 +4177,8 @@ function recentActivityHtml(){
   if(ME.role !== "admin") return "";
   const body = RECENT_ERR
     ? `<div class="err">Recent activity could not be loaded &mdash; ${esc(RECENT_ERR)}. That is a
-        read failure, not a quiet portal.</div>`
+        read failure, not a quiet portal.</div>
+       <button class="btn sm" data-act="recentRetry">Try again</button>`
     : !RECENT ? `<div class="empty">Loading recent activity&hellip;</div>`
     : !RECENT.length ? `<div class="empty"><div class="empty-title">Nothing recorded yet.</div>
         <div class="empty-hint">Intakes, days, reports, media, payments and packages appear here
@@ -4201,7 +4246,12 @@ function summaryCards(){
   const s = SUMMARY || {};
   const admin = ME.role === "admin";
 
-  const card = (label, n, hint, tone, set) => statCard(label, n, hint, tone, {set: n > 0 ? set : null});
+  /* A CARD MUST TAKE YOU WHERE THE FILTER APPLIES. todayView() does not read
+     CARD_FILTER and draws no chip, so on Today a tapped card would highlight
+     and change nothing, then filter My assignments later without being asked.
+     dashBands passes `go` for the same reason. */
+  const card = (label, n, hint, tone, set) => statCard(label, n, hint, tone,
+    {set: n > 0 ? set : null, ...(TAB === "today" ? {go: "cases"} : {})});
 
   const active = s.active_now || [], due = s.reports_due || [], low = s.auth_low || [];
   const late = s.tasks_overdue || [];
@@ -6306,6 +6356,9 @@ function sheetIncludables(sheetId, legal){
 }
 
 function sheetsView(){
+  if(!SHEETS.length && SHEETS_ERR) return `<div class="card"><div class="err">Rate sheets could not
+    be loaded &mdash; ${esc(SHEETS_ERR)}. That is a read failure, not an empty shelf.</div>
+    <button class="btn sm" data-act="reload">Try again</button></div>`;
   if(!SHEETS.length) return `<div class="card"><div class="empty">Loading rate sheets…</div></div>`;
   /* KEYED BY `key`, NOT BY SHEET ID (Unit 28). Private and Legal are the same
      PRODUCT in two contexts, so two cards carry `id: "private_retainer"` —
@@ -7486,10 +7539,16 @@ async function recordRetainerPayment(received){
 /* Voiding keeps the row. A payment recorded in error is corrected on the
    record, never erased — the same rule evidence and submitted reports follow. */
 async function voidRetainerPayment(id){
+  /* THE SIBLING'S TREATMENT. There is no un-void route, so one stray tap took
+     real money off the ledger permanently under a sentence nobody wrote. */
+  if(!confirm("Void this retainer payment?\n\nThe entry stays on the record, struck through, and "
+    + "stops counting toward what has been received. Nothing is deleted, and this cannot be undone "
+    + "from the portal.")) return;
+  const reason = prompt("Why is it being voided? (optional)", "") || "";
   RET_MSG = ""; RET_ERR = false;
   try{
     await api(`/cases/${encodeURIComponent(WS_CASE)}/retainer/payment/${encodeURIComponent(id)}/void`,
-      {method: "POST", body: {reason: "corrected in the portal"}});
+      {method: "POST", body: {reason}});
     RET_MSG = "Payment voided. It stays on the record, marked.";
     await reloadWorkspace();
   }catch(e){
@@ -9676,8 +9735,8 @@ function vstOpen(caseNo){
       if(r.ok){ VST.vw = r.w; VST.vh = r.h; VST.vdur = r.dur; }
       paintVStamp();
     });
-    VST.hash = await vstHash(f);
-    if(VST) paintVStamp();
+    const vhash = await vstHash(f);
+    if(VST && VST.url === url){ VST.hash = vhash; paintVStamp(); }
   };
   inp.click();
 }
@@ -10680,7 +10739,9 @@ async function pstFileToCase(){
         {method: "POST", credentials: "same-origin", body: fd0});
       const d0 = await r0.json().catch(() => ({}));
       if(!r0.ok) throw new Error(d0.error || ("The original could not be filed (" + r0.status + ")"));
-      originalId = d0.id;
+      /* KEEP IT ON THE SESSION. A retry after a failed photo-stamp POST used to
+         re-run this branch and file a SECOND original. */
+      originalId = d0.id; v.evId = originalId;
     }
     const fd = new FormData();
     fd.append("file", v.out.blob, "timestamped.jpg");
@@ -11143,6 +11204,10 @@ function vstHtml(){
           ${v.savedHere ? "" : `<button class="vst-btn go" data-act="vstSave">${
             (navigator.canShare && navigator.share) ? "Share or save to this device"
                                                    : "Save to this device"}</button>`}
+          ${v.caseNo && !v.recId ? `<p class="vst-note">The copy exists on this device, but the
+            portal's record of it was not written. Nothing is lost &mdash; the record can be written
+            now without regenerating anything.</p>
+            <button class="vst-btn" data-act="vstRerecord">Write the portal record</button>` : ""}
           ${v.caseNo && v.recId ? `
             <button class="vst-btn" data-act="vstDropbox" ${v.dbxBusy || v.dbxPath ? "disabled" : ""}>${
               v.dbxPath ? "Copy saved to Dropbox"
@@ -11207,7 +11272,7 @@ function vstHtml(){
    Dialogs are untouched and stay untouched — `ls_to` and `pi_to` focus after
    the user has explicitly opened that form, which the owner's rule allows by
    name. */
-const FOCUS_KEEP = ["q", "prof_q", "nl_pick", "gsearch", "am_q", "inv_q"];
+const FOCUS_KEEP = ["q", "prof_q", "nl_pick", "gsearch", "am_q", "inv_q", "asst_in"];
 let INV_Q_TIMER = null;   // the invoice search's debounce, the srchSoon shape
 let FOCUS_WAS = null;
 function focusCapture(){
@@ -11509,9 +11574,10 @@ async function render(){
       try{ INVITES = (await api("/invites")).invites; }catch(e){ INVITES = []; }
     })());
     jobs.push((async () => {
-      try{ const d = await api("/sheets"); SHEETS = d.sheets; BILLCOM_READY = !!d.billcom_ready;
+      try{ const d = await api("/sheets"); SHEETS = d.sheets; SHEETS_OK = true; SHEETS_ERR = "";
+        BILLCOM_READY = !!d.billcom_ready;
            LEGAL_SVCS = d.legal_services || []; }
-      catch(e){ SHEETS = []; }
+      catch(e){ SHEETS = []; SHEETS_OK = false; SHEETS_ERR = e.message; }
     })());
     // The dashboard is the admin's landing, so render() is a second door to
     // it — the tab click is not the only way in. Without this, the first
@@ -11630,7 +11696,13 @@ function sessionForget(){
   retainerReset(); RET_CASE = null;
   WS = null; WS_CASE = null; WS_TAB = "overview"; WS_ERR = ""; WS_REPORT = null; WS_MORE = false;
   WS_NOTICE = ""; ACT_MODAL = null; REP_VIEW = "preview"; REP_VERS = {}; EV_TAB = "all";
-  VIEW = "list"; SV = null; SV_SKEW = 0; svTickStop();
+  VIEW = "list";
+  /* The recogniser and the voice flush interval outlive SV, so they are stopped
+     HERE too — this is the field view's other exit door (a 401 from any call),
+     and dropping SV without them left the interval throwing every 20s. */
+  try{ svVoiceStop("off"); }catch(e){ /* nothing was listening */ }
+  if(SV && SV.voice && SV.voice.flushTimer){ clearInterval(SV.voice.flushTimer); SV.voice.flushTimer = null; }
+  SV = null; SV_SKEW = 0; svTickStop();
   document.body.classList.remove("surv");
 }
 
@@ -11666,6 +11738,9 @@ async function openCase(caseNo, tab){
      prefilled amount on another client's retainer is the kind of mistake that
      is only found when the money is reconciled. */
   retainerEnter(caseNo);
+  /* The Assistant's case leaves with the case, for the reason every other
+     global above does: the panel outlives navigation on a desktop. */
+  if(ASST) ASST.case = caseNo;
   /* THE PREVIOUS CASE'S DATA LEAVES WITH IT (closeout audit, 2026-09-02).
      WS_CASE and VIEW were switched above while WS still held the LAST case,
      and nothing painted until both reads landed — so any paint that fired in
@@ -13859,6 +13934,15 @@ async function saveCaseEdit(){
     EDIT_MSG = "Case updated.";
   }catch(e){ EDIT_MSG = e.message; EDIT_ERR = true; }
   await reloadWorkspace();
+  /* AND SO DOES THE CASE ITSELF. reloadWorkspace carries the previous
+     WS.submission forward on purpose, but this route writes the client,
+     subject, address and claim number into that payload — which the header and
+     this very form read — so without refetching it, "Case updated." sat over
+     the values the office had just corrected. */
+  try{
+    const sres = await api(`/submissions/${encodeURIComponent(WS_CASE)}`);
+    if(WS && sres && sres.submission) WS.submission = sres.submission;
+  }catch(e){ /* the write already succeeded; the list reload below still runs */ }
   /* THE LIST HOLDS THE OLD NAME UNTIL IT IS REFETCHED. `CASES` is loaded once by
      render(), and the case row carries client_name and subject_name — so
      correcting a name here and not reloading leaves the office looking at the
@@ -16027,7 +16111,7 @@ async function openSurveillanceLauncher(){
      would throw from a stale promise; the answer belongs to a launcher that
      no longer exists, so it is simply dropped. */
   try{ const d = await api("/my/active"); if(!SV) return; SV.launcher = d; }
-  catch(e){ if(!SV) return; SV.launcher = {active: null, assignments: []}; SV.err = e.message; }
+  catch(e){ if(!SV) return; SV.err = e.message; }   /* launcher stays UNSET — see svLauncher */
   paint();
 }
 
@@ -16090,7 +16174,15 @@ function svView(){
          <button class="sv-back" data-act="svTab" data-t="home">&larr; Back to active surveillance</button>
        </div>` : "";
   const body =
-      !WS            ? `<div class="sv-body"><div class="sv-card">Loading the assignment&hellip;</div></div>`
+      /* A FAILED READ IS NOT A SLOW ONE, and this mode has no navigation rail —
+         without the error, a retry and a way out, the field view stranded. */
+      !WS && SV.err  ? `<div class="sv-body">
+                          <div class="sv-err">${esc(SV.err)}</div>
+                          <div class="sv-card">The assignment could not be loaded.</div>
+                          <button class="sv-btn line" data-act="svEnter" data-case="${esc(WS_CASE || "")}">Try again</button>
+                          ${svExitBlock()}
+                        </div>`
+    : !WS            ? `<div class="sv-body"><div class="sv-card">Loading the assignment&hellip;</div></div>`
     : SV.tab === "activity" ? svActivityScreen()
     : SV.tab === "timeline"  ? svTimelineScreen()
     : SV.tab === "evidence"  ? svEvidenceScreen()
@@ -16164,6 +16256,22 @@ function svCardName(c){
                              : "No subject recorded";
 }
 function svLauncher(){
+  /* THREE STATES, NOT TWO. An unset launcher means the answer has not arrived
+     or did not arrive; only a launcher that LOADED may say the desk is empty.
+     Drawing a failed read as "No assignments yet" is the reassuring direction,
+     on the one screen a field investigator has. */
+  if(!SV.launcher){
+    return `<div class="sv">
+      <div class="sv-head"><span class="case">Active surveillance</span>
+        <button class="sv-x" data-act="svLeaveLauncher">&larr; The full portal</button></div>
+      <div class="sv-body">
+        ${SV.err ? `<div class="sv-err">${esc(SV.err)}</div>
+          <div class="sv-card">Your assignments could not be loaded. That is not the same as
+            having none — nothing has been changed.</div>
+          <button class="sv-btn line" data-act="svRelaunch">Try again</button>`
+        : `<div class="sv-card">Loading your assignments&hellip;</div>`}
+      </div></div>`;
+  }
   const d = SV.launcher || {};
   const a = d.active;
   if(a){
@@ -18538,8 +18646,10 @@ function svPickFile(kind){
     if(!f) return;
     const fd = new FormData();
     fd.append("file", f);
-    // Ride with the moment it documents when there is one.
-    const last = ((WS && WS.activity) || [])[0];
+    // Ride with the moment it documents when there is one. WS.activity is
+    // OLDEST-first (Unit 38), so this must ask newestActivity() rather than
+    // index the array — [0] is the case's first entry, not its latest.
+    const last = newestActivity(1)[0];
     if(last) fd.append("entry_id", String(last.id));
     SV.ok = "Uploading…"; paint();
     try{
@@ -19245,13 +19355,13 @@ document.addEventListener("click", ev => {
      and the only other door was ?surveillance=1, which assumes the icon is
      already on the home screen. This is the same launcher that URL opens. */
   else if(act === "surveillance"){
-    document.body.classList.remove("navopen");
+    navClose();
     openSurveillanceLauncher();
   }
   /* API ASSISTANT (ASSISTANT.md) — the panel's own acts. Everything they can
      reach is a read; navigation goes through asstNavigate's registry check. */
   else if(act === "asstOpen"){
-    document.body.classList.remove("navopen");
+    navClose();
     asstOpen(el.dataset.case || "");
   }
   else if(act === "asstClose"){ if(ASST) ASST.open = false; paint(); }
@@ -19276,7 +19386,9 @@ document.addEventListener("click", ev => {
        to finish. No action can send, delete, archive, pay or close. */
     if(action && action.navigate) asstNavigate(action.navigate);
     else if(action && action.say) asstSend(action.say);
-    else if(action && action.seed){ const inp = $("asst_in"); if(inp){ inp.value = action.seed; inp.focus(); } }
+    else if(action && action.seed){
+      if(ASST) ASST.draft = action.seed;
+      const inp = $("asst_in"); if(inp){ inp.value = action.seed; inp.focus(); } }
   }
   else if(act === "asstPrepPrev"){ asstPrepPrev(); }
   else if(act === "asstPrepSim"){ asstPrepSim(); }
@@ -19329,7 +19441,7 @@ document.addEventListener("click", ev => {
       CTYPES = null; CT_ERR = ""; CT_MSG = ""; CT_SAVING = false;
       CT_DRAFT = { label: "", side: "private" }; loadCaseTypes();
     }
-    document.body.classList.remove("navopen");
+    navClose();
     if(TAB === "myreports") api("/my/reports").then(d => { MY_REPORTS = d; paint(); }).catch(()=>{});
     if(TAB === "myexpenses"){
       api("/my/expenses").then(d => { MY_EXPENSES = d; paint(); }).catch(()=>{});
@@ -19396,6 +19508,7 @@ document.addEventListener("click", ev => {
   }
   else if(act === "vstSkipCase"){ VST.caseNo = ""; VST.step = "when"; paintVStamp(); }
   else if(act === "vstAttach"){ VST.step = "case"; paintVStamp(); vstLoadCases(); }
+  else if(act === "vstRerecord"){ if(VST){ VST.err = ""; paintVStamp(); vstRecord().then(paintVStamp); } }
   else if(act === "vstUseTime"){
     vstCollect();
     const s = vstStart();
@@ -19469,6 +19582,7 @@ document.addEventListener("click", ev => {
   else if(act === "saveCase"){ saveCase(el.dataset.case); }
   else if(act === "toggleActive"){ toggleActive(Number(el.dataset.id), Number(el.dataset.active)); }
   else if(act === "revokeInvite"){ revokeInvite(Number(el.dataset.id)); }
+  else if(act === "recentRetry"){ RECENT = null; RECENT_ERR = ""; loadRecent(); }
   else if(act === "reload"){
     /* RETRY MUST RETRY. A failed load leaves PKGS and COMPLETED holding truthy
        error-shaped objects so the page can keep drawing — and render()'s
@@ -19681,6 +19795,7 @@ document.addEventListener("click", ev => {
   }
   /* ---- Active Surveillance Mode ---- */
   else if(act === "svEnter"){ enterSurveillance(el.dataset.case || WS_CASE); }
+  else if(act === "svRelaunch"){ openSurveillanceLauncher(); }
   else if(act === "svLeaveLauncher"){ SV = null; document.body.classList.remove("surv"); render(); }
   else if(act === "svExit"){ exitSurveillance(); }
   else if(act === "svTab"){ SV.tab = el.dataset.t; SV.err = ""; if(el.dataset.t !== "activity") SV.ok = ""; paint(); }
@@ -20198,6 +20313,7 @@ document.addEventListener("submit", ev => {
     const inp = $("asst_in");
     const t = inp ? inp.value : "";
     if(inp) inp.value = "";
+    if(ASST) ASST.draft = "";
     asstSend(t);
   }
   else if(a === "invite") doInvite();
@@ -20285,6 +20401,9 @@ document.addEventListener("input", ev => {
   /* UNIT 4 — the Assistant workbench draft: the value lands in ASST.prep on
      every keystroke, so a repaint from anywhere redraws what was typed. */
   if(din === "asstPrep"){ asstPrepCollect(); return; }
+  /* The composer, same rule: a repaint from anywhere rebuilds this input, so
+     what is being typed lives on ASST rather than only in the DOM. */
+  if(din === "asstDraft"){ if(ASST) ASST.draft = ev.target.value; return; }
   /* Typing IN the paragraph is the writer taking it over: the flag flips and
      nothing rewrites the box — no repaint here, the cursor is in it. */
   if(din === "dsText"){

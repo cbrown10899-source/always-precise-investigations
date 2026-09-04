@@ -455,6 +455,45 @@ section('The manifest describes the site honestly');
      }));
 }
 
+/* ============================================================================
+   CLOSEOUT AUDIT, 2026-09-04 — THE SITEMAP MUST SURVIVE ITS OWN GENERATOR.
+
+   `sitemap.xml` is regenerated WHOLESALE by build-locations.py, from a
+   hand-written `urls` list plus the PLACES pages. The Legal page was added to
+   the committed sitemap BY HAND (its <url> was flush-left where every
+   generated one is indented) and never added to that list — so the next time
+   anyone touched PLACES, CI would have regenerated the sitemap WITHOUT Legal,
+   committed it to master, and the deploy guard's own "Legal IS in the sitemap"
+   assertion would have failed the build. That is the 2026-08-14 freeze
+   re-armed: a red workflow, the site not publishing, and nothing saying so.
+
+   This guards the CLASS rather than the instance: every non-generated page in
+   the sitemap has to be named in the generator's source.
+   ========================================================================= */
+{
+  const gen = fs.readFileSync(path.join(ROOT, 'build-locations.py'), 'utf8');
+  const sm = fs.readFileSync(path.join(ROOT, 'sitemap.xml'), 'utf8');
+  const locs = [...sm.matchAll(/<loc>https:\/\/[^/]+([^<]*)<\/loc>/g)].map(m => m[1]);
+  /* the location pages come from PLACES; everything else is hand-listed */
+  const handWritten = locs.filter(u => !/^\/private-investigator\/[a-z-]+\//.test(u));
+  ok('every non-generated sitemap URL is named in build-locations.py, so a '
+     + 'regeneration cannot silently drop a page',
+     handWritten.every(u => gen.includes(`{DOMAIN}${u}`)),
+     handWritten.filter(u => !gen.includes(`{DOMAIN}${u}`)).join(' '));
+
+  ok('the sitemap is byte-for-byte what its generator produces (no hand-edits)',
+     /\n  <url>/.test(sm) && !/\n<url>/.test(sm));
+
+  /* The 404 page offers "a working starting point" for each public door.
+     Legal was added as a public, indexed page and every sibling list was
+     updated except this one. */
+  const four = fs.readFileSync(path.join(ROOT, '404.html'), 'utf8');
+  for (const door of ['/infidelity-investigations/', '/child-custody-investigations/',
+                      '/insurance-investigations/', '/legal-investigations/']) {
+    ok(`the 404 page offers ${door}`, four.includes(`href="${door}"`));
+  }
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(results.join('\n'));
 console.log(`\n${passed} passed, ${failed} failed`);

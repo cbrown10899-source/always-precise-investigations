@@ -398,6 +398,13 @@ def main():
             (f"{DOMAIN}/child-custody-investigations/", "0.9", "monthly"),
             (f"{DOMAIN}/insurance-investigations/", "0.9", "monthly"),
             (f"{DOMAIN}/insurance-investigations/vendor-information/", "0.5", "yearly"),
+            # Legal is hand-written like the three service pages above it, and it is
+            # MEANT TO BE INDEXED (Unit 37A). It was added to sitemap.xml by hand and
+            # never added here, so the next regeneration would have dropped it — and
+            # test-deploy.mjs asserts it is present, so the FAILING GUARD WOULD HAVE
+            # FROZEN THE WHOLE SITE DEPLOY, exactly as on 2026-08-14. A page that is
+            # not in this list is not in the sitemap after the next rebuild.
+            (f"{DOMAIN}/legal-investigations/", "0.5", "yearly"),
             (f"{DOMAIN}/private-investigator/", "0.9", "monthly")]
     urls += [(f"{DOMAIN}/private-investigator/{s}/", "0.8", "monthly") for s, *_ in PLACES]
     body = "".join(

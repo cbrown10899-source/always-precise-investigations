@@ -197,8 +197,21 @@ Pushing a change to the script makes CI regenerate, commit and deploy.
 committed and served, so the two can drift if you hand-edit the output. Run
 `python3 build-locations.py` and check `git status` is clean before pushing.
 
-Current output: a hub page plus 6 location pages (~98 KB total), 10 sitemap
-URLs. The markets are Roanoke, Lynchburg, Charlottesville, Danville, Bedford
+Current output: a hub page plus 6 location pages (~98 KB total), **13 sitemap
+URLs** (this file said 10; the generator emits 12 hand-listed plus PLACES, and
+the committed file carries 13 — counted 2026-09-04, not estimated).
+
+**EVERY NON-GENERATED PAGE MUST BE IN THE GENERATOR'S OWN `urls` LIST.** The
+sitemap is rebuilt WHOLESALE, so a page that is only in the committed file is a
+page the next rebuild deletes. `/legal-investigations/` was added to
+`sitemap.xml` by hand and never added to the list — visible in the diff as a
+flush-left `<url>` where every generated one is indented — so the next touch of
+`PLACES` would have regenerated the sitemap without it, committed that to
+master, and **failed `test-deploy.mjs`'s own "the Legal page IS in the sitemap"
+assertion, freezing the site deploy**: the 2026-08-14 incident re-armed, from a
+different direction. Fixed 2026-09-04, and a test now asserts the CLASS — every
+non-generated sitemap URL must appear in `build-locations.py` — so the next
+hand-added page fails loudly instead of silently. The markets are Roanoke, Lynchburg, Charlottesville, Danville, Bedford
 and Farmville — deliberately scoped to about an hour's drive. An earlier
 version generated 27 near-duplicate city pages; that was consolidated on
 purpose, so resist re-expanding it without a reason.
@@ -1105,7 +1118,11 @@ Three rules came out of it that outlive the unit:
   controls underneath, and the open drawer covered the burger with nothing left
   to close it. `.navback` is a real button: it intercepts, it closes, and the
   burger sits above it (z-index) swapping ☰/✕ off `body.navopen` with
-  `aria-expanded` kept true-to-state. The drawer's `‹` retract handle
+  `aria-expanded` kept true-to-state — which was NOT true until 2026-09-04:
+  three handlers (a nav destination, Active surveillance, the Assistant door)
+  closed the drawer by removing `body.navopen` directly, leaving
+  `aria-expanded="true"` over a shut drawer on the most common close path there
+  is. `navClose()` is the one writer of both halves now. The drawer's `‹` retract handle
   (`.navhandle`, owner 2026-09-02) is a SIBLING of `.tabs`, never a child —
   everything in this file and the suite reaches the rail as `.tabs button`,
   so a control in there would be counted as a destination. The slide is a
@@ -1366,6 +1383,15 @@ LIMIT wrapped in a subquery that sorts the survivors ASC.
 reading the HEADING rather than the code: a list labelled "recent" that begins
 `slice(0, 4)` is correct against a newest-first array and exactly backwards
 against an oldest-first one. `newestActivity(n)` is the one reader now.
+
+**There was a FIFTH, and it was the one that mattered** (found 2026-09-04).
+`svPickFile` — the field's Photo button — took `WS.activity[0]` as "the last
+entry" and sent it as `entry_id`, so a photograph taken on day three was filed
+against the case's FIRST activity line while the screen said *"Photo stored with
+the last entry."* `case_evidence.entry_id` is the only column that says a
+photograph documents a moment, so this was the record being wrong, not a label.
+The other four were display; check any new reader against the ORDER, not against
+how the list reads on screen.
 
 **A comment cannot hold a backtick inside a SQL template literal.** Writing
 one ended the string and broke the Worker; the explanation lives outside the
@@ -2763,6 +2789,18 @@ covers the field and office activity writers, the rate-sheet send (the one send
 whose three siblings all had the guard), the five day actions, the evidence
 upload and the manual intake.
 
+**PRECISION, 2026-09-04 — the sentence above overstates it, and the difference
+matters.** `client_token` is read at exactly three places in the Worker (the
+invoice payment and the two retainer routes); the activity writers carry
+`event_id`. The rate-sheet send, the evidence upload, the day actions and the
+manual intake carry **only an in-flight flag** (`w.busy`, `EV_UP_BUSY`,
+`DAY_BUSY`, `NL_BUSY`). **A busy flag stops a double tap; it does not stop a
+retry after a dropped response** — and `createManualIntake` mints a fresh
+`case_no` per call, so a retry there makes a second case and a second alert. Day
+starts are separately safe (`idx_days_open_one`, below). The remaining three are
+a decision for the owner, not a keystroke: giving the manual intake a real
+attempt key needs somewhere to store it.
+
 **AND THE DAY CLOCK IS NOW GUARDED BY THE DATABASE** (owner, 2026-09-03, after
 production was read clean — 0 open days, no duplicate pairs).
 `idx_days_open_one` is a PARTIAL UNIQUE index on `(case_no, investigator_id)
@@ -2826,6 +2864,102 @@ used-case-number tombstone so a freed number cannot inherit send history (a
 new table). The third — the unique index on open `case_days` — was taken off
 this list on 2026-09-03 once production had been read clean; it is described
 above.
+
+## The final closeout audit (2026-09-04)
+
+A five-agent read of the whole product — public site, dashboard, mobile/PWA,
+Active Surveillance, Assistant, intakes, cases, reports/packages, billing, the
+timestamp tools — against the owner's own defect list. **The route wiring came
+back clean**: every path the page fetches is handled, every admin route is gated
+in the Worker, and `redactRow` covers every sensitive column the case list
+selects. What it found instead was the same two shapes this project keeps
+producing — **a screen saying something that is not true**, and **a claim in
+this file that the code does not support**.
+
+**A DERIVED FILE MUST NOT BE HAND-EDITED, because the generator is the writer.**
+See the sitemap paragraph under *Generated files*: a page added to `sitemap.xml`
+by hand would have been deleted by the next rebuild, and the deploy guard would
+then have frozen the whole site. The general rule is the test that now exists —
+every non-generated entry must be named in the generator's source.
+
+**A FAILED READ IS NOT AN EMPTY ONE — and the field view had the worst copy of
+this.** `svLauncher` was the only Active Surveillance screen with no `SV.err`
+output, so a dropped `/my/active` drew as *"No assignments yet"*: an empty desk,
+on the one screen a field investigator has, in the reassuring direction. The
+same shape was in `sheetsView` (a spinner that never resolved) and the case-page
+`!WS` branch (*"Loading the assignment…"* for ever, with no back control and no
+Exit, in a mode that has no navigation rail — the only way out was reloading the
+page). Three states, always: never loaded, failed, genuinely empty.
+
+**A TAP TARGET IS WHAT THE BOX COMPUTES TO, NOT WHAT THE CLASS DECLARES.** The
+field's per-entry Edit / Remove / Delete / Caption controls carry an inline
+`padding:0` that cancels `.sv-back`/`.sv-tap`'s own `8px 2px 12px`, leaving
+line-box height only — about 22px, with the destructive control beside the
+harmless one, one-handed, in the dark. The floor is a `min-height` at the END of
+the stylesheet, which the inline padding cannot override and which needed no
+change at the six call sites.
+
+**A CONTROL THAT CAN OPEN NOTHING MUST NOT BE DRAWN AS A BUTTON.** Assistant
+card rows for duplicate intakes, the watch's invoice line and pre-case
+simulations carry no case number, and were rendered identically to rows that
+open a case — a live-looking button that did nothing, silently.
+
+**AN ERROR MUST KEEP ITS STATUS THROUGH A WRAPPER.** With *Explain & Guide Me*
+on, the Assistant's guide wrapper consumed the core's body and re-wrote it as a
+fresh 200, so the one refusal the core can produce reached the page as
+`ok:true` and drew a **blank bubble** where the reason belonged. Guide OFF was
+always right, which is exactly why nobody saw it. A wrapper passes the status
+through.
+
+**A WRITE ROUTE ANSWERS WITH THE FRESH READ — all of them, not most.**
+`retentionSchedule` alone short-circuited with `{ok:true, already:true}` while
+its three siblings returned `retentionRead`, and the panel stores whatever comes
+back as its data: a second tap blanked the state chip, the retain-until date and
+the history, then offered *Schedule deletion* again on a case that is scheduled.
+
+**THE PREVIOUS CASE'S DATA LEAVES WITH THE CASE — the Assistant too.**
+`openCase` resets eight per-case globals under exactly that heading; `ASST.case`
+was not one of them, and only `asstOpen` ever wrote it. On a desktop the panel
+does not close on navigation, so the Assistant went on answering about the case
+you had left — check this case, package readiness, invoice preview, all of it.
+
+**A DESTRUCTIVE CONTROL CONFIRMS, AND THE REASON IS THE PERSON'S.** The retainer
+Void had neither: no confirmation, and a hard-coded *"corrected in the portal"*.
+There is no un-void route anywhere, so one stray tap struck real money off the
+ledger permanently under a sentence nobody wrote. Its sibling `voidInvPayment`
+had the right shape all along.
+
+**AND THE SCREEN MUST SHOW THE CORRECTION IT JUST ACCEPTED.** `reloadWorkspace`
+deliberately carries the previous `WS.submission` forward, but `/cases/:no/edit`
+writes the client, subject, address and claim number INTO that payload — which
+the case header and the Edit form both read. So *"Case updated."* appeared over
+the pre-edit values until the case was left and reopened.
+
+**Also fixed:** the 404 page offered every public door but Legal; an
+`aria-current="page"` on a link to a different page; an unterminated CSS comment
+that had swallowed the comment after it (nothing lost yet — the next rule added
+there would have been); a `_headers` comment naming a file that does not exist;
+a dead `.opt .badge` rule; `aria-expanded` desyncing on the drawer's commonest
+close path; the investigator's Today cards highlighting and changing nothing;
+Recent activity having no retry after a failure; the queue header printing the
+unfiltered total over a filtered list; the drawer handle having no project focus
+ring while `.navback` (which cannot be focused) did; a skip link that does not
+move focus in WebKit; a photo-stamp retry filing the original twice; a video
+hash written without the session re-check its five siblings use; a
+video-stamp record with no way to be retried; the voice recogniser and its 20s
+interval surviving the session-expiry exit; the Assistant composer losing what
+was typed on any repaint; a navigation refused in silence under an answer
+saying it had happened; and the Assistant's blocked-verb list missing
+authorization changes.
+
+**Left as PROPOSALS, not fixed** (each needs a suite run or an owner decision,
+and they are written up in `case-portal/FUTURE.md`): the dashboard stat cards
+being unreachable from the keyboard; the Archived/Deleted lens painting the
+previous lens's rows for one round trip (`CASES_Q_OK` is written in four places
+and read nowhere); voice mode destroying anything being typed in the field view
+every few seconds; the field view being silent to a screen reader; `editExpense`
+being a correctly-gated route with no door; and the invoice refusal naming an
+"adjust" remedy that is unreachable in both senses.
 
 ## The free-plan failsafe
 
@@ -3226,7 +3360,10 @@ the viewport meta carries `viewport-fit=cover`, which this page deliberately
 does not — so `calc(6px + env(...))` added nothing and the buttons landed on
 the home indicator, where a thumb cannot reach cleanly. Both now use
 `max(14px, env(safe-area-inset-bottom))`, which is correct in either mode and
-needs no viewport change. Targets are `min-height` 52/50px — Apple's minimum is
+needs no viewport change. **Correction, 2026-09-04:** that is true of the case
+bar (`.casepage .wsbar`); the field bar (`.sv-nav`) uses `max(12px, …)` under a
+comment claiming the same rule. Two pixels, and the suite only ever asserted the
+case bar — the number is left as it is, but the claim of sameness was false. Targets are `min-height` 52/50px — Apple's minimum is
 44 — and a test measures both the height and the gap rather than trusting how
 it looks. Do not go back to `calc()`.
 
