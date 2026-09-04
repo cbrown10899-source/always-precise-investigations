@@ -18254,8 +18254,8 @@ section('Closeout audit: the newest entry, the drawer, the composer, the honest 
       { title: 'Has one', line: 'opens', case_no: 'API-1' },
     ] }];
     paint();
-    const flat = document.querySelector('.asst-row-flat');
-    const live = document.querySelector('.asst-row:not(.asst-row-flat)');
+    const flat = document.querySelector('.asst-rec-flat');
+    const live = document.querySelector('.asst-rec:not(.asst-rec-flat)');
     return { flat: flat && flat.tagName, live: live && live.tagName,
              liveCase: live && live.getAttribute('data-case') };
   });
