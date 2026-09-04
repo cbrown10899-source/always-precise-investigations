@@ -1878,9 +1878,12 @@
 .asst-panel{pointer-events:auto;position:absolute;top:0;right:0;height:100%;
   width:min(420px,94vw);background:var(--panel);border-left:1px solid var(--line);
   box-shadow:-12px 0 32px rgba(12,22,38,.18);display:flex;flex-direction:column;padding:0 0 10px}
-.asst-head{display:flex;align-items:center;gap:8px;padding:12px 14px;
+.asst-head{display:flex;align-items:center;gap:8px;padding:10px 14px;
   background:var(--navy-2);color:#fff;font-size:1rem}
 .asst-head b{font-weight:800}
+.asst-head-id{display:flex;flex-direction:column;gap:0;min-width:0}
+.asst-sub{font-size:.68rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--head-sub)}
 .asst-beta{font-size:.62rem;font-weight:800;letter-spacing:.08em;padding:2px 7px;
   border-radius:9px;background:var(--gold);color:var(--gold-ink)}
 .asst-x{margin-left:auto;background:none;border:0;color:#fff;font-size:1.4rem;
@@ -1891,10 +1894,11 @@
 .asst-nav{display:flex;gap:8px;padding:8px 14px 0}
 .asst-nav .btn{min-height:44px}
 .asst-resume{opacity:.85;font-weight:600}
-.asst-banner{padding:10px 14px;background:var(--warn-bg);color:var(--warn);
-  font-weight:800;font-size:.8rem;letter-spacing:.03em;border-bottom:1px solid var(--gold-line)}
-.asst-banner span{font-weight:600;letter-spacing:0}
-.asst-log{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.asst-banner{padding:6px 14px;background:var(--warn-bg);color:var(--warn);
+  font-weight:800;font-size:.7rem;letter-spacing:.03em;line-height:1.35;
+  border-bottom:1px solid var(--gold-line)}
+.asst-banner span{font-weight:600;letter-spacing:0;font-size:.68rem}
+.asst-log{flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:9px}
 .asst-you{align-self:flex-end;background:var(--teal);color:#fff;
   padding:8px 12px;border-radius:12px 12px 2px 12px;max-width:88%;font-size:.92rem}
 .asst-m{align-self:flex-start;background:var(--neutral-bg);border:1px solid var(--line);
@@ -1902,26 +1906,113 @@
 .asst-blocked{font-size:.68rem;font-weight:800;letter-spacing:.06em;color:var(--bad);
   margin-bottom:4px}
 .asst-card{margin-top:8px;display:flex;flex-direction:column;gap:6px}
-.asst-row{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;
-  border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 10px;
-  cursor:pointer;min-height:44px;font-size:.88rem;width:100%}
-.asst-row span{color:var(--muted);font-size:.8rem}
-/* A row that opens nothing: same shape, no pointer, no invitation to tap. */
-.asst-row-flat{cursor:default}
+/* A row that opens nothing: the record's own shape, no pointer, no chevron,
+   no invitation to tap. Named for the element it modifies — the previous
+   name outlived the class it belonged to. */
+.asst-rec-flat{cursor:default}
+.asst-rec-flat:hover{border-color:var(--line)}
 /* The confirmation card: what will happen, to which case, and two buttons.
    Compact on purpose — this is read one-handed in a car, not studied. */
-.asst-cmd{margin-top:8px;border:1px solid var(--line);border-left:3px solid var(--gold);
-  border-radius:8px;padding:8px 10px;background:var(--card)}
-.asst-cmd-who{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;margin-bottom:8px;
-  font-size:.88rem}
-.asst-cmd-who .mono{color:var(--muted);font-size:.8rem}
-.asst-cmd-who span{color:var(--muted);font-size:.8rem}
+.asst-cmd{margin-top:8px;border:1px solid var(--gold-line);border-left:4px solid var(--gold);
+  border-radius:10px;padding:11px 12px;background:var(--card)}
+.asst-cmd-t{font-weight:800;font-size:.86rem;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--navy);margin-bottom:7px}
+.asst-cmd-who{display:flex;flex-direction:column;gap:1px;margin-bottom:6px;font-size:.9rem}
+.asst-cmd-who b{font-weight:800;color:var(--navy);overflow-wrap:anywhere}
+.asst-cmd-who .mono{color:var(--muted);font-size:.78rem}
+.asst-cmd-who span{color:var(--muted);font-size:.79rem}
+.asst-cmd-say{font-size:.83rem;color:var(--muted);line-height:1.45;margin-bottom:9px}
+.asst-cmd .asst-acts{margin-top:0;display:flex;flex-direction:column;gap:8px}
+.asst-cmd .asst-acts .btn{min-height:44px;width:100%}
+/* ===== THE CASE OPERATIONS CONSOLE (owner visual direction, 2026-09-04) =====
+
+   The reference is a LAYOUT brief, not a palette one: compact operational
+   cards instead of chatbot paragraphs, the client and case number where the
+   eye lands first, the facts that decide the next move visible without
+   scrolling, and the actions directly under the result they belong to. The
+   navy/teal/gold identity, the header, Back/Home, the rail-and-drawer
+   navigation and the responsive system are all unchanged — and there is
+   deliberately NO bottom navigation bar: the mockup shows one, this portal
+   has never had one, and the owner's instruction was not to invent it.
+
+   READ AND WRITE LOOK DIFFERENT ON PURPOSE, and structurally rather than by
+   shade: a result you can read is an `.asst-op` card — white, teal accents,
+   actions that only ever navigate. Something that will CHANGE the record is
+   an `.asst-cmd` panel — gold-edged, its own heading, and the only place a
+   primary button commits anything. A person should be able to tell which they
+   are looking at without reading a word of it. */
+.asst-op{margin-top:8px;border:1px solid var(--line);border-radius:10px;
+  background:#fff;overflow:hidden}
+.asst-op-h{display:flex;gap:8px;align-items:flex-start;padding:10px 12px 8px}
+.asst-op-id{min-width:0;flex:1}
+.asst-op-name{font-weight:800;font-size:.95rem;color:var(--navy);line-height:1.25;
+  overflow-wrap:anywhere}
+.asst-op-no{font-size:.76rem;color:var(--muted);letter-spacing:.02em}
+.asst-op-kind{flex:none;font-size:.62rem;font-weight:800;letter-spacing:.06em;
+  text-transform:uppercase;padding:3px 7px;border-radius:9px;
+  background:var(--info-bg-2);color:var(--navy-2)}
+/* The facts that decide the next move. Label left, value right, and a value
+   that is a PROBLEM says so in the semantic pair rather than in prose. */
+.asst-facts{border-top:1px solid var(--line)}
+.asst-fact{display:flex;gap:10px;align-items:baseline;justify-content:space-between;
+  padding:5px 12px;font-size:.84rem;border-bottom:1px solid var(--line)}
+.asst-fact:last-child{border-bottom:0}
+.asst-fact b{font-weight:600;color:var(--muted);white-space:nowrap}
+.asst-fact span{font-weight:700;text-align:right;overflow-wrap:anywhere}
+.asst-fact span.bad{color:var(--bad)}
+.asst-fact span.ok{color:var(--ok-ink)}
+.asst-fact span.warn{color:var(--warn)}
+/* Actions belong to the card above them: one primary across the width, the
+   rest two-up so a thumb can reach either without hunting. */
+.asst-opacts{padding:10px 12px;border-top:1px solid var(--line);
+  display:flex;flex-direction:column;gap:8px}
+.asst-opacts .btn{min-height:44px;width:100%}
+.asst-grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.asst-grid2 .btn{min-height:44px;width:100%}
+/* A selectable record: what it is, one line of detail, and a chevron that
+   says it opens. Rows that open NOTHING keep .asst-rec-flat and no chevron —
+   a control that can open nothing must not be drawn as one. */
+.asst-rec{display:flex;align-items:center;gap:10px;text-align:left;width:100%;
+  border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 10px;
+  min-height:48px;cursor:pointer;font-size:.88rem}
+.asst-rec:hover{border-color:var(--teal)}
+.asst-rec-b{min-width:0;flex:1}
+/* Name over detail, not name beside it: the name is what is being scanned
+   for, and an inline sub-line steals its weight. */
+.asst-rec-b{display:block}
+.asst-rec-t{display:block;font-weight:700;color:var(--navy);overflow-wrap:anywhere}
+.asst-rec-s{display:block;color:var(--muted);font-size:.79rem;overflow-wrap:anywhere}
+.asst-rec-go{flex:none;color:var(--muted);font-size:1.1rem;line-height:1}
+/* Case Ready: a checklist, because "4 of 6" is a different thought from a
+   paragraph listing four things. The count is the heading. */
+.asst-check{margin-top:8px;border:1px solid var(--line);border-radius:10px;
+  background:#fff;padding:10px 12px}
+.asst-check-h{font-weight:800;font-size:.9rem;letter-spacing:.03em;margin-bottom:8px}
+.asst-check-h.ready{color:var(--ok-ink)}
+.asst-check-h.part{color:var(--warn)}
+.asst-ck{display:flex;gap:8px;align-items:flex-start;padding:3px 0;font-size:.85rem}
+.asst-ck i{flex:none;font-style:normal;font-weight:800;width:1.1em;text-align:center}
+.asst-ck.done i{color:var(--ok-ink)}
+.asst-ck.todo i{color:var(--muted)}
+.asst-ck.todo span{color:var(--muted)}
+/* A draft is shown as a draft: readable, scrollable, and never mistaken for
+   something already saved. Insert is the only control that writes. */
+.asst-draft{margin-top:8px;border:1px solid var(--line);border-radius:10px;
+  background:#fff;overflow:hidden}
+/* Label over date, like the record rows: side by side, a long label and a
+   long date fight for one line at 390px and the label loses. */
+.asst-draft-h{display:flex;flex-direction:column;gap:1px;padding:9px 12px 6px;
+  font-weight:800;font-size:.88rem;color:var(--navy)}
+.asst-draft-h span{font-weight:600;font-size:.78rem;color:var(--muted)}
+.asst-draft-b{padding:0 12px 10px;font-size:.85rem;line-height:1.5;
+  max-height:190px;overflow-y:auto;white-space:pre-wrap}
 .asst-acts{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
 .asst-home{display:flex;flex-direction:column;gap:10px;margin:auto 0}
 .asst-big{border:1px solid var(--line);background:#fff;border-radius:12px;
   padding:16px 14px;font-size:1rem;font-weight:700;text-align:left;cursor:pointer;min-height:52px}
 .asst-big:hover{border-color:var(--teal)}
-.asst-guide{padding:6px 14px;font-size:.85rem}
+.asst-guide{padding:2px 14px 0;font-size:.76rem;color:var(--muted)}
+.asst-guide input{vertical-align:middle}
 .asst-ask{display:flex;gap:8px;padding:8px 14px 12px}
 .asst-ask input{flex:1;min-width:0;min-height:44px;font-size:16px;padding:8px 12px;
   border:1px solid var(--line);border-radius:10px}
@@ -2852,6 +2943,81 @@ async function asstSend(text){
   }
 }
 
+/* ===== THE CONSOLE RENDERERS =================================================
+
+   One builder per shape the Assistant can answer with, so every unit from here
+   renders into the same console rather than inventing its own layout. Each
+   takes a plain object from the Worker and none of them can act: every control
+   they draw is a navigate, a say or a seed, exactly as before. The only thing
+   that commits is the confirmation panel, which is a different builder with a
+   different look for exactly that reason.
+
+   ESCAPING IS NOT OPTIONAL HERE. Every value below arrives from the database
+   and is rendered into an admin's browser; esc() on all of it, and case
+   numbers reach handlers through data- attributes, never inline. */
+
+/* A fact worth showing is a fact worth showing HONESTLY: a value that is a
+   problem wears the semantic pair rather than being described in a sentence
+   underneath. `tone` is the Worker's word, not a guess made here. */
+function asstFactsHtml(facts){
+  const rows = (facts || []).filter(f => f && f.k);
+  if(!rows.length) return "";
+  return `<div class="asst-facts">${rows.map(f => `
+    <div class="asst-fact"><b>${esc(f.k)}</b><span class="${
+      f.tone === "bad" ? "bad" : f.tone === "ok" ? "ok" : f.tone === "warn" ? "warn" : ""
+    }">${esc(f.v == null || f.v === "" ? "—" : String(f.v))}</span></div>`).join("")}</div>`;
+}
+
+/* The operational case card: who it is, which case, the facts that decide the
+   next move, and the doors — primary across the width, the rest two-up. */
+function asstOpCardHtml(c, actions, mi){
+  /* THE CARD DRAWS THE MESSAGE'S OWN ACTIONS. A second numbering kept beside
+     the first is a second thing to drift, and asstAction already resolves
+     `msgs[mi].actions[ai]` — so the indices here are indices into THAT. */
+  const acts = (actions || []).filter(a => a && a.label);
+  const first = acts[0], rest = acts.slice(1);
+  const btn = (a, i, cls) => `<button class="btn sm ${cls}" data-act="asstAction"
+      data-i="${mi}:${i}">${esc(a.label)}</button>`;
+  return `<div class="asst-op">
+    <div class="asst-op-h">
+      <div class="asst-op-id">
+        <div class="asst-op-name">${esc(c.title || c.case_no || "")}</div>
+        ${c.case_no ? `<div class="asst-op-no mono">${esc(c.case_no)}</div>` : ""}
+      </div>
+      ${c.kind ? `<span class="asst-op-kind">${esc(c.kind)}</span>` : ""}
+    </div>
+    ${asstFactsHtml(c.facts)}
+    ${acts.length ? `<div class="asst-opacts">
+      ${first ? btn(first, 0, "accent") : ""}
+      ${rest.length ? `<div class="asst-grid2">${rest.map((a, i) => btn(a, i + 1, "")).join("")}</div>` : ""}
+    </div>` : ""}
+  </div>`;
+}
+
+/* Case Ready: the count IS the heading, and each line says done or not with
+   no third state invented for something the record cannot answer. */
+function asstCheckHtml(ck){
+  const items = (ck.items || []).filter(i => i && i.label);
+  const done = items.filter(i => i.done).length;
+  const all = done === items.length && items.length > 0;
+  return `<div class="asst-check">
+    <div class="asst-check-h ${all ? "ready" : "part"}">${esc(ck.title || "CASE READY")} &mdash; ${done}/${items.length}</div>
+    ${items.map(i => `<div class="asst-ck ${i.done ? "done" : "todo"}">
+      <i>${i.done ? "&#10003;" : "&#9675;"}</i><span>${esc(i.label)}</span></div>`).join("")}
+  </div>`;
+}
+
+/* A draft is shown AS a draft. Nothing here has been saved, and the card does
+   not imply otherwise — the controls that would save it live with the unit
+   that owns the saving, under its own confirmation. */
+function asstDraftHtml(d){
+  return `<div class="asst-draft">
+    <div class="asst-draft-h">${esc(d.title || "Draft")}${
+      d.sub ? `<span>${esc(d.sub)}</span>` : ""}</div>
+    <div class="asst-draft-b">${esc(d.body || "")}</div>
+  </div>`;
+}
+
 /* ============ CASE COMMAND CENTER — THE PAGE'S EXECUTABLE ALLOW-LIST ======
 
    The server decides what may be OFFERED (ASSISTANT_COMMANDS); this decides
@@ -3170,30 +3336,38 @@ function asstMsgHtml(m){
     ${m.kind === "simulated" ? `<div class="asst-sim">SIMULATED — NOT SENT</div>` : ""}
     ${m.kind === "invoice_preview" ? `<div class="asst-sim">DRY RUN — INVOICE PREVIEW · SIMULATED — NOT CREATED</div>` : ""}
     ${m.guide_intro ? `<div class="asst-guidep">${esc(m.guide_intro)}</div>` : ""}
-    ${m.kind === "invoice_preview" || m.kind === "chronology"
+    ${m.command ? ""    /* the panel below carries the title — one writer */
+      : m.kind === "invoice_preview" || m.kind === "chronology"
       ? `<pre class="asst-pre">${esc(m.text)}</pre>` : `<div class="asst-t">${esc(m.text)}</div>`}
+    ${m.op ? asstOpCardHtml(m.op, m.actions, ASST.msgs.indexOf(m)) : ""}
+    ${m.check ? asstCheckHtml(m.check) : ""}
+    ${m.draft ? asstDraftHtml(m.draft) : ""}
     ${m.card ? `<div class="asst-card">${m.card.map(c => c.case_no
       /* A ROW THAT CAN OPEN NOTHING IS NOT A BUTTON. Some card rows carry no
          case number at all, and drawn as buttons they invited a tap that did
          nothing silently. */
-      ? `<button class="asst-row" data-act="asstOpenCase" data-case="${esc(c.case_no)}">
-        <b>${esc(c.title || c.case_no || "")}</b>
-        <span>${esc(c.line || "")}</span>
+      ? `<button class="asst-rec" data-act="asstOpenCase" data-case="${esc(c.case_no)}">
+        <span class="asst-rec-b"><span class="asst-rec-t">${esc(c.title || c.case_no || "")}</span>
+          <span class="asst-rec-s">${esc(c.line || "")}</span></span>
+        <span class="asst-rec-go" aria-hidden="true">&rsaquo;</span>
       </button>`
-      : `<div class="asst-row asst-row-flat">
-        <b>${esc(c.title || "")}</b>
-        <span>${esc(c.line || "")}</span>
+      : `<div class="asst-rec asst-rec-flat">
+        <span class="asst-rec-b"><span class="asst-rec-t">${esc(c.title || "")}</span>
+          <span class="asst-rec-s">${esc(c.line || "")}</span></span>
       </div>`).join("")}</div>` : ""}
     ${m.command ? `<div class="asst-cmd">
+      <div class="asst-cmd-t">${esc(m.text || m.command.label)}</div>
       <div class="asst-cmd-who"><b>${esc(m.command.client || m.command.subject || m.command.case_no)}</b>
         <span class="mono">${esc(m.command.case_no)}</span>${
         m.command.whose ? `<span>Started by ${esc(m.command.whose)}</span>` : ""}</div>
+      <div class="asst-cmd-say">${esc(m.command.say
+        || "This changes the case record. Nothing happens until you confirm.")}</div>
       <div class="asst-acts">
         <button class="btn sm accent" data-act="asstCmdRun" data-token="${esc(m.command.token)}"${
           ASST.cmdBusy ? " disabled" : ""}>${esc(m.command.label)}</button>
         <button class="btn sm ghost" data-act="asstCmdCancel">Cancel</button>
       </div></div>` : ""}
-    ${m.actions ? `<div class="asst-acts">${m.actions.map((a, i) => `
+    ${m.actions && !m.op ? `<div class="asst-acts">${m.actions.map((a, i) => `
       <button class="btn sm" data-act="asstAction" data-i="${ASST.msgs.indexOf(m)}:${i}">${esc(a.label)}</button>`).join("")}</div>` : ""}
   </div>`;
 }
@@ -3202,7 +3376,8 @@ function asstHtml(){
   if(!ASST || !ASST.open) return "";
   return `<div class="asst-wrap">
     <div class="asst-panel" role="complementary" aria-label="API Assistant">
-      <div class="asst-head"><b>&#10024; API Assistant</b>
+      <div class="asst-head"><div class="asst-head-id"><b>&#10024; API Assistant</b>
+        <span class="asst-sub">Case Command Center</span></div>
         <span class="asst-beta">BETA</span>
         <button class="asst-x" data-act="asstClose" aria-label="Close the Assistant">&times;</button></div>
       ${asstNavHtml()}

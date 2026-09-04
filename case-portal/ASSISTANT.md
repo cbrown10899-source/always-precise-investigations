@@ -440,6 +440,40 @@ command resolves — a sentence naming a send, a deletion, an archive, an
 assignment or a payment is refused by name exactly as before. `sendMail` is
 still called nowhere in the block. No schema change; no portal-setup dispatch.
 
+**A20 — the console: the reference is a LAYOUT brief, not a palette one.**
+Owner mockup 2026-09-04. Answers are compact operational cards rather than
+chatbot paragraphs, and there is one builder per shape so every later unit
+renders into the same console instead of inventing a layout:
+`asstOpCardHtml` (name, case number, kind badge, the facts that decide the
+next move, primary action across the width and the rest two-up),
+`asstFactsHtml`, `asstCheckHtml` (the count IS the heading — "CASE READY —
+4/6"), `asstDraftHtml`, and `.asst-rec` records with a chevron.
+
+**READ AND WRITE LOOK DIFFERENT, STRUCTURALLY RATHER THAN BY SHADE.** A result
+you can read is an `.asst-op` card — white, teal accents, and every control on
+it navigates. Something that will CHANGE the record is an `.asst-cmd` panel —
+gold-edged, its own uppercase title, the case named, a sentence saying nothing
+happens until you confirm, and the only primary button that commits. A person
+can tell which they are looking at without reading a word.
+
+**What was taken from the mockup and what was not.** Taken: density,
+hierarchy, the card shapes, actions under the result they belong to,
+mobile-first spacing. NOT taken: the light/blue theme — navy/teal/gold is the
+identity and the mockup is a layout reference — and **the bottom navigation
+bar**, because this portal has a rail and a drawer, has never had a bottom
+bar, and the owner's instruction was not to invent one. The header, Back/Home,
+the navigation architecture, the responsive system and every confirmation rule
+are unchanged; the header gained a `Case Command Center` subtitle only.
+
+**The density pass was measured, not eyeballed** (`scratchpad/shots.mjs`
+renders each shape at 390px inside the real panel). Before: the Beta banner
+and the log's padding put 64px of chrome above every answer and the case card
+scrolled. After: all five shapes fit without scrolling, every control is ≥44px,
+no horizontal overflow, and the banner still says both things it promised —
+the promise is in the words, and only the type size moved. **Re-run that
+harness at the end of each Assistant UI unit** and compare the numbers, which
+is what the owner asked for.
+
 **Checkpoint (2026-09-02, updated overnight):** the pre-Assistant units went
 green first — PR #260 merged as `6770609`, both deploy workflows `success` on
 `67706099` — and Units 1–3 were then built as ONE additive change, merged as
