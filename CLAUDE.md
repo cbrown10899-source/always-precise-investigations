@@ -3480,6 +3480,62 @@ delete.
 `role="complementary"`, the phone door is the pill, and the case screen's
 door is the Ask Assistant action.
 
+## The Case Command Center — the model may interpret, it may not choose
+
+Owner brief 2026-09-04, architecture in `case-portal/ASSISTANT.md` (A19). The
+Assistant is becoming the portal's operating layer, and the whole safety of
+that rests on one table: **`ASSISTANT_COMMANDS` in `case-portal/worker.js` is
+the entire executable surface.** Each row is an action id, a confirmation
+level, a role list and **the ordinary route the command uses** — the shape
+`ASSISTANT_NAV` has always had for destinations, one layer up. Levels are the
+owner's: 0 read/navigate, 1 draft/prefill, 2 internal state change, 3 high
+consequence.
+
+**Nothing here executes.** `assistantPlan` is the one resolver — registry
+membership, role, `caseFor` (the IDOR boundary, where an invented case number
+dies) and `caseSendRefusal` (deleted/archived). It returns a plan. The **page**
+holds the offer in `ASST.pending` and, on an explicit confirmation, calls the
+route the button already uses, through `ASST_CMD` — a page-side allow-list
+keyed by action id. **No command has a private endpoint**, so every write keeps
+its existing gate, refusals, idempotency and audit record.
+
+**So the promise changed shape, and the tests say the new one.** "Read-only"
+would now be a comfortable lie. What is still exactly true: the block has no
+SQL of its own beyond `assistant_log`, it calls `sendMail` never, and
+everything runnable is a registry row naming an ordinary route. The guarantee
+is **nothing happens that the signed-in person could not already do by pressing
+the button themselves.** Do not restore the old wording — a guard that passes
+while testing something weaker than it claims is the failure this project
+keeps recording.
+
+**A confirmation belongs to one offer.** The token is minted with the offer and
+carried by that card's button; an older card is inert and says it is stale.
+`openCase` disarms `ASST.pending` alongside the eight per-case globals — an
+armed confirmation for one case while another is open is the stale-context
+defect already paid for once.
+
+**The card names who it is about, inside the role's boundary.** `caseFor`
+answers permission, not identity, so the confirmation reads names itself: the
+**subject** for both roles, the **client for an admin only**. `redactRow`'s
+rule, with no exception carved for a confirmation screen.
+
+**The record is honest about what it witnessed.** `/assistant/executed` re-runs
+the same resolver, so no row can name a command that could not have been
+offered; the outcome is the caller's REPORT of what the route answered, so a
+failure logs as `FAILED — …` rather than a success nobody saw. Still the
+block's one `INSERT`; `recipient` is `''` because a command addresses nobody —
+empty, never a placeholder.
+
+**Start/End Day went first on purpose** (`FUTURE.md` §1b): reversible, and
+already guarded at the database by `idx_days_open_one`. A day already running
+is not offered a second start — the answer names who has it and opens Active
+Surveillance, because **an offer the database will refuse is a screen telling
+somebody something untrue.**
+
+**Every Beta refusal still wins and is evaluated first.** A sentence naming a
+send, deletion, archive, assignment or payment is refused by name before any
+command resolves. External sends remain dry-run. No schema change.
+
 ## The /watch/ dashboard
 
 `watch/` is a private, passcode- and Face ID-gated dashboard showing live site

@@ -17211,10 +17211,24 @@ section('API Assistant — Beta reads, role-scoped navigation, refusals by name'
                           src.indexOf('async function route(request, env) {'));
     ok('the Assistant block is a real block and calls sendMail exactly never',
        blk.length > 5000 && !blk.includes('sendMail('));
-    /* Unit 4 widened the read-only pin by EXACTLY ONE WRITE: the simulation
-       log, in its own table. Anything else — a second INSERT, any UPDATE or
-       DELETE — is the Beta promise breaking, wherever it thinks it writes. */
-    ok('the block\'s one write is the simulation log — no UPDATE, no DELETE, no other INSERT',
+    /* THE PIN, RESTATED FOR THE COMMAND CENTER (owner brief 2026-09-04).
+       The Assistant is now an operating layer, so "read-only" would be a
+       comfortable lie. What is still exactly true, and what these assertions
+       hold, is narrower and stronger:
+
+         1. the block has NO SQL of its own beyond assistant_log — it cannot
+            write a case, a day, a task, an invoice or a payment even by
+            accident, because the statements are not there;
+         2. it calls sendMail NEVER, so no command can put anything on the
+            wire to a client;
+         3. everything a person can run is a row in ASSISTANT_COMMANDS, and
+            each row names an ORDINARY route that keeps its own gate.
+
+       Execution happens on those routes, dispatched by the page from an
+       allow-list keyed by action id. So the guarantee is not "nothing
+       happens" — it is "nothing happens that the signed-in person could not
+       already do by pressing the button themselves." */
+    ok('the block\'s one write is still the Assistant\'s own log — no UPDATE, no DELETE, no other INSERT',
        (blk.match(/\bINSERT INTO\b/g) || []).length === 1
        && /INSERT INTO assistant_log/.test(blk)
        && !/\b(UPDATE |DELETE FROM)\b/.test(blk),
@@ -17228,6 +17242,20 @@ section('API Assistant — Beta reads, role-scoped navigation, refusals by name'
        && !blk.includes('stampLead') && !blk.includes('logSend'));
     ok('no assistant route writes app_config — Live Mode cannot be born here',
        !blk.includes('app_config'));
+
+    /* THE REGISTRY IS THE WHOLE EXECUTABLE SURFACE. A verb that is not a row
+       here cannot be offered, and one that is must name a route the portal
+       already has — so a command can never reach a private endpoint. */
+    const reg = src.slice(src.indexOf('const ASSISTANT_COMMANDS = ['),
+                          src.indexOf('const assistantCmd ='));
+    ok('every executable command declares an action, a level, a role list and a route',
+       (reg.match(/action: '/g) || []).length === (reg.match(/level: /g) || []).length
+       && (reg.match(/action: '/g) || []).length === (reg.match(/route: '/g) || []).length
+       && (reg.match(/action: '/g) || []).length >= 2);
+    ok('and NO command names a send, a payment, a deletion or an archive',
+       !/send|email|payment|pay|delete|archive|void/i.test(reg), reg.slice(0, 120));
+    ok('the confirmation level of every state change is 2 or higher',
+       !/level: [01],[^]*?route: '(day|build|task)/.test(reg));
   }
 
   globalThis.fetch = realFetch;
@@ -18480,6 +18508,146 @@ section('Closeout audit: the guide wrapper, the blocked list, hidden cases, rete
      !!second.state, JSON.stringify(second).slice(0, 120));
   ok('both agree the case is scheduled',
      first.state === second.state && String(second.state) === 'scheduled');
+}
+
+/* ============================================================================
+   CASE COMMAND CENTER — UNIT A. The protocol, and the ways it must refuse.
+
+   What is under test is not "does start day work" — the day routes have their
+   own suite. It is that the Assistant cannot OFFER a command it should not,
+   and cannot RECORD one that was never offerable: the registry, the role, the
+   caseFor boundary and the deleted/archived gate, each tried from the outside.
+   ========================================================================= */
+section('Case Command Center: the command protocol and its refusals');
+{
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const mkInv = async (username, display) => {
+    const res = await invite(env, admin, { username, display_name: display, role: 'investigator' });
+    const token = new URL((await jsonOf(res)).url, 'https://x.test').searchParams.get('invite');
+    await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+    return (await login(env, username, 'FieldWork2026x')).cookie;
+  };
+  const dana = await mkInv('dana', 'Dana');
+  const users = (await jsonOf(await call(env, '/users', { cookie: admin }))).users;
+  const danaId = users.find(u => u.username === 'dana').id;
+
+  for (const no of ['API-CC-MINE', 'API-CC-THEIRS', 'API-CC-GONE']) {
+    await ingest(env, { case_no: no, client_name: `Client ${no}`, subject_name: `Subject ${no}` });
+  }
+  await call(env, '/submissions/API-CC-MINE/assign', { method: 'POST', cookie: admin,
+    body: { user_id: danaId } });
+
+  const cmd = (cookie, text, caseNo) => call(env, '/assistant/command', { method: 'POST', cookie,
+    body: { text, context: caseNo ? { case_no: caseNo, route: 'case' } : { route: 'cases' } } });
+  const exec = (cookie, body) => call(env, '/assistant/executed', { method: 'POST', cookie, body });
+  const logRows = async () => (await env.DB.prepare(
+    'SELECT action, outcome, case_no, recipient FROM assistant_log ORDER BY id DESC').all()).results || [];
+
+  /* 1 — IT WILL NOT GUESS WHICH CASE. */
+  let j = await jsonOf(await cmd(admin, 'start surveillance'));
+  ok('with no case open, starting a day asks which case rather than picking one',
+     j.kind === 'status' && /Which case/i.test(j.text) && !j.command);
+
+  /* 2 — A FABRICATED CASE NUMBER DIES AT caseFor, not at a string check. */
+  j = await jsonOf(await cmd(admin, 'start surveillance', 'API-NOPE-9999'));
+  ok('an invented case number is refused and nothing is offered',
+     j.kind === 'status' && /cannot read/i.test(j.text) && !j.command);
+
+  /* 3 — IDOR: an investigator cannot command a case they are not on. */
+  j = await jsonOf(await cmd(dana, 'start surveillance', 'API-CC-THEIRS'));
+  ok('an investigator cannot start a day on a case that is not theirs',
+     j.kind === 'status' && /cannot read/i.test(j.text) && !j.command);
+
+  /* 4 — the ordinary offer, and it is LEVEL 2 with the case named. */
+  j = await jsonOf(await cmd(dana, 'start surveillance', 'API-CC-MINE'));
+  ok('on their own case the investigator is OFFERED the command, not run it',
+     j.kind === 'command' && j.command.action === 'start_day');
+  ok('the offer is level 2 and names the case it would act on',
+     j.command.level === 2 && j.command.case_no === 'API-CC-MINE');
+  /* THE CARD NAMES WHO IT IS ABOUT — WITHIN THE ROLE'S BOUNDARY. The subject
+     is who is watched and reaches the field; the client is who is paying and
+     does not, exactly as redactRow has always had it. A confirmation card is
+     no exception to that, and this is where it would quietly become one. */
+  ok('the investigator\'s confirmation names the SUBJECT',
+     typeof j.command.subject === 'string' && j.command.subject.length > 0);
+  ok('and carries no client — the paying side does not reach the field, not even here',
+     !('client' in j.command), JSON.stringify(j.command));
+  const adminOffer = await jsonOf(await cmd(admin, 'start surveillance', 'API-CC-MINE'));
+  ok('while an admin\'s confirmation does name the client',
+     typeof adminOffer.command.client === 'string' && adminOffer.command.client.length > 0);
+  ok('nothing was started by asking', (await env.DB.prepare(
+     "SELECT COUNT(*) AS n FROM case_days WHERE case_no = 'API-CC-MINE'").first()).n === 0);
+
+  /* 5 — a running day is NOT offered a second start: the database would
+     refuse it, and an offer the database will refuse is a screen lying. */
+  await call(env, '/cases/API-CC-MINE/day/start', { method: 'POST', cookie: dana,
+    body: { day_date: '2026-09-04', start_time: '08:00' } });
+  j = await jsonOf(await cmd(dana, 'start surveillance', 'API-CC-MINE'));
+  ok('with a day already running, no second start is offered',
+     j.kind === 'status' && /already running/i.test(j.text) && !j.command);
+  ok('and it points at Active Surveillance instead',
+     (j.actions || []).some(a => a.navigate && a.navigate.id === 'surveillance'));
+
+  /* 6 — end offers, and end with nothing running says so. */
+  j = await jsonOf(await cmd(dana, 'end the day', 'API-CC-MINE'));
+  ok('ending a running day is offered', j.kind === 'command' && j.command.action === 'end_day');
+  await call(env, '/cases/API-CC-MINE/day/end', { method: 'POST', cookie: dana,
+    body: { end_time: '12:00' } });
+  j = await jsonOf(await cmd(dana, 'end the day', 'API-CC-MINE'));
+  ok('with nothing running, ending says there is nothing to end',
+     j.kind === 'status' && /nothing to end/i.test(j.text) && !j.command);
+
+  /* 7 — a case closed to writes is closed to commands, through the SAME gate
+     the ordinary routes use rather than a second copy of the rule. */
+  await call(env, '/cases/API-CC-GONE/delete', { method: 'POST', cookie: admin, body: {} });
+  j = await jsonOf(await cmd(admin, 'start surveillance', 'API-CC-GONE'));
+  ok('a deleted case is refused the command and told why',
+     j.kind === 'status' && /archived or deleted/i.test(j.text) && !j.command);
+
+  /* 8 — THE BETA REFUSALS STILL WIN. Widening the Assistant into an operating
+     layer must not have widened what it may do: a sentence naming a send, a
+     deletion or a payment is refused by name BEFORE any command resolves. */
+  for (const phrase of ['delete this case', 'record a payment of $250',
+                        'archive this case', 'assign this to dana']) {
+    const r = await jsonOf(await cmd(admin, phrase, 'API-CC-THEIRS'));
+    ok(`"${phrase}" is still refused by name, not resolved into a command`,
+       r.code === 'assistant_beta' && !r.command, r.kind);
+  }
+  /* A send phrase reaches the Unit 5 REHEARSAL, which is the designed answer
+     and cannot send: what matters is that it never becomes an executable
+     command, and that the rehearsal is still the only thing on offer. */
+  {
+    const r = await jsonOf(await cmd(admin, 'send the rate sheet to them', 'API-CC-THEIRS'));
+    ok('a send phrase opens the dry-run rehearsal and produces no executable command',
+       !r.command && r.kind === 'prepare_sheet', r.kind);
+  }
+
+  /* 9 — THE LOG CANNOT NAME A COMMAND THAT COULD NOT BE OFFERED. */
+  let r = await exec(admin, { action: 'launch_missiles', case_no: 'API-CC-THEIRS', ok: true });
+  ok('an action outside the registry cannot be recorded', r.status === 400);
+  r = await exec(dana, { action: 'start_day', case_no: 'API-CC-THEIRS', ok: true });
+  ok('nor can a command on a case the caller cannot read', r.status === 400);
+  ok('and neither attempt wrote a row', (await logRows()).length === 0);
+
+  /* 10 — a real record, with the outcome the CALLER reported. */
+  r = await exec(dana, { action: 'start_day', case_no: 'API-CC-MINE', ok: true, detail: 'day started' });
+  ok('a confirmed command is recorded', r.status === 200);
+  let rows = await logRows();
+  ok('the row names the action and says it was executed',
+     rows.length === 1 && rows[0].action === 'start_day' && /^EXECUTED/.test(rows[0].outcome),
+     JSON.stringify(rows[0] || {}));
+  ok('it addresses nobody — empty, not a placeholder standing in for a recipient',
+     rows[0].recipient === '');
+
+  /* 11 — A FAILURE IS LOGGED AS A FAILURE. The Assistant did not witness the
+     write, so it records what it was told rather than assuming success. */
+  await exec(dana, { action: 'end_day', case_no: 'API-CC-MINE', ok: false, detail: 'no open day' });
+  rows = await logRows();
+  ok('a command that did not work is recorded as failed, never as done',
+     /^FAILED/.test(rows[0].outcome), rows[0].outcome);
 }
 
 /* ------------------------------------------------------------------ report */
