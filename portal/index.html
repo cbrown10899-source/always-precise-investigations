@@ -257,6 +257,12 @@
   .qgo{margin-left:auto;flex:0 0 auto;}
   .qgo .btn{min-height:44px;}
   .qfoot{font-size:.79rem;color:var(--muted);padding:10px 2px 0;border-top:1px solid var(--line);}
+  /* The task board's group headings. Tokens, and only where the group has
+     something in it — the word is what states the group, the colour only
+     emphasises it. */
+  .tk-h{font-size:.92rem;}
+  .tk-h.tk-bad{color:var(--bad-ink);}
+  .tk-h.tk-ok{color:var(--ok-ink);}
   /* The counts that are real work but not today's headline. A line of text
      rather than five more cards: the owner asked for fewer busy cards, and
      dropping them outright would lose alerts somebody depends on. */
@@ -2080,6 +2086,10 @@
 .asst-work input,.asst-work select{min-height:44px;font-size:16px;padding:8px 10px;
   border:1px solid var(--line);border-radius:8px;background:#fff;width:100%}
 .asst-dry{font-size:.68rem;font-weight:800;letter-spacing:.06em;color:var(--gold-ink)}
+/* The lede under the DRY RUN chip: the owner's mockup words, which say what the
+   two buttons below actually do. Prose, not a .note — a .note here would be
+   read aloud on arrival by the Unit 21A chokepoint. */
+.asst-lede{margin:4px 0 8px;font-size:.82rem;line-height:1.45;color:var(--muted)}
 .asst-kv{display:flex;gap:8px;font-size:.85rem}
 .asst-kv b{flex:0 0 58px;font-weight:700}
 .asst-kv span{word-break:break-word;min-width:0}
@@ -2278,20 +2288,43 @@
     .sendnew .btn{min-height:44px;width:100%;justify-content:center;text-align:center;}
   }
 
-  /* ===== MOBILE UNIT D — THE INTAKE'S CHECKBOX MEETS THE TAP FLOOR =======
-     Measured on the private intake at 390px: `nl_saveprof` computed to 17px
-     tall. `.cap` is the portal's generic checkbox label — 36 of them — so this
-     was every tickable option in every form on a phone, not one field on one
-     screen. `.dsb-act` already had exactly this rule and exactly these numbers
-     for the alert-recipient checkboxes; this is that rule applied to the class
-     the rest of the portal actually uses, rather than a second set of numbers
-     for the same job.
+  /* ===== MOBILE UNIT D — THE INTAKE'S CHECKBOX IS A 13px BOX, NOT A SMALL
+     TARGET, AND THE DIFFERENCE IS THE WHOLE FIX =============================
 
-     Above 640px `.cap` is untouched, so nothing on the desktop-style portal
-     changes size. LAST IN THE FILE. */
+     Measured on the private intake at 390px: `nl_saveprof`'s BOX computed to
+     13px. Its LABEL — which is the thing a thumb actually hits, because
+     clicking the words toggles the box — was **65px all along**. So there was
+     never a tap-floor failure here; there was a box too small to see.
+
+     THE FIRST VERSION OF THIS RULE ALSO SET `.cap{min-height:44px}` AND THAT
+     WAS BOTH USELESS AND HARMFUL. Useless: the label measured 65px with the
+     rule and 65px without it, so it fixed nothing. Harmful: `.cap` is the
+     portal's generic checkbox label — 36 of them — and the Assistant's
+     workbench overrides it to a STACKED form label
+     (`.asst-work label.cap{flex-direction:column}`). Those measured 92 / 130 /
+     70 / 70px of label-plus-control and the floor flattened every one of them
+     to 44, so the rate-sheet form drew its labels on top of the controls
+     above them. A screen that had been correct was broken by a rule written
+     for a different screen, and every suite was green over it — which is why
+     there is now an assertion that the workbench's labels do not overlap.
+
+     What survives is the half that was doing the work: the box matches the
+     22px `.dsb-act` already uses on phones, so the two agree rather than
+     carrying two sets of numbers for one job. LAST IN THE FILE. */
   @media(max-width:640px){
-    .cap{min-height:44px;}
     .cap input[type=checkbox],.cap input[type=radio]{width:22px;height:22px;flex:none;}
+  }
+
+  /* ===== THE ASSISTANT WORKBENCH'S ACTIONS, FULL WIDTH ON A PHONE =========
+     The owner's rate-sheet mockup stacks them: the action that goes forward,
+     then the way out. `.asst-acts` is a wrapping flex row, so at 390px the two
+     buttons sat at their own widths on one line inside a 312px panel. Stacked
+     and full width, each is its own target and the order reads top to bottom.
+     The FLOW is unchanged — preview first, simulate from the preview — because
+     that is what makes the dry run a rehearsal of the real send. */
+  @media(max-width:640px){
+    .asst-acts{flex-direction:column;gap:8px;}
+    .asst-acts .btn{width:100%;justify-content:center;min-height:44px;}
   }
 
   /* ===== MOBILE UNIT E — BACK TO CASES STOPS FIGHTING THE BURGER ==========
@@ -3586,6 +3619,12 @@ function asstPrepHtml(){
     const svc = LEGAL_SVCS.find(s => s.id === p.legal_service) || null;
     return `<div class="asst-work">
       <div class="asst-dry">PREPARE A RATE SHEET &mdash; DRY RUN</div>
+      ${/* THE OWNER'S MOCKUP COPY, kept because it is TRUE of this flow: the
+            preview renders the real email through intakeInviteEmail/emailSheet's
+            own resolution, and the simulate writes one assistant_log row whose
+            face reads SIMULATED — NOT SENT. Nothing here can reach a client. */""}
+      <p class="asst-lede">Dry run: pick the audience, preview the exact sheet email, then
+        simulate &mdash; recorded as <b>SIMULATED &mdash; NOT SENT</b>, and nothing is sent.</p>
       ${p.err ? `<div class="err">${esc(p.err)}</div>` : ""}
       <label class="cap">Audience &mdash; a case reference below overrides this
         <select id="asst_sctx" data-act-input="asstPrep">
@@ -4511,8 +4550,12 @@ function tasksView(){
           ? `<span class="tag new">${esc(t.priority)}</span>` : ""}</span>
       <button class="btn sm ghost" data-act="openCase" data-case="${esc(t.case_no)}">Open case</button>
     </div>`;
-  const band = (title, rows, note) => `<div class="feebox" style="margin-bottom:12px">
-      <div class="row"><span><b>${title}</b></span>
+  /* NEVER COLOUR ALONE: the heading already SAYS Overdue / Today / Upcoming,
+     and the tint only emphasises a distinction the words carry — which is why
+     an empty Overdue band is drawn neutral rather than red. A band with
+     nothing in it is not a warning. */
+  const band = (title, rows, note, tone) => `<div class="feebox" style="margin-bottom:12px">
+      <div class="row"><span><b class="tk-h${rows.length && tone ? " tk-" + tone : ""}">${title}</b></span>
         <span style="color:var(--muted);font-size:.82rem">${rows.length}</span></div>
       ${rows.length ? rows.map(row).join("")
         : `<div class="row"><span style="color:var(--muted);font-size:.85rem">${note}</span><span></span></div>`}
@@ -4525,8 +4568,8 @@ function tasksView(){
       raises &mdash; an intake nobody accepted, a report due, money outstanding &mdash; are on
       <button class="linklike" data-act="tab" data-tab="dashboard">Needs attention</button>,
       which is where they are derived; nothing is duplicated here.</p>
-    ${band("Overdue", TASKS.overdue || [], "Nothing is overdue.")}
-    ${band("Today", TASKS.today || [], "Nothing is due today.")}
+    ${band("Overdue", TASKS.overdue || [], "Nothing is overdue.", "bad")}
+    ${band("Today", TASKS.today || [], "Nothing is due today.", "ok")}
     ${band("Upcoming", TASKS.upcoming || [], "Nothing is scheduled.")}
     ${done.length ? `<details><summary>Recently completed (${done.length})</summary>
       <div style="margin-top:8px">${done.map(row).join("")}</div></details>` : ""}

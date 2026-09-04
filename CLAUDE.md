@@ -3624,6 +3624,55 @@ target a thumb actually hits.
 everything it overrides — the source-order casualty this project has now
 recorded seven times.
 
+### A rule written for one screen broke another, and every suite was green
+
+The first version of the phone checkbox fix set **`.cap{min-height:44px}`**.
+It was BOTH useless and harmful, and the two halves are worth separating.
+
+**Useless:** the intake's save-as-profile label measured **65px with the rule
+and 65px without it**. What was actually small was the BOX — 13px — and the
+box is not the target, because clicking the words is what toggles it. The tap
+floor was never in question here; the control was just hard to see. Only the
+`width/height:22px` half does anything, and it matches the number `.dsb-act`
+already uses rather than inventing a second one.
+
+**Harmful:** `.cap` is the portal's generic checkbox label, and the Assistant's
+workbench overrides it into a STACKED form label
+(`.asst-work label.cap{flex-direction:column}`). Those hold a caption *and* a
+44px control and legitimately measure 70–130px. The floor flattened every one
+to 44, so **Prepare a Rate Sheet drew its labels on top of the controls above
+them** — a screen that had been correct, broken by a rule aimed at a different
+screen.
+
+**No suite noticed**, because they all assert that a field EXISTS and how tall
+the INPUT is, and none of them asked whether two things occupy the same pixels.
+There is an assertion for that now, written against geometry rather than
+against the rule that caused it: no two workbench labels may overlap, no
+control may be drawn outside the label that owns it, and a stacked label must
+be taller than the control it contains. A future rule with the same effect
+fails there too.
+
+### What the last two mockups asked for that the record cannot support
+
+The Rate Sheet and Billing/Tasks mockups were taken for their **shape** — the
+dry-run lede, full-width stacked actions, coloured group headings on the task
+board (the heading already SAYS Overdue/Today, so the tint only emphasises what
+the word states, and an empty band stays neutral because a band with nothing in
+it is not a warning). Four things in them were deliberately **not** built,
+because building them would put an untruth on a staff screen:
+
+- **A payment card offering Mail Check, Venmo and Cash App on one case.**
+  `CONTEXT_TAKES_PAYMENT === PRIVATE` is the entire payment boundary: Cash App
+  and Venmo can only ever attach to a private context, and Mail Check only to
+  legal or insurance. No case can be offered all three, and a screen that drew
+  them together would be offering what the Worker refuses by name.
+- **A case preview listing "Invoice, Card, Bank Transfer".** Those instruments
+  do not exist here.
+- **Task category chips (Billing / Client / Operations).** `case_tasks` has no
+  category column — it has `priority`, which is a different thing. Drawing a
+  category would be inventing data.
+- **An avatar and an "On Duty" status.** There is no such record.
+
 ## The /watch/ dashboard
 
 `watch/` is a private, passcode- and Face ID-gated dashboard showing live site

@@ -18948,10 +18948,14 @@ section('Mobile: the small controls that computed under the tap floor');
              label: Math.round(lab.getBoundingClientRect().height),
              cls: String(lab.className), toggled };
   });
-  /* THE TARGET IS THE LABEL, not the 22px square — clicking the words is what
-     toggles it, and the suite proves that rather than assuming it. */
-  ok('the intake save-as-profile tick is inside a 44px label', tick && tick.label >= 44,
-     JSON.stringify(tick));
+  /* THE TARGET IS THE LABEL, not the square — clicking the words is what
+     toggles it, and the suite proves that rather than assuming it. The label
+     measured 65px before this unit and 65px after: it was never under the
+     floor, so what changed is the BOX, which was 13px and is now the 22px
+     `.dsb-act` already uses on phones. The label assertion stays as a
+     regression guard, not as a claim that this unit fixed it. */
+  ok('the intake save-as-profile tick sits in a label above the tap floor',
+     tick && tick.label >= 44, JSON.stringify(tick));
   ok('and clicking that label really does toggle the box', tick && tick.toggled === true);
   ok('the box itself is the 22px one .dsb-act already uses', tick && tick.box >= 22,
      JSON.stringify(tick));
@@ -19114,6 +19118,84 @@ section("Mobile: a queue row is its content's height, not its flex basis");
     ok('so the phone row stays close to the content it holds',
        phone.row < desk.row * 2.2,
        JSON.stringify({ phoneRow: phone.row, deskRow: desk.row }));
+  }
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
+section("Mobile: the Assistant's stacked form labels keep their own height");
+{
+  /* THE REGRESSION THIS EXISTS FOR. A phone rule written for the portal's
+     generic checkbox label — `.cap{min-height:44px}` — flattened the
+     Assistant workbench's STACKED labels, which override `.cap` to a column
+     (`.asst-work label.cap{flex-direction:column}`) and legitimately measure
+     70-130px of label plus control. Every one collapsed to 44 and the form
+     drew its labels over the controls above them. Every suite was green over
+     it, because they all check that a field EXISTS and how tall the INPUT is
+     — never whether two things occupy the same pixels.
+
+     So this measures the boxes: each stacked label must be taller than a bare
+     line, and no two may overlap. It is written against geometry rather than
+     against the rule that broke it, so any future rule with the same effect
+     fails here too. */
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => { TAB = 'dashboard'; paint(); if (typeof asstOpen === 'function') asstOpen(); });
+  await page.waitForTimeout(700);
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('[data-act="asstQuick"]')]
+      .find(x => /rate sheet/i.test(x.dataset.cmd || ''));
+    if (b) b.click();
+  });
+  await page.waitForTimeout(1000);
+  await page.evaluate(() => {
+    const s2 = document.getElementById('asst_sctx');
+    if (s2) { s2.value = 'private'; s2.dispatchEvent(new Event('change', { bubbles: true })); }
+  });
+  await page.waitForTimeout(700);
+
+  const form = await page.evaluate(() => {
+    const w = document.querySelector('.asst-work');
+    if (!w) return null;
+    const labs = [...w.querySelectorAll('label.cap')].filter(l => l.offsetParent);
+    const boxes = labs.map(l => {
+      const r = l.getBoundingClientRect();
+      return { t: r.top, b: r.bottom, h: Math.round(r.height),
+               col: getComputedStyle(l).flexDirection === 'column',
+               txt: (l.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 22) };
+    });
+    /* Do any two labels occupy the same pixels? */
+    const overlaps = [];
+    for (let i = 0; i < boxes.length; i++)
+      for (let j = i + 1; j < boxes.length; j++)
+        if (boxes[i].b > boxes[j].t + 0.5 && boxes[j].b > boxes[i].t + 0.5)
+          overlaps.push(boxes[i].txt + ' / ' + boxes[j].txt);
+    /* And does each stacked label actually contain its control? */
+    const clipped = labs.filter(l => {
+      const c = l.querySelector('input, select');
+      if (!c) return false;
+      return c.getBoundingClientRect().bottom > l.getBoundingClientRect().bottom + 1;
+    }).map(l => (l.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 22));
+    return { boxes, overlaps, clipped, n: labs.length };
+  });
+
+  if (!form) {
+    ok('SKIPPED: the Assistant rate-sheet workbench did not open', true);
+  } else {
+    ok('the rate-sheet workbench opened with its fields', form.n >= 4, JSON.stringify(form.n));
+    ok('no two of its labels occupy the same pixels',
+       form.overlaps.length === 0, form.overlaps.join(' | '));
+    ok('and no control is drawn outside the label that owns it',
+       form.clipped.length === 0, form.clipped.join(' | '));
+    /* A stacked label holds a caption AND a 44px control, so it cannot be 44
+       itself. That is the number the broken rule produced, and naming it is
+       what makes this assertion specific rather than decorative. */
+    const stacked = form.boxes.filter(b => b.col);
+    ok('every stacked label is taller than the control it contains',
+       stacked.length > 0 && stacked.every(b => b.h > 48),
+       JSON.stringify(stacked.map(b => b.txt + ':' + b.h)));
   }
 
   await page.setViewportSize({ width: 1200, height: 900 });
