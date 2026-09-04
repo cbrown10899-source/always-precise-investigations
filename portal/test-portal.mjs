@@ -17757,15 +17757,35 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
                 is what "strip, not stack" means, and it cannot be satisfied by
                 a wrapped grid however short the container happens to be. */
              tops: [...new Set(tools.map(b => Math.round(b.getBoundingClientRect().top)))].length,
-             acts: tools.map(b => b.dataset.act + ':' + (b.dataset.tab || '')) };
+             acts: tools.map(b => b.dataset.act + ':' + (b.dataset.tab || b.dataset.k || '')),
+             /* The DESKTOP row is in the DOM here too, display:none. Reading
+                its composition is honest — this is about which doors exist in
+                which order, not about a hidden element's geometry. */
+             desk: [...document.querySelector('.qtgrid').children]
+               .map(b => b.dataset.act + ':' + (b.dataset.tab || b.dataset.k || '')) };
   });
   ok('one row on a phone', strip.tops === 1 && strip.rowH <= 150, JSON.stringify(strip));
   ok('it swipes inside its own container', strip.sw > strip.cw + 40, JSON.stringify(strip));
   ok('and the PAGE never scrolls sideways', strip.pageSw <= strip.pageCw + 1, JSON.stringify(strip));
   ok('every tool keeps the 44px floor', strip.toolH >= 44, String(strip.toolH));
-  ok('the six doors are exactly the six, most-used first, acts untouched',
-     JSON.stringify(strip.acts) === JSON.stringify(
+  /* TWO ORDERS NOW, AND THE ASSERTION FOLLOWS THE ONE IT PROTECTS.
+     This pinned the owner's 2026-09-02 phone order — six doors, most-used
+     first. The 2026-09-04 brief replaced the phone's with its own (Rate Sheet
+     first, then the four intake doors, then Reports & Packages, with the
+     timestamp tools moved down rather than away) and left the DESKTOP row
+     exactly as it was. So the original list is still exactly true — of the
+     desktop — and that is where it belongs, because "the desktop row did not
+     move" is the guarantee this whole brief rests on. The phone's own order
+     is asserted beside it, so the two are read together and neither can drift
+     into the other. */
+  ok('the desktop row is still the six doors, most-used first, acts untouched',
+     JSON.stringify(strip.desk) === JSON.stringify(
        ['pstLaunch:', 'vstOpen:', 'surveillance:', 'tab:newlead', 'tab:cases', 'tab:delivery']),
+     JSON.stringify(strip.desk));
+  ok("and the phone strip is the owner's 2026-09-04 order, Rate Sheet first",
+     JSON.stringify(strip.acts) === JSON.stringify(
+       ['tab:sheets', 'tab:newlead', 'nlKind:consumer', 'nlKind:claims', 'nlKind:legal',
+        'tab:delivery', 'pstLaunch:', 'vstOpen:', 'surveillance:', 'tab:cases']),
      JSON.stringify(strip.acts));
   const reach = await page.evaluate(() => {
     const g = document.querySelector('.qtgrid'); g.scrollLeft = 9999;
