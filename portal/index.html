@@ -257,6 +257,12 @@
   .qgo{margin-left:auto;flex:0 0 auto;}
   .qgo .btn{min-height:44px;}
   .qfoot{font-size:.79rem;color:var(--muted);padding:10px 2px 0;border-top:1px solid var(--line);}
+  /* The task board's group headings. Tokens, and only where the group has
+     something in it — the word is what states the group, the colour only
+     emphasises it. */
+  .tk-h{font-size:.92rem;}
+  .tk-h.tk-bad{color:var(--bad-ink);}
+  .tk-h.tk-ok{color:var(--ok-ink);}
   /* The counts that are real work but not today's headline. A line of text
      rather than five more cards: the owner asked for fewer busy cards, and
      dropping them outright would lose alerts somebody depends on. */
@@ -288,6 +294,12 @@
      keeps them adjacent because they are declared adjacent. */
   .qtgrid .qtool{flex:0 0 auto;justify-content:flex-start;white-space:nowrap;}
   .qtool.qt-pair{border-left:3px solid var(--teal);}
+  /* THE PHONE'S HOME QUICK ACTIONS ARE CARDS, NOT CHIPS (owner brief
+     2026-09-04, built against the approved Home mockup). Hidden at every width
+     but the phone's, where .qtgrid is hidden instead — one strip in the
+     accessibility tree at a time, never two. The rules that draw it live at
+     the END of this stylesheet with the rest of the phone overrides. */
+  .qtapps{display:none;}
   .qtools-l{font-size:.76rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
     color:var(--muted);}
   /* IT HAS TO READ AS AN ACTION, and the first two attempts did not.
@@ -413,6 +425,11 @@
   .rs-close{margin:14px 0 4px;padding:13px 15px;background:var(--gold-soft);border-left:3px solid var(--gold-2);border-radius:0 8px 8px 0;}
   .rs-close b{display:block;margin-bottom:3px;}
   .rs-close p{margin:0;font-size:.88rem;color:#44505c;}
+  /* The four pre-case sends. This was an inline style, which no media query can
+     reach — the base is exactly what that inline declared, so the desktop row
+     is unchanged, and the phone rule at the end of this file makes them an
+     even grid instead of four different widths on four lines. */
+  .sendnew{display:flex;gap:8px;flex-wrap:wrap;}
   @media(max-width:640px){.rs-big .rs-v{font-size:1.35rem;}}
   /* Invoices */
   .inv-line{display:grid;grid-template-columns:1fr 70px 90px 100px 34px;gap:6px;margin-bottom:6px;align-items:center;}
@@ -1020,6 +1037,15 @@
     align-items:center;justify-content:center;font-size:2rem;}
   .ovthumbs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;}
   .ovthumbs img{width:56px;height:56px;object-fit:cover;border-radius:8px;}
+  /* THE CONTROL MUST NOT COLLAPSE WHEN ITS PICTURE DOES NOT ARRIVE. The button
+     holds nothing but the <img>, so a thumbnail that fails to load — a Dropbox
+     hiccup, a file removed behind the record, an expired proxy read — leaves
+     the browser drawing the alt text's line box instead: measured 70x16, a
+     16px tap target where a 56px one was. The image's own width/height do not
+     save it, because a broken image is replaced by its alt content. Flooring
+     the BUTTON keeps the target whatever the picture does, and changes nothing
+     in the ordinary case, where it is already 56px. */
+  .ovthumbs button{min-width:56px;min-height:56px;}
   /* ---- Active Surveillance Mode (SURVEILLANCE.md). A dark field view of the
      same case: usable one-handed, at dusk, from a vehicle. Large targets,
      one primary action per screen, nothing that needs a careful tap. ---- */
@@ -1784,6 +1810,15 @@
        filter you have to discover by swiping is worse than one you can see. */
     .attnlenses{flex-wrap:wrap;}
     .qrow{flex-direction:column;align-items:stretch;gap:8px;}
+    /* AND `.qmain` HAS TO STOP READING ITS BASIS AS A HEIGHT. Its base rule is
+       `flex:1 1 240px`, written for the row this becomes a COLUMN — and in a
+       column a flex-basis is the main axis, which is the height. So every
+       queue row on a phone drew 240px tall whatever was in it: measured 314px
+       for a row whose text is four short lines, against 108px for the same row
+       at 1200px, on the card the office looks at first. One row filled a
+       screen. `auto` gives it back its content height and changes nothing
+       above 640px, where the basis is still a width and still 240. */
+    .qmain{flex:0 1 auto;}
     .qgo .btn{width:100%;min-height:44px;}
     /* UNIT 10 — the timeline on a phone. ONE COLUMN. The three-column grid puts
        a 78px time gutter and a 24px rail beside the description, which at 375px
@@ -2060,6 +2095,10 @@
 .asst-work input,.asst-work select{min-height:44px;font-size:16px;padding:8px 10px;
   border:1px solid var(--line);border-radius:8px;background:#fff;width:100%}
 .asst-dry{font-size:.68rem;font-weight:800;letter-spacing:.06em;color:var(--gold-ink)}
+/* The lede under the DRY RUN chip: the owner's mockup words, which say what the
+   two buttons below actually do. Prose, not a .note — a .note here would be
+   read aloud on arrival by the Unit 21A chokepoint. */
+.asst-lede{margin:4px 0 8px;font-size:.82rem;line-height:1.45;color:var(--muted)}
 .asst-kv{display:flex;gap:8px;font-size:.85rem}
 .asst-kv b{flex:0 0 58px;font-weight:700}
 .asst-kv span{word-break:break-word;min-width:0}
@@ -2135,6 +2174,232 @@
        rather than covering the middle destination — the owner's own line was
        that the Assistant must not overlap the nav. */
     body.hasmnav .asst-pill{bottom:calc(64px + max(10px, env(safe-area-inset-bottom)));}
+  }
+
+  /* ===== THE PHONE'S HOME QUICK ACTIONS (owner mockup, 2026-09-04) =========
+     The chip row becomes a swipeable strip of cards: an icon, the door's name,
+     and one muted line saying what it is for. Rate Sheet leads and is the only
+     card wearing the accent, because the owner's first priority is that it is
+     the most prominent action on Home.
+
+     THE FLAG IS THE --info PAIR, AND THE NUMBERS BELOW ARE THE PORTAL'S OWN.
+
+     THERE ARE TWO TEALS IN THIS REPOSITORY AND THEY ARE NOT THE SAME COLOUR.
+     The public site's `--teal` is #3d97ad; the portal's is #2f7d90, which is
+     darker. CLAUDE.md's contrast section — "white on --teal is 3.37:1" and the
+     alternatives offered to the owner — is about the PUBLIC SITE, and it is
+     correct there: white on #3d97ad measures 3.37 exactly. Applying those
+     figures to this file would be reading one palette's numbers off another's,
+     which is how the first draft of this rule went wrong.
+
+     Measured against the PORTAL's tokens:
+       white     on --teal   4.71:1  — passes, but by 0.21
+       --navy    on --teal   3.71:1  — FAILS the 4.5 normal-text bar
+       --info-ink on --info-bg 6.75:1 — and it is a declared semantic PAIR
+
+     This chip is ~10px, so the bar that applies is the normal-text 4.5:1 and
+     not the large-text 3:1. White on the portal's teal would clear it; the
+     --info pair is used anyway, because it has real headroom and because the
+     palette already names it as a pair. The card's SOLID TEAL BORDER carries
+     the emphasis and is a non-text edge at 4.71:1 against the card.
+
+     The lead card is an accent and a flag, NOT a bigger box: a card of a
+     different size would break the strip's rhythm and make one row read as
+     two lists. LAST IN THE FILE, like every other phone override here. */
+  @media(max-width:640px){
+    .qtgrid{display:none;}
+    .qtapps{display:flex;gap:8px;margin-top:6px;padding:2px 2px 4px;
+      overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+    .qtapps::-webkit-scrollbar{display:none;}
+    .qtapp{flex:0 0 auto;width:126px;min-height:96px;background:var(--card);
+      border:1px solid var(--line);border-radius:14px;padding:10px 9px;
+      display:flex;flex-direction:column;align-items:flex-start;gap:2px;
+      text-align:left;font:inherit;color:var(--navy);cursor:pointer;
+      box-shadow:0 1px 3px rgba(16,32,52,.07);}
+    .qtapp-i{font-size:1.35rem;line-height:1.15;}
+    .qtapp-n{font-weight:800;font-size:.82rem;line-height:1.15;}
+    .qtapp-s{font-size:.68rem;color:var(--muted);line-height:1.2;}
+    .qtapp-lead{border:2px solid var(--teal);padding:9px 8px;}
+    .qtapp-flag{font-size:.58rem;font-weight:800;letter-spacing:.02em;
+      text-transform:uppercase;color:var(--info-ink);background:var(--info-bg);
+      border:1px solid var(--info-line);border-radius:999px;
+      padding:1px 6px;margin-bottom:1px;white-space:nowrap;}
+    .qtapp:focus-visible{outline:2px solid var(--gold);outline-offset:2px;}
+  }
+
+  /* ===== HOME'S BANDS AND STATS AT PHONE DENSITY (owner mockup, 2026-09-04)
+     The approved Home screen puts a band's heading and its one action on ONE
+     line with the four figures immediately under them, tight. What was drawn
+     instead was a heading, then a full-width sentence, then the action on a
+     third row, then four tall tiles — about 180px of chrome before the first
+     number. Nothing here removes a figure, a label, a hint or an action: the
+     band's own sentence keeps its line, it just stops pushing the button off
+     the heading.
+
+     PHONE ONLY. Above 640px every one of these rules is absent and the
+     desktop-style dashboard is exactly what it was. */
+  @media(max-width:640px){
+    .band{margin:0 0 16px;}
+    .bandhead{padding-bottom:7px;margin-bottom:10px;gap:8px;}
+    /* ORDER, NOT A DOM CHANGE: the action rides up beside the heading and the
+       sentence takes the line below it. Reordering the markup instead would
+       have moved the button ahead of the sentence for a screen reader too,
+       which is a different screen, not a denser one. */
+    .bandhead .bandgo{order:1;}
+    .bandhead .bandsub{order:2;flex-basis:100%;font-size:.76rem;}
+    .stats{grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;}
+    .stat{padding:10px 11px;border-radius:12px;}
+    .stat-n{font-size:1.45rem;}
+    .stat-l{font-size:.78rem;}
+    .stat-h{font-size:.69rem;}
+    .band-work .stats{grid-template-columns:1fr 1fr;gap:1px;}
+    .band-work .stat{padding:10px 11px;}
+    .band-work .stat-n{font-size:1.15rem;}
+    /* The search card is the mockup's pill: the heading is the placeholder's
+       job at this width. .vh rather than display:none — the h2 stays in the
+       accessibility tree, so the region keeps the name it had. */
+    .srchcard .bar h2{position:absolute;width:1px;height:1px;margin:-1px;padding:0;
+      overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0;}
+    .srchcard .bar{margin-bottom:0;}
+  }
+
+  /* ===== MOBILE UNIT C — THE RATE SHEET AT PHONE WIDTH ===================
+     A MEASURED COLLAPSE, not a density preference — and the number is the
+     point. `.rs-v` is sized by its own content and the private sheet puts
+     SENTENCES in it ("No routine add-on fees", "Quoted in advance", "Only with
+     your approval"), so at 390px the value column took most of the row and the
+     label column was left **90px of a 312px panel** — two words a line, which
+     on screen reads as the two columns running into each other.
+
+     THE BOXES DO NOT ACTUALLY INTERSECT, and that is worth writing down: the
+     first probe for this looked for geometric overlap and found none, with the
+     fix and without it. It would have passed while testing nothing. What is
+     measurable is the label column's width, so that is what the suite asserts
+     — 90px before, the full panel after.
+
+     The answer is this project's own rule: stacked records, not hidden
+     columns. Every line keeps its label, its sub, its badge, its note and its
+     value — they simply stop competing for one row. Above 640px the two-column
+     sheet is exactly what it was. */
+  @media(max-width:640px){
+    .rs-row{display:block;padding:12px 0;}
+    .rs-l{display:block;}
+    .rs-sub{display:block;margin:2px 0 0;}
+    .rs-badge{margin:5px 0 0;vertical-align:baseline;}
+    .rs-note{max-width:none;}
+    .rs-v{display:block;text-align:left;padding-left:0;margin-top:6px;}
+    .rs-big .rs-v{margin-top:4px;}
+    .rs-close{padding:11px 13px;}
+    /* Four sends of four different widths on four lines read as a list of
+       leftovers. An even 2x2 grid reads as a set of doors, which is what they
+       are — and each cell keeps the 44px floor `.btn.sm` alone does not give. */
+    .sendnew{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+    .sendnew .btn{min-height:44px;width:100%;justify-content:center;text-align:center;}
+  }
+
+  /* ===== MOBILE UNIT D — THE INTAKE'S CHECKBOX IS A 13px BOX, NOT A SMALL
+     TARGET, AND THE DIFFERENCE IS THE WHOLE FIX =============================
+
+     Measured on the private intake at 390px: `nl_saveprof`'s BOX computed to
+     13px. Its LABEL — which is the thing a thumb actually hits, because
+     clicking the words toggles the box — was **65px all along**. So there was
+     never a tap-floor failure here; there was a box too small to see.
+
+     THE FIRST VERSION OF THIS RULE ALSO SET `.cap{min-height:44px}` AND THAT
+     WAS BOTH USELESS AND HARMFUL. Useless: the label measured 65px with the
+     rule and 65px without it, so it fixed nothing. Harmful: `.cap` is the
+     portal's generic checkbox label — 36 of them — and the Assistant's
+     workbench overrides it to a STACKED form label
+     (`.asst-work label.cap{flex-direction:column}`). Those measured 92 / 130 /
+     70 / 70px of label-plus-control and the floor flattened every one of them
+     to 44, so the rate-sheet form drew its labels on top of the controls
+     above them. A screen that had been correct was broken by a rule written
+     for a different screen, and every suite was green over it — which is why
+     there is now an assertion that the workbench's labels do not overlap.
+
+     What survives is the half that was doing the work: the box matches the
+     22px `.dsb-act` already uses on phones, so the two agree rather than
+     carrying two sets of numbers for one job. LAST IN THE FILE. */
+  @media(max-width:640px){
+    .cap input[type=checkbox],.cap input[type=radio]{width:22px;height:22px;flex:none;}
+  }
+
+  /* ===== THE ASSISTANT WORKBENCH'S ACTIONS, FULL WIDTH ON A PHONE =========
+     The owner's rate-sheet mockup stacks them: the action that goes forward,
+     then the way out. `.asst-acts` is a wrapping flex row, so at 390px the two
+     buttons sat at their own widths on one line inside a 312px panel. Stacked
+     and full width, each is its own target and the order reads top to bottom.
+     The FLOW is unchanged — preview first, simulate from the preview — because
+     that is what makes the dry run a rehearsal of the real send. */
+  @media(max-width:640px){
+    .asst-acts{flex-direction:column;gap:8px;}
+    .asst-acts .btn{width:100%;justify-content:center;min-height:44px;}
+  }
+
+  /* ===== MOBILE UNIT E — BACK TO CASES STOPS FIGHTING THE BURGER ==========
+     A SHARED BUG, measured at four widths, and the only one of this brief's
+     changes that is not phone-only — the owner's standing rule allows exactly
+     that for a shared defect.
+
+     `.close` is the DIALOG X's rule (`position:absolute; right:14px; top:12px`)
+     and the case page borrowed the class so "muscle memory and tests both
+     hold". The styling came with the position, `.pagebar` is not a positioned
+     ancestor, so the button resolves against the page and lands in the
+     header's top-right corner — the corner the burger occupies below 900px.
+     The class-name contest again, at the CSS-property layer this time, and the
+     seventh this project has recorded.
+
+     Measured with elementFromPoint rather than z-index arithmetic:
+       1200 / 1440 — FINE. The header is tall enough that "Back to Cases"
+                     stacks above "Admin | Sign out" and Sign out is still the
+                     element at its own centre. Nothing here touches it.
+        768 / 390 — BROKEN. The button covers the signed-in name, its own text
+                     is cut off ("Back to C"), and at 390 the BURGER is the
+                     element on top of the button's right half — so tapping the
+                     back control there opens the drawer instead.
+
+     Below 900px it becomes an ordinary in-flow control at the top of the page,
+     which is where a back control belongs on a phone and where it cannot reach
+     the corner at all. 899 is not a new number: it is the width at which the
+     rail becomes the burger, so the fix is scoped to exactly the widths that
+     have the problem. */
+  @media(max-width:899px){
+    .casepage .pagebar{position:relative;}
+    .casepage .pagebar .close{position:static;right:auto;top:auto;min-height:44px;}
+  }
+
+  /* ===== MOBILE UNIT E — TWO MORE CONTROLS THAT COMPUTE UNDER THE FLOOR ===
+     Measured on a real case at 390px, not inferred from the CSS:
+
+       .tl-edit        — 12px tall. It declares `padding:0` on an 11.52px line,
+                         so the box IS the line box. Five of them: Put it back,
+                         Days on this case, Edit, Open, and Assign — and Assign
+                         sits beside "Unassigned" on Case status, the busiest
+                         screen there is.
+       .ov-mods button — 34-35px. The five Case status doors (Activity, Report,
+                         Photos, Build, Invoice) are the fastest way into a tab
+                         and every one of them was under the floor.
+
+     `.pkg-b` — the package tab's own blocks, which look like the same control
+     — was CHECKED AND LEFT ALONE: it measures 56px already, so a floor on it
+     would have been a rule that does nothing sitting under a comment claiming
+     it fixed something. It was in the first draft of this block for exactly
+     that reason and came out when it was measured.
+
+     min-height is used rather than padding for `.tl-edit` for the same reason
+     `.sv-back`/`.sv-tap` were fixed that way in the closeout round: the inline
+     padding at the call sites cannot override it, so this needed no change at
+     any of the five. LAST IN THE FILE. */
+  @media(max-width:640px){
+    .tl-edit{min-height:44px;display:inline-flex;align-items:center;}
+    .ov-mods button{min-height:44px;}
+    /* `.linklike` is the same shape one screen over — `padding:0` on an
+       inherited line, so the Tasks board's "Needs attention" door out to the
+       exception list computed to 22px. A sweep of all sixteen top-level
+       screens at 390px found these three and nothing else; the profiles
+       checkbox it also flagged is a 22px BOX inside a 44px label, which is the
+       target a thumb actually hits, so it was left alone. */
+    .linklike{min-height:44px;display:inline-flex;align-items:center;}
   }
 
 </style>
@@ -3363,6 +3628,12 @@ function asstPrepHtml(){
     const svc = LEGAL_SVCS.find(s => s.id === p.legal_service) || null;
     return `<div class="asst-work">
       <div class="asst-dry">PREPARE A RATE SHEET &mdash; DRY RUN</div>
+      ${/* THE OWNER'S MOCKUP COPY, kept because it is TRUE of this flow: the
+            preview renders the real email through intakeInviteEmail/emailSheet's
+            own resolution, and the simulate writes one assistant_log row whose
+            face reads SIMULATED — NOT SENT. Nothing here can reach a client. */""}
+      <p class="asst-lede">Dry run: pick the audience, preview the exact sheet email, then
+        simulate &mdash; recorded as <b>SIMULATED &mdash; NOT SENT</b>, and nothing is sent.</p>
       ${p.err ? `<div class="err">${esc(p.err)}</div>` : ""}
       <label class="cap">Audience &mdash; a case reference below overrides this
         <select id="asst_sctx" data-act-input="asstPrep">
@@ -4018,6 +4289,63 @@ function recentlyCompletedHtml(){
 
    The same door is in the navigation foot for both roles and every screen; this
    is the dashboard's copy of it, not a second implementation. */
+/* ONE TABLE OF DOORS, TWO ORDERINGS, BOTH NAMED HERE.
+
+   The phone and the desktop want different first cards. The owner's Home
+   priorities (2026-09-04) put Rate Sheet first and the four intake doors
+   beside it; the desktop row's existing order is not changing, because the
+   standing rule is that the desktop-style portal stays visually and
+   structurally as it is.
+
+   So each door is DECLARED ONCE in QT and each surface names the ids it draws
+   in the order it draws them. A door's act, tab, icon and label therefore have
+   one writer and cannot disagree between the two surfaces, and adding a door
+   is one row plus a mention in whichever list wants it.
+
+   BOTH STRIPS ARE RENDERED AND ONE IS display:none AT EVERY WIDTH. A hidden
+   element is out of the accessibility tree entirely, so there is exactly one
+   strip and one set of tab stops at any size — the pattern .qe-long/.qe-short
+   and .more-primary already use in this file. Reordering with flex `order`
+   instead would have put the visual order and the focus order out of step,
+   which is the defect rather than the fix. */
+const QT = {
+  sheets:  {act:"tab", tab:"sheets",   icon:"&#128179;", label:"Rate Sheet",
+            sub:"Prepare &amp; send", admin:true, lead:true},
+  /* dlabel: the ONE place the two surfaces are allowed to differ in words, and
+     it exists so the desktop row keeps the wording it already had. Renaming a
+     desktop control is a desktop change, and the owner's standing rule forbids
+     one. Every other door reads the same on both. */
+  newlead: {act:"tab", tab:"newlead",  icon:"&#10133;",  label:"New Intake",
+            dlabel:"Intake a Client", sub:"Choose the type", admin:true},
+  /* The three kinds are the same door one step in: nlKind is the button
+     newLeadView() already draws, so nothing new decides what an intake is. */
+  priv:    {act:"nlKind", k:"consumer", icon:"&#128100;", label:"Private Intake",
+            sub:"Client matter", admin:true},
+  claims:  {act:"nlKind", k:"claims",   icon:"&#127974;", label:"Insurance Intake",
+            sub:"Carrier matter", admin:true},
+  legal:   {act:"nlKind", k:"legal",    icon:"&#128188;", label:"Law Firm Intake",
+            sub:"Legal matter", admin:true},
+  delivery:{act:"tab", tab:"delivery", icon:"&#128230;", label:"Reports &amp; Packages",
+            sub:"View all", admin:true},
+  photo:   {act:"pstLaunch", caseless:true, pair:true, icon:"&#128247;",
+            label:"Timestamp Photo", sub:"Burn the moment"},
+  video:   {act:"vstOpen",   caseless:true, pair:true, icon:"&#127909;",
+            label:"Timestamp Video", sub:"Burn the moment"},
+  field:   {act:"surveillance", icon:"&#128373;", label:"Active Surveillance",
+            sub:"Start or resume"},
+  cases:   {act:"tab", tab:"cases", icon:"&#128193;", label:"Cases",
+            sub:"All open work"},
+};
+/* EXACTLY WHAT THE DESKTOP ROW WAS: same doors, same order, same markup. */
+const QT_DESK = ["photo", "video", "field", "newlead", "cases", "delivery"];
+/* The phone's order is the owner's own: Rate Sheet first and the only card
+   wearing the accent, then the four intake doors, then Reports & Packages.
+   The timestamp tools MOVED DOWN THE ROW — they were not taken away, and
+   their nav-foot door is untouched either way. Cases is last because the
+   bottom bar carries it on every screen at this width. */
+const QT_PHONE = ["sheets", "newlead", "priv", "claims", "legal", "delivery",
+                  "photo", "video", "field", "cases"];
+
 function quickToolsHtml(){
   /* ONE WORDING, and it is the navigation's. Two spellings of the same control
      meant a find-in-page for what the menu says did not match what the dashboard
@@ -4027,18 +4355,29 @@ function quickToolsHtml(){
      tools stay a visual pair, and the doors an admin actually reaches for join
      them. Every entry is a place or tool that already exists; nothing here is
      a new destination, so nothing here can disagree with the rail. The grid
-     wraps on phones and every target keeps the 44px floor. */
+     wraps on phones and every target keeps the 44px floor.
+
+     MOBILE (owner brief 2026-09-04, built against the approved Home mockup):
+     the phone draws the same doors as CARDS in the owner's order. An
+     admin-only door is filtered for an investigator rather than drawn dead —
+     /sheets and the manual intake both answer 403 to that role, and a control
+     that can open nothing must not be drawn as a button. */
   const admin = ME.role === "admin";
+  const ok = id => admin || !QT[id].admin;
+  const attrs = t => `data-act="${t.act}"${t.tab ? ` data-tab="${t.tab}"` : ""}${
+    t.k ? ` data-k="${t.k}"` : ""}${t.caseless ? ` data-case=""` : ""}`;
+  const deskBtn = id => { const t = QT[id];
+    return `<button class="qtool${t.pair ? " qt-pair" : ""}" ${attrs(t)}><b>${t.icon}</b> ${t.dlabel || t.label}</button>`; };
+  const appCard = id => { const t = QT[id];
+    return `<button class="qtapp${t.lead ? " qtapp-lead" : ""}" ${attrs(t)}>${
+      t.lead ? `<span class="qtapp-flag">Fastest action</span>` : ""}
+      <span class="qtapp-i" aria-hidden="true">${t.icon}</span>
+      <span class="qtapp-n">${t.label}</span>
+      <span class="qtapp-s">${t.sub}</span></button>`; };
   return `<div class="qtools">
     <span class="qtools-l">Quick tools</span>
-    <div class="qtgrid">
-      <button class="qtool qt-pair" data-act="pstLaunch" data-case=""><b>&#128247;</b> Timestamp Photo</button>
-      <button class="qtool qt-pair" data-act="vstOpen" data-case=""><b>&#127909;</b> Timestamp Video</button>
-      <button class="qtool" data-act="surveillance"><b>&#128373;</b> Active Surveillance</button>
-      ${admin ? `<button class="qtool" data-act="tab" data-tab="newlead"><b>&#10133;</b> Intake a Client</button>` : ""}
-      <button class="qtool" data-act="tab" data-tab="cases"><b>&#128193;</b> Cases</button>
-      ${admin ? `<button class="qtool" data-act="tab" data-tab="delivery"><b>&#128230;</b> Reports &amp; Packages</button>` : ""}
-    </div>
+    <div class="qtgrid">${QT_DESK.filter(ok).map(deskBtn).join("")}</div>
+    <div class="qtapps">${QT_PHONE.filter(ok).map(appCard).join("")}</div>
   </div>`;
 }
 
@@ -4220,8 +4559,12 @@ function tasksView(){
           ? `<span class="tag new">${esc(t.priority)}</span>` : ""}</span>
       <button class="btn sm ghost" data-act="openCase" data-case="${esc(t.case_no)}">Open case</button>
     </div>`;
-  const band = (title, rows, note) => `<div class="feebox" style="margin-bottom:12px">
-      <div class="row"><span><b>${title}</b></span>
+  /* NEVER COLOUR ALONE: the heading already SAYS Overdue / Today / Upcoming,
+     and the tint only emphasises a distinction the words carry — which is why
+     an empty Overdue band is drawn neutral rather than red. A band with
+     nothing in it is not a warning. */
+  const band = (title, rows, note, tone) => `<div class="feebox" style="margin-bottom:12px">
+      <div class="row"><span><b class="tk-h${rows.length && tone ? " tk-" + tone : ""}">${title}</b></span>
         <span style="color:var(--muted);font-size:.82rem">${rows.length}</span></div>
       ${rows.length ? rows.map(row).join("")
         : `<div class="row"><span style="color:var(--muted);font-size:.85rem">${note}</span><span></span></div>`}
@@ -4234,8 +4577,8 @@ function tasksView(){
       raises &mdash; an intake nobody accepted, a report due, money outstanding &mdash; are on
       <button class="linklike" data-act="tab" data-tab="dashboard">Needs attention</button>,
       which is where they are derived; nothing is duplicated here.</p>
-    ${band("Overdue", TASKS.overdue || [], "Nothing is overdue.")}
-    ${band("Today", TASKS.today || [], "Nothing is due today.")}
+    ${band("Overdue", TASKS.overdue || [], "Nothing is overdue.", "bad")}
+    ${band("Today", TASKS.today || [], "Nothing is due today.", "ok")}
     ${band("Upcoming", TASKS.upcoming || [], "Nothing is scheduled.")}
     ${done.length ? `<details><summary>Recently completed (${done.length})</summary>
       <div style="margin-top:8px">${done.map(row).join("")}</div></details>` : ""}
@@ -6590,7 +6933,7 @@ function preCaseSendsHtml(){
     <p class="note">For a caller who is not on the desk yet. A name and an email address are
       enough &mdash; a case or claim number is carried if you have one, and left out if you
       do not. Nothing here creates a lead or a case.</p>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <div class="sendnew">
       <button class="btn sm ghost" data-act="preIntake" data-kind="private">Send private intake</button>
       <button class="btn sm ghost" data-act="preIntake" data-kind="insurance">Send insurance intake</button>
       ${/* UNIT 28. `/intake-link/email` has accepted kind:'legal' since Unit 6 —
@@ -20509,9 +20852,14 @@ document.addEventListener("click", ev => {
     else { SHEET_WIZ.err = ""; SHEET_WIZ.step = s2; paint(); }
   }
   else if(act === "wizSend"){ wizSend(); }
+  /* nlKind IS THE DOOR, from wherever it is pressed. It used to be drawn only
+     inside newLeadView(), where TAB is already "newlead" — so setting the tab
+     here is a no-op on that screen and is what lets the phone's Home cards go
+     straight to Private / Insurance / Law Firm without a second handler
+     deciding what an intake kind is. One writer, as everywhere else here. */
   else if(act === "nlKind"){ NL = {kind: el.dataset.k, err: "", v: {}};
     if(el.dataset.k === "legal") legalSvcsLoad();
-    paint(); }
+    TAB = "newlead"; paint(); }
   else if(act === "nlBack"){ NL = {kind: null, err: "", v: {}}; paint(); }
   else if(act === "nlSave"){ submitManualIntake(el.dataset.open === "1"); }
   /* ------------------------------------------------- UNIT 7: the picker */

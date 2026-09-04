@@ -3536,6 +3536,143 @@ somebody something untrue.**
 send, deletion, archive, assignment or payment is refused by name before any
 command resolves. External sends remain dry-run. No schema change.
 
+## The phone is a different shape, and the desktop portal did not move
+
+Owner brief 2026-09-04, with five approved mockups as the visual target. The
+rule that governs all of it is the owner's own: **"Desktop/tablet must remain
+visually and structurally unchanged except for shared bug fixes; all new
+app-style layout is scoped to mobile/PWA breakpoints only."**
+
+**Unit A** put a bottom nav (Home / Cases / Tasks / Intakes / More) on the
+phone, rendered from `shell()` — which the case page and the field view do not
+use, so it cannot collide with their own bottom bars structurally rather than
+by a CSS trick.
+
+**Unit B is the Home quick actions, and it is ONE TABLE WITH TWO ORDERINGS.**
+`QT` in `portal/index.html` declares each door once — act, tab, icon, label —
+and `QT_DESK` and `QT_PHONE` name the ids each surface draws, in its own order.
+The phone's order is the owner's (Rate Sheet first and emphasised, then New /
+Private / Insurance / Law Firm Intake, then Reports & Packages); the desktop
+row is byte-identical to what it was, because renaming or reordering a desktop
+control is a desktop change. **`dlabel` is the one place the two are allowed to
+differ in words** and it exists solely so the desktop keeps saying *Intake a
+Client* where the phone says *New Intake* — the first build shared one label
+and silently renamed the desktop control, which no phone assertion could see.
+
+**Both strips are rendered and one is `display:none` at every width.** A hidden
+element is out of the accessibility tree entirely, so there is exactly one
+strip and one set of tab stops at any size. Reordering with flex `order`
+instead would have put the visual order and the focus order out of step, which
+is the defect and not the fix.
+
+**The timestamp tools MOVED DOWN THE ROW, they were not taken away** — the
+owner asked only that they stop occupying the first two positions. **An
+admin-only door is filtered for an investigator rather than drawn dead**:
+`/sheets`, the manual intake and the delivery desk all answer 403 to that role,
+and a control that can open nothing must not be drawn as a button.
+
+**THERE ARE TWO TEALS IN THIS REPOSITORY AND THEY ARE NOT THE SAME COLOUR.**
+The public site's `--teal` is `#3d97ad`; the portal's is `#2f7d90`, which is
+darker. The contrast section above — *white on `--teal` is 3.37:1*, and the
+alternatives offered to the owner — is about the PUBLIC SITE and is correct
+there: white on `#3d97ad` measures 3.37 exactly. Against the PORTAL's tokens
+the same pairs measure **white on teal 4.71:1** and **navy on teal 3.71:1**.
+Reading one palette's numbers off the other is how the Unit B flag chip was
+first specified, and it produced a chip that would have failed AA under a
+comment citing a figure from a different file. **Measure against the file you
+are editing.**
+
+**Units C to F were an audit, and most of what they found was the tap floor.**
+Each screen was rendered at 390px and measured rather than looked at:
+
+- **The rate sheet's fee lines stack on a phone.** `.rs-v` is sized by its own
+  content and the private sheet puts SENTENCES in it, so the label column was
+  left **90px of a 312px panel**. The first probe for this looked for geometric
+  overlap between the two columns and found none — with the fix and without it
+  — so it would have passed while testing nothing. What is measurable is the
+  label's width, and that is what the suite asserts, **with a control that
+  re-measures the same page with the rule removed**.
+- **`Back to Cases` was drawn underneath the hamburger**, and this is the one
+  shared bug in the set. `.close` is the dialog X's rule (`position:absolute;
+  right:14px; top:12px`), the case page borrowed the class for its back button,
+  and the position came with it — into the corner the burger owns below 900px.
+  Measured with `elementFromPoint`, not z-index arithmetic: at 1200 and 1440 it
+  stacks harmlessly above *Admin | Sign out* and Sign out is still the element
+  at its own centre, so **desktop was never broken and is untouched**; at 768
+  and 390 it covered the signed-in name, its own text was cut off, and at 390
+  the burger was the element on top of it — so tapping *back* opened the
+  drawer. Fixed at 899px, which is where the rail becomes a burger.
+- **Controls that computed under 44px**: five `.tl-edit` inline actions at 12px
+  (including *Assign*, on Case status), five `.ov-mods` case-status doors at
+  34–35px, one `.linklike` at 22px on the Tasks board, and the intake's
+  save-as-profile tick at 17px. `.cap` is the portal's generic checkbox label —
+  36 of them — so that last one was every tickable option in every form on a
+  phone. **`.pkg-b` was checked and left alone at 56px**: it was in the first
+  draft of that rule and came out when it was measured, because a rule that
+  does nothing under a comment claiming it fixed something is worse than no
+  rule.
+- **The field view needed nothing.** It is already the dark, one-handed design
+  the mockups derive from, and a sweep of it at 390px found no control under
+  either floor. Saying so is the finding.
+
+A sweep of **all sixteen top-level screens** at 390px is what produced that
+list, rather than only the screens this brief redesigned. The profiles
+checkbox it also flagged was left alone: a 22px box inside a 44px label is the
+target a thumb actually hits.
+
+**Every phone rule in this file lives at the END of the stylesheet**, after
+everything it overrides — the source-order casualty this project has now
+recorded seven times.
+
+### A rule written for one screen broke another, and every suite was green
+
+The first version of the phone checkbox fix set **`.cap{min-height:44px}`**.
+It was BOTH useless and harmful, and the two halves are worth separating.
+
+**Useless:** the intake's save-as-profile label measured **65px with the rule
+and 65px without it**. What was actually small was the BOX — 13px — and the
+box is not the target, because clicking the words is what toggles it. The tap
+floor was never in question here; the control was just hard to see. Only the
+`width/height:22px` half does anything, and it matches the number `.dsb-act`
+already uses rather than inventing a second one.
+
+**Harmful:** `.cap` is the portal's generic checkbox label, and the Assistant's
+workbench overrides it into a STACKED form label
+(`.asst-work label.cap{flex-direction:column}`). Those hold a caption *and* a
+44px control and legitimately measure 70–130px. The floor flattened every one
+to 44, so **Prepare a Rate Sheet drew its labels on top of the controls above
+them** — a screen that had been correct, broken by a rule aimed at a different
+screen.
+
+**No suite noticed**, because they all assert that a field EXISTS and how tall
+the INPUT is, and none of them asked whether two things occupy the same pixels.
+There is an assertion for that now, written against geometry rather than
+against the rule that caused it: no two workbench labels may overlap, no
+control may be drawn outside the label that owns it, and a stacked label must
+be taller than the control it contains. A future rule with the same effect
+fails there too.
+
+### What the last two mockups asked for that the record cannot support
+
+The Rate Sheet and Billing/Tasks mockups were taken for their **shape** — the
+dry-run lede, full-width stacked actions, coloured group headings on the task
+board (the heading already SAYS Overdue/Today, so the tint only emphasises what
+the word states, and an empty band stays neutral because a band with nothing in
+it is not a warning). Four things in them were deliberately **not** built,
+because building them would put an untruth on a staff screen:
+
+- **A payment card offering Mail Check, Venmo and Cash App on one case.**
+  `CONTEXT_TAKES_PAYMENT === PRIVATE` is the entire payment boundary: Cash App
+  and Venmo can only ever attach to a private context, and Mail Check only to
+  legal or insurance. No case can be offered all three, and a screen that drew
+  them together would be offering what the Worker refuses by name.
+- **A case preview listing "Invoice, Card, Bank Transfer".** Those instruments
+  do not exist here.
+- **Task category chips (Billing / Client / Operations).** `case_tasks` has no
+  category column — it has `priority`, which is a different thing. Drawing a
+  category would be inventing data.
+- **An avatar and an "On Duty" status.** There is no such record.
+
 ## The /watch/ dashboard
 
 `watch/` is a private, passcode- and Face ID-gated dashboard showing live site
