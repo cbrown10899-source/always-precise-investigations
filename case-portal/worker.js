@@ -13631,7 +13631,27 @@ const ASSISTANT_COMMANDS = [
   { action: 'end_day', level: 2, label: 'End Day', needs_case: true,
     roles: ['admin', 'investigator'], route: 'day/end',
     title: 'END TODAY\'S INVESTIGATION DAY?' },
+  /* TASKS. `addTask` is admin-only and `setTaskStatus` lets an investigator
+     close their OWN task and nothing else — both stated here as the roles
+     that may be OFFERED the command, while the route keeps enforcing them.
+     Two gates that agree is the point; the route's is the one that counts. */
+  { action: 'add_task', level: 2, label: 'Add Task', needs_case: true,
+    roles: ['admin'], route: 'tasks',
+    title: 'ADD THIS FOLLOW-UP TASK?' },
+  { action: 'complete_task', level: 2, label: 'Mark Done', needs_case: true,
+    roles: ['admin', 'investigator'], route: 'tasks/:id/status',
+    title: 'MARK THIS TASK DONE?' },
 ];
+
+/* THE CASE TABS THE ASSISTANT MAY NAME, and it is a registry for the reason
+   ASSISTANT_NAV is one: model text must never become a destination. A case tab
+   is not a top-level tab — it lives inside the workspace — so it needs its own
+   list rather than a widening of that one, and the page resolves an id here
+   against its own handler exactly as it does for a tab. */
+const ASSISTANT_CASE_TABS = {
+  overview: 'Overview', activity: 'Activity', daily: 'Daily Summary',
+  evidence: 'Case media', reports: 'Report', billing: 'Billing',
+};
 /* `assistantCommand` is already the route handler's name — the class-name
    contest this project has recorded five times, at the function layer. */
 const assistantCmd = action => ASSISTANT_COMMANDS.find(c => c.action === action) || null;
@@ -14382,7 +14402,14 @@ async function assistantWatch(env, user) {
    names what it carries. The Assistant identifies and explains; deleting
    stays the manual control on the intake card, and the answer says so. */
 
-const nav = (label, id, kind = 'tab') => ({ label, navigate: kind === 'case' ? { kind, case_no: id } : { kind, id } });
+/* `kind` decides what `id` means: a tab id, an action id, a case number, or —
+   for 'case_tab' — a tab INSIDE a case, which needs both and so takes the case
+   number as a fourth argument. Every existing caller is a three-argument call
+   and is unchanged. */
+const nav = (label, id, kind = 'tab', caseNo = '') =>
+  ({ label, navigate: kind === 'case' ? { kind, case_no: id }
+    : kind === 'case_tab' ? { kind, id, case_no: caseNo }
+    : { kind, id } });
 const say = (label, text) => ({ label, say: text });
 const seed = (label, text) => ({ label, seed: text });
 
@@ -14910,6 +14937,159 @@ async function assistantCommandCore(body, env, user) {
           day_id: action === 'end_day' && open ? open.id : null,
           whose: action === 'end_day' && open && !mine ? (open.who || '') : '',
         } });
+    }
+  }
+
+  /* ---- THE DAILY SUMMARY, AND WHY THIS COMMAND DOES NOT WRITE ONE -------
+     The builder composes DETERMINISTIC sentences from recorded values and the
+     writer's own EXPLICIT PICKS — which vehicle, which entries, which opening,
+     which conclusion. Those picks are the authorship. A command that guessed
+     them so it could "draft the summary for you" would be inventing the one
+     thing DAILY-SUMMARY.md says nothing may invent, and it would do it on a
+     document that reaches a client.
+
+     So this answers the question from the record and opens the builder. It is
+     the same rule the Rebuild button already follows by ASKING first: the
+     engine composes, a person decides. */
+  {
+    const wantsDS = /\b(daily summary|day'?s summary|summary for (today|the day|this day))\b/i.test(text)
+      || (/\b(draft|write|start|open|do)\b/i.test(text) && /\bsummary\b/i.test(text)
+          && !/\bcombined summary\b/i.test(text) && !/\bcase summary\b/i.test(text));
+    if (wantsDS) {
+      if (!caseNo) {
+        return json({ ok: true, kind: 'status',
+          text: 'Which case? A daily summary belongs to one investigation day on one case — '
+              + 'open it first, or find it with "Find <name or case number>".',
+          actions: [nav('CASES', 'cases')] });
+      }
+      const row = await caseFor(env, user, caseNo);
+      if (!row) return json({ ok: true, kind: 'status',
+        text: `I cannot read ${caseNo} with your access.` });
+
+      const miss = await missingTables(env);
+      /* THE CASE'S CURRENT DAY, by wsCurrentDay's own rule: the day that is
+         running if one is, else the most recent — and the answer SAYS which,
+         because a screen that draws a day without saying whether it is running
+         is the silently wrong day this project has already named. */
+      const day = miss.includes('case_days') ? null : await env.DB.prepare(
+        `SELECT id, day_date, end_time FROM case_days WHERE case_no = ?
+          ORDER BY (end_time IS NULL) DESC, day_date DESC, id DESC LIMIT 1`).bind(caseNo).first();
+      if (!day) {
+        return json({ ok: true, kind: 'status',
+          text: `No investigation day has been recorded on ${caseNo} yet, so there is no day for a `
+              + 'summary to describe. A day starts in Active Surveillance or on the case\'s own Day panel.',
+          actions: [nav('OPEN THE CASE', caseNo, 'case')] });
+      }
+      const running = !day.end_time;
+      const saved = miss.includes('case_day_summary') ? null : await env.DB.prepare(
+        'SELECT narrative FROM case_day_summary WHERE day_id = ?').bind(day.id).first();
+      const has = saved && String(saved.narrative || '').trim();
+      const state = has
+        ? 'A summary is already written for that day. The builder will show it, and it stays yours '
+          + 'until you change it — nothing here rewrites what you wrote.'
+        : 'No summary is written for that day yet.';
+      return json({ ok: true, kind: 'status',
+        text: `${caseNo} — day of ${day.day_date}${running ? ' (running now)' : ' (most recent day)'}. `
+            + `${state} The builder composes the sentences from what is recorded; the picks that shape `
+            + 'them are yours, so I open it rather than writing one on your behalf.',
+        actions: [nav('OPEN THE DAILY SUMMARY', 'daily', 'case_tab', caseNo)] });
+    }
+  }
+
+  /* ---- TASKS ON THE EXISTING TASK SYSTEM (§ the case_tasks the board and the
+     case tab already write). Both commands map to the ordinary routes, so
+     `addTask`'s admin gate and `setTaskStatus`'s "your own task, and done is
+     the only transition the field needs" rule are the ones that decide. */
+  {
+    const wantsAdd = /\b(add|create|make|new|open)\b[^]{0,16}\b(task|to.?do|follow.?up|reminder)\b/i.test(text)
+      || /\bremind me to\b/i.test(text);
+    const wantsDone = (/\b(complete|finish|close)\b[^]{0,24}\b(task|to.?do|follow.?up)\b/i.test(text)
+      || /\bmark\b[^]{0,60}\bdone\b/i.test(text) || /\btask\b[^]{0,24}\bdone\b/i.test(text));
+    if (wantsAdd || wantsDone) {
+      const action = wantsAdd ? 'add_task' : 'complete_task';
+      const plan = await assistantPlan(env, user, action, caseNo);
+      if (plan.fail === 'not_your_desk') {
+        return json({ ok: true, kind: 'status',
+          text: 'Creating a task is an admin desk. You can mark your own task done from the task board.',
+          actions: [nav('TASKS', 'tasks')] });
+      }
+      if (plan.fail === 'no_case') {
+        return json({ ok: true, kind: 'status',
+          text: 'Which case? A task belongs to one — open it first, or find it with '
+              + '"Find <name or case number>".',
+          actions: [nav('CASES', 'cases'), nav('TASKS', 'tasks')] });
+      }
+      if (plan.fail === 'no_such_case') return json({ ok: true, kind: 'status',
+        text: `I cannot read ${caseNo} with your access.` });
+      if (plan.fail === 'case_closed_to_writes') return json({ ok: true, kind: 'status',
+        text: `${caseNo} has been archived or deleted, so nothing can be written to it. Put the case back first.` });
+      if (plan.fail) return json({ ok: true, kind: 'status',
+        text: 'That is not a command this account can run.' });
+
+      if (action === 'add_task') {
+        /* THE WORDS ARE THE PERSON'S OWN. What is stripped is the instruction
+           to me, never the content — and the confirmation prints exactly what
+           would be written, so nobody approves a sentence they cannot see. */
+        const said = String(text)
+          .replace(/^\s*(please\s+)?/i, '')
+          .replace(/^\s*remind me to\s+/i, '')
+          .replace(/^\s*(add|create|make|new|open)\s+(a|an|the)?\s*(task|to.?do|follow.?up|reminder)\s*(to|that|for|:)?\s*/i, '')
+          .replace(/\s+on\s+(this\s+case|case\s+[A-Za-z0-9-]{3,64})\s*$/i, '')
+          .trim().slice(0, 500);
+        if (!said) {
+          return json({ ok: true, kind: 'status',
+            text: 'Say what needs doing — "add a task to call the adjuster on Monday", for example. '
+                + 'I will show you the exact wording before anything is written.' });
+        }
+        return json({ ok: true, kind: 'command', text: plan.cmd.title,
+          command: { action, case_no: caseNo, label: plan.cmd.label, level: plan.cmd.level,
+                     task: said, detail: said,
+                     say: 'This writes a follow-up task on the case, at normal priority and with no '
+                        + 'due date — the task board and the case tab are where it can be given either. '
+                        + 'Nothing is emailed and nobody is assigned.' } });
+      }
+
+      /* COMPLETE: resolved against the case's OWN OPEN TASKS, never invented.
+         Zero matches and several matches are different answers and are said
+         differently — a command that picked one of three would be choosing on
+         the person's behalf. */
+      if ((await missingTables(env)).includes('case_tasks')) {
+        return json({ ok: true, kind: 'status',
+          text: 'The task table is not set up on this database yet, so I cannot read what is open.' });
+      }
+      const mineOnly = user.role === 'admin' ? '' : ' AND assigned_to = ?';
+      const binds = mineOnly ? [caseNo, user.id] : [caseNo];
+      const open = await env.DB.prepare(
+        `SELECT id, task FROM case_tasks WHERE case_no = ? AND status = 'open'${mineOnly}
+          ORDER BY id DESC LIMIT ${SEARCH_ARM_CAP}`).bind(...binds).all();
+      const rows = (open && open.results) || [];
+      if (!rows.length) {
+        return json({ ok: true, kind: 'status',
+          text: user.role === 'admin'
+            ? `No task is open on ${caseNo}.`
+            : `No task on ${caseNo} is open and assigned to you.`,
+          actions: [nav('TASKS', 'tasks')] });
+      }
+      const needle = String(text).toLowerCase()
+        .replace(/\b(mark|complete|finish|close|the|a|an|task|to.?do|follow.?up|as|done|please)\b/gi, ' ')
+        .replace(/\s+/g, ' ').trim();
+      const hits = needle
+        ? rows.filter(r => String(r.task || '').toLowerCase().includes(needle))
+        : rows;
+      if (hits.length !== 1) {
+        return json({ ok: true, kind: 'status',
+          text: hits.length === 0
+            ? `Nothing open on ${caseNo} matches that. Open tasks: `
+              + rows.slice(0, 5).map(r => `"${r.task}"`).join(', ') + '.'
+            : `More than one open task matches — say which: `
+              + hits.slice(0, 5).map(r => `"${r.task}"`).join(', ') + '.',
+          actions: [nav('TASKS', 'tasks')] });
+      }
+      return json({ ok: true, kind: 'command', text: plan.cmd.title,
+        command: { action, case_no: caseNo, label: plan.cmd.label, level: plan.cmd.level,
+                   task_id: hits[0].id, task: hits[0].task, detail: hits[0].task,
+                   say: 'This closes the task on the record. It stays on the board under Completed — '
+                      + 'nothing is deleted, and it can be reopened from the case.' } });
     }
   }
 

@@ -1982,6 +1982,8 @@
 .asst-cmd-who b{font-weight:800;color:var(--navy);overflow-wrap:anywhere}
 .asst-cmd-who .mono{color:var(--muted);font-size:.78rem}
 .asst-cmd-who span{color:var(--muted);font-size:.79rem}
+.asst-cmd-detail{margin:0 0 6px;padding:7px 9px;background:var(--gold-bg);
+  border-radius:8px;font-size:.88rem;line-height:1.4;color:var(--navy);overflow-wrap:anywhere}
 .asst-cmd-say{font-size:.83rem;color:var(--muted);line-height:1.45;margin-bottom:9px}
 .asst-cmd .asst-acts{margin-top:0;display:flex;flex-direction:column;gap:8px}
 .asst-cmd .asst-acts .btn{min-height:44px;width:100%}
@@ -3426,6 +3428,11 @@ function asstDraftHtml(d){
    has a private endpoint, so each keeps its own role gate, its own
    deleted/archived refusal, its own idempotency and its own audit record. The
    Assistant is a faster way to the same door, never a second door. */
+/* The case tabs a command may land on. Mirrors ASSISTANT_CASE_TABS in the
+   Worker; two short lists that agree is the same shape ASSISTANT_NAV and the
+   page's TAB handlers already have, and an id in neither opens nothing. */
+const ASST_CASE_TABS = ["overview", "activity", "daily", "evidence", "reports", "billing"];
+
 const ASST_CMD = {
   start_day: async c => {
     await api(`/cases/${encodeURIComponent(c.case_no)}/day/start`, {method: "POST", body: {
@@ -3438,6 +3445,23 @@ const ASST_CMD = {
       end_time: hmLocal(),
     }});
     return "Investigation day ended.";
+  },
+  /* THE ORDINARY TASK ROUTES, with nothing added. `addTask` is admin-only and
+     `setTaskStatus` refuses anything but "done" on a task that is not yours —
+     both still decide here, because this is the same POST the case tab and the
+     task board already send. Priority is left at the route's own default: a
+     task the office did not call urgent is not urgent, and guessing one would
+     raise an alert nobody asked for. */
+  add_task: async c => {
+    await api(`/cases/${encodeURIComponent(c.case_no)}/tasks`, {method: "POST", body: {
+      task: c.task || "",
+    }});
+    return `Task added to ${c.case_no}: ${c.task}`;
+  },
+  complete_task: async c => {
+    await api(`/cases/${encodeURIComponent(c.case_no)}/tasks/${encodeURIComponent(c.task_id)}/status`,
+      {method: "POST", body: { status: "done" }});
+    return `Marked done: ${c.task}`;
   },
 };
 
@@ -3504,6 +3528,14 @@ function asstNavigate(nav){
     return;
   }
   if(nav.kind === "case" && nav.case_no){ openCase(String(nav.case_no), "overview"); return; }
+  /* A TAB INSIDE A CASE. `openCase` has always taken the tab as its second
+     argument, so this needed no new door — but the id is checked against the
+     page's own list first, for the reason a top-level tab is: what the Worker
+     names is a registry id, and the page resolves it against handlers it
+     already has rather than trusting the string. */
+  if(nav.kind === "case_tab" && nav.case_no && ASST_CASE_TABS.includes(String(nav.id))){
+    openCase(String(nav.case_no), String(nav.id)); return;
+  }
   if(nav.kind === "action"){
     if(nav.id === "surveillance") openSurveillanceLauncher();
     if(nav.id === "vst") vstOpen("");
@@ -3774,6 +3806,11 @@ function asstMsgHtml(m){
       <div class="asst-cmd-who"><b>${esc(m.command.client || m.command.subject || m.command.case_no)}</b>
         <span class="mono">${esc(m.command.case_no)}</span>${
         m.command.whose ? `<span>Started by ${esc(m.command.whose)}</span>` : ""}</div>
+      ${/* THE EXACT WORDS THAT WOULD BE WRITTEN, when the command carries any.
+             A task's text is the person's own sentence and it is what lands in
+             the record, so it is shown verbatim rather than summarised —
+             nobody should approve a sentence they cannot read. */""}
+      ${m.command.detail ? `<div class="asst-cmd-detail">&ldquo;${esc(m.command.detail)}&rdquo;</div>` : ""}
       <div class="asst-cmd-say">${esc(m.command.say
         || "This changes the case record. Nothing happens until you confirm.")}</div>
       <div class="asst-acts">

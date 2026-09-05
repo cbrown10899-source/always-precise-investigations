@@ -18653,6 +18653,169 @@ section('Case Command Center: the command protocol and its refusals');
 /* ============================================================================
    UNIT B — search reaches invoices and tasks, and stops where the role does.
    ========================================================================= */
+section('Case Command Center: the daily summary opens, and does not write itself');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(env, { case_no: 'API-DS-1', client_name: 'Summary Client', subject_name: 'Subject One' });
+  const cmd = (cookie, text, caseNo) => call(env, '/assistant/command', { method: 'POST', cookie,
+    body: { text, context: caseNo ? { case_no: caseNo, route: 'case' } : { route: 'cases' } } });
+
+  let j = await jsonOf(await cmd(admin, "draft today's summary"));
+  ok('with no case open, the daily summary asks which case', j.kind === 'status'
+     && /Which case/i.test(j.text) && !j.command);
+
+  j = await jsonOf(await cmd(admin, "draft today's summary", 'API-DS-1'));
+  ok('with no day recorded it says so rather than offering a summary of nothing',
+     j.kind === 'status' && /no investigation day/i.test(j.text) && !j.command);
+
+  /* A real day, through the ordinary route. */
+  await call(env, '/cases/API-DS-1/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-09-05', start_time: '09:00' } });
+  j = await jsonOf(await cmd(admin, "draft today's summary", 'API-DS-1'));
+  ok('with a day running it names the day and says it is running',
+     j.kind === 'status' && /2026-09-05/.test(j.text) && /running now/i.test(j.text));
+  ok('and it says no summary is written yet', /no summary is written/i.test(j.text));
+
+  /* THE POINT OF THE UNIT. The builder composes from the writer's own explicit
+     picks — which vehicle, which entries, which opening — so a command that
+     guessed them would be inventing authorship on a document a client reads.
+     It offers the BUILDER and issues no command at all. */
+  ok('it is NOT a command — nothing is offered that would write a narrative',
+     j.kind === 'status' && !j.command);
+  const act = (j.actions || []).find(a => a.navigate && a.navigate.kind === 'case_tab');
+  ok('it offers the daily summary builder as a case-tab destination',
+     !!act && act.navigate.id === 'daily' && act.navigate.case_no === 'API-DS-1',
+     JSON.stringify(j.actions));
+  /* THE TAB IS A REGISTRY ID, not a string the answer made up — checked against
+     the registry's own source, the way this suite already pins other one-writer
+     lists. The page holds the matching list and resolves the id against its own
+     handlers, so an id in neither opens nothing. */
+  {
+    const src = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+    const block = (src.match(/const ASSISTANT_CASE_TABS = \{[^}]*\}/) || [''])[0];
+    ok('the tab it names is one ASSISTANT_CASE_TABS lists',
+       new RegExp(`\\b${act.navigate.id}:`).test(block), block.slice(0, 120));
+  }
+
+  /* An existing narrative is reported as existing, and still not touched. */
+  const day = (await env.DB.prepare('SELECT id FROM case_days WHERE case_no = ?').bind('API-DS-1').first());
+  await call(env, `/cases/API-DS-1/days/${day.id}/summary`, { method: 'POST', cookie: admin,
+    body: { narrative: 'The subject remained at the residence throughout.', config: {} } });
+  j = await jsonOf(await cmd(admin, 'daily summary', 'API-DS-1'));
+  ok('an existing summary is reported as already written', /already written/i.test(j.text));
+  ok('and the answer promises not to rewrite it', /stays yours|nothing here rewrites/i.test(j.text));
+  const after = await env.DB.prepare('SELECT narrative FROM case_day_summary WHERE day_id = ?')
+    .bind(day.id).first();
+  ok('and asking did not change one character of it',
+     after.narrative === 'The subject remained at the residence throughout.', after.narrative);
+}
+
+section('Case Command Center: tasks go through the task system that already exists');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const res = await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' });
+  const token = new URL((await jsonOf(res)).url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const danaId = (await jsonOf(await call(env, '/users', { cookie: admin }))).users
+    .find(u => u.username === 'dana').id;
+
+  await ingest(env, { case_no: 'API-TK-1', client_name: 'Task Client', subject_name: 'Task Subject' });
+  await call(env, '/submissions/API-TK-1/assign', { method: 'POST', cookie: admin, body: { user_id: danaId } });
+  const cmd = (cookie, text, caseNo) => call(env, '/assistant/command', { method: 'POST', cookie,
+    body: { text, context: caseNo ? { case_no: caseNo, route: 'case' } : { route: 'cases' } } });
+
+  /* ---- ADD ---------------------------------------------------------- */
+  let j = await jsonOf(await cmd(admin, 'add a task to call the adjuster on Monday', 'API-TK-1'));
+  ok('adding a task is OFFERED, never run', j.kind === 'command' && j.command.action === 'add_task');
+  ok('it is level 2', j.command.level === 2);
+  /* THE WORDS ARE THE PERSON'S OWN, and the card prints them. What is stripped
+     is the instruction to the Assistant, never the content. */
+  ok('the task text is the sentence they actually asked for',
+     j.command.task === 'call the adjuster on Monday', j.command.task);
+  ok('and the confirmation carries it verbatim so it can be read before approving',
+     j.command.detail === j.command.task);
+  ok('the confirmation says it writes no due date and assigns nobody',
+     /no due date/i.test(j.command.say) && /nobody is assigned/i.test(j.command.say));
+
+  j = await jsonOf(await cmd(admin, 'remind me to chase the signed paperwork', 'API-TK-1'));
+  ok('"remind me to X" is the same door', j.kind === 'command'
+     && j.command.task === 'chase the signed paperwork', JSON.stringify(j.command));
+
+  /* THE BETA GUARD STILL WINS, EVEN OVER A TASK'S OWN WORDING — and that is
+     the behaviour, not a bug to file. ASSISTANT_BLOCKED matches the utterance
+     before any command resolves, so "add a task to send the report" and
+     "remind me to chase the signed authorization" are refused by name: the
+     words `send` and `authoriz` are on the list.
+
+     It is a false positive on a note nobody would have executed, and it is the
+     SAFE direction. Narrowing the list so a task's text could carry those verbs
+     would mean the word `send` no longer reliably reaches the refusal, and that
+     refusal is what stands between this Assistant and a real client email. The
+     owner's own line is that conversational wording must never bypass the
+     restriction. The workaround is the task field on the case, which is one tap
+     away and was never gated. */
+  j = await jsonOf(await cmd(admin, 'add a task to send the report', 'API-TK-1'));
+  ok('a task whose wording carries a blocked verb is refused by the Beta guard first',
+     j.kind === 'refused' && !j.command, JSON.stringify({ kind: j.kind, text: j.text }));
+  j = await jsonOf(await cmd(admin, 'remind me to chase the signed authorization', 'API-TK-1'));
+  ok('and so is one that says "authorization"', j.kind === 'refused' && !j.command);
+
+  j = await jsonOf(await cmd(admin, 'add a task', 'API-TK-1'));
+  ok('a task with no words asks for them rather than writing an empty one',
+     j.kind === 'status' && !j.command && /say what needs doing/i.test(j.text));
+
+  /* ---- THE ROUTE'S OWN GATE IS THE ONE THAT COUNTS -------------------- */
+  j = await jsonOf(await cmd(dana, 'add a task to call the adjuster', 'API-TK-1'));
+  ok('an investigator is not offered task creation — addTask is admin-only',
+     j.kind === 'status' && !j.command && /admin desk/i.test(j.text));
+
+  j = await jsonOf(await cmd(admin, 'add a task to call the adjuster'));
+  ok('with no case open it asks which case rather than guessing',
+     j.kind === 'status' && !j.command && /Which case/i.test(j.text));
+
+  /* ---- COMPLETE ------------------------------------------------------ */
+  await call(env, '/cases/API-TK-1/tasks', { method: 'POST', cookie: admin,
+    body: { task: 'call the adjuster' } });
+  await call(env, '/cases/API-TK-1/tasks', { method: 'POST', cookie: admin,
+    body: { task: 'order the surveillance report' } });
+
+  j = await jsonOf(await cmd(admin, 'mark the adjuster task done', 'API-TK-1'));
+  ok('completing resolves against the case\'s own open tasks',
+     j.kind === 'command' && j.command.action === 'complete_task'
+     && j.command.task === 'call the adjuster', JSON.stringify(j.command));
+
+  j = await jsonOf(await cmd(admin, 'mark task done', 'API-TK-1'));
+  ok('an ambiguous match names the candidates instead of choosing one',
+     j.kind === 'status' && !j.command && /more than one/i.test(j.text), j.text);
+
+  j = await jsonOf(await cmd(admin, 'mark the parking task done', 'API-TK-1'));
+  ok('no match says so and lists what is actually open',
+     j.kind === 'status' && !j.command && /nothing open/i.test(j.text), j.text);
+
+  /* An investigator sees only THEIR OWN open tasks as candidates — the same
+     boundary setTaskStatus enforces, applied before anything is offered. */
+  j = await jsonOf(await cmd(dana, 'mark the adjuster task done', 'API-TK-1'));
+  ok('an investigator is offered nothing for a task that is not assigned to them',
+     j.kind === 'status' && !j.command && /assigned to you/i.test(j.text), j.text);
+
+  await call(env, '/cases/API-TK-1/tasks', { method: 'POST', cookie: admin,
+    body: { task: 'photograph the vehicle', assigned_to: danaId } });
+  j = await jsonOf(await cmd(dana, 'mark the vehicle task done', 'API-TK-1'));
+  ok('their own task is offered', j.kind === 'command'
+     && j.command.task === 'photograph the vehicle', JSON.stringify(j.command));
+
+  /* NOTHING WAS WRITTEN BY ANY OF THE ABOVE. Offering is not executing, and
+     that is the whole protocol. */
+  const still = (await env.DB.prepare("SELECT COUNT(*) AS n FROM case_tasks WHERE status = 'done'")
+    .first()).n;
+  ok('and not one task was closed by asking', Number(still) === 0, String(still));
+}
+
 section('Case Command Center: invoices and tasks are searchable, within the role');
 {
   const env = freshEnv();
