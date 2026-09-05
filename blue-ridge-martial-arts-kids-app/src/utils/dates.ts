@@ -86,14 +86,6 @@ export function relativeDayLabel(target: Date, today: Date): string {
   return DAY_NAMES[target.getDay()]
 }
 
-/** Minutes as "10 min" or "1 hr 5 min". */
-export function formatMinutes(total: number): string {
-  if (total < 60) return `${total} min`
-  const h = Math.floor(total / 60)
-  const m = total % 60
-  return m === 0 ? `${h} hr` : `${h} hr ${m} min`
-}
-
 /** Seconds as "M:SS", for the practice dial. */
 export function formatClock(seconds: number): string {
   const safe = Math.max(0, Math.floor(seconds))

@@ -10,6 +10,7 @@ import {
   lessonsCompletedCount,
   practicesThisWeek,
   readiness,
+  skillsPractisedThisWeek,
   weeklyProgress,
 } from '../utils/progress'
 import { skillLabel } from '../data/skills'
@@ -127,6 +128,7 @@ export function ParentModeScreen() {
   const lessons = lessonsCompletedCount(state)
   const ready = readiness(state)
   const insight = state.instructor.insight
+  const practisedSkills = skillsPractisedThisWeek(state, today)
   const cls = state.instructor.classSession
   const nextClass = nextDayOfWeek(today, cls.dayIndex)
   const name = state.student.firstName
@@ -174,9 +176,33 @@ export function ParentModeScreen() {
         </p>
       </Card>
 
+      {/* ------------------------------------- what the app actually logged */}
+      <Card>
+        <CardHead title="Practised at home this week" icon="reps" />
+        <p className="small muted" style={{ marginBottom: 'var(--s-3)' }}>
+          Taken from the practices {name} completed in the app — not from anyone's opinion.
+        </p>
+        {practisedSkills.length === 0 ? (
+          <p className="small faint">
+            No home practices logged this week yet. Skills appear here as soon as one is completed.
+          </p>
+        ) : (
+          <div className="row" style={{ flexWrap: 'wrap', gap: 'var(--s-2)' }}>
+            {practisedSkills.map((id) => (
+              <Chip key={id} tone="green" icon="complete">
+                {skillLabel(id)}
+              </Chip>
+            ))}
+          </div>
+        )}
+      </Card>
+
       {/* ------------------------------------------------------- what/next */}
       <Card>
-        <CardHead title={`What ${name} practised`} icon="complete" />
+        <CardHead title={`What ${name}'s instructor noted`} icon="heart" />
+        <p className="small muted" style={{ marginBottom: 'var(--s-3)' }}>
+          Written by the instructor, about what they saw in class.
+        </p>
         {insight.practiced.length === 0 ? (
           <p className="small muted">Your instructor has not added notes for this week yet.</p>
         ) : (

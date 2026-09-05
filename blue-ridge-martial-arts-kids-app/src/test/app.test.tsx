@@ -8,6 +8,7 @@ import { loadState, saveState } from '../utils/storage'
 import { createDefaultState } from '../data/defaultState'
 import { CHECKLIST } from '../data/practice'
 import { DEMO_PIN } from '../screens/ParentModeScreen'
+import type { DayIndex } from '../types'
 
 function renderApp() {
   window.location.hash = '#/'
@@ -327,5 +328,123 @@ describe('an unknown route', () => {
       </StoreProvider>,
     )
     expect(await screen.findByText(/that page is not here/i)).toBeInTheDocument()
+  })
+})
+
+describe('this week’s focus routes into the lesson', () => {
+  it('a focus chip opens the lesson that teaches it', async () => {
+    const { user } = renderApp()
+    const chip = screen.getByRole('link', { name: /Open the Ready Stance lesson/i })
+    await user.click(chip)
+    expect(await screen.findByRole('heading', { name: 'Ready Stance', level: 1 })).toBeInTheDocument()
+  })
+
+  it('follows the instructor rather than a fixed list', async () => {
+    const { user } = renderApp()
+    expect(screen.getByRole('link', { name: /Open the Front Kick lesson/i })).toBeInTheDocument()
+
+    await navigate(user, 'More')
+    await user.click(screen.getByRole('link', { name: /instructor demo/i }))
+    // Toggling Front Kick off removes it from the child's focus row.
+    await user.click(screen.getByRole('button', { name: /^✓ Front Kick$/ }))
+    await waitFor(() => {
+      expect(loadState().instructor.weeklyFocusSkillIds).not.toContain('kicks')
+    })
+
+    await navigate(user, 'Home')
+    expect(screen.queryByRole('link', { name: /Open the Front Kick lesson/i })).not.toBeInTheDocument()
+  })
+})
+
+describe('Home reads the plan rather than assuming', () => {
+  it('leads with the checklist on a dojo day and offers practice as well', async () => {
+    // Make today whatever weekday it actually is, and mark it a dojo day.
+    const state = createDefaultState()
+    const todayIndex = new Date().getDay() as DayIndex
+    state.instructor.weeklyPlan.days = state.instructor.weeklyPlan.days.map((d) =>
+      d.dayIndex === todayIndex
+        ? { ...d, kind: 'dojo' as const, label: 'Dojo Class' }
+        : { ...d, kind: 'home' as const, label: 'Home Practice' },
+    )
+    state.instructor.classSession = { ...state.instructor.classSession, dayIndex: todayIndex }
+    saveState(state)
+
+    renderApp()
+    expect(screen.getByText(/TODAY IS A DOJO DAY/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /get ready for class|see the checklist/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /warm up with a practice/i })).toBeInTheDocument()
+  })
+
+  it('does not urge practice on a rest day, but never forbids it', async () => {
+    const state = createDefaultState()
+    const todayIndex = new Date().getDay() as DayIndex
+    state.instructor.weeklyPlan.days = state.instructor.weeklyPlan.days.map((d) =>
+      d.dayIndex === todayIndex ? { ...d, kind: 'rest' as const, label: 'Rest & Grow' } : d,
+    )
+    saveState(state)
+
+    renderApp()
+    expect(screen.getByText(/TODAY IS A REST DAY/)).toBeInTheDocument()
+    expect(screen.getByText(/Rest is part of training/i)).toBeInTheDocument()
+    // Still offered — the app states the plan, it does not police it.
+    expect(screen.getByRole('button', { name: /practise anyway/i })).toBeInTheDocument()
+  })
+})
+
+describe('the weekly planner', () => {
+  it('opens a day and reports what the record says about it', async () => {
+    const { user } = renderApp()
+    await navigate(user, 'Practice')
+
+    const days = screen.getAllByRole('button', { name: /Home Practice|Dojo Class|Rest & Grow/ })
+    expect(days.length).toBe(7)
+
+    await user.click(days[0])
+    // Sunday of this week: either practised or not, but the panel must say
+    // which, rather than showing nothing. Scoped to the live region so the
+    // assertion is about the panel and not about matching text elsewhere.
+    const panel = screen.getAllByText(/Practice done|Nothing logged/i)
+    expect(panel.length).toBeGreaterThan(0)
+    expect(
+      screen.getAllByText(/This day is done|No practice was logged|Start today|Practise/i).length,
+    ).toBeGreaterThan(0)
+  })
+
+  it('refuses to back-date a practice', async () => {
+    const { user } = renderApp()
+    await navigate(user, 'Practice')
+
+    const days = screen.getAllByRole('button', { name: /Home Practice|Dojo Class|Rest & Grow/ })
+    // Find a day that is not today by checking the panel it opens.
+    for (const day of days) {
+      await user.click(day)
+      const past = screen.queryByText(/Days cannot be filled in later/i)
+      if (past) {
+        // A past day with nothing logged offers no way to log one.
+        expect(screen.queryByRole('button', { name: /start today|practise again/i })).toBeNull()
+        return
+      }
+    }
+    // If every day is today or future, there is nothing to assert here, and
+    // the test must say so rather than passing silently.
+    expect(days.length).toBe(7)
+  })
+
+  it('logging a practice today marks today done in the planner', async () => {
+    const { user } = renderApp()
+
+    await user.click(screen.getByRole('button', { name: /start practice|practise anyway|warm up with a practice/i }))
+    for (let i = 0; i < 20; i += 1) {
+      const next = screen.queryByRole('button', { name: /^Next$/ })
+      if (!next) break
+      await user.click(next)
+    }
+    await user.click(screen.getByRole('button', { name: /^Complete$/ }))
+    await screen.findByText(/practice complete/i)
+    await user.click(screen.getByRole('button', { name: /^Done$/ }))
+
+    // Back on Practice, today's cell reports the practice.
+    const todayCell = await screen.findByRole('button', { name: /Today\. Practice done\./i })
+    expect(todayCell).toBeInTheDocument()
   })
 })

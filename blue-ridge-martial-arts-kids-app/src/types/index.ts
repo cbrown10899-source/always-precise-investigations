@@ -299,16 +299,6 @@ export interface ChecklistItem {
  */
 export type GrowthLevel = 'Building' | 'Improving' | 'Strong' | 'Excellent'
 
-export type GrowthCategoryId = 'focus' | 'consistency' | 'effort' | 'confidence'
-
-export interface GrowthCategory {
-  id: GrowthCategoryId
-  label: string
-  /** What this category is looking at, so the label is never mysterious. */
-  basis: string
-  icon: IconKey
-}
-
 /* --------------------------------------------------------- parent insight */
 
 /**

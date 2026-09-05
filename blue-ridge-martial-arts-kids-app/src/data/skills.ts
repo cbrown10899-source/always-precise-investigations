@@ -22,10 +22,6 @@ export const SKILLS: Skill[] = [
 
 const BY_ID = new Map<SkillId, Skill>(SKILLS.map((s) => [s.id, s]))
 
-export function skillById(id: SkillId): Skill | undefined {
-  return BY_ID.get(id)
-}
-
 /** The label for a skill, falling back to the raw id rather than an empty
  *  string, so a stale instructor selection is visible instead of invisible. */
 export function skillLabel(id: SkillId): string {

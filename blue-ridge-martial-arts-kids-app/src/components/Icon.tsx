@@ -44,7 +44,7 @@ const REGISTRY: Record<IconKey, LucideIcon> = {
   sparkle: Sparkles,
 }
 
-export interface IconProps {
+interface IconProps {
   name: IconKey
   size?: number
   strokeWidth?: number

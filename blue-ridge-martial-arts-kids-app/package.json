@@ -16,7 +16,8 @@
     "build:single": "npm run build && node scripts/build-singlefile.mjs",
     "audit:ui": "node scripts/audit-ui.mjs",
     "audit:a11y": "node scripts/audit-a11y.mjs",
-    "audit": "npm run audit:ui && npm run audit:a11y"
+    "audit": "npm run audit:ui && npm run audit:a11y && npm run audit:runtime",
+    "audit:runtime": "node scripts/audit-runtime.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.454.0",
