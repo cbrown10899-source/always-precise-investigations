@@ -3680,6 +3680,72 @@ once.
 - **No second door for anything.** Every command is a registry row naming a
   route the portal already had.
 
+## The Assistant owns its own scroll, and the portal behind it does not move
+
+Owner, on a real iPhone, 2026-09-05: the sheet covered the page, a swipe
+inside it scrolled the PORTAL behind, and parts of a long form could not be
+reached.
+
+**MEASURED AT 390px BEFORE ANYTHING WAS CHANGED**, because a layout bug
+reported by feel needs a number before a fix:
+
+| | before |
+| --- | --- |
+| `.asst-work` | **692px of form inside a 350px box** |
+| `.asst-log` | 176px of log inside 128px |
+| both | `overscroll-behavior: auto` |
+| body | `overflow: visible` |
+
+**Two competing scrollers**, so the middle of the panel was not one surface
+and a swipe landed in whichever box it started over; either one, on reaching
+its end, handed the rest of the gesture to the document; and nothing captured
+a drag that started outside the sheet.
+
+**Three CSS answers, and no scroll handlers** — the owner's own preference,
+and the right one:
+
+1. **ONE SCROLLER.** `.asst-log` and the workbench were siblings, each with
+   its own `overflow`; they share `.asst-body` now. **`min-height:0` is
+   load-bearing** — a column flex item will not shrink below its content
+   without it, which is how a long panel pushes its own composer off the
+   screen. The head and the composer stay pinned by the flex column, which is
+   what "sticky header, reachable composer" means here without a single
+   `position:sticky`.
+2. **A REAL BACKDROP, AND IT IS A SIBLING OF THE PANEL, NOT AN ANCESTOR.**
+   `touch-action` is computed by walking UP from the touch target, so putting
+   `none` on a wrapper would have disabled panning inside the sheet as well —
+   the fix would have caused the bug. As a sibling it swallows a drag on the
+   exposed strip and costs the panel nothing. A tap closes: the `.navback`
+   precedent this file already records, *the dim must be an element*.
+3. **`overflow:hidden` on the document** while the sheet is open. It does not
+   move the page, so **there is no scroll offset to save and none to restore**
+   — the portal is exactly where it was when the sheet closes. That is why
+   this is not `position:fixed` with a saved offset: that technique jumps to
+   the top and then has to undo it, and the undo is where it goes wrong.
+
+The preview's own 180px window went too — a third scroller inside the sheet,
+for something that is read rather than peered at.
+
+**The height was already right and stays.** `min(92dvh,100%)` is the dynamic
+viewport, so Safari's toolbars and the keyboard shrink it correctly; the
+recorded `calc()`/`env()` trap in `.asst-ask` is untouched.
+
+**Proven by measurement, not asserted:** the panel scrolls while
+`window.scrollY` stays at 300; pushing PAST the end still leaves it at 300;
+closing returns the portal to exactly 300 and it scrolls again; reopening
+relocks. Eight flows reach their own bottom with the header and composer on
+screen — rate sheet form, rate sheet preview, Case Ready, Daily Summary, Start
+Day, payment prefill, a long conversation, and the viewport shrunk to 430px
+for the keyboard.
+
+**Desktop untouched and asserted:** no backdrop, page scrollable, wrapper
+still `pointer-events:none`, so the side panel sits beside a page that works.
+
+**One existing assertion changed, and only in what it reads.** A test pinned
+`.asst-log` as the scroller. The property it protects is unchanged and still
+asserted — the conversation area scrolls, and scrolled to its end the last
+message clears the composer rather than sliding under it.
+
 ## The phone is a different shape, and the desktop portal did not move
 
 Owner brief 2026-09-04, with five approved mockups as the visual target. The
