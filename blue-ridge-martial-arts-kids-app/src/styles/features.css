@@ -637,3 +637,21 @@
 @media (max-width: 359px) {
   .masthead__tagline { letter-spacing: 0.04em; }
 }
+
+/* ------------------------------------------------------- narrow tab rows */
+
+/* Four category tabs do not fit one line on a phone, and a half-visible
+   fourth tab reads as a layout failure rather than as "scroll me". They wrap
+   instead, so every category is visible without a gesture. */
+@media (max-width: 460px) {
+  .tabs {
+    flex-wrap: wrap;
+    border-radius: var(--r-lg);
+  }
+  .tabs__btn {
+    flex: 1 1 auto;
+    min-width: calc(50% - var(--s-2));
+    font-size: 0.8125rem;
+    padding-inline: var(--s-2);
+  }
+}

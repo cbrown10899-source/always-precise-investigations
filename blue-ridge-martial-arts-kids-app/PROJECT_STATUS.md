@@ -9,11 +9,11 @@ each one records **how** it was verified rather than asserting it.
 | --- | --- | --- |
 | DESIGN SYSTEM | ✅ Complete | Token layer in `src/styles/tokens.css`; four-file cascade; every colour named once; semantic accents measured as pairs. |
 | CODED | ✅ Complete | 15 screens, 13 components, 8 lessons, 2 routines, 9 badges. No placeholder screens. |
-| TESTED | ✅ Complete | 139 checks across 6 suites, all passing. Typecheck and lint clean. |
+| TESTED | ✅ Complete | 145 checks across 6 suites, all passing. Typecheck and lint clean. |
 | MOBILE CHECKED | ✅ Complete | `npm run audit:ui`: 0 problems across **6 widths** (320/375/390/430/768/1200) × 14 routes, plus dialogs, the planner panel and the player. Screenshots reviewed at 320 and 390. |
 | PWA CHECKED | ✅ Complete | Manifest, 4 icons, service worker and Apple metadata all verified loading in a real browser **from a Pages-shaped sub-path**; deep link survives a hard reload. |
 | GITHUB READY | ✅ Complete | Two workflows, `npm ci`, base path derived from the repo name. Sub-path build served and driven. |
-| PUSHED | ✅ Complete | `claude/blue-ridge-kids-app-mzor0d` at `984710b`. Working tree clean. |
+| PUSHED | ✅ Complete | `claude/blue-ridge-kids-app-mzor0d`, working tree clean. Working tree clean. |
 | DEPLOYED | 🟡 Partial | GitHub Pages blocked on a repository this integration cannot create (403, retried). A single-file build is published and live as a Claude Artifact. |
 | LIVE VERIFIED | 🟡 Partial | The single-file build was driven in a real browser — a practice completed end to end and persisted. GitHub Pages itself is unverified because it is undeployed. |
 
@@ -95,12 +95,12 @@ PracticeStep, ChecklistItem, DojoInfo, TodayPlan, AppState and AppSettings.
 
 ```
 Test Files  6 passed (6)
-     Tests  139 passed (139)
+     Tests  145 passed (145)
 ```
 
 `npm run typecheck` — clean (strict, `noUnusedLocals`, `noUnusedParameters`).
 `npm run lint` — clean, zero warnings.
-`npm run build` — 312 KB / 92 KB gzipped.
+`npm run build` — 314 KB / 92 KB gzipped.
 
 Every area the brief's item 22 names is covered: practice completion, weekly
 progress, readiness, badge unlocking, duplicate badge prevention, localStorage
@@ -206,8 +206,8 @@ instead of leaving an installed app stuck on an old build.
 
 ## PUSHED — complete
 
-Branch `claude/blue-ridge-kids-app-mzor0d`, latest commit `984710b`, working
-tree clean, four commits this run.
+Branch `claude/blue-ridge-kids-app-mzor0d`, working tree clean, five commits
+this run.
 
 ## DEPLOYED — partial
 

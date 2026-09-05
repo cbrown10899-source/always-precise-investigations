@@ -36,7 +36,7 @@ stored counter.
 - **Playwright** for the UI audit
 - Plain CSS with a token layer — no UI framework, no CSS-in-JS runtime
 
-Total production bundle: **~312 KB (~92 KB gzipped)**.
+Total production bundle: **~314 KB (~92 KB gzipped)**.
 
 ## Running it locally
 
@@ -112,7 +112,7 @@ screen. Instructor Demo has no gate at all and says that too.
 
 ## Tests
 
-139 checks across six suites:
+145 checks across six suites:
 
 | Suite | Covers |
 | --- | --- |

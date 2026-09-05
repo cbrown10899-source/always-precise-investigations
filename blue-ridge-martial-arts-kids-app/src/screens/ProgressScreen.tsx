@@ -7,6 +7,7 @@ import { Card, CardHead, Chip, Note, ProgressBar, ProgressRing, SectionHead, Sta
 import { BADGES } from '../data/badges'
 import { LESSONS } from '../data/lessons'
 import { beltById } from '../data/belts'
+import { skillLabel } from '../data/skills'
 import { useApp } from '../hooks/useApp'
 import { useToday } from '../hooks/useToday'
 import {
@@ -195,6 +196,69 @@ export function ProgressScreen() {
                   </li>
                 ))}
             </ul>
+          ) : null}
+        </Card>
+
+        {/* ----------------------------------------------- practice history */}
+        <Card>
+          <CardHead
+            title="Recent practices"
+            icon="reps"
+            action={
+              <span className="small bold" style={{ color: 'var(--blue-600)' }}>
+                {state.practiceHistory.length} total
+              </span>
+            }
+          />
+          {state.practiceHistory.length === 0 ? (
+            <p className="small muted">
+              No practices logged yet. Your first one appears here as soon as you finish it.
+            </p>
+          ) : (
+            <ul className="rows" style={{ listStyle: 'none' }}>
+              {[...state.practiceHistory]
+                .sort((a, b) => b.completedAt.localeCompare(a.completedAt))
+                .slice(0, 8)
+                .map((practice) => (
+                  <li
+                    key={practice.id}
+                    className="row-between"
+                    style={{ padding: 'var(--s-3) 0', alignItems: 'flex-start' }}
+                  >
+                    <span className="grow">
+                      <span className="bold small" style={{ color: 'var(--navy-900)' }}>
+                        {practice.routineTitle}
+                      </span>
+                      <span className="tiny faint" style={{ display: 'block' }}>
+                        {longDate(parseLocalDate(practice.date))}
+                      </span>
+                      <span
+                        className="row"
+                        style={{ flexWrap: 'wrap', gap: 4, marginTop: 4 }}
+                      >
+                        {practice.skills.slice(0, 3).map((id) => (
+                          <span key={id} className="tiny faint">
+                            {skillLabel(id)}
+                          </span>
+                        ))}
+                        {practice.skills.length > 3 ? (
+                          <span className="tiny faint">
+                            +{practice.skills.length - 3} more
+                          </span>
+                        ) : null}
+                      </span>
+                    </span>
+                    <Chip tone="green" icon="complete">
+                      {practice.minutes} min
+                    </Chip>
+                  </li>
+                ))}
+            </ul>
+          )}
+          {state.practiceHistory.length > 8 ? (
+            <p className="tiny faint" style={{ marginTop: 'var(--s-2)' }}>
+              Showing the 8 most recent of {state.practiceHistory.length}.
+            </p>
           ) : null}
         </Card>
 

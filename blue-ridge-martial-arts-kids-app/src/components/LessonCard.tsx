@@ -2,6 +2,7 @@ import { ChevronRight, Clock } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import type { Lesson } from '../types'
 import { Icon } from './Icon'
+import { skillLabel } from '../data/skills'
 import { Chip, ProgressBar } from './ui'
 
 const DIFFICULTY_LABEL = {
@@ -27,6 +28,11 @@ export function LessonCard({
   completion: number
   beltLabel: string
 }) {
+  // A skill whose label is already in the title tells the reader nothing.
+  const extraSkills = lesson.skills
+    .filter((id) => !lesson.title.toLowerCase().includes(skillLabel(id).toLowerCase()))
+    .slice(0, 2)
+
   const started = completion > 0
   const done = completion >= 1
   const action = done ? 'Review' : started ? 'Continue' : 'Start'
@@ -35,7 +41,9 @@ export function LessonCard({
     <Link
       to={`/lessons/${lesson.id}`}
       className="card-link"
-      aria-label={`${lesson.title}. ${lesson.estimatedMinutes} minutes. ${beltLabel}. ${
+      aria-label={`${lesson.title}. ${
+        extraSkills.length > 0 ? `Also builds ${extraSkills.map(skillLabel).join(' and ')}. ` : ''
+      }${lesson.estimatedMinutes} minutes. ${beltLabel}. ${
         done ? 'Completed.' : started ? `${Math.round(completion * 100)}% complete.` : 'Not started.'
       } ${action} lesson.`}
     >
@@ -65,6 +73,16 @@ export function LessonCard({
       </div>
 
       <div className="row" style={{ flexWrap: 'wrap', gap: 'var(--s-2)', marginTop: 'var(--s-3)' }}>
+        {/* The skills the lesson develops BEYOND its own name.
+            Since skills are named for techniques, "Ready Stance" as a chip on
+            the Ready Stance card is the title twice; what a reader does not
+            already know is that it also builds balance and focus. Two at most,
+            or the row becomes a wall of chips at 320px. */}
+        {extraSkills.map((id) => (
+          <Chip key={id} tone="blue">
+            {skillLabel(id)}
+          </Chip>
+        ))}
         <Chip tone="plain">
           <Clock size={12} aria-hidden="true" />
           {lesson.estimatedMinutes} min

@@ -157,7 +157,7 @@ describe('a lesson can actually be completed', () => {
     const { user } = renderApp()
     await navigate(user, 'Lessons')
 
-    await user.click(screen.getByRole('link', { name: /Ready Stance\./i }))
+    await user.click(screen.getByRole('link', { name: /^Ready Stance\./i }))
     expect(screen.getByRole('heading', { name: 'Ready Stance', level: 1 })).toBeInTheDocument()
 
     for (let i = 0; i < 10; i += 1) {
@@ -177,7 +177,7 @@ describe('a lesson can actually be completed', () => {
   it('remembers where the student stopped', async () => {
     const { user, unmount } = renderApp()
     await navigate(user, 'Lessons')
-    await user.click(screen.getByRole('link', { name: /Guard Position\./i }))
+    await user.click(screen.getByRole('link', { name: /^Guard Position\./i }))
 
     await user.click(screen.getByRole('button', { name: /^Next$/ }))
     await user.click(screen.getByRole('button', { name: /^Next$/ }))
@@ -255,7 +255,7 @@ describe('instructor demo changes reach the student app', () => {
   it('hiding a lesson removes it from the student library', async () => {
     const { user } = renderApp()
     await navigate(user, 'Lessons')
-    expect(screen.getByRole('link', { name: /Front Kick Basics\./i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /^Front Kick Basics\./i })).toBeInTheDocument()
 
     await navigate(user, 'More')
     await user.click(screen.getByRole('link', { name: /instructor demo/i }))
@@ -266,7 +266,7 @@ describe('instructor demo changes reach the student app', () => {
     })
 
     await navigate(user, 'Lessons')
-    expect(screen.queryByRole('link', { name: /Front Kick Basics\./i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /^Front Kick Basics\./i })).not.toBeInTheDocument()
   })
 
   it('a class time change reaches the schedule', async () => {
@@ -528,5 +528,80 @@ describe('counted labels agree with their number', () => {
     })
     await navigate(user, 'Home')
     expect(screen.getByText('Badges earned')).toBeInTheDocument()
+  })
+})
+
+describe('a lesson card names the skills it develops', () => {
+  it('names what the title does not already say', async () => {
+    const { user } = renderApp()
+    await navigate(user, 'Lessons')
+
+    // Ready Stance also builds balance and focus — the chip earns its place by
+    // saying something the title does not.
+    expect(
+      screen.getByRole('link', { name: /^Ready Stance\. Also builds Balance and Focus\./ }),
+    ).toBeInTheDocument()
+
+    // And it does not echo the title back: no "Ready Stance. Ready Stance."
+    expect(
+      screen.queryByRole('link', { name: /^Ready Stance\. Ready Stance\./ }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('every offered lesson carries its time and belt', async () => {
+    const { user } = renderApp()
+    await navigate(user, 'Lessons')
+    const cards = screen.getAllByRole('link', { name: /\d+ minutes\./ })
+    expect(cards.length).toBeGreaterThan(4)
+  })
+
+  it('all four category tabs are present', async () => {
+    const { user } = renderApp()
+    await navigate(user, 'Lessons')
+    for (const label of ['All Lessons', 'Current Belt', 'Skills', 'Character']) {
+      expect(screen.getByRole('tab', { name: label })).toBeInTheDocument()
+    }
+  })
+})
+
+describe('the child can see their own practice history', () => {
+  it('lists recent practices with the date and the time spent', async () => {
+    const { user } = renderApp()
+    await navigate(user, 'Progress')
+
+    expect(screen.getByText('Recent practices')).toBeInTheDocument()
+    // The seeded demo carries practices, so the list is not the empty state.
+    expect(screen.queryByText(/No practices logged yet/i)).not.toBeInTheDocument()
+    expect(screen.getAllByText(/10 min/).length).toBeGreaterThan(0)
+  })
+
+  it('a practice completed now appears at the top of the list', async () => {
+    const { user } = renderApp()
+
+    await user.click(
+      screen.getByRole('button', { name: /start practice|practise anyway|warm up with a practice/i }),
+    )
+    for (let i = 0; i < 20; i += 1) {
+      const next = screen.queryByRole('button', { name: /^Next$/ })
+      if (!next) break
+      await user.click(next)
+    }
+    await user.click(screen.getByRole('button', { name: /^Complete$/ }))
+    await screen.findByText(/practice complete/i)
+    await user.click(screen.getByRole('button', { name: /^Done$/ }))
+
+    await navigate(user, 'Progress')
+    const total = loadState().practiceHistory.length
+    expect(screen.getByText(`${total} total`)).toBeInTheDocument()
+  })
+
+  it('says so plainly when there is nothing yet, rather than drawing an empty list', async () => {
+    const empty = createDefaultState()
+    empty.practiceHistory = []
+    saveState(empty)
+
+    const { user } = renderApp()
+    await navigate(user, 'Progress')
+    expect(screen.getByText(/No practices logged yet/i)).toBeInTheDocument()
   })
 })

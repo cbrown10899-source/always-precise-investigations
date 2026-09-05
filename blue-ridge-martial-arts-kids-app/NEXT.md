@@ -15,14 +15,14 @@ backend, no accounts and no payments.
 | | |
 | --- | --- |
 | **Branch** | `claude/blue-ridge-kids-app-mzor0d` |
-| **Latest commit** | `984710b` — *Self-review as child, parent, instructor and owner — four defects found* |
+| **Latest commit** | See `git log -1` — the branch is pushed and the tree is clean. |
 | **Push status** | Pushed. Working tree clean. |
 | **Repository** | See **The one thing blocking deployment** below — this is **not** its own repo yet. |
 | **Live preview** | Published as a Claude Artifact (link in the session report). Openable on a phone; **cannot** be installed to a home screen — see PWA note below. |
 | **GitHub Pages** | Not deployed. Workflow written and the sub-path build verified. |
-| **Tests** | 139 passing, 6 suites |
+| **Tests** | 145 passing, 6 suites |
 | **Typecheck / lint** | Clean |
-| **Production build** | 312 KB, 92 KB gzipped |
+| **Production build** | 314 KB, 92 KB gzipped |
 | **UI audit** | 0 problems across 6 widths × 14 routes |
 | **Accessibility audit** | 0 problems across 14 routes |
 | **Runtime audit** | 0 problems after 16 driven journeys |
