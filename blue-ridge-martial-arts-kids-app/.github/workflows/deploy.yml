@@ -1,0 +1,70 @@
+name: Test and deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main, master]
+  # So a Pages deploy can be re-run without an empty commit.
+  workflow_dispatch:
+
+# The token needs write access to Pages, and an OIDC id-token to claim the
+# deployment. Nothing else, so a compromised action cannot push to the repo.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time. `cancel-in-progress: false` because cancelling a
+# half-finished Pages deploy can leave the site on a partial upload — a queued
+# run that waits is cheaper than a site that is briefly broken.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Typecheck, lint, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `npm ci` rather than `npm install`: it installs exactly the lockfile,
+      # so CI can never pass against a dependency tree the repo does not carry.
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        env:
+          # GitHub Pages serves a project site from /<repo>/, so the bundle
+          # needs that prefix. Derived from the repository name rather than
+          # hard-coded, so a rename cannot silently break every asset path.
+          BASE_PATH: /${{ github.event.repository.name }}/
+        run: npm run build
+
+      - name: Upload the built site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    name: Deploy
+    needs: verify
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

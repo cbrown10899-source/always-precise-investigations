@@ -1,0 +1,590 @@
+/* Styling for the app's own named pieces: the masthead, the nav, the belt
+   journey, badges, the week strip and the guided practice player. */
+
+/* -------------------------------------------------------------- masthead */
+
+.masthead {
+  position: relative;
+  isolation: isolate;
+}
+
+/* The sky holds the brand and the ridge. The tagline is NOT in here: drawn
+   over the ridge it sat half on pale peaks and half on the dark front range,
+   and the peaks read straight through the letters. */
+.masthead__sky {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, var(--sky-100) 0%, var(--blue-100) 55%, var(--sky-200) 100%);
+  padding-top: max(var(--s-3), env(safe-area-inset-top));
+}
+
+.masthead__inner {
+  position: relative;
+  z-index: 2;
+  max-width: var(--app-max);
+  margin: 0 auto;
+  /* The bottom padding clears the ridge, so the brand never overlaps it. */
+  padding: var(--s-3) var(--s-4) 30px;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+}
+
+/* The script aside from the brand art. Decorative: hidden from the reader
+   because the wordmark beside it already carries the identity. */
+.masthead__script {
+  flex: none;
+  width: 74px;
+  font-family: var(--font-script);
+  font-size: 0.8125rem;
+  line-height: 1.28;
+  color: var(--navy-700);
+  transform: rotate(-6deg);
+  padding-top: var(--s-2);
+}
+
+.masthead__brand {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.masthead__name {
+  font-size: 1.0625rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--navy-900);
+  line-height: 1.1;
+}
+.masthead__sub {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: var(--navy-700);
+}
+.masthead__place {
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--navy-600);
+  border-top: 1px solid var(--blue-300);
+  padding-top: 3px;
+  margin-top: 2px;
+}
+
+/* A solid band, so the wording is legible whatever the ridge behind it does. */
+.masthead__tagline {
+  margin: 0;
+  padding: 7px var(--s-4) 8px;
+  background: var(--navy-900);
+  text-align: center;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  /* 16.1:1 on --navy-900. */
+  color: var(--sky-100);
+}
+
+/* The ridge silhouette sits behind the content and never carries meaning. */
+.masthead__ridge {
+  position: absolute;
+  inset: auto 0 0 0;
+  z-index: 1;
+  width: 100%;
+  height: 56px;
+  display: block;
+}
+
+/* Student button in the masthead corner. */
+.masthead__student {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-height: var(--tap-min);
+  min-width: 68px;
+  padding: 2px;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-md);
+  color: var(--navy-900);
+}
+.masthead__student:hover { text-decoration: none; }
+.masthead__studentname {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.8125rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+.masthead__studentbelt { font-size: 0.6875rem; color: var(--navy-700); font-weight: 600; }
+
+/* ------------------------------------------------------------- bottom nav */
+
+.nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  background: var(--white);
+  border-top: 1px solid var(--line);
+  box-shadow: var(--shadow-nav);
+  /* max() rather than calc(): env() reports 0 without viewport-fit=cover,
+     and calc(6px + 0) would put the buttons on the home indicator. */
+  padding-bottom: max(6px, env(safe-area-inset-bottom));
+}
+
+.nav__inner {
+  max-width: var(--app-max);
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+}
+
+.nav__btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: var(--nav-height);
+  padding: var(--s-2) 2px;
+  background: transparent;
+  border: none;
+  color: var(--ink-soft);
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+.nav__btn:hover { text-decoration: none; color: var(--navy-700); }
+.nav__btn[aria-current='page'] { color: var(--blue-600); font-weight: 700; }
+/* Never colour alone: the active item also carries a bar above it. */
+.nav__btn[aria-current='page']::before {
+  content: '';
+  position: absolute;
+  margin-top: -14px;
+  width: 22px;
+  height: 3px;
+  border-radius: var(--r-pill);
+  background: var(--blue-600);
+}
+
+/* --------------------------------------------------------- belt journey */
+
+.journey {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  /* Still scrollable as a fallback below ~300px, where five rungs cannot fit
+     legibly however they are shared. */
+  overflow-x: auto;
+  padding: var(--s-2) 0 var(--s-1);
+  list-style: none;
+  scrollbar-width: none;
+}
+.journey::-webkit-scrollbar { display: none; }
+
+/* `1 1 0` rather than a fixed basis: the five rungs share whatever width the
+   card has, so the last one is never cut off at 390px. `min-width: 0` is what
+   stops a long label setting the track's minimum. */
+.journey__node {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 1px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  border-radius: var(--r-md);
+}
+
+.journey__disc {
+  position: relative;
+  width: 100%;
+  max-width: 56px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-md);
+  border: 2px solid transparent;
+  background: var(--paper);
+}
+.journey__node--current .journey__disc {
+  border-color: var(--blue-500);
+  background: var(--blue-050);
+  box-shadow: 0 0 0 3px var(--blue-100);
+}
+.journey__node--done .journey__disc { background: var(--white); border-color: var(--line); }
+
+.journey__tick {
+  position: absolute;
+  top: -5px;
+  right: -4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--green-solid);
+  color: var(--white);
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--white);
+}
+
+.journey__label {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: var(--navy-800);
+  text-align: center;
+  line-height: 1.2;
+}
+.journey__node--upcoming .journey__label { color: var(--ink-faint); }
+
+/* ---------------------------------------------------------------- badges */
+
+.badge-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: var(--s-3);
+}
+
+.badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: var(--s-2) 4px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  border-radius: var(--r-md);
+  text-align: center;
+}
+
+/* Hexagonal face, as in the brand art. */
+.badge__face {
+  width: 56px;
+  height: 62px;
+  display: grid;
+  place-items: center;
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  background: var(--blue-200);
+  color: var(--navy-700);
+}
+.badge--blue   .badge__face { background: var(--blue-200);   color: var(--navy-700); }
+.badge--green  .badge__face { background: var(--green-tint); color: var(--green-ink); }
+.badge--gold   .badge__face { background: var(--gold-tint);  color: var(--gold-ink); }
+.badge--orange .badge__face { background: var(--orange-tint);color: var(--orange-ink); }
+
+/* Locked badges are greyed AND carry a lock icon — never colour alone. */
+.badge--locked .badge__face { background: var(--paper); color: var(--ink-faint); }
+.badge--locked .badge__label { color: var(--ink-faint); }
+
+.badge__label { font-size: 0.6875rem; font-weight: 700; color: var(--navy-800); line-height: 1.2; }
+
+/* ------------------------------------------------------------ week strip */
+
+.week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.weekday {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: var(--s-2) 2px;
+  border-radius: var(--r-md);
+  border: 1.5px solid var(--line);
+  background: var(--white);
+  color: inherit;
+  min-height: 96px;
+}
+.weekday--today { border-color: var(--blue-500); background: var(--blue-050); box-shadow: 0 0 0 2px var(--blue-100); }
+.weekday--dojo { border-color: var(--blue-300); }
+
+.weekday__name { font-size: 0.6875rem; font-weight: 800; color: var(--navy-800); }
+.weekday__date { font-size: 0.625rem; color: var(--ink-faint); }
+.weekday__icon {
+  width: 30px; height: 30px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--green-tint);
+  color: var(--green-ink);
+}
+.weekday--dojo .weekday__icon { background: var(--blue-100); color: var(--blue-600); }
+.weekday--rest .weekday__icon { background: var(--paper); color: var(--ink-faint); }
+.weekday__kind { font-size: 0.5625rem; font-weight: 700; color: var(--ink-soft); text-align: center; line-height: 1.15; }
+.weekday__mark { display: grid; place-items: center; }
+
+/* --------------------------------------------------------------- ring */
+
+.ring { position: relative; display: grid; place-items: center; }
+.ring__text {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.05;
+}
+.ring__value { font-size: 1.125rem; font-weight: 800; color: var(--navy-900); }
+.ring__unit { font-size: 0.5625rem; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* -------------------------------------------------- guided practice player */
+
+.player {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, var(--navy-900) 0%, var(--navy-800) 55%, var(--navy-700) 100%);
+  color: var(--white);
+}
+
+.player__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: max(var(--s-3), env(safe-area-inset-top)) var(--s-4) var(--s-3);
+}
+
+.player__exit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--tap-min);
+  padding: var(--s-2) var(--s-3);
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: var(--r-pill);
+  color: var(--white);
+  font-weight: 700;
+  font-size: 0.875rem;
+}
+.player__exit:hover { background: rgba(255, 255, 255, 0.2); }
+
+.player__count { font-size: 0.8125rem; font-weight: 700; color: var(--blue-200); }
+
+.player__track {
+  display: grid;
+  gap: 4px;
+  padding: 0 var(--s-4) var(--s-3);
+}
+.player__ticks { display: flex; gap: 4px; list-style: none; margin: 0; padding: 0; }
+.player__tick {
+  flex: 1;
+  height: 5px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.2);
+}
+.player__tick--done { background: var(--green-solid); }
+.player__tick--current { background: var(--blue-300); }
+
+.player__body {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-4);
+  text-align: center;
+  max-width: var(--app-max);
+  width: 100%;
+  margin: 0 auto;
+}
+
+.player__icon {
+  width: 84px;
+  height: 84px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--white);
+}
+
+.player__title { font-size: 1.5rem; font-weight: 800; color: var(--white); }
+.player__instruction { color: var(--blue-200); font-size: 0.9375rem; max-width: 34ch; }
+
+.player__dial {
+  font-family: var(--font-mono);
+  font-size: 3.25rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--white);
+  font-variant-numeric: tabular-nums;
+}
+
+.player__cues {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  text-align: left;
+}
+.player__cue {
+  display: flex;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  font-size: 0.875rem;
+  color: var(--sky-100);
+}
+
+.player__controls {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4) max(var(--s-4), env(safe-area-inset-bottom));
+  max-width: var(--app-max);
+  width: 100%;
+  margin: 0 auto;
+}
+
+.player__side {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-height: var(--tap-min);
+  min-width: var(--tap-min);
+  padding: var(--s-2);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: var(--r-md);
+  color: var(--white);
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+.player__side:hover { background: rgba(255, 255, 255, 0.14); }
+.player__side:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.player__main {
+  min-height: 64px;
+  min-width: 168px;
+  padding: 0 var(--s-6);
+  border-radius: var(--r-pill);
+  border: none;
+  background: var(--white);
+  color: var(--navy-900);
+  font-size: 1.0625rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+}
+.player__main:hover { background: var(--blue-050); }
+
+.player :focus-visible {
+  box-shadow: 0 0 0 3px var(--navy-900), 0 0 0 6px var(--gold-solid);
+}
+
+/* -------------------------------------------------------------- reps pad */
+
+.reps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-4);
+}
+.reps__btn {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: var(--white);
+  color: var(--navy-700);
+  display: grid;
+  place-items: center;
+}
+.reps__btn:hover { background: var(--blue-050); border-color: var(--blue-300); }
+.reps__btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.reps__value {
+  min-width: 96px;
+  text-align: center;
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--navy-900);
+  font-variant-numeric: tabular-nums;
+}
+.player .reps__btn { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.24); color: var(--white); }
+.player .reps__btn:hover { background: rgba(255,255,255,0.2); }
+.player .reps__value { color: var(--white); }
+
+/* ------------------------------------------------------------- celebrate */
+
+@keyframes pop {
+  0%   { transform: scale(0.7); opacity: 0; }
+  60%  { transform: scale(1.06); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.celebrate { animation: pop 380ms ease-out both; }
+
+/* ------------------------------------------------------------ step dots */
+
+/* The lesson step map. 44px square: the floor for a control a child taps,
+   and these sit in a row where a mis-tap costs the reader their place. */
+.stepdot {
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--white);
+  color: var(--ink-soft);
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+.stepdot--done { background: var(--green-tint); color: var(--green-ink); border-color: var(--green-line); }
+.stepdot--current { border: 2px solid var(--blue-600); }
+
+/* --------------------------------------------------------- inline link */
+
+/* A text link that is still a real target. Negative margin keeps it visually
+   flush with the heading beside it while the padding does the work. */
+.linkish {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 var(--s-2);
+  margin-right: calc(var(--s-2) * -1);
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--blue-600);
+}
+
+/* ------------------------------------------------------- the tap floor */
+
+/* A last line of defence, after every rule that could shrink a control.
+   Measured rather than declared: `audit.mjs` walks every route at five
+   widths and fails on anything under 44px. */
+.btn,
+.tabs__btn,
+.check,
+.row-item,
+.nav__btn,
+.player__side,
+.player__main,
+.reps__btn,
+.journey__node,
+.badge {
+  min-height: 44px;
+}

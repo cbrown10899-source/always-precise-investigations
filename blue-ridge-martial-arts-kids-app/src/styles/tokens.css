@@ -1,0 +1,120 @@
+/*
+ * Blue Ridge Martial Arts — design tokens.
+ *
+ * Every colour the app draws is named here. A literal hex outside this file
+ * means a colour has escaped the system; the palette test in
+ * `src/test/design-system.test.ts` counts them.
+ *
+ * The palette is read off the brand mockups: navy structure, medium blue
+ * action, sky blue ground, white cards, with green / gold / orange used
+ * sparingly for meaning (done / earned / attention) and never for decoration.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* ---- brand blues ---------------------------------------------------- */
+  --navy-900: #10233f;   /* deepest text, headings */
+  --navy-800: #17325a;   /* mountain silhouette back ridge */
+  --navy-700: #1e4076;   /* strong body text on light ground */
+  --navy-600: #24518f;
+
+  --blue-600: #1f6fd0;   /* primary action */
+  --blue-500: #2f83e4;   /* primary action, hover */
+  --blue-400: #5aa2ef;
+  --blue-300: #8fc1f5;
+  --blue-200: #c2ddfa;
+  --blue-100: #e2eefc;
+  --blue-050: #f1f7fe;
+
+  --sky-400: #7fb8ea;
+  --sky-200: #bcdcf6;
+  --sky-100: #ddeefb;
+
+  /* ---- neutrals ------------------------------------------------------- */
+  --white: #ffffff;
+  --paper: #f6f9fd;      /* app background */
+  --line: #dfe8f3;       /* hairline borders */
+  --line-strong: #c6d6e8;
+  --ink: #10233f;        /* default text */
+  --ink-soft: #56708f;   /* secondary text */
+  --ink-faint: #7d93ad;  /* tertiary text, timestamps */
+
+  /* ---- semantic accents ----------------------------------------------- */
+  /* Each accent is a PAIR: a tint to sit on, and an ink that is legible on
+     it. Change both halves or neither. Ratios measured against the tint. */
+  --green-ink: #1c6b3f;      /* 6.35:1 on --green-tint */
+  --green-tint: #e6f6ec;
+  --green-solid: #2e9a5c;
+  --green-line: #b8e3c9;
+
+  --gold-ink: #8a5a06;       /* 5.72:1 on --gold-tint */
+  --gold-tint: #fdf3dd;
+  --gold-solid: #e0a11c;
+  --gold-line: #f0dca8;
+
+  --orange-ink: #9a4a12;     /* 6.02:1 on --orange-tint */
+  --orange-tint: #fdeee2;
+  --orange-solid: #e0752a;
+  --orange-line: #f4d0b2;
+
+  --red-ink: #9b2c2c;
+  --red-tint: #fdecec;
+  --red-line: #f3c6c6;
+
+  /* ---- belt colours ---------------------------------------------------- */
+  --belt-white: #f4f6f9;
+  --belt-white-edge: #c9d4e2;
+  --belt-blue: #2f6fc4;
+  --belt-blue-edge: #1d4d92;
+
+  /* ---- elevation ------------------------------------------------------- */
+  --shadow-sm: 0 1px 2px rgba(16, 35, 63, 0.06), 0 1px 3px rgba(16, 35, 63, 0.05);
+  --shadow-md: 0 2px 6px rgba(16, 35, 63, 0.07), 0 6px 16px rgba(16, 35, 63, 0.06);
+  --shadow-lg: 0 8px 28px rgba(16, 35, 63, 0.12);
+  --shadow-nav: 0 -2px 14px rgba(16, 35, 63, 0.08);
+
+  /* ---- shape ----------------------------------------------------------- */
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 18px;
+  --r-xl: 24px;
+  --r-pill: 999px;
+
+  /* ---- spacing --------------------------------------------------------- */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-7: 32px;
+  --s-8: 40px;
+
+  /* ---- type ------------------------------------------------------------ */
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, 'Noto Sans', sans-serif;
+  /* The handwritten accents in the brand art. A real script face can be added
+     later; until then this degrades to an italic serif, which reads as an
+     aside rather than as body copy. */
+  --font-script: 'Segoe Script', 'Bradley Hand', 'Snell Roundhand', 'Apple Chancery',
+    cursive, serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* ---- layout ---------------------------------------------------------- */
+  /* The app is phone-first. On a tablet or desktop it stays a single centred
+     column rather than stretching, because every screen here is a phone
+     screen and a 1400px-wide checklist reads as a spreadsheet. */
+  --app-max: 560px;
+  --nav-height: 62px;
+
+  /* ---- interaction ----------------------------------------------------- */
+  /* 48px, above the 44px floor, because the primary user is a child. */
+  --tap-min: 48px;
+  --focus-ring: 0 0 0 3px var(--white), 0 0 0 6px var(--blue-500);
+}
+
+/* Large-text setting: scales the root, which every rem-based size follows. */
+:root[data-large-text='true'] {
+  font-size: 18px;
+}
