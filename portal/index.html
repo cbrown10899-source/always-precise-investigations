@@ -1914,6 +1914,9 @@
    .amwrap (80). At 60 those two painted over the composer on a phone and the
    taps went to them. */
 .asst-wrap{position:fixed;inset:0;z-index:71;pointer-events:none}
+/* Absent on the desktop, where the side panel is meant to sit BESIDE a page
+   that still works. It becomes a real backdrop on the phone only. */
+.asst-back{display:none}
 .asst-panel{pointer-events:auto;position:absolute;top:0;right:0;height:100%;
   width:min(420px,94vw);background:var(--panel);border-left:1px solid var(--line);
   box-shadow:-12px 0 32px rgba(12,22,38,.18);display:flex;flex-direction:column;padding:0 0 10px}
@@ -1946,7 +1949,16 @@
   font-weight:800;font-size:.7rem;letter-spacing:.03em;line-height:1.35;
   border-bottom:1px solid var(--gold-line)}
 .asst-banner span{font-weight:600;letter-spacing:0;font-size:.68rem}
-.asst-log{flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:9px}
+/* THE ONE SCROLLING REGION. `min-height:0` is load-bearing: a column flex item
+   will not shrink below its content without it, which is how a long panel
+   pushes its own composer off the bottom of the screen. `overscroll-behavior:
+   contain` is what stops a swipe that reaches either end from continuing into
+   the portal behind — the scroll-chaining half of the reported bug, and it is
+   a CSS property rather than a touch-event hack. */
+.asst-body{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch}
+/* The log is a plain block inside it now — it lays out, it does not scroll. */
+.asst-log{flex:none;overflow:visible;padding:10px 14px;display:flex;flex-direction:column;gap:9px}
 .asst-you{align-self:flex-end;background:var(--teal);color:#fff;
   padding:8px 12px;border-radius:12px 12px 2px 12px;max-width:88%;font-size:.92rem}
 .asst-m{align-self:flex-start;background:var(--neutral-bg);border:1px solid var(--line);
@@ -2101,9 +2113,13 @@
 .side-asst .asst-beta{margin-left:2px}
 /* UNIT 4 — the dry-run workbench. Gold family on purpose: it is the same
    "Beta, nothing leaves the building" voice the banner already speaks. */
+/* NO MAX-HEIGHT AND NO SCROLLER OF ITS OWN. It used to cap at 46% of the panel
+   with its own overflow, which put a 692px form in a 350px box while the log
+   above it kept 128px it did not need. Inside the one scroller it is simply as
+   tall as it is, and the whole form is reachable by scrolling the panel. */
 .asst-work{margin:8px 14px 0;border:1px solid var(--gold-line);border-radius:12px;
   background:var(--neutral-bg);padding:10px 12px;display:flex;flex-direction:column;
-  gap:8px;max-height:46%;overflow-y:auto}
+  gap:8px}
 .asst-work label.cap{display:flex;flex-direction:column;gap:4px;font-size:.85rem}
 .asst-work input,.asst-work select{min-height:44px;font-size:16px;padding:8px 10px;
   border:1px solid var(--line);border-radius:8px;background:#fff;width:100%}
@@ -2146,6 +2162,47 @@
      the visual viewport and the sheet's flex column keeps the composer as
      the last row above it, with the 16px input font preventing iOS zoom. */
   .asst-ask{padding-bottom:max(26px, calc(env(safe-area-inset-bottom) + 6px))}
+
+  /* ===== THE SHEET OWNS THE TOUCH, AND THE PORTAL DOES NOT MOVE ==========
+     Reported on a real iPhone: the Assistant covered the page but a swipe
+     inside it scrolled the portal behind, and parts of a long form could not
+     be reached. Measured at 390px before the fix: `.asst-work` was a 692px
+     form in a 350px box, `.asst-log` a 176px log in 128px, BOTH with
+     `overscroll-behavior: auto` — so either one, on reaching its end, handed
+     the rest of the gesture to the document. The body was never locked and
+     nothing captured a drag that started outside the sheet.
+
+     Three CSS answers, no scroll-event handlers, nothing to save and restore:
+
+       1. ONE SCROLLER (`.asst-body`, above) with `overscroll-behavior:
+          contain`, so a swipe inside the panel stays inside it.
+       2. A REAL BACKDROP, a SIBLING of the panel so its `touch-action:none`
+          cannot disable panning within the sheet. A drag on the exposed strip
+          moves nothing; a tap closes, which is the `.navback` precedent.
+       3. `overflow:hidden` on the document while the sheet is open. It does
+          not move the page, so there is no scroll position to preserve and
+          none to restore — the portal is exactly where it was when the sheet
+          closes. That is why this is not `position:fixed` with a saved
+          offset: that technique jumps to the top and then has to undo it.
+
+     The height was already `min(92dvh,100%)` — the dynamic viewport, so
+     Safari's toolbars and the keyboard shrink it correctly — and it stays. */
+  .asst-back{display:block;position:fixed;inset:0;border:0;padding:0;margin:0;
+    background:rgba(9,18,30,.38);pointer-events:auto;touch-action:none;
+    cursor:pointer;-webkit-tap-highlight-color:transparent}
+  /* A PREVIEW IS READ, NOT PEERED AT. Its own 180px window was a third
+     scroller inside the sheet; in one surface the whole dry run is simply
+     scrolled to. */
+  .asst-pre{max-height:none}
+}
+
+/* WHILE THE SHEET IS OPEN THE DOCUMENT DOES NOT SCROLL. Set on both elements
+   because iOS Safari honours whichever is the scrolling box, and paired with
+   the backdrop above so a gesture cannot reach the document in the first
+   place. Phone only: the desktop side panel must leave the page scrollable,
+   which is the owner's standing rule about not regressing the desktop. */
+@media (max-width:899px){
+  html.asstlock, body.asstlock{overflow:hidden}
 }
 
   /* ===== THE FIELD'S SMALL CONTROLS MEET THE TAP FLOOR =====
@@ -3911,6 +3968,15 @@ function asstMsgHtml(m){
 function asstHtml(){
   if(!ASST || !ASST.open) return "";
   return `<div class="asst-wrap">
+    ${/* THE DIM MUST BE AN ELEMENT — this file's own rule, learned when the
+         drawer's backdrop was a box-shadow and taps went through it to live
+         controls underneath. It is a SIBLING of the panel, never an ancestor:
+         `touch-action:none` is computed by walking UP from the touch target,
+         so putting it on a wrapper would disable panning inside the panel
+         too. As a sibling it stops a drag outside the sheet from scrolling
+         the portal, and costs the panel nothing. Phone only — the desktop
+         side panel deliberately leaves the page usable behind it. */""}
+    <button class="asst-back" data-act="asstClose" aria-label="Close the Assistant"></button>
     <div class="asst-panel" role="complementary" aria-label="API Assistant">
       <div class="asst-head"><div class="asst-head-id"><b>&#10024; API Assistant</b>
         <span class="asst-sub">Case Command Center</span></div>
@@ -3921,11 +3987,22 @@ function asstHtml(){
       <div class="asst-banner">ASSISTANT BETA &mdash; DRY RUN MODE<br>
         <span>No external client messages or consequential actions will be sent.</span></div>
       ${ASST.err ? `<div class="err">${esc(ASST.err)}</div>` : ""}
-      <div class="asst-log" id="asst_log">
-        ${ASST.view === "chat" ? ASST.msgs.map(asstMsgHtml).join("") : asstQuickHtml()}
-        ${ASST.busy && ASST.view === "chat" ? `<div class="asst-m" style="opacity:.6">&hellip;</div>` : ""}
+      ${/* ONE SCROLLING REGION, and that is the fix. The log and the workbench
+           were SIBLINGS, each with its own `overflow-y:auto`, so a long form
+           was a 692px document crammed into a 350px window with a 128px log
+           squeezed above it — measured at 390px on the rate sheet. Two
+           scrollers in a column also means the middle of the panel is not one
+           surface: a swipe lands in whichever box it started over. They share
+           one scroller now; the head and the composer stay pinned by the flex
+           column, which is what "sticky header, sticky composer" means here
+           without any position:sticky. */""}
+      <div class="asst-body" id="asst_body">
+        <div class="asst-log" id="asst_log">
+          ${ASST.view === "chat" ? ASST.msgs.map(asstMsgHtml).join("") : asstQuickHtml()}
+          ${ASST.busy && ASST.view === "chat" ? `<div class="asst-m" style="opacity:.6">&hellip;</div>` : ""}
+        </div>
+        ${asstPrepHtml()}
       </div>
-      ${asstPrepHtml()}
       <label class="cap asst-guide"><input type="checkbox" id="asst_guide" data-act="asstGuide"
         ${ASST.guide ? "checked" : ""}><span>Explain &amp; Guide Me</span></label>
       <form class="asst-ask" data-act="asstAsk">
@@ -12266,6 +12343,15 @@ function paint(){
   paintEvView();
   paintPStamp();
   paintVStamp();
+  /* THE DOCUMENT LOCK IS A STATE FLAG, not a scroll handler. It rides every
+     paint because the Assistant renders on the shell, the case page and the
+     field view alike, and only the class is toggled — `overflow:hidden` does
+     not move the page, so there is no scroll offset to save here and none to
+     put back. The CSS scopes it to phone widths; the desktop side panel
+     leaves the page scrollable, which is the standing rule. */
+  const asstLock = !!(ASST && ASST.open);
+  document.documentElement.classList.toggle("asstlock", asstLock);
+  document.body.classList.toggle("asstlock", asstLock);
   if(!ME){ app.innerHTML = loginView(); $("who").hidden = true;
     document.body.classList.remove("withnav", "navopen", "hasmnav");
     if($("burger")) $("burger").hidden = true;
