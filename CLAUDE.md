@@ -3429,21 +3429,37 @@ auto-submitted**; the transcript is shown for review and only Use Text turns it
 into an entry. The privacy wording says only what is verifiable ("this page
 keeps no audio"), never the mockup's "never stored".
 
-## The API Assistant is BETA / DRY RUN, and the server is what enforces it
+## The API Assistant sends three things and refuses the rest by name
 
 Owner master spec 2026-09-02 (§1–38), architecture and unit ledger in
 `case-portal/ASSISTANT.md`. An INTERNAL operations copilot behind the
-existing sign-in — never a public chatbot. Units 1–5 are built; the rules
-that outlive them:
+existing sign-in — never a public chatbot.
 
-**Beta is permanent in v1 and structural.** No Live Mode switch exists, and
-the Assistant cannot create one: the `/assistant/*` block writes exactly ONE
-table — `assistant_log`, its own — and a source test counts the writes (one
-`INSERT INTO`, into that table only; no UPDATE, no DELETE, no `sendMail`, no
-settings store, and the literals for the real history tables appear nowhere
-in the block). Consequential verbs are refused server-side BY NAME
-(`assistant_beta`) before any intent runs; questions about those acts are
-answered, not refused. **Deterministic grammar, no AI provider**:
+**BETA CAME OFF ON 2026-09-05, FOR EXACTLY THREE PRODUCTS** (owner: *"make it
+live … it can take beta off also"*, scoped in the same exchange). The **rate
+sheet**, the **intake link** and the **payment instructions** really go now.
+Everything else was reaffirmed refused in the same decision — *"leave them
+refused"* — so deleting, archiving, voiding, altering a payment, assigning,
+approving, closing a case and changing pricing or an authorization all still
+answer `assistant_beta` by name.
+
+**The architecture did not move, and that is why it was a small edit.** Each
+send is a level-3 row in `ASSISTANT_COMMANDS` naming the ORDINARY route the
+desk's own Send button posts to (`/sheets/:id/email`,
+`/intake-link/email` or `/leads/:no/send-intake`, `/payment-options/email`);
+the PAGE dispatches to it; the mail leaves from there, behind that route's
+admin gate, rate limit, deleted/archived refusal, context and payment
+boundaries and its own `send_log` write.
+
+**What is still exactly true of the `/assistant/*` block**, and what the source
+pins hold: it writes exactly ONE table — `assistant_log`, its own (one
+`INSERT INTO`, no UPDATE, no DELETE, and the literals for the real history
+tables appear nowhere in it) — and it **calls `sendMail` NEVER**. Do not
+restate this as "read-only" or "dry run": both were true once, and a guard
+that passes while describing something weaker than it claims is the failure
+this project keeps recording.
+
+**Deterministic grammar, no AI provider**:
 `assistantProvider` answers `not_configured` until BOTH env vars exist, and
 nothing else reads the key. Model text never becomes a route — navigation
 answers are REGISTRY IDS (`ASSISTANT_NAV`, the TAB map per role) the page
@@ -3543,9 +3559,10 @@ is not offered a second start — the answer names who has it and opens Active
 Surveillance, because **an offer the database will refuse is a screen telling
 somebody something untrue.**
 
-**Every Beta refusal still wins and is evaluated first.** A sentence naming a
-send, deletion, archive, assignment or payment is refused by name before any
-command resolves. External sends remain dry-run. No schema change.
+**Every refusal still wins and is evaluated first.** A sentence naming a
+deletion, archive, assignment or payment is refused by name before any command
+resolves. Sending is the one line that moved, and only for the three products
+above. No schema change.
 
 ## The Command Center's five commands, and the four things it will not do
 
@@ -3675,10 +3692,85 @@ once.
 ### What the Command Center deliberately does not do
 
 - **No composed narrative**, per the Daily Summary rule above.
-- **No send of any kind.** The intake and rate-sheet REHEARSALS are the
-  send-shaped things it can do, and both still record `SIMULATED — NOT SENT`.
+- **No send beyond the three.** The rate sheet, the intake link and the
+  payment instructions go for real since 2026-09-05; anything else
+  send-shaped — case documents, a report, an invoice — is refused BY NAME,
+  and the refusal names the three that work. *Never auto-email evidence* is
+  the owner's own line.
 - **No second door for anything.** Every command is a registry row naming a
   route the portal already had.
+
+## Turning the sends live — what the suite caught, and what a pin is for
+
+Owner, 2026-09-05: *"make it live / ai works it can take beta off also"*, scoped
+in the same exchange to **rate sheet + intake link + payment options**, with
+*"leave them refused"* on every other verb. Five things from building it are
+worth keeping.
+
+**"BETA" WAS FOUR SWITCHES, AND ONLY ONE OF THEM ADDED CAPABILITY.** The chips
+and the DRY RUN banner were labels. The blocked-verb list enables nothing when
+removed, because nothing is executable without a registry row. Connecting a real
+AI model needs two secrets and is a separate decision — **there is still no
+model connected**, `assistantProvider` still answers `not_configured`, and the
+grammar is still a deterministic phrase matcher. Only *real external sends*
+changed anything. When an owner says "take beta off", find out which of these
+they mean before touching any of them.
+
+**REMOVING THE SEND VERB FROM `ASSISTANT_BLOCKED` WAS A MISTAKE, AND THE SUITE
+CAUGHT IT.** It looks like the obvious edit and it is the wrong one, for a
+structural reason: **the three carve-outs already `return` above the list.** An
+utterance naming an intake, a rate sheet or payment options never reaches the
+list at all, so the entry can only ever see send-shaped sentences that are NOT
+one of the three — *"email the firm their case documents"*, *"email them the
+invoice"*. Those must be refused BY NAME rather than falling through to *"I do
+not understand that phrase"*: **never auto-email evidence is the owner's own
+line**, and a shrug is not a refusal. Four assertions failed, all four were
+right, and restoring the entry also restored the documented false positive
+(*"add a task to send the report"*), which stays deliberate.
+
+**A PIN THAT STOPPED BEING TRUE IS REPLACED, NEVER LOOSENED.** The registry pin
+read *"NO command names a send, a payment, a deletion or an archive"*. The first
+clause had to go. What replaced it is stronger where it matters: sends are an
+**allow-list of three exact route strings**, each claimed by exactly one
+command, every one level 3 and admin-only, and no command routes to a delete,
+an archive or a void. **And it parses the ROWS instead of grepping the prose** —
+the old pin matched by substring, could not tell a comment from a call, and had
+already fired twice on my own explanatory text; a block that must now *explain*
+three sends cannot be held by a rule forbidding the word "send" inside it. That
+is the honest fix for that class of guard, and it was available the first time.
+
+**YOU CANNOT SEND WHAT YOU HAVE NOT PREVIEWED, and it is structural.** The Send
+button is drawn only on the preview screen, and what it posts is
+`ASST.prep.previewBody` — the exact object `/assistant/prepare-*` was handed at
+the moment the preview rendered — never a second build of the body from the
+draft. Edit and Back drop the preview and the captured body **together**, or
+Send would post values the person has just walked back from. The preview screen
+has no inputs, so the two could not differ today; capturing means they cannot
+differ tomorrow either.
+
+**A MIRROR FOLLOWS THE SENDER, NEVER THE OTHER WAY ROUND.** A case-referenced
+intake send goes through `/leads/:no/send-intake`, which greets with the lead's
+own `client_name` and ignores the body's name. The rehearsal filled in only a
+BLANK name, so a typed name previewed one greeting and emailed another — free
+while everything was a rehearsal, and a broken promise the moment Send really
+sent. **And the pin that guards this claimed one route more than it could
+hold**: it asserted a send reaches one of three exact routes while the page uses
+a fourth whenever a case is named. Nothing was unsafe; the CLAIM was wider than
+the code, which is the failure a pin exists to prevent, committed by the pin.
+Both found by reading the diff against what the ordinary routes actually do —
+neither by a suite. When a rehearsal becomes a send, re-read every place the two
+resolvers could differ, because the ones that did not matter yesterday are
+exactly the ones nothing was testing.
+
+**A SAFETY STATEMENT GETS ONE WRITER, AND IT IS THE WORKER.** The banner text
+was hard-coded in `portal/index.html` and said DRY RUN. `/assistant/state`
+returns `banner` and `banner_detail` now and the page prints them, because a
+second copy of "what this Assistant may do" drifts, and it drifts in the
+reassuring direction — a panel promising nothing will be sent, over a Send
+button that sends. Nothing is drawn until the state lands: a banner is not a
+placeholder. `.asst-dry` was renamed `.asst-live` for the same reason a rule is
+never left dead — a class named for a mode that no longer exists is waiting to
+be reintroduced by its own name.
 
 ## The Assistant owns its own scroll, and the portal behind it does not move
 

@@ -128,8 +128,20 @@ const DBX = {
   paths() { return [...this.files.keys()]; },
 };
 const REAL_FETCH = globalThis.fetch;
+/* THE MAIL PROVIDER, RECORDED RATHER THAN CALLED. Nothing reaches Resend from a
+   test run. `RESEND_API_KEY` is deliberately UNSET for the whole suite, so
+   `sendMail` answers not_configured and no send here can succeed by accident —
+   the one block that needs a working mailer sets the key, sends, and unsets it
+   again. MAILED holds the last message so an assertion can read what actually
+   went on the wire instead of trusting the confirmation on screen. */
+let MAILED = null;
+const REAL_MAIL = () => MAILED;
 globalThis.fetch = async (url, init) => {
   const u = String(url && url.url ? url.url : url);
+  if (u.includes('api.resend.com')) {
+    MAILED = JSON.parse(init.body);
+    return new Response('{"id":"re_e2e"}', { status: 200 });
+  }
   if (!u.includes('dropboxapi.com')) return REAL_FETCH(url, init);
   const arg = () => JSON.parse((init.headers || {})['Dropbox-API-Arg'] || '{}');
   if (u.includes('/oauth2/token')) {
@@ -16969,8 +16981,12 @@ section('API ASSISTANT — the dock, the doors, the Beta banner, and real naviga
              beforeSurv: b ? !!(b.compareDocumentPosition(document.querySelector('.side-surv'))
                & Node.DOCUMENT_POSITION_FOLLOWING) : null };
   });
-  ok('the sidebar carries ✨ Assistant with a BETA badge, before the utility doors',
-     nav.present && /Assistant/.test(nav.text) && /BETA/.test(nav.text) && nav.beforeSurv === true,
+  /* THE BADGE SAID BETA AND CAME OFF ON 2026-09-05. What this assertion is
+     actually for is the DOOR and its PLACE in the rail, which are unchanged —
+     so it pins those, plus the absence of the word, because a chip claiming a
+     mode the portal is no longer in is the untruth this unit exists to remove. */
+  ok('the sidebar carries ✨ Assistant before the utility doors, and no longer says BETA',
+     nav.present && /Assistant/.test(nav.text) && !/BETA/.test(nav.text) && nav.beforeSurv === true,
      JSON.stringify(nav));
 
   /* ---- open: the dock, the banner, the home actions ---- */
@@ -16984,10 +17000,19 @@ section('API ASSISTANT — the dock, the doors, the Beta banner, and real naviga
   }));
   ok('the dock opens over the portal — the page stays visible beside it',
      panel.portalStillThere === true);
-  ok('the persistent banner is the exact dry-run sentence',
-     /ASSISTANT BETA — DRY RUN MODE/.test(panel.banner)
-     && /No external client messages or consequential actions will be sent\./.test(panel.banner),
+  /* THE BANNER IS THE WORKER'S OWN SENTENCE, printed by the page rather than
+     held by it — one writer for a safety statement. It now has to say the
+     opposite of what it used to: that sending is live. A banner that drifted
+     back toward reassurance over a live send is the dangerous direction, so
+     both halves are pinned. */
+  ok('the persistent banner says sending is live, and no longer claims a dry run',
+     /SENDS ARE LIVE/.test(panel.banner)
+     && /exact email and confirm before anything leaves/.test(panel.banner)
+     && !/DRY RUN/i.test(panel.banner),
      panel.banner);
+  ok('and it still names what stays refused, so the limits are on screen',
+     /Deleting, archiving, voiding, assigning, approving and pricing changes are still refused/
+       .test(panel.banner), panel.banner);
   ok('the empty state offers big options, not a bare box',
      panel.home.length >= 3 && panel.home.some(t => /What should I do/.test(t)));
 
@@ -16997,8 +17022,9 @@ section('API ASSISTANT — the dock, the doors, the Beta banner, and real naviga
   await page.waitForTimeout(700);
   ok('“take me to invoices” lands on the Billing screen for real',
      await page.evaluate(() => TAB) === 'invoices');
-  ok('and the Assistant survives the trip — Beta state intact, transcript kept',
-     await page.evaluate(() => !!(ASST && ASST.state && ASST.state.beta && ASST.msgs.length >= 2)));
+  ok('and the Assistant survives the trip — state intact, transcript kept',
+     await page.evaluate(() => !!(ASST && ASST.state && ASST.state.live === true
+       && ASST.state.beta === false && ASST.msgs.length >= 2)));
 
   /* ---- a consequential ask draws the refusal, visibly ---- */
   await page.locator('#asst_in').fill('Send the client their invoice');
@@ -17011,8 +17037,14 @@ section('API ASSISTANT — the dock, the doors, the Beta banner, and real naviga
     if (!last) return { label: false, text: 'NO-ANSWER msgs=' + JSON.stringify((ASST && ASST.msgs) || []) };
     return { label: !!last.querySelector('.asst-blocked'), text: last.innerText };
   });
-  ok('a send request shows the BETA — ACTION DISABLED label and the plain refusal',
-     refused.label === true && /disabled/.test(refused.text), refused.text.slice(0, 160));
+  /* "Send the client their invoice" is NOT one of the three live products, so
+     it is still refused — the chip lost the word BETA, the refusal did not. */
+  ok('an invoice send is still refused, under the NOT AVAILABLE HERE label',
+     refused.label === true && /not something the Assistant does/i.test(refused.text),
+     refused.text.slice(0, 200));
+  ok('and the refusal names the three products that CAN be sent instead',
+     /rate sheet/i.test(refused.text) && /intake link/i.test(refused.text)
+     && /payment instructions/i.test(refused.text), refused.text.slice(0, 300));
 
   /* ---- the case-level door primes the case context ---- */
   await page.evaluate(() => { ASST = null; });
@@ -17104,12 +17136,16 @@ section('API ASSISTANT Unit 4 — the intake dry-run workbench, on the real page
   await page.locator('.asst-ask button').click();
   await page.waitForSelector('.asst-work', { timeout: 4000 });
   const bench = await page.evaluate(() => ({
-    head: document.querySelector('.asst-dry').innerText,
+    head: document.querySelector('.asst-live').innerText,
     kind: document.querySelector('#asst_pk').value,
     banner: !!document.querySelector('.asst-banner'),
   }));
-  ok('the workbench opens as a DRY RUN, with the door picked from the sentence',
-     /DRY RUN/.test(bench.head) && bench.kind === 'legal' && bench.banner === true,
+  /* `.asst-dry` was renamed `.asst-live` with the fact — a class named for a
+     mode that no longer exists is a dead rule waiting to be reintroduced by
+     its own name. */
+  ok('the workbench opens on the intake form, with the door picked from the sentence',
+     /PREPARE AN INTAKE LINK/.test(bench.head) && !/DRY RUN/.test(bench.head)
+     && bench.kind === 'legal' && bench.banner === true,
      JSON.stringify(bench));
 
   /* ---- the EDIT_DRAFT rule holds: a repaint from anywhere keeps the typing ---- */
@@ -17126,12 +17162,20 @@ section('API ASSISTANT Unit 4 — the intake dry-run workbench, on the real page
   await page.locator('[data-act="asstPrepPrev"]').click();
   await page.waitForFunction(() => ASST && ASST.prep && ASST.prep.preview, null, { timeout: 4000 });
   const prev = await page.evaluate(() => ({
-    head: document.querySelector('.asst-dry').innerText,
+    head: document.querySelector('.asst-live').innerText,
     body: document.querySelector('.asst-pre') ? document.querySelector('.asst-pre').innerText : '',
     text: document.querySelector('.asst-work').innerText,
+    sendBtn: !!document.querySelector('[data-act="asstPrepSend"]'),
   }));
-  ok('the preview says READY TO SEND and that nothing has been sent, in one breath',
-     /DRY RUN — READY TO SEND/.test(prev.head) && /nothing has been sent/.test(prev.head));
+  ok('the preview says READY TO SEND and that nothing has gone yet',
+     /READY TO SEND/.test(prev.head) && /nothing has been sent yet/.test(prev.head)
+     && !/DRY RUN/.test(prev.head), prev.head);
+  /* THE SEND BUTTON EXISTS ONLY HERE. You cannot send what you have not read
+     back, and the screen has to say what pressing it does. */
+  ok('a Send button is offered on the preview, and the line above it names the recipient',
+     prev.sendBtn === true
+     && /Send emails exactly the text above to/.test(prev.text)
+     && /workbench-test@example\.com/.test(prev.text), prev.text.slice(0, 300));
   ok('and the body is the REAL invite — the legal door, the greeting, the DCJS line',
      /assignment=legal/.test(prev.body) && /^Marks & Harrison,/.test(prev.body)
      && /DCJS/.test(prev.body), prev.body.slice(0, 160));
@@ -17150,7 +17194,7 @@ section('API ASSISTANT Unit 4 — the intake dry-run workbench, on the real page
   });
   ok('the simulation answer wears SIMULATED — NOT SENT and says it was recorded',
      simMsg.chip === true && /SIMULATED — NOT SENT/.test(simMsg.text)
-     && /Recorded in the Assistant beta log/.test(simMsg.text), simMsg.text.slice(0, 200));
+     && /Recorded in the Assistant log/.test(simMsg.text), simMsg.text.slice(0, 200));
   const sendsAfter = await page.evaluate(async () => (await api('/sends')).sends.length);
   ok('the office send history did not move by one rehearsal — a dry run is not a send',
      sendsAfter === sendsBefore, `before=${sendsBefore} after=${sendsAfter}`);
@@ -17183,6 +17227,153 @@ section('API ASSISTANT Unit 4 — the intake dry-run workbench, on the real page
   await page.close();
 }
 
+/* ============================================================================
+   THE THREE LIVE SENDS, ON THE REAL PAGE (owner, 2026-09-05: "make it live").
+
+   The worker suite proves the resolution and the refusals. What only the page
+   can prove is the part the owner will actually touch: that Send exists only
+   under a preview, that what it posts is what was read back, that the office
+   history moves when it goes, and that a failure says so instead of drawing a
+   confirmation over a message nobody received.
+   ========================================================================= */
+section('API ASSISTANT — sending is live, and only from under a preview');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.navfoot [data-act="asstOpen"]').click();
+  await page.waitForSelector('.asst-panel', { timeout: 4000 });
+  await page.waitForFunction(() => ASST && ASST.state, null, { timeout: 4000 });
+
+  /* ---- 1. THE THIRD WORKBENCH EXISTS AND THE PHRASE REACHES IT ---- */
+  await page.locator('#asst_in').fill('send payment options to payer@example.com');
+  await page.locator('.asst-ask button').click();
+  await page.waitForSelector('.asst-work', { timeout: 4000 });
+  const payForm = await page.evaluate(() => ({
+    head: document.querySelector('.asst-live').innerText,
+    to: $('asst_mto') ? $('asst_mto').value : null,
+    sendBtn: !!document.querySelector('[data-act="asstPrepSend"]'),
+  }));
+  ok('"send payment options" opens the payment workbench, seeded from the sentence',
+     /PREPARE PAYMENT INSTRUCTIONS/.test(payForm.head) && payForm.to === 'payer@example.com',
+     JSON.stringify(payForm));
+  /* THE CENTRAL SAFETY PROPERTY: no Send until the email has been read back. */
+  ok('and the FORM screen offers no Send at all — nothing goes unpreviewed',
+     payForm.sendBtn === false);
+
+  await page.locator('[data-act="asstPrepPrev"]').click();
+  await page.waitForFunction(() => ASST && ASST.prep && ASST.prep.preview, null, { timeout: 4000 });
+  ok('previewing draws the real payment email and offers Send',
+     await page.evaluate(() =>
+       !!document.querySelector('[data-act="asstPrepSend"]')
+       && /PAYMENT OPTIONS/i.test(document.querySelector('.asst-pre').innerText)));
+  ok('the preview says out loud that sending does NOT mark the retainer received',
+     await page.evaluate(() =>
+       /does\s*not\s*mark the retainer received/i.test(
+         document.querySelector('.asst-work').innerText.replace(/\s+/g, ' '))));
+
+  /* ---- 2. THE CAPTURED BODY IS DROPPED WHEN THE FORM IS REOPENED. Send must
+     never post values the person has walked back from. ---- */
+  await page.locator('[data-act="asstPrepEdit"]').click();
+  ok('Edit withdraws both the preview and the body it captured',
+     await page.evaluate(() => ASST.prep.preview === null && ASST.prep.previewBody === null
+       && !document.querySelector('[data-act="asstPrepSend"]')));
+  await page.locator('[data-act="asstPrepCancel"]').click();
+
+  /* ---- 3. A REAL SEND MOVES THE OFFICE HISTORY. The intake link is used
+     because it writes `send_log`, which /sends reads — the same list the Rate
+     Sheets screen shows, so this asserts the send landed where the office
+     looks for it rather than only that a route answered 200. ---- */
+  const before = await page.evaluate(async () => (await api('/sends')).sends.length);
+  await page.locator('#asst_in').fill('send a private intake to live-send@example.com');
+  await page.locator('.asst-ask button').click();
+  await page.waitForSelector('.asst-work', { timeout: 4000 });
+  await page.locator('[data-act="asstPrepPrev"]').click();
+  await page.waitForFunction(() => ASST && ASST.prep && ASST.prep.preview, null, { timeout: 4000 });
+  const captured = await page.evaluate(() => JSON.stringify(ASST.prep.previewBody));
+  ok('the body that produced the preview is captured beside it',
+     /live-send@example\.com/.test(captured), captured);
+
+  MAILED = null;
+  env.RESEND_API_KEY = 'e2e-resend-key';        // only this block has a mailer
+  await page.locator('[data-act="asstPrepSend"]').click();
+  await page.waitForFunction(() => ASST && !ASST.prep, null, { timeout: 6000 });
+  const sentMsg = await page.evaluate(() => {
+    const blocks = [...document.querySelectorAll('.asst-m')];
+    const last = blocks[blocks.length - 1];
+    return last ? { chip: !!last.querySelector('.asst-sent'), text: last.innerText }
+      : { chip: false, text: 'NO-ANSWER msgs=' + JSON.stringify((ASST && ASST.msgs) || []) };
+  });
+  ok('the answer wears SENT and names who it went to',
+     sentMsg.chip === true && /live-send@example\.com/.test(sentMsg.text)
+     && /No case was created/.test(sentMsg.text), sentMsg.text.slice(0, 200));
+  ok('and it really reached the mail provider, addressed to the previewed recipient',
+     REAL_MAIL() && REAL_MAIL().to === 'live-send@example.com',
+     JSON.stringify(REAL_MAIL() && REAL_MAIL().to));
+  ok('the office send history gained the row — a live send is not a rehearsal',
+     (await page.evaluate(async () => (await api('/sends')).sends.length)) === before + 1);
+  ok('the workbench closed itself once the send went',
+     await page.evaluate(() => !document.querySelector('.asst-work')));
+
+  /* ---- 3b. THE INTAKE'S SECOND DOOR. Naming a case sends through
+     `/leads/:no/send-intake`, which derives the form from the CASE'S OWN
+     RECORD rather than from a typed kind — the property that stops a legal
+     lead being emailed the consumer form — and links the send to the case in
+     the office history. Only the page can prove which door it chose. ---- */
+  await post('/ingest', { case_no: 'API-LIVE-LGL', assignment: 'legal',
+    client_name: 'Harmon PLC', objective: 'Serve' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  MAILED = null;
+  await page.locator('#asst_in').fill('send an intake link to firm@example.com');
+  await page.locator('.asst-ask button').click();
+  await page.waitForSelector('.asst-work', { timeout: 4000 });
+  await page.locator('#asst_pcase').fill('API-LIVE-LGL');
+  await page.locator('#asst_pname').fill('Somebody Else Entirely');
+  await page.locator('[data-act="asstPrepPrev"]').click();
+  await page.waitForFunction(() => ASST && ASST.prep && ASST.prep.preview, null, { timeout: 4000 });
+  ok('a case reference picks the LEGAL door, and the typed name gives way to the case\'s own',
+     await page.evaluate(() => {
+       const b = document.querySelector('.asst-pre').innerText;
+       return /assignment=legal/.test(b) && /^Harmon PLC,/.test(b)
+         && !/Somebody Else Entirely/.test(b);
+     }));
+  await page.locator('[data-act="asstPrepSend"]').click();
+  await page.waitForFunction(() => ASST && !ASST.prep, null, { timeout: 6000 });
+  ok('the confirmation names the case it went out on',
+     await page.evaluate(() => {
+       const blocks = [...document.querySelectorAll('.asst-m')];
+       const last = blocks[blocks.length - 1];
+       return !!last && /API-LIVE-LGL/.test(last.innerText) && !!last.querySelector('.asst-sent');
+     }));
+  ok('and the office history holds it AGAINST THE CASE — the second door, not the pre-case one',
+     await page.evaluate(async () => {
+       const rows = (await api('/sends')).sends;
+       return rows.some(r => r.case_no === 'API-LIVE-LGL' && r.recipient === 'firm@example.com');
+     }));
+
+  /* ---- 4. A FAILURE SAYS SO. With the mailer unconfigured the ordinary route
+     answers 502, and the panel must report that rather than draw a
+     confirmation over a message nobody received. ---- */
+  delete env.RESEND_API_KEY;
+  MAILED = null;
+  await page.locator('#asst_in').fill('send a private intake to nobody@example.com');
+  await page.locator('.asst-ask button').click();
+  await page.waitForSelector('.asst-work', { timeout: 4000 });
+  await page.locator('[data-act="asstPrepPrev"]').click();
+  await page.waitForFunction(() => ASST && ASST.prep && ASST.prep.preview, null, { timeout: 4000 });
+  await page.locator('[data-act="asstPrepSend"]').click();
+  await page.waitForFunction(() => ASST && !ASST.prep, null, { timeout: 6000 });
+  const failMsg = await page.evaluate(() => {
+    const blocks = [...document.querySelectorAll('.asst-m')];
+    const last = blocks[blocks.length - 1];
+    return last ? { chip: !!last.querySelector('.asst-sent'), text: last.innerText } : null;
+  });
+  ok('a send that did not go says it did not go, and wears no SENT chip',
+     failMsg && failMsg.chip === false && /did not go through/.test(failMsg.text),
+     failMsg && failMsg.text.slice(0, 200));
+  ok('and nothing reached the provider on that attempt', REAL_MAIL() === null);
+
+  await page.close();
+}
+
 section('API ASSISTANT Unit 5 — the rate-sheet dry-run workbench, on the real page');
 {
   const page = await newPage();
@@ -17201,7 +17392,7 @@ section('API ASSISTANT Unit 5 — the rate-sheet dry-run workbench, on the real 
   await page.waitForFunction(() => LEGAL_SVCS.length > 0, null, { timeout: 4000 });
   ok('the sheet workbench opens on the audience the sentence named, services loaded',
      await page.evaluate(() =>
-       /PREPARE A RATE SHEET/.test(document.querySelector('.asst-dry').innerText)
+       /PREPARE A RATE SHEET/.test(document.querySelector('.asst-live').innerText)
        && $('asst_sctx').value === 'legal' && !!document.querySelector('#asst_ssvc')));
   /* Picking a FIXED service must draw the fee box — the change listener
      reaches the workbench on every screen (it once sat behind the

@@ -13528,10 +13528,25 @@ async function missingTables(env) {
 
    THE WHOLE SAFETY MODEL, in one place:
 
-   - BETA IS PERMANENT IN V1. There is no Live Mode switch anywhere in this
-     code, and the Assistant can never create one: no /assistant route writes
-     the settings store, sends mail, or touches money, status, deletion or
-     archival. A source test counts the calls, the intake-delete pattern.
+   - THE THREE SENDS ARE LIVE; EVERYTHING ELSE IS STILL REFUSED BY NAME.
+     Owner, 2026-09-05: "make it live". The rate sheet, the intake link and
+     the payment instructions now really go, and nothing else moved —
+     deleting, archiving, voiding, altering a payment, assigning, approving,
+     closing a case and changing pricing or an authorization all still refuse.
+
+     WHAT IS STILL EXACTLY TRUE OF THIS BLOCK, and it is what the source pins
+     hold: it has NO SQL of its own beyond `assistant_log`; it calls `sendMail`
+     NEVER; it writes no settings store; and everything a person can run is a
+     row in ASSISTANT_COMMANDS naming an ORDINARY route. The mail leaves from
+     that route, behind its own admin gate, rate limit, deleted/archived
+     refusal, context and payment boundaries and `send_log` write. So the
+     guarantee is not "nothing happens" — it is that nothing happens that the
+     signed-in person could not already do by pressing the button themselves,
+     and that the Assistant is never a second way into the data.
+
+     Do not restate this as "read-only" or "dry run"; both were true once and
+     are not now, and a guard that passes while describing something weaker
+     than it claims is the failure this project keeps recording.
    - Every tool runs as the SIGNED-IN USER through the same functions the
      ordinary routes use, so the role boundary is the SQL it always was. The
      Assistant grants nothing: an investigator's Assistant is an investigator.
@@ -13645,15 +13660,66 @@ const ASSISTANT_COMMANDS = [
      the office's decision that this is a case, and the ordinary lead-status
      route stays the single writer of 'converted', which is what carries the
      acceptance-time fee snapshot with it. So the confirmation has to say that.
-     Admin-only, like the route.
-
-     (This comment names no outbound verb on purpose: a source pin forbids the
-     whole registry block from carrying one, and it is right to — the rehearsal
-     branch above is the only place in this Assistant that goes near one.) */
+     Admin-only, like the route. */
   { action: 'accept_intake', level: 3, label: 'Accept Intake', needs_case: true,
     roles: ['admin'], route: 'leads/:no/status',
     title: 'ACCEPT THIS INTAKE AS A CASE?' },
+
+  /* ===== THE THREE LIVE SENDS (owner, 2026-09-05: "make it live"). =========
+
+     Until now every send-shaped thing here was a REHEARSAL: the workbench
+     priced the real document, rendered the real email and recorded
+     `SIMULATED — NOT SENT`. The owner has turned that off for exactly these
+     three products, and for nothing else — the blocked list still refuses
+     deleting, archiving, voiding, altering a payment, assigning, approving,
+     closing a case and changing pricing or an authorization.
+
+     WHAT DID NOT CHANGE, and it is the whole reason this was a small edit:
+     the Assistant still contains no way to send. Each row names the ORDINARY
+     route the desk's own Send button posts to, the PAGE dispatches to it, and
+     `sendMail` is reached there — inside the route, behind its own admin gate,
+     its rate limit, its deleted/archived refusal, its context and payment
+     boundaries, and its `send_log` write. A source pin holds the three route
+     strings as an ALLOW-LIST, so a fourth send cannot arrive by wording.
+
+     `needs_case` is false on all three because a case number is a REFERENCE
+     here, not the subject of the act: every one of these sends works before a
+     case exists, and a reference that resolves to nothing must still send.
+     The routes already apply `caseSendRefusal` to a reference that DOES
+     resolve, which is where that check belongs. */
+  { action: 'send_sheet', level: 3, label: 'Send Rate Sheet', needs_case: false,
+    roles: ['admin'], route: 'sheets/:id/email',
+    title: 'SEND THIS RATE SHEET?' },
+  /* TWO DOORS, DECLARED — the only command with a `route_alt`, and it is a
+     fact rather than a convenience. `/intake-link/email` derives the form from
+     the KIND it is handed; `/leads/:no/send-intake` derives it from the CASE'S
+     OWN RECORD, the payload marker outranking kind, which is what stops a
+     legal lead being emailed the consumer form. A send that names a case must
+     use the second, and it also links the send to the case in `send_log`.
+     Declaring it is what keeps the source pin honest: the pin holds the routes
+     a send can REACH, and a door the page uses but the registry omits would
+     make that guarantee read stronger than it is. */
+  { action: 'send_intake', level: 3, label: 'Send Intake Link', needs_case: false,
+    roles: ['admin'], route: 'intake-link/email', route_alt: 'leads/:no/send-intake',
+    title: 'SEND THIS INTAKE LINK?' },
+  { action: 'send_payment_options', level: 3, label: 'Send Payment Options', needs_case: false,
+    roles: ['admin'], route: 'payment-options/email',
+    title: 'SEND THESE PAYMENT INSTRUCTIONS?' },
 ];
+
+/* EVERY ROUTE A SEND CAN REACH, named once so the source pin and the page can
+   both be held to the same list — an allow-list, for the `inlineSafeType`
+   reason: a send route nobody has considered is refused by default rather than
+   admitted by a pattern that happens to match it.
+
+   FOUR, NOT THREE, because the intake has two doors and the second was missing
+   from the first version of this list. The page used `/leads/:no/send-intake`
+   for a case-referenced send while the registry named only the pre-case door,
+   so the pin asserted a guarantee one route wider than it could actually
+   hold. Both are ordinary routes with their own admin gate and refusals; what
+   was wrong was the claim, not the code. */
+const ASSISTANT_SEND_ROUTES = ['sheets/:id/email', 'intake-link/email',
+                               'leads/:no/send-intake', 'payment-options/email'];
 
 /* THE CASE TABS THE ASSISTANT MAY NAME, and it is a registry for the reason
    ASSISTANT_NAV is one: model text must never become a destination. A case tab
@@ -13733,11 +13799,31 @@ const ASSISTANT_EXPLAIN = {
   case: 'A case workspace: Overview answers "what now", with Activity, Daily Summary, Evidence, Report and Billing one tap away. Everything you do here lands on the same records the rest of the portal reads.',
 };
 
-/* The verbs Beta refuses BY NAME (owner: "conversational wording must never
-   bypass this restriction"). Matched against the utterance server-side; the
-   answer names the block and the manual door that still works. */
+/* The verbs refused BY NAME (owner: "conversational wording must never bypass
+   this restriction"). Matched against the utterance server-side; the answer
+   names the block and the manual door that still works.
+
+   THE SEND VERB STAYS ON THIS LIST, AND TAKING IT OFF WAS A MISTAKE THE SUITE
+   CAUGHT (2026-09-05). Turning three products live looked like a reason to
+   drop it. It is not, because THE THREE CARVE-OUTS ABOVE ALREADY RETURN: an
+   utterance naming an intake, a rate sheet or payment options never reaches
+   this list at all. So the only sentences the entry can still see are
+   send-shaped ones that are NOT one of the three — "email the firm their case
+   documents", "email them the invoice" — and those must be refused BY NAME
+   rather than shrugged at with "I do not understand that phrase". Never
+   auto-email evidence is the owner's own line, and a clear refusal is how a
+   screen says so.
+
+   It also keeps the false positive this file already records and defends: "add
+   a task to send the report" is refused, because narrowing the pattern so a
+   task's own wording could carry the verb would mean `send` no longer reliably
+   reaches this refusal. The task field on the case is one tap away and never
+   gated.
+
+   Everything else here was reaffirmed by the owner in the same decision that
+   turned the sends live: "leave them refused". */
 const ASSISTANT_BLOCKED = [
-  [/\b(send|email|resend)\b/i, 'sending anything to a client'],
+  [/\b(send|email|resend)\b/i, 'sending anything else to a client'],
   [/\brecord (a )?payment\b|\bmark .*paid\b/i, 'recording payments'],
   /* VOIDING AND ALTERING, added 2026-09-05 with the prefill. The owner's line
      is that the Assistant may never record, post, VOID or alter a payment, and
@@ -13779,12 +13865,35 @@ function assistantNavMatch(text, role) {
   return best ? best.nav : null;
 }
 
-/* GET /assistant/state — what the panel needs to draw: the Beta facts, the
-   provider's honest state, and the navigation this ROLE may be offered. */
+/* GET /assistant/state — what the panel needs to draw: what this Assistant
+   may actually do, the provider's honest state, and the navigation this ROLE
+   may be offered.
+
+   `beta` WENT FALSE ON 2026-09-05 AND THE BANNER HAD TO MOVE WITH IT. The two
+   are one fact said twice, and a screen that kept saying DRY RUN over a send
+   that really goes is this project's own forbidden shape — a staff screen
+   asserting something untrue — pointing the wrong way, which is the dangerous
+   way. So the banner now states the three things that are true instead:
+   sends are real, every one shows the exact email and waits, and rehearsing is
+   still there for anyone who wants it.
+
+   `rehearsal: true` is what the page keys the SIMULATE controls off, so the
+   dry run is a capability the panel reports rather than a mode it is stuck
+   in. `blocked` is the count of verbs still refused by name — a number the
+   Settings card can show without the page holding its own copy of the list. */
 async function assistantState(env, user) {
   return json({
-    beta: true,
-    banner: 'ASSISTANT BETA — DRY RUN MODE. No external client messages or consequential actions will be sent.',
+    beta: false,
+    live: true,
+    rehearsal: true,
+    blocked: ASSISTANT_BLOCKED.length,
+    /* TWO PARTS BECAUSE THE BANNER IS TWO LINES, and the WORKER is the one
+       writer of both — the page used to hard-code this text, which is a second
+       copy of a safety statement, and the copy that drifts is the one nobody
+       is looking at. */
+    banner: 'SENDS ARE LIVE',
+    banner_detail: 'You see the exact email and confirm before anything leaves. Deleting, '
+                 + 'archiving, voiding, assigning, approving and pricing changes are still refused.',
     provider: assistantProvider(env),
     role: user.role,
     nav: assistantNavFor(user.role),
@@ -13874,7 +13983,15 @@ async function assistantIntakePlan(env, body) {
         + `assignment, so the right intake form cannot be chosen.` }, 409) };
     }
     caseNo = ref;
-    if (!name) name = String(lead.client_name || '');
+    /* THE CASE'S OWN NAME WINS, and this changed on 2026-09-05 when the sends
+       went live. It used to fill in only a BLANK name, which was harmless
+       while every rehearsal was a rehearsal — but a case-referenced send goes
+       through `/leads/:no/send-intake`, and that route greets with
+       `lead.client_name` and ignores the body's name entirely. So a typed
+       name previewed one greeting and emailed another, which breaks the one
+       property this whole flow rests on: WHAT YOU PREVIEWED IS WHAT GOES.
+       The mirror follows the sender, never the other way round. */
+    name = String(lead.client_name || '');
   } else {
     const kind = String(body.kind || '').trim().toLowerCase();
     context = kind === 'legal' ? SEND_CONTEXT.LEGAL
@@ -14153,6 +14270,104 @@ async function assistantSimulateSheet(request, env, user) {
     { context: plan.sendCtx, sheet_id: plan.sheet.id, subject: plan.subject,
       door: plan.intakeDoor ? plan.intakeDoor.url : null,
       methods: plan.npPicked.length ? plan.npPicked : plan.payment.map(x => x.id) });
+}
+
+/* ---------------- PAYMENT INSTRUCTIONS — preparation and preview ----------
+
+   The third live product, added 2026-09-05 when the owner turned sending on.
+   Same construction as `assistantSheetPlan`: a PINNED MIRROR of
+   `emailPaymentOptions`, restating its resolution step for step through the
+   same named helpers, containing no way to send, and held to the real route
+   by the suite the strong way — same inputs through both produce the SAME
+   subject and body byte for byte, and the SAME refusals.
+
+   The two refusals are the point of mirroring rather than guessing. This
+   email IS Cash App and Venmo, so a reference resolving to a claim assignment
+   or a legal case is refused BY NAME here exactly as it is there — a preview
+   that renders happily for a send the portal would refuse is a rehearsal of
+   the wrong play, which is the Unit 4 lesson. An UNRESOLVABLE reference still
+   previews and still sends: the pre-case rule, and this route is a private
+   context by construction so there is nothing to classify. */
+async function assistantPaymentPlan(env, body) {
+  const to = String(body.to || '').trim();
+  if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(to) || to.length > 200) {
+    return { fail: json({ error: 'Enter a valid email address.' }, 400) };
+  }
+  const clean = (v, max) => String(v == null ? '' : v)
+    .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').slice(0, max);
+  const note = clean(body.note, 500);
+  const name = clean(body.name, 120);
+  const caseNo = String(body.case_no || '').replace(/[^\x20-\x7e]/g, '').slice(0, 64);
+
+  let linkedCase = null;
+  if (caseNo) {
+    const lead = await env.DB.prepare('SELECT kind, payload FROM submissions WHERE case_no = ?')
+      .bind(caseNo).first();
+    if (lead && contextForSub(lead) === SEND_CONTEXT.INSURANCE) {
+      return { fail: json({ error: `${caseNo} is a claim assignment. Cash App and Venmo are private-client `
+                         + `payment methods and are never sent to a carrier or TPA.` }, 400) };
+    }
+    if (lead && contextForSub(lead) === SEND_CONTEXT.LEGAL) {
+      return { fail: json({ error: `${caseNo} is a legal assignment. Cash App and Venmo are private-client `
+                         + `payment methods — law firms are billed by BILL.com invoice or retainer check.` }, 400) };
+    }
+    if (lead) {
+      const refusal = await caseSendRefusal(env, caseNo);
+      if (refusal) return { fail: refusal };
+      linkedCase = caseNo;
+    }
+  }
+  /* No rate-limit spend here: nothing is about to be sent. */
+  const wantedMethods = Array.isArray(body.methods)
+    ? body.methods.map(x => String(x)).filter(x => PAY_IDS.includes(x)) : null;
+  const brokenMethods = [];
+  const payment = await paymentOptionsFor(env, wantedMethods, brokenMethods, SEND_CONTEXT.PRIVATE);
+  if (brokenMethods.length) {
+    const names = brokenMethods.map(m => m.display_name || m.label).join(' and ');
+    return { fail: json({ error: `${names} is switched on but has no payment link, so it cannot be `
+                       + `offered — every payment option a client sees has to be tappable. `
+                       + `Add a link in Settings, or switch it off.`,
+                  needs_link: brokenMethods.map(m => m.id) }, 400) };
+  }
+  if (!payment.length) {
+    return { fail: json({ error: wantedMethods && !wantedMethods.length
+      ? 'Choose at least one payment method.'
+      : 'No payment method is enabled and configured. Set one up in Settings '
+        + 'before sending payment instructions.' }, 400) };
+  }
+  const retainer = await retainerForSend(env, caseNo, body.retainer_amount);
+  const { text } = paymentOnlyEmail(payment, retainer, note, name);
+  const subject = caseNo
+    ? `Payment options — Always Precise Investigations (case ${caseNo})`
+    : 'Payment options — Always Precise Investigations';
+  return { to, name, note, subject, text, payment, linkedCase, caseNo };
+}
+
+/* POST /assistant/prepare-payment — what WOULD go. Reads only. */
+async function assistantPreparePayment(request, env) {
+  const plan = await assistantPaymentPlan(env, await readJson(request));
+  if (plan.fail) return plan.fail;
+  return json({ ok: true, dry_run: true, to: plan.to, case_no: plan.linkedCase,
+    send_context: SEND_CONTEXT.PRIVATE,
+    included: { payment_methods: plan.payment.map(x => ({ id: x.id, label: x.label })) },
+    /* RULE 2, said in the preview as well as in the send's own answer: asking
+       is not receiving, and the one screen that shows the instructions before
+       they go is where that is worth saying. */
+    retainer_marked_paid: false,
+    subject: plan.subject, body_text: plan.text });
+}
+
+/* POST /assistant/simulate-payment — the rehearsal recorded, through the one
+   log writer. */
+async function assistantSimulatePayment(request, env, user) {
+  const plan = await assistantPaymentPlan(env, await readJson(request));
+  if (plan.fail) return plan.fail;
+  return assistantLogged(env, user, 'payment_options_send',
+    { ok: true, outcome: ASSISTANT_SIM_OUTCOME, to: plan.to,
+      case_no: plan.linkedCase, send_context: SEND_CONTEXT.PRIVATE,
+      intake: 'Payment options' },
+    { context: SEND_CONTEXT.PRIVATE, subject: plan.subject,
+      methods: plan.payment.map(x => x.id) });
 }
 
 /* ---------------- UNIT 6 (completed) — the ZERO-WRITE invoice preview -----
@@ -14436,7 +14651,8 @@ async function assistantWatch(env, user) {
    NAVIGATION (registry id), a SAY (a phrase fed back through this same
    deterministic grammar, exactly as if typed), or a SEED (text placed in
    the box for the person to finish) — nothing here can delete, archive,
-   send, pay or close, in Beta or by these buttons ever.
+   send, pay or close — not from these buttons, ever. (The three live sends
+   are the workbench's own Send button under a full preview, never a card.)
 
    DORMANT-INTAKE INTELLIGENCE runs the SAME eligibility probe the real
    delete runs (`intakeBlockersFound`), so "eligible for cleanup review"
@@ -14550,7 +14766,7 @@ async function assistantTopicAnswer(env, user, short, caseNo) {
     const prot = list.filter(x => x.cls.startsWith('PROTECTED')).length;
     return topicJson('DORMANT INTAKES', [
       `${list.length} older undecided intake${list.length === 1 ? '' : 's'} — ${elig} eligible for cleanup review, ${prot} protected.`,
-      'The Assistant identifies and explains; deleting stays the manual control on the intake card, and Beta never deletes anything.',
+      'The Assistant identifies and explains; deleting stays the manual control on the intake card, and the Assistant never deletes anything.',
     ], [nav('OPEN INTAKES', 'leads')],
       list.map(x => ({ title: `${x.cls} — ${x.who}`, case_no: x.case_no,
         line: `${x.case_no} · ${x.age_days}d old · ${x.why}` })));
@@ -14846,10 +15062,13 @@ async function assistantCommandCore(body, env, user) {
   const caseNo = CASE_NO_RE.test(String(ctx.case_no || '')) ? String(ctx.case_no) : '';
   const t = ' ' + asstStrip(text) + ' ';
 
-  /* ---- UNIT 4: the one send-shaped act Beta can REHEARSE. An utterance
-     about sending or preparing an INTAKE opens the workbench instead of the
-     flat refusal — the doing is two explicit routes, the send still never
-     happens, and destructive verbs about an intake still refuse below. */
+  /* ---- UNIT 4, now live: an utterance about sending or preparing an INTAKE
+     opens the workbench. THE UTTERANCE NEVER SENDS — it only opens the form.
+     A recipient spotted in the sentence is a SEED for a field the person can
+     read and correct, never an address the Assistant mails on its own: the
+     one thing that puts an email on the wire is the Send button under a
+     preview of the exact text. Destructive verbs about an intake still refuse
+     below. */
   if (/\bintake\b/i.test(text)
       && /\b(prepare|send|email|simulate|draft|rehears|dry.?run)\b/i.test(text)
       && !/\bdelete\b|\barchiv/i.test(text)) {
@@ -14862,8 +15081,9 @@ async function assistantCommandCore(body, env, user) {
       : /legal|law firm|attorney|\bfirm\b/i.test(text) ? 'legal'
       : /private|consumer/i.test(text) ? 'private' : '';
     return json({ ok: true, kind: 'prepare_intake',
-      text: 'Dry run: say who this intake link is for and preview exactly what would go. '
-          + `Nothing is sent — the SIMULATE step records the rehearsal as ${ASSISTANT_SIM_OUTCOME}.`,
+      text: 'Say who this intake link is for, then preview exactly what would go. '
+          + 'Send emails it; Simulate rehearses it instead and records '
+          + `${ASSISTANT_SIM_OUTCOME}.`,
       form: { kind: kindGuess, to: mail || '', name: '', case_no: caseNo || '' } });
   }
 
@@ -14882,9 +15102,37 @@ async function assistantCommandCore(body, env, user) {
       : /legal|law firm|attorney|\bfirm\b/i.test(text) ? 'legal'
       : /private|consumer/i.test(text) ? 'private' : '';
     return json({ ok: true, kind: 'prepare_sheet',
-      text: 'Dry run: pick the audience, preview the exact sheet email, then SIMULATE — '
-          + `recorded as ${ASSISTANT_SIM_OUTCOME}, and nothing is sent.`,
+      text: 'Pick the audience, then preview the exact sheet email. Send emails it; '
+          + `Simulate rehearses it instead and records ${ASSISTANT_SIM_OUTCOME}.`,
       form: { context: ctxGuess, to: mail || '', case_no: caseNo || '' } });
+  }
+
+  /* ---- THE THIRD LIVE PRODUCT — PAYMENT INSTRUCTIONS ON THEIR OWN, the
+     shape Units 4 and 5 use, added when the owner turned sending live.
+
+     `/payment-options/email` is a PRIVATE context by construction: it sends
+     exactly one thing, so there is no audience to pick and no classification
+     to get wrong. The route still refuses a reference that resolves to a claim
+     assignment, and refusing it there rather than here is deliberate — this
+     branch only opens a form.
+
+     ORDERED AFTER THE SHEET so "send the rate sheet with payment options"
+     is taken as the sheet, which is the send that carries them. It matches
+     only payment OPTIONS or INSTRUCTIONS: "record a payment" is a different
+     act, and it is caught by the prefill branch below and the blocked list
+     under that. */
+  if (/payment (options|instructions|details)|how to pay/i.test(text)
+      && /\b(prepare|send|email|simulate|draft|rehears|dry.?run)\b/i.test(text)
+      && !/\bdelete\b|\barchiv|\bvoid\b/i.test(text)) {
+    if (user.role !== 'admin') {
+      return json({ ok: true, kind: 'status',
+        text: 'Sending payment instructions is an admin desk — this action requires Admin permission.' });
+    }
+    const mail = (text.match(/[^@\s]+@[^@\s.]+\.[^@\s]+/) || [null])[0];
+    return json({ ok: true, kind: 'prepare_payment',
+      text: 'Say who these payment instructions are for, then preview the exact email. '
+          + 'Sending them records that the office asked — it never marks a retainer received.',
+      form: { to: mail || '', name: '', case_no: caseNo || '', note: '' } });
   }
 
   /* ---- THE PAYMENT PREFILL — a rehearsal, in the shape Units 4 and 5 use ---
@@ -15032,11 +15280,15 @@ async function assistantCommandCore(body, env, user) {
   if (!asking) {
     for (const [re, what] of ASSISTANT_BLOCKED) {
       if (re.test(text)) {
+        /* THE CODE STAYS `assistant_beta` THOUGH BETA IS OFF, because it is
+           the wire name three suites and the page already match on, and what
+           it identifies is unchanged: a verb this Assistant refuses by name.
+           Renaming it would be a breaking change to say the same thing. */
         return json({ ok: true, kind: 'refused', code: 'assistant_beta',
-          text: `Beta dry-run: ${what} is disabled for the Assistant — nothing was done, `
-              + `and no message left the building. The ordinary portal controls still work; `
-              + `I can rehearse intake links ("prepare an intake") and rate sheets ("prepare `
-              + `a rate sheet"), and invoice preparation arrives in a later Assistant unit.` });
+          text: `${what} is not something the Assistant does — nothing was done. The ordinary `
+              + `portal controls still work. What I can send is the rate sheet ("send a rate `
+              + `sheet"), the intake link ("send an intake") and the payment instructions `
+              + `("send payment options"), each one previewed in full before it goes.` });
       }
     }
   }
@@ -15762,10 +16014,11 @@ async function assistantCommandCore(body, env, user) {
   /* ---- the honest fallback ---- */
   const provider = assistantProvider(env);
   return json({ ok: true, kind: 'help',
-    text: 'Beta understands set phrases so far: "Where am I?", "Explain this page", '
+    text: 'The Assistant understands set phrases so far: "Where am I?", "Explain this page", '
         + '"Take me to <a portal section>", "Anything new?", "What should I do?", '
         + '"What needs attention?", "What is outstanding?", "Find <a name or case number>", '
-        + '"Prepare an intake", "Prepare a rate sheet", "invoice preview", bare topics like '
+        + '"Send a rate sheet", "Send an intake", "Send payment options", '
+        + '"invoice preview", bare topics like '
         + '"intakes", "invoices", "cases", "rate sheets", "surveillance", "reports", "clients", '
         + '"tasks", "today", and on a case: '
         + '"Check this case", "Is this ready to close?", "Is this ready to invoice?", '
@@ -16208,6 +16461,15 @@ async function route(request, env) {
   if (p === '/assistant/simulate-sheet' && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return assistantSimulateSheet(request, env, user);
+  }
+  /* Admin-only like `/payment-options/email`, the door this prepares. */
+  if (p === '/assistant/prepare-payment' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return assistantPreparePayment(request, env);
+  }
+  if (p === '/assistant/simulate-payment' && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return assistantSimulatePayment(request, env, user);
   }
 
   /* CASE COMMAND CENTER — the audit row for a command the person confirmed.
