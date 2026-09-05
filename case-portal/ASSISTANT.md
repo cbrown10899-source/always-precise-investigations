@@ -492,3 +492,55 @@ phone pill/sheet. Units 4–6 (intake/rate-sheet/invoice preparation +
 SIMULATE) are the next tier and bring `assistant_log` — the first Assistant
 schema change, one portal-setup dispatch, reported to the owner before it
 lands.
+
+---
+
+## A21 — Command Center V1: the registry reaches five, and what it refuses
+
+`ASSISTANT_COMMANDS` is still the entire executable surface, now five rows:
+
+| action | level | roles | ordinary route |
+| --- | --- | --- | --- |
+| `start_day` | 2 | admin, investigator | `cases/:no/day/start` |
+| `end_day` | 2 | admin, investigator | `cases/:no/day/end` |
+| `add_task` | 2 | admin | `cases/:no/tasks` |
+| `complete_task` | 2 | admin, investigator | `cases/:no/tasks/:id/status` |
+| `accept_intake` | 3 | admin | `leads/:no/status` |
+
+Nothing about the shape changed: `assistantPlan` is the one resolver
+(registry membership, role, `caseFor`, `caseSendRefusal`), the block writes
+only `assistant_log`, and the page dispatches through `ASST_CMD` to the route
+the button already uses.
+
+**Derived decisions, one per entry, so each can be overturned on its own:**
+
+- **D1 — the daily summary command opens the builder and writes nothing.** The
+  builder's selections are the authorship; guessing them would be inventing
+  narrative on a client-facing document. The answer states the day, whether it
+  is running, and whether a summary exists — and a test reads the stored
+  narrative back unchanged after asking.
+- **D2 — the registry's role list gates the OFFER; the route gates the RUN.**
+  Two lists that agree, with the route's the one that counts.
+- **D3 — completing a task resolves against the case's own open tasks**, scoped
+  to the caller's own where the route would scope them. Zero and several are
+  different answers.
+- **D4 — the task's words are the person's own**, printed verbatim on the card.
+  The extractor strips the instruction, never the content.
+- **D5 — `ASSISTANT_CASE_TABS` is its own registry.** A case tab is not a
+  top-level tab; `nav()` took a fourth argument rather than widening
+  `ASSISTANT_NAV`.
+- **D6 — billing on a case is not offered to the field**, because the tab is
+  admin-only and a door that would refuse them is not a door.
+- **D7 — accepting an intake is level 3 and goes through the lead-status
+  route**, so that route's writer stays the single writer of `converted` and
+  carries the fee snapshot. A decided lead is never re-decided by a command.
+- **D8 — `assistantCardNames` is the one reader of a card's names**, with
+  `redactRow`'s boundary. The case number is never drawn in the name position.
+- **D9 — no payment prefill.** Deliberate: recording a payment is refused by
+  name in Beta, and a money field the Assistant fills for someone else to
+  approve is not where this portal should save keystrokes. Open for the owner
+  to overturn.
+- **D10 — the Beta guard wins over a task's own wording.** A false positive in
+  the safe direction, pinned by two tests rather than narrowed.
+
+No schema change, so no `portal-setup` dispatch is owed for any of it.
