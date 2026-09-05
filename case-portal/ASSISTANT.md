@@ -574,3 +574,95 @@ of them passed on the first run** — the boundaries held without a fix:
   KEY at all;
 - the prefill never becomes a command, an absurd amount is refused, and the
   ledger is empty at the end of the section.
+
+## A23 — the three sends go live (owner, 2026-09-05)
+
+**The brief, verbatim in substance:** *"make it live / ai works it can take beta
+off also."* Asked which sends, the owner chose **all three** — rate sheet,
+intake link, payment options — and, asked about the remaining blocked verbs,
+chose **"Leave them refused."**
+
+### D1 — Beta was four switches, and only one of them was capability
+
+Stated to the owner before anything was touched, because "take beta off" does
+not name one thing:
+
+| switch | what removing it does |
+| --- | --- |
+| BETA chips + DRY RUN banner | labels only — but removing them while sends are rehearsed puts an untruth on the screen |
+| **real external sends** | **the only one that adds capability, and the irreversible one** |
+| the blocked-verb list | **enables nothing** — no registry row exists for those verbs, so the only change is a clear refusal becoming a shrug |
+| a real AI model | two secrets in the Worker env; a separate decision, not taken |
+
+**There is still no AI model connected.** `assistantProvider` answers
+`not_configured`; the grammar is the same deterministic phrase matcher it has
+always been. Turning the sends live changed what the Assistant may DO, not how
+it understands.
+
+### D2 — a send is a registry row naming an ordinary route
+
+`send_sheet`, `send_intake`, `send_payment_options`: level 3, admin-only,
+`needs_case: false`. `needs_case` is false because a case number is a
+REFERENCE on these routes, not the subject of the act — every one of them
+works before a case exists, and an unresolvable reference must still send. The
+routes already apply `caseSendRefusal` to a reference that DOES resolve.
+
+`ASSISTANT_SEND_ROUTES` names the three route strings once so the source pin
+and the page can be held to the same list.
+
+### D3 — the pin was replaced, not loosened
+
+The old assertion — *no command names a send, a payment, a deletion or an
+archive* — is gone because its first clause is no longer true. The replacement
+parses the registry ROWS and asserts: exactly three send commands; each names
+one of three exact route strings; each route claimed by exactly one command;
+every send level 3 and admin-only; no command routing to a delete, archive or
+void. Parsing rows rather than grepping prose also retires the defect that made
+this pin fire twice on my own comments.
+
+### D4 — the send verb stays on the blocked list, and the suite proved it
+
+Taking `/\b(send|email|resend)\b/` off looked correct and was not. **The three
+carve-outs return above the list**, so the entry only ever sees send-shaped
+sentences that are NOT one of the three. Removing it turned *"email the firm
+their case documents"* from a named refusal into the help fallback. Four
+assertions failed; all four were right. Restored, with the refusal reworded to
+name the three products that DO work.
+
+### D5 — payment instructions gained the third workbench
+
+`assistantPaymentPlan` is a pinned mirror of `emailPaymentOptions` in the Unit 5
+sense: same subject and body byte for byte (asserted), the claims and legal
+refusals in the sender's own words, `caseSendRefusal` applied, an unresolvable
+reference still previewing. `/assistant/prepare-payment` and
+`/assistant/simulate-payment` are admin-only like the door they prepare, and the
+simulate reaches neither the transport nor `payment_send`.
+
+### D6 — you cannot send what you have not previewed
+
+The Send button exists only on the preview screen and posts
+`ASST.prep.previewBody` — the exact object the preview was rendered from.
+Edit and Back drop the preview and the captured body together.
+
+### D7 — one dispatcher, two doors
+
+`asstDispatch(c, tidy)` is the one writer of *run it, say what happened, record
+it*. Both `asstCmdRun` (a confirmed conversational offer) and `asstPrepSend`
+(the workbench) go through it, so the outcome reporting and the
+`/assistant/executed` provenance row cannot drift apart. The outcome is the
+caller's REPORT: a failure logs as `FAILED — …` and wears no SENT chip.
+
+### D8 — the banner's one writer is the Worker
+
+`/assistant/state` returns `banner` + `banner_detail`; the page prints them and
+draws nothing until the state lands. `beta:false`, `live:true`,
+`rehearsal:true` and `blocked:<count>` are the state's own facts.
+`.asst-dry` was renamed `.asst-live`.
+
+### What did not move
+
+`CONTEXT_TAKES_PAYMENT`, every Cash App/Venmo boundary, `FIELD_KEEP`,
+`redactRow`, the intake-delete guard, the Daily Summary authorship rule, the
+payment prefill (still not a command), the invoice preview (still
+`SIMULATED — NOT CREATED`), and every other entry on `ASSISTANT_BLOCKED`. No
+schema change, so no `portal-setup` dispatch is owed.
