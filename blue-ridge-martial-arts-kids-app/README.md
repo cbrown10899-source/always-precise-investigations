@@ -15,9 +15,9 @@ on the device, and has no backend, no accounts and no payments.
 
 | Screen | What it is for |
 | --- | --- |
-| **Home** | The dashboard — today's practice, this week's progress, streak, badges, class-ready status and the week's focus. |
+| **Home** | The dashboard — today's practice, this week's progress, streak, badges, class-ready status and the week's focus. It reads the instructor's plan: a dojo day leads with the checklist, a rest day says rest is part of training, and each focus chip opens the lesson that teaches it. |
 | **Lessons** | Eight lessons across Current Belt / Skills / Character, each a six-section player with a timer, a rep counter and a comprehension check. |
-| **Practice** | The weekly plan (home / dojo / rest), the Get Ready for Class checklist with a readiness meter, and this week's mission. |
+| **Practice** | The weekly plan (home / dojo / rest) where tapping a day opens its detail, the Get Ready for Class checklist with a readiness meter, and this week's mission. |
 | **Guided Practice** | A full-screen, one-step-at-a-time session with timers, rep counters and Start / Pause / Next / Previous / Complete. |
 | **Progress** | Belt journey, next goal, growth readings, attendance and the badge wall. |
 | **More** | Profile, Parent Mode, Instructor Demo, schedule, dojo information, safety and settings. |
@@ -36,7 +36,7 @@ stored counter.
 - **Playwright** for the UI audit
 - Plain CSS with a token layer — no UI framework, no CSS-in-JS runtime
 
-Total production bundle: **~307 KB (~91 KB gzipped)**.
+Total production bundle: **~312 KB (~92 KB gzipped)**.
 
 ## Running it locally
 
@@ -56,22 +56,25 @@ npm run preview      # serve the production build
 npm run verify       # typecheck + lint + test + build, in that order
 ```
 
-### The UI audit
+### The three audits
 
-`scripts/audit-ui.mjs` drives a real Chromium over **every route at five
-widths** (320 / 390 / 430 / 768 / 1200) and reports horizontal overflow, tap
-targets under 44px, controls with no accessible name, inputs under 16px (which
-make iOS zoom on focus) and any page error.
+These need a built app and a running preview, so they are separate from
+`npm test`:
 
 ```bash
 npm run build
 npm run preview &          # must be on :4183
-node scripts/audit-ui.mjs
+npm run audit              # all three
 ```
 
-It currently reports **0 problems across 5 widths × 14 routes**. It is not part
-of `npm test` because it needs a built app and a browser; run it after any
-layout change.
+| Audit | What it drives |
+| --- | --- |
+| `npm run audit:ui` | Every route at **six widths** (320/375/390/430/768/1200): horizontal overflow, tap targets under 44px, controls with no accessible name, inputs under 16px (which make iOS zoom on focus), text under 11px, controls buried under the fixed bottom nav, the confirm dialogs, the planner's detail panel, the guided player, and whether the wordmark wraps. |
+| `npm run audit:a11y` | Tabs every screen: reachability, a visible focus ring, an accessible name, forward focus order, Escape leaving the player, and reduced motion. |
+| `npm run audit:runtime` | Sixteen real journeys — completing a practice, pausing a timer, counting reps, answering a quiz, the checklist, every planner day, Parent Mode, every Instructor Demo field, the profile, every setting, a badge, reset — watching for console errors, React warnings, failed requests and links to routes that do not exist. Each journey **asserts the effect it should have had**, so it cannot report clean while silently doing nothing. |
+
+All three currently report **0 problems**. Each found real defects on its first
+honest run; run them after any layout or interaction change.
 
 ### A single-file build
 
@@ -109,15 +112,16 @@ screen. Instructor Demo has no gate at all and says that too.
 
 ## Tests
 
-101 checks across five suites:
+139 checks across six suites:
 
 | Suite | Covers |
 | --- | --- |
-| `progress.test.ts` | Week boundaries, streaks (including a streak that is still alive and one that has broken), the weekly goal, readiness, lesson completion fractions, growth labels, session building. |
-| `badges.test.ts` | Every badge's own stated requirement, that the catalogue and the rules agree in both directions, that nothing is earned by doing nothing, that a badge is never awarded twice and never taken away. |
+| `progress.test.ts` | Week boundaries, streaks (alive and broken), the weekly goal, readiness, lesson completion fractions, growth labels, session building, and that a date is never named twice. |
+| `badges.test.ts` | Every badge's own stated requirement, that the catalogue and the rules agree in both directions, that nothing is earned by doing nothing, that a badge is never awarded twice and never taken away, and that "3 Practices" and "3 Day Streak" separate on the case that distinguishes them. |
+| `instructor.test.ts` | Propagation: the weekly goal is the instructor's and a stored zero cannot make every week vacuously complete; `todayPlan` reads the real weekday and falls back rather than throwing; an unlisted lesson is not offered; an unnamed instructor stays null; attendance starts empty; reset clears every edit without leaking into the next reset. |
 | `storage.test.ts` | Round trips, unparseable JSON, a stored `null`, an array, a mismatched schema version, a blob missing a branch a later build added, a browser that refuses to write, reset, and that `utils/storage.ts` is the only file in `src/` touching `localStorage`. |
-| `safety.test.ts` | Greps the whole lesson and practice library for sparring, chokes, joint locks, weapons, striking objects, full-force instructions and vulnerable targets — with **control tests** that plant a violation and prove the matcher catches it. Also that nothing about the school is invented. |
-| `app.test.tsx` | The real journeys: completing a practice end to end and seeing the streak, badges and weekly count move; abandoning one and logging nothing; the checklist persisting and earning its badge; completing a lesson and resuming a half-finished one; Parent Mode's PIN; four separate Instructor Demo changes reaching the child's app; reset; the school card refusing to invent a detail; an unknown route. |
+| `safety.test.ts` | Greps the whole lesson and practice library for sparring, chokes, joint locks, weapons, striking objects, full-force instruction and vulnerable targets — with **control tests** that plant a violation and prove the matcher catches it. Also that nothing about the school is invented, and that every skill's `lessonId` resolves. |
+| `app.test.tsx` | The real journeys: completing a practice and seeing the streak, badges and weekly count move; abandoning one and logging nothing; the checklist persisting and earning its badge; completing a lesson and resuming a half-finished one; the focus chips routing; Home reading the plan on a dojo day and a rest day; the planner refusing to back-date; Parent Mode's PIN; four Instructor Demo changes reaching the child's app; badges settled on load; plural labels; reset; the school card refusing to invent a detail; an unknown route. |
 
 ```bash
 npm test
@@ -270,6 +274,12 @@ these is missing.
    against what the school actually teaches at each rank.
 8. **A photograph policy decision** — the app currently uses generated avatars
    and holds no images of children.
+
+## Where to look next
+
+- **`NEXT.md`** — the exact current state, what is done, what remains, known
+  issues, the branch and commit, and the recommended next task.
+- **`PROJECT_STATUS.md`** — the checkpoint ledger, with how each was verified.
 
 ## Licence
 
