@@ -3630,13 +3630,50 @@ rewritten and the helper moved below the slice boundary; neither guard was
 loosened.** A guard weakened to accommodate its author's prose is the failure
 this project keeps recording.
 
+### The payment prefill prepares; the existing form still commits
+
+**Owner, 2026-09-05, overturning the deferral above.** *"Record $250 Mail
+Check for Vanessa"* prepares a **review card** — case, client, amount, method,
+and how the case was found — whose one button opens the case's **existing**
+Record Payment form with those fields filled in. The person presses the form's
+own control.
+
+**It is not a command and cannot become one.** The answer is
+`kind: 'payment_prefill'` with no command object, so `ASST_CMD` has no entry
+for it and nothing can execute it. `asstPrefillGo` calls no `api()`.
+
+**It seeds `RET_DRAFT`, not the DOM**, and that is why this form can take a
+prefill at all: the retainer form is rebuilt from that object on every
+repaint, so a value poked into an input would be gone at the next paint while
+the message still said it had been filled in — this file's own `EDIT_DRAFT`
+rule.
+
+**The method is only ever one the case's own form offers.** Mail Check belongs
+to a legal case; asking for it on a private one leaves the method blank and
+says why, rather than prefilling a value into a control with no such option. A
+claim assignment is refused entirely, in the route's own words: it is
+authorized in hour blocks and has no retainer form to open.
+
+**The blocked list was not weakened to allow it.** It refuses `record payment`
+by name, so the phrase needed the same treatment the intake and rate-sheet
+REHEARSALS already have: a narrow branch ABOVE the list, matching only an
+amount being recorded, returning a prefill. Everything else still refuses —
+and the list GREW: **voiding and altering a payment were never on it**, which
+the tests found. Nothing could have voided anything, but the owner's line names
+those verbs and a refusal by name is how that is said to the person asking.
+
+**Two things worth keeping from building it.** The first version opened the
+**Billing** tab — the right-looking screen with no such control on it, under a
+message promising a filled-in form. The retainer form lives on the
+**Authorization** panel; the tab a form lives on is a fact to look up, not to
+assume, and the suite asserts the panel by name. And the **per-invoice**
+payment form is deliberately still not prefillable: it has no draft object, so
+giving it one means touching the money form's state machinery where the
+`INVPAY_TOKEN` "a token belongs to one object" defect was already paid for
+once.
+
 ### What the Command Center deliberately does not do
 
-- **No payment prefill.** The brief asked for one. Recording a payment is
-  refused by name in Beta, and a money field filled in by the Assistant that a
-  person then approves is the one place this portal should not save keystrokes.
-  Billing answers the case's money and offers the Billing tab; the amount comes
-  from the invoice on screen.
 - **No composed narrative**, per the Daily Summary rule above.
 - **No send of any kind.** The intake and rate-sheet REHEARSALS are the
   send-shaped things it can do, and both still record `SIMULATED — NOT SENT`.

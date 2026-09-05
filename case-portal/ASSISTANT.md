@@ -536,11 +536,41 @@ the button already uses.
   carries the fee snapshot. A decided lead is never re-decided by a command.
 - **D8 — `assistantCardNames` is the one reader of a card's names**, with
   `redactRow`'s boundary. The case number is never drawn in the name position.
-- **D9 — no payment prefill.** Deliberate: recording a payment is refused by
-  name in Beta, and a money field the Assistant fills for someone else to
-  approve is not where this portal should save keystrokes. Open for the owner
-  to overturn.
+- **D9 — the payment PREFILL (owner, 2026-09-05, overturning the deferral).**
+  A review card, then the EXISTING form. `kind: 'payment_prefill'` carries no
+  command object, so nothing can execute it; `asstPrefillGo` seeds `RET_DRAFT`
+  — the object the retainer form already renders from — and calls no `api()`.
+  The method is only ever one that case's form offers; a claim assignment is
+  refused because it has no retainer form. The carve-out sits above the blocked
+  list, matching only an amount being recorded, exactly as the two rehearsals
+  do. **Deferred within it:** the per-invoice payment form, which has no draft
+  object — giving it one touches the machinery that produced the
+  `INVPAY_TOKEN` defect.
+- **D11 — voiding and altering a payment are refused BY NAME.** They were on no
+  list before; nothing could have voided anything, but the owner's line names
+  them and a person asking deserves the answer.
 - **D10 — the Beta guard wins over a task's own wording.** A false positive in
   the safe direction, pinned by two tests rather than narrowed.
 
 No schema change, so no `portal-setup` dispatch is owed for any of it.
+
+### A22 — the hardening pass
+
+22 adversarial assertions over every path the Command Center added, and **all
+of them passed on the first run** — the boundaries held without a fix:
+
+- a case number written INTO the sentence does not redirect the command; the
+  context carries the case and the sentence is text;
+- every new command dies at `caseFor` for a case the caller cannot read —
+  walked across all six;
+- `/assistant/executed` re-runs the same resolver, so a caller cannot log a
+  command they could never have been offered (wrong role, unknown action,
+  unreadable case, absent case) and none of those attempts writes a row;
+- hostile text is data: a script tag, a SQL fragment, a template expression and
+  a prompt-injection preamble each either hit the Beta refusal or become a task
+  whose text is those words — never a route, never a second action, and the
+  table is still there afterwards;
+- an investigator's confirmation card carries the subject and has no `client`
+  KEY at all;
+- the prefill never becomes a command, an absurd amount is refused, and the
+  ledger is empty at the end of the section.
