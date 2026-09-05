@@ -13,8 +13,8 @@ each one records **how** it was verified rather than asserting it.
 | MOBILE CHECKED | ✅ Complete | `scripts/audit-ui.mjs`: 0 problems across 5 widths × 14 routes. Screenshots reviewed at 390px. |
 | PWA CHECKED | ✅ Complete | Manifest + 4 icons verified loading in a real browser from a Pages-style sub-path. |
 | GITHUB READY | ✅ Complete | Two workflows, `npm ci`-based, base path derived from the repo name. Sub-path build verified. |
-| DEPLOYED | ⬜ Blocked | Needs a repository. See **Deployment** below. |
-| LIVE VERIFIED | ⬜ Blocked | Follows deployment. |
+| DEPLOYED | 🟡 Partial | GitHub Pages blocked on a repository (see below). A single-file build is published and live as a Claude Artifact in the meantime. |
+| LIVE VERIFIED | 🟡 Partial | The single-file build was driven in a real browser: a practice completed end to end and persisted. GitHub Pages itself is unverified because it is undeployed. |
 
 ---
 
@@ -145,7 +145,22 @@ same origin is unregistered.
   rename cannot silently break every asset path.
 - Minimal permissions: `contents: read`, `pages: write`, `id-token: write`.
 
-## DEPLOYED — blocked, and why
+## DEPLOYED — partial
+
+### The live preview
+
+A single-file build (`npm run build:single`) is published and openable on a
+phone today. It is the same application — same bundle, same behaviour — with
+the CSS and JS inlined into one file so it can be served from a single URL. Two
+things do not carry over, because they need sibling files: the web manifest and
+the service worker, so **Add to Home Screen and offline use are not available
+on the preview**. Both work on a Pages deploy.
+
+Verified in a real browser before publishing: the app boots, a guided practice
+runs to completion, the record persists to `localStorage`, and there are no
+console errors.
+
+### GitHub Pages — blocked, and why
 
 **The blocker is a repository, not the code.** This session's GitHub
 integration is scoped to one unrelated repository and is not permitted to

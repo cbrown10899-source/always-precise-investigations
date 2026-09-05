@@ -73,6 +73,17 @@ It currently reports **0 problems across 5 widths × 14 routes**. It is not part
 of `npm test` because it needs a built app and a browser; run it after any
 layout change.
 
+### A single-file build
+
+```bash
+npm run build:single -- preview.html
+```
+
+Inlines the CSS and JS into one HTML file, for hosts that serve exactly one
+file. The application is unchanged; only the delivery is. The manifest and
+service worker are dropped, because they need sibling files — so a single-file
+build cannot be installed to a home screen or used offline.
+
 ### Regenerating the app icons
 
 ```bash
