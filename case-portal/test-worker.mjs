@@ -17090,10 +17090,24 @@ section('API Assistant — Beta reads, role-scoped navigation, refusals by name'
 
   /* ---- /assistant/state: the Beta facts and the role's own registry ---- */
   let d = await jsonOf(await call(env, '/assistant/state', { cookie: admin }));
-  ok('Beta is on, the banner is the exact dry-run sentence, the provider is honestly not configured',
-     d.beta === true
-     && d.banner === 'ASSISTANT BETA — DRY RUN MODE. No external client messages or consequential actions will be sent.'
-     && d.provider.ready === false && d.provider.reason === 'not_configured');
+  /* THE STATE SAYS WHAT IT CAN DO, and on 2026-09-05 that changed. The old
+     assertion pinned `beta === true` and the DRY RUN sentence; both are now
+     false, so this pins the new facts instead — and pins the WORDING too,
+     because the banner is the one place a person is told that pressing Send
+     really sends. A banner that quietly reverted to reassuring language over
+     a live send is the failure this suite exists to catch. */
+  ok('Beta is off, sending is live, and the state says so in the banner the page prints',
+     d.beta === false && d.live === true && d.rehearsal === true
+     && d.banner === 'SENDS ARE LIVE'
+     && /exact email and confirm before anything leaves/.test(d.banner_detail)
+     && /Deleting, archiving, voiding, assigning, approving and pricing changes are still refused/
+          .test(d.banner_detail));
+  ok('and the banner never claims a dry run again',
+     !/dry run/i.test(d.banner + ' ' + d.banner_detail));
+  ok('the refused-verb count is reported, so no second copy of the list lives on the page',
+     typeof d.blocked === 'number' && d.blocked >= 9, d.blocked);
+  ok('the provider is still honestly not configured — no model is guessing',
+     d.provider.ready === false && d.provider.reason === 'not_configured');
   ok('the admin registry offers the admin doors',
      ['dashboard', 'leads', 'invoices', 'sheets', 'settings'].every(id => d.nav.some(n => n.id === id)));
   d = await jsonOf(await call(env, '/assistant/state', { cookie: dana }));
@@ -17258,8 +17272,49 @@ section('API Assistant — Beta reads, role-scoped navigation, refusals by name'
        (reg.match(/action: '/g) || []).length === (reg.match(/level: /g) || []).length
        && (reg.match(/action: '/g) || []).length === (reg.match(/route: '/g) || []).length
        && (reg.match(/action: '/g) || []).length >= 2);
-    ok('and NO command names a send, a payment, a deletion or an archive',
-       !/send|email|payment|pay|delete|archive|void/i.test(reg), reg.slice(0, 120));
+
+    /* ==== THE PIN THAT CHANGED, 2026-09-05, AND WHY IT IS NOT A LOOSENING ==
+
+       This used to read "NO command names a send, a payment, a deletion or an
+       archive", tested against the raw text of the block. The owner turned
+       three sends live, so the first clause stopped being the truth — and a
+       guard kept passing while describing something weaker than it claims is
+       the exact failure this project keeps recording. It is replaced, not
+       relaxed, and the replacement is STRONGER in the direction that matters:
+
+         · sends are an ALLOW-LIST OF THREE EXACT ROUTE STRINGS, so a fourth
+           send cannot arrive by wording, by a new verb, or by a route that
+           merely looks like one of these;
+         · every send is level 3 and admin-only;
+         · nothing else moved: no command names a deletion, an archive or a
+           void, and the block still calls sendMail NEVER — the mail leaves
+           from the ordinary route, which is the whole architecture.
+
+       AND IT IS PARSED FROM THE ROWS, NOT GREPPED OVER THE PROSE. The old pin
+       matched by substring and could not tell a comment from a call; it fired
+       twice on my own explanatory text and was right to, but the fix then was
+       to move the words. A block that must now EXPLAIN three sends cannot be
+       held by a rule that forbids the word "send" appearing in it. */
+    const rows = [...reg.matchAll(/action: '([a-z_]+)'[^]*?route: '([^']*)'/g)]
+      .map(m => ({ action: m[1], route: m[2] }));
+    ok('the row parse found every command the registry declares',
+       rows.length === (reg.match(/action: '/g) || []).length && rows.length >= 5, rows.length);
+    const sends = rows.filter(r => r.action.startsWith('send_'));
+    const ALLOWED_SENDS = ['sheets/:id/email', 'intake-link/email', 'payment-options/email'];
+    ok('every send command names one of the three ordinary send routes, and nothing else',
+       sends.length === 3 && sends.every(r => ALLOWED_SENDS.includes(r.route)),
+       sends.map(r => `${r.action}->${r.route}`).join(' | '));
+    ok('and each of those three routes is claimed by exactly one command',
+       ALLOWED_SENDS.every(rt => sends.filter(r => r.route === rt).length === 1));
+    ok('the Worker names the same three routes in ASSISTANT_SEND_ROUTES',
+       ALLOWED_SENDS.every(rt => reg.includes(`'${rt}'`))
+       && /const ASSISTANT_SEND_ROUTES = \[/.test(reg));
+    ok('NO command routes to a deletion, an archive or a void',
+       !rows.some(r => /delete|archive|void/i.test(r.route)),
+       rows.map(r => r.route).join(' | '));
+    ok('every live send is the highest confirmation level and admin-only',
+       sends.every(r => new RegExp(`action: '${r.action}', level: 3,`).test(reg))
+       && sends.every(r => new RegExp(`action: '${r.action}'[^]*?roles: \\['admin'\\]`).test(reg)));
     ok('the confirmation level of every state change is 2 or higher',
        !/level: [01],[^]*?route: '(day|build|task)/.test(reg));
   }
@@ -18008,8 +18063,9 @@ section('API Assistant — Unit 10: topic commands, live status, situational opt
                          && /an investigation day/.test(c.line))
      && j.card.some(c => /^NEEDS REVIEW — Dormant Worked/.test(c.title)
                          && /being worked \(contacted\)/.test(c.line)), JSON.stringify(j.card).slice(0, 400));
-  ok('…and it says out loud that Beta never deletes — the manual control stays the only delete',
-     /deleting stays the manual control/.test(j.text) && /Beta never deletes anything/.test(j.text));
+  ok('…and it says out loud that the Assistant never deletes — the manual control stays the only delete',
+     /deleting stays the manual control/.test(j.text)
+     && /the Assistant never deletes anything/.test(j.text));
 
   /* ---- 4. invoices: live money, situational SHOW OVERDUE ---- */
   j = await jsonOf(await cmd(admin, 'invoices'));
@@ -19381,6 +19437,157 @@ section('Assistant rate sheet: the custom retainer is the existing one, not a se
     retainer_amount: 2750 }));
   ok('and the rehearsal of it is byte-identical — one resolver, two callers',
      mirror.subject === mailed.subject && mirror.body_text === mailed.text);
+
+  globalThis.fetch = realFetch;
+}
+
+/* ============================================================================
+   THE THREE LIVE SENDS (owner, 2026-09-05: "make it live").
+
+   The rate sheet, the intake link and the payment instructions really go now.
+   Everything else is unchanged, and these assertions are written to fail if
+   any of that quietly widens — the whole risk of this unit is a FOURTH thing
+   learning to send, or one of the three losing a refusal on the way to being
+   allowed at all.
+   ========================================================================= */
+section('Assistant: sending is live for exactly three products, and for nothing else');
+{
+  const realFetch = globalThis.fetch;
+  let mailed = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) { mailed = JSON.parse(init.body); return new Response('{"id":"re_1"}', { status: 200 }); }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '50';
+  env.MAIL_PER_MINUTE = '50';
+  env.RESEND_API_KEY = 'test-resend-key';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const invLink = (await jsonOf(await invite(env, admin,
+    { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  const invToken = new URL(invLink, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${invToken}/accept`, { method: 'POST',
+    body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  await call(env, '/payment-methods/cash_app', { method: 'POST', cookie: admin,
+    body: { enabled: true, display_name: 'Cash App', handle: '$AlwaysPrecise',
+            url: 'https://cash.app/$AlwaysPrecise' } });
+
+  await ingest(env, { case_no: 'API-LV-PRIV', service: 'Surveillance',
+                      client_name: 'P. Client', subject_name: 'S' });
+  await ingest(env, { case_no: 'API-LV-CLAIM', carrier: 'Acme Mutual', claim_number: 'AM-9',
+                      client_name: 'A. Adjuster', subject_name: 'C' });
+  await ingest(env, { case_no: 'API-LV-ARCH', service: 'Surveillance',
+                      client_name: 'Q. Client', subject_name: 'Z' });
+  await call(env, '/cases/API-LV-ARCH/archive', { method: 'POST', cookie: admin, body: {} });
+
+  const prepPay = body => call(env, '/assistant/prepare-payment', { method: 'POST', cookie: admin, body });
+  const simPay  = body => call(env, '/assistant/simulate-payment', { method: 'POST', cookie: admin, body });
+  const ask = (text, cookie = admin) => call(env, '/assistant/command',
+    { method: 'POST', cookie, body: { text } });
+
+  /* ---- 1. THE PAYMENT PLAN IS A PINNED MIRROR, the Unit 5 way. The strong
+     form: the same inputs through the rehearsal and through the real sender
+     produce the SAME subject and the SAME body, byte for byte. A resolver
+     that drifts from the sender is a preview of a different email. ---- */
+  mailed = null;
+  const preview = await jsonOf(await prepPay({ to: 'mirror@example.com', name: 'Jane',
+    case_no: 'API-LV-PRIV', note: 'as discussed' }));
+  ok('preparing payment instructions renders the email and puts NOTHING on the wire',
+     preview.ok === true && mailed === null && /PAYMENT OPTIONS/i.test(preview.body_text));
+  const realSend = await jsonOf(await call(env, '/payment-options/email', { method: 'POST',
+    cookie: admin, body: { to: 'mirror@example.com', name: 'Jane',
+                           case_no: 'API-LV-PRIV', note: 'as discussed' } }));
+  ok('the ordinary route still sends it', realSend.ok === true && mailed !== null);
+  ok('and the rehearsal is byte-identical to what actually went — one resolver, two callers',
+     preview.subject === mailed.subject && preview.body_text === mailed.text,
+     `${preview.subject} :: ${mailed && mailed.subject}`);
+
+  /* ---- 2. THE REFUSALS ARE MIRRORED TOO. A preview that renders happily for
+     a send the portal would refuse is a rehearsal of the wrong play. ---- */
+  const claimRefusal = await prepPay({ to: 'x@example.com', case_no: 'API-LV-CLAIM' });
+  const claimJson = await jsonOf(claimRefusal);
+  ok('a claim assignment is refused BY NAME, in the sender\'s own words',
+     claimRefusal.status === 400 && /claim assignment/.test(claimJson.error)
+     && /never sent to a carrier or TPA/.test(claimJson.error), claimJson.error);
+  const archRefusal = await prepPay({ to: 'x@example.com', case_no: 'API-LV-ARCH' });
+  ok('an archived case is refused before it can be previewed',
+     archRefusal.status !== 200, String(archRefusal.status));
+  ok('an unresolvable reference still previews — the pre-case rule is not lost',
+     (await prepPay({ to: 'x@example.com', case_no: 'API-NOSUCH-9' })).status === 200);
+
+  /* ---- 3. A SIMULATION IS STILL A SIMULATION. It must reach neither the
+     transport nor the real history table. ---- */
+  mailed = null;
+  const payBefore = Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM payment_send').first()).n);
+  const simd = await jsonOf(await simPay({ to: 'nobody@example.com', case_no: 'API-LV-PRIV' }));
+  ok('simulating payment instructions records the rehearsal and sends nothing',
+     simd.outcome === 'SIMULATED — NOT SENT' && mailed === null, JSON.stringify(simd.outcome));
+  ok('and the REAL payment-send history gained no row',
+     Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM payment_send').first()).n) === payBefore);
+
+  /* ---- 4. ROLE. Both doors are admin-only, like the route they prepare. ---- */
+  ok('an investigator cannot prepare payment instructions',
+     (await call(env, '/assistant/prepare-payment', { method: 'POST', cookie: dana,
+       body: { to: 'x@example.com' } })).status === 403);
+  ok('nor simulate them',
+     (await call(env, '/assistant/simulate-payment', { method: 'POST', cookie: dana,
+       body: { to: 'x@example.com' } })).status === 403);
+
+  /* ---- 5. THE THREE PHRASES OPEN A WORKBENCH; THE UTTERANCE NEVER SENDS.
+     What is being asserted is that a sentence carrying an address produces a
+     FORM, not a send — the recipient reaches a field a person reads back. ---- */
+  mailed = null;
+  let a = await jsonOf(await ask('send a rate sheet to someone@example.com'));
+  ok('"send a rate sheet" opens the sheet workbench rather than refusing',
+     a.kind === 'prepare_sheet' && a.form.to === 'someone@example.com', a.kind);
+  a = await jsonOf(await ask('send an intake link to someone@example.com'));
+  ok('"send an intake link" opens the intake workbench',
+     a.kind === 'prepare_intake' && a.form.to === 'someone@example.com', a.kind);
+  a = await jsonOf(await ask('send payment options to someone@example.com'));
+  ok('"send payment options" opens the payment workbench',
+     a.kind === 'prepare_payment' && a.form.to === 'someone@example.com', a.kind);
+  ok('and NONE of those three utterances put anything on the wire', mailed === null);
+
+  /* ---- 6. EVERYTHING ELSE SEND-SHAPED IS STILL REFUSED BY NAME, and the
+     refusal names what CAN be sent rather than shrugging. "Never auto-email
+     evidence" is the owner's own line. ---- */
+  const docs = await jsonOf(await ask('email the firm their case documents'));
+  ok('emailing case documents is still refused by name',
+     docs.kind === 'refused' && docs.code === 'assistant_beta', JSON.stringify(docs.kind));
+  ok('and the refusal names the three products that CAN be sent',
+     /rate sheet/i.test(docs.text) && /intake link/i.test(docs.text)
+     && /payment instructions/i.test(docs.text), docs.text);
+  ok('emailing a report is refused too',
+     (await jsonOf(await ask('email them the final report'))).kind === 'refused');
+  ok('and the other verbs the owner kept refused are untouched',
+     (await jsonOf(await ask('delete this case'))).kind === 'refused'
+     && (await jsonOf(await ask('archive this case'))).kind === 'refused'
+     && (await jsonOf(await ask('void that payment'))).kind === 'refused'
+     && (await jsonOf(await ask('assign this to dana'))).kind === 'refused');
+
+  /* ---- 7. THE AUDIT ROW. `/assistant/executed` re-runs the resolver, so a
+     send can only be RECORDED if it could have been OFFERED — and the outcome
+     is the caller's report, so a failure logs as a failure. ---- */
+  const logBefore = Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM assistant_log').first()).n);
+  const rec = await jsonOf(await call(env, '/assistant/executed', { method: 'POST', cookie: admin,
+    body: { action: 'send_sheet', ok: true, detail: 'Rate sheet sent to x@example.com' } }));
+  ok('a completed send records where it was started from',
+     rec.ok === true && /^EXECUTED — Send Rate Sheet/.test(rec.outcome), JSON.stringify(rec.outcome));
+  ok('and it is one row in the Assistant\'s own log',
+     Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM assistant_log').first()).n) === logBefore + 1);
+  const failed = await jsonOf(await call(env, '/assistant/executed', { method: 'POST', cookie: admin,
+    body: { action: 'send_payment_options', ok: false, detail: 'provider down' } }));
+  ok('a send that did NOT go is recorded as a failure, never as a success',
+     /^FAILED — Send Payment Options/.test(failed.outcome), JSON.stringify(failed.outcome));
+  ok('an investigator cannot record a send command — the resolver refuses their desk',
+     (await call(env, '/assistant/executed', { method: 'POST', cookie: dana,
+       body: { action: 'send_sheet', ok: true } })).status === 400);
+  ok('and an action the registry does not carry cannot be recorded at all',
+     (await call(env, '/assistant/executed', { method: 'POST', cookie: admin,
+       body: { action: 'send_evidence', ok: true } })).status === 400);
 
   globalThis.fetch = realFetch;
 }

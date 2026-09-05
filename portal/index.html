@@ -1926,7 +1926,12 @@
 .asst-head-id{display:flex;flex-direction:column;gap:0;min-width:0}
 .asst-sub{font-size:.68rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;
   color:var(--head-sub)}
-.asst-beta{font-size:.62rem;font-weight:800;letter-spacing:.08em;padding:2px 7px;
+/* WAS `.asst-beta` AND SAID BETA IN THREE PLACES. Beta came off on 2026-09-05;
+   what is left is the phone pill's own label, which needs a word because the
+   pill is otherwise a bare sparkle. Renamed rather than kept, so the old name
+   cannot be reintroduced by autocomplete on a chip that no longer means
+   anything. */
+.asst-tag{font-size:.62rem;font-weight:800;letter-spacing:.08em;padding:2px 7px;
   border-radius:9px;background:var(--gold);color:var(--gold-ink)}
 .asst-x{margin-left:auto;background:none;border:0;color:#fff;font-size:1.4rem;
   cursor:pointer;min-width:44px;min-height:44px}
@@ -2110,9 +2115,8 @@
   border:0;border-radius:24px;padding:12px 16px;font-size:1rem;cursor:pointer;
   box-shadow:0 6px 18px rgba(12,22,38,.3);min-height:48px}
 .side-asst{display:flex;align-items:center;gap:8px}
-.side-asst .asst-beta{margin-left:2px}
-/* UNIT 4 — the dry-run workbench. Gold family on purpose: it is the same
-   "Beta, nothing leaves the building" voice the banner already speaks. */
+/* The workbench. Gold family on purpose: it is the same attention voice the
+   banner above it speaks, and READY TO SEND is exactly that. */
 /* NO MAX-HEIGHT AND NO SCROLLER OF ITS OWN. It used to cap at 46% of the panel
    with its own overflow, which put a 692px form in a 350px box while the log
    above it kept 128px it did not need. Inside the one scroller it is simply as
@@ -2123,11 +2127,21 @@
 .asst-work label.cap{display:flex;flex-direction:column;gap:4px;font-size:.85rem}
 .asst-work input,.asst-work select{min-height:44px;font-size:16px;padding:8px 10px;
   border:1px solid var(--line);border-radius:8px;background:#fff;width:100%}
-.asst-dry{font-size:.68rem;font-weight:800;letter-spacing:.06em;color:var(--gold-ink)}
-/* The lede under the DRY RUN chip: the owner's mockup words, which say what the
-   two buttons below actually do. Prose, not a .note — a .note here would be
-   read aloud on arrival by the Unit 21A chokepoint. */
+/* WAS `.asst-dry`, RENAMED WITH THE FACT (2026-09-05). The chip said DRY RUN
+   on every workbench screen; the three sends are live now, so a class named
+   for a mode that no longer exists is a dead rule waiting to be reintroduced
+   by its own name — the `.opt .badge` lesson. Same gold treatment: this is an
+   attention state, and READY TO SEND is exactly that. */
+.asst-live{font-size:.68rem;font-weight:800;letter-spacing:.06em;color:var(--gold-ink)}
+/* The lede under the chip: what the buttons below actually do. Prose, not a
+   .note — a .note here would be read aloud on arrival by the Unit 21A
+   chokepoint. */
 .asst-lede{margin:4px 0 8px;font-size:.82rem;line-height:1.45;color:var(--muted)}
+/* The sentence directly above the Send button, naming the recipient one last
+   time. The card's own To row says it too; this says what pressing DOES, which
+   is the thing a confirmation is for. */
+.asst-sendline{margin:2px 0 0;font-size:.82rem;line-height:1.45;color:var(--ink)}
+.asst-sendline b{word-break:break-word}
 .asst-kv{display:flex;gap:8px;font-size:.85rem}
 .asst-kv b{flex:0 0 58px;font-weight:700}
 .asst-kv span{word-break:break-word;min-width:0}
@@ -2135,6 +2149,11 @@
   border:1px solid var(--line);border-radius:8px;padding:8px 10px;max-height:180px;
   overflow-y:auto;margin:0}
 .asst-sim{font-size:.68rem;font-weight:800;letter-spacing:.06em;color:var(--gold-ink);
+  margin-bottom:4px}
+/* SENT is its own colour, because a rehearsal and a real send must not read
+   the same at a glance. The semantic pair rule: both halves or neither. */
+.asst-sent{font-size:.68rem;font-weight:800;letter-spacing:.06em;color:var(--ok-ink);
+  background:var(--ok-bg);border-radius:999px;padding:1px 8px;display:inline-block;
   margin-bottom:4px}
 .asst-work label.asst-ck{flex-direction:row;align-items:center;gap:8px}
 .asst-work .asst-ck input{width:20px;height:20px;min-height:20px;flex:0 0 auto}
@@ -3179,10 +3198,10 @@ function shell(inner){
      buried mid-list where it sat for the investigator. */
   const foot = `<div class="navfoot">
     ${/* API ASSISTANT (ASSISTANT.md) — the owner's placement: after the
-         grouped navigation, before the big utility doors, both roles, with a
-         visible BETA badge. It opens the dock; it changes no route. */""}
-    <button class="side-vst side-asst" data-act="asstOpen">&#10024; Assistant
-      <span class="asst-beta">BETA</span></button>
+         grouped navigation, before the big utility doors, both roles. The
+         BETA badge that sat here came off when the sends went live. It opens
+         the dock; it changes no route. */""}
+    <button class="side-vst side-asst" data-act="asstOpen">&#10024; Assistant</button>
     <button class="side-surv" data-act="surveillance">&#128373; Active Surveillance</button>
     <!-- Timestamp Video is a door that does something, so it belongs in this
          block rather than in a list of places. It is here for BOTH roles and
@@ -3368,6 +3387,13 @@ async function asstSend(text){
     if(r.kind === "command" && r.command && ASST_CMD[r.command.action]){
       ASST.pending = { ...r.command, token: asstCmdToken() };
       ASST.msgs[ASST.msgs.length - 1].command = ASST.pending;
+    }
+    /* The third workbench, and the draft it opens on is the same shape its two
+       siblings use — one object, EDIT_DRAFT, no DOM values read back later. */
+    if(r.kind === "prepare_payment" && r.form){
+      ASST.prep = { mode: "payment", to: r.form.to || "", name: r.form.name || "",
+                    case_no: r.form.case_no || "", note: r.form.note || "",
+                    preview: null, previewBody: null, err: "", busy: false };
     }
     if(r.kind === "prepare_sheet" && r.form){
       ASST.prep = { mode: "sheet", context: r.form.context || "", to: r.form.to || "",
@@ -3598,7 +3624,83 @@ const ASST_CMD = {
     if(TAB === "leads") await render();
     return `${c.case_no} accepted. It is a case now.`;
   },
+
+  /* ===== THE THREE LIVE SENDS (owner, 2026-09-05: "make it live") =========
+
+     Each posts the workbench's OWN PREVIEWED BODY to the ordinary route the
+     desk's Send button already posts to. Nothing is composed here: `c.body`
+     is the exact object `/assistant/prepare-*` was given, captured at the
+     moment the preview rendered, so what goes out is what was read back — not
+     a second build of the same thing from a draft that may have moved. */
+  send_sheet: async c => {
+    const b = c.body || {};
+    const r = await api(`/sheets/${encodeURIComponent(b.id)}/email`, {method: "POST", body: b});
+    return `${(r.included && r.included.rate_sheet) || "Rate sheet"} sent to ${r.sent_to}.`;
+  },
+  send_intake: async c => {
+    const b = c.body || {};
+    /* TWO REAL DOORS, and which one is a fact rather than a preference:
+       `/intake-link/email` derives the form from the KIND it is handed, while
+       `/leads/:no/send-intake` derives it from the CASE'S OWN RECORD — the
+       payload marker outranking kind, which is what stops a legal lead being
+       emailed the consumer form. `assistantIntakePlan` resolved the preview
+       by exactly that rule, so choosing the route by the same fact is what
+       holds the two in step. A case that does not resolve never gets here:
+       the preview refuses it, and there is no Send without a preview. */
+    if(b.case_no){
+      const r = await api(`/leads/${encodeURIComponent(b.case_no)}/send-intake`,
+        {method: "POST", body: {to: b.to}});
+      return `${r.intake} sent to ${r.sent_to} on ${b.case_no}.`;
+    }
+    const r = await api("/intake-link/email", {method: "POST",
+      body: {to: b.to, name: b.name, kind: b.kind}});
+    return `${r.intake} sent to ${r.sent_to}. No case was created.`;
+  },
+  send_payment_options: async c => {
+    const b = c.body || {};
+    const r = await api("/payment-options/email", {method: "POST", body: b});
+    /* The desk's own wording, and the second sentence is RULE 2 said out loud:
+       asking is not receiving. Read back from the Worker's answer rather than
+       from what was ticked. */
+    const names = ((r.included && r.included.payment_methods) || []).map(m => m.label).join(" and ");
+    return `Payment options sent to ${r.sent_to}${names ? ` — ${names}` : ""}. `
+         + `The retainer is still pending until you record it.`;
+  },
 };
+
+/* RUN A COMMAND AND RECORD WHERE IT WAS STARTED FROM — the ONE writer of that
+   sequence, because there are two doors into it now: a confirmed conversational
+   offer (`asstCmdRun`) and the workbench's Send button (`asstPrepSend`). Two
+   copies of "run it, say what happened, log it honestly" is two things to
+   drift, and the one that drifts is the one nobody is looking at.
+
+   THE OUTCOME IS REPORTED, NEVER ASSUMED: a throw is pushed as a failure and
+   logged as one. The log is best-effort and last — the write already happened
+   on its own route with its own audit, so a failed provenance note must never
+   be reported as a failed command.
+
+   `tidy` is the caller's own busy/pending state, cleared WITH the result and
+   before the message is pushed, so the panel repaints once holding the answer
+   rather than twice holding a spent offer. */
+async function asstDispatch(c, tidy){
+  const run = ASST_CMD[c.action];
+  if(!run){                                  /* not in the allow-list: nothing happens */
+    ASST.err = "That is not an action this portal can run.";
+    if(tidy) tidy(); paint(); return false;
+  }
+  let okRan = false, said = "";
+  try{ said = await run(c); okRan = true; }
+  catch(e){ said = e.message || String(e); }
+  if(tidy) tidy();
+  ASST.msgs.push({ who: "asst", kind: okRan && c.sent ? "sent" : "",
+                   text: okRan ? said : ("That did not go through: " + said) });
+  paint();
+  try{
+    await api("/assistant/executed", {method: "POST",
+      body: { action: c.action, case_no: c.case_no || "", ok: okRan, detail: said.slice(0, 200) }});
+  }catch(e){ /* the command stands; only the provenance note is missing */ }
+  return okRan;
+}
 
 /* A confirmation belongs to ONE offer. The token is minted when the offer is
    stored and carried by that card's button, so an older card left in the
@@ -3615,27 +3717,42 @@ async function asstCmdRun(token){
   }
   if(ASST.cmdBusy) return;                  /* one tap is one command */
   const c = ASST.pending;
-  const run = ASST_CMD[c.action];
-  if(!run){                                  /* not in the allow-list: nothing happens */
-    ASST.err = "That is not an action this portal can run."; ASST.pending = null; paint(); return;
-  }
   ASST.cmdBusy = true; ASST.err = ""; paint();
-  let okRan = false, said = "";
-  try{ said = await run(c); okRan = true; }
-  catch(e){ said = e.message || String(e); }
-  ASST.cmdBusy = false; ASST.pending = null;
-  ASST.msgs.push({ who: "asst", text: okRan ? said : ("That did not go through: " + said) });
-  paint();
-  /* The record of WHERE it was started from, after the fact and best-effort:
-     the write already happened on its own route with its own audit, and a
-     failed log must never be reported as a failed command. */
-  try{
-    await api("/assistant/executed", {method: "POST",
-      body: { action: c.action, case_no: c.case_no, ok: okRan, detail: said.slice(0, 200) }});
-  }catch(e){ /* the command stands; only the provenance note is missing */ }
+  /* Run, report and record go through the one dispatcher, which the workbench
+     Send button also uses — see asstDispatch. */
+  await asstDispatch(c, () => { ASST.cmdBusy = false; ASST.pending = null; });
   if(c.action === "start_day" || c.action === "end_day"){
     if(WS_CASE === c.case_no) await reloadWorkspace();
   }
+}
+
+/* THE WORKBENCH'S SEND — the second and last door into asstDispatch.
+
+   YOU CANNOT SEND WHAT YOU HAVE NOT PREVIEWED, and that is structural rather
+   than a rule to remember: the button is drawn only on the preview screen, and
+   what it posts is `p.previewBody` — the exact object `/assistant/prepare-*`
+   was handed at the moment the preview rendered. Rebuilding the body here from
+   the draft would be a second build of the same thing, and the draft is what
+   an Edit would have moved. The preview screen has no inputs, so the two could
+   not differ today; capturing the body means they cannot differ tomorrow
+   either. */
+async function asstPrepSend(){
+  if(!ASST || !ASST.prep || ASST.prep.busy) return;
+  const p = ASST.prep;
+  if(!p.preview || !p.previewBody){
+    p.err = "Preview it first — nothing is sent from a form that has not been read back."; return paint();
+  }
+  const action = p.mode === "sheet" ? "send_sheet"
+               : p.mode === "payment" ? "send_payment_options" : "send_intake";
+  p.busy = true; p.err = ""; paint();
+  await asstDispatch({ action, sent: true, body: p.previewBody,
+                       case_no: p.previewBody.case_no || "" },
+                     () => { ASST.prep = null; });
+  /* A refusal at the route (a rate limit, a provider outage, a case archived
+     between preview and send) leaves the workbench closed and the reason in
+     the conversation, where every other refusal already lands. Nothing is
+     half-sent: the ordinary route either put the mail on the wire or did not,
+     and its own `send_log` row is the record either way. */
 }
 
 /* Registry ids only — the server names a destination, the page resolves it
@@ -3702,6 +3819,17 @@ function asstPrepCollect(){
     if(ip) p.include_payment = ip.checked;
     return;
   }
+  if(p.mode === "payment"){
+    /* `asst_m*` because `asst_p*` is the intake form's and `asst_s*` the
+       sheet's — the class-name contest, at the element-id layer. */
+    const to = read("asst_mto"), nm = read("asst_mname"),
+          cs = read("asst_mcase"), nt = read("asst_mnote");
+    if(to !== null) p.to = to;
+    if(nm !== null) p.name = nm;
+    if(cs !== null) p.case_no = cs;
+    if(nt !== null) p.note = nt;
+    return;
+  }
   const k = read("asst_pk"), to = read("asst_pto"), nm = read("asst_pname"), cs = read("asst_pcase");
   if(k !== null) p.kind = k;
   if(to !== null) p.to = to;
@@ -3726,19 +3854,40 @@ function asstPrepBody(){
     if(p.include_payment && p.context && p.context !== "private") body.methods = ["mail_check"];
     return body;
   }
+  /* Payment instructions carry no audience: `/payment-options/email` is a
+     PRIVATE context by construction — it sends exactly one thing — so there is
+     nothing to pick and no classification to get wrong. The methods are left
+     out so the Worker resolves whatever is enabled and configured, which is
+     the same set the desk's own dialog offers. */
+  if(p.mode === "payment"){
+    return { to: p.to, name: p.name, case_no: p.case_no, note: p.note || "" };
+  }
   return { kind: p.kind, to: p.to, name: p.name, case_no: p.case_no };
 }
+
+/* Which pair of routes a mode rehearses. One table, so the preview and the
+   simulation can never reach different doors. */
+const ASST_PREP_ROUTE = {
+  sheet:   { prepare: "/assistant/prepare-sheet",   simulate: "/assistant/simulate-sheet" },
+  intake:  { prepare: "/assistant/prepare-intake",  simulate: "/assistant/simulate-intake" },
+  payment: { prepare: "/assistant/prepare-payment", simulate: "/assistant/simulate-payment" },
+};
 
 async function asstPrepPrev(){
   if(!ASST || !ASST.prep || ASST.prep.busy) return;
   asstPrepCollect();
   const p = ASST.prep;
   p.busy = true; p.err = ""; paint();
+  /* CAPTURED, NOT REBUILT. The body that produced the preview is kept beside
+     it, because it is also the body Send posts — see asstPrepSend. */
+  const body = asstPrepBody();
   try{
-    p.preview = await api(p.mode === "sheet" ? "/assistant/prepare-sheet" : "/assistant/prepare-intake",
-      { method: "POST", body: asstPrepBody() });
+    p.preview = await api((ASST_PREP_ROUTE[p.mode] || ASST_PREP_ROUTE.intake).prepare,
+      { method: "POST", body });
+    p.previewBody = body;
     p.busy = false; paint();
   }catch(e){
+    p.preview = null; p.previewBody = null;
     p.busy = false; p.err = e.message || "The preview was refused."; paint();
   }
 }
@@ -3748,12 +3897,12 @@ async function asstPrepSim(){
   const p = ASST.prep;
   p.busy = true; p.err = ""; paint();
   try{
-    const r = await api(p.mode === "sheet" ? "/assistant/simulate-sheet" : "/assistant/simulate-intake",
+    const r = await api((ASST_PREP_ROUTE[p.mode] || ASST_PREP_ROUTE.intake).simulate,
       { method: "POST", body: asstPrepBody() });
     ASST.prep = null;
     ASST.msgs.push({ who: "asst", kind: "simulated",
       text: `${r.outcome} — ${r.sheet_name || r.intake} for ${r.to}` + (r.case_no ? ` on ${r.case_no}` : "") + ". "
-          + (r.logged ? "Recorded in the Assistant beta log."
+          + (r.logged ? "Recorded in the Assistant log."
              : r.reason === "not_set_up"
                ? "Not recorded — the log table is not set up yet (run portal-setup)."
                : "Not recorded — the log write failed.") });
@@ -3775,18 +3924,56 @@ function asstPrepHtml(){
       (v.included.payment_methods || []).length
         ? `Payment: ${v.included.payment_methods.map(m => m.label).join(", ")}` : "",
     ].filter(Boolean).join(" · ") : "";
+    /* WHAT THIS SCREEN IS NAMES ITSELF. The label was DRY RUN — nothing has
+       been sent, which stopped being true on 2026-09-05 when the owner turned
+       the three sends live. A preview that still called itself a dry run over
+       a Send button that really sends is this project's forbidden shape
+       pointing the dangerous way, so the chip says READY TO SEND and the line
+       below the body says, in words, what the button will do. */
+    const what = v.sheet_name || v.intake || "Payment options";
     return `<div class="asst-work">
-      <div class="asst-dry">DRY RUN &mdash; READY TO SEND &middot; nothing has been sent</div>
+      <div class="asst-live">READY TO SEND &middot; nothing has been sent yet</div>
       ${p.err ? `<div class="err">${esc(p.err)}</div>` : ""}
       <div class="asst-kv"><b>To</b><span>${esc(v.to)}</span></div>
       <div class="asst-kv"><b>Subject</b><span>${esc(v.subject)}</span></div>
-      <div class="asst-kv"><b>${v.sheet_name ? "Sheet" : "Form"}</b><span>${esc(v.sheet_name || v.intake)}${v.case_no ? ` &middot; ${esc(v.case_no)}` : ""}</span></div>
+      <div class="asst-kv"><b>${v.sheet_name ? "Sheet" : "Form"}</b><span>${esc(what)}${v.case_no ? ` &middot; ${esc(v.case_no)}` : ""}</span></div>
       ${v.door ? `<div class="asst-kv"><b>Door</b><span>${esc(v.door)}</span></div>` : ""}
       ${inc ? `<div class="asst-kv"><b>With</b><span>${esc(inc)}</span></div>` : ""}
       <pre class="asst-pre">${esc(v.body_text)}</pre>
+      ${/* RULE 2 on the one screen that shows the instructions before they go:
+            asking is not receiving. Drawn from the Worker's own answer, not
+            from the mode, so it can never disagree with what was sent. */
+        v.retainer_marked_paid === false
+        ? `<p class="asst-lede">Sending this records that the office asked. It does
+             <b>not</b> mark the retainer received &mdash; that stays your entry on the case.</p>` : ""}
+      <p class="asst-sendline">Send emails exactly the text above to
+        <b>${esc(v.to)}</b>. Simulate records a rehearsal instead and sends nothing.</p>
       <div class="asst-acts">
-        <button class="btn sm accent" data-act="asstPrepSim" ${p.busy ? "disabled" : ""}>Simulate &mdash; record only</button>
+        <button class="btn sm accent" data-act="asstPrepSend" ${p.busy ? "disabled" : ""}>Send</button>
+        <button class="btn sm ghost" data-act="asstPrepSim" ${p.busy ? "disabled" : ""}>Simulate &mdash; record only</button>
         <button class="btn sm ghost" data-act="asstPrepEdit">Edit</button>
+        <button class="btn sm ghost" data-act="asstPrepCancel">Cancel</button>
+      </div>
+    </div>`;
+  }
+  if(p.mode === "payment"){
+    return `<div class="asst-work">
+      <div class="asst-live">PREPARE PAYMENT INSTRUCTIONS</div>
+      <p class="asst-lede">The private-client payment options, on their own &mdash; no rate sheet
+        and no intake link. Preview the exact email, then send it.</p>
+      ${p.err ? `<div class="err">${esc(p.err)}</div>` : ""}
+      <label class="cap">Recipient email
+        <input id="asst_mto" data-act-input="asstPrep" value="${esc(p.to)}" autocomplete="off"></label>
+      <label class="cap">Name (optional)
+        <input id="asst_mname" data-act-input="asstPrep" value="${esc(p.name)}" autocomplete="off"></label>
+      <label class="cap">Case (optional)
+        <input id="asst_mcase" data-act-input="asstPrep" value="${esc(p.case_no)}" autocomplete="off">
+        <span class="asst-hint">A claim assignment or a legal case is refused here &mdash; Cash App
+          and Venmo are private-client methods.</span></label>
+      <label class="cap">Note (optional)
+        <input id="asst_mnote" data-act-input="asstPrep" value="${esc(p.note || "")}" autocomplete="off"></label>
+      <div class="asst-acts">
+        <button class="btn sm" data-act="asstPrepPrev" ${p.busy ? "disabled" : ""}>Preview the email</button>
         <button class="btn sm ghost" data-act="asstPrepCancel">Cancel</button>
       </div>
     </div>`;
@@ -3794,13 +3981,14 @@ function asstPrepHtml(){
   if(p.mode === "sheet"){
     const svc = LEGAL_SVCS.find(s => s.id === p.legal_service) || null;
     return `<div class="asst-work">
-      <div class="asst-dry">PREPARE A RATE SHEET &mdash; DRY RUN</div>
-      ${/* THE OWNER'S MOCKUP COPY, kept because it is TRUE of this flow: the
-            preview renders the real email through intakeInviteEmail/emailSheet's
-            own resolution, and the simulate writes one assistant_log row whose
-            face reads SIMULATED — NOT SENT. Nothing here can reach a client. */""}
-      <p class="asst-lede">Dry run: pick the audience, preview the exact sheet email, then
-        simulate &mdash; recorded as <b>SIMULATED &mdash; NOT SENT</b>, and nothing is sent.</p>
+      <div class="asst-live">PREPARE A RATE SHEET</div>
+      ${/* THE OWNER'S MOCKUP COPY SAID "dry run ... nothing is sent", and that
+            was true until 2026-09-05. The preview still renders the real email
+            through emailSheet's own resolution; what changed is that Send now
+            posts it to the ordinary route. The words moved with the fact. */""}
+      <p class="asst-lede">Pick the audience, then preview the exact sheet email. <b>Send</b>
+        emails it; <b>Simulate</b> rehearses it instead and records
+        <b>SIMULATED &mdash; NOT SENT</b>.</p>
       ${p.err ? `<div class="err">${esc(p.err)}</div>` : ""}
       <label class="cap">Audience &mdash; a case reference below overrides this
         <select id="asst_sctx" data-act-input="asstPrep">
@@ -3839,7 +4027,7 @@ function asstPrepHtml(){
     </div>`;
   }
   return `<div class="asst-work">
-    <div class="asst-dry">PREPARE AN INTAKE LINK &mdash; DRY RUN</div>
+    <div class="asst-live">PREPARE AN INTAKE LINK</div>
     ${p.err ? `<div class="err">${esc(p.err)}</div>` : ""}
     <label class="cap">Which intake &mdash; a case reference below overrides this
       <select id="asst_pk" data-act-input="asstPrep">
@@ -3878,7 +4066,9 @@ function asstLevel(){
 function asstBack(){
   if(!ASST) return;
   const lvl = asstLevel();
-  if(lvl === 4){ ASST.prep.preview = null; ASST.prep.err = ""; }
+  /* Preview -> form, which is Edit's own write: the captured body goes too, or
+     Send would post values the person has just walked back from. */
+  if(lvl === 4){ ASST.prep.preview = null; ASST.prep.previewBody = null; ASST.prep.err = ""; }
   else if(lvl === 3){ ASST.prep = null; }
   else if(lvl === 2){ ASST.view = "home"; }
   paint();
@@ -3913,8 +4103,9 @@ function asstQuickHtml(){
 function asstMsgHtml(m){
   if(m.who === "you") return `<div class="asst-you">${esc(m.text)}</div>`;
   return `<div class="asst-m">
-    ${m.kind === "refused" ? `<div class="asst-blocked">BETA — ACTION DISABLED</div>` : ""}
+    ${m.kind === "refused" ? `<div class="asst-blocked">NOT AVAILABLE HERE</div>` : ""}
     ${m.kind === "simulated" ? `<div class="asst-sim">SIMULATED — NOT SENT</div>` : ""}
+    ${m.kind === "sent" ? `<div class="asst-sent">SENT</div>` : ""}
     ${m.kind === "invoice_preview" ? `<div class="asst-sim">DRY RUN — INVOICE PREVIEW · SIMULATED — NOT CREATED</div>` : ""}
     ${m.guide_intro ? `<div class="asst-guidep">${esc(m.guide_intro)}</div>` : ""}
     ${m.command ? ""    /* the panel below carries the title — one writer */
@@ -3980,12 +4171,19 @@ function asstHtml(){
     <div class="asst-panel" role="complementary" aria-label="API Assistant">
       <div class="asst-head"><div class="asst-head-id"><b>&#10024; API Assistant</b>
         <span class="asst-sub">Case Command Center</span></div>
-        <span class="asst-beta">BETA</span>
         <button class="asst-x" data-act="asstClose" aria-label="Close the Assistant">&times;</button></div>
       ${asstNavHtml()}
       ${asstCaseChipHtml()}
-      <div class="asst-banner">ASSISTANT BETA &mdash; DRY RUN MODE<br>
-        <span>No external client messages or consequential actions will be sent.</span></div>
+      ${/* ONE WRITER, AND IT IS THE WORKER. This was two hard-coded lines
+            claiming DRY RUN, which stopped being true when the three sends went
+            live — a safety statement kept in two places, drifting in the
+            dangerous direction. `/assistant/state` says what this Assistant may
+            do; the page prints it. Nothing is drawn until the state lands: a
+            banner is not a placeholder, and inventing one would be the page
+            asserting something it has not been told. */""}
+      ${ASST.state && ASST.state.banner
+        ? `<div class="asst-banner">${esc(ASST.state.banner)}<br>
+        <span>${esc(ASST.state.banner_detail || "")}</span></div>` : ""}
       ${ASST.err ? `<div class="err">${esc(ASST.err)}</div>` : ""}
       ${/* ONE SCROLLING REGION, and that is the fix. The log and the workbench
            were SIBLINGS, each with its own `overflow-y:auto`, so a long form
@@ -4020,8 +4218,8 @@ function asstHtml(){
    Assistant action instead, so nothing fixed ever overlaps. */
 function asstPillHtml(){
   if(ASST && ASST.open) return "";
-  return `<button class="asst-pill" data-act="asstOpen" aria-label="Open the API Assistant (Beta)">
-    &#10024; <span class="asst-beta">BETA</span></button>`;
+  return `<button class="asst-pill" data-act="asstOpen" aria-label="Open the API Assistant">
+    &#10024; <span class="asst-tag">ASSISTANT</span></button>`;
 }
 
 /* --------------------------------------------------------- the dashboard */
@@ -20374,7 +20572,12 @@ document.addEventListener("click", ev => {
   }
   else if(act === "asstPrepPrev"){ asstPrepPrev(); }
   else if(act === "asstPrepSim"){ asstPrepSim(); }
-  else if(act === "asstPrepEdit"){ if(ASST && ASST.prep){ ASST.prep.preview = null; ASST.prep.err = ""; paint(); } }
+  else if(act === "asstPrepSend"){ asstPrepSend(); }
+  /* Edit drops the PREVIEW AND THE BODY THAT PRODUCED IT together. Keeping the
+     captured body across an edit would leave the one thing Send posts pointing
+     at values the person has just walked back from — the stale-context defect,
+     one screen down. */
+  else if(act === "asstPrepEdit"){ if(ASST && ASST.prep){ ASST.prep.preview = null; ASST.prep.previewBody = null; ASST.prep.err = ""; paint(); } }
   else if(act === "asstPrepCancel"){ if(ASST){ ASST.prep = null; paint(); } }
   /* A18 — panel navigation. All three touch ASST alone: no case, tab or page
      draft moves, and none of them closes the panel. Home keeps the log —
