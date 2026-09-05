@@ -17432,14 +17432,20 @@ section('ASSISTANT COMPOSER — the input row clears the phone\'s bottom edge');
     await page.locator('.asst-ask button').click();
     await page.waitForTimeout(450);
   }
-  ok('a long conversation scrolls inside the log and its last message clears the composer',
+  /* THE SCROLLER MOVED, THE PROPERTY DID NOT. `.asst-log` used to scroll
+     itself; it is a plain block inside `.asst-body` now, because two scrollers
+     in one column put a 692px form in a 350px box and let a swipe chain into
+     the portal. What this has always been about is unchanged and is still
+     asserted here: the conversation area scrolls, and scrolled to its end the
+     last message clears the composer rather than sliding under it. */
+  ok('a long conversation scrolls in the sheet and its last message clears the composer',
      await page.evaluate(() => {
-       const log = document.querySelector('.asst-log');
-       log.scrollTop = log.scrollHeight;
+       const body = document.getElementById('asst_body');
+       body.scrollTop = body.scrollHeight;
        const last = [...document.querySelectorAll('.asst-m')].pop().getBoundingClientRect();
        const form = document.querySelector('.asst-ask').getBoundingClientRect();
-       return log.scrollHeight > log.clientHeight
-         && log.scrollTop + log.clientHeight >= log.scrollHeight - 2
+       return body.scrollHeight > body.clientHeight
+         && body.scrollTop + body.clientHeight >= body.scrollHeight - 2
          && last.bottom <= form.top + 1;
      }));
   ok('focused for typing, the input stays fully visible at the 16px no-zoom size',
