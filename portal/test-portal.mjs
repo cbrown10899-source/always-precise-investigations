@@ -19522,6 +19522,224 @@ section('Case Command Center: the payment prefill opens the existing form and sa
   await page.close();
 }
 
+/* ============================================================================
+   THE ASSISTANT OWNS ITS OWN SCROLL (owner, real iPhone, 2026-09-05).
+
+   Reported: the sheet covered the page, a swipe inside it scrolled the PORTAL
+   behind, and parts of a long form could not be reached. Measured at 390px
+   before the fix: `.asst-work` was a 692px form inside a 350px box and
+   `.asst-log` a 176px log inside 128px — TWO scrollers — and both carried
+   `overscroll-behavior: auto`, so either one, on reaching its end, handed the
+   rest of the gesture to the document. The body was never locked.
+
+   These assert the three answers by measurement, and the headline one is the
+   owner's own words: a scroll on a long panel moves the ASSISTANT and leaves
+   the portal exactly where it was.
+   ========================================================================= */
+section('Mobile Assistant: the sheet scrolls, the portal behind it does not');
+{
+  for (let i = 1; i <= 6; i++) {
+    await post('/ingest', { case_no: `API-SCROLL-${100 + i}`, service: 'Surveillance',
+      client_name: `Scroll Client ${i}`, subject_name: `Scroll Subject ${i}`,
+      fee_due: 1500, payment_method: 'venmo' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  }
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => { TAB = 'cases'; paint(); });
+  await page.waitForTimeout(600);
+
+  /* Put the portal somewhere that is NOT the top, so "it did not move" is a
+     real claim rather than one a reset to zero would also satisfy. */
+  await page.evaluate(() => window.scrollTo(0, 300));
+  await page.waitForTimeout(200);
+  const parked = await page.evaluate(() => window.scrollY);
+  ok('the portal is parked away from the top before the sheet opens', parked > 0, String(parked));
+
+  /* Open the Assistant and give it a long body — the rate-sheet workbench is
+     the flow the owner named. */
+  await page.evaluate(() => asstOpen());
+  await page.waitForTimeout(500);
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('[data-act="asstQuick"]')]
+      .find(x => /rate sheet/i.test(x.dataset.cmd || ''));
+    if (b) b.click();
+  });
+  await page.waitForTimeout(1000);
+  await page.evaluate(() => {
+    const sel = document.getElementById('asst_sctx');
+    if (sel) { sel.value = 'private'; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+  });
+  await page.waitForTimeout(700);
+
+  const shape = await page.evaluate(() => {
+    const b = document.getElementById('asst_body');
+    const back = document.querySelector('.asst-back');
+    const bcs = back ? getComputedStyle(back) : null;
+    return {
+      body: !!b, sh: b ? b.scrollHeight : 0, ch: b ? b.clientHeight : 0,
+      osb: b ? getComputedStyle(b).overscrollBehaviorY : null,
+      /* EXACTLY ONE scroller in the sheet. Two is what put a 692px form in a
+         350px box and made a swipe land in whichever box it started over. */
+      scrollers: [...document.querySelectorAll('.asst-panel *')]
+        .filter(e => e.scrollHeight > e.clientHeight + 2
+          && /auto|scroll/.test(getComputedStyle(e).overflowY))
+        .map(e => String(e.className).split(' ')[0]),
+      backShown: bcs ? bcs.display !== 'none' : false,
+      backTouch: bcs ? bcs.touchAction : null,
+      htmlOvf: getComputedStyle(document.documentElement).overflowY,
+      bodyOvf: getComputedStyle(document.body).overflowY,
+    };
+  });
+  ok('the sheet has a scrollable body', shape.body && shape.sh > shape.ch + 50,
+     JSON.stringify({ sh: shape.sh, ch: shape.ch }));
+  ok('and EXACTLY ONE scroller inside the panel',
+     shape.scrollers.length === 1 && shape.scrollers[0] === 'asst-body',
+     JSON.stringify(shape.scrollers));
+  ok('the scroller contains its overscroll, so a swipe cannot chain out',
+     shape.osb === 'contain', shape.osb);
+  ok('a real backdrop covers the page and swallows the drag',
+     shape.backShown === true && shape.backTouch === 'none', JSON.stringify(shape));
+  ok('and the document itself is locked while the sheet is open',
+     shape.htmlOvf === 'hidden' && shape.bodyOvf === 'hidden', JSON.stringify(shape));
+
+  /* ---- THE HEADLINE: the panel moves, the portal does not --------------- */
+  const moved = await page.evaluate(async () => {
+    const b = document.getElementById('asst_body');
+    const start = { panel: b.scrollTop, page: window.scrollY };
+    b.scrollTop = 99999;
+    await new Promise(r => setTimeout(r, 120));
+    const atEnd = { panel: b.scrollTop, page: window.scrollY,
+      really: Math.abs(b.scrollTop + b.clientHeight - b.scrollHeight) < 3 };
+    /* PUSH PAST THE END — the chaining case, and the one that was reported. */
+    b.dispatchEvent(new WheelEvent('wheel', { deltaY: 800, bubbles: true, cancelable: true }));
+    await new Promise(r => setTimeout(r, 150));
+    const past = { panel: b.scrollTop, page: window.scrollY };
+    b.scrollTop = 0;
+    await new Promise(r => setTimeout(r, 120));
+    const atTop = { panel: b.scrollTop, page: window.scrollY };
+    return { start, atEnd, past, atTop,
+      head: document.querySelector('.asst-head').getBoundingClientRect().top,
+      askBottom: document.querySelector('.asst-ask').getBoundingClientRect().bottom,
+      vh: window.innerHeight,
+      hOvf: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+  });
+  ok('scrolling the panel MOVES THE PANEL', moved.atEnd.panel > 0, JSON.stringify(moved.atEnd));
+  ok('and it really reaches the bottom of its content', moved.atEnd.really === true);
+  ok('THE PORTAL BEHIND DID NOT MOVE', moved.atEnd.page === moved.start.page,
+     JSON.stringify({ before: moved.start.page, after: moved.atEnd.page }));
+  ok('pushing PAST the end does not chain into the portal',
+     moved.past.page === moved.start.page && moved.past.panel === moved.atEnd.panel,
+     JSON.stringify(moved.past));
+  ok('the panel returns to the top, portal still unmoved',
+     moved.atTop.panel === 0 && moved.atTop.page === moved.start.page, JSON.stringify(moved.atTop));
+  /* NOTHING IS TRAPPED: the header and the composer are on screen at both
+     ends of the scroll, which is what "sticky header, reachable composer"
+     means in a flex column with one scrolling middle. */
+  ok('the header is on screen', moved.head >= -1, String(moved.head));
+  ok('the composer is on screen', moved.askBottom <= moved.vh + 1,
+     JSON.stringify({ askBottom: moved.askBottom, vh: moved.vh }));
+  ok('and nothing scrolls sideways', moved.hOvf === false);
+
+  /* ---- CLOSING GIVES THE PORTAL BACK, EXACTLY WHERE IT WAS -------------- */
+  await page.evaluate(() => { const b = document.querySelector('.asst-back'); if (b) b.click(); });
+  await page.waitForTimeout(500);
+  const closed = await page.evaluate(() => ({ open: !!(ASST && ASST.open),
+    page: window.scrollY, bodyOvf: getComputedStyle(document.body).overflowY,
+    back: !!document.querySelector('.asst-back') }));
+  ok('tapping the backdrop closes the sheet', closed.open === false);
+  ok('the portal is exactly where it was left — no jump to the top',
+     closed.page === parked, JSON.stringify({ parked, now: closed.page }));
+  ok('and the portal scrolls again', closed.bodyOvf === 'visible', closed.bodyOvf);
+  ok('with the backdrop gone', closed.back === false);
+  const again = await page.evaluate(async () => {
+    window.scrollTo(0, 520); await new Promise(r => setTimeout(r, 150));
+    return window.scrollY;
+  });
+  ok('proved by actually scrolling it', again > parked, String(again));
+
+  /* ---- AND IT ALL WORKS THE SECOND TIME -------------------------------- */
+  await page.evaluate(() => asstOpen());
+  await page.waitForTimeout(600);
+  const re = await page.evaluate(() => ({ body: !!document.getElementById('asst_body'),
+    bodyOvf: getComputedStyle(document.body).overflowY }));
+  ok('reopening rebuilds the scroller and relocks the document',
+     re.body === true && re.bodyOvf === 'hidden', JSON.stringify(re));
+
+  /* ---- THE DESKTOP SIDE PANEL IS UNTOUCHED ----------------------------- */
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.waitForTimeout(400);
+  const desk = await page.evaluate(() => ({
+    backShown: getComputedStyle(document.querySelector('.asst-back')).display !== 'none',
+    bodyOvf: getComputedStyle(document.body).overflowY,
+    wrapPE: getComputedStyle(document.querySelector('.asst-wrap')).pointerEvents,
+  }));
+  ok('on the desktop there is no backdrop', desk.backShown === false);
+  ok('the page behind is still scrollable', desk.bodyOvf === 'visible', desk.bodyOvf);
+  ok('and the wrapper still lets clicks through to it', desk.wrapPE === 'none');
+
+  await page.close();
+}
+
+section('Mobile Assistant: every long flow reaches its own bottom');
+{
+  await post('/ingest', { case_no: 'API-SCROLL-FLOW', service: 'Surveillance',
+    client_name: 'Flow Client', subject_name: 'Flow Subject',
+    fee_due: 1500, payment_method: 'venmo' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => openCase('API-SCROLL-FLOW'));
+  await page.waitForTimeout(1000);
+
+  const probe = () => page.evaluate(() => {
+    const b = document.getElementById('asst_body');
+    if (!b) return null;
+    b.scrollTop = 99999;
+    const reached = b.scrollHeight <= b.clientHeight + 2
+      || Math.abs(b.scrollTop + b.clientHeight - b.scrollHeight) < 3;
+    b.scrollTop = 0;
+    return { reached, sh: b.scrollHeight,
+      head: document.querySelector('.asst-head').getBoundingClientRect().top >= -1,
+      ask: document.querySelector('.asst-ask').getBoundingClientRect().bottom <= innerHeight + 1,
+      one: [...document.querySelectorAll('.asst-panel *')]
+        .filter(e => e.scrollHeight > e.clientHeight + 2
+          && /auto|scroll/.test(getComputedStyle(e).overflowY)).length,
+      hOvf: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+  });
+
+  for (const [phrase, label] of [
+    ['check this case', 'Case Ready'],
+    ["draft today's summary", 'Daily Summary'],
+    ['start surveillance', 'Start Day confirmation'],
+    ['record $250 venmo payment', 'payment prefill'],
+    ['what should I do?', 'a briefing'],
+  ]) {
+    await page.evaluate(async t => { await asstOpen('API-SCROLL-FLOW'); await asstSend(t); }, phrase);
+    await page.waitForTimeout(1100);
+    const m = await probe();
+    ok(`${label}: the panel reaches its own bottom`, m && m.reached === true, JSON.stringify(m));
+    ok(`${label}: header and composer stay on screen`, m && m.head && m.ask, JSON.stringify(m));
+    ok(`${label}: still exactly one scroller`, m && m.one <= 1, JSON.stringify(m));
+    ok(`${label}: no sideways scroll`, m && m.hOvf === false);
+  }
+
+  /* THE KEYBOARD CASE. iOS shrinks the visual viewport; the sheet is sized in
+     dvh so it shrinks with it, and the composer must stay reachable — which is
+     the whole point of the flex column with one scrolling middle. */
+  await page.evaluate(() => { const el = document.getElementById('asst_in'); if (el) el.focus(); });
+  await page.setViewportSize({ width: 390, height: 430 });
+  await page.waitForTimeout(500);
+  const kb = await probe();
+  ok('with the keyboard open the panel still reaches its bottom',
+     kb && kb.reached === true, JSON.stringify(kb));
+  ok('and the composer is still on screen', kb && kb.ask === true, JSON.stringify(kb));
+  ok('and the header is too', kb && kb.head === true, JSON.stringify(kb));
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
 await browser.close();
 server.close();
 
