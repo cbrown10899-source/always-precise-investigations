@@ -2415,11 +2415,14 @@
 
   /* ===== THE ASSISTANT WORKBENCH'S ACTIONS, FULL WIDTH ON A PHONE =========
      The owner's rate-sheet mockup stacks them: the action that goes forward,
-     then the way out. `.asst-acts` is a wrapping flex row, so at 390px the two
+     then the way out. `.asst-acts` is a wrapping flex row, so at 390px the
      buttons sat at their own widths on one line inside a 312px panel. Stacked
      and full width, each is its own target and the order reads top to bottom.
-     The FLOW is unchanged — preview first, simulate from the preview — because
-     that is what makes the dry run a rehearsal of the real send. */
+     THE PREVIEW SCREEN NOW CARRIES FOUR — Send, Simulate, Edit, Cancel — since
+     the sends went live, which is exactly why this rule matters more than it
+     did: four at their own widths would wrap into a ragged block with the
+     destructive-looking one landing wherever it fell. The FLOW is unchanged:
+     preview first, and Send exists only under a preview. */
   @media(max-width:640px){
     .asst-acts{flex-direction:column;gap:8px;}
     .asst-acts .btn{width:100%;justify-content:center;min-height:44px;}
@@ -3692,8 +3695,19 @@ async function asstDispatch(c, tidy){
   try{ said = await run(c); okRan = true; }
   catch(e){ said = e.message || String(e); }
   if(tidy) tidy();
+  /* A FAILED SEND POINTS AT THE RECORD RATHER THAN INVITING A SECOND TAP.
+     These three routes carry no attempt key, so a response lost AFTER the
+     Worker sent is indistinguishable here from one that never arrived — and
+     the two want opposite things. `send_log` is the answer to which happened,
+     so the message says to look there. Closing the workbench (the caller's
+     `tidy`) is the same decision one step up: re-sending has to be a
+     deliberate act, not a retry of a button still sitting under a thumb. */
+  const failed = !okRan && c.sent
+    ? "That did not go through: " + said
+      + " Check the send history before trying again — if it left, it is recorded there."
+    : "That did not go through: " + said;
   ASST.msgs.push({ who: "asst", kind: okRan && c.sent ? "sent" : "",
-                   text: okRan ? said : ("That did not go through: " + said) });
+                   text: okRan ? said : failed });
   paint();
   try{
     await api("/assistant/executed", {method: "POST",
@@ -4038,7 +4052,12 @@ function asstPrepHtml(){
       </select></label>
     <label class="cap">Recipient email
       <input id="asst_pto" data-act-input="asstPrep" value="${esc(p.to)}" autocomplete="off"></label>
-    <label class="cap">Name (optional)
+    ${/* A CASE SUPPLIES ITS OWN GREETING, and the label has to say so. A
+          case-referenced send goes through `/leads/:no/send-intake`, which
+          greets with the lead's own client name and ignores anything typed
+          here — so a field that silently stops mattering is the "control that
+          draws is not a control that works" defect, one field over. */""}
+    <label class="cap">Name (optional) &mdash; a case below supplies its own
       <input id="asst_pname" data-act-input="asstPrep" value="${esc(p.name)}" autocomplete="off"></label>
     <label class="cap">Case (optional)
       <input id="asst_pcase" data-act-input="asstPrep" value="${esc(p.case_no)}" autocomplete="off"></label>

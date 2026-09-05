@@ -17295,18 +17295,31 @@ section('API Assistant — Beta reads, role-scoped navigation, refusals by name'
        twice on my own explanatory text and was right to, but the fix then was
        to move the words. A block that must now EXPLAIN three sends cannot be
        held by a rule that forbids the word "send" appearing in it. */
-    const rows = [...reg.matchAll(/action: '([a-z_]+)'[^]*?route: '([^']*)'/g)]
-      .map(m => ({ action: m[1], route: m[2] }));
+    const rows = [...reg.matchAll(/action: '([a-z_]+)'[^]*?route: '([^']*)'(?:, route_alt: '([^']*)')?/g)]
+      .map(m => ({ action: m[1], route: m[2], alt: m[3] || null }));
     ok('the row parse found every command the registry declares',
        rows.length === (reg.match(/action: '/g) || []).length && rows.length >= 5, rows.length);
     const sends = rows.filter(r => r.action.startsWith('send_'));
-    const ALLOWED_SENDS = ['sheets/:id/email', 'intake-link/email', 'payment-options/email'];
-    ok('every send command names one of the three ordinary send routes, and nothing else',
-       sends.length === 3 && sends.every(r => ALLOWED_SENDS.includes(r.route)),
-       sends.map(r => `${r.action}->${r.route}`).join(' | '));
-    ok('and each of those three routes is claimed by exactly one command',
-       ALLOWED_SENDS.every(rt => sends.filter(r => r.route === rt).length === 1));
-    ok('the Worker names the same three routes in ASSISTANT_SEND_ROUTES',
+    /* FOUR STRINGS, NOT THREE. The intake has two doors — the pre-case one and
+       the case-addressed one, which derives the form from the case's own record
+       — and the first version of this pin listed only the first while the page
+       used both. The pin then claimed a guarantee one route wider than it could
+       hold, which is exactly the failure it exists to prevent, so the second
+       door is DECLARED (`route_alt`) and counted here. */
+    const ALLOWED_SENDS = ['sheets/:id/email', 'intake-link/email',
+                           'leads/:no/send-intake', 'payment-options/email'];
+    const sendRoutes = sends.flatMap(r => [r.route, ...(r.alt ? [r.alt] : [])]);
+    ok('every route a send command can reach is one of the four declared, and nothing else',
+       sends.length === 3 && sendRoutes.every(rt => ALLOWED_SENDS.includes(rt)),
+       sends.map(r => `${r.action}->${r.route}${r.alt ? '|' + r.alt : ''}`).join(' ; '));
+    ok('and each of those four routes is claimed by exactly one command',
+       ALLOWED_SENDS.every(rt => sendRoutes.filter(x => x === rt).length === 1),
+       sendRoutes.join(' | '));
+    ok('only the intake carries a second door, and it is the case-addressed one',
+       rows.filter(r => r.alt).length === 1
+       && rows.find(r => r.alt).action === 'send_intake'
+       && rows.find(r => r.alt).alt === 'leads/:no/send-intake');
+    ok('the Worker names the same four routes in ASSISTANT_SEND_ROUTES',
        ALLOWED_SENDS.every(rt => reg.includes(`'${rt}'`))
        && /const ASSISTANT_SEND_ROUTES = \[/.test(reg));
     ok('NO command routes to a deletion, an archive or a void',
@@ -17419,6 +17432,22 @@ section('API Assistant — Unit 4: intake preparation, preview, SIMULATE');
   res = await prep(admin, { to: 'x@example.com', case_no: 'API-U4-NOPE' });
   ok('a reference that resolves to nothing is told so, and told the pre-case way in',
      res.status === 404 && /leave the case blank/i.test((await jsonOf(res)).error));
+
+  /* WHAT YOU PREVIEWED IS WHAT GOES — the property the live send rests on.
+     A case-referenced send goes through `/leads/:no/send-intake`, which greets
+     with the LEAD'S OWN NAME and ignores the body's. So a typed name must not
+     change the preview either, or the screen would show one greeting and the
+     client would receive another. Asserted the strong way: the preview and the
+     real lead send, byte for byte. */
+  d = await jsonOf(await prep(admin, { to: 'x@example.com', case_no: 'API-U4-LGL',
+    name: 'Somebody Else Entirely' }));
+  ok('a typed name cannot override the case\'s own — the preview follows the sender',
+     /^Harmon PLC,/.test(d.body_text) && !/Somebody Else Entirely/.test(d.body_text),
+     d.body_text.slice(0, 80));
+  /* The byte-for-byte half of this lives in the live-sends section, because
+     proving it needs a REAL send and THIS section's premise is that nothing
+     real happens in it — a send here would write the send_log row and stamp
+     the lead that three assertions below are about to require absent. */
 
   /* ---- SIMULATE: recorded in its own table, and NOWHERE the real history
      lives ---- */
@@ -19527,6 +19556,32 @@ section('Assistant: sending is live for exactly three products, and for nothing 
      simd.outcome === 'SIMULATED — NOT SENT' && mailed === null, JSON.stringify(simd.outcome));
   ok('and the REAL payment-send history gained no row',
      Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM payment_send').first()).n) === payBefore);
+
+  /* ---- 3b. THE INTAKE'S SECOND DOOR, and the greeting that proves it.
+     A case-referenced send goes through `/leads/:no/send-intake`, which greets
+     with the LEAD'S OWN NAME and ignores the body's — so the preview must do
+     the same, or the screen shows one greeting and the client receives
+     another. WHAT YOU PREVIEWED IS WHAT GOES is the property the whole live
+     send rests on, and it is asserted byte for byte. ---- */
+  await ingest(env, { case_no: 'API-LV-LGL', assignment: 'legal', client_name: 'Harmon PLC',
+                      objective: 'Serve' });
+  const leadPrev = await jsonOf(await call(env, '/assistant/prepare-intake',
+    { method: 'POST', cookie: admin,
+      body: { to: 'firm@example.com', case_no: 'API-LV-LGL', name: 'Somebody Else Entirely' } }));
+  ok('a typed name cannot override the case\'s own — the preview follows the sender',
+     /^Harmon PLC,/.test(leadPrev.body_text)
+     && !/Somebody Else Entirely/.test(leadPrev.body_text), leadPrev.body_text.slice(0, 80));
+  ok('and the case picks the LEGAL door by its own marker, not by a typed kind',
+     leadPrev.send_context === 'legal' && /assignment=legal/.test(leadPrev.door));
+  mailed = null;
+  const leadSent = await jsonOf(await call(env, '/leads/API-LV-LGL/send-intake',
+    { method: 'POST', cookie: admin,
+      body: { to: 'firm@example.com', name: 'Somebody Else Entirely' } }));
+  ok('the real lead send goes', leadSent.ok === true && mailed !== null,
+     JSON.stringify(leadSent).slice(0, 160));
+  ok('and the preview of it was byte-identical — one greeting, never two',
+     !!mailed && leadPrev.subject === mailed.subject && leadPrev.body_text === mailed.text,
+     `${leadPrev.subject} :: ${mailed && mailed.subject}`);
 
   /* ---- 4. ROLE. Both doors are admin-only, like the route they prepare. ---- */
   ok('an investigator cannot prepare payment instructions',

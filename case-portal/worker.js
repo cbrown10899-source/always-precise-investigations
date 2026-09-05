@@ -13690,20 +13690,36 @@ const ASSISTANT_COMMANDS = [
   { action: 'send_sheet', level: 3, label: 'Send Rate Sheet', needs_case: false,
     roles: ['admin'], route: 'sheets/:id/email',
     title: 'SEND THIS RATE SHEET?' },
+  /* TWO DOORS, DECLARED — the only command with a `route_alt`, and it is a
+     fact rather than a convenience. `/intake-link/email` derives the form from
+     the KIND it is handed; `/leads/:no/send-intake` derives it from the CASE'S
+     OWN RECORD, the payload marker outranking kind, which is what stops a
+     legal lead being emailed the consumer form. A send that names a case must
+     use the second, and it also links the send to the case in `send_log`.
+     Declaring it is what keeps the source pin honest: the pin holds the routes
+     a send can REACH, and a door the page uses but the registry omits would
+     make that guarantee read stronger than it is. */
   { action: 'send_intake', level: 3, label: 'Send Intake Link', needs_case: false,
-    roles: ['admin'], route: 'intake-link/email',
+    roles: ['admin'], route: 'intake-link/email', route_alt: 'leads/:no/send-intake',
     title: 'SEND THIS INTAKE LINK?' },
   { action: 'send_payment_options', level: 3, label: 'Send Payment Options', needs_case: false,
     roles: ['admin'], route: 'payment-options/email',
     title: 'SEND THESE PAYMENT INSTRUCTIONS?' },
 ];
 
-/* The three routes above, named once so the source pin and the page can both
-   be held to the same list. A send command may name one of these and nothing
-   else — an allow-list, for the `inlineSafeType` reason: a fourth send route
-   nobody has considered is refused by default rather than admitted by a
-   pattern that happens to match it. */
-const ASSISTANT_SEND_ROUTES = ['sheets/:id/email', 'intake-link/email', 'payment-options/email'];
+/* EVERY ROUTE A SEND CAN REACH, named once so the source pin and the page can
+   both be held to the same list — an allow-list, for the `inlineSafeType`
+   reason: a send route nobody has considered is refused by default rather than
+   admitted by a pattern that happens to match it.
+
+   FOUR, NOT THREE, because the intake has two doors and the second was missing
+   from the first version of this list. The page used `/leads/:no/send-intake`
+   for a case-referenced send while the registry named only the pre-case door,
+   so the pin asserted a guarantee one route wider than it could actually
+   hold. Both are ordinary routes with their own admin gate and refusals; what
+   was wrong was the claim, not the code. */
+const ASSISTANT_SEND_ROUTES = ['sheets/:id/email', 'intake-link/email',
+                               'leads/:no/send-intake', 'payment-options/email'];
 
 /* THE CASE TABS THE ASSISTANT MAY NAME, and it is a registry for the reason
    ASSISTANT_NAV is one: model text must never become a destination. A case tab
@@ -13967,7 +13983,15 @@ async function assistantIntakePlan(env, body) {
         + `assignment, so the right intake form cannot be chosen.` }, 409) };
     }
     caseNo = ref;
-    if (!name) name = String(lead.client_name || '');
+    /* THE CASE'S OWN NAME WINS, and this changed on 2026-09-05 when the sends
+       went live. It used to fill in only a BLANK name, which was harmless
+       while every rehearsal was a rehearsal — but a case-referenced send goes
+       through `/leads/:no/send-intake`, and that route greets with
+       `lead.client_name` and ignores the body's name entirely. So a typed
+       name previewed one greeting and emailed another, which breaks the one
+       property this whole flow rests on: WHAT YOU PREVIEWED IS WHAT GOES.
+       The mirror follows the sender, never the other way round. */
+    name = String(lead.client_name || '');
   } else {
     const kind = String(body.kind || '').trim().toLowerCase();
     context = kind === 'legal' ? SEND_CONTEXT.LEGAL

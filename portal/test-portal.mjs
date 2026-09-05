@@ -17314,6 +17314,41 @@ section('API ASSISTANT — sending is live, and only from under a preview');
   ok('the workbench closed itself once the send went',
      await page.evaluate(() => !document.querySelector('.asst-work')));
 
+  /* ---- 3b. THE INTAKE'S SECOND DOOR. Naming a case sends through
+     `/leads/:no/send-intake`, which derives the form from the CASE'S OWN
+     RECORD rather than from a typed kind — the property that stops a legal
+     lead being emailed the consumer form — and links the send to the case in
+     the office history. Only the page can prove which door it chose. ---- */
+  await post('/ingest', { case_no: 'API-LIVE-LGL', assignment: 'legal',
+    client_name: 'Harmon PLC', objective: 'Serve' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  MAILED = null;
+  await page.locator('#asst_in').fill('send an intake link to firm@example.com');
+  await page.locator('.asst-ask button').click();
+  await page.waitForSelector('.asst-work', { timeout: 4000 });
+  await page.locator('#asst_pcase').fill('API-LIVE-LGL');
+  await page.locator('#asst_pname').fill('Somebody Else Entirely');
+  await page.locator('[data-act="asstPrepPrev"]').click();
+  await page.waitForFunction(() => ASST && ASST.prep && ASST.prep.preview, null, { timeout: 4000 });
+  ok('a case reference picks the LEGAL door, and the typed name gives way to the case\'s own',
+     await page.evaluate(() => {
+       const b = document.querySelector('.asst-pre').innerText;
+       return /assignment=legal/.test(b) && /^Harmon PLC,/.test(b)
+         && !/Somebody Else Entirely/.test(b);
+     }));
+  await page.locator('[data-act="asstPrepSend"]').click();
+  await page.waitForFunction(() => ASST && !ASST.prep, null, { timeout: 6000 });
+  ok('the confirmation names the case it went out on',
+     await page.evaluate(() => {
+       const blocks = [...document.querySelectorAll('.asst-m')];
+       const last = blocks[blocks.length - 1];
+       return !!last && /API-LIVE-LGL/.test(last.innerText) && !!last.querySelector('.asst-sent');
+     }));
+  ok('and the office history holds it AGAINST THE CASE — the second door, not the pre-case one',
+     await page.evaluate(async () => {
+       const rows = (await api('/sends')).sends;
+       return rows.some(r => r.case_no === 'API-LIVE-LGL' && r.recipient === 'firm@example.com');
+     }));
+
   /* ---- 4. A FAILURE SAYS SO. With the mailer unconfigured the ordinary route
      answers 502, and the panel must report that rather than draw a
      confirmation over a message nobody received. ---- */
