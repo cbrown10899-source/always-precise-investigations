@@ -18391,8 +18391,25 @@ section('Case Command Center: offered, confirmed, dispatched — and nothing els
   /* THE ALLOW-LIST IS THE WHOLE EXECUTABLE SURFACE. An action id that is not
      a key here can do nothing, however it got into the page. */
   const surface = await page.evaluate(() => Object.keys(ASST_CMD).sort());
-  ok('the page can run exactly the commands it has entries for',
-     JSON.stringify(surface) === JSON.stringify(['end_day', 'start_day']), JSON.stringify(surface));
+  /* THE PROPERTY, NOT A LIST. This used to name the two commands that existed
+     when it was written, so every command added afterwards broke it and the
+     fix was to retype the list — which tests nothing about the thing that
+     matters. What matters is that the page's executable surface is EXACTLY the
+     Worker's registry: an id the page can run but the server would never offer
+     is a private door, and one the server offers but the page cannot run is a
+     button that does nothing. Parsed from the registry's own source, so it
+     cannot drift in either direction without failing here. */
+  const registryActions = (() => {
+    const src = fs.readFileSync(path.join(ROOT, 'case-portal', 'worker.js'), 'utf8');
+    const reg = src.slice(src.indexOf('const ASSISTANT_COMMANDS = ['),
+                          src.indexOf('const assistantCmd ='));
+    return [...reg.matchAll(/action: '([a-z_]+)'/g)].map(m => m[1]).sort();
+  })();
+  ok('the registry is not empty, so this comparison means something',
+     registryActions.length >= 5, JSON.stringify(registryActions));
+  ok('the page can run exactly the commands the Worker can offer — no more, no less',
+     JSON.stringify(surface) === JSON.stringify(registryActions),
+     `page ${JSON.stringify(surface)} vs registry ${JSON.stringify(registryActions)}`);
 
   await page.evaluate(() => openCase('API-CMD-DAY'));
   await page.waitForTimeout(700);
@@ -19273,6 +19290,233 @@ section("Mobile: the Assistant's stacked form labels keep their own height");
        stacked.length > 0 && stacked.every(b => b.h > 48),
        JSON.stringify(stacked.map(b => b.txt + ':' + b.h)));
   }
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
+/* ============================================================================
+   CASE COMMAND CENTER — the new commands, end to end, and the card that has
+   to be readable before anybody approves it.
+   ========================================================================= */
+section('Case Command Center: a task is offered, read, confirmed and written');
+{
+  await post('/ingest', { case_no: 'API-CMD-TASK', service: 'Surveillance',
+    client_name: 'Task Command Client', subject_name: 'Task Command Subject' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => openCase('API-CMD-TASK'));
+  await page.waitForTimeout(800);
+
+  await page.evaluate(async () => {
+    await asstOpen('API-CMD-TASK');
+    await asstSend('add a task to call the adjuster on Monday');
+  });
+  await page.waitForTimeout(900);
+
+  const card = await page.evaluate(() => {
+    const c = document.querySelector('.asst-cmd');
+    if (!c) return null;
+    const det = c.querySelector('.asst-cmd-detail');
+    const who = c.querySelector('.asst-cmd-who b');
+    return {
+      title: c.querySelector('.asst-cmd-t').textContent.trim(),
+      who: who ? who.textContent.trim() : null,
+      detail: det ? det.textContent.trim() : null,
+      say: (c.querySelector('.asst-cmd-say') || {}).textContent || '',
+      btns: [...c.querySelectorAll('.btn')].map(b => ({ t: b.textContent.trim(),
+        h: Math.round(b.getBoundingClientRect().height) })),
+      pending: !!(ASST && ASST.pending),
+      overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    };
+  });
+  ok('asking OFFERS a task; it does not write one', !!card && card.pending === true);
+  ok('the card is titled as a question', /ADD THIS FOLLOW-UP TASK\?/.test(card.title), card.title);
+  /* NOBODY APPROVES WORDING THEY CANNOT READ. The exact sentence is on the
+     card, quoted, before the button. */
+  ok('the exact task wording is printed on the card',
+     /call the adjuster on Monday/.test(card.detail || ''), card.detail);
+  /* AND A NUMBER IS NEVER DRAWN WHERE A NAME BELONGS — the orphaned-reference
+     shape this project already recorded on the surveillance launcher. */
+  ok('the card names the client, not the case number again',
+     card.who === 'Task Command Client', card.who);
+  ok('it says what it will and will not do',
+     /no due date/i.test(card.say) && /nothing is emailed/i.test(card.say), card.say);
+  ok('its buttons clear the tap floor on a phone',
+     card.btns.length === 2 && card.btns.every(b => b.h >= 44), JSON.stringify(card.btns));
+  ok('and the card caused no sideways scroll at 390', card.overflow === false);
+
+  /* NOTHING IS WRITTEN UNTIL THE PERSON CONFIRMS. */
+  let n = await page.evaluate(async () => (await (await fetch(
+    '/portal-api/cases/API-CMD-TASK/workspace', { credentials: 'include' })).json()).tasks?.length ?? 0);
+  ok('no task exists while the offer is only an offer', n === 0, String(n));
+
+  await page.evaluate(() => {
+    const b = document.querySelector('.asst-cmd [data-act="asstCmdRun"]');
+    if (b) b.click();
+  });
+  await page.waitForTimeout(1200);
+  const after = await page.evaluate(async () => {
+    const w = await (await fetch('/portal-api/cases/API-CMD-TASK/workspace',
+      { credentials: 'include' })).json();
+    return { tasks: (w.tasks || []).map(t => t.task), pending: !!(ASST && ASST.pending),
+      said: (ASST.msgs[ASST.msgs.length - 1] || {}).text || '' };
+  });
+  ok('confirming writes the task through the ordinary route',
+     after.tasks.includes('call the adjuster on Monday'), JSON.stringify(after.tasks));
+  ok('the offer is spent, so a second tap cannot repeat it', after.pending === false);
+  ok('and the panel says what happened', /Task added/i.test(after.said), after.said);
+
+  /* AND THE OTHER DIRECTION: mark it done. */
+  await page.evaluate(async () => { await asstSend('mark the adjuster task done'); });
+  await page.waitForTimeout(900);
+  const done = await page.evaluate(() => {
+    const c = document.querySelector('.asst-cmd');
+    return { has: !!c, label: c ? c.querySelector('.btn').textContent.trim() : null,
+      action: ASST.pending ? ASST.pending.action : null };
+  });
+  ok('completing is its own offer', done.action === 'complete_task', JSON.stringify(done));
+  /* THE LAST CARD IS THE LIVE ONE. The conversation keeps every card it ever
+     offered, and querySelector returns the FIRST — the spent add_task card,
+     whose token is stale, so pressing it correctly says so and does nothing.
+     That is the protection working; the test had to stop clicking the wrong
+     card. */
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.asst-cmd [data-act="asstCmdRun"]')].pop();
+    if (b) b.click();
+  });
+  await page.waitForTimeout(1200);
+  const closed = await page.evaluate(async () => {
+    const w = await (await fetch('/portal-api/cases/API-CMD-TASK/workspace',
+      { credentials: 'include' })).json();
+    return (w.tasks || []).filter(t => t.status === 'done').map(t => t.task);
+  });
+  ok('and confirming closes it on the record',
+     closed.includes('call the adjuster on Monday'), JSON.stringify(closed));
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
+section('Case Command Center: a case-tab destination lands on the tab it named');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => openCase('API-CMD-TASK'));
+  await page.waitForTimeout(800);
+  await page.evaluate(async () => {
+    await asstOpen('API-CMD-TASK');
+    await asstSend('open the evidence on this case');
+  });
+  await page.waitForTimeout(900);
+  /* MATCHED ON THE DESTINATION, NOT THE WORDS. The `evidence` tab is called
+     "Case media" on purpose — CLAUDE.md's media-wording rule — so the button
+     reads OPEN CASE MEDIA and a text match on "evidence" finds nothing. What
+     the test is about is where it goes, so that is what it looks at. */
+  const offered = await page.evaluate(() => {
+    const msgs = ASST.msgs.filter(m => m.actions);
+    const last = msgs[msgs.length - 1];
+    const i = (last.actions || []).findIndex(a => a.navigate
+      && a.navigate.kind === 'case_tab' && a.navigate.id === 'evidence');
+    if (i < 0) return { found: false, labels: (last.actions || []).map(a => a.label) };
+    const btn = [...document.querySelectorAll('.asst-m .asst-acts .btn')]
+      .find(b => b.dataset.i === `${ASST.msgs.indexOf(last)}:${i}`);
+    if (btn) btn.click();
+    return { found: true, clicked: !!btn, label: last.actions[i].label };
+  });
+  ok('the answer offers the evidence tab as a case-tab destination',
+     offered.found === true && offered.clicked === true, JSON.stringify(offered));
+  ok('and it is labelled with the portal\'s own word for that tab',
+     /CASE MEDIA/i.test(offered.label || ''), offered.label);
+  await page.waitForTimeout(900);
+  const landed = await page.evaluate(() => ({ view: VIEW, caseNo: WS_CASE, tab: WS_TAB }));
+  ok('and pressing it lands on that tab of that case',
+     landed.view === 'case' && landed.caseNo === 'API-CMD-TASK' && landed.tab === 'evidence',
+     JSON.stringify(landed));
+
+  /* AN ID THE PAGE DOES NOT KNOW OPENS NOTHING — the registry principle, at
+     the page layer. Model text can never become a destination. */
+  const bogus = await page.evaluate(() => {
+    const before = { view: VIEW, tab: WS_TAB };
+    asstNavigate({ kind: 'case_tab', case_no: 'API-CMD-TASK', id: 'settings' });
+    return { before, after: { view: VIEW, tab: WS_TAB } };
+  });
+  ok('a case-tab id outside the page\'s own list changes nothing',
+     bogus.after.tab === bogus.before.tab, JSON.stringify(bogus));
+  await page.close();
+}
+
+section('Case Command Center: the payment prefill opens the existing form and saves nothing');
+{
+  await post('/ingest', { case_no: 'API-PF-E2E', service: 'Surveillance',
+    client_name: 'Prefill Client', subject_name: 'Prefill Subject',
+    fee_due: 1500, payment_method: 'venmo' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => openCase('API-PF-E2E'));
+  await page.waitForTimeout(900);
+  await page.evaluate(async () => {
+    await asstOpen('API-PF-E2E');
+    await asstSend('record $250 venmo payment');
+  });
+  await page.waitForTimeout(1000);
+
+  const card = await page.evaluate(() => {
+    const c = document.querySelector('.asst-pf');
+    if (!c) return null;
+    return {
+      rows: [...c.querySelectorAll('.asst-pf-r')].map(r => r.textContent.replace(/\s+/g, ' ').trim()),
+      btn: c.querySelector('.btn').textContent.trim(),
+      btnH: Math.round(c.querySelector('.btn').getBoundingClientRect().height),
+      /* IT IS NOT A COMMAND. Nothing armed, so nothing can be confirmed. */
+      pending: !!(ASST && ASST.pending),
+      overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    };
+  });
+  ok('the answer is a review card, not a command offer',
+     !!card && card.pending === false, JSON.stringify(card));
+  ok('it shows the case, the amount and the method for review',
+     card.rows.some(r => /Prefill Client/.test(r)) && card.rows.some(r => /\$250\.00/.test(r))
+     && card.rows.some(r => /Venmo/.test(r)), JSON.stringify(card.rows));
+  ok('its one button opens a form rather than committing',
+     /Continue to Record Payment/.test(card.btn) && card.btnH >= 44, JSON.stringify(card));
+  ok('and it caused no sideways scroll at 390', card.overflow === false);
+
+  const before = await page.evaluate(async () => ((await (await fetch(
+    '/portal-api/cases/API-PF-E2E/workspace', { credentials: 'include' })).json())
+    .retainer_payments || []).length);
+  ok('no payment exists before continuing', before === 0, String(before));
+
+  await page.evaluate(() => { const b = document.querySelector('.asst-pf .btn'); if (b) b.click(); });
+  await page.waitForTimeout(1500);
+
+  const after = await page.evaluate(async () => {
+    const amt = document.getElementById('ret_amt');
+    const meth = document.getElementById('ret_method');
+    const w = await (await fetch('/portal-api/cases/API-PF-E2E/workspace',
+      { credentials: 'include' })).json();
+    return { formOpen: !!amt, amt: amt ? amt.value : null, meth: meth ? meth.value : null,
+      tab: WS_TAB, caseNo: WS_CASE,
+      payments: (w.retainer_payments || []).length,
+      /* The form's own control is still what commits — it is present and it is
+         not the Assistant's button. */
+      saveBtn: !!document.querySelector('[data-act="retSave"]') };
+  });
+  /* THE TAB A FORM LIVES ON IS A FACT TO LOOK UP. The first build opened
+     `billing`, which is the right-looking screen with no such control on it —
+     a message saying "it opens filled in" over a screen that has no form. */
+  ok('the EXISTING retainer form is open, on the panel that actually holds it',
+     after.formOpen === true && after.tab === 'auth', JSON.stringify(after));
+  ok('the amount is prefilled', after.amt === '250.00', after.amt);
+  ok('the method is prefilled', after.meth === 'venmo', after.meth);
+  ok("and the form's own Record payment control is what commits", after.saveBtn === true);
+  /* THE WHOLE POINT. */
+  ok('OPENING AND PREFILLING RECORDED NOTHING', after.payments === 0, String(after.payments));
 
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.close();

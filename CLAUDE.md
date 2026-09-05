@@ -69,16 +69,27 @@ A single unfiltered call therefore costs more than an entire context window
 and will end the session. This repo accumulates runs quickly — five workflows,
 one of them a daily cron — so the count only grows.
 
-**`per_page` does not work on this tool.** Measured on 2026-08-12: asking for
-`per_page: 2` with `resource_id: deploy.yml` returned **30 runs, 464 KB**. The
-`resource_id` filter is honoured — only that workflow's runs came back — but the
-count is not, so scoping alone still overflows.
+**THE PARAMETER IS `perPage`, NOT `per_page` — and with the right spelling it
+works.** Measured 2026-09-04: `perPage: 3` with `resource_id: deploy.yml` plus
+`workflow_runs_filter: {branch, event}` returned **exactly 3 runs**, small
+enough to read inline, and the newest carried the head SHA and conclusion the
+question was actually about.
+
+This corrects the note that stood here since 2026-08-12, which said the count
+was ignored. What was ignored was a parameter the tool does not have: the
+schema names `perPage`, and `per_page` is silently dropped, so the call fell
+back to the 30-run default and returned 464 KB. The `resource_id` filter was
+honoured then and is honoured now; the spelling was the whole problem.
+
+So the cheap call is: `resource_id` + `perPage: 3` + a `workflow_runs_filter`
+of `{branch: "master", event: "push"}`. Do not go back to unfiltered listings.
 
 What actually works:
 
 - For "did my push deploy?", use `pull_request_read` with `get_status` or
   `get_check_runs`. Those return a few hundred bytes, not half a megabyte.
-- If you do call an Actions listing, **expect it to overflow and plan for it**.
+- If you call an Actions listing WITHOUT `perPage`, **expect it to overflow and
+  plan for it**.
   The harness saves the payload to a file and hands you the path. Parse that
   file with a small python script that prints only the fields you want — never
   read it into context. That path works reliably and costs nothing:
@@ -3535,6 +3546,139 @@ somebody something untrue.**
 **Every Beta refusal still wins and is evaluated first.** A sentence naming a
 send, deletion, archive, assignment or payment is refused by name before any
 command resolves. External sends remain dry-run. No schema change.
+
+## The Command Center's five commands, and the four things it will not do
+
+`ASSISTANT_COMMANDS` grew from two rows to five, and every one still names an
+ORDINARY route: `start_day`, `end_day`, `add_task`, `complete_task` (level 2)
+and `accept_intake` (level 3, the only high-consequence command in V1). The
+architecture did not move — the Assistant block still holds no SQL of its own
+beyond `assistant_log`, calls the mail sender never, and executes nothing; the
+page dispatches a confirmed offer to the route the button already uses, so
+every write keeps its own gate, idempotency and audit record.
+
+**THE DAILY SUMMARY COMMAND DOES NOT WRITE A SUMMARY, and that IS the unit.**
+The builder composes deterministic sentences from recorded values and the
+writer's own **explicit picks** — which vehicle, which entries, which opening,
+which conclusion. Those picks are the authorship. A command that guessed them
+to "draft it for you" would invent the one thing `DAILY-SUMMARY.md` says
+nothing may invent, on a document a client reads. So it answers from the
+record — which day, whether that day is running or is merely the most recent,
+whether a summary already exists — and opens the builder. A test reads the
+stored narrative back byte for byte after asking, because "it does not rewrite
+what you wrote" is a promise a comment cannot keep.
+
+**The roles in the registry say who may be OFFERED a command; the route decides
+who may run it.** `addTask` is admin-only and `setTaskStatus` lets an
+investigator close their own task and nothing else, so those gates are the ones
+that count — the registry only stops a pointless offer. Completing resolves
+against the case's own open tasks, scoped exactly as the route would scope
+them, and **zero matches and several matches are different answers said
+differently**: a command that picked one of three would be choosing for the
+person.
+
+**A task's words are the person's own.** What the extractor strips is the
+instruction to the Assistant, never the content, and the confirmation card
+prints the exact sentence in quotes — nobody should approve wording they cannot
+read. `assistantCardNames` is the one reader of the case's names for those
+cards, with `redactRow`'s boundary (client admin-only, subject to both roles);
+before it existed the task cards fell through to the case NUMBER and drew it in
+the name position, which is how a live card reads as an orphaned reference —
+the defect already recorded on the surveillance launcher.
+
+**`ASSISTANT_CASE_TABS` is a registry for the reason `ASSISTANT_NAV` is one.**
+Model text must never become a destination. A case tab is not a top-level tab,
+so it gets its own list; `nav()` grew a fourth argument for the case number and
+every existing three-argument caller is unchanged. The page holds the matching
+list and resolves the id against handlers it already has, so an id in neither
+opens nothing. Billing on a case is admin-only and is therefore not offered to
+the field — a door that would refuse them is not a door.
+
+**"Cases ready to build"** was the nineteenth phrase from the owner's list and
+the one search could not answer. It is composed from the two tables that
+already decide it — an approved or delivered report, no finalized build —
+which is what the dashboard's own card counts, and `hiddenCases` excludes a
+deleted or archived case first, because a deleted case is not work.
+
+**Accepting an intake goes through `/leads/:no/status` and nothing else**, so
+that route's writer stays the single writer of `converted` and the
+acceptance-time fee snapshot rides with it. The record answers first: an
+already-accepted intake is not offered acceptance again and a declined lead is
+not quietly reopened. The confirmation names the two facts a person needs — the
+fee is snapshotted onto the case, and nothing is emailed.
+
+### The Beta guard wins over a task's own wording, and that stays
+
+`ASSISTANT_BLOCKED` matches the utterance before any command resolves, so
+*"add a task to send the report"* is refused by name — the word `send` is on
+the list. It is a false positive on a note nobody would have executed, and it
+is the **safe direction**: narrowing the list so a task's text could carry that
+verb would mean `send` no longer reliably reaches the refusal standing between
+this Assistant and a real client email. The owner's own line is that
+conversational wording must never bypass the restriction. Two tests pin it as
+behaviour, and the workaround is the task field on the case, one tap away and
+never gated.
+
+### Two source pins fired on my own comments, and both were right
+
+The Beta pin forbids the Assistant block from naming the lead writer at all;
+a second forbids the registry block from carrying an outbound verb anywhere.
+Both match by substring and cannot tell a comment from a call. My code called
+neither and named both in prose — once literally, once as the word "paying"
+inside a helper I had placed inside the registry's slice. **The comments were
+rewritten and the helper moved below the slice boundary; neither guard was
+loosened.** A guard weakened to accommodate its author's prose is the failure
+this project keeps recording.
+
+### The payment prefill prepares; the existing form still commits
+
+**Owner, 2026-09-05, overturning the deferral above.** *"Record $250 Mail
+Check for Vanessa"* prepares a **review card** — case, client, amount, method,
+and how the case was found — whose one button opens the case's **existing**
+Record Payment form with those fields filled in. The person presses the form's
+own control.
+
+**It is not a command and cannot become one.** The answer is
+`kind: 'payment_prefill'` with no command object, so `ASST_CMD` has no entry
+for it and nothing can execute it. `asstPrefillGo` calls no `api()`.
+
+**It seeds `RET_DRAFT`, not the DOM**, and that is why this form can take a
+prefill at all: the retainer form is rebuilt from that object on every
+repaint, so a value poked into an input would be gone at the next paint while
+the message still said it had been filled in — this file's own `EDIT_DRAFT`
+rule.
+
+**The method is only ever one the case's own form offers.** Mail Check belongs
+to a legal case; asking for it on a private one leaves the method blank and
+says why, rather than prefilling a value into a control with no such option. A
+claim assignment is refused entirely, in the route's own words: it is
+authorized in hour blocks and has no retainer form to open.
+
+**The blocked list was not weakened to allow it.** It refuses `record payment`
+by name, so the phrase needed the same treatment the intake and rate-sheet
+REHEARSALS already have: a narrow branch ABOVE the list, matching only an
+amount being recorded, returning a prefill. Everything else still refuses —
+and the list GREW: **voiding and altering a payment were never on it**, which
+the tests found. Nothing could have voided anything, but the owner's line names
+those verbs and a refusal by name is how that is said to the person asking.
+
+**Two things worth keeping from building it.** The first version opened the
+**Billing** tab — the right-looking screen with no such control on it, under a
+message promising a filled-in form. The retainer form lives on the
+**Authorization** panel; the tab a form lives on is a fact to look up, not to
+assume, and the suite asserts the panel by name. And the **per-invoice**
+payment form is deliberately still not prefillable: it has no draft object, so
+giving it one means touching the money form's state machinery where the
+`INVPAY_TOKEN` "a token belongs to one object" defect was already paid for
+once.
+
+### What the Command Center deliberately does not do
+
+- **No composed narrative**, per the Daily Summary rule above.
+- **No send of any kind.** The intake and rate-sheet REHEARSALS are the
+  send-shaped things it can do, and both still record `SIMULATED — NOT SENT`.
+- **No second door for anything.** Every command is a registry row naming a
+  route the portal already had.
 
 ## The phone is a different shape, and the desktop portal did not move
 

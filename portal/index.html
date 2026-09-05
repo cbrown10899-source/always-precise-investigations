@@ -1982,6 +1982,19 @@
 .asst-cmd-who b{font-weight:800;color:var(--navy);overflow-wrap:anywhere}
 .asst-cmd-who .mono{color:var(--muted);font-size:.78rem}
 .asst-cmd-who span{color:var(--muted);font-size:.79rem}
+.asst-cmd-detail{margin:0 0 6px;padding:7px 9px;background:var(--gold-bg);
+  border-radius:8px;font-size:.88rem;line-height:1.4;color:var(--navy);overflow-wrap:anywhere}
+/* The prefill review card. Deliberately NOT the gold-edged command panel: gold
+   is where a primary button commits, and nothing here commits. It reads as a
+   statement of what was understood, with one button that only opens a form. */
+.asst-pf{margin-top:8px;border:1px solid var(--line);border-left:4px solid var(--teal);
+  border-radius:10px;padding:10px 12px;background:var(--card)}
+.asst-pf-t{font-weight:800;font-size:.68rem;letter-spacing:.06em;color:var(--info-ink);
+  margin-bottom:6px}
+.asst-pf-r{display:flex;justify-content:space-between;gap:12px;padding:3px 0;font-size:.88rem}
+.asst-pf-r span{color:var(--muted)}
+.asst-pf-r b{color:var(--navy);text-align:right;overflow-wrap:anywhere}
+.asst-pf-n{margin-top:6px;font-size:.78rem;color:var(--muted);line-height:1.45}
 .asst-cmd-say{font-size:.83rem;color:var(--muted);line-height:1.45;margin-bottom:9px}
 .asst-cmd .asst-acts{margin-top:0;display:flex;flex-direction:column;gap:8px}
 .asst-cmd .asst-acts .btn{min-height:44px;width:100%}
@@ -3289,6 +3302,12 @@ async function asstSend(text){
     /* CASE COMMAND CENTER — an offer is stored as PENDING, never executed on
        arrival. The card the person sees and the thing the button runs are the
        same object, and it carries the token that ties them together. */
+    /* THE PREFILL IS NOT A COMMAND. It has no ASST_CMD entry and cannot get
+       one — `payment_prefill` is a review card whose button OPENS a form. It
+       rides on the message like `op`, `check` and `draft` already do. */
+    if(r.kind === "payment_prefill" && r.prefill){
+      ASST.msgs[ASST.msgs.length - 1].prefill = r.prefill;
+    }
     if(r.kind === "command" && r.command && ASST_CMD[r.command.action]){
       ASST.pending = { ...r.command, token: asstCmdToken() };
       ASST.msgs[ASST.msgs.length - 1].command = ASST.pending;
@@ -3426,6 +3445,59 @@ function asstDraftHtml(d){
    has a private endpoint, so each keeps its own role gate, its own
    deleted/archived refusal, its own idempotency and its own audit record. The
    Assistant is a faster way to the same door, never a second door. */
+/* The case tabs a command may land on. Mirrors ASSISTANT_CASE_TABS in the
+   Worker; two short lists that agree is the same shape ASSISTANT_NAV and the
+   page's TAB handlers already have, and an id in neither opens nothing. */
+const ASST_CASE_TABS = ["overview", "activity", "daily", "evidence", "reports", "billing"];
+
+/* THE PAYMENT PREFILL (owner, 2026-09-05). A REVIEW CARD, then the EXISTING
+   form. Nothing here records, posts, voids or alters a payment, and there is
+   no new form and no new route: `asstPrefillGo` opens the case, seeds the
+   draft object the retainer form ALREADY renders from, and shows it. The
+   person reads it and presses the form's own Record payment.
+
+   Seeding RET_DRAFT rather than writing into the DOM is what makes it hold:
+   the form is rebuilt from that object on every repaint, so a value poked
+   into an input would be gone at the next paint while the message still said
+   it had been filled in. That is the EDIT_DRAFT rule this file already
+   carries, and it is why the retainer form can take a prefill safely. */
+function asstPrefillHtml(p){
+  const row = (l, v) => `<div class="asst-pf-r"><span>${esc(l)}</span><b>${esc(v)}</b></div>`;
+  return `<div class="asst-pf">
+    <div class="asst-pf-t">REVIEW &mdash; NOTHING RECORDED</div>
+    ${row("Case", (p.client || p.subject || "") + " · " + p.case_no)}
+    ${row("Amount", "$" + p.amount)}
+    ${row("Method", p.method_label || "None chosen")}
+    ${p.method_note ? `<div class="asst-pf-n">${esc(p.method_note)}</div>` : ""}
+    <div class="asst-pf-n">Found by ${esc(p.found_by)}. Opening the form saves nothing &mdash;
+      you press <b>Record payment</b> on the case yourself.</div>
+    <div class="asst-acts">
+      <button class="btn sm accent" data-act="asstPrefillGo"
+        data-case="${esc(p.case_no)}" data-amt="${esc(p.amount)}"
+        data-meth="${esc(p.method || "")}">Continue to Record Payment</button>
+    </div>
+  </div>`;
+}
+
+async function asstPrefillGo(caseNo, amt, meth){
+  if(!caseNo) return;
+  const phone = window.innerWidth < 900;
+  if(phone && ASST) ASST.open = false;
+  /* "auth", NOT "billing". The retainer's Record payment form lives on the
+     Authorization panel — `authPanel` is what renders `retainerReceiptHtml`,
+     which is what renders the form. Measured: opening `billing` landed on the
+     right case and the right-looking screen with NO form on it, which is a
+     message saying "it opens filled in" over a screen that has no such
+     control. The tab a form lives on is a fact to look up, not to assume. */
+  await openCase(String(caseNo), "auth");
+  /* AFTER the case is loaded, and after retainerReset — which retOpen calls —
+     so nothing the previous case left behind can survive into this one. */
+  retainerReset();
+  RET_DRAFT = { amt: String(amt || ""), meth: String(meth || ""), date: "", ref: "" };
+  RET_FORM = true;
+  paintCase();
+}
+
 const ASST_CMD = {
   start_day: async c => {
     await api(`/cases/${encodeURIComponent(c.case_no)}/day/start`, {method: "POST", body: {
@@ -3438,6 +3510,36 @@ const ASST_CMD = {
       end_time: hmLocal(),
     }});
     return "Investigation day ended.";
+  },
+  /* THE ORDINARY TASK ROUTES, with nothing added. `addTask` is admin-only and
+     `setTaskStatus` refuses anything but "done" on a task that is not yours —
+     both still decide here, because this is the same POST the case tab and the
+     task board already send. Priority is left at the route's own default: a
+     task the office did not call urgent is not urgent, and guessing one would
+     raise an alert nobody asked for. */
+  add_task: async c => {
+    await api(`/cases/${encodeURIComponent(c.case_no)}/tasks`, {method: "POST", body: {
+      task: c.task || "",
+    }});
+    return `Task added to ${c.case_no}: ${c.task}`;
+  },
+  complete_task: async c => {
+    await api(`/cases/${encodeURIComponent(c.case_no)}/tasks/${encodeURIComponent(c.task_id)}/status`,
+      {method: "POST", body: { status: "done" }});
+    return `Marked done: ${c.task}`;
+  },
+  /* LEVEL 3. The ordinary lead writer, so stampLead stays the one writer of
+     'converted' and the acceptance-time fee snapshot rides with it. */
+  accept_intake: async c => {
+    await api(`/leads/${encodeURIComponent(c.case_no)}/status`, {method: "POST", body: {
+      status: "converted",
+    }});
+    /* THE LIST HAS TO STOP SAYING "NEW". `render()` is the page's own reload —
+       the same one the Try-again controls use — and without it the intake desk
+       would go on drawing this intake as undecided under a message saying it
+       was accepted. `loadLeads` does not exist; leadsView reads CASES. */
+    if(TAB === "leads") await render();
+    return `${c.case_no} accepted. It is a case now.`;
   },
 };
 
@@ -3504,6 +3606,14 @@ function asstNavigate(nav){
     return;
   }
   if(nav.kind === "case" && nav.case_no){ openCase(String(nav.case_no), "overview"); return; }
+  /* A TAB INSIDE A CASE. `openCase` has always taken the tab as its second
+     argument, so this needed no new door — but the id is checked against the
+     page's own list first, for the reason a top-level tab is: what the Worker
+     names is a registry id, and the page resolves it against handlers it
+     already has rather than trusting the string. */
+  if(nav.kind === "case_tab" && nav.case_no && ASST_CASE_TABS.includes(String(nav.id))){
+    openCase(String(nav.case_no), String(nav.id)); return;
+  }
   if(nav.kind === "action"){
     if(nav.id === "surveillance") openSurveillanceLauncher();
     if(nav.id === "vst") vstOpen("");
@@ -3756,6 +3866,7 @@ function asstMsgHtml(m){
     ${m.op ? asstOpCardHtml(m.op, m.actions, ASST.msgs.indexOf(m)) : ""}
     ${m.check ? asstCheckHtml(m.check) : ""}
     ${m.draft ? asstDraftHtml(m.draft) : ""}
+    ${m.prefill ? asstPrefillHtml(m.prefill) : ""}
     ${m.card ? `<div class="asst-card">${m.card.map(c => c.case_no
       /* A ROW THAT CAN OPEN NOTHING IS NOT A BUTTON. Some card rows carry no
          case number at all, and drawn as buttons they invited a tap that did
@@ -3771,9 +3882,20 @@ function asstMsgHtml(m){
       </div>`).join("")}</div>` : ""}
     ${m.command ? `<div class="asst-cmd">
       <div class="asst-cmd-t">${esc(m.text || m.command.label)}</div>
-      <div class="asst-cmd-who"><b>${esc(m.command.client || m.command.subject || m.command.case_no)}</b>
+      ${/* A NUMBER WHERE A NAME BELONGS is how a live card reads as an orphaned
+             reference — the defect this project already recorded on the
+             surveillance launcher. The case number is on its own line below, so
+             repeating it in the name position says nothing and looks broken.
+             When neither name is known the card says which is missing. */""}
+      <div class="asst-cmd-who"><b>${esc(m.command.client || m.command.subject
+        || "No client or subject recorded")}</b>
         <span class="mono">${esc(m.command.case_no)}</span>${
         m.command.whose ? `<span>Started by ${esc(m.command.whose)}</span>` : ""}</div>
+      ${/* THE EXACT WORDS THAT WOULD BE WRITTEN, when the command carries any.
+             A task's text is the person's own sentence and it is what lands in
+             the record, so it is shown verbatim rather than summarised —
+             nobody should approve a sentence they cannot read. */""}
+      ${m.command.detail ? `<div class="asst-cmd-detail">&ldquo;${esc(m.command.detail)}&rdquo;</div>` : ""}
       <div class="asst-cmd-say">${esc(m.command.say
         || "This changes the case record. Nothing happens until you confirm.")}</div>
       <div class="asst-acts">
@@ -20155,6 +20277,11 @@ document.addEventListener("click", ev => {
   /* CASE COMMAND CENTER — the only two acts that can reach ASST_CMD, and the
      run act carries the token of the card it belongs to. */
   else if(act === "asstCmdRun"){ asstCmdRun(el.dataset.token || ""); }
+  /* OPENS A FORM. It calls no api() and writes nothing — the only act in this
+     file that touches the money form is the form's own Record payment. */
+  else if(act === "asstPrefillGo"){
+    asstPrefillGo(el.dataset.case, el.dataset.amt, el.dataset.meth);
+  }
   else if(act === "asstCmdCancel"){
     if(ASST){ ASST.pending = null;
       ASST.msgs.push({ who: "asst", text: "Cancelled — nothing was changed." }); paint(); }

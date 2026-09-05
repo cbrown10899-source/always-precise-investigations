@@ -13631,10 +13631,63 @@ const ASSISTANT_COMMANDS = [
   { action: 'end_day', level: 2, label: 'End Day', needs_case: true,
     roles: ['admin', 'investigator'], route: 'day/end',
     title: 'END TODAY\'S INVESTIGATION DAY?' },
+  /* TASKS. `addTask` is admin-only and `setTaskStatus` lets an investigator
+     close their OWN task and nothing else — both stated here as the roles
+     that may be OFFERED the command, while the route keeps enforcing them.
+     Two gates that agree is the point; the route's is the one that counts. */
+  { action: 'add_task', level: 2, label: 'Add Task', needs_case: true,
+    roles: ['admin'], route: 'tasks',
+    title: 'ADD THIS FOLLOW-UP TASK?' },
+  { action: 'complete_task', level: 2, label: 'Mark Done', needs_case: true,
+    roles: ['admin', 'investigator'], route: 'tasks/:id/status',
+    title: 'MARK THIS TASK DONE?' },
+  /* LEVEL 3 — the only high-consequence command in V1. Accepting an intake is
+     the office's decision that this is a case, and the ordinary lead-status
+     route stays the single writer of 'converted', which is what carries the
+     acceptance-time fee snapshot with it. So the confirmation has to say that.
+     Admin-only, like the route.
+
+     (This comment names no outbound verb on purpose: a source pin forbids the
+     whole registry block from carrying one, and it is right to — the rehearsal
+     branch above is the only place in this Assistant that goes near one.) */
+  { action: 'accept_intake', level: 3, label: 'Accept Intake', needs_case: true,
+    roles: ['admin'], route: 'leads/:no/status',
+    title: 'ACCEPT THIS INTAKE AS A CASE?' },
 ];
+
+/* THE CASE TABS THE ASSISTANT MAY NAME, and it is a registry for the reason
+   ASSISTANT_NAV is one: model text must never become a destination. A case tab
+   is not a top-level tab — it lives inside the workspace — so it needs its own
+   list rather than a widening of that one, and the page resolves an id here
+   against its own handler exactly as it does for a tab. */
+const ASSISTANT_CASE_TABS = {
+  overview: 'Overview', activity: 'Activity', daily: 'Daily Summary',
+  evidence: 'Case media', reports: 'Report', billing: 'Billing',
+};
 /* `assistantCommand` is already the route handler's name — the class-name
    contest this project has recorded five times, at the function layer. */
 const assistantCmd = action => ASSISTANT_COMMANDS.find(c => c.action === action) || null;
+
+/* WHO THE CONFIRMATION IS ABOUT, and the boundary is redactRow's own: caseFor
+   answers permission, not identity — it selects four columns and none of them
+   is a name — so a card that wants to name the case reads it here. The CLIENT
+   is the paying side and reaches an admin only; the SUBJECT is who is watched
+   and reaches the field, which is the investigator's whole job.
+
+   ONE READER, because the day commands had this inline and the task commands
+   then drew the CASE NUMBER in the name position instead — a number where a
+   name belongs, which is how a live card reads as an orphaned reference. This
+   project has recorded that exact defect once already, on the surveillance
+   launcher. */
+async function assistantCardNames(env, user, caseNo) {
+  const row = await env.DB.prepare(
+    'SELECT client_name, subject_name FROM submissions WHERE case_no = ?').bind(caseNo).first() || {};
+  return {
+    ...(user.role === 'admin' ? { client: row.client_name || '' } : {}),
+    subject: row.subject_name || '',
+  };
+}
+
 
 /* THE ONE RESOLVER. Both the offer and the after-the-fact log go through it,
    so a command cannot be logged that could not have been offered — and the
@@ -13686,6 +13739,15 @@ const ASSISTANT_EXPLAIN = {
 const ASSISTANT_BLOCKED = [
   [/\b(send|email|resend)\b/i, 'sending anything to a client'],
   [/\brecord (a )?payment\b|\bmark .*paid\b/i, 'recording payments'],
+  /* VOIDING AND ALTERING, added 2026-09-05 with the prefill. The owner's line
+     is that the Assistant may never record, post, VOID or alter a payment, and
+     until now only the first two were refused BY NAME — nothing could have
+     voided anything, because nothing executes without a registry row, but the
+     person asking got no answer saying so. The prefill carve-out sits above
+     this list and matches only an amount being RECORDED, so neither of these
+     can reach it. */
+  [/\bvoid\b/i, 'voiding a payment'],
+  [/\b(change|edit|alter|adjust|correct|fix)\b[^]{0,30}\bpayment\b/i, 'altering a payment'],
   [/\bdelete\b/i, 'deleting records'],
   [/\barchiv/i, 'archiving'],
   [/\bclose (the )?case\b|\bclose this\b/i, 'closing cases'],
@@ -14382,7 +14444,14 @@ async function assistantWatch(env, user) {
    names what it carries. The Assistant identifies and explains; deleting
    stays the manual control on the intake card, and the answer says so. */
 
-const nav = (label, id, kind = 'tab') => ({ label, navigate: kind === 'case' ? { kind, case_no: id } : { kind, id } });
+/* `kind` decides what `id` means: a tab id, an action id, a case number, or —
+   for 'case_tab' — a tab INSIDE a case, which needs both and so takes the case
+   number as a fourth argument. Every existing caller is a three-argument call
+   and is unchanged. */
+const nav = (label, id, kind = 'tab', caseNo = '') =>
+  ({ label, navigate: kind === 'case' ? { kind, case_no: id }
+    : kind === 'case_tab' ? { kind, id, case_no: caseNo }
+    : { kind, id } });
 const say = (label, text) => ({ label, say: text });
 const seed = (label, text) => ({ label, seed: text });
 
@@ -14818,6 +14887,144 @@ async function assistantCommandCore(body, env, user) {
       form: { context: ctxGuess, to: mail || '', case_no: caseNo || '' } });
   }
 
+  /* ---- THE PAYMENT PREFILL — a rehearsal, in the shape Units 4 and 5 use ---
+     Owner, 2026-09-05: "Record $250 Mail Check for Vanessa" may PREPARE a
+     reviewed card and then open the EXISTING Record Payment form with the
+     fields filled in. It may never record, post, void or alter a payment.
+
+     THIS SITS ABOVE THE BETA LIST ON PURPOSE, and that is not a hole in it.
+     The list refuses `record payment` by name, so without a carve-out the
+     owner's own phrase would be refused — the same situation the intake and
+     rate-sheet REHEARSALS were in, and this is that precedent applied a third
+     time. The pattern is narrow: it must look like recording an amount, and
+     what it returns is a PREFILL, never a command. Anything that does not
+     match still falls through to the refusal, and the blocked list is
+     unchanged.
+
+     WHAT MAKES IT SAFE, and each of these is asserted:
+       - it returns `kind: 'payment_prefill'`, which the page's command
+         allow-list has no entry for, so it cannot be run as a command;
+       - it writes nothing and calls no write route;
+       - the case is resolved through `caseFor`, so an invented or unreadable
+         case number dies where every other one does;
+       - the METHOD is only ever one the case's own form actually offers, so a
+         prefill can never put a value in a control that has no such option;
+       - the amount is shown for review before anything opens.
+
+     THE PERSON STILL PRESSES RECORD PAYMENT. Opening a filled-in form saves
+     nothing; the existing control, its validation, its idempotency token and
+     its audit row are all exactly where they were. */
+  {
+    const money = text.match(/\$\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/)
+      || text.match(/\b([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(?:dollars?|usd)\b/i);
+    const looksLikeRecording = /\b(record|log|enter|take|received|receive)\b/i.test(text)
+      && /\bpayment\b|\bpaid\b|\bretainer\b|\$/.test(text);
+    if (money && looksLikeRecording) {
+      if (user.role !== 'admin') {
+        return json({ ok: true, kind: 'status',
+          text: 'Recording a payment is an admin desk — this action requires Admin permission.' });
+      }
+      const amount = Number(String(money[1]).replace(/,/g, ''));
+      if (!(amount > 0) || amount > 1000000) {
+        return json({ ok: true, kind: 'status',
+          text: 'I could not read a sensible amount there. Say it as a figure, like "$250".' });
+      }
+
+      /* WHICH CASE. The one that is open, else exactly one search match — and
+         a name that finds none or several is SAID, never chosen between,
+         because picking one of three would be deciding whose money this is. */
+      let target = caseNo;
+      let foundBy = 'the case you have open';
+      if (!target) {
+        const who = String(text)
+          .replace(/\$\s*[0-9][0-9,]*(?:\.[0-9]{1,2})?/g, ' ')
+          .replace(/\b(record|log|enter|take|received|receive|payment|paid|retainer|a|the|for|of|from|mail|check|cash|app|venmo|ach|bill|wire|card|dollars?|usd)\b/gi, ' ')
+          .replace(/\s+/g, ' ').trim();
+        if (!who) {
+          return json({ ok: true, kind: 'status',
+            text: 'Which case is that payment for? Open it, or name the client — '
+                + '"record $250 mail check for Vanessa".',
+            actions: [nav('CASES', 'cases')] });
+        }
+        /* THE SAME SEARCH THE OFFICE USES, so the role boundary is the SQL's
+           and nothing is re-implemented. A synthetic Request carries the query
+           because globalSearch reads its URL; nothing external is fetched. */
+        const sres = await globalSearch(
+          new Request('http://assistant.internal/search?q=' + encodeURIComponent(who)), env, user);
+        const hits = ((await sres.json()).results || []).filter(h => h.case_no);
+        const cases = [...new Map(hits.map(h => [h.case_no,
+          { case_no: h.case_no, title: h.subtitle || h.case_no,
+            line: [h.case_no, (h.matched || []).join(', ')].filter(Boolean).join(' · ') }])).values()];
+        if (cases.length !== 1) {
+          return json({ ok: true, kind: 'status',
+            text: cases.length === 0
+              ? `Nothing matches "${who}", so I do not know whose payment that is.`
+              : `More than one case matches "${who}" — open the right one and ask again.`,
+            card: cases.slice(0, 5).map(c => ({ case_no: c.case_no,
+              title: c.title || c.case_no, line: c.line || c.case_no })),
+            actions: [nav('SEARCH', 'search')] });
+        }
+        target = cases[0].case_no;
+        foundBy = `matched "${who}"`;
+      }
+      const row = await caseFor(env, user, target);
+      if (!row) return json({ ok: true, kind: 'status',
+        text: `I cannot read ${target} with your access.` });
+      const gate = await caseSendRefusal(env, target);
+      if (gate) return json({ ok: true, kind: 'status',
+        text: `${target} has been archived or deleted, so nothing can be recorded against it.` });
+
+      /* A CLAIM ASSIGNMENT HAS NO RETAINER, and the route says so in those
+         words — so the prefill must not offer a form that does not exist. */
+      if (row.kind === 'claims') {
+        return json({ ok: true, kind: 'status',
+          text: `${target} is a claim assignment. Retainers are the private-client model — a claim `
+              + 'is authorized in hour blocks and billed on its invoice, so there is no retainer '
+              + 'payment to record.',
+          actions: [nav('BILLING', 'billing', 'case_tab', target)] });
+      }
+
+      /* THE METHOD IS ONLY EVER ONE THE CASE'S OWN FORM OFFERS. Mail Check is
+         a legal case's option; the rest are the shared list. A method the form
+         would not render is reported and left blank rather than prefilled into
+         a control with no such option — which would show "—" under a message
+         saying it had been filled in. */
+      /* `isLegalSub` is the ONE reader of the legal marker — never inferred
+         from a recipient, an address or a table's presence, which is the rule
+         LEGAL-INTAKE.md already sets. The page's form uses the same fact. */
+      const subRow = await env.DB.prepare('SELECT payload FROM submissions WHERE case_no = ?')
+        .bind(target).first();
+      const legal = isLegalSub(subRow);
+      const offered = legal ? RETAINER_METHODS : RETAINER_METHODS.filter(x => x !== 'mail_check');
+      const asked =
+          /\bmail\s*check\b/i.test(text) ? 'mail_check'
+        : /\bcash\s*app\b/i.test(text) ? 'cash_app'
+        : /\bvenmo\b/i.test(text) ? 'venmo'
+        : /\bach\b|\bbill\.?com\b/i.test(text) ? 'ach_bill'
+        : /\bcheck\b|\bcheque\b/i.test(text) ? 'check'
+        : /\bcash\b/i.test(text) ? 'cash' : '';
+      const methodOk = asked && offered.includes(asked);
+      const methodNote = !asked ? 'No method was named, so the form opens with none chosen.'
+        : methodOk ? '' 
+        : `${RETAINER_METHOD_LABEL[asked] || asked} is not one of the methods this case's form `
+          + 'offers, so it is left blank for you to choose.';
+
+      const names = await assistantCardNames(env, user, target);
+      return json({ ok: true, kind: 'payment_prefill',
+        text: 'Nothing is recorded here. Check these against what you were given, then continue '
+            + 'to the case\'s own Record Payment form — it opens filled in, and you press Record '
+            + 'Payment yourself.',
+        prefill: {
+          case_no: target, ...names,
+          amount: amount.toFixed(2),
+          method: methodOk ? asked : '',
+          method_label: methodOk ? (RETAINER_METHOD_LABEL[asked] || asked) : '',
+          method_note: methodNote,
+          found_by: foundBy,
+        } });
+    }
+  }
+
   /* ---- Beta enforcement FIRST: a consequential verb is refused before any
      intent could act on it, whatever else the sentence says. Pure questions
      ("why can't I delete this?") are let through to the explainers below. */
@@ -14898,18 +15105,301 @@ async function assistantCommandCore(body, env, user) {
          CLIENT is the paying side and reaches an admin only, exactly as
          redactRow has always had it; the SUBJECT is who is watched and
          reaches the field, which is the investigator's whole job. */
-      const nameRow = await env.DB.prepare(
-        'SELECT client_name, subject_name FROM submissions WHERE case_no = ?')
-        .bind(caseNo).first() || {};
       return json({ ok: true, kind: 'command',
         text: cmd.title,
         command: {
           action, case_no: caseNo, label: cmd.label, level: cmd.level,
-          ...(user.role === 'admin' ? { client: nameRow.client_name || '' } : {}),
-          subject: nameRow.subject_name || '',
+          ...(await assistantCardNames(env, user, caseNo)),
           day_id: action === 'end_day' && open ? open.id : null,
           whose: action === 'end_day' && open && !mine ? (open.who || '') : '',
         } });
+    }
+  }
+
+  /* ---- THE DAILY SUMMARY, AND WHY THIS COMMAND DOES NOT WRITE ONE -------
+     The builder composes DETERMINISTIC sentences from recorded values and the
+     writer's own EXPLICIT PICKS — which vehicle, which entries, which opening,
+     which conclusion. Those picks are the authorship. A command that guessed
+     them so it could "draft the summary for you" would be inventing the one
+     thing DAILY-SUMMARY.md says nothing may invent, and it would do it on a
+     document that reaches a client.
+
+     So this answers the question from the record and opens the builder. It is
+     the same rule the Rebuild button already follows by ASKING first: the
+     engine composes, a person decides. */
+  {
+    const wantsDS = /\b(daily summary|day'?s summary|summary for (today|the day|this day))\b/i.test(text)
+      || (/\b(draft|write|start|open|do)\b/i.test(text) && /\bsummary\b/i.test(text)
+          && !/\bcombined summary\b/i.test(text) && !/\bcase summary\b/i.test(text));
+    if (wantsDS) {
+      if (!caseNo) {
+        return json({ ok: true, kind: 'status',
+          text: 'Which case? A daily summary belongs to one investigation day on one case — '
+              + 'open it first, or find it with "Find <name or case number>".',
+          actions: [nav('CASES', 'cases')] });
+      }
+      const row = await caseFor(env, user, caseNo);
+      if (!row) return json({ ok: true, kind: 'status',
+        text: `I cannot read ${caseNo} with your access.` });
+
+      const miss = await missingTables(env);
+      /* THE CASE'S CURRENT DAY, by wsCurrentDay's own rule: the day that is
+         running if one is, else the most recent — and the answer SAYS which,
+         because a screen that draws a day without saying whether it is running
+         is the silently wrong day this project has already named. */
+      const day = miss.includes('case_days') ? null : await env.DB.prepare(
+        `SELECT id, day_date, end_time FROM case_days WHERE case_no = ?
+          ORDER BY (end_time IS NULL) DESC, day_date DESC, id DESC LIMIT 1`).bind(caseNo).first();
+      if (!day) {
+        return json({ ok: true, kind: 'status',
+          text: `No investigation day has been recorded on ${caseNo} yet, so there is no day for a `
+              + 'summary to describe. A day starts in Active Surveillance or on the case\'s own Day panel.',
+          actions: [nav('OPEN THE CASE', caseNo, 'case')] });
+      }
+      const running = !day.end_time;
+      const saved = miss.includes('case_day_summary') ? null : await env.DB.prepare(
+        'SELECT narrative FROM case_day_summary WHERE day_id = ?').bind(day.id).first();
+      const has = saved && String(saved.narrative || '').trim();
+      const state = has
+        ? 'A summary is already written for that day. The builder will show it, and it stays yours '
+          + 'until you change it — nothing here rewrites what you wrote.'
+        : 'No summary is written for that day yet.';
+      return json({ ok: true, kind: 'status',
+        text: `${caseNo} — day of ${day.day_date}${running ? ' (running now)' : ' (most recent day)'}. `
+            + `${state} The builder composes the sentences from what is recorded; the picks that shape `
+            + 'them are yours, so I open it rather than writing one on your behalf.',
+        actions: [nav('OPEN THE DAILY SUMMARY', 'daily', 'case_tab', caseNo)] });
+    }
+  }
+
+  /* ---- TASKS ON THE EXISTING TASK SYSTEM (§ the case_tasks the board and the
+     case tab already write). Both commands map to the ordinary routes, so
+     `addTask`'s admin gate and `setTaskStatus`'s "your own task, and done is
+     the only transition the field needs" rule are the ones that decide. */
+  {
+    const wantsAdd = /\b(add|create|make|new|open)\b[^]{0,16}\b(task|to.?do|follow.?up|reminder)\b/i.test(text)
+      || /\bremind me to\b/i.test(text);
+    const wantsDone = (/\b(complete|finish|close)\b[^]{0,24}\b(task|to.?do|follow.?up)\b/i.test(text)
+      || /\bmark\b[^]{0,60}\bdone\b/i.test(text) || /\btask\b[^]{0,24}\bdone\b/i.test(text));
+    if (wantsAdd || wantsDone) {
+      const action = wantsAdd ? 'add_task' : 'complete_task';
+      const plan = await assistantPlan(env, user, action, caseNo);
+      if (plan.fail === 'not_your_desk') {
+        return json({ ok: true, kind: 'status',
+          text: 'Creating a task is an admin desk. You can mark your own task done from the task board.',
+          actions: [nav('TASKS', 'tasks')] });
+      }
+      if (plan.fail === 'no_case') {
+        return json({ ok: true, kind: 'status',
+          text: 'Which case? A task belongs to one — open it first, or find it with '
+              + '"Find <name or case number>".',
+          actions: [nav('CASES', 'cases'), nav('TASKS', 'tasks')] });
+      }
+      if (plan.fail === 'no_such_case') return json({ ok: true, kind: 'status',
+        text: `I cannot read ${caseNo} with your access.` });
+      if (plan.fail === 'case_closed_to_writes') return json({ ok: true, kind: 'status',
+        text: `${caseNo} has been archived or deleted, so nothing can be written to it. Put the case back first.` });
+      if (plan.fail) return json({ ok: true, kind: 'status',
+        text: 'That is not a command this account can run.' });
+
+      if (action === 'add_task') {
+        /* THE WORDS ARE THE PERSON'S OWN. What is stripped is the instruction
+           to me, never the content — and the confirmation prints exactly what
+           would be written, so nobody approves a sentence they cannot see. */
+        const said = String(text)
+          .replace(/^\s*(please\s+)?/i, '')
+          .replace(/^\s*remind me to\s+/i, '')
+          .replace(/^\s*(add|create|make|new|open)\s+(a|an|the)?\s*(task|to.?do|follow.?up|reminder)\s*(to|that|for|:)?\s*/i, '')
+          .replace(/\s+on\s+(this\s+case|case\s+[A-Za-z0-9-]{3,64})\s*$/i, '')
+          .trim().slice(0, 500);
+        if (!said) {
+          return json({ ok: true, kind: 'status',
+            text: 'Say what needs doing — "add a task to call the adjuster on Monday", for example. '
+                + 'I will show you the exact wording before anything is written.' });
+        }
+        return json({ ok: true, kind: 'command', text: plan.cmd.title,
+          command: { action, case_no: caseNo, label: plan.cmd.label, level: plan.cmd.level,
+                     ...(await assistantCardNames(env, user, caseNo)),
+                     task: said, detail: said,
+                     say: 'This writes a follow-up task on the case, at normal priority and with no '
+                        + 'due date — the task board and the case tab are where it can be given either. '
+                        + 'Nothing is emailed and nobody is assigned.' } });
+      }
+
+      /* COMPLETE: resolved against the case's OWN OPEN TASKS, never invented.
+         Zero matches and several matches are different answers and are said
+         differently — a command that picked one of three would be choosing on
+         the person's behalf. */
+      if ((await missingTables(env)).includes('case_tasks')) {
+        return json({ ok: true, kind: 'status',
+          text: 'The task table is not set up on this database yet, so I cannot read what is open.' });
+      }
+      const mineOnly = user.role === 'admin' ? '' : ' AND assigned_to = ?';
+      const binds = mineOnly ? [caseNo, user.id] : [caseNo];
+      const open = await env.DB.prepare(
+        `SELECT id, task FROM case_tasks WHERE case_no = ? AND status = 'open'${mineOnly}
+          ORDER BY id DESC LIMIT ${SEARCH_ARM_CAP}`).bind(...binds).all();
+      const rows = (open && open.results) || [];
+      if (!rows.length) {
+        return json({ ok: true, kind: 'status',
+          text: user.role === 'admin'
+            ? `No task is open on ${caseNo}.`
+            : `No task on ${caseNo} is open and assigned to you.`,
+          actions: [nav('TASKS', 'tasks')] });
+      }
+      const needle = String(text).toLowerCase()
+        .replace(/\b(mark|complete|finish|close|the|a|an|task|to.?do|follow.?up|as|done|please)\b/gi, ' ')
+        .replace(/\s+/g, ' ').trim();
+      const hits = needle
+        ? rows.filter(r => String(r.task || '').toLowerCase().includes(needle))
+        : rows;
+      if (hits.length !== 1) {
+        return json({ ok: true, kind: 'status',
+          text: hits.length === 0
+            ? `Nothing open on ${caseNo} matches that. Open tasks: `
+              + rows.slice(0, 5).map(r => `"${r.task}"`).join(', ') + '.'
+            : `More than one open task matches — say which: `
+              + hits.slice(0, 5).map(r => `"${r.task}"`).join(', ') + '.',
+          actions: [nav('TASKS', 'tasks')] });
+      }
+      return json({ ok: true, kind: 'command', text: plan.cmd.title,
+        command: { action, case_no: caseNo, label: plan.cmd.label, level: plan.cmd.level,
+                   ...(await assistantCardNames(env, user, caseNo)),
+                   task_id: hits[0].id, task: hits[0].task, detail: hits[0].task,
+                   say: 'This closes the task on the record. It stays on the board under Completed — '
+                      + 'nothing is deleted, and it can be reopened from the case.' } });
+    }
+  }
+
+
+  /* ---- ACCEPTING AN INTAKE — the one level-3 command in V1 ---------------
+     The office deciding an intake is a case. It goes through the ordinary
+     `/leads/:no/status` route, so that route's own writer stays the single
+     writer of 'converted' and the acceptance-time fee snapshot cannot be
+     missed by a new door — which is exactly why no route was added here.
+
+     THIS IS NOT THE OUTBOUND PATH. An utterance pairing an intake with an
+     outbound verb reaches the dry-run workbench above instead, and that
+     branch's own guard is what keeps them apart; this one is only the decision
+     that already-received work is now a case.
+
+     (The pattern below excludes those verbs for that reason, and the whole
+     branch deliberately avoids naming the writer function, because a source
+     pin forbids the Assistant block from carrying that name at all.) */
+  if (/\b(accept|convert)\b/i.test(text) && /\b(intake|lead|case|this)\b/i.test(text)
+      && !/\bsend\b|\bemail\b|\bprepare\b|\bdry.?run\b|\bsimulat/i.test(text)) {
+    const plan = await assistantPlan(env, user, 'accept_intake', caseNo);
+    if (plan.fail === 'not_your_desk') {
+      return json({ ok: true, kind: 'status',
+        text: 'Accepting an intake is an admin desk — this action requires Admin permission.' });
+    }
+    if (plan.fail === 'no_case') {
+      return json({ ok: true, kind: 'status',
+        text: 'Which intake? Open it from the intake desk first — I will not guess which one to accept.',
+        actions: [nav('INTAKES', 'leads')] });
+    }
+    if (plan.fail === 'no_such_case') return json({ ok: true, kind: 'status',
+      text: `I cannot read ${caseNo} with your access.` });
+    if (plan.fail === 'case_closed_to_writes') return json({ ok: true, kind: 'status',
+      text: `${caseNo} has been archived or deleted, so its lead state cannot be moved. `
+          + 'Put the case back first.' });
+    if (plan.fail) return json({ ok: true, kind: 'status',
+      text: 'That is not a command this account can run.' });
+
+    /* THE RECORD ANSWERS FIRST. Once the office has decided, the system never
+       quietly moves the lead again — so an already-decided intake is not
+       offered an acceptance that would overwrite that decision silently. */
+    const miss = await missingTables(env);
+    const cur = miss.includes('lead_status') ? null : await env.DB.prepare(
+      'SELECT status FROM lead_status WHERE case_no = ?').bind(caseNo).first();
+    if (cur && LEAD_DECIDED.includes(cur.status)) {
+      return json({ ok: true, kind: 'status',
+        text: cur.status === 'converted'
+          ? `${caseNo} has already been accepted — it is a case. Nothing to do.`
+          : `${caseNo} was already recorded as ${cur.status.replace(/_/g, ' ')}. `
+            + 'Reopening a decided lead is a deliberate act on the intake desk, not something I will do here.',
+        actions: [nav('INTAKES', 'leads')] });
+    }
+    return json({ ok: true, kind: 'command', text: plan.cmd.title,
+      command: { action: 'accept_intake', case_no: caseNo, label: plan.cmd.label,
+                 level: plan.cmd.level,
+                 ...(await assistantCardNames(env, user, caseNo)),
+                 say: 'This records the office\'s decision that the intake is a case, and it '
+                    + 'snapshots the fee in force onto it so a later change to the default cannot '
+                    + 'alter this one. Nothing is emailed to anybody.' } });
+  }
+
+  /* ---- READY TO BUILD, and the case tabs that answer "where is that" -----
+     "Cases ready to build" is the nineteenth phrase from the owner's own list
+     and the one Unit C could not answer, because it needs the package read
+     rather than search. It is composed here from the two tables that already
+     decide it — an approved or delivered report, and no finalized build —
+     which is exactly what the dashboard's own Ready-to-build card counts. No
+     new state, no new meaning.
+
+     Admin-only, like every package desk in this portal. */
+  if (/\bready to build\b|\bready for (a )?package\b|\bcases? (that are )?ready\b/i.test(text)) {
+    if (user.role !== 'admin') {
+      return json({ ok: true, kind: 'status',
+        text: 'Packages are an admin desk — this action requires Admin permission.' });
+    }
+    const miss = await missingTables(env);
+    if (miss.includes('case_reports') || miss.includes('case_builds')) {
+      return json({ ok: true, kind: 'status',
+        text: 'The report or package table is not set up on this database yet, so readiness is '
+            + 'unknown — not zero.' });
+    }
+    const hidden = await hiddenCases(env);
+    const rows = ((await env.DB.prepare(
+      `SELECT s.case_no, s.client_name, s.subject_name
+         FROM submissions s
+        WHERE EXISTS (SELECT 1 FROM case_reports r WHERE r.case_no = s.case_no
+                        AND r.status IN ('approved','delivered'))
+          AND NOT EXISTS (SELECT 1 FROM case_builds b WHERE b.case_no = s.case_no
+                            AND b.status = 'finalized')
+        ORDER BY s.created_at DESC LIMIT ${SEARCH_TOTAL_CAP}`).all()).results || [])
+      .filter(r => !hidden.has(r.case_no));
+    if (!rows.length) {
+      return json({ ok: true, kind: 'status',
+        text: 'No case has an approved report waiting for a package right now.',
+        actions: [nav('REPORTS & PACKAGES', 'delivery')] });
+    }
+    return json({ ok: true, kind: 'status',
+      text: `${rows.length} case${rows.length === 1 ? ' has' : 's have'} an approved report and no `
+          + 'finalized package yet.',
+      card: rows.slice(0, 8).map(r => ({
+        case_no: r.case_no,
+        title: r.client_name || r.subject_name || r.case_no,
+        line: `${r.case_no} — report approved, package not finalized`,
+      })),
+      actions: [nav('REPORTS & PACKAGES', 'delivery')] });
+  }
+
+  /* ---- "WHERE IS THE REPORT / THE EVIDENCE / THE BILLING ON THIS CASE" ---
+     A destination, not a command: these are the case tabs Unit 38 made one
+     level deep, and the Assistant's job here is to be the tap that gets you
+     there. The id is a registry id resolved by the page against its own
+     handlers, so nothing here can name a screen that does not exist. */
+  {
+    const tab = /\b(evidence|photos?|media|files?)\b/i.test(text) ? 'evidence'
+      : /\breports?\b/i.test(text) ? 'reports'
+      : /\b(billing|invoices?|balance|outstanding)\b/i.test(text) ? 'billing'
+      : /\bactivity\b|\bactivity log\b/i.test(text) ? 'activity'
+      : null;
+    const asksWhere = /\b(open|show|take me to|go to|where|jump to|bring up)\b/i.test(text);
+    if (tab && asksWhere && caseNo) {
+      const row = await caseFor(env, user, caseNo);
+      if (!row) return json({ ok: true, kind: 'status',
+        text: `I cannot read ${caseNo} with your access.` });
+      /* BILLING IS ADMIN-ONLY ON THE CASE PAGE, so it is not offered to the
+         field — a door that would refuse them is not a door. */
+      if (tab === 'billing' && user.role !== 'admin') {
+        return json({ ok: true, kind: 'status',
+          text: 'Billing on a case is an admin desk — this action requires Admin permission.' });
+      }
+      return json({ ok: true, kind: 'status',
+        text: `${ASSISTANT_CASE_TABS[tab]} on ${caseNo}.`,
+        actions: [nav(`OPEN ${ASSISTANT_CASE_TABS[tab].toUpperCase()}`, tab, 'case_tab', caseNo)] });
     }
   }
 
