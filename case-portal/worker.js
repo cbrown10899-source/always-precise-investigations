@@ -15093,6 +15093,81 @@ async function assistantCommandCore(body, env, user) {
     }
   }
 
+
+  /* ---- READY TO BUILD, and the case tabs that answer "where is that" -----
+     "Cases ready to build" is the nineteenth phrase from the owner's own list
+     and the one Unit C could not answer, because it needs the package read
+     rather than search. It is composed here from the two tables that already
+     decide it — an approved or delivered report, and no finalized build —
+     which is exactly what the dashboard's own Ready-to-build card counts. No
+     new state, no new meaning.
+
+     Admin-only, like every package desk in this portal. */
+  if (/\bready to build\b|\bready for (a )?package\b|\bcases? (that are )?ready\b/i.test(text)) {
+    if (user.role !== 'admin') {
+      return json({ ok: true, kind: 'status',
+        text: 'Packages are an admin desk — this action requires Admin permission.' });
+    }
+    const miss = await missingTables(env);
+    if (miss.includes('case_reports') || miss.includes('case_builds')) {
+      return json({ ok: true, kind: 'status',
+        text: 'The report or package table is not set up on this database yet, so readiness is '
+            + 'unknown — not zero.' });
+    }
+    const hidden = await hiddenCases(env);
+    const rows = ((await env.DB.prepare(
+      `SELECT s.case_no, s.client_name, s.subject_name
+         FROM submissions s
+        WHERE EXISTS (SELECT 1 FROM case_reports r WHERE r.case_no = s.case_no
+                        AND r.status IN ('approved','delivered'))
+          AND NOT EXISTS (SELECT 1 FROM case_builds b WHERE b.case_no = s.case_no
+                            AND b.status = 'finalized')
+        ORDER BY s.created_at DESC LIMIT ${SEARCH_TOTAL_CAP}`).all()).results || [])
+      .filter(r => !hidden.has(r.case_no));
+    if (!rows.length) {
+      return json({ ok: true, kind: 'status',
+        text: 'No case has an approved report waiting for a package right now.',
+        actions: [nav('REPORTS & PACKAGES', 'delivery')] });
+    }
+    return json({ ok: true, kind: 'status',
+      text: `${rows.length} case${rows.length === 1 ? ' has' : 's have'} an approved report and no `
+          + 'finalized package yet.',
+      card: rows.slice(0, 8).map(r => ({
+        case_no: r.case_no,
+        title: r.client_name || r.subject_name || r.case_no,
+        line: `${r.case_no} — report approved, package not finalized`,
+      })),
+      actions: [nav('REPORTS & PACKAGES', 'delivery')] });
+  }
+
+  /* ---- "WHERE IS THE REPORT / THE EVIDENCE / THE BILLING ON THIS CASE" ---
+     A destination, not a command: these are the case tabs Unit 38 made one
+     level deep, and the Assistant's job here is to be the tap that gets you
+     there. The id is a registry id resolved by the page against its own
+     handlers, so nothing here can name a screen that does not exist. */
+  {
+    const tab = /\b(evidence|photos?|media|files?)\b/i.test(text) ? 'evidence'
+      : /\breports?\b/i.test(text) ? 'reports'
+      : /\b(billing|invoices?|balance|outstanding)\b/i.test(text) ? 'billing'
+      : /\bactivity\b|\bactivity log\b/i.test(text) ? 'activity'
+      : null;
+    const asksWhere = /\b(open|show|take me to|go to|where|jump to|bring up)\b/i.test(text);
+    if (tab && asksWhere && caseNo) {
+      const row = await caseFor(env, user, caseNo);
+      if (!row) return json({ ok: true, kind: 'status',
+        text: `I cannot read ${caseNo} with your access.` });
+      /* BILLING IS ADMIN-ONLY ON THE CASE PAGE, so it is not offered to the
+         field — a door that would refuse them is not a door. */
+      if (tab === 'billing' && user.role !== 'admin') {
+        return json({ ok: true, kind: 'status',
+          text: 'Billing on a case is an admin desk — this action requires Admin permission.' });
+      }
+      return json({ ok: true, kind: 'status',
+        text: `${ASSISTANT_CASE_TABS[tab]} on ${caseNo}.`,
+        actions: [nav(`OPEN ${ASSISTANT_CASE_TABS[tab].toUpperCase()}`, tab, 'case_tab', caseNo)] });
+    }
+  }
+
   /* ---- UNIT 4: the Beta audit trail, readable where it is written (§26) —
      what has been simulated, each row wearing its outcome. */
   if (/simulation (log|history)|\b(show|list|recent|what have)\b[^]*simulat/i.test(text)) {

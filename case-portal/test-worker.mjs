@@ -18816,6 +18816,88 @@ section('Case Command Center: tasks go through the task system that already exis
   ok('and not one task was closed by asking', Number(still) === 0, String(still));
 }
 
+section('Case Command Center: cases ready to build, and the case tabs');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const res = await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' });
+  const token = new URL((await jsonOf(res)).url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const danaId = (await jsonOf(await call(env, '/users', { cookie: admin }))).users
+    .find(u => u.username === 'dana').id;
+
+  for (const no of ['API-RB-READY', 'API-RB-DONE', 'API-RB-DRAFT', 'API-RB-HIDDEN']) {
+    await ingest(env, { case_no: no, client_name: `Client ${no}`, subject_name: `Subject ${no}` });
+  }
+  await call(env, '/submissions/API-RB-READY/assign', { method: 'POST', cookie: admin,
+    body: { user_id: danaId } });
+  const rep = async (no, status) => {
+    await env.DB.prepare(
+      `INSERT INTO case_reports (case_no, day_id, investigator_id, report_date, status, body, created_at)
+       VALUES (?, NULL, 1, '2026-09-05', ?, 'x', ?)`)
+      .bind(no, status, new Date().toISOString()).run();
+  };
+  await rep('API-RB-READY', 'approved');
+  await rep('API-RB-DONE', 'approved');
+  await rep('API-RB-DRAFT', 'draft');
+  await rep('API-RB-HIDDEN', 'approved');
+  await env.DB.prepare(
+    `INSERT INTO case_builds (case_no, version, status, created_by, created_at)
+     VALUES ('API-RB-DONE', 1, 'finalized', 1, ?)`).bind(new Date().toISOString()).run();
+  /* A DELETED CASE IS NOT WORK. hiddenCases is the same exclusion every other
+     cross-case read here applies, and it applies before the answer is drawn. */
+  await call(env, '/cases/API-RB-HIDDEN/delete', { method: 'POST', cookie: admin, body: {} });
+
+  const cmd = (cookie, text, caseNo) => call(env, '/assistant/command', { method: 'POST', cookie,
+    body: { text, context: caseNo ? { case_no: caseNo, route: 'case' } : { route: 'cases' } } });
+
+  let j = await jsonOf(await cmd(admin, 'show cases ready to build'));
+  const nos = (j.card || []).map(c => c.case_no);
+  ok('a case with an approved report and no finalized package is ready',
+     nos.includes('API-RB-READY'), JSON.stringify(nos));
+  ok('a case whose package is already finalized is not',
+     !nos.includes('API-RB-DONE'), JSON.stringify(nos));
+  ok('a case whose report is still a draft is not',
+     !nos.includes('API-RB-DRAFT'), JSON.stringify(nos));
+  ok('and a deleted case is not work, so it is excluded',
+     !nos.includes('API-RB-HIDDEN'), JSON.stringify(nos));
+  ok('nothing is OFFERED as a command — this is a read',
+     j.kind === 'status' && !j.command);
+  ok('every row can open its case', (j.card || []).every(c => c.case_no));
+
+  /* ADMIN-ONLY, like every package desk here. */
+  j = await jsonOf(await cmd(dana, 'show cases ready to build'));
+  ok('an investigator is told it is an admin desk, not shown a list',
+     j.kind === 'status' && !j.card && /admin/i.test(j.text), j.text);
+
+  /* ---- THE CASE TABS ------------------------------------------------- */
+  const tabOf = a => (a && a.navigate && a.navigate.kind === 'case_tab') ? a.navigate.id : null;
+  for (const [phrase, want] of [['open the evidence on this case', 'evidence'],
+                                ['take me to the report', 'reports'],
+                                ['open the activity log', 'activity']]) {
+    j = await jsonOf(await cmd(admin, phrase, 'API-RB-READY'));
+    const got = (j.actions || []).map(tabOf).filter(Boolean);
+    ok(`"${phrase}" offers the ${want} tab`, got.includes(want), JSON.stringify(j.actions));
+    ok(`and it carries the case it is about`,
+       (j.actions || []).some(a => a.navigate && a.navigate.case_no === 'API-RB-READY'));
+  }
+
+  /* BILLING IS ADMIN-ONLY ON A CASE, so it is not offered to the field — a
+     door that would refuse them is not a door. */
+  j = await jsonOf(await cmd(dana, 'open the billing on this case', 'API-RB-READY'));
+  ok('an investigator is not offered the case Billing tab',
+     !(j.actions || []).some(a => tabOf(a) === 'billing') && /admin/i.test(j.text), j.text);
+  j = await jsonOf(await cmd(admin, 'open the billing on this case', 'API-RB-READY'));
+  ok('an admin is', (j.actions || []).some(a => tabOf(a) === 'billing'), JSON.stringify(j.actions));
+
+  /* IDOR: the tab hop resolves through caseFor like everything else. */
+  j = await jsonOf(await cmd(dana, 'open the evidence on this case', 'API-RB-DRAFT'));
+  ok('a case the investigator is not on offers no tab at all',
+     !(j.actions || []).some(tabOf) && /cannot read/i.test(j.text), j.text);
+}
+
 section('Case Command Center: invoices and tasks are searchable, within the role');
 {
   const env = freshEnv();
