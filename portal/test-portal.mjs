@@ -19379,8 +19379,13 @@ section('Case Command Center: a task is offered, read, confirmed and written');
       action: ASST.pending ? ASST.pending.action : null };
   });
   ok('completing is its own offer', done.action === 'complete_task', JSON.stringify(done));
+  /* THE LAST CARD IS THE LIVE ONE. The conversation keeps every card it ever
+     offered, and querySelector returns the FIRST — the spent add_task card,
+     whose token is stale, so pressing it correctly says so and does nothing.
+     That is the protection working; the test had to stop clicking the wrong
+     card. */
   await page.evaluate(() => {
-    const b = document.querySelector('.asst-cmd [data-act="asstCmdRun"]');
+    const b = [...document.querySelectorAll('.asst-cmd [data-act="asstCmdRun"]')].pop();
     if (b) b.click();
   });
   await page.waitForTimeout(1200);
@@ -19407,13 +19412,25 @@ section('Case Command Center: a case-tab destination lands on the tab it named')
     await asstSend('open the evidence on this case');
   });
   await page.waitForTimeout(900);
+  /* MATCHED ON THE DESTINATION, NOT THE WORDS. The `evidence` tab is called
+     "Case media" on purpose — CLAUDE.md's media-wording rule — so the button
+     reads OPEN CASE MEDIA and a text match on "evidence" finds nothing. What
+     the test is about is where it goes, so that is what it looks at. */
   const offered = await page.evaluate(() => {
-    const btns = [...document.querySelectorAll('.asst-m .asst-acts .btn')];
-    const b = btns.find(x => /EVIDENCE/i.test(x.textContent));
-    if (b) b.click();
-    return !!b;
+    const msgs = ASST.msgs.filter(m => m.actions);
+    const last = msgs[msgs.length - 1];
+    const i = (last.actions || []).findIndex(a => a.navigate
+      && a.navigate.kind === 'case_tab' && a.navigate.id === 'evidence');
+    if (i < 0) return { found: false, labels: (last.actions || []).map(a => a.label) };
+    const btn = [...document.querySelectorAll('.asst-m .asst-acts .btn')]
+      .find(b => b.dataset.i === `${ASST.msgs.indexOf(last)}:${i}`);
+    if (btn) btn.click();
+    return { found: true, clicked: !!btn, label: last.actions[i].label };
   });
-  ok('the answer offers the evidence tab', offered === true);
+  ok('the answer offers the evidence tab as a case-tab destination',
+     offered.found === true && offered.clicked === true, JSON.stringify(offered));
+  ok('and it is labelled with the portal\'s own word for that tab',
+     /CASE MEDIA/i.test(offered.label || ''), offered.label);
   await page.waitForTimeout(900);
   const landed = await page.evaluate(() => ({ view: VIEW, caseNo: WS_CASE, tab: WS_TAB }));
   ok('and pressing it lands on that tab of that case',
