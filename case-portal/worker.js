@@ -13739,6 +13739,15 @@ const ASSISTANT_EXPLAIN = {
 const ASSISTANT_BLOCKED = [
   [/\b(send|email|resend)\b/i, 'sending anything to a client'],
   [/\brecord (a )?payment\b|\bmark .*paid\b/i, 'recording payments'],
+  /* VOIDING AND ALTERING, added 2026-09-05 with the prefill. The owner's line
+     is that the Assistant may never record, post, VOID or alter a payment, and
+     until now only the first two were refused BY NAME — nothing could have
+     voided anything, because nothing executes without a registry row, but the
+     person asking got no answer saying so. The prefill carve-out sits above
+     this list and matches only an amount being RECORDED, so neither of these
+     can reach it. */
+  [/\bvoid\b/i, 'voiding a payment'],
+  [/\b(change|edit|alter|adjust|correct|fix)\b[^]{0,30}\bpayment\b/i, 'altering a payment'],
   [/\bdelete\b/i, 'deleting records'],
   [/\barchiv/i, 'archiving'],
   [/\bclose (the )?case\b|\bclose this\b/i, 'closing cases'],
@@ -14876,6 +14885,144 @@ async function assistantCommandCore(body, env, user) {
       text: 'Dry run: pick the audience, preview the exact sheet email, then SIMULATE — '
           + `recorded as ${ASSISTANT_SIM_OUTCOME}, and nothing is sent.`,
       form: { context: ctxGuess, to: mail || '', case_no: caseNo || '' } });
+  }
+
+  /* ---- THE PAYMENT PREFILL — a rehearsal, in the shape Units 4 and 5 use ---
+     Owner, 2026-09-05: "Record $250 Mail Check for Vanessa" may PREPARE a
+     reviewed card and then open the EXISTING Record Payment form with the
+     fields filled in. It may never record, post, void or alter a payment.
+
+     THIS SITS ABOVE THE BETA LIST ON PURPOSE, and that is not a hole in it.
+     The list refuses `record payment` by name, so without a carve-out the
+     owner's own phrase would be refused — the same situation the intake and
+     rate-sheet REHEARSALS were in, and this is that precedent applied a third
+     time. The pattern is narrow: it must look like recording an amount, and
+     what it returns is a PREFILL, never a command. Anything that does not
+     match still falls through to the refusal, and the blocked list is
+     unchanged.
+
+     WHAT MAKES IT SAFE, and each of these is asserted:
+       - it returns `kind: 'payment_prefill'`, which the page's command
+         allow-list has no entry for, so it cannot be run as a command;
+       - it writes nothing and calls no write route;
+       - the case is resolved through `caseFor`, so an invented or unreadable
+         case number dies where every other one does;
+       - the METHOD is only ever one the case's own form actually offers, so a
+         prefill can never put a value in a control that has no such option;
+       - the amount is shown for review before anything opens.
+
+     THE PERSON STILL PRESSES RECORD PAYMENT. Opening a filled-in form saves
+     nothing; the existing control, its validation, its idempotency token and
+     its audit row are all exactly where they were. */
+  {
+    const money = text.match(/\$\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/)
+      || text.match(/\b([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(?:dollars?|usd)\b/i);
+    const looksLikeRecording = /\b(record|log|enter|take|received|receive)\b/i.test(text)
+      && /\bpayment\b|\bpaid\b|\bretainer\b|\$/.test(text);
+    if (money && looksLikeRecording) {
+      if (user.role !== 'admin') {
+        return json({ ok: true, kind: 'status',
+          text: 'Recording a payment is an admin desk — this action requires Admin permission.' });
+      }
+      const amount = Number(String(money[1]).replace(/,/g, ''));
+      if (!(amount > 0) || amount > 1000000) {
+        return json({ ok: true, kind: 'status',
+          text: 'I could not read a sensible amount there. Say it as a figure, like "$250".' });
+      }
+
+      /* WHICH CASE. The one that is open, else exactly one search match — and
+         a name that finds none or several is SAID, never chosen between,
+         because picking one of three would be deciding whose money this is. */
+      let target = caseNo;
+      let foundBy = 'the case you have open';
+      if (!target) {
+        const who = String(text)
+          .replace(/\$\s*[0-9][0-9,]*(?:\.[0-9]{1,2})?/g, ' ')
+          .replace(/\b(record|log|enter|take|received|receive|payment|paid|retainer|a|the|for|of|from|mail|check|cash|app|venmo|ach|bill|wire|card|dollars?|usd)\b/gi, ' ')
+          .replace(/\s+/g, ' ').trim();
+        if (!who) {
+          return json({ ok: true, kind: 'status',
+            text: 'Which case is that payment for? Open it, or name the client — '
+                + '"record $250 mail check for Vanessa".',
+            actions: [nav('CASES', 'cases')] });
+        }
+        /* THE SAME SEARCH THE OFFICE USES, so the role boundary is the SQL's
+           and nothing is re-implemented. A synthetic Request carries the query
+           because globalSearch reads its URL; nothing external is fetched. */
+        const sres = await globalSearch(
+          new Request('http://assistant.internal/search?q=' + encodeURIComponent(who)), env, user);
+        const hits = ((await sres.json()).results || []).filter(h => h.case_no);
+        const cases = [...new Map(hits.map(h => [h.case_no,
+          { case_no: h.case_no, title: h.subtitle || h.case_no,
+            line: [h.case_no, (h.matched || []).join(', ')].filter(Boolean).join(' · ') }])).values()];
+        if (cases.length !== 1) {
+          return json({ ok: true, kind: 'status',
+            text: cases.length === 0
+              ? `Nothing matches "${who}", so I do not know whose payment that is.`
+              : `More than one case matches "${who}" — open the right one and ask again.`,
+            card: cases.slice(0, 5).map(c => ({ case_no: c.case_no,
+              title: c.title || c.case_no, line: c.line || c.case_no })),
+            actions: [nav('SEARCH', 'search')] });
+        }
+        target = cases[0].case_no;
+        foundBy = `matched "${who}"`;
+      }
+      const row = await caseFor(env, user, target);
+      if (!row) return json({ ok: true, kind: 'status',
+        text: `I cannot read ${target} with your access.` });
+      const gate = await caseSendRefusal(env, target);
+      if (gate) return json({ ok: true, kind: 'status',
+        text: `${target} has been archived or deleted, so nothing can be recorded against it.` });
+
+      /* A CLAIM ASSIGNMENT HAS NO RETAINER, and the route says so in those
+         words — so the prefill must not offer a form that does not exist. */
+      if (row.kind === 'claims') {
+        return json({ ok: true, kind: 'status',
+          text: `${target} is a claim assignment. Retainers are the private-client model — a claim `
+              + 'is authorized in hour blocks and billed on its invoice, so there is no retainer '
+              + 'payment to record.',
+          actions: [nav('BILLING', 'billing', 'case_tab', target)] });
+      }
+
+      /* THE METHOD IS ONLY EVER ONE THE CASE'S OWN FORM OFFERS. Mail Check is
+         a legal case's option; the rest are the shared list. A method the form
+         would not render is reported and left blank rather than prefilled into
+         a control with no such option — which would show "—" under a message
+         saying it had been filled in. */
+      /* `isLegalSub` is the ONE reader of the legal marker — never inferred
+         from a recipient, an address or a table's presence, which is the rule
+         LEGAL-INTAKE.md already sets. The page's form uses the same fact. */
+      const subRow = await env.DB.prepare('SELECT payload FROM submissions WHERE case_no = ?')
+        .bind(target).first();
+      const legal = isLegalSub(subRow);
+      const offered = legal ? RETAINER_METHODS : RETAINER_METHODS.filter(x => x !== 'mail_check');
+      const asked =
+          /\bmail\s*check\b/i.test(text) ? 'mail_check'
+        : /\bcash\s*app\b/i.test(text) ? 'cash_app'
+        : /\bvenmo\b/i.test(text) ? 'venmo'
+        : /\bach\b|\bbill\.?com\b/i.test(text) ? 'ach_bill'
+        : /\bcheck\b|\bcheque\b/i.test(text) ? 'check'
+        : /\bcash\b/i.test(text) ? 'cash' : '';
+      const methodOk = asked && offered.includes(asked);
+      const methodNote = !asked ? 'No method was named, so the form opens with none chosen.'
+        : methodOk ? '' 
+        : `${RETAINER_METHOD_LABEL[asked] || asked} is not one of the methods this case's form `
+          + 'offers, so it is left blank for you to choose.';
+
+      const names = await assistantCardNames(env, user, target);
+      return json({ ok: true, kind: 'payment_prefill',
+        text: 'Nothing is recorded here. Check these against what you were given, then continue '
+            + 'to the case\'s own Record Payment form — it opens filled in, and you press Record '
+            + 'Payment yourself.',
+        prefill: {
+          case_no: target, ...names,
+          amount: amount.toFixed(2),
+          method: methodOk ? asked : '',
+          method_label: methodOk ? (RETAINER_METHOD_LABEL[asked] || asked) : '',
+          method_note: methodNote,
+          found_by: foundBy,
+        } });
+    }
   }
 
   /* ---- Beta enforcement FIRST: a consequential verb is refused before any

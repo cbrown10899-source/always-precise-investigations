@@ -19432,6 +19432,79 @@ section('Case Command Center: a case-tab destination lands on the tab it named')
   await page.close();
 }
 
+section('Case Command Center: the payment prefill opens the existing form and saves nothing');
+{
+  await post('/ingest', { case_no: 'API-PF-E2E', service: 'Surveillance',
+    client_name: 'Prefill Client', subject_name: 'Prefill Subject',
+    fee_due: 1500, payment_method: 'venmo' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => openCase('API-PF-E2E'));
+  await page.waitForTimeout(900);
+  await page.evaluate(async () => {
+    await asstOpen('API-PF-E2E');
+    await asstSend('record $250 venmo payment');
+  });
+  await page.waitForTimeout(1000);
+
+  const card = await page.evaluate(() => {
+    const c = document.querySelector('.asst-pf');
+    if (!c) return null;
+    return {
+      rows: [...c.querySelectorAll('.asst-pf-r')].map(r => r.textContent.replace(/\s+/g, ' ').trim()),
+      btn: c.querySelector('.btn').textContent.trim(),
+      btnH: Math.round(c.querySelector('.btn').getBoundingClientRect().height),
+      /* IT IS NOT A COMMAND. Nothing armed, so nothing can be confirmed. */
+      pending: !!(ASST && ASST.pending),
+      overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    };
+  });
+  ok('the answer is a review card, not a command offer',
+     !!card && card.pending === false, JSON.stringify(card));
+  ok('it shows the case, the amount and the method for review',
+     card.rows.some(r => /Prefill Client/.test(r)) && card.rows.some(r => /\$250\.00/.test(r))
+     && card.rows.some(r => /Venmo/.test(r)), JSON.stringify(card.rows));
+  ok('its one button opens a form rather than committing',
+     /Continue to Record Payment/.test(card.btn) && card.btnH >= 44, JSON.stringify(card));
+  ok('and it caused no sideways scroll at 390', card.overflow === false);
+
+  const before = await page.evaluate(async () => ((await (await fetch(
+    '/portal-api/cases/API-PF-E2E/workspace', { credentials: 'include' })).json())
+    .retainer_payments || []).length);
+  ok('no payment exists before continuing', before === 0, String(before));
+
+  await page.evaluate(() => { const b = document.querySelector('.asst-pf .btn'); if (b) b.click(); });
+  await page.waitForTimeout(1500);
+
+  const after = await page.evaluate(async () => {
+    const amt = document.getElementById('ret_amt');
+    const meth = document.getElementById('ret_method');
+    const w = await (await fetch('/portal-api/cases/API-PF-E2E/workspace',
+      { credentials: 'include' })).json();
+    return { formOpen: !!amt, amt: amt ? amt.value : null, meth: meth ? meth.value : null,
+      tab: WS_TAB, caseNo: WS_CASE,
+      payments: (w.retainer_payments || []).length,
+      /* The form's own control is still what commits — it is present and it is
+         not the Assistant's button. */
+      saveBtn: !!document.querySelector('[data-act="retSave"]') };
+  });
+  /* THE TAB A FORM LIVES ON IS A FACT TO LOOK UP. The first build opened
+     `billing`, which is the right-looking screen with no such control on it —
+     a message saying "it opens filled in" over a screen that has no form. */
+  ok('the EXISTING retainer form is open, on the panel that actually holds it',
+     after.formOpen === true && after.tab === 'auth', JSON.stringify(after));
+  ok('the amount is prefilled', after.amt === '250.00', after.amt);
+  ok('the method is prefilled', after.meth === 'venmo', after.meth);
+  ok("and the form's own Record payment control is what commits", after.saveBtn === true);
+  /* THE WHOLE POINT. */
+  ok('OPENING AND PREFILLING RECORDED NOTHING', after.payments === 0, String(after.payments));
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
 await browser.close();
 server.close();
 

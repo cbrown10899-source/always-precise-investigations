@@ -1984,6 +1984,17 @@
 .asst-cmd-who span{color:var(--muted);font-size:.79rem}
 .asst-cmd-detail{margin:0 0 6px;padding:7px 9px;background:var(--gold-bg);
   border-radius:8px;font-size:.88rem;line-height:1.4;color:var(--navy);overflow-wrap:anywhere}
+/* The prefill review card. Deliberately NOT the gold-edged command panel: gold
+   is where a primary button commits, and nothing here commits. It reads as a
+   statement of what was understood, with one button that only opens a form. */
+.asst-pf{margin-top:8px;border:1px solid var(--line);border-left:4px solid var(--teal);
+  border-radius:10px;padding:10px 12px;background:var(--card)}
+.asst-pf-t{font-weight:800;font-size:.68rem;letter-spacing:.06em;color:var(--info-ink);
+  margin-bottom:6px}
+.asst-pf-r{display:flex;justify-content:space-between;gap:12px;padding:3px 0;font-size:.88rem}
+.asst-pf-r span{color:var(--muted)}
+.asst-pf-r b{color:var(--navy);text-align:right;overflow-wrap:anywhere}
+.asst-pf-n{margin-top:6px;font-size:.78rem;color:var(--muted);line-height:1.45}
 .asst-cmd-say{font-size:.83rem;color:var(--muted);line-height:1.45;margin-bottom:9px}
 .asst-cmd .asst-acts{margin-top:0;display:flex;flex-direction:column;gap:8px}
 .asst-cmd .asst-acts .btn{min-height:44px;width:100%}
@@ -3291,6 +3302,12 @@ async function asstSend(text){
     /* CASE COMMAND CENTER — an offer is stored as PENDING, never executed on
        arrival. The card the person sees and the thing the button runs are the
        same object, and it carries the token that ties them together. */
+    /* THE PREFILL IS NOT A COMMAND. It has no ASST_CMD entry and cannot get
+       one — `payment_prefill` is a review card whose button OPENS a form. It
+       rides on the message like `op`, `check` and `draft` already do. */
+    if(r.kind === "payment_prefill" && r.prefill){
+      ASST.msgs[ASST.msgs.length - 1].prefill = r.prefill;
+    }
     if(r.kind === "command" && r.command && ASST_CMD[r.command.action]){
       ASST.pending = { ...r.command, token: asstCmdToken() };
       ASST.msgs[ASST.msgs.length - 1].command = ASST.pending;
@@ -3432,6 +3449,54 @@ function asstDraftHtml(d){
    Worker; two short lists that agree is the same shape ASSISTANT_NAV and the
    page's TAB handlers already have, and an id in neither opens nothing. */
 const ASST_CASE_TABS = ["overview", "activity", "daily", "evidence", "reports", "billing"];
+
+/* THE PAYMENT PREFILL (owner, 2026-09-05). A REVIEW CARD, then the EXISTING
+   form. Nothing here records, posts, voids or alters a payment, and there is
+   no new form and no new route: `asstPrefillGo` opens the case, seeds the
+   draft object the retainer form ALREADY renders from, and shows it. The
+   person reads it and presses the form's own Record payment.
+
+   Seeding RET_DRAFT rather than writing into the DOM is what makes it hold:
+   the form is rebuilt from that object on every repaint, so a value poked
+   into an input would be gone at the next paint while the message still said
+   it had been filled in. That is the EDIT_DRAFT rule this file already
+   carries, and it is why the retainer form can take a prefill safely. */
+function asstPrefillHtml(p){
+  const row = (l, v) => `<div class="asst-pf-r"><span>${esc(l)}</span><b>${esc(v)}</b></div>`;
+  return `<div class="asst-pf">
+    <div class="asst-pf-t">REVIEW &mdash; NOTHING RECORDED</div>
+    ${row("Case", (p.client || p.subject || "") + " · " + p.case_no)}
+    ${row("Amount", "$" + p.amount)}
+    ${row("Method", p.method_label || "None chosen")}
+    ${p.method_note ? `<div class="asst-pf-n">${esc(p.method_note)}</div>` : ""}
+    <div class="asst-pf-n">Found by ${esc(p.found_by)}. Opening the form saves nothing &mdash;
+      you press <b>Record payment</b> on the case yourself.</div>
+    <div class="asst-acts">
+      <button class="btn sm accent" data-act="asstPrefillGo"
+        data-case="${esc(p.case_no)}" data-amt="${esc(p.amount)}"
+        data-meth="${esc(p.method || "")}">Continue to Record Payment</button>
+    </div>
+  </div>`;
+}
+
+async function asstPrefillGo(caseNo, amt, meth){
+  if(!caseNo) return;
+  const phone = window.innerWidth < 900;
+  if(phone && ASST) ASST.open = false;
+  /* "auth", NOT "billing". The retainer's Record payment form lives on the
+     Authorization panel — `authPanel` is what renders `retainerReceiptHtml`,
+     which is what renders the form. Measured: opening `billing` landed on the
+     right case and the right-looking screen with NO form on it, which is a
+     message saying "it opens filled in" over a screen that has no such
+     control. The tab a form lives on is a fact to look up, not to assume. */
+  await openCase(String(caseNo), "auth");
+  /* AFTER the case is loaded, and after retainerReset — which retOpen calls —
+     so nothing the previous case left behind can survive into this one. */
+  retainerReset();
+  RET_DRAFT = { amt: String(amt || ""), meth: String(meth || ""), date: "", ref: "" };
+  RET_FORM = true;
+  paintCase();
+}
 
 const ASST_CMD = {
   start_day: async c => {
@@ -3801,6 +3866,7 @@ function asstMsgHtml(m){
     ${m.op ? asstOpCardHtml(m.op, m.actions, ASST.msgs.indexOf(m)) : ""}
     ${m.check ? asstCheckHtml(m.check) : ""}
     ${m.draft ? asstDraftHtml(m.draft) : ""}
+    ${m.prefill ? asstPrefillHtml(m.prefill) : ""}
     ${m.card ? `<div class="asst-card">${m.card.map(c => c.case_no
       /* A ROW THAT CAN OPEN NOTHING IS NOT A BUTTON. Some card rows carry no
          case number at all, and drawn as buttons they invited a tap that did
@@ -20211,6 +20277,11 @@ document.addEventListener("click", ev => {
   /* CASE COMMAND CENTER — the only two acts that can reach ASST_CMD, and the
      run act carries the token of the card it belongs to. */
   else if(act === "asstCmdRun"){ asstCmdRun(el.dataset.token || ""); }
+  /* OPENS A FORM. It calls no api() and writes nothing — the only act in this
+     file that touches the money form is the form's own Record payment. */
+  else if(act === "asstPrefillGo"){
+    asstPrefillGo(el.dataset.case, el.dataset.amt, el.dataset.meth);
+  }
   else if(act === "asstCmdCancel"){
     if(ASST){ ASST.pending = null;
       ASST.msgs.push({ who: "asst", text: "Cancelled — nothing was changed." }); paint(); }

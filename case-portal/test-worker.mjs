@@ -17138,7 +17138,13 @@ section('API Assistant — Beta reads, role-scoped navigation, refusals by name'
        dry-run workbench now, asserted in the Unit 4/5 sections below. */
     ['Email the firm their case documents', /sending/],
     ['Email them the invoice', /sending/],
-    ['Record a payment of $250 on this case', /recording payments/],
+    /* 'Record a payment of $250…' moved to the PREFILL carve-out (owner,
+       2026-09-05) — it prepares a review card and opens the existing form,
+       asserted in its own section below. What stays refused by name is every
+       payment verb that is not that: marking paid, voiding, altering. */
+    ['Mark this invoice paid', /recording payments/],
+    ['Void that payment', /voiding a payment/],
+    ['Change the amount on that payment', /altering a payment/],
     ['Delete this intake', /deleting/],
     ['Archive this case', /archiving/],
     ['Close the case', /closing cases/],
@@ -18610,8 +18616,13 @@ section('Case Command Center: the command protocol and its refusals');
   /* 8 — THE BETA REFUSALS STILL WIN. Widening the Assistant into an operating
      layer must not have widened what it may do: a sentence naming a send, a
      deletion or a payment is refused by name BEFORE any command resolves. */
-  for (const phrase of ['delete this case', 'record a payment of $250',
-                        'archive this case', 'assign this to dana']) {
+  /* 'record a payment of $250' is deliberately NOT in this list any more: the
+     owner approved a PREFILL for it, which prepares and records nothing. It is
+     asserted in the payment-prefill section — including that it carries no
+     command and writes no ledger row. What is walked here is what still
+     refuses outright. */
+  for (const phrase of ['delete this case', 'mark this invoice paid',
+                        'void that payment', 'archive this case', 'assign this to dana']) {
     const r = await jsonOf(await cmd(admin, phrase, 'API-CC-THEIRS'));
     ok(`"${phrase}" is still refused by name, not resolved into a command`,
        r.code === 'assistant_beta' && !r.command, r.kind);
@@ -18876,6 +18887,110 @@ section('Case Command Center: accepting an intake is level 3, and sending still 
     .bind('API-AI-FRESH').first();
   ok('the fresh intake was not converted by being asked about', !still || still.status !== 'converted',
      JSON.stringify(still));
+}
+
+section('Case Command Center: the payment PREFILL prepares and records nothing');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const res = await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' });
+  const token = new URL((await jsonOf(res)).url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  await ingest(env, { case_no: 'API-PF-PRIV', client_name: 'Vanessa Northcott',
+    subject_name: 'Subject Priv', service: 'Surveillance' });
+  await ingest(env, { case_no: 'API-PF-LEGAL', client_name: 'Halloran Legal',
+    subject_name: 'Subject Legal', service: 'Surveillance', assignment: 'legal' });
+  await ingest(env, { case_no: 'API-PF-CLAIM', client_name: 'Example Mutual',
+    subject_name: 'Subject Claim', service: 'Insurance Claim Assignment',
+    carrier: 'Example Mutual', claim_number: 'WC-1' });
+
+  const cmd = (cookie, text, caseNo) => call(env, '/assistant/command', { method: 'POST', cookie,
+    body: { text, context: caseNo ? { case_no: caseNo, route: 'case' } : { route: 'cases' } } });
+  const moneyRows = async () => Number((await env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM retainer_payment').first()).n);
+
+  /* ---- IT PREPARES, AND IT IS NOT A COMMAND ---------------------------- */
+  let j = await jsonOf(await cmd(admin, 'record $250 mail check', 'API-PF-LEGAL'));
+  ok('the phrase reaches a PREFILL, not the Beta refusal',
+     j.kind === 'payment_prefill', JSON.stringify({ kind: j.kind, text: j.text }).slice(0, 160));
+  /* THE CRITICAL PROPERTY: it is not a command, so the page's command
+     allow-list has no entry for it and it cannot be run as one. */
+  ok('it carries no command, so nothing can execute it', !j.command);
+  ok('it names the case, the amount and the method for review',
+     j.prefill.case_no === 'API-PF-LEGAL' && j.prefill.amount === '250.00'
+     && j.prefill.method === 'mail_check', JSON.stringify(j.prefill));
+  ok('and it says plainly that nothing is recorded',
+     /nothing is recorded/i.test(j.text) && /you press Record Payment yourself/i.test(j.text), j.text);
+  ok('NOT ONE PAYMENT ROW WAS WRITTEN', (await moneyRows()) === 0);
+
+  /* ---- THE METHOD IS ONLY EVER ONE THE CASE'S FORM OFFERS --------------- */
+  j = await jsonOf(await cmd(admin, 'record $250 mail check', 'API-PF-PRIV'));
+  ok('Mail Check is not prefilled on a case whose form does not offer it',
+     j.kind === 'payment_prefill' && j.prefill.method === '', JSON.stringify(j.prefill));
+  ok('and the card says why it was left blank',
+     /not one of the methods/i.test(j.prefill.method_note), j.prefill.method_note);
+  j = await jsonOf(await cmd(admin, 'record $80 venmo payment', 'API-PF-PRIV'));
+  ok('a method the form does offer is prefilled',
+     j.prefill.method === 'venmo' && j.prefill.method_label === 'Venmo', JSON.stringify(j.prefill));
+  j = await jsonOf(await cmd(admin, 'record a payment of $100', 'API-PF-PRIV'));
+  ok('no method named leaves it unchosen and says so',
+     j.prefill.method === '' && /No method was named/i.test(j.prefill.method_note));
+
+  /* ---- A CLAIM ASSIGNMENT HAS NO RETAINER FORM TO OPEN ------------------ */
+  j = await jsonOf(await cmd(admin, 'record $500 check', 'API-PF-CLAIM'));
+  ok('a claim assignment is refused a retainer prefill, in the route\'s own words',
+     j.kind === 'status' && !j.prefill && /authorized in hour blocks/i.test(j.text), j.text);
+
+  /* ---- THE BOUNDARIES EVERY OTHER COMMAND HAS -------------------------- */
+  j = await jsonOf(await cmd(dana, 'record $250 check', 'API-PF-PRIV'));
+  ok('an investigator is refused — recording payments is an admin desk',
+     j.kind === 'status' && !j.prefill && /admin/i.test(j.text));
+  j = await jsonOf(await cmd(admin, 'record $250 check', 'API-NOPE-0000'));
+  ok('an invented case number dies at caseFor', j.kind === 'status' && !j.prefill
+     && /cannot read/i.test(j.text));
+  await call(env, '/cases/API-PF-PRIV/delete', { method: 'POST', cookie: admin, body: {} });
+  j = await jsonOf(await cmd(admin, 'record $250 check', 'API-PF-PRIV'));
+  ok('a deleted case refuses the prefill through the same gate',
+     j.kind === 'status' && !j.prefill && /archived or deleted/i.test(j.text), j.text);
+  await call(env, '/cases/API-PF-PRIV/undelete', { method: 'POST', cookie: admin, body: {} });
+
+  /* ---- FINDING THE CASE BY NAME: one match, or say so ------------------ */
+  j = await jsonOf(await cmd(admin, 'record $250 mail check for Vanessa'));
+  ok('a name that matches exactly one case resolves to it',
+     j.kind === 'payment_prefill' && j.prefill.case_no === 'API-PF-PRIV', JSON.stringify(j.prefill));
+  ok('and the card says how it was found', /matched/i.test(j.prefill.found_by), j.prefill.found_by);
+  j = await jsonOf(await cmd(admin, 'record $250 for Zzzznobody'));
+  ok('a name that matches nothing is said, not guessed at',
+     j.kind === 'status' && !j.prefill && /Nothing matches/i.test(j.text), j.text);
+  j = await jsonOf(await cmd(admin, 'record $250 check'));
+  ok('with no case and no name it asks which case',
+     j.kind === 'status' && !j.prefill && /Which case/i.test(j.text), j.text);
+
+  /* ---- A NONSENSE AMOUNT IS NOT PREFILLED ------------------------------ */
+  j = await jsonOf(await cmd(admin, 'record $0 check', 'API-PF-LEGAL'));
+  ok('a zero amount is refused rather than prefilled',
+     j.kind !== 'payment_prefill', JSON.stringify({ kind: j.kind }));
+
+  /* ---- AND THE BETA REFUSAL IS UNCHANGED FOR EVERYTHING ELSE ----------- */
+  j = await jsonOf(await cmd(admin, 'mark this invoice paid', 'API-PF-LEGAL'));
+  ok('"mark paid" is still refused by name — the carve-out is narrow',
+     j.kind === 'refused' && !j.prefill, JSON.stringify({ kind: j.kind }));
+  /* VOIDING WAS NOT ON THE BLOCKED LIST AT ALL, and this test found it. It
+     could not have voided anything — nothing executes without a registry row —
+     but the owner's line is that the Assistant may never record, post, VOID or
+     alter a payment, and a refusal by name is how that is stated to the person
+     asking. It is on the list now. */
+  j = await jsonOf(await cmd(admin, 'void that payment', 'API-PF-LEGAL'));
+  ok('voiding is refused by name', j.kind === 'refused' && !j.prefill,
+     JSON.stringify({ kind: j.kind }));
+  j = await jsonOf(await cmd(admin, 'change the amount on that payment', 'API-PF-LEGAL'));
+  ok('altering a payment is refused by name', j.kind === 'refused' && !j.prefill,
+     JSON.stringify({ kind: j.kind }));
+
+  ok('AFTER ALL OF THAT, THE LEDGER IS STILL EMPTY', (await moneyRows()) === 0);
 }
 
 section('Case Command Center: cases ready to build, and the case tabs');
