@@ -3463,6 +3463,19 @@ const ASST_CMD = {
       {method: "POST", body: { status: "done" }});
     return `Marked done: ${c.task}`;
   },
+  /* LEVEL 3. The ordinary lead writer, so stampLead stays the one writer of
+     'converted' and the acceptance-time fee snapshot rides with it. */
+  accept_intake: async c => {
+    await api(`/leads/${encodeURIComponent(c.case_no)}/status`, {method: "POST", body: {
+      status: "converted",
+    }});
+    /* THE LIST HAS TO STOP SAYING "NEW". `render()` is the page's own reload —
+       the same one the Try-again controls use — and without it the intake desk
+       would go on drawing this intake as undecided under a message saying it
+       was accepted. `loadLeads` does not exist; leadsView reads CASES. */
+    if(TAB === "leads") await render();
+    return `${c.case_no} accepted. It is a case now.`;
+  },
 };
 
 /* A confirmation belongs to ONE offer. The token is minted when the offer is

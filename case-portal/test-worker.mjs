@@ -18816,6 +18816,68 @@ section('Case Command Center: tasks go through the task system that already exis
   ok('and not one task was closed by asking', Number(still) === 0, String(still));
 }
 
+section('Case Command Center: accepting an intake is level 3, and sending still is not offered');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const res = await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' });
+  const token = new URL((await jsonOf(res)).url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${token}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+
+  for (const no of ['API-AI-FRESH', 'API-AI-DONE', 'API-AI-NO']) {
+    await ingest(env, { case_no: no, client_name: `Client ${no}`, subject_name: `Subject ${no}` });
+  }
+  await call(env, '/leads/API-AI-DONE/status', { method: 'POST', cookie: admin,
+    body: { status: 'converted' } });
+  await call(env, '/leads/API-AI-NO/status', { method: 'POST', cookie: admin,
+    body: { status: 'declined' } });
+
+  const cmd = (cookie, text, caseNo) => call(env, '/assistant/command', { method: 'POST', cookie,
+    body: { text, context: caseNo ? { case_no: caseNo, route: 'case' } : { route: 'leads' } } });
+
+  let j = await jsonOf(await cmd(admin, 'accept this intake', 'API-AI-FRESH'));
+  ok('a fresh intake is OFFERED acceptance, not accepted',
+     j.kind === 'command' && j.command.action === 'accept_intake', JSON.stringify(j).slice(0, 180));
+  ok('and it is the one LEVEL 3 command in V1', j.command.level === 3);
+  /* THE CONFIRMATION SAYS THE PART THAT MATTERS: stampLead snapshots the fee in
+     force onto the case, so accepting is not only a status change. */
+  ok('the confirmation says the fee is snapshotted onto the case',
+     /snapshots the fee/i.test(j.command.say), j.command.say);
+  ok('and that nothing is emailed', /nothing is emailed/i.test(j.command.say));
+  ok('the card names who it is about', j.command.client === 'Client API-AI-FRESH');
+
+  /* THE RECORD ANSWERS FIRST — a decided lead is never quietly re-decided. */
+  j = await jsonOf(await cmd(admin, 'accept this intake', 'API-AI-DONE'));
+  ok('an already-accepted intake is not offered acceptance again',
+     j.kind === 'status' && !j.command && /already been accepted/i.test(j.text), j.text);
+  j = await jsonOf(await cmd(admin, 'accept this intake', 'API-AI-NO'));
+  ok('a declined lead is not quietly reopened by a command',
+     j.kind === 'status' && !j.command && /declined/i.test(j.text), j.text);
+
+  /* ADMIN-ONLY, like the route. */
+  j = await jsonOf(await cmd(dana, 'accept this intake', 'API-AI-FRESH'));
+  ok('an investigator is not offered it', j.kind === 'status' && !j.command && /admin/i.test(j.text));
+
+  j = await jsonOf(await cmd(admin, 'accept this intake'));
+  ok('with no intake open it asks which one', j.kind === 'status' && !j.command
+     && /Which intake/i.test(j.text), j.text);
+
+  /* SENDING IS STILL NOT A COMMAND. An utterance that pairs a send with an
+     intake reaches the DRY-RUN workbench, never an acceptance and never a real
+     email — the Beta boundary this whole unit sits inside. */
+  j = await jsonOf(await cmd(admin, 'send the intake and accept it', 'API-AI-FRESH'));
+  ok('"send ... intake" reaches the dry run, not an acceptance',
+     j.kind === 'prepare_intake' && !j.command, j.kind);
+
+  /* AND ASKING CHANGED NOTHING. */
+  const still = await env.DB.prepare('SELECT status FROM lead_status WHERE case_no = ?')
+    .bind('API-AI-FRESH').first();
+  ok('the fresh intake was not converted by being asked about', !still || still.status !== 'converted',
+     JSON.stringify(still));
+}
+
 section('Case Command Center: cases ready to build, and the case tabs');
 {
   const env = freshEnv();

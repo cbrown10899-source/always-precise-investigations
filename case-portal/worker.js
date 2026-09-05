@@ -13641,6 +13641,18 @@ const ASSISTANT_COMMANDS = [
   { action: 'complete_task', level: 2, label: 'Mark Done', needs_case: true,
     roles: ['admin', 'investigator'], route: 'tasks/:id/status',
     title: 'MARK THIS TASK DONE?' },
+  /* LEVEL 3 — the only high-consequence command in V1. Accepting an intake is
+     the office's decision that this is a case, and the ordinary lead-status
+     route stays the single writer of 'converted', which is what carries the
+     acceptance-time fee snapshot with it. So the confirmation has to say that.
+     Admin-only, like the route.
+
+     (This comment names no outbound verb on purpose: a source pin forbids the
+     whole registry block from carrying one, and it is right to — the rehearsal
+     branch above is the only place in this Assistant that goes near one.) */
+  { action: 'accept_intake', level: 3, label: 'Accept Intake', needs_case: true,
+    roles: ['admin'], route: 'leads/:no/status',
+    title: 'ACCEPT THIS INTAKE AS A CASE?' },
 ];
 
 /* THE CASE TABS THE ASSISTANT MAY NAME, and it is a registry for the reason
@@ -15093,6 +15105,65 @@ async function assistantCommandCore(body, env, user) {
     }
   }
 
+
+  /* ---- ACCEPTING AN INTAKE — the one level-3 command in V1 ---------------
+     The office deciding an intake is a case. It goes through the ordinary
+     `/leads/:no/status` route, so that route's own writer stays the single
+     writer of 'converted' and the acceptance-time fee snapshot cannot be
+     missed by a new door — which is exactly why no route was added here.
+
+     THIS IS NOT THE OUTBOUND PATH. An utterance pairing an intake with an
+     outbound verb reaches the dry-run workbench above instead, and that
+     branch's own guard is what keeps them apart; this one is only the decision
+     that already-received work is now a case.
+
+     (The pattern below excludes those verbs for that reason, and the whole
+     branch deliberately avoids naming the writer function, because a source
+     pin forbids the Assistant block from carrying that name at all.) */
+  if (/\b(accept|convert)\b/i.test(text) && /\b(intake|lead|case|this)\b/i.test(text)
+      && !/\bsend\b|\bemail\b|\bprepare\b|\bdry.?run\b|\bsimulat/i.test(text)) {
+    const plan = await assistantPlan(env, user, 'accept_intake', caseNo);
+    if (plan.fail === 'not_your_desk') {
+      return json({ ok: true, kind: 'status',
+        text: 'Accepting an intake is an admin desk — this action requires Admin permission.' });
+    }
+    if (plan.fail === 'no_case') {
+      return json({ ok: true, kind: 'status',
+        text: 'Which intake? Open it from the intake desk first — I will not guess which one to accept.',
+        actions: [nav('INTAKES', 'leads')] });
+    }
+    if (plan.fail === 'no_such_case') return json({ ok: true, kind: 'status',
+      text: `I cannot read ${caseNo} with your access.` });
+    if (plan.fail === 'case_closed_to_writes') return json({ ok: true, kind: 'status',
+      text: `${caseNo} has been archived or deleted, so its lead state cannot be moved. `
+          + 'Put the case back first.' });
+    if (plan.fail) return json({ ok: true, kind: 'status',
+      text: 'That is not a command this account can run.' });
+
+    /* THE RECORD ANSWERS FIRST. Once the office has decided, the system never
+       quietly moves the lead again — so an already-decided intake is not
+       offered an acceptance that would overwrite that decision silently. */
+    const miss = await missingTables(env);
+    const cur = miss.includes('lead_status') ? null : await env.DB.prepare(
+      'SELECT status FROM lead_status WHERE case_no = ?').bind(caseNo).first();
+    if (cur && LEAD_DECIDED.includes(cur.status)) {
+      return json({ ok: true, kind: 'status',
+        text: cur.status === 'converted'
+          ? `${caseNo} has already been accepted — it is a case. Nothing to do.`
+          : `${caseNo} was already recorded as ${cur.status.replace(/_/g, ' ')}. `
+            + 'Reopening a decided lead is a deliberate act on the intake desk, not something I will do here.',
+        actions: [nav('INTAKES', 'leads')] });
+    }
+    const nameRow = await env.DB.prepare(
+      'SELECT client_name, subject_name FROM submissions WHERE case_no = ?').bind(caseNo).first() || {};
+    return json({ ok: true, kind: 'command', text: plan.cmd.title,
+      command: { action: 'accept_intake', case_no: caseNo, label: plan.cmd.label,
+                 level: plan.cmd.level,
+                 client: nameRow.client_name || '', subject: nameRow.subject_name || '',
+                 say: 'This records the office\'s decision that the intake is a case, and it '
+                    + 'snapshots the fee in force onto it so a later change to the default cannot '
+                    + 'alter this one. Nothing is emailed to anybody.' } });
+  }
 
   /* ---- READY TO BUILD, and the case tabs that answer "where is that" -----
      "Cases ready to build" is the nineteenth phrase from the owner's own list
