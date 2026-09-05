@@ -54,6 +54,26 @@ describe('each badge unlocks on its own stated requirement', () => {
     expect(newlyEarnedBadges(state, FIXED_NOW)).toContain('first-practice')
   })
 
+  it('3 Practices: three practices, whenever they happened', () => {
+    const two = emptyState(FIXED_NOW)
+    two.practiceHistory = [0, 1].map((d) => practiceOn(d, FIXED_NOW))
+    expect(newlyEarnedBadges(two, FIXED_NOW)).not.toContain('three-practices')
+
+    // Three on the SAME day still counts — this badge counts practices.
+    const sameDay = emptyState(FIXED_NOW)
+    sameDay.practiceHistory = [0, 0, 0].map((d) => practiceOn(d, FIXED_NOW))
+    expect(newlyEarnedBadges(sameDay, FIXED_NOW)).toContain('three-practices')
+  })
+
+  it('3 Practices and 3 Day Streak are different badges, and say so', () => {
+    // Three practices in one afternoon: the count badge, not the streak badge.
+    const sameDay = emptyState(FIXED_NOW)
+    sameDay.practiceHistory = [0, 0, 0].map((d) => practiceOn(d, FIXED_NOW))
+    const earned = newlyEarnedBadges(sameDay, FIXED_NOW)
+    expect(earned).toContain('three-practices')
+    expect(earned).not.toContain('three-day-streak')
+  })
+
   it('3 Day Streak: three consecutive days, not three practices', () => {
     const sameDay = emptyState(FIXED_NOW)
     sameDay.practiceHistory = [0, 0, 0].map((d) => practiceOn(d, FIXED_NOW))

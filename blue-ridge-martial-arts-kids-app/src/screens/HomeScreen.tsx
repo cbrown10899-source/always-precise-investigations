@@ -6,8 +6,9 @@ import { BadgeTile } from '../components/BadgeTile'
 import { Icon } from '../components/Icon'
 import { Card, CardHead, Chip, Note, ProgressBar, SectionHead, Stat } from '../components/ui'
 import { BADGES } from '../data/badges'
-import { skillLabel } from '../data/skills'
+import { skillLabel, skillLessonId } from '../data/skills'
 import { DEFAULT_ROUTINE_ID, routineById } from '../data/practice'
+import type { SkillId } from '../types'
 import { useApp } from '../hooks/useApp'
 import { useToday } from '../hooks/useToday'
 import {
@@ -15,6 +16,7 @@ import {
   isReadyForDojo,
   practiceDates,
   readiness,
+  todayPlan,
   weeklyProgress,
 } from '../utils/progress'
 import { formatTimeRange, isoDate, nextDayOfWeek, relativeDayLabel, weekDates } from '../utils/dates'
@@ -37,6 +39,7 @@ export function HomeScreen() {
   const dojoReady = isReadyForDojo(state)
   const dates = weekDates(today)
   const practised = new Set(practiceDates(state.practiceHistory))
+  const plan = todayPlan(state, today)
   const routine = routineById(DEFAULT_ROUTINE_ID)
   const earned = new Set(state.earnedBadges.map((b) => b.badgeId))
 
@@ -57,15 +60,27 @@ export function HomeScreen() {
           <div className="row-between" style={{ alignItems: 'flex-start' }}>
             <div className="grow">
               <p className="tiny bold" style={{ color: 'var(--blue-600)', letterSpacing: '0.08em' }}>
-                TODAY'S AT-HOME PRACTICE
+                {plan.kind === 'dojo'
+                  ? 'TODAY IS A DOJO DAY'
+                  : plan.kind === 'rest'
+                    ? 'TODAY IS A REST DAY'
+                    : "TODAY'S AT-HOME PRACTICE"}
               </p>
               <h2 style={{ fontSize: '1.375rem', marginTop: 2 }}>
-                {routine?.title ?? 'Practice'}
+                {plan.kind === 'dojo'
+                  ? cls.title
+                  : plan.kind === 'rest'
+                    ? 'Rest & Grow'
+                    : (routine?.title ?? 'Practice')}
               </h2>
               <p className="small muted" style={{ marginTop: 2 }}>
-                {routine
-                  ? `${routine.steps.length} steps · about ${routine.estimatedMinutes} minutes`
-                  : 'A short session you can do at home.'}
+                {plan.kind === 'dojo'
+                  ? `${formatTimeRange(cls.startTime, cls.endTime)} · ${cls.locationName}`
+                  : plan.kind === 'rest'
+                    ? 'Rest is part of training. Your body gets stronger while it recovers.'
+                    : routine
+                      ? `${routine.steps.length} steps · about ${routine.estimatedMinutes} minutes`
+                      : 'A short session you can do at home.'}
               </p>
             </div>
             <span className="section__script" aria-hidden="true" style={{ marginTop: 4 }}>
@@ -81,15 +96,44 @@ export function HomeScreen() {
             </div>
           ) : null}
 
-          <button
-            type="button"
-            className="btn btn--lg btn--block"
-            style={{ marginTop: 'var(--s-4)' }}
-            onClick={() => navigate(`/practice/session/${DEFAULT_ROUTINE_ID}`)}
-          >
-            <Play size={20} aria-hidden="true" />
-            {practisedToday ? 'Practice Again' : 'Start Practice'}
-          </button>
+          {/* On a dojo day the checklist is the primary action, because being
+              ready for class is what today is actually for. Practising is
+              still offered, never forbidden. */}
+          {plan.kind === 'dojo' ? (
+            <>
+              <Link
+                to="/practice"
+                className="btn btn--lg btn--block"
+                style={{ marginTop: 'var(--s-4)' }}
+              >
+                <Icon name="shield" size={20} />
+                {dojoReady ? 'You are ready — see the checklist' : 'Get Ready for Class'}
+              </Link>
+              <button
+                type="button"
+                className="btn btn--ghost btn--block"
+                style={{ marginTop: 'var(--s-2)' }}
+                onClick={() => navigate(`/practice/session/${DEFAULT_ROUTINE_ID}`)}
+              >
+                <Play size={18} aria-hidden="true" />
+                Warm up with a practice
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className={`btn btn--block ${plan.kind === 'rest' ? 'btn--ghost' : 'btn--lg'}`}
+              style={{ marginTop: 'var(--s-4)' }}
+              onClick={() => navigate(`/practice/session/${DEFAULT_ROUTINE_ID}`)}
+            >
+              <Play size={plan.kind === 'rest' ? 18 : 20} aria-hidden="true" />
+              {plan.kind === 'rest'
+                ? 'Practise anyway'
+                : practisedToday
+                  ? 'Practice Again'
+                  : 'Start Practice'}
+            </button>
+          )}
         </Card>
 
         {/* ------------------------------------------------ weekly progress */}
@@ -188,17 +232,13 @@ export function HomeScreen() {
         <Card>
           <CardHead title="This Week's Focus" icon="target" />
           <p className="small muted" style={{ marginBottom: 'var(--s-3)' }}>
-            What your instructor wants you working on.
+            What your instructor wants you working on. Tap one to open its lesson.
           </p>
           <div className="row" style={{ flexWrap: 'wrap', gap: 'var(--s-2)' }}>
             {state.instructor.weeklyFocusSkillIds.length === 0 ? (
               <p className="small faint">No focus skills set yet.</p>
             ) : (
-              state.instructor.weeklyFocusSkillIds.map((id) => (
-                <Chip key={id} tone="blue">
-                  {skillLabel(id)}
-                </Chip>
-              ))
+              state.instructor.weeklyFocusSkillIds.map((id) => <FocusChip key={id} skillId={id} />)
             )}
           </div>
         </Card>
@@ -280,6 +320,32 @@ function Shortcut({
         {label}
       </span>
       <span className="tiny faint">{hint}</span>
+    </Link>
+  )
+}
+
+/**
+ * One "This Week's Focus" chip.
+ *
+ * A skill that has a lesson becomes a link to it — the shortest route from
+ * "what should I work on" to actually working on it. A skill with no lesson is
+ * drawn as plain text, because a control that can open nothing must not look
+ * like a button.
+ */
+function FocusChip({ skillId }: { skillId: SkillId }) {
+  const label = skillLabel(skillId)
+  const lessonId = skillLessonId(skillId)
+
+  if (!lessonId) return <Chip tone="blue">{label}</Chip>
+
+  return (
+    <Link
+      to={`/lessons/${lessonId}`}
+      className="chip chip--tap"
+      aria-label={`${label}. Open the ${label} lesson.`}
+    >
+      {label}
+      <ChevronRight size={13} aria-hidden="true" />
     </Link>
   )
 }

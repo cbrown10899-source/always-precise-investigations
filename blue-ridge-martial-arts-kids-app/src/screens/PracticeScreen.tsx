@@ -1,14 +1,24 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MapPin, Play } from 'lucide-react'
 import { Masthead } from '../components/Masthead'
 import { WeekStrip } from '../components/WeekStrip'
 import { Icon } from '../components/Icon'
 import { Card, CardHead, CheckRow, Chip, Note, ProgressRing, SectionHead } from '../components/ui'
-import { CHECKLIST, ROUTINES } from '../data/practice'
+import type { DayKind } from '../types'
+import { CHECKLIST, DEFAULT_ROUTINE_ID, ROUTINES } from '../data/practice'
 import { useApp } from '../hooks/useApp'
 import { useToday } from '../hooks/useToday'
 import { isReadyForDojo, practiceDates, readiness, weeklyProgress } from '../utils/progress'
-import { formatTimeRange, nextDayOfWeek, relativeDayLabel, weekDates } from '../utils/dates'
+import {
+  daysBetween,
+  formatTimeRange,
+  isoDate,
+  longDate,
+  nextDayOfWeek,
+  relativeDayLabel,
+  weekDates,
+} from '../utils/dates'
 
 /**
  * The weekly plan, the Get Ready checklist and this week's mission.
@@ -22,6 +32,8 @@ export function PracticeScreen() {
   const today = useToday()
   const navigate = useNavigate()
 
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+
   const dates = weekDates(today)
   const practised = new Set(practiceDates(state.practiceHistory))
   const ready = readiness(state)
@@ -31,6 +43,23 @@ export function PracticeScreen() {
   const cls = state.instructor.classSession
   const nextClass = nextDayOfWeek(today, cls.dayIndex)
   const plan = state.instructor.weeklyPlan
+
+  // The detail for the day the student tapped, derived rather than stored, so
+  // it cannot go stale when a practice is completed and the strip repaints.
+  const selectedDay = (() => {
+    if (!selectedKey) return null
+    const date = dates.find((d) => isoDate(d) === selectedKey)
+    if (!date) return null
+    const day = plan.days.find((p) => p.dayIndex === date.getDay())
+    const diff = daysBetween(today, date)
+    return {
+      date,
+      kind: day?.kind ?? ('home' as const),
+      label: day?.label ?? 'Home Practice',
+      practised: practised.has(selectedKey),
+      relation: diff === 0 ? ('today' as const) : diff < 0 ? ('past' as const) : ('future' as const),
+    }
+  })()
 
   const toggle = (id: string, next: boolean) => {
     update((draft) => ({
@@ -53,10 +82,30 @@ export function PracticeScreen() {
 
         {/* ------------------------------------------------------ week plan */}
         <Card>
-          <WeekStrip plan={plan} dates={dates} today={today} practiceDates={practised} />
+          <WeekStrip
+            plan={plan}
+            dates={dates}
+            today={today}
+            practiceDates={practised}
+            onSelectDay={(date) => setSelectedKey((k) => (k === isoDate(date) ? null : isoDate(date)))}
+            selectedKey={selectedKey ?? undefined}
+          />
           <p className="small muted" style={{ marginTop: 'var(--s-3)' }}>
-            {week.done} of {week.goal} home practices done this week.
+            {week.done} of {week.goal} home practices done this week. Tap a day to see it.
           </p>
+
+          <div aria-live="polite">
+            {selectedDay ? (
+              <DayDetail
+                date={selectedDay.date}
+                kind={selectedDay.kind}
+                label={selectedDay.label}
+                practised={selectedDay.practised}
+                relation={selectedDay.relation}
+                onStart={() => navigate(`/practice/session/${DEFAULT_ROUTINE_ID}`)}
+              />
+            ) : null}
+          </div>
         </Card>
 
         {/* --------------------------------------------------- next class */}
@@ -207,5 +256,83 @@ export function PracticeScreen() {
         </Note>
       </div>
     </>
+  )
+}
+
+/* ------------------------------------------------------------ day detail */
+
+/**
+ * What one day of the plan is for, and what can be done about it.
+ *
+ * A practice can only be started for TODAY. There is deliberately no way to
+ * back-date one: a logged practice is a record that it happened, and letting a
+ * child tick Tuesday on Thursday would make the streak, the weekly count and
+ * the parent's summary all assert something nobody did. A past day reports
+ * what the record says and offers nothing.
+ */
+function DayDetail({
+  date,
+  kind,
+  label,
+  practised,
+  relation,
+  onStart,
+}: {
+  date: Date
+  kind: DayKind
+  label: string
+  practised: boolean
+  relation: 'past' | 'today' | 'future'
+  onStart: () => void
+}) {
+  const when = relation === 'today' ? 'Today' : longDate(date)
+
+  return (
+    <div
+      style={{
+        marginTop: 'var(--s-3)',
+        padding: 'var(--s-3)',
+        borderRadius: 'var(--r-md)',
+        border: '1px solid var(--blue-200)',
+        background: 'var(--blue-050)',
+      }}
+    >
+      <div className="row-between" style={{ alignItems: 'flex-start' }}>
+        <div className="grow">
+          <p className="bold" style={{ color: 'var(--navy-900)' }}>
+            {when}
+          </p>
+          <p className="small muted">{label}</p>
+        </div>
+        <Chip tone={practised ? 'green' : 'plain'} icon={practised ? 'complete' : 'calendar'}>
+          {practised ? 'Practice done' : 'Nothing logged'}
+        </Chip>
+      </div>
+
+      {relation === 'today' ? (
+        <button
+          type="button"
+          className="btn btn--block"
+          style={{ marginTop: 'var(--s-3)' }}
+          onClick={onStart}
+        >
+          {practised ? 'Practise again' : kind === 'rest' ? 'Practise anyway' : 'Start today’s practice'}
+        </button>
+      ) : relation === 'past' ? (
+        <p className="small muted" style={{ marginTop: 'var(--s-2)' }}>
+          {practised
+            ? 'This day is done. Nice work.'
+            : 'No practice was logged on this day. Days cannot be filled in later — what counts is what you actually did.'}
+        </p>
+      ) : (
+        <p className="small muted" style={{ marginTop: 'var(--s-2)' }}>
+          {kind === 'dojo'
+            ? 'Class day. Get your checklist ticked before you go.'
+            : kind === 'rest'
+              ? 'A rest day. Resting is part of training.'
+              : 'A home practice day. You can start it when the day comes around.'}
+        </p>
+      )}
+    </div>
   )
 }

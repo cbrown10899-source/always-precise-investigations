@@ -27,6 +27,11 @@ type Rule = (state: AppState, now: Date) => boolean
 export const BADGE_RULES: Record<BadgeId, Rule> = {
   'first-practice': (s) => s.practiceHistory.length >= 1,
 
+  // Counts PRACTICES, where 'three-day-streak' counts DAYS — three in one
+  // afternoon earns this one and not that one, which is the distinction the
+  // two badges exist to draw.
+  'three-practices': (s) => s.practiceHistory.length >= 3,
+
   'three-day-streak': (s, now) => currentStreak(s.practiceHistory, now) >= 3,
 
   'great-listener': (s) => completedLessonIds(s).length >= 1,

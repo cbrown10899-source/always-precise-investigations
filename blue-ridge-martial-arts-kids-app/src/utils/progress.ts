@@ -1,5 +1,6 @@
 import type {
   AppState,
+  DayKind,
   GrowthLevel,
   Lesson,
   PracticeSession,
@@ -239,5 +240,33 @@ export function buildSession(
     stepsCompleted,
     stepsTotal,
     skills: [...new Set(skills)],
+  }
+}
+
+/* --------------------------------------------------------- today's plan */
+
+export interface TodayPlan {
+  kind: DayKind
+  /** The plan's own word for the day, e.g. "Home Practice". */
+  label: string
+  /** Whether a practice has already been logged today. */
+  practisedToday: boolean
+}
+
+/**
+ * What today is, according to the instructor's weekly plan.
+ *
+ * Home used to announce "Today's At-Home Practice" on every day of the week,
+ * including the one the plan calls a rest day — a screen telling a child to
+ * train on the day their instructor set aside for recovery. The plan is the
+ * record, so the screen reads it.
+ */
+export function todayPlan(state: AppState, now: Date): TodayPlan {
+  const dayIndex = now.getDay()
+  const day = state.instructor.weeklyPlan.days.find((d) => d.dayIndex === dayIndex)
+  return {
+    kind: day?.kind ?? 'home',
+    label: day?.label ?? 'Home Practice',
+    practisedToday: state.practiceHistory.some((p) => p.date === isoDate(now)),
   }
 }

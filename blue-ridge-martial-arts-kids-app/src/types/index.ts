@@ -58,6 +58,16 @@ export interface Skill {
   label: string
   /** One friendly line a child can read. */
   blurb: string
+  /**
+   * The lesson that teaches this skill, when one exists.
+   *
+   * It is what makes a "This Week's Focus" chip a destination rather than a
+   * word: a child who reads "Ready Stance" can tap it and be in that lesson.
+   * Optional, because a skill may be practised without having a lesson of its
+   * own — and a chip with no lesson is drawn as plain text rather than as a
+   * control that goes nowhere.
+   */
+  lessonId?: string
 }
 
 /* ---------------------------------------------------------------- lessons */
@@ -240,6 +250,7 @@ export interface AttendanceRecord {
 
 export type BadgeId =
   | 'first-practice'
+  | 'three-practices'
   | 'three-day-streak'
   | 'great-listener'
   | 'hard-worker'

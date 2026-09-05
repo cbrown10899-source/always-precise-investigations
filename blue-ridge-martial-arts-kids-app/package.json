@@ -13,7 +13,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run build",
-    "build:single": "npm run build && node scripts/build-singlefile.mjs"
+    "build:single": "npm run build && node scripts/build-singlefile.mjs",
+    "audit:ui": "node scripts/audit-ui.mjs",
+    "audit:a11y": "node scripts/audit-a11y.mjs",
+    "audit": "npm run audit:ui && npm run audit:a11y"
   },
   "dependencies": {
     "lucide-react": "^0.454.0",

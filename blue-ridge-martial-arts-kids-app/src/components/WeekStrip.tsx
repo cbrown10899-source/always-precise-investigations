@@ -11,17 +11,36 @@ import { DAY_SHORT, isoDate, shortDate } from '../utils/dates'
  */
 const KIND_ICON = { home: Home, dojo: Swords, rest: Moon }
 
+/**
+ * The word the strip draws, as opposed to the plan's own label.
+ *
+ * Seven columns on a 320px screen give each day about 40px. "Home Practice"
+ * there was two cramped lines at 9px. The short word is what is drawn; the
+ * plan's full label is what a screen reader is given, so nothing is lost.
+ */
+const KIND_SHORT = { home: 'Home', dojo: 'Dojo', rest: 'Rest' } as const
+
 export function WeekStrip({
   plan,
   dates,
   today,
   practiceDates,
+  onSelectDay,
+  selectedKey,
 }: {
   plan: WeeklyPlan
   dates: Date[]
   today: Date
   /** Local YYYY-MM-DD keys the student practised on. */
   practiceDates: Set<string>
+  /**
+   * Makes each day a button. Without it the strip is a read-only summary,
+   * which is what Home wants — a control that does nothing is worse than no
+   * control, so interactivity is opt-in rather than always on.
+   */
+  onSelectDay?: (date: Date) => void
+  /** The day currently open in the detail panel, as a YYYY-MM-DD key. */
+  selectedKey?: string
 }) {
   const todayKey = isoDate(today)
 
@@ -40,12 +59,18 @@ export function WeekStrip({
           'weekday',
           `weekday--${kind}`,
           isToday ? 'weekday--today' : '',
+          key === selectedKey ? 'weekday--selected' : '',
         ]
           .filter(Boolean)
           .join(' ')
 
-        return (
-          <li key={key} className={classes}>
+        const label =
+          `${DAY_SHORT[dayIndex]} ${shortDate(date)}. ${day?.label ?? 'Home Practice'}.` +
+          `${isToday ? ' Today.' : ''}` +
+          `${practised ? ' Practice done.' : ' No practice logged yet.'}`
+
+        const body = (
+          <>
             <span className="weekday__name" aria-hidden="true">
               {DAY_SHORT[dayIndex]}
             </span>
@@ -56,7 +81,7 @@ export function WeekStrip({
               <KindIcon size={15} strokeWidth={2.5} />
             </span>
             <span className="weekday__kind" aria-hidden="true">
-              {day?.label ?? 'Home Practice'}
+              {KIND_SHORT[kind]}
             </span>
             <span className="weekday__mark" aria-hidden="true">
               {practised ? (
@@ -73,11 +98,26 @@ export function WeekStrip({
                 />
               )}
             </span>
-            <span className="vh">
-              {DAY_SHORT[dayIndex]} {shortDate(date)}. {day?.label ?? 'Home Practice'}.
-              {isToday ? ' Today.' : ''}
-              {practised ? ' Practice done.' : ' No practice logged yet.'}
-            </span>
+            <span className="vh">{label}</span>
+          </>
+        )
+
+        return (
+          <li key={key} className={onSelectDay ? undefined : classes}>
+            {onSelectDay ? (
+              <button
+                type="button"
+                className={classes}
+                onClick={() => onSelectDay(date)}
+                aria-pressed={key === selectedKey}
+                aria-label={label}
+                style={{ width: '100%' }}
+              >
+                {body}
+              </button>
+            ) : (
+              body
+            )}
           </li>
         )
       })}

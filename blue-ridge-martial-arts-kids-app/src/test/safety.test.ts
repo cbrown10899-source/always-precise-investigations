@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { LESSONS } from '../data/lessons'
+import { SKILLS } from '../data/skills'
 import { CHECKLIST, ROUTINES } from '../data/practice'
 import { DEFAULT_DOJO, createDefaultState } from '../data/defaultState'
 
@@ -262,5 +263,26 @@ describe('the app makes no claim it cannot support', () => {
   it('instructor mode is labelled as not real authentication', () => {
     const screen = readFileSync(join(process.cwd(), 'src/screens/InstructorDemoScreen.tsx'), 'utf8')
     expect(screen).toMatch(/not real authentication/i)
+  })
+})
+
+describe('every link in the data actually resolves', () => {
+  it("a skill's lessonId names a lesson that exists", () => {
+    // A typo here draws a live-looking chip that opens the Not Found screen —
+    // the "a control that renders is not a control that works" failure.
+    const known = new Set(LESSONS.map((l) => l.id))
+    const broken = SKILLS.filter((s) => s.lessonId && !known.has(s.lessonId)).map(
+      (s) => `${s.id} -> ${s.lessonId}`,
+    )
+    expect(broken).toEqual([])
+  })
+
+  it('most skills carry a lesson, so the focus chips are mostly tappable', () => {
+    // Not all: flexibility is practised inside every warm-up and has no lesson
+    // of its own, and the app draws that chip as plain text rather than as a
+    // button that opens nothing. This pins the ratio so a future skill added
+    // without a lesson is a deliberate choice, not an oversight.
+    const withLesson = SKILLS.filter((s) => s.lessonId).length
+    expect(withLesson).toBeGreaterThanOrEqual(SKILLS.length - 1)
   })
 })

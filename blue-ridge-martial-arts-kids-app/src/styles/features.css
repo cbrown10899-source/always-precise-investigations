@@ -67,7 +67,9 @@
   color: var(--navy-700);
 }
 .masthead__place {
-  font-size: 0.625rem;
+  /* 11px: the floor this project holds every readable string to. Below it the
+     letter-spaced caps stop being legible on a phone. */
+  font-size: 0.6875rem;
   font-weight: 700;
   letter-spacing: 0.2em;
   color: var(--navy-600);
@@ -82,9 +84,11 @@
   padding: 7px var(--s-4) 8px;
   background: var(--navy-900);
   text-align: center;
-  font-size: 0.625rem;
+  font-size: 0.6875rem;
   font-weight: 700;
-  letter-spacing: 0.16em;
+  /* Tightened from .16em to pay for the larger size: at 320px the line has to
+     fit "DISCIPLINE TODAY • CONFIDENCE TOMORROW" without wrapping oddly. */
+  letter-spacing: 0.1em;
   /* 16.1:1 on --navy-900. */
   color: var(--sky-100);
 }
@@ -311,10 +315,13 @@
   min-height: 96px;
 }
 .weekday--today { border-color: var(--blue-500); background: var(--blue-050); box-shadow: 0 0 0 2px var(--blue-100); }
+/* The day whose detail panel is open. Gold, so it is distinguishable from
+   "today" (blue) even when they are the same day. */
+.weekday--selected { border-color: var(--gold-solid); box-shadow: 0 0 0 2px var(--gold-tint); }
 .weekday--dojo { border-color: var(--blue-300); }
 
 .weekday__name { font-size: 0.6875rem; font-weight: 800; color: var(--navy-800); }
-.weekday__date { font-size: 0.625rem; color: var(--ink-faint); }
+.weekday__date { font-size: 0.6875rem; color: var(--ink-faint); }
 .weekday__icon {
   width: 30px; height: 30px;
   display: grid; place-items: center;
@@ -324,7 +331,10 @@
 }
 .weekday--dojo .weekday__icon { background: var(--blue-100); color: var(--blue-600); }
 .weekday--rest .weekday__icon { background: var(--paper); color: var(--ink-faint); }
-.weekday__kind { font-size: 0.5625rem; font-weight: 700; color: var(--ink-soft); text-align: center; line-height: 1.15; }
+/* 11px and a SHORT word. "Home Practice" at 9px across a 48px column was two
+   cramped lines; the strip shows "Home", the accessible name still says
+   "Home Practice", and the icon carries the same meaning a third way. */
+.weekday__kind { font-size: 0.6875rem; font-weight: 700; color: var(--ink-soft); text-align: center; line-height: 1.15; }
 .weekday__mark { display: grid; place-items: center; }
 
 /* --------------------------------------------------------------- ring */
@@ -338,7 +348,7 @@
   line-height: 1.05;
 }
 .ring__value { font-size: 1.125rem; font-weight: 800; color: var(--navy-900); }
-.ring__unit { font-size: 0.5625rem; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.04em; }
+.ring__unit { font-size: 0.6875rem; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.03em; }
 
 /* -------------------------------------------------- guided practice player */
 
@@ -587,4 +597,43 @@
 .journey__node,
 .badge {
   min-height: 44px;
+}
+
+/* ------------------------------------------------------- tappable chip */
+
+/* A chip that is a LINK, not a label. It carries the tap floor and a chevron;
+   a chip that merely states a fact stays plain text and is not a target. */
+.chip--tap {
+  min-height: 44px;
+  padding-inline: var(--s-3);
+  gap: 4px;
+  background: var(--blue-100);
+  color: var(--navy-700);
+  border-color: var(--blue-300);
+  font-size: 0.8125rem;
+}
+.chip--tap:hover {
+  text-decoration: none;
+  background: var(--blue-200);
+  border-color: var(--blue-400);
+}
+
+/* ------------------------------------------ narrow-phone masthead */
+
+/* Under 400px the decorative script aside is withdrawn.
+ *
+ * It is 74px of a 320px screen, and with it the brand box measured 88px —
+ * enough to wrap BLUE RIDGE onto two lines and MARTIAL ARTS onto two more,
+ * which turns the wordmark into a paragraph. The aside is `aria-hidden`
+ * decoration and the wordmark is the identity, so the decoration is what
+ * gives way. Measured: the brand box goes 88px -> 170px at 320.
+ */
+@media (max-width: 399px) {
+  .masthead__script { display: none; }
+  .masthead__inner { gap: var(--s-2); }
+}
+
+/* At 320 the tagline needs its tracking back to fit on one line. */
+@media (max-width: 359px) {
+  .masthead__tagline { letter-spacing: 0.04em; }
 }

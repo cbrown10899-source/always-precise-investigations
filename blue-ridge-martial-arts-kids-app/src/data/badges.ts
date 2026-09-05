@@ -16,6 +16,14 @@ export const BADGES: Badge[] = [
     tone: 'blue',
   },
   {
+    id: 'three-practices',
+    label: '3 Practices',
+    description: 'Three practices done. You are building a habit.',
+    requirement: 'Complete 3 practices',
+    icon: 'reps',
+    tone: 'blue',
+  },
+  {
     id: 'three-day-streak',
     label: '3 Day Streak',
     description: 'Three days in a row. That is how habits are built.',
