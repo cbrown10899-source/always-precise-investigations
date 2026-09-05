@@ -3816,7 +3816,13 @@ function asstMsgHtml(m){
       </div>`).join("")}</div>` : ""}
     ${m.command ? `<div class="asst-cmd">
       <div class="asst-cmd-t">${esc(m.text || m.command.label)}</div>
-      <div class="asst-cmd-who"><b>${esc(m.command.client || m.command.subject || m.command.case_no)}</b>
+      ${/* A NUMBER WHERE A NAME BELONGS is how a live card reads as an orphaned
+             reference — the defect this project already recorded on the
+             surveillance launcher. The case number is on its own line below, so
+             repeating it in the name position says nothing and looks broken.
+             When neither name is known the card says which is missing. */""}
+      <div class="asst-cmd-who"><b>${esc(m.command.client || m.command.subject
+        || "No client or subject recorded")}</b>
         <span class="mono">${esc(m.command.case_no)}</span>${
         m.command.whose ? `<span>Started by ${esc(m.command.whose)}</span>` : ""}</div>
       ${/* THE EXACT WORDS THAT WOULD BE WRITTEN, when the command carries any.

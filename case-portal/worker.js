@@ -13668,6 +13668,27 @@ const ASSISTANT_CASE_TABS = {
    contest this project has recorded five times, at the function layer. */
 const assistantCmd = action => ASSISTANT_COMMANDS.find(c => c.action === action) || null;
 
+/* WHO THE CONFIRMATION IS ABOUT, and the boundary is redactRow's own: caseFor
+   answers permission, not identity — it selects four columns and none of them
+   is a name — so a card that wants to name the case reads it here. The CLIENT
+   is the paying side and reaches an admin only; the SUBJECT is who is watched
+   and reaches the field, which is the investigator's whole job.
+
+   ONE READER, because the day commands had this inline and the task commands
+   then drew the CASE NUMBER in the name position instead — a number where a
+   name belongs, which is how a live card reads as an orphaned reference. This
+   project has recorded that exact defect once already, on the surveillance
+   launcher. */
+async function assistantCardNames(env, user, caseNo) {
+  const row = await env.DB.prepare(
+    'SELECT client_name, subject_name FROM submissions WHERE case_no = ?').bind(caseNo).first() || {};
+  return {
+    ...(user.role === 'admin' ? { client: row.client_name || '' } : {}),
+    subject: row.subject_name || '',
+  };
+}
+
+
 /* THE ONE RESOLVER. Both the offer and the after-the-fact log go through it,
    so a command cannot be logged that could not have been offered — and the
    checks are the ordinary ones (registry membership, role, and caseFor, which
@@ -14937,15 +14958,11 @@ async function assistantCommandCore(body, env, user) {
          CLIENT is the paying side and reaches an admin only, exactly as
          redactRow has always had it; the SUBJECT is who is watched and
          reaches the field, which is the investigator's whole job. */
-      const nameRow = await env.DB.prepare(
-        'SELECT client_name, subject_name FROM submissions WHERE case_no = ?')
-        .bind(caseNo).first() || {};
       return json({ ok: true, kind: 'command',
         text: cmd.title,
         command: {
           action, case_no: caseNo, label: cmd.label, level: cmd.level,
-          ...(user.role === 'admin' ? { client: nameRow.client_name || '' } : {}),
-          subject: nameRow.subject_name || '',
+          ...(await assistantCardNames(env, user, caseNo)),
           day_id: action === 'end_day' && open ? open.id : null,
           whose: action === 'end_day' && open && !mine ? (open.who || '') : '',
         } });
@@ -15055,6 +15072,7 @@ async function assistantCommandCore(body, env, user) {
         }
         return json({ ok: true, kind: 'command', text: plan.cmd.title,
           command: { action, case_no: caseNo, label: plan.cmd.label, level: plan.cmd.level,
+                     ...(await assistantCardNames(env, user, caseNo)),
                      task: said, detail: said,
                      say: 'This writes a follow-up task on the case, at normal priority and with no '
                         + 'due date — the task board and the case tab are where it can be given either. '
@@ -15099,6 +15117,7 @@ async function assistantCommandCore(body, env, user) {
       }
       return json({ ok: true, kind: 'command', text: plan.cmd.title,
         command: { action, case_no: caseNo, label: plan.cmd.label, level: plan.cmd.level,
+                   ...(await assistantCardNames(env, user, caseNo)),
                    task_id: hits[0].id, task: hits[0].task, detail: hits[0].task,
                    say: 'This closes the task on the record. It stays on the board under Completed — '
                       + 'nothing is deleted, and it can be reopened from the case.' } });
@@ -15154,12 +15173,10 @@ async function assistantCommandCore(body, env, user) {
             + 'Reopening a decided lead is a deliberate act on the intake desk, not something I will do here.',
         actions: [nav('INTAKES', 'leads')] });
     }
-    const nameRow = await env.DB.prepare(
-      'SELECT client_name, subject_name FROM submissions WHERE case_no = ?').bind(caseNo).first() || {};
     return json({ ok: true, kind: 'command', text: plan.cmd.title,
       command: { action: 'accept_intake', case_no: caseNo, label: plan.cmd.label,
                  level: plan.cmd.level,
-                 client: nameRow.client_name || '', subject: nameRow.subject_name || '',
+                 ...(await assistantCardNames(env, user, caseNo)),
                  say: 'This records the office\'s decision that the intake is a case, and it '
                     + 'snapshots the fee in force onto it so a later change to the default cannot '
                     + 'alter this one. Nothing is emailed to anybody.' } });
