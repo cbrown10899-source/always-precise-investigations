@@ -59,10 +59,10 @@ export function SettingsScreen() {
       <Card>
         <CardHead title="Stored on this device" icon="shield" />
         <div className="grid-2">
-          <Stat value={state.practiceHistory.length} label="Practices" />
+          <Stat value={state.practiceHistory.length} label="Practices" singular="Practice" />
           <Stat value={`${lessonsCompletedCount(state)}/${LESSONS.length}`} label="Lessons done" />
-          <Stat value={state.earnedBadges.length} label="Badges" />
-          <Stat value={state.checklist.length} label="Checklist ticks" />
+          <Stat value={state.earnedBadges.length} label="Badges" singular="Badge" />
+          <Stat value={state.checklist.length} label="Checklist ticks" singular="Checklist tick" />
         </div>
         <p className="small muted" style={{ marginTop: 'var(--s-3)' }}>
           Everything is kept in this browser's local storage under{' '}

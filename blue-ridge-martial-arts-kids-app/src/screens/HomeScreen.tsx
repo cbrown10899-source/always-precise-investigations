@@ -180,7 +180,7 @@ export function HomeScreen() {
             </span>
             <span className="stat__label">Day streak</span>
           </div>
-          <Stat value={state.earnedBadges.length} label="Badges earned" />
+          <Stat value={state.earnedBadges.length} label="Badges earned" singular="Badge earned" />
           <Stat value={`${ready.done}/${ready.total}`} label="Class ready" />
         </div>
 

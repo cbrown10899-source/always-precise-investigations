@@ -93,3 +93,22 @@ export function formatClock(seconds: number): string {
   const s = safe % 60
   return `${m}:${String(s).padStart(2, '0')}`
 }
+
+/**
+ * A full date for a day that may be today or tomorrow.
+ *
+ * Two screens composed this by hand as `relativeDayLabel + ', ' + longDate`,
+ * which reads "Thursday, Thursday, September 10" on every day that is neither
+ * today nor tomorrow — the weekday twice, because `longDate` already names it.
+ * One writer, so the schedule and the parent summary cannot disagree about the
+ * same class.
+ */
+export function fullDayLabel(target: Date, today: Date): string {
+  const relative = relativeDayLabel(target, today)
+  // "Today" and "Tomorrow" add something the date does not say; a weekday name
+  // does not, because longDate opens with it.
+  if (relative === 'Today' || relative === 'Tomorrow') {
+    return `${relative}, ${target.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}`
+  }
+  return longDate(target)
+}

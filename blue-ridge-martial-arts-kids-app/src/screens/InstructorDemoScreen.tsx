@@ -368,6 +368,10 @@ export function InstructorDemoScreen() {
                 type="button"
                 className="check"
                 aria-pressed={on}
+                // An explicit name, rather than letting the accessible name be
+                // a concatenation of the title, the category, the duration and
+                // the state — which is what a screen reader was reading out.
+                aria-label={`${lesson.title} — ${on ? 'available to the student' : 'hidden from the student'}`}
                 onClick={() => toggleLesson(lesson.id)}
               >
                 <span className="check__box" aria-hidden="true">
@@ -380,7 +384,6 @@ export function InstructorDemoScreen() {
                     · {lesson.estimatedMinutes} min
                   </span>
                 </span>
-                <span className="vh">{on ? 'Available' : 'Hidden'}</span>
               </button>
             )
           })}

@@ -194,11 +194,28 @@ export function ProgressRing({
 
 /* ------------------------------------------------------------------ stat */
 
-export function Stat({ value, label }: { value: ReactNode; label: string }) {
+/**
+ * A number and what it counts.
+ *
+ * `singular` is used when the value is exactly 1, because a fixed plural
+ * label reads "1 Badges earned" on the most common state a new student is in.
+ * Omit it where the label is not a count of things — "1 Day streak" is a
+ * length, not a plural, and pluralising it would be wrong the other way.
+ */
+export function Stat({
+  value,
+  label,
+  singular,
+}: {
+  value: ReactNode
+  label: string
+  singular?: string
+}) {
+  const text = typeof value === 'number' && value === 1 && singular ? singular : label
   return (
     <div className="stat">
       <span className="stat__value">{value}</span>
-      <span className="stat__label">{label}</span>
+      <span className="stat__label">{text}</span>
     </div>
   )
 }

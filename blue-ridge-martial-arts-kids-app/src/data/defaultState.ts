@@ -60,11 +60,16 @@ export const DEFAULT_INSTRUCTOR: InstructorSettings = {
     title: 'Thursday Dojo Class',
     locationName: 'Blue Ridge Martial Arts',
     locationCity: 'Forest, VA',
-    focus: 'Stance, punches and front kick',
+    focus: 'Ready stance, straight punches and front kick',
   },
   availableLessonIds: LESSONS.map((l) => l.id),
   insight: {
-    practiced: ['Stance and balance', 'Front punches', 'Basic front kick', 'Focus and listening'],
+    practiced: [
+      'Ready stance and balance',
+      'Straight punches',
+      'Front kick basics',
+      'Focus and listening',
+    ],
     workOnNext: [
       'Keep hands up after punching',
       'Stronger chamber on the front kick',

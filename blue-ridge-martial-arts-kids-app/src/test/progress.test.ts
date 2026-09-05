@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { fullDayLabel } from '../utils/dates'
 import {
   buildSession,
   currentStreak,
@@ -224,5 +225,26 @@ describe('buildSession', () => {
   it('never records a zero-minute practice', () => {
     const session = buildSession('quick-5', 'Quick', ['stance'], 5, 5, 0, FIXED_NOW)
     expect(session.minutes).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('a date is never named twice', () => {
+  it('says the weekday once, not "Thursday, Thursday, September 10"', () => {
+    // Parent Mode and Schedule both composed this by hand and both read the
+    // weekday twice on every day that is neither today nor tomorrow.
+    const today = new Date(2026, 3, 9) // Thursday 9 April
+    const nextThursday = new Date(2026, 3, 16)
+    const label = fullDayLabel(nextThursday, today)
+
+    expect(label).toContain('Thursday')
+    expect(label.match(/Thursday/g)).toHaveLength(1)
+  })
+
+  it('still says Today and Tomorrow, which the date alone does not', () => {
+    const today = new Date(2026, 3, 9)
+    expect(fullDayLabel(new Date(2026, 3, 9), today)).toMatch(/^Today, /)
+    expect(fullDayLabel(new Date(2026, 3, 10), today)).toMatch(/^Tomorrow, /)
+    // And neither repeats the weekday either.
+    expect(fullDayLabel(new Date(2026, 3, 9), today)).not.toMatch(/Thursday/)
   })
 })

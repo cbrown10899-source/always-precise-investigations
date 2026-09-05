@@ -96,10 +96,10 @@ export function ProfileScreen() {
       </Card>
 
       <div className="grid-2">
-        <Stat value={state.practiceHistory.length} label="Practices logged" />
-        <Stat value={lessonsCompletedCount(state)} label="Lessons completed" />
+        <Stat value={state.practiceHistory.length} label="Practices logged" singular="Practice logged" />
+        <Stat value={lessonsCompletedCount(state)} label="Lessons completed" singular="Lesson completed" />
         <Stat value={currentStreak(state.practiceHistory, today)} label="Day streak" />
-        <Stat value={state.earnedBadges.length} label="Badges earned" />
+        <Stat value={state.earnedBadges.length} label="Badges earned" singular="Badge earned" />
       </div>
 
       <Card>

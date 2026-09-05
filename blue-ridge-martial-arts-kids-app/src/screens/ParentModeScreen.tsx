@@ -14,7 +14,7 @@ import {
   weeklyProgress,
 } from '../utils/progress'
 import { skillLabel } from '../data/skills'
-import { formatTimeRange, longDate, nextDayOfWeek, relativeDayLabel } from '../utils/dates'
+import { formatTimeRange, fullDayLabel, nextDayOfWeek } from '../utils/dates'
 
 /** The demo PIN. Stated on screen, because this is a demo gate and pretending
  *  otherwise would be the app claiming a security property it does not have. */
@@ -144,7 +144,7 @@ export function ParentModeScreen() {
       {/* ------------------------------------------------------ the numbers */}
       <div className="grid-2">
         <Stat value={`${week.done}/${week.goal}`} label="Practices this week" />
-        <Stat value={lessons} label="Lessons completed" />
+        <Stat value={lessons} label="Lessons completed" singular="Lesson completed" />
         <Stat value={streak} label="Day streak" />
         <Stat value={`${ready.done}/${ready.total}`} label="Class ready" />
       </div>
@@ -169,7 +169,7 @@ export function ParentModeScreen() {
         <CardHead title="Next class" icon="calendar" />
         <p className="bold">{cls.title}</p>
         <p className="small">
-          {relativeDayLabel(nextClass, today)}, {longDate(nextClass)}
+          {fullDayLabel(nextClass, today)}
         </p>
         <p className="small muted">
           {formatTimeRange(cls.startTime, cls.endTime)} · {cls.locationName}, {cls.locationCity}

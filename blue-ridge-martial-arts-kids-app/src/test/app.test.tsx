@@ -259,7 +259,7 @@ describe('instructor demo changes reach the student app', () => {
 
     await navigate(user, 'More')
     await user.click(screen.getByRole('link', { name: /instructor demo/i }))
-    await user.click(screen.getByRole('button', { name: /Front Kick Basics/i }))
+    await user.click(screen.getByRole('button', { name: /^Front Kick Basics — available/i }))
 
     await waitFor(() => {
       expect(loadState().instructor.availableLessonIds).not.toContain('front-kick-basics')
@@ -446,5 +446,87 @@ describe('the weekly planner', () => {
     // Back on Practice, today's cell reports the practice.
     const todayCell = await screen.findByRole('button', { name: /Today\. Practice done\./i })
     expect(todayCell).toBeInTheDocument()
+  })
+})
+
+describe('a badge whose requirement is already met is never drawn as locked', () => {
+  it('the seeded demo opens with the badges its own practices have earned', async () => {
+    const { user } = renderApp()
+
+    // The seeded demo carries completed practices, so First Practice — whose
+    // stated requirement is "Complete 1 practice" — must already be held.
+    await waitFor(() => {
+      expect(loadState().practiceHistory.length).toBeGreaterThan(0)
+      expect(loadState().earnedBadges.map((b) => b.badgeId)).toContain('first-practice')
+    })
+
+    await navigate(user, 'Progress')
+    expect(screen.getByText(/First Practice\. Earned\./i)).toBeInTheDocument()
+  })
+
+  it('awards them silently — nobody just did anything to celebrate', () => {
+    renderApp()
+    // The celebration banner announces work the user just did. On arrival
+    // there is none, however many badges the stored record deserves.
+    expect(screen.queryByText(/badge earned!/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/badges earned!/i)).not.toBeInTheDocument()
+  })
+
+  it('resetting also settles the fresh demo’s badges', async () => {
+    const { user } = renderApp()
+    await navigate(user, 'More')
+    await user.click(screen.getByRole('button', { name: /reset demo data/i }))
+    await user.click(screen.getByRole('button', { name: /yes, reset/i }))
+
+    await waitFor(() => {
+      const fresh = loadState()
+      expect(fresh.practiceHistory.length).toBeGreaterThan(0)
+      expect(fresh.earnedBadges.map((b) => b.badgeId)).toContain('first-practice')
+    })
+  })
+
+  it('never awards a badge whose requirement is not met', () => {
+    renderApp()
+    // Two seeded practices: Hard Worker needs five and must stay locked.
+    const held = loadState().earnedBadges.map((b) => b.badgeId)
+    expect(held).not.toContain('hard-worker')
+    expect(held).not.toContain('ready-for-dojo')
+    expect(held).not.toContain('great-listener')
+  })
+})
+
+describe('counted labels agree with their number', () => {
+  it('says "1 Badge earned", never "1 Badges earned"', async () => {
+    renderApp()
+
+    // The seeded demo earns exactly one badge, which is the case a fixed
+    // plural label gets wrong and the case a new student is most often in.
+    await waitFor(() => {
+      expect(loadState().earnedBadges).toHaveLength(1)
+    })
+    expect(screen.getByText('Badge earned')).toBeInTheDocument()
+    expect(screen.queryByText('Badges earned')).not.toBeInTheDocument()
+  })
+
+  it('switches back to the plural above one', async () => {
+    const { user } = renderApp()
+
+    await user.click(
+      screen.getByRole('button', { name: /start practice|practise anyway|warm up with a practice/i }),
+    )
+    for (let i = 0; i < 20; i += 1) {
+      const next = screen.queryByRole('button', { name: /^Next$/ })
+      if (!next) break
+      await user.click(next)
+    }
+    await user.click(screen.getByRole('button', { name: /^Complete$/ }))
+    await screen.findByText(/practice complete/i)
+    await user.click(screen.getByRole('button', { name: /^Done$/ }))
+
+    await waitFor(() => {
+      expect(loadState().earnedBadges.length).toBeGreaterThan(1)
+    })
+    await navigate(user, 'Home')
+    expect(screen.getByText('Badges earned')).toBeInTheDocument()
   })
 })

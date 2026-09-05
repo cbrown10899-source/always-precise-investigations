@@ -93,7 +93,7 @@ export function ProgressScreen() {
 
         {/* -------------------------------------------------------- totals */}
         <div className="grid-2">
-          <Stat value={state.practiceHistory.length} label="Home practices" />
+          <Stat value={state.practiceHistory.length} label="Home practices" singular="Home practice" />
           <Stat value={`${lessonsDone}/${LESSONS.length}`} label="Lessons completed" />
           <Stat value={streak} label="Current streak (days)" />
           <Stat value={best} label="Best streak (days)" />

@@ -8,9 +8,8 @@ import { practiceDates } from '../utils/progress'
 import {
   DAY_NAMES,
   formatTimeRange,
-  longDate,
   nextDayOfWeek,
-  relativeDayLabel,
+  fullDayLabel,
   weekDates,
 } from '../utils/dates'
 
@@ -31,7 +30,7 @@ export function ScheduleScreen() {
         </p>
         <h2 style={{ fontSize: '1.375rem', marginTop: 2 }}>{cls.title}</h2>
         <p className="bold" style={{ color: 'var(--navy-700)', marginTop: 4 }}>
-          {relativeDayLabel(nextClass, today)}, {longDate(nextClass)}
+          {fullDayLabel(nextClass, today)}
         </p>
         <p className="small muted">{formatTimeRange(cls.startTime, cls.endTime)}</p>
         <p className="small muted row" style={{ gap: 4, marginTop: 'var(--s-2)' }}>

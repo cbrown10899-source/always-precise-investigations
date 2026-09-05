@@ -13,7 +13,18 @@ import { AppContext, type AppStore } from './context'
  * UPDATE rather than from a value read a moment earlier.
  */
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<AppState>(() => loadState())
+  // Badges are settled ON LOAD as well as on update.
+  //
+  // They were only ever awarded inside `update`, so a state that arrived
+  // already deserving one never got it: the seeded demo carries two completed
+  // practices and drew "0 of 9" with First Practice — requirement "Complete 1
+  // practice" — showing as locked. A locked badge whose own stated
+  // requirement is already met is the app telling a child something untrue.
+  //
+  // Awarding here is silent: `justEarned` stays empty, because nobody just
+  // did anything and a celebration for work done last week would be its own
+  // small lie.
+  const [state, setState] = useState<AppState>(() => applyBadges(loadState()).state)
   const [justEarned, setJustEarned] = useState<BadgeId[]>([])
   const [persisted, setPersisted] = useState(true)
 
@@ -51,7 +62,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const reset = useCallback(() => {
     pendingBadges.current = []
     setJustEarned([])
-    setState(resetState())
+    // Same rule as the initial load: the fresh demo carries seeded practices,
+    // so the badges those practices earn are settled immediately and silently.
+    const fresh = applyBadges(resetState()).state
+    saveState(fresh)
+    setState(fresh)
   }, [])
 
   const clearJustEarned = useCallback(() => setJustEarned([]), [])
