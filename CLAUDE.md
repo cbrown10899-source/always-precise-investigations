@@ -3748,6 +3748,20 @@ Send would post values the person has just walked back from. The preview screen
 has no inputs, so the two could not differ today; capturing means they cannot
 differ tomorrow either.
 
+**A MIRROR FOLLOWS THE SENDER, NEVER THE OTHER WAY ROUND.** A case-referenced
+intake send goes through `/leads/:no/send-intake`, which greets with the lead's
+own `client_name` and ignores the body's name. The rehearsal filled in only a
+BLANK name, so a typed name previewed one greeting and emailed another — free
+while everything was a rehearsal, and a broken promise the moment Send really
+sent. **And the pin that guards this claimed one route more than it could
+hold**: it asserted a send reaches one of three exact routes while the page uses
+a fourth whenever a case is named. Nothing was unsafe; the CLAIM was wider than
+the code, which is the failure a pin exists to prevent, committed by the pin.
+Both found by reading the diff against what the ordinary routes actually do —
+neither by a suite. When a rehearsal becomes a send, re-read every place the two
+resolvers could differ, because the ones that did not matter yesterday are
+exactly the ones nothing was testing.
+
 **A SAFETY STATEMENT GETS ONE WRITER, AND IT IS THE WORKER.** The banner text
 was hard-coded in `portal/index.html` and said DRY RUN. `/assistant/state`
 returns `banner` and `banner_detail` now and the page prints them, because a

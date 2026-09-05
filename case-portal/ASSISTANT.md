@@ -659,6 +659,40 @@ draws nothing until the state lands. `beta:false`, `live:true`,
 `rehearsal:true` and `blocked:<count>` are the state's own facts.
 `.asst-dry` was renamed `.asst-live`.
 
+### D9 — the preview and the send disagreed on the greeting
+
+Found reviewing the diff, not by a suite. A case-referenced intake send goes
+through `/leads/:no/send-intake`, which greets with the LEAD'S OWN
+`client_name` and ignores `body.name`. `assistantIntakePlan` filled in only a
+BLANK name, so a typed name previewed one greeting and emailed another.
+
+Harmless while every rehearsal was a rehearsal. **Not harmless once Send really
+sends**, because *what you previewed is what goes* is the property the whole
+flow rests on. The mirror follows the sender: the case's own name wins, and the
+suite asserts the preview against a real lead send byte for byte. The Name
+field's label now says a case supplies its own — a field that silently stops
+mattering is the *"a control that draws is not a control that works"* defect one
+field over.
+
+### D10 — the pin claimed one route more than it could hold
+
+The first version asserted a send may reach one of **three** exact routes. The
+page uses a **fourth**, `/leads/:no/send-intake`, whenever a case is named.
+Nothing was unsafe — both are ordinary routes with their own admin gate and
+refusals — but **the claim was wider than the code**, which is the failure the
+pin exists to prevent, committed by the pin itself.
+
+The second door is DECLARED on the row (`route_alt`, the only one in the
+registry), `ASSISTANT_SEND_ROUTES` is four, and the pin counts every route a
+send can reach, asserts each is claimed by exactly one command, and asserts
+only the intake carries an alternate.
+
+**A third lesson came with it:** proving D9 needs a REAL send, and I first put
+it in the Unit 4 rehearsal section — whose premise is that nothing real happens
+there. The send wrote the `send_log` row and stamped the lead that three
+assertions below require absent, and three tests went red. A real send belongs
+in the section that has a mailer.
+
 ### What did not move
 
 `CONTEXT_TAKES_PAYMENT`, every Cash App/Venmo boundary, `FIELD_KEEP`,
