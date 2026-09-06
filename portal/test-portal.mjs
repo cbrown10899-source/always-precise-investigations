@@ -1056,6 +1056,40 @@ section('Rate sheets');
   ok('and shows NO percentage and no arithmetic — the owner\'s own rule',
      !/%/.test(eng.text) && !/\bx\b|×|÷|=/.test(eng.text), eng.text);
 
+  /* ==== THE PRINTABLE RATE SHEET. The owner asked for it twice; this portal
+     had no rate-sheet print path at all. Same shape as #invdoc / #tldoc /
+     #mandoc — the rendering on screen IS the document, the browser's own
+     dialog saves the PDF, and there is still exactly one PDF writer. ==== */
+  const printable = await page.evaluate(() => {
+    const doc = document.querySelector('#rsdoc');
+    if (!doc) return null;
+    const btn = [...document.querySelectorAll('.btn')]
+      .find(b => /Print \/ Save PDF/.test(b.innerText));
+    const inDoc = sel => !!doc.querySelector(sel);
+    return {
+      button: !!btn,
+      /* WHAT MUST BE IN THE CLIENT'S DOCUMENT */
+      engagement: inDoc('.rs-eng'), lines: doc.querySelectorAll('.rs-row').length,
+      closing: inDoc('.rs-close'), ident: !!doc.querySelector('.rs-ident'),
+      /* AND WHAT MUST NOT: the office's own controls and history */
+      send: inDoc('[data-act="shWiz"]'), nextstep: inDoc('.nextstep'),
+      printBtn: inDoc('[data-act="rsPrint"]'),
+    };
+  });
+  ok('the rate sheet has a printable region and a Print / Save PDF control',
+     printable && printable.button === true && printable.engagement === true,
+     JSON.stringify(printable));
+  ok('the printed document carries the priced lines and the closing',
+     printable.lines >= 4 && printable.closing === true, JSON.stringify(printable));
+  ok('and the firm identity line, which paper needs and the screen already has',
+     printable.ident === true);
+  /* THE OFFICE'S OWN CONTROLS ARE NOT THE CLIENT'S DOCUMENT. Structural, not a
+     CSS assertion: they are outside #rsdoc, so no restyle can put them on a
+     sheet a client is handed. The same rule #pkgdoc is held to. */
+  ok('the Send control, the Next-step panel and the Print button are all OUTSIDE the document',
+     printable.send === false && printable.nextstep === false && printable.printBtn === false,
+     JSON.stringify(printable));
+
   /* PAYMENTS.md §2 — the send area used to explain itself in a 0.78rem muted
      `.opt` footnote, which is the one presentation that section forbids by
      name. The wording is asserted here; the SIZE is asserted too, because
@@ -1964,8 +1998,12 @@ section('A private lead can be sent payment options; an insurance lead cannot');
   ok('and the insurance card still offers its own two sends',
      await ins.locator('.btn', { hasText: 'Send rate sheet' }).count() === 1
      && await ins.locator('.btn', { hasText: 'Send intake' }).count() === 1);
+  /* "Review" opened the CASE, which is not what the word promised — the owner
+     reported it from a phone. It is "View intake" now and goes to the
+     submission. The property this assertion protects is unchanged: the card's
+     other actions were not displaced by the rename. */
   ok('the private card keeps its existing actions too — nothing was displaced',
-     await priv.locator('.btn', { hasText: 'Review' }).count() === 1
+     await priv.locator('.btn', { hasText: 'View intake' }).count() === 1
      && await priv.locator('.btn', { hasText: 'Send rate sheet' }).count() === 1
      && await priv.locator('.btn', { hasText: 'Send intake' }).count() === 1);
 
@@ -4381,7 +4419,8 @@ section('Leads and intakes: cards, decisions, and the phone-call lead');
   await page.waitForTimeout(400);
   const desk = await text(page, '#app');
   ok('early-stage submissions wait as cards', await page.locator('.pcard').count() >= 1, desk.slice(0, 200));
-  ok('a card offers Review', await page.locator('.pcard .btn', { hasText: 'Review' }).count() >= 1);
+  ok('a card offers a way into the submitted intake, named for what it opens',
+     await page.locator('.pcard .btn', { hasText: 'View intake' }).count() >= 1);
   ok('and Accept routes to the assignment decision',
      await page.locator('.pcard .btn', { hasText: 'Accept' }).count() >= 1);
   // The hostile row is stage new, so it sits on this desk too — as text.
@@ -6765,13 +6804,24 @@ section('A lead has its own life, and its sends live on the card');
 
   const card = page.locator('.pcard', { hasText: 'API-20260812-4005' });
   ok('a fresh lead is on the desk', await card.count() === 1);
-  ok('with the lead vocabulary, not the case one',
-     has(await card.innerText(), 'Lead status'));
+  /* THE LADDER IS STILL HERE, FOLDED. It moved under Admin status because a
+     dropdown was as loud as the client's own name on a card whose job is
+     "somebody submitted this, read it" — so the visible text must NOT lead
+     with it, while the control itself is still present and still works. */
+  ok('the lead ladder is present but folded under Admin status',
+     has(await card.innerText(), 'Admin status')
+     && !has(await card.innerText(), 'Lead status')
+     && await card.locator('select[data-act="leadStatus"]').count() === 1,
+     (await card.innerText()).slice(0, 160));
   ok('and both send actions on the card',
      await card.locator('.btn', { hasText: 'Send rate sheet' }).count() === 1
      && await card.locator('.btn', { hasText: 'Send intake' }).count() === 1);
 
   // The office's own hand: set Contacted, and it survives a full reload.
+  // The disclosure has to be opened first — it is closed by default, which is
+  // the point of it. A keyboard user reaches it the same way.
+  await card.locator('.pc-more summary').click();
+  await page.waitForTimeout(200);
   await card.locator('select[data-act="leadStatus"]').selectOption('contacted');
   await page.waitForTimeout(600);
   await page.reload();
@@ -6836,7 +6886,7 @@ section('A lead has its own life, and its sends live on the card');
      real failure — and it has to be on the record as one. Done last, because
      opening the case leaves the leads desk behind. */
   await page.locator('.pcard', { hasText: 'API-20260812-4005' })
-    .locator('.btn', { hasText: 'Review' }).click();
+    .locator('.btn', { hasText: 'View intake' }).click();
   await page.waitForTimeout(700);
   await wsTab(page, 'Comm log');
   await page.waitForTimeout(500);
@@ -7022,8 +7072,8 @@ section('A returned private intake shows the retainer pending and the way to act
      await c1.locator('.btn', { hasText: 'Record payment' }).count() === 1);
   ok('§10: so is Send payment options',
      await c1.locator('.btn', { hasText: 'Send payment options' }).count() === 1);
-  ok('§10: and Review, which is the third named action',
-     await c1.locator('.btn', { hasText: 'Review' }).count() === 1);
+  ok('§10: and the way into the submitted intake, which is the third named action',
+     await c1.locator('.btn', { hasText: 'View intake' }).count() === 1);
 
   /* The condition is BOTH halves. A retainer that has arrived is not pending,
      and saying so anyway would send the office chasing money it already has. */
@@ -17295,6 +17345,112 @@ section('API ASSISTANT Unit 4 — the intake dry-run workbench, on the real page
    reads shows the same amount the email will carry, and that none of it breaks
    at 390px.
    ========================================================================= */
+/* ============================================================================
+   ONE TAP FROM INTAKES TO THE SUBMITTED INTAKE (owner, from a real iPhone).
+
+   The reported path was Intakes -> Review -> the case Overview -> scroll to the
+   bottom -> Intake details. The regression the owner asked for is exactly that:
+   tap the card and be looking at what the client entered and signed, with NO
+   intermediate case Overview.
+   ========================================================================= */
+section('Intakes: tapping a submitted intake opens what the client signed');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await post('/ingest', {
+    case_no: 'API-TAP-1', service: 'Surveillance',
+    client_name: 'Michelle Fultz', client_phone: '4343861459',
+    client_email: 'michellefultz@me.com', subject_name: 'Gregory Hunter Fultz',
+    objective: 'Document weekday movements',
+    signature: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await page.evaluate(() => { TAB = 'leads'; VIEW = 'list'; render(); });
+  await page.waitForTimeout(900);
+
+  /* THE CARD ITSELF IS THE DOOR. Located by the client's name, the way a
+     person finds it — not by a nth-child that would pass on the wrong card. */
+  const card = page.locator('.pcard', { hasText: 'Michelle Fultz' });
+  const shape = await page.evaluate(() => {
+    const c = [...document.querySelectorAll('.pcard')]
+      .find(x => /Michelle Fultz/.test(x.innerText));
+    if (!c) return null;
+    const door = c.querySelector('.pc-open');
+    return {
+      door: !!door,
+      doorTab: door ? door.dataset.tab : null,
+      /* the identity is INSIDE the door, so tapping the name is tapping it */
+      nameInDoor: door ? /Michelle Fultz/.test(door.innerText) : false,
+      /* CASE-INSENSITIVE ON PURPOSE: `.tag` is text-transform:uppercase and
+         innerText returns RENDERED text, so the card reads "SIGNED ✓". The
+         first version of this assertion matched the source casing and failed
+         against correct output — the test was wrong, not the card. */
+      signed: /signed/i.test(c.innerText),
+      /* the admin ladder is folded, not deleted */
+      statusInHeader: !!c.querySelector('.pc-top select'),
+      statusUnderMore: !!c.querySelector('.pc-more select'),
+      moreClosed: c.querySelector('.pc-more') ? !c.querySelector('.pc-more').open : null,
+      /* NO CONTROL INSIDE A CONTROL — the Unit 40 nesting rule */
+      nested: door ? door.querySelectorAll('button,a,select,input').length : -1,
+      viewBtn: !!c.querySelector('[data-tab="details"].btn'),
+      reviewGone: !/\bReview\b/.test(c.innerText),
+    };
+  });
+  ok('the intake card has a single door carrying the client identity',
+     shape && shape.door === true && shape.nameInDoor === true, JSON.stringify(shape));
+  ok('and it points at the submitted intake, not the case overview',
+     shape.doorTab === 'details', shape.doorTab);
+  ok('the card says the client signed it', shape.signed === true);
+  ok('the lead ladder is folded under Admin status, not sitting in the header',
+     shape.statusInHeader === false && shape.statusUnderMore === true
+     && shape.moreClosed === true, JSON.stringify(shape));
+  ok('the door contains no nested control — one destination, one tab stop',
+     shape.nested === 0, String(shape.nested));
+  ok('"Review" is gone, replaced by a control that says what it opens',
+     shape.reviewGone === true && shape.viewBtn === true, JSON.stringify(shape));
+
+  /* ---- THE REGRESSION THE OWNER ASKED FOR, ONE TAP ---- */
+  await card.locator('.pc-open').click();
+  await page.waitForTimeout(900);
+  const landed = await page.evaluate(() => ({
+    view: VIEW, tab: WS_TAB, caseNo: WS_CASE,
+    text: (document.querySelector('.casepage') || document.body).innerText,
+    sig: !!document.querySelector('img.sig'),
+    back: (document.querySelector('.pagebar .close') || {}).innerText || '',
+  }));
+  ok('ONE TAP lands on the submitted intake — no case Overview in between',
+     landed.tab === 'details' && landed.caseNo === 'API-TAP-1', JSON.stringify({
+       tab: landed.tab, caseNo: landed.caseNo }));
+  ok('the client, the subject and the objective are all on that first screen',
+     /Michelle Fultz/.test(landed.text) && /Gregory Hunter Fultz/.test(landed.text)
+     && /Document weekday movements/.test(landed.text), landed.text.slice(0, 200));
+  ok('the phone and the email they gave are there too',
+     /4343861459/.test(landed.text) && /michellefultz@me\.com/.test(landed.text));
+  ok('and the stored signature is rendered, not described', landed.sig === true);
+  ok('the way back says where it goes — Intakes, because that is where we came from',
+     /Back to Intakes/.test(landed.back), landed.back);
+
+  /* ---- 390px: the phone this was reported from ---- */
+  await page.evaluate(() => { VIEW = 'list'; render(); });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(500);
+  const phoneCard = await page.evaluate(() => {
+    const c = [...document.querySelectorAll('.pcard')]
+      .find(x => /Michelle Fultz/.test(x.innerText));
+    const d = c && c.querySelector('.pc-open');
+    return d ? { h: Math.round(d.getBoundingClientRect().height),
+                 overflow: document.documentElement.scrollWidth > window.innerWidth } : null;
+  });
+  ok(`the door is a comfortable target on a phone (${phoneCard && phoneCard.h}px)`,
+     phoneCard && phoneCard.h >= 44, JSON.stringify(phoneCard));
+  ok('and the intake list does not scroll sideways at 390px', phoneCard.overflow === false);
+  await page.locator('.pcard', { hasText: 'Michelle Fultz' }).locator('.pc-open').click();
+  await page.waitForTimeout(900);
+  ok('one tap on a phone lands on the same submitted intake',
+     await page.evaluate(() => WS_TAB) === 'details');
+
+  await page.close();
+}
+
 section('The send wizard offers the non-refundable amount, on Private only');
 {
   const page = await newPage();

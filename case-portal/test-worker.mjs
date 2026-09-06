@@ -19790,6 +19790,92 @@ section('The private rate sheet carries a non-refundable portion, from one sourc
      res.status === 400 && (await jsonOf(res)).code === 'non_refundable_not_private',
      JSON.stringify(await jsonOf(res)).slice(0, 140));
 
+  /* ---- THE ASSISTANT PARSER (owner, 2026-09-06). The owner's four sentences,
+     verbatim, and what each must put in the form. NOTHING IS SENT by typing
+     one: these assert the SEED, and the send still needs the preview and the
+     confirmation the workbench already requires. ---- */
+  const say = t => call(env, '/assistant/command',
+    { method: 'POST', cookie: admin, body: { text: t, context: {} } });
+  mailed = null;
+  let a = await jsonOf(await say('Send Vanessa a $1,500 rate sheet'));
+  ok('"Send Vanessa a $1,500 rate sheet" seeds the retainer',
+     a.kind === 'prepare_sheet' && a.form.retainer === '1500', JSON.stringify(a.form));
+  ok('…and leaves the non-refundable box BLANK, which is what makes it track the standard',
+     a.form.non_refundable === '', JSON.stringify(a.form));
+  a = await jsonOf(await say('Prepare Vanessa a $1,000 rate sheet with $500 non-refundable'));
+  ok('"$1,000 rate sheet with $500 non-refundable" seeds both figures the right way round',
+     a.form.retainer === '1000' && a.form.non_refundable === '500', JSON.stringify(a.form));
+  a = await jsonOf(await say('Send a $1,500 Private rate sheet with $750 non-refundable'));
+  ok('"$1,500 Private rate sheet with $750 non-refundable" seeds 1500 and 750',
+     a.form.retainer === '1500' && a.form.non_refundable === '750'
+     && a.form.context === 'private', JSON.stringify(a.form));
+  a = await jsonOf(await say('Prepare a Private rate sheet with a $2,000 retainer and $900 non-refundable'));
+  ok('a custom retainer named after the non-refundable amount is still read correctly',
+     a.form.retainer === '2000' && a.form.non_refundable === '900', JSON.stringify(a.form));
+  ok('and typing ANY of those sent nothing at all', mailed === null);
+
+  /* THE ORDER IS THE WHOLE TRICK, so it is asserted from the other direction
+     too: the amount standing next to "non-refundable" is claimed first, and
+     whatever is left is the retainer — whichever way round they were typed. */
+  a = await jsonOf(await say('Prepare a rate sheet with $600 non-refundable and a $2,500 retainer'));
+  ok('the non-refundable amount is claimed by its words, not by its position',
+     a.form.retainer === '2500' && a.form.non_refundable === '600', JSON.stringify(a.form));
+  a = await jsonOf(await say('Prepare a rate sheet'));
+  ok('a sentence naming no figure seeds neither, and the form opens on the standard',
+     a.form.retainer === '' && a.form.non_refundable === '', JSON.stringify(a.form));
+  /* A non-refundable amount is a private-client term, so a sentence carrying
+     one has said which audience it means — but words about the audience are
+     more explicit and keep the floor. */
+  a = await jsonOf(await say('Prepare a rate sheet with $400 non-refundable'));
+  ok('naming a non-refundable amount resolves an unstated audience to private',
+     a.form.context === 'private', JSON.stringify(a.form));
+  a = await jsonOf(await say('Prepare a law firm rate sheet with $400 non-refundable'));
+  ok('but naming the law firm keeps the legal audience — the Worker refuses the pairing by name',
+     a.form.context === 'legal', JSON.stringify(a.form));
+
+  /* ---- READING A SUBMITTED INTAKE (owner, from a real iPhone 2026-09-06).
+     The complaint was the DISTANCE: Intakes -> Review -> the case Overview ->
+     scroll -> Intake details. `details` is now a destination the Assistant can
+     name, and asking to read one is a READ — no command, no confirmation. ---- */
+  await ingest(env, { case_no: 'API-NR-SIGNED', service: 'Surveillance',
+    client_name: 'Michelle Fultz', subject_name: 'Gregory Hunter Fultz',
+    signature: 'data:image/png;base64,iVBORw0KGgo=' });
+  await ingest(env, { case_no: 'API-NR-UNSIGNED', service: 'Surveillance',
+    client_name: 'No Pen', subject_name: 'S' });
+  const rows = (await jsonOf(await call(env, '/submissions', { cookie: admin }))).submissions;
+  const sgn = rows.find(r => r.case_no === 'API-NR-SIGNED');
+  const uns = rows.find(r => r.case_no === 'API-NR-UNSIGNED');
+  ok('the intake list reports whether the client signed it', sgn && sgn.signed === 1,
+     JSON.stringify(sgn && sgn.signed));
+  ok('and says so honestly when they did not', uns && uns.signed === 0,
+     JSON.stringify(uns && uns.signed));
+  /* THE FACT TRAVELS, THE IMAGE DOES NOT. A signature is ~50KB and the desk
+     draws dozens of cards; none of them needs the picture. */
+  ok('and the signature image itself never reaches the list',
+     !/data:image/.test(JSON.stringify(rows)));
+
+  let r2 = await jsonOf(await call(env, '/assistant/command', { method: 'POST', cookie: admin,
+    body: { text: 'open the intake', context: { route: 'case', case_no: 'API-NR-SIGNED' } } }));
+  ok('"open the intake" on a case goes straight to the submitted intake',
+     r2.navigate && r2.navigate.kind === 'case_tab' && r2.navigate.id === 'details'
+     && r2.navigate.case_no === 'API-NR-SIGNED', JSON.stringify(r2.navigate));
+  ok('and it is a READ — no command, nothing to confirm',
+     !r2.command && r2.kind === 'status', r2.kind);
+  r2 = await jsonOf(await call(env, '/assistant/command', { method: 'POST', cookie: admin,
+    body: { text: 'show me the submission', context: {} } }));
+  ok('with no case in hand it points at the desk that lists them',
+     r2.actions && r2.actions[0].navigate.id === 'leads', JSON.stringify(r2.actions));
+  /* THE SEND CARVE-OUT STILL OWNS ITS OWN VERB. "Send an intake link" must
+     still open the workbench, not be swallowed by the read branch above it. */
+  r2 = await jsonOf(await call(env, '/assistant/command', { method: 'POST', cookie: admin,
+    body: { text: 'send an intake link to x@example.com', context: {} } }));
+  ok('"send an intake link" is still a preparation, not a read',
+     r2.kind === 'prepare_intake', r2.kind);
+  r2 = await jsonOf(await call(env, '/assistant/command', { method: 'POST', cookie: admin,
+    body: { text: 'delete this intake', context: { route: 'case', case_no: 'API-NR-SIGNED' } } }));
+  ok('and "delete this intake" is still refused, never read as an open',
+     r2.kind === 'refused', r2.kind);
+
   /* ---- WHAT MUST NOT HAVE MOVED. ---- */
   ok('the 4-hour minimum is still on the private sheet\'s own lines',
      privCard.lines.some(l => /4-hour minimum/i.test(`${l.sub} ${l.note}`)));

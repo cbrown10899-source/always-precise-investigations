@@ -4277,6 +4277,16 @@ async function listSubmissions(request, env, user) {
             CASE WHEN json_valid(s.payload)
                   AND json_extract(s.payload, '$.assignment') = 'legal'
                  THEN 1 ELSE 0 END AS legal,
+            /* DID THE CLIENT SIGN IT? Computed in SQL so the boolean travels
+               and the 50KB payload does not — the intake list draws dozens of
+               rows and none of them needs the signature image, only the fact
+               that one exists. json_extract is already used two lines above in
+               this same statement, so this adds no dependency.
+               (No backticks in here: this comment lives INSIDE a template
+               literal, and one would end the string. CLAUDE.md records that
+               trap; this is it, met a second time.) */
+            CASE WHEN COALESCE(json_extract(s.payload, '$.signature'), '') != ''
+                 THEN 1 ELSE 0 END AS signed,
             (SELECT COUNT(*) FROM send_log sl WHERE sl.case_no = s.case_no AND sl.ok = 1) AS send_count,
             (SELECT MAX(sent_at) FROM send_log sl WHERE sl.case_no = s.case_no AND sl.ok = 1) AS last_sent_at,
             s.carrier, s.claim_number, s.created_at, s.assigned_to, u.display_name AS assigned_name,
@@ -13879,6 +13889,11 @@ const ASSISTANT_SEND_ROUTES = ['sheets/:id/email', 'intake-link/email',
    against its own handler exactly as it does for a tab. */
 const ASSISTANT_CASE_TABS = {
   overview: 'Overview', activity: 'Activity', daily: 'Daily Summary',
+  /* `details` IS THE SUBMITTED INTAKE — what the client typed and signed. It
+     was missing from this list, so "open the intake" had nowhere to land and
+     the Assistant could only offer the case Overview: the same detour the
+     owner reported taking by hand on the Intakes screen. */
+  details: 'Intake details',
   evidence: 'Case media', reports: 'Report', billing: 'Billing',
 };
 /* `assistantCommand` is already the route handler's name — the class-name
@@ -15219,12 +15234,82 @@ async function assistantCommand(request, env, user) {
   return json(d, res.status);
 }
 
+/* THE TWO FIGURES A PRIVATE RATE-SHEET SENTENCE CAN CARRY (owner, 2026-09-06).
+
+   "Prepare Vanessa a $1,500 rate sheet with $750 non-refundable" seeds the
+   retainer and the non-refundable portion into the workbench. NOTHING IS SENT
+   BY TYPING IT: the values land in a form the person reads, previews and
+   confirms, exactly as if they had typed them into the boxes.
+
+   THE NON-REFUNDABLE AMOUNT IS TAKEN FIRST AND REMOVED FROM THE SENTENCE, and
+   the order is what makes this reliable rather than clever. "$1,500 rate sheet
+   with $750 non-refundable" has two amounts, and the only thing distinguishing
+   them is that one of them is standing next to the words "non-refundable".
+   Claim that one, take it out, and whatever dollar figure is left is the
+   retainer — which is why the retainer pattern does not need to know about
+   "retainer", "rate sheet" or the order they appear in.
+
+   A LOOSE MATCH IS SAFE HERE, and that is a property of the flow rather than
+   of the regex: a seed that lands in the wrong box is visible in the form, the
+   preview and the confirmation before anything leaves. It would not be safe on
+   anything that acted on the sentence directly, and nothing here does.
+
+   BLANK STAYS BLANK when no amount is given. It is tempting to write the
+   default in, and it would be wrong: blank means "whatever the standard is",
+   and a figure typed into the box means "this figure". Seeding 500 would turn
+   the first into the second, so a later change to the standard would not reach
+   a form somebody had opened from a sentence. `nonRefundableFor` resolves it,
+   the placeholder shows it, and the preview prints it. */
+function asstSheetAmounts(text) {
+  let rest = ' ' + String(text || '') + ' ';
+  const num = m => String(m).replace(/[$,\s]/g, '');
+  const AMT = '\\$\\s?([\\d,]+(?:\\.\\d{1,2})?)';
+
+  let nonRefundable = '';
+  const nr = rest.match(new RegExp(
+    `${AMT}\\s*(?:dollars?\\s*)?non[-\\s]?refundable|non[-\\s]?refundable[^$]{0,24}${AMT}`, 'i'));
+  if (nr) { nonRefundable = num(nr[1] || nr[2]); rest = rest.replace(nr[0], ' '); }
+
+  /* Whatever figure is left. A sentence naming neither leaves both blank and
+     the form opens on the standard, which is the ordinary case. */
+  const ret = rest.match(new RegExp(AMT));
+  return { retainer: ret ? num(ret[1]) : '', nonRefundable };
+}
+
 async function assistantCommandCore(body, env, user) {
   const text = String(body.text || '').slice(0, 500);
   const ctx = body.context && typeof body.context === 'object' ? body.context : {};
   const route = String(ctx.route || '').slice(0, 40);
   const caseNo = CASE_NO_RE.test(String(ctx.case_no || '')) ? String(ctx.case_no) : '';
   const t = ' ' + asstStrip(text) + ' ';
+
+  /* ---- READING A SUBMITTED INTAKE (owner, 2026-09-06). "Open the intake",
+     "show the submission" — a READ, so no confirmation and no command: it
+     resolves to the same `details` destination the Intakes card now opens, and
+     the page routes it through handlers it already has.
+
+     ORDERED ABOVE THE SEND CARVE-OUT so "open the intake" is a read rather
+     than a preparation. The send branch below still owns anything naming a
+     send verb, which is why this one requires an opening verb of its own and
+     refuses to match "send an intake link". */
+  if (/\bintake\b|\bsubmission\b/i.test(text)
+      && /\b(open|show|view|read|see|pull up)\b/i.test(text)
+      && !/\b(send|email|resend|prepare|delete|archiv)\b/i.test(text)) {
+    if (caseNo) {
+      const row = await caseFor(env, user, caseNo);
+      if (row) {
+        return json({ ok: true, kind: 'status',
+          text: `Opening the submitted intake for ${caseNo} — everything the client entered and signed.`,
+          navigate: { kind: 'case_tab', id: 'details', case_no: caseNo } });
+      }
+    }
+    /* No case in context: the desk that lists them is the honest answer, and
+       it is one tap from every submitted intake now. */
+    return json({ ok: true, kind: 'status',
+      text: 'Open it from Intakes — every submitted intake opens straight to what the client '
+          + 'entered and signed. Say "intakes" for what is waiting.',
+      actions: [nav('OPEN INTAKES', 'leads')] });
+  }
 
   /* ---- UNIT 4, now live: an utterance about sending or preparing an INTAKE
      opens the workbench. THE UTTERANCE NEVER SENDS — it only opens the form.
@@ -15265,10 +15350,19 @@ async function assistantCommandCore(body, env, user) {
     const ctxGuess = /insuran|carrier|claim/i.test(text) ? 'insurance'
       : /legal|law firm|attorney|\bfirm\b/i.test(text) ? 'legal'
       : /private|consumer/i.test(text) ? 'private' : '';
+    const amounts = asstSheetAmounts(text);
+    /* A non-refundable amount is a PRIVATE-CLIENT term. A sentence that names
+       one has said which audience it means, so an unstated context becomes
+       private rather than staying blank — and a sentence that names BOTH a
+       non-refundable amount and a law firm keeps the firm, because the words
+       about the audience are the more explicit of the two. The Worker refuses
+       the pairing on that path by name, which is the honest answer. */
+    const ctx = ctxGuess || (amounts.nonRefundable ? 'private' : '');
     return json({ ok: true, kind: 'prepare_sheet',
       text: 'Pick the audience, then preview the exact sheet email. Send emails it; '
           + `Simulate rehearses it instead and records ${ASSISTANT_SIM_OUTCOME}.`,
-      form: { context: ctxGuess, to: mail || '', case_no: caseNo || '' } });
+      form: { context: ctx, to: mail || '', case_no: caseNo || '',
+              retainer: amounts.retainer, non_refundable: amounts.nonRefundable } });
   }
 
   /* ---- THE THIRD LIVE PRODUCT — PAYMENT INSTRUCTIONS ON THEIR OWN, the

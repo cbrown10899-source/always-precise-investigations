@@ -438,6 +438,13 @@
   .rs-eng .eng-alert{color:var(--bad);font-weight:800;font-size:1.05rem;}
   .rs-eng .eng-emph{color:var(--gold-ink);font-weight:800;letter-spacing:.04em;}
   .rs-eng p{margin:9px 0 0;font-size:.84rem;color:var(--muted);line-height:1.5;}
+  /* PRINT ONLY. On screen the masthead already says who this is; on paper the
+     sheet leaves the building on its own and has to say so itself. The reveal
+     lives in the ONE `@media print` block further down, not in a second one of
+     its own: a test matches the first print block in the file and asserts it
+     isolates every document region, so a stray second block ahead of it makes
+     that assertion read the wrong rules. */
+  .rs-ident{display:none;}
   .rs-close{margin:14px 0 4px;padding:13px 15px;background:var(--gold-soft);border-left:3px solid var(--gold-2);border-radius:0 8px 8px 0;}
   .rs-close b{display:block;margin-bottom:3px;}
   .rs-close p{margin:0;font-size:.88rem;color:#44505c;}
@@ -691,6 +698,16 @@
   .pcard{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;
     min-width:0;overflow-wrap:anywhere;}
   .pc-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;}
+  /* THE INTAKE CARD'S OWN DOOR. A real button, full width, left aligned, and
+     carrying the card's whole identity — so "tap the client's name" and "tap
+     the card" are the same act and there is exactly ONE tab stop for it. The
+     action row and the admin disclosure are siblings, never children: a
+     control inside a control is the invalid nesting Unit 40 paid for. */
+  .pc-open{display:block;width:100%;text-align:left;background:none;border:0;padding:0 0 2px;
+    font:inherit;color:inherit;cursor:pointer;border-radius:8px;}
+  .pc-open:focus-visible{outline:3px solid var(--gold);outline-offset:3px;}
+  .pc-open:hover .pc-cue{text-decoration:underline;}
+  .pc-cue{display:inline-block;margin-top:7px;font-size:.8rem;font-weight:700;color:var(--teal);}
   .pc-ring{flex:0 0 auto;}
   .pc-mods{display:flex;gap:4px;flex-wrap:wrap;margin:10px 0 8px;}
   .pc-m{flex:1 1 40px;min-width:52px;text-align:center;font-size:.62rem;color:var(--muted);
@@ -698,6 +715,12 @@
   .pc-m b{display:block;font-size:.86rem;color:var(--ink,var(--ink));}
   .pc-m.done{border-color:var(--ok-line);background:var(--ok-soft);}
   .pc-m.part{border-color:#e9d8a6;background:#fdfaf1;}
+  /* ADMIN PAPERWORK, FOLDED. Closed by default so the card leads with who
+     submitted and whether they signed it. The control inside is unchanged. */
+  .pc-more{margin-top:10px;border-top:1px solid var(--line);padding-top:8px;}
+  .pc-more summary{cursor:pointer;font-size:.8rem;font-weight:700;color:var(--muted);
+    min-height:32px;display:flex;align-items:center;}
+  .pc-more summary:focus-visible{outline:3px solid var(--gold);outline-offset:2px;}
   .pc-next{display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1px solid var(--line);
     padding-top:10px;margin-top:4px;}
   /* UNIT 5 (owner: "Intake Accept-style controls can appear narrow/unfinished").
@@ -1332,6 +1355,15 @@
     /* UNIT 10 — the timeline prints the SAME rendering that is on screen. There
        is no second document and no PDF writer: the browser's own print dialog
        is what saves one, on an explicit action, and nothing is stored. */
+    /* THE RATE SHEET. `#rsdoc` is the client-facing document and nothing else:
+       the Send controls, the Next-step panel and the send history are the
+       office's own and must not print on a sheet a client is handed. */
+    body.printing-sheet *{visibility:hidden !important;}
+    body.printing-sheet #rsdoc, body.printing-sheet #rsdoc *{visibility:visible !important;}
+    body.printing-sheet #rsdoc{position:absolute;left:0;top:0;width:100%;border:0;padding:0;}
+    body.printing-sheet .rs-row{break-inside:avoid;}
+    body.printing-sheet .rs-ident{display:block;margin:0 0 10px;font-size:.8rem;
+      letter-spacing:.04em;text-transform:uppercase;color:#5c6775;}
     body.printing-timeline *{visibility:hidden !important;}
     body.printing-timeline #tldoc, body.printing-timeline #tldoc *{visibility:visible !important;}
     body.printing-timeline #tldoc{position:absolute;left:0;top:0;width:100%;border:0;padding:0;}
@@ -3422,9 +3454,15 @@ async function asstSend(text){
                     preview: null, previewBody: null, err: "", busy: false };
     }
     if(r.kind === "prepare_sheet" && r.form){
+      /* THE SENTENCE'S OWN FIGURES, seeded into the draft (owner 2026-09-06).
+         They are a SEED and nothing more: the person reads them in the form,
+         previews the exact email and confirms before anything is sent. A blank
+         non-refundable stays blank on purpose — blank means "the standard",
+         and writing the number in would turn that into "this number". */
       ASST.prep = { mode: "sheet", context: r.form.context || "", to: r.form.to || "",
-                    case_no: r.form.case_no || "", legal_service: "", flat_fee: "", retainer: "",
-                    non_refundable: "",
+                    case_no: r.form.case_no || "", legal_service: "", flat_fee: "",
+                    retainer: r.form.retainer || "",
+                    non_refundable: r.form.non_refundable || "",
                     include_intake: false, include_payment: false,
                     preview: null, previewBody: null, err: "", busy: false };
       legalSvcsLoad();
@@ -3558,7 +3596,7 @@ function asstDraftHtml(d){
 /* The case tabs a command may land on. Mirrors ASSISTANT_CASE_TABS in the
    Worker; two short lists that agree is the same shape ASSISTANT_NAV and the
    page's TAB handlers already have, and an id in neither opens nothing. */
-const ASST_CASE_TABS = ["overview", "activity", "daily", "evidence", "reports", "billing"];
+const ASST_CASE_TABS = ["overview", "activity", "daily", "details", "evidence", "reports", "billing"];
 
 /* THE PAYMENT PREFILL (owner, 2026-09-05). A REVIEW CARD, then the EXISTING
    form. Nothing here records, posts, voids or alters a payment, and there is
@@ -4070,6 +4108,7 @@ function asstPrepHtml(){
         <span class="asst-hint">Blank keeps the standard non-refundable amount &mdash; it is
           never dropped for being empty, and it can never exceed the retainer.</span>
         <input id="asst_snr" data-act-input="asstPrep" value="${esc(p.non_refundable || "")}"
+          placeholder="${esc(SHEETS_NR_DEFAULT != null ? String(SHEETS_NR_DEFAULT) : "")}"
           inputmode="decimal" autocomplete="off"></label>` : ""}
       <label class="cap">Recipient email
         <input id="asst_sto" data-act-input="asstPrep" value="${esc(p.to)}" autocomplete="off"></label>
@@ -5765,11 +5804,30 @@ function leadsView(){
        any act on this screen. */
     const ARR = { bill_ach: "BILL.com invoice / ACH", check_pickup: "Awaiting pickup — retainer check at the firm",
                   check_mail: "Awaiting mailed check", existing_billing: "Existing billing arrangement" };
+    /* ONE TAP TO THE SUBMITTED INTAKE (owner, from a real iPhone, 2026-09-06).
+       The path used to be Intakes -> Review -> the case Overview -> scroll to
+       the bottom -> Intake details. "Review" opened the case, which is not
+       what the word promised. The identity block IS the door now and it goes
+       straight to `details`, the screen the owner confirmed is already right.
+
+       A BUTTON WRAPPING THE IDENTITY, NOT AN ANCHOR WRAPPING THE CARD. The
+       action row and the admin disclosure are SIBLINGS of it — the `.ra-row`
+       shape — because a control inside a control is the invalid nesting Unit
+       40 already paid for, and it would give one destination two tab stops. */
+    /* `isAccepted`, not `accepted` — the view above already binds that name to
+       the accepted LIST, and a shadow inside the card renderer is a reader's
+       trap even where it happens to be harmless. */
+    const isAccepted = ls === "converted";
     return `<div class="pcard">
-      <div class="pc-top"><div>
+      <button class="pc-open" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="details"
+        aria-label="View the submitted intake for ${esc(who)}">
         <span class="tag ${legal ? "legaltag" : claim ? "claims" : "consumer"}">${legal ? "Legal" : claim ? "Insurance" : "Private"}</span>
         <span class="tag ${tone}">${lbl}</span>
-        <span class="tag lead-${esc(ls)}">${esc(LEAD_LABEL[ls] || ls)}</span>
+        ${isAccepted ? `<span class="tag lead-converted">Accepted</span>` : ""}
+        ${/* SIGNED is the fact that decides whether this is ready to read, so
+             it sits with the category rather than under a status dropdown. The
+             Worker computes it from the payload without sending the payload. */""}
+        ${c.signed ? `<span class="tag ok">Signed &#10003;</span>` : ""}
         <div style="font-weight:800;margin-top:5px">${esc(legal ? (c.legal_firm || c.client_name || "—")
           : claim ? (c.carrier || c.client_name || "—") : (c.client_name || "—"))}</div>
         ${legal && c.legal_attorney ? `<div style="font-size:.82rem;color:var(--muted)">${esc(c.legal_attorney)}</div>` : ""}
@@ -5784,13 +5842,8 @@ function leadsView(){
         <div style="font-size:.76rem;color:var(--muted);margin-top:4px">Received ${when(c.created_at)}</div>
         ${c.send_count ? `<div style="font-size:.76rem;color:var(--muted);margin-top:2px">
           &#9993; ${c.send_count} sent &middot; last ${when(c.last_sent_at)}</div>` : ""}
-      </div>
-      <label class="f" style="margin:0"><span>Lead status</span>
-        <select data-act="leadStatus" data-case="${esc(c.case_no)}">
-          ${Object.entries(LEAD_LABEL).map(([v, l]) =>
-            `<option value="${v}" ${ls === v ? "selected" : ""}>${l}</option>`).join("")}
-        </select></label>
-      </div>
+        <span class="pc-cue">View intake &rarr;</span>
+      </button>
       ${retPending || paySent ? `<div class="retpend">
         ${retPending ? `<div class="rp-ok">&#10003; Private intake received</div>
           <div class="rp-due">Retainer pending</div>` : ""}
@@ -5800,7 +5853,12 @@ function leadsView(){
       </div>` : ""}
       <div class="pc-next">
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn sm ghost" data-act="openCase" data-case="${esc(c.case_no)}">Review</button>
+          ${/* "Review" OPENED THE CASE, which is not what the word promised —
+               the owner's own report. Renamed to what it does, and pointed at
+               the intake. Open Case is its own separate action, offered when
+               the intake has actually been accepted into one. */""}
+          <button class="btn sm" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="details">View intake</button>
+          ${isAccepted ? `<button class="btn sm ghost" data-act="openCase" data-case="${esc(c.case_no)}">Open case</button>` : ""}
           <button class="btn sm ghost" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="comms">Message</button>
           <button class="btn sm ghost" data-act="leadSheet" data-case="${esc(c.case_no)}" data-kind="${esc(c.kind)}">Send rate sheet</button>
           <button class="btn sm ghost" data-act="leadIntake" data-case="${esc(c.case_no)}">Send intake</button>
@@ -5817,6 +5875,21 @@ function leadsView(){
         ${sendRow}
         ${open ? `<button class="btn sm" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="assign">Accept &rarr;</button>` : ""}
       </div>
+      ${/* THE LEAD LADDER IS ADMIN PAPERWORK, NOT THE INTAKE. The owner's
+           report: the Lead status dropdown was as visually prominent as the
+           client's own name on a card whose job is "somebody submitted this,
+           read it". Nothing is removed — the nine statuses, the route and the
+           stamps are untouched, because other screens and the send flows key
+           off them. It is folded under a disclosure, which is where the brief
+           asked for "truly necessary administrative status controls". */""}
+      <details class="pc-more">
+        <summary>Admin status</summary>
+        <label class="f" style="margin:8px 0 0"><span>Lead status</span>
+          <select data-act="leadStatus" data-case="${esc(c.case_no)}">
+            ${Object.entries(LEAD_LABEL).map(([v, l]) =>
+              `<option value="${v}" ${ls === v ? "selected" : ""}>${l}</option>`).join("")}
+          </select></label>
+      </details>
     </div>`;
   };
 
@@ -7672,6 +7745,18 @@ function sheetsView(){
     </div>
   </div>
   ${open ? `<div class="card">
+    ${/* THE PRINTED REGION (owner asked twice for a printable rate sheet). It
+         is the SAME rendering that is on screen — the pattern #invdoc, #tldoc
+         and #mandoc already follow — so the browser's own dialog saves the PDF
+         and this page still has exactly ONE PDF writer, which a source test
+         pins by counting the header literal. (Naming that literal here would
+         have made this comment the second occurrence and failed the guard —
+         the third time a pin in this project has fired on my own prose.)
+         Nothing is generated, stored or uploaded. The firm's identity
+         line prints because a sheet leaving the building on paper has to say
+         whose it is; on screen the masthead already does. */""}
+    <div id="rsdoc">
+    <p class="rs-ident">Always Precise Investigations, LLC &middot; Va DCJS #11-9159</p>
     <div class="bar"><h2 style="margin:0">${esc(open.name)}</h2>
       <span class="count">${esc(open.audience)}</span></div>
     <p class="lead">${esc(open.summary)}</p>
@@ -7684,7 +7769,9 @@ function sheetsView(){
         <span class="rs-v">${esc(l.value)}</span></div>`).join("")}
     </div>
     <div class="rs-close"><b>${esc(open.closing_title)}</b><p>${esc(open.closing)}</p></div>
+    </div>
     <div class="sendcta">
+      <button class="btn ghost" data-act="rsPrint">&#128424; Print / Save PDF</button>
       <button class="btn" data-act="shWiz" data-sheet="${esc(open.id)}"
         data-context="${esc(open.context || "")}">Send this sheet &rarr;</button>
       <div class="nextstep">
@@ -12726,7 +12813,11 @@ function paint(){
     // .close class the dialog's X had, so muscle memory and tests both hold.
     app.innerHTML = `<div class="casepage">
       <h1 class="vh">Case ${esc(WS_CASE)} &mdash; Always Precise Investigations case portal</h1>
-      <div class="pagebar"><button class="btn sm ghost close" data-act="backToCases">&larr; Back to Cases</button></div>
+      ${/* IT SAYS WHERE IT ACTUALLY GOES. `backToCases` restores the LIST for
+           whichever tab is current, so arriving from Intakes already returned
+           to Intakes — the label was the only thing that lied. */""}
+      <div class="pagebar"><button class="btn sm ghost close" data-act="backToCases">&larr; Back to ${
+        TAB === "leads" ? "Intakes" : TAB === "completed" ? "Completed" : "Cases"}</button></div>
       <div class="card"><div class="dlg" id="dlgBody">${caseBodyHtml()}</div></div>
     </div>`;
     /* UNIT 21'S CHOKEPOINT REACHES THIS SCREEN AT LAST. This branch returned
@@ -13736,6 +13827,14 @@ function tlPrint(){
   document.body.classList.add("printing-timeline");
   window.print();
   setTimeout(() => document.body.classList.remove("printing-timeline"), 400);
+}
+
+/* THE RATE SHEET ON PAPER — the same rendering that is on screen, saved by the
+   browser's own dialog. No second PDF writer, nothing stored, nothing sent. */
+function rsPrint(){
+  document.body.classList.add("printing-sheet");
+  window.print();
+  setTimeout(() => document.body.classList.remove("printing-sheet"), 400);
 }
 
 /* THE LINK OPENS THE RECORD, and for a file that means the viewer rather than
@@ -20728,6 +20827,7 @@ document.addEventListener("click", ev => {
   }
   else if(act === "asstPrepPrev"){ asstPrepPrev(); }
   else if(act === "asstPrepSim"){ asstPrepSim(); }
+  else if(act === "rsPrint"){ rsPrint(); }
   else if(act === "asstPrepSend"){ asstPrepSend(); }
   /* Edit drops the PREVIEW AND THE BODY THAT PRODUCED IT together. Keeping the
      captured body across an edit would leave the one thing Send posts pointing
