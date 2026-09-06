@@ -20965,8 +20965,12 @@ section('Mobile CEO Bot: own scroll, locked portal, no collisions');
       overlap: !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top),
       ceoLeft: a.left < 100, h: Math.round(a.height) };
   });
-  ok('the CEO pill sits bottom-left, clear of the Assistant pill, at the tap floor',
-     pills.ceo && pills.asst && pills.overlap === false && pills.ceoLeft && pills.h >= 44,
+  /* THE SIDE MOVED, THE PROPERTY DID NOT. The chip was bottom-LEFT until the
+     owner stacked the pair on the thumb side; what this assertion is for is
+     that both doors exist, never overlap, and meet the floor. The stacked
+     geometry has its own section below. */
+  ok('both floating doors are present, clear of each other, at the tap floor',
+     pills.ceo && pills.asst && pills.overlap === false && pills.h >= 44,
      JSON.stringify(pills));
   /* §10 — AND IT COVERS NOTHING. It sat at bottom:14px, inside the bottom
      navigation's own band: the nav is z-60 and the fab z-58, so the nav
@@ -21106,11 +21110,18 @@ section('CEO Bot refinement: priority, protection and a plan, at both widths');
   const card = await page.evaluate(() => {
     const c = document.querySelector('.ceo-card.ceo-task');
     return { cat: !!c.querySelector('.ceo-cat'), why: !!c.querySelector('.ceo-why'),
-      metric: !!c.querySelector('.ceo-ev'), impact: !!c.querySelector('.ceo-imp'),
+      /* The sentence-shaped metric line became evidence CHIPS in the polish
+         pass; either satisfies "one concise metric on the card". */
+      metric: !!c.querySelector('.ceo-ev') || !!c.querySelector('.ceo-chips'),
+      chips: [...c.querySelectorAll('.ceo-chip')].map(x => x.textContent.trim()),
+      impact: !!c.querySelector('.ceo-imp'),
       acts: [...c.querySelectorAll('button')].map(b => b.textContent.trim()) };
   });
-  ok('a suggestion card shows category, why, one metric and the impact',
+  ok('a suggestion card shows category, why, its evidence and the impact',
      card.cat && card.why && card.metric && card.impact, JSON.stringify(card));
+  ok('and the evidence reads as scannable chips, including the usage count',
+     card.chips.length >= 2 && card.chips.some(c => /Home tap/.test(c)),
+     JSON.stringify(card.chips));
   ok('with Preview / Not now / Why?', card.acts.join('|') === 'Preview|Not now|Why?',
      JSON.stringify(card.acts));
   const whyOpen = await page.evaluate(() => {
@@ -21215,6 +21226,122 @@ section('CEO Bot refinement: priority, protection and a plan, at both widths');
   ok('the investigator carries none of the admin\'s CEO decisions or counters',
      dana.states === 0 && dana.taps === 0 && dana.mine === 0, JSON.stringify(dana));
   await other.close();
+}
+
+section('The two bots are two doors: stacked on the thumb side, one open at a time');
+{
+  await post('/ingest', { case_no: 'API-PILL-E2E', service: 'Surveillance',
+    client_name: 'Pill Client', subject_name: 'Pill Subject' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const geo = () => page.evaluate(() => {
+    const r = s => { const e = document.querySelector(s); return e ? e.getBoundingClientRect() : null; };
+    const vis = s => { const e = document.querySelector(s);
+      return !!e && getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().height > 0; };
+    const ceo = r('.ceo-fab'), asst = r('.asst-pill'), nav = r('.mnav');
+    const ov = (a, b) => (a && b) ? !(a.right <= b.left || b.right <= a.left
+      || a.bottom <= b.top || b.bottom <= a.top) : false;
+    return { ceoVis: vis('.ceo-fab'), asstVis: vis('.asst-pill'),
+      ceoH: ceo ? Math.round(ceo.height) : null, asstH: asst ? Math.round(asst.height) : null,
+      sameEdge: (ceo && asst) ? Math.abs((window.innerWidth - ceo.right)
+        - (window.innerWidth - asst.right)) <= 1 : null,
+      ceoAbove: (ceo && asst) ? ceo.bottom <= asst.top : null,
+      gap: (ceo && asst) ? Math.round(asst.top - ceo.bottom) : null,
+      overlap: ov(ceo, asst), overNav: ov(ceo, nav) || ov(asst, nav),
+      inViewport: ceo ? ceo.top >= 0 && ceo.bottom <= window.innerHeight : null,
+      hOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+  });
+
+  /* ---- BOTH REACHABLE WITHOUT THE DRAWER, at both real phone widths. The
+     chip used to sit bottom-LEFT — a real floating control, but on the side
+     nobody looks at, which is why it read as hidden. ---- */
+  for (const [w, h] of [[320, 700], [390, 844]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.evaluate(() => { TAB = 'dashboard'; VIEW = 'app'; paint(); });
+    await page.waitForTimeout(450);
+    const g = await geo();
+    ok(`at ${w}px both doors are on screen without opening the drawer`,
+       g.ceoVis && g.asstVis, JSON.stringify(g));
+    ok(`at ${w}px they stack on the same edge, CEO above the Assistant`,
+       g.sameEdge === true && g.ceoAbove === true && g.gap >= 6, JSON.stringify(g));
+    ok(`at ${w}px the CEO chip is the smaller of the two, and both clear the floor`,
+       g.ceoH < g.asstH && g.ceoH >= 44, JSON.stringify([g.ceoH, g.asstH]));
+    ok(`at ${w}px neither overlaps the other or the bottom navigation`,
+       g.overlap === false && g.overNav === false, JSON.stringify(g));
+    ok(`at ${w}px the stack is wholly on screen and causes no sideways scroll`,
+       g.inViewport === true && g.hOverflow === false, JSON.stringify(g));
+  }
+
+  /* ---- ONE PANEL AT A TIME, from both directions. ---- */
+  await page.evaluate(() => { const b = document.querySelector('.ceo-fab'); if (b) b.click(); });
+  await page.waitForTimeout(900);
+  let st = await page.evaluate(() => ({ ceo: CEO_OPEN, asst: !!(ASST && ASST.open),
+    ceoPanel: !!document.querySelector('.ceo-panel'),
+    asstPanel: !!document.querySelector('.asst-panel, .asst-dock, .asst-wrap'),
+    pillsHidden: !document.querySelector('.ceo-fab') && !document.querySelector('.asst-pill') }));
+  ok('tapping CEO opens the CEO panel', st.ceo === true && st.ceoPanel === true, JSON.stringify(st));
+  ok('and both floating doors withdraw while a sheet is up — neither sits behind a modal',
+     st.pillsHidden === true, JSON.stringify(st));
+
+  await page.evaluate(() => asstOpen());
+  await page.waitForTimeout(900);
+  st = await page.evaluate(() => ({ ceo: CEO_OPEN, asst: !!(ASST && ASST.open),
+    ceoPanel: !!document.querySelector('.ceo-panel'),
+    locked: document.body.classList.contains('ceoopen') }));
+  ok('opening the Assistant closes the CEO panel cleanly',
+     st.asst === true && st.ceo === false && st.ceoPanel === false, JSON.stringify(st));
+  ok('and the CEO body lock leaves with it — the portal scrolls again',
+     st.locked === false, JSON.stringify(st));
+
+  await page.evaluate(() => ceoOpen());
+  await page.waitForTimeout(900);
+  st = await page.evaluate(() => ({ ceo: CEO_OPEN, asst: !!(ASST && ASST.open) }));
+  ok('and opening CEO from an open Assistant switches the other way',
+     st.ceo === true && st.asst === false, JSON.stringify(st));
+  await page.evaluate(() => ceoClose());
+  await page.waitForTimeout(400);
+
+  /* ---- THE CASE VIEW USES ITS OWN IDIOM. Measured at 390: `.wsbar` owns the
+     bottom 74px with five controls in it, so a floating pair there would sit
+     over case content. The Assistant's door on this page has always been an
+     in-content button for that reason; the CEO Bot's is its sibling. ---- */
+  await page.evaluate(() => openCase('API-PILL-E2E'));
+  await page.waitForTimeout(1300);
+  const c = await page.evaluate(() => {
+    const r = s => { const e = document.querySelector(s); return e ? e.getBoundingClientRect() : null; };
+    const bar = r('.wsbar');
+    const ceoBtn = document.querySelector('.ceo-casebtn');
+    const asstBtn = [...document.querySelectorAll('button')]
+      .find(b => /Ask Assistant/.test(b.textContent));
+    const cb = ceoBtn ? ceoBtn.getBoundingClientRect() : null;
+    return { ceoDoor: !!ceoBtn, asstDoor: !!asstBtn,
+      noFloating: !document.querySelector('.ceo-fab') && !document.querySelector('.asst-pill'),
+      /* Neither door sits over the section bar. */
+      clearOfBar: (cb && bar) ? cb.bottom <= bar.top : null,
+      ceoBtnH: cb ? Math.round(cb.height) : null,
+      hOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+  });
+  ok('the case view carries both doors as in-content buttons, not floating pills',
+     c.ceoDoor && c.asstDoor && c.noFloating === true, JSON.stringify(c));
+  ok('and the CEO door sits clear of the section bar, at the tap floor',
+     c.clearOfBar === true && c.ceoBtnH >= 44, JSON.stringify(c));
+  ok('with no sideways scroll on the case screen', c.hOverflow === false);
+
+  /* ---- THE DRAWER KEEPS ITS SECONDARY ROUTE. ---- */
+  await page.evaluate(() => { VIEW = 'app'; TAB = 'dashboard'; paint(); });
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.waitForTimeout(400);
+  const rail = await page.evaluate(() => ({
+    ceo: !!document.querySelector('.side-ceo'),
+    asst: !!document.querySelector('.side-asst'),
+    ceoPillOnDesktop: (() => { const e = document.querySelector('.ceo-fab');
+      return !!e && getComputedStyle(e).display !== 'none'; })() }));
+  ok('the desktop rail keeps both launchers side by side', rail.ceo && rail.asst,
+     JSON.stringify(rail));
+  ok('and the phone chip does not clutter the desktop shell',
+     rail.ceoPillOnDesktop === false, JSON.stringify(rail));
+  await page.close();
 }
 
 await browser.close();

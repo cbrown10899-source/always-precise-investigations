@@ -2637,7 +2637,20 @@
      operational pill and keeps its size and its corner; the CEO Bot is a
      compact gold chip on the opposite side. Two identical floating pills would
      read as one feature drawn twice — the owner's own note. */
-  .ceo-fab{position:fixed;left:14px;bottom:max(14px,env(safe-area-inset-bottom));z-index:55;
+  /* THE TWO DOORS STACK ON THE RIGHT, CEO ABOVE ASSISTANT (owner, 2026-09-06).
+
+     It was bottom-LEFT, opposite the Assistant — a real floating control, not
+     a drawer-only entry, but on the side of the screen nobody looks at, which
+     is why it read as hidden. Stacked on the thumb side the pair is one
+     column: the Assistant is the resting position and the CEO Bot sits above
+     it, so the hierarchy is read before either is pressed.
+
+     `--pillgap` is the ONE number the stack is built from — the Assistant's
+     own height plus the space between them — so the two cannot drift apart
+     when either changes size. */
+  :root{--pillgap:58px;}
+  .ceo-fab{position:fixed;right:14px;
+    bottom:calc(max(14px,env(safe-area-inset-bottom)) + var(--pillgap));z-index:55;
     display:none;align-items:center;gap:5px;
     background:var(--navy-2);color:var(--gold);border:1px solid var(--gold);border-radius:20px;
     padding:8px 13px;font-weight:800;font-size:.8rem;letter-spacing:.03em;cursor:pointer;
@@ -2648,6 +2661,9 @@
        project makes. */
     min-height:44px;box-shadow:0 4px 14px rgba(12,22,38,.3);}
   .ceo-fab:focus-visible{outline:2px solid var(--gold);outline-offset:2px;}
+  .ceo-fabstar{font-size:.95rem;line-height:1;}
+  /* The case page's door wears the identity without becoming a second pill. */
+  .ceo-casebtn{color:var(--gold-ink);border-color:var(--gold-line);}
   .ceo-back{position:fixed;inset:0;background:rgba(10,16,26,.45);z-index:70;border:0;}
   .ceo-panel{position:fixed;top:0;right:0;bottom:0;width:min(420px,100%);z-index:71;
     background:#fff;border-left:3px solid var(--gold);display:flex;flex-direction:column;}
@@ -2795,15 +2811,15 @@
     body.ceoopen{overflow:hidden;}
     /* Cleared over the bottom navigation by the nav's own height, the same
        expression `.asst-pill` uses — one number, two controls. */
-    body.hasmnav .ceo-fab{bottom:calc(64px + max(10px, env(safe-area-inset-bottom)));}
+    body.hasmnav .ceo-fab{
+      bottom:calc(64px + max(10px, env(safe-area-inset-bottom)) + var(--pillgap));}
   }
   /* §6 — 320px. The two floating doors have 292px between their outer edges
      there; the chip drops its word to its mark so the pair cannot meet in the
      middle, and both keep the 44px floor. */
-  @media(max-width:359px){
-    .ceo-fab{padding:8px 11px;}
-    .ceo-fab span:last-child{display:none;}
-  }
+  /* 320px: stacked, the chip has no horizontal neighbour to meet, so it keeps
+     its word. The rule that hid the label existed for a side-by-side pair. */
+  @media(max-width:359px){ .ceo-fab{padding:8px 11px;font-size:.76rem;} }
 
 </style>
 </head>
@@ -3654,6 +3670,9 @@ function asstReset(){ ASST = null; }
 
 async function asstOpen(caseNo){
   if(!ASST) ASST = { open: true, busy: false, guide: false, state: null, msgs: [], err: "", view: "home", draft: "", pending: null, cmdBusy: false };
+  /* The same rule from the other side. `ceoClose` also drops a standing
+     preview, so an unapplied layout cannot survive behind the Assistant. */
+  if(CEO_OPEN) ceoClose();
   ASST.open = true;
   ASST.case = caseNo || (VIEW === "case" && WS_CASE ? WS_CASE : "");
   paint();
@@ -4680,6 +4699,12 @@ function ceoReset(){ CEO = null; CEO_OPEN = false; CEO_TAB = "insights"; CEO_ERR
 }
 
 async function ceoOpen(){
+  /* ONE PANEL AT A TIME (owner, §MOBILE SAFETY). The two are separate
+     products with separate state, and on a phone they are both full sheets —
+     two open at once is one covering the other with no way to tell which is
+     which. Opening either closes the other; neither loses anything by it,
+     because each keeps its own state and reopens where it was. */
+  if(ASST && ASST.open) ASST.open = false;
   CEO_OPEN = true; CEO_ERR = "";
   /* THE PORTAL BEHIND THE SHEET DOES NOT MOVE. `body.ceoopen` is what the
      phone rule keys off; without the class the rule is dead CSS and a swipe
@@ -4995,11 +5020,17 @@ function ceoReviewCase(caseNo){
 function ceoFabHtml(){
   if(CEO_OPEN || (ASST && ASST.open)) return "";
   return `<button class="ceo-fab" data-act="ceoOpen" aria-label="Open the CEO Bot">
-    <span aria-hidden="true">&#9733;</span><span>CEO</span></button>`;
+    <span class="ceo-fabstar" aria-hidden="true">&#9733;</span><span>CEO</span></button>`;
 }
 
 function asstPillHtml(){
   if(ASST && ASST.open) return "";
+  /* SYMMETRY WITH THE CEO CHIP, which already withdraws while the Assistant is
+     open. Measured: with the CEO sheet up the pill was still rendered — under
+     the z-70 backdrop, so invisible, but present in the DOM and in the
+     accessibility tree, which is a control a screen-reader user could reach
+     behind a modal sheet. Each door withdraws while the other is open. */
+  if(CEO_OPEN) return "";
   return `<button class="asst-pill" data-act="asstOpen" aria-label="Open the API Assistant">
     &#10024; <span class="asst-tag">ASSISTANT</span></button>`;
 }
@@ -18763,6 +18794,13 @@ function caseActionsHtml(){
     <button class="btn addact" data-act="actOpen">+ Add activity</button>
     ${coreActs}
     <button class="btn sm ghost" data-act="asstOpen" data-case="${esc(WS_CASE)}">&#10024; Ask Assistant</button>
+    ${/* THE CEO BOT'S DOOR ON A CASE IS A BUTTON, NOT A PILL. Measured at
+         390px: the section bar owns the bottom 74px of this screen with five
+         controls in it, so a floating pair here would sit over case content,
+         and the owner's own constraint forbids covering case buttons. The
+         Assistant has always used an in-content door on this page for exactly
+         that reason; this is its sibling, in the CEO Bot's own gold. */""}
+    <button class="btn sm ghost ceo-casebtn" data-act="ceoOpen">&#9733; CEO Bot</button>
     <button class="btn sm ghost" data-act="wsTab" data-tab="daily">Daily summary</button>
     ${cur.open
       ? `<button class="btn sm ghost" data-act="wsTab" data-tab="field">End day</button>
