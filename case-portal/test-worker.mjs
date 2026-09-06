@@ -20538,6 +20538,99 @@ section('Case closeout: a refund is its own event and the payment is never touch
   globalThis.fetch = realFetch;
 }
 
+section('My Portal is per user: one account\'s choices never reach another\'s screen');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const corey = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const inv2 = await jsonOf(await invite(env, corey,
+    { username: 'trever2', role: 'admin', display_name: 'Trever B' }));
+  const tok2 = new URL(inv2.url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok2}/accept`, { method: 'POST', body: { password: 'SecondAdmin2026x' } });
+  const trever = (await login(env, 'trever2', 'SecondAdmin2026x')).cookie;
+
+  /* THE OWNER'S OWN TEST, verbatim from the addendum: Corey hides Assignment
+     -> Trever still sees it; Trever reorders -> Corey unchanged. */
+  await call(env, '/me/prefs', { method: 'POST', cookie: corey,
+    body: { hidden: ['needs_assignment', 'lead_status'], qt_order: ['sheets', 'newlead'] } });
+  let c = await jsonOf(await call(env, '/me/prefs', { cookie: corey }));
+  let t = await jsonOf(await call(env, '/me/prefs', { cookie: trever }));
+  ok("Corey's hides and order are on Corey's row",
+     c.prefs.hidden.includes('needs_assignment') && c.prefs.qt_order[0] === 'sheets',
+     JSON.stringify(c.prefs));
+  ok("and Trever's row is UNTOUCHED — no hides, no order",
+     !t.prefs.hidden && !t.prefs.qt_order, JSON.stringify(t.prefs));
+  await call(env, '/me/prefs', { method: 'POST', cookie: trever,
+    body: { qt_order: ['vstamp', 'sheets'] } });
+  c = await jsonOf(await call(env, '/me/prefs', { cookie: corey }));
+  t = await jsonOf(await call(env, '/me/prefs', { cookie: trever }));
+  ok("Trever's reorder lands on Trever's row", t.prefs.qt_order[0] === 'vstamp');
+  ok("and changes nothing of Corey's", c.prefs.qt_order[0] === 'sheets'
+     && c.prefs.hidden.includes('lead_status'), JSON.stringify(c.prefs));
+
+  /* Dismissed suggestions are personal too. */
+  await call(env, '/me/prefs', { method: 'POST', cookie: corey,
+    body: { dismissed: ['hide_assignment'] } });
+  t = await jsonOf(await call(env, '/me/prefs', { cookie: trever }));
+  ok("Corey dismissing a CEO suggestion leaves Trever's list alone", !t.prefs.dismissed,
+     JSON.stringify(t.prefs));
+
+  /* THE MERGE RULE IS /meta's: absent unchanged, null clears. */
+  await call(env, '/me/prefs', { method: 'POST', cookie: corey, body: { ceo: { active: true } } });
+  c = await jsonOf(await call(env, '/me/prefs', { cookie: corey }));
+  ok('posting one key leaves every other key exactly as it was',
+     c.prefs.hidden.length === 2 && c.prefs.qt_order[0] === 'sheets' && c.prefs.ceo.active === true,
+     JSON.stringify(c.prefs));
+  await call(env, '/me/prefs', { method: 'POST', cookie: corey, body: { hidden: null } });
+  c = await jsonOf(await call(env, '/me/prefs', { cookie: corey }));
+  ok('and an explicit null clears exactly that key — Restore Default in one write',
+     !c.prefs.hidden && c.prefs.qt_order[0] === 'sheets', JSON.stringify(c.prefs));
+
+  /* LOGOUT/LOGIN PERSISTS — the store is the database, not the tab. */
+  const corey2 = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  c = await jsonOf(await call(env, '/me/prefs', { cookie: corey2 }));
+  ok('a fresh sign-in reads the same personal row', c.prefs.qt_order[0] === 'sheets');
+
+  /* USAGE METRICS are the caller's own. */
+  for (let i = 0; i < 3; i++) {
+    await call(env, '/me/prefs/use', { method: 'POST', cookie: corey, body: { action: 'sheets' } });
+  }
+  await call(env, '/me/prefs/use', { method: 'POST', cookie: trever, body: { action: 'vstamp' } });
+  c = await jsonOf(await call(env, '/me/prefs', { cookie: corey }));
+  t = await jsonOf(await call(env, '/me/prefs', { cookie: trever }));
+  ok("three taps count three on Corey's row and nothing on Trever's",
+     c.prefs.metrics.sheets.n === 3 && !t.prefs.metrics.sheets,
+     JSON.stringify([c.prefs.metrics, t.prefs.metrics]));
+  ok("and Trever's tap is his own", t.prefs.metrics.vstamp.n === 1);
+
+  /* HOSTILE INPUT: unknown keys refused by omission, junk action named. */
+  await call(env, '/me/prefs', { method: 'POST', cookie: corey,
+    body: { evil_key: 'x', qt_order: ['a'] } });
+  c = await jsonOf(await call(env, '/me/prefs', { cookie: corey }));
+  ok('an unknown key is not stored — the allow-list is the schema here',
+     !('evil_key' in c.prefs), JSON.stringify(Object.keys(c.prefs)));
+  ok('a junk action name is refused',
+     (await call(env, '/me/prefs/use', { method: 'POST', cookie: corey,
+        body: { action: '<script>' } })).status === 400);
+  ok('an oversized blob is refused by name',
+     (await jsonOf(await call(env, '/me/prefs', { method: 'POST', cookie: corey,
+        body: { ceo: { pad: 'x'.repeat(30000) } } }))).code === 'prefs_too_large');
+  ok('and signing out ends access to the row entirely',
+     (await call(env, '/me/prefs', {})).status === 401);
+
+  /* WITHOUT THE TABLE the read answers with defaults and says the store is
+     not there; the write refuses naming the workflow. */
+  const bare = freshEnv();
+  await bare.DB.prepare('DROP TABLE user_pref').run();
+  await bootstrapAdmin(bare);
+  const bAdmin = (await login(bare, 'trever', 'FirstAdminPass1')).cookie;
+  const br = await jsonOf(await call(bare, '/me/prefs', { cookie: bAdmin }));
+  ok('with no table the read still answers, saying no store exists yet',
+     br.ok === true && br.stored === false, JSON.stringify(br));
+  ok('while the write refuses 503 naming the workflow',
+     (await call(bare, '/me/prefs', { method: 'POST', cookie: bAdmin, body: { hidden: [] } })).status === 503);
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

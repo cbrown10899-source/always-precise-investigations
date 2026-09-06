@@ -6024,6 +6024,94 @@ async function closeoutEmail(request, env, user, caseNo) {
   return json({ ok: true, sent_to: to, ...out });
 }
 
+/* ================= MY PORTAL — PER-USER STATE (owner, 2026-09-06) =========
+
+   "Corey and Trever log in separately and should NOT share personal CEO Bot
+   preferences or personal portal layout decisions." One row per user in
+   `user_pref`, keyed to the AUTHENTICATED identity and nothing else — every
+   read and write below binds `user.id`, so there is no path by which one
+   account's choice reaches another's screen. Shared business data is exactly
+   as shared as it was; this table holds LAYOUT and OBSERVATION, never a case.
+
+   THE MERGE RULE IS /meta's: an absent key is unchanged, an explicit null
+   clears, and the whole blob is re-read after the write so the page repaints
+   from what is actually stored. Keys are allow-listed — a preference store
+   that accepts anything becomes a junk drawer nobody can migrate. */
+const PREF_KEYS = ['qt_order', 'hidden', 'dismissed', 'metrics', 'ceo', 'suggestion_state'];
+const PREF_MAX_BYTES = 24 * 1024;
+
+async function prefsRow(env, userId) {
+  if ((await missingTables(env)).includes('user_pref')) return null;
+  const row = await env.DB.prepare('SELECT prefs FROM user_pref WHERE user_id = ?')
+    .bind(userId).first();
+  let out = {};
+  try { out = row && row.prefs ? JSON.parse(row.prefs) : {}; } catch { out = {}; }
+  return out && typeof out === 'object' ? out : {};
+}
+
+async function readMyPrefs(env, user) {
+  const prefs = await prefsRow(env, user.id);
+  return json({ ok: true, prefs: prefs || {},
+    /* The table can be absent between a merge and portal-setup; the page must
+       know "no store yet" from "empty store" — defaults apply either way, but
+       a save is refused only in the first. */
+    stored: prefs !== null });
+}
+
+async function writeMyPrefs(request, env, user) {
+  if ((await missingTables(env)).includes('user_pref')) {
+    return json({ error: 'The preference table is not set up yet — run the portal-setup workflow.',
+                  code: 'not_set_up' }, 503);
+  }
+  const body = await readJson(request);
+  const cur = (await prefsRow(env, user.id)) || {};
+  for (const k of PREF_KEYS) {
+    if (!(k in body)) continue;               // absent means unchanged
+    if (body[k] === null) { delete cur[k]; continue; }   // null clears
+    cur[k] = body[k];
+  }
+  const packed = JSON.stringify(cur);
+  if (packed.length > PREF_MAX_BYTES) {
+    return json({ error: 'That preference payload is larger than the store accepts.',
+                  code: 'prefs_too_large' }, 400);
+  }
+  await env.DB.prepare(
+    `INSERT INTO user_pref (user_id, prefs, updated_at) VALUES (?1, ?2, ?3)
+     ON CONFLICT(user_id) DO UPDATE SET prefs = ?2, updated_at = ?3`)
+    .bind(user.id, packed, nowIso()).run();
+  return json({ ok: true, prefs: cur });
+}
+
+/* One tap on a quick action, counted for the OWNER'S OWN CEO Bot and nobody
+   else's. Fire-and-forget from the page; a lost count is a lost count, and a
+   guard must not be the cost it guards — one bounded UPDATE, nothing read back
+   beyond the blob it merges into. */
+async function notePrefUse(request, env, user) {
+  if ((await missingTables(env)).includes('user_pref')) return json({ ok: true, counted: false });
+  const body = await readJson(request);
+  const act = String(body.action || '').trim().slice(0, 48);
+  if (!/^[a-z0-9_.-]+$/i.test(act)) return json({ error: 'Name the action.' }, 400);
+  const cur = (await prefsRow(env, user.id)) || {};
+  const metrics = cur.metrics && typeof cur.metrics === 'object' ? cur.metrics : {};
+  const m = metrics[act] && typeof metrics[act] === 'object' ? metrics[act] : { n: 0 };
+  m.n = (Number(m.n) || 0) + 1;
+  m.last = nowIso();
+  metrics[act] = m;
+  /* THE COUNTER SET IS CAPPED — the oldest-used key falls out rather than the
+     blob growing with invented action names. */
+  const keys = Object.keys(metrics);
+  if (keys.length > 80) {
+    keys.sort((x, y) => String(metrics[x].last || '').localeCompare(String(metrics[y].last || '')));
+    for (const k of keys.slice(0, keys.length - 80)) delete metrics[k];
+  }
+  cur.metrics = metrics;
+  await env.DB.prepare(
+    `INSERT INTO user_pref (user_id, prefs, updated_at) VALUES (?1, ?2, ?3)
+     ON CONFLICT(user_id) DO UPDATE SET prefs = ?2, updated_at = ?3`)
+    .bind(user.id, JSON.stringify(cur), nowIso()).run();
+  return json({ ok: true, counted: true });
+}
+
 /* ------------------------------------------------------- case workspace */
 
 /* THE ACCESS RULE for everything in the workspace. An investigator reaches a
@@ -14329,7 +14417,7 @@ const EXPECTED_TABLES = [
   'build_template', 'evidence_integrity', 'case_day_summary', 'storage_failure',
   'case_retention', 'legal_hold', 'retention_event', 'case_day_end',
   'case_content_removed', 'case_content_event', 'feed_hidden', 'assistant_log',
-  'case_refund', 'case_closeout', 'case_refund_status',
+  'case_refund', 'case_closeout', 'case_refund_status', 'user_pref',
 ];
 
 async function missingTables(env) {
@@ -17949,6 +18037,12 @@ async function route(request, env) {
 
   // Active Surveillance Mode: resume-anywhere for whoever is asking, and the
   // office's view of who is out. Both scoped by the caller's own identity.
+  /* MY PORTAL — per-user layout and observation, any signed-in role, always
+     the CALLER'S OWN row. */
+  if (p === '/me/prefs' && method === 'GET') return readMyPrefs(env, user);
+  if (p === '/me/prefs' && method === 'POST') return writeMyPrefs(request, env, user);
+  if (p === '/me/prefs/use' && method === 'POST') return notePrefUse(request, env, user);
+
   if (p === '/my/active' && method === 'GET') return myActiveDay(env, user);
   if (p === '/active' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);

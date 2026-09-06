@@ -20367,7 +20367,9 @@ section('Case closeout: the page records a refund and emails nobody');
      /\$400/.test(asked) && /\$600/.test(asked), asked.slice(0, 160));
   ok('and the confirmation says the original payment is not changed',
      /original payment is not changed/.test(asked), asked.slice(0, 220));
-  ok('and that nothing is emailed by it', /Nothing is emailed/.test(asked), asked.slice(-120));
+  ok('and that nothing is emailed by it', /nothing is emailed/i.test(asked), asked.slice(-160));
+  ok('and that it CLOSES the case — the charter behavior, said before the click',
+     /CLOSE the case/.test(asked) && /Closing is not deleting/.test(asked), asked.slice(0, 120));
 
   const after = await page.evaluate(async () => {
     const w = await (await fetch('/portal-api/cases/API-FC-E2E/closeout-money',
@@ -20467,6 +20469,166 @@ section('The intake screen carries the intake\'s own actions');
   ok('and the row causes no sideways scroll at 390', acts.overflow === false);
 
   await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
+
+section('The no-work close: pay, change mind, two taps, honest record');
+{
+  /* SCENARIO C of the charter's acceptance list, through the real page: a
+     client pays $1,000 and cancels before any work. No surveillance, no
+     report, no package, no checklist — Close Case on the case row, preset
+     $500, refund REQUESTED, confirm. The case leaves the working queues and
+     the statement is ready. */
+  await post('/ingest', { case_no: 'API-NW-E2E', service: 'Surveillance',
+    client_name: 'Quick Cancel', client_email: 'qc@example.com', subject_name: 'Nobody Watched' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => openCase('API-NW-E2E'));
+  await page.waitForTimeout(700);
+
+  /* MISSION 6: Retainer Paid is one tap from the case header. */
+  const acts = await page.evaluate(() => ({
+    ret: !!document.querySelector('[data-act="retQuick"]'),
+    close: !!document.querySelector('[data-act="fcQuick"]'),
+  }));
+  ok('Retainer paid and Close case sit on the case actions row', acts.ret && acts.close,
+     JSON.stringify(acts));
+  await page.evaluate(() => { document.querySelector('[data-act="retQuick"]').click(); });
+  await page.waitForTimeout(400);
+  const retForm = await page.evaluate(() => ({
+    tab: WS_TAB, amt: !!document.getElementById('ret_amt'),
+  }));
+  ok('Retainer paid opens the EXISTING Record Payment form, on the panel that holds it',
+     retForm.tab === 'auth' && retForm.amt === true, JSON.stringify(retForm));
+  await page.evaluate(async () => {
+    document.getElementById('ret_amt').value = '1000';
+    document.getElementById('ret_method').value = 'cash_app';
+    await recordRetainerPayment(true);
+  });
+  await page.waitForTimeout(900);
+
+  /* MISSION 7: Close Case, one tap, no checklist. */
+  await page.evaluate(() => { document.querySelector('[data-act="fcQuick"]').click(); });
+  await page.waitForTimeout(600);
+  const form = await page.evaluate(() => ({
+    tab: WS_TAB, form: !!document.getElementById('fc_retained'),
+    presets: [...document.querySelectorAll('[data-act="fcPreset"]')].map(b => b.textContent.trim()),
+  }));
+  ok('Close case opens the closeout form directly', form.tab === 'billing' && form.form,
+     JSON.stringify(form));
+  ok('with the charter presets: $500, Full amount, Custom',
+     form.presets.join('|') === '$500|Full amount|Custom', JSON.stringify(form.presets));
+
+  /* THE PRESET SEEDS BOTH HALVES, reviewable. */
+  await page.evaluate(() => { document.querySelector('[data-act="fcPreset"]').click(); });
+  await page.waitForTimeout(300);
+  const seeded = await page.evaluate(() => ({
+    kept: document.getElementById('fc_retained').value,
+    back: document.getElementById('fc_refund').value,
+    status: document.getElementById('fc_rstatus').value,
+  }));
+  ok('$500 preset seeds retained 500 and the $500 remainder as the refund',
+     seeded.kept === '500' && seeded.back === '500', JSON.stringify(seeded));
+  ok('and reads the refund as REQUESTED until the owner says otherwise',
+     seeded.status === 'requested', seeded.status);
+
+  await page.evaluate(() => {
+    document.getElementById('fc_reason').value = 'cancelled_before_work';
+    fcCollect();
+  });
+  await page.evaluate(() => { const b = document.querySelector('[data-act="fcPreview"]'); if (b) b.click(); });
+  await page.waitForTimeout(900);
+  const prev2 = await page.evaluate(() => ({
+    txt: document.querySelector('.fc-box').innerText.replace(/\s+/g, ' '),
+    btn: (document.querySelector('[data-act="fcConfirm"]') || {}).textContent || '',
+  }));
+  ok('the review names the requested status and the reason',
+     /Refund requested/i.test(prev2.txt) && /cancelled before work began/i.test(prev2.txt),
+     prev2.txt.slice(0, 240));
+  ok('and the button says what it does: Confirm & close case',
+     /Confirm & close case/.test(prev2.btn), prev2.btn);
+
+  page.once('dialog', d => d.accept());
+  await page.evaluate(() => { const b = document.querySelector('[data-act="fcConfirm"]'); if (b) b.click(); });
+  await page.waitForTimeout(2000);
+
+  const done = await page.evaluate(async () => {
+    const w = await (await fetch('/portal-api/cases/API-NW-E2E/closeout-money',
+      { credentials: 'include' })).json();
+    const ws = await (await fetch('/portal-api/cases/API-NW-E2E/workspace',
+      { credentials: 'include' })).json();
+    const sum = await (await fetch('/portal-api/summary', { credentials: 'include' })).json();
+    const doc = document.getElementById('fcdoc');
+    return { closed: ws.status, refunds: (w.refunds || []).length, status: w.refund_status,
+      bal: w.final_balance, agreed: w.agreed_refund,
+      inQueues: JSON.stringify(sum).includes('API-NW-E2E'),
+      refundDoneBtn: !!document.querySelector('[data-act="fcRefundDone"]'),
+      doc: doc ? doc.innerText.replace(/\s+/g, ' ') : '' };
+  });
+  ok('the case closed with ZERO work records and zero checklist ticks', done.closed === 'closed');
+  ok('the requested refund wrote NO ledger row — the money is still held, truthfully',
+     done.refunds === 0 && done.status === 'requested' && done.bal === 500,
+     JSON.stringify([done.refunds, done.status, done.bal]));
+  ok('the closed case is out of every dashboard alert', done.inQueues === false);
+  ok('the statement on screen says Refund requested — never issued',
+     /Refund requested/.test(done.doc) && !/issued/i.test(done.doc), done.doc.slice(0, 260));
+  ok('with the reason on it', /Client cancelled before work began/.test(done.doc));
+  ok('and the settlement balance a client can add up', /Final balance \$0/.test(done.doc));
+  ok('the Refund completed control waits for the owner\'s word', done.refundDoneBtn === true);
+
+  /* THE OWNER SENDS THE MONEY, THEN TELLS THE PORTAL. */
+  page.once('dialog', d => d.accept());   // the date prompt, accepting today
+  await page.evaluate(() => { document.querySelector('[data-act="fcRefundDone"]').click(); });
+  await page.waitForTimeout(1200);
+  const after2 = await page.evaluate(async () => {
+    const w = await (await fetch('/portal-api/cases/API-NW-E2E/closeout-money',
+      { credentials: 'include' })).json();
+    return { refunds: (w.refunds || []).length, status: w.refund_status, bal: w.final_balance,
+      pays: null };
+  });
+  ok('Refund completed writes the one ledger row and settles the balance',
+     after2.refunds === 1 && after2.status === 'completed_external' && after2.bal === 0,
+     JSON.stringify(after2));
+  const payKept = await page.evaluate(async () => {
+    const ws = await (await fetch('/portal-api/cases/API-NW-E2E/workspace',
+      { credentials: 'include' })).json();
+    const p = (ws.authorization.retainer.payments || [])[0];
+    return p && `${p.amount}|${p.method}`;
+  });
+  ok('AND THE ORIGINAL PAYMENT NEVER MOVED', payKept === '1000|cash_app', String(payKept));
+  await page.close();
+}
+
+section('An intake can end without a case, reason on the record');
+{
+  await post('/ingest', { case_no: 'API-ARC-E2E', service: 'Surveillance',
+    client_name: 'Never Proceeded', subject_name: 'S' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => openCase('API-ARC-E2E', 'details'));
+  await page.waitForTimeout(800);
+  page.once('dialog', d => { d.accept('Client changed mind'); });
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('[data-act="intakeArchive"]')][0];
+    if (b) b.click();
+  });
+  await page.waitForTimeout(1500);
+  const st = await page.evaluate(async () => {
+    const ws = await (await fetch('/portal-api/cases/API-ARC-E2E/workspace',
+      { credentials: 'include' })).json();
+    const subs = await (await fetch('/portal-api/submissions', { credentials: 'include' })).json();
+    return { archived: !!ws.archived,
+      notes: (ws.notes || []).map(n => n.body).join(' | '),
+      inActiveList: (subs.submissions || []).some(r => r.case_no === 'API-ARC-E2E'),
+      sig: (ws.submission && ws.submission.payload && ws.submission.payload.client_name) || null };
+  });
+  ok('the intake archives without inventing a case or deleting anything',
+     st.archived === true && st.sig === 'Never Proceeded', JSON.stringify([st.archived, st.sig]));
+  ok('with the reason on the record as the office\'s own note',
+     /Intake closed\/archived — Client changed mind/.test(st.notes), st.notes.slice(0, 120));
+  ok('and it leaves the active list', st.inActiveList === false);
   await page.close();
 }
 
