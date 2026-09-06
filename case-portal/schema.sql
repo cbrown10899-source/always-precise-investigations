@@ -550,18 +550,21 @@ CREATE TABLE IF NOT EXISTS user_pref (
   updated_at TEXT
 );
 
--- The refund's STATE, in the owner's own vocabulary (CEO charter 2026-09-06,
--- Mission 9: "requested" and "completed" are NOT interchangeable). A row in
--- case_refund is the record of a refund COMPLETED outside the portal; this
--- table carries the chosen word and the date for everything short of that.
--- A side table rather than columns on case_closeout, because that table is
--- already on the live database and CREATE TABLE IF NOT EXISTS cannot widen it.
-CREATE TABLE IF NOT EXISTS case_refund_status (
-  case_no     TEXT PRIMARY KEY,
-  status      TEXT,
-  refund_date TEXT,
-  set_by      INTEGER REFERENCES users(id),
-  set_at      TEXT
+-- Everything the closeout records that the LIVE case_closeout table cannot
+-- hold (it shipped 2026-09-06 and CREATE TABLE IF NOT EXISTS cannot widen
+-- it): the refund's STATE in the owner's own vocabulary ("requested" and
+-- "completed" are NOT interchangeable — a case_refund row is the record of a
+-- refund COMPLETED outside the portal, and everything short of that is a
+-- word here), the WORK PERFORMED statement, and the custom text behind an
+-- "Other" reason. One companion row per closeout.
+CREATE TABLE IF NOT EXISTS case_closeout_detail (
+  case_no        TEXT PRIMARY KEY,
+  refund_status  TEXT,
+  refund_date    TEXT,
+  work_performed TEXT,
+  reason_detail  TEXT,
+  set_by         INTEGER REFERENCES users(id),
+  set_at         TEXT
 );
 
 CREATE TABLE IF NOT EXISTS case_closeout (
