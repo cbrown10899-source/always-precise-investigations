@@ -438,6 +438,11 @@
   .rs-eng .eng-alert{color:var(--bad);font-weight:800;font-size:1.05rem;}
   .rs-eng .eng-emph{color:var(--gold-ink);font-weight:800;letter-spacing:.04em;}
   .rs-eng p{margin:9px 0 0;font-size:.84rem;color:var(--muted);line-height:1.5;}
+  /* PRINT ONLY. On screen the masthead already says who this is; on paper the
+     sheet leaves the building on its own and has to say so itself. */
+  .rs-ident{display:none;}
+  @media print{.rs-ident{display:block;margin:0 0 10px;font-size:.8rem;letter-spacing:.04em;
+    text-transform:uppercase;color:#5c6775;}}
   .rs-close{margin:14px 0 4px;padding:13px 15px;background:var(--gold-soft);border-left:3px solid var(--gold-2);border-radius:0 8px 8px 0;}
   .rs-close b{display:block;margin-bottom:3px;}
   .rs-close p{margin:0;font-size:.88rem;color:#44505c;}
@@ -1332,6 +1337,13 @@
     /* UNIT 10 — the timeline prints the SAME rendering that is on screen. There
        is no second document and no PDF writer: the browser's own print dialog
        is what saves one, on an explicit action, and nothing is stored. */
+    /* THE RATE SHEET. `#rsdoc` is the client-facing document and nothing else:
+       the Send controls, the Next-step panel and the send history are the
+       office's own and must not print on a sheet a client is handed. */
+    body.printing-sheet *{visibility:hidden !important;}
+    body.printing-sheet #rsdoc, body.printing-sheet #rsdoc *{visibility:visible !important;}
+    body.printing-sheet #rsdoc{position:absolute;left:0;top:0;width:100%;border:0;padding:0;}
+    body.printing-sheet .rs-row{break-inside:avoid;}
     body.printing-timeline *{visibility:hidden !important;}
     body.printing-timeline #tldoc, body.printing-timeline #tldoc *{visibility:visible !important;}
     body.printing-timeline #tldoc{position:absolute;left:0;top:0;width:100%;border:0;padding:0;}
@@ -3422,9 +3434,15 @@ async function asstSend(text){
                     preview: null, previewBody: null, err: "", busy: false };
     }
     if(r.kind === "prepare_sheet" && r.form){
+      /* THE SENTENCE'S OWN FIGURES, seeded into the draft (owner 2026-09-06).
+         They are a SEED and nothing more: the person reads them in the form,
+         previews the exact email and confirms before anything is sent. A blank
+         non-refundable stays blank on purpose — blank means "the standard",
+         and writing the number in would turn that into "this number". */
       ASST.prep = { mode: "sheet", context: r.form.context || "", to: r.form.to || "",
-                    case_no: r.form.case_no || "", legal_service: "", flat_fee: "", retainer: "",
-                    non_refundable: "",
+                    case_no: r.form.case_no || "", legal_service: "", flat_fee: "",
+                    retainer: r.form.retainer || "",
+                    non_refundable: r.form.non_refundable || "",
                     include_intake: false, include_payment: false,
                     preview: null, previewBody: null, err: "", busy: false };
       legalSvcsLoad();
@@ -4070,6 +4088,7 @@ function asstPrepHtml(){
         <span class="asst-hint">Blank keeps the standard non-refundable amount &mdash; it is
           never dropped for being empty, and it can never exceed the retainer.</span>
         <input id="asst_snr" data-act-input="asstPrep" value="${esc(p.non_refundable || "")}"
+          placeholder="${esc(SHEETS_NR_DEFAULT != null ? String(SHEETS_NR_DEFAULT) : "")}"
           inputmode="decimal" autocomplete="off"></label>` : ""}
       <label class="cap">Recipient email
         <input id="asst_sto" data-act-input="asstPrep" value="${esc(p.to)}" autocomplete="off"></label>
@@ -7672,6 +7691,18 @@ function sheetsView(){
     </div>
   </div>
   ${open ? `<div class="card">
+    ${/* THE PRINTED REGION (owner asked twice for a printable rate sheet). It
+         is the SAME rendering that is on screen — the pattern #invdoc, #tldoc
+         and #mandoc already follow — so the browser's own dialog saves the PDF
+         and this page still has exactly ONE PDF writer, which a source test
+         pins by counting the header literal. (Naming that literal here would
+         have made this comment the second occurrence and failed the guard —
+         the third time a pin in this project has fired on my own prose.)
+         Nothing is generated, stored or uploaded. The firm's identity
+         line prints because a sheet leaving the building on paper has to say
+         whose it is; on screen the masthead already does. */""}
+    <div id="rsdoc">
+    <p class="rs-ident">Always Precise Investigations, LLC &middot; Va DCJS #11-9159</p>
     <div class="bar"><h2 style="margin:0">${esc(open.name)}</h2>
       <span class="count">${esc(open.audience)}</span></div>
     <p class="lead">${esc(open.summary)}</p>
@@ -7684,7 +7715,9 @@ function sheetsView(){
         <span class="rs-v">${esc(l.value)}</span></div>`).join("")}
     </div>
     <div class="rs-close"><b>${esc(open.closing_title)}</b><p>${esc(open.closing)}</p></div>
+    </div>
     <div class="sendcta">
+      <button class="btn ghost" data-act="rsPrint">&#128424; Print / Save PDF</button>
       <button class="btn" data-act="shWiz" data-sheet="${esc(open.id)}"
         data-context="${esc(open.context || "")}">Send this sheet &rarr;</button>
       <div class="nextstep">
@@ -13736,6 +13769,14 @@ function tlPrint(){
   document.body.classList.add("printing-timeline");
   window.print();
   setTimeout(() => document.body.classList.remove("printing-timeline"), 400);
+}
+
+/* THE RATE SHEET ON PAPER — the same rendering that is on screen, saved by the
+   browser's own dialog. No second PDF writer, nothing stored, nothing sent. */
+function rsPrint(){
+  document.body.classList.add("printing-sheet");
+  window.print();
+  setTimeout(() => document.body.classList.remove("printing-sheet"), 400);
 }
 
 /* THE LINK OPENS THE RECORD, and for a file that means the viewer rather than
@@ -20728,6 +20769,7 @@ document.addEventListener("click", ev => {
   }
   else if(act === "asstPrepPrev"){ asstPrepPrev(); }
   else if(act === "asstPrepSim"){ asstPrepSim(); }
+  else if(act === "rsPrint"){ rsPrint(); }
   else if(act === "asstPrepSend"){ asstPrepSend(); }
   /* Edit drops the PREVIEW AND THE BODY THAT PRODUCED IT together. Keeping the
      captured body across an edit would leave the one thing Send posts pointing

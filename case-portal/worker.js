@@ -15219,6 +15219,48 @@ async function assistantCommand(request, env, user) {
   return json(d, res.status);
 }
 
+/* THE TWO FIGURES A PRIVATE RATE-SHEET SENTENCE CAN CARRY (owner, 2026-09-06).
+
+   "Prepare Vanessa a $1,500 rate sheet with $750 non-refundable" seeds the
+   retainer and the non-refundable portion into the workbench. NOTHING IS SENT
+   BY TYPING IT: the values land in a form the person reads, previews and
+   confirms, exactly as if they had typed them into the boxes.
+
+   THE NON-REFUNDABLE AMOUNT IS TAKEN FIRST AND REMOVED FROM THE SENTENCE, and
+   the order is what makes this reliable rather than clever. "$1,500 rate sheet
+   with $750 non-refundable" has two amounts, and the only thing distinguishing
+   them is that one of them is standing next to the words "non-refundable".
+   Claim that one, take it out, and whatever dollar figure is left is the
+   retainer — which is why the retainer pattern does not need to know about
+   "retainer", "rate sheet" or the order they appear in.
+
+   A LOOSE MATCH IS SAFE HERE, and that is a property of the flow rather than
+   of the regex: a seed that lands in the wrong box is visible in the form, the
+   preview and the confirmation before anything leaves. It would not be safe on
+   anything that acted on the sentence directly, and nothing here does.
+
+   BLANK STAYS BLANK when no amount is given. It is tempting to write the
+   default in, and it would be wrong: blank means "whatever the standard is",
+   and a figure typed into the box means "this figure". Seeding 500 would turn
+   the first into the second, so a later change to the standard would not reach
+   a form somebody had opened from a sentence. `nonRefundableFor` resolves it,
+   the placeholder shows it, and the preview prints it. */
+function asstSheetAmounts(text) {
+  let rest = ' ' + String(text || '') + ' ';
+  const num = m => String(m).replace(/[$,\s]/g, '');
+  const AMT = '\\$\\s?([\\d,]+(?:\\.\\d{1,2})?)';
+
+  let nonRefundable = '';
+  const nr = rest.match(new RegExp(
+    `${AMT}\\s*(?:dollars?\\s*)?non[-\\s]?refundable|non[-\\s]?refundable[^$]{0,24}${AMT}`, 'i'));
+  if (nr) { nonRefundable = num(nr[1] || nr[2]); rest = rest.replace(nr[0], ' '); }
+
+  /* Whatever figure is left. A sentence naming neither leaves both blank and
+     the form opens on the standard, which is the ordinary case. */
+  const ret = rest.match(new RegExp(AMT));
+  return { retainer: ret ? num(ret[1]) : '', nonRefundable };
+}
+
 async function assistantCommandCore(body, env, user) {
   const text = String(body.text || '').slice(0, 500);
   const ctx = body.context && typeof body.context === 'object' ? body.context : {};
@@ -15265,10 +15307,19 @@ async function assistantCommandCore(body, env, user) {
     const ctxGuess = /insuran|carrier|claim/i.test(text) ? 'insurance'
       : /legal|law firm|attorney|\bfirm\b/i.test(text) ? 'legal'
       : /private|consumer/i.test(text) ? 'private' : '';
+    const amounts = asstSheetAmounts(text);
+    /* A non-refundable amount is a PRIVATE-CLIENT term. A sentence that names
+       one has said which audience it means, so an unstated context becomes
+       private rather than staying blank — and a sentence that names BOTH a
+       non-refundable amount and a law firm keeps the firm, because the words
+       about the audience are the more explicit of the two. The Worker refuses
+       the pairing on that path by name, which is the honest answer. */
+    const ctx = ctxGuess || (amounts.nonRefundable ? 'private' : '');
     return json({ ok: true, kind: 'prepare_sheet',
       text: 'Pick the audience, then preview the exact sheet email. Send emails it; '
           + `Simulate rehearses it instead and records ${ASSISTANT_SIM_OUTCOME}.`,
-      form: { context: ctxGuess, to: mail || '', case_no: caseNo || '' } });
+      form: { context: ctx, to: mail || '', case_no: caseNo || '',
+              retainer: amounts.retainer, non_refundable: amounts.nonRefundable } });
   }
 
   /* ---- THE THIRD LIVE PRODUCT — PAYMENT INSTRUCTIONS ON THEIR OWN, the

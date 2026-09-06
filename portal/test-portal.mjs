@@ -1056,6 +1056,40 @@ section('Rate sheets');
   ok('and shows NO percentage and no arithmetic — the owner\'s own rule',
      !/%/.test(eng.text) && !/\bx\b|×|÷|=/.test(eng.text), eng.text);
 
+  /* ==== THE PRINTABLE RATE SHEET. The owner asked for it twice; this portal
+     had no rate-sheet print path at all. Same shape as #invdoc / #tldoc /
+     #mandoc — the rendering on screen IS the document, the browser's own
+     dialog saves the PDF, and there is still exactly one PDF writer. ==== */
+  const printable = await page.evaluate(() => {
+    const doc = document.querySelector('#rsdoc');
+    if (!doc) return null;
+    const btn = [...document.querySelectorAll('.btn')]
+      .find(b => /Print \/ Save PDF/.test(b.innerText));
+    const inDoc = sel => !!doc.querySelector(sel);
+    return {
+      button: !!btn,
+      /* WHAT MUST BE IN THE CLIENT'S DOCUMENT */
+      engagement: inDoc('.rs-eng'), lines: doc.querySelectorAll('.rs-row').length,
+      closing: inDoc('.rs-close'), ident: !!doc.querySelector('.rs-ident'),
+      /* AND WHAT MUST NOT: the office's own controls and history */
+      send: inDoc('[data-act="shWiz"]'), nextstep: inDoc('.nextstep'),
+      printBtn: inDoc('[data-act="rsPrint"]'),
+    };
+  });
+  ok('the rate sheet has a printable region and a Print / Save PDF control',
+     printable && printable.button === true && printable.engagement === true,
+     JSON.stringify(printable));
+  ok('the printed document carries the priced lines and the closing',
+     printable.lines >= 4 && printable.closing === true, JSON.stringify(printable));
+  ok('and the firm identity line, which paper needs and the screen already has',
+     printable.ident === true);
+  /* THE OFFICE'S OWN CONTROLS ARE NOT THE CLIENT'S DOCUMENT. Structural, not a
+     CSS assertion: they are outside #rsdoc, so no restyle can put them on a
+     sheet a client is handed. The same rule #pkgdoc is held to. */
+  ok('the Send control, the Next-step panel and the Print button are all OUTSIDE the document',
+     printable.send === false && printable.nextstep === false && printable.printBtn === false,
+     JSON.stringify(printable));
+
   /* PAYMENTS.md §2 — the send area used to explain itself in a 0.78rem muted
      `.opt` footnote, which is the one presentation that section forbids by
      name. The wording is asserted here; the SIZE is asserted too, because
