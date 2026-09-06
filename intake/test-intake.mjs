@@ -1959,6 +1959,140 @@ section('Unit 40 — contrast, focus, and what the hero kept');
    a claim number typed and then marked unavailable still satisfied the
    identity rule while the payload stored it blank, and the form carried a
    file input that uploaded nothing at all. */
+
+/* ============================================================================
+   THE WAY BACK TO THE MAIN SITE (owner, 2026-09-06).
+
+   A client opens this page from a link in an email or a text, so there is no
+   browser history to go back to. Both controls are ordinary absolute links to
+   the public site — never history.back() — and they are asserted on every
+   door, cold, at desktop and phone width, with the leaving click proving that
+   nothing was submitted on the way out.
+   ========================================================================= */
+section('Every intake door offers a way back to the main site');
+{
+  const HOME = 'https://alwayspreciseinvestigations.net/';
+  for (const door of ['', '?assignment=private', '?assignment=legal', '?assignment=insurance']) {
+    for (const width of [1200, 390]) {
+      const tag = `${door || 'bare /intake/'} @ ${width}`;
+      const ctx = await browser.newContext({ viewport: { width, height: 900 } });
+      const page = await ctx.newPage();
+      let relay = null, portal = null, left = null;
+      await page.route('**api.web3forms.com/**', r => { relay = 'hit'; r.fulfill({ status: 200, body: '{}' }); });
+      await page.route('**/portal-api/ingest', r => { portal = 'hit'; r.fulfill({ status: 200, body: '{}' }); });
+      /* The destination is answered locally: the test must never reach the
+         real site, and a fulfilled navigation is what proves the click LEFT. */
+      await page.route(url => url.href.startsWith(HOME), r => {
+        left = r.request().url();
+        r.fulfill({ status: 200, contentType: 'text/html', body: '<title>home</title>' });
+      });
+      await page.goto(BASE + door);
+      await page.waitForTimeout(150);
+      const m = await page.evaluate(() => {
+        const a = document.querySelector('.top a.home');
+        const b = document.querySelector('.foot a.home2');
+        if (!a || !b) return { a: !!a, b: !!b };
+        const box = el => el.getBoundingClientRect();
+        const overlap = (p, q) => !(p.right <= q.left || q.right <= p.left
+                                    || p.bottom <= q.top || q.bottom <= p.top);
+        const r = box(a), rb = box(b);
+        const mark = box(document.querySelector('.mark'));
+        const meta = box(document.querySelector('.top .meta'));
+        const name = box(document.querySelector('.top .name'));
+        return { a: true, b: true, hrefA: a.href, hrefB: b.href,
+          text: a.textContent.replace(/\s+/g, ' ').trim(),
+          textB: b.textContent.replace(/\s+/g, ' ').trim(),
+          h: Math.round(r.height), hB: Math.round(rb.height),
+          left: Math.round(r.left), markLeft: Math.round(mark.left),
+          aboveMark: r.bottom <= mark.top + 1,
+          overlap: overlap(r, mark) || overlap(r, meta) || overlap(r, name),
+          onclickA: a.getAttribute('onclick'), onclickB: b.getAttribute('onclick'),
+          inApp: !!(a.closest('#app') || b.closest('#app')),
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          headerH: Math.round(box(document.querySelector('.top')).height) };
+      });
+      ok(`${tag}: both links exist`, m.a && m.b, JSON.stringify(m));
+      if (!(m.a && m.b)) { await ctx.close(); continue; }
+      ok(`${tag}: the header link reads "Back to Always Precise"`,
+         /^← Back to Always Precise$/.test(m.text), m.text);
+      ok(`${tag}: the footer link reads "Return to Always Precise Investigations"`,
+         m.textB === 'Return to Always Precise Investigations', m.textB);
+      ok(`${tag}: both go to the main site's home page, by absolute URL, on the production domain`,
+         m.hrefA === HOME && m.hrefB === HOME, JSON.stringify([m.hrefA, m.hrefB]));
+      ok(`${tag}: neither is wired to history.back()`, m.onclickA === null && m.onclickB === null);
+      ok(`${tag}: the header link overlaps neither the logo, the name nor the contact block`,
+         m.overlap === false && m.aboveMark === true, JSON.stringify(m));
+      ok(`${tag}: it sits top-left, on the logo's own left edge`,
+         Math.abs(m.left - m.markLeft) <= 2, `${m.left} vs ${m.markLeft}`);
+      ok(`${tag}: neither link lives inside the form region`, m.inApp === false);
+      ok(`${tag}: no sideways scroll`, m.overflow === false);
+      if (width === 390) {
+        ok(`${tag}: the header link meets the 44px tap floor`, m.h >= 44, String(m.h));
+        ok(`${tag}: and so does the footer link`, m.hB >= 44, String(m.hB));
+        /* COMPACT: the band did not grow by a whole tap target. The bound is
+           arithmetic, not taste: the identity row measures 71 at 390 and the
+           paddings 24, so the link row may add at most ~30 including its gap
+           — the 44px floor overdraws into the padding rather than stacking on
+           top of it. 103 was the band before the link existed. */
+        ok(`${tag}: and the header stays compact — under 128px tall`, m.headerH < 128, String(m.headerH));
+      }
+      /* LEAVING MID-FORM SUBMITS NOTHING. Type into the first field the door
+         offers, then leave through the header link. */
+      const first = page.locator('#app input[type=text]').first();
+      if (await first.count()) await first.fill('Leaving Early');
+      await page.locator('.top a.home').click();
+      await page.waitForTimeout(400);
+      ok(`${tag}: clicking the header link leaves for the main site`, left === HOME, String(left));
+      ok(`${tag}: and leaving sent nothing to the relay or the portal`,
+         relay === null && portal === null, JSON.stringify([relay, portal]));
+      await ctx.close();
+    }
+  }
+  /* THE FOOTER LINK LEAVES TOO, and by the same route. One door, one width —
+     it is the same anchor markup on every door, and the loop above has already
+     pinned its destination eight times. */
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await ctx.newPage();
+    let left = null, relay = null;
+    await page.route('**api.web3forms.com/**', r => { relay = 'hit'; r.fulfill({ status: 200, body: '{}' }); });
+    await page.route(url => url.href.startsWith(HOME), r => {
+      left = r.request().url();
+      r.fulfill({ status: 200, contentType: 'text/html', body: '<title>home</title>' });
+    });
+    await page.goto(BASE + '?assignment=legal');
+    await page.waitForTimeout(150);
+    await page.locator('.foot a.home2').scrollIntoViewIfNeeded();
+    await page.locator('.foot a.home2').click();
+    await page.waitForTimeout(400);
+    ok('the footer link leaves for the main site as well', left === HOME, String(left));
+    ok('and it submitted nothing either', relay === null);
+    await ctx.close();
+  }
+  /* THE FORM STILL NAVIGATES. Adding two anchors must not have changed what
+     Continue and Back do — one door walked one step forward and back. */
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await ctx.newPage();
+    await page.route('**api.web3forms.com/**', r => r.fulfill({ status: 200, body: '{}' }));
+    await page.route('**/portal-api/ingest', r => r.fulfill({ status: 200, body: '{}' }));
+    await page.goto(BASE + '?assignment=private');
+    await page.waitForTimeout(150);
+    const before = await heading(page);
+    await set(page, 'c_name', 'Nav Check');
+    await set(page, 'c_phone', '5405551212');
+    await advance(page);
+    const after = await heading(page);
+    ok('Continue still advances the private door', after !== before, `${before} -> ${after}`);
+    await page.locator('.btn.ghost', { hasText: 'Back' }).first().click();
+    await page.waitForTimeout(90);
+    ok('and Back still returns', (await heading(page)) === before);
+    ok('with the way-back links still on the page after navigating',
+       (await page.locator('.top a.home').count()) === 1 && (await page.locator('.foot a.home2').count()) === 1);
+    await ctx.close();
+  }
+}
+
 section('Closeout: an unavailable claim number cannot identify the file');
 {
   const page = await (await browser.newContext()).newPage();

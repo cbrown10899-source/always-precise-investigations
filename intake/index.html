@@ -33,6 +33,29 @@
   .top .name span{display:block;font-weight:400;font-size:.72rem;color:#9db2c9;letter-spacing:.05em;}
   .top .meta{margin-left:auto;text-align:right;font-size:.74rem;color:#9db2c9;line-height:1.5;}
   .top .meta a{color:#cfe0f0;text-decoration:none;font-weight:600;}
+  /* THE WAY BACK (owner, 2026-09-06). A client opens this page from a link in
+     an email or a text, so there is no history to go back TO — the control is
+     an ordinary absolute link to the public site, never history.back(). It
+     is its own row above the identity row, so it cannot overlap the mark or
+     the contact block at any width: that is a property of the layout rather
+     than of a breakpoint. Same ink as the phone link beside it. */
+  .top .homerow{margin-bottom:6px;}
+  .top .home{display:inline-flex;align-items:center;gap:6px;color:#cfe0f0;text-decoration:none;
+    font-size:.78rem;font-weight:600;letter-spacing:.02em;min-height:32px;}
+  .top .home:hover{color:#fff;text-decoration:underline;}
+  .top .home:focus-visible{outline:2px solid var(--gold);outline-offset:3px;color:#fff;}
+  /* On a phone it keeps the 44px tap floor without growing the band by 44px:
+     the 44px box overdraws into the band's own padding through negative
+     margins, so the ROW it occupies is ~26px while the target stays 44.
+     Measured at 390: identity row 71 + paddings 20 + this row 34 + 2 gap
+     = 127, against 103 before the link existed. The negative top margin must
+     leave the box's own top INSIDE the band (a box poking above the viewport
+     is a tap that misses), and the bottom must clear the identity row. */
+  @media(max-width:520px){
+    .top{padding:8px 16px 12px;}
+    .top .homerow{margin-bottom:2px;}
+    .top .home{min-height:44px;margin:-6px 0 -4px;font-size:.8rem;}
+  }
 
   main{max-width:680px;margin:0 auto;padding:20px 16px 60px;}
   .progress{display:flex;gap:6px;margin:6px 0 18px;}
@@ -108,13 +131,21 @@
   .ok{background:#e9f7ef;border:1px solid #b6e0c6;color:#166534;border-radius:8px;padding:12px 14px;font-size:.9rem;margin-bottom:14px;}
   .warn{background:#fdecea;border:1px solid #f5c6c0;color:#8a2318;border-radius:8px;padding:12px 14px;font-size:.9rem;margin-bottom:14px;}
   .foot{max-width:680px;margin:0 auto;padding:0 16px 40px;color:var(--muted);font-size:.78rem;text-align:center;}
-  @media print{.top .meta,.nav,.sigclear{display:none;}body{background:#fff;}}
+  /* The second way back, under the form. Padded to the tap floor at every
+     width — a text link at the foot of a phone screen is thumbed, not clicked. */
+  .foot .home2{display:inline-block;margin-top:6px;padding:12px 8px;color:var(--teal);
+    font-weight:600;text-decoration:none;}
+  .foot .home2:hover{text-decoration:underline;}
+  .foot .home2:focus-visible{outline:2px solid var(--teal-2);outline-offset:2px;border-radius:4px;}
+  /* Neither way-back link means anything on paper. */
+  @media print{.top .meta,.top .homerow,.foot .home2,.nav,.sigclear{display:none;}body{background:#fff;}}
 .sr-page-title{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 </style>
 </head>
 <body>
 
 <div class="top">
+  <div class="wrap homerow"><a class="home" href="https://alwayspreciseinvestigations.net/">&larr; Back to Always Precise</a></div>
   <div class="wrap">
     <svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="10" fill="#13273f"/><path d="M32 12l6 8-6 8-6-8z" fill="#3d97ad"/><path d="M32 30l10 12H22z" fill="#c99a3b"/></svg>
     <div class="name">ALWAYS PRECISE<span id="m-kind">INVESTIGATIONS · CLIENT INTAKE</span></div>
@@ -131,7 +162,8 @@
 
   <div id="app"></div>
 </main>
-<div class="foot">Confidential. Submitted only to Always Precise Investigations. Licensed &amp; insured · Va DCJS #11-9159.</div>
+<div class="foot">Confidential. Submitted only to Always Precise Investigations. Licensed &amp; insured · Va DCJS #11-9159.<br>
+  <a class="home2" href="https://alwayspreciseinvestigations.net/">Return to Always Precise Investigations</a></div>
 
 <script>
 "use strict";

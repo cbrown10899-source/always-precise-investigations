@@ -20297,6 +20297,66 @@ section('Case closeout: a refund is its own event and the payment is never touch
   ok('the lead ladder is admin paperwork and never reaches the field',
      !('lead_status' in iws2), JSON.stringify(Object.keys(iws2).filter(k => /lead/.test(k))));
 
+
+  /* ---- READING A FIELD OFF THE INTAKE (owner brief Part 8). A READ: no
+     command, nothing written, and the answer is the payload's own value. The
+     role boundary is the SAME `redactPayload` the case read uses, so an
+     investigator asking for the paying side gets what that read already gives
+     them — nothing — and is told why rather than told "not provided". ---- */
+  await ingest(env, { case_no: 'API-CLO-RD', service: 'Surveillance',
+    client_name: 'Vanessa Reed', client_phone: '(540) 555-0147', client_email: 'vanessa@example.com',
+    subject_name: 'Rex Dalton', subject_address: '14 Elm St, Bedford, VA',
+    subject_description: 'Blue 2019 Ford F-150, VA plate ABC-1234',
+    objective: 'Document daily activity', date_of_loss_status: 'unknown',
+    signature: 'data:image/png;base64,iVBORw0KGgo=' });
+  const rd = { route: 'case', case_no: 'API-CLO-RD' };
+  let q = await say('What phone number did Vanessa provide?', rd);
+  ok('"What phone number did Vanessa provide?" answers from the intake, verbatim',
+     q.kind === 'status' && !q.command && /\(540\) 555-0147/.test(q.text || ''),
+     JSON.stringify(q).slice(0, 160));
+  ok('and offers the intake screen — a navigation, never a command',
+     q.actions && q.actions[0].navigate.id === 'details' && q.actions[0].navigate.kind === 'case_tab',
+     JSON.stringify(q.actions));
+  q = await say("what is the subject's address", rd);
+  ok('the subject address reads back', /14 Elm St, Bedford, VA/.test(q.text || ''), q.text);
+  q = await say('what vehicle did they describe', rd);
+  ok('the vehicle reads back', /Blue 2019 Ford F-150/.test(q.text || ''), q.text);
+  q = await say('what email did she give', rd);
+  ok('the email reads back', /vanessa@example\.com/.test(q.text || ''), q.text);
+  q = await say('what is the mailing address', rd);
+  ok('a field left blank says so, and invents nothing from another field',
+     /No mailing address was given/.test(q.text || '') && !/Elm St/.test(q.text || ''), q.text);
+  q = await say('what is the date of loss', rd);
+  ok('a field the client marked unavailable reports the status they chose',
+     /marked "unknown"/.test(q.text || ''), q.text);
+  q = await say('is there a signature', rd);
+  ok('a signature is answered as a fact, never read out',
+     /Vanessa Reed signed the intake/.test(q.text || '') && !/data:image/.test(q.text || ''), q.text);
+  q = await say('what phone number did Vanessa provide', {});
+  ok('with no case in hand it is not this branch, and nothing leaks',
+     typeof q.kind === 'string' && !/555-0147/.test(q.text || ''), JSON.stringify(q).slice(0, 100));
+  q = await say('email me the phone number Vanessa provided', rd);
+  ok('an executing verb in the sentence still reaches the refusal', q.kind === 'refused', q.kind);
+
+  /* THE ROLE BOUNDARY IS INHERITED, NOT RE-DECIDED. */
+  const fieldco = await env.DB.prepare("SELECT id FROM users WHERE username = 'fieldco'").first();
+  await call(env, '/submissions/API-CLO-RD/assign', { method: 'POST', cookie: admin,
+    body: { user_id: fieldco.id } });
+  const sayInv = async (t, ctx) => jsonOf(await call(env, '/assistant/command',
+    { method: 'POST', cookie: inv, body: { text: t, context: ctx } }));
+  q = await sayInv('What phone number did Vanessa provide?', rd);
+  ok("an investigator asking for the CLIENT's phone is told it is office-side — and the digits never appear",
+     /office side/.test(q.text || '') && !/555-0147/.test(q.text || ''), q.text);
+  q = await sayInv('what email did the client give', rd);
+  ok("nor does the client's email", !/vanessa@example\.com/.test(q.text || ''), q.text);
+  q = await sayInv("what is the subject's address", rd);
+  ok("while the SUBJECT's address — fieldwork — reads back to them", /14 Elm St/.test(q.text || ''), q.text);
+  q = await sayInv('what vehicle', rd);
+  ok('and the vehicle', /F-150/.test(q.text || ''), q.text);
+  q = await sayInv('What phone number did Vanessa provide?', { route: 'case', case_no: 'API-CLO-A' });
+  ok('a case they are not on answers as unreadable, revealing nothing',
+     !/555/.test(q.text || '') && !/Vanessa/.test(q.text || ''), q.text);
+
   /* ---- THE DEMO SWEEP TAKES BOTH TABLES, so a TEST- case leaves nothing
      behind — the orphan-row lesson this project has already paid for. ---- */
   await ingest(env, { case_no: 'TEST-CLO-1', service: 'Surveillance', client_name: 'T', subject_name: 'S' });

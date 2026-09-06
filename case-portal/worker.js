@@ -15970,6 +15970,128 @@ async function assistantCommandCore(body, env, user) {
   }
 
 
+
+  /* ---- READING A FIELD OFF THE INTAKE (owner brief 2026-09-06 Part 8) ------
+
+     "What phone number did Vanessa provide?" — a READ, and the whole unit is
+     that it is a read: no command, no confirmation, nothing written, and the
+     answer comes out of `submissions.payload` verbatim.
+
+     THE ROLE BOUNDARY IS INHERITED, NOT RE-DECIDED. A non-admin's payload goes
+     through `redactPayload` — the SAME function `/submissions/:no` uses — so an
+     investigator asking for the client's phone number gets the answer
+     `redactRow` already gives them, which is none. A second copy of that
+     boundary written here is the stale duplicate this project refuses to keep,
+     and it would be the copy nobody was looking at.
+
+     IT COMPOSES NOTHING. A field that was left blank is reported as not
+     provided; a field the client marked unavailable reports the status they
+     chose. Filling either in from somewhere else would be the portal inventing
+     case data, and "not provided" is the answer that is true. */
+  {
+    const ASK = /\bwhat|\bwhich|\bwho\b|\bwhen\b|\bwhere\b|\bdid\b|\bdoes\b|\bis (the|there)\b|\btell me\b/i;
+    /* Each entry is [the words that name it, the payload key, its label, and
+       whether it is the PAYING side — the last one only decides the wording of
+       a refusal, because the redaction has already removed the value. */
+    const FIELDS = [
+      [/\bphone\b|\bnumber to (call|reach)\b|\bcell\b|\bmobile\b/i, 'client_phone', 'phone number'],
+      [/\bemail\b|\be-mail\b/i, 'client_email', 'email address'],
+      [/\bmailing address\b|\bclient address\b|\bhome address\b/i, 'client_address', 'mailing address'],
+      [/\b(subject|claimant)('s)? address\b|\bwhere .*(live|lives|located)\b|\baddress\b/i,
+        'subject_address', 'subject address'],
+      [/\b(subject|claimant)\b/i, 'subject_name', 'subject'],
+      [/\bclaim number\b|\bclaim #/i, 'claim_number', 'claim number'],
+      [/\bpolicy\b/i, 'policy_number', 'policy number'],
+      [/\bcarrier\b|\btpa\b/i, 'carrier', 'carrier'],
+      [/\badjuster\b/i, 'adjuster', 'adjuster'],
+      [/\bdate of loss\b|\bloss date\b/i, 'date_of_loss', 'date of loss'],
+      [/\bvehicle\b|\bcar\b|\bdescription\b|\bplate\b/i, 'subject_description', 'vehicle or description'],
+      [/\bobjective\b|\bscope\b|\bwhat .*(want|asking|asked for)\b/i, 'objective', 'objective'],
+      [/\bauthoriz|\bhours\b/i, 'authorized_hours', 'requested authorization'],
+      [/\bstart date\b|\bwhen .*start\b/i, 'start_date', 'requested start'],
+      [/\bbest time\b/i, 'best_time', 'best time to reach them'],
+      [/\bdeadline\b|\btimeline\b/i, 'timeline', 'deadline'],
+      [/\bsigned\b|\bsignature\b/i, 'signature', 'signature'],
+      [/\bdefense counsel\b|\bcounsel\b/i, 'defense_counsel', 'defense counsel'],
+      [/\bbilling\b/i, 'billing_email', 'billing contact'],
+    ];
+    const named = FIELDS.find(([re]) => re.test(text));
+    /* IT MUST BE ABOUT THE INTAKE. A bare "what is the address" while nothing
+       is open would be a guess about which record is meant, and the branches
+       below own their own vocabulary — so this requires a question shape AND a
+       named field AND a case in hand, and stands down otherwise. */
+    /* "email" is a NOUN in "what email did she give" and a VERB in "email me
+       the number" — only the verb belongs to the send refusal. The verb shape
+       is the word followed by an object; the noun stands at the end of its
+       clause or before "did/was/is". */
+    if (named && ASK.test(text) && caseNo
+        && !/\b(send|resend|prepare|delete|archiv|record|refund|close)\b/i.test(text)
+        && !/\bemail\b\s+(me|it|them|him|her|us|the|this|that|a|an)\b/i.test(text)) {
+      const row = await caseFor(env, user, caseNo);
+      if (!row) {
+        return json({ ok: true, kind: 'status',
+          text: `I cannot read ${caseNo} with your access.` });
+      }
+      const sub = await env.DB.prepare(
+        'SELECT payload, client_name, subject_name FROM submissions WHERE case_no = ?')
+        .bind(caseNo).first() || {};
+      let payload = {};
+      try { payload = JSON.parse(sub.payload || '{}') || {}; } catch { payload = {}; }
+      /* THE SAME REDACTION THE CASE READ APPLIES, not a second one — and the
+         boundary is the FIELD LIST, not the payload's keys. An absent key on
+         an admin's read means the client did not provide the value; only a
+         key `FIELD_KEEP` does not carry, read by a non-admin, means the
+         office side. Deciding "office side" from the key's absence answered
+         an ADMIN's question about a blank field with a sentence about
+         investigator redaction — the suite caught it before it shipped. */
+      const [, key, label] = named;
+      const officeSide = user.role !== 'admin' && key !== 'signature'
+        && !FIELD_KEEP.includes(key);
+      const invisible = officeSide || (user.role !== 'admin' && key === 'signature');
+      const raw = invisible ? '' : String(payload[key] ?? '').trim();
+      const status = invisible ? '' : String(payload[`${key}_status`] || '').trim();
+      const names = await assistantCardNames(env, user, caseNo);
+      const card = [{ case_no: caseNo, title: names.subject || caseNo,
+                      line: `Intake for ${caseNo}` }];
+      const go = [nav('OPEN THE INTAKE', 'details', 'case_tab', caseNo)];
+
+      if (invisible) {
+        /* NOT A REFUSAL DRESSED AS AN ABSENCE. The field exists on the record
+           and this role does not see it, and saying so is more honest than
+           "not provided" — which would be the portal telling an investigator
+           the client left their number blank. */
+        return json({ ok: true, kind: 'status',
+          text: `The ${label} is on the office side of this case, and an investigator's copy does `
+              + 'not carry it. The subject, the address, the scope and the authorization are what '
+              + 'travels with the assignment.',
+          card, actions: go });
+      }
+      /* A SIGNATURE IS A FACT, NOT A VALUE. The image is ~50KB and nobody
+         asking this wants it read out; what they want to know is whether the
+         client signed. */
+      if (key === 'signature') {
+        return json({ ok: true, kind: 'status',
+          text: raw ? `${sub.client_name || 'The client'} signed the intake for ${caseNo}. `
+                    + 'The signature itself is on the intake screen.'
+                    : `No signature is on the intake for ${caseNo}.`,
+          card, actions: go });
+      }
+      if (!raw) {
+        return json({ ok: true, kind: 'status',
+          text: status
+            ? `The ${label} was marked "${status.replace(/_/g, ' ')}" at submission rather than left `
+              + 'blank — the client said it was not available then, so nothing was recorded.'
+            : `No ${label} was given on the intake for ${caseNo}. Nothing is recorded for it, and I `
+              + 'will not fill one in from anywhere else.',
+          card, actions: go });
+      }
+      return json({ ok: true, kind: 'status',
+        text: `The ${label} on the intake for ${caseNo} is ${raw}.`
+            + (status ? ` It was marked "${status.replace(/_/g, ' ')}".` : ''),
+        card, actions: go });
+    }
+  }
+
   /* ---- THE CLOSEOUT PREPARATION (owner, 2026-09-06) -----------------------
 
      "The Assistant must never execute the refund, case closure, or email
