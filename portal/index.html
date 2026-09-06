@@ -2621,23 +2621,51 @@
      teal fill anywhere in the panel. `.ceo-` is its own prefix. The drawer is
      the Assistant dock's geometry on the OTHER visual identity, and the phone
      pill sits bottom-LEFT so the two bots cannot collide. */
-  .ceo-fab{position:fixed;left:14px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:58;
-    background:var(--navy-2);color:var(--gold);border:1px solid var(--gold);border-radius:22px;
-    padding:10px 16px;font-weight:800;font-size:.9rem;cursor:pointer;min-height:44px;
-    box-shadow:0 2px 10px rgba(14,26,44,.35);}
+  /* §10 — THE MOBILE DOOR: NEARBY, DISTINCT, AND OVER NOTHING.
+
+     It sat at `bottom:14px`, which is inside the bottom navigation's own band
+     — the nav is z-60 and the fab z-58, so the nav painted over it and the
+     control was partly a control you could not press. It now takes the SAME
+     lift the Assistant pill takes (`body.hasmnav`), so both clear the nav by
+     the nav's own height rather than by a guessed number.
+
+     IT IS DELIBERATELY THE SMALLER OF THE TWO. The Assistant is the primary
+     operational pill and keeps its size and its corner; the CEO Bot is a
+     compact gold chip on the opposite side. Two identical floating pills would
+     read as one feature drawn twice — the owner's own note. */
+  .ceo-fab{position:fixed;left:14px;bottom:max(14px,env(safe-area-inset-bottom));z-index:55;
+    display:none;align-items:center;gap:5px;
+    background:var(--navy-2);color:var(--gold);border:1px solid var(--gold);border-radius:20px;
+    padding:8px 13px;font-weight:800;font-size:.8rem;letter-spacing:.03em;cursor:pointer;
+    /* THE FLOOR IS THE FLOOR. It was 40px — visibly smaller than the pill, and
+       under the 44px minimum every other control on this phone is held to.
+       44 against the pill's 48 is still a clear size difference and both are
+       pressable; shaving a tap target for hierarchy is not a trade this
+       project makes. */
+    min-height:44px;box-shadow:0 4px 14px rgba(12,22,38,.3);}
   .ceo-fab:focus-visible{outline:2px solid var(--gold);outline-offset:2px;}
   .ceo-back{position:fixed;inset:0;background:rgba(10,16,26,.45);z-index:70;border:0;}
-  .ceo-panel{position:fixed;top:0;right:0;bottom:0;width:min(430px,100%);z-index:71;
+  .ceo-panel{position:fixed;top:0;right:0;bottom:0;width:min(420px,100%);z-index:71;
     background:#fff;border-left:3px solid var(--gold);display:flex;flex-direction:column;}
   .ceo-head{display:flex;align-items:center;gap:10px;padding:12px 14px;
     background:var(--navy-2);color:#fff;}
   .ceo-brand{font-weight:800;letter-spacing:.04em;color:var(--gold);}
   .ceo-head .optn{color:#c8d4e4;}
   .ceo-x{margin-left:auto;color:#fff;border-color:#3a4c66;background:transparent;}
-  .ceo-tabs{display:flex;border-bottom:2px solid var(--gold);background:var(--paper);}
-  .ceo-tabs button{flex:1;border:0;background:none;padding:11px 4px;font:inherit;font-size:.72rem;
-    font-weight:800;letter-spacing:.05em;color:var(--muted);cursor:pointer;min-height:44px;}
+  /* §12 — THE TAB STRIP SCROLLS RATHER THAN CLIPPING. Four uppercase words in
+     390px of a phone is tight, and the failure mode of `flex:1` there is a
+     clipped word, not a narrow one. The strip scrolls horizontally INSIDE
+     itself (never the page), each tab keeps its whole label on one line, and
+     the active tab is marked by weight and a gold underline rather than by
+     colour alone. */
+  .ceo-tabs{display:flex;border-bottom:2px solid var(--gold);background:var(--paper);
+    overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;}
+  .ceo-tabs::-webkit-scrollbar{display:none;}
+  .ceo-tabs button{flex:1 0 auto;border:0;background:none;padding:11px 14px;font:inherit;
+    font-size:.72rem;font-weight:800;letter-spacing:.05em;color:var(--muted);cursor:pointer;
+    min-height:44px;white-space:nowrap;}
   .ceo-tabs button.on{color:var(--navy-2);box-shadow:inset 0 -3px 0 var(--gold);}
+  .ceo-tabs button:focus-visible{outline:2px solid var(--gold);outline-offset:-3px;}
   /* ONE SCROLLER — the Assistant's own lesson applied on day one: the body is
      the only overflow in the panel, min-height:0 so the column can shrink. */
   .ceo-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;
@@ -2646,8 +2674,13 @@
   .ceo-hl{font-weight:800;letter-spacing:.04em;font-size:.85rem;color:var(--gold);}
   .ceo-health ul{margin:8px 0 0 18px;font-size:.85rem;}
   .ceo-gate{margin-top:8px;font-size:.75rem;color:#c8d4e4;}
-  .ceo-card{border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:10px;
-    padding:12px 14px;margin:0 0 10px;background:#fff;}
+  /* §13 — NOT EVERY CARD GETS A COLOURED EDGE. Gold means "the CEO Bot is
+     recommending something"; a card that is reporting a fact or confirming a
+     working flow is plain, so the accent still means something when it does
+     appear. Red stays reserved for genuine risk. */
+  .ceo-card{border:1px solid var(--line);border-radius:10px;
+    padding:13px 15px;margin:0 0 11px;background:#fff;}
+  .ceo-card.ceo-task{border-left:3px solid var(--gold);}
   .ceo-card.ceo-hi{border-left-color:var(--bad);}
   .ceo-flag{display:inline-block;font-size:.68rem;font-weight:800;letter-spacing:.06em;
     color:var(--bad);margin-bottom:4px;}
@@ -2662,6 +2695,59 @@
   .ceo-fs{font-size:.7rem;font-weight:800;letter-spacing:.05em;padding:2px 7px;border-radius:9px;}
   .ceo-fs.ok{background:var(--ok-bg);color:var(--ok-ink);}
   .ceo-fs.warn{background:#f6ead2;color:var(--gold-ink);}
+  /* §4 CEO PRIORITY — the top of the executive hierarchy, and the one place
+     gold is a FILL rather than an accent. Two items maximum. */
+  .ceo-prio{border:1px solid var(--gold);border-radius:12px;margin:0 0 14px;overflow:hidden;}
+  .ceo-pt{background:var(--gold);color:var(--navy);font-weight:800;font-size:.72rem;
+    letter-spacing:.08em;padding:7px 14px;}
+  .ceo-pitem{padding:12px 14px;border-top:1px solid var(--line);}
+  .ceo-pitem:first-of-type{border-top:0;}
+  .ceo-plab{font-size:.66rem;font-weight:800;letter-spacing:.07em;color:var(--muted);}
+  .ceo-ph{font-weight:800;font-size:1rem;margin:3px 0 0;line-height:1.3;}
+  .ceo-pw{font-size:.86rem;color:var(--muted);margin:5px 0 0;line-height:1.5;}
+  .ceo-prio-none .ceo-pnone{padding:12px 14px;margin:0;font-size:.9rem;color:var(--muted);}
+  /* §14 — Fix First. A row until asked, a card once answered. */
+  .ceo-fixrow{margin:0 0 14px;}
+  .ceo-fix .ceo-fh{font-weight:800;font-size:.98rem;margin:4px 0 8px;line-height:1.35;}
+  .ceo-fl{font-size:.64rem;font-weight:800;letter-spacing:.07em;color:var(--muted);margin-top:8px;}
+  /* §5 — grouped health. */
+  .ceo-hstate{display:inline-block;font-size:.68rem;font-weight:800;letter-spacing:.06em;
+    padding:2px 8px;border-radius:9px;margin-left:6px;vertical-align:middle;}
+  .ceo-hstate.ok{background:var(--ok-bg);color:var(--ok-ink);}
+  .ceo-hstate.warn{background:#f6ead2;color:var(--gold-ink);}
+  .ceo-hstate.bad{background:#f7ded9;color:var(--bad);}
+  .ceo-hgrp{margin-top:10px;}
+  .ceo-hgt{font-size:.64rem;font-weight:800;letter-spacing:.07em;color:var(--gold);}
+  .ceo-hrow{display:flex;gap:8px;align-items:baseline;font-size:.86rem;margin-top:3px;}
+  .ceo-hmk{flex:0 0 auto;font-weight:800;}
+  .ceo-hmk.ok{color:#8fd6a8;} .ceo-hmk.warn{color:#f0c778;}
+  /* §8 — the card's own parts. */
+  .ceo-cat{font-size:.64rem;font-weight:800;letter-spacing:.07em;color:var(--muted);
+    margin-bottom:3px;}
+  .ceo-ev{font-size:.78rem;color:var(--navy-2);background:var(--paper);border-radius:7px;
+    padding:5px 9px;margin:7px 0 0;display:inline-block;}
+  .ceo-imp{font-size:.82rem;color:var(--muted);margin:7px 0 0;line-height:1.5;}
+  .ceo-whybox{margin-top:9px;padding:9px 11px;background:var(--paper);border-radius:9px;}
+  .ceo-evl{margin:5px 0 0 17px;font-size:.83rem;line-height:1.55;}
+  .ceo-rec{font-size:.83rem;margin-top:7px;}
+  .ceo-path{font-size:.8rem;color:var(--muted);margin-top:3px;}
+  /* §3/§16 — what is working. No coloured border: it is not a task. */
+
+  .ceo-krow{display:flex;justify-content:space-between;gap:10px;font-size:.87rem;padding:4px 0;
+    border-bottom:1px solid var(--line);}
+  .ceo-krow:last-of-type{border-bottom:0;}
+  .ceo-kact{color:var(--ok-ink);font-weight:700;white-space:nowrap;}
+  /* §6 — the plan. */
+  .ceo-plrow{display:flex;gap:10px;padding:5px 0;border-bottom:1px solid var(--line);font-size:.86rem;}
+  .ceo-plrow:last-of-type{border-bottom:0;}
+  .ceo-pll{flex:0 0 38%;font-weight:800;color:var(--navy-2);}
+  .ceo-plv{flex:1 1 auto;color:var(--muted);}
+  /* §11 — a tab with nothing in it says so positively. */
+  .ceo-none{text-align:center;padding:26px 16px;color:var(--muted);}
+  .ceo-nonemk{font-size:1.6rem;color:var(--ok-ink);line-height:1;}
+  .ceo-none p{margin:8px 0 0;font-size:.9rem;line-height:1.55;}
+  .ceo-fs.exc{background:var(--ok-bg);color:var(--ok-ink);}
+  .ceo-fs.bad{background:#f7ded9;color:var(--bad);}
   .ceo-prevbar{position:sticky;top:0;z-index:2;background:#f6ead2;color:var(--gold-ink);
     border:1px solid var(--gold);border-radius:10px;padding:10px 12px;margin:0 0 10px;
     display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;
@@ -2670,8 +2756,12 @@
      pill hides while the panel is open. */
   @media(max-width:640px){
     .ceo-panel{width:100%;}
+    .ceo-fab{display:inline-flex;}
     body.ceoopen .ceo-fab{display:none;}
     body.ceoopen{overflow:hidden;}
+    /* Cleared over the bottom navigation by the nav's own height, the same
+       expression `.asst-pill` uses — one number, two controls. */
+    body.hasmnav .ceo-fab{bottom:calc(64px + max(10px, env(safe-area-inset-bottom)));}
   }
 
 </style>
@@ -4539,9 +4629,10 @@ let CEO_ERR = "";
 let CEO_BUSY = false;
 let CEO_PREVIEW = null;  /* {sug, prevValue, key} while a preview is standing */
 let CEO_WHY = {};        /* suggestion id -> expanded */
+let CEO_FIX = false;     /* "What should I fix first?" asked, this visit */
 
 function ceoReset(){ CEO = null; CEO_OPEN = false; CEO_TAB = "insights"; CEO_ERR = "";
-  CEO_BUSY = false; CEO_PREVIEW = null; CEO_WHY = {};
+  CEO_BUSY = false; CEO_PREVIEW = null; CEO_WHY = {}; CEO_FIX = false;
   /* The lock is a body class, so it outlives the state that set it unless the
      reset takes it too — a signed-out page that cannot scroll is the failure. */
   try{ document.body.classList.remove("ceoopen"); }catch{}
@@ -4569,33 +4660,124 @@ function ceoClose(){
   paint();
 }
 
+/* PORTAL HEALTH, GROUPED (§5). Three groups, a tick or a triangle per line,
+   and the release gate's own totals — an executive summary rather than a list
+   of sentences. Every number arrives counted from the Worker. */
 function ceoHealthHtml(h){
   if(!h) return "";
+  const grp = (title, rows) => `<div class="ceo-hgrp"><div class="ceo-hgt">${title}</div>
+    ${(rows || []).map(r => `<div class="ceo-hrow"><span class="ceo-hmk ${r.ok ? "ok" : "warn"}"
+      aria-hidden="true">${r.ok ? "&#10003;" : "&#9651;"}</span>
+      <span>${esc(r.text)}</span></div>`).join("")}</div>`;
+  const tone = h.label === "GOOD" ? "ok" : h.label === "WATCH" ? "warn" : "bad";
   return `<div class="ceo-health">
-    <div class="ceo-hl">PORTAL HEALTH: <b>${esc(h.label)}</b></div>
-    <ul>${(h.lines || []).map(l => `<li>${esc(l)}</li>`).join("")}</ul>
-    <div class="ceo-gate">Last release gate: ${esc(String(h.gate && h.gate.ran || "never"))}
-      &middot; ${h.gate ? `${h.gate.pass} pass / ${h.gate.warn} warn / ${h.gate.fail} fail` : ""}</div>
+    <div class="ceo-hl">PORTAL HEALTH <span class="ceo-hstate ${tone}">${esc(h.label)}</span></div>
+    ${grp("CLIENT EXPERIENCE", h.client)}
+    ${grp("OWNER EXPERIENCE", h.owner)}
+    <div class="ceo-hgrp"><div class="ceo-hgt">RELEASE GATE</div>
+      <div class="ceo-hrow"><span class="ceo-hmk ok" aria-hidden="true">&#10003;</span>
+        <span>${h.gate.pass} pass / ${h.gate.warn} warn / ${h.gate.fail} fail</span></div>
+      <div class="ceo-gate">Last run ${esc(String(h.gate.ran || "never"))}</div></div>
   </div>`;
 }
 
+/* CEO PRIORITY (§4) — at most two, and the honest empty state when there is
+   genuinely nothing. The Bot does not invent work to look busy. */
+function ceoPriorityHtml(p){
+  if(!p) return "";
+  if(p.none) return `<div class="ceo-prio ceo-prio-none">
+    <div class="ceo-pt">CEO PRIORITY</div>
+    <p class="ceo-pnone">${esc(p.none)}</p></div>`;
+  const item = (label, it, cls) => it ? `<div class="ceo-pitem ${cls}">
+    <div class="ceo-plab">${label}</div>
+    <div class="ceo-ph">${esc(it.title)}</div>
+    <p class="ceo-pw">${esc(it.why)}</p>
+    <div class="ceo-acts">${it.cta === "review"
+      ? `<button class="btn sm" data-act="ceoReview" data-case="${esc(it.case_no || "")}">Review</button>`
+      : `<button class="btn sm" data-act="ceoPreview" data-id="${esc(it.id)}">Preview</button>`}</div>
+  </div>` : "";
+  return `<div class="ceo-prio">
+    <div class="ceo-pt">CEO PRIORITY</div>
+    ${item("HIGHEST IMPACT TODAY", p.highest_impact, "hi")}
+    ${item("LOW-RISK CLEANUP", p.low_risk, "lo")}
+  </div>`;
+}
+
+/* WHAT SHOULD I FIX FIRST (§14). Not a chatbot: it prints the selection the
+   Worker already made over data already on screen, with its risk stated. */
+function ceoFixFirstHtml(f){
+  if(!f) return "";
+  if(!CEO_FIX) return `<div class="ceo-acts ceo-fixrow">
+    <button class="btn sm ghost" data-act="ceoFix">What should I fix first?</button></div>`;
+  if(f.none) return `<div class="ceo-card ceo-fix">
+    <div class="ceo-t">What I would fix first</div>
+    <p class="ceo-why">${esc(f.none)}</p>
+    <div class="ceo-acts"><button class="btn sm ghost" data-act="ceoFixClose">Close</button></div></div>`;
+  return `<div class="ceo-card ceo-fix">
+    <div class="ceo-t">What I would fix first</div>
+    <div class="ceo-fh">${esc(f.recommendation)}</div>
+    <div class="ceo-fl">WHY</div><p class="ceo-why">${esc(f.why)}</p>
+    <div class="ceo-fl">EXPECTED BENEFIT</div><p class="ceo-why">${esc(f.benefit)}</p>
+    <div class="ceo-fl">RISK</div><p class="ceo-why"><b>${esc(f.risk)}</b></p>
+    <div class="ceo-acts">
+      ${f.cta === "review"
+        ? `<button class="btn sm" data-act="ceoReview" data-case="${esc(f.case_no || "")}">Review recommendation</button>`
+        : `<button class="btn sm" data-act="ceoPreview" data-id="${esc(f.id)}">Review recommendation</button>`}
+      <button class="btn sm ghost" data-act="ceoFixClose">Close</button></div>
+  </div>`;
+}
+
+/* MY PORTAL PLAN (§6) — this user's direction, grouped, and a proposal only.
+   Ordered so the "keep" groups read first: the plan's headline is what stays. */
+const CEO_PLAN_ORDER = ["KEEP_PROMINENT", "PROMOTE", "PRESERVE", "HIDE_DUPLICATE",
+  "MOVE_TO_MORE", "MOVE_TO_ADVANCED", "REVIEW"];
+function ceoPlanHtml(plan, labels){
+  if(!plan || !Object.keys(plan).length) return "";
+  const rows = CEO_PLAN_ORDER.filter(k => (plan[k] || []).length);
+  if(!rows.length) return "";
+  return `<div class="ceo-card"><div class="ceo-t">My portal plan</div>
+    ${rows.map(k => `<div class="ceo-plrow"><div class="ceo-pll">${esc((labels || {})[k] || k)}</div>
+      <div class="ceo-plv">${plan[k].map(esc).join(", ")}</div></div>`).join("")}
+    <p class="ceo-why">A summary of where your own portal is heading. Nothing here is applied until
+      you preview and accept it, and it is yours alone.</p></div>`;
+}
+
+/* A SUGGESTION CARD (§8): category, headline, why, evidence, impact — then the
+   three controls. `Why?` expands the EVIDENCE LIST rather than restating the
+   sentence above it, which is what §7 asks for. */
 function ceoSugCard(s){
   const st = ((CEO && CEO.suggestion_state) || {})[s.id];
   const stLbl = st ? { accepted: "Accepted", implemented: "Implemented", reviewed: "Reviewed",
     not_now: "Not now", dismissed: "Dismissed" }[st.state] : "";
-  return `<div class="ceo-card${s.priority === "high" ? " ceo-hi" : ""}">
-    ${s.priority === "high" ? `<span class="ceo-flag">HIGH PRIORITY</span>` : ""}
+  const open = CEO_WHY[s.id];
+  return `<div class="ceo-card ceo-task${s.priority === "high" ? " ceo-hi" : ""}">
+    <div class="ceo-cat">${esc(s.category || "")}</div>
     <div class="ceo-t">${esc(s.title)}</div>
     ${stLbl ? `<span class="ceo-st">${esc(stLbl)}</span>` : ""}
-    ${CEO_WHY[s.id] ? `<p class="ceo-why">${esc(s.why)}</p>` : ""}
+    <p class="ceo-why">${esc(s.why)}</p>
+    ${s.metric ? `<div class="ceo-ev">${esc(s.metric)}</div>` : ""}
+    ${s.impact ? `<p class="ceo-imp">${esc(s.impact)}</p>` : ""}
+    ${open ? `<div class="ceo-whybox">
+      <div class="ceo-fl">WHY THIS SUGGESTION?</div>
+      <ul class="ceo-evl">${(s.evidence || []).map(e => `<li>${esc(e)}</li>`).join("")}</ul>
+      <div class="ceo-rec">Recommendation: <b>${esc(s.action_label || "")}</b></div>
+    </div>` : ""}
     <div class="ceo-acts">
       ${s.kind === "navigate_case"
         ? `<button class="btn sm" data-act="ceoReview" data-case="${esc(s.target)}">Review case</button>`
         : `<button class="btn sm" data-act="ceoPreview" data-id="${esc(s.id)}">Preview</button>`}
       <button class="btn sm ghost" data-act="ceoNotNow" data-id="${esc(s.id)}">Not now</button>
-      <button class="btn sm ghost" data-act="ceoWhy" data-id="${esc(s.id)}">Why?</button>
+      <button class="btn sm ghost" data-act="ceoWhy" data-id="${esc(s.id)}"
+        aria-expanded="${!!open}">Why?</button>
     </div>
   </div>`;
+}
+
+/* A TAB WITH NOTHING IN IT SAYS SO POSITIVELY (§11) — never an unfinished
+   blank panel. */
+function ceoNoneHtml(msg){
+  return `<div class="ceo-none"><div class="ceo-nonemk" aria-hidden="true">&#10003;</div>
+    <p>${esc(msg)}</p></div>`;
 }
 
 function ceoBodyHtml(){
@@ -4603,60 +4785,79 @@ function ceoBodyHtml(){
     <div class="actions"><button class="btn sm ghost" data-act="ceoRetry">Try again</button></div></div>`;
   if(!CEO) return `<p class="hint">Reading your portal&hellip;</p>`;
   const d = CEO;
+  const L = d.action_labels || {};
+
   if(CEO_TAB === "insights"){
+    /* THE EXECUTIVE ORDER (§13): priority, health, today, then the detail. */
     const b = d.brief || {};
-    return `${ceoHealthHtml(d.health)}
-      ${Object.keys(b).length ? `<div class="ceo-card"><div class="ceo-t">Today</div>
-        <div class="ceo-brief">
-          ${b.new_signed_intakes != null ? `<div><b>${b.new_signed_intakes}</b> new signed intake${b.new_signed_intakes === 1 ? "" : "s"}</div>` : ""}
-          ${b.open_cases != null ? `<div><b>${b.open_cases}</b> open case${b.open_cases === 1 ? "" : "s"}</div>` : ""}
-          ${b.retainers_recorded_7d != null ? `<div><b>${b.retainers_recorded_7d}</b> retainer${b.retainers_recorded_7d === 1 ? "" : "s"} recorded this week</div>` : ""}
-          ${b.possible_closeouts != null ? `<div><b>${b.possible_closeouts}</b> possible closeout${b.possible_closeouts === 1 ? "" : "s"}</div>` : ""}
-        </div></div>` : ""}
+    const briefRows = [
+      b.new_signed_intakes != null ? [b.new_signed_intakes, `new signed intake${b.new_signed_intakes === 1 ? "" : "s"}`] : null,
+      b.open_cases != null ? [b.open_cases, `open case${b.open_cases === 1 ? "" : "s"}`] : null,
+      b.retainers_recorded_7d != null ? [b.retainers_recorded_7d, "retainers this week"] : null,
+      b.possible_closeouts != null ? [b.possible_closeouts, `possible closeout${b.possible_closeouts === 1 ? "" : "s"}`] : null,
+    ].filter(Boolean);
+    return `${ceoPriorityHtml(d.priority)}
+      ${ceoFixFirstHtml(d.fix_first)}
+      ${ceoHealthHtml(d.health)}
+      ${briefRows.length ? `<div class="ceo-card"><div class="ceo-t">Today</div>
+        <div class="ceo-brief">${briefRows.map(([n, w]) =>
+          `<div><b>${n}</b> ${esc(w)}</div>`).join("")}</div></div>` : ""}
+      ${ceoPlanHtml(d.plan, L)}
       ${d.most_used && d.most_used.length ? `<div class="ceo-card"><div class="ceo-t">Most used actions</div>
         <ol class="ceo-most">${d.most_used.slice(0, 5).map(m =>
-          `<li>${esc(ceoActionLabel(m.id))} <span class="optn">${m.n} taps</span></li>`).join("")}</ol>
+          `<li>${esc(m.label || ceoActionLabel(m.id))} <span class="optn">${m.n}</span></li>`).join("")}</ol>
         <p class="ceo-why">Counted from your own taps, on your sign-in only.</p></div>`
         : `<div class="ceo-card"><div class="ceo-t">Most used actions</div>
           <p class="ceo-why">Nothing counted yet — use the portal normally and this fills in, for
-          your sign-in only.</p></div>`}
-      ${(d.closeout_watch || []).length ? `<div class="ceo-card ceo-hi">
-        <span class="ceo-flag">POSSIBLE CLOSEOUT</span>
-        ${d.closeout_watch.map(c => `<div class="ceo-t">${esc(c.client)}</div>
-          <ul>${c.facts.map(f => `<li>${esc(f)}</li>`).join("")}</ul>
-          <div class="ceo-acts"><button class="btn sm" data-act="ceoReview" data-case="${esc(c.case_no)}">Review case</button>
-            <button class="btn sm ghost" data-act="ceoNotNow" data-id="closeout:${esc(c.case_no)}">Not now</button></div>`).join("")}
-        <p class="ceo-why">The CEO Bot never closes a case — Review opens it and the ordinary
-          Close Case confirmations stand.</p></div>` : ""}`;
+          your sign-in only.</p></div>`}`;
   }
+
   if(CEO_TAB === "suggestions"){
     const live = (d.suggestions || []);
     return `${CEO_PREVIEW ? `<div class="ceo-prevbar">Previewing: ${esc(CEO_PREVIEW.sug.title)}
       <span class="ceo-acts"><button class="btn sm" data-act="ceoApply">Apply</button>
       <button class="btn sm ghost" data-act="ceoUndo">Undo</button></span></div>` : ""}
       ${live.length ? live.map(ceoSugCard).join("")
-        : `<p class="hint">Nothing to suggest right now. Suggestions appear from your own usage —
-          never from anyone else's — and dismissed ones stay dismissed.</p>`}`;
+        : ceoNoneHtml("No changes recommended right now. Suggestions come from your own usage, "
+          + "never from anyone else's, and dismissed ones stay dismissed.")}
+      ${(d.working || []).length ? `<div class="ceo-card ceo-keep">
+        <div class="ceo-cat">WORKING WELL &mdash; NO CHANGE</div>
+        ${d.working.map(w => `<div class="ceo-krow"><b>${esc(w.label)}</b>
+          <span class="ceo-kact">${esc(w.action_label)}</span></div>`).join("")}
+        <p class="ceo-why">A good portal is mostly one nobody needs to change.</p></div>` : ""}`;
   }
+
   if(CEO_TAB === "workflow"){
-    return `<p class="ceo-why">Measured flows of the shipped build — taps counted by the release
-      gate, your own usage beside each.</p>
+    return `<p class="ceo-why">Measured flows of the shipped build &mdash; taps counted by the
+      release gate, your own usage beside each.</p>
       ${(d.flows || []).map(f => {
         const mine = ((d.most_used || []).find(m => m.id === `qt:${f.id}` || m.id === f.id) || {}).n;
+        const tone = f.status === "EXCELLENT" ? "exc" : f.status === "GOOD" ? "ok"
+                   : f.status === "WATCH" ? "warn" : "bad";
         return `<div class="ceo-card"><div class="ceo-t">${esc(f.label)}</div>
         <div class="ceo-flow"><b>${f.taps} tap${f.taps === 1 ? "" : "s"}</b>
-          <span class="ceo-fs ${f.status === "GOOD" ? "ok" : "warn"}">${esc(f.status)}</span>
+          <span class="ceo-fs ${tone}">${esc(f.status)}</span>
           ${mine ? `<span class="optn">you: ${mine}&times;</span>` : ""}</div>
-        <div class="optn">${esc(f.path)}</div>
-        ${CEO_WHY[f.id] ? `<p class="ceo-why">${esc(f.evidence)}</p>` : ""}
-        <div class="ceo-acts"><button class="btn sm ghost" data-act="ceoWhy" data-id="${esc(f.id)}">Why?</button></div>
+        <div class="ceo-path">${esc(f.path)}</div>
+        <div class="ceo-rec">CEO recommendation: <b>${esc(f.action_label || "")}</b></div>
+        ${f.note ? `<p class="ceo-why">${esc(f.note)}</p>` : ""}
       </div>`; }).join("")}`;
   }
+
   /* HEALTH */
   return `${ceoHealthHtml(d.health)}
+    ${(d.closeout_watch || []).length ? `<div class="ceo-card ceo-task ceo-hi">
+      <span class="ceo-flag">POSSIBLE CLOSEOUT</span>
+      ${d.closeout_watch.map(c => `<div class="ceo-t">${esc(c.client)}</div>
+        <ul class="ceo-evl">${c.facts.map(f => `<li>${esc(f)}</li>`).join("")}</ul>
+        <div class="ceo-acts"><button class="btn sm" data-act="ceoReview" data-case="${esc(c.case_no)}">Review case</button>
+          <button class="btn sm ghost" data-act="ceoNotNow" data-id="closeout:${esc(c.case_no)}">Not now</button></div>`).join("")}
+      <p class="ceo-why">The CEO Bot never closes a case &mdash; Review opens it and the ordinary
+        Close Case confirmations stand.</p></div>`
+      : ceoNoneHtml("No unresolved closeout alerts.")}
     <div class="ceo-card"><div class="ceo-t">The release gate</div>
       <p class="ceo-why">The CEO UX Gate walks the public site, the intake doors, the portal and
-        the phone render before a release — dead ends, tap floors, sideways scroll, internal
+        the phone render before a release &mdash; dead ends, tap floors, sideways scroll, internal
         vocabulary on client pages. The Bot displays its findings; it never runs its own crawler.</p>
       <p class="optn">node portal/test-ceo-gate.mjs</p></div>`;
 }
@@ -4741,7 +4942,8 @@ function ceoReviewCase(caseNo){
    withdraws while either panel is open so it cannot sit over its own drawer. */
 function ceoFabHtml(){
   if(CEO_OPEN || (ASST && ASST.open)) return "";
-  return `<button class="ceo-fab" data-act="ceoOpen" aria-label="Open the CEO Bot">&#9733;</button>`;
+  return `<button class="ceo-fab" data-act="ceoOpen" aria-label="Open the CEO Bot">
+    <span aria-hidden="true">&#9733;</span><span>CEO</span></button>`;
 }
 
 function asstPillHtml(){
@@ -22430,6 +22632,8 @@ document.addEventListener("click", ev => {
   else if(act === "ceoDismiss"){ ceoSetState(el.dataset.id, "dismissed"); }
   else if(act === "ceoReview"){ ceoReviewCase(el.dataset.case); }
   else if(act === "ceoSimplify"){ CEO_TAB = "suggestions"; paint(); }
+  else if(act === "ceoFix"){ CEO_FIX = true; paint(); }
+  else if(act === "ceoFixClose"){ CEO_FIX = false; paint(); }
   else if(act === "closeCase"){ doCloseCase(); }
   else if(act === "fcOpen"){ fcOpen(); }
   else if(act === "fcCancel"){ fcCancel(); }

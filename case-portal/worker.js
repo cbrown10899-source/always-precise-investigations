@@ -6239,33 +6239,217 @@ const CEO_GATE_SUMMARY = {
   notes: 'Run node portal/test-ceo-gate.mjs before a release; it fails if this drifts.',
 };
 
-/* The primary controls the Bot watches for disuse, each with where it lives
-   and which existing per-user hide (or reorder) answers it. Evidence-based:
-   a suggestion fires only off THIS user's own counters. */
-const CEO_WATCH = [
-  { id: 'qt:photo',  label: 'Timestamp Photo quick action', hideable: true },
-  { id: 'qt:video',  label: 'Timestamp Video quick action', hideable: true },
-  { id: 'qt:delivery', label: 'Reports & Packages quick action', hideable: true },
-  { id: 'qt:cases',  label: 'Cases quick action', hideable: true },
-  { id: 'needs_assignment', label: 'Needs-assignment alert card', hideable: true },
-  { id: 'lead_status', label: 'Lead status controls', hideable: true },
+/* ============ CEO BOT — WHAT MAY BE RECOMMENDED, AND ABOUT WHAT ============
+
+   Owner brief 2026-09-06 (product refinement), §§1–2, 16.
+
+   THE DEFECT THIS REPLACES: the first engine had one rule — unused implies
+   hide — so it could recommend hiding **Cases**. That is not a tidy-up, it is
+   a proposal to remove a core business destination because a shortcut to it
+   was quiet, and it would have been printed with "you have not used this once"
+   underneath as though that were an argument.
+
+   THE DISTINCTION THAT FIXES IT is the owner's own: a CAPABILITY is not its
+   SHORTCUT. Cases is a core destination reachable from the bottom navigation;
+   its Home quick action is a duplicate of that route. Removing the duplicate
+   costs nothing. Removing the capability is not on the table at all, and no
+   rule below can produce that recommendation for a `core` row — a property of
+   the table rather than a check somebody has to remember.
+
+   `alt` is WHERE ELSE THE THING LIVES, and it is what makes a hide safe: a
+   control with no other route can never be recommended away, because that
+   would be manufacturing the dead end the gate exists to find. */
+
+const CEO_ACTIONS = {
+  KEEP_PROMINENT:  'Keep prominent',
+  PRESERVE:        'Preserve',
+  PROMOTE:         'Promote',
+  MOVE_TO_MORE:    'Move to More',
+  MOVE_TO_ADVANCED:'Move to Advanced',
+  HIDE_DUPLICATE:  'Hide duplicate shortcut',
+  REVIEW:          'Review',
+  NOT_ENOUGH_DATA: 'Not enough data',
+};
+
+/* An action that TAKES SOMETHING OFF the user's primary view. Only these
+   produce a `pref_hide` suggestion, and §1 forbids all of them on a core
+   capability that has nowhere else to be reached from. */
+const CEO_REMOVING = ['MOVE_TO_MORE', 'MOVE_TO_ADVANCED', 'HIDE_DUPLICATE'];
+
+/* THE CAPABILITY TABLE. `core` marks a business capability the owner named in
+   §1; `nav` says the thing itself is a primary navigation destination, which
+   is what makes its Home card a DUPLICATE rather than the only door; `alt` is
+   where the capability still lives if the shortcut goes. */
+const CEO_CAPS = [
+  { id: 'qt:sheets',   label: 'Rate Sheet',          core: true,  nav: false, alt: null },
+  { id: 'qt:newlead',  label: 'New Intake',          core: true,  nav: false, alt: 'the Intakes desk' },
+  { id: 'qt:priv',     label: 'Private Intake',      core: false, nav: false, alt: 'New Intake' },
+  { id: 'qt:claims',   label: 'Insurance Intake',    core: false, nav: false, alt: 'New Intake' },
+  { id: 'qt:legal',    label: 'Law Firm Intake',     core: false, nav: false, alt: 'New Intake' },
+  { id: 'qt:delivery', label: 'Reports & Packages',  core: false, nav: false, alt: 'the More menu' },
+  { id: 'qt:photo',    label: 'Timestamp Photo',     core: false, nav: false, alt: 'the More menu' },
+  { id: 'qt:video',    label: 'Timestamp Video',     core: false, nav: false, alt: 'the More menu' },
+  { id: 'qt:field',    label: 'Active Surveillance', core: true,  nav: true,  alt: 'the bottom navigation' },
+  { id: 'qt:cases',    label: 'Cases',               core: true,  nav: true,  alt: 'the bottom navigation' },
+  /* Not quick actions — dashboard furniture the owner's noise list already
+     names, hideable per user and reachable nowhere else, so they are REVIEW
+     candidates at most. */
+  { id: 'needs_assignment', label: 'Needs-assignment alert card', core: false, nav: false,
+    alt: null, panel: true },
+  { id: 'lead_status',      label: 'Lead status controls',        core: false, nav: false,
+    alt: 'the Intakes desk', panel: true },
 ];
 
-/* The measured flows the WORKFLOW tab shows. Tap counts are the gate's and
-   the suites' own measurements of the shipped screens — statements about the
-   BUILD, not about any client's data, and each names its evidence. */
+/* THE MEASURED FLOWS (§9). Tap counts are the gate's and the suites' own
+   measurements of the shipped screens — statements about the BUILD, not about
+   any client's data. Each carries the CEO recommendation the owner asked for,
+   and the point of most of them is that the answer is "leave it alone". */
 const CEO_FLOWS = [
-  { id: 'view_intake', label: 'View a signed intake', taps: 1, status: 'GOOD',
-    path: 'Intakes → tap the card', evidence: 'The card is the door (shipped 2026-09-06).' },
+  { id: 'view_intake', label: 'View a signed intake', taps: 1, status: 'EXCELLENT',
+    path: 'Intakes → the client card', action: 'PRESERVE',
+    note: 'Already a one-tap workflow. No simplification recommended.' },
   { id: 'rate_sheet', label: 'Prepare & send a rate sheet', taps: 2, status: 'GOOD',
-    path: 'Home → Rate Sheet → form', evidence: 'Quick action first on Home.' },
+    path: 'Home → Rate Sheet → form', action: 'KEEP_PROMINENT',
+    note: 'Heavily used and already first on Home.' },
   { id: 'retainer_paid', label: 'Record a retainer payment', taps: 2, status: 'GOOD',
-    path: 'Case → Retainer paid', evidence: 'On the case actions row (Mission 6).' },
+    path: 'Case → Retainer paid', action: 'KEEP_PROMINENT',
+    note: 'A direct action on the case actions row.' },
   { id: 'close_case', label: 'Close a no-work case', taps: 2, status: 'GOOD',
-    path: 'Case → Close case → preset → confirm', evidence: 'No checklist required (Mission 7).' },
+    path: 'Case → Close case → confirm', action: 'PRESERVE',
+    note: 'Already at the target two-tap flow.' },
   { id: 'surveillance', label: 'Start Active Surveillance', taps: 2, status: 'GOOD',
-    path: 'Home → Active Surveillance → case', evidence: 'Top-level door, both roles.' },
+    path: 'Home → Active Surveillance → case', action: 'PRESERVE',
+    note: 'A top-level door for both roles.' },
 ];
+
+/* HOW MUCH EVIDENCE BEFORE THE BOT SPEAKS AT ALL. Below this the honest
+   answer is NOT_ENOUGH_DATA — §2's own action — and no suggestion is made. */
+const CEO_MIN_TAPS = 20;
+/* "Heavily used" for KEEP_PROMINENT: a fifth of the measured taps. */
+const CEO_HEAVY_SHARE = 0.2;
+
+/* ONE CONTROL, CLASSIFIED (§2). Deterministic, evidence-first, and it returns
+   the EVIDENCE it used rather than a sentence about it — §7's requirement, so
+   "Why?" can print facts the reader can check instead of prose they have to
+   trust. Nothing here reads a case, a client or a payment: the inputs are this
+   user's own tap counters and the capability table above. */
+function ceoClassify(cap, ctx) {
+  const { metrics, totalTaps, hidden, firstQt } = ctx;
+  const n = metrics[cap.id] && Number(metrics[cap.id].n) > 0 ? Number(metrics[cap.id].n) : 0;
+  const share = totalTaps > 0 ? n / totalTaps : 0;
+  const ev = [];
+  const out = a => ({ cap, action: a, uses: n, share, evidence: ev });
+
+  /* ALREADY THE USER'S OWN CHOICE — nothing to recommend about it. */
+  if (hidden.includes(cap.id)) {
+    ev.push(`You have already hidden this from your own view`);
+    if (cap.alt) ev.push(`Still reachable from ${cap.alt}`);
+    return out('PRESERVE');
+  }
+
+  /* NOT ENOUGH EVIDENCE TO SAY ANYTHING (§2). Said out loud rather than
+     defaulting to a change: a portal with no measured use is a portal nobody
+     has told the Bot anything about yet. */
+  if (totalTaps < CEO_MIN_TAPS) {
+    ev.push(`${totalTaps} counted actions so far — the Bot waits for ${CEO_MIN_TAPS}`);
+    return out('NOT_ENOUGH_DATA');
+  }
+
+  if (n > 0) {
+    ev.push(`${n} of your last ${totalTaps} counted actions`);
+    if (share >= CEO_HEAVY_SHARE) {
+      ev.push('One of your most-used controls');
+      /* PROMOTE only when it is genuinely not first — otherwise the honest
+         answer is that it is already where it should be (§16). */
+      if (firstQt && cap.id === `qt:${firstQt}`) {
+        ev.push('Already first on your Home');
+        return out('KEEP_PROMINENT');
+      }
+      if (cap.id.startsWith('qt:')) return out('PROMOTE');
+      return out('KEEP_PROMINENT');
+    }
+    return out('PRESERVE');
+  }
+
+  /* UNUSED FROM HERE DOWN. */
+  ev.push(`0 uses in the measured period (${totalTaps} counted actions)`);
+  ev.push('Occupies a primary slot on your Home');
+
+  /* §1 — A CAPABILITY IS NOT ITS SHORTCUT, and this is where that is enforced
+     rather than remembered. A core capability whose own destination is in the
+     navigation has a DUPLICATE shortcut: only the duplicate may go, and the
+     recommendation says so in those words. A core capability with no other
+     route keeps its place, however quiet it is. */
+  if (cap.core) {
+    if (cap.nav) {
+      ev.push(`${cap.label} is a core business destination`);
+      ev.push(`Reached from ${cap.alt}, which is where you already use it`);
+      ev.push(`Only the duplicate Home shortcut would go — ${cap.label} itself stays`);
+      return out('HIDE_DUPLICATE');
+    }
+    ev.push(`${cap.label} is a core business capability`);
+    ev.push(cap.alt ? `Also reachable from ${cap.alt}` : 'This is its only door');
+    /* Core, quiet, and no duplicate route: KEEP AS IS. Removing it would be
+       trading a rarely-used capability for space, which is not the Bot's
+       call to make. */
+    return out('PRESERVE');
+  }
+
+  if (cap.alt) {
+    ev.push(`Still available from ${cap.alt}`);
+    ev.push(`Removing the shortcut does not remove ${cap.label}`);
+    return out(cap.panel ? 'MOVE_TO_ADVANCED' : 'MOVE_TO_MORE');
+  }
+
+  /* Not core, unused, and nowhere else to reach it: hiding it WOULD be a dead
+     end, so the answer is a look rather than a change. */
+  ev.push('No other route to it — hiding this would remove the only door');
+  return out('REVIEW');
+}
+
+/* THE HEADLINE, THE ONE SENTENCE AND WHAT ACTUALLY CHANGES (§8). One writer,
+   so a card, the priority strip and Fix First cannot word the same
+   recommendation three ways. */
+function ceoCard(c) {
+  const L = c.cap.label;
+  const A = c.action;
+  const t = {
+    KEEP_PROMINENT:  { cat: 'WORKING WELL', head: `Keep ${L} prominent`,
+      why: `${L} is one of the controls you actually use.`,
+      impact: 'Nothing changes — this is a confirmation, not a task.' },
+    PRESERVE:        { cat: 'WORKING WELL', head: `Keep ${L} as it is`,
+      why: `${L} is doing its job where it sits.`,
+      impact: 'Nothing changes.' },
+    PROMOTE:         { cat: 'SIMPLIFY HOME', head: `Move ${L} to the front of Home`,
+      why: `${L} is your most-used action and it is not first.`,
+      impact: 'Reorders your own Home only. Nothing is hidden.' },
+    MOVE_TO_MORE:    { cat: 'SIMPLIFY HOME', head: `Move ${L} to More`,
+      why: `This shortcut has not been used from your Home quick actions.`,
+      impact: `${L} remains available under ${c.cap.alt}.` },
+    MOVE_TO_ADVANCED:{ cat: 'REDUCE NOISE', head: `Move ${L} out of the main view`,
+      why: `${L} has not been used and takes primary space.`,
+      impact: `Yours only; returns from Settings → My Portal.` },
+    HIDE_DUPLICATE:  { cat: 'REMOVE A DUPLICATE', head: `Remove the duplicate ${L} shortcut`,
+      why: `${L} is a core destination you already reach from ${c.cap.alt}; `
+         + 'the Home card duplicates it.',
+      impact: `Only the duplicate shortcut goes. ${L} stays exactly where it is.` },
+    REVIEW:          { cat: 'WORTH A LOOK', head: `Take a look at ${L}`,
+      why: `${L} has not been used, and it has no second route.`,
+      impact: 'Nothing changes from here — this is a note, not a proposal.' },
+    NOT_ENOUGH_DATA: { cat: 'NOT ENOUGH DATA', head: `Not enough use recorded for ${L}`,
+      why: 'The Bot has not seen enough of your work to say anything useful yet.',
+      impact: 'Nothing changes.' },
+  }[A];
+  return { ...t, action: A, action_label: CEO_ACTIONS[A] };
+}
+
+/* WHAT A RECOMMENDATION IS WORTH, so the priority strip and Fix First rank by
+   the same number. Removing a genuine duplicate is the highest-value low-risk
+   change; a confirmation is worth nothing to act on. */
+const CEO_VALUE = { HIDE_DUPLICATE: 40, MOVE_TO_MORE: 30, MOVE_TO_ADVANCED: 25,
+  PROMOTE: 20, REVIEW: 5, KEEP_PROMINENT: 0, PRESERVE: 0, NOT_ENOUGH_DATA: 0 };
+const CEO_RISK = { HIDE_DUPLICATE: 'LOW', MOVE_TO_MORE: 'LOW', MOVE_TO_ADVANCED: 'LOW',
+  PROMOTE: 'LOW', REVIEW: 'LOW' };
 
 async function ceoInsights(env, user) {
   const missing = await missingTables(env);
@@ -6278,8 +6462,8 @@ async function ceoInsights(env, user) {
   const hidden = Array.isArray(prefs.hidden) ? prefs.hidden : ['needs_assignment', 'lead_status'];
   const now = Date.now();
 
-  /* ---- THE DAILY CEO BRIEF: today's numbers, from the shared record, scoped
-     by role exactly as the dashboard scopes them. ---- */
+  /* ---- TODAY'S OPERATING SUMMARY: the shared record, scoped by role exactly
+     as the dashboard scopes it. ---- */
   const brief = {};
   if (admin) {
     const dayAgo = new Date(now - 86400e3).toISOString();
@@ -6294,24 +6478,13 @@ async function ceoInsights(env, user) {
       'SELECT COUNT(*) AS n FROM retainer_payment WHERE recorded_at > ?').bind(weekAgo).first()).n : 0;
   }
 
-  /* ---- CLOSEOUT WATCH (brief §11): possible closeouts, each a REVIEW
-     navigation and never an act. Derived from records that exist — retainer
-     in, no day ever started, case still open, older than 7 days; and open
-     cases with no activity for 14+ days. ---- */
+  /* ---- CLOSEOUT WATCH: possible closeouts, each a REVIEW navigation and
+     never an act. Marker tables excluded through `hiddenCases` (guarded), and
+     the LIMIT applies after the exclusion so hidden rows cannot empty a watch
+     with live candidates behind them. ---- */
   let closeoutWatch = [];
   if (admin && have('retainer_payment') && have('case_days')) {
-    /* THE MARKER TABLES ARE EXCLUDED THROUGH `hiddenCases`, NOT THROUGH A
-       SUBQUERY. A bare `NOT IN (SELECT case_no FROM case_deleted)` is a hard
-       reference to a table that does not exist between a merge and its manual
-       portal-setup dispatch — the same shape that would have taken out the
-       case list before `missingTables` was put in front of it. `hiddenCases`
-       already carries that guard and returns a Set, so the filter costs one
-       read the portal already makes everywhere else.
-
-       The void guard is inline for the same reason, and the LIMIT is applied
-       AFTER the exclusion: filtering a page of already-limited rows lets six
-       hidden cases empty a watch that has live candidates behind them. */
-    const hidden = await hiddenCases(env);
+    const hiddenSet = await hiddenCases(env);
     const voidGuard = have('retainer_payment_void')
       ? ' WHERE id NOT IN (SELECT payment_id FROM retainer_payment_void)' : '';
     const { results: paidNoWork } = await env.DB.prepare(
@@ -6324,7 +6497,7 @@ async function ceoInsights(env, user) {
           AND NOT EXISTS (SELECT 1 FROM case_days d WHERE d.case_no = s.case_no)
         LIMIT 40`).bind(new Date(now - 7 * 86400e3).toISOString()).all();
     closeoutWatch = (paidNoWork || [])
-      .filter(r => !hidden.has(r.case_no))
+      .filter(r => !hiddenSet.has(r.case_no))
       .slice(0, 6)
       .map(r => ({
         case_no: r.case_no, client: r.client_name || r.case_no,
@@ -6333,17 +6506,26 @@ async function ceoInsights(env, user) {
   }
   if (admin) brief.possible_closeouts = closeoutWatch.length;
 
-  /* ---- MOST USED: this user's own counters, labelled. ---- */
+  /* ---- THIS USER'S OWN COUNTERS. ---- */
   const mostUsed = Object.entries(metrics)
-    .map(([id, m]) => ({ id, n: Number(m.n) || 0, last: m.last || null }))
+    .map(([id, m]) => ({ id, n: Number(m.n) || 0, last: m.last || null,
+      label: (CEO_CAPS.find(c => c.id === id) || {}).label || id }))
     .filter(m => m.n > 0)
     .sort((a, b) => b.n - a.n).slice(0, 6);
+  const totalTaps = Object.values(metrics).reduce((a, m) => a + (Number(m.n) || 0), 0);
+  const order = Array.isArray(prefs.qt_order) && prefs.qt_order.length ? prefs.qt_order : null;
+  const firstQt = order ? order[0] : 'sheets';
 
-  /* ---- SUGGESTIONS: deterministic, evidence-based, personal. Every one
-     names its why, previews through the EXISTING pref layer, and respects
-     this user's own dismissals. NOT NOW sleeps 14 days; DISMISSED sleeps
-     until the suggestion's evidence version changes. ---- */
-  const suggestions = [];
+  /* ---- EVERY WATCHED CONTROL, CLASSIFIED. This is the whole engine: one
+     pass, one function, and the same classification feeds the suggestions,
+     the portal plan, the health counts and Fix First — so the four cannot
+     disagree about the same control. ---- */
+  const ctx = { metrics, totalTaps, hidden, firstQt };
+  const classified = CEO_CAPS.map(cap => {
+    const c = ceoClassify(cap, ctx);
+    return { ...c, card: ceoCard(c), value: CEO_VALUE[c.action] || 0 };
+  });
+
   const asleep = id => {
     const st = sugState[id];
     if (!st) return false;
@@ -6352,60 +6534,124 @@ async function ceoInsights(env, user) {
     if (st.state === 'accepted' || st.state === 'implemented') return true;
     return false;
   };
-  const totalTaps = mostUsed.reduce((a, m) => a + m.n, 0);
-  for (const w of CEO_WATCH) {
-    if (!w.hideable || hidden.includes(w.id)) continue;
-    const used = metrics[w.id] && Number(metrics[w.id].n) > 0;
-    /* Only speak when there is evidence: this user has really been working
-       (20+ counted taps) and this control took none of them. */
-    if (!used && totalTaps >= 20 && !asleep(`hide:${w.id}`)) {
-      suggestions.push({ id: `hide:${w.id}`, kind: 'pref_hide', target: w.id,
-        priority: 'normal', title: `Hide ${w.label} from my main view`,
-        why: `Across your last ${totalTaps} counted quick actions you have not used ${w.label} once, `
-           + 'but it occupies primary space. Hiding it changes only your own portal, and it can '
-           + 'come back any time from Settings → My Portal.' });
-    }
-  }
-  if (mostUsed.length && totalTaps >= 20) {
-    const top = mostUsed[0];
-    const order = Array.isArray(prefs.qt_order) && prefs.qt_order.length ? prefs.qt_order : null;
-    const first = order ? order[0] : 'sheets';
-    const topQt = top.id.startsWith('qt:') ? top.id.slice(3) : null;
-    if (topQt && topQt !== first && !asleep(`front:${topQt}`)) {
-      suggestions.push({ id: `front:${topQt}`, kind: 'pref_front', target: topQt,
-        priority: 'normal', title: `Keep your most-used action first on Home`,
-        why: `${top.id} is your most-used action (${top.n} of your last ${totalTaps} taps) and it `
-           + 'is not first. Moving it changes only your own portal.' });
-    }
+
+  /* ---- SUGGESTIONS: only the classifications that PROPOSE something. A
+     confirmation is reported in the plan and the workflow tab, never as a task
+     card — "keep it as it is" is not something to accept or dismiss. ---- */
+  const suggestions = [];
+  for (const c of classified) {
+    if (!CEO_REMOVING.includes(c.action) && c.action !== 'PROMOTE') continue;
+    const id = c.action === 'PROMOTE' ? `front:${c.cap.id.replace(/^qt:/, '')}`
+                                      : `hide:${c.cap.id}`;
+    if (asleep(id)) continue;
+    suggestions.push({
+      id, target: c.cap.id.replace(/^qt:/, ''),
+      kind: c.action === 'PROMOTE' ? 'pref_front' : 'pref_hide',
+      pref_target: c.cap.id,
+      priority: 'normal',
+      action: c.action, action_label: c.card.action_label,
+      category: c.card.cat, title: c.card.head,
+      why: c.card.why, impact: c.card.impact,
+      evidence: c.evidence,
+      /* The one-line metric §8 asks the card to show. */
+      metric: `${c.uses} Home tap${c.uses === 1 ? '' : 's'} in ${totalTaps} counted actions`,
+      protects_core: !!c.cap.core,
+      value: c.value,
+    });
   }
   for (const c of closeoutWatch) {
     if (asleep(`closeout:${c.case_no}`)) continue;
     suggestions.push({ id: `closeout:${c.case_no}`, kind: 'navigate_case',
-      target: c.case_no, priority: 'high', title: `Possible closeout — ${c.client}`,
-      why: `${c.facts.join('. ')}. Clients sometimes pay and change their minds; if this one has, `
-         + 'the Close Case flow documents the retention and any refund. Nothing here closes '
-         + 'anything — Review opens the case and the ordinary confirmations stand.' });
+      target: c.case_no, priority: 'high', action: 'REVIEW', action_label: 'Review',
+      category: 'POSSIBLE CLOSEOUT', title: `Possible closeout — ${c.client}`,
+      why: 'A retainer was received and no investigation day was ever started.',
+      impact: 'Review opens the case. Nothing here closes anything, and the ordinary '
+            + 'confirmations still stand.',
+      evidence: c.facts, metric: `Open 7+ days`, value: 60 });
+  }
+  suggestions.sort((a, b) => (b.value || 0) - (a.value || 0));
+
+  /* ---- WHAT IS WORKING (§3). Reported as its own list so the Bot says the
+     true thing — most of this portal needs nothing — instead of only ever
+     printing tasks. ---- */
+  const working = classified
+    .filter(c => c.action === 'KEEP_PROMINENT' || c.action === 'PRESERVE')
+    .filter(c => c.uses > 0 || c.cap.core)
+    .map(c => ({ id: c.cap.id, label: c.cap.label, action: c.action,
+      action_label: c.card.action_label, note: c.card.why }));
+
+  /* ---- CEO PRIORITY (§4): at most two, and NOTHING INVENTED. Highest impact
+     is the most valuable open recommendation; low-risk cleanup is the best
+     remaining LOW-risk one that is not already the headline. ---- */
+  const ranked = suggestions.filter(s => (s.value || 0) > 0);
+  const highest = ranked[0] || null;
+  const lowRisk = ranked.find(s => s !== highest && CEO_RISK[s.action] === 'LOW') || null;
+  const priority = {
+    highest_impact: highest ? {
+      id: highest.id, title: highest.title, why: highest.why,
+      action: highest.action, cta: highest.kind === 'navigate_case' ? 'review' : 'preview',
+      case_no: highest.kind === 'navigate_case' ? highest.target : null } : null,
+    low_risk: lowRisk ? {
+      id: lowRisk.id, title: lowRisk.title, why: lowRisk.why, action: lowRisk.action,
+      cta: lowRisk.kind === 'navigate_case' ? 'review' : 'preview',
+      case_no: lowRisk.kind === 'navigate_case' ? lowRisk.target : null } : null,
+    /* THE HONEST EMPTY STATE, in the owner's own words. */
+    none: ranked.length === 0
+      ? 'No high-impact portal changes recommended today.' : null,
+  };
+
+  /* ---- MY PORTAL PLAN (§6): this user's direction, grouped by what the
+     engine concluded. Proposal and summary — it changes nothing by existing,
+     and it is one user's own. ---- */
+  const plan = {};
+  for (const c of classified) {
+    if (c.action === 'NOT_ENOUGH_DATA') continue;
+    (plan[c.action] = plan[c.action] || []).push(c.cap.label);
   }
 
-  /* ---- PORTAL HEALTH: the gate's totals plus today's counts, in words. ---- */
+  /* ---- PORTAL HEALTH, GROUPED (§5). Client experience is the gate's
+     findings; owner experience is this user's own classification; the release
+     gate is the gate's raw totals. Every number here is counted, not typed. */
+  const dupes = classified.filter(c => c.action === 'HIDE_DUPLICATE').length;
+  const unnecessary = classified.filter(c => CEO_REMOVING.includes(c.action)).length;
+  const atTarget = CEO_FLOWS.filter(f => f.status === 'EXCELLENT' || f.status === 'GOOD').length;
   const health = {
-    label: CEO_GATE_SUMMARY.fail > 0 ? 'Needs attention'
-         : CEO_GATE_SUMMARY.warn > 0 ? 'Fair' : 'Good',
+    label: CEO_GATE_SUMMARY.fail > 0 ? 'NEEDS ATTENTION'
+         : (CEO_GATE_SUMMARY.warn > 0 || unnecessary > 2) ? 'WATCH' : 'GOOD',
     gate: CEO_GATE_SUMMARY,
-    lines: [
-      `${CEO_GATE_SUMMARY.fail} critical dead ends in the last release gate`,
-      `${CEO_GATE_SUMMARY.warn} gate warnings open`,
-      `${suggestions.filter(s => s.kind === 'pref_hide').length} unused primary controls (yours)`,
-      `${closeoutWatch.length} possible closeout${closeoutWatch.length === 1 ? '' : 's'}`,
+    client: [
+      { ok: CEO_GATE_SUMMARY.fail === 0, text: `${CEO_GATE_SUMMARY.fail} dead ends` },
+      { ok: CEO_GATE_SUMMARY.fail === 0, text: `${CEO_GATE_SUMMARY.fail} broken intake routes` },
+      { ok: CEO_GATE_SUMMARY.fail === 0, text: `${CEO_GATE_SUMMARY.fail} mobile blockers` },
+    ],
+    owner: [
+      { ok: true, text: `${atTarget} core workflows at target` },
+      { ok: dupes === 0, text: `${dupes} duplicate primary shortcut${dupes === 1 ? '' : 's'}` },
+      { ok: closeoutWatch.length === 0,
+        text: `${closeoutWatch.length} unresolved closeout alert${closeoutWatch.length === 1 ? '' : 's'}` },
     ],
   };
 
+  /* ---- WHAT SHOULD I FIX FIRST (§14): a SELECTION over what is already
+     computed, never a new answer and never a chatbot. ---- */
+  const fixFirst = highest ? {
+    recommendation: highest.title,
+    why: highest.evidence && highest.evidence.length ? highest.evidence.join('. ') + '.' : highest.why,
+    benefit: highest.impact,
+    risk: CEO_RISK[highest.action] || 'LOW',
+    id: highest.id,
+    cta: highest.kind === 'navigate_case' ? 'review' : 'preview',
+    case_no: highest.kind === 'navigate_case' ? highest.target : null,
+  } : { none: 'No meaningful portal change is recommended right now.' };
+
   return json({ ok: true,
-    health, brief, most_used: mostUsed, flows: CEO_FLOWS,
+    health, brief, most_used: mostUsed, total_taps: totalTaps,
+    flows: CEO_FLOWS.map(f => ({ ...f, action_label: CEO_ACTIONS[f.action] })),
+    priority, plan, working, fix_first: fixFirst,
     suggestions, closeout_watch: closeoutWatch,
     suggestion_state: sugState,
-    /* Named so the page can say "no store yet" honestly. */
-    prefs_stored: !(await missingTables(env)).includes('user_pref') });
+    action_labels: CEO_ACTIONS,
+    prefs_stored: !missing.includes('user_pref') });
 }
 
 /* The one CEO write, and it is a PREF write: this user's own suggestion

@@ -20968,6 +20968,24 @@ section('Mobile CEO Bot: own scroll, locked portal, no collisions');
   ok('the CEO pill sits bottom-left, clear of the Assistant pill, at the tap floor',
      pills.ceo && pills.asst && pills.overlap === false && pills.ceoLeft && pills.h >= 44,
      JSON.stringify(pills));
+  /* §10 — AND IT COVERS NOTHING. It sat at bottom:14px, inside the bottom
+     navigation's own band: the nav is z-60 and the fab z-58, so the nav
+     painted over it and part of the control could not be pressed. Both
+     floating doors now take the nav's own height as their lift. */
+  const clears = await page.evaluate(() => {
+    const r = s => { const e = document.querySelector(s); return e ? e.getBoundingClientRect() : null; };
+    const ceo = r('.ceo-fab'), asst = r('.asst-pill'), nav = r('.mnav');
+    return { navShown: !!nav && nav.height > 0,
+      ceoClears: ceo && nav ? ceo.bottom <= nav.top + 1 : null,
+      asstClears: asst && nav ? asst.bottom <= nav.top + 1 : null,
+      /* Distinct sizes: the Assistant stays the primary pill. */
+      ceoH: ceo ? Math.round(ceo.height) : null, asstH: asst ? Math.round(asst.height) : null };
+  });
+  ok('neither floating door covers the bottom navigation',
+     clears.navShown && clears.ceoClears === true && clears.asstClears === true,
+     JSON.stringify(clears));
+  ok('and the CEO chip is the smaller of the two — one primary pill, not two',
+     clears.ceoH < clears.asstH && clears.ceoH >= 44, JSON.stringify(clears));
 
   await page.evaluate(() => { window.scrollTo(0, 200); });
   await page.evaluate(() => ceoOpen());
@@ -20990,6 +21008,202 @@ section('Mobile CEO Bot: own scroll, locked portal, no collisions');
      after.overflow !== 'hidden' && after.y === 200, JSON.stringify(after));
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.close();
+}
+
+section('CEO Bot refinement: priority, protection and a plan, at both widths');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.waitForTimeout(500);
+  /* A real working pattern: 25 taps, all Rate Sheet, so the engine has
+     evidence and the protections are exercised rather than skipped. */
+  await page.evaluate(async () => {
+    for (let i = 0; i < 25; i++) {
+      await fetch('/portal-api/me/prefs/use', { method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'qt:sheets' }) });
+    }
+  });
+  await page.evaluate(() => ceoOpen());
+  await page.waitForTimeout(1000);
+
+  /* ---- §4/§13 — the executive order, read off the rendered DOM. ---- */
+  const order = await page.evaluate(() => {
+    const b = document.querySelector('.ceo-body');
+    const seen = [];
+    for (const el of b.children) {
+      if (el.classList.contains('ceo-prio')) seen.push('priority');
+      else if (el.classList.contains('ceo-health')) seen.push('health');
+      else if (/Today/.test(el.textContent) && seen.indexOf('today') < 0) seen.push('today');
+    }
+    return seen;
+  });
+  ok('Insights leads with CEO PRIORITY, then Portal Health, then today',
+     order[0] === 'priority' && order.indexOf('health') > 0
+     && order.indexOf('health') < (order.indexOf('today') < 0 ? 99 : order.indexOf('today')),
+     JSON.stringify(order));
+
+  /* ---- §5 — health is grouped and its numbers are the gate's. ---- */
+  const health = await page.evaluate(() => {
+    const h = document.querySelector('.ceo-health');
+    return { groups: [...h.querySelectorAll('.ceo-hgt')].map(g => g.textContent.trim()),
+      state: (h.querySelector('.ceo-hstate') || {}).textContent,
+      gate: /43 pass \/ 0 warn \/ 0 fail/.test(h.innerText) };
+  });
+  ok('Portal Health groups client experience, owner experience and the release gate',
+     health.groups.join('|') === 'CLIENT EXPERIENCE|OWNER EXPERIENCE|RELEASE GATE',
+     JSON.stringify(health.groups));
+  ok('and prints the CEO UX Gate\'s own totals', health.gate === true);
+  ok('with a one-word state', ['GOOD', 'WATCH', 'NEEDS ATTENTION'].includes((health.state || '').trim()),
+     health.state);
+
+  /* ---- §6 — MY PORTAL PLAN, and §1 inside it. ---- */
+  const plan = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.ceo-plrow')]
+      .map(r => [r.querySelector('.ceo-pll').textContent.trim(),
+                 r.querySelector('.ceo-plv').textContent.trim()]);
+    return Object.fromEntries(rows);
+  });
+  ok('My portal plan groups the user\'s own direction',
+     !!plan['Keep prominent'] && /Rate Sheet/.test(plan['Keep prominent']), JSON.stringify(plan));
+  ok('and Cases appears ONLY under removing the duplicate shortcut',
+     /Cases/.test(plan['Hide duplicate shortcut'] || '')
+     && !Object.entries(plan).some(([k, v]) =>
+          k !== 'Hide duplicate shortcut' && k !== 'Preserve' && k !== 'Keep prominent'
+          && /\bCases\b/.test(v)), JSON.stringify(plan));
+
+  /* ---- §14 — Fix First is a button that answers from what is on screen. ---- */
+  await page.evaluate(() => { const b = document.querySelector('[data-act="ceoFix"]'); if (b) b.click(); });
+  await page.waitForTimeout(400);
+  const fix = await page.evaluate(() => {
+    const c = document.querySelector('.ceo-fix');
+    if (!c) return null;
+    const t = c.innerText;
+    return { has: true, why: /WHY/.test(t), benefit: /EXPECTED BENEFIT/.test(t),
+      risk: /RISK/.test(t) && /(LOW|MEDIUM|HIGH)/.test(t),
+      /* It offers a review, never an act. */
+      verbs: [...c.querySelectorAll('button')].map(b => b.textContent.trim()) };
+  });
+  ok('"What should I fix first?" answers with why, benefit and a stated risk',
+     !!fix && fix.why && fix.benefit && fix.risk, JSON.stringify(fix));
+  ok('and its strongest control is a review, never an act',
+     fix.verbs.every(v => /review|close/i.test(v)), JSON.stringify(fix.verbs));
+
+  /* ---- §7/§8 — the card shows its parts, and Why? expands EVIDENCE. ---- */
+  await page.evaluate(() => { CEO_TAB = 'suggestions'; paint(); });
+  await page.waitForTimeout(400);
+  const card = await page.evaluate(() => {
+    const c = document.querySelector('.ceo-card.ceo-task');
+    return { cat: !!c.querySelector('.ceo-cat'), why: !!c.querySelector('.ceo-why'),
+      metric: !!c.querySelector('.ceo-ev'), impact: !!c.querySelector('.ceo-imp'),
+      acts: [...c.querySelectorAll('button')].map(b => b.textContent.trim()) };
+  });
+  ok('a suggestion card shows category, why, one metric and the impact',
+     card.cat && card.why && card.metric && card.impact, JSON.stringify(card));
+  ok('with Preview / Not now / Why?', card.acts.join('|') === 'Preview|Not now|Why?',
+     JSON.stringify(card.acts));
+  const whyOpen = await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.ceo-card.ceo-task button')]
+      .find(x => x.textContent.trim() === 'Why?');
+    b.click();
+    return null;
+  });
+  await page.waitForTimeout(400);
+  const evid = await page.evaluate(() => {
+    const w = document.querySelector('.ceo-whybox');
+    return w ? { head: /WHY THIS SUGGESTION/.test(w.innerText),
+      items: [...w.querySelectorAll('li')].map(li => li.textContent.trim()),
+      rec: /Recommendation:/.test(w.innerText) } : null;
+  });
+  ok('Why? expands an EVIDENCE LIST, not a restatement',
+     !!evid && evid.head && evid.items.length >= 2 && evid.rec, JSON.stringify(evid));
+  ok('and the evidence is measurable facts about usage',
+     evid.items.some(i => /0 uses in the measured period/.test(i)), JSON.stringify(evid.items));
+
+  /* ---- §1 ON SCREEN: the core protection a person would actually read. ---- */
+  const cases = await page.evaluate(() => {
+    const c = [...document.querySelectorAll('.ceo-card.ceo-task')]
+      .find(x => /Cases/.test(x.innerText));
+    return c ? c.innerText.replace(/\s+/g, ' ') : null;
+  });
+  ok('the Cases card offers the duplicate shortcut, never the capability',
+     !!cases && /duplicate/i.test(cases) && /Cases stays exactly where it is/.test(cases),
+     (cases || '').slice(0, 160));
+
+  /* ---- §3/§16 — what is working is on screen too. ---- */
+  const keep = await page.evaluate(() => {
+    const k = document.querySelector('.ceo-keep');
+    return k ? { has: true, rows: k.querySelectorAll('.ceo-krow').length,
+      text: k.innerText.replace(/\s+/g, ' ').slice(0, 120) } : null;
+  });
+  ok('the Suggestions tab also reports what needs no change',
+     !!keep && keep.rows >= 2, JSON.stringify(keep));
+
+  /* ---- §9 — workflow cards carry a recommendation, none a complaint. ---- */
+  await page.evaluate(() => { CEO_TAB = 'workflow'; paint(); });
+  await page.waitForTimeout(400);
+  const flows = await page.evaluate(() => [...document.querySelectorAll('.ceo-card')]
+    .map(c => ({ rec: /CEO recommendation/.test(c.innerText),
+      status: (c.querySelector('.ceo-fs') || {}).textContent })));
+  ok('every workflow card states a CEO recommendation',
+     flows.length === 5 && flows.every(f => f.rec), JSON.stringify(flows.map(f => f.status)));
+  ok('and none of the five is labelled a problem',
+     flows.every(f => ['EXCELLENT', 'GOOD'].includes((f.status || '').trim())),
+     JSON.stringify(flows.map(f => f.status)));
+
+  /* ---- §11 — a quiet tab says so positively rather than drawing blank. ---- */
+  await page.evaluate(() => { CEO_TAB = 'health'; paint(); });
+  await page.waitForTimeout(400);
+  const quiet = await page.evaluate(() => {
+    const b = document.querySelector('.ceo-body');
+    return { none: !!b.querySelector('.ceo-none'), len: b.innerText.trim().length };
+  });
+  ok('a tab with nothing to report says so, and is never an empty panel',
+     quiet.none === true && quiet.len > 120, JSON.stringify(quiet));
+
+  /* ---- §11/§12 — geometry at both widths. ---- */
+  for (const [w, h] of [[1440, 900], [390, 844]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(350);
+    const g = await page.evaluate(() => {
+      const p = document.querySelector('.ceo-panel');
+      const tabs = [...p.querySelectorAll('.ceo-tabs button')];
+      const strip = p.querySelector('.ceo-tabs');
+      return { width: Math.round(p.getBoundingClientRect().width),
+        clipped: tabs.filter(t => t.scrollWidth > t.clientWidth + 1).length,
+        minTabH: Math.min(...tabs.map(t => Math.round(t.getBoundingClientRect().height))),
+        stripScrolls: strip.scrollWidth > strip.clientWidth + 1,
+        pageOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+    });
+    ok(`at ${w}px the drawer is within the 380-420 target and nothing is clipped`,
+       (w >= 420 ? g.width >= 380 && g.width <= 420 : g.width <= w)
+       && g.clipped === 0 && g.pageOverflow === false, JSON.stringify(g));
+    ok(`at ${w}px every tab clears the tap floor`, g.minTabH >= 44, String(g.minTabH));
+  }
+
+  /* ---- §15 — one user's decisions never reach the other's screen. ---- */
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.evaluate(() => { CEO_TAB = 'suggestions'; paint(); });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.ceo-card.ceo-task button')]
+      .find(x => x.textContent.trim() === 'Not now');
+    if (b) b.click();
+  });
+  await page.waitForTimeout(900);
+  await page.close();
+
+  const other = await newPage();
+  await signIn(other, 'dana', 'FieldWork2026x');
+  await other.waitForTimeout(600);
+  const dana = await other.evaluate(async () => {
+    const r = await (await fetch('/portal-api/ceo/insights', { credentials: 'include' })).json();
+    return { states: Object.keys(r.suggestion_state || {}).length,
+      taps: r.total_taps, mine: (r.most_used || []).length };
+  });
+  ok('the investigator carries none of the admin\'s CEO decisions or counters',
+     dana.states === 0 && dana.taps === 0 && dana.mine === 0, JSON.stringify(dana));
+  await other.close();
 }
 
 await browser.close();

@@ -20764,9 +20764,17 @@ section('The CEO Bot observes, recommends, and can execute nothing');
   }
   d = await jsonOf(await call(env, '/ceo/insights', { cookie: admin }));
   const hideSug = d.suggestions.find(s => s.id === 'hide:qt:video');
-  ok('with 21 counted taps and zero on Timestamp Video, the hide suggestion appears',
-     !!hideSug && /have not used/.test(hideSug.why) && /only your own portal/i.test(hideSug.why),
+  ok('with 21 counted taps and zero on Timestamp Video, the move suggestion appears',
+     !!hideSug && hideSug.action === 'MOVE_TO_MORE'
+     && /has not been used/.test(hideSug.why),
      JSON.stringify(d.suggestions.map(s => s.id)));
+  ok('and it says what stays available rather than only what goes',
+     /remains available under the More menu/.test(hideSug.impact), hideSug.impact);
+  ok('its evidence is FACTS the reader can check, not prose to trust',
+     hideSug.evidence.some(e => /0 uses in the measured period/.test(e))
+     && hideSug.evidence.some(e => /Still available from/.test(e))
+     && hideSug.evidence.some(e => /does not remove Timestamp Video/.test(e)),
+     JSON.stringify(hideSug.evidence));
   /* THE COUNTER MUST ACCEPT WHAT THE PAGE ACTUALLY SENDS. `noteUse` composes
      "qt:" + the action id, and the allow-list refused the colon — so every
      quick-action tap 400'd, silently, behind that helper's own empty catch.
@@ -20839,6 +20847,173 @@ section('The CEO Bot observes, recommends, and can execute nothing');
      && !JSON.stringify(fd).includes('Michelle'), JSON.stringify(fd.brief));
   ok('and signing out closes the door',
      (await call(env, '/ceo/insights', {})).status === 401);
+}
+
+
+section('CEO Bot: a capability is not its shortcut, and most answers are "leave it alone"');
+{
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '90';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const invLink = (await jsonOf(await invite(env, admin,
+    { username: 'trevorf', role: 'investigator', display_name: 'Trevor Field' }))).url;
+  const invTok = new URL(invLink, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${invTok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'trevorf', 'FieldWork2026x')).cookie;
+  const ceo = async cookie => jsonOf(await call(env, '/ceo/insights', { cookie }));
+  const tap = async (cookie, action, n = 1) => {
+    for (let i = 0; i < n; i++) {
+      await call(env, '/me/prefs/use', { method: 'POST', cookie, body: { action } });
+    }
+  };
+
+  /* ---- §2 — NOTHING IS SAID WITHOUT EVIDENCE. ---- */
+  let d = await ceo(admin);
+  ok('with no measured use the Bot proposes nothing at all',
+     d.suggestions.filter(s => s.kind !== 'navigate_case').length === 0,
+     JSON.stringify(d.suggestions.map(s => s.id)));
+  ok('and CEO PRIORITY says so in the owner\'s own words rather than inventing work',
+     d.priority.none === 'No high-impact portal changes recommended today.'
+     && d.priority.highest_impact === null, JSON.stringify(d.priority));
+  ok('Fix First refuses to invent one too',
+     d.fix_first.none === 'No meaningful portal change is recommended right now.',
+     JSON.stringify(d.fix_first));
+
+  /* Now give the Bot a real working pattern: 25 taps, all Rate Sheet. */
+  await tap(admin, 'qt:sheets', 25);
+  d = await ceo(admin);
+
+  const by = id => d.suggestions.find(s => s.pref_target === id || s.target === id);
+
+  /* ---- §1 — THE PROTECTION THAT IS THE POINT OF THIS UNIT. Cases is a core
+     destination. It took none of the 25 taps. The old engine would have said
+     "Hide Cases"; the new one may only ever offer to remove the DUPLICATE
+     shortcut, and must say the capability stays. ---- */
+  const cases = by('qt:cases');
+  ok('Cases is never recommended for hiding as a CAPABILITY',
+     !!cases && cases.action === 'HIDE_DUPLICATE', JSON.stringify(cases && cases.action));
+  ok('the headline names the duplicate, not the capability',
+     /duplicate/i.test(cases.title) && !/^Hide Cases$/i.test(cases.title), cases.title);
+  ok('and it states in words that Cases itself stays where it is',
+     /Cases stays exactly where it is/.test(cases.impact), cases.impact);
+  ok('its evidence names Cases as a core business destination',
+     cases.evidence.some(e => /core business destination/.test(e))
+     && cases.evidence.some(e => /bottom navigation/.test(e)), JSON.stringify(cases.evidence));
+  ok('and the suggestion is flagged as touching a core capability',
+     cases.protects_core === true);
+
+  /* ---- A CORE CAPABILITY WITH NO SECOND ROUTE IS NEVER PROPOSED AWAY. Rate
+     Sheet is core and lives nowhere else; even at zero use it would be kept.
+     Here it is the most-used control, so the answer is a confirmation. ---- */
+  ok('the Rate Sheet is not proposed away — it is confirmed',
+     !by('qt:sheets'), JSON.stringify((by('qt:sheets') || {}).action));
+  ok('and it appears in WHAT IS WORKING as Keep prominent',
+     d.working.some(w => w.id === 'qt:sheets' && w.action === 'KEEP_PROMINENT'),
+     JSON.stringify(d.working.map(w => `${w.id}:${w.action}`)));
+
+  /* ---- §3 — POSITIVE RECOMMENDATIONS EXIST AT ALL. ---- */
+  /* THE PROPERTY, NOT A COUNT. Two entries is the honest answer for a user who
+     has only ever tapped one control; what §3 actually asks is that BOTH
+     positive verdicts are reachable and reported. */
+  ok('the Bot reports what is working, and both positive verdicts are reachable',
+     d.working.some(w => w.action === 'KEEP_PROMINENT')
+     && d.working.some(w => w.action === 'PRESERVE'),
+     JSON.stringify(d.working.map(w => `${w.label}:${w.action}`)));
+  ok('a core capability with no second route is kept, however quiet it is',
+     d.working.some(w => w.id === 'qt:newlead' && w.action === 'PRESERVE'),
+     JSON.stringify(d.working.map(w => w.id)));
+  ok('every measured workflow carries a CEO recommendation, and none is a complaint',
+     d.flows.length === 5
+     && d.flows.every(f => ['PRESERVE', 'KEEP_PROMINENT'].includes(f.action))
+     && d.flows.every(f => ['EXCELLENT', 'GOOD'].includes(f.status)),
+     JSON.stringify(d.flows.map(f => `${f.id}:${f.status}:${f.action}`)));
+  ok('§16 — a one-tap flow is told to stay a one-tap flow, in words',
+     /already a one-tap workflow/i.test(
+       (d.flows.find(f => f.id === 'view_intake') || {}).note || ''),
+     JSON.stringify((d.flows.find(f => f.id === 'view_intake') || {}).note));
+
+  /* ---- §2 — NOT EVERYTHING IS "HIDE". ---- */
+  const actions = new Set(d.suggestions.map(s => s.action));
+  ok('the engine produces more than one kind of recommendation',
+     actions.size >= 2, JSON.stringify([...actions]));
+  ok('a non-core unused shortcut is MOVED, and the move names where it lives',
+     by('qt:photo').action === 'MOVE_TO_MORE'
+     && /remains available under the More menu/.test(by('qt:photo').impact),
+     JSON.stringify(by('qt:photo')));
+
+  /* ---- §4 — CEO PRIORITY ranks, shows at most two, and never invents. ---- */
+  ok('CEO PRIORITY names a highest-impact item once there is one',
+     !!d.priority.highest_impact && !d.priority.none, JSON.stringify(d.priority.none));
+  ok('and a separate low-risk cleanup that is not the same item',
+     !d.priority.low_risk || d.priority.low_risk.id !== d.priority.highest_impact.id,
+     JSON.stringify([d.priority.highest_impact.id, d.priority.low_risk && d.priority.low_risk.id]));
+
+  /* ---- §14 — FIX FIRST is a SELECTION over what is already computed. ---- */
+  ok('Fix First picks the top-ranked recommendation, with its risk stated',
+     d.fix_first.id === d.priority.highest_impact.id
+     && ['LOW', 'MEDIUM', 'HIGH'].includes(d.fix_first.risk),
+     JSON.stringify(d.fix_first));
+  ok('and its WHY is the evidence, not a restatement of the headline',
+     d.fix_first.why !== d.fix_first.recommendation && d.fix_first.why.length > 20,
+     d.fix_first.why);
+
+  /* ---- §6 — MY PORTAL PLAN groups this user's direction. ---- */
+  ok('the portal plan groups by what the engine concluded',
+     Array.isArray(d.plan.KEEP_PROMINENT) && d.plan.KEEP_PROMINENT.includes('Rate Sheet'),
+     JSON.stringify(d.plan));
+  ok('and a core destination is listed under removing the duplicate, never under a capability hide',
+     (d.plan.HIDE_DUPLICATE || []).includes('Cases')
+     && !Object.entries(d.plan).some(([a, list]) =>
+          a !== 'HIDE_DUPLICATE' && a !== 'PRESERVE' && a !== 'KEEP_PROMINENT'
+          && list.includes('Cases')), JSON.stringify(d.plan));
+
+  /* ---- §5 — HEALTH IS GROUPED AND ITS NUMBERS ARE COUNTED. ---- */
+  ok('health is grouped into client and owner experience plus the gate',
+     Array.isArray(d.health.client) && Array.isArray(d.health.owner) && d.health.gate,
+     JSON.stringify(Object.keys(d.health)));
+  ok('the release-gate totals are the CEO UX Gate\'s own',
+     d.health.gate.pass === 43 && d.health.gate.warn === 0 && d.health.gate.fail === 0,
+     JSON.stringify(d.health.gate));
+  ok('the duplicate count in health matches the classification, never a typed number',
+     (d.health.owner.find(o => /duplicate/.test(o.text)) || {}).text
+       === `${d.suggestions.filter(s => s.action === 'HIDE_DUPLICATE').length} duplicate primary shortcuts`,
+     JSON.stringify(d.health.owner));
+  ok('and the status word is one of the three the owner named',
+     ['GOOD', 'WATCH', 'NEEDS ATTENTION'].includes(d.health.label), d.health.label);
+
+  /* ---- §15 — COREY AND TREVER STAY SEPARATE, on the recommendations too. ---- */
+  await tap(inv, 'qt:field', 22);
+  const dInv = await ceo(inv);
+  const dAdm = await ceo(admin);
+  ok('the investigator\'s own most-used is their own',
+     dInv.most_used[0].id === 'qt:field' && dAdm.most_used[0].id === 'qt:sheets',
+     JSON.stringify([dInv.most_used[0], dAdm.most_used[0]]));
+  ok('and their recommendations differ because their usage does',
+     JSON.stringify(dInv.plan) !== JSON.stringify(dAdm.plan));
+  ok('the investigator is never offered the admin\'s closeout watch',
+     (dInv.closeout_watch || []).length === 0 && !dInv.brief.open_cases,
+     JSON.stringify(dInv.brief));
+  /* One user's decision does not reach the other's screen. */
+  await call(env, '/ceo/suggestion', { method: 'POST', cookie: admin,
+    body: { id: 'hide:qt:photo', state: 'dismissed' } });
+  const after = await ceo(admin);
+  const afterInv = await ceo(inv);
+  ok('a dismissal removes it from that user\'s own list',
+     !after.suggestions.some(s => s.id === 'hide:qt:photo'));
+  ok('and leaves the other user\'s suggestions untouched',
+     Object.keys(afterInv.suggestion_state || {}).length === 0,
+     JSON.stringify(afterInv.suggestion_state));
+
+  /* ---- §17 — STILL READ-ONLY. Nothing in this block writes a case. ---- */
+  const wsrc = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  const blk = wsrc.slice(wsrc.indexOf('/* ============ CEO BOT — WHAT MAY BE RECOMMENDED'),
+                         wsrc.indexOf('/* ------------------------------------------------------- case workspace */'));
+  ok('the CEO block writes exactly one table, and it is the preference row',
+     (blk.match(/INSERT INTO (\w+)/g) || []).every(m => /user_pref/.test(m))
+     && !/UPDATE (submissions|case_|retainer|invoice)/.test(blk)
+     && !/DELETE FROM/.test(blk), JSON.stringify(blk.match(/INSERT INTO (\w+)/g)));
+  ok('and it never reaches the mail sender', !/sendMail/.test(blk));
 }
 
 /* ------------------------------------------------------------------ report */

@@ -3606,6 +3606,25 @@ which is a navigation into the ordinary portal where the ordinary confirmations
 still stand. A test counts the write-shaped verbs in the rendered drawer and
 requires zero.
 
+**THE ENGINE KNOWS A CAPABILITY FROM ITS SHORTCUT** (product refinement,
+2026-09-06). The first version had one rule — unused implies hide — so it could
+recommend *"Hide Cases"*: removing a core business destination because a
+shortcut to it was quiet, with *"you have not used this once"* printed
+underneath as the argument. `CEO_CAPS` marks each control `core`, `nav` (the
+thing itself is a navigation destination, so its Home card is a DUPLICATE) and
+`alt` (where it still lives if the shortcut goes). **A core capability can only
+ever be offered as a duplicate-shortcut removal, and a control with no `alt` is
+never removed at all** — that would manufacture the dead end the gate exists to
+find. Both are properties of the table, not rules to remember.
+
+**IT CAN SAY "LEAVE IT ALONE".** Eight actions, not one; below 20 counted taps
+the answer is `NOT_ENOUGH_DATA` and nothing is suggested; all five measured
+workflows carry PRESERVE or KEEP_PROMINENT; and CEO Priority and *What should I
+fix first?* are SELECTIONS over the same classified list, both saying so plainly
+when there is nothing worth changing. **Why?** expands the evidence the
+classifier actually used, not a restatement of the headline.
+
+
 **THE GATE DETECTS, THE BOT DISPLAYS.** `CEO_GATE_SUMMARY` in `worker.js` is a
 literal the Health tab prints, and `portal/test-ceo-gate.mjs` **asserts its own
 fresh totals against it and fails on drift**, naming the numbers to paste.
